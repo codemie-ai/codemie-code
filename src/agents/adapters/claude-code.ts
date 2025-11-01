@@ -60,6 +60,12 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     if (!env.ANTHROPIC_MODEL && env.CODEMIE_MODEL) {
       env.ANTHROPIC_MODEL = env.CODEMIE_MODEL;
     }
+    // Set subagent model to match the main model
+    if (!env.CLAUDE_CODE_SUBAGENT_MODEL && env.CODEMIE_MODEL) {
+      env.CLAUDE_CODE_SUBAGENT_MODEL = env.CODEMIE_MODEL;
+    } else if (!env.CLAUDE_CODE_SUBAGENT_MODEL && env.ANTHROPIC_MODEL) {
+      env.CLAUDE_CODE_SUBAGENT_MODEL = env.ANTHROPIC_MODEL;
+    }
 
     // Spawn Claude Code
     const child = spawn('claude', args, {
