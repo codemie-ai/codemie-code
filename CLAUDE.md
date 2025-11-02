@@ -162,41 +162,40 @@ To create your own specialized agent:
 
 ### Git Workflow Policy
 
-**IMPORTANT - Always use feature branches:**
-- NEVER commit directly to `main` branch
-- ALWAYS create a feature branch for changes
-- Follow standard git branch naming conventions:
-  - `feature/add-something` - New features
-  - `fix/issue-description` - Bug fixes
-  - `docs/update-readme` - Documentation changes
-  - `refactor/component-name` - Code refactoring
-  - `chore/update-dependencies` - Maintenance tasks
+**CRITICAL - Read the complete Git Workflow Policy:**
 
-**Standard workflow:**
+📖 **See:** `.codemie/guides/git-workflow.md` for comprehensive git workflow guidelines
+
+**Key Requirements:**
+- ❌ **NEVER commit directly to `main` branch**
+- ✅ **ALWAYS create a feature branch** for any changes
+- ✅ **ALL changes go through Pull Request review**
+- ✅ Use conventional commit format: `type: description`
+- ✅ Follow branch naming: `feature/`, `fix/`, `docs/`, `refactor/`, `chore/`
+
+**Quick Reference:**
 ```bash
-# 1. Create feature branch from main
-git checkout main
-git pull origin main
+# Standard workflow
+git checkout main && git pull origin main
 git checkout -b feature/your-feature-name
-
-# 2. Make changes and commit
+# Make changes...
 git add .
-git commit -m "Descriptive commit message"
-
-# 3. Push branch to remote
+git commit -m "feat: add something" -m "Co-authored-by: CodeMie AI <codemie.ai@gmail.com>"
 git push -u origin feature/your-feature-name
-
-# 4. Create Pull Request for review
-# Use GitHub UI or gh CLI to create PR
-
-# 5. After PR approval, merge to main
+# Create PR via GitHub UI or: gh pr create
 ```
 
-**Branch naming guidelines:**
-- Use lowercase with hyphens
-- Be descriptive but concise
-- Include ticket/issue number if applicable (e.g., `feature/GH-123-add-feature`)
-- Keep branch names under 50 characters when possible
+**Important:** Always add CodeMie AI co-author to commits for proper attribution
+
+For detailed information on:
+- Branch naming conventions
+- Commit message guidelines
+- PR creation and review process
+- Merge conflict resolution
+- Emergency hotfixes
+- Git commands reference
+
+👉 **Read:** `.codemie/guides/git-workflow.md`
 
 ### Release & Publishing Policy
 
