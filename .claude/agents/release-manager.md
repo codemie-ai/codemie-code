@@ -264,7 +264,7 @@ For initial releases, use this format instead:
 ## 📦 Installation
 
 ```bash
-npm install -g @codemie.ai/code
+npm install -g @codemieai/code
 ```
 
 ## 🚀 Quick Start
@@ -305,7 +305,7 @@ git tag -l "v{VERSION}"
 gh release view v{VERSION} 2>/dev/null || echo "No GitHub release found"
 
 # Check if version is on npm
-npm view @codemie.ai/code@{VERSION} version 2>/dev/null || echo "Not on npm"
+npm view @codemieai/code@{VERSION} version 2>/dev/null || echo "Not on npm"
 ```
 
 **Determine what steps are needed:**
@@ -481,8 +481,8 @@ gh run list --workflow=publish.yml --limit=1
 🚀 Next Steps:
 - GitHub Actions "Publish to NPM" workflow is triggered
 - Monitor workflow: https://github.com/{owner}/{repo}/actions
-- Once complete, package will be available: npm install @codemie.ai/code@{VERSION}
-- Verify on npm: https://www.npmjs.com/package/@codemie.ai/code
+- Once complete, package will be available: npm install @codemieai/code@{VERSION}
+- Verify on npm: https://www.npmjs.com/package/@codemieai/code
 
 ⏱️ Estimated time until npm availability: 2-5 minutes
 ```

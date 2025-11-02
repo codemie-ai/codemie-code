@@ -5,7 +5,7 @@ CodeMie Code provides both a built-in AI coding assistant (`codemie-code`) and a
 ## Installation
 
 ```bash
-npm install -g @codemie.ai/code
+npm install -g @codemieai/code
 ```
 
 **Verify installation:**
@@ -463,7 +463,7 @@ export CODEMIE_MODEL="..."
 
 ```bash
 # Re-install globally
-npm install -g @codemie.ai/code
+npm install -g @codemieai/code
 
 # Verify installation
 which codemie
