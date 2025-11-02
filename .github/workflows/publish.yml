@@ -18,7 +18,7 @@ jobs:
 
     steps:
       - name: Confirm publish
-        if: ${{ github.event.inputs.confirm != 'publish' }}
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.confirm != 'publish' }}
         run: |
           echo "❌ Workflow disabled. To enable, type 'publish' when triggering manually."
           exit 1
