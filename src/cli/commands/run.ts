@@ -10,7 +10,9 @@ export function createRunCommand(): Command {
     .description('Run an agent')
     .argument('<agent>', 'Agent name to run')
     .argument('[args...]', 'Additional arguments to pass to the agent')
-    .option('-m, --model <model>', 'Model to use')
+    .option('-m, --model <model>', 'Model to use (CodeMie option, not passed to agent)')
+    .allowUnknownOption() // Allow passing unknown options to the agent
+    .passThroughOptions() // Pass through options to the agent
     .action(async (agentName: string, args: string[], options) => {
       try {
         const agent = AgentRegistry.getAgent(agentName);
@@ -31,8 +33,34 @@ export function createRunCommand(): Command {
           process.env[envVar] = options.model;
         }
 
-        // Run the agent
-        await agent.run(args);
+        // Collect all arguments to pass to the agent
+        // This includes both positional args and any unknown options
+        const agentArgs = [...args];
+
+        // Add back unknown options that were parsed
+        // Commander.js stores unknown options in the options object
+        // We need to reconstruct them as command-line arguments
+        for (const [key, value] of Object.entries(options)) {
+          // Skip known CodeMie options
+          if (key === 'model') continue;
+
+          // Reconstruct the option format
+          if (key.length === 1) {
+            // Single character option: -p
+            agentArgs.push(`-${key}`);
+          } else {
+            // Multi-character option: --prompt
+            agentArgs.push(`--${key}`);
+          }
+
+          // Add the value if it's not a boolean flag
+          if (value !== true && value !== undefined) {
+            agentArgs.push(String(value));
+          }
+        }
+
+        // Run the agent with all collected arguments
+        await agent.run(agentArgs);
       } catch (error: unknown) {
         logger.error('Failed to run agent:', error);
         process.exit(1);

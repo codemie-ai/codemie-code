@@ -1,6 +1,6 @@
 {
   "name": "@codemieai/code",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "CodeMie Code - AI coding assistant and CLI wrapper for multiple agents",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
