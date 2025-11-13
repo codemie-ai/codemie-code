@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import * as fs from 'fs';
 import * as path from 'path';
+import { getDirname } from '../utils/dirname.js';
 
 export interface Tip {
   message: string;
@@ -24,7 +25,7 @@ export class AsyncTipDisplay {
    */
   private loadTips(): void {
     try {
-      const tipsPath = path.join(__dirname, '../data/tips.json');
+      const tipsPath = path.join(getDirname(import.meta.url), '../data/tips.json');
       const tipsData = fs.readFileSync(tipsPath, 'utf-8');
       this.tips = JSON.parse(tipsData);
     } catch {

@@ -1,24 +1,13 @@
-// Main exports for CodeMie Code package
-
-// Core
-export { CodeMieCode } from './code/index';
-export { CodeMieAgent } from './code/agent';
-export { loadConfig } from './code/config';
-
-// Tools
-export { FilesystemTools } from './code/tools/filesystem';
-export { CommandTools } from './code/tools/command';
-export { GitTools } from './code/tools/git';
-export { MCPTools } from './code/tools/mcp';
+// Main exports for CodeMie package
 
 // Agents
-export { AgentRegistry } from './agents/registry';
-export type { AgentAdapter } from './agents/registry';
+export { AgentRegistry } from './agents/registry.js';
+export type { AgentAdapter } from './agents/registry.js';
 
 // Utils
-export { logger } from './utils/logger';
-export { exec } from './utils/exec';
-export * from './utils/errors';
+export { logger } from './utils/logger.js';
+export { exec } from './utils/exec.js';
+export * from './utils/errors.js';
 
 // Environment
-export { EnvManager } from './env/manager';
+export { EnvManager } from './env/manager.js';

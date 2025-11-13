@@ -1,7 +1,7 @@
 import { Command } from 'commander';
-import { AgentRegistry } from '../../agents/registry';
-import { logger } from '../../utils/logger';
-import { tipDisplay } from '../../utils/tips';
+import { AgentRegistry } from '../../agents/registry.js';
+import { logger } from '../../utils/logger.js';
+import { tipDisplay } from '../../utils/tips.js';
 import chalk from 'chalk';
 
 export function createListCommand(): Command {

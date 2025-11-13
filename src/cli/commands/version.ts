@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { getDirname } from '../../utils/dirname.js';
 
 export function createVersionCommand(): Command {
   const command = new Command('version');
@@ -10,7 +11,7 @@ export function createVersionCommand(): Command {
     .description('Show version information')
     .action(() => {
       try {
-        const packageJsonPath = join(__dirname, '../../../package.json');
+        const packageJsonPath = join(getDirname(import.meta.url), '../../../package.json');
         const packageJsonContent = readFileSync(packageJsonPath, 'utf-8');
         const packageJson = JSON.parse(packageJsonContent) as { version: string };
         console.log(chalk.bold(`\nCodeMie Code v${packageJson.version}\n`));

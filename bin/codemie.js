@@ -5,4 +5,4 @@
  * Entry point for the codemie executable
  */
 
-require('../dist/cli/index.js');
+import '../dist/cli/index.js';

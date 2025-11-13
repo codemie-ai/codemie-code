@@ -4,7 +4,7 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { ConfigLoader, CodeMieConfigOptions } from '../../utils/config-loader.js';
 import { logger } from '../../utils/logger.js';
-import { ChatOpenAI } from '@langchain/openai';
+import { checkProviderHealth } from '../../utils/health-checker.js';
 
 export function createConfigCommand(): Command {
   const command = new Command('config');
@@ -39,7 +39,6 @@ export function createConfigCommand(): Command {
         { name: 'model', desc: 'Model identifier (e.g., claude-sonnet-4, gpt-4)' },
         { name: 'timeout', desc: 'Request timeout in seconds' },
         { name: 'debug', desc: 'Enable debug logging (true/false)' },
-        { name: 'mcpServers', desc: 'MCP server names (comma-separated)' },
         { name: 'allowedDirs', desc: 'Allowed directories (comma-separated)' },
         { name: 'ignorePatterns', desc: 'Ignore patterns (comma-separated)' }
       ];
@@ -228,28 +227,18 @@ export function createConfigCommand(): Command {
 
         spinner.start('Testing connection...');
 
-        const llm = new ChatOpenAI({
-          modelName: config.model,
-          configuration: {
-            baseURL: config.baseUrl,
-            apiKey: config.apiKey
-          },
-          timeout: (config.timeout || 300) * 1000,
-          maxRetries: 1
-        });
-
         const startTime = Date.now();
-        const response = await llm.invoke('Say "test successful"');
+        const result = await checkProviderHealth(config.baseUrl!, config.apiKey!);
         const duration = Date.now() - startTime;
 
-        if (!response || !response.content) {
-          throw new Error('Empty response from model');
+        if (!result.success) {
+          throw new Error(result.message);
         }
 
         spinner.succeed(chalk.green(`Connection successful (${duration}ms)`));
         console.log(chalk.dim(`  Provider: ${config.provider}`));
         console.log(chalk.dim(`  Model: ${config.model}`));
-        console.log(chalk.dim(`  Response: ${response.content}\n`));
+        console.log(chalk.dim(`  Status: ${result.message}\n`));
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         logger.error('Connection test failed:', errorMessage);
@@ -287,7 +276,7 @@ export function createConfigCommand(): Command {
         console.log(chalk.bold('\n📁 Initialize Project Configuration\n'));
         console.log(chalk.dim('Override global settings for this project.\n'));
 
-        const { overrideModel, overrideTimeout, addMcpServers } = await inquirer.prompt([
+        const { overrideModel, overrideTimeout } = await inquirer.prompt([
           {
             type: 'confirm',
             name: 'overrideModel',
@@ -298,12 +287,6 @@ export function createConfigCommand(): Command {
             type: 'confirm',
             name: 'overrideTimeout',
             message: 'Override timeout for this project?',
-            default: false
-          },
-          {
-            type: 'confirm',
-            name: 'addMcpServers',
-            message: 'Configure project-specific MCP servers?',
             default: false
           }
         ]);
@@ -332,18 +315,6 @@ export function createConfigCommand(): Command {
             }
           ]);
           projectConfig.timeout = timeout;
-        }
-
-        if (addMcpServers) {
-          const { mcpServers } = await inquirer.prompt([
-            {
-              type: 'input',
-              name: 'mcpServers',
-              message: 'MCP servers (comma-separated):',
-              default: Array.isArray(globalConfig.mcpServers) ? globalConfig.mcpServers.join(',') : ''
-            }
-          ]);
-          projectConfig.mcpServers = mcpServers.split(',').map((s: string) => s.trim());
         }
 
         await ConfigLoader.saveProjectConfig(options.dir, projectConfig);

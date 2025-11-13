@@ -1,7 +1,7 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
-import { logger } from '../utils/logger';
+import { logger } from '../utils/logger.js';
 
 export interface EnvConfig {
   [key: string]: string;

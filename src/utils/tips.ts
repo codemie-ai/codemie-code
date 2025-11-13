@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import * as fs from 'fs';
 import * as path from 'path';
+import { getDirname } from '../utils/dirname.js';
 
 export interface Tip {
   message: string;
@@ -12,7 +13,7 @@ export interface Tip {
  */
 function loadTipsFromFile(): Tip[] {
   try {
-    const tipsPath = path.join(__dirname, '../data/tips.json');
+    const tipsPath = path.join(getDirname(import.meta.url), '../data/tips.json');
     const tipsData = fs.readFileSync(tipsPath, 'utf-8');
     return JSON.parse(tipsData);
   } catch {

@@ -63,22 +63,17 @@ export class FirstTimeExperience {
     console.log(chalk.dim('  → Tests AI provider connection'));
     console.log(chalk.dim('  → Shows installed agents\n'));
 
-    console.log(chalk.cyan('Step 3: Start Using CodeMie\n'));
-    console.log(chalk.bold('  Built-in Assistant (Ready to use):'));
-    console.log(chalk.white('  $ ') + chalk.green('codemie-code') + chalk.dim('              # Start interactive AI assistant'));
-    console.log(chalk.white('  $ ') + chalk.green('codemie run codemie-code') + chalk.dim(' # Alternative way to run\n'));
-
-    console.log(chalk.bold('  External Agents (Optional):'));
+    console.log(chalk.cyan('Step 3: Install and Run Agents\n'));
     console.log(chalk.white('  $ ') + chalk.green('codemie list') + chalk.dim('             # See all available agents'));
     console.log(chalk.white('  $ ') + chalk.green('codemie install claude') + chalk.dim('      # Install Anthropic Claude Code'));
     console.log(chalk.white('  $ ') + chalk.green('codemie install codex') + chalk.dim('       # Install OpenAI Codex'));
-    console.log(chalk.white('  $ ') + chalk.green('codemie run <agent>') + chalk.dim('        # Run installed agent\n'));
+    console.log(chalk.white('  $ ') + chalk.green('codemie run claude') + chalk.dim('         # Run Claude agent'));
+    console.log(chalk.white('  $ ') + chalk.green('codemie run codex') + chalk.dim('          # Run Codex agent\n'));
 
     console.log(chalk.bold('📚 Additional Resources:\n'));
     console.log(chalk.dim('   • Documentation: ') + chalk.blue('README.md'));
     console.log(chalk.dim('   • Agent management: ') + chalk.green('codemie list, install, uninstall, run'));
-    console.log(chalk.dim('   • Configuration help: ') + chalk.green('codemie config --help'));
-    console.log(chalk.dim('   • MCP servers: ') + chalk.green('codemie-code mcp --help\n'));
+    console.log(chalk.dim('   • Configuration help: ') + chalk.green('codemie config --help\n'));
   }
 
   /**
@@ -100,14 +95,12 @@ export class FirstTimeExperience {
     console.log(chalk.bold('Verify:'));
     console.log(chalk.cyan('  codemie doctor') + chalk.dim('            # Check configuration\n'));
 
-    console.log(chalk.bold('Use Built-in Assistant:'));
-    console.log(chalk.cyan('  codemie-code') + chalk.dim('              # Start CodeMie Code assistant\n'));
-
-    console.log(chalk.bold('Manage External Agents:'));
+    console.log(chalk.bold('Manage Agents:'));
     console.log(chalk.cyan('  codemie list') + chalk.dim('              # List available agents'));
-    console.log(chalk.cyan('  codemie install <agent>') + chalk.dim('   # Install: claude, codex'));
-    console.log(chalk.cyan('  codemie uninstall <agent>') + chalk.dim(' # Uninstall: claude, codex'));
-    console.log(chalk.cyan('  codemie run <agent>') + chalk.dim('       # Run an agent\n'));
+    console.log(chalk.cyan('  codemie install claude') + chalk.dim('    # Install Claude Code'));
+    console.log(chalk.cyan('  codemie install codex') + chalk.dim('     # Install Codex'));
+    console.log(chalk.cyan('  codemie run claude') + chalk.dim('        # Run Claude agent'));
+    console.log(chalk.cyan('  codemie run codex') + chalk.dim('         # Run Codex agent\n'));
 
     console.log(chalk.dim('For detailed help, run: ') + chalk.green('codemie --help\n'));
   }
@@ -127,18 +120,17 @@ export class FirstTimeExperience {
     console.log(chalk.bold.green('\n✅ You\'re all set!\n'));
     console.log(chalk.bold('Next Steps:\n'));
 
-    console.log(chalk.cyan('1. Start the built-in AI assistant:'));
-    console.log(chalk.white('   $ ') + chalk.green('codemie-code') + chalk.dim('         # Interactive AI coding assistant\n'));
-
-    console.log(chalk.cyan('2. Verify your configuration:'));
+    console.log(chalk.cyan('1. Verify your configuration:'));
     console.log(chalk.white('   $ ') + chalk.green('codemie doctor') + chalk.dim('       # Check system health\n'));
 
-    console.log(chalk.cyan('3. (Optional) Install external agents:'));
+    console.log(chalk.cyan('2. Install and run agents:'));
     console.log(chalk.white('   $ ') + chalk.green('codemie list') + chalk.dim('          # See available agents'));
     console.log(chalk.white('   $ ') + chalk.green('codemie install claude') + chalk.dim('  # Install Anthropic Claude Code'));
-    console.log(chalk.white('   $ ') + chalk.green('codemie install codex') + chalk.dim('   # Install OpenAI Codex\n'));
+    console.log(chalk.white('   $ ') + chalk.green('codemie run claude') + chalk.dim('     # Run Claude agent\n'));
 
-    console.log(chalk.dim('💡 Tip: You can also use ') + chalk.green('codemie run codemie-code') + chalk.dim(' to start the assistant\n'));
+    console.log(chalk.cyan('3. (Optional) Install Codex:'));
+    console.log(chalk.white('   $ ') + chalk.green('codemie install codex') + chalk.dim('   # Install OpenAI Codex'));
+    console.log(chalk.white('   $ ') + chalk.green('codemie run codex') + chalk.dim('      # Run Codex agent\n'));
   }
 
   /**
@@ -156,7 +148,11 @@ export class FirstTimeExperience {
         console.log(chalk.white('CODEMIE_BASE_URL') + chalk.dim('      = ') + chalk.cyan('"https://ai.run/api/v1"'));
         console.log(chalk.white('CODEMIE_API_KEY') + chalk.dim('       = ') + chalk.cyan('"your-ai-run-api-key"'));
         console.log(chalk.white('CODEMIE_MODEL') + chalk.dim('         = ') + chalk.cyan('"claude-4-5-sonnet"'));
-        console.log(chalk.white('CODEMIE_PROVIDER') + chalk.dim('      = ') + chalk.cyan('"ai-run"') + chalk.dim(' (optional)\n'));
+        console.log();
+        console.log(chalk.bold('Optional Environment Variables:\n'));
+        console.log(chalk.white('CODEMIE_PROVIDER') + chalk.dim('      = ') + chalk.cyan('"ai-run"'));
+        console.log(chalk.dim('  Controls which environment variables are passed to agents'));
+        console.log(chalk.dim('  Options: ai-run (default), anthropic, azure, bedrock, openai\n'));
         break;
 
       case 'bedrock':
@@ -182,14 +178,22 @@ export class FirstTimeExperience {
         console.log(chalk.white('CODEMIE_BASE_URL') + chalk.dim('      = ') + chalk.cyan('"https://api.anthropic.com/v1"'));
         console.log(chalk.white('CODEMIE_API_KEY') + chalk.dim('       = ') + chalk.cyan('"sk-ant-api03-..."'));
         console.log(chalk.white('CODEMIE_MODEL') + chalk.dim('         = ') + chalk.cyan('"claude-sonnet-4"'));
-        console.log(chalk.white('CODEMIE_PROVIDER') + chalk.dim('      = ') + chalk.cyan('"anthropic"') + chalk.dim(' (optional)\n'));
+        console.log();
+        console.log(chalk.bold('Optional Environment Variables:\n'));
+        console.log(chalk.white('CODEMIE_PROVIDER') + chalk.dim('      = ') + chalk.cyan('"anthropic"'));
+        console.log(chalk.dim('  Controls which environment variables are passed to agents'));
+        console.log(chalk.dim('  Options: ai-run (default), anthropic, azure, bedrock, openai\n'));
         break;
 
       case 'azure':
         console.log(chalk.white('CODEMIE_BASE_URL') + chalk.dim('      = ') + chalk.cyan('"https://your-resource.openai.azure.com"'));
         console.log(chalk.white('CODEMIE_API_KEY') + chalk.dim('       = ') + chalk.cyan('"your-azure-api-key"'));
         console.log(chalk.white('CODEMIE_MODEL') + chalk.dim('         = ') + chalk.cyan('"gpt-4"') + chalk.dim(' or ') + chalk.cyan('"codex"'));
-        console.log(chalk.white('CODEMIE_PROVIDER') + chalk.dim('      = ') + chalk.cyan('"azure"') + chalk.dim(' (optional)\n'));
+        console.log();
+        console.log(chalk.bold('Optional Environment Variables:\n'));
+        console.log(chalk.white('CODEMIE_PROVIDER') + chalk.dim('      = ') + chalk.cyan('"azure"'));
+        console.log(chalk.dim('  Controls which environment variables are passed to agents'));
+        console.log(chalk.dim('  Options: ai-run (default), anthropic, azure, bedrock, openai\n'));
         break;
     }
 
@@ -264,8 +268,9 @@ export class FirstTimeExperience {
     console.log(chalk.green('# Replace ~/.bashrc with ~/.zshrc in commands above\n'));
 
     console.log(chalk.bold('Verification:\n'));
-    console.log(chalk.white('  $ ') + chalk.green('codemie doctor') + chalk.dim('   # Check configuration and test connection'));
-    console.log(chalk.white('  $ ') + chalk.green('codemie-code') + chalk.dim('     # Start the AI assistant\n'));
+    console.log(chalk.white('  $ ') + chalk.green('codemie doctor') + chalk.dim('       # Check configuration and test connection'));
+    console.log(chalk.white('  $ ') + chalk.green('codemie install claude') + chalk.dim('  # Install Claude agent'));
+    console.log(chalk.white('  $ ') + chalk.green('codemie run claude') + chalk.dim('     # Run the AI assistant\n'));
 
     console.log(chalk.dim('Need help? Run: ') + chalk.green('codemie --help\n'));
   }

@@ -1,57 +1,42 @@
 {
   "name": "@codemieai/code",
   "version": "0.0.2",
-  "description": "CodeMie Code - AI coding assistant and CLI wrapper for multiple agents",
+  "description": "CodeMie - CLI wrapper for managing multiple AI coding agents",
+  "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "codemie-code": "./bin/codemie-code.js",
     "codemie": "./bin/codemie.js"
   },
   "scripts": {
-    "build": "tsc && mkdir -p dist/data && cp src/data/tips.json dist/data/",
+    "build": "tsc",
     "dev": "tsc --watch",
     "lint": "eslint 'src/**/*.ts' --max-warnings=-1",
     "lint:fix": "eslint 'src/**/*.ts' --fix",
     "license-check": "npx license-checker --summary --onlyAllow 'MIT;Apache-2.0;ISC;BSD-2-Clause;BSD-3-Clause;0BSD;CC0-1.0;Unlicense;BlueOak-1.0.0;Python-2.0;CC-BY-4.0;Apache*;(MIT OR CC0-1.0)'",
-    "test": "node --test tests/*.test.mjs",
-    "test:watch": "node --test --watch tests/*.test.mjs",
-    "ci": "npm run license-check && npm run lint && npm run build && npm test",
+    "ci": "npm run license-check && npm run lint && npm run build",
     "prepublishOnly": "npm run build",
     "prepack": "npm run build"
   },
   "keywords": [
     "ai",
     "coding",
-    "assistant",
     "cli",
-    "langchain",
-    "litellm",
-    "mcp",
     "claude",
-    "codex"
+    "codex",
+    "wrapper"
   ],
   "author": "CodeMie Team",
   "license": "Apache-2.0",
   "dependencies": {
-    "@langchain/core": "^1.0.1",
-    "@langchain/langgraph": "^1.0.1",
-    "@langchain/mcp-adapters": "^1.0.0",
-    "@langchain/openai": "^1.0.0",
-    "@types/blessed": "^0.1.25",
-    "blessed": "^0.1.81",
     "chalk": "^5.3.0",
     "commander": "^11.1.0",
-    "diff": "^5.1.0",
     "dotenv": "^16.3.1",
     "inquirer": "^9.2.12",
-    "langchain": "^1.0.2",
-    "ora": "^7.0.1",
-    "zod": "^3.22.4"
+    "ora": "^7.0.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.38.0",
-    "@types/diff": "^5.0.9",
     "@types/inquirer": "^9.0.7",
     "@types/node": "^20.10.5",
     "@typescript-eslint/eslint-plugin": "^8.46.2",

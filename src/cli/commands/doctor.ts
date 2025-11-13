@@ -1,11 +1,11 @@
 import { Command } from 'commander';
-import { tipDisplay } from '../../utils/tips';
-import { exec } from '../../utils/exec';
+import { tipDisplay } from '../../utils/tips.js';
+import { exec } from '../../utils/exec.js';
 import chalk from 'chalk';
 import ora from 'ora';
-import { AgentRegistry } from '../../agents/registry';
+import { AgentRegistry } from '../../agents/registry.js';
 import { ConfigLoader } from '../../utils/config-loader.js';
-import { ChatOpenAI } from '@langchain/openai';
+import { checkProviderHealth } from '../../utils/health-checker.js';
 
 export function createDoctorCommand(): Command {
   const command = new Command('doctor');
@@ -91,27 +91,17 @@ export function createDoctorCommand(): Command {
         const spinner = ora('Testing connection...').start();
 
         try {
-          const llm = new ChatOpenAI({
-            modelName: config.model,
-            configuration: {
-              baseURL: config.baseUrl,
-              apiKey: config.apiKey
-            },
-            timeout: (config.timeout || 300) * 1000,
-            maxRetries: 1
-          });
-
           const startTime = Date.now();
-          const response = await llm.invoke('Say "test successful"');
+          const result = await checkProviderHealth(config.baseUrl, config.apiKey);
           const duration = Date.now() - startTime;
 
-          if (!response || !response.content) {
-            throw new Error('Empty response from model');
+          if (!result.success) {
+            throw new Error(result.message);
           }
 
           spinner.succeed(chalk.green(`Connection successful`));
           console.log(`  ${chalk.dim('Response time:')} ${duration}ms`);
-          console.log(`  ${chalk.dim('Model response:')} ${response.content}`);
+          console.log(`  ${chalk.dim('Status:')} ${result.message}`);
         } catch (error: unknown) {
           const errorMessage = error instanceof Error ? error.message : String(error);
           spinner.fail(chalk.red('Connection test failed'));

@@ -14,7 +14,6 @@ export interface CodeMieConfigOptions {
   model?: string;
   timeout?: number;
   debug?: boolean;
-  mcpServers?: string[];
   allowedDirs?: string[];
   ignorePatterns?: string[];
 }
@@ -50,7 +49,6 @@ export class ConfigLoader {
       model: 'claude-sonnet-4',
       timeout: 300,
       debug: false,
-      mcpServers: [],
       allowedDirs: [],
       ignorePatterns: ['node_modules', '.git', 'dist', 'build']
     };
@@ -118,9 +116,6 @@ export class ConfigLoader {
     }
     if (process.env.CODEMIE_DEBUG) {
       env.debug = process.env.CODEMIE_DEBUG === 'true';
-    }
-    if (process.env.CODEMIE_MCP_SERVERS) {
-      env.mcpServers = process.env.CODEMIE_MCP_SERVERS.split(',').map(s => s.trim());
     }
     if (process.env.CODEMIE_ALLOWED_DIRS) {
       env.allowedDirs = process.env.CODEMIE_ALLOWED_DIRS.split(',').map(s => s.trim());
@@ -374,14 +369,43 @@ export class ConfigLoader {
         // For Claude Code subagents
         env.CLAUDE_CODE_SUBAGENT_MODEL = config.model;
       }
-    } else if (provider === 'OPENAI') {
+    } else if (provider === 'OPENAI' || provider === 'CODEX') {
+      // OpenAI and Codex share the same configuration
+      // Note: OpenAI Codex was deprecated in March 2023
+      // Modern usage should use gpt-3.5-turbo or gpt-4 models instead
       if (config.baseUrl) env.OPENAI_BASE_URL = config.baseUrl;
       if (config.apiKey) env.OPENAI_API_KEY = config.apiKey;
       if (config.model) env.OPENAI_MODEL = config.model;
+
+      // Legacy Codex environment variables (for compatibility)
+      if (provider === 'CODEX') {
+        if (config.baseUrl) env.CODEX_BASE_URL = config.baseUrl;
+        if (config.apiKey) env.CODEX_API_KEY = config.apiKey;
+        if (config.model) env.CODEX_MODEL = config.model;
+      }
     } else if (provider === 'AZURE') {
       if (config.baseUrl) env.AZURE_OPENAI_ENDPOINT = config.baseUrl;
       if (config.apiKey) env.AZURE_OPENAI_API_KEY = config.apiKey;
       if (config.model) env.AZURE_OPENAI_DEPLOYMENT = config.model;
+    } else if (provider === 'BEDROCK') {
+      // AWS Bedrock configuration
+      if (config.model) env.ANTHROPIC_MODEL = config.model;
+      env.CLAUDE_CODE_USE_BEDROCK = '1';
+      // AWS credentials should be set via AWS CLI or environment variables
+    } else if (provider === 'AI-RUN' || provider === 'LITELLM') {
+      // Generic LiteLLM proxy or AI/Run gateway
+      if (config.baseUrl) {
+        env.OPENAI_BASE_URL = config.baseUrl;
+        env.ANTHROPIC_BASE_URL = config.baseUrl;
+      }
+      if (config.apiKey) {
+        env.OPENAI_API_KEY = config.apiKey;
+        env.ANTHROPIC_API_KEY = config.apiKey;
+      }
+      if (config.model) {
+        env.OPENAI_MODEL = config.model;
+        env.ANTHROPIC_MODEL = config.model;
+      }
     }
 
     return env;

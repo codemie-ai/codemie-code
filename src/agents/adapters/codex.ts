@@ -1,6 +1,6 @@
-import { AgentAdapter } from '../registry';
-import { exec } from '../../utils/exec';
-import { logger } from '../../utils/logger';
+import { AgentAdapter } from '../registry.js';
+import { exec } from '../../utils/exec.js';
+import { logger } from '../../utils/logger.js';
 import { spawn } from 'child_process';
 
 export class CodexAdapter implements AgentAdapter {
@@ -11,8 +11,8 @@ export class CodexAdapter implements AgentAdapter {
   async install(): Promise<void> {
     logger.info('Installing Codex...');
     try {
-      // Install via pip
-      await exec('pip', ['install', 'openai-codex'], { timeout: 120000 });
+      // Install via npm
+      await exec('npm', ['install', '-g', '@openai/codex'], { timeout: 120000 });
       logger.success('Codex installed successfully');
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -23,7 +23,7 @@ export class CodexAdapter implements AgentAdapter {
   async uninstall(): Promise<void> {
     logger.info('Uninstalling Codex...');
     try {
-      await exec('pip', ['uninstall', '-y', 'openai-codex']);
+      await exec('npm', ['uninstall', '-g', '@openai/codex']);
       logger.success('Codex uninstalled successfully');
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -49,8 +49,24 @@ export class CodexAdapter implements AgentAdapter {
       ...envOverrides
     };
 
+    // Build Codex arguments with model if specified
+    const codexArgs = [...args];
+
+    // Check if model is already specified in args
+    const hasModelArg = args.some((arg, idx) =>
+      (arg === '-m' || arg === '--model') && idx < args.length - 1
+    );
+
+    // If model not in args but available in env, add it
+    if (!hasModelArg && (envOverrides?.CODEMIE_MODEL || envOverrides?.OPENAI_MODEL)) {
+      const model = envOverrides?.CODEMIE_MODEL || envOverrides?.OPENAI_MODEL;
+      if (model) {
+        codexArgs.unshift('--model', model);
+      }
+    }
+
     // Spawn Codex
-    const child = spawn('codex', args, {
+    const child = spawn('codex', codexArgs, {
       stdio: 'inherit',
       env
     });

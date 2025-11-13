@@ -60,14 +60,6 @@
     "command": "export CODEMIE_MODEL=claude-4-5-sonnet"
   },
   {
-    "message": "Enable MCP servers for extended functionality",
-    "command": "CODEMIE_MCP_SERVERS=filesystem,cli-mcp-server codemie run codemie-code"
-  },
-  {
-    "message": "Configure filesystem MCP server with specific paths",
-    "command": "FILE_PATHS=/project1,/project2 CODEMIE_MCP_SERVERS=filesystem codemie run"
-  },
-  {
     "message": "Increase timeout for long-running AI requests",
     "command": "CODEMIE_TIMEOUT=600 codemie run codemie-code"
   },
@@ -89,9 +81,6 @@
   },
   {
     "message": "All agents support the same generic env vars (CODEMIE_BASE_URL, CODEMIE_AUTH_TOKEN, etc.)"
-  },
-  {
-    "message": "MCP servers add capabilities like file operations and IDE integrations"
   },
   {
     "message": "Copy text: Hold Shift while selecting with mouse"

@@ -1,6 +1,6 @@
-import { AgentAdapter } from '../registry';
-import { exec } from '../../utils/exec';
-import { logger } from '../../utils/logger';
+import { AgentAdapter } from '../registry.js';
+import { exec } from '../../utils/exec.js';
+import { logger } from '../../utils/logger.js';
 import { spawn } from 'child_process';
 
 export class ClaudeCodeAdapter implements AgentAdapter {

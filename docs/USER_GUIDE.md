@@ -118,9 +118,6 @@ codemie-code exec "Add error handling to api.ts"
 
 # Execute with custom directory
 codemie-code exec "Run tests" -d /path/to/project
-
-# With MCP servers
-codemie-code --mcp-servers time,context7
 ```
 
 ### Available Tools
@@ -188,72 +185,6 @@ You: Show me the git status
 You: What files have changed since last commit?
 You: Show me the diff for src/api.ts
 You: Show the last 10 commits
-```
-
-## MCP Server Management
-
-Extend capabilities with Model Context Protocol (MCP) servers.
-
-### MCP Commands
-
-```bash
-# List available servers
-codemie-code mcp list
-
-# List with detailed configuration
-codemie-code mcp list -v
-
-# Add new server
-codemie-code mcp add <name> <command-or-url> [options]
-
-# Test server configuration
-codemie-code mcp test <server-name>
-
-# Remove server
-codemie-code mcp remove <server-name>
-
-# Preview which servers will load
-codemie-code mcp servers
-codemie-code mcp servers --servers time,context7
-```
-
-### Popular MCP Servers
-
-**Time Server** - Query times in any timezone:
-```bash
-codemie-code mcp add time uvx -a "mcp-server-time"
-codemie-code --mcp-servers time
-
-# Then ask: "What time is it in Hong Kong?"
-```
-
-**Context7** - Access up-to-date library documentation:
-```bash
-codemie-code mcp add context7 npx -a "-y" "@upstash/context7-mcp"
-codemie-code --mcp-servers context7
-
-# Then ask: "Show me LangChain documentation for chains"
-```
-
-### Using MCP Servers
-
-**Start with specific servers:**
-```bash
-codemie-code --mcp-servers time,context7
-```
-
-**Or set environment variable:**
-```bash
-export CODEMIE_MCP_SERVERS="time,context7"
-codemie-code
-```
-
-**Example usage:**
-```
-You: What time is it in Tokyo?
-You: Convert 2 PM Los Angeles time to London time
-You: Show me React hooks documentation
-You: How do I use useState in React?
 ```
 
 ## CodeMie CLI Wrapper
@@ -328,11 +259,6 @@ export CODEMIE_DEBUG="true"
 **Request timeout (seconds):**
 ```bash
 export CODEMIE_TIMEOUT="300"  # Default: 300 seconds
-```
-
-**Load specific MCP servers:**
-```bash
-export CODEMIE_MCP_SERVERS="time,context7"
 ```
 
 ### Configuration Methods
@@ -471,17 +397,6 @@ which codemie-code
 npm config get prefix
 ```
 
-### MCP Server Not Found
-
-```
-✗ Server 'my-server' not found
-```
-
-**Solution:**
-```bash
-codemie-code mcp list  # See available servers
-```
-
 ### Agent Not Found
 
 ```
@@ -517,16 +432,13 @@ codemie-code /path/to/your/project
 1. **Start with simple tasks** - Get familiar with the assistant's capabilities
 2. **Be specific** - Clear, detailed prompts get better results
 3. **Review changes** - Always review code changes before committing
-4. **Use MCP servers** - Extend capabilities when needed
-5. **Check health regularly** - Run `codemie doctor` to ensure everything is configured
-6. **Test your setup** - Use `codemie-code test` to verify connection before starting work
-7. **Use version control** - Work in git repositories for safety
-8. **Verify environment** - Check `env | grep CODEMIE_` to ensure variables are set
+4. **Check health regularly** - Run `codemie doctor` to ensure everything is configured
+5. **Test your setup** - Use `codemie-code test` to verify connection before starting work
+6. **Use version control** - Work in git repositories for safety
+7. **Verify environment** - Check `env | grep CODEMIE_` to ensure variables are set
 
 ## Resources
 
-- [Model Context Protocol Specification](https://github.com/modelcontextprotocol/specification)
-- [Available MCP Servers](https://github.com/modelcontextprotocol/servers)
 - [CodeMie Code GitHub Repository](https://github.com/codemie/codemie-code)
 
 ## Quick Reference
@@ -548,10 +460,6 @@ codemie-code
 codemie-code /path/to/project
 codemie-code exec "task description"
 
-# MCP
-codemie-code mcp list
-codemie-code --mcp-servers time,context7
-
 # CLI Wrapper
 codemie list
 codemie install claude-code
@@ -566,6 +474,5 @@ codemie run claude-code
 | Execute single task | `codemie-code exec "task"` |
 | Test connection | `codemie-code test` |
 | Check system health | `codemie doctor` |
-| List MCP servers | `codemie-code mcp list` |
 | Install agent | `codemie install <agent>` |
 | Show versions | `codemie version` |

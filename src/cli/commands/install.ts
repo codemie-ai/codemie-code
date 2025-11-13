@@ -1,8 +1,8 @@
 import { Command } from 'commander';
-import { AgentRegistry } from '../../agents/registry';
-import { logger } from '../../utils/logger';
-import { asyncTipDisplay } from '../../utils/async-tips';
-import { AgentInstallationError } from '../../utils/errors';
+import { AgentRegistry } from '../../agents/registry.js';
+import { logger } from '../../utils/logger.js';
+import { asyncTipDisplay } from '../../utils/async-tips.js';
+import { AgentInstallationError } from '../../utils/errors.js';
 import ora from 'ora';
 import chalk from 'chalk';
 

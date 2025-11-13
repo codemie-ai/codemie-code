@@ -5,7 +5,8 @@ import ora from 'ora';
 import { ConfigLoader, CodeMieConfigOptions } from '../../utils/config-loader.js';
 import { logger } from '../../utils/logger.js';
 import { FirstTimeExperience } from '../../utils/first-time.js';
-import { ChatOpenAI } from '@langchain/openai';
+import { checkProviderHealth } from '../../utils/health-checker.js';
+import { fetchAvailableModels } from '../../utils/model-fetcher.js';
 
 interface ProviderOption {
   name: string;
@@ -244,17 +245,99 @@ async function runSetupWizard(force?: boolean): Promise<void> {
     apiKey = apiKeyInput;
   }
 
+  // Step 2.5: Validate credentials and fetch models
+  let availableModels: string[] = [];
+
+  if (provider !== 'bedrock') {
+    const healthSpinner = ora('Validating credentials...').start();
+
+    try {
+      const healthCheck = await checkProviderHealth(baseUrl, apiKey);
+
+      if (!healthCheck.success) {
+        healthSpinner.fail(chalk.red('Validation failed'));
+        console.log(chalk.red(`  Error: ${healthCheck.message}\n`));
+
+        const { continueAnyway } = await inquirer.prompt([
+          {
+            type: 'confirm',
+            name: 'continueAnyway',
+            message: 'Continue with setup anyway?',
+            default: false
+          }
+        ]);
+
+        if (!continueAnyway) {
+          console.log(chalk.yellow('\nSetup cancelled. Please check your credentials.\n'));
+          return;
+        }
+      } else {
+        healthSpinner.succeed(chalk.green('Credentials validated'));
+
+        // Fetch available models
+        const modelsSpinner = ora('Fetching available models...').start();
+
+        try {
+          availableModels = await fetchAvailableModels({
+            provider,
+            baseUrl,
+            apiKey,
+            model: 'temp', // Temporary, not used for fetching
+            timeout: 300
+          });
+
+          if (availableModels.length > 0) {
+            modelsSpinner.succeed(chalk.green(`Found ${availableModels.length} available models`));
+          } else {
+            modelsSpinner.warn(chalk.yellow('No models found - will use manual entry'));
+          }
+        } catch {
+          modelsSpinner.warn(chalk.yellow('Could not fetch models - will use manual entry'));
+          availableModels = [];
+        }
+      }
+    } catch (error) {
+      healthSpinner.fail(chalk.red('Validation error'));
+      console.log(chalk.red(`  ${error instanceof Error ? error.message : String(error)}\n`));
+
+      const { continueAnyway } = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'continueAnyway',
+          message: 'Continue with setup anyway?',
+          default: false
+        }
+      ]);
+
+      if (!continueAnyway) {
+        console.log(chalk.yellow('\nSetup cancelled.\n'));
+        return;
+      }
+    }
+  }
+
   // Model selection
-  if (selectedProvider.models.length > 0) {
+  // Use fetched models if available, otherwise fall back to provider defaults
+  const modelChoices = availableModels.length > 0
+    ? availableModels
+    : selectedProvider.models;
+
+  if (modelChoices.length > 0) {
+    // Add custom option at the end
+    const choices = [
+      ...modelChoices,
+      { name: chalk.dim('Custom model (manual entry)...'), value: 'custom' }
+    ];
+
     const { selectedModel } = await inquirer.prompt([
       {
         type: 'list',
         name: 'selectedModel',
-        message: 'Choose a model:',
-        choices: [
-          ...selectedProvider.models,
-          { name: 'Custom model...', value: 'custom' }
-        ]
+        message: availableModels.length > 0
+          ? `Choose a model (${availableModels.length} available):`
+          : 'Choose a model:',
+        choices,
+        pageSize: 15
       }
     ]);
 
@@ -283,69 +366,13 @@ async function runSetupWizard(force?: boolean): Promise<void> {
     model = modelInput;
   }
 
-  // Optional: Timeout
-  const { timeout } = await inquirer.prompt([
-    {
-      type: 'number',
-      name: 'timeout',
-      message: 'Request timeout (seconds):',
-      default: 300,
-      validate: (input: number) => input > 0 || 'Timeout must be positive'
-    }
-  ]);
-
-  // Step 3: Test connection
-  const { testConnection } = await inquirer.prompt([
-    {
-      type: 'confirm',
-      name: 'testConnection',
-      message: 'Test connection before saving?',
-      default: true
-    }
-  ]);
-
-  if (testConnection) {
-    const spinner = ora('Testing connection...').start();
-
-    try {
-      const testConfig: CodeMieConfigOptions = {
-        provider,
-        baseUrl,
-        apiKey,
-        model,
-        timeout
-      };
-
-      await testConnectionToProvider(testConfig);
-      spinner.succeed(chalk.green(`Connected successfully to ${model}`));
-    } catch (error: unknown) {
-      spinner.fail(chalk.red('Connection test failed'));
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      console.log(chalk.red(`Error: ${errorMessage}\n`));
-
-      const { continueAnyway } = await inquirer.prompt([
-        {
-          type: 'confirm',
-          name: 'continueAnyway',
-          message: 'Save configuration anyway?',
-          default: false
-        }
-      ]);
-
-      if (!continueAnyway) {
-        console.log(chalk.yellow('\nSetup cancelled.\n'));
-        return;
-      }
-    }
-  }
-
-  // Step 4: Save configuration
+  // Step 3: Save configuration (credentials already validated)
   const config: Partial<CodeMieConfigOptions> = {
     provider,
     baseUrl,
     apiKey,
     model,
-    timeout,
+    timeout: 300, // Default timeout for most users
     debug: false
   };
 
@@ -361,42 +388,4 @@ async function runSetupWizard(force?: boolean): Promise<void> {
 
   // Success message - use first-time experience utility
   FirstTimeExperience.showPostSetupMessage();
-}
-
-/**
- * Test connection to AI provider
- */
-async function testConnectionToProvider(config: CodeMieConfigOptions): Promise<void> {
-  try {
-    const llm = new ChatOpenAI({
-      modelName: config.model,
-      configuration: {
-        baseURL: config.baseUrl,
-        apiKey: config.apiKey
-      },
-      timeout: (config.timeout || 300) * 1000,
-      maxRetries: 1
-    });
-
-    // Try a simple invocation
-    const response = await llm.invoke('Say "test successful"');
-
-    if (!response || !response.content) {
-      throw new Error('Empty response from model');
-    }
-  } catch (error: unknown) {
-    if (error instanceof Error) {
-      // Parse common error types
-      if (error.message.includes('401') || error.message.includes('unauthorized')) {
-        throw new Error('Invalid API key');
-      } else if (error.message.includes('404') || error.message.includes('not found')) {
-        throw new Error('Invalid base URL or model not found');
-      } else if (error.message.includes('timeout')) {
-        throw new Error('Connection timeout - check your network or base URL');
-      } else {
-        throw new Error(`Connection failed: ${error.message}`);
-      }
-    }
-    throw error;
-  }
 }

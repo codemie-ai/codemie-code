@@ -1,27 +1,27 @@
 #!/usr/bin/env node
 
 import { Command } from 'commander';
-import { createListCommand } from './commands/list';
-import { createInstallCommand } from './commands/install';
-import { createUninstallCommand } from './commands/uninstall';
-import { createRunCommand } from './commands/run';
-import { createDoctorCommand } from './commands/doctor';
-import { createVersionCommand } from './commands/version';
-import { createMCPCommand } from './commands/mcp';
-import { createSetupCommand } from './commands/setup';
-import { createConfigCommand } from './commands/config';
-import { createEnvCommand } from './commands/env';
-import { FirstTimeExperience } from '../utils/first-time';
+import { createListCommand } from './commands/list.js';
+import { createInstallCommand } from './commands/install.js';
+import { createUninstallCommand } from './commands/uninstall.js';
+import { createRunCommand } from './commands/run.js';
+import { createDoctorCommand } from './commands/doctor.js';
+import { createVersionCommand } from './commands/version.js';
+import { createSetupCommand } from './commands/setup.js';
+import { createConfigCommand } from './commands/config.js';
+import { createEnvCommand } from './commands/env.js';
+import { FirstTimeExperience } from '../utils/first-time.js';
 import chalk from 'chalk';
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { getDirname } from '../utils/dirname.js';
 
 const program = new Command();
 
 // Read version from package.json
 let version = '1.0.0';
 try {
-  const packageJsonPath = join(__dirname, '../../package.json');
+  const packageJsonPath = join(getDirname(import.meta.url), '../../package.json');
   const packageJsonContent = readFileSync(packageJsonPath, 'utf-8');
   const packageJson = JSON.parse(packageJsonContent) as { version: string };
   version = packageJson.version;
@@ -44,7 +44,6 @@ program.addCommand(createUninstallCommand());
 program.addCommand(createRunCommand());
 program.addCommand(createDoctorCommand());
 program.addCommand(createVersionCommand());
-program.addCommand(createMCPCommand());
 
 // Show help if no command provided
 if (process.argv.length === 2) {
