@@ -10,8 +10,8 @@ export function createInstallCommand(): Command {
   const command = new Command('install');
 
   command
-    .description('Install an agent')
-    .argument('[agent]', 'Agent name to install')
+    .description('Install an external AI coding agent (e.g., claude, codex)')
+    .argument('[agent]', 'Agent name to install (run without argument to see available agents)')
     .action(async (agentName?: string) => {
       try {
         // If no agent name provided, show available agents

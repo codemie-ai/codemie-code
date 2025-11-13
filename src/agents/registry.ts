@@ -1,7 +1,6 @@
 import { CodeMieCodeAdapter } from './adapters/codemie-code';
 import { ClaudeCodeAdapter } from './adapters/claude-code';
 import { CodexAdapter } from './adapters/codex';
-import { AiderAdapter } from './adapters/aider';
 
 export interface AgentAdapter {
   name: string;
@@ -10,7 +9,7 @@ export interface AgentAdapter {
   install(): Promise<void>;
   uninstall(): Promise<void>;
   isInstalled(): Promise<boolean>;
-  run(args: string[]): Promise<void>;
+  run(args: string[], env?: Record<string, string>): Promise<void>;
   getVersion(): Promise<string | null>;
 }
 
@@ -18,8 +17,7 @@ export class AgentRegistry {
   private static adapters: Map<string, AgentAdapter> = new Map([
     ['codemie-code', new CodeMieCodeAdapter()],
     ['claude', new ClaudeCodeAdapter()],
-    ['codex', new CodexAdapter()],
-    ['aider', new AiderAdapter()]
+    ['codex', new CodexAdapter()]
   ]);
 
   static getAgent(name: string): AgentAdapter | undefined {

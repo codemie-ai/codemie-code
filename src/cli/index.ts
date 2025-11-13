@@ -8,6 +8,10 @@ import { createRunCommand } from './commands/run';
 import { createDoctorCommand } from './commands/doctor';
 import { createVersionCommand } from './commands/version';
 import { createMCPCommand } from './commands/mcp';
+import { createSetupCommand } from './commands/setup';
+import { createConfigCommand } from './commands/config';
+import { createEnvCommand } from './commands/env';
+import { FirstTimeExperience } from '../utils/first-time';
 import chalk from 'chalk';
 import { readFileSync } from 'fs';
 import { join } from 'path';
@@ -31,6 +35,9 @@ program
   .version(version);
 
 // Add commands
+program.addCommand(createSetupCommand());
+program.addCommand(createEnvCommand());
+program.addCommand(createConfigCommand());
 program.addCommand(createListCommand());
 program.addCommand(createInstallCommand());
 program.addCommand(createUninstallCommand());
@@ -41,10 +48,22 @@ program.addCommand(createMCPCommand());
 
 // Show help if no command provided
 if (process.argv.length === 2) {
-  console.log(chalk.bold.cyan('\n╔═══════════════════════════════════════╗'));
-  console.log(chalk.bold.cyan('║         CodeMie CLI Wrapper           ║'));
-  console.log(chalk.bold.cyan('╚═══════════════════════════════════════╝\n'));
-  program.help();
+  // Check if this is a first-time user
+  FirstTimeExperience.isFirstTime().then(isFirstTime => {
+    if (isFirstTime) {
+      // Show welcome message and recommendations for first-time users
+      FirstTimeExperience.showWelcomeMessage();
+    } else {
+      // Show quick start guide for returning users
+      FirstTimeExperience.showQuickStart();
+    }
+  }).catch(() => {
+    // Fallback to default help if detection fails
+    console.log(chalk.bold.cyan('\n╔═══════════════════════════════════════╗'));
+    console.log(chalk.bold.cyan('║         CodeMie CLI Wrapper           ║'));
+    console.log(chalk.bold.cyan('╚═══════════════════════════════════════╝\n'));
+    program.help();
+  });
+} else {
+  program.parse(process.argv);
 }
-
-program.parse(process.argv);

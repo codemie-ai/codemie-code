@@ -56,7 +56,7 @@ export class TerminalUI {
     { command: '/clear', description: 'Clear conversation history and free up context', aliases: ['reset', 'new'] },
     { command: '/exit', description: 'Exit the REPL', aliases: ['quit'] },
     { command: '/help', description: 'Show help information' },
-    { command: '/install', description: 'Install an agent (e.g., /install aider)' },
+    { command: '/install', description: 'Install an agent (e.g., /install claude)' },
     { command: '/uninstall', description: 'Uninstall an agent' },
     { command: '/run', description: 'Run a specific agent' },
   ];

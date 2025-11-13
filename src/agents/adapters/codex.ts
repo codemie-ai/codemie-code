@@ -40,14 +40,14 @@ export class CodexAdapter implements AgentAdapter {
     }
   }
 
-  async run(args: string[]): Promise<void> {
+  async run(args: string[], envOverrides?: Record<string, string>): Promise<void> {
     logger.info('Starting Codex...');
 
-    // Set model from environment if configured
-    const env: NodeJS.ProcessEnv = { ...process.env };
-    if (process.env.CODEX_MODEL) {
-      env.CODEX_MODEL = process.env.CODEX_MODEL;
-    }
+    // Merge environment variables: process.env < envOverrides
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      ...envOverrides
+    };
 
     // Spawn Codex
     const child = spawn('codex', args, {

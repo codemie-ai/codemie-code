@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { CodeMieCode } from '../code/index';
 import { logger } from '../utils/logger';
 import { createMCPCommand } from './commands/mcp';
+import { ConfigLoader } from '../utils/config-loader.js';
 
 export async function createCLI(): Promise<Command> {
   const program = new Command();
@@ -19,10 +20,35 @@ export async function createCLI(): Promise<Command> {
     .command('interactive', { isDefault: false })
     .description('Start interactive mode with terminal UI (default)')
     .argument('[working-dir]', 'Working directory', process.cwd())
+    .option('-m, --model <model>', 'Override model')
+    .option('-p, --provider <provider>', 'Override provider')
+    .option('--api-key <key>', 'Override API key')
+    .option('--base-url <url>', 'Override base URL')
+    .option('--timeout <seconds>', 'Override timeout', parseInt)
     .option('--mcp-servers <servers>', 'Comma-separated list of MCP servers to load')
-    .action(async (workingDir: string, options: { mcpServers?: string }) => {
+    .action(async (workingDir: string, options: {
+      model?: string;
+      provider?: string;
+      apiKey?: string;
+      baseUrl?: string;
+      timeout?: number;
+      mcpServers?: string;
+    }) => {
       try {
-        // Set MCP servers in environment if provided
+        // Apply environment overrides from config
+        const config = await ConfigLoader.load(workingDir, {
+          model: options.model,
+          provider: options.provider,
+          apiKey: options.apiKey,
+          baseUrl: options.baseUrl,
+          timeout: options.timeout,
+          mcpServers: options.mcpServers?.split(',').map(s => s.trim())
+        });
+
+        // Apply to environment
+        const env = ConfigLoader.exportProviderEnvVars(config);
+        Object.assign(process.env, env);
+
         if (options.mcpServers) {
           process.env.CODEMIE_MCP_SERVERS = options.mcpServers;
         }
@@ -71,17 +97,42 @@ export async function createCLI(): Promise<Command> {
 
   // Add global options
   program
+    .option('-m, --model <model>', 'Override model')
+    .option('-p, --provider <provider>', 'Override provider')
+    .option('--api-key <key>', 'Override API key')
+    .option('--base-url <url>', 'Override base URL')
+    .option('--timeout <seconds>', 'Override timeout', parseInt)
     .option('--mcp-servers <servers>', 'Comma-separated list of MCP servers to load');
 
   // Default behavior: if no command specified and no args, run interactive
   // If args provided without command, treat first arg as working directory for interactive mode
-  program.action(async (options: { mcpServers?: string }) => {
+  program.action(async (options: {
+    model?: string;
+    provider?: string;
+    apiKey?: string;
+    baseUrl?: string;
+    timeout?: number;
+    mcpServers?: string;
+  }) => {
     const args = process.argv.slice(2);
 
     // If there are no arguments at all, run interactive mode
     if (args.length === 0 || (args.length > 0 && args[0].startsWith('--'))) {
       try {
-        // Set MCP servers in environment if provided
+        // Apply environment overrides from config
+        const config = await ConfigLoader.load(process.cwd(), {
+          model: options.model,
+          provider: options.provider,
+          apiKey: options.apiKey,
+          baseUrl: options.baseUrl,
+          timeout: options.timeout,
+          mcpServers: options.mcpServers?.split(',').map(s => s.trim())
+        });
+
+        // Apply to environment
+        const env = ConfigLoader.exportProviderEnvVars(config);
+        Object.assign(process.env, env);
+
         if (options.mcpServers) {
           process.env.CODEMIE_MCP_SERVERS = options.mcpServers;
         }

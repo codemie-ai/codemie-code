@@ -9,8 +9,8 @@ export function createUninstallCommand(): Command {
   const command = new Command('uninstall');
 
   command
-    .description('Uninstall an agent')
-    .argument('[agent]', 'Agent name to uninstall')
+    .description('Uninstall an external AI coding agent (e.g., claude, codex)')
+    .argument('[agent]', 'Agent name to uninstall (run without argument to see installed agents)')
     .action(async (agentName?: string) => {
       try {
         // If no agent name provided, show installed agents

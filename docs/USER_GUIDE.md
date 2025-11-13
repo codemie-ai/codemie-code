@@ -274,7 +274,6 @@ codemie list --installed
 
 ```bash
 codemie install claude-code     # Anthropic Claude Code
-codemie install aider           # Aider AI
 codemie install codex           # OpenAI Codex
 ```
 
@@ -283,12 +282,11 @@ codemie install codex           # OpenAI Codex
 ```bash
 # Run installed agents
 codemie run claude-code
-codemie run aider
 codemie run codex
 
 # Pass arguments to agents
-codemie run aider --model claude-opus
 codemie run claude-code --help
+codemie run codex --model gpt-4
 ```
 
 ### System Health Check

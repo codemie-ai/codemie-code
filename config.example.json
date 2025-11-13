@@ -1,0 +1,11 @@
+{
+  "provider": "anthropic",
+  "baseUrl": "https://api.anthropic.com/v1",
+  "apiKey": "sk-ant-your-api-key-here",
+  "model": "claude-sonnet-4",
+  "timeout": 300,
+  "debug": false,
+  "mcpServers": ["filesystem", "cli-mcp-server"],
+  "allowedDirs": ["/home/user/projects"],
+  "ignorePatterns": ["node_modules", ".git", "dist", "build"]
+}

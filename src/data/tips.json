@@ -24,10 +24,6 @@
     "command": "codemie run codemie-code --cwd /path/to/project"
   },
   {
-    "message": "Install Aider - AI pair programming assistant",
-    "command": "codemie install aider"
-  },
-  {
     "message": "Install Codex - OpenAI coding assistant",
     "command": "codemie install codex"
   },

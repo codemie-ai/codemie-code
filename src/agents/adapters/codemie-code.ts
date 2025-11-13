@@ -21,8 +21,13 @@ export class CodeMieCodeAdapter implements AgentAdapter {
     return true; // Always installed (built-in)
   }
 
-  async run(args: string[]): Promise<void> {
+  async run(args: string[], envOverrides?: Record<string, string>): Promise<void> {
     const workingDir = args[0] || process.cwd();
+
+    // Apply environment overrides if provided
+    if (envOverrides) {
+      Object.assign(process.env, envOverrides);
+    }
 
     const assistant = new CodeMieCode(workingDir);
     await assistant.initialize();

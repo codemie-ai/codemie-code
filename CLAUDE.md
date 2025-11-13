@@ -312,7 +312,7 @@ Seek user guidance when:
 
 **CodeMie Code** is a unified npm package that provides:
 - A built-in AI coding assistant powered by LiteLLM (via LangChain)
-- A CLI wrapper for managing multiple AI coding agents (Claude Code, Aider, Codex)
+- A CLI wrapper for managing multiple AI coding agents (Claude Code, Codex)
 
 The project uses TypeScript with a ReAct agent pattern via LangGraph for autonomous tool execution.
 
@@ -391,8 +391,7 @@ codemie-code/
 │   │   └── adapters/            # Agent adapters
 │   │       ├── codemie-code.ts
 │   │       ├── claude-code.ts
-│   │       ├── codex.ts
-│   │       └── aider.ts
+│   │       └── codex.ts
 │   │
 │   ├── env/                     # Environment Management
 │   │   └── manager.ts

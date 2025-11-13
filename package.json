@@ -29,8 +29,7 @@
     "litellm",
     "mcp",
     "claude",
-    "codex",
-    "aider"
+    "codex"
   ],
   "author": "CodeMie Team",
   "license": "Apache-2.0",

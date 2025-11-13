@@ -40,32 +40,14 @@ export class ClaudeCodeAdapter implements AgentAdapter {
     }
   }
 
-  async run(args: string[]): Promise<void> {
+  async run(args: string[], envOverrides?: Record<string, string>): Promise<void> {
     logger.info('Starting Claude Code...');
 
-    // Prepare environment variables
-    // Convert generic CODEMIE_* config to ANTHROPIC_* that Claude Code expects
-    const env: NodeJS.ProcessEnv = { ...process.env };
-
-    // Map our generic env vars to Anthropic-specific ones
-    if (!env.ANTHROPIC_BASE_URL && env.CODEMIE_BASE_URL) {
-      env.ANTHROPIC_BASE_URL = env.CODEMIE_BASE_URL;
-    }
-    if (!env.ANTHROPIC_AUTH_TOKEN && env.CODEMIE_AUTH_TOKEN) {
-      env.ANTHROPIC_AUTH_TOKEN = env.CODEMIE_AUTH_TOKEN;
-    }
-    if (!env.ANTHROPIC_API_KEY && env.CODEMIE_AUTH_TOKEN) {
-      env.ANTHROPIC_API_KEY = env.CODEMIE_AUTH_TOKEN;
-    }
-    if (!env.ANTHROPIC_MODEL && env.CODEMIE_MODEL) {
-      env.ANTHROPIC_MODEL = env.CODEMIE_MODEL;
-    }
-    // Set subagent model to match the main model
-    if (!env.CLAUDE_CODE_SUBAGENT_MODEL && env.CODEMIE_MODEL) {
-      env.CLAUDE_CODE_SUBAGENT_MODEL = env.CODEMIE_MODEL;
-    } else if (!env.CLAUDE_CODE_SUBAGENT_MODEL && env.ANTHROPIC_MODEL) {
-      env.CLAUDE_CODE_SUBAGENT_MODEL = env.ANTHROPIC_MODEL;
-    }
+    // Merge environment variables: process.env < envOverrides
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      ...envOverrides
+    };
 
     // Spawn Claude Code
     const child = spawn('claude', args, {

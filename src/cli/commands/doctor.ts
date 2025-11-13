@@ -2,7 +2,10 @@ import { Command } from 'commander';
 import { tipDisplay } from '../../utils/tips';
 import { exec } from '../../utils/exec';
 import chalk from 'chalk';
+import ora from 'ora';
 import { AgentRegistry } from '../../agents/registry';
+import { ConfigLoader } from '../../utils/config-loader.js';
+import { ChatOpenAI } from '@langchain/openai';
 
 export function createDoctorCommand(): Command {
   const command = new Command('doctor');
@@ -56,48 +59,68 @@ export function createDoctorCommand(): Command {
       // Check AI Configuration
       console.log(chalk.bold('AI Configuration:'));
 
-      // Check for any valid base URL
-      const baseUrl = process.env.CODEMIE_BASE_URL ||
-                      process.env.ANTHROPIC_BASE_URL ||
-                      process.env.OPENAI_BASE_URL;
+      let config;
+      try {
+        config = await ConfigLoader.load();
 
-      // Check for any valid auth token
-      const authToken = process.env.CODEMIE_AUTH_TOKEN ||
-                        process.env.CODEMIE_API_KEY ||
-                        process.env.ANTHROPIC_AUTH_TOKEN ||
-                        process.env.ANTHROPIC_API_KEY ||
-                        process.env.OPENAI_AUTH_TOKEN ||
-                        process.env.OPENAI_API_KEY;
-
-      if (baseUrl) {
-        console.log(`  ${chalk.green('✓')} Base URL: ${baseUrl}`);
-      } else {
-        console.log(`  ${chalk.red('✗')} Base URL not set`);
-        console.log(`      Set: CODEMIE_BASE_URL (or provider-specific: ANTHROPIC_BASE_URL, OPENAI_BASE_URL)`);
+        if (config.provider) {
+          console.log(`  ${chalk.green('✓')} Provider: ${config.provider}`);
+        }
+        if (config.baseUrl) {
+          console.log(`  ${chalk.green('✓')} Base URL: ${config.baseUrl}`);
+        }
+        if (config.apiKey) {
+          const masked = config.apiKey.substring(0, 8) + '***' + config.apiKey.substring(config.apiKey.length - 4);
+          console.log(`  ${chalk.green('✓')} API Key: ${masked}`);
+        }
+        if (config.model) {
+          console.log(`  ${chalk.green('✓')} Model: ${config.model}`);
+        }
+      } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        console.log(`  ${chalk.red('✗')} Configuration error: ${errorMessage}`);
+        console.log(`      ${chalk.dim('Run: codemie setup')}`);
         hasIssues = true;
-      }
-
-      if (authToken) {
-        const masked = authToken.substring(0, 4) + '***';
-        console.log(`  ${chalk.green('✓')} Auth Token: ${masked}`);
-      } else {
-        console.log(`  ${chalk.red('✗')} Auth Token not set`);
-        console.log(`      Set: CODEMIE_AUTH_TOKEN (or provider-specific: ANTHROPIC_AUTH_TOKEN, OPENAI_API_KEY)`);
-        hasIssues = true;
-      }
-
-      // Check model configuration
-      const model = process.env.CODEMIE_MODEL ||
-                    process.env.ANTHROPIC_MODEL ||
-                    process.env.OPENAI_MODEL;
-
-      if (model) {
-        console.log(`  ${chalk.green('✓')} Model: ${model}`);
-      } else {
-        console.log(`  ${chalk.yellow('⚠')} Model not set (will use default: claude-4-5-sonnet)`);
       }
 
       console.log();
+
+      // Test connectivity if config is valid
+      if (config && config.baseUrl && config.apiKey && config.model) {
+        console.log(chalk.bold('Connectivity Test:'));
+        const spinner = ora('Testing connection...').start();
+
+        try {
+          const llm = new ChatOpenAI({
+            modelName: config.model,
+            configuration: {
+              baseURL: config.baseUrl,
+              apiKey: config.apiKey
+            },
+            timeout: (config.timeout || 300) * 1000,
+            maxRetries: 1
+          });
+
+          const startTime = Date.now();
+          const response = await llm.invoke('Say "test successful"');
+          const duration = Date.now() - startTime;
+
+          if (!response || !response.content) {
+            throw new Error('Empty response from model');
+          }
+
+          spinner.succeed(chalk.green(`Connection successful`));
+          console.log(`  ${chalk.dim('Response time:')} ${duration}ms`);
+          console.log(`  ${chalk.dim('Model response:')} ${response.content}`);
+        } catch (error: unknown) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          spinner.fail(chalk.red('Connection test failed'));
+          console.log(`  ${chalk.dim('Error:')} ${errorMessage}`);
+          hasIssues = true;
+        }
+
+        console.log();
+      }
 
       // Check installed agents
       console.log(chalk.bold('Installed Agents:'));
