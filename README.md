@@ -7,10 +7,13 @@ CodeMie is a unified CLI tool for installing, configuring, and running multiple 
 ## ✨ Features
 
 - 🔧 **Unified CLI** - Manage multiple AI coding agents from one interface
+- ⭐ **Built-in Agent** - CodeMie Native ready to use immediately (no installation required)
 - 🤖 **Multi-Agent Support** - Claude Code, Codex, and more
 - 🛠️ **Environment Management** - Centralized configuration for all agents
 - 🚀 **Zero Hassle** - Install and run agents with simple commands
 - 📦 **Provider Agnostic** - Works with any AI provider (OpenAI, Anthropic, Azure, etc.)
+- 🎯 **Task Execution** - Single task mode with `--task` flag for automation
+- 🖼️ **Clipboard Integration** - Automatic image detection from system clipboard
 
 ---
 
@@ -103,7 +106,25 @@ codemie env
 
 ### Step 3: Use Agents
 
-#### Install an Agent
+#### Try the Built-in Agent (Recommended for New Users)
+
+**CodeMie Native** is built-in and ready to use immediately:
+
+```bash
+# Start interactive session
+codemie run codemie-code
+
+# OR use direct executable
+codemie-code
+
+# Execute single task
+codemie-code --task "Help me debug this error"
+
+# With initial message
+codemie-code "Review my code for bugs"
+```
+
+#### Install Additional Agents
 
 ```bash
 # Install Claude Code
@@ -124,6 +145,9 @@ codemie list
 Agents are run directly after installation. Configuration is automatically passed from `~/.codemie/config.json`.
 
 ```bash
+# Run built-in CodeMie Native
+codemie run codemie-code
+
 # Run Claude
 codemie run claude
 
@@ -172,6 +196,9 @@ codemie install <agent>
 # Uninstall an agent
 codemie uninstall <agent>
 
+# Run an agent
+codemie run <agent>
+
 # Check installation and configuration
 codemie doctor
 
@@ -181,6 +208,50 @@ codemie config [options]
 # Show version
 codemie version
 ```
+
+### Built-in Agent Commands
+
+```bash
+# CodeMie Native - Interactive mode
+codemie-code
+
+# CodeMie Native - Single task execution
+codemie-code --task "Your task here"
+
+# CodeMie Native - With initial message
+codemie-code "Your initial message"
+
+# CodeMie Native - Health check
+codemie-code health
+
+# CodeMie Native - Debug mode
+codemie-code --debug
+```
+
+### Direct Agent Shortcuts
+
+Quick access to external agents with configuration overrides:
+
+```bash
+# Claude Code (direct shortcut)
+codemie-claude                              # Interactive mode
+codemie-claude --model claude-4-5-sonnet    # Override model
+codemie-claude --api-key your-key           # Override API key
+codemie-claude health                       # Health check
+
+# Codex (direct shortcut)
+codemie-codex                               # Interactive mode
+codemie-codex --model gpt-4o                # Override model (OpenAI only)
+codemie-codex --provider openai             # Override provider
+codemie-codex health                        # Health check
+```
+
+**Features of Direct Shortcuts:**
+- Bypass the registry system for faster startup
+- Support all original agent options and arguments
+- Allow configuration overrides via CLI flags
+- Include health check commands
+- Pass through unknown options to the underlying agent
 
 ### Configuration Commands
 
@@ -251,6 +322,47 @@ export AI_MODEL="your-model"
 ---
 
 ## 🤖 Supported Agents
+
+### CodeMie Native (Built-in) ⭐
+
+**NEW:** CodeMie's built-in LangGraph-based coding assistant. No external installation required!
+
+**Usage:**
+```bash
+# Interactive mode
+codemie run codemie-code
+
+# Direct executable (alternative)
+codemie-code
+
+# Single task execution
+codemie-code --task "Fix the bug in utils.js"
+
+# With initial message
+codemie-code "Help me refactor this component"
+```
+
+**Features:**
+- 🔧 **Built-in**: No installation required - ready to use immediately
+- 🚀 **Modern UI**: Beautiful terminal interface with real-time streaming
+- 🎯 **Task-focused**: Execute single tasks or start interactive sessions
+- 🔍 **Debug Mode**: Comprehensive logging with `--debug` flag
+- 📋 **Clipboard Support**: Automatic image detection from clipboard
+- 🛠️ **System Tools**: File operations, git integration, and command execution
+- 💬 **Interactive Chat**: Continuous conversations with context memory
+- 📊 **Usage Statistics**: Token tracking and cost monitoring
+
+**Direct Commands:**
+```bash
+# Health check
+codemie-code health
+
+# Interactive mode with debug
+codemie-code --debug
+
+# Execute task and exit
+codemie-code --task "Run tests and fix any failures"
+```
 
 ### Claude Code
 
