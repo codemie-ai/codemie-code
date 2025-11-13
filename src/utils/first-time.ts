@@ -145,14 +145,20 @@ export class FirstTimeExperience {
 
     switch (provider) {
       case 'ai-run':
-        console.log(chalk.white('CODEMIE_BASE_URL') + chalk.dim('      = ') + chalk.cyan('"https://ai.run/api/v1"'));
-        console.log(chalk.white('CODEMIE_API_KEY') + chalk.dim('       = ') + chalk.cyan('"your-ai-run-api-key"'));
+        console.log(chalk.white('CODEMIE_BASE_URL') + chalk.dim('      = ') + chalk.cyan('"https://litellm.codemie.example.com"'));
+        console.log(chalk.white('CODEMIE_API_KEY') + chalk.dim('       = ') + chalk.cyan('"your-litellm-api-key"'));
         console.log(chalk.white('CODEMIE_MODEL') + chalk.dim('         = ') + chalk.cyan('"claude-4-5-sonnet"'));
         console.log();
         console.log(chalk.bold('Optional Environment Variables:\n'));
         console.log(chalk.white('CODEMIE_PROVIDER') + chalk.dim('      = ') + chalk.cyan('"ai-run"'));
         console.log(chalk.dim('  Controls which environment variables are passed to agents'));
-        console.log(chalk.dim('  Options: ai-run (default), anthropic, azure, bedrock, openai\n'));
+        console.log(chalk.dim('  Options: ai-run (default), anthropic, azure, bedrock, openai'));
+        console.log();
+        console.log(chalk.bold('For Running Claude Directly (bypassing codemie):\n'));
+        console.log(chalk.white('ANTHROPIC_BASE_URL') + chalk.dim('    = ') + chalk.cyan('"https://litellm.codemie.example.com"'));
+        console.log(chalk.white('ANTHROPIC_AUTH_TOKEN') + chalk.dim('   = ') + chalk.cyan('"your-litellm-api-key"'));
+        console.log(chalk.white('ANTHROPIC_MODEL') + chalk.dim('        = ') + chalk.cyan('"claude-4-5-sonnet"'));
+        console.log(chalk.dim('  Note: Use ANTHROPIC_AUTH_TOKEN (not ANTHROPIC_API_KEY) for LiteLLM/AI-Run\n'));
         break;
 
       case 'bedrock':
@@ -202,9 +208,13 @@ export class FirstTimeExperience {
 
     switch (provider) {
       case 'ai-run':
-        console.log(chalk.green('export CODEMIE_BASE_URL="https://ai.run/api/v1"'));
-        console.log(chalk.green('export CODEMIE_API_KEY="your-ai-run-api-key"'));
+        console.log(chalk.green('export CODEMIE_BASE_URL="https://litellm.codemie.example.com"'));
+        console.log(chalk.green('export CODEMIE_API_KEY="your-litellm-api-key"'));
         console.log(chalk.green('export CODEMIE_MODEL="claude-4-5-sonnet"'));
+        console.log(chalk.dim('# Or for direct Claude usage:'));
+        console.log(chalk.green('export ANTHROPIC_BASE_URL="https://litellm.codemie.example.com"'));
+        console.log(chalk.green('export ANTHROPIC_AUTH_TOKEN="your-litellm-api-key"'));
+        console.log(chalk.green('export ANTHROPIC_MODEL="claude-4-5-sonnet"'));
         break;
 
       case 'bedrock':
@@ -235,9 +245,13 @@ export class FirstTimeExperience {
 
     switch (provider) {
       case 'ai-run':
-        console.log(chalk.green('export CODEMIE_BASE_URL="https://ai.run/api/v1"'));
-        console.log(chalk.green('export CODEMIE_API_KEY="your-ai-run-api-key"'));
+        console.log(chalk.green('export CODEMIE_BASE_URL="https://litellm.codemie.example.com"'));
+        console.log(chalk.green('export CODEMIE_API_KEY="your-litellm-api-key"'));
         console.log(chalk.green('export CODEMIE_MODEL="claude-4-5-sonnet"'));
+        console.log(chalk.dim('# Or for direct Claude usage:'));
+        console.log(chalk.green('export ANTHROPIC_BASE_URL="https://litellm.codemie.example.com"'));
+        console.log(chalk.green('export ANTHROPIC_AUTH_TOKEN="your-litellm-api-key"'));
+        console.log(chalk.green('export ANTHROPIC_MODEL="claude-4-5-sonnet"'));
         break;
 
       case 'bedrock':

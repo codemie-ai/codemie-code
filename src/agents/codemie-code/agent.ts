@@ -1,0 +1,639 @@
+/**
+ * CodeMie Native Agent Implementation
+ *
+ * Core LangGraph ReAct agent using LangChain v1.0+ with streaming support
+ */
+
+import { createReactAgent } from '@langchain/langgraph/prebuilt';
+import { ChatOpenAI } from '@langchain/openai';
+import { ChatAnthropic } from '@langchain/anthropic';
+import type { StructuredTool } from '@langchain/core/tools';
+import type { BaseMessage } from '@langchain/core/messages';
+import { HumanMessage } from '@langchain/core/messages';
+import type { CodeMieConfig, EventCallback, AgentStats, ExecutionStep, TokenUsage } from './types.js';
+import type { ClipboardImage } from '../../utils/clipboard.js';
+import { getSystemPrompt } from './prompts.js';
+import { CodeMieAgentError } from './types.js';
+import { extractToolMetadata } from './toolMetadata.js';
+import { extractTokenUsageFromStreamChunk, extractTokenUsageFromFinalState } from './tokenUtils.js';
+
+export class CodeMieAgent {
+  private agent: any;
+  private config: CodeMieConfig;
+  private tools: StructuredTool[];
+  private conversationHistory: BaseMessage[] = [];
+  private toolCallArgs: Map<string, Record<string, any>> = new Map(); // Store tool args by tool call ID
+  private currentExecutionSteps: ExecutionStep[] = [];
+  private currentStepNumber = 0;
+  private currentLLMTokenUsage: TokenUsage | null = null; // Store token usage for associating with next tool call
+  private isFirstLLMCall = true; // Track if this is the initial user input processing
+  private stats: AgentStats = {
+    inputTokens: 0,
+    outputTokens: 0,
+    cachedTokens: 0,
+    totalTokens: 0,
+    estimatedTotalCost: 0,
+    executionTime: 0,
+    toolCalls: 0,
+    successfulTools: 0,
+    failedTools: 0,
+    llmCalls: 0,
+    executionSteps: []
+  };
+
+  constructor(config: CodeMieConfig, tools: StructuredTool[]) {
+    this.config = config;
+    this.tools = tools;
+
+    // Create the appropriate LLM based on provider
+    const llm = this.createLLM();
+
+    // Create LangGraph ReAct agent with system prompt
+    this.agent = createReactAgent({
+      llm,
+      tools: this.tools,
+      messageModifier: getSystemPrompt(config.workingDirectory)
+    });
+
+    if (config.debug) {
+      console.log(`[DEBUG] CodeMie Agent initialized with ${tools.length} tools`);
+    }
+  }
+
+  /**
+   * Create the appropriate LLM instance based on provider configuration
+   */
+  private createLLM() {
+    const commonConfig = {
+      temperature: 0.7,
+      maxTokens: 4096,
+      timeout: this.config.timeout * 1000
+    };
+
+    switch (this.config.provider) {
+      case 'anthropic':
+        return new ChatAnthropic({
+          model: this.config.model,
+          apiKey: this.config.authToken,
+          // Note: Custom baseUrl not currently supported in ChatAnthropic
+          ...commonConfig
+        });
+
+      case 'openai':
+        return new ChatOpenAI({
+          model: this.config.model,
+          apiKey: this.config.authToken,
+          configuration: {
+            ...(this.config.baseUrl !== 'https://api.openai.com/v1' && {
+              baseURL: this.config.baseUrl
+            })
+          },
+          ...commonConfig
+        });
+
+      case 'azure':
+        return new ChatOpenAI({
+          model: this.config.model,
+          apiKey: this.config.authToken,
+          configuration: {
+            baseURL: this.config.baseUrl,
+            defaultQuery: { 'api-version': '2024-02-01' }
+          },
+          ...commonConfig
+        });
+
+      case 'bedrock':
+        // For Bedrock, we'll use Anthropic format but with special configuration
+        // Note: Bedrock configuration may need special handling
+        return new ChatAnthropic({
+          model: this.config.model,
+          apiKey: this.config.authToken,
+          // baseUrl not supported in ChatAnthropic - will handle differently in future
+          ...commonConfig
+        });
+
+      case 'litellm':
+        // LiteLLM proxy - use OpenAI format as it's most compatible
+        return new ChatOpenAI({
+          model: this.config.model,
+          apiKey: this.config.authToken,
+          configuration: {
+            baseURL: this.config.baseUrl
+          },
+          ...commonConfig
+        });
+
+      default:
+        throw new CodeMieAgentError(
+          `Unsupported provider: ${this.config.provider}`,
+          'INVALID_PROVIDER',
+          { provider: this.config.provider }
+        );
+    }
+  }
+
+  /**
+   * Create a HumanMessage with optional image support (multiple images)
+   */
+  private createHumanMessage(text: string, images: ClipboardImage[] = []): HumanMessage {
+    if (images.length === 0) {
+      // Text-only message
+      return new HumanMessage(text);
+    }
+
+    // Multimodal message with images
+    const content: any[] = [
+      {
+        type: "text",
+        text: text
+      }
+    ];
+
+    // Add all images to the content
+    for (const image of images) {
+      content.push({
+        type: "image_url",
+        image_url: `data:${image.mimeType};base64,${image.data}`
+      });
+    }
+
+    return new HumanMessage({
+      content: content
+    });
+  }
+
+  /**
+   * Stream a chat interaction with the agent
+   */
+  async chatStream(message: string, onEvent: EventCallback, images: ClipboardImage[] = []): Promise<void> {
+    const startTime = Date.now();
+    let currentToolCall: string | null = null;
+    let currentStep: ExecutionStep | null = null;
+
+    // Reset execution steps for new conversation
+    this.currentExecutionSteps = [];
+    this.currentStepNumber = 0;
+    this.isFirstLLMCall = true;
+
+    try {
+      if (this.config.debug) {
+        console.log(`[DEBUG] Processing message: ${message.substring(0, 100)}...`);
+      }
+
+      // Add user message to conversation history (with optional images)
+      const userMessage = this.createHumanMessage(message, images);
+      this.conversationHistory.push(userMessage);
+
+      // Notify start of thinking
+      onEvent({ type: 'thinking_start' });
+
+      // Start the first LLM call step
+      currentStep = this.startLLMStep();
+
+      // Create the stream with conversation history
+      const stream = await this.agent.stream(
+        { messages: this.conversationHistory },
+        {
+          streamMode: 'updates',
+          recursionLimit: 50
+        }
+      );
+
+      let hasContent = false;
+
+      // Process stream chunks
+      for await (const chunk of stream) {
+        // Try to extract token usage from stream chunk
+        const tokenUsage = extractTokenUsageFromStreamChunk(
+          chunk,
+          this.config.model,
+          this.config.provider
+        );
+
+        if (tokenUsage && currentStep && currentStep.type === 'llm_call') {
+          // Update current step with token usage
+          currentStep.tokenUsage = tokenUsage;
+          this.updateStatsWithTokenUsage(tokenUsage);
+
+          // Store token usage to associate with next tool call
+          this.currentLLMTokenUsage = tokenUsage;
+
+          if (this.config.debug) {
+            console.log(`[DEBUG] Token usage: ${tokenUsage.inputTokens} in, ${tokenUsage.outputTokens} out`);
+          }
+        }
+
+        this.processStreamChunk(chunk, onEvent, (toolStarted) => {
+          if (toolStarted) {
+            // Complete current LLM step if it exists
+            if (currentStep && currentStep.type === 'llm_call') {
+              this.completeStep(currentStep);
+              currentStep = null;
+            }
+
+            // Start tool execution step
+            currentStep = this.startToolStep(toolStarted);
+            currentToolCall = toolStarted;
+            this.stats.toolCalls++;
+          } else if (currentToolCall && currentStep) {
+            // Complete tool step
+            currentStep.toolSuccess = true;
+            this.completeStep(currentStep);
+            currentStep = null;
+
+            this.stats.successfulTools++;
+            currentToolCall = null;
+
+            // Start new LLM step for next reasoning cycle (processing tool result)
+            currentStep = this.startLLMStep();
+          }
+        });
+
+        // Check if we have content
+        if (chunk.agent?.messages) {
+          const lastMessage = chunk.agent.messages.at(-1);
+          if (lastMessage?.content && !hasContent) {
+            hasContent = true;
+          }
+        }
+      }
+
+      // Complete any remaining step
+      if (currentStep) {
+        this.completeStep(currentStep);
+      }
+
+      // Update conversation history with final messages and try to extract any missed token usage
+      try {
+        const finalState = await this.agent.getState();
+        if (finalState?.messages) {
+          this.conversationHistory = finalState.messages;
+
+          // Try to extract token usage from final state if we missed it during streaming
+          const finalTokenUsage = extractTokenUsageFromFinalState(
+            finalState,
+            this.config.model,
+            this.config.provider
+          );
+
+          if (finalTokenUsage && this.currentExecutionSteps.length > 0) {
+            // Find the last LLM step that doesn't have token usage
+            for (let i = this.currentExecutionSteps.length - 1; i >= 0; i--) {
+              const step = this.currentExecutionSteps[i];
+              if (step.type === 'llm_call' && !step.tokenUsage) {
+                step.tokenUsage = finalTokenUsage;
+                this.updateStatsWithTokenUsage(finalTokenUsage);
+                break;
+              }
+            }
+          }
+        }
+      } catch {
+        // If getState fails, continue without updating history
+        if (this.config.debug) {
+          console.log('[DEBUG] Could not get final state, continuing...');
+        }
+      }
+
+      // Finalize execution statistics
+      this.stats.executionTime = Date.now() - startTime;
+      this.stats.executionSteps = [...this.currentExecutionSteps];
+
+      // Notify thinking end and completion
+      onEvent({ type: 'thinking_end' });
+      onEvent({ type: 'complete' });
+
+      if (this.config.debug) {
+        console.log(`[DEBUG] Agent completed in ${this.stats.executionTime}ms`);
+        console.log(`[DEBUG] Total tokens: ${this.stats.totalTokens} (${this.stats.inputTokens} in, ${this.stats.outputTokens} out)`);
+        console.log(`[DEBUG] Estimated cost: $${this.stats.estimatedTotalCost.toFixed(4)}`);
+      }
+
+    } catch (error) {
+      this.stats.executionTime = Date.now() - startTime;
+
+      if (currentToolCall) {
+        this.stats.failedTools++;
+      }
+
+      const errorMessage = error instanceof Error ? error.message : String(error);
+
+      if (this.config.debug) {
+        console.error(`[DEBUG] Agent error:`, error);
+      }
+
+      onEvent({
+        type: 'error',
+        error: errorMessage
+      });
+
+      throw new CodeMieAgentError(
+        `Agent execution failed: ${errorMessage}`,
+        'EXECUTION_ERROR',
+        { originalError: error, stats: this.stats }
+      );
+    }
+  }
+
+  /**
+   * Process individual stream chunks from LangGraph
+   */
+  private processStreamChunk(
+    chunk: any,
+    onEvent: EventCallback,
+    onToolEvent?: (toolStarted?: string) => void
+  ): void {
+    try {
+      // Handle agent node updates (LLM responses)
+      if (chunk.agent?.messages) {
+        const messages = chunk.agent.messages;
+        const lastMessage = messages[messages.length - 1];
+
+        // Stream content chunks
+        if (lastMessage?.content && typeof lastMessage.content === 'string') {
+          onEvent({
+            type: 'content_chunk',
+            content: lastMessage.content
+          });
+        }
+
+        // Handle tool calls
+        if (lastMessage?.tool_calls && lastMessage.tool_calls.length > 0) {
+          for (const toolCall of lastMessage.tool_calls) {
+            // Store tool args for later use in result processing
+            // Use tool name as key since LangGraph may not preserve IDs consistently
+            this.toolCallArgs.set(toolCall.name, toolCall.args);
+
+            onEvent({
+              type: 'tool_call_start',
+              toolName: toolCall.name,
+              toolArgs: toolCall.args
+            });
+
+            if (onToolEvent) {
+              onToolEvent(toolCall.name);
+            }
+          }
+        }
+      }
+
+      // Handle tool node updates (tool execution results)
+      if (chunk.tools?.messages) {
+        const messages = chunk.tools.messages;
+
+        for (const toolMessage of messages) {
+          const toolName = toolMessage.name || 'unknown';
+          const result = toolMessage.content || '';
+
+          // Get the stored tool args for this tool name
+          const toolArgs = this.toolCallArgs.get(toolName);
+          if (toolArgs) {
+            this.toolCallArgs.delete(toolName); // Clean up after use
+          }
+
+          // Extract enhanced metadata from the tool result
+          let toolMetadata = extractToolMetadata(toolName, result, toolArgs);
+
+          // Associate token usage from the LLM call that triggered this tool
+          if (toolMetadata && this.currentLLMTokenUsage) {
+            toolMetadata = {
+              ...toolMetadata,
+              tokenUsage: this.currentLLMTokenUsage
+            };
+            // Clear the stored token usage after associating it
+            this.currentLLMTokenUsage = null;
+          }
+
+          onEvent({
+            type: 'tool_call_result',
+            toolName,
+            result,
+            toolMetadata
+          });
+
+          if (onToolEvent) {
+            onToolEvent(); // Signal tool completion
+          }
+        }
+      }
+
+    } catch (error) {
+      if (this.config.debug) {
+        console.error(`[DEBUG] Error processing stream chunk:`, error);
+      }
+
+      // Don't throw here, just log - let the main stream continue
+      onEvent({
+        type: 'error',
+        error: `Stream processing error: ${error instanceof Error ? error.message : String(error)}`
+      });
+    }
+  }
+
+  /**
+   * Execute a single message without streaming (for non-interactive use)
+   */
+  async executeMessage(message: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      let response = '';
+      let hasError = false;
+
+      this.chatStream(message, (event) => {
+        switch (event.type) {
+          case 'content_chunk':
+            response += event.content || '';
+            break;
+
+          case 'complete':
+            if (!hasError) {
+              resolve(response.trim());
+            }
+            break;
+
+          case 'error':
+            hasError = true;
+            reject(new Error(event.error));
+            break;
+        }
+      }).catch(reject);
+    });
+  }
+
+  /**
+   * Clear conversation history
+   */
+  clearHistory(): void {
+    this.conversationHistory = [];
+    this.toolCallArgs.clear(); // Clear stored tool args
+    this.currentExecutionSteps = [];
+    this.currentStepNumber = 0;
+    this.currentLLMTokenUsage = null;
+    this.isFirstLLMCall = true;
+
+    // Reset stats
+    this.stats = {
+      inputTokens: 0,
+      outputTokens: 0,
+      cachedTokens: 0,
+      totalTokens: 0,
+      estimatedTotalCost: 0,
+      executionTime: 0,
+      toolCalls: 0,
+      successfulTools: 0,
+      failedTools: 0,
+      llmCalls: 0,
+      executionSteps: []
+    };
+
+    if (this.config.debug) {
+      console.log('[DEBUG] Conversation history cleared');
+    }
+  }
+
+  /**
+   * Get current conversation history
+   */
+  getHistory(): BaseMessage[] {
+    return [...this.conversationHistory];
+  }
+
+  /**
+   * Get agent runtime statistics
+   */
+  getStats(): AgentStats {
+    return { ...this.stats };
+  }
+
+  /**
+   * Get available tools
+   */
+  getTools(): StructuredTool[] {
+    return [...this.tools];
+  }
+
+  /**
+   * Get agent configuration
+   */
+  getConfig(): CodeMieConfig {
+    // Return sanitized config (without sensitive data)
+    return {
+      ...this.config,
+      authToken: `${this.config.authToken.substring(0, 8)}***`
+    };
+  }
+
+  /**
+   * Health check for the agent
+   */
+  async healthCheck(): Promise<{
+    status: 'healthy' | 'unhealthy';
+    provider: string;
+    model: string;
+    toolCount: number;
+    error?: string;
+  }> {
+    try {
+      // Simple test message
+      await this.executeMessage('Hello, can you confirm you are working?');
+
+      return {
+        status: 'healthy',
+        provider: this.config.provider,
+        model: this.config.model,
+        toolCount: this.tools.length
+      };
+    } catch (error) {
+      return {
+        status: 'unhealthy',
+        provider: this.config.provider,
+        model: this.config.model,
+        toolCount: this.tools.length,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  }
+
+  /**
+   * Start a new LLM call step
+   */
+  private startLLMStep(): ExecutionStep {
+    // Determine the context based on whether this is the first call and if we just had a tool execution
+    let llmContext: 'initial_input' | 'processing_tool_result' | 'final_response';
+
+    if (this.isFirstLLMCall) {
+      llmContext = 'initial_input';
+      this.isFirstLLMCall = false;
+    } else {
+      // Check if the previous step was a tool execution
+      const prevStep = this.currentExecutionSteps[this.currentExecutionSteps.length - 1];
+      llmContext = (prevStep?.type === 'tool_execution') ? 'processing_tool_result' : 'final_response';
+    }
+
+    const step: ExecutionStep = {
+      stepNumber: ++this.currentStepNumber,
+      type: 'llm_call',
+      startTime: Date.now(),
+      llmContext
+    };
+
+    this.currentExecutionSteps.push(step);
+    this.stats.llmCalls++;
+
+    if (this.config.debug) {
+      console.log(`[DEBUG] Started LLM step ${step.stepNumber} (${llmContext})`);
+    }
+
+    return step;
+  }
+
+  /**
+   * Start a new tool execution step
+   */
+  private startToolStep(toolName: string): ExecutionStep {
+    const step: ExecutionStep = {
+      stepNumber: ++this.currentStepNumber,
+      type: 'tool_execution',
+      startTime: Date.now(),
+      toolName
+    };
+
+    this.currentExecutionSteps.push(step);
+
+    if (this.config.debug) {
+      console.log(`[DEBUG] Started tool step ${step.stepNumber}: ${toolName}`);
+    }
+
+    return step;
+  }
+
+  /**
+   * Complete an execution step
+   */
+  private completeStep(step: ExecutionStep): void {
+    step.endTime = Date.now();
+    step.duration = step.endTime - step.startTime;
+
+    if (this.config.debug) {
+      const type = step.type === 'llm_call' ? 'LLM' : `Tool (${step.toolName})`;
+      console.log(`[DEBUG] Completed ${type} step ${step.stepNumber} in ${step.duration}ms`);
+    }
+  }
+
+  /**
+   * Update aggregate statistics with token usage
+   */
+  private updateStatsWithTokenUsage(tokenUsage: TokenUsage): void {
+    this.stats.inputTokens += tokenUsage.inputTokens;
+    this.stats.outputTokens += tokenUsage.outputTokens;
+
+    if (tokenUsage.cachedTokens) {
+      this.stats.cachedTokens += tokenUsage.cachedTokens;
+    }
+
+    this.stats.totalTokens = this.stats.inputTokens + this.stats.outputTokens;
+
+    if (tokenUsage.estimatedCost) {
+      this.stats.estimatedTotalCost += tokenUsage.estimatedCost;
+    }
+  }
+}

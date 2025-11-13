@@ -35,6 +35,13 @@ const AGENT_MODEL_RULES: Record<string, AgentModelRules> = {
     blockedPatterns: [],  // No restrictions
     fallbackModels: [],   // No fallback - must fetch from API
     defaultModel: undefined  // Will be auto-detected from available models
+  },
+  'codemie-code': {
+    // CodeMie Native supports all providers and models via LangChain
+    allowedProviders: ['anthropic', 'bedrock', 'openai', 'azure', 'ai-run', 'litellm'],
+    blockedPatterns: [],  // No restrictions - supports all models
+    fallbackModels: [],   // No fallback - must fetch from API
+    defaultModel: undefined  // Will be auto-detected from available models
   }
 };
 

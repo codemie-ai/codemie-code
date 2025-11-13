@@ -1,8 +1,8 @@
 {
-  "provider": "anthropic",
-  "baseUrl": "https://api.anthropic.com/v1",
-  "apiKey": "sk-ant-your-api-key-here",
-  "model": "claude-sonnet-4",
+  "provider": "ai-run",
+  "baseUrl": "https://litellm.codemie.example.com",
+  "apiKey": "your-litellm-api-key-here",
+  "model": "claude-4-5-sonnet",
   "timeout": 300,
   "debug": false,
   "allowedDirs": ["/home/user/projects"],

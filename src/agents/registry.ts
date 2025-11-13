@@ -1,5 +1,6 @@
 import { ClaudeCodeAdapter } from './adapters/claude-code.js';
 import { CodexAdapter } from './adapters/codex.js';
+import { CodeMieCodeAdapter } from './adapters/codemie-code.js';
 
 export interface AgentAdapter {
   name: string;
@@ -15,7 +16,8 @@ export interface AgentAdapter {
 export class AgentRegistry {
   private static adapters: Map<string, AgentAdapter> = new Map([
     ['claude', new ClaudeCodeAdapter()],
-    ['codex', new CodexAdapter()]
+    ['codex', new CodexAdapter()],
+    ['codemie-code', new CodeMieCodeAdapter()]
   ]);
 
   static getAgent(name: string): AgentAdapter | undefined {

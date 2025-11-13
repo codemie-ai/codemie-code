@@ -400,7 +400,7 @@ export class ConfigLoader {
       }
       if (config.apiKey) {
         env.OPENAI_API_KEY = config.apiKey;
-        env.ANTHROPIC_API_KEY = config.apiKey;
+        env.ANTHROPIC_AUTH_TOKEN = config.apiKey;
       }
       if (config.model) {
         env.OPENAI_MODEL = config.model;

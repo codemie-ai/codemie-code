@@ -17,9 +17,9 @@ interface ProviderOption {
 
 const PROVIDERS: ProviderOption[] = [
   {
-    name: 'AI/Run CodeMie (Recommended - Unified AI Gateway)',
+    name: 'AI/Run LiteLLM (Recommended - Unified AI Gateway)',
     value: 'ai-run',
-    baseUrl: 'https://ai.run/api/v1',
+    baseUrl: 'https://litellm.codemie.example.com',
     models: ['claude-4-5-sonnet', 'claude-opus-4', 'gpt-4.1', 'gpt-5']
   },
   {

@@ -6,6 +6,7 @@ import ora from 'ora';
 import { AgentRegistry } from '../../agents/registry.js';
 import { ConfigLoader } from '../../utils/config-loader.js';
 import { checkProviderHealth } from '../../utils/health-checker.js';
+import { fetchAvailableModels } from '../../utils/model-fetcher.js';
 
 export function createDoctorCommand(): Command {
   const command = new Command('doctor');
@@ -88,7 +89,7 @@ export function createDoctorCommand(): Command {
       // Test connectivity if config is valid
       if (config && config.baseUrl && config.apiKey && config.model) {
         console.log(chalk.bold('Connectivity Test:'));
-        const spinner = ora('Testing connection...').start();
+        const healthSpinner = ora('Validating credentials and endpoint...').start();
 
         try {
           const startTime = Date.now();
@@ -99,17 +100,58 @@ export function createDoctorCommand(): Command {
             throw new Error(result.message);
           }
 
-          spinner.succeed(chalk.green(`Connection successful`));
+          healthSpinner.succeed(chalk.green(`Credentials validated`));
           console.log(`  ${chalk.dim('Response time:')} ${duration}ms`);
           console.log(`  ${chalk.dim('Status:')} ${result.message}`);
         } catch (error: unknown) {
           const errorMessage = error instanceof Error ? error.message : String(error);
-          spinner.fail(chalk.red('Connection test failed'));
+          healthSpinner.fail(chalk.red('Connection test failed'));
           console.log(`  ${chalk.dim('Error:')} ${errorMessage}`);
           hasIssues = true;
         }
 
         console.log();
+
+        // Fetch and verify models
+        if (config.provider !== 'bedrock') {
+          console.log(chalk.bold('Model Verification:'));
+          const modelsSpinner = ora('Fetching available models...').start();
+
+          try {
+            const availableModels = await fetchAvailableModels({
+              provider: config.provider,
+              baseUrl: config.baseUrl,
+              apiKey: config.apiKey,
+              model: config.model,
+              timeout: config.timeout || 300
+            });
+
+            if (availableModels.length > 0) {
+              modelsSpinner.succeed(chalk.green(`Found ${availableModels.length} available models`));
+
+              // Check if configured model exists
+              const configuredModel = config.model;
+              const modelExists = availableModels.includes(configuredModel);
+
+              if (modelExists) {
+                console.log(`  ${chalk.green('✓')} Configured model '${configuredModel}' is available`);
+              } else {
+                console.log(`  ${chalk.yellow('⚠')} Configured model '${configuredModel}' not found in available models`);
+                console.log(`  ${chalk.dim('Available models:')} ${availableModels.slice(0, 5).join(', ')}${availableModels.length > 5 ? '...' : ''}`);
+                hasIssues = true;
+              }
+            } else {
+              modelsSpinner.warn(chalk.yellow('Could not fetch models from provider'));
+              console.log(`  ${chalk.dim('Using configured model:')} ${config.model}`);
+            }
+          } catch (error: unknown) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            modelsSpinner.warn(chalk.yellow('Model verification skipped'));
+            console.log(`  ${chalk.dim('Error:')} ${errorMessage}`);
+          }
+
+          console.log();
+        }
       }
 
       // Check installed agents

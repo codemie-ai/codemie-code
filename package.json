@@ -6,12 +6,15 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "codemie": "./bin/codemie.js"
+    "codemie": "./bin/codemie.js",
+    "codemie-code": "./bin/codemie-code.js",
+    "codemie-claude": "./bin/codemie-claude.js",
+    "codemie-codex": "./bin/codemie-codex.js"
   },
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "lint": "eslint 'src/**/*.ts' --max-warnings=-1",
+    "lint": "eslint 'src/**/*.ts' --max-warnings=10",
     "lint:fix": "eslint 'src/**/*.ts' --fix",
     "license-check": "npx license-checker --summary --onlyAllow 'MIT;Apache-2.0;ISC;BSD-2-Clause;BSD-3-Clause;0BSD;CC0-1.0;Unlicense;BlueOak-1.0.0;Python-2.0;CC-BY-4.0;Apache*;(MIT OR CC0-1.0)'",
     "ci": "npm run license-check && npm run lint && npm run build",
@@ -29,11 +32,18 @@
   "author": "CodeMie Team",
   "license": "Apache-2.0",
   "dependencies": {
+    "@clack/core": "^0.5.0",
+    "@clack/prompts": "^0.11.0",
+    "@langchain/anthropic": "^1.0.0",
+    "@langchain/core": "^1.0.4",
+    "@langchain/langgraph": "^1.0.2",
+    "@langchain/openai": "^1.1.0",
     "chalk": "^5.3.0",
     "commander": "^11.1.0",
     "dotenv": "^16.3.1",
     "inquirer": "^9.2.12",
-    "ora": "^7.0.1"
+    "ora": "^7.0.1",
+    "zod": "^4.1.12"
   },
   "devDependencies": {
     "@eslint/js": "^9.38.0",
