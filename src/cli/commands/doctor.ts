@@ -9,6 +9,8 @@ import { checkProviderHealth } from '../../utils/health-checker.js';
 import { fetchAvailableModels } from '../../utils/model-fetcher.js';
 import { CodeMieSSO } from '../../utils/sso-auth.js';
 import { fetchCodeMieModelsFromConfig, validateCodeMieConnectivity } from '../../utils/codemie-model-fetcher.js';
+import { checkAllTools } from '../../tools/index.js';
+import { detectVCSProvider, listInstalledWorkflows } from '../../workflows/index.js';
 
 export function createDoctorCommand(): Command {
   const command = new Command('doctor');
@@ -46,16 +48,6 @@ export function createDoctorCommand(): Command {
       } catch {
         console.log(`  ${chalk.red('✗')} npm not found`);
         hasIssues = true;
-      }
-      console.log();
-
-      // Check git
-      console.log(chalk.bold('git:'));
-      try {
-        const result = await exec('git', ['--version']);
-        console.log(`  ${chalk.green('✓')} ${result.stdout}`);
-      } catch {
-        console.log(`  ${chalk.yellow('⚠')} git not found (optional)`);
       }
       console.log();
 
@@ -199,6 +191,70 @@ export function createDoctorCommand(): Command {
         }
       } else {
         console.log(`  ${chalk.yellow('⚠')} No agents installed (CodeMie Code is built-in)`);
+      }
+      console.log();
+
+      // Check VCS Tools
+      console.log(chalk.bold('VCS Tools:'));
+      const toolsStatus = checkAllTools();
+
+      // Show git first
+      if (toolsStatus.git.installed) {
+        console.log(`  ${chalk.green('✓')} Git v${toolsStatus.git.version}`);
+      } else {
+        console.log(`  ${chalk.yellow('⚠')} Git not installed`);
+      }
+
+      if (toolsStatus.gh.installed) {
+        const authStatus = toolsStatus.gh.authenticated
+          ? chalk.green(`authenticated as ${toolsStatus.gh.authUser}`)
+          : chalk.yellow('not authenticated');
+        console.log(`  ${chalk.green('✓')} GitHub CLI (gh) v${toolsStatus.gh.version} - ${authStatus}`);
+      } else {
+        console.log(`  ${chalk.dim('○')} GitHub CLI (gh) not installed`);
+        console.log(`      ${chalk.dim('Install with: codemie tools install gh')}`);
+      }
+
+      if (toolsStatus.glab.installed) {
+        const authStatus = toolsStatus.glab.authenticated
+          ? chalk.green(`authenticated as ${toolsStatus.glab.authUser}`)
+          : chalk.yellow('not authenticated');
+        console.log(`  ${chalk.green('✓')} GitLab CLI (glab) v${toolsStatus.glab.version} - ${authStatus}`);
+      } else {
+        console.log(`  ${chalk.dim('○')} GitLab CLI (glab) not installed`);
+        console.log(`      ${chalk.dim('Install with: codemie tools install glab')}`);
+      }
+      console.log();
+
+      // Check VCS and Workflows
+      console.log(chalk.bold('Repository & Workflows:'));
+      const vcsDetection = detectVCSProvider();
+
+      if (vcsDetection.isGitRepo) {
+        console.log(`  ${chalk.green('✓')} Git repository detected`);
+
+        if (vcsDetection.provider) {
+          console.log(`  ${chalk.green('✓')} Provider: ${vcsDetection.provider}`);
+          console.log(`      ${chalk.dim(`Remote: ${vcsDetection.remoteUrl}`)}`);
+
+          // List installed workflows
+          const installedWorkflows = listInstalledWorkflows(vcsDetection.provider);
+          if (installedWorkflows.length > 0) {
+            console.log(`  ${chalk.green('✓')} ${installedWorkflows.length} workflow(s) installed:`);
+            installedWorkflows.forEach(workflow => {
+              const fileName = workflow.split('/').pop();
+              console.log(`      ${chalk.dim('•')} ${fileName}`);
+            });
+          } else {
+            console.log(`  ${chalk.dim('○')} No workflows installed`);
+            console.log(`      ${chalk.dim('Install workflows with: codemie workflow install <workflow-id>')}`);
+          }
+        } else {
+          console.log(`  ${chalk.yellow('⚠')} VCS provider not detected`);
+          console.log(`      ${chalk.dim('Remote URL:')} ${vcsDetection.remoteUrl || 'none'}`);
+        }
+      } else {
+        console.log(`  ${chalk.dim('○')} Not a git repository`);
       }
       console.log();
 

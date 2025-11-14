@@ -70,10 +70,16 @@ export class FirstTimeExperience {
     console.log(chalk.white('  $ ') + chalk.green('codemie-claude') + chalk.dim('            # Run Claude agent'));
     console.log(chalk.white('  $ ') + chalk.green('codemie-codex') + chalk.dim('             # Run Codex agent\n'));
 
+    console.log(chalk.bold('VCS Tools & Workflows:'));
+    console.log(chalk.white('  $ ') + chalk.green('codemie tools') + chalk.dim('           # Manage VCS CLI tools (gh, glab)'));
+    console.log(chalk.white('  $ ') + chalk.green('codemie workflow') + chalk.dim('        # Manage CI/CD workflows\n'));
+
     console.log(chalk.bold('📚 Additional Resources:\n'));
     console.log(chalk.dim('   • Documentation: ') + chalk.blue('README.md'));
     console.log(chalk.dim('   • Agent shortcuts: ') + chalk.green('codemie-claude, codemie-codex, codemie-code'));
-    console.log(chalk.dim('   • Configuration: ') + chalk.green('codemie config --help\n'));
+    console.log(chalk.dim('   • Configuration: ') + chalk.green('codemie config --help'));
+    console.log(chalk.dim('   • Workflows: ') + chalk.green('codemie workflow --help'));
+    console.log(chalk.dim('   • VCS Tools: ') + chalk.green('codemie tools --help\n'));
   }
 
   /**
@@ -104,6 +110,10 @@ export class FirstTimeExperience {
     console.log(chalk.cyan('  codemie-claude') + chalk.dim('            # Run Claude agent'));
     console.log(chalk.cyan('  codemie-codex') + chalk.dim('             # Run Codex agent'));
     console.log(chalk.cyan('  codemie-code') + chalk.dim('              # Run built-in agent\n'));
+
+    console.log(chalk.bold('VCS Tools & Workflows:'));
+    console.log(chalk.cyan('  codemie tools') + chalk.dim('           # Manage VCS CLI tools (gh, glab)'));
+    console.log(chalk.cyan('  codemie workflow') + chalk.dim('        # Manage CI/CD workflows\n'));
 
     console.log(chalk.dim('For detailed help, run: ') + chalk.green('codemie --help\n'));
   }

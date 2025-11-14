@@ -11,6 +11,13 @@
     "codemie-claude": "./bin/codemie-claude.js",
     "codemie-codex": "./bin/codemie-codex.js"
   },
+  "files": [
+    "dist",
+    "bin",
+    "src/workflows/templates/**/*.yml",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",

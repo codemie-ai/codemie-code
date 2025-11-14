@@ -88,6 +88,8 @@ codemie-code/
 ├── src/
 │   ├── cli/                # CLI command implementations
 │   ├── agents/             # Agent registry and adapters
+│   ├── workflows/          # Workflow/action management
+│   ├── tools/              # VCS tools management (gh/glab)
 │   ├── env/                # Environment and config management
 │   ├── utils/              # Shared utilities
 │   └── index.ts           # Main package exports
@@ -120,6 +122,23 @@ codemie-code/
 - **Priority**: Environment variables override config file
 - **Providers**: Anthropic, OpenAI, Azure, Bedrock, LiteLLM
 - **Model Validation**: Real-time model fetching via `/v1/models` endpoints
+
+#### 4. Workflow Management System (`src/workflows/`)
+
+- **Registry** (`registry.ts`): Manages workflow templates (GitHub Actions, GitLab CI)
+- **Detector** (`detector.ts`): Auto-detects VCS provider from git remote
+- **Installer** (`installer.ts`): Installs and customizes workflow templates
+- **Templates** (`templates/`): Pre-built workflow templates
+  - `github/`: GitHub Actions workflows (pr-review, inline-fix, code-ci)
+  - `gitlab/`: GitLab CI workflows
+- **Types** (`types.ts`): TypeScript definitions for workflows
+
+#### 5. VCS Tools Management (`src/tools/`)
+
+- **Registry** (`registry.ts`): Tool definitions (gh, glab)
+- **Detector** (`detector.ts`): Check tool installation and authentication
+- **Manager** (`manager.ts`): Install/uninstall/update tools via npm
+- **npm-only**: Tools are installed via npm packages only (no system packages)
 
 #### 4. Built-in Agent Architecture (`src/agents/codemie-code/`)
 
@@ -223,3 +242,104 @@ When working on the CodeMie Native agent (`src/agents/codemie-code/`):
 - **Streaming**: Implement proper event handling for real-time responses
 - **Configuration**: Follow the provider config pattern in `config.ts`
 - **Error Handling**: Use structured error types with context information
+
+### Workflow and Tools Management
+
+#### VCS Tools Management
+
+The `src/tools/` module manages VCS CLI tools (GitHub CLI, GitLab CLI):
+
+**Key Features:**
+- npm-only installation (no system package managers)
+- Tool detection and version checking
+- Authentication status checking
+- Installation, uninstallation, and updates via npm
+
+**Available Commands:**
+```bash
+codemie tools check           # Check status of all VCS tools
+codemie tools install gh      # Install GitHub CLI via npm
+codemie tools install glab    # Install GitLab CLI via npm
+codemie tools auth gh         # Authenticate GitHub CLI
+codemie tools auth-status     # Check authentication status
+codemie tools list            # List all available tools
+```
+
+**Adding New Tools:**
+1. Add tool info to `src/tools/registry.ts`
+2. Update `VCSTool` type in `src/tools/types.ts`
+3. Ensure npm package exists for the tool
+4. Update documentation
+
+#### Workflow Installation System
+
+The `src/workflows/` module manages CI/CD workflow installation:
+
+**Key Features:**
+- Auto-detect VCS provider (GitHub/GitLab) from git remote
+- Template-based workflow installation
+- Customizable configurations (timeout, max-turns, environment)
+- Dependency validation
+- Interactive and non-interactive modes
+
+**Available Commands:**
+```bash
+codemie workflow list                    # List available workflows
+codemie workflow list --installed        # Show only installed workflows
+codemie workflow install pr-review       # Install PR review workflow
+codemie workflow install --interactive   # Interactive installation
+codemie workflow uninstall pr-review     # Uninstall workflow
+```
+
+**Available Workflows:**
+- **pr-review**: Automated code review on pull requests
+- **inline-fix**: Quick code fixes from PR comments
+- **code-ci**: Full feature implementation from issues
+
+**Adding New Workflows:**
+
+1. **Create Template File:**
+   - GitHub: `src/workflows/templates/github/your-workflow.yml`
+   - GitLab: `src/workflows/templates/gitlab/your-workflow.yml`
+
+2. **Register Template:**
+   ```typescript
+   // In src/workflows/templates/github/metadata.ts (or gitlab)
+   {
+     id: 'your-workflow',
+     name: 'Your Workflow Name',
+     description: 'Workflow description',
+     provider: 'github',
+     version: '1.0.0',
+     category: 'code-review', // or 'automation', 'ci-cd', 'security'
+     triggers: [...],
+     permissions: {...},
+     config: {...},
+     templatePath: path.join(__dirname, 'your-workflow.yml'),
+     dependencies: {...}
+   }
+   ```
+
+3. **Template Variables:**
+   Templates support the following customizable variables:
+   - `timeout-minutes`: Workflow timeout
+   - `MAX_TURNS`: Maximum AI turns
+   - `environment`: GitHub environment name
+
+4. **Test Installation:**
+   ```bash
+   npm run build && npm link
+   codemie workflow install your-workflow --dry-run
+   ```
+
+**VCS Detection:**
+- Automatically detects GitHub/GitLab from `.git/config` remote URL
+- Override with `--github` or `--gitlab` flags
+- Validates workflow directory exists/creates if needed
+
+**Dependency Validation:**
+- Checks for required VCS CLI tools (gh/glab)
+- Offers to install missing tools
+- Warns about required secrets
+- Lists optional configuration
+

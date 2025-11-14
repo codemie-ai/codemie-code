@@ -11,6 +11,8 @@ import { createSetupCommand } from './commands/setup.js';
 import { createConfigCommand } from './commands/config.js';
 import { createEnvCommand } from './commands/env.js';
 import { createAuthCommand } from './commands/auth.js';
+import { createToolsCommand } from './commands/tools.js';
+import { createWorkflowCommand } from './commands/workflow.js';
 import { FirstTimeExperience } from '../utils/first-time.js';
 import chalk from 'chalk';
 import { readFileSync } from 'fs';
@@ -47,6 +49,8 @@ program.addCommand(createUninstallCommand());
 program.addCommand(createRunCommand());
 program.addCommand(createDoctorCommand());
 program.addCommand(createVersionCommand());
+program.addCommand(createToolsCommand());
+program.addCommand(createWorkflowCommand());
 
 // Check for --task option before parsing commands
 const taskIndex = process.argv.indexOf('--task');
