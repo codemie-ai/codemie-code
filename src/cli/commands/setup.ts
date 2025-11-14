@@ -7,6 +7,8 @@ import { logger } from '../../utils/logger.js';
 import { FirstTimeExperience } from '../../utils/first-time.js';
 import { checkProviderHealth } from '../../utils/health-checker.js';
 import { fetchAvailableModels } from '../../utils/model-fetcher.js';
+import { CodeMieSSO } from '../../utils/sso-auth.js';
+import { fetchCodeMieModels } from '../../utils/codemie-model-fetcher.js';
 
 interface ProviderOption {
   name: string;
@@ -17,9 +19,15 @@ interface ProviderOption {
 
 const PROVIDERS: ProviderOption[] = [
   {
-    name: 'AI/Run LiteLLM (Recommended - Unified AI Gateway)',
-    value: 'ai-run',
-    baseUrl: 'https://litellm.codemie.example.com',
+    name: 'CodeMie SSO (Recommended - Enterprise Authentication)',
+    value: 'ai-run-sso',
+    baseUrl: '', // Will be resolved from CodeMie URL
+    models: [] // Will be fetched from CodeMie /v1/llm_models endpoint
+  },
+  {
+    name: 'LiteLLM Proxy (OpenAI-compatible Gateway)',
+    value: 'litellm',
+    baseUrl: 'https://litellm.example.com',
     models: ['claude-4-5-sonnet', 'claude-opus-4', 'gpt-4.1', 'gpt-5']
   },
   {
@@ -31,12 +39,6 @@ const PROVIDERS: ProviderOption[] = [
       'us.anthropic.claude-opus-4-0-20250514-v1:0',
       'anthropic.claude-3-5-sonnet-20241022-v2:0'
     ]
-  },
-  {
-    name: 'Anthropic (Direct API)',
-    value: 'anthropic',
-    baseUrl: 'https://api.anthropic.com/v1',
-    models: ['claude-sonnet-4', 'claude-opus-4', 'claude-haiku-4']
   },
   {
     name: 'Azure OpenAI (for GPT models and Codex)',
@@ -88,15 +90,21 @@ async function runSetupWizard(force?: boolean): Promise<void> {
 
   console.log(chalk.dim("Let's configure your AI assistant.\n"));
 
-  // Step 1: Choose provider
+  // Step 1: Choose provider (ai-run-sso is now first/default)
   const { provider } = await inquirer.prompt([
     {
       type: 'list',
       name: 'provider',
       message: 'Choose your LLM provider:',
-      choices: PROVIDERS.map(p => ({ name: p.name, value: p.value }))
+      choices: PROVIDERS.map(p => ({ name: p.name, value: p.value })),
+      default: 'ai-run-sso' // Make SSO the default
     }
   ]);
+
+  if (provider === 'ai-run-sso') {
+    await handleAiRunSSOSetup();
+    return; // Early return for SSO flow
+  }
 
   const selectedProvider = PROVIDERS.find(p => p.value === provider)!;
 
@@ -388,4 +396,166 @@ async function runSetupWizard(force?: boolean): Promise<void> {
 
   // Success message - use first-time experience utility
   FirstTimeExperience.showPostSetupMessage();
+}
+
+async function handleAiRunSSOSetup(): Promise<void> {
+  console.log(chalk.bold.cyan('\n🔐 CodeMie SSO Configuration\n'));
+
+  // Step 1: Get CodeMie URL
+  const { codeMieUrl } = await inquirer.prompt([
+    {
+      type: 'input',
+      name: 'codeMieUrl',
+      message: 'Enter CodeMie URL:',
+      default: 'https://codemie.lab.epam.com',
+      validate: (input: string) => {
+        const trimmed = input.trim();
+        if (!trimmed) return 'CodeMie URL is required';
+        if (!trimmed.startsWith('http')) return 'URL must start with http:// or https://';
+        try {
+          new URL(trimmed);
+          return true;
+        } catch {
+          return 'Please enter a valid URL';
+        }
+      }
+    }
+  ]);
+
+  // Step 2: Proceed directly to SSO authentication (no connectivity check)
+  // Following the same pattern as codemie-ide-plugin which trusts the SSO endpoint
+
+  // Step 3: Launch SSO Authentication
+  console.log(chalk.dim('\nStarting SSO authentication...\n'));
+  const authSpinner = ora('Launching browser for authentication...').start();
+
+  try {
+    const sso = new CodeMieSSO();
+    const authResult = await sso.authenticate({ codeMieUrl, timeout: 120000 });
+
+    if (!authResult.success) {
+      authSpinner.fail(chalk.red('SSO authentication failed'));
+      console.log(chalk.red(`  Error: ${authResult.error}\n`));
+      return;
+    }
+
+    authSpinner.succeed(chalk.green('SSO authentication successful'));
+
+    // Step 4: Fetch available models from CodeMie
+    const modelsSpinner = ora('Fetching available models from CodeMie...').start();
+
+    try {
+      const models = await fetchCodeMieModels(authResult.apiUrl!, authResult.cookies!);
+      modelsSpinner.succeed(chalk.green(`Found ${models.length} available models`));
+
+      // Step 5: Model selection
+      const selectedModel = await promptForModelSelection(models);
+
+      // Step 6: Save configuration
+      const config: Partial<CodeMieConfigOptions> = {
+        provider: 'ai-run-sso',
+        authMethod: 'sso',
+        codeMieUrl,
+        baseUrl: authResult.apiUrl,
+        apiKey: 'sso-authenticated', // Placeholder - auth via cookies
+        model: selectedModel,
+        timeout: 300,
+        debug: false
+      };
+
+      const saveSpinner = ora('Saving configuration...').start();
+      await ConfigLoader.saveGlobalConfig(config);
+      saveSpinner.succeed(chalk.green('Configuration saved to ~/.codemie/config.json'));
+
+      // Success message
+      console.log(chalk.bold.green('\n✅ CodeMie SSO setup completed successfully!\n'));
+      console.log(chalk.cyan(`🔗 Connected to: ${codeMieUrl}`));
+      console.log(chalk.cyan(`🔑 Authentication: SSO (session stored securely)`));
+      console.log(chalk.cyan(`🤖 Selected Model: ${selectedModel}`));
+      console.log(chalk.cyan(`📁 Config saved to: ~/.codemie/config.json\n`));
+      console.log(chalk.bold(`🚀 Ready to use! Try: ${chalk.white('codemie-code --task "explore current repository"')}\n`));
+      console.log(chalk.dim(`   Or start interactive mode: ${chalk.white('codemie-code')}\n`));
+      console.log(chalk.yellow(`💡 Install additional agents with: ${chalk.white('codemie install claude')}\n`));
+
+    } catch (error) {
+      modelsSpinner.fail(chalk.red('Failed to fetch models'));
+      console.log(chalk.red(`  Error: ${error instanceof Error ? error.message : String(error)}\n`));
+
+      // Continue with manual model entry
+      const { manualModel } = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'manualModel',
+          message: 'Enter model name manually:',
+          default: 'claude-4-5-sonnet',
+          validate: (input: string) => input.trim() !== '' || 'Model name is required'
+        }
+      ]);
+
+      // Save config with manual model
+      const config: Partial<CodeMieConfigOptions> = {
+        provider: 'ai-run-sso',
+        authMethod: 'sso',
+        codeMieUrl,
+        baseUrl: authResult.apiUrl,
+        apiKey: 'sso-authenticated',
+        model: manualModel,
+        timeout: 300,
+        debug: false
+      };
+
+      await ConfigLoader.saveGlobalConfig(config);
+      console.log(chalk.green('\n✅ Configuration saved with manual model selection.\n'));
+    }
+
+  } catch (error) {
+    authSpinner.fail(chalk.red('Authentication error'));
+    console.log(chalk.red(`  ${error instanceof Error ? error.message : String(error)}\n`));
+    return;
+  }
+}
+
+async function promptForModelSelection(models: string[]): Promise<string> {
+  if (models.length === 0) {
+    const { manualModel } = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'manualModel',
+        message: 'No models found. Enter model name manually:',
+        default: 'claude-4-5-sonnet',
+        validate: (input: string) => input.trim() !== '' || 'Model name is required'
+      }
+    ]);
+    return manualModel;
+  }
+
+  // Add custom option at the end
+  const choices = [
+    ...models,
+    { name: chalk.dim('Custom model (manual entry)...'), value: 'custom' }
+  ];
+
+  const { selectedModel } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'selectedModel',
+      message: `Choose a model (${models.length} available):`,
+      choices,
+      pageSize: 15
+    }
+  ]);
+
+  if (selectedModel === 'custom') {
+    const { customModel } = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'customModel',
+        message: 'Enter model name:',
+        validate: (input: string) => input.trim() !== '' || 'Model is required'
+      }
+    ]);
+    return customModel;
+  }
+
+  return selectedModel;
 }

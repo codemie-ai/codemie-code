@@ -37,17 +37,15 @@ program
     try {
       const workingDir = process.cwd();
 
-      // Check configuration
+      // Initialize the agent with debug flag
+      const codeMie = new CodeMieCode(workingDir);
+
       try {
-        await loadCodeMieConfig(workingDir);
+        await codeMie.initialize({ debug: options.debug });
       } catch (error) {
         logger.error('CodeMie configuration required. Please run: codemie setup');
         process.exit(1);
       }
-
-      // Initialize the agent
-      const codeMie = new CodeMieCode(workingDir);
-      await codeMie.initialize();
 
       if (options.task) {
         // Single task execution with modern UI

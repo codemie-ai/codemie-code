@@ -68,7 +68,11 @@ async function tryHealthEndpoint(
   path: string
 ): Promise<HealthCheckResult> {
   try {
-    const url = new URL(path, baseUrl);
+    // Ensure baseUrl ends with / for proper path joining
+    const normalizedBase = baseUrl.endsWith('/') ? baseUrl : baseUrl + '/';
+    // Remove leading / from path to avoid URL replacement
+    const normalizedPath = path.startsWith('/') ? path.substring(1) : path;
+    const url = new URL(normalizedPath, normalizedBase);
     const isHttps = url.protocol === 'https:';
     const client = isHttps ? https : http;
 

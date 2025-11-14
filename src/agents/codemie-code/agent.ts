@@ -6,7 +6,6 @@
 
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
 import { ChatOpenAI } from '@langchain/openai';
-import { ChatAnthropic } from '@langchain/anthropic';
 import type { StructuredTool } from '@langchain/core/tools';
 import type { BaseMessage } from '@langchain/core/messages';
 import { HumanMessage } from '@langchain/core/messages';
@@ -71,14 +70,6 @@ export class CodeMieAgent {
     };
 
     switch (this.config.provider) {
-      case 'anthropic':
-        return new ChatAnthropic({
-          model: this.config.model,
-          apiKey: this.config.authToken,
-          // Note: Custom baseUrl not currently supported in ChatAnthropic
-          ...commonConfig
-        });
-
       case 'openai':
         return new ChatOpenAI({
           model: this.config.model,
@@ -103,23 +94,72 @@ export class CodeMieAgent {
         });
 
       case 'bedrock':
-        // For Bedrock, we'll use Anthropic format but with special configuration
-        // Note: Bedrock configuration may need special handling
-        return new ChatAnthropic({
+        // For Bedrock, use OpenAI format with AWS Bedrock credentials
+        // Bedrock uses OpenAI-compatible API with special model IDs
+        return new ChatOpenAI({
           model: this.config.model,
           apiKey: this.config.authToken,
-          // baseUrl not supported in ChatAnthropic - will handle differently in future
+          configuration: {
+            baseURL: this.config.baseUrl !== 'bedrock' ? this.config.baseUrl : undefined
+          },
           ...commonConfig
         });
 
       case 'litellm':
         // LiteLLM proxy - use OpenAI format as it's most compatible
+        // For SSO, we need to inject cookies into requests
+        // NOTE: ChatOpenAI appends '/chat/completions' directly, not '/v1/chat/completions'
+        // So if baseUrl ends with '/v1', use it as is, otherwise append '/v1'
+        let baseURL = this.config.baseUrl;
+        if (!baseURL.endsWith('/v1')) {
+          baseURL = `${baseURL}/v1`;
+        }
+
+        const ssoConfig: any = {
+          baseURL
+        };
+
+        // Check if we have SSO cookies to inject (following codemie-ide-plugin pattern)
+        const ssoCookies = (global as any).codemieSSOCookies;
+        if (this.config.debug) {
+          console.log(`[DEBUG] SSO Cookies available:`, ssoCookies ? Object.keys(ssoCookies) : 'none');
+          console.log(`[DEBUG] Auth token:`, this.config.authToken);
+        }
+
+        if (ssoCookies && this.config.authToken === 'sso-authenticated') {
+          // Create custom fetch function that includes SSO cookies (matches oauth2Proxy.js line 134)
+          ssoConfig.fetch = async (url: string, options: any = {}) => {
+            const cookieString = Object.entries(ssoCookies)
+              .map(([key, value]) => `${key}=${value}`)
+              .join(';'); // Note: using ';' separator like IDE plugin
+
+            const updatedOptions = {
+              ...options,
+              headers: {
+                ...options.headers,
+                'cookie': cookieString // lowercase 'cookie' header like IDE plugin
+              }
+            };
+
+            if (this.config.debug) {
+              console.log(`[DEBUG] SSO request to ${url}`);
+              console.log(`[DEBUG] Cookies: ${Object.keys(ssoCookies).join(', ')}`);
+              console.log(`[DEBUG] Full cookie string length: ${cookieString.length}`);
+            }
+
+            return fetch(url, updatedOptions);
+          };
+        } else {
+          if (this.config.debug) {
+            console.log(`[DEBUG] WARNING: SSO cookies not found or auth token mismatch`);
+            console.log(`[DEBUG] Will attempt request without SSO cookies`);
+          }
+        }
+
         return new ChatOpenAI({
           model: this.config.model,
           apiKey: this.config.authToken,
-          configuration: {
-            baseURL: this.config.baseUrl
-          },
+          configuration: ssoConfig,
           ...commonConfig
         });
 

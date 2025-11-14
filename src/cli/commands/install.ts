@@ -69,7 +69,8 @@ export function createInstallCommand(): Command {
           // Show how to run the newly installed agent
           console.log();
           console.log(chalk.cyan('💡 Next steps:'));
-          console.log(chalk.white(`   Run the agent with:`), chalk.blueBright(`codemie run ${agentName}`));
+          console.log(chalk.white(`   Interactive mode:`), chalk.blueBright(`codemie-${agentName}`));
+          console.log(chalk.white(`   Single task:`), chalk.blueBright(`codemie-${agentName} --task "your task"`));
           console.log();
         } catch (error: unknown) {
           spinner.fail(`Failed to install ${agent.displayName}`);

@@ -34,7 +34,6 @@
   "dependencies": {
     "@clack/core": "^0.5.0",
     "@clack/prompts": "^0.11.0",
-    "@langchain/anthropic": "^1.0.0",
     "@langchain/core": "^1.0.4",
     "@langchain/langgraph": "^1.0.2",
     "@langchain/openai": "^1.1.0",
@@ -42,6 +41,8 @@
     "commander": "^11.1.0",
     "dotenv": "^16.3.1",
     "inquirer": "^9.2.12",
+    "keytar": "^7.9.0",
+    "open": "^8.4.2",
     "ora": "^7.0.1",
     "zod": "^4.1.12"
   },

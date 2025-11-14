@@ -26,8 +26,10 @@ export class CodeMieTerminalUI {
 
     const config = this.agent.getConfig();
     if (config) {
+      // Use displayProvider for user-facing output, or fall back to normalized provider
+      const displayProvider = config.displayProvider || config.provider;
       note(
-        `Provider: ${chalk.yellow(config.provider)}\n` +
+        `Provider: ${chalk.yellow(displayProvider)}\n` +
         `Model: ${chalk.cyan(config.model)}\n` +
         `Working Directory: ${chalk.dim(config.workingDirectory)}`,
         'Configuration'
@@ -440,8 +442,10 @@ export class CodeMieTerminalUI {
       return;
     }
 
+    // Use displayProvider for user-facing output, or fall back to normalized provider
+    const displayProvider = config.displayProvider || config.provider;
     const configText = [
-      `Provider: ${chalk.yellow(config.provider)}`,
+      `Provider: ${chalk.yellow(displayProvider)}`,
       `Model: ${chalk.cyan(config.model)}`,
       `Base URL: ${chalk.dim(config.baseUrl)}`,
       `Working Directory: ${chalk.dim(config.workingDirectory)}`,

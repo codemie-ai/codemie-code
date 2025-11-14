@@ -19,7 +19,7 @@ export const MODEL_PRICING = {
   'gpt-4': { input: 30.00, output: 60.00 },
   'gpt-3.5-turbo': { input: 0.50, output: 1.50 },
 
-  // Anthropic Claude Models
+  // Claude Models (via LiteLLM/Bedrock)
   'claude-3-5-sonnet-20241022': { input: 3.00, output: 15.00 },
   'claude-3-5-sonnet-20240620': { input: 3.00, output: 15.00 },
   'claude-3-5-haiku-20241022': { input: 0.25, output: 1.25 },

@@ -15,9 +15,9 @@ export interface AgentAdapter {
 
 export class AgentRegistry {
   private static adapters: Map<string, AgentAdapter> = new Map([
+    ['codemie-code', new CodeMieCodeAdapter()],
     ['claude', new ClaudeCodeAdapter()],
-    ['codex', new CodexAdapter()],
-    ['codemie-code', new CodeMieCodeAdapter()]
+    ['codex', new CodexAdapter()]
   ]);
 
   static getAgent(name: string): AgentAdapter | undefined {

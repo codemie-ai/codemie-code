@@ -89,9 +89,8 @@ codemie setup
 - ✅ Saves to `~/.codemie/config.json`
 
 **Supported Providers:**
-- AI/Run CodeMie (Unified gateway)
+- CodeMie SSO (Unified gateway)
 - AWS Bedrock (Claude via AWS)
-- Anthropic (Direct API)
 - Azure OpenAI (for GPT models and Codex)
 - Custom LiteLLM Proxy
 
@@ -112,13 +111,10 @@ codemie env
 
 ```bash
 # Start interactive session
-codemie run codemie-code
-
-# OR use direct executable
 codemie-code
 
 # Execute single task
-codemie-code --task "Help me debug this error"
+codemie-code --task "explore current repository"
 
 # With initial message
 codemie-code "Review my code for bugs"
@@ -132,6 +128,10 @@ codemie install claude
 
 # Install Codex
 codemie install codex
+
+# Uninstall an agent
+codemie uninstall claude
+codemie uninstall codex
 ```
 
 #### List Available Agents
@@ -142,17 +142,20 @@ codemie list
 
 #### Run an Agent
 
-Agents are run directly after installation. Configuration is automatically passed from `~/.codemie/config.json`.
+Use the direct agent shortcuts for the best experience. Configuration is automatically passed from `~/.codemie/config.json`.
 
 ```bash
 # Run built-in CodeMie Native
-codemie run codemie-code
+codemie-code                                    # Interactive mode
+codemie-code --task "explore current repository" # Single task
 
 # Run Claude
-codemie run claude
+codemie-claude                                  # Interactive mode
+codemie-claude --task "Review my code"          # Single task
 
 # Run Codex
-codemie run codex
+codemie-codex                                   # Interactive mode
+codemie-codex --task "Generate tests"           # Single task
 ```
 
 **Automatic Model Validation:**
@@ -172,7 +175,7 @@ If you try to run Codex with a Claude model, CodeMie will:
 - Models are fetched in real-time from your configured provider
 - No hardcoded lists - always shows what's actually available
 - Results are cached for 5 minutes to improve performance
-- Works with any OpenAI-compatible API (AI/Run, LiteLLM, OpenAI, etc.)
+- Works with any OpenAI-compatible API (LiteLLM, OpenAI, etc.)
 
 ---
 
@@ -196,35 +199,49 @@ codemie install <agent>
 # Uninstall an agent
 codemie uninstall <agent>
 
-# Run an agent
-codemie run <agent>
-
 # Check installation and configuration
 codemie doctor
 
 # Manage configuration
-codemie config [options]
+codemie config
 
 # Show version
 codemie version
 ```
 
+### Agent Shortcuts (Recommended)
+
+```bash
+# Run built-in agent
+codemie-code                                    # Interactive mode
+codemie-code --task "explore current repository" # Single task
+
+# Run Claude agent
+codemie-claude                                  # Interactive mode
+codemie-claude --task "Review my code"          # Single task
+
+# Run Codex agent
+codemie-codex                                   # Interactive mode
+codemie-codex --task "Generate tests"           # Single task
+```
+
 ### Built-in Agent Commands
 
 ```bash
-# CodeMie Native - Interactive mode
+# CodeMie Native - Interactive mode (start a conversation)
 codemie-code
 
-# CodeMie Native - Single task execution
-codemie-code --task "Your task here"
+# CodeMie Native - Single task execution (run and exit)
+codemie-code --task "explore current repository"
+codemie-code --task "Fix bugs in src/utils"
 
-# CodeMie Native - With initial message
-codemie-code "Your initial message"
+# CodeMie Native - With initial message (start with context)
+codemie-code "Review my code for bugs"
 
 # CodeMie Native - Health check
 codemie-code health
 
-# CodeMie Native - Debug mode
+# CodeMie Native - Debug mode (detailed logging)
 codemie-code --debug
 ```
 
@@ -280,19 +297,16 @@ CodeMie stores configuration in `~/.codemie/config.json`:
 
 ```json
 {
-  "provider": "anthropic",
+  "provider": "litellm",
   "model": "claude-4-5-sonnet",
-  "anthropic": {
-    "baseUrl": "https://api.anthropic.com/v1",
-    "apiKey": "your-api-key",
-    "timeout": 300
-  }
+  "baseUrl": "https://litellm.codemie.example.com",
+  "apiKey": "your-api-key",
+  "timeout": 300
 }
 ```
 
 ### Supported Providers
 
-- **anthropic** - Anthropic Claude API
 - **openai** - OpenAI API
 - **azure** - Azure OpenAI
 - **bedrock** - AWS Bedrock
@@ -303,20 +317,15 @@ CodeMie stores configuration in `~/.codemie/config.json`:
 You can also configure via environment variables (higher priority than config file):
 
 ```bash
-# Anthropic
-export ANTHROPIC_BASE_URL="https://api.anthropic.com/v1"
-export ANTHROPIC_API_KEY="your-api-key"
-export ANTHROPIC_MODEL="claude-4-5-sonnet"
-
 # OpenAI
 export OPENAI_BASE_URL="https://api.openai.com/v1"
 export OPENAI_API_KEY="your-api-key"
 export OPENAI_MODEL="gpt-4"
 
 # Generic (works with any provider)
-export AI_BASE_URL="https://your-proxy.com"
-export AI_API_KEY="your-api-key"
-export AI_MODEL="your-model"
+export CODEMIE_BASE_URL="https://your-proxy.com"
+export CODEMIE_API_KEY="your-api-key"
+export CODEMIE_MODEL="your-model"
 ```
 
 ---
@@ -329,16 +338,14 @@ export AI_MODEL="your-model"
 
 **Usage:**
 ```bash
-# Interactive mode
-codemie run codemie-code
-
-# Direct executable (alternative)
+# Interactive mode (recommended) - start a conversation
 codemie-code
 
-# Single task execution
+# Single task execution - run and exit
+codemie-code --task "explore current repository"
 codemie-code --task "Fix the bug in utils.js"
 
-# With initial message
+# With initial message - start with context
 codemie-code "Help me refactor this component"
 ```
 

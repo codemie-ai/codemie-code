@@ -8,6 +8,7 @@
 import { CodexAdapter } from '../dist/agents/adapters/codex.js';
 import { ConfigLoader } from '../dist/utils/config-loader.js';
 import { logger } from '../dist/utils/logger.js';
+import { validateProviderCompatibility, validateModelCompatibility, displayCompatibilityError } from '../dist/utils/agent-compatibility.js';
 import { Command } from 'commander';
 import { readFileSync } from 'fs';
 import { join } from 'path';
@@ -63,19 +64,17 @@ program
         process.exit(1);
       }
 
-      // Validate model compatibility with Codex (OpenAI models only)
-      const currentModel = config.model;
-      const claudePatterns = [/^claude/i, /anthropic/i, /bedrock.*claude/i];
-      const isClaudeModel = claudePatterns.some(pattern => pattern.test(currentModel));
+      // Validate provider compatibility
+      const providerResult = validateProviderCompatibility('codex', config);
+      if (!providerResult.valid) {
+        displayCompatibilityError(providerResult, logger);
+        process.exit(1);
+      }
 
-      if (isClaudeModel) {
-        logger.error(`Model '${currentModel}' is not compatible with Codex`);
-        console.log('Codex requires OpenAI-compatible models (e.g., gpt-5, gpt-4o, gpt-4.1)');
-        console.log('Claude models are not supported due to API incompatibilities');
-        console.log('\nOptions:');
-        console.log('  1. Switch to an OpenAI model: codemie config set model gpt-4o');
-        console.log('  2. Use Claude agent instead: codemie-claude');
-        console.log('  3. Override model for this session: codemie-codex --model gpt-4o');
+      // Validate model compatibility
+      const modelResult = validateModelCompatibility('codex', config);
+      if (!modelResult.valid) {
+        displayCompatibilityError(modelResult, logger);
         process.exit(1);
       }
 

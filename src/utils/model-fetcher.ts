@@ -3,6 +3,7 @@ import http from 'http';
 import { URL } from 'url';
 import { CodeMieConfigOptions } from './config-loader.js';
 import { logger } from './logger.js';
+import { fetchCodeMieModelsFromConfig } from './codemie-model-fetcher.js';
 
 /**
  * Model information from provider API
@@ -29,7 +30,17 @@ const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
  * Fetch available models from provider API
  */
 export async function fetchAvailableModels(config: CodeMieConfigOptions): Promise<string[]> {
-  // Check cache first
+  // Handle ai-run-sso provider
+  if (config.provider === 'ai-run-sso') {
+    try {
+      return await fetchCodeMieModelsFromConfig();
+    } catch (error) {
+      logger.debug(`Failed to fetch CodeMie models: ${error instanceof Error ? error.message : String(error)}`);
+      return [];
+    }
+  }
+
+  // Check cache first for other providers
   const cacheKey = `${config.baseUrl}:${config.provider}`;
   const cached = modelCache.get(cacheKey);
 
@@ -62,7 +73,9 @@ async function fetchModelsFromAPI(config: CodeMieConfigOptions): Promise<string[
     throw new Error('Base URL not configured');
   }
 
-  const url = new URL('/v1/models', config.baseUrl);
+  // Ensure baseUrl ends with / for proper path joining
+  const normalizedBase = config.baseUrl.endsWith('/') ? config.baseUrl : config.baseUrl + '/';
+  const url = new URL('v1/models', normalizedBase);
   const isHttps = url.protocol === 'https:';
   const client = isHttps ? https : http;
 

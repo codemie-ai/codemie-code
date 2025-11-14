@@ -30,13 +30,14 @@ export class CodeMieCode {
   /**
    * Initialize the CodeMie agent asynchronously
    */
-  async initialize(): Promise<InitializationResult> {
+  async initialize(cliOverrides?: { debug?: boolean }): Promise<InitializationResult> {
     try {
-      // Load configuration
-      this.config = await loadCodeMieConfig(this.workingDirectory);
+      // Load configuration with CLI overrides
+      this.config = await loadCodeMieConfig(this.workingDirectory, cliOverrides);
 
       if (this.config.debug) {
         console.log('[DEBUG] Configuration loaded:', getConfigSummary(this.config));
+        console.log('[DEBUG] Global SSO cookies set:', !!(global as any).codemieSSOCookies);
       }
 
       // Create system tools

@@ -6,6 +6,7 @@ import { logger } from '../../utils/logger.js';
 import { AgentNotFoundError } from '../../utils/errors.js';
 import { ConfigLoader, CodeMieConfigOptions } from '../../utils/config-loader.js';
 import { fetchAvailableModels, filterModelsByAgent, categorizeModels } from '../../utils/model-fetcher.js';
+import { validateProviderCompatibility as checkProviderCompatibility, displayCompatibilityError } from '../../utils/agent-compatibility.js';
 
 /**
  * Model compatibility rules for agents
@@ -20,10 +21,9 @@ interface AgentModelRules {
 const AGENT_MODEL_RULES: Record<string, AgentModelRules> = {
   'codex': {
     // Codex only supports OpenAI models
-    allowedProviders: ['openai', 'azure', 'ai-run', 'litellm'],
+    allowedProviders: ['openai', 'azure', 'litellm'],
     blockedPatterns: [
       /^claude/i,           // Block any Claude models
-      /anthropic/i,         // Block Anthropic models
       /bedrock.*claude/i    // Block Bedrock Claude models
     ],
     fallbackModels: [],   // No fallback - must fetch from API
@@ -31,14 +31,14 @@ const AGENT_MODEL_RULES: Record<string, AgentModelRules> = {
   },
   'claude': {
     // Claude supports both Claude and GPT models
-    allowedProviders: ['anthropic', 'bedrock', 'openai', 'azure', 'ai-run', 'litellm'],
+    allowedProviders: ['bedrock', 'openai', 'azure', 'litellm'],
     blockedPatterns: [],  // No restrictions
     fallbackModels: [],   // No fallback - must fetch from API
     defaultModel: undefined  // Will be auto-detected from available models
   },
   'codemie-code': {
     // CodeMie Native supports all providers and models via LangChain
-    allowedProviders: ['anthropic', 'bedrock', 'openai', 'azure', 'ai-run', 'litellm'],
+    allowedProviders: ['bedrock', 'openai', 'azure', 'litellm', 'ai-run-sso'],
     blockedPatterns: [],  // No restrictions - supports all models
     fallbackModels: [],   // No fallback - must fetch from API
     defaultModel: undefined  // Will be auto-detected from available models
@@ -49,8 +49,8 @@ export function createRunCommand(): Command {
   const command = new Command('run');
 
   command
-    .description('Run an agent with your configured settings')
-    .argument('<agent>', 'Agent name to run (e.g., claude, codex)')
+    .description('Run an agent with your configured settings (prefer direct shortcuts: codemie-claude, codemie-codex, codemie-code)')
+    .argument('<agent>', 'Agent name to run (e.g., claude, codex, codemie-code)')
     .argument('[args...]', 'Additional arguments to pass to the agent')
     .option('-m, --model <model>', 'Override model')
     .option('-p, --provider <provider>', 'Override provider')
@@ -96,6 +96,13 @@ export function createRunCommand(): Command {
 
         // Use validated config
         config = validationResult.config;
+
+        // Validate provider compatibility
+        const providerResult = checkProviderCompatibility(agentName, config);
+        if (!providerResult.valid) {
+          displayCompatibilityError(providerResult, logger);
+          process.exit(1);
+        }
 
         // Validate model compatibility for this agent
         const modelValidation = await validateModelCompatibility(
@@ -195,7 +202,7 @@ async function validateModelCompatibility(
     console.log(chalk.dim('  • Invalid API key or permissions'));
     console.log(chalk.dim('  • No compatible models available on this provider'));
     console.log(chalk.yellow('\nPlease verify your configuration or specify a model manually:'));
-    console.log(chalk.cyan(`  codemie run ${agentName} --model <model-name>\n`));
+    console.log(chalk.cyan(`  codemie-${agentName} --model <model-name>\n`));
     return { valid: false, model: currentModel };
   }
 
@@ -337,8 +344,8 @@ async function validateAndPromptConfig(
       type: 'list',
       name: 'provider',
       message: 'Choose provider:',
-      choices: ['ai-run', 'anthropic', 'openai', 'azure', 'bedrock', 'litellm'],
-      default: 'ai-run'
+      choices: ['litellm', 'openai', 'azure', 'bedrock'],
+      default: 'litellm'
     });
   }
 

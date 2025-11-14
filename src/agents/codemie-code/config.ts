@@ -8,6 +8,7 @@
 import { ConfigLoader, type CodeMieConfigOptions } from '../../utils/config-loader.js';
 import type { CodeMieConfig, ProviderConfig } from './types.js';
 import { ConfigurationError } from './types.js';
+import { CredentialStore } from '../../utils/credential-store.js';
 
 /**
  * Load and validate configuration for the CodeMie native agent
@@ -22,12 +23,43 @@ export async function loadCodeMieConfig(
     // Use existing ConfigLoader to get base configuration
     const baseConfig = await ConfigLoader.loadAndValidate(workDir, cliOverrides);
 
+    // Handle SSO configuration
+    let resolvedBaseUrl = baseConfig.baseUrl!;
+    let resolvedApiKey = baseConfig.apiKey!;
+
+    if (baseConfig.provider === 'ai-run-sso') {
+      const store = CredentialStore.getInstance();
+      const credentials = await store.retrieveSSOCredentials();
+
+      if (!credentials) {
+        throw new ConfigurationError(
+          'SSO credentials not found. Please run: codemie auth login',
+          { provider: 'ai-run-sso' }
+        );
+      }
+
+      // Use SSO credentials
+      resolvedBaseUrl = credentials.apiUrl;
+      resolvedApiKey = 'sso-authenticated'; // Placeholder - actual auth via cookies
+
+      // Store cookies for HTTP client access
+      (global as any).codemieSSOCookies = credentials.cookies;
+
+      if (baseConfig.debug) {
+        console.log('[DEBUG] SSO credentials loaded from store');
+        console.log('[DEBUG] API URL:', resolvedBaseUrl);
+        console.log('[DEBUG] Cookies:', Object.keys(credentials.cookies));
+      }
+    }
+
     // Convert to our agent-specific config format
+    const originalProvider = baseConfig.provider!;
     const agentConfig: CodeMieConfig = {
-      baseUrl: baseConfig.baseUrl!,
-      authToken: baseConfig.apiKey!,
+      baseUrl: resolvedBaseUrl,
+      authToken: resolvedApiKey,
       model: baseConfig.model!,
-      provider: normalizeProvider(baseConfig.provider!),
+      provider: normalizeProvider(originalProvider),
+      displayProvider: originalProvider, // Keep original for display
       timeout: baseConfig.timeout || 300,
       workingDirectory: workDir,
       debug: baseConfig.debug || false
@@ -53,10 +85,6 @@ function normalizeProvider(provider: string): CodeMieConfig['provider'] {
   const normalized = provider.toLowerCase();
 
   switch (normalized) {
-    case 'anthropic':
-    case 'claude':
-      return 'anthropic';
-
     case 'openai':
     case 'gpt':
     case 'codex':
@@ -71,7 +99,7 @@ function normalizeProvider(provider: string): CodeMieConfig['provider'] {
       return 'bedrock';
 
     case 'litellm':
-    case 'ai-run':
+    case 'ai-run-sso':
     case 'proxy':
       return 'litellm';
 
@@ -119,16 +147,6 @@ function validateAgentConfig(config: CodeMieConfig): void {
  */
 function validateProviderConfig(config: CodeMieConfig, _errors: string[]): void {
   switch (config.provider) {
-    case 'anthropic':
-      if (!config.baseUrl.includes('anthropic.com') &&
-          !config.baseUrl.includes('claude.ai') &&
-          !config.baseUrl.includes('localhost') &&
-          !config.baseUrl.includes('127.0.0.1')) {
-        // Allow custom endpoints but warn about potential issues
-        console.warn(`Warning: Using custom endpoint ${config.baseUrl} with Anthropic provider`);
-      }
-      break;
-
     case 'openai':
       if (!config.baseUrl.includes('openai.com') &&
           !config.baseUrl.includes('localhost') &&
@@ -166,12 +184,6 @@ function validateModelCompatibility(config: CodeMieConfig, errors: string[]): vo
   const model = config.model.toLowerCase();
 
   switch (config.provider) {
-    case 'anthropic':
-      if (!model.includes('claude')) {
-        errors.push(`Model '${config.model}' may not be compatible with Anthropic provider`);
-      }
-      break;
-
     case 'openai':
       if (model.includes('claude')) {
         errors.push(`Model '${config.model}' is not compatible with OpenAI provider`);
@@ -220,12 +232,6 @@ export function createProviderConfig(config: CodeMieConfig): ProviderConfig[keyo
         ...(process.env.OPENAI_ORG_ID && { organization: process.env.OPENAI_ORG_ID })
       };
 
-    case 'anthropic':
-      return {
-        apiKey: config.authToken,
-        ...(config.baseUrl !== 'https://api.anthropic.com/v1' && { baseURL: config.baseUrl })
-      };
-
     case 'azure':
       return {
         apiKey: config.authToken,
@@ -261,6 +267,7 @@ function sanitizeConfig(config: CodeMieConfig): Partial<CodeMieConfig> {
     baseUrl: config.baseUrl,
     model: config.model,
     provider: config.provider,
+    displayProvider: config.displayProvider,
     timeout: config.timeout,
     workingDirectory: config.workingDirectory,
     debug: config.debug,
@@ -274,7 +281,7 @@ function sanitizeConfig(config: CodeMieConfig): Partial<CodeMieConfig> {
 export function getConfigSummary(config: CodeMieConfig): string {
   const sanitized = sanitizeConfig(config);
   return [
-    `Provider: ${sanitized.provider}`,
+    `Provider: ${sanitized.displayProvider || sanitized.provider}`,
     `Model: ${sanitized.model}`,
     `Base URL: ${sanitized.baseUrl}`,
     `Working Directory: ${sanitized.workingDirectory}`,

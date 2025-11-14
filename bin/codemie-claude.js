@@ -8,6 +8,7 @@
 import { ClaudeCodeAdapter } from '../dist/agents/adapters/claude-code.js';
 import { ConfigLoader } from '../dist/utils/config-loader.js';
 import { logger } from '../dist/utils/logger.js';
+import { validateProviderCompatibility, validateModelCompatibility, displayCompatibilityError } from '../dist/utils/agent-compatibility.js';
 import { Command } from 'commander';
 import { readFileSync } from 'fs';
 import { join } from 'path';
@@ -60,6 +61,20 @@ program
       // Validate essential configuration
       if (!config.baseUrl || !config.apiKey || !config.model) {
         logger.error('Configuration incomplete. Run: codemie setup');
+        process.exit(1);
+      }
+
+      // Validate provider compatibility
+      const providerResult = validateProviderCompatibility('claude', config);
+      if (!providerResult.valid) {
+        displayCompatibilityError(providerResult, logger);
+        process.exit(1);
+      }
+
+      // Validate model compatibility
+      const modelResult = validateModelCompatibility('claude', config);
+      if (!modelResult.valid) {
+        displayCompatibilityError(modelResult, logger);
         process.exit(1);
       }
 

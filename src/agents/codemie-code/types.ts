@@ -21,7 +21,10 @@ export interface CodeMieConfig {
   model: string;
 
   /** LLM provider type */
-  provider: 'openai' | 'anthropic' | 'azure' | 'bedrock' | 'litellm';
+  provider: 'openai' | 'azure' | 'bedrock' | 'litellm';
+
+  /** Original provider name for display (before normalization) */
+  displayProvider?: string;
 
   /** Request timeout in seconds */
   timeout: number;
@@ -282,10 +285,6 @@ export type ProviderConfig = {
     apiKey: string;
     baseURL?: string;
     organization?: string;
-  };
-  anthropic: {
-    apiKey: string;
-    baseURL?: string;
   };
   azure: {
     apiKey: string;

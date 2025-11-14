@@ -16,6 +16,14 @@ export interface CodeMieConfigOptions {
   debug?: boolean;
   allowedDirs?: string[];
   ignorePatterns?: string[];
+
+  // SSO-specific fields
+  authMethod?: 'manual' | 'sso';
+  codeMieUrl?: string;      // Original CodeMie URL entered by user
+  ssoConfig?: {
+    apiUrl?: string;        // Resolved API endpoint from config.js
+    cookiesEncrypted?: string; // Encrypted authentication cookies (deprecated - use credential store)
+  };
 }
 
 /**
@@ -45,8 +53,6 @@ export class ConfigLoader {
   ): Promise<CodeMieConfigOptions> {
     // 5. Built-in defaults (lowest priority)
     const config: CodeMieConfigOptions = {
-      provider: 'anthropic',
-      model: 'claude-sonnet-4',
       timeout: 300,
       debug: false,
       allowedDirs: [],
@@ -124,10 +130,13 @@ export class ConfigLoader {
       env.ignorePatterns = process.env.CODEMIE_IGNORE_PATTERNS.split(',').map(s => s.trim());
     }
 
+    // SSO-specific environment variables
+    if (process.env.CODEMIE_URL) env.codeMieUrl = process.env.CODEMIE_URL;
+    if (process.env.CODEMIE_AUTH_METHOD) env.authMethod = process.env.CODEMIE_AUTH_METHOD as 'manual' | 'sso';
+
     // Check for AWS Bedrock configuration
-    if (process.env.CLAUDE_CODE_USE_BEDROCK === '1' && process.env.ANTHROPIC_MODEL) {
+    if (process.env.CLAUDE_CODE_USE_BEDROCK === '1') {
       env.provider = 'bedrock';
-      env.model = process.env.ANTHROPIC_MODEL;
       env.baseUrl = 'bedrock';
       env.apiKey = 'bedrock'; // Placeholder for AWS credentials
     }
@@ -176,12 +185,43 @@ export class ConfigLoader {
   }
 
   /**
-   * Check if global config exists
+   * Delete global config file
+   */
+  static async deleteGlobalConfig(): Promise<void> {
+    try {
+      await fs.unlink(this.GLOBAL_CONFIG);
+    } catch (error: any) {
+      // Ignore if file doesn't exist
+      if (error.code !== 'ENOENT') {
+        throw error;
+      }
+    }
+  }
+
+  /**
+   * Delete project config file
+   */
+  static async deleteProjectConfig(workingDir: string): Promise<void> {
+    try {
+      const localConfigPath = path.join(workingDir, this.LOCAL_CONFIG);
+      await fs.unlink(localConfigPath);
+    } catch (error: any) {
+      // Ignore if file doesn't exist
+      if (error.code !== 'ENOENT') {
+        throw error;
+      }
+    }
+  }
+
+  /**
+   * Check if global config exists and is not empty
    */
   static async hasGlobalConfig(): Promise<boolean> {
     try {
       await fs.access(this.GLOBAL_CONFIG);
-      return true;
+      const config = await this.loadJsonConfig(this.GLOBAL_CONFIG);
+      // Check if config has any actual values (not just an empty object)
+      return Object.keys(config).length > 0;
     } catch {
       return false;
     }
@@ -242,8 +282,6 @@ export class ConfigLoader {
     const configs = [
       {
         data: {
-          provider: 'anthropic',
-          model: 'claude-sonnet-4',
           timeout: 300,
           debug: false
         },
@@ -356,20 +394,9 @@ export class ConfigLoader {
     if (config.debug) env.CODEMIE_DEBUG = String(config.debug);
 
     // Set provider-specific vars based on provider
-    const provider = (config.provider || 'anthropic').toUpperCase();
+    const provider = (config.provider || 'openai').toUpperCase();
 
-    if (provider === 'ANTHROPIC') {
-      if (config.baseUrl) env.ANTHROPIC_BASE_URL = config.baseUrl;
-      if (config.apiKey) {
-        env.ANTHROPIC_API_KEY = config.apiKey;
-        env.ANTHROPIC_AUTH_TOKEN = config.apiKey;
-      }
-      if (config.model) {
-        env.ANTHROPIC_MODEL = config.model;
-        // For Claude Code subagents
-        env.CLAUDE_CODE_SUBAGENT_MODEL = config.model;
-      }
-    } else if (provider === 'OPENAI' || provider === 'CODEX') {
+    if (provider === 'OPENAI' || provider === 'CODEX') {
       // OpenAI and Codex share the same configuration
       // Note: OpenAI Codex was deprecated in March 2023
       // Modern usage should use gpt-3.5-turbo or gpt-4 models instead
@@ -389,11 +416,11 @@ export class ConfigLoader {
       if (config.model) env.AZURE_OPENAI_DEPLOYMENT = config.model;
     } else if (provider === 'BEDROCK') {
       // AWS Bedrock configuration
-      if (config.model) env.ANTHROPIC_MODEL = config.model;
       env.CLAUDE_CODE_USE_BEDROCK = '1';
       // AWS credentials should be set via AWS CLI or environment variables
-    } else if (provider === 'AI-RUN' || provider === 'LITELLM') {
-      // Generic LiteLLM proxy or AI/Run gateway
+    } else if (provider === 'LITELLM') {
+      // Generic LiteLLM proxy gateway
+      // LiteLLM can proxy for any model, so set both OpenAI and Anthropic env vars
       if (config.baseUrl) {
         env.OPENAI_BASE_URL = config.baseUrl;
         env.ANTHROPIC_BASE_URL = config.baseUrl;
@@ -406,6 +433,23 @@ export class ConfigLoader {
         env.OPENAI_MODEL = config.model;
         env.ANTHROPIC_MODEL = config.model;
       }
+    } else if (provider === 'AI-RUN-SSO') {
+      // CodeMie SSO authentication - credentials handled via credential store
+      // Set both OpenAI and Anthropic env vars for compatibility
+      if (config.baseUrl) {
+        env.OPENAI_BASE_URL = config.baseUrl;
+        env.ANTHROPIC_BASE_URL = config.baseUrl;
+      }
+      if (config.apiKey) {
+        env.OPENAI_API_KEY = config.apiKey;
+        env.ANTHROPIC_AUTH_TOKEN = config.apiKey;
+      }
+      if (config.model) {
+        env.OPENAI_MODEL = config.model;
+        env.ANTHROPIC_MODEL = config.model;
+      }
+      if (config.codeMieUrl) env.CODEMIE_URL = config.codeMieUrl;
+      if (config.authMethod) env.CODEMIE_AUTH_METHOD = config.authMethod;
     }
 
     return env;

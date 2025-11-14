@@ -5,6 +5,7 @@ import ora from 'ora';
 import { ConfigLoader, CodeMieConfigOptions } from '../../utils/config-loader.js';
 import { logger } from '../../utils/logger.js';
 import { checkProviderHealth } from '../../utils/health-checker.js';
+import { fetchCodeMieModelsFromConfig } from '../../utils/codemie-model-fetcher.js';
 
 export function createConfigCommand(): Command {
   const command = new Command('config');
@@ -33,7 +34,7 @@ export function createConfigCommand(): Command {
       console.log(chalk.bold('\nAvailable Configuration Parameters:\n'));
 
       const params = [
-        { name: 'provider', desc: 'LLM provider (anthropic, openai, azure, litellm)' },
+        { name: 'provider', desc: 'LLM provider (openai, azure, bedrock, litellm)' },
         { name: 'baseUrl', desc: 'API endpoint URL' },
         { name: 'apiKey', desc: 'Authentication API key' },
         { name: 'model', desc: 'Model identifier (e.g., claude-sonnet-4, gpt-4)' },
@@ -200,11 +201,11 @@ export function createConfigCommand(): Command {
         }
 
         if (isGlobal) {
-          await ConfigLoader.saveGlobalConfig({});
+          await ConfigLoader.deleteGlobalConfig();
           logger.success('Global configuration reset');
           console.log(chalk.dim('\nRun: codemie setup'));
         } else {
-          await ConfigLoader.saveProjectConfig(options.dir, {});
+          await ConfigLoader.deleteProjectConfig(options.dir);
           logger.success('Project configuration reset');
         }
       } catch (error: unknown) {
@@ -225,20 +226,48 @@ export function createConfigCommand(): Command {
         const config = await ConfigLoader.loadAndValidate(options.dir);
         spinner.succeed('Configuration loaded');
 
-        spinner.start('Testing connection...');
+        // Special handling for SSO provider
+        if (config.provider === 'ai-run-sso') {
+          spinner.start('Testing SSO connection...');
 
-        const startTime = Date.now();
-        const result = await checkProviderHealth(config.baseUrl!, config.apiKey!);
-        const duration = Date.now() - startTime;
+          try {
+            const startTime = Date.now();
+            const models = await fetchCodeMieModelsFromConfig();
+            const duration = Date.now() - startTime;
 
-        if (!result.success) {
-          throw new Error(result.message);
+            spinner.succeed(chalk.green(`Connection successful (${duration}ms)`));
+            console.log(chalk.dim(`  Provider: ${config.provider}`));
+            console.log(chalk.dim(`  Model: ${config.model}`));
+            console.log(chalk.dim(`  Available models: ${models.length}`));
+            console.log(chalk.dim(`  Status: SSO authentication working\n`));
+          } catch (error: unknown) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            spinner.fail(chalk.red('SSO connection failed'));
+
+            if (errorMessage.includes('expired')) {
+              console.log(chalk.yellow('  Your SSO session may have expired.'));
+              console.log(chalk.dim('  Run: codemie auth refresh\n'));
+            }
+
+            throw error;
+          }
+        } else {
+          // Standard provider health check
+          spinner.start('Testing connection...');
+
+          const startTime = Date.now();
+          const result = await checkProviderHealth(config.baseUrl!, config.apiKey!);
+          const duration = Date.now() - startTime;
+
+          if (!result.success) {
+            throw new Error(result.message);
+          }
+
+          spinner.succeed(chalk.green(`Connection successful (${duration}ms)`));
+          console.log(chalk.dim(`  Provider: ${config.provider}`));
+          console.log(chalk.dim(`  Model: ${config.model}`));
+          console.log(chalk.dim(`  Status: ${result.message}\n`));
         }
-
-        spinner.succeed(chalk.green(`Connection successful (${duration}ms)`));
-        console.log(chalk.dim(`  Provider: ${config.provider}`));
-        console.log(chalk.dim(`  Model: ${config.model}`));
-        console.log(chalk.dim(`  Status: ${result.message}\n`));
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         logger.error('Connection test failed:', errorMessage);

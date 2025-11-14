@@ -10,6 +10,7 @@ import { createVersionCommand } from './commands/version.js';
 import { createSetupCommand } from './commands/setup.js';
 import { createConfigCommand } from './commands/config.js';
 import { createEnvCommand } from './commands/env.js';
+import { createAuthCommand } from './commands/auth.js';
 import { FirstTimeExperience } from '../utils/first-time.js';
 import chalk from 'chalk';
 import { readFileSync } from 'fs';
@@ -32,10 +33,12 @@ try {
 program
   .name('codemie')
   .description('CLI wrapper for managing multiple AI coding agents')
-  .version(version);
+  .version(version)
+  .option('--task <task>', 'Execute a single task using the built-in agent and exit');
 
 // Add commands
 program.addCommand(createSetupCommand());
+program.addCommand(createAuthCommand());
 program.addCommand(createEnvCommand());
 program.addCommand(createConfigCommand());
 program.addCommand(createListCommand());
@@ -45,9 +48,37 @@ program.addCommand(createRunCommand());
 program.addCommand(createDoctorCommand());
 program.addCommand(createVersionCommand());
 
-// Show help if no command provided
-if (process.argv.length === 2) {
-  // Check if this is a first-time user
+// Check for --task option before parsing commands
+const taskIndex = process.argv.indexOf('--task');
+if (taskIndex !== -1 && taskIndex < process.argv.length - 1) {
+  // Extract task and run the built-in agent
+  const task = process.argv[taskIndex + 1];
+
+  (async () => {
+    try {
+      const { CodeMieCode } = await import('../agents/codemie-code/index.js');
+      const { logger } = await import('../utils/logger.js');
+
+      const workingDir = process.cwd();
+      const codeMie = new CodeMieCode(workingDir);
+
+      try {
+        await codeMie.initialize();
+      } catch (error) {
+        logger.error('CodeMie configuration required. Please run: codemie setup');
+        process.exit(1);
+      }
+
+      // Execute task with UI
+      await codeMie.executeTaskWithUI(task);
+      process.exit(0);
+    } catch (error) {
+      console.error('Failed to run task:', error);
+      process.exit(1);
+    }
+  })();
+} else if (process.argv.length === 2) {
+  // Show help if no command provided
   FirstTimeExperience.isFirstTime().then(isFirstTime => {
     if (isFirstTime) {
       // Show welcome message and recommendations for first-time users

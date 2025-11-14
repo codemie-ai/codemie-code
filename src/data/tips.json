@@ -12,16 +12,24 @@
     "command": "codemie doctor"
   },
   {
-    "message": "Run CodeMie Code assistant in current directory",
-    "command": "codemie run codemie-code"
+    "message": "Run built-in agent interactively",
+    "command": "codemie-code"
+  },
+  {
+    "message": "Run built-in agent with a task",
+    "command": "codemie-code --task \"explore current repository\""
   },
   {
     "message": "Run Claude Code agent (if installed)",
-    "command": "codemie run claude"
+    "command": "codemie-claude"
+  },
+  {
+    "message": "Run Codex agent (if installed)",
+    "command": "codemie-codex"
   },
   {
     "message": "Start assistant in a specific project directory",
-    "command": "codemie run codemie-code --cwd /path/to/project"
+    "command": "cd /path/to/project && codemie-code"
   },
   {
     "message": "Install Codex - OpenAI coding assistant",
@@ -33,27 +41,23 @@
   },
   {
     "message": "Enable debug mode to see detailed logs and tool execution",
-    "command": "CODEMIE_DEBUG=true codemie run codemie-code"
+    "command": "codemie-code --debug"
   },
   {
     "message": "Configure CodeMie with your AI provider",
     "command": "export CODEMIE_BASE_URL=https://your-ai-proxy.com CODEMIE_AUTH_TOKEN=sk-..."
   },
   {
-    "message": "Configure using Anthropic-specific variables (advanced)",
-    "command": "export ANTHROPIC_BASE_URL=https://api.anthropic.com ANTHROPIC_AUTH_TOKEN=sk-..."
-  },
-  {
     "message": "Configure using OpenAI-specific variables (advanced)",
     "command": "export OPENAI_BASE_URL=https://api.openai.com/v1 OPENAI_API_KEY=sk-..."
   },
   {
-    "message": "Override model for specific run (Anthropic)",
-    "command": "ANTHROPIC_MODEL=claude-opus-4 codemie run codemie-code"
+    "message": "Override model for specific run",
+    "command": "codemie-code --model claude-opus-4"
   },
   {
-    "message": "Override model for specific run (OpenAI)",
-    "command": "OPENAI_MODEL=gpt-4-turbo codemie run codemie-code"
+    "message": "Override model for Claude agent",
+    "command": "codemie-claude --model gpt-4-turbo"
   },
   {
     "message": "Set model globally across all runs",
@@ -61,7 +65,7 @@
   },
   {
     "message": "Increase timeout for long-running AI requests",
-    "command": "CODEMIE_TIMEOUT=600 codemie run codemie-code"
+    "command": "codemie-code --timeout 600"
   },
   {
     "message": "Type 'clear' in interactive mode to reset conversation history"
@@ -77,7 +81,7 @@
     "command": "codemie doctor"
   },
   {
-    "message": "Provider is auto-detected from model name (claude=Anthropic, gpt=OpenAI)"
+    "message": "Provider is auto-detected from model name (gpt=OpenAI, claude via LiteLLM/Bedrock)"
   },
   {
     "message": "All agents support the same generic env vars (CODEMIE_BASE_URL, CODEMIE_AUTH_TOKEN, etc.)"

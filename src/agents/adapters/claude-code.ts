@@ -6,7 +6,7 @@ import { spawn } from 'child_process';
 export class ClaudeCodeAdapter implements AgentAdapter {
   name = 'claude';
   displayName = 'Claude Code';
-  description = 'Anthropic Claude Code - official CLI tool';
+  description = 'Claude Code - official Anthropic CLI tool';
 
   async install(): Promise<void> {
     logger.info('Installing Claude Code...');

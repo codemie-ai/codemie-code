@@ -49,13 +49,13 @@ export class FirstTimeExperience {
     console.log(chalk.white('  $ ') + chalk.green('codemie setup'));
     console.log(chalk.dim('  → Guided configuration for all providers'));
     console.log(chalk.dim('  → Tests connection before saving'));
-    console.log(chalk.dim('  → Supports: AI/Run CodeMie, AWS Bedrock, Anthropic, Azure\n'));
+    console.log(chalk.dim('  → Supports: AI/Run CodeMie, AWS Bedrock, Azure\n'));
 
     console.log(chalk.bold('  Option B: Manual Configuration Guide'));
-    console.log(chalk.white('  $ ') + chalk.green('codemie env [provider]') + chalk.dim('  # Show all required env vars'));
+    console.log(chalk.white('  $ ') + chalk.green('codemie env') + chalk.dim('  # Show all required env vars'));
     console.log(chalk.dim('  → Complete environment variable list'));
     console.log(chalk.dim('  → Copy-paste ready commands'));
-    console.log(chalk.dim('  → Providers: ai-run (default), bedrock, anthropic, azure\n'));
+    console.log(chalk.dim('  → Providers: litellm (default), bedrock, azure\n'));
 
     console.log(chalk.cyan('Step 2: Verify Configuration\n'));
     console.log(chalk.white('  $ ') + chalk.green('codemie doctor'));
@@ -67,13 +67,13 @@ export class FirstTimeExperience {
     console.log(chalk.white('  $ ') + chalk.green('codemie list') + chalk.dim('             # See all available agents'));
     console.log(chalk.white('  $ ') + chalk.green('codemie install claude') + chalk.dim('      # Install Anthropic Claude Code'));
     console.log(chalk.white('  $ ') + chalk.green('codemie install codex') + chalk.dim('       # Install OpenAI Codex'));
-    console.log(chalk.white('  $ ') + chalk.green('codemie run claude') + chalk.dim('         # Run Claude agent'));
-    console.log(chalk.white('  $ ') + chalk.green('codemie run codex') + chalk.dim('          # Run Codex agent\n'));
+    console.log(chalk.white('  $ ') + chalk.green('codemie-claude') + chalk.dim('            # Run Claude agent'));
+    console.log(chalk.white('  $ ') + chalk.green('codemie-codex') + chalk.dim('             # Run Codex agent\n'));
 
     console.log(chalk.bold('📚 Additional Resources:\n'));
     console.log(chalk.dim('   • Documentation: ') + chalk.blue('README.md'));
-    console.log(chalk.dim('   • Agent management: ') + chalk.green('codemie list, install, uninstall, run'));
-    console.log(chalk.dim('   • Configuration help: ') + chalk.green('codemie config --help\n'));
+    console.log(chalk.dim('   • Agent shortcuts: ') + chalk.green('codemie-claude, codemie-codex, codemie-code'));
+    console.log(chalk.dim('   • Configuration: ') + chalk.green('codemie config --help\n'));
   }
 
   /**
@@ -88,9 +88,8 @@ export class FirstTimeExperience {
 
     console.log(chalk.bold('Setup & Configuration:'));
     console.log(chalk.cyan('  codemie setup') + chalk.dim('             # Interactive setup wizard'));
-    console.log(chalk.cyan('  codemie env [provider]') + chalk.dim('    # Show manual setup guide'));
-    console.log(chalk.cyan('  codemie config show') + chalk.dim('        # View current configuration'));
-    console.log(chalk.cyan('  codemie config edit <key>') + chalk.dim('  # Update a config value\n'));
+    console.log(chalk.cyan('  codemie config') + chalk.dim('            # Manage configuration'));
+    console.log(chalk.cyan('  codemie env') + chalk.dim('               # Show environment variable guide\n'));
 
     console.log(chalk.bold('Verify:'));
     console.log(chalk.cyan('  codemie doctor') + chalk.dim('            # Check configuration\n'));
@@ -99,8 +98,12 @@ export class FirstTimeExperience {
     console.log(chalk.cyan('  codemie list') + chalk.dim('              # List available agents'));
     console.log(chalk.cyan('  codemie install claude') + chalk.dim('    # Install Claude Code'));
     console.log(chalk.cyan('  codemie install codex') + chalk.dim('     # Install Codex'));
-    console.log(chalk.cyan('  codemie run claude') + chalk.dim('        # Run Claude agent'));
-    console.log(chalk.cyan('  codemie run codex') + chalk.dim('         # Run Codex agent\n'));
+    console.log(chalk.cyan('  codemie uninstall <agent>') + chalk.dim('  # Remove an agent\n'));
+
+    console.log(chalk.bold('Run Agents:'));
+    console.log(chalk.cyan('  codemie-claude') + chalk.dim('            # Run Claude agent'));
+    console.log(chalk.cyan('  codemie-codex') + chalk.dim('             # Run Codex agent'));
+    console.log(chalk.cyan('  codemie-code') + chalk.dim('              # Run built-in agent\n'));
 
     console.log(chalk.dim('For detailed help, run: ') + chalk.green('codemie --help\n'));
   }
@@ -120,23 +123,25 @@ export class FirstTimeExperience {
     console.log(chalk.bold.green('\n✅ You\'re all set!\n'));
     console.log(chalk.bold('Next Steps:\n'));
 
-    console.log(chalk.cyan('1. Verify your configuration:'));
-    console.log(chalk.white('   $ ') + chalk.green('codemie doctor') + chalk.dim('       # Check system health\n'));
+    console.log(chalk.cyan('1. Try the built-in agent:'));
+    console.log(chalk.white('   $ ') + chalk.green('codemie-code --task "explore current repository"'));
+    console.log(chalk.dim('   Or start interactive mode:'));
+    console.log(chalk.white('   $ ') + chalk.green('codemie-code') + chalk.dim('               # Interactive session\n'));
 
-    console.log(chalk.cyan('2. Install and run agents:'));
-    console.log(chalk.white('   $ ') + chalk.green('codemie list') + chalk.dim('          # See available agents'));
-    console.log(chalk.white('   $ ') + chalk.green('codemie install claude') + chalk.dim('  # Install Anthropic Claude Code'));
-    console.log(chalk.white('   $ ') + chalk.green('codemie run claude') + chalk.dim('     # Run Claude agent\n'));
+    console.log(chalk.cyan('2. Verify your configuration:'));
+    console.log(chalk.white('   $ ') + chalk.green('codemie doctor') + chalk.dim('              # Check system health\n'));
 
-    console.log(chalk.cyan('3. (Optional) Install Codex:'));
-    console.log(chalk.white('   $ ') + chalk.green('codemie install codex') + chalk.dim('   # Install OpenAI Codex'));
-    console.log(chalk.white('   $ ') + chalk.green('codemie run codex') + chalk.dim('      # Run Codex agent\n'));
+    console.log(chalk.cyan('3. Install additional agents:'));
+    console.log(chalk.white('   $ ') + chalk.green('codemie install claude') + chalk.dim('       # Install Anthropic Claude Code'));
+    console.log(chalk.white('   $ ') + chalk.green('codemie-claude') + chalk.dim('                # Run Claude agent'));
+    console.log(chalk.white('   $ ') + chalk.green('codemie install codex') + chalk.dim('        # Install OpenAI Codex'));
+    console.log(chalk.white('   $ ') + chalk.green('codemie-codex') + chalk.dim('                 # Run Codex agent\n'));
   }
 
   /**
    * Show manual setup guide with all required environment variables
    */
-  static showManualSetup(provider: 'ai-run' | 'bedrock' | 'anthropic' | 'azure' = 'ai-run'): void {
+  static showManualSetup(provider: 'litellm' | 'bedrock' | 'azure' = 'litellm'): void {
     console.log(chalk.bold.cyan('\n╔═══════════════════════════════════════════════════════╗'));
     console.log(chalk.bold.cyan('║          Manual Configuration Guide                   ║'));
     console.log(chalk.bold.cyan('╚═══════════════════════════════════════════════════════╝\n'));
@@ -144,21 +149,15 @@ export class FirstTimeExperience {
     console.log(chalk.bold('Required Environment Variables:\n'));
 
     switch (provider) {
-      case 'ai-run':
-        console.log(chalk.white('CODEMIE_BASE_URL') + chalk.dim('      = ') + chalk.cyan('"https://litellm.codemie.example.com"'));
+      case 'litellm':
+        console.log(chalk.white('CODEMIE_BASE_URL') + chalk.dim('      = ') + chalk.cyan('"https://litellm.example.com"'));
         console.log(chalk.white('CODEMIE_API_KEY') + chalk.dim('       = ') + chalk.cyan('"your-litellm-api-key"'));
         console.log(chalk.white('CODEMIE_MODEL') + chalk.dim('         = ') + chalk.cyan('"claude-4-5-sonnet"'));
         console.log();
         console.log(chalk.bold('Optional Environment Variables:\n'));
-        console.log(chalk.white('CODEMIE_PROVIDER') + chalk.dim('      = ') + chalk.cyan('"ai-run"'));
+        console.log(chalk.white('CODEMIE_PROVIDER') + chalk.dim('      = ') + chalk.cyan('"litellm"'));
         console.log(chalk.dim('  Controls which environment variables are passed to agents'));
-        console.log(chalk.dim('  Options: ai-run (default), anthropic, azure, bedrock, openai'));
-        console.log();
-        console.log(chalk.bold('For Running Claude Directly (bypassing codemie):\n'));
-        console.log(chalk.white('ANTHROPIC_BASE_URL') + chalk.dim('    = ') + chalk.cyan('"https://litellm.codemie.example.com"'));
-        console.log(chalk.white('ANTHROPIC_AUTH_TOKEN') + chalk.dim('   = ') + chalk.cyan('"your-litellm-api-key"'));
-        console.log(chalk.white('ANTHROPIC_MODEL') + chalk.dim('        = ') + chalk.cyan('"claude-4-5-sonnet"'));
-        console.log(chalk.dim('  Note: Use ANTHROPIC_AUTH_TOKEN (not ANTHROPIC_API_KEY) for LiteLLM/AI-Run\n'));
+        console.log(chalk.dim('  Options: litellm (default), azure, bedrock, openai\n'));
         break;
 
       case 'bedrock':
@@ -175,20 +174,9 @@ export class FirstTimeExperience {
         console.log(chalk.white('AWS_REGION') + chalk.dim('                = ') + chalk.cyan('"us-west-2"\n'));
 
         console.log(chalk.bold.white('Step 2: Bedrock Configuration:\n'));
-        console.log(chalk.white('ANTHROPIC_MODEL') + chalk.dim('          = ') + chalk.cyan('"us.anthropic.claude-sonnet-4-5-20250929-v1:0"'));
+        console.log(chalk.white('CODEMIE_MODEL') + chalk.dim('           = ') + chalk.cyan('"us.anthropic.claude-sonnet-4-5-20250929-v1:0"'));
         console.log(chalk.white('CLAUDE_CODE_USE_BEDROCK') + chalk.dim('   = ') + chalk.cyan('1'));
         console.log(chalk.white('AWS_PROFILE') + chalk.dim('               = ') + chalk.cyan('"default"') + chalk.dim(' (optional if using CLI)\n'));
-        break;
-
-      case 'anthropic':
-        console.log(chalk.white('CODEMIE_BASE_URL') + chalk.dim('      = ') + chalk.cyan('"https://api.anthropic.com/v1"'));
-        console.log(chalk.white('CODEMIE_API_KEY') + chalk.dim('       = ') + chalk.cyan('"sk-ant-api03-..."'));
-        console.log(chalk.white('CODEMIE_MODEL') + chalk.dim('         = ') + chalk.cyan('"claude-sonnet-4"'));
-        console.log();
-        console.log(chalk.bold('Optional Environment Variables:\n'));
-        console.log(chalk.white('CODEMIE_PROVIDER') + chalk.dim('      = ') + chalk.cyan('"anthropic"'));
-        console.log(chalk.dim('  Controls which environment variables are passed to agents'));
-        console.log(chalk.dim('  Options: ai-run (default), anthropic, azure, bedrock, openai\n'));
         break;
 
       case 'azure':
@@ -199,7 +187,7 @@ export class FirstTimeExperience {
         console.log(chalk.bold('Optional Environment Variables:\n'));
         console.log(chalk.white('CODEMIE_PROVIDER') + chalk.dim('      = ') + chalk.cyan('"azure"'));
         console.log(chalk.dim('  Controls which environment variables are passed to agents'));
-        console.log(chalk.dim('  Options: ai-run (default), anthropic, azure, bedrock, openai\n'));
+        console.log(chalk.dim('  Options: litellm (default), azure, bedrock, openai\n'));
         break;
     }
 
@@ -207,28 +195,18 @@ export class FirstTimeExperience {
     console.log(chalk.dim('# Export variables (current session only)'));
 
     switch (provider) {
-      case 'ai-run':
-        console.log(chalk.green('export CODEMIE_BASE_URL="https://litellm.codemie.example.com"'));
+      case 'litellm':
+        console.log(chalk.green('export CODEMIE_BASE_URL="https://litellm.example.com"'));
         console.log(chalk.green('export CODEMIE_API_KEY="your-litellm-api-key"'));
         console.log(chalk.green('export CODEMIE_MODEL="claude-4-5-sonnet"'));
-        console.log(chalk.dim('# Or for direct Claude usage:'));
-        console.log(chalk.green('export ANTHROPIC_BASE_URL="https://litellm.codemie.example.com"'));
-        console.log(chalk.green('export ANTHROPIC_AUTH_TOKEN="your-litellm-api-key"'));
-        console.log(chalk.green('export ANTHROPIC_MODEL="claude-4-5-sonnet"'));
         break;
 
       case 'bedrock':
         console.log(chalk.green('export AWS_ACCESS_KEY_ID="AKIAIOSFODNN7EXAMPLE"'));
         console.log(chalk.green('export AWS_SECRET_ACCESS_KEY="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"'));
         console.log(chalk.green('export AWS_REGION="us-west-2"'));
-        console.log(chalk.green('export ANTHROPIC_MODEL="us.anthropic.claude-sonnet-4-5-20250929-v1:0"'));
+        console.log(chalk.green('export CODEMIE_MODEL="us.anthropic.claude-sonnet-4-5-20250929-v1:0"'));
         console.log(chalk.green('export CLAUDE_CODE_USE_BEDROCK=1'));
-        break;
-
-      case 'anthropic':
-        console.log(chalk.green('export CODEMIE_BASE_URL="https://api.anthropic.com/v1"'));
-        console.log(chalk.green('export CODEMIE_API_KEY="sk-ant-api03-..."'));
-        console.log(chalk.green('export CODEMIE_MODEL="claude-sonnet-4"'));
         break;
 
       case 'azure':
@@ -244,28 +222,18 @@ export class FirstTimeExperience {
     console.log(chalk.green('cat >> ~/.bashrc << EOF'));
 
     switch (provider) {
-      case 'ai-run':
-        console.log(chalk.green('export CODEMIE_BASE_URL="https://litellm.codemie.example.com"'));
+      case 'litellm':
+        console.log(chalk.green('export CODEMIE_BASE_URL="https://litellm.example.com"'));
         console.log(chalk.green('export CODEMIE_API_KEY="your-litellm-api-key"'));
         console.log(chalk.green('export CODEMIE_MODEL="claude-4-5-sonnet"'));
-        console.log(chalk.dim('# Or for direct Claude usage:'));
-        console.log(chalk.green('export ANTHROPIC_BASE_URL="https://litellm.codemie.example.com"'));
-        console.log(chalk.green('export ANTHROPIC_AUTH_TOKEN="your-litellm-api-key"'));
-        console.log(chalk.green('export ANTHROPIC_MODEL="claude-4-5-sonnet"'));
         break;
 
       case 'bedrock':
         console.log(chalk.green('export AWS_ACCESS_KEY_ID="AKIAIOSFODNN7EXAMPLE"'));
         console.log(chalk.green('export AWS_SECRET_ACCESS_KEY="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"'));
         console.log(chalk.green('export AWS_REGION="us-west-2"'));
-        console.log(chalk.green('export ANTHROPIC_MODEL="us.anthropic.claude-sonnet-4-5-20250929-v1:0"'));
+        console.log(chalk.green('export CODEMIE_MODEL="us.anthropic.claude-sonnet-4-5-20250929-v1:0"'));
         console.log(chalk.green('export CLAUDE_CODE_USE_BEDROCK=1'));
-        break;
-
-      case 'anthropic':
-        console.log(chalk.green('export CODEMIE_BASE_URL="https://api.anthropic.com/v1"'));
-        console.log(chalk.green('export CODEMIE_API_KEY="sk-ant-api03-..."'));
-        console.log(chalk.green('export CODEMIE_MODEL="claude-sonnet-4"'));
         break;
 
       case 'azure':
@@ -282,9 +250,12 @@ export class FirstTimeExperience {
     console.log(chalk.green('# Replace ~/.bashrc with ~/.zshrc in commands above\n'));
 
     console.log(chalk.bold('Verification:\n'));
-    console.log(chalk.white('  $ ') + chalk.green('codemie doctor') + chalk.dim('       # Check configuration and test connection'));
-    console.log(chalk.white('  $ ') + chalk.green('codemie install claude') + chalk.dim('  # Install Claude agent'));
-    console.log(chalk.white('  $ ') + chalk.green('codemie run claude') + chalk.dim('     # Run the AI assistant\n'));
+    console.log(chalk.white('  $ ') + chalk.green('codemie doctor') + chalk.dim('              # Check configuration and test connection'));
+    console.log(chalk.white('  $ ') + chalk.green('codemie-code --task "explore current repository"'));
+    console.log(chalk.dim('     Or start interactive:'));
+    console.log(chalk.white('  $ ') + chalk.green('codemie-code') + chalk.dim('                # Run built-in agent'));
+    console.log(chalk.white('  $ ') + chalk.green('codemie install claude') + chalk.dim('       # Install Claude agent'));
+    console.log(chalk.white('  $ ') + chalk.green('codemie-claude') + chalk.dim('                # Run Claude assistant\n'));
 
     console.log(chalk.dim('Need help? Run: ') + chalk.green('codemie --help\n'));
   }
