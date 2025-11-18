@@ -99,7 +99,9 @@ export interface ToolMetadata {
 export interface AgentEvent {
   /** Event type */
   type: 'thinking_start' | 'thinking_end' | 'content_chunk' |
-        'tool_call_start' | 'tool_call_result' | 'complete' | 'error';
+        'tool_call_start' | 'tool_call_progress' | 'tool_call_result' | 'complete' | 'error' |
+        'todo_update' | 'planning_start' | 'planning_complete' |
+        'planning_progress' | 'planning_tool_call' | 'planning_discovery' | 'planning_phase_change';
 
   /** Content chunk for streaming text */
   content?: string;
@@ -116,8 +118,88 @@ export interface AgentEvent {
   /** Enhanced tool metadata for better UI display */
   toolMetadata?: ToolMetadata;
 
+  /** Tool progress information (when type is 'tool_call_progress') */
+  toolProgress?: {
+    /** Progress percentage (0-100) */
+    percentage: number;
+    /** Current operation description */
+    operation: string;
+    /** Additional details */
+    details?: string;
+    /** Estimated time remaining in ms */
+    estimatedTimeRemaining?: number;
+  };
+
   /** Error message if event type is 'error' */
   error?: string;
+
+  /** Todo update information (when type is 'todo_update') */
+  todoUpdate?: {
+    todos: Todo[];
+    changedIndex?: number;
+    previousState?: Todo[];
+    changeType?: 'create' | 'update' | 'delete' | 'reorder';
+  };
+
+  /** Planning phase information */
+  planningInfo?: {
+    phase: 'starting' | 'in_progress' | 'completed' | 'failed';
+    totalSteps?: number;
+    currentStep?: number;
+    message?: string;
+  };
+
+  /** Planning progress streaming (for planning_progress event) */
+  planningProgress?: {
+    /** Current planning phase */
+    phase: 'context_gathering' | 'task_analysis' | 'plan_generation' | 'plan_validation';
+    /** Descriptive message for current activity */
+    message: string;
+    /** Progress within current phase (0-100) */
+    phaseProgress?: number;
+    /** Overall planning progress (0-100) */
+    overallProgress?: number;
+    /** Additional details for UI display */
+    details?: string;
+  };
+
+  /** Planning tool call information (for planning_tool_call event) */
+  planningToolCall?: {
+    /** Tool being called during planning */
+    toolName: string;
+    /** Tool arguments */
+    args?: Record<string, any>;
+    /** Current step within planning phase */
+    step: number;
+    /** Total steps in current phase */
+    totalSteps: number;
+    /** Purpose of this tool call */
+    purpose: string;
+  };
+
+  /** Planning discovery information (for planning_discovery event) */
+  planningDiscovery?: {
+    /** Type of discovery */
+    type: 'project_structure' | 'file_analysis' | 'dependency_analysis' | 'feature_detection';
+    /** Discovery summary */
+    summary: string;
+    /** Discovered data */
+    data?: Record<string, any>;
+    /** Impact on planning */
+    impact?: string;
+  };
+
+  /** Planning phase change information (for planning_phase_change event) */
+  planningPhaseChange?: {
+    /** Previous phase */
+    fromPhase: string;
+    /** New phase */
+    toPhase: string;
+    /** Phase transition message */
+    message: string;
+    /** Summary of previous phase results */
+    previousPhaseResults?: Record<string, any>;
+  };
 }
 
 /**
@@ -337,6 +419,128 @@ export class ConfigurationError extends CodeMieAgentError {
     super(message, 'CONFIGURATION_ERROR', details);
     this.name = 'ConfigurationError';
   }
+}
+
+/**
+ * Todo item for structured planning and progress tracking
+ */
+export interface Todo {
+  /** The content/description of the todo item */
+  content: string;
+
+  /** Current status of the todo */
+  status: 'pending' | 'in_progress' | 'completed';
+
+  /** Optional index for ordering and reference */
+  index?: number;
+
+  /** Timestamp when todo was created */
+  timestamp?: Date;
+
+  /** Timestamp when todo was last updated */
+  lastUpdated?: Date;
+
+  /** Optional additional metadata */
+  metadata?: Record<string, any>;
+}
+
+/**
+ * Agent state for persistent storage across interactions
+ * Inspired by LangChain-Code's Deep Agent state management
+ */
+export interface CodeMieAgentState {
+  /** Structured todos for planning and progress tracking */
+  todos: Todo[];
+
+  /** Virtual files for staging edits before writing to disk */
+  files: Record<string, string>;
+
+  /** Current step being executed (0-based index) */
+  currentStep?: number;
+
+  /** Whether initial planning phase is complete */
+  planningComplete?: boolean;
+
+  /** Planning mode configuration */
+  planMode?: {
+    enabled: boolean;
+    requirePlanning: boolean;
+    maxTodos: number;
+    enforceSequential: boolean;
+  };
+
+  /** Session metadata */
+  sessionMetadata?: {
+    sessionId: string;
+    startTime: Date;
+    lastActivity: Date;
+  };
+}
+
+/**
+ * Todo update event for streaming interfaces
+ */
+export interface TodoUpdateEvent {
+  /** Event type */
+  type: 'todo_update';
+
+  /** Current todo list */
+  todos: Todo[];
+
+  /** Index of changed todo (if specific update) */
+  changedIndex?: number;
+
+  /** Previous state for diff calculations */
+  previousState?: Todo[];
+
+  /** Type of change that occurred */
+  changeType?: 'create' | 'update' | 'delete' | 'reorder';
+
+  /** Timestamp of the update */
+  timestamp: Date;
+}
+
+/**
+ * Todo parsing result with validation information
+ */
+export interface TodoParseResult {
+  /** Successfully parsed todos */
+  todos: Todo[];
+
+  /** Parse errors encountered */
+  errors: string[];
+
+  /** Warnings about format or content */
+  warnings: string[];
+
+  /** Input format detected */
+  detectedFormat: 'string_bullets' | 'github_checkboxes' | 'object_array' | 'string_array' | 'mixed';
+}
+
+/**
+ * Progress tracking information
+ */
+export interface ProgressInfo {
+  /** Total number of todos */
+  total: number;
+
+  /** Number of completed todos */
+  completed: number;
+
+  /** Number of pending todos */
+  pending: number;
+
+  /** Number of in-progress todos (should be 0 or 1) */
+  inProgress: number;
+
+  /** Progress percentage (0-100) */
+  percentage: number;
+
+  /** Current active todo (if any) */
+  currentTodo?: Todo;
+
+  /** Estimated completion based on current pace */
+  estimatedCompletion?: Date;
 }
 
 /**

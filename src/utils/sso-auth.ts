@@ -93,11 +93,12 @@ export class CodeMieSSO {
           this.callbackResult = result;
 
           // Send success page
-          res.writeHead(200, { 'Content-Type': 'text/html' });
+          res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
           res.end(`
             <!DOCTYPE html>
             <html>
               <head>
+                <meta charset="UTF-8">
                 <title>CodeMie Authentication</title>
                 <style>
                   body { font-family: Arial, sans-serif; text-align: center; padding: 50px; }
@@ -118,11 +119,14 @@ export class CodeMieSSO {
           this.server!.close();
         }).catch(error => {
           this.callbackResult = { success: false, error: error.message };
-          res.writeHead(500, { 'Content-Type': 'text/html' });
+          res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' });
           res.end(`
             <!DOCTYPE html>
             <html>
-              <head><title>CodeMie Authentication Error</title></head>
+              <head>
+                <meta charset="UTF-8">
+                <title>CodeMie Authentication Error</title>
+              </head>
               <body>
                 <h2>❌ Authentication Failed</h2>
                 <p>Error: ${error.message}</p>

@@ -43,11 +43,83 @@ class ReadFileTool extends StructuredTool {
         throw new Error('Access denied: Path is outside working directory');
       }
 
-      const content = await fs.readFile(resolvedPath, 'utf-8');
-      return `File: ${filePath}\n\n${content}`;
+      // Emit progress: starting file read
+      emitToolProgress(this.name, {
+        percentage: 10,
+        operation: `Reading ${path.basename(filePath)}...`,
+        details: `Opening file: ${filePath}`
+      });
+
+      // Check file stats for progress estimation
+      const stats = await fs.stat(resolvedPath);
+      const fileSize = stats.size;
+
+      // Emit progress: file opened
+      emitToolProgress(this.name, {
+        percentage: 30,
+        operation: `Reading ${path.basename(filePath)}...`,
+        details: `File size: ${this.formatFileSize(fileSize)}`
+      });
+
+      // For large files, simulate progress by reading in chunks
+      if (fileSize > 50000) { // 50KB threshold for showing progress
+        let content = '';
+        const chunkSize = 8192; // 8KB chunks
+        const totalChunks = Math.ceil(fileSize / chunkSize);
+
+        const fileHandle = await fs.open(resolvedPath, 'r');
+        const buffer = Buffer.alloc(chunkSize);
+
+        try {
+          for (let i = 0; i < totalChunks; i++) {
+            const { bytesRead } = await fileHandle.read(buffer, 0, chunkSize, i * chunkSize);
+            content += buffer.subarray(0, bytesRead).toString('utf-8');
+
+            const progress = Math.min(30 + Math.round((i + 1) / totalChunks * 60), 90);
+            emitToolProgress(this.name, {
+              percentage: progress,
+              operation: `Reading ${path.basename(filePath)}...`,
+              details: `${Math.round((i + 1) / totalChunks * 100)}% complete`
+            });
+
+            // Small delay for large files to show progress
+            if (i % 10 === 0) {
+              await new Promise(resolve => setTimeout(resolve, 1));
+            }
+          }
+        } finally {
+          await fileHandle.close();
+        }
+
+        // Final progress
+        emitToolProgress(this.name, {
+            percentage: 100,
+            operation: `Completed reading ${path.basename(filePath)}`,
+            details: `Read ${this.formatFileSize(fileSize)}`
+          });
+
+        return `File: ${filePath}\n\n${content}`;
+      } else {
+        // For small files, read normally but still show progress
+        const content = await fs.readFile(resolvedPath, 'utf-8');
+
+        emitToolProgress(this.name, {
+            percentage: 100,
+            operation: `Completed reading ${path.basename(filePath)}`,
+            details: `Read ${this.formatFileSize(fileSize)}`
+          });
+
+        return `File: ${filePath}\n\n${content}`;
+      }
     } catch (error) {
       return `Error reading file: ${error instanceof Error ? error.message : String(error)}`;
     }
+  }
+
+  private formatFileSize(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 }
 
@@ -118,20 +190,89 @@ class ExecuteCommandTool extends StructuredTool {
         return `Error: Command rejected for security reasons: ${command}`;
       }
 
-      const { stdout, stderr } = await execAsync(command, {
-        cwd: this.workingDirectory,
-        timeout: 30000, // 30 second timeout
-        maxBuffer: 1024 * 1024 // 1MB output limit
-      });
+      // Emit progress: command starting
+      emitToolProgress(this.name, {
+          percentage: 10,
+          operation: `Executing command...`,
+          details: command.length > 50 ? `${command.substring(0, 47)}...` : command
+        });
 
-      let result = '';
-      if (stdout) result += `STDOUT:\n${stdout}\n`;
-      if (stderr) result += `STDERR:\n${stderr}\n`;
+      // Start timer for progress estimation
+      const startTime = Date.now();
+      let progressInterval: NodeJS.Timeout | undefined;
 
-      return result || 'Command executed successfully (no output)';
+      // For long-running commands, simulate progress
+      const estimatedTime = this.estimateCommandTime(command);
+      if (estimatedTime > 2000) { // Only show progress for commands estimated > 2s
+        progressInterval = setInterval(() => {
+          const elapsed = Date.now() - startTime;
+          const progress = Math.min(10 + Math.round((elapsed / estimatedTime) * 80), 90);
+
+          emitToolProgress(this.name, {
+            percentage: progress,
+            operation: `Executing command...`,
+            details: `Running for ${Math.round(elapsed / 1000)}s`,
+            estimatedTimeRemaining: Math.max(0, estimatedTime - elapsed)
+          });
+        }, 1000);
+      }
+
+      try {
+        const { stdout, stderr } = await execAsync(command, {
+          cwd: this.workingDirectory,
+          timeout: 30000, // 30 second timeout
+          maxBuffer: 1024 * 1024 // 1MB output limit
+        });
+
+        // Clear interval and emit completion
+        if (progressInterval) {
+          clearInterval(progressInterval);
+        }
+
+        const executionTime = Date.now() - startTime;
+        emitToolProgress(this.name, {
+            percentage: 100,
+            operation: `Command completed`,
+            details: `Finished in ${executionTime}ms`
+          });
+
+        let result = '';
+        if (stdout) result += `STDOUT:\n${stdout}\n`;
+        if (stderr) result += `STDERR:\n${stderr}\n`;
+
+        return result || 'Command executed successfully (no output)';
+      } catch (error) {
+        if (progressInterval) {
+          clearInterval(progressInterval);
+        }
+        throw error;
+      }
     } catch (error) {
       return `Error executing command: ${error instanceof Error ? error.message : String(error)}`;
     }
+  }
+
+  private estimateCommandTime(command: string): number {
+    // Simple heuristics for command execution time estimation
+    const lowerCommand = command.toLowerCase();
+
+    if (lowerCommand.includes('npm install') || lowerCommand.includes('yarn install')) {
+      return 15000; // 15s for package installs
+    }
+    if (lowerCommand.includes('npm run build') || lowerCommand.includes('yarn build')) {
+      return 10000; // 10s for builds
+    }
+    if (lowerCommand.includes('git clone') || lowerCommand.includes('git pull')) {
+      return 8000; // 8s for git operations
+    }
+    if (lowerCommand.includes('find') || lowerCommand.includes('grep -r')) {
+      return 5000; // 5s for search operations
+    }
+    if (lowerCommand.includes('tar') || lowerCommand.includes('zip') || lowerCommand.includes('unzip')) {
+      return 6000; // 6s for compression operations
+    }
+
+    return 2000; // Default 2s
   }
 }
 
@@ -242,6 +383,50 @@ class ListDirectoryTool extends StructuredTool {
 }
 
 /**
+ * Tool event callback type for progress reporting
+ */
+export type ToolEventCallback = (event: {
+  type: 'tool_call_progress';
+  toolName: string;
+  progress: {
+    percentage: number;
+    operation: string;
+    details?: string;
+    estimatedTimeRemaining?: number;
+  };
+}) => void;
+
+/**
+ * Global tool event emitter - set during chatStream
+ */
+let globalToolEventCallback: ToolEventCallback | null = null;
+
+/**
+ * Set the global tool event callback for the current execution
+ */
+export function setGlobalToolEventCallback(callback: ToolEventCallback | null): void {
+  globalToolEventCallback = callback;
+}
+
+/**
+ * Emit a tool progress event using the global callback
+ */
+export function emitToolProgress(toolName: string, progress: {
+  percentage: number;
+  operation: string;
+  details?: string;
+  estimatedTimeRemaining?: number;
+}): void {
+  if (globalToolEventCallback) {
+    globalToolEventCallback({
+      type: 'tool_call_progress',
+      toolName,
+      progress
+    });
+  }
+}
+
+/**
  * Create system tools available to the CodeMie agent
  */
 export async function createSystemTools(config: CodeMieConfig): Promise<StructuredTool[]> {
@@ -256,8 +441,27 @@ export async function createSystemTools(config: CodeMieConfig): Promise<Structur
     // Command execution tool
     tools.push(new ExecuteCommandTool(config.workingDirectory));
 
+    // Planning and todo tools
+    try {
+      const { planningTools, initializeTodoStorage } = await import('./planning.js');
+
+      // Initialize todo storage for this working directory
+      initializeTodoStorage(config.workingDirectory, config.debug);
+
+      tools.push(...planningTools);
+
+      if (config.debug) {
+        console.log(`[DEBUG] Added ${planningTools.length} planning tools`);
+        console.log(`[DEBUG] Initialized todo storage for: ${config.workingDirectory}`);
+      }
+    } catch (error) {
+      if (config.debug) {
+        console.warn('[DEBUG] Planning tools not available:', error);
+      }
+    }
+
     if (config.debug) {
-      console.log(`[DEBUG] Created ${tools.length} system tools`);
+      console.log(`[DEBUG] Created ${tools.length} total system tools`);
     }
 
     return tools;
@@ -279,6 +483,11 @@ export function getToolSummary(): Array<{ name: string; description: string }> {
     { name: 'read_file', description: 'Read the contents of a file from the filesystem' },
     { name: 'write_file', description: 'Write content to a file in the filesystem' },
     { name: 'list_directory', description: 'List files and directories in a given path, automatically filtering out common ignore patterns (node_modules, .git, build artifacts, etc.)' },
-    { name: 'execute_command', description: 'Execute a shell command in the working directory' }
+    { name: 'execute_command', description: 'Execute a shell command in the working directory' },
+    { name: 'write_todos', description: 'Create or update a structured todo list for planning and progress tracking' },
+    { name: 'update_todo_status', description: 'Update the status of a specific todo by index' },
+    { name: 'append_todo', description: 'Add a new todo item to the existing list' },
+    { name: 'clear_todos', description: 'Clear all todos from the list' },
+    { name: 'show_todos', description: 'Display the current todo list with progress information' }
   ];
 }

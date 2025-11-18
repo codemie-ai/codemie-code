@@ -12,6 +12,7 @@ import { Command } from 'commander';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { getDirname } from '../dist/utils/dirname.js';
+import chalk from 'chalk';
 
 const program = new Command();
 
@@ -32,6 +33,8 @@ program
   .version(version)
   .option('--task <task>', 'Execute a single task and exit')
   .option('--debug', 'Enable debug logging')
+  .option('--plan', 'Enable structured planning mode with visual todo tracking')
+  .option('--plan-only', 'Generate plan without execution (planning phase only)')
   .argument('[message...]', 'Initial message or conversation starter')
   .action(async (message, options) => {
     try {
@@ -49,20 +52,57 @@ program
 
       if (options.task) {
         // Single task execution with modern UI
-        const result = await codeMie.executeTaskWithUI(options.task);
+        const planOptions = {
+          planMode: options.plan || options.planOnly,
+          planOnly: options.planOnly
+        };
+        const result = await codeMie.executeTaskWithUI(options.task, planOptions);
         console.log(result);
       } else if (message.length > 0) {
         // Execute initial message then continue interactively
         const initialMessage = message.join(' ');
         console.log(`> ${initialMessage}`);
-        await codeMie.executeTaskWithUI(initialMessage);
+
+        const planOptions = {
+          planMode: options.plan || options.planOnly,
+          planOnly: options.planOnly
+        };
+        await codeMie.executeTaskWithUI(initialMessage, planOptions);
         console.log(''); // Add spacing
 
-        // Start interactive session
-        await codeMie.startInteractive();
+        // Start interactive session (with plan mode if enabled)
+        if (options.plan && !options.planOnly) {
+          // Enable plan mode for interactive session
+          const agent = codeMie.getAgent();
+          if (agent) {
+            const { CodeMieTerminalUI } = await import('../dist/agents/codemie-code/ui.js');
+            const ui = new CodeMieTerminalUI(agent);
+            ui.enablePlanMode();
+            await ui.startInteractive();
+            ui.dispose();
+          } else {
+            await codeMie.startInteractive();
+          }
+        } else if (!options.planOnly) {
+          await codeMie.startInteractive();
+        }
       } else {
         // Pure interactive mode
-        await codeMie.startInteractive();
+        if (options.plan) {
+          // Enable plan mode for interactive session (no extra console message)
+          const agent = codeMie.getAgent();
+          if (agent) {
+            const { CodeMieTerminalUI } = await import('../dist/agents/codemie-code/ui.js');
+            const ui = new CodeMieTerminalUI(agent);
+            ui.enablePlanMode();
+            await ui.startInteractive();
+            ui.dispose();
+          } else {
+            await codeMie.startInteractive();
+          }
+        } else {
+          await codeMie.startInteractive();
+        }
       }
     } catch (error) {
       logger.error('Failed to run CodeMie Native:', error);

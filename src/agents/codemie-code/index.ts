@@ -148,7 +148,7 @@ export class CodeMieCode {
   /**
    * Execute a single task with modern UI feedback (for CLI usage)
    */
-  async executeTaskWithUI(task: string): Promise<string> {
+  async executeTaskWithUI(task: string, options?: { planMode?: boolean; planOnly?: boolean }): Promise<string> {
     if (!this.agent) {
       throw new CodeMieAgentError(
         'Agent not initialized. Call initialize() first.',
@@ -161,6 +161,11 @@ export class CodeMieCode {
     const ui = new CodeMieTerminalUI(this.agent);
 
     try {
+      // Enable plan mode if requested
+      if (options?.planMode || options?.planOnly) {
+        ui.enablePlanMode();
+      }
+
       // Check for clipboard image
       let clipboardImage;
       if (await hasClipboardImage()) {
@@ -168,8 +173,19 @@ export class CodeMieCode {
       }
 
       ui.showTaskWelcome(task);
-      const result = await ui.executeSingleTask(task, clipboardImage ? [clipboardImage] : []);
-      ui.showTaskComplete();
+
+      let result: string;
+      if (options?.planMode) {
+        // Use UI-connected planning execution instead of direct planning
+        result = await ui.executePlanningTask(task, clipboardImage ? [clipboardImage] : [], options.planOnly);
+      } else {
+        result = await ui.executeSingleTask(task, clipboardImage ? [clipboardImage] : []);
+      }
+
+      // Only show task complete if not plan-only mode
+      if (!options?.planOnly) {
+        ui.showTaskComplete();
+      }
       return result;
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -177,6 +193,69 @@ export class CodeMieCode {
       throw error;
     } finally {
       ui.dispose();
+    }
+  }
+
+  /**
+   * Execute a task with structured planning mode
+   */
+  async executeTaskWithPlanning(task: string, _images: any[] = [], planOnly = false): Promise<string> {
+    if (!this.agent) {
+      throw new CodeMieAgentError(
+        'Agent not initialized. Call initialize() first.',
+        'NOT_INITIALIZED'
+      );
+    }
+
+    try {
+      const { PlanMode } = await import('./modes/planMode.js');
+      const planMode = new PlanMode(this.agent, {
+        requirePlanning: true,
+        enforceSequential: true,
+        showPlanningFeedback: true
+      });
+
+      if (planOnly) {
+        // Only generate plan, don't execute
+        const planningResult = await (planMode as any).planningPhase(task);
+
+        if (!planningResult.success) {
+          throw new Error(`Planning failed: ${planningResult.error}`);
+        }
+
+        return `📋 Plan generated successfully with ${planningResult.todos.length} steps:\n\n` +
+               planningResult.todos.map((todo: any, i: number) =>
+                 `${i + 1}. ${todo.content}`
+               ).join('\n') +
+               `\n\nQuality Score: ${planningResult.qualityScore}/100\n` +
+               (planningResult.suggestions.length > 0 ?
+                 `\nSuggestions:\n${planningResult.suggestions.map((s: string) => `• ${s}`).join('\n')}` : '') +
+               `\n\n🎯 **Plan-only mode**: Plan created. Use --plan flag (without --plan-only) to execute this plan.`;
+      }
+
+      // Full planning + execution
+      return await planMode.executePlannedTask(task, (event) => {
+        // Handle todo updates and planning events
+        // Note: planning_start and other UI events are handled by the UI system
+        if (event.type === 'planning_complete') {
+          console.log(`📋 Plan created with ${event.planningInfo?.totalSteps || 0} steps`);
+        } else if (event.type === 'todo_update') {
+          // Todo updates are handled by the UI system
+        }
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+
+      if (this.config.debug) {
+        console.error('[DEBUG] Plan mode execution failed:', error);
+      }
+
+      throw new CodeMieAgentError(
+        `Plan mode execution failed: ${errorMessage}`,
+        'PLAN_MODE_ERROR',
+        { task, originalError: error }
+      );
     }
   }
 
@@ -224,6 +303,13 @@ export class CodeMieCode {
    */
   getConfig(): CodeMieConfig | null {
     return this.agent?.getConfig() || null;
+  }
+
+  /**
+   * Get the underlying agent instance (for advanced usage)
+   */
+  getAgent(): CodeMieAgent | null {
+    return this.agent;
   }
 
   /**

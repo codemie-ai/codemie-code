@@ -1,10 +1,13 @@
 import { intro, outro, text, spinner, note, isCancel } from '@clack/prompts';
 import chalk from 'chalk';
 import { CodeMieAgent } from './agent.js';
-import { ExecutionStep } from './types.js';
+import { ExecutionStep, TodoUpdateEvent } from './types.js';
 import { formatToolMetadata } from './toolMetadata.js';
 import { formatCost, formatTokens, formatTokenUsageSummary } from './tokenUtils.js';
 import { hasClipboardImage, getClipboardImage, type ClipboardImage } from '../../utils/clipboard.js';
+import { TodoPanel } from './ui/todoPanel.js';
+import { ProgressTracker, getProgressTracker } from './ui/progressTracker.js';
+import { TodoStateManager } from './tools/planning.js';
 
 /**
  * Terminal UI interface for CodeMie Agent using Clack
@@ -12,9 +15,25 @@ import { hasClipboardImage, getClipboardImage, type ClipboardImage } from '../..
 export class CodeMieTerminalUI {
   private agent: CodeMieAgent;
   private currentSpinner?: any;
+  private todoPanel: TodoPanel;
+  private progressTracker: ProgressTracker;
+  private planMode = false;
+  private activePlanningPhase: string | null = null;
 
   constructor(agent: CodeMieAgent) {
     this.agent = agent;
+    this.todoPanel = new TodoPanel({
+      showProgress: true,
+      compact: false
+    });
+    this.progressTracker = getProgressTracker({
+      realTimeUpdates: true,
+      showCelebrations: true,
+      compact: true
+    });
+
+    // Register for todo update events
+    TodoStateManager.addEventCallback(this.handleTodoUpdate.bind(this));
   }
 
   /**
@@ -28,17 +47,18 @@ export class CodeMieTerminalUI {
     if (config) {
       // Use displayProvider for user-facing output, or fall back to normalized provider
       const displayProvider = config.displayProvider || config.provider;
-      note(
-        `Provider: ${chalk.yellow(displayProvider)}\n` +
-        `Model: ${chalk.cyan(config.model)}\n` +
-        `Working Directory: ${chalk.dim(config.workingDirectory)}`,
-        'Configuration'
-      );
+      console.log(chalk.cyan('◇  Configuration'));
+      console.log(`   Provider: ${chalk.yellow(displayProvider)}`);
+      console.log(`   Model: ${chalk.cyan(config.model)}`);
+      console.log(`   Working Directory: ${chalk.dim(config.workingDirectory)}`);
+      console.log(`   Mode: ${this.planMode ? chalk.green('Plan Mode') : chalk.yellow('Direct Mode')}`);
+      console.log('');
     }
 
     console.log(chalk.dim('Type /help for commands, /exit to quit'));
     console.log(chalk.dim('Enter = send, Shift+Enter = new line, Cmd+V = paste text'));
-    console.log(chalk.dim('📸 Tab = insert clipboard image • Multiple images supported\n'));
+    console.log(chalk.dim('📸 Tab = insert clipboard image • Multiple images supported'));
+    console.log(chalk.dim('💡 Press Ctrl+H for hotkeys, Ctrl+P to toggle plan mode\n'));
 
     // Main interaction loop
     while (true) {
@@ -60,8 +80,8 @@ export class CodeMieTerminalUI {
 
       if (trimmed === '') continue;
 
-      // Execute the task with streaming UI
-      await this.executeTaskWithUI(trimmed, input.images);
+      // Execute the task with streaming UI (respecting current mode)
+      await this.executeTaskWithCurrentMode(trimmed, input.images);
     }
   }
 
@@ -155,7 +175,50 @@ export class CodeMieTerminalUI {
           return;
         }
 
-        // Ctrl+I - Insert image from clipboard
+        // Hotkeys for mode switching
+        // Ctrl+P - Toggle plan mode
+        if (data === '\u0010') {
+          this.handleHotkey('toggle-plan-mode');
+          // Mode change notification is handled in showModeChangeNotification()
+          writePrompt();
+          process.stdout.write(currentLine);
+          return;
+        }
+
+        // Ctrl+H - Show hotkey help
+        if (data === '\u0008') {
+          this.showHotkeyHelp();
+          writePrompt();
+          process.stdout.write(currentLine);
+          return;
+        }
+
+        // Ctrl+T - Show current todos
+        if (data === '\u0014') {
+          this.handleHotkey('show-todos');
+          writePrompt();
+          process.stdout.write(currentLine);
+          return;
+        }
+
+        // Ctrl+S - Show current mode status (changed from Ctrl+M to avoid Enter conflict)
+        if (data === '\u0013') {
+          this.showModeStatus();
+          writePrompt();
+          process.stdout.write(currentLine);
+          return;
+        }
+
+        // Alt+M - Show mode status (Alt key sequences start with \x1b)
+        if (data === 'm' && escapeSequence.includes('\x1b')) {
+          this.showModeStatus();
+          writePrompt();
+          process.stdout.write(currentLine);
+          escapeSequence = '';
+          return;
+        }
+
+        // Ctrl+I - Insert image from clipboard (Tab key)
         if (data === '\u0009') {
           // Check if there's an image in clipboard
           hasClipboardImage().then(hasImage => {
@@ -166,7 +229,7 @@ export class CodeMieTerminalUI {
                   images.push(clipboardImage);
 
                   // Insert visual indicator in current line
-                  const imageIndicator = chalk.blue(`[Image #${imageCounter}]`);
+                  const imageIndicator = chalk.blueBright(`[Image #${imageCounter}]`);
                   currentLine += imageIndicator;
                   process.stdout.write(imageIndicator);
 
@@ -181,7 +244,7 @@ export class CodeMieTerminalUI {
               process.stdout.write(currentLine);
             }
           }).catch(() => {
-            console.log(chalk.red('\n❌ Error accessing clipboard'));
+            console.log(chalk.rgb(255, 120, 120)('\n❌ Error accessing clipboard'));
             writePrompt();
             process.stdout.write(currentLine);
           });
@@ -252,9 +315,15 @@ export class CodeMieTerminalUI {
           `${chalk.cyan('/help')} - Show this help message\n` +
           `${chalk.cyan('/clear')} - Clear conversation history\n` +
           `${chalk.cyan('/stats')} - Show agent statistics\n` +
+          `${chalk.cyan('/todos')} - Show current todo list and progress\n` +
           `${chalk.cyan('/config')} - Show configuration\n` +
           `${chalk.cyan('/health')} - Run health check\n` +
           `${chalk.cyan('/exit')} - Exit the agent\n\n` +
+          `${chalk.yellow('Hotkeys:')}\n` +
+          `- ${chalk.cyan('Ctrl+P')} - Toggle plan mode on/off\n` +
+          `- ${chalk.cyan('Ctrl+H')} - Show detailed hotkey help\n` +
+          `- ${chalk.cyan('Ctrl+T')} - Show current todo list\n` +
+          `- ${chalk.cyan('Ctrl+S')} - Show current mode status\n\n` +
           `${chalk.yellow('Input Controls:')}\n` +
           `- ${chalk.cyan('Enter')} - Send message\n` +
           `- ${chalk.cyan('Shift+Enter')} - New line (multiline input)\n` +
@@ -263,7 +332,7 @@ export class CodeMieTerminalUI {
           `- ${chalk.cyan('Ctrl+C')} - Cancel current input\n\n` +
           `${chalk.yellow('Image Support:')}\n` +
           `- Copy image/screenshot to clipboard\n` +
-          `- Press ${chalk.cyan('Tab')} to insert as ${chalk.blue('[Image #N]')}\n` +
+          `- Press ${chalk.cyan('Tab')} to insert as ${chalk.blueBright('[Image #N]')}\n` +
           `- Multiple images supported per message\n` +
           `- AI analyzes both text and all images`,
           'Available Commands'
@@ -279,6 +348,10 @@ export class CodeMieTerminalUI {
         await this.showStats();
         break;
 
+      case 'todos':
+        await this.showTodos();
+        break;
+
       case 'config':
         await this.showConfig();
         break;
@@ -292,7 +365,7 @@ export class CodeMieTerminalUI {
         return 'exit';
 
       default:
-        note(chalk.red(`Unknown command: ${command}\nType /help for available commands`), 'Error');
+        note(chalk.rgb(255, 120, 120)(`Unknown command: ${command}\nType /help for available commands`), 'Error');
         break;
     }
   }
@@ -342,6 +415,20 @@ export class CodeMieTerminalUI {
               this.currentSpinner = spinner();
             }
             this.currentSpinner.start(chalk.yellow(`Using ${event.toolName}...`));
+            break;
+
+          case 'tool_call_progress':
+            if (this.currentSpinner && event.toolProgress) {
+              const { percentage, operation, details } = event.toolProgress;
+              const progressBar = this.createToolProgressBar(percentage);
+              let message = `${operation} ${Math.round(percentage)}% ${progressBar}`;
+
+              if (details) {
+                message += ` (${details})`;
+              }
+
+              this.currentSpinner.message(chalk.cyan(message));
+            }
             break;
 
           case 'tool_call_result':
@@ -536,6 +623,20 @@ export class CodeMieTerminalUI {
             taskSpinner.message(chalk.yellow(`Using ${event.toolName}...`));
             break;
 
+          case 'tool_call_progress':
+            if (event.toolProgress) {
+              const { percentage, operation, details } = event.toolProgress;
+              const progressBar = this.createToolProgressBar(percentage);
+              let message = `${operation} ${Math.round(percentage)}% ${progressBar}`;
+
+              if (details) {
+                message += ` (${details})`;
+              }
+
+              taskSpinner.message(chalk.cyan(message));
+            }
+            break;
+
           case 'tool_call_result':
             // Show enhanced tool info in single task mode too
             if (event.toolMetadata) {
@@ -584,25 +685,121 @@ export class CodeMieTerminalUI {
   }
 
   /**
-   * Show a welcome message for single task execution
+   * Execute a task with planning mode and UI streaming (for plan mode)
    */
-  showTaskWelcome(task: string): void {
-    intro(chalk.cyan('🤖 CodeMie Native Agent'));
-    note(chalk.dim(`Task: ${task}`), 'Executing');
-  }
+  async executePlanningTask(task: string, _images: any[] = [], planOnly = false): Promise<string> {
+    const planSpinner = spinner();
+    this.currentSpinner = planSpinner; // Store reference to stop when progress starts
+    planSpinner.start(chalk.blueBright('📋 Starting planning phase...'));
 
-  /**
-   * Show task completion message
-   */
-  showTaskComplete(): void {
-    outro(chalk.green('Task completed successfully'));
-  }
+    try {
+      // Import PlanMode
+      const { PlanMode } = await import('./modes/planMode.js');
+      const planMode = new PlanMode(this.agent, {
+        requirePlanning: true,
+        enforceSequential: true,
+        showPlanningFeedback: true
+      });
 
-  /**
-   * Show error message
-   */
-  showError(error: string): void {
-    outro(chalk.red(`Error: ${error}`));
+      // Create a UI-connected event callback that handles both planning and streaming events
+      const uiEventCallback = (event: any) => {
+        // Handle planning-specific events
+        this.handleStreamingEvent(event);
+
+        // Handle regular streaming events too
+        switch (event.type) {
+          case 'thinking_start':
+            planSpinner.message(chalk.dim('Thinking...'));
+            break;
+
+          case 'content_chunk':
+            // For planning phase, we might not want to show content chunks immediately
+            break;
+
+          case 'tool_call_start':
+            planSpinner.message(chalk.yellow(`Using ${event.toolName}...`));
+            break;
+
+          case 'tool_call_progress':
+            if (event.toolProgress) {
+              const { percentage, operation, details } = event.toolProgress;
+              const progressBar = this.createToolProgressBar(percentage);
+              let message = `${operation} ${Math.round(percentage)}% ${progressBar}`;
+
+              if (details) {
+                message += ` (${details})`;
+              }
+
+              planSpinner.message(chalk.cyan(message));
+            }
+            break;
+
+          case 'tool_call_result':
+            if (event.toolMetadata) {
+              const message = formatToolMetadata(event.toolName || 'tool', event.toolMetadata);
+              planSpinner.message(chalk.green(message));
+            } else {
+              planSpinner.message(chalk.dim('Processing...'));
+            }
+            break;
+
+          case 'complete':
+            planSpinner.stop();
+            break;
+
+          case 'error':
+            planSpinner.stop(chalk.red(`Error: ${event.error}`));
+            break;
+        }
+      };
+
+      if (planOnly) {
+        // Only generate plan, don't execute
+        const planningResult = await (planMode as any).planningPhase(task, uiEventCallback);
+
+        planSpinner.stop();
+
+        if (!planningResult.success) {
+          throw new Error(`Planning failed: ${planningResult.error}`);
+        }
+
+        return `📋 Plan generated successfully with ${planningResult.todos.length} steps:\n\n` +
+               planningResult.todos.map((todo: any, i: number) =>
+                 `${i + 1}. ${todo.content}`
+               ).join('\n') +
+               `\n\nQuality Score: ${planningResult.qualityScore}/100\n` +
+               (planningResult.suggestions.length > 0 ?
+                 `\nSuggestions:\n${planningResult.suggestions.map((s: string) => `• ${s}`).join('\n')}` : '') +
+               `\n\n🎯 **Plan-only mode**: Plan created. Use --plan flag (without --plan-only) to execute this plan.`;
+      }
+
+      // Full planning + execution
+      const result = await planMode.executePlannedTask(task, uiEventCallback);
+
+      planSpinner.stop();
+
+      // Show success message with token usage
+      const stats = this.agent.getStats();
+      const summaryParts: string[] = [];
+
+      if (stats.totalTokens > 0) {
+        summaryParts.push(`${formatTokens(stats.totalTokens)} tokens`);
+      }
+
+      if (stats.estimatedTotalCost > 0) {
+        summaryParts.push(`${formatCost(stats.estimatedTotalCost)}`);
+      }
+
+      if (summaryParts.length > 0) {
+        console.log(chalk.dim(`${summaryParts.join(' • ')}\n`));
+      }
+
+      return result;
+
+    } catch (error) {
+      planSpinner.stop(chalk.red('Planning failed'));
+      throw error;
+    }
   }
 
   /**
@@ -724,6 +921,642 @@ export class CodeMieTerminalUI {
   }
 
   /**
+   * Handle todo update events
+   */
+  private handleTodoUpdate(event: TodoUpdateEvent): void {
+    // Update internal state
+    this.todoPanel.update(event.todos);
+
+    // Only show progress tracker updates when NOT in active planning phase
+    // This prevents duplicate progress displays during context-aware planning
+    if (!this.activePlanningPhase) {
+      this.progressTracker.updateTodos(event.todos, event);
+
+      // Show visual feedback based on change type
+      if (event.changeType === 'create' && event.todos.length > 0) {
+        this.progressTracker.showPlanningComplete(event.todos.length);
+      }
+    } else {
+      // During planning phase, update internal state but suppress visual feedback
+      this.progressTracker.updateTodos(event.todos, event, true);
+    }
+  }
+
+  /**
+   * Enable plan mode for structured planning
+   */
+  enablePlanMode(): void {
+    this.planMode = true;
+    // Remove redundant messages - UI will show plan mode status in the configuration display
+  }
+
+  /**
+   * Disable plan mode
+   */
+  disablePlanMode(): void {
+    this.planMode = false;
+    this.progressTracker.stop();
+  }
+
+  /**
+   * Show current todo status
+   */
+  private async showTodos(): Promise<void> {
+    const _todos = this.todoPanel.getTodos();
+
+    if (_todos.length === 0) {
+      note('No todos found. Use a planning task to create todos automatically.', '📋 Todo Status');
+      return;
+    }
+
+    const todoDisplay = this.todoPanel.render();
+    note(todoDisplay, '📋 Current Todo List');
+  }
+
+  /**
+   * Show planning phase welcome
+   */
+  showPlanningWelcome(): void {
+    if (this.planMode) {
+      console.log(chalk.cyan('💡 Plan mode features: structured planning, progress tracking, sequential execution'));
+      console.log('');
+    }
+  }
+
+  /**
+   * Show task welcome with planning context
+   */
+  showTaskWelcome(task: string): void {
+    intro(chalk.cyan('🤖 CodeMie Native Agent'));
+
+    if (this.planMode) {
+      console.log(chalk.cyan('◇  Task Execution'));
+      console.log(`   Task: ${chalk.yellow(task)}`);
+      console.log(`   Mode: ${chalk.cyan('Plan Mode')} - Structured planning enabled`);
+      console.log('');
+      this.showPlanningWelcome();
+    } else {
+      console.log(chalk.cyan('◇  Task Execution'));
+      console.log(`   Task: ${chalk.yellow(task)}`);
+      console.log('');
+    }
+  }
+
+  /**
+   * Show task completion with todo summary
+   */
+  showTaskComplete(): void {
+    const _todos = this.todoPanel.getTodos();
+    const progressInfo = this.todoPanel.getProgressInfo();
+
+    if (progressInfo && progressInfo.total > 0) {
+      const stats = {
+        tasksCompleted: progressInfo.completed,
+        totalTime: undefined // Could track this if needed
+      };
+      this.progressTracker.showOverallCompletion(stats);
+
+      // Show final todo status if relevant
+      if (progressInfo.completed === progressInfo.total) {
+        note('All planned tasks completed successfully! 🎉', '✅ Task Complete');
+      } else if (progressInfo.completed > 0) {
+        note(
+          `Completed ${progressInfo.completed}/${progressInfo.total} planned tasks`,
+          '📊 Progress Summary'
+        );
+      }
+    } else {
+      outro(chalk.green('✅ Task completed!'));
+    }
+  }
+
+  /**
+   * Show error with todo context
+   */
+  showError(error: string): void {
+    const _todos = this.todoPanel.getTodos();
+    const progressInfo = this.todoPanel.getProgressInfo();
+
+    let contextInfo = '';
+    if (progressInfo?.currentTodo) {
+      contextInfo = `\n📍 Error occurred while working on: ${progressInfo.currentTodo.content}`;
+    }
+
+    note(chalk.rgb(255, 120, 120)(`❌ ${error}${contextInfo}`), 'Error');
+  }
+
+  /**
+   * Execute task respecting current mode settings
+   */
+  private async executeTaskWithCurrentMode(task: string, images: ClipboardImage[] = []): Promise<void> {
+    if (this.planMode) {
+      // Use plan mode execution with confirmation
+      try {
+        const { PlanMode } = await import('./modes/planMode.js');
+        const planMode = new PlanMode(this.agent, {
+          requirePlanning: true,
+          enforceSequential: true,
+          showPlanningFeedback: true
+        });
+
+        // First, create the plan only - using UI-integrated planning
+        const planningResult = await (planMode as any).planningPhase(task, (event: any) => {
+          // Handle planning-specific events with UI integration
+          this.handleStreamingEvent(event);
+
+          // Handle regular streaming events for spinner updates
+          switch (event.type) {
+            case 'thinking_start':
+              // Already handled in handleStreamingEvent
+              break;
+            case 'tool_call_start':
+              // Already handled in handleStreamingEvent
+              break;
+            case 'tool_call_result':
+              // Already handled in handleStreamingEvent
+              break;
+          }
+        });
+
+        if (!planningResult.success) {
+          this.showError(`Planning failed: ${planningResult.error}`);
+          return;
+        }
+
+        // Show the plan to the user with proper formatting
+        const formattedPlan = this.formatPlanForDisplay(planningResult.todos, planningResult.qualityScore);
+        note(formattedPlan, 'Planning Complete');
+
+        // Ask for confirmation
+        const shouldExecute = await text({
+          message: 'Execute this plan?',
+          placeholder: 'Type "yes" to execute, or "no" to cancel',
+          validate: (value) => {
+            const normalized = value.toLowerCase().trim();
+            if (!['yes', 'y', 'no', 'n'].includes(normalized)) {
+              return 'Please type "yes" or "no"';
+            }
+          }
+        });
+
+        if (isCancel(shouldExecute)) {
+          note('Plan execution cancelled by user', 'Cancelled');
+          return;
+        }
+
+        const response = (shouldExecute as string).toLowerCase().trim();
+        if (['yes', 'y'].includes(response)) {
+          // Execute the plan
+          await planMode.executePlannedTask(task, (event) => {
+            this.handleStreamingEvent(event);
+          });
+        } else {
+          note('Plan execution cancelled by user', 'Cancelled');
+        }
+      } catch (error) {
+        this.showError(error instanceof Error ? error.message : String(error));
+      }
+    } else {
+      // Use direct execution
+      await this.executeTaskWithUI(task, images);
+    }
+  }
+
+  /**
+   * Handle streaming events from plan mode execution
+   */
+  private handleStreamingEvent(event: any): void {
+    switch (event.type) {
+      case 'planning_start':
+        this.activePlanningPhase = event.planningInfo?.phase || 'planning';
+        // Don't duplicate the planning start message - handled by spinner
+        break;
+
+      case 'planning_complete':
+        this.activePlanningPhase = null;
+        console.log(chalk.green(`📋 Plan created with ${event.planningInfo?.totalSteps || 0} steps`));
+        break;
+
+      case 'planning_progress':
+        this.handlePlanningProgress(event.planningProgress);
+        break;
+
+      case 'planning_tool_call':
+        this.handlePlanningToolCall(event.planningToolCall);
+        break;
+
+      case 'content_chunk':
+        if (event.content) {
+          process.stdout.write(event.content);
+        }
+        break;
+
+      case 'todo_update':
+        // Todo updates are handled automatically by the TodoStateManager
+        // During planning phase, we suppress duplicate visual feedback
+        break;
+
+      case 'error':
+        this.activePlanningPhase = null;
+        this.showError(event.error || 'Unknown error');
+        break;
+
+      default:
+        // Handle other event types silently
+        break;
+    }
+  }
+
+  /**
+   * Handle planning progress streaming events
+   */
+  private currentPhase: string = '';
+  private currentTool: string = '';
+  private currentToolCall: string = '';
+
+  private handlePlanningProgress(progressInfo: any): void {
+    if (!progressInfo) return;
+
+    // Keep the spinner running and use it to display progress updates
+    const phaseNames = {
+      'context_gathering': 'Discovery',
+      'task_analysis': 'Analysis',
+      'plan_generation': 'Planning',
+      'plan_validation': 'Validation'
+    };
+
+    this.currentPhase = phaseNames[progressInfo.phase as keyof typeof phaseNames] || 'Planning';
+    this.updateGlobalProgress(progressInfo.overallProgress || 0);
+  }
+
+  /**
+   * Handle planning tool call events
+   */
+  private handlePlanningToolCall(toolInfo: any): void {
+    if (!toolInfo) return;
+
+    const toolNames = {
+      'list_directory': 'Exploring',
+      'read_file': 'Reading',
+      'execute_command': 'Executing',
+      'llm_analysis': 'Analyzing',
+      'llm_plan_generation': 'Generating Plan',
+      'plan_validation': 'Validating',
+      'analyze_dependencies': 'Dependencies'
+    };
+
+    this.currentTool = toolNames[toolInfo.toolName as keyof typeof toolNames] || 'Tool';
+
+    // Format tool call details with arguments
+    this.currentToolCall = this.formatToolCall(toolInfo.toolName, toolInfo.args);
+
+    // Update progress with current tool info
+    this.updateGlobalProgress();
+  }
+
+  /**
+   * Format tool call with arguments for display
+   */
+  private formatToolCall(toolName: string, args?: Record<string, any>): string {
+    if (!args || Object.keys(args).length === 0) {
+      return toolName;
+    }
+
+    // Extract key arguments for concise display
+    const formatArg = (key: string, value: any): string => {
+      if (typeof value === 'string') {
+        // Truncate long strings and show just the relevant part
+        if (key === 'path' || key === 'directory') {
+          // Show just the last part of paths
+          const parts = value.split('/');
+          return parts[parts.length - 1] || value;
+        }
+        if (key === 'command') {
+          // Show first word of commands
+          return value.split(' ')[0];
+        }
+        if (value.length > 20) {
+          return value.substring(0, 17) + '...';
+        }
+        return value;
+      }
+      if (Array.isArray(value)) {
+        return `[${value.length} items]`;
+      }
+      if (typeof value === 'object') {
+        return '{...}';
+      }
+      return String(value);
+    };
+
+    // Pick the most relevant arguments to show
+    const relevantKeys = ['path', 'directory', 'file', 'command', 'query', 'pattern'];
+    const argsToShow: string[] = [];
+
+    for (const key of relevantKeys) {
+      if (key in args) {
+        argsToShow.push(formatArg(key, args[key]));
+        if (argsToShow.length >= 2) break; // Show max 2 args
+      }
+    }
+
+    // If no relevant keys found, show first few keys
+    if (argsToShow.length === 0) {
+      const keys = Object.keys(args).slice(0, 2);
+      for (const key of keys) {
+        argsToShow.push(formatArg(key, args[key]));
+      }
+    }
+
+    return argsToShow.length > 0 ? `${toolName} (${argsToShow.join(', ')})` : toolName;
+  }
+
+  /**
+   * Update global progress display
+   */
+  private currentProgress: number = 0;
+
+  private updateGlobalProgress(progress?: number): void {
+    if (progress !== undefined) {
+      this.currentProgress = progress;
+    }
+
+    const progressBar = this.createProgressBar(this.currentProgress);
+    let displayText = `Progress ${Math.round(this.currentProgress)}% ${progressBar}`;
+
+    // Show tool call details if available, otherwise fall back to tool name or phase
+    // This provides detailed info like "(Discovery, calling list_dir (src))"
+    if (this.currentToolCall) {
+      displayText += ` (${this.currentPhase}, calling ${this.currentToolCall})`;
+    } else if (this.currentTool) {
+      displayText += ` (${this.currentTool})`;
+    } else if (this.currentPhase) {
+      displayText += ` (${this.currentPhase})`;
+    }
+
+    // Use clack-style spinner update for reliable real-time display
+    if (this.currentSpinner) {
+      this.currentSpinner.message(displayText);
+    } else {
+      // Fallback to direct output if no spinner
+      process.stdout.write('\r' + displayText);
+    }
+
+    // Only add newline when planning is completely finished (100%)
+    if (this.currentProgress >= 100) {
+      if (this.currentSpinner) {
+        this.currentSpinner.stop(displayText);
+        this.currentSpinner = undefined;
+      } else {
+        process.stdout.write('\n');
+      }
+      this.currentPhase = '';
+      this.currentTool = '';
+      this.currentToolCall = '';
+    }
+  }
+
+  /**
+   * Create a simple progress bar
+   */
+  private createProgressBar(percentage: number, width: number = 20): string {
+    const filled = Math.round((percentage / 100) * width);
+    const empty = width - filled;
+
+    const filledBar = chalk.cyan('█'.repeat(filled));
+    const emptyBar = chalk.dim('░'.repeat(empty));
+
+    return `[${filledBar}${emptyBar}]`;
+  }
+
+  /**
+   * Create a tool progress bar (smaller for inline use)
+   */
+  private createToolProgressBar(percentage: number, width: number = 12): string {
+    const filled = Math.round((percentage / 100) * width);
+    const empty = width - filled;
+
+    const filledBar = chalk.green('█'.repeat(filled));
+    const emptyBar = chalk.dim('░'.repeat(empty));
+
+    return `[${filledBar}${emptyBar}]`;
+  }
+
+  /**
+   * Handle hotkey actions
+   */
+  private handleHotkey(action: string): void {
+    switch (action) {
+      case 'toggle-plan-mode':
+        this.togglePlanMode();
+        break;
+
+      case 'show-todos':
+        this.showTodosHotkey();
+        break;
+
+      case 'show-help':
+        this.showHotkeyHelp();
+        break;
+
+      case 'show-status':
+        this.showModeStatus();
+        break;
+
+      default:
+        console.log(chalk.red(`\n❌ Unknown hotkey action: ${action}`));
+        break;
+    }
+  }
+
+  /**
+   * Toggle plan mode on/off
+   */
+  private togglePlanMode(): void {
+    const wasEnabled = this.planMode;
+
+    if (this.planMode) {
+      this.disablePlanMode();
+    } else {
+      this.enablePlanMode();
+    }
+
+    // Show enhanced visual feedback
+    this.showModeChangeNotification(wasEnabled, this.planMode);
+  }
+
+  /**
+   * Show enhanced visual feedback for mode changes
+   */
+  private showModeChangeNotification(wasEnabled: boolean, nowEnabled: boolean): void {
+    const modeIcon = nowEnabled ? '📋' : '⚡';
+    const statusText = nowEnabled ? 'enabled' : 'disabled';
+
+    // Simple, concise mode change message
+    console.log(chalk.blueBright(`\n${modeIcon} Plan mode ${statusText}`));
+
+    // Start progress tracking when plan mode is enabled (but don't show 0/0 progress yet)
+    if (nowEnabled) {
+      this.progressTracker.start();
+    }
+  }
+
+  /**
+   * Show todos via hotkey (non-blocking)
+   */
+  private showTodosHotkey(): void {
+    const _todos = this.todoPanel.getTodos();
+
+    if (_todos.length === 0) {
+      console.log(chalk.dim('\n📋 No todos found'));
+    } else {
+      const todoDisplay = this.todoPanel.render();
+      console.log(`\n${todoDisplay}`);
+    }
+  }
+
+  /**
+   * Show hotkey help
+   */
+  private showHotkeyHelp(): void {
+    const helpText = `
+${chalk.bold.cyan('🔥 Interactive Mode Hotkeys')}
+
+Mode Control:
+  ${chalk.yellow('Ctrl+P')}   Toggle plan mode on/off
+  ${chalk.yellow('Ctrl+S')}   Show current mode status
+
+Todo Management:
+  ${chalk.yellow('Ctrl+T')}   Show current todo list and progress
+
+General:
+  ${chalk.yellow('Ctrl+H')}   Show this help
+  ${chalk.yellow('Tab')}      Insert image from clipboard
+  ${chalk.yellow('Ctrl+C')}   Cancel input / Exit
+
+Input Controls:
+  ${chalk.yellow('Enter')}         Send message
+  ${chalk.yellow('Shift+Enter')}   New line (multiline input)
+
+Chat Commands:
+  ${chalk.yellow('/help')}     Show chat commands
+  ${chalk.yellow('/todos')}    Show detailed todo information
+  ${chalk.yellow('/stats')}    Show agent statistics
+  ${chalk.yellow('/exit')}     Exit the session
+`;
+
+    console.log(helpText);
+  }
+
+  /**
+   * Show current mode status
+   */
+  private showModeStatus(): void {
+    const _todos = this.todoPanel.getTodos();
+    const progressInfo = this.todoPanel.getProgressInfo();
+
+    let statusText = chalk.bold.blueBright('\n📊 Current Status\n');
+
+    // Mode information
+    statusText += `Mode: ${this.planMode ?
+      chalk.green('Plan Mode (structured todos)') :
+      chalk.yellow('Direct Mode (immediate execution)')}\n`;
+
+    // Todo information
+    if (progressInfo && progressInfo.total > 0) {
+      statusText += `Todos: ${progressInfo.completed}/${progressInfo.total} completed (${progressInfo.percentage}%)\n`;
+
+      if (progressInfo.currentTodo) {
+        statusText += `Current: ${chalk.cyan(progressInfo.currentTodo.content)}\n`;
+      }
+    } else {
+      statusText += 'Todos: None active\n';
+    }
+
+    // Agent status
+    const agentStats = this.agent.getStats();
+    if (agentStats) {
+      statusText += `Session: ${agentStats.toolCalls} tool calls, ${agentStats.llmCalls} LLM calls\n`;
+    }
+
+    console.log(statusText);
+  }
+
+
+  /**
+   * Format plan for display with proper text wrapping
+   */
+  private formatPlanForDisplay(todos: any[], qualityScore: number): string {
+    const maxWidth = Math.min(process.stdout.columns - 10, 100); // Leave some margin
+
+    let formatted = `📋 **Plan Created** (${todos.length} steps):\n\n`;
+
+    todos.forEach((todo, index) => {
+      const stepNumber = `${index + 1}. `;
+      const content = todo.content;
+
+      // Wrap long lines properly
+      const wrappedContent = this.wrapText(content, maxWidth - stepNumber.length);
+      const lines = wrappedContent.split('\n');
+
+      // First line with step number
+      formatted += stepNumber + lines[0] + '\n';
+
+      // Subsequent lines indented to align with content
+      for (let i = 1; i < lines.length; i++) {
+        formatted += ' '.repeat(stepNumber.length) + lines[i] + '\n';
+      }
+
+      // Add spacing between steps
+      if (index < todos.length - 1) {
+        formatted += '\n';
+      }
+    });
+
+    formatted += `\n\nQuality Score: ${qualityScore}/100`;
+
+    return formatted;
+  }
+
+  /**
+   * Wrap text to specified width
+   */
+  private wrapText(text: string, maxWidth: number): string {
+    if (text.length <= maxWidth) {
+      return text;
+    }
+
+    const words = text.split(' ');
+    const lines: string[] = [];
+    let currentLine = '';
+
+    for (const word of words) {
+      // If adding this word would exceed the width
+      if (currentLine.length + word.length + 1 > maxWidth) {
+        if (currentLine) {
+          lines.push(currentLine.trim());
+          currentLine = word;
+        } else {
+          // Single word is longer than maxWidth, force break
+          lines.push(word);
+        }
+      } else {
+        if (currentLine) {
+          currentLine += ' ' + word;
+        } else {
+          currentLine = word;
+        }
+      }
+    }
+
+    if (currentLine) {
+      lines.push(currentLine.trim());
+    }
+
+    return lines.join('\n');
+  }
+
+  /**
    * Cleanup resources
    */
   dispose(): void {
@@ -731,5 +1564,9 @@ export class CodeMieTerminalUI {
       this.currentSpinner.stop();
       this.currentSpinner = undefined;
     }
+
+    // Clean up todo tracking
+    this.progressTracker.stop();
+    TodoStateManager.removeEventCallback(this.handleTodoUpdate.bind(this));
   }
 }

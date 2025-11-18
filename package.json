@@ -21,6 +21,9 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
+    "test": "vitest",
+    "test:ui": "vitest --ui",
+    "test:run": "vitest run",
     "lint": "eslint 'src/**/*.ts' --max-warnings=10",
     "lint:fix": "eslint 'src/**/*.ts' --fix",
     "license-check": "npx license-checker --summary --onlyAllow 'MIT;Apache-2.0;ISC;BSD-2-Clause;BSD-3-Clause;0BSD;CC0-1.0;Unlicense;BlueOak-1.0.0;Python-2.0;CC-BY-4.0;Apache*;(MIT OR CC0-1.0)'",
@@ -59,8 +62,10 @@
     "@types/node": "^20.10.5",
     "@typescript-eslint/eslint-plugin": "^8.46.2",
     "@typescript-eslint/parser": "^8.46.2",
+    "@vitest/ui": "^4.0.10",
     "eslint": "^9.38.0",
-    "typescript": "^5.3.3"
+    "typescript": "^5.3.3",
+    "vitest": "^4.0.10"
   },
   "engines": {
     "node": ">=24.0.0"

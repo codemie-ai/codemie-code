@@ -30,7 +30,7 @@ export class CredentialStore {
     try {
       // Try secure keychain storage first
       await keytar.setPassword(SERVICE_NAME, ACCOUNT_NAME, encrypted);
-    } catch (_error) {
+    } catch {
       console.warn('Keychain not available, using encrypted file storage');
       await this.storeToFile(encrypted);
     }
@@ -44,7 +44,7 @@ export class CredentialStore {
         const decrypted = this.decrypt(encrypted);
         return JSON.parse(decrypted);
       }
-    } catch (_error) {
+    } catch {
       // Fall back to file storage
     }
 
@@ -55,7 +55,7 @@ export class CredentialStore {
         const decrypted = this.decrypt(encrypted);
         return JSON.parse(decrypted);
       }
-    } catch (_fileError) {
+    } catch {
       // Unable to decrypt file storage
     }
 
@@ -65,7 +65,7 @@ export class CredentialStore {
   async clearSSOCredentials(): Promise<void> {
     try {
       await keytar.deletePassword(SERVICE_NAME, ACCOUNT_NAME);
-    } catch (_error) {
+    } catch {
       // Also clear file storage
       try {
         await fs.unlink(FALLBACK_FILE);

@@ -15,6 +15,7 @@ import { getSystemPrompt } from './prompts.js';
 import { CodeMieAgentError } from './types.js';
 import { extractToolMetadata } from './toolMetadata.js';
 import { extractTokenUsageFromStreamChunk, extractTokenUsageFromFinalState } from './tokenUtils.js';
+import { setGlobalToolEventCallback } from './tools/index.js';
 
 export class CodeMieAgent {
   private agent: any;
@@ -105,7 +106,7 @@ export class CodeMieAgent {
           ...commonConfig
         });
 
-      case 'litellm':
+      case 'litellm': {
         // LiteLLM proxy - use OpenAI format as it's most compatible
         // For SSO, we need to inject cookies into requests
         // NOTE: ChatOpenAI appends '/chat/completions' directly, not '/v1/chat/completions'
@@ -162,6 +163,7 @@ export class CodeMieAgent {
           configuration: ssoConfig,
           ...commonConfig
         });
+      }
 
       default:
         throw new CodeMieAgentError(
@@ -209,11 +211,37 @@ export class CodeMieAgent {
     const startTime = Date.now();
     let currentToolCall: string | null = null;
     let currentStep: ExecutionStep | null = null;
+    let streamAborted = false;
 
     // Reset execution steps for new conversation
     this.currentExecutionSteps = [];
     this.currentStepNumber = 0;
     this.isFirstLLMCall = true;
+
+    // Set up global tool event callback for progress reporting
+    setGlobalToolEventCallback((event) => {
+      onEvent({
+        type: 'tool_call_progress',
+        toolName: event.toolName,
+        toolProgress: event.progress
+      });
+    });
+
+    // Create an AbortController for proper stream cancellation
+    const abortController = new AbortController();
+
+    // Set up Ctrl+C handler for graceful stream termination
+    const originalSigintHandler = process.listeners('SIGINT');
+    const sigintHandler = () => {
+      if (this.config.debug) {
+        console.log('\n[DEBUG] Received SIGINT - aborting stream...');
+      }
+      streamAborted = true;
+      abortController.abort();
+      onEvent({ type: 'error', error: 'Stream interrupted by user (Ctrl+C)' });
+    };
+
+    process.once('SIGINT', sigintHandler);
 
     try {
       if (this.config.debug) {
@@ -235,14 +263,22 @@ export class CodeMieAgent {
         { messages: this.conversationHistory },
         {
           streamMode: 'updates',
-          recursionLimit: 50
+          recursionLimit: 50,
+          signal: abortController.signal // Add abort signal for stream cancellation
         }
       );
 
       let hasContent = false;
 
-      // Process stream chunks
+      // Process stream chunks with interruption handling
       for await (const chunk of stream) {
+        // Check if stream was aborted
+        if (streamAborted || abortController.signal.aborted) {
+          if (this.config.debug) {
+            console.log('[DEBUG] Stream processing aborted');
+          }
+          break;
+        }
         // Try to extract token usage from stream chunk
         const tokenUsage = extractTokenUsageFromStreamChunk(
           chunk,
@@ -358,6 +394,20 @@ export class CodeMieAgent {
 
       const errorMessage = error instanceof Error ? error.message : String(error);
 
+      // Handle AbortError from user interruption gracefully
+      if (error instanceof Error && (error.name === 'AbortError' || streamAborted)) {
+        if (this.config.debug) {
+          console.log('[DEBUG] Stream aborted by user');
+        }
+
+        onEvent({
+          type: 'error',
+          error: 'Operation interrupted by user'
+        });
+
+        return; // Don't throw error for user interruptions
+      }
+
       if (this.config.debug) {
         console.error(`[DEBUG] Agent error:`, error);
       }
@@ -372,6 +422,19 @@ export class CodeMieAgent {
         'EXECUTION_ERROR',
         { originalError: error, stats: this.stats }
       );
+    } finally {
+      // Clean up global tool event callback
+      setGlobalToolEventCallback(null);
+
+      // Always clean up signal handler
+      process.removeListener('SIGINT', sigintHandler);
+
+      // Restore original handlers if they existed
+      if (originalSigintHandler.length > 0) {
+        originalSigintHandler.forEach(handler => {
+          process.on('SIGINT', handler as NodeJS.SignalsListener);
+        });
+      }
     }
   }
 
@@ -640,7 +703,13 @@ export class CodeMieAgent {
     this.currentExecutionSteps.push(step);
 
     if (this.config.debug) {
-      console.log(`[DEBUG] Started tool step ${step.stepNumber}: ${toolName}`);
+      // Get the stored tool args for enhanced logging
+      const toolArgs = this.toolCallArgs.get(toolName);
+      if (toolArgs && Object.keys(toolArgs).length > 0) {
+        console.log(`[DEBUG] Started tool step ${step.stepNumber}: ${toolName} ${JSON.stringify(toolArgs)}`);
+      } else {
+        console.log(`[DEBUG] Started tool step ${step.stepNumber}: ${toolName}`);
+      }
     }
 
     return step;
