@@ -78,7 +78,18 @@ export class CodeMieAgent {
           configuration: {
             ...(this.config.baseUrl !== 'https://api.openai.com/v1' && {
               baseURL: this.config.baseUrl
-            })
+            }),
+            // Add client tracking header to all OpenAI requests
+            fetch: async (input: string | URL | Request, init?: RequestInit) => {
+              const updatedInit = {
+                ...init,
+                headers: {
+                  ...init?.headers,
+                  'X-CodeMie-Client': 'codemie-code'
+                }
+              };
+              return fetch(input, updatedInit);
+            }
           },
           ...commonConfig
         });
@@ -89,7 +100,18 @@ export class CodeMieAgent {
           apiKey: this.config.authToken,
           configuration: {
             baseURL: this.config.baseUrl,
-            defaultQuery: { 'api-version': '2024-02-01' }
+            defaultQuery: { 'api-version': '2024-02-01' },
+            // Add client tracking header to all Azure requests
+            fetch: async (input: string | URL | Request, init?: RequestInit) => {
+              const updatedInit = {
+                ...init,
+                headers: {
+                  ...init?.headers,
+                  'X-CodeMie-Client': 'codemie-code'
+                }
+              };
+              return fetch(input, updatedInit);
+            }
           },
           ...commonConfig
         });
@@ -101,7 +123,18 @@ export class CodeMieAgent {
           model: this.config.model,
           apiKey: this.config.authToken,
           configuration: {
-            baseURL: this.config.baseUrl !== 'bedrock' ? this.config.baseUrl : undefined
+            baseURL: this.config.baseUrl !== 'bedrock' ? this.config.baseUrl : undefined,
+            // Add client tracking header to all Bedrock requests
+            fetch: async (input: string | URL | Request, init?: RequestInit) => {
+              const updatedInit = {
+                ...init,
+                headers: {
+                  ...init?.headers,
+                  'X-CodeMie-Client': 'codemie-code'
+                }
+              };
+              return fetch(input, updatedInit);
+            }
           },
           ...commonConfig
         });
@@ -129,16 +162,17 @@ export class CodeMieAgent {
 
         if (ssoCookies && this.config.authToken === 'sso-authenticated') {
           // Create custom fetch function that includes SSO cookies (matches oauth2Proxy.js line 134)
-          ssoConfig.fetch = async (url: string, options: any = {}) => {
+          ssoConfig.fetch = async (input: string | URL | Request, init?: RequestInit) => {
             const cookieString = Object.entries(ssoCookies)
               .map(([key, value]) => `${key}=${value}`)
               .join('; '); // Note: using '; ' separator (semicolon + space) for HTTP standard
 
-            const updatedOptions = {
-              ...options,
+            const updatedInit = {
+              ...init,
               headers: {
-                ...options.headers,
-                'cookie': cookieString // lowercase 'cookie' header like IDE plugin
+                ...init?.headers,
+                'cookie': cookieString, // lowercase 'cookie' header like IDE plugin
+                'X-CodeMie-Client': 'codemie-code' // Track client type for request metrics
               }
             };
 
@@ -155,13 +189,13 @@ export class CodeMieAgent {
             }
 
             if (this.config.debug) {
-              console.log(`[DEBUG] SSO request to ${url}`);
+              console.log(`[DEBUG] SSO request to ${input}`);
               console.log(`[DEBUG] Cookies: ${Object.keys(ssoCookies).join(', ')}`);
               console.log(`[DEBUG] Full cookie string length: ${cookieString.length}`);
             }
 
             try {
-              const response = await fetch(url, updatedOptions);
+              const response = await fetch(input, updatedInit);
 
               if (this.config.debug && !response.ok) {
                 console.log(`[DEBUG] SSO request failed: ${response.status} ${response.statusText}`);
@@ -176,9 +210,26 @@ export class CodeMieAgent {
             }
           };
         } else {
+          // Even without SSO cookies, we still want to add the client tracking header
+          ssoConfig.fetch = async (input: string | URL | Request, init?: RequestInit) => {
+            const updatedInit = {
+              ...init,
+              headers: {
+                ...init?.headers,
+                'X-CodeMie-Client': 'codemie-code' // Track client type for request metrics
+              }
+            };
+
+            if (this.config.debug) {
+              console.log(`[DEBUG] Non-SSO request to ${input} with client header`);
+            }
+
+            return fetch(input, updatedInit);
+          };
+
           if (this.config.debug) {
             console.log(`[DEBUG] WARNING: SSO cookies not found or auth token mismatch`);
-            console.log(`[DEBUG] Will attempt request without SSO cookies`);
+            console.log(`[DEBUG] Will attempt request without SSO cookies but with client header`);
           }
         }
 

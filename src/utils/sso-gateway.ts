@@ -14,6 +14,7 @@ export interface GatewayConfig {
   targetApiUrl: string;
   port?: number;
   debug?: boolean;
+  clientType?: string; // Client type for X-CodeMie-Client header
 }
 
 export class SSOGateway {
@@ -155,6 +156,15 @@ export class SSOGateway {
         // Non-fatal error - continue without integration header
         if (this.config.debug) {
           console.log(`[DEBUG] Could not load config for integration header: ${error}`);
+        }
+      }
+
+      // Add CodeMie client type header for request tracking
+      if (this.config.clientType) {
+        forwardHeaders['X-CodeMie-Client'] = this.config.clientType;
+
+        if (this.config.debug) {
+          console.log(`[DEBUG] Added CodeMie client header: ${this.config.clientType}`);
         }
       }
 

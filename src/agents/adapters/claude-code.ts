@@ -123,7 +123,8 @@ export class ClaudeCodeAdapter implements AgentAdapter {
       // Create and start the SSO gateway
       this.ssoGateway = new SSOGateway({
         targetApiUrl,
-        debug: !!(env.DEBUG || env.CODEMIE_DEBUG)
+        debug: !!(env.DEBUG || env.CODEMIE_DEBUG),
+        clientType: 'codemie-claude'
       });
 
       const { port, url } = await this.ssoGateway.start();
