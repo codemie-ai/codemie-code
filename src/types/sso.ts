@@ -30,3 +30,18 @@ export interface SSOCredentials {
   apiUrl: string;
   expiresAt?: number;
 }
+
+export interface CodeMieIntegration {
+  id: string;
+  alias: string;
+  project_name: string;
+  credential_type: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CodeMieIntegrationsResponse {
+  integrations?: CodeMieIntegration[];
+  // Allow for flexible response structure
+  [key: string]: any;
+}

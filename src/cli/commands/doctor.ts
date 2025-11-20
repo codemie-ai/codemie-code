@@ -8,7 +8,7 @@ import { ConfigLoader, CodeMieConfigOptions } from '../../utils/config-loader.js
 import { checkProviderHealth } from '../../utils/health-checker.js';
 import { fetchAvailableModels } from '../../utils/model-fetcher.js';
 import { CodeMieSSO } from '../../utils/sso-auth.js';
-import { fetchCodeMieModelsFromConfig, validateCodeMieConnectivity } from '../../utils/codemie-model-fetcher.js';
+import { fetchCodeMieModelsFromConfig, validateCodeMieConnectivity, fetchCodeMieIntegrationsFromConfig } from '../../utils/codemie-model-fetcher.js';
 import { checkAllTools } from '../../tools/index.js';
 import { detectVCSProvider, listInstalledWorkflows } from '../../workflows/index.js';
 
@@ -325,6 +325,54 @@ async function checkSSOConfiguration(config: CodeMieConfigOptions): Promise<void
         if (error instanceof Error && error.message.includes('expired')) {
           console.log(`      ${chalk.dim('Run: codemie auth refresh')}`);
         }
+      }
+
+      // Check CodeMie integrations for ai-run-sso
+      if (config.codeMieIntegration) {
+        // Display alias if available, otherwise show ID
+        const displayValue = config.codeMieIntegration.alias || config.codeMieIntegration.id || 'unknown';
+        console.log(`  ${chalk.green('✓')} Integration: ${displayValue}`);
+
+        const integrationSpinner = ora('Validating CodeMie integration...').start();
+        try {
+          const integrations = await fetchCodeMieIntegrationsFromConfig();
+          const litellmIntegrations = integrations.filter(i => i.credential_type === 'LiteLLM');
+
+          if (litellmIntegrations.length === 0) {
+            integrationSpinner.fail(chalk.red('No LiteLLM integrations found'));
+            console.log(`      ${chalk.dim('Contact support to set up LiteLLM integration')}`);
+          } else {
+            // Use ID for validation if available, otherwise fall back to alias
+            const validationKey = config.codeMieIntegration.id ? 'id' : 'alias';
+            const validationValue = config.codeMieIntegration.id || config.codeMieIntegration.alias;
+            const hasSelectedIntegration = litellmIntegrations.some(i => i[validationKey] === validationValue);
+
+            if (hasSelectedIntegration) {
+              const selectedIntegration = litellmIntegrations.find(i => i[validationKey] === validationValue);
+              const displayName = selectedIntegration?.project_name
+                ? `${selectedIntegration.alias} (${selectedIntegration.project_name})`
+                : selectedIntegration?.alias || validationValue;
+
+              integrationSpinner.succeed(chalk.green(`Integration validated: ${displayName}`));
+            } else {
+              integrationSpinner.fail(chalk.red('Selected integration not found'));
+              console.log(`      ${chalk.dim('Available LiteLLM integrations:')}`);
+              litellmIntegrations.forEach(integration => {
+                const displayName = integration.project_name
+                  ? `${integration.alias} (${integration.project_name})`
+                  : integration.alias;
+                console.log(`        ${chalk.dim('•')} ${displayName}`);
+              });
+              console.log(`      ${chalk.dim('Run: codemie setup to reconfigure')}`);
+            }
+          }
+        } catch (error) {
+          integrationSpinner.fail(chalk.red('Integration validation failed'));
+          console.log(`  ${chalk.dim('Error:')} ${error instanceof Error ? error.message : String(error)}`);
+        }
+      } else {
+        console.log(`  ${chalk.yellow('⚠')} No integration configured`);
+        console.log(`      ${chalk.dim('This may indicate an older configuration. Run: codemie setup')}`);
       }
 
     } else {

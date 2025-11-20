@@ -5,6 +5,14 @@ import dotenv from 'dotenv';
 import chalk from 'chalk';
 
 /**
+ * Minimal CodeMie integration info for config storage
+ */
+export interface CodeMieIntegrationInfo {
+  id: string;
+  alias: string;
+}
+
+/**
  * Configuration options for CodeMie Code
  */
 export interface CodeMieConfigOptions {
@@ -20,6 +28,7 @@ export interface CodeMieConfigOptions {
   // SSO-specific fields
   authMethod?: 'manual' | 'sso';
   codeMieUrl?: string;      // Original CodeMie URL entered by user
+  codeMieIntegration?: CodeMieIntegrationInfo; // Selected CodeMie integration for ai-run-sso
   ssoConfig?: {
     apiUrl?: string;        // Resolved API endpoint from config.js
     cookiesEncrypted?: string; // Encrypted authentication cookies (deprecated - use credential store)
@@ -133,6 +142,13 @@ export class ConfigLoader {
     // SSO-specific environment variables
     if (process.env.CODEMIE_URL) env.codeMieUrl = process.env.CODEMIE_URL;
     if (process.env.CODEMIE_AUTH_METHOD) env.authMethod = process.env.CODEMIE_AUTH_METHOD as 'manual' | 'sso';
+    // Handle CodeMie integration from environment variables
+    if (process.env.CODEMIE_INTEGRATION_ID || process.env.CODEMIE_INTEGRATION_ALIAS) {
+      env.codeMieIntegration = {
+        id: process.env.CODEMIE_INTEGRATION_ID || '',
+        alias: process.env.CODEMIE_INTEGRATION_ALIAS || ''
+      };
+    }
 
     // Check for AWS Bedrock configuration
     if (process.env.CLAUDE_CODE_USE_BEDROCK === '1') {
@@ -450,6 +466,7 @@ export class ConfigLoader {
       }
       if (config.codeMieUrl) env.CODEMIE_URL = config.codeMieUrl;
       if (config.authMethod) env.CODEMIE_AUTH_METHOD = config.authMethod;
+      if (config.codeMieIntegration?.id) env.CODEMIE_INTEGRATION_ID = config.codeMieIntegration.id;
     }
 
     return env;

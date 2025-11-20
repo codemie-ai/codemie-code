@@ -9,6 +9,7 @@ import { checkProviderHealth } from '../../utils/health-checker.js';
 import { fetchAvailableModels } from '../../utils/model-fetcher.js';
 import { CodeMieSSO } from '../../utils/sso-auth.js';
 import { fetchCodeMieModels } from '../../utils/codemie-model-fetcher.js';
+import { validateCodeMieIntegrations } from '../../utils/codemie-integration-validator.js';
 
 interface ProviderOption {
   name: string;
@@ -441,7 +442,20 @@ async function handleAiRunSSOSetup(): Promise<void> {
 
     authSpinner.succeed(chalk.green('SSO authentication successful'));
 
-    // Step 4: Fetch available models from CodeMie
+    // Step 4a: Validate CodeMie integrations
+    const integrationsSpinner = ora('Checking CodeMie integrations...').start();
+
+    let selectedIntegration: { id: string; alias: string };
+    try {
+      selectedIntegration = await validateCodeMieIntegrations(authResult, integrationsSpinner);
+      integrationsSpinner.succeed(chalk.green('CodeMie integrations validated'));
+    } catch {
+      integrationsSpinner.stop();
+      // Error details already displayed by validateCodeMieIntegrations
+      return;
+    }
+
+    // Step 4b: Fetch available models from CodeMie
     const modelsSpinner = ora('Fetching available models from CodeMie...').start();
 
     try {
@@ -457,6 +471,7 @@ async function handleAiRunSSOSetup(): Promise<void> {
         authMethod: 'sso',
         codeMieUrl,
         baseUrl: authResult.apiUrl,
+        codeMieIntegration: selectedIntegration,
         apiKey: 'sso-authenticated', // Placeholder - auth via cookies
         model: selectedModel,
         timeout: 300,
@@ -498,6 +513,7 @@ async function handleAiRunSSOSetup(): Promise<void> {
         authMethod: 'sso',
         codeMieUrl,
         baseUrl: authResult.apiUrl,
+        codeMieIntegration: selectedIntegration,
         apiKey: 'sso-authenticated',
         model: manualModel,
         timeout: 300,

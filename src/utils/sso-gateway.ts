@@ -139,6 +139,25 @@ export class SSOGateway {
 
       forwardHeaders['Cookie'] = cookieHeader;
 
+      // Add CodeMie integration header for ai-run-sso
+      try {
+        const { ConfigLoader } = await import('./config-loader.js');
+        const config = await ConfigLoader.load();
+
+        if (config.codeMieIntegration?.id && config.provider === 'ai-run-sso') {
+          forwardHeaders['X-CodeMie-Integration'] = config.codeMieIntegration.id;
+
+          if (this.config.debug) {
+            console.log(`[DEBUG] Added CodeMie integration header: ${config.codeMieIntegration.id}`);
+          }
+        }
+      } catch (error) {
+        // Non-fatal error - continue without integration header
+        if (this.config.debug) {
+          console.log(`[DEBUG] Could not load config for integration header: ${error}`);
+        }
+      }
+
       // Handle request body for POST/PUT requests
       let body = '';
       if (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH') {

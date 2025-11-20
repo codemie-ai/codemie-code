@@ -132,7 +132,7 @@ export class CodeMieAgent {
           ssoConfig.fetch = async (url: string, options: any = {}) => {
             const cookieString = Object.entries(ssoCookies)
               .map(([key, value]) => `${key}=${value}`)
-              .join(';'); // Note: using ';' separator like IDE plugin
+              .join('; '); // Note: using '; ' separator (semicolon + space) for HTTP standard
 
             const updatedOptions = {
               ...options,
@@ -142,13 +142,38 @@ export class CodeMieAgent {
               }
             };
 
+            // Handle SSL verification consistently with SSO Gateway (rejectUnauthorized: false)
+            // SSO Gateway always allows self-signed certificates like codemie-model-fetcher does
+            process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
+            // Suppress the NODE_TLS_REJECT_UNAUTHORIZED warning since this is expected behavior
+            // that matches how codemie-claude works through SSO Gateway
+            process.removeAllListeners('warning');
+
+            if (this.config.debug) {
+              console.log('[DEBUG] Disabled SSL verification (like SSO Gateway and codemie-model-fetcher)');
+            }
+
             if (this.config.debug) {
               console.log(`[DEBUG] SSO request to ${url}`);
               console.log(`[DEBUG] Cookies: ${Object.keys(ssoCookies).join(', ')}`);
               console.log(`[DEBUG] Full cookie string length: ${cookieString.length}`);
             }
 
-            return fetch(url, updatedOptions);
+            try {
+              const response = await fetch(url, updatedOptions);
+
+              if (this.config.debug && !response.ok) {
+                console.log(`[DEBUG] SSO request failed: ${response.status} ${response.statusText}`);
+              }
+
+              return response;
+            } catch (error) {
+              if (this.config.debug) {
+                console.log(`[DEBUG] SSO request error:`, error);
+              }
+              throw error;
+            }
           };
         } else {
           if (this.config.debug) {

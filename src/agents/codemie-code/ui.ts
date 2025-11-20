@@ -92,36 +92,72 @@ export class CodeMieTerminalUI {
     return new Promise((resolve) => {
       if (!process.stdin.setRawMode) {
         // Fallback for environments without raw mode
-        resolve(this.getFallbackInput());
+        this.getFallbackInput().then(resolve).catch(() => resolve(null));
         return;
       }
 
-      process.stdin.setRawMode(true);
-      process.stdin.resume();
-      process.stdin.setEncoding('utf8');
+      let cleanupDone = false;
 
-      let lines: string[] = [];
-      let currentLine = '';
-      let isFirstLine = true;
-      let escapeSequence = '';
-      let images: ClipboardImage[] = [];
-      let imageCounter = 0;
+      const performCleanup = () => {
+        if (cleanupDone) return;
+        cleanupDone = true;
 
-      const writePrompt = () => {
-        const prompt = isFirstLine ? '> ' : '... ';
-        process.stdout.write(prompt);
+        try {
+          if (process.stdin.setRawMode) {
+            process.stdin.setRawMode(false);
+          }
+          process.stdin.pause();
+          process.stdin.removeAllListeners('data');
+          process.stdin.removeAllListeners('error');
+        } catch {
+          // Ignore cleanup errors
+        }
       };
 
-      const cleanup = () => {
-        process.stdin.setRawMode(false);
-        process.stdin.pause();
-        process.stdin.removeAllListeners('data');
-      };
+      // Set up error handling first
+      process.stdin.once('error', (error) => {
+        performCleanup();
+        const config = this.agent.getConfig();
+        if (config?.debug) {
+          console.error('[DEBUG] Stdin error:', error);
+        }
+        resolve(null);
+      });
 
-      writePrompt();
+      try {
+        process.stdin.setRawMode(true);
+        process.stdin.resume();
+        process.stdin.setEncoding('utf8');
 
-      process.stdin.on('data', (key: Buffer) => {
-        const data = key.toString('utf8');
+        let lines: string[] = [];
+        let currentLine = '';
+        let isFirstLine = true;
+        let escapeSequence = '';
+        let images: ClipboardImage[] = [];
+        let imageCounter = 0;
+
+        const writePrompt = () => {
+          try {
+            const prompt = isFirstLine ? '> ' : '... ';
+            process.stdout.write(prompt);
+          } catch {
+            // Ignore prompt write errors
+          }
+        };
+
+        // Add timeout to prevent hanging indefinitely
+        const inputTimeout = setTimeout(() => {
+          performCleanup();
+          resolve(null);
+        }, 30000); // 30 second timeout
+
+        writePrompt();
+
+        process.stdin.on('data', (key: Buffer) => {
+          if (cleanupDone) return; // Prevent processing after cleanup
+
+          try {
+            const data = key.toString('utf8');
 
         // Handle escape sequences
         if (data.startsWith('\x1b')) {
@@ -154,26 +190,28 @@ export class CodeMieTerminalUI {
             return;
           }
 
-          // Send the message
-          if (currentLine.trim() !== '') {
-            lines.push(currentLine);
-          }
+            // Send the message
+            if (currentLine.trim() !== '') {
+              lines.push(currentLine);
+            }
 
-          process.stdout.write('\n');
-          cleanup();
-          resolve({
-            text: lines.join('\n'),
-            images: images
-          });
-          return;
+            process.stdout.write('\n');
+            clearTimeout(inputTimeout);
+            performCleanup();
+            resolve({
+              text: lines.join('\n'),
+              images: images
+            });
+            return;
         }
 
-        // Ctrl+C
-        if (data === '\u0003') {
-          cleanup();
-          resolve(null);
-          return;
-        }
+            // Ctrl+C
+            if (data === '\u0003') {
+              clearTimeout(inputTimeout);
+              performCleanup();
+              resolve(null);
+              return;
+            }
 
         // Hotkeys for mode switching
         // Ctrl+P - Toggle plan mode
@@ -274,8 +312,25 @@ export class CodeMieTerminalUI {
           }
         }
 
-        escapeSequence = '';
-      });
+            escapeSequence = '';
+          } catch (error) {
+            // Handle data processing errors gracefully
+            const config = this.agent.getConfig();
+            if (config?.debug) {
+              console.error('[DEBUG] Input processing error:', error);
+            }
+            // Continue processing - don't crash on single key errors
+          }
+        });
+
+      } catch (error) {
+        performCleanup();
+        const config = this.agent.getConfig();
+        if (config?.debug) {
+          console.error('[DEBUG] Input setup error:', error);
+        }
+        resolve(null);
+      }
     });
   }
 

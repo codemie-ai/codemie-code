@@ -189,8 +189,8 @@ export class CodeMieSSO {
             apiUrl = viteApiMatch[1].replace(/\/$/, '');
           }
         }
-      } catch (error) {
-        console.warn(`Could not fetch config.js: ${error instanceof Error ? error.message : String(error)}`);
+      } catch {
+        // Silently fallback to default API URL - config.js fetch is optional
       }
 
       return {
