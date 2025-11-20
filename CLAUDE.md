@@ -73,6 +73,30 @@ git push origin v0.0.1                         # Push tag to trigger publish
 - If you find yourself copying code, refactor it into a shared function
 - One source of truth for each piece of knowledge
 
+### Clean Variable Management
+- **Avoid unused variables entirely** - remove variables that are not used
+- **Never prefix with underscore** (`_variable`) unless absolutely necessary
+- **Only use underscore prefix when:**
+  - Required by external API or framework (destructuring with some unused parameters)
+  - TypeScript/ESLint requires it for valid syntax in edge cases
+  - Part of a pattern where the variable must exist but isn't used in current implementation
+- **Prefer refactoring over underscore prefixes:**
+  - Remove unused parameters from function signatures
+  - Use object destructuring with only needed properties
+  - Extract only required values from arrays/objects
+- **Example of proper approach:**
+  ```typescript
+  // ❌ Avoid - unused variable with underscore
+  const [first, _second, third] = array;
+
+  // ✅ Better - only destructure what you need
+  const [first, , third] = array;  // Use empty slot for unused middle element
+
+  // ✅ Or restructure to avoid unused variables
+  const first = array[0];
+  const third = array[2];
+  ```
+
 **Remember:** Simple, clean code is better than clever, complex code.
 
 ## Project Overview

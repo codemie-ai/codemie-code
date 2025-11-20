@@ -29,7 +29,8 @@ export async function fetchCodeMieModels(
       headers: {
         'cookie': cookieString,
         'Content-Type': 'application/json',
-        'User-Agent': 'CodeMie-CLI/1.0.0'
+        'User-Agent': 'CodeMie-CLI/1.0.0',
+        'X-CodeMie-Client': 'codemie-cli'
       },
       // Handle certificate issues commonly found in enterprise environments
       rejectUnauthorized: false, // Allow self-signed certificates
@@ -174,7 +175,8 @@ async function fetchIntegrationsPage(fullUrl: string, cookieString: string): Pro
     headers: {
       'cookie': cookieString,
       'Content-Type': 'application/json',
-      'User-Agent': 'CodeMie-CLI/1.0.0'
+      'User-Agent': 'CodeMie-CLI/1.0.0',
+      'X-CodeMie-Client': 'codemie-cli'
     },
     // Handle certificate issues commonly found in enterprise environments
     rejectUnauthorized: false, // Allow self-signed certificates

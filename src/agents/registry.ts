@@ -14,11 +14,14 @@ export interface AgentAdapter {
 }
 
 export class AgentRegistry {
-  private static adapters: Map<string, AgentAdapter> = new Map([
-    ['codemie-code', new CodeMieCodeAdapter()],
-    ['claude', new ClaudeCodeAdapter()],
-    ['codex', new CodexAdapter()]
-  ]);
+  private static adapters: Map<string, AgentAdapter> = new Map();
+
+  static {
+    // Initialize adapters
+    AgentRegistry.adapters.set('codemie-code', new CodeMieCodeAdapter());
+    AgentRegistry.adapters.set('claude', new ClaudeCodeAdapter());
+    AgentRegistry.adapters.set('codex', new CodexAdapter());
+  }
 
   static getAgent(name: string): AgentAdapter | undefined {
     return AgentRegistry.adapters.get(name);
