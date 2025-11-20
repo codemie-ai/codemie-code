@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+This project is **AI/Run CodeMie CLI** - a professional, unified CLI tool for managing multiple AI coding agents.
+
 ## Critical First Step: ALWAYS Read Documentation
 
 **MANDATORY**: Before writing ANY code, you MUST:
@@ -75,7 +77,7 @@ git push origin v0.0.1                         # Push tag to trigger publish
 
 ## Project Overview
 
-**CodeMie** is a unified CLI wrapper for managing multiple AI coding agents, featuring:
+**AI/Run CodeMie CLI** is a professional, unified CLI wrapper for managing multiple AI coding agents, featuring:
 
 1. **External Agent Management**: Install and run external agents (Claude Code, Codex)
 2. **Built-in Agent**: CodeMie Native - a LangGraph-based coding assistant
@@ -260,7 +262,7 @@ To add a new direct agent shortcut (e.g., `codemie-newagent`):
 
 ### Built-in Agent Development
 
-When working on the CodeMie Native agent (`src/agents/codemie-code/`):
+When working on the AI/Run CodeMie Native agent (`src/agents/codemie-code/`):
 
 - **Tools**: Add new tools in `tools/` directory with proper security filtering
 - **UI**: Use Clack components for consistent terminal interface

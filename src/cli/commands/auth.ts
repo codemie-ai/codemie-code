@@ -13,8 +13,8 @@ export function createAuthCommand(): Command {
   // Login command
   const loginCmd = new Command('login');
   loginCmd
-    .description('Authenticate with CodeMie SSO')
-    .option('--url <url>', 'CodeMie URL to authenticate with')
+    .description('Authenticate with AI/Run CodeMie SSO')
+    .option('--url <url>', 'AI/Run CodeMie URL to authenticate with')
     .action(async (options: { url?: string }) => {
       try {
         await handleLogin(options.url);
@@ -76,8 +76,8 @@ async function handleLogin(url?: string): Promise<void> {
 
   const codeMieUrl = url || config.codeMieUrl;
   if (!codeMieUrl) {
-    console.log(chalk.red('❌ No CodeMie URL configured or provided'));
-    console.log(chalk.dim('Use: codemie auth login --url https://codemie.lab.epam.com'));
+    console.log(chalk.red('❌ No AI/Run CodeMie URL configured or provided'));
+    console.log(chalk.dim('Use: codemie auth login --url https://your-airun-codemie-instance.com'));
     return;
   }
 

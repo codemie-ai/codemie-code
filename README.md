@@ -1,25 +1,79 @@
-# CodeMie
+# AI/Run CodeMie CLI
 
-> CLI wrapper for managing multiple AI coding agents
+> Professional CLI wrapper for managing multiple AI coding agents
 
-CodeMie is a unified CLI tool for installing, configuring, and running multiple AI coding agents (Claude Code, Codex, etc.) from a single interface.
+## Table of Contents
 
-## ✨ Features
+- [Synopsis](#synopsis)
+- [Quick Start](#quick-start)
+- [Installation](#installation)
+  - [From npm (Recommended)](#from-npm-recommended)
+  - [From Source (Development)](#from-source-development)
+  - [Verify Installation](#verify-installation)
+- [Usage](#usage)
+  - [Built-in Agent (CodeMie Native)](#built-in-agent-codemie-native)
+  - [External Agents](#external-agents)
+- [Commands](#commands)
+  - [Core Commands](#core-commands)
+  - [Agent Shortcuts](#agent-shortcuts)
+  - [Configuration Commands](#configuration-commands)
+- [Configuration](#configuration)
+  - [Setup Wizard (Recommended)](#setup-wizard-recommended)
+  - [Supported Providers](#supported-providers)
+  - [Manual Configuration](#manual-configuration)
+  - [Model Compatibility](#model-compatibility)
+- [Authentication & SSO Management](#authentication--sso-management)
+  - [AI/Run CodeMie SSO Setup](#airun-codemie-sso-setup)
+  - [Token Management](#token-management)
+  - [Enterprise SSO Features](#enterprise-sso-features)
+- [Examples](#examples)
+  - [Common Workflows](#common-workflows)
+  - [Configuration Examples](#configuration-examples)
+  - [Advanced Usage](#advanced-usage)
+- [Agents](#agents)
+  - [CodeMie Native (Built-in)](#codemie-native-built-in)
+  - [Claude Code](#claude-code)
+  - [Codex](#codex)
+- [Troubleshooting](#troubleshooting)
+  - [Command Not Found](#command-not-found)
+  - [Configuration Issues](#configuration-issues)
+  - [Connection Problems](#connection-problems)
+  - [Agent Installation Failures](#agent-installation-failures)
+  - [Model Compatibility Errors](#model-compatibility-errors)
+- [Development](#development)
+  - [Project Structure](#project-structure)
+  - [Building](#building)
+  - [Testing](#testing)
+- [License](#license)
+- [Links](#links)
 
-- 🔧 **Unified CLI** - Manage multiple AI coding agents from one interface
-- ⭐ **Built-in Agent** - CodeMie Native ready to use immediately (no installation required)
-- 🤖 **Multi-Agent Support** - Claude Code, Codex, and more
-- 🛠️ **Environment Management** - Centralized configuration for all agents
-- 🚀 **Zero Hassle** - Install and run agents with simple commands
-- 📦 **Provider Agnostic** - Works with any AI provider (OpenAI, Anthropic, Azure, etc.)
-- 🎯 **Task Execution** - Single task mode with `--task` flag for automation
-- 🖼️ **Clipboard Integration** - Automatic image detection from system clipboard
+## Synopsis
 
----
+```bash
+codemie [COMMAND] [OPTIONS]
+codemie-code [MESSAGE|--task TASK] [OPTIONS]
+codemie-claude [-p MESSAGE] [OPTIONS]
+codemie-codex [MESSAGE|--task TASK] [OPTIONS]
+```
 
-## 📦 Installation
+AI/Run CodeMie CLI is a professional, unified CLI tool for installing, configuring, and running multiple AI coding agents from a single interface. It includes a built-in LangGraph-based agent (CodeMie Native) and supports external agents like Claude Code and Codex.
 
-### From npm (when published)
+## Quick Start
+
+```bash
+# 1. Install
+npm install -g @codemieai/code
+
+# 2. Setup (interactive wizard)
+codemie setup
+
+# 3. Start coding with built-in agent
+codemie-code "Review my code for bugs"
+```
+
+## Installation
+
+### From npm (Recommended)
 
 ```bash
 npm install -g @codemieai/code
@@ -28,272 +82,143 @@ npm install -g @codemieai/code
 ### From Source (Development)
 
 ```bash
-# Clone the repository
 git clone https://github.com/codemie-ai/codemie-code.git
 cd codemie-code
-
-# Install dependencies
-npm install
-
-# Build the project
-npm run build
-
-# Link globally for testing
-npm link
+npm install && npm run build && npm link
 ```
 
 ### Verify Installation
 
 ```bash
-# Check if command is available
 codemie --help
-
-# Run health check
 codemie doctor
 ```
 
----
+## Usage
 
-## 🚀 Quick Start
+### Built-in Agent (CodeMie Native)
 
-### Installation → Setup → Use
-
-CodeMie follows a simple three-step workflow:
-
-```
-1. Install → 2. Setup (Wizard OR Manual) → 3. Use (Install & Run Agents)
-```
-
-### Step 1: Install
+Ready to use immediately - no installation required:
 
 ```bash
-npm install -g @codemieai/code
-```
-
-### Step 2: Setup (Choose One Method)
-
-#### Method A: Interactive Setup Wizard (Recommended)
-
-Best for most users - guided configuration with connection testing:
-
-```bash
-codemie setup
-```
-
-**What it does:**
-- ✅ Guides you through provider selection
-- ✅ Prompts for credentials
-- ✅ **Validates credentials** via `/health` endpoint
-- ✅ **Fetches available models** via `/v1/models` endpoint
-- ✅ Shows real-time model list (no hardcoded options)
-- ✅ Saves to `~/.codemie/config.json`
-
-**Supported Providers:**
-- CodeMie SSO (Unified gateway)
-- AWS Bedrock (Claude via AWS)
-- Azure OpenAI (for GPT models and Codex)
-- Custom LiteLLM Proxy
-
-#### Method B: Manual Configuration Guide
-
-Best for automated setups or when you have credentials ready:
-
-```bash
-# View detailed setup guide with examples
-codemie env
-```
-
-### Step 3: Use Agents
-
-#### Try the Built-in Agent (Recommended for New Users)
-
-**CodeMie Native** is built-in and ready to use immediately:
-
-```bash
-# Start interactive session
+# Interactive conversation
 codemie-code
 
 # Execute single task
-codemie-code --task "explore current repository"
+codemie-code --task "fix bugs in src/utils"
 
-# With initial message
-codemie-code "Review my code for bugs"
+# Start with initial message
+codemie-code "Help me refactor this component"
+
+# Debug mode
+codemie-code --debug
 ```
 
-#### Install Additional Agents
+### External Agents
+
+Install and run external agents:
 
 ```bash
-# Install Claude Code
+# Install agents
 codemie install claude
-
-# Install Codex
 codemie install codex
 
-# Uninstall an agent
-codemie uninstall claude
-codemie uninstall codex
+# Run via shortcuts (recommended)
+codemie-claude -p "Review my API code"
+codemie-codex --task "Generate unit tests"
+
+# Or run through main CLI
+codemie run claude --task "Fix security issues"
 ```
 
-#### List Available Agents
-
-```bash
-codemie list
-```
-
-#### Run an Agent
-
-Use the direct agent shortcuts for the best experience. Configuration is automatically passed from `~/.codemie/config.json`.
-
-```bash
-# Run built-in CodeMie Native
-codemie-code                                    # Interactive mode
-codemie-code --task "explore current repository" # Single task
-
-# Run Claude
-codemie-claude                                  # Interactive mode
-codemie-claude --task "Review my code"          # Single task
-
-# Run Codex
-codemie-codex                                   # Interactive mode
-codemie-codex --task "Generate tests"           # Single task
-```
-
-**Automatic Model Validation:**
-
-CodeMie automatically validates model compatibility:
-- **Codex** only accepts OpenAI models (gpt-5, gpt-4.1, gpt-4o, etc.)
-- **Claude** accepts both Claude and GPT models
-
-If you try to run Codex with a Claude model, CodeMie will:
-1. Detect the incompatibility
-2. **Fetch available models** from your provider's `/v1/models` API endpoint
-3. Filter to show only compatible models
-4. Offer to switch to a compatible GPT model
-5. Optionally save your choice
-
-**Dynamic Model Discovery:**
-- Models are fetched in real-time from your configured provider
-- No hardcoded lists - always shows what's actually available
-- Results are cached for 5 minutes to improve performance
-- Works with any OpenAI-compatible API (LiteLLM, OpenAI, etc.)
-
----
-
-## 📚 Available Commands
+## Commands
 
 ### Core Commands
 
 ```bash
-# Setup wizard (interactive configuration)
-codemie setup
-
-# Environment configuration guide
-codemie env
-
-# List all available agents
-codemie list
-
-# Install an agent
-codemie install <agent>
-
-# Uninstall an agent
-codemie uninstall <agent>
-
-# Check installation and configuration
-codemie doctor
-
-# Manage configuration
-codemie config
-
-# Show version
-codemie version
+codemie setup                    # Interactive configuration wizard
+codemie auth <command>           # Manage SSO authentication
+codemie list                     # List all available agents
+codemie install <agent>          # Install an agent
+codemie uninstall <agent>        # Uninstall an agent
+codemie run <agent> [args...]    # Run an agent
+codemie doctor                   # Health check and diagnostics
+codemie config <action>          # Manage configuration
+codemie version                  # Show version information
 ```
 
-### Agent Shortcuts (Recommended)
+### Agent Shortcuts
+
+Direct access to agents with automatic configuration:
 
 ```bash
-# Run built-in agent
-codemie-code                                    # Interactive mode
-codemie-code --task "explore current repository" # Single task
+# Built-in agent
+codemie-code [message]           # Interactive or with initial message
+codemie-code --task "task"       # Single task execution
+codemie-code health              # Health check
 
-# Run Claude agent
-codemie-claude                                  # Interactive mode
-codemie-claude --task "Review my code"          # Single task
+# External agents
+codemie-claude                   # Claude Code agent (interactive)
+codemie-claude -p "message"      # Claude Code agent (print mode)
+codemie-codex [message]          # Codex agent
 
-# Run Codex agent
-codemie-codex                                   # Interactive mode
-codemie-codex --task "Generate tests"           # Single task
+# Configuration overrides
+codemie-claude --model claude-4-5-sonnet --api-key your-key
+codemie-codex --model gpt-4o --provider openai
 ```
-
-### Built-in Agent Commands
-
-```bash
-# CodeMie Native - Interactive mode (start a conversation)
-codemie-code
-
-# CodeMie Native - Single task execution (run and exit)
-codemie-code --task "explore current repository"
-codemie-code --task "Fix bugs in src/utils"
-
-# CodeMie Native - With initial message (start with context)
-codemie-code "Review my code for bugs"
-
-# CodeMie Native - Health check
-codemie-code health
-
-# CodeMie Native - Debug mode (detailed logging)
-codemie-code --debug
-```
-
-### Direct Agent Shortcuts
-
-Quick access to external agents with configuration overrides:
-
-```bash
-# Claude Code (direct shortcut)
-codemie-claude                              # Interactive mode
-codemie-claude --model claude-4-5-sonnet    # Override model
-codemie-claude --api-key your-key           # Override API key
-codemie-claude health                       # Health check
-
-# Codex (direct shortcut)
-codemie-codex                               # Interactive mode
-codemie-codex --model gpt-4o                # Override model (OpenAI only)
-codemie-codex --provider openai             # Override provider
-codemie-codex health                        # Health check
-```
-
-**Features of Direct Shortcuts:**
-- Bypass the registry system for faster startup
-- Support all original agent options and arguments
-- Allow configuration overrides via CLI flags
-- Include health check commands
-- Pass through unknown options to the underlying agent
 
 ### Configuration Commands
 
 ```bash
-# Set a configuration value
-codemie config set <key> <value>
-
-# Get a configuration value
-codemie config get <key>
-
-# List all configuration
-codemie config list
-
-# Reset configuration
-codemie config reset
-
-# Advanced: Change timeout (default: 300 seconds)
-codemie config set timeout 600
+codemie config list              # Show all configuration
+codemie config get <key>         # Get specific value
+codemie config set <key> <value> # Set configuration value
+codemie config reset             # Reset to defaults
 ```
 
----
+## Configuration
 
-## ⚙️ Configuration
+### Setup Wizard (Recommended)
 
-CodeMie stores configuration in `~/.codemie/config.json`:
+Run the interactive setup wizard:
+
+```bash
+codemie setup
+```
+
+The wizard will:
+- Guide you through provider selection
+- Test your credentials via health endpoints
+- Fetch available models in real-time
+- Save configuration to `~/.codemie/config.json`
+
+### Supported Providers
+
+- **ai-run-sso** - AI/Run CodeMie SSO (unified enterprise gateway)
+- **openai** - OpenAI API
+- **azure** - Azure OpenAI
+- **bedrock** - AWS Bedrock
+- **litellm** - LiteLLM Proxy
+
+### Manual Configuration
+
+#### Environment Variables (Highest Priority)
+
+```bash
+# Generic (works with any provider)
+export CODEMIE_BASE_URL="https://your-proxy.com"
+export CODEMIE_API_KEY="your-api-key"
+export CODEMIE_MODEL="your-model"
+export CODEMIE_PROVIDER="litellm"
+
+# Provider-specific
+export OPENAI_API_KEY="your-openai-key"
+export OPENAI_BASE_URL="https://api.openai.com/v1"
+```
+
+#### Configuration File
+
+Location: `~/.codemie/config.json`
 
 ```json
 {
@@ -305,207 +230,325 @@ CodeMie stores configuration in `~/.codemie/config.json`:
 }
 ```
 
-### Supported Providers
+### Model Compatibility
 
-- **openai** - OpenAI API
-- **azure** - Azure OpenAI
-- **bedrock** - AWS Bedrock
-- **litellm** - LiteLLM Proxy (custom)
+AI/Run CodeMie CLI automatically validates model compatibility:
 
-### Environment Variables
+- **Codex**: OpenAI models only (gpt-4, gpt-4o, gpt-5, etc.)
+- **Claude**: Both Claude and GPT models
+- **CodeMie Native**: All supported models
 
-You can also configure via environment variables (higher priority than config file):
+When incompatible models are detected, AI/Run CodeMie CLI will:
+1. Fetch available models from your provider's API
+2. Filter to compatible models
+3. Offer to switch automatically
+
+## Authentication & SSO Management
+
+### AI/Run CodeMie SSO Setup
+
+For enterprise environments with AI/Run CodeMie SSO (Single Sign-On):
+
+#### Initial Setup via Wizard
+
+The setup wizard automatically detects and configures AI/Run CodeMie SSO:
 
 ```bash
-# OpenAI
-export OPENAI_BASE_URL="https://api.openai.com/v1"
-export OPENAI_API_KEY="your-api-key"
-export OPENAI_MODEL="gpt-4"
-
-# Generic (works with any provider)
-export CODEMIE_BASE_URL="https://your-proxy.com"
-export CODEMIE_API_KEY="your-api-key"
-export CODEMIE_MODEL="your-model"
+codemie setup
 ```
 
----
+**The wizard will:**
+1. Detect if you have access to AI/Run CodeMie SSO
+2. Guide you through the authentication flow
+3. Test the connection with health checks
+4. Fetch and display available models
+5. Save secure credentials to `~/.codemie/config.json`
 
-## 🤖 Supported Agents
+#### Manual SSO Authentication
 
-### CodeMie Native (Built-in) ⭐
+If you need to authenticate separately or refresh your credentials:
 
-**NEW:** CodeMie's built-in LangGraph-based coding assistant. No external installation required!
+```bash
+# Authenticate with AI/Run CodeMie SSO
+codemie auth login --url https://your-airun-codemie-instance.com
+
+# Check authentication status
+codemie auth status
+
+# Refresh expired tokens
+codemie auth refresh
+
+# Logout and clear credentials
+codemie auth logout
+```
+
+### Token Management
+
+SSO tokens are automatically managed but you can control them manually:
+
+#### Token Refresh
+
+AI/Run CodeMie CLI automatically refreshes tokens when they expire. For manual refresh:
+
+```bash
+# Refresh SSO credentials (extends session)
+codemie auth refresh
+```
+
+**When to refresh manually:**
+- Before long-running tasks
+- After extended periods of inactivity
+- When you receive authentication errors
+- Before important demonstrations
+
+#### Authentication Status
+
+Check your current authentication state:
+
+```bash
+codemie auth status
+```
+
+**Status information includes:**
+- Connection status to AI/Run CodeMie SSO
+- Token validity and expiration
+- Available models for your account
+- Provider configuration details
+
+#### Token Troubleshooting
+
+Common authentication issues and solutions:
+
+```bash
+# Token expired
+codemie auth refresh
+
+# Connection issues
+codemie doctor                    # Full system diagnostics
+codemie auth status              # Check auth-specific issues
+
+# Complete re-authentication
+codemie auth logout
+codemie auth login --url https://your-airun-codemie-instance.com
+
+# Reset all configuration
+codemie config reset
+codemie setup                    # Run wizard again
+```
+
+### Enterprise SSO Features
+
+AI/Run CodeMie SSO provides enterprise-grade features:
+
+- **Secure Token Storage**: Credentials stored in system keychain
+- **Automatic Refresh**: Seamless token renewal without interruption
+- **Multi-Model Access**: Access to Claude, GPT, and other models through unified gateway
+- **Audit Logging**: Enterprise audit trails for security compliance
+- **Role-Based Access**: Model access based on organizational permissions
+
+## Examples
+
+### Common Workflows
+
+```bash
+# Code review workflow
+codemie-code "Review this PR for security issues and performance"
+
+# Bug fixing
+codemie-claude -p "Fix the authentication bug in src/auth.ts"
+
+# Test generation
+codemie-codex --task "Generate comprehensive tests for the API endpoints"
+
+# Documentation
+codemie-code "Document the functions in utils/helpers.js"
+
+# Refactoring
+codemie-claude -p "Refactor this component to use React hooks"
+```
+
+### Configuration Examples
+
+```bash
+# Setup with different providers
+codemie config set provider openai
+codemie config set model gpt-4o
+codemie config set apiKey sk-your-key
+
+# Temporary model override
+codemie-claude --model claude-4-5-sonnet -p "Explain this algorithm"
+
+# Debug mode for troubleshooting
+codemie-code --debug --task "analyze performance issues"
+```
+
+### Advanced Usage
+
+```bash
+# Run specific agent versions
+codemie run claude --version latest
+
+# Pass custom arguments
+codemie-codex --temperature 0.1 --max-tokens 2000 "Generate clean code"
+
+# Health checks
+codemie doctor                   # Full system check
+codemie-code health             # Built-in agent check
+codemie-claude health           # Claude agent check
+```
+
+## Agents
+
+### CodeMie Native (Built-in)
+
+LangGraph-based coding assistant with no installation required.
+
+**Features:**
+- Modern terminal UI with streaming responses
+- File operations, git integration, command execution
+- Clipboard support with automatic image detection
+- Interactive conversations with context memory
+- Task-focused execution mode
+- Debug mode with comprehensive logging
 
 **Usage:**
 ```bash
-# Interactive mode (recommended) - start a conversation
-codemie-code
-
-# Single task execution - run and exit
-codemie-code --task "explore current repository"
-codemie-code --task "Fix the bug in utils.js"
-
-# With initial message - start with context
-codemie-code "Help me refactor this component"
-```
-
-**Features:**
-- 🔧 **Built-in**: No installation required - ready to use immediately
-- 🚀 **Modern UI**: Beautiful terminal interface with real-time streaming
-- 🎯 **Task-focused**: Execute single tasks or start interactive sessions
-- 🔍 **Debug Mode**: Comprehensive logging with `--debug` flag
-- 📋 **Clipboard Support**: Automatic image detection from clipboard
-- 🛠️ **System Tools**: File operations, git integration, and command execution
-- 💬 **Interactive Chat**: Continuous conversations with context memory
-- 📊 **Usage Statistics**: Token tracking and cost monitoring
-
-**Direct Commands:**
-```bash
-# Health check
-codemie-code health
-
-# Interactive mode with debug
-codemie-code --debug
-
-# Execute task and exit
-codemie-code --task "Run tests and fix any failures"
+codemie-code                    # Interactive mode
+codemie-code --task "task"      # Single task
+codemie-code --debug            # Debug mode
 ```
 
 ### Claude Code
 
-Anthropic's official CLI for Claude AI. Provides advanced code understanding, generation, and refactoring capabilities.
+Anthropic's official CLI with advanced code understanding.
 
-**Installation:**
-```bash
-codemie install claude
-```
+**Installation:** `codemie install claude`
 
 **Features:**
-- Advanced code understanding
-- Multi-file editing
-- Interactive conversations
+- Advanced code understanding and generation
+- Multi-file editing capabilities
 - Project-aware context
+- Interactive conversations
 
 ### Codex
 
-OpenAI's code generation assistant. Optimized for code completion and generation tasks.
+OpenAI's code generation assistant optimized for completion tasks.
 
-**Installation:**
-```bash
-codemie install codex
-```
+**Installation:** `codemie install codex`
 
 **Features:**
-- Code completion
-- Function generation
-- Bug fixing
-- Code explanation
+- Code completion and generation
+- Function generation and bug fixing
+- Code explanation and documentation
+- **Requires OpenAI-compatible models only**
 
-**Model Compatibility:**
-- ✅ Supports: GPT models (gpt-5, gpt-5-codex, gpt-4.1, gpt-4o)
-- ❌ Not supported: Claude/Anthropic models (API incompatibility)
+## Troubleshooting
 
-> **Note:** Codex requires OpenAI-compatible models. If you configure a Claude model, CodeMie will automatically prompt you to switch to a compatible GPT model.
+### Command Not Found
 
----
+```bash
+# Re-link the package
+npm link
+which codemie
 
-## 🛠️ Development
+# Check installation
+npm list -g @codemieai/code
+```
+
+### Configuration Issues
+
+```bash
+# Run setup wizard
+codemie setup
+
+# Check current config
+codemie config list
+
+# Reset if needed
+codemie config reset
+```
+
+### Connection Problems
+
+```bash
+# Run diagnostics
+codemie doctor
+
+# Test specific agent
+codemie-code health
+codemie-claude health
+
+# Debug mode for detailed logs
+codemie-code --debug
+```
+
+### Agent Installation Failures
+
+```bash
+# Check internet connection
+curl -I https://api.github.com
+
+# Clear npm cache
+npm cache clean --force
+
+# Retry installation
+codemie install claude
+```
+
+### Model Compatibility Errors
+
+When you see "Model not compatible" errors:
+
+1. Check your configured model: `codemie config get model`
+2. Run the agent to see compatible options
+3. Set a compatible model: `codemie config set model gpt-4o`
+4. Or override temporarily: `codemie-codex --model gpt-4o`
+
+## Development
 
 ### Project Structure
 
 ```
 codemie-code/
-├── bin/
-│   └── codemie.js               # CLI entry point
+├── bin/                    # Executable entry points
+│   ├── codemie.js         # Main CLI
+│   ├── codemie-code.js    # Built-in agent
+│   ├── codemie-claude.js  # Claude shortcut
+│   └── codemie-codex.js   # Codex shortcut
 ├── src/
-│   ├── agents/                  # Agent adapters
-│   │   ├── registry.ts          # Agent registry
-│   │   └── adapters/            # Agent implementations
-│   ├── cli/                     # CLI commands
-│   │   ├── index.ts             # CLI setup
-│   │   └── commands/            # Command implementations
-│   ├── env/                     # Environment management
-│   └── utils/                   # Utilities
-├── package.json
-└── README.md
+│   ├── agents/            # Agent registry and adapters
+│   ├── cli/               # CLI command implementations
+│   ├── env/               # Environment and config management
+│   ├── workflows/         # Workflow management
+│   ├── tools/             # VCS tools management
+│   └── utils/             # Shared utilities
+└── tests/                 # Test files
 ```
 
 ### Building
 
 ```bash
-npm run build       # Compile TypeScript
-npm run dev         # Watch mode for development
-npm run lint        # Check code style
-npm run lint:fix    # Fix linting issues
+npm run build              # Compile TypeScript
+npm run dev                # Watch mode
+npm run lint               # Check code style
+npm run test               # Run tests
+npm run ci                 # Full CI pipeline
 ```
 
 ### Testing
 
-After building, test the CLI locally:
-
 ```bash
-# Build and link
 npm run build && npm link
-
-# Test commands
 codemie --help
-codemie list
 codemie doctor
+codemie-code health
 ```
 
----
-
-## 🐛 Troubleshooting
-
-### Command not found after installation
-
-Re-link the package:
-```bash
-npm link
-which codemie
-```
-
-### Configuration not found
-
-Run the setup wizard:
-```bash
-codemie setup
-```
-
-Or check your configuration:
-```bash
-codemie config list
-```
-
-### Agent installation fails
-
-Check your internet connection and try again:
-```bash
-codemie install <agent>
-```
-
-### Connection issues
-
-Verify your configuration:
-```bash
-codemie doctor
-```
-
----
-
-## 📄 License
+## License
 
 Apache-2.0
 
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please read our contributing guidelines before submitting PRs.
-
----
-
-## 🔗 Links
+## Links
 
 - [GitHub Repository](https://github.com/codemie-ai/codemie-code)
 - [Issue Tracker](https://github.com/codemie-ai/codemie-code/issues)

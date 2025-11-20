@@ -14,7 +14,7 @@ export function createVersionCommand(): Command {
         const packageJsonPath = join(getDirname(import.meta.url), '../../../package.json');
         const packageJsonContent = readFileSync(packageJsonPath, 'utf-8');
         const packageJson = JSON.parse(packageJsonContent) as { version: string };
-        console.log(chalk.bold(`\nCodeMie Code v${packageJson.version}\n`));
+        console.log(chalk.bold(`\nAI/Run CodeMie CLI v${packageJson.version}\n`));
       } catch {
         console.log(chalk.yellow('\nVersion information not available\n'));
       }

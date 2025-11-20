@@ -34,7 +34,7 @@ try {
 
 program
   .name('codemie')
-  .description('CLI wrapper for managing multiple AI coding agents')
+  .description('AI/Run CodeMie CLI - Professional CLI wrapper for managing multiple AI coding agents')
   .version(version)
   .option('--task <task>', 'Execute a single task using the built-in agent and exit');
 
