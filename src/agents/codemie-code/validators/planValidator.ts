@@ -360,14 +360,14 @@ function generateImprovements(
   }
 
   // Pattern improvements
-  Object.entries(criteriaAssessment.patterns).forEach(([pattern, result]: [string, any]) => {
+  Object.entries(criteriaAssessment.patterns).forEach(([, result]: [string, any]) => {
     if (!result.found) {
       improvements.push(result.description);
     }
   });
 
   // Task-specific improvements
-  Object.entries(criteriaAssessment.taskSpecific).forEach(([criteria, result]: [string, any]) => {
+  Object.entries(criteriaAssessment.taskSpecific).forEach(([, result]: [string, any]) => {
     if (!result.valid) {
       improvements.push(result.description);
     }

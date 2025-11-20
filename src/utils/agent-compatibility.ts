@@ -16,7 +16,7 @@ interface AgentCompatibility {
  */
 const AGENT_COMPATIBILITY: Record<string, AgentCompatibility> = {
   'claude': {
-    supportedProviders: ['bedrock', 'openai', 'azure', 'litellm'],
+    supportedProviders: ['bedrock', 'openai', 'azure', 'litellm', 'ai-run-sso'],
     blockedModelPatterns: [] // Claude accepts both Claude and GPT models
   },
   'codex': {

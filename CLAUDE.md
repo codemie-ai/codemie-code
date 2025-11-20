@@ -20,6 +20,11 @@ npm link                    # Link globally for local testing
 npm run build              # Compile TypeScript
 npm run dev                # Watch mode for development
 
+# Testing
+npm run test               # Run tests with Vitest
+npm run test:ui            # Run tests with interactive UI
+npm run test:run           # Run tests once (no watch mode)
+
 # Code Quality
 npm run lint               # Check code style with ESLint (max 10 warnings)
 npm run lint:fix           # Fix linting issues automatically
@@ -31,8 +36,11 @@ codemie doctor             # Verify installation and configuration
 codemie-code health        # Test built-in agent health
 
 # Testing the Built-in Agent
-codemie-code --task "test"  # Single task execution
-codemie-code --debug       # Interactive with debug logging
+codemie-code --task "test"          # Single task execution
+codemie-code --debug                # Interactive with debug logging
+codemie-code --plan                 # Enable structured planning mode with visual todo tracking
+codemie-code --plan-only            # Generate plan without execution (planning phase only)
+codemie-code --task "test" --plan   # Task execution with planning phase
 
 # Direct Agent Shortcuts (bypass registry)
 codemie-claude             # Direct Claude Code access
@@ -140,7 +148,22 @@ codemie-code/
 - **Manager** (`manager.ts`): Install/uninstall/update tools via npm
 - **npm-only**: Tools are installed via npm packages only (no system packages)
 
-#### 4. Built-in Agent Architecture (`src/agents/codemie-code/`)
+#### 6. Client Adapters System (`src/clients/`)
+
+- **Registry** (`registry.ts`): Manages client adapters for different platforms
+- **Adapters** (`adapters/`): Platform-specific implementations
+  - `github.ts`: GitHub API integration
+  - `gitlab.ts`: GitLab API integration
+
+#### 7. SSO Gateway System (`src/utils/sso-gateway.ts`)
+
+- **Local Proxy**: Creates HTTP server that proxies requests from external binaries
+- **Authentication**: Automatically injects SSO cookies into API requests
+- **Dynamic Ports**: Finds available ports and handles EADDRINUSE errors
+- **Request Forwarding**: Streams request/response bodies for compatibility
+- **Debug Logging**: Comprehensive request/response logging for development
+
+#### 8. Built-in Agent Architecture (`src/agents/codemie-code/`)
 
 **Multi-layered architecture:**
 
@@ -190,12 +213,14 @@ interface AgentAdapter {
 
 ### Technology Stack
 
+- **Node.js**: Requires Node.js >=24.0.0 for ES2024 features
 - **TypeScript**: Full type safety with ES2024 + NodeNext modules
 - **Commander.js**: CLI framework with subcommands
 - **LangChain/LangGraph**: Agent orchestration and tool calling
 - **Clack**: Modern terminal user interface
 - **Chalk**: Terminal styling and colors
 - **Zod**: Runtime type validation
+- **Vitest**: Modern testing framework
 - **ESLint**: Code quality (max 10 warnings allowed)
 
 ## Development Guidelines
@@ -242,6 +267,12 @@ When working on the CodeMie Native agent (`src/agents/codemie-code/`):
 - **Streaming**: Implement proper event handling for real-time responses
 - **Configuration**: Follow the provider config pattern in `config.ts`
 - **Error Handling**: Use structured error types with context information
+- **Planning Modes**: Leverage structured todo-based planning system with progress tracking
+  - `modes/planMode.ts`: Core planning implementation with quality validation
+  - `modes/contextAwarePlanning.ts`: Context-aware planning that explores codebase first
+  - `ui/todoPanel.ts`: Visual todo tracking with progress indicators
+  - `utils/todoValidator.ts`: Todo quality scoring and validation
+  - `storage/todoStorage.ts`: Persistent todo state management
 
 ### Workflow and Tools Management
 

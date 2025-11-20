@@ -283,7 +283,7 @@ async function checkSSOConfiguration(config: CodeMieConfigOptions): Promise<void
 
     const connectivitySpinner = ora('Checking CodeMie server connectivity...').start();
     try {
-      await validateCodeMieConnectivity(config.codeMieUrl);
+      await validateCodeMieConnectivity();
       connectivitySpinner.succeed(chalk.green('CodeMie server accessible'));
     } catch (error) {
       connectivitySpinner.fail(chalk.red('CodeMie server not accessible'));

@@ -1,5 +1,7 @@
 import { CodeMieModel } from '../types/sso.js';
 import { CredentialStore } from './credential-store.js';
+import https from 'https';
+import { URL } from 'url';
 
 export async function fetchCodeMieModels(
   apiUrl: string,
@@ -10,25 +12,62 @@ export async function fetchCodeMieModels(
     .join(';');
 
   try {
-    const response = await fetch(`${apiUrl}/v1/llm_models`, {
+    // Use custom HTTPS request to properly handle certificate issues in enterprise environments
+    const parsedUrl = new URL(`${apiUrl}/v1/llm_models`);
+
+    const requestOptions: https.RequestOptions = {
+      hostname: parsedUrl.hostname,
+      port: parsedUrl.port || (parsedUrl.protocol === 'https:' ? 443 : 80),
+      path: parsedUrl.pathname + parsedUrl.search,
       method: 'GET',
       headers: {
         'cookie': cookieString,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'User-Agent': 'CodeMie-CLI/1.0.0'
       },
-      // @ts-expect-error - timeout is supported in node-fetch
+      // Handle certificate issues commonly found in enterprise environments
+      rejectUnauthorized: false, // Allow self-signed certificates
       timeout: 10000
+    };
+
+    const response = await new Promise<{ statusCode?: number; statusMessage?: string; data: string }>((resolve, reject) => {
+      const req = https.request(requestOptions, (res) => {
+        let data = '';
+
+        res.on('data', (chunk) => {
+          data += chunk;
+        });
+
+        res.on('end', () => {
+          resolve({
+            statusCode: res.statusCode,
+            statusMessage: res.statusMessage,
+            data
+          });
+        });
+      });
+
+      req.on('error', (error) => {
+        reject(error);
+      });
+
+      req.on('timeout', () => {
+        req.destroy();
+        reject(new Error('Request timeout'));
+      });
+
+      req.end();
     });
 
-    if (!response.ok) {
-      if (response.status === 401 || response.status === 403) {
+    if (!response.statusCode || response.statusCode < 200 || response.statusCode >= 300) {
+      if (response.statusCode === 401 || response.statusCode === 403) {
         throw new Error('SSO session expired - please run setup again');
       }
-      throw new Error(`Failed to fetch models: ${response.status} ${response.statusText}`);
+      throw new Error(`Failed to fetch models: ${response.statusCode} ${response.statusMessage}`);
     }
 
     // Parse the response
-    const models: CodeMieModel[] = (await response.json()) as CodeMieModel[];
+    const models: CodeMieModel[] = JSON.parse(response.data) as CodeMieModel[];
 
     if (!Array.isArray(models)) {
       return [];
@@ -71,7 +110,7 @@ export async function fetchCodeMieModelsFromConfig(): Promise<string[]> {
   return fetchCodeMieModels(credentials.apiUrl, credentials.cookies);
 }
 
-export async function validateCodeMieConnectivity(codeMieUrl: string): Promise<void> {
+export async function validateCodeMieConnectivity(): Promise<void> {
   // Following the codemie-ide-plugin pattern, we don't perform connectivity validation
   // Instead, we trust that the SSO flow will handle any connectivity issues
   // This function is kept for compatibility but essentially becomes a no-op

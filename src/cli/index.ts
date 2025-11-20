@@ -68,7 +68,7 @@ if (taskIndex !== -1 && taskIndex < process.argv.length - 1) {
 
       try {
         await codeMie.initialize();
-      } catch (error) {
+      } catch {
         logger.error('CodeMie configuration required. Please run: codemie setup');
         process.exit(1);
       }

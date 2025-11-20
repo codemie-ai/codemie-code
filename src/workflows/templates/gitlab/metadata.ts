@@ -11,9 +11,7 @@ const __dirname = path.dirname(__filename);
 
 // Template files are always in src/workflows/templates/gitlab relative to package root
 // From dist/workflows/templates/gitlab, go up 4 levels to package root, then to src/workflows/templates/gitlab
-const templateDir = __dirname.includes('/dist/')
-  ? path.resolve(__dirname, '../../../../src/workflows/templates/gitlab')
-  : __dirname;
+// templateDir will be used when GitLab templates are implemented
 
 // GitLab templates coming soon!
 // Currently only GitHub Actions workflows are available.

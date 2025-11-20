@@ -58,6 +58,14 @@ program
         timeout: options.timeout
       });
 
+      // Handle SSO provider detection
+      if (config.provider === 'ai-run-sso' || (config.baseUrl && config.baseUrl.includes('codemie'))) {
+        // Update provider to ai-run-sso if detected from baseUrl
+        if (config.provider !== 'ai-run-sso') {
+          config.provider = 'ai-run-sso';
+        }
+      }
+
       // Validate essential configuration
       if (!config.baseUrl || !config.apiKey || !config.model) {
         logger.error('Configuration incomplete. Run: codemie setup');

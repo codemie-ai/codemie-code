@@ -312,7 +312,7 @@ export function calculateProgress(todos: Todo[]) {
  */
 export function diffTodos(before: Todo[], after: Todo[]): string[] {
   const changes: string[] = [];
-  const maxLength = Math.max(before.length, after.length);
+  const _maxLength = Math.max(before.length, after.length);
 
   // Check status changes in existing todos
   for (let i = 0; i < Math.min(before.length, after.length); i++) {

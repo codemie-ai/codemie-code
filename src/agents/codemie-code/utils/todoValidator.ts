@@ -53,7 +53,7 @@ export interface TodoListValidationResult {
 /**
  * Validate a single todo item
  */
-export function validateTodo(todo: Todo, index: number): TodoValidationResult {
+export function validateTodo(todo: Todo): TodoValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
   const suggestions: string[] = [];
@@ -145,7 +145,7 @@ export function validateTodoList(todos: Todo[]): TodoListValidationResult {
 
   // Validate each todo
   for (let i = 0; i < todos.length; i++) {
-    const validation = validateTodo(todos[i], i);
+    const validation = validateTodo(todos[i]);
     todoValidations.push(validation);
 
     // Collect errors and warnings
@@ -165,7 +165,7 @@ export function validateTodoList(todos: Todo[]): TodoListValidationResult {
     contentMap.get(content)!.push(index + 1);
   });
 
-  for (const [content, indices] of contentMap) {
+  for (const [, indices] of contentMap) {
     if (indices.length > 1) {
       warnings.push(`Duplicate todo content found at positions: ${indices.join(', ')}`);
       suggestions.push('Remove or merge duplicate todos');
