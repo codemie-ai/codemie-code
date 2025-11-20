@@ -1,6 +1,6 @@
 {
   "name": "@codemieai/code",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "AI/Run CodeMie CLI - Professional CLI wrapper for managing multiple AI coding agents",
   "type": "module",
   "main": "dist/index.js",
