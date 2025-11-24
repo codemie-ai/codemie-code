@@ -104,9 +104,9 @@ export class ClaudeCodeAdapter implements AgentAdapter {
    */
   private async setupSSOGateway(env: NodeJS.ProcessEnv): Promise<{ gatewayUrl?: string; port?: number } | null> {
     // Check if we're using SSO provider
-    const isSSOProvider = env.CODEMIE_PROVIDER === 'ai-run-sso' ||
-                         (env.CODEMIE_BASE_URL?.includes('codemie')) ||
-                         (env.OPENAI_BASE_URL?.includes('codemie'));
+    // Only activate SSO gateway for explicit ai-run-sso provider
+    // Do NOT activate for litellm or other providers, even if their URLs contain "codemie"
+    const isSSOProvider = env.CODEMIE_PROVIDER === 'ai-run-sso';
 
     if (!isSSOProvider) {
       return null; // No SSO, use regular authentication
