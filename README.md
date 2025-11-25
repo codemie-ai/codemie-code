@@ -164,7 +164,7 @@ codemie-codex [message]          # Codex agent
 
 # Configuration overrides
 codemie-claude --model claude-4-5-sonnet --api-key your-key
-codemie-codex --model gpt-4o --provider openai
+codemie-codex --model gpt-4.1 --provider openai
 ```
 
 ### Configuration Commands
@@ -234,7 +234,7 @@ Location: `~/.codemie/config.json`
 
 AI/Run CodeMie CLI automatically validates model compatibility:
 
-- **Codex**: OpenAI models only (gpt-4, gpt-4o, gpt-5, etc.)
+- **Codex**: OpenAI models only (gpt-4, gpt-4.1, gpt-5, etc.)
 - **Claude**: Both Claude and GPT models
 - **CodeMie Native**: All supported models
 
@@ -372,7 +372,7 @@ codemie-claude -p "Refactor this component to use React hooks"
 ```bash
 # Setup with different providers
 codemie config set provider openai
-codemie config set model gpt-4o
+codemie config set model gpt-4.1
 codemie config set apiKey sk-your-key
 
 # Temporary model override
@@ -501,8 +501,8 @@ When you see "Model not compatible" errors:
 
 1. Check your configured model: `codemie config get model`
 2. Run the agent to see compatible options
-3. Set a compatible model: `codemie config set model gpt-4o`
-4. Or override temporarily: `codemie-codex --model gpt-4o`
+3. Set a compatible model: `codemie config set model gpt-4.1`
+4. Or override temporarily: `codemie-codex --model gpt-4.1`
 
 ## Development
 

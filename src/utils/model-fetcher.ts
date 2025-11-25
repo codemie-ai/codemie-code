@@ -168,9 +168,7 @@ export function categorizeModels(models: string[]): {
   const recommendedPatterns = [
     /^gpt-5/i,
     /^gpt-4\.1/i,
-    /^gpt-4o-2024/i,
-    /^claude-4/i,
-    /^claude-3-7/i
+    /^claude-4-5/i,
   ];
 
   const recommended: string[] = [];

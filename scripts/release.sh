@@ -1,8 +1,9 @@
 #!/bin/bash
-set -e
+# Note: Do NOT use 'set -e' to allow recovery from individual step failures
 
 # CodeMie Code Release Script
 # Simple script to automate releases following KISS principles
+# Designed to be resumable - can continue from failed steps
 
 DRY_RUN=false
 VERSION=""
@@ -21,16 +22,37 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Get current version
+# Get current version from package.json
 CURRENT=$(grep '"version"' package.json | sed 's/.*"version": "\(.*\)".*/\1/')
-echo "Current version: $CURRENT"
+echo "Current version in package.json: $CURRENT"
+
+# Get latest released tag
+LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+if [[ -n "$LATEST_TAG" ]]; then
+    LATEST_VERSION="${LATEST_TAG#v}"
+    echo "Latest released version: $LATEST_VERSION"
+else
+    LATEST_VERSION=""
+    echo "No previous releases found"
+fi
 
 # Determine target version
 if [[ -z "$VERSION" ]]; then
-    # Auto-increment patch version
-    IFS='.' read -r major minor patch <<< "$CURRENT"
-    VERSION="$major.$minor.$((patch + 1))"
-    echo "Auto-incrementing to: $VERSION"
+    # Check if current package.json version is already ahead of latest release
+    if [[ -n "$LATEST_VERSION" && "$CURRENT" != "$LATEST_VERSION" ]]; then
+        # package.json is ahead but not released - use it
+        VERSION="$CURRENT"
+        echo "Using unreleased version from package.json: $VERSION"
+    elif [[ -z "$LATEST_VERSION" ]]; then
+        # No releases yet - use package.json version
+        VERSION="$CURRENT"
+        echo "Using initial version from package.json: $VERSION"
+    else
+        # Auto-increment patch version from latest release
+        IFS='.' read -r major minor patch <<< "$LATEST_VERSION"
+        VERSION="$major.$minor.$((patch + 1))"
+        echo "Auto-incrementing from $LATEST_VERSION to: $VERSION"
+    fi
 fi
 
 echo "Target version: $VERSION"
@@ -39,39 +61,78 @@ echo "Target version: $VERSION"
 echo ""
 echo "🔍 Pre-flight checks:"
 
-# Check git status
-if ! git diff --quiet || ! git diff --cached --quiet; then
-    echo "❌ Working directory has uncommitted changes"
-    if [[ "$DRY_RUN" == "false" ]]; then
-        read -p "Continue anyway? (y/N): " -n 1 -r
-        echo
-        [[ ! $REPLY =~ ^[Yy]$ ]] && exit 1
-    fi
+# Check what's already done
+CURRENT_PKG_VERSION=$(grep '"version"' package.json | sed 's/.*"version": "\(.*\)".*/\1/')
+VERSION_UPDATED=false
+VERSION_COMMITTED=false
+TAG_EXISTS=false
+RELEASE_EXISTS=false
+
+if [[ "$CURRENT_PKG_VERSION" == "$VERSION" ]]; then
+    VERSION_UPDATED=true
+    echo "✅ package.json already at version $VERSION"
 else
-    echo "✅ Working directory is clean"
+    echo "⏭️  package.json needs update to $VERSION"
 fi
 
-# Check if version tag exists
+COMMIT_MSG="chore: bump version to $VERSION"
+if git log -1 --pretty=%B | grep -q "$COMMIT_MSG"; then
+    VERSION_COMMITTED=true
+    echo "✅ Version bump already committed"
+else
+    echo "⏭️  Version bump needs to be committed"
+fi
+
 if git tag -l "v$VERSION" | grep -q "v$VERSION"; then
-    echo "⚠️  Tag v$VERSION already exists"
+    TAG_EXISTS=true
+    echo "✅ Tag v$VERSION already exists"
+else
+    echo "⏭️  Tag v$VERSION needs to be created"
+fi
+
+if command -v gh >/dev/null 2>&1 && gh release view "v$VERSION" >/dev/null 2>&1; then
+    RELEASE_EXISTS=true
+    echo "✅ GitHub Release v$VERSION already exists"
+elif command -v gh >/dev/null 2>&1; then
+    echo "⏭️  GitHub Release needs to be created"
+fi
+
+# Check git status
+if ! git diff --quiet || ! git diff --cached --quiet; then
+    echo "⚠️  Working directory has uncommitted changes"
     if [[ "$DRY_RUN" == "false" ]]; then
         read -p "Continue anyway? (y/N): " -n 1 -r
         echo
         [[ ! $REPLY =~ ^[Yy]$ ]] && exit 1
     fi
-else
-    echo "✅ Tag v$VERSION does not exist"
 fi
 
 # Show what will be done
 echo ""
 echo "📋 Actions that will be performed:"
-echo "1. Update package.json version to $VERSION"
-echo "2. Commit version bump"
-echo "3. Create git tag v$VERSION"
-echo "4. Push commit and tag to origin"
-if command -v gh >/dev/null 2>&1; then
-    echo "5. Create GitHub Release (if gh CLI available)"
+STEP=1
+if [[ "$VERSION_UPDATED" == "false" ]]; then
+    echo "$STEP. Update package.json version to $VERSION"
+    STEP=$((STEP + 1))
+fi
+if [[ "$VERSION_COMMITTED" == "false" ]]; then
+    echo "$STEP. Commit version bump"
+    STEP=$((STEP + 1))
+fi
+if [[ "$TAG_EXISTS" == "false" ]]; then
+    echo "$STEP. Create git tag v$VERSION"
+    STEP=$((STEP + 1))
+fi
+echo "$STEP. Push commit and tag to origin"
+STEP=$((STEP + 1))
+if command -v gh >/dev/null 2>&1 && [[ "$RELEASE_EXISTS" == "false" ]]; then
+    echo "$STEP. Create GitHub Release"
+fi
+
+# If everything is done, just need to push
+if [[ "$VERSION_UPDATED" == "true" && "$VERSION_COMMITTED" == "true" && "$TAG_EXISTS" == "true" ]]; then
+    echo ""
+    echo "ℹ️  Version $VERSION is ready - only push and release creation needed"
 fi
 
 if [[ "$DRY_RUN" == "true" ]]; then
@@ -91,40 +152,68 @@ echo "🚀 Executing release..."
 
 # Update version in package.json and package-lock.json
 echo "📝 Updating package versions..."
-npm version "$VERSION" --no-git-tag-version
+CURRENT_PKG_VERSION=$(grep '"version"' package.json | sed 's/.*"version": "\(.*\)".*/\1/')
+if [[ "$CURRENT_PKG_VERSION" == "$VERSION" ]]; then
+    echo "⏭️  package.json already at version $VERSION, skipping version update..."
+else
+    npm version "$VERSION" --no-git-tag-version || {
+        echo "⚠️  Failed to update package version, but continuing..."
+    }
+fi
 
 # Commit changes
 echo "💾 Committing version bump..."
-git add package.json package-lock.json
-git commit -m "chore: bump version to $VERSION
+COMMIT_MSG="chore: bump version to $VERSION"
+if git log -1 --pretty=%B | grep -q "$COMMIT_MSG"; then
+    echo "⏭️  Version bump already committed, skipping commit..."
+else
+    git add package.json package-lock.json
+    git commit -m "$COMMIT_MSG
 
-🤖 Generated with release script"
+🤖 Generated with release script" || {
+        echo "⚠️  Failed to commit (possibly already committed), continuing..."
+    }
+fi
 
-# Create tag
-echo "🏷️  Creating tag v$VERSION..."
-git tag -a "v$VERSION" -m "Release version $VERSION"
+# Create tag (skip if exists)
+if git tag -l "v$VERSION" | grep -q "v$VERSION"; then
+    echo "⏭️  Tag v$VERSION already exists, skipping tag creation..."
+else
+    echo "🏷️  Creating tag v$VERSION..."
+    git tag -a "v$VERSION" -m "Release version $VERSION" || {
+        echo "⚠️  Failed to create tag, but continuing..."
+    }
+fi
 
 # Push to origin
 echo "📤 Pushing to origin..."
-git push origin main
-git push origin "v$VERSION"
+git push origin main || {
+    echo "⚠️  Failed to push main branch, but continuing..."
+}
+git push origin "v$VERSION" || {
+    echo "⚠️  Failed to push tag (possibly already pushed), continuing..."
+}
 
 # Create GitHub release if gh CLI is available
 if command -v gh >/dev/null 2>&1; then
     echo "🐱 Creating GitHub Release..."
 
-    # Generate simple release notes
-    LAST_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
-    if [[ -n "$LAST_TAG" ]]; then
-        COMMITS=$(git log "$LAST_TAG..HEAD" --oneline --no-merges | wc -l)
-        RANGE="$LAST_TAG..v$VERSION"
+    # Check if release already exists
+    if gh release view "v$VERSION" >/dev/null 2>&1; then
+        echo "⏭️  GitHub Release v$VERSION already exists, skipping..."
     else
-        COMMITS=$(git rev-list --count HEAD)
-        RANGE="v$VERSION"
-    fi
+        # Generate simple release notes
+        LAST_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+        if [[ -n "$LAST_TAG" ]]; then
+            COMMITS=$(git log "$LAST_TAG..HEAD" --oneline --no-merges | wc -l)
+            RANGE="$LAST_TAG..v$VERSION"
+        else
+            COMMITS=$(git rev-list --count HEAD)
+            RANGE="v$VERSION"
+        fi
 
-    # Create release notes
-    cat > /tmp/release-notes.md << EOF
+        # Create release notes
+        cat > /tmp/release-notes.md << EOF
 ## What's Changed
 
 This release includes $COMMITS commits with improvements and updates.
@@ -135,13 +224,16 @@ $(git log --oneline --no-merges -10 ${LAST_TAG:+$LAST_TAG..HEAD} | sed 's/^/- /'
 **Full Changelog**: https://github.com/EPMCDME/codemie-ai/compare/${LAST_TAG:-initial}...v$VERSION
 EOF
 
-    gh release create "v$VERSION" \
-        --title "Release v$VERSION" \
-        --notes-file /tmp/release-notes.md \
-        --latest
+        gh release create "v$VERSION" \
+            --title "Release v$VERSION" \
+            --notes-file /tmp/release-notes.md \
+            --latest || {
+            echo "⚠️  Failed to create GitHub release, but continuing..."
+        }
 
-    rm -f /tmp/release-notes.md
-    echo "✅ GitHub Release created"
+        rm -f /tmp/release-notes.md
+        echo "✅ GitHub Release created"
+    fi
 else
     echo "⚠️  GitHub CLI not available - create release manually at:"
     echo "   https://github.com/EPMCDME/codemie-ai/releases/new?tag=v$VERSION"

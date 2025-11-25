@@ -180,7 +180,7 @@ async function validateModelCompatibility(
 
   // Model is incompatible
   logger.warn(`${chalk.yellow('⚠')}  Model '${chalk.cyan(currentModel)}' is not compatible with ${agentName}`);
-  console.log(chalk.dim(`   ${agentName} requires OpenAI-compatible models (e.g., gpt-5, gpt-4o)`));
+  console.log(chalk.dim(`   ${agentName} requires OpenAI-compatible models (e.g., gpt-5, gpt-4.1)`));
   console.log(chalk.dim(`   Claude models are not supported due to API incompatibilities\n`));
 
   if (!allowPrompt) {

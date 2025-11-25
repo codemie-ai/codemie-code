@@ -145,12 +145,6 @@ export class CodeMieTerminalUI {
           }
         };
 
-        // Add timeout to prevent hanging indefinitely
-        const inputTimeout = setTimeout(() => {
-          performCleanup();
-          resolve(null);
-        }, 30000); // 30 second timeout
-
         writePrompt();
 
         process.stdin.on('data', (key: Buffer) => {
@@ -196,7 +190,6 @@ export class CodeMieTerminalUI {
             }
 
             process.stdout.write('\n');
-            clearTimeout(inputTimeout);
             performCleanup();
             resolve({
               text: lines.join('\n'),
@@ -207,7 +200,6 @@ export class CodeMieTerminalUI {
 
             // Ctrl+C
             if (data === '\u0003') {
-              clearTimeout(inputTimeout);
               performCleanup();
               resolve(null);
               return;

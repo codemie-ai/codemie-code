@@ -119,9 +119,9 @@ export function validateModelCompatibility(
         valid: false,
         error: `Model '${model}' is not compatible with ${agentName}`,
         suggestions: [
-          `${agentName} requires OpenAI-compatible models (e.g., gpt-5, gpt-4o)`,
-          `Switch model: codemie config set model gpt-4o`,
-          `Override for this session: codemie-${agentName} --model gpt-4o`
+          `${agentName} requires OpenAI-compatible models (e.g., gpt-5, gpt-4.1)`,
+          `Switch model: codemie config set model gpt-4.1`,
+          `Override for this session: codemie-${agentName} --model gpt-4.1`
         ]
       };
     }

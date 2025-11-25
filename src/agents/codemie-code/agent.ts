@@ -211,25 +211,27 @@ export class CodeMieAgent {
           };
         } else {
           // Even without SSO cookies, we still want to add the client tracking header
+          // Explicitly add Authorization header for non-SSO LiteLLM
           ssoConfig.fetch = async (input: string | URL | Request, init?: RequestInit) => {
             const updatedInit = {
               ...init,
               headers: {
                 ...init?.headers,
+                'Authorization': `Bearer ${this.config.authToken}`,
                 'X-CodeMie-Client': 'codemie-code' // Track client type for request metrics
               }
             };
 
             if (this.config.debug) {
-              console.log(`[DEBUG] Non-SSO request to ${input} with client header`);
+              console.log(`[DEBUG] Non-SSO LiteLLM request to ${input}`);
+              console.log(`[DEBUG] Authorization header set with API key`);
             }
 
             return fetch(input, updatedInit);
           };
 
           if (this.config.debug) {
-            console.log(`[DEBUG] WARNING: SSO cookies not found or auth token mismatch`);
-            console.log(`[DEBUG] Will attempt request without SSO cookies but with client header`);
+            console.log(`[DEBUG] LiteLLM provider configured with API key authentication`);
           }
         }
 
