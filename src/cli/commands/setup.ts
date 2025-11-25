@@ -73,23 +73,60 @@ async function runSetupWizard(force?: boolean): Promise<void> {
   console.log(chalk.bold.cyan('╚═══════════════════════════════════════╝\n'));
 
   // Check if config already exists
-  if (!force && await ConfigLoader.hasGlobalConfig()) {
-    const { proceed } = await inquirer.prompt([
+  const hasConfig = await ConfigLoader.hasGlobalConfig();
+  let profileName: string | null = null;
+  let isUpdate = false;
+
+  if (!force && hasConfig) {
+    const profiles = await ConfigLoader.listProfiles();
+
+    if (profiles.length > 0) {
+      console.log(chalk.cyan('\n📋 Existing Profiles:\n'));
+      profiles.forEach(({ name, active, profile }) => {
+        const activeMarker = active ? chalk.green('● ') : chalk.dim('○ ');
+        console.log(`${activeMarker}${chalk.white(name)} (${profile.provider})`);
+      });
+      console.log('');
+    }
+
+    const { action } = await inquirer.prompt([
       {
-        type: 'confirm',
-        name: 'proceed',
-        message: 'Configuration already exists. Do you want to reconfigure?',
-        default: false
+        type: 'list',
+        name: 'action',
+        message: 'What would you like to do?',
+        choices: [
+          { name: 'Add a new profile', value: 'add' },
+          { name: 'Update an existing profile', value: 'update' },
+          { name: 'Cancel', value: 'cancel' }
+        ]
       }
     ]);
 
-    if (!proceed) {
-      console.log(chalk.yellow('\nSetup cancelled. Use --force to reconfigure.\n'));
+    if (action === 'cancel') {
+      console.log(chalk.yellow('\nSetup cancelled.\n'));
       return;
     }
-  }
 
-  console.log(chalk.dim("Let's configure your AI assistant.\n"));
+    if (action === 'update') {
+      const { selectedProfile } = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'selectedProfile',
+          message: 'Select profile to update:',
+          choices: profiles.map(p => ({ name: p.name, value: p.name }))
+        }
+      ]);
+      profileName = selectedProfile;
+      isUpdate = true;
+      console.log(chalk.dim(`\nUpdating profile: ${chalk.white(profileName)}\n`));
+    } else {
+      // Adding new profile - will ask for name at the end
+      console.log(chalk.dim('\nConfiguring new profile...\n'));
+    }
+  } else {
+    // First time setup - will create default profile or ask for name at the end
+    console.log(chalk.dim("Let's configure your AI assistant.\n"));
+  }
 
   // Step 1: Choose provider (ai-run-sso is now first/default)
   const { provider } = await inquirer.prompt([
@@ -103,7 +140,7 @@ async function runSetupWizard(force?: boolean): Promise<void> {
   ]);
 
   if (provider === 'ai-run-sso') {
-    await handleAiRunSSOSetup();
+    await handleAiRunSSOSetup(profileName, isUpdate, hasConfig);
     return; // Early return for SSO flow
   }
 
@@ -375,31 +412,94 @@ async function runSetupWizard(force?: boolean): Promise<void> {
     model = modelInput;
   }
 
-  // Step 3: Save configuration (credentials already validated)
-  const config: Partial<CodeMieConfigOptions> = {
+  // Step 3: Ask for profile name (if creating new)
+  if (!isUpdate && profileName === null) {
+    const profiles = await ConfigLoader.listProfiles();
+    const existingNames = profiles.map(p => p.name);
+
+    // Suggest a default name based on provider
+    let defaultName = 'default';
+    if (existingNames.length > 0) {
+      // If profiles exist, suggest provider-based name
+      defaultName = provider === 'ai-run-sso' ? 'codemie-sso' : provider;
+      // Make it unique if needed
+      let counter = 1;
+      let suggestedName = defaultName;
+      while (existingNames.includes(suggestedName)) {
+        suggestedName = `${defaultName}-${counter}`;
+        counter++;
+      }
+      defaultName = suggestedName;
+    }
+
+    const { newProfileName } = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'newProfileName',
+        message: 'Enter a name for this profile:',
+        default: defaultName,
+        validate: (input: string) => {
+          if (!input.trim()) return 'Profile name is required';
+          if (existingNames.includes(input.trim())) {
+            return 'A profile with this name already exists';
+          }
+          return true;
+        }
+      }
+    ]);
+    profileName = newProfileName;
+  }
+
+  // Step 4: Save configuration as profile
+  const profile: Partial<CodeMieConfigOptions> = {
+    name: profileName!,
     provider,
     baseUrl,
     apiKey,
     model,
-    timeout: 300, // Default timeout for most users
+    timeout: 300,
     debug: false
   };
 
-  const spinner = ora('Saving configuration...').start();
+  const spinner = ora('Saving profile...').start();
 
   try {
-    await ConfigLoader.saveGlobalConfig(config);
-    spinner.succeed(chalk.green('Configuration saved to ~/.codemie/config.json'));
+    await ConfigLoader.saveProfile(profileName!, profile as any);
+    spinner.succeed(chalk.green(`Profile "${profileName}" saved to ~/.codemie/config.json`));
+
+    // If this is a new profile, ask if user wants to switch to it
+    if (!isUpdate) {
+      const activeProfile = await ConfigLoader.getActiveProfileName();
+      if (activeProfile !== profileName) {
+        const { switchToNew } = await inquirer.prompt([
+          {
+            type: 'confirm',
+            name: 'switchToNew',
+            message: `Switch to profile "${profileName}" as active?`,
+            default: true
+          }
+        ]);
+
+        if (switchToNew) {
+          await ConfigLoader.switchProfile(profileName!);
+          console.log(chalk.green(`✓ Switched to profile "${profileName}"`));
+        }
+      }
+    }
   } catch (error: unknown) {
-    spinner.fail(chalk.red('Failed to save configuration'));
+    spinner.fail(chalk.red('Failed to save profile'));
     throw error;
   }
 
-  // Success message - use first-time experience utility
-  FirstTimeExperience.showPostSetupMessage();
+  // Success message
+  console.log(chalk.bold.green(`\n✅ Profile "${profileName}" configured successfully!\n`));
+  console.log(chalk.cyan(`🔗 Provider: ${provider}`));
+  console.log(chalk.cyan(`🤖 Model: ${model}`));
+  console.log(chalk.cyan(`📁 Config: ~/.codemie/config.json\n`));
+  console.log(chalk.bold(`🚀 Ready to use! Try: ${chalk.white('codemie-code "test task"')}\n`));
 }
 
-async function handleAiRunSSOSetup(): Promise<void> {
+async function handleAiRunSSOSetup(profileName: string | null, isUpdate: boolean, hasConfig: boolean): Promise<void> {
   console.log(chalk.bold.cyan('\n🔐 CodeMie SSO Configuration\n'));
 
   // Step 1: Get CodeMie URL
@@ -465,32 +565,89 @@ async function handleAiRunSSOSetup(): Promise<void> {
       // Step 5: Model selection
       const selectedModel = await promptForModelSelection(models);
 
-      // Step 6: Save configuration
-      const config: Partial<CodeMieConfigOptions> = {
+      // Step 6: Ask for profile name (if creating new)
+      let finalProfileName = profileName;
+      if (!isUpdate && profileName === null) {
+        const profiles = await ConfigLoader.listProfiles();
+        const existingNames = profiles.map(p => p.name);
+
+        // Suggest a default name
+        let defaultName = 'codemie-sso';
+        if (existingNames.length > 0) {
+          let counter = 1;
+          let suggestedName = defaultName;
+          while (existingNames.includes(suggestedName)) {
+            suggestedName = `${defaultName}-${counter}`;
+            counter++;
+          }
+          defaultName = suggestedName;
+        } else {
+          defaultName = 'default';
+        }
+
+        const { newProfileName } = await inquirer.prompt([
+          {
+            type: 'input',
+            name: 'newProfileName',
+            message: 'Enter a name for this profile:',
+            default: defaultName,
+            validate: (input: string) => {
+              if (!input.trim()) return 'Profile name is required';
+              if (existingNames.includes(input.trim())) {
+                return 'A profile with this name already exists';
+              }
+              return true;
+            }
+          }
+        ]);
+        finalProfileName = newProfileName;
+      }
+
+      // Step 7: Save configuration as profile
+      const profile: Partial<CodeMieConfigOptions> = {
+        name: finalProfileName!,
         provider: 'ai-run-sso',
         authMethod: 'sso',
         codeMieUrl,
         baseUrl: authResult.apiUrl,
         codeMieIntegration: selectedIntegration,
-        apiKey: 'sso-authenticated', // Placeholder - auth via cookies
+        apiKey: 'sso-authenticated',
         model: selectedModel,
         timeout: 300,
         debug: false
       };
 
-      const saveSpinner = ora('Saving configuration...').start();
-      await ConfigLoader.saveGlobalConfig(config);
-      saveSpinner.succeed(chalk.green('Configuration saved to ~/.codemie/config.json'));
+      const saveSpinner = ora('Saving profile...').start();
+      await ConfigLoader.saveProfile(finalProfileName!, profile as any);
+      saveSpinner.succeed(chalk.green(`Profile "${finalProfileName}" saved to ~/.codemie/config.json`));
+
+      // If this is a new profile, ask if user wants to switch to it
+      if (!isUpdate) {
+        const activeProfile = await ConfigLoader.getActiveProfileName();
+        if (activeProfile !== finalProfileName) {
+          const { switchToNew } = await inquirer.prompt([
+            {
+              type: 'confirm',
+              name: 'switchToNew',
+              message: `Switch to profile "${finalProfileName}" as active?`,
+              default: true
+            }
+          ]);
+
+          if (switchToNew) {
+            await ConfigLoader.switchProfile(finalProfileName!);
+            console.log(chalk.green(`✓ Switched to profile "${finalProfileName}"`));
+          }
+        }
+      }
 
       // Success message
-      console.log(chalk.bold.green('\n✅ CodeMie SSO setup completed successfully!\n'));
+      console.log(chalk.bold.green(`\n✅ Profile "${finalProfileName}" configured successfully!\n`));
       console.log(chalk.cyan(`🔗 Connected to: ${codeMieUrl}`));
       console.log(chalk.cyan(`🔑 Authentication: SSO (session stored securely)`));
       console.log(chalk.cyan(`🤖 Selected Model: ${selectedModel}`));
       console.log(chalk.cyan(`📁 Config saved to: ~/.codemie/config.json\n`));
-      console.log(chalk.bold(`🚀 Ready to use! Try: ${chalk.white('codemie-code --task "explore current repository"')}\n`));
-      console.log(chalk.dim(`   Or start interactive mode: ${chalk.white('codemie-code')}\n`));
-      console.log(chalk.yellow(`💡 Install additional agents with: ${chalk.white('codemie install claude')}\n`));
+      console.log(chalk.bold(`🚀 Ready to use! Try: ${chalk.white('codemie-code "test task"')}\n`));
 
     } catch (error) {
       modelsSpinner.fail(chalk.red('Failed to fetch models'));
@@ -507,8 +664,46 @@ async function handleAiRunSSOSetup(): Promise<void> {
         }
       ]);
 
-      // Save config with manual model
-      const config: Partial<CodeMieConfigOptions> = {
+      // Ask for profile name (if creating new)
+      let finalProfileName = profileName;
+      if (!isUpdate && profileName === null) {
+        const profiles = await ConfigLoader.listProfiles();
+        const existingNames = profiles.map(p => p.name);
+
+        let defaultName = 'codemie-sso';
+        if (existingNames.length > 0) {
+          let counter = 1;
+          let suggestedName = defaultName;
+          while (existingNames.includes(suggestedName)) {
+            suggestedName = `${defaultName}-${counter}`;
+            counter++;
+          }
+          defaultName = suggestedName;
+        } else {
+          defaultName = 'default';
+        }
+
+        const { newProfileName } = await inquirer.prompt([
+          {
+            type: 'input',
+            name: 'newProfileName',
+            message: 'Enter a name for this profile:',
+            default: defaultName,
+            validate: (input: string) => {
+              if (!input.trim()) return 'Profile name is required';
+              if (existingNames.includes(input.trim())) {
+                return 'A profile with this name already exists';
+              }
+              return true;
+            }
+          }
+        ]);
+        finalProfileName = newProfileName;
+      }
+
+      // Save config with manual model as profile
+      const profile: Partial<CodeMieConfigOptions> = {
+        name: finalProfileName!,
         provider: 'ai-run-sso',
         authMethod: 'sso',
         codeMieUrl,
@@ -520,8 +715,8 @@ async function handleAiRunSSOSetup(): Promise<void> {
         debug: false
       };
 
-      await ConfigLoader.saveGlobalConfig(config);
-      console.log(chalk.green('\n✅ Configuration saved with manual model selection.\n'));
+      await ConfigLoader.saveProfile(finalProfileName!, profile as any);
+      console.log(chalk.green(`\n✅ Profile "${finalProfileName}" saved with manual model selection.\n`));
     }
 
   } catch (error) {

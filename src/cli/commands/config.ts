@@ -10,12 +10,12 @@ import { fetchCodeMieModelsFromConfig } from '../../utils/codemie-model-fetcher.
 export function createConfigCommand(): Command {
   const command = new Command('config');
 
-  command.description('Manage CodeMie Code configuration');
+  command.description('Configuration utilities and diagnostics');
 
   // config show - Display configuration with sources
   command
     .command('show')
-    .description('Show current configuration with sources')
+    .description('Show current configuration with sources (env, global, project)')
     .option('-d, --dir <path>', 'Working directory', process.cwd())
     .action(async (options: { dir: string }) => {
       try {
@@ -34,10 +34,10 @@ export function createConfigCommand(): Command {
       console.log(chalk.bold('\nAvailable Configuration Parameters:\n'));
 
       const params = [
-        { name: 'provider', desc: 'LLM provider (openai, azure, bedrock, litellm)' },
+        { name: 'provider', desc: 'LLM provider (ai-run-sso, openai, azure, bedrock, litellm)' },
         { name: 'baseUrl', desc: 'API endpoint URL' },
         { name: 'apiKey', desc: 'Authentication API key' },
-        { name: 'model', desc: 'Model identifier (e.g., claude-sonnet-4, gpt-4)' },
+        { name: 'model', desc: 'Model identifier (e.g., claude-4-5-sonnet, gpt-4.1)' },
         { name: 'timeout', desc: 'Request timeout in seconds' },
         { name: 'debug', desc: 'Enable debug logging (true/false)' },
         { name: 'allowedDirs', desc: 'Allowed directories (comma-separated)' },
@@ -48,171 +48,18 @@ export function createConfigCommand(): Command {
         console.log(`  ${chalk.cyan(param.name.padEnd(20))} ${chalk.dim(param.desc)}`);
       }
 
-      console.log(chalk.dim('\nSet via:'));
-      console.log(chalk.dim('  - Global config:  ~/.codemie/config.json'));
-      console.log(chalk.dim('  - Project config: .codemie/config.json'));
-      console.log(chalk.dim('  - Environment:    CODEMIE_<PARAM>'));
-      console.log(chalk.dim('  - CLI flags:      --<param>\n'));
+      console.log(chalk.dim('\n📝 To modify profiles:'));
+      console.log(chalk.dim('  - Add/update:     codemie setup'));
+      console.log(chalk.dim('  - Switch active:  codemie profile switch <name>'));
+      console.log(chalk.dim('  - View profiles:  codemie profile list'));
+      console.log(chalk.dim('\n🔧 Configuration sources (priority order):'));
+      console.log(chalk.dim('  1. CLI flags:     --profile <name>, --model <model>, etc.'));
+      console.log(chalk.dim('  2. Environment:   CODEMIE_<PARAM>'));
+      console.log(chalk.dim('  3. Project:       .codemie/config.json (use: codemie config init)'));
+      console.log(chalk.dim('  4. Global:        ~/.codemie/config.json (profiles)'));
+      console.log(chalk.dim('  5. Defaults:      Built-in fallback values\n'));
     });
 
-  // config set - Set a configuration value
-  command
-    .command('set')
-    .description('Set a configuration value')
-    .argument('<key>', 'Configuration key')
-    .argument('<value>', 'Configuration value')
-    .option('-g, --global', 'Set in global config (default)', true)
-    .option('-p, --project', 'Set in project config')
-    .option('-d, --dir <path>', 'Working directory for project config', process.cwd())
-    .action(async (key: string, value: string, options: { global?: boolean; project?: boolean; dir: string }) => {
-      try {
-        const isGlobal = !options.project;
-
-        // Parse value
-        const parsedValue = parseConfigValue(value);
-
-        // Load current config
-        const currentConfig = isGlobal
-          ? await ConfigLoader['loadJsonConfig'](ConfigLoader['GLOBAL_CONFIG'])
-          : await ConfigLoader['loadJsonConfig'](`${options.dir}/.codemie/config.json`);
-
-        // Update config
-        const updatedConfig = { ...currentConfig, [key]: parsedValue };
-
-        // Save config
-        if (isGlobal) {
-          await ConfigLoader.saveGlobalConfig(updatedConfig);
-          logger.success(`Set ${key} in global config`);
-        } else {
-          await ConfigLoader.saveProjectConfig(options.dir, updatedConfig);
-          logger.success(`Set ${key} in project config`);
-        }
-      } catch (error: unknown) {
-        logger.error('Failed to set configuration:', error);
-        process.exit(1);
-      }
-    });
-
-  // config get - Get a configuration value
-  command
-    .command('get')
-    .description('Get a configuration value')
-    .argument('<key>', 'Configuration key')
-    .option('-d, --dir <path>', 'Working directory', process.cwd())
-    .action(async (key: string, options: { dir: string }) => {
-      try {
-        const config = await ConfigLoader.load(options.dir);
-        const value = (config as any)[key];
-
-        if (value === undefined) {
-          console.log(chalk.yellow(`Configuration key '${key}' not set`));
-        } else {
-          // Check if sensitive
-          const keyLower = key.toLowerCase();
-          if (keyLower.includes('key') || keyLower.includes('token')) {
-            const masked = ConfigLoader['maskSensitive'](key, value);
-            console.log(masked);
-          } else {
-            console.log(value);
-          }
-        }
-      } catch (error: unknown) {
-        logger.error('Failed to get configuration:', error);
-        process.exit(1);
-      }
-    });
-
-  // config edit - Edit configuration interactively
-  command
-    .command('edit')
-    .description('Edit a configuration value interactively')
-    .argument('<key>', 'Configuration key')
-    .option('-g, --global', 'Edit global config (default)', true)
-    .option('-p, --project', 'Edit project config')
-    .option('-d, --dir <path>', 'Working directory for project config', process.cwd())
-    .action(async (key: string, options: { global?: boolean; project?: boolean; dir: string }) => {
-      try {
-        const isGlobal = !options.project;
-
-        // Load current value
-        const config = await ConfigLoader.load(options.dir);
-        const currentValue = (config as any)[key];
-
-        // Prompt for new value
-        const isSensitive = key.toLowerCase().includes('key') || key.toLowerCase().includes('token');
-        const { newValue } = await inquirer.prompt([
-          {
-            type: isSensitive ? 'password' : 'input',
-            name: 'newValue',
-            message: `Enter new value for ${key}:`,
-            default: isSensitive ? undefined : currentValue,
-            mask: isSensitive ? '*' : undefined
-          }
-        ]);
-
-        // Parse value
-        const parsedValue = parseConfigValue(newValue);
-
-        // Load current config
-        const currentConfig = isGlobal
-          ? await ConfigLoader['loadJsonConfig'](ConfigLoader['GLOBAL_CONFIG'])
-          : await ConfigLoader['loadJsonConfig'](`${options.dir}/.codemie/config.json`);
-
-        // Update config
-        const updatedConfig = { ...currentConfig, [key]: parsedValue };
-
-        // Save config
-        if (isGlobal) {
-          await ConfigLoader.saveGlobalConfig(updatedConfig);
-          logger.success(`Updated ${key} in global config`);
-        } else {
-          await ConfigLoader.saveProjectConfig(options.dir, updatedConfig);
-          logger.success(`Updated ${key} in project config`);
-        }
-      } catch (error: unknown) {
-        logger.error('Failed to edit configuration:', error);
-        process.exit(1);
-      }
-    });
-
-  // config reset - Reset configuration
-  command
-    .command('reset')
-    .description('Reset configuration (delete config file)')
-    .option('-g, --global', 'Reset global config', true)
-    .option('-p, --project', 'Reset project config')
-    .option('-d, --dir <path>', 'Working directory for project config', process.cwd())
-    .action(async (options: { global?: boolean; project?: boolean; dir: string }) => {
-      try {
-        const isGlobal = !options.project;
-
-        const { confirm } = await inquirer.prompt([
-          {
-            type: 'confirm',
-            name: 'confirm',
-            message: `Are you sure you want to reset ${isGlobal ? 'global' : 'project'} configuration?`,
-            default: false
-          }
-        ]);
-
-        if (!confirm) {
-          console.log(chalk.yellow('Reset cancelled.'));
-          return;
-        }
-
-        if (isGlobal) {
-          await ConfigLoader.deleteGlobalConfig();
-          logger.success('Global configuration reset');
-          console.log(chalk.dim('\nRun: codemie setup'));
-        } else {
-          await ConfigLoader.deleteProjectConfig(options.dir);
-          logger.success('Project configuration reset');
-        }
-      } catch (error: unknown) {
-        logger.error('Failed to reset configuration:', error);
-        process.exit(1);
-      }
-    });
 
   // config test - Test configuration
   command
@@ -357,23 +204,4 @@ export function createConfigCommand(): Command {
     });
 
   return command;
-}
-
-/**
- * Parse configuration value from string
- */
-function parseConfigValue(value: string): any {
-  // Try to parse as JSON for complex types
-  if (value === 'true') return true;
-  if (value === 'false') return false;
-  if (value === 'null') return null;
-  if (/^\d+$/.test(value)) return parseInt(value, 10);
-  if (/^\d+\.\d+$/.test(value)) return parseFloat(value);
-
-  // Check if it's a comma-separated list
-  if (value.includes(',')) {
-    return value.split(',').map(s => s.trim());
-  }
-
-  return value;
 }

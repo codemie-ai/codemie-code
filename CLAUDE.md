@@ -50,6 +50,14 @@ codemie-codex              # Direct Codex access
 codemie-claude health      # Claude health check
 codemie-codex health       # Codex health check
 
+# Profile Management (Multi-Provider Support)
+codemie setup              # Add new profile or update existing
+codemie profile list       # List all provider profiles
+codemie profile switch <name>  # Switch to different profile
+codemie profile show [name]    # Show profile details
+codemie profile delete <name>  # Delete a profile
+codemie-code --profile work "task"  # Use specific profile
+
 # Release & Publishing
 git tag -a v0.0.1 -m "Release version 0.0.1"  # Create release tag
 git push origin v0.0.1                         # Push tag to trigger publish
@@ -152,9 +160,13 @@ codemie-code/
 
 #### 3. Configuration System (`src/env/`)
 
-- **EnvManager** (`manager.ts`): Global config at `~/.codemie/config.json`
-- **Priority**: Environment variables override config file
-- **Providers**: Anthropic, OpenAI, Azure, Bedrock, LiteLLM
+- **Types** (`types.ts`): Multi-provider configuration types and type guards
+- **ConfigLoader** (`utils/config-loader.ts`): Multi-provider profile management
+  - Supports both legacy (v1) and multi-provider (v2) configs
+  - Automatic migration from legacy to profile-based format
+  - Profile CRUD: add, update, delete, rename, switch, list
+- **Priority**: CLI args > Env vars > Project config > Global config > Defaults
+- **Providers**: AI-Run SSO, LiteLLM, OpenAI, Azure, Bedrock
 - **Model Validation**: Real-time model fetching via `/v1/models` endpoints
 
 #### 4. Workflow Management System (`src/workflows/`)
@@ -222,9 +234,19 @@ interface AgentAdapter {
 ```
 
 #### Configuration Hierarchy
-1. Environment variables (highest priority)
-2. Global config file (`~/.codemie/config.json`)
-3. Default values (lowest priority)
+1. CLI arguments (`--profile`, `--model`, etc.) - highest priority
+2. Environment variables (`CODEMIE_*`, `OPENAI_*`, etc.)
+3. Project-local config (`.codemie/config.json`)
+4. Global config file (`~/.codemie/config.json`)
+5. Default values - lowest priority
+
+#### Multi-Provider Profile System
+- **Configuration Format**: Version 2 supports multiple named profiles
+- **Profile Storage**: `~/.codemie/config.json` with `version: 2` field
+- **Active Profile**: One profile marked as active, used by default
+- **Profile Selection**: Use `--profile <name>` flag to override active profile
+- **Automatic Migration**: Legacy (v1) configs auto-convert to "default" profile
+- **Non-Destructive Setup**: `codemie setup` offers "Add new" or "Update existing"
 
 #### Tool System Architecture
 - **Modular Design**: Each tool type in separate file
@@ -251,11 +273,43 @@ interface AgentAdapter {
 
 ## Development Guidelines
 
+### Working with Multi-Provider Configuration
+
+When working with the configuration system:
+
+1. **Profile Management Pattern**:
+   - Use `ConfigLoader.saveProfile(name, profile)` to add/update profiles
+   - Use `ConfigLoader.switchProfile(name)` to change active profile
+   - Use `ConfigLoader.listProfiles()` to get all profiles with active status
+   - Never directly overwrite `~/.codemie/config.json` - use ConfigLoader methods
+
+2. **Configuration Loading Priority**:
+   ```typescript
+   // Load with profile support
+   const config = await ConfigLoader.load(process.cwd(), {
+     name: profileName,  // Optional profile selection
+     model: cliModel,    // Optional CLI overrides
+     provider: cliProvider
+   });
+   ```
+
+3. **Migration Pattern**:
+   - Use `loadMultiProviderConfig()` which auto-migrates legacy configs
+   - Type guards: `isMultiProviderConfig()` and `isLegacyConfig()`
+   - Legacy configs become "default" profile automatically
+
+4. **Setup Wizard Pattern** (`setup.ts`):
+   - Check existing profiles with `ConfigLoader.listProfiles()`
+   - Offer "Add new" or "Update existing" options
+   - Prompt for unique profile name when adding
+   - Use `ConfigLoader.saveProfile()` instead of `saveGlobalConfig()`
+
 ### Working with Agent Shortcuts
 
 When modifying the direct agent shortcuts (`codemie-claude`, `codemie-codex`):
 
 1. **Configuration Override Pattern**: All shortcuts support CLI overrides for:
+   - `--profile`: Select specific provider profile
    - `--model`: Override model selection
    - `--provider`: Override provider
    - `--api-key`: Override API key

@@ -17,8 +17,10 @@
   - [Core Commands](#core-commands)
   - [Agent Shortcuts](#agent-shortcuts)
   - [Configuration Commands](#configuration-commands)
+  - [Profile Management Commands](#profile-management-commands)
 - [Configuration](#configuration)
   - [Setup Wizard (Recommended)](#setup-wizard-recommended)
+  - [Multi-Provider Profiles](#multi-provider-profiles)
   - [Supported Providers](#supported-providers)
   - [Manual Configuration](#manual-configuration)
   - [Model Compatibility](#model-compatibility)
@@ -137,6 +139,7 @@ codemie-claude -p "Fix security issues"
 
 ```bash
 codemie setup                    # Interactive configuration wizard
+codemie profile <command>        # Manage provider profiles
 codemie auth <command>           # Manage SSO authentication
 codemie list                     # List all available agents
 codemie install <agent>          # Install an agent
@@ -164,15 +167,29 @@ codemie-codex [message]          # Codex agent
 # Configuration overrides
 codemie-claude --model claude-4-5-sonnet --api-key your-key
 codemie-codex --model gpt-4.1 --provider openai
+
+# Profile selection
+codemie-code --profile work-litellm "task"
+codemie-claude --profile personal-openai -p "message"
 ```
 
 ### Configuration Commands
 
 ```bash
-codemie config list              # Show all configuration
-codemie config get <key>         # Get specific value
-codemie config set <key> <value> # Set configuration value
-codemie config reset             # Reset to defaults
+codemie config show              # Show current configuration with sources
+codemie config list              # List all available parameters
+codemie config test              # Test connection with current configuration
+codemie config init              # Initialize project-specific configuration
+```
+
+### Profile Management Commands
+
+```bash
+codemie profile list             # List all provider profiles
+codemie profile switch <name>    # Switch to a different profile
+codemie profile show [name]      # Show profile details (defaults to active)
+codemie profile delete <name>    # Delete a profile
+codemie profile rename <old> <new> # Rename a profile
 ```
 
 ## Configuration
@@ -190,6 +207,100 @@ The wizard will:
 - Test your credentials via health endpoints
 - Fetch available models in real-time
 - Save configuration to `~/.codemie/config.json`
+
+**Multi-Provider Support**: If you already have profiles configured, the wizard will offer to:
+- Add a new profile (prompts for unique name)
+- Update an existing profile (select from list)
+- Cancel without changes
+
+This ensures you can configure multiple providers (work, personal, enterprise SSO) without losing existing configurations.
+
+### Multi-Provider Profiles
+
+CodeMie CLI supports multiple provider profiles, allowing you to:
+- Configure different providers for different contexts (work, personal, etc.)
+- Switch between profiles with a single command
+- Keep all configurations without overwriting
+
+#### Creating Multiple Profiles
+
+```bash
+# First profile - work account with LiteLLM
+codemie setup
+# → Choose: Add a new profile
+# → Name: "work-litellm"
+# → Provider: LiteLLM
+# → Configure credentials...
+
+# Second profile - personal OpenAI account
+codemie setup
+# → Choose: Add a new profile
+# → Name: "personal-openai"
+# → Provider: OpenAI
+# → Configure credentials...
+
+# Third profile - enterprise SSO
+codemie setup
+# → Choose: Add a new profile
+# → Name: "enterprise-sso"
+# → Provider: CodeMie SSO
+# → Authenticate via SSO...
+```
+
+#### Using Profiles
+
+```bash
+# List all profiles (shows active profile with ●)
+codemie profile list
+# Output:
+# ● work-litellm (litellm) - claude-4-5-sonnet
+# ○ personal-openai (openai) - gpt-4.1
+# ○ enterprise-sso (ai-run-sso) - claude-4-5-sonnet
+
+# Switch active profile
+codemie profile switch personal-openai
+
+# Use active profile (default behavior)
+codemie-code "analyze this code"
+
+# Override with specific profile for one command
+codemie-claude --profile work-litellm "review PR"
+codemie-codex --profile personal-openai "generate tests"
+
+# Show profile details
+codemie profile show work-litellm
+```
+
+#### Profile Configuration File
+
+Profiles are stored in `~/.codemie/config.json`:
+
+```json
+{
+  "version": 2,
+  "activeProfile": "work-litellm",
+  "profiles": {
+    "work-litellm": {
+      "name": "work-litellm",
+      "provider": "litellm",
+      "baseUrl": "https://litellm.company.com",
+      "apiKey": "sk-***",
+      "model": "claude-4-5-sonnet",
+      "timeout": 300
+    },
+    "personal-openai": {
+      "name": "personal-openai",
+      "provider": "openai",
+      "baseUrl": "https://api.openai.com/v1",
+      "apiKey": "sk-***",
+      "model": "gpt-4.1",
+      "timeout": 300
+    }
+  }
+}
+```
+
+**Legacy Configuration**: If you have an existing single-provider config, it will automatically migrate to a profile named "default" on first use.
 
 ### Supported Providers
 
@@ -369,16 +480,61 @@ codemie-claude -p "Refactor this component to use React hooks"
 ### Configuration Examples
 
 ```bash
-# Setup with different providers
-codemie config set provider openai
-codemie config set model gpt-4.1
-codemie config set apiKey sk-your-key
+# View current configuration with sources
+codemie config show
+
+# Test connection
+codemie config test
+
+# Initialize project-specific overrides
+codemie config init
 
 # Temporary model override
 codemie-claude --model claude-4-5-sonnet -p "Explain this algorithm"
 
 # Debug mode for troubleshooting
 codemie-code --debug --task "analyze performance issues"
+```
+
+### Multi-Provider Workflow Examples
+
+```bash
+# Scenario: Developer with work and personal accounts
+
+# Setup work profile with enterprise LiteLLM
+codemie setup
+# → Name: "work"
+# → Provider: LiteLLM
+# → URL: https://litellm.company.com
+# → Model: claude-4-5-sonnet
+
+# Setup personal profile with OpenAI
+codemie setup
+# → Name: "personal"
+# → Provider: OpenAI
+# → Model: gpt-4.1
+
+# List profiles to verify
+codemie profile list
+# ● work (litellm) - claude-4-5-sonnet
+# ○ personal (openai) - gpt-4.1
+
+# Use work profile during work hours
+codemie-code "review company codebase"
+
+# Switch to personal for side projects
+codemie profile switch personal
+codemie-code "help with my open source project"
+
+# Or use specific profile without switching
+codemie-claude --profile work "analyze security"
+codemie-codex --profile personal "generate tests"
+
+# Update work profile when credentials rotate
+codemie setup
+# → Choose: Update existing profile
+# → Select: work
+# → Update credentials...
 ```
 
 ### Advanced Usage
@@ -459,10 +615,13 @@ npm list -g @codemieai/code
 codemie setup
 
 # Check current config
+codemie config show
+
+# View available parameters
 codemie config list
 
-# Reset if needed
-codemie config reset
+# Test connection
+codemie config test
 ```
 
 ### Connection Problems
@@ -496,9 +655,9 @@ codemie install claude
 
 When you see "Model not compatible" errors:
 
-1. Check your configured model: `codemie config get model`
+1. Check your configured model: `codemie config show`
 2. Run the agent to see compatible options
-3. Set a compatible model: `codemie config set model gpt-4.1`
+3. Update your profile: `codemie setup` (choose "Update existing profile")
 4. Or override temporarily: `codemie-codex --model gpt-4.1`
 
 ## Development

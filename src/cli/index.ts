@@ -12,6 +12,7 @@ import { createEnvCommand } from './commands/env.js';
 import { createAuthCommand } from './commands/auth.js';
 import { createToolsCommand } from './commands/tools.js';
 import { createWorkflowCommand } from './commands/workflow.js';
+import { createProfileCommand } from './commands/profile.js';
 import { FirstTimeExperience } from '../utils/first-time.js';
 import chalk from 'chalk';
 import { readFileSync } from 'fs';
@@ -39,6 +40,7 @@ program
 
 // Add commands
 program.addCommand(createSetupCommand());
+program.addCommand(createProfileCommand());
 program.addCommand(createAuthCommand());
 program.addCommand(createEnvCommand());
 program.addCommand(createConfigCommand());

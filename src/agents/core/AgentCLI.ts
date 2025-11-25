@@ -46,6 +46,7 @@ export class AgentCLI {
       .name(`codemie-${this.adapter.name}`)
       .description(`CodeMie ${this.adapter.displayName} - ${this.adapter.description}`)
       .version(this.version)
+      .option('--profile <name>', 'Use specific provider profile')
       .option('-m, --model <model>', 'Override model')
       .option('-p, --provider <provider>', 'Override provider')
       .option('--api-key <key>', 'Override API key')
@@ -80,6 +81,7 @@ export class AgentCLI {
 
       // Load configuration with CLI overrides
       const config = await ConfigLoader.load(process.cwd(), {
+        name: options.profile as string | undefined,  // Profile selection
         model: options.model as string | undefined,
         provider: options.provider as string | undefined,
         apiKey: options.apiKey as string | undefined,
@@ -141,7 +143,7 @@ export class AgentCLI {
    */
   private collectPassThroughArgs(args: string[], options: Record<string, unknown>): string[] {
     const agentArgs = [...args];
-    const knownOptions = ['model', 'provider', 'apiKey', 'baseUrl', 'timeout'];
+    const knownOptions = ['profile', 'model', 'provider', 'apiKey', 'baseUrl', 'timeout'];
 
     for (const [key, value] of Object.entries(options)) {
       if (knownOptions.includes(key)) continue;
