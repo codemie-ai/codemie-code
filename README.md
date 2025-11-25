@@ -127,8 +127,8 @@ codemie install codex
 codemie-claude -p "Review my API code"
 codemie-codex --task "Generate unit tests"
 
-# Or run through main CLI
-codemie run claude --task "Fix security issues"
+# Direct shortcuts are the recommended way
+codemie-claude -p "Fix security issues"
 ```
 
 ## Commands
@@ -141,7 +141,6 @@ codemie auth <command>           # Manage SSO authentication
 codemie list                     # List all available agents
 codemie install <agent>          # Install an agent
 codemie uninstall <agent>        # Uninstall an agent
-codemie run <agent> [args...]    # Run an agent
 codemie doctor                   # Health check and diagnostics
 codemie config <action>          # Manage configuration
 codemie version                  # Show version information
@@ -385,11 +384,9 @@ codemie-code --debug --task "analyze performance issues"
 ### Advanced Usage
 
 ```bash
-# Run specific agent versions
-codemie run claude --version latest
-
-# Pass custom arguments
+# Pass custom arguments to agents
 codemie-codex --temperature 0.1 --max-tokens 2000 "Generate clean code"
+codemie-claude -p "Review this code" --context large
 
 # Health checks
 codemie doctor                   # Full system check

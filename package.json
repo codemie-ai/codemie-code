@@ -7,9 +7,9 @@
   "types": "dist/index.d.ts",
   "bin": {
     "codemie": "./bin/codemie.js",
-    "codemie-code": "./bin/codemie-code.js",
-    "codemie-claude": "./bin/codemie-claude.js",
-    "codemie-codex": "./bin/codemie-codex.js"
+    "codemie-code": "./bin/agent-executor.js",
+    "codemie-claude": "./bin/agent-executor.js",
+    "codemie-codex": "./bin/agent-executor.js"
   },
   "files": [
     "dist",

@@ -1,26 +1,23 @@
-import { ClaudeCodeAdapter } from './adapters/claude-code.js';
-import { CodexAdapter } from './adapters/codex.js';
-import { CodeMieCodeAdapter } from './adapters/codemie-code.js';
+import { ClaudePlugin } from './plugins/claude.plugin.js';
+import { CodexPlugin } from './plugins/codex.plugin.js';
+import { CodeMieCodePlugin } from './plugins/codemie-code.plugin.js';
+import { AgentAdapter } from './core/types.js';
 
-export interface AgentAdapter {
-  name: string;
-  displayName: string;
-  description: string;
-  install(): Promise<void>;
-  uninstall(): Promise<void>;
-  isInstalled(): Promise<boolean>;
-  run(args: string[], env?: Record<string, string>): Promise<void>;
-  getVersion(): Promise<string | null>;
-}
+// Re-export for backwards compatibility
+export { AgentAdapter } from './core/types.js';
 
+/**
+ * Central registry for all agents
+ * Uses plugin-based architecture for easy extensibility
+ */
 export class AgentRegistry {
   private static adapters: Map<string, AgentAdapter> = new Map();
 
   static {
-    // Initialize adapters
-    AgentRegistry.adapters.set('codemie-code', new CodeMieCodeAdapter());
-    AgentRegistry.adapters.set('claude', new ClaudeCodeAdapter());
-    AgentRegistry.adapters.set('codex', new CodexAdapter());
+    // Initialize plugin-based adapters
+    AgentRegistry.adapters.set('codemie-code', new CodeMieCodePlugin());
+    AgentRegistry.adapters.set('claude', new ClaudePlugin());
+    AgentRegistry.adapters.set('codex', new CodexPlugin());
   }
 
   static getAgent(name: string): AgentAdapter | undefined {
