@@ -9,7 +9,8 @@
     "codemie": "./bin/codemie.js",
     "codemie-code": "./bin/agent-executor.js",
     "codemie-claude": "./bin/agent-executor.js",
-    "codemie-codex": "./bin/agent-executor.js"
+    "codemie-codex": "./bin/agent-executor.js",
+    "codemie-gemini": "./bin/agent-executor.js"
   },
   "files": [
     "dist",
@@ -37,6 +38,7 @@
     "cli",
     "claude",
     "codex",
+    "gemini",
     "wrapper"
   ],
   "author": "AI/Run Team",

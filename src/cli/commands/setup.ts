@@ -4,7 +4,6 @@ import chalk from 'chalk';
 import ora from 'ora';
 import { ConfigLoader, CodeMieConfigOptions } from '../../utils/config-loader.js';
 import { logger } from '../../utils/logger.js';
-import { FirstTimeExperience } from '../../utils/first-time.js';
 import { checkProviderHealth } from '../../utils/health-checker.js';
 import { fetchAvailableModels } from '../../utils/model-fetcher.js';
 import { CodeMieSSO } from '../../utils/sso-auth.js';
@@ -24,6 +23,12 @@ const PROVIDERS: ProviderOption[] = [
     value: 'ai-run-sso',
     baseUrl: '', // Will be resolved from CodeMie URL
     models: [] // Will be fetched from CodeMie /v1/llm_models endpoint
+  },
+  {
+    name: 'Google Gemini (Direct API Access)',
+    value: 'gemini',
+    baseUrl: 'https://generativelanguage.googleapis.com',
+    models: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-1.5-pro', 'gemini-1.5-flash']
   },
   {
     name: 'LiteLLM Proxy (OpenAI-compatible Gateway)',
@@ -140,7 +145,7 @@ async function runSetupWizard(force?: boolean): Promise<void> {
   ]);
 
   if (provider === 'ai-run-sso') {
-    await handleAiRunSSOSetup(profileName, isUpdate, hasConfig);
+    await handleAiRunSSOSetup(profileName, isUpdate);
     return; // Early return for SSO flow
   }
 
@@ -499,7 +504,7 @@ async function runSetupWizard(force?: boolean): Promise<void> {
   console.log(chalk.bold(`🚀 Ready to use! Try: ${chalk.white('codemie-code "test task"')}\n`));
 }
 
-async function handleAiRunSSOSetup(profileName: string | null, isUpdate: boolean, hasConfig: boolean): Promise<void> {
+async function handleAiRunSSOSetup(profileName: string | null, isUpdate: boolean): Promise<void> {
   console.log(chalk.bold.cyan('\n🔐 CodeMie SSO Configuration\n'));
 
   // Step 1: Get CodeMie URL

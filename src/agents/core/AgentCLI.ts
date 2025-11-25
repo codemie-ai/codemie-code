@@ -9,6 +9,7 @@ import { getDirname } from '../../utils/dirname.js';
 import { ClaudePluginMetadata } from '../plugins/claude.plugin.js';
 import { CodexPluginMetadata } from '../plugins/codex.plugin.js';
 import { CodeMieCodePluginMetadata } from '../plugins/codemie-code.plugin.js';
+import { GeminiPluginMetadata } from '../plugins/gemini.plugin.js';
 
 /**
  * Universal CLI builder for any agent
@@ -48,7 +49,6 @@ export class AgentCLI {
       .version(this.version)
       .option('--profile <name>', 'Use specific provider profile')
       .option('-m, --model <model>', 'Override model')
-      .option('-p, --provider <provider>', 'Override provider')
       .option('--api-key <key>', 'Override API key')
       .option('--base-url <url>', 'Override base URL')
       .option('--timeout <seconds>', 'Override timeout (in seconds)', parseInt)
@@ -83,7 +83,6 @@ export class AgentCLI {
       const config = await ConfigLoader.load(process.cwd(), {
         name: options.profile as string | undefined,  // Profile selection
         model: options.model as string | undefined,
-        provider: options.provider as string | undefined,
         apiKey: options.apiKey as string | undefined,
         baseUrl: options.baseUrl as string | undefined,
         timeout: options.timeout as number | undefined
@@ -169,7 +168,8 @@ export class AgentCLI {
     const metadataMap: Record<string, typeof ClaudePluginMetadata> = {
       'claude': ClaudePluginMetadata,
       'codex': CodexPluginMetadata,
-      'codemie-code': CodeMieCodePluginMetadata
+      'codemie-code': CodeMieCodePluginMetadata,
+      'gemini': GeminiPluginMetadata
     };
     return metadataMap[this.adapter.name];
   }
@@ -210,9 +210,25 @@ export class AgentCLI {
     if (isBlocked) {
       logger.error(`Model '${model}' is not compatible with ${this.adapter.displayName}`);
       console.log(chalk.dim('\nOptions:'));
-      console.log(chalk.dim(`  1. ${this.adapter.name} requires OpenAI-compatible models (e.g., gpt-5, gpt-4.1)`));
-      console.log(chalk.dim(`  2. Switch model: codemie config set model gpt-4.1`));
-      console.log(chalk.dim(`  3. Override for this session: codemie-${this.adapter.name} --model gpt-4.1`));
+
+      // Provide agent-specific model suggestions
+      let suggestedModel = 'gpt-4.1';
+      let modelDescription = 'OpenAI-compatible models';
+
+      if (this.adapter.name === 'gemini') {
+        suggestedModel = 'gemini-2.5-flash';
+        modelDescription = 'Gemini models';
+      } else if (this.adapter.name === 'claude') {
+        suggestedModel = 'claude-4-5-sonnet';
+        modelDescription = 'Claude or GPT models';
+      } else if (this.adapter.name === 'codex') {
+        suggestedModel = 'gpt-4.1';
+        modelDescription = 'OpenAI-compatible models';
+      }
+
+      console.log(chalk.dim(`  1. ${this.adapter.name} requires ${modelDescription} (e.g., ${suggestedModel})`));
+      console.log(chalk.dim(`  2. Switch model: codemie config set model ${suggestedModel}`));
+      console.log(chalk.dim(`  3. Override for this session: codemie-${this.adapter.name} --model ${suggestedModel}`));
       return false;
     }
 

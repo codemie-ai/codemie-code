@@ -1,6 +1,7 @@
 import { ClaudePlugin } from './plugins/claude.plugin.js';
 import { CodexPlugin } from './plugins/codex.plugin.js';
 import { CodeMieCodePlugin } from './plugins/codemie-code.plugin.js';
+import { GeminiPlugin } from './plugins/gemini.plugin.js';
 import { AgentAdapter } from './core/types.js';
 
 // Re-export for backwards compatibility
@@ -18,6 +19,7 @@ export class AgentRegistry {
     AgentRegistry.adapters.set('codemie-code', new CodeMieCodePlugin());
     AgentRegistry.adapters.set('claude', new ClaudePlugin());
     AgentRegistry.adapters.set('codex', new CodexPlugin());
+    AgentRegistry.adapters.set('gemini', new GeminiPlugin());
   }
 
   static getAgent(name: string): AgentAdapter | undefined {

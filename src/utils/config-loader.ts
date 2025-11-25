@@ -7,7 +7,6 @@ import {
   CodeMieConfigOptions,
   ProviderProfile,
   MultiProviderConfig,
-  LegacyConfig,
   CodeMieIntegrationInfo,
   ConfigWithSource,
   isMultiProviderConfig,
@@ -569,6 +568,33 @@ export class ConfigLoader {
   }
 
   /**
+   * Set multi-provider environment variables (OpenAI, Anthropic, Gemini)
+   * Used by LiteLLM and AI-Run SSO for maximum compatibility
+   */
+  private static setMultiProviderEnvVars(
+    env: Record<string, string>,
+    config: CodeMieConfigOptions
+  ): void {
+    if (config.baseUrl) {
+      env.OPENAI_BASE_URL = config.baseUrl;
+      env.ANTHROPIC_BASE_URL = config.baseUrl;
+      // LiteLLM Gemini integration requires GOOGLE_GEMINI_BASE_URL
+      // See: https://docs.litellm.ai/docs/tutorials/litellm_gemini_cli
+      env.GOOGLE_GEMINI_BASE_URL = config.baseUrl;
+    }
+    if (config.apiKey) {
+      env.OPENAI_API_KEY = config.apiKey;
+      env.ANTHROPIC_AUTH_TOKEN = config.apiKey;
+      env.GEMINI_API_KEY = config.apiKey;
+    }
+    if (config.model) {
+      env.OPENAI_MODEL = config.model;
+      env.ANTHROPIC_MODEL = config.model;
+      env.GEMINI_MODEL = config.model;
+    }
+  }
+
+  /**
    * Export provider-specific environment variables
    * (for passing to external agents like Claude Code, Codex)
    */
@@ -608,36 +634,23 @@ export class ConfigLoader {
       // AWS Bedrock configuration
       env.CLAUDE_CODE_USE_BEDROCK = '1';
       // AWS credentials should be set via AWS CLI or environment variables
+    } else if (provider === 'GEMINI') {
+      // Google Gemini API
+      // LiteLLM Gemini integration requires GOOGLE_GEMINI_BASE_URL
+      // See: https://docs.litellm.ai/docs/tutorials/litellm_gemini_cli
+      if (config.baseUrl) env.GOOGLE_GEMINI_BASE_URL = config.baseUrl;
+      if (config.apiKey) env.GEMINI_API_KEY = config.apiKey;
+      if (config.model) env.GEMINI_MODEL = config.model;
     } else if (provider === 'LITELLM') {
       // Generic LiteLLM proxy gateway
-      // LiteLLM can proxy for any model, so set both OpenAI and Anthropic env vars
-      if (config.baseUrl) {
-        env.OPENAI_BASE_URL = config.baseUrl;
-        env.ANTHROPIC_BASE_URL = config.baseUrl;
-      }
-      if (config.apiKey) {
-        env.OPENAI_API_KEY = config.apiKey;
-        env.ANTHROPIC_AUTH_TOKEN = config.apiKey;
-      }
-      if (config.model) {
-        env.OPENAI_MODEL = config.model;
-        env.ANTHROPIC_MODEL = config.model;
-      }
+      // LiteLLM can proxy for any model, so set OpenAI, Anthropic, and Gemini env vars
+      this.setMultiProviderEnvVars(env, config);
     } else if (provider === 'AI-RUN-SSO') {
       // CodeMie SSO authentication - credentials handled via credential store
-      // Set both OpenAI and Anthropic env vars for compatibility
-      if (config.baseUrl) {
-        env.OPENAI_BASE_URL = config.baseUrl;
-        env.ANTHROPIC_BASE_URL = config.baseUrl;
-      }
-      if (config.apiKey) {
-        env.OPENAI_API_KEY = config.apiKey;
-        env.ANTHROPIC_AUTH_TOKEN = config.apiKey;
-      }
-      if (config.model) {
-        env.OPENAI_MODEL = config.model;
-        env.ANTHROPIC_MODEL = config.model;
-      }
+      // Set OpenAI, Anthropic, and Gemini env vars for compatibility
+      this.setMultiProviderEnvVars(env, config);
+
+      // Add SSO-specific environment variables
       if (config.codeMieUrl) env.CODEMIE_URL = config.codeMieUrl;
       if (config.authMethod) env.CODEMIE_AUTH_METHOD = config.authMethod;
       if (config.codeMieIntegration?.id) env.CODEMIE_INTEGRATION_ID = config.codeMieIntegration.id;

@@ -309,12 +309,13 @@ When working with the configuration system:
 When modifying the direct agent shortcuts (`codemie-claude`, `codemie-codex`):
 
 1. **Configuration Override Pattern**: All shortcuts support CLI overrides for:
-   - `--profile`: Select specific provider profile
+   - `--profile`: Select specific provider profile (contains all provider settings)
    - `--model`: Override model selection
-   - `--provider`: Override provider
    - `--api-key`: Override API key
    - `--base-url`: Override base URL
    - `--timeout`: Override timeout
+
+   Note: Provider is NOT overridable via CLI flag - it's part of the profile configuration
 
 2. **Pass-through Architecture**: Use `allowUnknownOption()` and `passThroughOptions()` to forward all unrecognized options to the underlying agent
 

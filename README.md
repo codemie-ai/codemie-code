@@ -36,6 +36,7 @@
   - [CodeMie Native (Built-in)](#codemie-native-built-in)
   - [Claude Code](#claude-code)
   - [Codex](#codex)
+  - [Gemini CLI](#gemini-cli)
 - [Troubleshooting](#troubleshooting)
   - [Command Not Found](#command-not-found)
   - [Configuration Issues](#configuration-issues)
@@ -56,9 +57,10 @@ codemie [COMMAND] [OPTIONS]
 codemie-code [MESSAGE|--task TASK] [OPTIONS]
 codemie-claude [-p MESSAGE] [OPTIONS]
 codemie-codex [MESSAGE|--task TASK] [OPTIONS]
+codemie-gemini [-m MODEL] [-p MESSAGE] [OPTIONS]
 ```
 
-AI/Run CodeMie CLI is a professional, unified CLI tool for installing, configuring, and running multiple AI coding agents from a single interface. It includes a built-in LangGraph-based agent (CodeMie Native) and supports external agents like Claude Code and Codex.
+AI/Run CodeMie CLI is a professional, unified CLI tool for installing, configuring, and running multiple AI coding agents from a single interface. It includes a built-in LangGraph-based agent (CodeMie Native) and supports external agents like Claude Code, Codex, and Gemini CLI.
 
 ## Quick Start
 
@@ -69,8 +71,29 @@ npm install -g @codemieai/code
 # 2. Setup (interactive wizard)
 codemie setup
 
-# 3. Start coding with built-in agent
+# 3. View supported agents
+codemie list
+
+# 4. Install external agents (optional)
+codemie install claude   # Claude Code
+codemie install codex    # OpenAI Codex
+codemie install gemini   # Google Gemini CLI
+
+# 5. Manage profiles (multi-provider support)
+codemie profile list             # List all profiles
+codemie profile switch work      # Switch to different profile
+codemie setup                    # Add new profile or update existing
+
+# 6. Start coding with built-in agent
 codemie-code "Review my code for bugs"
+
+# 7. Use external agents
+codemie-claude "Refactor this function"
+codemie-codex "Add unit tests"
+codemie-gemini "Optimize performance"
+
+# 8. Use specific profile for a task
+codemie-code --profile work "Deploy to production"
 ```
 
 ## Installation
@@ -163,14 +186,17 @@ codemie-code health              # Health check
 codemie-claude                   # Claude Code agent (interactive)
 codemie-claude -p "message"      # Claude Code agent (print mode)
 codemie-codex [message]          # Codex agent
+codemie-gemini                   # Gemini CLI agent
 
-# Configuration overrides
+# Configuration overrides (model, API key, base URL, timeout)
 codemie-claude --model claude-4-5-sonnet --api-key your-key
-codemie-codex --model gpt-4.1 --provider openai
+codemie-codex --model gpt-4.1 --base-url https://api.openai.com/v1
+codemie-gemini --model gemini-2.0-flash-exp
 
-# Profile selection
+# Profile selection (profiles contain provider + all settings)
 codemie-code --profile work-litellm "task"
 codemie-claude --profile personal-openai -p "message"
+codemie-gemini --profile lite --model gemini-2.5-flash  # Use LiteLLM proxy
 ```
 
 ### Configuration Commands
@@ -305,6 +331,7 @@ Profiles are stored in `~/.codemie/config.json`:
 ### Supported Providers
 
 - **ai-run-sso** - AI/Run CodeMie SSO (unified enterprise gateway)
+- **gemini** - Google Gemini API (direct access)
 - **openai** - OpenAI API
 - **azure** - Azure OpenAI
 - **bedrock** - AWS Bedrock
@@ -324,6 +351,10 @@ export CODEMIE_PROVIDER="litellm"
 # Provider-specific
 export OPENAI_API_KEY="your-openai-key"
 export OPENAI_BASE_URL="https://api.openai.com/v1"
+
+# Gemini-specific
+export GEMINI_API_KEY="your-gemini-key"
+export GEMINI_MODEL="gemini-2.5-flash"
 ```
 
 #### Configuration File
@@ -346,6 +377,7 @@ AI/Run CodeMie CLI automatically validates model compatibility:
 
 - **Codex**: OpenAI models only (gpt-4, gpt-4.1, gpt-5, etc.)
 - **Claude**: Both Claude and GPT models
+- **Gemini CLI**: Gemini models only (gemini-2.5-flash, gemini-2.5-pro, gemini-1.5-pro, etc.)
 - **CodeMie Native**: All supported models
 
 When incompatible models are detected, AI/Run CodeMie CLI will:
@@ -594,6 +626,41 @@ OpenAI's code generation assistant optimized for completion tasks.
 - Function generation and bug fixing
 - Code explanation and documentation
 - **Requires OpenAI-compatible models only**
+
+### Gemini CLI
+
+Google's Gemini AI coding assistant with advanced code understanding.
+
+**Installation:** `codemie install gemini`
+
+**Requirements:**
+- **Requires a valid Google Gemini API key** from https://aistudio.google.com/apikey
+- **Requires Gemini-compatible models only** (gemini-2.5-flash, gemini-2.5-pro, etc.)
+- LiteLLM or AI-Run SSO API keys will **not** work with Gemini CLI
+
+**Setup:**
+```bash
+# Configure Gemini with dedicated API key
+codemie setup
+# Select: "Google Gemini (Direct API Access)"
+# Enter your Gemini API key from https://aistudio.google.com/apikey
+
+# Or use environment variable
+export GEMINI_API_KEY="your-gemini-api-key-here"
+```
+
+**Features:**
+- Advanced code generation and analysis
+- Multi-model support (Gemini 2.5 Flash, Pro, etc.)
+- Project-aware context with directory inclusion
+- JSON and streaming JSON output formats
+
+**Usage:**
+```bash
+codemie-gemini                          # Interactive mode
+codemie-gemini -m gemini-2.5-flash      # Specify model
+codemie-gemini -p "your prompt"         # Non-interactive mode
+```
 
 ## Troubleshooting
 
