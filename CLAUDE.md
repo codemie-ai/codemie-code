@@ -310,14 +310,15 @@ When modifying the direct agent shortcuts (`codemie-claude`, `codemie-codex`):
 
 1. **Configuration Override Pattern**: All shortcuts support CLI overrides for:
    - `--profile`: Select specific provider profile (contains all provider settings)
+   - `--provider`: Override provider (ai-run-sso, litellm, openai, azure, bedrock)
    - `--model`: Override model selection
    - `--api-key`: Override API key
    - `--base-url`: Override base URL
    - `--timeout`: Override timeout
 
-   Note: Provider is NOT overridable via CLI flag - it's part of the profile configuration
+   Note: These flags are config-only and will not be passed to the underlying agent binary
 
-2. **Pass-through Architecture**: Use `allowUnknownOption()` and `passThroughOptions()` to forward all unrecognized options to the underlying agent
+2. **Pass-through Architecture**: Use `allowUnknownOption()` to allow unknown options, and `collectPassThroughArgs()` method filters out known config options before forwarding to the underlying agent
 
 3. **Model Validation**:
    - Codex must validate OpenAI-compatible models only

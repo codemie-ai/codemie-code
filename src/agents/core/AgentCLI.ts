@@ -48,12 +48,12 @@ export class AgentCLI {
       .description(`CodeMie ${this.adapter.displayName} - ${this.adapter.description}`)
       .version(this.version)
       .option('--profile <name>', 'Use specific provider profile')
+      .option('--provider <provider>', 'Override provider (ai-run-sso, litellm, openai, azure, bedrock)')
       .option('-m, --model <model>', 'Override model')
       .option('--api-key <key>', 'Override API key')
       .option('--base-url <url>', 'Override base URL')
       .option('--timeout <seconds>', 'Override timeout (in seconds)', parseInt)
       .allowUnknownOption()
-      .passThroughOptions()
       .argument('[args...]', `Arguments to pass to ${this.adapter.displayName}`)
       .action(async (args, options) => {
         await this.handleRun(args, options);
@@ -82,6 +82,7 @@ export class AgentCLI {
       // Load configuration with CLI overrides
       const config = await ConfigLoader.load(process.cwd(), {
         name: options.profile as string | undefined,  // Profile selection
+        provider: options.provider as string | undefined,
         model: options.model as string | undefined,
         apiKey: options.apiKey as string | undefined,
         baseUrl: options.baseUrl as string | undefined,
