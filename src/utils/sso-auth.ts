@@ -79,14 +79,25 @@ export class CodeMieSSO {
     return base;
   }
 
-  private async startLocalServer(): Promise<number> {
+  private startLocalServer(): Promise<number> {
     return new Promise((resolve, reject) => {
-      this.server = createServer((req, res) => {
-        if (!req.url) return;
+      let serverPort: number | undefined;
 
-        const address = this.server!.address();
-        const port = typeof address === 'object' && address ? address.port : 0;
-        const url = new URL(req.url, `http://localhost:${port}`);
+      this.server = createServer((req, res) => {
+        if (!req.url) {
+          res.writeHead(400, { 'Content-Type': 'text/plain' });
+          res.end('Bad Request: Missing URL');
+          return;
+        }
+
+        // Use locally scoped port from closure
+        if (!serverPort) {
+          res.writeHead(500, { 'Content-Type': 'text/plain' });
+          res.end('Internal Server Error: Server not ready');
+          return;
+        }
+
+        const url = new URL(req.url, `http://localhost:${serverPort}`);
 
         // Handle the OAuth callback
         this.handleCallback(url).then(result => {
@@ -116,7 +127,10 @@ export class CodeMieSSO {
             </html>
           `);
 
-          this.server!.close();
+          // Close server safely
+          if (this.server) {
+            this.server.close();
+          }
         }).catch(error => {
           this.callbackResult = { success: false, error: error.message };
           res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -134,14 +148,17 @@ export class CodeMieSSO {
               </body>
             </html>
           `);
-          this.server!.close();
+          // Close server safely
+          if (this.server) {
+            this.server.close();
+          }
         });
       });
 
       this.server.listen(0, () => {
         const address = this.server!.address();
-        const port = typeof address === 'object' && address ? address.port : 0;
-        resolve(port);
+        serverPort = typeof address === 'object' && address ? address.port : 0;
+        resolve(serverPort);
       });
 
       this.server.on('error', reject);
