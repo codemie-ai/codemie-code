@@ -24,16 +24,26 @@ class Logger {
   }
 
   private async initializeDebugLogging(): Promise<void> {
-    const baseDir = join(homedir(), '.codemie', 'debug', 'logger');
+    const baseDir = join(homedir(), '.codemie', 'debug');
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const filename = `session-${timestamp}.log`;
+    const sessionDir = join(baseDir, `session-${timestamp}`);
+    const filename = 'application.log';
 
     try {
-      await fs.mkdir(baseDir, { recursive: true });
-      this.debugLogFile = join(baseDir, filename);
+      await fs.mkdir(sessionDir, { recursive: true });
+      this.debugLogFile = join(sessionDir, filename);
     } catch {
       this.debugLogFile = null;
     }
+  }
+
+  /**
+   * Get the current debug session directory
+   * @returns Session directory path or null if debug is not enabled
+   */
+  getDebugSessionDir(): string | null {
+    if (!this.debugLogFile) return null;
+    return join(this.debugLogFile, '..');
   }
 
   private async writeToFile(level: string, message: string, ...args: unknown[]): Promise<void> {

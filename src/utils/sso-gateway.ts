@@ -5,9 +5,9 @@
  * to the codemie API, adding SSO authentication cookies in the process.
  *
  * Debug Logging:
- * When debug mode is enabled, all requests and responses are logged to a single
- * session file in JSONL (JSON Lines) format at:
- *   ~/.codemie/debug/sso-gateway/session-<timestamp>.jsonl
+ * When debug mode is enabled, all requests and responses are logged to the
+ * unified debug session directory in JSONL (JSON Lines) format at:
+ *   ~/.codemie/debug/session-<timestamp>/requests.jsonl
  *
  * Each line in the file is a JSON object with a 'type' field:
  *   - session_start: Gateway initialization
@@ -24,7 +24,6 @@ import { SSOCredentials } from '../types/sso.js';
 import { logger } from './logger.js';
 import { promises as fs } from 'fs';
 import { join } from 'path';
-import { homedir } from 'os';
 
 export interface GatewayConfig {
   targetApiUrl: string;
@@ -420,17 +419,23 @@ export class SSOGateway {
   }
 
   /**
-   * Initialize debug logging - creates a single session file
+   * Initialize debug logging - uses session directory from main logger
    */
   private async initializeDebugLogging(): Promise<void> {
-    const baseDir = join(homedir(), '.codemie', 'debug', 'sso-gateway');
     this.sessionStartTime = new Date().toISOString();
-    const timestamp = this.sessionStartTime.replace(/[:.]/g, '-');
-    const filename = `session-${timestamp}.jsonl`;
 
     try {
-      await fs.mkdir(baseDir, { recursive: true });
-      this.debugLogFile = join(baseDir, filename);
+      // Get session directory from main logger
+      const sessionDir = logger.getDebugSessionDir();
+      if (!sessionDir) {
+        logger.error('Debug session directory not available');
+        this.debugLogFile = null;
+        return;
+      }
+
+      // Create requests.jsonl in the same session directory
+      const filename = 'requests.jsonl';
+      this.debugLogFile = join(sessionDir, filename);
 
       // Write session header
       const sessionHeader = {
@@ -443,7 +448,7 @@ export class SSOGateway {
       };
 
       await fs.writeFile(this.debugLogFile, JSON.stringify(sessionHeader) + '\n', 'utf-8');
-      logger.info(`Debug session log: ${this.debugLogFile}`);
+      logger.info(`HTTP requests debug log: ${this.debugLogFile}`);
     } catch (error) {
       logger.error('Failed to create debug log file:', error);
       this.debugLogFile = null;
