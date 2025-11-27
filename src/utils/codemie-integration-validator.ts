@@ -4,37 +4,52 @@ import { CodeMieIntegration, SSOAuthResult } from '../types/sso.js';
 import { fetchCodeMieIntegrations, CODEMIE_ENDPOINTS } from './codemie-model-fetcher.js';
 
 /**
- * Validates that the user has required CodeMie integrations and prompts for selection
+ * Validates CodeMie integrations and prompts for selection (SSO provider only)
+ * Returns null if user opts out or no integrations available
  */
 export async function validateCodeMieIntegrations(
   authResult: SSOAuthResult,
   spinner?: any
-): Promise<{ id: string; alias: string }> {
+): Promise<{ id: string; alias: string } | null> {
   const integrations = await fetchCodeMieIntegrations(authResult.apiUrl!, authResult.cookies!, CODEMIE_ENDPOINTS.USER_SETTINGS);
 
   // Integrations are already filtered by API for LiteLLM type
   if (integrations.length === 0) {
-    console.log(chalk.red('\n❌ No CodeMie LiteLLM integration found\n'));
-    console.log(chalk.yellow('📋 Required Setup Steps:'));
+    console.log(chalk.yellow('\n⚠️  No CodeMie LiteLLM integration found\n'));
+    console.log(chalk.white('CodeMie integrations allow you to use organization-managed LLM keys.'));
+    console.log(chalk.white('You can continue without an integration.\n'));
+    console.log(chalk.yellow('To set up an integration later:'));
     console.log(chalk.white('  1. Contact your support team to request a LiteLLM key'));
     console.log(chalk.white('  2. In CodeMie, go to Integrations → User Integrations'));
     console.log(chalk.white('  3. Add the key as a new integration with type "LiteLLM"'));
     console.log(chalk.white('  4. Re-run: codemie setup\n'));
 
-    throw new Error('CodeMie LiteLLM integration setup required');
+    const { continueWithoutIntegration } = await inquirer.prompt([{
+      type: 'confirm',
+      name: 'continueWithoutIntegration',
+      message: 'Continue without integration?',
+      default: true
+    }]);
+
+    if (!continueWithoutIntegration) {
+      throw new Error('Setup cancelled by user');
+    }
+
+    return null;
   }
 
-  // Return selected integration ID and alias
+  // Return selected integration ID and alias (or null if user opts out)
   return await promptForIntegrationSelection(integrations, spinner);
 }
 
 /**
  * Prompts user to select from available LiteLLM integrations
+ * Returns null if user chooses to skip
  */
 async function promptForIntegrationSelection(
   integrations: CodeMieIntegration[],
   spinner?: any
-): Promise<{ id: string; alias: string }> {
+): Promise<{ id: string; alias: string } | null> {
   if (integrations.length === 1) {
     // Auto-select single integration with confirmation
     const integration = integrations[0];
@@ -47,15 +62,20 @@ async function promptForIntegrationSelection(
       spinner.stop();
     }
 
-    const { confirm } = await inquirer.prompt([{
-      type: 'confirm',
-      name: 'confirm',
+    const { action } = await inquirer.prompt([{
+      type: 'list',
+      name: 'action',
       message: `Use CodeMie LiteLLM integration "${displayName}"?`,
-      default: true
+      choices: [
+        { name: `Yes, use "${displayName}"`, value: 'use' },
+        { name: 'Skip (continue without integration)', value: 'skip' }
+      ],
+      default: 'use'
     }]);
 
-    if (!confirm) {
-      throw new Error('Setup cancelled by user');
+    if (action === 'skip') {
+      console.log(chalk.white('Skipping integration setup'));
+      return null;
     }
 
     console.log(chalk.green(`✓ Selected integration: ${displayName}`));
@@ -80,6 +100,12 @@ async function promptForIntegrationSelection(
     };
   });
 
+  // Add skip option
+  choices.push({
+    name: chalk.white('Skip (continue without integration)'),
+    value: 'skip'
+  });
+
   const { selectedId } = await inquirer.prompt([{
     type: 'list',
     name: 'selectedId',
@@ -87,6 +113,11 @@ async function promptForIntegrationSelection(
     choices,
     pageSize: 15
   }]);
+
+  if (selectedId === 'skip') {
+    console.log(chalk.white('Skipping integration setup'));
+    return null;
+  }
 
   const selectedIntegration = integrations.find(i => i.id === selectedId);
   const displayName = selectedIntegration?.project_name

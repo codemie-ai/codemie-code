@@ -22,7 +22,7 @@ export class CodeMieSSO {
       const ssoUrl = `${codeMieBase}/v1/auth/login/${port}`;
 
       // 3. Launch browser
-      console.log(chalk.dim(`Opening browser for authentication...`));
+      console.log(chalk.white(`Opening browser for authentication...`));
       await open(ssoUrl);
 
       // 4. Wait for callback with timeout

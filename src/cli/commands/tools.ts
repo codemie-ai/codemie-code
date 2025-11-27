@@ -39,9 +39,9 @@ export function createToolsCommand(): Command {
 
       // Git status
       if (status.git.installed) {
-        console.log(`${chalk.green('✓')} Git ${chalk.dim(`(v${status.git.version})`)}`);
+        console.log(`${chalk.green('✓')} Git ${chalk.white(`(v${status.git.version})`)}`);
       } else {
-        console.log(`${chalk.red('✗')} Git ${chalk.dim('(not installed)')}`);
+        console.log(`${chalk.red('✗')} Git ${chalk.white('(not installed)')}`);
       }
 
       console.log('');
@@ -52,11 +52,11 @@ export function createToolsCommand(): Command {
           ? chalk.green(`authenticated as ${status.gh.authUser}`)
           : chalk.yellow('not authenticated');
         console.log(
-          `${chalk.green('✓')} GitHub CLI (gh) ${chalk.dim(`v${status.gh.version}`)} - ${authStatus}`
+          `${chalk.green('✓')} GitHub CLI (gh) ${chalk.white(`v${status.gh.version}`)} - ${authStatus}`
         );
       } else {
-        console.log(`${chalk.red('✗')} GitHub CLI (gh) ${chalk.dim('not installed')}`);
-        console.log(chalk.dim('   Install with: codemie tools install gh'));
+        console.log(`${chalk.red('✗')} GitHub CLI (gh) ${chalk.white('not installed')}`);
+        console.log(chalk.white('   Install with: codemie tools install gh'));
       }
 
       console.log('');
@@ -67,11 +67,11 @@ export function createToolsCommand(): Command {
           ? chalk.green(`authenticated as ${status.glab.authUser}`)
           : chalk.yellow('not authenticated');
         console.log(
-          `${chalk.green('✓')} GitLab CLI (glab) ${chalk.dim(`v${status.glab.version}`)} - ${authStatus}`
+          `${chalk.green('✓')} GitLab CLI (glab) ${chalk.white(`v${status.glab.version}`)} - ${authStatus}`
         );
       } else {
-        console.log(`${chalk.red('✗')} GitLab CLI (glab) ${chalk.dim('not installed')}`);
-        console.log(chalk.dim('   Install with: codemie tools install glab'));
+        console.log(`${chalk.red('✗')} GitLab CLI (glab) ${chalk.white('not installed')}`);
+        console.log(chalk.white('   Install with: codemie tools install glab'));
       }
 
       console.log('');
@@ -90,7 +90,7 @@ export function createToolsCommand(): Command {
       for (const toolName of toolNames) {
         if (toolName !== 'gh' && toolName !== 'glab') {
           console.log(chalk.red(`✗ Unknown tool: ${toolName}`));
-          console.log(chalk.dim('  Available tools: gh, glab\n'));
+          console.log(chalk.white('  Available tools: gh, glab\n'));
           continue;
         }
 
@@ -112,7 +112,7 @@ export function createToolsCommand(): Command {
           }
         } catch (error) {
           console.log(chalk.red(`✗ Failed to install ${toolName}`));
-          console.log(chalk.dim(`  ${error instanceof Error ? error.message : String(error)}`));
+          console.log(chalk.white(`  ${error instanceof Error ? error.message : String(error)}`));
         }
       }
 
@@ -130,7 +130,7 @@ export function createToolsCommand(): Command {
 
       if (toolName !== 'gh' && toolName !== 'glab') {
         console.log(chalk.red(`✗ Unknown tool: ${toolName}`));
-        console.log(chalk.dim('  Available tools: gh, glab\n'));
+        console.log(chalk.white('  Available tools: gh, glab\n'));
         return;
       }
 
@@ -159,7 +159,7 @@ export function createToolsCommand(): Command {
         console.log('');
       } catch (error) {
         console.log(chalk.red(`✗ Failed to uninstall ${toolName}`));
-        console.log(chalk.dim(`  ${error instanceof Error ? error.message : String(error)}\n`));
+        console.log(chalk.white(`  ${error instanceof Error ? error.message : String(error)}\n`));
       }
     });
 
@@ -174,7 +174,7 @@ export function createToolsCommand(): Command {
 
       if (toolName !== 'gh' && toolName !== 'glab') {
         console.log(chalk.red(`✗ Unknown tool: ${toolName}`));
-        console.log(chalk.dim('  Available tools: gh, glab\n'));
+        console.log(chalk.white('  Available tools: gh, glab\n'));
         return;
       }
 
@@ -189,7 +189,7 @@ export function createToolsCommand(): Command {
         console.log('');
       } catch (error) {
         console.log(chalk.red(`✗ Failed to update ${toolName}`));
-        console.log(chalk.dim(`  ${error instanceof Error ? error.message : String(error)}\n`));
+        console.log(chalk.white(`  ${error instanceof Error ? error.message : String(error)}\n`));
       }
     });
 
@@ -205,14 +205,14 @@ export function createToolsCommand(): Command {
 
       if (toolName !== 'gh' && toolName !== 'glab') {
         console.log(chalk.red(`✗ Unknown tool: ${toolName}`));
-        console.log(chalk.dim('  Available tools: gh, glab\n'));
+        console.log(chalk.white('  Available tools: gh, glab\n'));
         return;
       }
 
       const tool = toolName as VCSTool;
 
       try {
-        console.log(chalk.dim('This will open your browser for authentication...\n'));
+        console.log(chalk.white('This will open your browser for authentication...\n'));
 
         await authenticateTool(tool, options.token);
 
@@ -221,7 +221,7 @@ export function createToolsCommand(): Command {
       } catch (error) {
         console.log('');
         console.log(chalk.red(`✗ Failed to authenticate ${toolName}`));
-        console.log(chalk.dim(`  ${error instanceof Error ? error.message : String(error)}\n`));
+        console.log(chalk.white(`  ${error instanceof Error ? error.message : String(error)}\n`));
       }
     });
 
@@ -244,10 +244,10 @@ export function createToolsCommand(): Command {
           );
         } else {
           console.log(`${chalk.yellow('⚠')} GitHub CLI: ${chalk.yellow('not authenticated')}`);
-          console.log(chalk.dim('   Run: codemie tools auth gh'));
+          console.log(chalk.white('   Run: codemie tools auth gh'));
         }
       } else {
-        console.log(`${chalk.red('✗')} GitHub CLI: ${chalk.dim('not installed')}`);
+        console.log(`${chalk.red('✗')} GitHub CLI: ${chalk.white('not installed')}`);
       }
 
       console.log('');
@@ -260,10 +260,10 @@ export function createToolsCommand(): Command {
           );
         } else {
           console.log(`${chalk.yellow('⚠')} GitLab CLI: ${chalk.yellow('not authenticated')}`);
-          console.log(chalk.dim('   Run: codemie tools auth glab'));
+          console.log(chalk.white('   Run: codemie tools auth glab'));
         }
       } else {
-        console.log(`${chalk.red('✗')} GitLab CLI: ${chalk.dim('not installed')}`);
+        console.log(`${chalk.red('✗')} GitLab CLI: ${chalk.white('not installed')}`);
       }
 
       console.log('');
@@ -283,19 +283,19 @@ export function createToolsCommand(): Command {
 
       for (const toolInfo of allTools) {
         const toolStatus = status[toolInfo.name];
-        const installed = toolStatus.installed ? chalk.green('installed') : chalk.dim('not installed');
+        const installed = toolStatus.installed ? chalk.green('installed') : chalk.white('not installed');
 
         console.log(chalk.bold(toolInfo.displayName) + ` (${toolInfo.name})`);
-        console.log(chalk.dim(`  ${toolInfo.description}`));
+        console.log(chalk.white(`  ${toolInfo.description}`));
         console.log(`  Status: ${installed}`);
         if (toolStatus.installed) {
-          console.log(chalk.dim(`  Version: ${toolStatus.version}`));
+          console.log(chalk.white(`  Version: ${toolStatus.version}`));
           console.log(
             `  Auth: ${toolStatus.authenticated ? chalk.green('✓') : chalk.yellow('✗')}`
           );
         }
-        console.log(chalk.dim(`  npm: ${toolInfo.npmPackage}`));
-        console.log(chalk.dim(`  Docs: ${toolInfo.docsUrl}`));
+        console.log(chalk.white(`  npm: ${toolInfo.npmPackage}`));
+        console.log(chalk.white(`  Docs: ${toolInfo.docsUrl}`));
         console.log('');
       }
     });

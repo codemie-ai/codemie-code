@@ -50,22 +50,22 @@ export class CodeMieTerminalUI {
       console.log(chalk.cyan('◇  Configuration'));
       console.log(`   Provider: ${chalk.yellow(displayProvider)}`);
       console.log(`   Model: ${chalk.cyan(config.model)}`);
-      console.log(`   Working Directory: ${chalk.dim(config.workingDirectory)}`);
+      console.log(`   Working Directory: ${chalk.white(config.workingDirectory)}`);
       console.log(`   Mode: ${this.planMode ? chalk.green('Plan Mode') : chalk.yellow('Direct Mode')}`);
       console.log('');
     }
 
-    console.log(chalk.dim('Type /help for commands, /exit to quit'));
-    console.log(chalk.dim('Enter = send, Shift+Enter = new line, Cmd+V = paste text'));
-    console.log(chalk.dim('📸 Tab = insert clipboard image • Multiple images supported'));
-    console.log(chalk.dim('💡 Press Ctrl+H for hotkeys, Ctrl+P to toggle plan mode\n'));
+    console.log(chalk.white('Type /help for commands, /exit to quit'));
+    console.log(chalk.white('Enter = send, Shift+Enter = new line, Cmd+V = paste text'));
+    console.log(chalk.white('📸 Tab = insert clipboard image • Multiple images supported'));
+    console.log(chalk.white('💡 Press Ctrl+H for hotkeys, Ctrl+P to toggle plan mode\n'));
 
     // Main interaction loop
     while (true) {
       const input = await this.getMultilineInput();
 
       if (input === null) {
-        outro(chalk.dim('Goodbye! 👋'));
+        outro(chalk.white('Goodbye! 👋'));
         break;
       }
 
@@ -408,7 +408,7 @@ export class CodeMieTerminalUI {
         break;
 
       case 'exit':
-        outro(chalk.dim('Goodbye! 👋'));
+        outro(chalk.white('Goodbye! 👋'));
         return 'exit';
 
       default:
@@ -439,7 +439,7 @@ export class CodeMieTerminalUI {
             if (!this.currentSpinner) {
               this.currentSpinner = spinner();
             }
-            this.currentSpinner.start(chalk.dim('Thinking...'));
+            this.currentSpinner.start(chalk.white('Thinking...'));
             break;
 
           case 'content_chunk':
@@ -554,7 +554,7 @@ export class CodeMieTerminalUI {
       `  LLM Calls: ${chalk.cyan(stats.llmCalls)}`,
       `  Tool Calls: ${chalk.cyan(stats.toolCalls)} (${chalk.green(stats.successfulTools)} success, ${chalk.red(stats.failedTools)} failed)`,
       `  Total Steps: ${chalk.cyan(stats.executionSteps.length)}`,
-      `  Duration: ${chalk.dim(stats.executionTime + 'ms')}`
+      `  Duration: ${chalk.white(stats.executionTime + 'ms')}`
     ].join('\n');
 
     note(statsText, 'Agent Statistics');
@@ -581,10 +581,10 @@ export class CodeMieTerminalUI {
     const configText = [
       `Provider: ${chalk.yellow(displayProvider)}`,
       `Model: ${chalk.cyan(config.model)}`,
-      `Base URL: ${chalk.dim(config.baseUrl)}`,
-      `Working Directory: ${chalk.dim(config.workingDirectory)}`,
-      `Debug Mode: ${config.debug ? chalk.green('enabled') : chalk.dim('disabled')}`,
-      `Timeout: ${chalk.dim(config.timeout + 'ms')}`
+      `Base URL: ${chalk.white(config.baseUrl)}`,
+      `Working Directory: ${chalk.white(config.workingDirectory)}`,
+      `Debug Mode: ${config.debug ? chalk.green('enabled') : chalk.white('disabled')}`,
+      `Timeout: ${chalk.white(config.timeout + 'ms')}`
     ].join('\n');
 
     note(configText, 'Configuration');
@@ -653,13 +653,13 @@ export class CodeMieTerminalUI {
         switch (event.type) {
           case 'thinking_start':
             // Show "Thinking..." when the agent starts processing
-            taskSpinner.start(chalk.dim('Thinking...'));
+            taskSpinner.start(chalk.white('Thinking...'));
             break;
 
           case 'content_chunk':
             if (!hasStarted) {
               // Switch from "Thinking..." to "Processing task..." when content starts
-              taskSpinner.message(chalk.dim('Processing task...'));
+              taskSpinner.message(chalk.white('Processing task...'));
               hasStarted = true;
             }
             response += event.content || '';
@@ -690,7 +690,7 @@ export class CodeMieTerminalUI {
               const message = formatToolMetadata(event.toolName || 'tool', event.toolMetadata);
               taskSpinner.message(chalk.green(message));
             } else {
-              taskSpinner.message(chalk.dim('Processing task...'));
+              taskSpinner.message(chalk.white('Processing task...'));
             }
             break;
 
@@ -721,7 +721,7 @@ export class CodeMieTerminalUI {
       }
 
       if (summaryParts.length > 0) {
-        console.log(chalk.dim(`${summaryParts.join(' • ')}\n`));
+        console.log(chalk.white(`${summaryParts.join(' • ')}\n`));
       }
 
       return response;
@@ -756,7 +756,7 @@ export class CodeMieTerminalUI {
         // Handle regular streaming events too
         switch (event.type) {
           case 'thinking_start':
-            planSpinner.message(chalk.dim('Thinking...'));
+            planSpinner.message(chalk.white('Thinking...'));
             break;
 
           case 'content_chunk':
@@ -786,7 +786,7 @@ export class CodeMieTerminalUI {
               const message = formatToolMetadata(event.toolName || 'tool', event.toolMetadata);
               planSpinner.message(chalk.green(message));
             } else {
-              planSpinner.message(chalk.dim('Processing...'));
+              planSpinner.message(chalk.white('Processing...'));
             }
             break;
 
@@ -838,7 +838,7 @@ export class CodeMieTerminalUI {
       }
 
       if (summaryParts.length > 0) {
-        console.log(chalk.dim(`${summaryParts.join(' • ')}\n`));
+        console.log(chalk.white(`${summaryParts.join(' • ')}\n`));
       }
 
       return result;
@@ -868,7 +868,7 @@ export class CodeMieTerminalUI {
     switch (toolName) {
       case 'read_file':
         if (metadata.contentPreview) {
-          details = chalk.dim(`Preview:\n${metadata.contentPreview}`);
+          details = chalk.white(`Preview:\n${metadata.contentPreview}`);
         }
         break;
 
@@ -883,24 +883,24 @@ export class CodeMieTerminalUI {
 
             // Format with each item on a new line
             const formattedItems = items.map(item => `  ${item}`).join('\n');
-            details = chalk.dim(`${formattedItems}\n  +${remainingStr}`);
+            details = chalk.white(`${formattedItems}\n  +${remainingStr}`);
           } else {
             // Fallback for simple lists without truncation
             const items = preview.split(', ');
-            details = chalk.dim(items.map(item => `  ${item}`).join('\n'));
+            details = chalk.white(items.map(item => `  ${item}`).join('\n'));
           }
         }
         break;
 
       case 'execute_command':
         if (metadata.outputPreview && metadata.outputPreview !== 'No output') {
-          details = chalk.dim(`Output:\n${metadata.outputPreview}`);
+          details = chalk.white(`Output:\n${metadata.outputPreview}`);
         }
         break;
     }
 
     if (details) {
-      console.log(chalk.dim('  ' + details.replace(/\n/g, '\n  ')));
+      console.log(chalk.white('  ' + details.replace(/\n/g, '\n  ')));
     }
   }
 
@@ -955,12 +955,12 @@ export class CodeMieTerminalUI {
           llmLabel = 'Final Reasoning';
         }
 
-        stepLines.push(`  ${chalk.cyan(`${step.stepNumber}.`)} ${llmLabel} - ${chalk.dim(duration)}${tokenInfo}`);
+        stepLines.push(`  ${chalk.cyan(`${step.stepNumber}.`)} ${llmLabel} - ${chalk.white(duration)}${tokenInfo}`);
       } else {
         const success = step.toolSuccess !== undefined
           ? (step.toolSuccess ? chalk.green('✓') : chalk.red('✗'))
           : chalk.yellow('?');
-        stepLines.push(`  ${chalk.cyan(`${step.stepNumber}.`)} ${success} ${step.toolName} - ${chalk.dim(duration)}`);
+        stepLines.push(`  ${chalk.cyan(`${step.stepNumber}.`)} ${success} ${step.toolName} - ${chalk.white(duration)}`);
       }
     }
 
@@ -1371,7 +1371,7 @@ export class CodeMieTerminalUI {
     const empty = width - filled;
 
     const filledBar = chalk.cyan('█'.repeat(filled));
-    const emptyBar = chalk.dim('░'.repeat(empty));
+    const emptyBar = chalk.white('░'.repeat(empty));
 
     return `[${filledBar}${emptyBar}]`;
   }
@@ -1384,7 +1384,7 @@ export class CodeMieTerminalUI {
     const empty = width - filled;
 
     const filledBar = chalk.green('█'.repeat(filled));
-    const emptyBar = chalk.dim('░'.repeat(empty));
+    const emptyBar = chalk.white('░'.repeat(empty));
 
     return `[${filledBar}${emptyBar}]`;
   }
@@ -1455,7 +1455,7 @@ export class CodeMieTerminalUI {
     const _todos = this.todoPanel.getTodos();
 
     if (_todos.length === 0) {
-      console.log(chalk.dim('\n📋 No todos found'));
+      console.log(chalk.white('\n📋 No todos found'));
     } else {
       const todoDisplay = this.todoPanel.render();
       console.log(`\n${todoDisplay}`);

@@ -77,7 +77,7 @@ async function handleLogin(url?: string): Promise<void> {
   const codeMieUrl = url || config.codeMieUrl;
   if (!codeMieUrl) {
     console.log(chalk.red('❌ No AI/Run CodeMie URL configured or provided'));
-    console.log(chalk.dim('Use: codemie auth login --url https://your-airun-codemie-instance.com'));
+    console.log(chalk.white('Use: codemie auth login --url https://your-airun-codemie-instance.com'));
     return;
   }
 
@@ -109,7 +109,7 @@ async function handleLogout(): Promise<void> {
     await sso.clearStoredCredentials();
 
     spinner.succeed(chalk.green('Successfully logged out'));
-    console.log(chalk.dim('SSO credentials have been cleared'));
+    console.log(chalk.white('SSO credentials have been cleared'));
   } catch (error) {
     spinner.fail(chalk.red('Logout failed'));
     console.log(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
@@ -123,7 +123,7 @@ async function handleStatus(): Promise<void> {
 
   if (config.provider !== 'ai-run-sso') {
     console.log(chalk.yellow('  Provider: Not using SSO authentication'));
-    console.log(chalk.dim(`  Current provider: ${config.provider || 'unknown'}`));
+    console.log(chalk.white(`  Current provider: ${config.provider || 'unknown'}`));
     return;
   }
 
@@ -162,7 +162,7 @@ async function handleStatus(): Promise<void> {
 
     } else {
       console.log(chalk.red(`  Status: Not authenticated`));
-      console.log(chalk.dim(`  Run: codemie auth login`));
+      console.log(chalk.white(`  Run: codemie auth login`));
     }
   } catch (error) {
     console.log(chalk.red(`  Status: Error checking credentials`));
@@ -175,7 +175,7 @@ async function handleRefresh(): Promise<void> {
 
   if (config.provider !== 'ai-run-sso' || !config.codeMieUrl) {
     console.log(chalk.red('❌ Not configured for SSO authentication'));
-    console.log(chalk.dim('Run: codemie setup'));
+    console.log(chalk.white('Run: codemie setup'));
     return;
   }
 

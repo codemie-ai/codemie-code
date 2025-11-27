@@ -100,7 +100,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     logger.info(`Starting ${this.displayName}...`);
 
     // Merge environment variables
-    const env: NodeJS.ProcessEnv = {
+    let env: NodeJS.ProcessEnv = {
       ...process.env,
       ...envOverrides
     };
@@ -115,7 +115,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
     // Run lifecycle hook
     if (this.metadata.lifecycle?.beforeRun) {
-      await this.metadata.lifecycle.beforeRun(env, this.extractConfig(env));
+      env = await this.metadata.lifecycle.beforeRun(env, this.extractConfig(env));
     }
 
     if (!this.metadata.cliCommand) {
@@ -186,22 +186,15 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       // Create and start the SSO gateway
       this.ssoGateway = new SSOGateway({
         targetApiUrl,
-        debug: !!(env.DEBUG || env.CODEMIE_DEBUG),
+        debug: !!env.CODEMIE_DEBUG,
         clientType: this.metadata.ssoConfig.clientType
       });
 
       const { url } = await this.ssoGateway.start();
 
-      // Override env vars based on agent's ssoConfig.envOverrides
       const { baseUrl, apiKey } = this.metadata.ssoConfig.envOverrides;
-      env[baseUrl] = url;                  // Point to local gateway
-      env[apiKey] = 'gateway-handled';     // Placeholder
-
-      if (env.DEBUG || env.CODEMIE_DEBUG) {
-        logger.info(`[DEBUG] SSO Gateway started for ${this.displayName}`);
-        logger.info(`[DEBUG] Gateway URL: ${url}`);
-        logger.info(`[DEBUG] Target API: ${targetApiUrl}`);
-      }
+      env[baseUrl] = url;
+      env[apiKey] = 'gateway-handled';
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       throw new Error(`SSO gateway setup failed: ${errorMessage}`);

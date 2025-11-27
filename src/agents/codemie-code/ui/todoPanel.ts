@@ -89,7 +89,7 @@ export class TodoPanel {
    * Render empty state
    */
   private renderEmptyState(): string {
-    return chalk.dim('📋 No todos yet. Use write_todos to create a plan.');
+    return chalk.white('📋 No todos yet. Use write_todos to create a plan.');
   }
 
   /**
@@ -103,7 +103,7 @@ export class TodoPanel {
 
     if (count > 0) {
       const percentage = Math.round((completed / count) * 100);
-      header += chalk.dim(` (${completed}/${count} • ${percentage}%)`);
+      header += chalk.white(` (${completed}/${count} • ${percentage}%)`);
     }
 
     return header;
@@ -144,8 +144,8 @@ export class TodoPanel {
         break;
       case 'pending':
       default:
-        icon = chalk.dim('⏳');
-        contentStyle = (text: string) => chalk.dim(text);
+        icon = chalk.white('⏳');
+        contentStyle = (text: string) => chalk.white(text);
         break;
     }
 
@@ -156,7 +156,7 @@ export class TodoPanel {
     }
 
     // Build the line
-    const indexStr = chalk.dim(`${index + 1}.`);
+    const indexStr = chalk.white(`${index + 1}.`);
     const styledContent = contentStyle(displayContent);
 
     let line = `${indexStr} ${icon} ${styledContent}`;
@@ -164,7 +164,7 @@ export class TodoPanel {
     // Add timestamp if enabled
     if (this.options.showTimestamps && todo.timestamp) {
       const timeStr = this.formatTimestamp(todo.timestamp);
-      line += chalk.dim(` (${timeStr})`);
+      line += chalk.white(` (${timeStr})`);
     }
 
     return line;
@@ -184,7 +184,7 @@ export class TodoPanel {
     const empty = barWidth - filled;
 
     const filledBar = chalk.green('█'.repeat(filled));
-    const emptyBar = chalk.dim('░'.repeat(empty));
+    const emptyBar = chalk.white('░'.repeat(empty));
     const progressBar = `[${filledBar}${emptyBar}]`;
 
     const stats = chalk.bold(`${completed}/${total} completed (${percentage}%)`);
@@ -256,7 +256,7 @@ export class TodoPanel {
     }
 
     if (changes.length === 0) {
-      return chalk.dim('No changes');
+      return chalk.white('No changes');
     }
 
     return `🔄 ${chalk.bold('Changes:')}\n${changes.map(c => `  ${c}`).join('\n')}`;
@@ -267,7 +267,7 @@ export class TodoPanel {
    */
   renderCompactProgress(): string {
     if (!this.lastProgressInfo) {
-      return chalk.dim('📋 No todos');
+      return chalk.white('📋 No todos');
     }
 
     const { total, completed, percentage, currentTodo } = this.lastProgressInfo;

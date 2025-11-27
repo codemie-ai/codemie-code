@@ -28,6 +28,16 @@ export const ClaudePluginMetadata: AgentMetadata = {
       baseUrl: 'ANTHROPIC_BASE_URL',
       apiKey: 'ANTHROPIC_AUTH_TOKEN'
     }
+  },
+
+  lifecycle: {
+    async beforeRun(env) {
+      // Disable experimental betas if not already set
+      if (!env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS) {
+        env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = '1';
+      }
+      return env;
+    }
   }
 };
 

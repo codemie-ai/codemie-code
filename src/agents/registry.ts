@@ -16,7 +16,7 @@ export class AgentRegistry {
 
   static {
     // Initialize plugin-based adapters
-    AgentRegistry.adapters.set('codemie-code', new CodeMieCodePlugin());
+    AgentRegistry.adapters.set('code', new CodeMieCodePlugin());
     AgentRegistry.adapters.set('claude', new ClaudePlugin());
     AgentRegistry.adapters.set('codex', new CodexPlugin());
     AgentRegistry.adapters.set('gemini', new GeminiPlugin());

@@ -4,7 +4,7 @@ import { Command } from 'commander';
 import { createListCommand } from './commands/list.js';
 import { createInstallCommand } from './commands/install.js';
 import { createUninstallCommand } from './commands/uninstall.js';
-import { createDoctorCommand } from './commands/doctor.js';
+import { createDoctorCommand } from './commands/doctor/index.js';
 import { createVersionCommand } from './commands/version.js';
 import { createSetupCommand } from './commands/setup.js';
 import { createConfigCommand } from './commands/config.js';

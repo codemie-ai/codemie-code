@@ -10,7 +10,7 @@ import { getDirname } from '../../utils/dirname.js';
  * CodeMie-Code Plugin Metadata
  */
 export const CodeMieCodePluginMetadata: AgentMetadata = {
-  name: 'codemie-code',
+  name: 'code',
   displayName: 'CodeMie Native',
   description: 'Built-in LangGraph-based coding assistant',
 
@@ -90,7 +90,7 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
  * Custom implementation for built-in agent
  */
 export class CodeMieCodePlugin implements AgentAdapter {
-  name = 'codemie-code';
+  name = 'code';
   displayName = 'CodeMie Native';
   description = 'CodeMie Native Agent - Built-in LangGraph-based coding assistant';
 
@@ -130,6 +130,10 @@ export class CodeMieCodePlugin implements AgentAdapter {
       } else {
         filteredArgs.push(arg);
       }
+    }
+
+    if (!options.debug && process.env.CODEMIE_DEBUG) {
+      options.debug = true;
     }
 
     if (CodeMieCodePluginMetadata.customRunHandler) {

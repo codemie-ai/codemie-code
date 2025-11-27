@@ -88,7 +88,7 @@ async function runSetupWizard(force?: boolean): Promise<void> {
     if (profiles.length > 0) {
       console.log(chalk.cyan('\n📋 Existing Profiles:\n'));
       profiles.forEach(({ name, active, profile }) => {
-        const activeMarker = active ? chalk.green('● ') : chalk.dim('○ ');
+        const activeMarker = active ? chalk.green('● ') : chalk.white('○ ');
         console.log(`${activeMarker}${chalk.white(name)} (${profile.provider})`);
       });
       console.log('');
@@ -123,14 +123,14 @@ async function runSetupWizard(force?: boolean): Promise<void> {
       ]);
       profileName = selectedProfile;
       isUpdate = true;
-      console.log(chalk.dim(`\nUpdating profile: ${chalk.white(profileName)}\n`));
+      console.log(chalk.white(`\nUpdating profile: ${chalk.cyan(profileName)}\n`));
     } else {
       // Adding new profile - will ask for name at the end
-      console.log(chalk.dim('\nConfiguring new profile...\n'));
+      console.log(chalk.white('\nConfiguring new profile...\n'));
     }
   } else {
     // First time setup - will create default profile or ask for name at the end
-    console.log(chalk.dim("Let's configure your AI assistant.\n"));
+    console.log(chalk.white("Let's configure your AI assistant.\n"));
   }
 
   // Step 1: Choose provider (ai-run-sso is now first/default)
@@ -159,11 +159,11 @@ async function runSetupWizard(force?: boolean): Promise<void> {
   // Special handling for AWS Bedrock
   if (provider === 'bedrock') {
     console.log(chalk.bold.cyan('\n📝 AWS Bedrock Configuration\n'));
-    console.log(chalk.dim('AWS Bedrock requires AWS access credentials and region configuration.'));
-    console.log(chalk.dim('AWS credentials can be configured in multiple ways:\n'));
-    console.log(chalk.dim('  1. AWS CLI profiles (recommended): ~/.aws/credentials'));
-    console.log(chalk.dim('  2. Environment variables: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY'));
-    console.log(chalk.dim('  3. IAM roles (for EC2/ECS instances)\n'));
+    console.log(chalk.white('AWS Bedrock requires AWS access credentials and region configuration.'));
+    console.log(chalk.white('AWS credentials can be configured in multiple ways:\n'));
+    console.log(chalk.white('  1. AWS CLI profiles (recommended): ~/.aws/credentials'));
+    console.log(chalk.white('  2. Environment variables: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY'));
+    console.log(chalk.white('  3. IAM roles (for EC2/ECS instances)\n'));
 
     // Check if AWS credentials might be available
     const hasAwsCli = await (async () => {
@@ -180,10 +180,10 @@ async function runSetupWizard(force?: boolean): Promise<void> {
 
     if (!hasAwsCli && !hasAwsEnvVars) {
       console.log(chalk.yellow('⚠️  AWS CLI not detected and no AWS environment variables found.\n'));
-      console.log(chalk.dim('Please configure AWS credentials before proceeding:\n'));
+      console.log(chalk.white('Please configure AWS credentials before proceeding:\n'));
       console.log(chalk.cyan('  Option 1: Install and configure AWS CLI'));
       console.log(chalk.white('    $ ') + chalk.green('aws configure'));
-      console.log(chalk.dim('    Enter your AWS Access Key ID and Secret Access Key\n'));
+      console.log(chalk.white('    Enter your AWS Access Key ID and Secret Access Key\n'));
       console.log(chalk.cyan('  Option 2: Set environment variables'));
       console.log(chalk.white('    $ ') + chalk.green('export AWS_ACCESS_KEY_ID="your-access-key"'));
       console.log(chalk.white('    $ ') + chalk.green('export AWS_SECRET_ACCESS_KEY="your-secret-key"\n'));
@@ -233,18 +233,18 @@ async function runSetupWizard(force?: boolean): Promise<void> {
     ]);
 
     // Set environment variables for Bedrock
-    process.env.AWS_REGION = awsRegion;
+    process.env.AWS_REGION = awsRegion ? awsRegion.trim() : awsRegion;
     process.env.CLAUDE_CODE_USE_BEDROCK = '1';
     if (useProfile && awsProfile) {
-      process.env.AWS_PROFILE = awsProfile;
+      process.env.AWS_PROFILE = awsProfile ? awsProfile.trim() : awsProfile;
     }
 
     console.log(chalk.green('\n✓ Bedrock configuration set'));
-    console.log(chalk.dim('  AWS_REGION=' + awsRegion));
+    console.log(chalk.white('  AWS_REGION=' + (awsRegion ? awsRegion.trim() : awsRegion)));
     if (useProfile && awsProfile) {
-      console.log(chalk.dim('  AWS_PROFILE=' + awsProfile));
+      console.log(chalk.white('  AWS_PROFILE=' + (awsProfile ? awsProfile.trim() : awsProfile)));
     }
-    console.log(chalk.dim('  CLAUDE_CODE_USE_BEDROCK=1\n'));
+    console.log(chalk.white('  CLAUDE_CODE_USE_BEDROCK=1\n'));
 
     // For Bedrock, we don't need base URL or API key (uses AWS credentials)
     baseUrl = 'bedrock';
@@ -259,7 +259,7 @@ async function runSetupWizard(force?: boolean): Promise<void> {
         validate: (input: string) => input.trim() !== '' || 'Base URL is required'
       }
     ]);
-    baseUrl = answers.baseUrl;
+    baseUrl = answers.baseUrl ? answers.baseUrl.trim() : answers.baseUrl;
   } else {
     // Prompt for base URL directly (no default)
     const { customUrl } = await inquirer.prompt([
@@ -277,8 +277,8 @@ async function runSetupWizard(force?: boolean): Promise<void> {
     ]);
 
     // Use custom URL if provided, otherwise keep default
-    if (customUrl.trim() !== '') {
-      baseUrl = customUrl;
+    if (customUrl && customUrl.trim() !== '') {
+      baseUrl = customUrl.trim();
     }
   }
 
@@ -293,7 +293,7 @@ async function runSetupWizard(force?: boolean): Promise<void> {
         validate: (input: string) => input.trim() !== '' || 'API key is required'
       }
     ]);
-    apiKey = apiKeyInput;
+    apiKey = apiKeyInput ? apiKeyInput.trim() : apiKeyInput;
   }
 
   // Step 2.5: Validate credentials and fetch models
@@ -377,7 +377,7 @@ async function runSetupWizard(force?: boolean): Promise<void> {
     // Add custom option at the end
     const choices = [
       ...modelChoices,
-      { name: chalk.dim('Custom model (manual entry)...'), value: 'custom' }
+      { name: chalk.white('Custom model (manual entry)...'), value: 'custom' }
     ];
 
     const { selectedModel } = await inquirer.prompt([
@@ -401,7 +401,7 @@ async function runSetupWizard(force?: boolean): Promise<void> {
           validate: (input: string) => input.trim() !== '' || 'Model is required'
         }
       ]);
-      model = customModel;
+      model = customModel ? customModel.trim() : customModel;
     } else {
       model = selectedModel;
     }
@@ -414,7 +414,7 @@ async function runSetupWizard(force?: boolean): Promise<void> {
         validate: (input: string) => input.trim() !== '' || 'Model is required'
       }
     ]);
-    model = modelInput;
+    model = modelInput ? modelInput.trim() : modelInput;
   }
 
   // Step 3: Ask for profile name (if creating new)
@@ -452,7 +452,7 @@ async function runSetupWizard(force?: boolean): Promise<void> {
         }
       }
     ]);
-    profileName = newProfileName;
+    profileName = newProfileName ? newProfileName.trim() : newProfileName;
   }
 
   // Step 4: Save configuration as profile
@@ -528,16 +528,19 @@ async function handleAiRunSSOSetup(profileName: string | null, isUpdate: boolean
     }
   ]);
 
+  // Trim the URL to ensure no leading/trailing spaces
+  const trimmedCodeMieUrl = codeMieUrl ? codeMieUrl.trim() : codeMieUrl;
+
   // Step 2: Proceed directly to SSO authentication (no connectivity check)
   // Following the same pattern as codemie-ide-plugin which trusts the SSO endpoint
 
   // Step 3: Launch SSO Authentication
-  console.log(chalk.dim('\nStarting SSO authentication...\n'));
+  console.log(chalk.white('\nStarting SSO authentication...\n'));
   const authSpinner = ora('Launching browser for authentication...').start();
 
   try {
     const sso = new CodeMieSSO();
-    const authResult = await sso.authenticate({ codeMieUrl, timeout: 120000 });
+    const authResult = await sso.authenticate({ codeMieUrl: trimmedCodeMieUrl, timeout: 120000 });
 
     if (!authResult.success) {
       authSpinner.fail(chalk.red('SSO authentication failed'));
@@ -550,10 +553,14 @@ async function handleAiRunSSOSetup(profileName: string | null, isUpdate: boolean
     // Step 4a: Validate CodeMie integrations
     const integrationsSpinner = ora('Checking CodeMie integrations...').start();
 
-    let selectedIntegration: { id: string; alias: string };
+    let selectedIntegration: { id: string; alias: string } | null;
     try {
       selectedIntegration = await validateCodeMieIntegrations(authResult, integrationsSpinner);
-      integrationsSpinner.succeed(chalk.green('CodeMie integrations validated'));
+      if (selectedIntegration) {
+        integrationsSpinner.succeed(chalk.green('CodeMie integration selected'));
+      } else {
+        integrationsSpinner.info(chalk.white('Continuing without integration'));
+      }
     } catch {
       integrationsSpinner.stop();
       // Error details already displayed by validateCodeMieIntegrations
@@ -605,7 +612,7 @@ async function handleAiRunSSOSetup(profileName: string | null, isUpdate: boolean
             }
           }
         ]);
-        finalProfileName = newProfileName;
+        finalProfileName = newProfileName ? newProfileName.trim() : newProfileName;
       }
 
       // Step 7: Save configuration as profile
@@ -613,14 +620,18 @@ async function handleAiRunSSOSetup(profileName: string | null, isUpdate: boolean
         name: finalProfileName!,
         provider: 'ai-run-sso',
         authMethod: 'sso',
-        codeMieUrl,
+        codeMieUrl: trimmedCodeMieUrl,
         baseUrl: authResult.apiUrl,
-        codeMieIntegration: selectedIntegration,
         apiKey: 'sso-authenticated',
         model: selectedModel,
         timeout: 300,
         debug: false
       };
+
+      // Only add integration if one was selected
+      if (selectedIntegration) {
+        profile.codeMieIntegration = selectedIntegration;
+      }
 
       const saveSpinner = ora('Saving profile...').start();
       await ConfigLoader.saveProfile(finalProfileName!, profile as any);
@@ -648,7 +659,7 @@ async function handleAiRunSSOSetup(profileName: string | null, isUpdate: boolean
 
       // Success message
       console.log(chalk.bold.green(`\n✅ Profile "${finalProfileName}" configured successfully!\n`));
-      console.log(chalk.cyan(`🔗 Connected to: ${codeMieUrl}`));
+      console.log(chalk.cyan(`🔗 Connected to: ${trimmedCodeMieUrl}`));
       console.log(chalk.cyan(`🔑 Authentication: SSO (session stored securely)`));
       console.log(chalk.cyan(`🤖 Selected Model: ${selectedModel}`));
       console.log(chalk.cyan(`📁 Config saved to: ~/.codemie/config.json\n`));
@@ -703,7 +714,7 @@ async function handleAiRunSSOSetup(profileName: string | null, isUpdate: boolean
             }
           }
         ]);
-        finalProfileName = newProfileName;
+        finalProfileName = newProfileName ? newProfileName.trim() : newProfileName;
       }
 
       // Save config with manual model as profile
@@ -711,14 +722,18 @@ async function handleAiRunSSOSetup(profileName: string | null, isUpdate: boolean
         name: finalProfileName!,
         provider: 'ai-run-sso',
         authMethod: 'sso',
-        codeMieUrl,
+        codeMieUrl: trimmedCodeMieUrl,
         baseUrl: authResult.apiUrl,
-        codeMieIntegration: selectedIntegration,
         apiKey: 'sso-authenticated',
-        model: manualModel,
+        model: manualModel ? manualModel.trim() : manualModel,
         timeout: 300,
         debug: false
       };
+
+      // Only add integration if one was selected
+      if (selectedIntegration) {
+        profile.codeMieIntegration = selectedIntegration;
+      }
 
       await ConfigLoader.saveProfile(finalProfileName!, profile as any);
       console.log(chalk.green(`\n✅ Profile "${finalProfileName}" saved with manual model selection.\n`));
@@ -742,13 +757,13 @@ async function promptForModelSelection(models: string[]): Promise<string> {
         validate: (input: string) => input.trim() !== '' || 'Model name is required'
       }
     ]);
-    return manualModel;
+    return manualModel ? manualModel.trim() : manualModel;
   }
 
   // Add custom option at the end
   const choices = [
     ...models,
-    { name: chalk.dim('Custom model (manual entry)...'), value: 'custom' }
+    { name: chalk.white('Custom model (manual entry)...'), value: 'custom' }
   ];
 
   const { selectedModel } = await inquirer.prompt([
@@ -770,7 +785,7 @@ async function promptForModelSelection(models: string[]): Promise<string> {
         validate: (input: string) => input.trim() !== '' || 'Model is required'
       }
     ]);
-    return customModel;
+    return customModel ? customModel.trim() : customModel;
   }
 
   return selectedModel;

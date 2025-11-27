@@ -125,6 +125,42 @@ export function getToolStatus(tool: VCSTool): ToolStatus {
 }
 
 /**
+ * Check git status asynchronously
+ */
+export async function checkGitStatus(): Promise<{ installed: boolean; version: string | null }> {
+  return new Promise((resolve) => {
+    let gitInstalled = false;
+    let gitVersion: string | null = null;
+
+    try {
+      const output = execSync('git --version', {
+        stdio: 'pipe',
+        encoding: 'utf-8',
+      }).trim();
+      gitInstalled = true;
+      const match = output.match(/git version (\d+\.\d+\.\d+)/);
+      gitVersion = match ? match[1] : output;
+    } catch {
+      // Git not installed
+    }
+
+    resolve({
+      installed: gitInstalled,
+      version: gitVersion,
+    });
+  });
+}
+
+/**
+ * Get tool status asynchronously
+ */
+export async function getToolStatusAsync(tool: VCSTool): Promise<ToolStatus> {
+  return new Promise((resolve) => {
+    resolve(getToolStatus(tool));
+  });
+}
+
+/**
  * Check status of all tools including git
  */
 export function checkAllTools(): ToolsCheckResult {

@@ -31,11 +31,11 @@ export function createUninstallCommand(): Command {
 
           for (const agent of installedAgents) {
             const version = await agent.getVersion();
-            const versionStr = version ? chalk.gray(` (${version})`) : '';
+            const versionStr = version ? chalk.white(` (${version})`) : '';
 
             console.log(chalk.bold(`  ${agent.displayName}`) + versionStr);
             console.log(`    Command: ${chalk.cyan(`codemie uninstall ${agent.name}`)}`);
-            console.log(`    ${chalk.gray(agent.description)}`);
+            console.log(`    ${chalk.white(agent.description)}`);
             console.log();
           }
 

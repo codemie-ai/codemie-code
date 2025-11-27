@@ -64,11 +64,11 @@ export class AsyncTipDisplay {
    * Format tip for display at bottom of terminal
    */
   private formatTip(tip: Tip): string {
-    const separator = chalk.dim('─'.repeat(60));
+    const separator = chalk.white('─'.repeat(60));
     let output = '\n' + separator + '\n';
     output += chalk.cyan('💡 Tip: ') + chalk.white(tip.message) + '\n';
     if (tip.command) {
-      output += chalk.gray('   → ') + chalk.blueBright(tip.command) + '\n';
+      output += chalk.white('   → ') + chalk.blueBright(tip.command) + '\n';
     }
     output += separator;
     return output;
@@ -175,13 +175,13 @@ export class AsyncTipDisplay {
     if (tipsToShow.length === 0) return;
 
     console.log();
-    const separator = chalk.dim('─'.repeat(60));
+    const separator = chalk.white('─'.repeat(60));
     console.log(separator);
 
     tipsToShow.forEach((tip, index) => {
       console.log(chalk.cyan('💡 Tip:'), chalk.white(tip.message));
       if (tip.command) {
-        console.log(chalk.gray('   →'), chalk.blueBright(tip.command));
+        console.log(chalk.white('   →'), chalk.blueBright(tip.command));
       }
       if (index < tipsToShow.length - 1) {
         console.log(); // Spacing between tips
@@ -208,11 +208,11 @@ export class AsyncTipDisplay {
       process.stdout.write(`\x1b[${terminalHeight - 3};0H`);
 
       // Show tip
-      const separator = chalk.dim('─'.repeat(Math.min(60, process.stdout.columns || 80)));
+      const separator = chalk.white('─'.repeat(Math.min(60, process.stdout.columns || 80)));
       process.stdout.write(separator + '\n');
       process.stdout.write(chalk.cyan('💡 ') + chalk.white(tip.message));
       if (tip.command) {
-        process.stdout.write(chalk.gray(' → ') + chalk.blueBright(tip.command));
+        process.stdout.write(chalk.white(' → ') + chalk.blueBright(tip.command));
       }
       process.stdout.write('\n' + separator);
 
