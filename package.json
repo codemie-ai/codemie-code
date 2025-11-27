@@ -49,6 +49,14 @@
   ],
   "author": "AI/Run Team",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/codemie-ai/codemie-code.git"
+  },
+  "homepage": "https://github.com/codemie-ai/codemie-code#readme",
+  "bugs": {
+    "url": "https://github.com/codemie-ai/codemie-code/issues"
+  },
   "dependencies": {
     "@clack/core": "^0.5.0",
     "@clack/prompts": "^0.11.0",
