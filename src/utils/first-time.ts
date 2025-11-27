@@ -1,13 +1,12 @@
 import chalk from 'chalk';
 import { ConfigLoader } from './config-loader.js';
-import { AgentRegistry } from '../agents/registry.js';
+import { AgentRegistry, BUILTIN_AGENT_NAME } from '../agents/registry.js';
 import type { AgentAdapter } from '../agents/core/types.js';
 
 /**
  * First-time user experience utilities
  */
 export class FirstTimeExperience {
-  private static readonly BUILTIN_AGENT_NAME = 'code';
 
   /**
    * Get all agents split into built-in and external
@@ -15,8 +14,8 @@ export class FirstTimeExperience {
   private static getAgents(): { builtIn: AgentAdapter | undefined; external: AgentAdapter[] } {
     const allAgents = AgentRegistry.getAllAgents();
     return {
-      builtIn: allAgents.find(agent => agent.name === this.BUILTIN_AGENT_NAME),
-      external: allAgents.filter(agent => agent.name !== this.BUILTIN_AGENT_NAME)
+      builtIn: allAgents.find(agent => agent.name === BUILTIN_AGENT_NAME),
+      external: allAgents.filter(agent => agent.name !== BUILTIN_AGENT_NAME)
     };
   }
   /**
@@ -81,7 +80,9 @@ export class FirstTimeExperience {
     });
 
     external.forEach(agent => {
-      const runCmd = `codemie-${agent.name}`.padEnd(30);
+      // Handle special case where agent name already includes 'codemie-' prefix
+      const command = agent.name.startsWith('codemie-') ? agent.name : `codemie-${agent.name}`;
+      const runCmd = command.padEnd(30);
       console.log(chalk.white('  $ ') + chalk.green(runCmd) + chalk.white(`# Run ${agent.displayName}`));
     });
 
@@ -94,7 +95,9 @@ export class FirstTimeExperience {
     console.log(chalk.white('   • Documentation: ') + chalk.blue('README.md'));
 
     const allAgents = AgentRegistry.getAllAgents();
-    const agentShortcuts = allAgents.map(agent => `codemie-${agent.name}`).join(', ');
+    const agentShortcuts = allAgents.map(agent =>
+      agent.name.startsWith('codemie-') ? agent.name : `codemie-${agent.name}`
+    ).join(', ');
     console.log(chalk.white('   • Agent shortcuts: ') + chalk.green(agentShortcuts));
 
     console.log(chalk.white('   • Configuration: ') + chalk.green('codemie config --help'));
@@ -148,7 +151,8 @@ export class FirstTimeExperience {
 
     const allAgents = AgentRegistry.getAllAgents();
     allAgents.forEach(agent => {
-      const command = `codemie-${agent.name}`;
+      // Handle special case where agent name already includes 'codemie-' prefix
+      const command = agent.name.startsWith('codemie-') ? agent.name : `codemie-${agent.name}`;
       const paddedCommand = command.padEnd(28);
       console.log(chalk.cyan(`  ${paddedCommand}`) + chalk.white(`# Run ${agent.displayName}`));
     });
@@ -188,7 +192,9 @@ export class FirstTimeExperience {
 
       external.forEach(agent => {
         const installCmd = `codemie install ${agent.name}`.padEnd(35);
-        const runCmd = `codemie-${agent.name}`.padEnd(35);
+        // Handle special case where agent name already includes 'codemie-' prefix
+        const command = agent.name.startsWith('codemie-') ? agent.name : `codemie-${agent.name}`;
+        const runCmd = command.padEnd(35);
 
         console.log(chalk.white('   $ ') + chalk.green(installCmd) + chalk.white(`# Install ${agent.displayName}`));
         console.log(chalk.white('   $ ') + chalk.green(runCmd) + chalk.white(`# Run ${agent.displayName}`));
@@ -323,7 +329,9 @@ export class FirstTimeExperience {
     if (external.length > 0) {
       const firstExternal = external[0];
       const installCmd = `codemie install ${firstExternal.name}`.padEnd(35);
-      const runCmd = `codemie-${firstExternal.name}`.padEnd(35);
+      // Handle special case where agent name already includes 'codemie-' prefix
+      const command = firstExternal.name.startsWith('codemie-') ? firstExternal.name : `codemie-${firstExternal.name}`;
+      const runCmd = command.padEnd(35);
 
       console.log(chalk.white('  $ ') + chalk.green(installCmd) + chalk.white(`# Install ${firstExternal.displayName}`));
       console.log(chalk.white('  $ ') + chalk.green(runCmd) + chalk.white(`# Run ${firstExternal.displayName}\n`));

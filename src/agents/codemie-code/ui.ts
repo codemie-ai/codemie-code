@@ -8,6 +8,7 @@ import { hasClipboardImage, getClipboardImage, type ClipboardImage } from '../..
 import { TodoPanel } from './ui/todoPanel.js';
 import { ProgressTracker, getProgressTracker } from './ui/progressTracker.js';
 import { TodoStateManager } from './tools/planning.js';
+import { logger } from '../../utils/logger.js';
 
 /**
  * Terminal UI interface for CodeMie Agent using Clack
@@ -119,7 +120,7 @@ export class CodeMieTerminalUI {
         performCleanup();
         const config = this.agent.getConfig();
         if (config?.debug) {
-          console.error('[DEBUG] Stdin error:', error);
+          logger.debug('Stdin error:', error);
         }
         resolve(null);
       });
@@ -309,7 +310,7 @@ export class CodeMieTerminalUI {
             // Handle data processing errors gracefully
             const config = this.agent.getConfig();
             if (config?.debug) {
-              console.error('[DEBUG] Input processing error:', error);
+              logger.debug('Input processing error:', error);
             }
             // Continue processing - don't crash on single key errors
           }
@@ -319,7 +320,7 @@ export class CodeMieTerminalUI {
         performCleanup();
         const config = this.agent.getConfig();
         if (config?.debug) {
-          console.error('[DEBUG] Input setup error:', error);
+          logger.debug('Input setup error:', error);
         }
         resolve(null);
       }

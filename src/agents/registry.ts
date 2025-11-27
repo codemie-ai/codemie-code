@@ -1,11 +1,12 @@
 import { ClaudePlugin } from './plugins/claude.plugin.js';
 import { CodexPlugin } from './plugins/codex.plugin.js';
-import { CodeMieCodePlugin } from './plugins/codemie-code.plugin.js';
+import { CodeMieCodePlugin, BUILTIN_AGENT_NAME } from './plugins/codemie-code.plugin.js';
 import { GeminiPlugin } from './plugins/gemini.plugin.js';
 import { AgentAdapter } from './core/types.js';
 
 // Re-export for backwards compatibility
 export { AgentAdapter } from './core/types.js';
+export { BUILTIN_AGENT_NAME } from './plugins/codemie-code.plugin.js';
 
 /**
  * Central registry for all agents
@@ -16,7 +17,7 @@ export class AgentRegistry {
 
   static {
     // Initialize plugin-based adapters
-    AgentRegistry.adapters.set('code', new CodeMieCodePlugin());
+    AgentRegistry.adapters.set(BUILTIN_AGENT_NAME, new CodeMieCodePlugin());
     AgentRegistry.adapters.set('claude', new ClaudePlugin());
     AgentRegistry.adapters.set('codex', new CodexPlugin());
     AgentRegistry.adapters.set('gemini', new GeminiPlugin());

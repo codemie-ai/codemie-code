@@ -16,6 +16,7 @@ import { CodeMieAgentError } from './types.js';
 import { extractToolMetadata } from './toolMetadata.js';
 import { extractTokenUsageFromStreamChunk, extractTokenUsageFromFinalState } from './tokenUtils.js';
 import { setGlobalToolEventCallback } from './tools/index.js';
+import { logger } from '../../utils/logger.js';
 
 export class CodeMieAgent {
   private agent: any;
@@ -56,7 +57,7 @@ export class CodeMieAgent {
     });
 
     if (config.debug) {
-      console.log(`[DEBUG] CodeMie Agent initialized with ${tools.length} tools`);
+      logger.debug(`CodeMie Agent initialized with ${tools.length} tools`);
     }
   }
 
@@ -156,8 +157,8 @@ export class CodeMieAgent {
         // Check if we have SSO cookies to inject (following codemie-ide-plugin pattern)
         const ssoCookies = (global as any).codemieSSOCookies;
         if (this.config.debug) {
-          console.log(`[DEBUG] SSO Cookies available:`, ssoCookies ? Object.keys(ssoCookies) : 'none');
-          console.log(`[DEBUG] Auth token:`, this.config.authToken);
+          logger.debug(`SSO Cookies available:`, ssoCookies ? Object.keys(ssoCookies) : 'none');
+          logger.debug(`Auth token:`, this.config.authToken);
         }
 
         if (ssoCookies && this.config.authToken === 'sso-authenticated') {
@@ -185,26 +186,26 @@ export class CodeMieAgent {
             process.removeAllListeners('warning');
 
             if (this.config.debug) {
-              console.log('[DEBUG] Disabled SSL verification (like SSO Gateway and codemie-model-fetcher)');
+              logger.debug('Disabled SSL verification (like SSO Gateway and codemie-model-fetcher)');
             }
 
             if (this.config.debug) {
-              console.log(`[DEBUG] SSO request to ${input}`);
-              console.log(`[DEBUG] Cookies: ${Object.keys(ssoCookies).join(', ')}`);
-              console.log(`[DEBUG] Full cookie string length: ${cookieString.length}`);
+              logger.debug(`SSO request to ${input}`);
+              logger.debug(`Cookies: ${Object.keys(ssoCookies).join(', ')}`);
+              logger.debug(`Full cookie string length: ${cookieString.length}`);
             }
 
             try {
               const response = await fetch(input, updatedInit);
 
               if (this.config.debug && !response.ok) {
-                console.log(`[DEBUG] SSO request failed: ${response.status} ${response.statusText}`);
+                logger.debug(`SSO request failed: ${response.status} ${response.statusText}`);
               }
 
               return response;
             } catch (error) {
               if (this.config.debug) {
-                console.log(`[DEBUG] SSO request error:`, error);
+                logger.debug(`SSO request error:`, error);
               }
               throw error;
             }
@@ -223,15 +224,15 @@ export class CodeMieAgent {
             };
 
             if (this.config.debug) {
-              console.log(`[DEBUG] Non-SSO LiteLLM request to ${input}`);
-              console.log(`[DEBUG] Authorization header set with API key`);
+              logger.debug(`Non-SSO LiteLLM request to ${input}`);
+              logger.debug(`Authorization header set with API key`);
             }
 
             return fetch(input, updatedInit);
           };
 
           if (this.config.debug) {
-            console.log(`[DEBUG] LiteLLM provider configured with API key authentication`);
+            logger.debug(`LiteLLM provider configured with API key authentication`);
           }
         }
 
@@ -312,7 +313,7 @@ export class CodeMieAgent {
     const originalSigintHandler = process.listeners('SIGINT');
     const sigintHandler = () => {
       if (this.config.debug) {
-        console.log('\n[DEBUG] Received SIGINT - aborting stream...');
+        logger.debug('\nReceived SIGINT - aborting stream...');
       }
       streamAborted = true;
       abortController.abort();
@@ -323,7 +324,7 @@ export class CodeMieAgent {
 
     try {
       if (this.config.debug) {
-        console.log(`[DEBUG] Processing message: ${message.substring(0, 100)}...`);
+        logger.debug(`Processing message: ${message.substring(0, 100)}...`);
       }
 
       // Add user message to conversation history (with optional images)
@@ -353,7 +354,7 @@ export class CodeMieAgent {
         // Check if stream was aborted
         if (streamAborted || abortController.signal.aborted) {
           if (this.config.debug) {
-            console.log('[DEBUG] Stream processing aborted');
+            logger.debug('Stream processing aborted');
           }
           break;
         }
@@ -373,7 +374,7 @@ export class CodeMieAgent {
           this.currentLLMTokenUsage = tokenUsage;
 
           if (this.config.debug) {
-            console.log(`[DEBUG] Token usage: ${tokenUsage.inputTokens} in, ${tokenUsage.outputTokens} out`);
+            logger.debug(`Token usage: ${tokenUsage.inputTokens} in, ${tokenUsage.outputTokens} out`);
           }
         }
 
@@ -445,7 +446,7 @@ export class CodeMieAgent {
       } catch {
         // If getState fails, continue without updating history
         if (this.config.debug) {
-          console.log('[DEBUG] Could not get final state, continuing...');
+          logger.debug('Could not get final state, continuing...');
         }
       }
 
@@ -458,9 +459,9 @@ export class CodeMieAgent {
       onEvent({ type: 'complete' });
 
       if (this.config.debug) {
-        console.log(`[DEBUG] Agent completed in ${this.stats.executionTime}ms`);
-        console.log(`[DEBUG] Total tokens: ${this.stats.totalTokens} (${this.stats.inputTokens} in, ${this.stats.outputTokens} out)`);
-        console.log(`[DEBUG] Estimated cost: $${this.stats.estimatedTotalCost.toFixed(4)}`);
+        logger.debug(`Agent completed in ${this.stats.executionTime}ms`);
+        logger.debug(`Total tokens: ${this.stats.totalTokens} (${this.stats.inputTokens} in, ${this.stats.outputTokens} out)`);
+        logger.debug(`Estimated cost: $${this.stats.estimatedTotalCost.toFixed(4)}`);
       }
 
     } catch (error) {
@@ -475,7 +476,7 @@ export class CodeMieAgent {
       // Handle AbortError from user interruption gracefully
       if (error instanceof Error && (error.name === 'AbortError' || streamAborted)) {
         if (this.config.debug) {
-          console.log('[DEBUG] Stream aborted by user');
+          logger.debug('Stream aborted by user');
         }
 
         onEvent({
@@ -487,7 +488,7 @@ export class CodeMieAgent {
       }
 
       if (this.config.debug) {
-        console.error(`[DEBUG] Agent error:`, error);
+        logger.debug(`Agent error:`, error);
       }
 
       onEvent({
@@ -600,7 +601,7 @@ export class CodeMieAgent {
 
     } catch (error) {
       if (this.config.debug) {
-        console.error(`[DEBUG] Error processing stream chunk:`, error);
+        logger.debug(`Error processing stream chunk:`, error);
       }
 
       // Don't throw here, just log - let the main stream continue
@@ -667,7 +668,7 @@ export class CodeMieAgent {
     };
 
     if (this.config.debug) {
-      console.log('[DEBUG] Conversation history cleared');
+      logger.debug('Conversation history cleared');
     }
   }
 
@@ -761,7 +762,7 @@ export class CodeMieAgent {
     this.stats.llmCalls++;
 
     if (this.config.debug) {
-      console.log(`[DEBUG] Started LLM step ${step.stepNumber} (${llmContext})`);
+      logger.debug(`Started LLM step ${step.stepNumber} (${llmContext})`);
     }
 
     return step;
@@ -784,9 +785,9 @@ export class CodeMieAgent {
       // Get the stored tool args for enhanced logging
       const toolArgs = this.toolCallArgs.get(toolName);
       if (toolArgs && Object.keys(toolArgs).length > 0) {
-        console.log(`[DEBUG] Started tool step ${step.stepNumber}: ${toolName} ${JSON.stringify(toolArgs)}`);
+        logger.debug(`Started tool step ${step.stepNumber}: ${toolName} ${JSON.stringify(toolArgs)}`);
       } else {
-        console.log(`[DEBUG] Started tool step ${step.stepNumber}: ${toolName}`);
+        logger.debug(`Started tool step ${step.stepNumber}: ${toolName}`);
       }
     }
 
@@ -802,7 +803,7 @@ export class CodeMieAgent {
 
     if (this.config.debug) {
       const type = step.type === 'llm_call' ? 'LLM' : `Tool (${step.toolName})`;
-      console.log(`[DEBUG] Completed ${type} step ${step.stepNumber} in ${step.duration}ms`);
+      logger.debug(`Completed ${type} step ${step.stepNumber} in ${step.duration}ms`);
     }
   }
 

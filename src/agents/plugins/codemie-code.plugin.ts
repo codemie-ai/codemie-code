@@ -7,10 +7,15 @@ import { readFileSync } from 'fs';
 import { getDirname } from '../../utils/dirname.js';
 
 /**
+ * Built-in agent name constant - single source of truth
+ */
+export const BUILTIN_AGENT_NAME = 'codemie-code';
+
+/**
  * CodeMie-Code Plugin Metadata
  */
 export const CodeMieCodePluginMetadata: AgentMetadata = {
-  name: 'code',
+  name: BUILTIN_AGENT_NAME,
   displayName: 'CodeMie Native',
   description: 'Built-in LangGraph-based coding assistant',
 
@@ -90,7 +95,7 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
  * Custom implementation for built-in agent
  */
 export class CodeMieCodePlugin implements AgentAdapter {
-  name = 'code';
+  name = BUILTIN_AGENT_NAME;
   displayName = 'CodeMie Native';
   description = 'CodeMie Native Agent - Built-in LangGraph-based coding assistant';
 

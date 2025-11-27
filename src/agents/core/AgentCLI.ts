@@ -6,6 +6,7 @@ import { AgentAdapter } from './types.js';
 import { ConfigLoader, CodeMieConfigOptions } from '../../utils/config-loader.js';
 import { logger } from '../../utils/logger.js';
 import { getDirname } from '../../utils/dirname.js';
+import { BUILTIN_AGENT_NAME } from '../registry.js';
 import { ClaudePluginMetadata } from '../plugins/claude.plugin.js';
 import { CodexPluginMetadata } from '../plugins/codex.plugin.js';
 import { CodeMieCodePluginMetadata } from '../plugins/codemie-code.plugin.js';
@@ -43,8 +44,13 @@ export class AgentCLI {
    * Setup commander program
    */
   private setupProgram(): void {
+    // Handle special case where adapter name already includes 'codemie-' prefix (built-in agent)
+    const programName = this.adapter.name.startsWith('codemie-')
+      ? this.adapter.name
+      : `codemie-${this.adapter.name}`;
+
     this.program
-      .name(`codemie-${this.adapter.name}`)
+      .name(programName)
       .description(`CodeMie ${this.adapter.displayName} - ${this.adapter.description}`)
       .version(this.version)
       .option('--profile <name>', 'Use specific provider profile')
@@ -173,7 +179,7 @@ export class AgentCLI {
     const metadataMap: Record<string, typeof ClaudePluginMetadata> = {
       'claude': ClaudePluginMetadata,
       'codex': CodexPluginMetadata,
-      'code': CodeMieCodePluginMetadata,
+      [BUILTIN_AGENT_NAME]: CodeMieCodePluginMetadata,
       'gemini': GeminiPluginMetadata
     };
     return metadataMap[this.adapter.name];
@@ -233,7 +239,9 @@ export class AgentCLI {
 
       console.log(chalk.white(`  1. ${this.adapter.name} requires ${modelDescription} (e.g., ${suggestedModel})`));
       console.log(chalk.white(`  2. Switch model: codemie config set model ${suggestedModel}`));
-      console.log(chalk.white(`  3. Override for this session: codemie-${this.adapter.name} --model ${suggestedModel}`));
+      // Handle special case where adapter name already includes 'codemie-' prefix
+      const command = this.adapter.name.startsWith('codemie-') ? this.adapter.name : `codemie-${this.adapter.name}`;
+      console.log(chalk.white(`  3. Override for this session: ${command} --model ${suggestedModel}`));
       return false;
     }
 

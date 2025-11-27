@@ -60,7 +60,6 @@ class Logger {
 
   debug(message: string, ...args: unknown[]): void {
     if (this.debugEnabled) {
-      console.log(chalk.cyan(message), ...args);
       this.writeToFile('debug', message, ...args);
     }
   }

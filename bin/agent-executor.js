@@ -19,12 +19,14 @@ import { logger } from '../dist/utils/logger.js';
 
 // Detect agent from executable name
 // /usr/local/bin/codemie-claude → 'claude'
-// /usr/local/bin/codemie-code → 'codemie-code' (special case)
+// /usr/local/bin/codemie-code → 'codemie-code' (special case for built-in agent)
+// NOTE: 'codemie-code' constant defined in src/agents/plugins/codemie-code.plugin.ts
 const executableName = basename(process.argv[1]);
+const BUILTIN_AGENT_NAME = 'codemie-code';
 
 let agentName;
-if (executableName === 'codemie-code') {
-  agentName = 'codemie-code'; // Keep full name for built-in agent
+if (executableName === BUILTIN_AGENT_NAME) {
+  agentName = BUILTIN_AGENT_NAME; // Keep full name for built-in agent
 } else {
   agentName = executableName.replace('codemie-', ''); // Strip prefix for external agents
 }
@@ -33,7 +35,7 @@ if (executableName === 'codemie-code') {
 const agent = AgentRegistry.getAgent(agentName);
 
 if (!agent) {
-  logger.error(`Unknown agent: ${agentName}`);
+  logger.error(`Unknown agent '${agentName}'`);
   console.log('Available agents:', AgentRegistry.getAgentNames().join(', '));
   process.exit(1);
 }

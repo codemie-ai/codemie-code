@@ -11,6 +11,7 @@ import { createSystemTools } from './tools/index.js';
 import type { CodeMieConfig, InitializationResult, AgentStats } from './types.js';
 import { CodeMieAgentError } from './types.js';
 import { hasClipboardImage, getClipboardImage } from '../../utils/clipboard.js';
+import { logger } from '../../utils/logger.js';
 
 export class CodeMieCode {
   private agent: CodeMieAgent | null = null;
@@ -36,15 +37,15 @@ export class CodeMieCode {
       this.config = await loadCodeMieConfig(this.workingDirectory, cliOverrides);
 
       if (this.config.debug) {
-        console.log('[DEBUG] Configuration loaded:', getConfigSummary(this.config));
-        console.log('[DEBUG] Global SSO cookies set:', !!(global as any).codemieSSOCookies);
+        logger.debug('Configuration loaded:', getConfigSummary(this.config));
+        logger.debug('Global SSO cookies set:', !!(global as any).codemieSSOCookies);
       }
 
       // Create system tools
       const tools = await createSystemTools(this.config);
 
       if (this.config.debug) {
-        console.log(`[DEBUG] Created ${tools.length} system tools`);
+        logger.debug(`Created ${tools.length} system tools`);
       }
 
       // Initialize the agent
@@ -57,7 +58,7 @@ export class CodeMieCode {
       };
 
       if (this.config.debug) {
-        console.log('[DEBUG] Agent initialized successfully');
+        logger.debug('Agent initialized successfully');
       }
 
       return this.initializationResult!;
@@ -73,7 +74,7 @@ export class CodeMieCode {
       };
 
       if (this.config.debug) {
-        console.error('[DEBUG] Initialization failed:', error);
+        logger.debug('Initialization failed:', error);
       }
 
       throw new CodeMieAgentError(
@@ -119,7 +120,7 @@ export class CodeMieCode {
 
     try {
       if (this.config.debug) {
-        console.log(`[DEBUG] Executing task: ${task.substring(0, 100)}...`);
+        logger.debug(`Executing task: ${task.substring(0, 100)}...`);
       }
 
       let result = '';
@@ -134,7 +135,7 @@ export class CodeMieCode {
       const errorMessage = error instanceof Error ? error.message : String(error);
 
       if (this.config.debug) {
-        console.error('[DEBUG] Task execution failed:', error);
+        logger.debug('Task execution failed:', error);
       }
 
       throw new CodeMieAgentError(
@@ -248,7 +249,7 @@ export class CodeMieCode {
       const errorMessage = error instanceof Error ? error.message : String(error);
 
       if (this.config.debug) {
-        console.error('[DEBUG] Plan mode execution failed:', error);
+        logger.debug('Plan mode execution failed:', error);
       }
 
       throw new CodeMieAgentError(
@@ -380,7 +381,7 @@ export class CodeMieCode {
   async dispose(): Promise<void> {
     // Future: Clean up any resources, close connections, etc.
     if (this.config.debug) {
-      console.log('[DEBUG] CodeMie agent disposed');
+      logger.debug('CodeMie agent disposed');
     }
   }
 

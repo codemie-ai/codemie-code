@@ -12,6 +12,7 @@ import { exec } from 'child_process';
 import { promisify } from 'util';
 import path from 'path';
 import { filterDirectoryEntries, createFilterConfig, DEFAULT_FILTER_CONFIG, generateFilterStats } from '../filters.js';
+import { logger } from '../../../utils/logger.js';
 
 const execAsync = promisify(exec);
 
@@ -451,23 +452,23 @@ export async function createSystemTools(config: CodeMieConfig): Promise<Structur
       tools.push(...planningTools);
 
       if (config.debug) {
-        console.log(`[DEBUG] Added ${planningTools.length} planning tools`);
-        console.log(`[DEBUG] Initialized todo storage for: ${config.workingDirectory}`);
+        logger.debug(`Added ${planningTools.length} planning tools`);
+        logger.debug(`Initialized todo storage for: ${config.workingDirectory}`);
       }
     } catch (error) {
       if (config.debug) {
-        console.warn('[DEBUG] Planning tools not available:', error);
+        logger.debug('Planning tools not available:', error);
       }
     }
 
     if (config.debug) {
-      console.log(`[DEBUG] Created ${tools.length} total system tools`);
+      logger.debug(`Created ${tools.length} total system tools`);
     }
 
     return tools;
   } catch (error) {
     if (config.debug) {
-      console.error('[DEBUG] Error creating system tools:', error);
+      logger.debug('Error creating system tools:', error);
     }
 
     // Return empty array on error to allow agent to function
