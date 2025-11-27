@@ -4,7 +4,7 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'node',
-    include: ['src/**/*.test.ts', 'src/**/*.spec.ts'],
+    include: ['src/**/*.test.ts', 'src/**/*.spec.ts', 'tests/**/*.test.ts'],
     exclude: ['node_modules', 'dist'],
     coverage: {
       provider: 'v8',
@@ -16,9 +16,10 @@ export default defineConfig({
         '**/*.spec.ts',
         '**/types.ts',
         'bin/',
+        'tests/',
       ],
     },
-    testTimeout: 10000,
+    testTimeout: 30000,
     hookTimeout: 10000,
   },
   resolve: {

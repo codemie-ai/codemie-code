@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import { randomUUID } from 'crypto';
 
 export enum LogLevel {
   DEBUG = 'debug',
@@ -13,8 +14,11 @@ export enum LogLevel {
 class Logger {
   private debugEnabled: boolean;
   private debugLogFile: string | null = null;
+  private sessionId: string;
 
   constructor() {
+    // Always generate session ID regardless of debug mode
+    this.sessionId = randomUUID();
     this.debugEnabled = process.env.CODEMIE_DEBUG === 'true' || process.env.CODEMIE_DEBUG === '1';
     if (this.debugEnabled) {
       this.initializeDebugLogging().catch(() => {
@@ -43,7 +47,8 @@ class Logger {
   private async initializeDebugLogging(): Promise<void> {
     const baseDir = join(homedir(), '.codemie', 'debug');
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const sessionDir = join(baseDir, `session-${timestamp}`);
+    // Use session ID in directory name for easy correlation
+    const sessionDir = join(baseDir, `session-${timestamp}-${this.sessionId}`);
     const filename = 'application.log';
 
     try {
@@ -61,6 +66,14 @@ class Logger {
   getDebugSessionDir(): string | null {
     if (!this.debugLogFile) return null;
     return join(this.debugLogFile, '..');
+  }
+
+  /**
+   * Get the current session ID (UUID)
+   * @returns Session ID (always available)
+   */
+  getSessionId(): string {
+    return this.sessionId;
   }
 
   private async writeToFile(level: string, message: string, ...args: unknown[]): Promise<void> {

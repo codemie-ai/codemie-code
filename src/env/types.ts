@@ -81,12 +81,16 @@ export type CodeMieConfigOptions = ProviderProfile;
  * Type guard to check if config is multi-provider format
  */
 export function isMultiProviderConfig(config: any): config is MultiProviderConfig {
-  return config && config.version === 2 && config.profiles && config.activeProfile;
+  return Boolean(
+    config && config.version === 2 && config.profiles && config.activeProfile
+  );
 }
 
 /**
  * Type guard to check if config is legacy format
  */
 export function isLegacyConfig(config: any): config is LegacyConfig {
-  return config && !config.version && (config.provider || config.baseUrl || config.apiKey);
+  return Boolean(
+    config && !config.version && (config.provider || config.baseUrl || config.apiKey)
+  );
 }

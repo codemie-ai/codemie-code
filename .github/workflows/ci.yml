@@ -22,6 +22,11 @@ jobs:
           node-version: '24'
           cache: 'npm'
 
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libsecret-1-dev
+
       - name: Install dependencies
         run: npm ci
 

@@ -1,4 +1,3 @@
-import * as keytar from 'keytar';
 import * as crypto from 'crypto';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -8,6 +7,25 @@ import { SSOCredentials } from '../types/sso.js';
 const SERVICE_NAME = 'codemie-code';
 const ACCOUNT_NAME = 'sso-credentials';
 const FALLBACK_FILE = path.join(os.homedir(), '.codemie', 'sso-credentials.enc');
+
+/**
+ * Lazy load keytar to avoid requiring system dependencies during test imports
+ * Falls back gracefully if keytar is not available (e.g., in CI environments)
+ */
+let keytar: typeof import('keytar') | null | undefined = undefined;
+async function getKeytar(): Promise<typeof import('keytar') | null> {
+  if (keytar !== undefined) {
+    return keytar;
+  }
+  try {
+    keytar = await import('keytar');
+    return keytar;
+  } catch {
+    // Keytar not available (missing system dependencies)
+    keytar = null;
+    return null;
+  }
+}
 
 export class CredentialStore {
   private static instance: CredentialStore;
@@ -27,25 +45,34 @@ export class CredentialStore {
   async storeSSOCredentials(credentials: SSOCredentials): Promise<void> {
     const encrypted = this.encrypt(JSON.stringify(credentials));
 
-    try {
-      // Try secure keychain storage first
-      await keytar.setPassword(SERVICE_NAME, ACCOUNT_NAME, encrypted);
-    } catch {
-      console.warn('Keychain not available, using encrypted file storage');
-      await this.storeToFile(encrypted);
+    const keytarModule = await getKeytar();
+    if (keytarModule) {
+      try {
+        // Try secure keychain storage first
+        await keytarModule.setPassword(SERVICE_NAME, ACCOUNT_NAME, encrypted);
+        return;
+      } catch {
+        // Fall through to file storage
+      }
     }
+
+    // Use encrypted file storage as fallback
+    await this.storeToFile(encrypted);
   }
 
   async retrieveSSOCredentials(): Promise<SSOCredentials | null> {
-    try {
-      // Try keychain first
-      const encrypted = await keytar.getPassword(SERVICE_NAME, ACCOUNT_NAME);
-      if (encrypted) {
-        const decrypted = this.decrypt(encrypted);
-        return JSON.parse(decrypted);
+    // Try keychain first if available
+    const keytarModule = await getKeytar();
+    if (keytarModule) {
+      try {
+        const encrypted = await keytarModule.getPassword(SERVICE_NAME, ACCOUNT_NAME);
+        if (encrypted) {
+          const decrypted = this.decrypt(encrypted);
+          return JSON.parse(decrypted);
+        }
+      } catch {
+        // Fall through to file storage
       }
-    } catch {
-      // Fall back to file storage
     }
 
     // Always try file storage as fallback
@@ -63,15 +90,21 @@ export class CredentialStore {
   }
 
   async clearSSOCredentials(): Promise<void> {
-    try {
-      await keytar.deletePassword(SERVICE_NAME, ACCOUNT_NAME);
-    } catch {
-      // Also clear file storage
+    // Clear keychain if available
+    const keytarModule = await getKeytar();
+    if (keytarModule) {
       try {
-        await fs.unlink(FALLBACK_FILE);
+        await keytarModule.deletePassword(SERVICE_NAME, ACCOUNT_NAME);
       } catch {
-        // Ignore file not found errors
+        // Ignore errors, will try file storage next
       }
+    }
+
+    // Also clear file storage
+    try {
+      await fs.unlink(FALLBACK_FILE);
+    } catch {
+      // Ignore file not found errors
     }
   }
 

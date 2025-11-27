@@ -192,17 +192,30 @@ export class SSOGateway {
 
       forwardHeaders['Cookie'] = cookieHeader;
 
-      // Add CodeMie integration header only if integration is configured
+      // Add session ID header (always available)
+      forwardHeaders['X-CodeMie-Session-ID'] = logger.getSessionId();
+
+      // Add CodeMie headers from config
       try {
         const { ConfigLoader } = await import('./config-loader.js');
         const config = await ConfigLoader.load();
 
-        // Only add integration header when provider is ai-run-sso AND integration exists
+        // Add integration header only for ai-run-sso provider
         if (config.provider === 'ai-run-sso' && config.codeMieIntegration?.id) {
           forwardHeaders['X-CodeMie-Integration'] = config.codeMieIntegration.id;
         }
+
+        // Add model header if configured (for all providers)
+        if (config.model) {
+          forwardHeaders['X-CodeMie-CLI-Model'] = config.model;
+        }
+
+        // Add timeout header if configured (for all providers)
+        if (config.timeout) {
+          forwardHeaders['X-CodeMie-CLI-Timeout'] = String(config.timeout);
+        }
       } catch {
-        // Non-fatal error - continue without integration header
+        // Non-fatal error - continue without config headers
       }
 
       if (this.config.clientType) {
