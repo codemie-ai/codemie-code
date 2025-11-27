@@ -601,6 +601,11 @@ codemie-claude --debug "analyze codebase"
 codemie-codex --debug "implement feature"
 codemie-code --debug "test task"
 
+# Debug logging (writes to ~/.codemie/debug/)
+codemie-claude --debug "analyze codebase"
+codemie-codex --debug "implement feature"
+codemie-code --debug "test task"
+
 # Health checks
 codemie doctor                   # Full system check
 codemie-code health             # Built-in agent check
@@ -800,6 +805,76 @@ cat ~/.codemie/debug/session-*/requests.jsonl | jq 'select(.type == "request")'
 ```bash
 # Remove session directories older than 7 days
 find ~/.codemie/debug -type d -name "session-*" -mtime +7 -exec rm -rf {} +
+
+# Remove all debug logs
+rm -rf ~/.codemie/debug
+```
+
+## Debug Logging
+
+All CodeMie agents support comprehensive debug logging that writes to files.
+
+### Enabling Debug Mode
+
+```bash
+# Using --debug flag (recommended)
+codemie-claude --debug "your task"
+codemie-codex --debug "your task"
+codemie-code --debug "your task"
+
+# Using environment variable
+CODEMIE_DEBUG=1 codemie-claude "your task"
+
+# For entire session
+export CODEMIE_DEBUG=1
+codemie-claude "task 1"
+codemie-codex "task 2"
+```
+
+### Debug Log Files
+
+When debug mode is enabled, logs are written to:
+
+1. **General Logger** - All application logs
+   - Location: `~/.codemie/debug/logger/session-<timestamp>.log`
+   - Contains: Info, warnings, errors, debug messages
+   - Format: Plain text with timestamps
+
+2. **SSO Gateway** - HTTP request/response details (ai-run-sso provider only)
+   - Location: `~/.codemie/debug/sso-gateway/session-<timestamp>.jsonl`
+   - Contains: Request/response headers, bodies, timing
+   - Format: JSONL (one JSON object per line)
+   - Security: Sensitive headers automatically redacted
+
+### Console Output
+
+Debug mode keeps your console clean - you'll only see:
+```bash
+$ codemie-claude --debug "analyze code"
+Debug session log: ~/.codemie/debug/sso-gateway/session-2025-11-27T12-30-00-000Z.jsonl
+Starting Claude Code with model claude-sonnet-4-5...
+```
+
+All debug details go to the log files.
+
+### Analyzing Logs
+
+**Using command-line tools:**
+```bash
+# View latest session log
+tail -f ~/.codemie/debug/logger/session-*.log
+
+# Search for errors
+grep ERROR ~/.codemie/debug/logger/session-*.log
+
+# Parse SSO Gateway logs with jq
+cat ~/.codemie/debug/sso-gateway/session-*.jsonl | jq 'select(.type == "request")'
+```
+
+**Clean up old logs:**
+```bash
+# Remove logs older than 7 days
+find ~/.codemie/debug -name "session-*" -mtime +7 -delete
 
 # Remove all debug logs
 rm -rf ~/.codemie/debug

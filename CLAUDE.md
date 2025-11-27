@@ -51,6 +51,11 @@ codemie-claude --debug "task"   # Enable debug logging (writes to file)
 codemie-codex --debug "task"    # All agents support --debug flag
 codemie-code --debug "task"     # Debug logs: ~/.codemie/debug/
 
+# Debug Logging
+codemie-claude --debug "task"   # Enable debug logging (writes to file)
+codemie-codex --debug "task"    # All agents support --debug flag
+codemie-code --debug "task"     # Debug logs: ~/.codemie/debug/
+
 # Profile Management (Multi-Provider Support)
 codemie setup              # Add new profile or update existing
 codemie profile list       # List all provider profiles
@@ -698,4 +703,56 @@ When writing code for this project, ask yourself:
 ✅ **Error Handling**: Are error messages actionable?
 ✅ **Testing**: Can this code be easily tested?
 ✅ **Documentation**: Will this require doc updates?
+
+### Debug Logging System
+
+All CodeMie agents support debug logging that writes comprehensive logs to files.
+
+**Enabling Debug Mode:**
+```bash
+# Using --debug flag (recommended)
+codemie-claude --debug "your task"
+codemie-codex --debug "your task"
+codemie-code --debug "your task"
+
+# Using environment variable
+CODEMIE_DEBUG=1 codemie-claude "your task"
+```
+
+**Debug Log Files:**
+1. **General Logger** - All application logs:
+   - Location: `~/.codemie/debug/logger/session-<timestamp>.log`
+   - Format: Plain text with timestamps
+   - Contains: Info, warnings, errors, debug messages
+
+2. **SSO Gateway** - HTTP request/response details (ai-run-sso provider only):
+   - Location: `~/.codemie/debug/sso-gateway/session-<timestamp>.jsonl`
+   - Format: JSONL (one JSON object per line)
+   - Contains: Request/response headers, bodies, timing, session metadata
+   - Security: Automatically redacts sensitive headers (Cookie, Authorization)
+
+**Key Features:**
+- ✅ File-only output - keeps console clean
+- ✅ Separate log file per session with timestamp
+- ✅ Automatic directory creation
+- ✅ Security-first - sensitive data redacted
+- ✅ Works with all agents (claude, codex, codemie-code, gemini)
+
+**Usage:**
+When you run with `--debug`, you'll see one message indicating the log file location, then all debug information goes to files:
+```bash
+$ codemie-claude --debug "analyze the codebase"
+Debug session log: ~/.codemie/debug/sso-gateway/session-2025-11-27T12-30-00-000Z.jsonl
+Starting Claude Code with model claude-sonnet-4-5...
+```
+
+**Clean Up:**
+```bash
+# Remove logs older than 7 days
+find ~/.codemie/debug -name "session-*.log" -mtime +7 -delete
+find ~/.codemie/debug -name "session-*.jsonl" -mtime +7 -delete
+
+# Remove all debug logs
+rm -rf ~/.codemie/debug
+```
 
