@@ -6,7 +6,7 @@ import { ConfigLoader } from '../../../../utils/config-loader.js';
 import { HealthCheck, HealthCheckResult, HealthCheckDetail, ProgressCallback } from '../types.js';
 
 export class AIConfigCheck implements HealthCheck {
-  name = 'AI Configuration';
+  name = 'Active Profile';
 
   async run(onProgress?: ProgressCallback): Promise<HealthCheckResult> {
     const details: HealthCheckDetail[] = [];
@@ -14,7 +14,23 @@ export class AIConfigCheck implements HealthCheck {
 
     try {
       onProgress?.('Loading profile configuration');
-      // Get active profile name
+
+      // Check if any profiles exist first
+      const profiles = await ConfigLoader.listProfiles();
+      const hasAnyProfiles = profiles.length > 0;
+
+      // If no profiles exist, show single consolidated error
+      if (!hasAnyProfiles) {
+        details.push({
+          status: 'error',
+          message: 'No configuration found',
+          hint: 'Run: codemie setup'
+        });
+        success = false;
+        return { name: this.name, success, details };
+      }
+
+      // Get active profile name and load config
       const activeProfileName = await ConfigLoader.getActiveProfileName();
       const config = await ConfigLoader.load();
 
@@ -24,6 +40,9 @@ export class AIConfigCheck implements HealthCheck {
       const hasApiKey = !!config.apiKey;
       const hasModel = !!config.model;
       const isSSOProvider = config.provider === 'ai-run-sso';
+
+      // Track missing fields for consolidated error message
+      const missingFields: string[] = [];
 
       // Show active profile
       if (activeProfileName) {
@@ -41,12 +60,7 @@ export class AIConfigCheck implements HealthCheck {
           message: `Provider: ${config.provider}`
         });
       } else {
-        details.push({
-          status: 'error',
-          message: 'Provider not configured',
-          hint: 'Run: codemie setup'
-        });
-        success = false;
+        missingFields.push('Provider');
       }
 
       // For SSO, show CodeMie URL instead of API endpoint
@@ -58,12 +72,7 @@ export class AIConfigCheck implements HealthCheck {
             message: `CodeMie URL: ${config.codeMieUrl}`
           });
         } else {
-          details.push({
-            status: 'error',
-            message: 'CodeMie URL not configured',
-            hint: 'Run: codemie setup'
-          });
-          success = false;
+          missingFields.push('CodeMie URL');
         }
       } else {
         onProgress?.('Checking base URL');
@@ -74,12 +83,7 @@ export class AIConfigCheck implements HealthCheck {
             message: `Base URL: ${config.baseUrl}`
           });
         } else {
-          details.push({
-            status: 'error',
-            message: 'Base URL not configured',
-            hint: 'Run: codemie setup'
-          });
-          success = false;
+          missingFields.push('Base URL');
         }
       }
 
@@ -93,12 +97,7 @@ export class AIConfigCheck implements HealthCheck {
             message: `API Key: ${masked}`
           });
         } else {
-          details.push({
-            status: 'error',
-            message: 'API Key not configured',
-            hint: 'Run: codemie setup'
-          });
-          success = false;
+          missingFields.push('API Key');
         }
       }
 
@@ -110,9 +109,14 @@ export class AIConfigCheck implements HealthCheck {
           message: `Model: ${config.model}`
         });
       } else {
+        missingFields.push('Model');
+      }
+
+      // If any fields are missing, show consolidated error
+      if (missingFields.length > 0) {
         details.push({
           status: 'error',
-          message: 'Model not configured',
+          message: `Missing configuration: ${missingFields.join(', ')}`,
           hint: 'Run: codemie setup'
         });
         success = false;

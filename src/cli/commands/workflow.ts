@@ -19,7 +19,6 @@ import {
   type VCSProvider,
   type WorkflowInstallOptions,
 } from '../../workflows/index.js';
-import { isToolInstalled } from '../../tools/index.js';
 
 export function createWorkflowCommand(): Command {
   const workflow = new Command('workflow')
@@ -243,36 +242,8 @@ Configuration Guide:
           console.log(chalk.yellow(`  - ${dep}`));
         });
         console.log('');
-
-        const { install } = await inquirer.prompt([
-          {
-            type: 'confirm',
-            name: 'install',
-            message: 'Install missing tools?',
-            default: true
-          }
-        ]);
-
-        if (install) {
-          // Install missing tools
-          const { installTool } = await import('../../tools/index.js');
-          for (const tool of template.dependencies.tools) {
-            if (tool === 'gh' || tool === 'glab') {
-              if (!isToolInstalled(tool)) {
-                const spinner = ora(`Installing ${tool}...`).start();
-                try {
-                  await installTool(tool);
-                  spinner.succeed(chalk.green(`${tool} installed`));
-                } catch {
-                  spinner.fail(chalk.red(`Failed to install ${tool}`));
-                }
-              }
-            }
-          }
-        } else {
-          console.log(chalk.yellow('\nInstallation cancelled\n'));
-          return;
-        }
+        console.log(chalk.yellow('Please install the required tools manually before proceeding.\n'));
+        return;
       }
 
       // Show warnings

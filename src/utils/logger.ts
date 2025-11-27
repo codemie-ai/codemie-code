@@ -93,7 +93,7 @@ class Logger {
           }
         }
       } else {
-        console.error(chalk.red(error));
+        console.error(chalk.red(String(error)));
         if (this.debugEnabled) {
           this.writeToFile('error', String(error));
         }

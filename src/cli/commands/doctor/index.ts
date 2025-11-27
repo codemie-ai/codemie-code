@@ -10,7 +10,6 @@ import {
   NpmCheck,
   AIConfigCheck,
   AgentsCheck,
-  ToolsCheck,
   WorkflowsCheck
 } from './checks/index.js';
 import { providerCheckRegistry } from './providers/index.js';
@@ -33,7 +32,6 @@ export function createDoctorCommand(): Command {
         new NpmCheck(),
         new AIConfigCheck(),
         new AgentsCheck(),
-        new ToolsCheck(),
         new WorkflowsCheck()
       ];
 
@@ -64,22 +62,22 @@ export function createDoctorCommand(): Command {
           results.push(result);
           formatter.displayCheck(result);
         }
-      }
 
-      // Run and display provider-specific checks immediately
-      // Get config from AIConfigCheck
-      const configCheck = checks.find(c => c instanceof AIConfigCheck) as AIConfigCheck;
-      const config = configCheck?.getConfig();
+        // After AIConfigCheck, immediately run provider-specific checks
+        if (check instanceof AIConfigCheck) {
+          const config = check.getConfig();
 
-      if (config && config.provider) {
-        const providerResults = await providerCheckRegistry.runChecks(config, (checkName) => {
-          formatter.startCheck(checkName);
-        });
-        results.push(...providerResults);
+          if (config && config.provider) {
+            const providerResults = await providerCheckRegistry.runChecks(config, (checkName) => {
+              formatter.startCheck(checkName);
+            });
+            results.push(...providerResults);
 
-        // Display each provider result immediately with proper header positioning
-        for (const result of providerResults) {
-          formatter.displayCheckWithHeader(result);
+            // Display each provider result immediately with proper header positioning
+            for (const result of providerResults) {
+              formatter.displayCheckWithHeader(result);
+            }
+          }
         }
       }
 

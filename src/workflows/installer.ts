@@ -7,7 +7,6 @@ import * as path from 'node:path';
 import type { VCSProvider, WorkflowInstallOptions, WorkflowTemplate } from './types.js';
 import { getTemplate } from './registry.js';
 import { ensureWorkflowDir, isWorkflowInstalled } from './detector.js';
-import { isToolInstalled } from '../tools/detector.js';
 
 /**
  * Install a workflow from template
@@ -141,13 +140,11 @@ export function validateDependencies(template: WorkflowTemplate): {
     );
   }
 
-  // Check required tools
-  for (const tool of template.dependencies.tools) {
-    if (tool === 'gh' || tool === 'glab') {
-      if (!isToolInstalled(tool as 'gh' | 'glab')) {
-        missing.push(`${tool.toUpperCase()} CLI`);
-      }
-    }
+  // Note required tools in warnings
+  if (template.dependencies.tools.length > 0) {
+    warnings.push(
+      `This workflow requires the following CLI tools:\n  - ${template.dependencies.tools.join('\n  - ')}\nPlease install them manually.`
+    );
   }
 
   return {

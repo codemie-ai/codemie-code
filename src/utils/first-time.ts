@@ -59,16 +59,10 @@ export class FirstTimeExperience {
 
     console.log(chalk.cyan('Step 1: Choose Your Setup Method\n'));
 
-    console.log(chalk.bold('  Option A: Interactive Setup Wizard (Recommended)'));
     console.log(chalk.white('  $ ') + chalk.green('codemie setup'));
     console.log(chalk.white('  → Guided configuration for all providers'));
     console.log(chalk.white('  → Tests connection before saving'));
     console.log(chalk.white('  → Supports: AI/Run CodeMie, AWS Bedrock, Azure\n'));
-
-    console.log(chalk.bold('  Option B: Manual Configuration Guide'));
-    console.log(chalk.white('  → Complete environment variable list'));
-    console.log(chalk.white('  → Copy-paste ready commands'));
-    console.log(chalk.white('  → Providers: litellm (default), bedrock, azure\n'));
 
     console.log(chalk.cyan('Step 2: Verify Configuration\n'));
     console.log(chalk.white('  $ ') + chalk.green('codemie doctor'));
@@ -81,20 +75,19 @@ export class FirstTimeExperience {
 
     const { external } = this.getAgents();
 
-    external.slice(0, 2).forEach(agent => {
+    external.forEach(agent => {
       const installCmd = `codemie install ${agent.name}`.padEnd(30);
       console.log(chalk.white('  $ ') + chalk.green(installCmd) + chalk.white(`# Install ${agent.displayName}`));
     });
 
-    external.slice(0, 2).forEach(agent => {
+    external.forEach(agent => {
       const runCmd = `codemie-${agent.name}`.padEnd(30);
       console.log(chalk.white('  $ ') + chalk.green(runCmd) + chalk.white(`# Run ${agent.displayName}`));
     });
 
     console.log();
 
-    console.log(chalk.bold('VCS Tools & Workflows:'));
-    console.log(chalk.white('  $ ') + chalk.green('codemie tools') + chalk.white('           # Manage VCS CLI tools (gh, glab)'));
+    console.log(chalk.bold('CI/CD Workflows:'));
     console.log(chalk.white('  $ ') + chalk.green('codemie workflow') + chalk.white('        # Manage CI/CD workflows\n'));
 
     console.log(chalk.bold('📚 Additional Resources:\n'));
@@ -105,8 +98,7 @@ export class FirstTimeExperience {
     console.log(chalk.white('   • Agent shortcuts: ') + chalk.green(agentShortcuts));
 
     console.log(chalk.white('   • Configuration: ') + chalk.green('codemie config --help'));
-    console.log(chalk.white('   • Workflows: ') + chalk.green('codemie workflow --help'));
-    console.log(chalk.white('   • VCS Tools: ') + chalk.green('codemie tools --help\n'));
+    console.log(chalk.white('   • Workflows: ') + chalk.green('codemie workflow --help\n'));
   }
 
   /**
@@ -128,8 +120,7 @@ export class FirstTimeExperience {
 
     this.showAgentSections();
 
-    console.log(chalk.bold('VCS Tools & Workflows:'));
-    console.log(chalk.cyan('  codemie tools') + chalk.white('           # Manage VCS CLI tools (gh, glab)'));
+    console.log(chalk.bold('CI/CD Workflows:'));
     console.log(chalk.cyan('  codemie workflow') + chalk.white('        # Manage CI/CD workflows\n'));
 
     console.log(chalk.white('For detailed help, run: ') + chalk.green('codemie --help\n'));
@@ -195,7 +186,7 @@ export class FirstTimeExperience {
     if (external.length > 0) {
       console.log(chalk.cyan('3. Install additional agents:'));
 
-      external.slice(0, 2).forEach(agent => {
+      external.forEach(agent => {
         const installCmd = `codemie install ${agent.name}`.padEnd(35);
         const runCmd = `codemie-${agent.name}`.padEnd(35);
 

@@ -136,7 +136,6 @@ codemie-code/
 │   ├── cli/                # CLI command implementations
 │   ├── agents/             # Agent registry and adapters
 │   ├── workflows/          # Workflow/action management
-│   ├── tools/              # VCS tools management (gh/glab)
 │   ├── env/                # Environment and config management
 │   ├── utils/              # Shared utilities
 │   └── index.ts           # Main package exports
@@ -184,21 +183,7 @@ codemie-code/
   - `gitlab/`: GitLab CI workflows
 - **Types** (`types.ts`): TypeScript definitions for workflows
 
-#### 5. VCS Tools Management (`src/tools/`)
-
-- **Registry** (`registry.ts`): Tool definitions (gh, glab)
-- **Detector** (`detector.ts`): Check tool installation and authentication
-- **Manager** (`manager.ts`): Install/uninstall/update tools via npm
-- **npm-only**: Tools are installed via npm packages only (no system packages)
-
-#### 6. Client Adapters System (`src/clients/`)
-
-- **Registry** (`registry.ts`): Manages client adapters for different platforms
-- **Adapters** (`adapters/`): Platform-specific implementations
-  - `github.ts`: GitHub API integration
-  - `gitlab.ts`: GitLab API integration
-
-#### 7. SSO Gateway System (`src/utils/sso-gateway.ts`)
+#### 5. SSO Gateway System (`src/utils/sso-gateway.ts`)
 
 - **Local Proxy**: Creates HTTP server that proxies requests from external binaries
 - **Authentication**: Automatically injects SSO cookies into API requests
@@ -206,7 +191,7 @@ codemie-code/
 - **Request Forwarding**: Streams request/response bodies for compatibility
 - **Debug Logging**: Comprehensive request/response logging for development
 
-#### 8. Built-in Agent Architecture (`src/agents/codemie-code/`)
+#### 6. Built-in Agent Architecture (`src/agents/codemie-code/`)
 
 **Multi-layered architecture:**
 
@@ -252,12 +237,6 @@ interface AgentAdapter {
 - **Profile Selection**: Use `--profile <name>` flag to override active profile
 - **Automatic Migration**: Legacy (v1) configs auto-convert to "default" profile
 - **Non-Destructive Setup**: `codemie setup` offers "Add new" or "Update existing"
-
-#### Tool System Architecture
-- **Modular Design**: Each tool type in separate file
-- **Security First**: All operations go through security filters
-- **Type Safety**: Full TypeScript coverage with Zod validation
-- **Error Handling**: Structured error types with context
 
 #### Execution Modes
 - **Interactive**: Full terminal UI with streaming responses
@@ -361,33 +340,7 @@ When working on the AI/Run CodeMie Native agent (`src/agents/codemie-code/`):
   - `utils/todoValidator.ts`: Todo quality scoring and validation
   - `storage/todoStorage.ts`: Persistent todo state management
 
-### Workflow and Tools Management
-
-#### VCS Tools Management
-
-The `src/tools/` module manages VCS CLI tools (GitHub CLI, GitLab CLI):
-
-**Key Features:**
-- npm-only installation (no system package managers)
-- Tool detection and version checking
-- Authentication status checking
-- Installation, uninstallation, and updates via npm
-
-**Available Commands:**
-```bash
-codemie tools check           # Check status of all VCS tools
-codemie tools install gh      # Install GitHub CLI via npm
-codemie tools install glab    # Install GitLab CLI via npm
-codemie tools auth gh         # Authenticate GitHub CLI
-codemie tools auth-status     # Check authentication status
-codemie tools list            # List all available tools
-```
-
-**Adding New Tools:**
-1. Add tool info to `src/tools/registry.ts`
-2. Update `VCSTool` type in `src/tools/types.ts`
-3. Ensure npm package exists for the tool
-4. Update documentation
+### Workflow Management
 
 #### Workflow Installation System
 
@@ -454,12 +407,6 @@ codemie workflow uninstall pr-review     # Uninstall workflow
 - Automatically detects GitHub/GitLab from `.git/config` remote URL
 - Override with `--github` or `--gitlab` flags
 - Validates workflow directory exists/creates if needed
-
-**Dependency Validation:**
-- Checks for required VCS CLI tools (gh/glab)
-- Offers to install missing tools
-- Warns about required secrets
-- Lists optional configuration
 
 ### Debug Logging System
 

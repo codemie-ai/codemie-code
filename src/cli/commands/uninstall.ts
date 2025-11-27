@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { AgentRegistry } from '../../agents/registry.js';
 import { logger } from '../../utils/logger.js';
-import { AgentNotFoundError } from '../../utils/errors.js';
+import { AgentNotFoundError, getErrorMessage } from '../../utils/errors.js';
 import ora from 'ora';
 import chalk from 'chalk';
 
@@ -66,7 +66,23 @@ export function createUninstallCommand(): Command {
           throw error;
         }
       } catch (error: unknown) {
-        logger.error('Uninstallation failed:', error);
+        // Handle AgentNotFoundError with helpful suggestions
+        if (error instanceof AgentNotFoundError) {
+          console.error(chalk.red(`✗ ${getErrorMessage(error)}`));
+          console.log();
+          console.log(chalk.cyan('💡 Available agents:'));
+          const allAgents = AgentRegistry.getAllAgents();
+          for (const agent of allAgents) {
+            console.log(chalk.white(`   • ${agent.name}`));
+          }
+          console.log();
+          console.log(chalk.cyan('💡 Tip:') + ' Run ' + chalk.blueBright('codemie uninstall') + ' to see installed agents');
+          console.log();
+          process.exit(1);
+        }
+
+        // For other errors, show simple message
+        console.error(chalk.red(`✗ Uninstallation failed: ${getErrorMessage(error)}`));
         process.exit(1);
       }
     });

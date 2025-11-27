@@ -818,7 +818,6 @@ codemie-code/
 │   ├── cli/               # CLI command implementations
 │   ├── env/               # Environment and config management
 │   ├── workflows/         # Workflow management
-│   ├── tools/             # VCS tools management
 │   └── utils/             # Shared utilities
 └── tests/                 # Test files
 ```
