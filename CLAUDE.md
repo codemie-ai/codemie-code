@@ -136,6 +136,73 @@ git push origin v0.0.1                         # Push tag to trigger publish
 
 **Remember:** Simple, clean code is better than clever, complex code.
 
+### Testing Philosophy
+
+**Favor integration tests over unit tests** - Test real behavior, not implementation details.
+
+#### Core Principles
+
+1. **Integration Tests First**
+   - Test the actual user experience end-to-end
+   - Run real commands and verify actual output
+   - Cover critical user workflows
+   - Example: `tests/integration/cli-commands.test.ts`
+
+2. **Minimal Unit Tests**
+   - Only unit test complex algorithms or utilities
+   - Avoid testing implementation details
+   - Don't mock everything - use real dependencies when possible
+   - Example: Type guards, configuration parsers
+
+3. **Quality Over Quantity**
+   - 1 good integration test > 10 fragile unit tests
+   - Test what matters to users, not internal functions
+   - Keep tests simple and maintainable
+   - Tests should be obvious and easy to understand
+
+4. **Test Structure**
+   - `tests/integration/` - End-to-end tests of CLI commands
+   - `src/**/__tests__/` - Unit tests only when necessary
+   - Integration tests verify real behavior
+   - Unit tests verify isolated logic
+
+#### When to Write Tests
+
+**Always write integration tests for:**
+- New CLI commands
+- New agent shortcuts
+- Critical user workflows
+- Doctor health checks
+
+**Only write unit tests for:**
+- Complex algorithms
+- Type guards and validators
+- Utility functions with edge cases
+- Pure functions with clear inputs/outputs
+
+**Don't write tests for:**
+- Trivial getters/setters
+- Simple pass-through functions
+- Code that's tested via integration tests
+
+#### Example: Doctor Command Testing
+
+```typescript
+// ✅ Good - Integration test
+it('should check Python', () => {
+  const result = cli.runSilent('doctor');
+  expect(result.output).toMatch(/Python/i);
+});
+
+// ❌ Avoid - Unnecessary unit test
+it('should create PythonCheck instance', () => {
+  const check = new PythonCheck();
+  expect(check.name).toBe('Python');
+});
+```
+
+**Remember:** Tests should give confidence, not false security. Integration tests catch real bugs.
+
 ## Project Overview
 
 **AI/Run CodeMie CLI** is a professional, unified CLI wrapper for managing multiple AI coding agents, featuring:
@@ -702,61 +769,5 @@ When writing code for this project, ask yourself:
 ✅ **Plugin Pattern**: Should this be a plugin instead of core modification?
 ✅ **Type Safety**: Are types defined and validated?
 ✅ **Error Handling**: Are error messages actionable?
-✅ **Testing**: Can this code be easily tested?
+✅ **Testing**: Integration test > unit test? (1 good integration test > 10 unit tests)
 ✅ **Documentation**: Will this require doc updates?
-
-### Debug Logging System
-
-All CodeMie agents support debug logging that writes comprehensive logs to files.
-
-**Enabling Debug Mode:**
-```bash
-# Using --debug flag (recommended)
-codemie-claude --debug "your task"
-codemie-codex --debug "your task"
-codemie-code --debug "your task"
-
-# Using environment variable
-CODEMIE_DEBUG=1 codemie-claude "your task"
-```
-
-**Debug Log Files:**
-
-Logs are written to a unified session directory:
-
-**Location:** `~/.codemie/debug/session-<timestamp>/`
-
-1. **application.log** - All application logs
-   - Format: Plain text with timestamps
-   - Contains: Info, warnings, errors, debug messages
-
-2. **requests.jsonl** - HTTP request/response details (ai-run-sso provider only)
-   - Format: JSONL (one JSON object per line)
-   - Contains: Request/response headers, bodies, timing, session metadata
-   - Security: Automatically redacts sensitive headers (Cookie, Authorization)
-
-**Key Features:**
-- ✅ File-only output - keeps console clean
-- ✅ Unified session directory with timestamp
-- ✅ Automatic directory creation
-- ✅ Security-first - sensitive data redacted
-- ✅ Works with all agents (claude, codex, codemie-code, gemini)
-
-**Usage:**
-When you run with `--debug`, you'll see the session directory in the startup message:
-```bash
-$ codemie-claude --debug "analyze the codebase"
-Starting Claude Code | Profile: default | Provider: openai | Model: claude-sonnet-4-5 | Debug: /Users/username/.codemie/debug/session-2025-11-27T12-30-00-000Z
-```
-
-All debug information is written to files in the session directory.
-
-**Clean Up:**
-```bash
-# Remove session directories older than 7 days
-find ~/.codemie/debug -type d -name "session-*" -mtime +7 -exec rm -rf {} +
-
-# Remove all debug logs
-rm -rf ~/.codemie/debug
-```
-

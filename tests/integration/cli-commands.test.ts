@@ -42,6 +42,27 @@ describe('CLI Commands - Integration', () => {
       expect(result.output).toMatch(/Node\.?js|node version/i);
     });
 
+    it('should check npm', () => {
+      const result = cli.runSilent('doctor');
+
+      // Should verify npm installation
+      expect(result.output).toMatch(/npm/i);
+    });
+
+    it('should check Python', () => {
+      const result = cli.runSilent('doctor');
+
+      // Should check Python installation (may be present or not)
+      expect(result.output).toMatch(/Python/i);
+    });
+
+    it('should check uv', () => {
+      const result = cli.runSilent('doctor');
+
+      // Should check uv installation (optional)
+      expect(result.output).toMatch(/uv/i);
+    });
+
     it('should execute without crashing', () => {
       // Doctor may return non-zero exit code if no profile configured
       // but it should still run and not crash
