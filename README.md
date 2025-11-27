@@ -37,6 +37,7 @@
   - [Claude Code](#claude-code)
   - [Codex](#codex)
   - [Gemini CLI](#gemini-cli)
+  - [Deep Agents CLI](#deep-agents-cli)
 - [Troubleshooting](#troubleshooting)
   - [Command Not Found](#command-not-found)
   - [Configuration Issues](#configuration-issues)
@@ -198,6 +199,7 @@ codemie-claude -p "message"      # Claude Code agent (non-interactive/print mode
 codemie-codex "message"          # Codex agent (interactive)
 codemie-codex -p "message"       # Codex agent (non-interactive mode)
 codemie-gemini "message"         # Gemini CLI agent
+codemie-deepagents "message"     # Deep Agents CLI agent
 
 # With agent-specific options (pass-through to underlying CLI)
 codemie-claude --context large -p "review code"
@@ -611,6 +613,7 @@ codemie doctor                   # Full system check
 codemie-code health             # Built-in agent check
 codemie-claude health           # Claude agent check
 codemie-gemini health           # Gemini agent check
+codemie-deepagents health       # Deep Agents CLI check
 ```
 
 ### CI/CD Integration Example
@@ -736,6 +739,29 @@ codemie-gemini -p "your prompt"         # Non-interactive mode (Gemini-specific)
 codemie-gemini -m gemini-2.5-flash      # Specify model (Gemini-specific)
 codemie-gemini --model gemini-2.5-flash "analyze code"  # With config override
 ```
+
+### Deep Agents CLI
+
+LangChain's terminal interface for building agents with persistent memory. Built on LangGraph with planning capabilities, file system tools, and subagent delegation.
+
+**Installation:** `codemie install deepagents`
+
+**Links:**
+- [Documentation](https://docs.langchain.com/oss/javascript/deepagents/cli)
+- [Overview](https://docs.langchain.com/oss/javascript/deepagents/overview)
+- [Middleware](https://docs.langchain.com/oss/javascript/deepagents/middleware)
+- [Subagents](https://docs.langchain.com/oss/javascript/deepagents/subagents)
+- [Customization](https://docs.langchain.com/oss/javascript/deepagents/customization)
+
+**Usage:**
+```bash
+codemie-deepagents                   # Interactive mode
+codemie-deepagents "your task"       # Start with message
+codemie-deepagents --debug           # Debug mode
+codemie-deepagents health            # Health check
+```
+
+**Note:** Installed via Python (pip/uv), not npm. Requires Python 3.9+ and Anthropic or OpenAI API key.
 
 ## Debug Logging
 

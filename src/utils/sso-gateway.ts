@@ -19,6 +19,7 @@
  */
 
 import { createServer, Server, IncomingMessage, ServerResponse } from 'http';
+import { randomUUID } from 'crypto';
 import { CredentialStore } from './credential-store.js';
 import { SSOCredentials } from '../types/sso.js';
 import { logger } from './logger.js';
@@ -38,7 +39,7 @@ export class SSOGateway {
   private config: GatewayConfig;
   private actualPort: number = 0;
   private debugLogFile: string | null = null;
-  private requestCounter: number = 0;
+  private requestCounter: number = 0; // For statistics only
   private sessionStartTime: string = '';
 
   constructor(config: GatewayConfig) {
@@ -153,8 +154,9 @@ export class SSOGateway {
       return;
     }
 
-    // Assign request ID for tracking
-    const requestId = ++this.requestCounter;
+    // Generate unique request ID for tracking and add to statistics
+    const requestId = randomUUID();
+    this.requestCounter++;
     const requestTimestamp = new Date().toISOString();
 
     try {
@@ -191,6 +193,9 @@ export class SSOGateway {
         .join('; ');
 
       forwardHeaders['Cookie'] = cookieHeader;
+
+      // Add request ID header for tracking
+      forwardHeaders['X-CodeMie-Request-ID'] = requestId;
 
       // Add session ID header (always available)
       forwardHeaders['X-CodeMie-Session-ID'] = logger.getSessionId();
@@ -471,7 +476,7 @@ export class SSOGateway {
    * Append request details to session debug file
    */
   private async logRequestToFile(
-    requestId: number,
+    requestId: string,
     data: {
       method: string;
       url: string;
@@ -515,7 +520,7 @@ export class SSOGateway {
    * Append response details to session debug file
    */
   private async logResponseToFile(
-    requestId: number,
+    requestId: string,
     data: {
       statusCode: number;
       statusMessage: string;
