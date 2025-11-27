@@ -109,15 +109,20 @@ export class AgentCLI {
 
       const providerEnv = ConfigLoader.exportProviderEnvVars(config);
 
+      // Enable debug mode and get session directory if --debug flag is set
+      let debugSessionDir: string | null = null;
       if (options.debug) {
         providerEnv.CODEMIE_DEBUG = '1';
+        debugSessionDir = await logger.enableDebugMode();
       }
 
       // Collect all arguments to pass to the agent
       const agentArgs = this.collectPassThroughArgs(args, options);
 
       // Run the agent
-      logger.info(`Starting ${this.adapter.displayName} with model ${config.model}...`);
+      const profileName = config.name || 'default';
+      const debugInfo = debugSessionDir ? ` | Debug: ${debugSessionDir}` : '';
+      logger.info(`Starting ${this.adapter.displayName} | Profile: ${profileName} | Provider: ${config.provider} | Model: ${config.model}${debugInfo}`);
       await this.adapter.run(agentArgs, providerEnv);
     } catch (error) {
       logger.error(`Failed to run ${this.adapter.displayName}:`, error);

@@ -671,12 +671,13 @@ Each debug session creates a timestamped directory containing all related logs:
 - Works with all agents (claude, codex, codemie-code, gemini)
 
 **Usage:**
-When you run with `--debug`, you'll see messages indicating the log file locations, then all debug information goes to files:
+When you run with `--debug`, you'll see the session directory in the startup message:
 ```bash
 $ codemie-claude --debug "analyze the codebase"
-HTTP requests debug log: ~/.codemie/debug/session-2025-11-27T12-30-00-000Z/requests.jsonl
-Starting Claude Code with model claude-4-5-sonnet...
+Starting Claude Code | Profile: work | Provider: ai-run-sso | Model: claude-4-5-sonnet | Debug: /Users/username/.codemie/debug/session-2025-11-27T12-30-00-000Z
 ```
+
+All debug information is written to files in the session directory.
 
 **Clean Up:**
 ```bash
@@ -720,37 +721,40 @@ CODEMIE_DEBUG=1 codemie-claude "your task"
 ```
 
 **Debug Log Files:**
-1. **General Logger** - All application logs:
-   - Location: `~/.codemie/debug/logger/session-<timestamp>.log`
+
+Logs are written to a unified session directory:
+
+**Location:** `~/.codemie/debug/session-<timestamp>/`
+
+1. **application.log** - All application logs
    - Format: Plain text with timestamps
    - Contains: Info, warnings, errors, debug messages
 
-2. **SSO Gateway** - HTTP request/response details (ai-run-sso provider only):
-   - Location: `~/.codemie/debug/sso-gateway/session-<timestamp>.jsonl`
+2. **requests.jsonl** - HTTP request/response details (ai-run-sso provider only)
    - Format: JSONL (one JSON object per line)
    - Contains: Request/response headers, bodies, timing, session metadata
    - Security: Automatically redacts sensitive headers (Cookie, Authorization)
 
 **Key Features:**
 - ✅ File-only output - keeps console clean
-- ✅ Separate log file per session with timestamp
+- ✅ Unified session directory with timestamp
 - ✅ Automatic directory creation
 - ✅ Security-first - sensitive data redacted
 - ✅ Works with all agents (claude, codex, codemie-code, gemini)
 
 **Usage:**
-When you run with `--debug`, you'll see one message indicating the log file location, then all debug information goes to files:
+When you run with `--debug`, you'll see the session directory in the startup message:
 ```bash
 $ codemie-claude --debug "analyze the codebase"
-Debug session log: ~/.codemie/debug/sso-gateway/session-2025-11-27T12-30-00-000Z.jsonl
-Starting Claude Code with model claude-sonnet-4-5...
+Starting Claude Code | Profile: default | Provider: openai | Model: claude-sonnet-4-5 | Debug: /Users/username/.codemie/debug/session-2025-11-27T12-30-00-000Z
 ```
+
+All debug information is written to files in the session directory.
 
 **Clean Up:**
 ```bash
-# Remove logs older than 7 days
-find ~/.codemie/debug -name "session-*.log" -mtime +7 -delete
-find ~/.codemie/debug -name "session-*.jsonl" -mtime +7 -delete
+# Remove session directories older than 7 days
+find ~/.codemie/debug -type d -name "session-*" -mtime +7 -exec rm -rf {} +
 
 # Remove all debug logs
 rm -rf ~/.codemie/debug

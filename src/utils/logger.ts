@@ -23,6 +23,23 @@ class Logger {
     }
   }
 
+  /**
+   * Enable debug mode and initialize debug logging
+   * @returns The debug session directory path
+   */
+  async enableDebugMode(): Promise<string | null> {
+    if (!this.debugEnabled) {
+      this.debugEnabled = true;
+      process.env.CODEMIE_DEBUG = '1';
+    }
+
+    if (!this.debugLogFile) {
+      await this.initializeDebugLogging();
+    }
+
+    return this.getDebugSessionDir();
+  }
+
   private async initializeDebugLogging(): Promise<void> {
     const baseDir = join(homedir(), '.codemie', 'debug');
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');

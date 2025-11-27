@@ -448,7 +448,6 @@ export class SSOGateway {
       };
 
       await fs.writeFile(this.debugLogFile, JSON.stringify(sessionHeader) + '\n', 'utf-8');
-      logger.info(`HTTP requests debug log: ${this.debugLogFile}`);
     } catch (error) {
       logger.error('Failed to create debug log file:', error);
       this.debugLogFile = null;

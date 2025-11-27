@@ -781,11 +781,10 @@ When debug mode is enabled, each session creates a timestamped directory:
 Debug mode keeps your console clean - you'll only see:
 ```bash
 $ codemie-claude --debug "analyze code"
-HTTP requests debug log: ~/.codemie/debug/session-2025-11-27T12-30-00-000Z/requests.jsonl
-Starting Claude Code with model claude-4-5-sonnet...
+Starting Claude Code | Profile: work | Provider: ai-run-sso | Model: claude-4-5-sonnet | Debug: /Users/username/.codemie/debug/session-2025-11-27T12-30-00-000Z
 ```
 
-All debug details go to the log files.
+All debug details are written to files in the session directory.
 
 ### Analyzing Logs
 
@@ -833,15 +832,15 @@ codemie-codex "task 2"
 
 ### Debug Log Files
 
-When debug mode is enabled, logs are written to:
+When debug mode is enabled, logs are written to a unified session directory:
 
-1. **General Logger** - All application logs
-   - Location: `~/.codemie/debug/logger/session-<timestamp>.log`
+**Location:** `~/.codemie/debug/session-<timestamp>/`
+
+1. **application.log** - All application logs
    - Contains: Info, warnings, errors, debug messages
    - Format: Plain text with timestamps
 
-2. **SSO Gateway** - HTTP request/response details (ai-run-sso provider only)
-   - Location: `~/.codemie/debug/sso-gateway/session-<timestamp>.jsonl`
+2. **requests.jsonl** - HTTP request/response details (ai-run-sso provider only)
    - Contains: Request/response headers, bodies, timing
    - Format: JSONL (one JSON object per line)
    - Security: Sensitive headers automatically redacted
@@ -851,24 +850,23 @@ When debug mode is enabled, logs are written to:
 Debug mode keeps your console clean - you'll only see:
 ```bash
 $ codemie-claude --debug "analyze code"
-Debug session log: ~/.codemie/debug/sso-gateway/session-2025-11-27T12-30-00-000Z.jsonl
-Starting Claude Code with model claude-sonnet-4-5...
+Starting Claude Code | Profile: default | Provider: openai | Model: claude-sonnet-4-5 | Debug: /Users/username/.codemie/debug/session-2025-11-27T12-30-00-000Z
 ```
 
-All debug details go to the log files.
+All debug details are written to files in the session directory.
 
 ### Analyzing Logs
 
 **Using command-line tools:**
 ```bash
-# View latest session log
-tail -f ~/.codemie/debug/logger/session-*.log
+# View latest application log
+tail -f ~/.codemie/debug/session-*/application.log
 
-# Search for errors
-grep ERROR ~/.codemie/debug/logger/session-*.log
+# Search for errors in latest session
+grep ERROR ~/.codemie/debug/session-*/application.log
 
-# Parse SSO Gateway logs with jq
-cat ~/.codemie/debug/sso-gateway/session-*.jsonl | jq 'select(.type == "request")'
+# Parse HTTP request logs with jq (ai-run-sso only)
+cat ~/.codemie/debug/session-*/requests.jsonl | jq 'select(.type == "request")'
 ```
 
 **Clean up old logs:**

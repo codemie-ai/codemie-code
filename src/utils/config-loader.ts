@@ -105,12 +105,13 @@ export class ConfigLoader {
         );
       }
 
-      return rawConfig.profiles[profile];
+      // Return profile with name included
+      return { ...rawConfig.profiles[profile], name: profile };
     }
 
     // Legacy single-provider config
     if (isLegacyConfig(rawConfig)) {
-      return rawConfig;
+      return { ...rawConfig, name: 'default' };
     }
 
     return {};
