@@ -53,6 +53,7 @@ export class AgentCLI {
       .option('--api-key <key>', 'Override API key')
       .option('--base-url <url>', 'Override base URL')
       .option('--timeout <seconds>', 'Override timeout (in seconds)', parseInt)
+      .option('--debug', 'Enable debug logging (writes to file)')
       .allowUnknownOption()
       .argument('[args...]', `Arguments to pass to ${this.adapter.displayName}`)
       .action(async (args, options) => {
@@ -100,8 +101,11 @@ export class AgentCLI {
         process.exit(1);
       }
 
-      // Export provider-specific environment variables
       const providerEnv = ConfigLoader.exportProviderEnvVars(config);
+
+      if (options.debug) {
+        providerEnv.CODEMIE_DEBUG = '1';
+      }
 
       // Collect all arguments to pass to the agent
       const agentArgs = this.collectPassThroughArgs(args, options);
@@ -143,7 +147,7 @@ export class AgentCLI {
    */
   private collectPassThroughArgs(args: string[], options: Record<string, unknown>): string[] {
     const agentArgs = [...args];
-    const knownOptions = ['profile', 'model', 'provider', 'apiKey', 'baseUrl', 'timeout'];
+    const knownOptions = ['profile', 'model', 'provider', 'apiKey', 'baseUrl', 'timeout', 'debug'];
 
     for (const [key, value] of Object.entries(options)) {
       if (knownOptions.includes(key)) continue;
@@ -169,7 +173,7 @@ export class AgentCLI {
     const metadataMap: Record<string, typeof ClaudePluginMetadata> = {
       'claude': ClaudePluginMetadata,
       'codex': CodexPluginMetadata,
-      'codemie-code': CodeMieCodePluginMetadata,
+      'code': CodeMieCodePluginMetadata,
       'gemini': GeminiPluginMetadata
     };
     return metadataMap[this.adapter.name];
@@ -191,15 +195,15 @@ export class AgentCLI {
     // Check provider compatibility
     if (!metadata.supportedProviders.includes(provider)) {
       logger.error(`Provider '${provider}' is not supported by ${this.adapter.displayName}`);
-      console.log(chalk.dim(`\nSupported providers: ${metadata.supportedProviders.join(', ')}`));
-      console.log(chalk.dim('\nOptions:'));
-      console.log(chalk.dim('  1. Run setup to choose a different provider: codemie setup'));
+      console.log(chalk.white(`\nSupported providers: ${metadata.supportedProviders.join(', ')}`));
+      console.log(chalk.white('\nOptions:'));
+      console.log(chalk.white('  1. Run setup to choose a different provider: codemie setup'));
 
       if (this.adapter.name === 'claude') {
-        console.log(chalk.dim('  2. Or configure environment variables directly:'));
-        console.log(chalk.dim('     export ANTHROPIC_BASE_URL="https://litellm....."'));
-        console.log(chalk.dim('     export ANTHROPIC_AUTH_TOKEN="sk...."'));
-        console.log(chalk.dim('     export ANTHROPIC_MODEL="claude-4-5-sonnet"'));
+        console.log(chalk.white('  2. Or configure environment variables directly:'));
+        console.log(chalk.white('     export ANTHROPIC_BASE_URL="https://litellm....."'));
+        console.log(chalk.white('     export ANTHROPIC_AUTH_TOKEN="sk...."'));
+        console.log(chalk.white('     export ANTHROPIC_MODEL="claude-4-5-sonnet"'));
       }
       return false;
     }
@@ -210,7 +214,7 @@ export class AgentCLI {
 
     if (isBlocked) {
       logger.error(`Model '${model}' is not compatible with ${this.adapter.displayName}`);
-      console.log(chalk.dim('\nOptions:'));
+      console.log(chalk.white('\nOptions:'));
 
       // Provide agent-specific model suggestions
       let suggestedModel = 'gpt-4.1';
@@ -227,9 +231,9 @@ export class AgentCLI {
         modelDescription = 'OpenAI-compatible models';
       }
 
-      console.log(chalk.dim(`  1. ${this.adapter.name} requires ${modelDescription} (e.g., ${suggestedModel})`));
-      console.log(chalk.dim(`  2. Switch model: codemie config set model ${suggestedModel}`));
-      console.log(chalk.dim(`  3. Override for this session: codemie-${this.adapter.name} --model ${suggestedModel}`));
+      console.log(chalk.white(`  1. ${this.adapter.name} requires ${modelDescription} (e.g., ${suggestedModel})`));
+      console.log(chalk.white(`  2. Switch model: codemie config set model ${suggestedModel}`));
+      console.log(chalk.white(`  3. Override for this session: codemie-${this.adapter.name} --model ${suggestedModel}`));
       return false;
     }
 

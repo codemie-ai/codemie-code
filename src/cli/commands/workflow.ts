@@ -19,7 +19,6 @@ import {
   type VCSProvider,
   type WorkflowInstallOptions,
 } from '../../workflows/index.js';
-import { isToolInstalled } from '../../tools/index.js';
 
 export function createWorkflowCommand(): Command {
   const workflow = new Command('workflow')
@@ -81,7 +80,7 @@ Examples:
         const detection = detectVCSProvider();
         if (detection.provider) {
           provider = detection.provider;
-          console.log(chalk.dim(`Auto-detected: ${provider} repository\n`));
+          console.log(chalk.white(`Auto-detected: ${provider} repository\n`));
         }
       }
 
@@ -94,7 +93,7 @@ Examples:
 
         const installed = listInstalledWorkflows(provider);
         if (installed.length === 0) {
-          console.log(chalk.dim('No workflows installed\n'));
+          console.log(chalk.white('No workflows installed\n'));
         } else {
           console.log(chalk.bold('Installed Workflows:'));
           installed.forEach(file => {
@@ -109,7 +108,7 @@ Examples:
           : getAllTemplates();
 
         if (templates.length === 0) {
-          console.log(chalk.dim('No templates available\n'));
+          console.log(chalk.white('No templates available\n'));
           return;
         }
 
@@ -128,21 +127,21 @@ Examples:
 
           temps.forEach(template => {
             const installed = isWorkflowInstalled(template.id, template.provider);
-            const status = installed ? chalk.green('✓ installed') : chalk.dim('not installed');
+            const status = installed ? chalk.green('✓ installed') : chalk.white('not installed');
 
             console.log(chalk.bold(`  ${template.name}`));
-            console.log(chalk.dim(`    ${template.description}`));
+            console.log(chalk.white(`    ${template.description}`));
             console.log(`    ${chalk.bold('ID:')} ${chalk.cyan(template.id)} | Category: ${template.category} | Status: ${status}`);
             console.log('');
           });
         }
 
         // Show usage hint
-        console.log(chalk.dim('To install a workflow:'));
-        console.log(chalk.dim(`  codemie workflow install ${chalk.cyan('<workflow-id>')}`));
+        console.log(chalk.white('To install a workflow:'));
+        console.log(chalk.white(`  codemie workflow install ${chalk.cyan('<workflow-id>')}`));
         console.log('');
-        console.log(chalk.dim('Example:'));
-        console.log(chalk.dim(`  codemie workflow install ${chalk.cyan('pr-review')}\n`));
+        console.log(chalk.white('Example:'));
+        console.log(chalk.white(`  codemie workflow install ${chalk.cyan('pr-review')}\n`));
       }
     });
 
@@ -200,28 +199,28 @@ Configuration Guide:
         const detection = detectVCSProvider();
         if (!detection.provider) {
           console.log(chalk.red('✗ Could not detect VCS provider'));
-          console.log(chalk.dim('  Use --github or --gitlab to specify provider\n'));
+          console.log(chalk.white('  Use --github or --gitlab to specify provider\n'));
           console.log(chalk.yellow('Installation cancelled\n'));
           return;
         }
         provider = detection.provider;
-        console.log(chalk.dim(`Auto-detected: ${provider} repository\n`));
+        console.log(chalk.white(`Auto-detected: ${provider} repository\n`));
       }
 
       // Get template
       const template = getTemplate(workflowId, provider);
       if (!template) {
         console.log(chalk.red(`✗ Workflow template '${workflowId}' not found for ${provider}`));
-        console.log(chalk.dim('\n  Available workflows:'));
+        console.log(chalk.white('\n  Available workflows:'));
 
         const templates = getTemplatesByProvider(provider);
         if (templates.length === 0) {
           console.log(chalk.yellow(`\n  No ${provider} workflows are currently available.`));
-          console.log(chalk.dim(`  GitLab workflows are coming soon!`));
-          console.log(chalk.dim(`  Try using GitHub workflows instead: codemie workflow list --github\n`));
+          console.log(chalk.white(`  GitLab workflows are coming soon!`));
+          console.log(chalk.white(`  Try using GitHub workflows instead: codemie workflow list --github\n`));
         } else {
           templates.forEach(t => {
-            console.log(chalk.dim(`    - ${t.id}: ${t.name}`));
+            console.log(chalk.white(`    - ${t.id}: ${t.name}`));
           });
           console.log('');
         }
@@ -231,7 +230,7 @@ Configuration Guide:
       }
 
       console.log(chalk.bold(template.name));
-      console.log(chalk.dim(template.description));
+      console.log(chalk.white(template.description));
       console.log('');
 
       // Validate dependencies
@@ -243,36 +242,8 @@ Configuration Guide:
           console.log(chalk.yellow(`  - ${dep}`));
         });
         console.log('');
-
-        const { install } = await inquirer.prompt([
-          {
-            type: 'confirm',
-            name: 'install',
-            message: 'Install missing tools?',
-            default: true
-          }
-        ]);
-
-        if (install) {
-          // Install missing tools
-          const { installTool } = await import('../../tools/index.js');
-          for (const tool of template.dependencies.tools) {
-            if (tool === 'gh' || tool === 'glab') {
-              if (!isToolInstalled(tool)) {
-                const spinner = ora(`Installing ${tool}...`).start();
-                try {
-                  await installTool(tool);
-                  spinner.succeed(chalk.green(`${tool} installed`));
-                } catch {
-                  spinner.fail(chalk.red(`Failed to install ${tool}`));
-                }
-              }
-            }
-          }
-        } else {
-          console.log(chalk.yellow('\nInstallation cancelled\n'));
-          return;
-        }
+        console.log(chalk.yellow('Please install the required tools manually before proceeding.\n'));
+        return;
       }
 
       // Show warnings
@@ -295,8 +266,8 @@ Configuration Guide:
 
       if (options.interactive) {
         console.log(chalk.bold('Workflow Configuration'));
-        console.log(chalk.dim('Customize the workflow settings below'));
-        console.log(chalk.dim('Press Enter to use default values\n'));
+        console.log(chalk.white('Customize the workflow settings below'));
+        console.log(chalk.white('Press Enter to use default values\n'));
 
         const questions: any[] = [
           {
@@ -353,11 +324,11 @@ Configuration Guide:
         }
 
         console.log('');
-        console.log(chalk.dim('Configuration notes:'));
-        console.log(chalk.dim('  • Timeout: How long the workflow can run (15-60 minutes recommended)'));
-        console.log(chalk.dim('  • Max turns: AI conversation depth (50 = simple, 100+ = complex tasks)'));
+        console.log(chalk.white('Configuration notes:'));
+        console.log(chalk.white('  • Timeout: How long the workflow can run (15-60 minutes recommended)'));
+        console.log(chalk.white('  • Max turns: AI conversation depth (50 = simple, 100+ = complex tasks)'));
         if (provider === 'github') {
-          console.log(chalk.dim('  • Environment: GitHub deployment environment for protection rules\n'));
+          console.log(chalk.white('  • Environment: GitHub deployment environment for protection rules\n'));
         } else {
           console.log('');
         }
@@ -376,9 +347,9 @@ Configuration Guide:
         if (result.action === 'skipped') {
           spinner.warn(chalk.yellow('Installation skipped'));
           console.log('');
-          console.log(chalk.dim('Workflow is already installed at:'), result.path);
+          console.log(chalk.white('Workflow is already installed at:'), result.path);
           console.log('');
-          console.log(chalk.dim('Use --force to reinstall\n'));
+          console.log(chalk.white('Use --force to reinstall\n'));
           return;
         }
 
@@ -392,9 +363,9 @@ Configuration Guide:
           console.log(chalk.green('✅ Workflow installation complete'));
           console.log('');
           console.log(chalk.bold('Next steps:'));
-          console.log(chalk.dim('  1. Configure required secrets in your repository settings'));
-          console.log(chalk.dim('  2. Commit and push the workflow file'));
-          console.log(chalk.dim('  3. The workflow will run automatically based on configured triggers\n'));
+          console.log(chalk.white('  1. Configure required secrets in your repository settings'));
+          console.log(chalk.white('  2. Commit and push the workflow file'));
+          console.log(chalk.white('  3. The workflow will run automatically based on configured triggers\n'));
         }
       } catch (error) {
         spinner.fail(chalk.red('Installation failed'));
@@ -431,7 +402,7 @@ Note: This removes the workflow file but doesn't delete workflow runs or history
         const detection = detectVCSProvider();
         if (!detection.provider) {
           console.log(chalk.red('✗ Could not detect VCS provider'));
-          console.log(chalk.dim('  Use --github or --gitlab to specify provider\n'));
+          console.log(chalk.white('  Use --github or --gitlab to specify provider\n'));
           console.log(chalk.yellow('Uninstall cancelled\n'));
           return;
         }

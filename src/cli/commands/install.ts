@@ -1,8 +1,7 @@
 import { Command } from 'commander';
 import { AgentRegistry } from '../../agents/registry.js';
-import { logger } from '../../utils/logger.js';
 import { asyncTipDisplay } from '../../utils/async-tips.js';
-import { AgentInstallationError } from '../../utils/errors.js';
+import { AgentInstallationError, getErrorMessage } from '../../utils/errors.js';
 import ora from 'ora';
 import chalk from 'chalk';
 
@@ -25,12 +24,12 @@ export function createInstallCommand(): Command {
             const installed = await agent.isInstalled();
             const status = installed ? chalk.green('✓ installed') : chalk.yellow('○ not installed');
             const version = installed ? await agent.getVersion() : null;
-            const versionStr = version ? chalk.gray(` (${version})`) : '';
+            const versionStr = version ? chalk.white(` (${version})`) : '';
 
             console.log(chalk.bold(`  ${agent.displayName}`) + versionStr);
             console.log(`    Command: ${chalk.cyan(`codemie install ${agent.name}`)}`);
             console.log(`    Status: ${status}`);
-            console.log(`    ${chalk.gray(agent.description)}`);
+            console.log(`    ${chalk.white(agent.description)}`);
             console.log();
           }
 
@@ -50,7 +49,7 @@ export function createInstallCommand(): Command {
 
         // Check if already installed
         if (await agent.isInstalled()) {
-          logger.info(`${agent.displayName} is already installed`);
+          console.log(chalk.blueBright(`${agent.displayName} is already installed`));
           return;
         }
 
@@ -77,7 +76,23 @@ export function createInstallCommand(): Command {
           throw error;
         }
       } catch (error: unknown) {
-        logger.error('Installation failed:', error);
+        // Handle AgentInstallationError with helpful suggestions
+        if (error instanceof AgentInstallationError) {
+          console.error(chalk.red(`✗ ${getErrorMessage(error)}`));
+          console.log();
+          console.log(chalk.cyan('💡 Available agents:'));
+          const allAgents = AgentRegistry.getAllAgents();
+          for (const agent of allAgents) {
+            console.log(chalk.white(`   • ${agent.name}`));
+          }
+          console.log();
+          console.log(chalk.cyan('💡 Tip:') + ' Run ' + chalk.blueBright('codemie install') + ' to see all agents');
+          console.log();
+          process.exit(1);
+        }
+
+        // For other errors, show simple message
+        console.error(chalk.red(`✗ Installation failed: ${getErrorMessage(error)}`));
         process.exit(1);
       }
     });

@@ -45,19 +45,19 @@ export function createConfigCommand(): Command {
       ];
 
       for (const param of params) {
-        console.log(`  ${chalk.cyan(param.name.padEnd(20))} ${chalk.dim(param.desc)}`);
+        console.log(`  ${chalk.cyan(param.name.padEnd(20))} ${chalk.white(param.desc)}`);
       }
 
-      console.log(chalk.dim('\n📝 To modify profiles:'));
-      console.log(chalk.dim('  - Add/update:     codemie setup'));
-      console.log(chalk.dim('  - Switch active:  codemie profile switch <name>'));
-      console.log(chalk.dim('  - View profiles:  codemie profile list'));
-      console.log(chalk.dim('\n🔧 Configuration sources (priority order):'));
-      console.log(chalk.dim('  1. CLI flags:     --profile <name>, --model <model>, etc.'));
-      console.log(chalk.dim('  2. Environment:   CODEMIE_<PARAM>'));
-      console.log(chalk.dim('  3. Project:       .codemie/config.json (use: codemie config init)'));
-      console.log(chalk.dim('  4. Global:        ~/.codemie/config.json (profiles)'));
-      console.log(chalk.dim('  5. Defaults:      Built-in fallback values\n'));
+      console.log(chalk.white('\n📝 To modify profiles:'));
+      console.log(chalk.white('  - Add/update:     codemie setup'));
+      console.log(chalk.white('  - Switch active:  codemie profile switch <name>'));
+      console.log(chalk.white('  - View profiles:  codemie profile list'));
+      console.log(chalk.white('\n🔧 Configuration sources (priority order):'));
+      console.log(chalk.white('  1. CLI flags:     --profile <name>, --model <model>, etc.'));
+      console.log(chalk.white('  2. Environment:   CODEMIE_<PARAM>'));
+      console.log(chalk.white('  3. Project:       .codemie/config.json (use: codemie config init)'));
+      console.log(chalk.white('  4. Global:        ~/.codemie/config.json (profiles)'));
+      console.log(chalk.white('  5. Defaults:      Built-in fallback values\n'));
     });
 
 
@@ -83,17 +83,17 @@ export function createConfigCommand(): Command {
             const duration = Date.now() - startTime;
 
             spinner.succeed(chalk.green(`Connection successful (${duration}ms)`));
-            console.log(chalk.dim(`  Provider: ${config.provider}`));
-            console.log(chalk.dim(`  Model: ${config.model}`));
-            console.log(chalk.dim(`  Available models: ${models.length}`));
-            console.log(chalk.dim(`  Status: SSO authentication working\n`));
+            console.log(chalk.white(`  Provider: ${config.provider}`));
+            console.log(chalk.white(`  Model: ${config.model}`));
+            console.log(chalk.white(`  Available models: ${models.length}`));
+            console.log(chalk.white(`  Status: SSO authentication working\n`));
           } catch (error: unknown) {
             const errorMessage = error instanceof Error ? error.message : String(error);
             spinner.fail(chalk.red('SSO connection failed'));
 
             if (errorMessage.includes('expired')) {
               console.log(chalk.yellow('  Your SSO session may have expired.'));
-              console.log(chalk.dim('  Run: codemie auth refresh\n'));
+              console.log(chalk.white('  Run: codemie auth refresh\n'));
             }
 
             throw error;
@@ -111,9 +111,9 @@ export function createConfigCommand(): Command {
           }
 
           spinner.succeed(chalk.green(`Connection successful (${duration}ms)`));
-          console.log(chalk.dim(`  Provider: ${config.provider}`));
-          console.log(chalk.dim(`  Model: ${config.model}`));
-          console.log(chalk.dim(`  Status: ${result.message}\n`));
+          console.log(chalk.white(`  Provider: ${config.provider}`));
+          console.log(chalk.white(`  Model: ${config.model}`));
+          console.log(chalk.white(`  Status: ${result.message}\n`));
         }
       } catch (error: unknown) {
         const errorMessage = error instanceof Error ? error.message : String(error);
@@ -150,7 +150,7 @@ export function createConfigCommand(): Command {
         const globalConfig = await ConfigLoader['loadJsonConfig'](ConfigLoader['GLOBAL_CONFIG']);
 
         console.log(chalk.bold('\n📁 Initialize Project Configuration\n'));
-        console.log(chalk.dim('Override global settings for this project.\n'));
+        console.log(chalk.white('Override global settings for this project.\n'));
 
         const { overrideModel, overrideTimeout } = await inquirer.prompt([
           {
@@ -196,7 +196,7 @@ export function createConfigCommand(): Command {
         await ConfigLoader.saveProjectConfig(options.dir, projectConfig);
         logger.success(`Created .codemie/config.json`);
 
-        console.log(chalk.dim('\nProject config created. Environment variables and CLI flags will still override these settings.'));
+        console.log(chalk.white('\nProject config created. Environment variables and CLI flags will still override these settings.'));
       } catch (error: unknown) {
         logger.error('Failed to initialize project config:', error);
         process.exit(1);

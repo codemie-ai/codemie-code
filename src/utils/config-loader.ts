@@ -90,9 +90,18 @@ export class ConfigLoader {
       this.multiProviderCache = rawConfig;
       const profile = profileName || rawConfig.activeProfile;
 
+      // Validate that active profile exists
+      if (!profile) {
+        throw new Error('No active profile set. Run: codemie setup');
+      }
+
       if (!rawConfig.profiles[profile]) {
+        const availableProfiles = Object.keys(rawConfig.profiles);
+        if (availableProfiles.length === 0) {
+          throw new Error('No profiles configured. Run: codemie setup');
+        }
         throw new Error(
-          `Profile "${profile}" not found. Available profiles: ${Object.keys(rawConfig.profiles).join(', ')}`
+          `Profile "${profile}" not found. Available profiles: ${availableProfiles.join(', ')}`
         );
       }
 
@@ -519,7 +528,7 @@ export class ConfigLoader {
       console.log(`  ${chalk.cyan(key)}: ${displayValue} ${sourceLabel}`);
     }
 
-    console.log(chalk.dim('\nPriority: cli > env > project > global > default\n'));
+    console.log(chalk.white('\nPriority: cli > env > project > global > default\n'));
   }
 
   /**
@@ -551,7 +560,7 @@ export class ConfigLoader {
    */
   private static getSourceColor(source: string): (text: string) => string {
     const colors: Record<string, (text: string) => string> = {
-      default: chalk.gray,
+      default: chalk.white,
       global: chalk.cyan,
       project: chalk.yellow,
       env: chalk.green,
@@ -653,7 +662,10 @@ export class ConfigLoader {
       // Add SSO-specific environment variables
       if (config.codeMieUrl) env.CODEMIE_URL = config.codeMieUrl;
       if (config.authMethod) env.CODEMIE_AUTH_METHOD = config.authMethod;
-      if (config.codeMieIntegration?.id) env.CODEMIE_INTEGRATION_ID = config.codeMieIntegration.id;
+      // Only export integration ID if integration is configured
+      if (config.codeMieIntegration?.id) {
+        env.CODEMIE_INTEGRATION_ID = config.codeMieIntegration.id;
+      }
     }
 
     return env;

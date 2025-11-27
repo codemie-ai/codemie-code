@@ -35,14 +35,14 @@ function createListCommand(): Command {
         console.log(chalk.bold.cyan('\n📋 Provider Profiles:\n'));
 
         profiles.forEach(({ name, active, profile }) => {
-          const activeMarker = active ? chalk.green('● ') : chalk.dim('○ ');
-          const providerLabel = chalk.dim(`(${profile.provider})`);
-          const modelLabel = profile.model ? chalk.dim(`- ${profile.model}`) : '';
+          const activeMarker = active ? chalk.green('● ') : chalk.white('○ ');
+          const providerLabel = chalk.white(`(${profile.provider})`);
+          const modelLabel = profile.model ? chalk.white(`- ${profile.model}`) : '';
 
           console.log(`${activeMarker}${chalk.white(name)} ${providerLabel} ${modelLabel}`);
 
           if (active) {
-            console.log(chalk.dim(`  └─ Active profile`));
+            console.log(chalk.white(`  └─ Active profile`));
           }
         });
 
@@ -118,7 +118,7 @@ function createShowCommand(): Command {
           const maskedKey = profile.apiKey.length > 12
             ? `${profile.apiKey.substring(0, 8)}***${profile.apiKey.substring(profile.apiKey.length - 4)}`
             : '***';
-          console.log(chalk.cyan('API Key:      ') + chalk.dim(maskedKey));
+          console.log(chalk.cyan('API Key:      ') + chalk.white(maskedKey));
         }
 
         console.log('');
@@ -163,7 +163,7 @@ function createDeleteCommand(): Command {
         // Show new active profile if switched
         const activeProfile = await ConfigLoader.getActiveProfileName();
         if (activeProfile) {
-          console.log(chalk.dim(`Active profile is now: ${activeProfile}\n`));
+          console.log(chalk.white(`Active profile is now: ${activeProfile}\n`));
         }
       } catch (error: unknown) {
         logger.error('Failed to delete profile:', error);

@@ -54,13 +54,20 @@
 
 ```bash
 codemie [COMMAND] [OPTIONS]
-codemie-code [MESSAGE|--task TASK] [OPTIONS]
+codemie-code [MESSAGE] [OPTIONS]
 codemie-claude [-p MESSAGE] [OPTIONS]
-codemie-codex [MESSAGE|--task TASK] [OPTIONS]
+codemie-codex [-p MESSAGE] [OPTIONS]
 codemie-gemini [-m MODEL] [-p MESSAGE] [OPTIONS]
 ```
 
 AI/Run CodeMie CLI is a professional, unified CLI tool for installing, configuring, and running multiple AI coding agents from a single interface. It includes a built-in LangGraph-based agent (CodeMie Native) and supports external agents like Claude Code, Codex, and Gemini CLI.
+
+All agent shortcuts (`codemie-*`) share common configuration options:
+- `--profile <name>` - Use specific provider profile
+- `--model <model>` - Override model
+- `--api-key <key>` - Override API key
+- `--base-url <url>` - Override base URL
+- `--debug` - Enable debug logging
 
 ## Quick Start
 
@@ -129,11 +136,11 @@ Ready to use immediately - no installation required:
 # Interactive conversation
 codemie-code
 
-# Execute single task
-codemie-code --task "fix bugs in src/utils"
-
 # Start with initial message
 codemie-code "Help me refactor this component"
+
+# Execute single task (via main CLI)
+codemie --task "fix bugs in src/utils"
 
 # Debug mode
 codemie-code --debug
@@ -147,13 +154,16 @@ Install and run external agents:
 # Install agents
 codemie install claude
 codemie install codex
+codemie install gemini
 
-# Run via shortcuts (recommended)
-codemie-claude -p "Review my API code"
-codemie-codex --task "Generate unit tests"
+# Run via direct shortcuts (recommended)
+codemie-claude "Review my API code"
+codemie-codex "Generate unit tests"
+codemie-gemini "Optimize performance"
 
-# Direct shortcuts are the recommended way
-codemie-claude -p "Fix security issues"
+# With model override
+codemie-claude --model claude-4-5-sonnet "Fix security issues"
+codemie-codex --model gpt-4.1 "Add type annotations"
 ```
 
 ## Commands
@@ -178,25 +188,31 @@ Direct access to agents with automatic configuration:
 
 ```bash
 # Built-in agent
-codemie-code [message]           # Interactive or with initial message
-codemie-code --task "task"       # Single task execution
+codemie-code                     # Interactive mode
+codemie-code "message"           # Start with initial message
 codemie-code health              # Health check
 
-# External agents
-codemie-claude                   # Claude Code agent (interactive)
-codemie-claude -p "message"      # Claude Code agent (print mode)
-codemie-codex [message]          # Codex agent
-codemie-gemini                   # Gemini CLI agent
+# External agents (direct invocation)
+codemie-claude "message"         # Claude Code agent (interactive)
+codemie-claude -p "message"      # Claude Code agent (non-interactive/print mode)
+codemie-codex "message"          # Codex agent (interactive)
+codemie-codex -p "message"       # Codex agent (non-interactive mode)
+codemie-gemini "message"         # Gemini CLI agent
+
+# With agent-specific options (pass-through to underlying CLI)
+codemie-claude --context large -p "review code"
+codemie-codex --temperature 0.1 -p "generate tests"
+codemie-gemini -p "your prompt"  # Gemini's non-interactive mode
 
 # Configuration overrides (model, API key, base URL, timeout)
-codemie-claude --model claude-4-5-sonnet --api-key your-key
-codemie-codex --model gpt-4.1 --base-url https://api.openai.com/v1
-codemie-gemini --model gemini-2.0-flash-exp
+codemie-claude --model claude-4-5-sonnet --api-key your-key "review code"
+codemie-codex --model gpt-4.1 --base-url https://api.openai.com/v1 "generate tests"
+codemie-gemini -m gemini-2.5-flash "optimize performance"
 
 # Profile selection (profiles contain provider + all settings)
-codemie-code --profile work-litellm "task"
-codemie-claude --profile personal-openai -p "message"
-codemie-gemini --profile lite --model gemini-2.5-flash  # Use LiteLLM proxy
+codemie-code --profile work-litellm "analyze codebase"
+codemie-claude --profile personal-openai "review PR"
+codemie-gemini --profile lite --model gemini-2.5-flash "document code"
 ```
 
 ### Configuration Commands
@@ -364,7 +380,7 @@ Location: `~/.codemie/config.json`
 ```json
 {
   "provider": "litellm",
-  "model": "claude-4-5-sonnet",
+  "model": "claude-sonnet-4-5",
   "baseUrl": "https://litellm.codemie.example.com",
   "apiKey": "your-api-key",
   "timeout": 300
@@ -426,7 +442,7 @@ codemie auth logout
 
 ### Token Management
 
-SSO tokens are automatically managed but you can control them manually:
+SSO tokens are automatically managed, but you can control them manually:
 
 #### Token Refresh
 
@@ -497,16 +513,16 @@ AI/Run CodeMie SSO provides enterprise-grade features:
 codemie-code "Review this PR for security issues and performance"
 
 # Bug fixing
-codemie-claude -p "Fix the authentication bug in src/auth.ts"
+codemie-claude "Fix the authentication bug in src/auth.ts"
 
 # Test generation
-codemie-codex --task "Generate comprehensive tests for the API endpoints"
+codemie-codex "Generate comprehensive tests for the API endpoints"
 
 # Documentation
 codemie-code "Document the functions in utils/helpers.js"
 
 # Refactoring
-codemie-claude -p "Refactor this component to use React hooks"
+codemie-claude "Refactor this component to use React hooks"
 ```
 
 ### Configuration Examples
@@ -522,10 +538,10 @@ codemie config test
 codemie config init
 
 # Temporary model override
-codemie-claude --model claude-4-5-sonnet -p "Explain this algorithm"
+codemie-claude --model claude-4-5-sonnet "Explain this algorithm"
 
 # Debug mode for troubleshooting
-codemie-code --debug --task "analyze performance issues"
+codemie-code --debug "analyze performance issues"
 ```
 
 ### Multi-Provider Workflow Examples
@@ -572,14 +588,47 @@ codemie setup
 ### Advanced Usage
 
 ```bash
-# Pass custom arguments to agents
+# Pass custom arguments to agents (unknown options pass through)
 codemie-codex --temperature 0.1 --max-tokens 2000 "Generate clean code"
-codemie-claude -p "Review this code" --context large
+codemie-claude --context large "Review this code"
+
+# Non-interactive mode with -p (useful for CI/CD)
+codemie-claude -p "$(cat prompt.txt)" --max-turns 50
+codemie-codex -p "Generate tests for src/utils" --output json
+
+# Debug logging (writes to ~/.codemie/debug/)
+codemie-claude --debug "analyze codebase"
+codemie-codex --debug "implement feature"
+codemie-code --debug "test task"
 
 # Health checks
 codemie doctor                   # Full system check
 codemie-code health             # Built-in agent check
 codemie-claude health           # Claude agent check
+codemie-gemini health           # Gemini agent check
+```
+
+### CI/CD Integration Example
+
+```bash
+# GitHub Actions / GitLab CI workflow example
+codemie-claude \
+  --base-url "${CODEMIE_BASE_URL}" \
+  --api-key "${CODEMIE_API_KEY}" \
+  --model "${CODEMIE_MODEL:-claude-4-5-sonnet}" \
+  --provider "litellm" \
+  -p "$(cat /tmp/review-prompt.txt)" \
+  --max-turns "${CODEMIE_MAX_TURNS:-50}" \
+  --dangerously-skip-permissions \
+  --allowedTools "Bash(*),Read(*),Curl(*)" \
+  --debug
+
+# Using profile for CI/CD
+codemie-claude \
+  --profile ci-litellm \
+  -p "Review this PR for security issues" \
+  --max-turns 30 \
+  --debug
 ```
 
 ## Agents
@@ -599,7 +648,8 @@ LangGraph-based coding assistant with no installation required.
 **Usage:**
 ```bash
 codemie-code                    # Interactive mode
-codemie-code --task "task"      # Single task
+codemie-code "task"             # Start with message
+codemie --task "task"           # Single task execution
 codemie-code --debug            # Debug mode
 ```
 
@@ -614,6 +664,15 @@ Anthropic's official CLI with advanced code understanding.
 - Multi-file editing capabilities
 - Project-aware context
 - Interactive conversations
+- Non-interactive mode with `-p` flag
+
+**Usage:**
+```bash
+codemie-claude                   # Interactive mode
+codemie-claude "message"         # Start with message
+codemie-claude -p "message"      # Non-interactive/print mode
+codemie-claude health            # Health check
+```
 
 ### Codex
 
@@ -625,7 +684,16 @@ OpenAI's code generation assistant optimized for completion tasks.
 - Code completion and generation
 - Function generation and bug fixing
 - Code explanation and documentation
+- Non-interactive mode with `-p` flag
 - **Requires OpenAI-compatible models only**
+
+**Usage:**
+```bash
+codemie-codex                    # Interactive mode
+codemie-codex "message"          # Start with message
+codemie-codex -p "message"       # Non-interactive mode
+codemie-codex health             # Health check
+```
 
 ### Gemini CLI
 
@@ -658,8 +726,83 @@ export GEMINI_API_KEY="your-gemini-api-key-here"
 **Usage:**
 ```bash
 codemie-gemini                          # Interactive mode
-codemie-gemini -m gemini-2.5-flash      # Specify model
-codemie-gemini -p "your prompt"         # Non-interactive mode
+codemie-gemini "your prompt"            # With initial message
+codemie-gemini -p "your prompt"         # Non-interactive mode (Gemini-specific)
+codemie-gemini -m gemini-2.5-flash      # Specify model (Gemini-specific)
+codemie-gemini --model gemini-2.5-flash "analyze code"  # With config override
+```
+
+## Debug Logging
+
+All CodeMie agents support comprehensive debug logging that writes to files.
+
+### Enabling Debug Mode
+
+```bash
+# Using --debug flag (recommended)
+codemie-claude --debug "your task"
+codemie-codex --debug "your task"
+codemie-code --debug "your task"
+
+# Using environment variable
+CODEMIE_DEBUG=1 codemie-claude "your task"
+
+# For entire session
+export CODEMIE_DEBUG=1
+codemie-claude "task 1"
+codemie-codex "task 2"
+```
+
+### Debug Log Files
+
+When debug mode is enabled, each session creates a timestamped directory:
+
+**Location:** `~/.codemie/debug/session-<timestamp>/`
+
+**Log Files:**
+1. **application.log** - All application activity
+   - Contains: Info, warnings, errors, debug messages
+   - Format: Plain text with timestamps
+   - Example: `[2025-11-27T12:30:00.000Z] [INFO] Starting agent...`
+
+2. **requests.jsonl** - HTTP request/response details (ai-run-sso provider only)
+   - Contains: Request/response headers, bodies, timing
+   - Format: JSONL (one JSON object per line)
+   - Security: Sensitive headers automatically redacted
+   - Example: `{"type":"request","requestId":1,"method":"POST",...}`
+
+### Console Output
+
+Debug mode keeps your console clean - you'll only see:
+```bash
+$ codemie-claude --debug "analyze code"
+HTTP requests debug log: ~/.codemie/debug/session-2025-11-27T12-30-00-000Z/requests.jsonl
+Starting Claude Code with model claude-4-5-sonnet...
+```
+
+All debug details go to the log files.
+
+### Analyzing Logs
+
+**Using command-line tools:**
+```bash
+# View latest application log
+tail -f ~/.codemie/debug/session-*/application.log
+
+# Search for errors in latest session
+grep ERROR ~/.codemie/debug/session-*/application.log
+
+# Parse HTTP requests with jq
+cat ~/.codemie/debug/session-*/requests.jsonl | jq 'select(.type == "request")'
+```
+
+**Clean up old logs:**
+```bash
+# Remove session directories older than 7 days
+find ~/.codemie/debug -type d -name "session-*" -mtime +7 -exec rm -rf {} +
+
+# Remove all debug logs
+rm -rf ~/.codemie/debug
 ```
 
 ## Troubleshooting
@@ -733,19 +876,21 @@ When you see "Model not compatible" errors:
 
 ```
 codemie-code/
-├── bin/                    # Executable entry points
-│   ├── codemie.js         # Main CLI
-│   ├── codemie-code.js    # Built-in agent
-│   ├── codemie-claude.js  # Claude shortcut
-│   └── codemie-codex.js   # Codex shortcut
+├── bin/                       # Executable entry points
+│   ├── codemie.js            # Main CLI
+│   └── agent-executor.js     # Universal agent executor (all shortcuts)
 ├── src/
-│   ├── agents/            # Agent registry and adapters
-│   ├── cli/               # CLI command implementations
-│   ├── env/               # Environment and config management
-│   ├── workflows/         # Workflow management
-│   ├── tools/             # VCS tools management
-│   └── utils/             # Shared utilities
-└── tests/                 # Test files
+│   ├── agents/               # Agent system
+│   │   ├── core/            # Core agent abstractions
+│   │   ├── plugins/         # Plugin-based adapters (claude, codex, gemini, codemie-code)
+│   │   └── codemie-code/    # Built-in agent implementation
+│   ├── cli/                 # CLI commands
+│   │   └── commands/        # Command implementations (setup, doctor, workflow, etc.)
+│   ├── env/                 # Configuration management
+│   ├── workflows/           # CI/CD workflow management
+│   │   └── templates/       # Workflow templates (GitHub Actions, GitLab CI)
+│   └── utils/               # Shared utilities
+└── tests/                   # Test files
 ```
 
 ### Building

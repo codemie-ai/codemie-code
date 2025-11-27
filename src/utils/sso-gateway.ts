@@ -3,12 +3,27 @@
  *
  * This creates a local HTTP server that proxies requests from the claude binary
  * to the codemie API, adding SSO authentication cookies in the process.
+ *
+ * Debug Logging:
+ * When debug mode is enabled, all requests and responses are logged to the
+ * unified debug session directory in JSONL (JSON Lines) format at:
+ *   ~/.codemie/debug/session-<timestamp>/requests.jsonl
+ *
+ * Each line in the file is a JSON object with a 'type' field:
+ *   - session_start: Gateway initialization
+ *   - request: HTTP request details (headers, body, URL)
+ *   - response: HTTP response details (status, headers, body preview)
+ *   - session_end: Gateway shutdown with session statistics
+ *
+ * Sensitive data (Cookie, Authorization headers) is automatically redacted.
  */
 
 import { createServer, Server, IncomingMessage, ServerResponse } from 'http';
 import { CredentialStore } from './credential-store.js';
 import { SSOCredentials } from '../types/sso.js';
 import { logger } from './logger.js';
+import { promises as fs } from 'fs';
+import { join } from 'path';
 
 export interface GatewayConfig {
   targetApiUrl: string;
@@ -22,6 +37,9 @@ export class SSOGateway {
   private credentials: SSOCredentials | null = null;
   private config: GatewayConfig;
   private actualPort: number = 0;
+  private debugLogFile: string | null = null;
+  private requestCounter: number = 0;
+  private sessionStartTime: string = '';
 
   constructor(config: GatewayConfig) {
     this.config = config;
@@ -39,6 +57,10 @@ export class SSOGateway {
       throw new Error('SSO credentials not found. Please run: codemie auth login');
     }
 
+    if (this.config.debug) {
+      await this.initializeDebugLogging();
+    }
+
     // Find available port
     this.actualPort = this.config.port || await this.findAvailablePort();
 
@@ -46,8 +68,24 @@ export class SSOGateway {
       this.server = createServer((req, res) => {
         this.handleRequest(req, res).catch(error => {
           logger.error('Gateway request error:', error);
-          res.statusCode = 500;
-          res.end('Internal Server Error');
+
+          if (!res.headersSent) {
+            res.statusCode = 500;
+            res.setHeader('Content-Type', 'application/json');
+
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            const errorResponse: Record<string, unknown> = {
+              error: 'Internal Server Error',
+              message: errorMessage,
+              timestamp: new Date().toISOString()
+            };
+
+            if (this.config.debug && error instanceof Error && error.stack) {
+              errorResponse.stack = error.stack;
+            }
+
+            res.end(JSON.stringify(errorResponse, null, 2));
+          }
         });
       });
 
@@ -68,12 +106,6 @@ export class SSOGateway {
         }
 
         const gatewayUrl = `http://localhost:${this.actualPort}`;
-
-        if (this.config.debug) {
-          logger.info(`[DEBUG] SSO Gateway started on ${gatewayUrl}`);
-          logger.info(`[DEBUG] Proxying to: ${this.config.targetApiUrl}`);
-        }
-
         resolve({ port: this.actualPort, url: gatewayUrl });
       });
     });
@@ -84,11 +116,22 @@ export class SSOGateway {
    */
   async stop(): Promise<void> {
     if (this.server) {
+      if (this.config.debug && this.debugLogFile) {
+        try {
+          const sessionEnd = {
+            type: 'session_end',
+            timestamp: new Date().toISOString(),
+            totalRequests: this.requestCounter,
+            duration: Date.now() - new Date(this.sessionStartTime).getTime()
+          };
+          await fs.appendFile(this.debugLogFile, JSON.stringify(sessionEnd) + '\n', 'utf-8');
+        } catch (error) {
+          logger.error('Failed to write session end log:', error);
+        }
+      }
+
       return new Promise((resolve) => {
         this.server!.close(() => {
-          if (this.config.debug) {
-            logger.info('[DEBUG] SSO Gateway stopped');
-          }
           resolve();
         });
       });
@@ -101,9 +144,18 @@ export class SSOGateway {
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (!this.credentials) {
       res.statusCode = 401;
-      res.end('SSO credentials not available');
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({
+        error: 'Unauthorized',
+        message: 'SSO credentials not available. Please run: codemie auth login',
+        timestamp: new Date().toISOString()
+      }, null, 2));
       return;
     }
+
+    // Assign request ID for tracking
+    const requestId = ++this.requestCounter;
+    const requestTimestamp = new Date().toISOString();
 
     try {
       // Construct target URL by properly joining base URL with request path
@@ -140,32 +192,21 @@ export class SSOGateway {
 
       forwardHeaders['Cookie'] = cookieHeader;
 
-      // Add CodeMie integration header for ai-run-sso
+      // Add CodeMie integration header only if integration is configured
       try {
         const { ConfigLoader } = await import('./config-loader.js');
         const config = await ConfigLoader.load();
 
-        if (config.codeMieIntegration?.id && config.provider === 'ai-run-sso') {
+        // Only add integration header when provider is ai-run-sso AND integration exists
+        if (config.provider === 'ai-run-sso' && config.codeMieIntegration?.id) {
           forwardHeaders['X-CodeMie-Integration'] = config.codeMieIntegration.id;
-
-          if (this.config.debug) {
-            console.log(`[DEBUG] Added CodeMie integration header: ${config.codeMieIntegration.id}`);
-          }
         }
-      } catch (error) {
+      } catch {
         // Non-fatal error - continue without integration header
-        if (this.config.debug) {
-          console.log(`[DEBUG] Could not load config for integration header: ${error}`);
-        }
       }
 
-      // Add CodeMie client type header for request tracking
       if (this.config.clientType) {
         forwardHeaders['X-CodeMie-Client'] = this.config.clientType;
-
-        if (this.config.debug) {
-          console.log(`[DEBUG] Added CodeMie client header: ${this.config.clientType}`);
-        }
       }
 
       // Handle request body for POST/PUT requests
@@ -175,9 +216,14 @@ export class SSOGateway {
       }
 
       if (this.config.debug) {
-        console.log(`[DEBUG] About to fetch: ${targetUrl}`);
-        console.log(`[DEBUG] Method: ${req.method || 'GET'}`);
-        console.log(`[DEBUG] Cookie header present: ${!!forwardHeaders['Cookie']}`);
+        await this.logRequestToFile(requestId, {
+          method: req.method || 'GET',
+          url: requestUrl,
+          targetUrl,
+          headers: forwardHeaders,
+          body: body || undefined,
+          timestamp: requestTimestamp
+        });
       }
 
       // Use native Node.js https module for better SSL control (following codemie-model-fetcher pattern)
@@ -196,10 +242,6 @@ export class SSOGateway {
         rejectUnauthorized: false, // Always allow self-signed certificates like codemie-model-fetcher
         timeout: 30000
       };
-
-      if (this.config.debug) {
-        console.log(`[DEBUG] Using native https with SSL verification disabled (like codemie-model-fetcher)`);
-      }
 
       const responseData = await this.makeHttpRequest(https, parsedUrl, requestOptions, body);
 
@@ -243,31 +285,47 @@ export class SSOGateway {
       }
 
       if (this.config.debug) {
-        logger.info(`[DEBUG] Proxied ${req.method} ${req.url} -> ${response.status}`);
+        const responseHeaders: Record<string, string> = {};
+        response.headers.forEach((value, key) => {
+          responseHeaders[key] = value;
+        });
 
-        // Log request details for OpenAPI spec creation
-        console.log(`\n=== REQUEST DETAILS ===`);
-        console.log(`Method: ${req.method}`);
-        console.log(`Original URL: ${req.url}`);
-        console.log(`Target URL: ${targetUrl}`);
-        console.log(`Headers:`, JSON.stringify(forwardHeaders, null, 2));
-        if (body) {
-          console.log(`Body:`, body);
+        // Extract response body preview (first 1000 chars)
+        let bodyPreview: string | undefined;
+        if (responseData.data) {
+          const bodyText = responseData.data.toString('utf-8');
+          bodyPreview = bodyText.length > 1000
+            ? bodyText.substring(0, 1000) + '...[truncated]'
+            : bodyText;
         }
-        console.log(`Response Status: ${response.status}`);
-        console.log(`======================\n`);
+
+        await this.logResponseToFile(requestId, {
+          statusCode: response.status,
+          statusMessage: response.statusText,
+          headers: responseHeaders,
+          bodyPreview,
+          timestamp: new Date().toISOString()
+        });
       }
 
     } catch (error) {
       logger.error('Gateway proxy error:', error);
 
-      if (this.config.debug) {
-        console.log(`[DEBUG] Proxy error for request: ${req.url}`);
-        console.log(`[DEBUG] Error details:`, error);
+      res.statusCode = 502;
+      res.setHeader('Content-Type', 'application/json');
+
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorResponse: Record<string, unknown> = {
+        error: 'Bad Gateway',
+        message: errorMessage,
+        timestamp: new Date().toISOString()
+      };
+
+      if (this.config.debug && error instanceof Error && error.stack) {
+        errorResponse.stack = error.stack;
       }
 
-      res.statusCode = 502;
-      res.end('Bad Gateway');
+      res.end(JSON.stringify(errorResponse, null, 2));
     }
   }
 
@@ -358,5 +416,119 @@ export class SSOGateway {
         }
       });
     });
+  }
+
+  /**
+   * Initialize debug logging - uses session directory from main logger
+   */
+  private async initializeDebugLogging(): Promise<void> {
+    this.sessionStartTime = new Date().toISOString();
+
+    try {
+      // Get session directory from main logger
+      const sessionDir = logger.getDebugSessionDir();
+      if (!sessionDir) {
+        logger.error('Debug session directory not available');
+        this.debugLogFile = null;
+        return;
+      }
+
+      // Create requests.jsonl in the same session directory
+      const filename = 'requests.jsonl';
+      this.debugLogFile = join(sessionDir, filename);
+
+      // Write session header
+      const sessionHeader = {
+        type: 'session_start',
+        timestamp: this.sessionStartTime,
+        gatewayConfig: {
+          targetApiUrl: this.config.targetApiUrl,
+          clientType: this.config.clientType
+        }
+      };
+
+      await fs.writeFile(this.debugLogFile, JSON.stringify(sessionHeader) + '\n', 'utf-8');
+      logger.info(`HTTP requests debug log: ${this.debugLogFile}`);
+    } catch (error) {
+      logger.error('Failed to create debug log file:', error);
+      this.debugLogFile = null;
+    }
+  }
+
+  /**
+   * Append request details to session debug file
+   */
+  private async logRequestToFile(
+    requestId: number,
+    data: {
+      method: string;
+      url: string;
+      targetUrl: string;
+      headers: Record<string, string>;
+      body?: string;
+      timestamp: string;
+    }
+  ): Promise<void> {
+    if (!this.debugLogFile) return;
+
+    try {
+      // Sanitize sensitive data
+      const sanitizedHeaders = { ...data.headers };
+      if (sanitizedHeaders['Cookie']) {
+        sanitizedHeaders['Cookie'] = '[REDACTED]';
+      }
+      if (sanitizedHeaders['Authorization']) {
+        sanitizedHeaders['Authorization'] = '[REDACTED]';
+      }
+
+      const logEntry = {
+        type: 'request',
+        requestId,
+        timestamp: data.timestamp,
+        method: data.method,
+        url: data.url,
+        targetUrl: data.targetUrl,
+        headers: sanitizedHeaders,
+        body: data.body
+      };
+
+      // Append to file (JSONL format - one JSON object per line)
+      await fs.appendFile(this.debugLogFile, JSON.stringify(logEntry) + '\n', 'utf-8');
+    } catch (error) {
+      logger.error('Failed to write request log:', error);
+    }
+  }
+
+  /**
+   * Append response details to session debug file
+   */
+  private async logResponseToFile(
+    requestId: number,
+    data: {
+      statusCode: number;
+      statusMessage: string;
+      headers: Record<string, string>;
+      bodyPreview?: string;
+      timestamp: string;
+    }
+  ): Promise<void> {
+    if (!this.debugLogFile) return;
+
+    try {
+      const logEntry = {
+        type: 'response',
+        requestId,
+        timestamp: data.timestamp,
+        statusCode: data.statusCode,
+        statusMessage: data.statusMessage,
+        headers: data.headers,
+        bodyPreview: data.bodyPreview
+      };
+
+      // Append to file (JSONL format - one JSON object per line)
+      await fs.appendFile(this.debugLogFile, JSON.stringify(logEntry) + '\n', 'utf-8');
+    } catch (error) {
+      logger.error('Failed to write response log:', error);
+    }
   }
 }

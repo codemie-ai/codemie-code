@@ -61,12 +61,12 @@ export class TipDisplay {
    * Display a formatted tip
    */
   displayTip(tip: Tip): void {
-    console.log(chalk.dim('─'.repeat(60)));
+    console.log(chalk.white('─'.repeat(60)));
     console.log(chalk.cyan('💡 Tip:'), chalk.white(tip.message));
     if (tip.command) {
-      console.log(chalk.gray('   →'), chalk.blueBright(tip.command));
+      console.log(chalk.white('   →'), chalk.blueBright(tip.command));
     }
-    console.log(chalk.dim('─'.repeat(60)));
+    console.log(chalk.white('─'.repeat(60)));
   }
 
   /**

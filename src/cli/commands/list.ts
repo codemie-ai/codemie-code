@@ -25,14 +25,14 @@ export function createListCommand(): Command {
 
         for (const agent of agents) {
           const installed = await agent.isInstalled();
-          const status = installed ? chalk.green('✓ installed') : chalk.gray('not installed');
+          const status = installed ? chalk.green('✓ installed') : chalk.white('not installed');
           const version = installed ? await agent.getVersion() : null;
-          const versionStr = version ? chalk.gray(` (${version})`) : '';
+          const versionStr = version ? chalk.white(` (${version})`) : '';
 
           console.log(chalk.bold(`  ${agent.displayName}`) + versionStr);
           console.log(`    Command: ${chalk.cyan(agent.name)}`);
           console.log(`    Status: ${status}`);
-          console.log(`    ${chalk.gray(agent.description)}`);
+          console.log(`    ${chalk.white(agent.description)}`);
           console.log();
         }
 
