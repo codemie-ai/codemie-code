@@ -8,24 +8,24 @@
 
 > **Unified AI Coding Assistant CLI** - Manage Claude Code, OpenAI Codex, Google Gemini, and custom AI agents from one powerful command-line interface. Multi-provider support (OpenAI, Azure OpenAI, AWS Bedrock, LiteLLM, Enterprise SSO). Built-in LangGraph agent with file operations, git integration, and advanced code generation.
 
-* * * * *
+---
 
-**(Suggestion: Add a GIF or screenshot of the CLI in action here)**
+![CodeMie CLI Demo](./assets/demo.gif)
 
-* * * * *
+---
 
 ## Why CodeMie CLI?
 
 CodeMie CLI is the all-in-one AI coding assistant for developers.
 
-✨ **One CLI, Multiple AI Agents** - Switch between Claude Code, Codex, Gemini, Deep Agents, and built-in agent.
-🔄 **Multi-Provider Support** - OpenAI, Azure, Bedrock, LiteLLM, Google Gemini, and Enterprise SSO.
-🚀 **Built-in Agent** - A powerful LangGraph-based assistant with file operations and git integration.
-🔐 **Enterprise Ready** - SSO authentication, audit logging, and role-based access.
-⚡ **Productivity Boost** - Code review, refactoring, test generation, and bug fixing.
-🎯 **Profile Management** - Manage work, personal, and team configurations separately.
-📊 **Usage Analytics** - Track and analyze AI usage across all agents with detailed insights.
-🔧 **CI/CD Workflows** - Automated code review, fixes, and feature implementation.
+- ✨ **One CLI, Multiple AI Agents** - Switch between Claude Code, Codex, Gemini, Deep Agents, and built-in agent.
+- 🔄 **Multi-Provider Support** - OpenAI, Azure, Bedrock, LiteLLM, Google Gemini, and Enterprise SSO.
+- 🚀 **Built-in Agent** - A powerful LangGraph-based assistant with file operations and git integration.
+- 🔐 **Enterprise Ready** - SSO authentication, audit logging, and role-based access.
+- ⚡ **Productivity Boost** - Code review, refactoring, test generation, and bug fixing.
+- 🎯 **Profile Management** - Manage work, personal, and team configurations separately.
+- 📊 **Usage Analytics** - Track and analyze AI usage across all agents with detailed insights.
+- 🔧 **CI/CD Workflows** - Automated code review, fixes, and feature implementation.
 
 Perfect for developers seeking a powerful alternative to GitHub Copilot or Cursor.
 
