@@ -24,7 +24,10 @@ export class APIMetricsPlugin implements AnalyticsPlugin {
     errorTypes: {} as Record<string, number>
   };
 
-  async enrichMetrics(event: AnalyticsEvent): Promise<Record<string, unknown>> {
+  /**
+   * Process events to track metrics (no enrichment to individual events)
+   */
+  async processEvent(event: AnalyticsEvent): Promise<AnalyticsEvent | null> {
     // Track API request metrics
     if (event.eventType === 'api_request') {
       this.sessionMetrics.totalRequests++;
@@ -52,25 +55,6 @@ export class APIMetricsPlugin implements AnalyticsPlugin {
         this.sessionMetrics.minLatency = Math.min(this.sessionMetrics.minLatency, latency);
         this.sessionMetrics.maxLatency = Math.max(this.sessionMetrics.maxLatency, latency);
       }
-
-      // Calculate aggregated metrics
-      const successRate = this.sessionMetrics.totalRequests > 0
-        ? this.sessionMetrics.successfulRequests / this.sessionMetrics.totalRequests
-        : 0;
-
-      const averageLatency = this.sessionMetrics.successfulRequests > 0
-        ? this.sessionMetrics.totalLatency / this.sessionMetrics.successfulRequests
-        : 0;
-
-      return {
-        api_total_requests: this.sessionMetrics.totalRequests,
-        api_success_count: this.sessionMetrics.successfulRequests,
-        api_failure_count: this.sessionMetrics.failedRequests,
-        api_success_rate: Math.round(successRate * 100) / 100, // Round to 2 decimals
-        api_avg_latency_ms: Math.round(averageLatency),
-        api_min_latency_ms: this.sessionMetrics.minLatency === Infinity ? 0 : this.sessionMetrics.minLatency,
-        api_max_latency_ms: this.sessionMetrics.maxLatency
-      };
     }
 
     // Track proxy errors
@@ -78,14 +62,10 @@ export class APIMetricsPlugin implements AnalyticsPlugin {
       const errorType = event.attributes.errorType as string || 'unknown';
       this.sessionMetrics.errorTypes[errorType] =
         (this.sessionMetrics.errorTypes[errorType] || 0) + 1;
-
-      return {
-        proxy_error_count: Object.values(this.sessionMetrics.errorTypes).reduce((a, b) => a + b, 0),
-        proxy_error_types: this.sessionMetrics.errorTypes
-      };
     }
 
-    return {};
+    // Return event unchanged (no enrichment)
+    return event;
   }
 
   /**

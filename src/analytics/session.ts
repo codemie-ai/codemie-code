@@ -41,13 +41,13 @@ export class SessionManager {
   }
 
   /**
-   * Get session duration in seconds
+   * Get session duration in milliseconds
    */
-  get duration(): number {
+  get durationMs(): number {
     if (!this.session) {
       return 0;
     }
-    return Math.floor((Date.now() - this.session.startTime) / 1000);
+    return Date.now() - this.session.startTime;
   }
 
   /**

@@ -8,9 +8,102 @@ on:
   workflow_call:
 
 jobs:
+  commit-and-pr-validation:
+    name: Commit & PR Validation
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    env:
+      # Conventional Commits pattern: type(scope): description
+      # Examples: feat(cli): add new command, fix: resolve bug
+      VALIDATION_PATTERN: '^(feat|fix|docs|style|refactor|perf|test|chore|ci)(\([a-z-]+\))?!?: [a-z].*$'
+      MAX_LENGTH: '72'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 2
+
+      - name: Validate commit message
+        run: |
+          python3 .github/scripts/validate_commit.py \
+            --pattern "$VALIDATION_PATTERN" \
+            --max-length $MAX_LENGTH \
+            --verbose
+
+      - name: Validate PR title
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 .github/scripts/validate_pr_title.py \
+            --pattern "$VALIDATION_PATTERN" \
+            --max-length $MAX_LENGTH \
+            --pr-number ${{ github.event.pull_request.number }} \
+            --repo ${{ github.repository }} \
+            --verbose
+
+  secrets-detection:
+    name: Secrets Detection
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    needs: commit-and-pr-validation
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_SUMMARY: true
+
+      - name: Secrets detection summary
+        if: success()
+        run: |
+          echo "✅ Secrets detection scan completed successfully!"
+          echo "- Gitleaks: PASSED"
+
+  license-check:
+    name: License Check
+    runs-on: ubuntu-latest
+    needs: [commit-and-pr-validation]
+    if: |
+      always() &&
+      (needs.commit-and-pr-validation.result == 'success' || needs.commit-and-pr-validation.result == 'skipped')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run license check
+        run: npm run license-check
+
+      - name: License check summary
+        if: success()
+        run: |
+          echo "✅ License check passed - all dependencies have approved licenses"
+
   test:
     name: Test & Build
     runs-on: ubuntu-latest
+    needs: [secrets-detection, license-check]
+    if: |
+      always() &&
+      (needs.secrets-detection.result == 'success' || needs.secrets-detection.result == 'skipped') &&
+      needs.license-check.result == 'success'
 
     steps:
       - name: Checkout code

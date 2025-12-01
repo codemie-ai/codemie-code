@@ -455,7 +455,18 @@ async function runSetupWizard(force?: boolean): Promise<void> {
     profileName = newProfileName ? newProfileName.trim() : newProfileName;
   }
 
-  // Step 4: Save configuration as profile
+  // Step 4: Enable analytics by default (only for first-time setup)
+  let enableAnalytics = false;
+  if (!isUpdate) {
+    const profiles = await ConfigLoader.listProfiles();
+    const isFirstProfile = profiles.length === 0;
+
+    if (isFirstProfile) {
+      enableAnalytics = true;
+    }
+  }
+
+  // Step 5: Save configuration as profile
   const profile: Partial<CodeMieConfigOptions> = {
     name: profileName!,
     provider,
@@ -470,6 +481,22 @@ async function runSetupWizard(force?: boolean): Promise<void> {
 
   try {
     await ConfigLoader.saveProfile(profileName!, profile as any);
+
+    // Save analytics config if this is first profile
+    if (enableAnalytics !== false) {
+      const config = await ConfigLoader.loadMultiProviderConfig();
+      if (!config.analytics) {
+        config.analytics = {
+          enabled: enableAnalytics,
+          target: 'local',
+          localPath: '~/.codemie/analytics',
+          flushInterval: 5000,
+          maxBufferSize: 100
+        };
+        await ConfigLoader.saveMultiProviderConfig(config);
+      }
+    }
+
     spinner.succeed(chalk.green(`Profile "${profileName}" saved to ~/.codemie/config.json`));
 
     // If this is a new profile, ask if user wants to switch to it
@@ -615,6 +642,17 @@ async function handleAiRunSSOSetup(profileName: string | null, isUpdate: boolean
         finalProfileName = newProfileName ? newProfileName.trim() : newProfileName;
       }
 
+      // Step 6.5: Enable analytics by default (only for first-time setup)
+      let enableAnalytics = false;
+      if (!isUpdate) {
+        const profiles = await ConfigLoader.listProfiles();
+        const isFirstProfile = profiles.length === 0;
+
+        if (isFirstProfile) {
+          enableAnalytics = true;
+        }
+      }
+
       // Step 7: Save configuration as profile
       const profile: Partial<CodeMieConfigOptions> = {
         name: finalProfileName!,
@@ -635,6 +673,22 @@ async function handleAiRunSSOSetup(profileName: string | null, isUpdate: boolean
 
       const saveSpinner = ora('Saving profile...').start();
       await ConfigLoader.saveProfile(finalProfileName!, profile as any);
+
+      // Save analytics config if this is first profile
+      if (enableAnalytics !== false) {
+        const config = await ConfigLoader.loadMultiProviderConfig();
+        if (!config.analytics) {
+          config.analytics = {
+            enabled: enableAnalytics,
+            target: 'local',
+            localPath: '~/.codemie/analytics',
+            flushInterval: 5000,
+            maxBufferSize: 100
+          };
+          await ConfigLoader.saveMultiProviderConfig(config);
+        }
+      }
+
       saveSpinner.succeed(chalk.green(`Profile "${finalProfileName}" saved to ~/.codemie/config.json`));
 
       // If this is a new profile, ask if user wants to switch to it
@@ -717,6 +771,17 @@ async function handleAiRunSSOSetup(profileName: string | null, isUpdate: boolean
         finalProfileName = newProfileName ? newProfileName.trim() : newProfileName;
       }
 
+      // Enable analytics by default (only for first-time setup)
+      let enableAnalytics = false;
+      if (!isUpdate) {
+        const profiles = await ConfigLoader.listProfiles();
+        const isFirstProfile = profiles.length === 0;
+
+        if (isFirstProfile) {
+          enableAnalytics = true;
+        }
+      }
+
       // Save config with manual model as profile
       const profile: Partial<CodeMieConfigOptions> = {
         name: finalProfileName!,
@@ -736,6 +801,22 @@ async function handleAiRunSSOSetup(profileName: string | null, isUpdate: boolean
       }
 
       await ConfigLoader.saveProfile(finalProfileName!, profile as any);
+
+      // Save analytics config if this is first profile
+      if (enableAnalytics !== false) {
+        const config = await ConfigLoader.loadMultiProviderConfig();
+        if (!config.analytics) {
+          config.analytics = {
+            enabled: enableAnalytics,
+            target: 'local',
+            localPath: '~/.codemie/analytics',
+            flushInterval: 5000,
+            maxBufferSize: 100
+          };
+          await ConfigLoader.saveMultiProviderConfig(config);
+        }
+      }
+
       console.log(chalk.green(`\n✅ Profile "${finalProfileName}" saved with manual model selection.\n`));
     }
 

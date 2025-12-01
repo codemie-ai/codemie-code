@@ -1,16 +1,26 @@
 import { AgentMetadata } from '../core/types.js';
 import { BaseAgentAdapter } from '../core/BaseAgentAdapter.js';
+import { mkdir, writeFile } from 'fs/promises';
+import { existsSync } from 'fs';
+import { join } from 'path';
+import { homedir } from 'os';
+import { CodexAnalyticsAdapter } from '../../analytics/aggregation/adapters/codex.adapter.js';
 
-/**
- * Codex Plugin Metadata
- */
-export const CodexPluginMetadata: AgentMetadata = {
+// Define metadata object for reusability
+const metadata = {
   name: 'codex',
   displayName: 'Codex',
   description: 'OpenAI Codex - AI coding assistant',
 
   npmPackage: '@openai/codex',
   cliCommand: 'codex',
+
+  // Data paths used by lifecycle hooks and analytics
+  dataPaths: {
+    home: '~/.codex',
+    sessions: 'sessions',  // Relative to home
+    settings: 'auth.json'  // Relative to home
+  },
 
   envMapping: {
     baseUrl: ['OPENAI_API_BASE', 'OPENAI_BASE_URL'],
@@ -42,6 +52,39 @@ export const CodexPluginMetadata: AgentMetadata = {
 
     return args;
   }
+};
+
+/**
+ * Codex Plugin Metadata
+ */
+export const CodexPluginMetadata: AgentMetadata = {
+  ...metadata,
+
+  // Lifecycle hook uses dataPaths from metadata (DRY!)
+  lifecycle: {
+    beforeRun: async (env) => {
+      const codexDir = join(homedir(), metadata.dataPaths.home.replace('~/', ''));
+      const authFile = join(codexDir, metadata.dataPaths.settings);
+
+      // Create ~/.codex directory if it doesn't exist
+      if (!existsSync(codexDir)) {
+        await mkdir(codexDir, { recursive: true });
+      }
+
+      // Create auth.json if it doesn't exist
+      if (!existsSync(authFile)) {
+        const authConfig = {
+          OPENAI_API_KEY: env.OPENAI_API_KEY || 'proxy-handled'
+        };
+        await writeFile(authFile, JSON.stringify(authConfig, null, 2));
+      }
+
+      return env;
+    }
+  },
+
+  // Analytics adapter uses same metadata (DRY!)
+  analyticsAdapter: new CodexAnalyticsAdapter(metadata)
 };
 
 /**

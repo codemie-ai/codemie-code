@@ -129,17 +129,51 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         env
       });
 
+      // Define cleanup function for proxy
+      const cleanup = async () => {
+        if (this.proxy) {
+          logger.debug(`[${this.displayName}] Stopping proxy and flushing analytics...`);
+          await this.proxy.stop();
+          this.proxy = null;
+          logger.debug(`[${this.displayName}] Proxy cleanup complete`);
+        }
+      };
+
+      // Signal handler for graceful shutdown
+      const handleSignal = async (signal: NodeJS.Signals) => {
+        logger.debug(`Received ${signal}, cleaning up proxy...`);
+        await cleanup();
+        // Kill child process gracefully
+        child.kill(signal);
+      };
+
+      // Register signal handlers
+      const sigintHandler = () => handleSignal('SIGINT');
+      const sigtermHandler = () => handleSignal('SIGTERM');
+
+      process.once('SIGINT', sigintHandler);
+      process.once('SIGTERM', sigtermHandler);
+
       return new Promise((resolve, reject) => {
         child.on('error', (error) => {
           reject(new Error(`Failed to start ${this.displayName}: ${error.message}`));
         });
 
         child.on('exit', async (code) => {
-          // Clean up proxy
+          // Remove signal handlers to prevent memory leaks
+          process.off('SIGINT', sigintHandler);
+          process.off('SIGTERM', sigtermHandler);
+
+          // Grace period: wait for any final API calls from the external agent
+          // Many agents (Claude, Gemini, Codex) send telemetry/session data on shutdown
           if (this.proxy) {
-            await this.proxy.stop();
-            this.proxy = null;
+            const gracePeriodMs = 2000; // 2 seconds
+            logger.debug(`[${this.displayName}] Waiting ${gracePeriodMs}ms grace period for final API calls...`);
+            await new Promise(resolve => setTimeout(resolve, gracePeriodMs));
           }
+
+          // Clean up proxy
+          await cleanup();
 
           // Run afterRun hook
           if (this.metadata.lifecycle?.afterRun && code !== null) {

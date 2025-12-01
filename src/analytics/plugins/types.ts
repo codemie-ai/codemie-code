@@ -25,9 +25,6 @@ export interface AnalyticsPlugin {
   /** Transform/enrich events before writing */
   processEvent?(event: AnalyticsEvent): Promise<AnalyticsEvent | null>;
 
-  /** Add custom metrics to events */
-  enrichMetrics?(event: AnalyticsEvent): Promise<Record<string, unknown>>;
-
   /** Get current aggregated metrics snapshot (for reporting) */
   getMetrics?(): Record<string, unknown>;
 

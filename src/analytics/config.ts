@@ -5,19 +5,40 @@
 
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import { readFileSync } from 'node:fs';
 import type { AnalyticsConfig } from './types.js';
 import { DEFAULT_ANALYTICS_CONFIG } from './types.js';
 
 /**
  * Load analytics configuration with environment variable overrides
+ * Priority: Environment variables > Global config > baseConfig > Defaults
  */
 export function loadAnalyticsConfig(
   baseConfig?: Partial<AnalyticsConfig>
 ): AnalyticsConfig {
+  // Start with defaults
   const config: AnalyticsConfig = {
     ...DEFAULT_ANALYTICS_CONFIG,
-    ...baseConfig,
   };
+
+  // Try to load from global config synchronously
+  try {
+    const configPath = join(homedir(), '.codemie', 'config.json');
+    const content = readFileSync(configPath, 'utf-8');
+    const parsed = JSON.parse(content);
+
+    // Merge global config if available (multi-provider format)
+    if (parsed.version === 2 && parsed.analytics) {
+      Object.assign(config, parsed.analytics);
+    }
+  } catch {
+    // No global config, continue with defaults
+  }
+
+  // Merge base config
+  if (baseConfig) {
+    Object.assign(config, baseConfig);
+  }
 
   // Environment variable overrides
   if (process.env.CODEMIE_ANALYTICS_ENABLED !== undefined) {

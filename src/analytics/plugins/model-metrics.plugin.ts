@@ -23,12 +23,15 @@ export class ModelMetricsPlugin implements AnalyticsPlugin {
   // Track metrics per model
   private modelMetrics = new Map<string, ModelStats>();
 
-  async enrichMetrics(event: AnalyticsEvent): Promise<Record<string, unknown>> {
+  /**
+   * Process events to track metrics (no enrichment to individual events)
+   */
+  async processEvent(event: AnalyticsEvent): Promise<AnalyticsEvent | null> {
     // Extract model from event
     const model = event.model || event.attributes.model as string;
 
     if (!model) {
-      return {};
+      return event;
     }
 
     // Initialize model stats if needed
@@ -72,26 +75,10 @@ export class ModelMetricsPlugin implements AnalyticsPlugin {
                            0;
         stats.totalTokens += totalTokens;
       }
-
-      // Calculate model-specific metrics
-      const successRate = stats.requestCount > 0
-        ? stats.successCount / stats.requestCount
-        : 0;
-
-      const avgLatency = stats.successCount > 0
-        ? stats.totalLatency / stats.successCount
-        : 0;
-
-      return {
-        model_name: model,
-        model_request_count: stats.requestCount,
-        model_success_rate: Math.round(successRate * 100) / 100,
-        model_avg_latency_ms: Math.round(avgLatency),
-        model_total_tokens: stats.totalTokens
-      };
     }
 
-    return {};
+    // Return event unchanged (no enrichment)
+    return event;
   }
 
   /**

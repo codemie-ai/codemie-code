@@ -25,12 +25,15 @@ export class ProviderMetricsPlugin implements AnalyticsPlugin {
   // Track metrics per provider
   private providerMetrics = new Map<string, ProviderStats>();
 
-  async enrichMetrics(event: AnalyticsEvent): Promise<Record<string, unknown>> {
+  /**
+   * Process events to track metrics (no enrichment to individual events)
+   */
+  async processEvent(event: AnalyticsEvent): Promise<AnalyticsEvent | null> {
     // Extract provider from event
     const provider = event.provider || event.attributes.provider as string;
 
     if (!provider) {
-      return {};
+      return event;
     }
 
     // Initialize provider stats if needed
@@ -89,29 +92,8 @@ export class ProviderMetricsPlugin implements AnalyticsPlugin {
       stats.failureCount++;
     }
 
-    // Calculate provider-specific metrics
-    const successRate = stats.requestCount > 0
-      ? stats.successCount / stats.requestCount
-      : 0;
-
-    const avgLatency = stats.successCount > 0
-      ? stats.totalLatency / stats.successCount
-      : 0;
-
-    const errorRate = stats.requestCount > 0
-      ? stats.failureCount / stats.requestCount
-      : 0;
-
-    return {
-      provider_name: provider,
-      provider_request_count: stats.requestCount,
-      provider_success_rate: Math.round(successRate * 100) / 100,
-      provider_error_rate: Math.round(errorRate * 100) / 100,
-      provider_avg_latency_ms: Math.round(avgLatency),
-      provider_timeout_count: stats.timeouts,
-      provider_network_error_count: stats.networkErrors,
-      provider_auth_error_count: stats.authErrors
-    };
+    // Return event unchanged (no enrichment)
+    return event;
   }
 
   /**

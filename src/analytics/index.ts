@@ -30,11 +30,6 @@ export class Analytics {
   // Plugin system for extensibility
   private plugins: AnalyticsPlugin[] = [];
 
-  // Session metrics aggregation
-  private sessionMetrics = {
-    totalLatencyMs: 0,
-    apiRequestCount: 0,
-  };
 
   constructor(config: Partial<AnalyticsConfig> = {}) {
     this.config = loadAnalyticsConfig(config);
@@ -165,7 +160,7 @@ export class Analytics {
       // Process through plugins
       for (const plugin of this.plugins) {
         try {
-          // 1. Allow plugins to transform event
+          // Allow plugins to transform event (but not add aggregate metrics)
           if (plugin.processEvent) {
             const processed = await plugin.processEvent(event);
             if (!processed) {
@@ -174,26 +169,10 @@ export class Analytics {
             }
             event = processed;
           }
-
-          // 2. Enrich with plugin metrics
-          if (plugin.enrichMetrics) {
-            const pluginMetrics = await plugin.enrichMetrics(event);
-            // Merge plugin metrics (cast to Record<string, number> for compatibility)
-            event.metrics = { ...event.metrics, ...pluginMetrics as Record<string, number> };
-          }
         } catch (pluginError) {
           // Plugin errors should not break analytics
           console.error(`Plugin "${plugin.name}" error:`, pluginError);
         }
-      }
-
-      // Aggregate session metrics
-      if (eventType === 'api_request') {
-        this.sessionMetrics.apiRequestCount++;
-      }
-
-      if (eventType === 'api_response' && event.metrics?.latencyMs) {
-        this.sessionMetrics.totalLatencyMs += event.metrics.latencyMs;
       }
 
       this.collector.add(event);
@@ -206,20 +185,7 @@ export class Analytics {
 
 
 
-  /**
-   * Track agent response
-   */
-  async trackAgentResponse(
-    response: string,
-    attributes: Record<string, unknown> = {}
-  ): Promise<void> {
-    const eventAttrs: Record<string, unknown> = {
-      ...attributes,
-      responseLength: response.length,
-    };
 
-    await this.track('agent_response', eventAttrs);
-  }
 
   /**
    * Track API response
@@ -248,7 +214,17 @@ export class Analytics {
    */
   startSession(config: SessionConfig): void {
     this.session.start(config);
-    this.resetMetrics(); // Reset metrics for new session
+
+    // Reset all plugin metrics for new session
+    for (const plugin of this.plugins) {
+      if (plugin.reset) {
+        try {
+          plugin.reset();
+        } catch (error) {
+          console.error(`Error resetting plugin "${plugin.name}":`, error);
+        }
+      }
+    }
 
     void this.track('session_start', {
       workingDir: config.workingDir,
@@ -267,15 +243,9 @@ export class Analytics {
       return;
     }
 
-    // Combine session metrics with provided metrics
+    // Only track session duration in milliseconds
     const sessionMetrics = {
-      durationSeconds: this.session.duration,
-      totalLatencyMs: this.sessionMetrics.totalLatencyMs,
-      averageLatencyMs: this.sessionMetrics.apiRequestCount > 0
-        ? this.sessionMetrics.totalLatencyMs / this.sessionMetrics.apiRequestCount
-        : 0,
-      apiRequestCount: this.sessionMetrics.apiRequestCount,
-
+      durationMs: this.session.durationMs,
       ...metrics,
     };
 
@@ -288,20 +258,7 @@ export class Analytics {
     // Force flush on session end
     await this.flush();
 
-    // Reset metrics
-    this.resetMetrics();
-
     this.session.end();
-  }
-
-  /**
-   * Reset session metrics
-   */
-  private resetMetrics(): void {
-    this.sessionMetrics = {
-      totalLatencyMs: 0,
-      apiRequestCount: 0,
-    };
   }
 
   /**

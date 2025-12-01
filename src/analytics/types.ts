@@ -41,9 +41,6 @@ export type EventType =
   | 'session_end'
   | 'session_error'
   // User interactions
-  | 'user_prompt'
-  | 'agent_response'
-  // API interactions
   | 'api_request'
   | 'api_response'
   | 'api_error'

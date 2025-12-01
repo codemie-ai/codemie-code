@@ -29,7 +29,7 @@ import {
   AnalyticsInterceptor
 } from './proxy/interceptors.js';
 import { ProxyConfig, ProxyContext, UpstreamResponse } from './proxy/types.js';
-import { AuthenticationError, normalizeError } from './proxy/errors.js';
+import { AuthenticationError, NetworkError, TimeoutError, normalizeError } from './proxy/errors.js';
 
 // Re-export types for backward compatibility
 export type GatewayConfig = ProxyConfig;
@@ -145,6 +145,13 @@ export class CodeMieProxy {
    * Stop the proxy server
    */
   async stop(): Promise<void> {
+    // Flush analytics before stopping to ensure all events are written
+    const analytics = getAnalytics();
+    if (analytics.isEnabled) {
+      logger.debug('Flushing analytics before proxy shutdown...');
+      await analytics.flush();
+    }
+
     if (this.server) {
       await new Promise<void>((resolve) => {
         this.server!.close(() => {
@@ -368,8 +375,14 @@ export class CodeMieProxy {
       timestamp: new Date().toISOString()
     }, null, 2));
 
-    // Log error with proper formatting
-    logger.error('[proxy] Error:', proxyError);
+    // Log error at appropriate level
+    // NetworkError and TimeoutError are operational errors (not programming errors)
+    // Log them at debug level to avoid noise in production logs
+    if (proxyError instanceof NetworkError || proxyError instanceof TimeoutError) {
+      logger.debug(`[proxy] Operational error: ${proxyError.message}`);
+    } else {
+      logger.error('[proxy] Error:', proxyError);
+    }
   }
 
   /**

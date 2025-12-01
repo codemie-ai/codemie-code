@@ -158,7 +158,7 @@ export class AnalyticsInterceptor implements ProxyInterceptor {
         ...(requestBodyToLog ? { requestBody: requestBodyToLog } : {})
       });
 
-      logger.debug(`[${this.name}] Tracked API request`);
+      logger.debug(`[${this.name}] Tracked API request: ${context.method} ${context.url}`);
     } catch (error) {
       // Silently fail - analytics should not block requests
       logger.error(`[${this.name}] Error tracking request:`, error);
@@ -175,7 +175,7 @@ export class AnalyticsInterceptor implements ProxyInterceptor {
       const latency = Date.now() - context.requestStartTime;
 
       let responseBodyParsed: any = null;
-      const MAX_BODY_SIZE = 10000; // 10KB limit
+      const MAX_BODY_SIZE = 100000; // 100KB limit
 
       if (response.body) {
         const contentType = response.headers['content-type'] || '';
@@ -208,7 +208,7 @@ export class AnalyticsInterceptor implements ProxyInterceptor {
             model: responseBodyParsed.model,
             id: responseBodyParsed.id,
             object: responseBodyParsed.object,
-            contentTruncated: '[Content truncated - exceeded 10KB limit]',
+            contentTruncated: '[Content truncated - exceeded 100KB limit]',
             originalSize: bodyStr.length
           };
           bodyTruncated = true;
@@ -229,20 +229,7 @@ export class AnalyticsInterceptor implements ProxyInterceptor {
         latencyMs: latency
       });
 
-      // Track agent response content
-      if (responseBodyParsed) {
-        const responseContent = await this.extractResponseContent(responseBodyParsed);
-
-        if (responseContent) {
-          await analytics.trackAgentResponse(responseContent, {
-            requestId: context.requestId,
-            model: responseBodyParsed.model || 'unknown',
-            streaming: responseBodyParsed.streaming || false
-          });
-        }
-      }
-
-      logger.debug(`[${this.name}] Tracked API response (${latency}ms)`);
+      logger.debug(`[${this.name}] Tracked API response: ${response.statusCode} ${context.url} (${latency}ms)`);
     } catch (error) {
       // Silently fail - analytics should not block requests
       logger.error(`[${this.name}] Error tracking response:`, error);

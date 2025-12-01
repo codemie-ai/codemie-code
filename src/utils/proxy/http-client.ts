@@ -86,9 +86,16 @@ export class ProxyHTTPClient {
         }
 
         // Convert to proxy error types
-        if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND' || error.code === 'ECONNRESET') {
+        // Check both error code and message for network errors
+        const isNetworkError = error.code === 'ECONNREFUSED' ||
+                              error.code === 'ENOTFOUND' ||
+                              error.code === 'ECONNRESET' ||
+                              error.message?.includes('socket hang up') ||
+                              error.message?.includes('ECONNRESET');
+
+        if (isNetworkError) {
           reject(new NetworkError(`Cannot connect to upstream: ${error.message}`, {
-            errorCode: error.code,
+            errorCode: error.code || 'NETWORK_ERROR',
             hostname: url.hostname
           }));
         } else {

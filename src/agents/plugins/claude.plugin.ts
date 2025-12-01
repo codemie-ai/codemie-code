@@ -1,16 +1,23 @@
 import { AgentMetadata } from '../core/types.js';
 import { BaseAgentAdapter } from '../core/BaseAgentAdapter.js';
+import { ClaudeAnalyticsAdapter } from '../../analytics/aggregation/adapters/claude.adapter.js';
 
 /**
  * Claude Code Plugin Metadata
  */
-export const ClaudePluginMetadata: AgentMetadata = {
+const metadata = {
   name: 'claude',
   displayName: 'Claude Code',
   description: 'Claude Code - official Anthropic CLI tool',
 
   npmPackage: '@anthropic-ai/claude-code',
   cliCommand: 'claude',
+
+  // Data paths (used by lifecycle hooks and analytics)
+  dataPaths: {
+    home: '~/.claude',
+    sessions: 'projects'
+  },
 
   envMapping: {
     baseUrl: ['ANTHROPIC_BASE_URL'],
@@ -39,6 +46,13 @@ export const ClaudePluginMetadata: AgentMetadata = {
       return env;
     }
   }
+};
+
+export const ClaudePluginMetadata: AgentMetadata = {
+  ...metadata,
+
+  // Analytics adapter uses same metadata (DRY principle!)
+  analyticsAdapter: new ClaudeAnalyticsAdapter(metadata)
 };
 
 /**

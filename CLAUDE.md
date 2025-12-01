@@ -27,10 +27,14 @@ npm run test               # Run tests with Vitest
 npm run test:ui            # Run tests with interactive UI
 npm run test:run           # Run tests once (no watch mode)
 
-# Code Quality
+# Code Quality & Validation
 npm run lint               # Check code style with ESLint (max 0 warnings)
 npm run lint:fix           # Fix linting issues automatically
-npm run ci                 # Run full CI pipeline (license-check + lint + build)
+npm run validate:commit    # Validate last commit message (Conventional Commits)
+npm run validate:secrets   # Check for exposed secrets (requires Docker)
+npm run license-check      # Check dependency licenses
+npm run ci                 # Run full CI: commit validation + license + lint + build + tests
+npm run ci:full            # CI + secrets detection (requires Docker)
 
 # Development Workflow
 npm run build && npm link  # Build and link for testing
@@ -55,15 +59,12 @@ codemie profile delete <name>  # Delete a profile
 codemie-code --profile work "task"  # Use specific profile
 
 # Analytics Commands
-codemie analytics status           # Show configuration and today's stats
-codemie analytics status --json    # Output as JSON
-codemie analytics stats            # Show detailed statistics (default: last 7 days)
-codemie analytics stats --from 2025-11-01 --to 2025-11-30  # Custom date range
-codemie analytics stats --agent claude  # Filter by agent
-codemie analytics export           # Export analytics data
-codemie analytics export --format json --output data.json
-codemie analytics clear            # Clear old analytics files
-codemie analytics clear --older-than 30 --yes
+codemie analytics                  # Show configuration and available commands
+codemie analytics enable           # Enable analytics collection
+codemie analytics disable          # Disable analytics collection
+codemie analytics show             # Show analytics from all agents
+codemie analytics show --from 2025-11-01 --to 2025-11-30  # Custom date range
+codemie analytics show --agent claude  # Filter by agent
 
 # Release & Publishing
 git tag -a v0.0.1 -m "Release version 0.0.1"  # Create release tag
@@ -684,13 +685,13 @@ The analytics system is **already integrated** with the plugin system, providing
 1. **Agent Validation**: All analytics commands validate agent filters against the registry
    ```bash
    # Shows error with available agents if invalid
-   codemie analytics stats --agent invalid
+   codemie analytics show --agent invalid
    # Available agents: codemie-code (CodeMie Native), claude (Claude Code), ...
    ```
 
-2. **Display Name Integration**: Stats automatically show friendly names
+2. **Display Name Integration**: Analytics automatically show friendly names
    ```
-   🤖 Agent Usage
+   🤖 Breakdown by Agent
 
    Claude Code         15 prompts   3 sessions   45 API calls  (65.2%)
    CodeMie Native       8 prompts   2 sessions   20 API calls  (34.8%)
@@ -699,9 +700,8 @@ The analytics system is **already integrated** with the plugin system, providing
 3. **No Code Changes Required**: Adding a new plugin automatically includes it in analytics
 
 **Commands with Plugin Integration**:
-- `codemie analytics status` - Shows agent activity with display names
-- `codemie analytics stats --agent <name>` - Validates and filters by agent
-- `codemie analytics export --agent <name>` - Validates agent filters
+- `codemie analytics show` - Shows agent activity with display names
+- `codemie analytics show --agent <name>` - Validates and filters by agent
 
 **Implementation Details** (for reference):
 - `src/utils/analytics-reader.ts`: Queries `AgentRegistry.getAgent()` for display names

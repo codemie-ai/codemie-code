@@ -2,6 +2,20 @@
  * Core types for the plugin-based agent architecture
  */
 
+// Forward declaration for circular dependency
+// Full interface defined in src/analytics/aggregation/core/adapter.interface.ts
+export interface AgentAnalyticsAdapter {
+  agentName: string;
+  displayName: string;
+  version: string;
+  findSessions(options?: any): Promise<any[]>;
+  extractSession(descriptor: any): Promise<any>;
+  extractMessages(descriptor: any): Promise<any[]>;
+  extractToolCalls(descriptor: any): Promise<any[]>;
+  extractFileModifications(descriptor: any): Promise<any[]>;
+  validateSource(): Promise<boolean>;
+}
+
 /**
  * Agent metadata schema - declarative configuration for agents
  */
@@ -54,6 +68,17 @@ export interface AgentMetadata {
   isBuiltIn?: boolean;
   customRunHandler?: (args: string[], options: Record<string, unknown>, config: AgentConfig) => Promise<void>;
   customHealthCheck?: () => Promise<boolean>;
+
+  // === Data Paths ===
+  dataPaths?: {
+    home: string;           // Main directory: '~/.gemini', '~/.claude', '~/.codex'
+    sessions?: string;      // Session logs path (relative to home or absolute)
+    settings?: string;      // Settings file path (relative to home or absolute)
+    cache?: string;         // Cache directory (relative to home or absolute)
+  };
+
+  // === Analytics Support ===
+  analyticsAdapter?: AgentAnalyticsAdapter;  // Optional analytics adapter
 }
 
 /**
