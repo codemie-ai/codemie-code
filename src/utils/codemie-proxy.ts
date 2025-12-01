@@ -135,7 +135,7 @@ export class CodeMieProxy {
         }
 
         const gatewayUrl = `http://localhost:${this.actualPort}`;
-        logger.info(`Proxy started: ${gatewayUrl}`);
+        logger.debug(`Proxy started: ${gatewayUrl}`);
         resolve({ port: this.actualPort, url: gatewayUrl });
       });
     });
@@ -148,7 +148,7 @@ export class CodeMieProxy {
     if (this.server) {
       await new Promise<void>((resolve) => {
         this.server!.close(() => {
-          logger.info('Proxy stopped');
+          logger.debug('Proxy stopped');
           resolve();
         });
       });
@@ -307,6 +307,16 @@ export class CodeMieProxy {
     req: IncomingMessage,
     res: ServerResponse
   ): Promise<void> {
+    // Check if this is a normal client disconnect (abort)
+    if (error && typeof error === 'object' && (error as any).isAborted) {
+      // Client disconnected normally (user closed agent) - don't log or respond
+      logger.debug('[proxy] Client disconnected');
+      if (!res.headersSent) {
+        res.end();
+      }
+      return;
+    }
+
     // Build minimal context for error tracking
     const context: ProxyContext = {
       requestId: randomUUID(),
@@ -358,14 +368,8 @@ export class CodeMieProxy {
       timestamp: new Date().toISOString()
     }, null, 2));
 
-    // Log error
-    logger.error('[proxy] Error:', {
-      errorType: proxyError.name,
-      errorCode: proxyError.code,
-      statusCode: proxyError.statusCode,
-      message: proxyError.message,
-      requestId: context?.requestId
-    });
+    // Log error with proper formatting
+    logger.error('[proxy] Error:', proxyError);
   }
 
   /**

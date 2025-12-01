@@ -15,26 +15,10 @@ export async function validateCodeMieIntegrations(
 
   // Integrations are already filtered by API for LiteLLM type
   if (integrations.length === 0) {
-    console.log(chalk.yellow('\n⚠️  No CodeMie LiteLLM integration found\n'));
-    console.log(chalk.white('CodeMie integrations allow you to use organization-managed LLM keys.'));
-    console.log(chalk.white('You can continue without an integration.\n'));
-    console.log(chalk.yellow('To set up an integration later:'));
-    console.log(chalk.white('  1. Contact your support team to request a LiteLLM key'));
-    console.log(chalk.white('  2. In CodeMie, go to Integrations → User Integrations'));
-    console.log(chalk.white('  3. Add the key as a new integration with type "LiteLLM"'));
-    console.log(chalk.white('  4. Re-run: codemie setup\n'));
-
-    const { continueWithoutIntegration } = await inquirer.prompt([{
-      type: 'confirm',
-      name: 'continueWithoutIntegration',
-      message: 'Continue without integration?',
-      default: true
-    }]);
-
-    if (!continueWithoutIntegration) {
-      throw new Error('Setup cancelled by user');
+    // No integrations found - continue without integration
+    if (spinner) {
+      spinner.info(chalk.white('No CodeMie integrations found - continuing without integration'));
     }
-
     return null;
   }
 

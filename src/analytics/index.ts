@@ -8,24 +8,12 @@ import type {
   AnalyticsEvent,
   EventType,
   SessionConfig,
-  ToolMetrics,
 } from './types.js';
 import { EventCollector } from './collector.js';
 import { AnalyticsWriter } from './writer.js';
 import { SessionManager } from './session.js';
-import { redactSensitive } from './privacy.js';
 import { loadAnalyticsConfig } from './config.js';
 import { getInstallationId } from '../utils/installation-id.js';
-import {
-  parseAnthropicToolResult,
-  parseOpenAIToolResult,
-  parseGeminiToolResult,
-  createEmptyCodeMetrics,
-  createEmptyCommandMetrics,
-  mergeCodeMetrics,
-  mergeCommandMetrics,
-  type ToolResultMetrics,
-} from './tool-parser.js';
 import { AnalyticsPlugin } from './plugins/types.js';
 
 /**
@@ -44,22 +32,9 @@ export class Analytics {
 
   // Session metrics aggregation
   private sessionMetrics = {
-    toolCallCount: 0,
-    toolSuccessCount: 0,
-    toolFailureCount: 0,
     totalLatencyMs: 0,
     apiRequestCount: 0,
-    toolCallsByName: {} as Record<string, number>,
-    toolMetricsByName: {} as Record<string, ToolMetrics>,
-    code: createEmptyCodeMetrics(),
-    commands: createEmptyCommandMetrics(),
   };
-
-  // Track tool call IDs to match calls with results
-  private toolCallTracker = new Map<string, {
-    toolName: string;
-    startTime: number;
-  }>();
 
   constructor(config: Partial<AnalyticsConfig> = {}) {
     this.config = loadAnalyticsConfig(config);
@@ -213,7 +188,13 @@ export class Analytics {
       }
 
       // Aggregate session metrics
-      this.aggregateMetrics(eventType, attributes, event.metrics);
+      if (eventType === 'api_request') {
+        this.sessionMetrics.apiRequestCount++;
+      }
+
+      if (eventType === 'api_response' && event.metrics?.latencyMs) {
+        this.sessionMetrics.totalLatencyMs += event.metrics.latencyMs;
+      }
 
       this.collector.add(event);
     } catch (error) {
@@ -222,120 +203,8 @@ export class Analytics {
     }
   }
 
-  /**
-   * Update tool-specific metrics from tool result
-   */
-  private updateToolMetrics(
-    toolName: string,
-    toolMetrics: ToolResultMetrics,
-    latencyMs?: number
-  ): void {
-    // Initialize tool metrics if not exists
-    if (!this.sessionMetrics.toolMetricsByName[toolName]) {
-      this.sessionMetrics.toolMetricsByName[toolName] = {
-        totalCalls: 0,
-        successCount: 0,
-        failureCount: 0,
-        failureRate: 0,
-        totalLatencyMs: 0,
-        averageLatencyMs: 0,
-      };
-    }
-
-    const metrics = this.sessionMetrics.toolMetricsByName[toolName];
-    metrics.totalCalls++;
-
-    if (toolMetrics.success) {
-      metrics.successCount++;
-    } else {
-      metrics.failureCount++;
-    }
-
-    metrics.failureRate = metrics.totalCalls > 0
-      ? metrics.failureCount / metrics.totalCalls
-      : 0;
-
-    if (latencyMs) {
-      metrics.totalLatencyMs += latencyMs;
-      metrics.averageLatencyMs = metrics.totalLatencyMs / metrics.totalCalls;
-    }
-
-    // Merge code metrics
-    mergeCodeMetrics(this.sessionMetrics.code, toolMetrics);
-
-    // Merge command metrics
-    mergeCommandMetrics(this.sessionMetrics.commands, toolMetrics);
-  }
-
-  /**
-   * Aggregate metrics for session-level reporting
-   */
-  private aggregateMetrics(
-    eventType: EventType,
-    attributes: Record<string, unknown>,
-    metrics?: Record<string, number>
-  ): void {
-    // Track tool calls
-    if (eventType === 'tool_call') {
-      this.sessionMetrics.toolCallCount++;
-
-      // Track by tool name for breakdown
-      const toolName = attributes.toolName as string;
-      if (toolName) {
-        this.sessionMetrics.toolCallsByName[toolName] =
-          (this.sessionMetrics.toolCallsByName[toolName] || 0) + 1;
-      }
-    }
-
-    // Track tool results
-    if (eventType === 'tool_result') {
-      const success = attributes.success as boolean;
-      if (success) {
-        this.sessionMetrics.toolSuccessCount++;
-      } else {
-        this.sessionMetrics.toolFailureCount++;
-      }
-    }
-
-    // Track tool errors (explicit error tracking)
-    if (eventType === 'tool_error') {
-      this.sessionMetrics.toolFailureCount++;
-
-      const toolName = attributes.toolName as string;
-      if (toolName) {
-        this.sessionMetrics.toolCallsByName[toolName] =
-          (this.sessionMetrics.toolCallsByName[toolName] || 0) + 1;
-      }
-    }
-
-    // Track API metrics
-    if (eventType === 'api_request') {
-      this.sessionMetrics.apiRequestCount++;
-    }
-
-    if (eventType === 'api_response' && metrics?.latencyMs) {
-      this.sessionMetrics.totalLatencyMs += metrics.latencyMs;
-    }
-  }
 
 
-  /**
-   * Track tool call
-   */
-  async trackToolCall(
-    toolName: string,
-    params: Record<string, unknown>,
-    latency?: number
-  ): Promise<void> {
-    const attributes = {
-      toolName,
-      ...redactSensitive(params),
-    };
-
-    const metrics = latency ? { latencyMs: latency } : undefined;
-
-    await this.track('tool_call', attributes, metrics);
-  }
 
   /**
    * Track agent response
@@ -353,9 +222,7 @@ export class Analytics {
   }
 
   /**
-   * Track API response with unified tool call extraction
-   * Extracts tool calls and results from API request/response bodies
-   * Supports multiple API formats: Anthropic, OpenAI, Google Gemini
+   * Track API response
    */
   async trackAPIResponse(data: {
     latency?: number;
@@ -369,333 +236,12 @@ export class Analytics {
       attributes.statusCode = data.statusCode;
     }
 
-    // Extract tool calls from API response (multiple formats)
-    if (data.responseBody && typeof data.responseBody === 'object') {
-      await this.extractToolCallsFromResponse(data.responseBody);
-    }
-
-    // Extract tool results from API request (multiple formats)
-    if (data.requestBody && typeof data.requestBody === 'object') {
-      await this.extractToolResultsFromRequest(data.requestBody);
-    }
-
     const metrics: Record<string, number> = {};
     if (data.latency) metrics.latencyMs = data.latency;
 
     await this.track('api_response', attributes, metrics);
   }
 
-  /**
-   * Extract tool calls from API response body
-   * Supports: Anthropic, OpenAI, Google Gemini formats
-   */
-  private async extractToolCallsFromResponse(responseBody: unknown): Promise<void> {
-    if (!responseBody || typeof responseBody !== 'object') {
-      return;
-    }
-
-    // Anthropic format: {content: [{type: "tool_use", name: "...", id: "..."}]}
-    const anthropicBody = responseBody as {
-      content?: Array<{
-        type?: string;
-        name?: string;
-        id?: string;
-        input?: unknown;
-      }>;
-    };
-
-    if (Array.isArray(anthropicBody.content)) {
-      for (const item of anthropicBody.content) {
-        if (item.type === 'tool_use' && item.name) {
-          // Track tool call for matching with result later
-          if (item.id) {
-            this.toolCallTracker.set(item.id, {
-              toolName: item.name,
-              startTime: Date.now(),
-            });
-          }
-
-          await this.track('tool_call', {
-            toolName: item.name,
-            toolUseId: item.id,
-            source: 'api_response',
-            format: 'anthropic',
-            hasInput: !!item.input
-          });
-        }
-      }
-      return; // Found Anthropic format, stop processing
-    }
-
-    // OpenAI format: {choices: [{message: {tool_calls: [{id, function: {name, arguments}}]}}]}
-    const openaiBody = responseBody as {
-      choices?: Array<{
-        message?: {
-          tool_calls?: Array<{
-            id?: string;
-            type?: string;
-            function?: {
-              name?: string;
-              arguments?: string;
-            };
-          }>;
-        };
-      }>;
-    };
-
-    if (Array.isArray(openaiBody.choices)) {
-      for (const choice of openaiBody.choices) {
-        const toolCalls = choice.message?.tool_calls;
-        if (Array.isArray(toolCalls)) {
-          for (const toolCall of toolCalls) {
-            if (toolCall.type === 'function' && toolCall.function?.name) {
-              // Track tool call for matching with result later
-              if (toolCall.id) {
-                this.toolCallTracker.set(toolCall.id, {
-                  toolName: toolCall.function.name,
-                  startTime: Date.now(),
-                });
-              }
-
-              await this.track('tool_call', {
-                toolName: toolCall.function.name,
-                toolUseId: toolCall.id,
-                source: 'api_response',
-                format: 'openai',
-                hasArguments: !!toolCall.function.arguments
-              });
-            }
-          }
-          return; // Found OpenAI format, stop processing
-        }
-      }
-    }
-
-    // Google Gemini format: {candidates: [{content: {parts: [{functionCall: {name, args}}]}}]}
-    const geminiBody = responseBody as {
-      candidates?: Array<{
-        content?: {
-          parts?: Array<{
-            functionCall?: {
-              name?: string;
-              args?: unknown;
-            };
-          }>;
-        };
-      }>;
-    };
-
-    if (Array.isArray(geminiBody.candidates)) {
-      for (const candidate of geminiBody.candidates) {
-        const parts = candidate.content?.parts;
-        if (Array.isArray(parts)) {
-          for (const part of parts) {
-            if (part.functionCall?.name) {
-              await this.track('tool_call', {
-                toolName: part.functionCall.name,
-                source: 'api_response',
-                format: 'gemini',
-                hasArgs: !!part.functionCall.args
-              });
-            }
-          }
-          return; // Found Gemini format, stop processing
-        }
-      }
-    }
-  }
-
-  /**
-   * Extract tool results from API request body
-   * Supports: Anthropic, OpenAI, Google Gemini formats
-   */
-  private async extractToolResultsFromRequest(requestBody: unknown): Promise<void> {
-    if (!requestBody || typeof requestBody !== 'object') {
-      return;
-    }
-
-    // Anthropic format: {content: [{type: "tool_result", tool_use_id: "...", is_error: false, content: "..."}]}
-    const anthropicBody = requestBody as {
-      content?: Array<{
-        type?: string;
-        tool_use_id?: string;
-        is_error?: boolean;
-        content?: unknown;
-      }>;
-    };
-
-    if (Array.isArray(anthropicBody.content)) {
-      for (const item of anthropicBody.content) {
-        if (item.type === 'tool_result') {
-          const resultContent = typeof item.content === 'string' ? item.content : JSON.stringify(item.content);
-          const resultLength = resultContent ? resultContent.length : 0;
-
-          // Get tool name from tracker
-          const toolInfo = item.tool_use_id ? this.toolCallTracker.get(item.tool_use_id) : null;
-          const toolName = toolInfo?.toolName || 'unknown';
-          const latencyMs = toolInfo ? Date.now() - toolInfo.startTime : undefined;
-
-          // Parse tool result for detailed metrics
-          const toolMetrics = parseAnthropicToolResult(
-            toolName,
-            item.content,
-            item.is_error || false
-          );
-
-          // Update session metrics
-          this.updateToolMetrics(toolName, toolMetrics, latencyMs);
-
-          // Destructure to avoid duplicate 'success' field
-          const { success: toolSuccess, errorMessage, ...otherMetrics } = toolMetrics;
-
-          await this.track('tool_result', {
-            toolUseId: item.tool_use_id,
-            toolName,
-            success: toolSuccess,
-            isError: item.is_error || false,
-            source: 'api_request',
-            format: 'anthropic',
-            resultLength,
-            errorMessage,
-            ...otherMetrics,
-          }, latencyMs ? { latencyMs } : undefined);
-
-          if (item.is_error) {
-            await this.track('tool_error', {
-              toolUseId: item.tool_use_id,
-              toolName,
-              success: false,
-              error: resultContent.substring(0, 500),
-              source: 'api_request',
-              format: 'anthropic'
-            });
-          }
-
-          // Clean up tracker
-          if (item.tool_use_id) {
-            this.toolCallTracker.delete(item.tool_use_id);
-          }
-        }
-      }
-      return; // Found Anthropic format, stop processing
-    }
-
-    // OpenAI format: {messages: [{role: "tool", tool_call_id: "...", content: "..."}]}
-    const openaiBody = requestBody as {
-      messages?: Array<{
-        role?: string;
-        tool_call_id?: string;
-        content?: string;
-      }>;
-    };
-
-    if (Array.isArray(openaiBody.messages)) {
-      for (const message of openaiBody.messages) {
-        if (message.role === 'tool' && message.tool_call_id) {
-          const resultLength = message.content?.length || 0;
-
-          // Get tool name from tracker
-          const toolInfo = this.toolCallTracker.get(message.tool_call_id);
-          const toolName = toolInfo?.toolName || 'unknown';
-          const latencyMs = toolInfo ? Date.now() - toolInfo.startTime : undefined;
-
-          // Parse tool result for detailed metrics
-          const toolMetrics = parseOpenAIToolResult(toolName, message.content || '');
-
-          // Update session metrics
-          this.updateToolMetrics(toolName, toolMetrics, latencyMs);
-
-          // Destructure to avoid duplicate 'success' field
-          const { success: toolSuccess, errorMessage, ...otherMetrics } = toolMetrics;
-
-          await this.track('tool_result', {
-            toolUseId: message.tool_call_id,
-            toolName,
-            success: toolSuccess,
-            isError: !toolSuccess,
-            source: 'api_request',
-            format: 'openai',
-            resultLength,
-            errorMessage,
-            ...otherMetrics,
-          }, latencyMs ? { latencyMs } : undefined);
-
-          if (!toolMetrics.success) {
-            await this.track('tool_error', {
-              toolUseId: message.tool_call_id,
-              toolName,
-              success: false,
-              error: message.content?.substring(0, 500) || 'Unknown error',
-              source: 'api_request',
-              format: 'openai'
-            });
-          }
-
-          // Clean up tracker
-          this.toolCallTracker.delete(message.tool_call_id);
-        }
-      }
-      return; // Found OpenAI format, stop processing
-    }
-
-    // Google Gemini format: {contents: [{parts: [{functionResponse: {name, response}}]}]}
-    const geminiBody = requestBody as {
-      contents?: Array<{
-        parts?: Array<{
-          functionResponse?: {
-            name?: string;
-            response?: unknown;
-          };
-        }>;
-      }>;
-    };
-
-    if (Array.isArray(geminiBody.contents)) {
-      for (const content of geminiBody.contents) {
-        const parts = content.parts;
-        if (Array.isArray(parts)) {
-          for (const part of parts) {
-            if (part.functionResponse?.name) {
-              const toolName = part.functionResponse.name;
-              const responseStr = JSON.stringify(part.functionResponse.response);
-              const resultLength = responseStr.length;
-
-              // Parse tool result for detailed metrics
-              const toolMetrics = parseGeminiToolResult(toolName, part.functionResponse.response);
-
-              // Note: Gemini doesn't provide tool_call_id, so we can't track latency
-              this.updateToolMetrics(toolName, toolMetrics, undefined);
-
-              // Destructure to avoid duplicate 'success' field
-              const { success: toolSuccess, errorMessage, ...otherMetrics } = toolMetrics;
-
-              await this.track('tool_result', {
-                toolName,
-                success: toolSuccess,
-                isError: !toolSuccess,
-                source: 'api_request',
-                format: 'gemini',
-                resultLength,
-                errorMessage,
-                ...otherMetrics,
-              });
-
-              if (!toolMetrics.success) {
-                await this.track('tool_error', {
-                  toolName,
-                  success: false,
-                  error: responseStr.substring(0, 500),
-                  source: 'api_request',
-                  format: 'gemini'
-                });
-              }
-            }
-          }
-          return; // Found Gemini format, stop processing
-        }
-      }
-    }
-  }
 
   /**
    * Start analytics session
@@ -721,61 +267,20 @@ export class Analytics {
       return;
     }
 
-    // Calculate per-tool failure rates
-    const toolMetricsByName: Record<string, any> = {};
-    for (const [toolName, toolMetrics] of Object.entries(this.sessionMetrics.toolMetricsByName)) {
-      toolMetricsByName[toolName] = {
-        totalCalls: toolMetrics.totalCalls,
-        successCount: toolMetrics.successCount,
-        failureCount: toolMetrics.failureCount,
-        failureRate: toolMetrics.failureRate,
-        averageLatencyMs: toolMetrics.averageLatencyMs,
-      };
-    }
-
     // Combine session metrics with provided metrics
     const sessionMetrics = {
       durationSeconds: this.session.duration,
-      toolCallCount: this.sessionMetrics.toolCallCount,
-      toolSuccessCount: this.sessionMetrics.toolSuccessCount,
-      toolFailureCount: this.sessionMetrics.toolFailureCount,
-      toolSuccessRate: this.sessionMetrics.toolCallCount > 0
-        ? this.sessionMetrics.toolSuccessCount / this.sessionMetrics.toolCallCount
-        : 0,
       totalLatencyMs: this.sessionMetrics.totalLatencyMs,
       averageLatencyMs: this.sessionMetrics.apiRequestCount > 0
         ? this.sessionMetrics.totalLatencyMs / this.sessionMetrics.apiRequestCount
         : 0,
       apiRequestCount: this.sessionMetrics.apiRequestCount,
 
-      // Code metrics
-      linesAdded: this.sessionMetrics.code.linesAdded,
-      linesRemoved: this.sessionMetrics.code.linesRemoved,
-      linesModified: this.sessionMetrics.code.linesModified,
-      filesCreated: this.sessionMetrics.code.filesCreated,
-      filesModified: this.sessionMetrics.code.filesModified,
-      filesDeleted: this.sessionMetrics.code.filesDeleted,
-      filesRead: this.sessionMetrics.code.filesRead,
-      totalCharactersWritten: this.sessionMetrics.code.totalCharactersWritten,
-      totalBytesRead: this.sessionMetrics.code.totalBytesRead,
-      totalBytesWritten: this.sessionMetrics.code.totalBytesWritten,
-
-      // Command metrics
-      totalCommands: this.sessionMetrics.commands.totalCommands,
-      successfulCommands: this.sessionMetrics.commands.successfulCommands,
-      failedCommands: this.sessionMetrics.commands.failedCommands,
-      commandSuccessRate: this.sessionMetrics.commands.totalCommands > 0
-        ? this.sessionMetrics.commands.successfulCommands / this.sessionMetrics.commands.totalCommands
-        : 0,
-
       ...metrics,
     };
 
     const attributes = {
       exitReason,
-      toolCallsByName: this.sessionMetrics.toolCallsByName,
-      toolMetricsByName,
-      commandsByType: this.sessionMetrics.commands.commandsByType,
     };
 
     await this.track('session_end', attributes, sessionMetrics);
@@ -794,17 +299,9 @@ export class Analytics {
    */
   private resetMetrics(): void {
     this.sessionMetrics = {
-      toolCallCount: 0,
-      toolSuccessCount: 0,
-      toolFailureCount: 0,
       totalLatencyMs: 0,
       apiRequestCount: 0,
-      toolCallsByName: {},
-      toolMetricsByName: {},
-      code: createEmptyCodeMetrics(),
-      commands: createEmptyCommandMetrics(),
     };
-    this.toolCallTracker.clear();
   }
 
   /**

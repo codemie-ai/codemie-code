@@ -76,6 +76,15 @@ export class ProxyHTTPClient {
       });
 
       req.on('error', (error: any) => {
+        // Handle client disconnection (normal behavior when user closes agent)
+        if (error.message === 'aborted' || error.code === 'ECONNABORTED' || error.code === 'ERR_STREAM_PREMATURE_CLOSE') {
+          // Silent rejection for normal client disconnect - don't log as error
+          const abortError = new Error('Client disconnected');
+          (abortError as any).isAborted = true;
+          reject(abortError);
+          return;
+        }
+
         // Convert to proxy error types
         if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND' || error.code === 'ECONNRESET') {
           reject(new NetworkError(`Cannot connect to upstream: ${error.message}`, {

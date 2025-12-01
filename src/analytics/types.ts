@@ -25,7 +25,7 @@ export interface AnalyticsConfig {
  * Default analytics configuration
  */
 export const DEFAULT_ANALYTICS_CONFIG: AnalyticsConfig = {
-  enabled: true,
+  enabled: false,
   target: 'local',
   localPath: '~/.codemie/analytics',
   flushInterval: 5000, // 5 seconds
@@ -43,15 +43,6 @@ export type EventType =
   // User interactions
   | 'user_prompt'
   | 'agent_response'
-  | 'tool_call'
-  | 'tool_result'
-  | 'tool_error'
-  // Code operations
-  | 'file_read'
-  | 'file_write'
-  | 'file_edit'
-  | 'command_execution'
-  | 'git_operation'
   // API interactions
   | 'api_request'
   | 'api_response'
@@ -143,65 +134,13 @@ export interface IRemoteAnalytics {
 }
 
 /**
- * Tool-specific metrics for detailed tracking
- */
-export interface ToolMetrics {
-  totalCalls: number;
-  successCount: number;
-  failureCount: number;
-  failureRate: number;
-  totalLatencyMs: number;
-  averageLatencyMs: number;
-}
-
-/**
- * Code modification metrics
- */
-export interface CodeMetrics {
-  linesAdded: number;
-  linesRemoved: number;
-  linesModified: number;
-  filesCreated: number;
-  filesModified: number;
-  filesDeleted: number;
-  filesRead: number;
-  totalCharactersWritten: number;
-  totalBytesRead: number;
-  totalBytesWritten: number;
-}
-
-/**
- * Command execution metrics
- */
-export interface CommandMetrics {
-  totalCommands: number;
-  successfulCommands: number;
-  failedCommands: number;
-  commandsByType: Record<string, number>;
-}
-
-/**
  * Comprehensive session metrics
  */
 export interface SessionMetrics {
-  // Tool metrics
-  toolCallCount: number;
-  toolSuccessCount: number;
-  toolFailureCount: number;
-  toolSuccessRate: number;
-  toolCallsByName: Record<string, number>;
-  toolMetricsByName: Record<string, ToolMetrics>;
-
   // API metrics
   apiRequestCount: number;
   totalLatencyMs: number;
   averageLatencyMs: number;
-
-  // Code metrics
-  code: CodeMetrics;
-
-  // Command metrics
-  commands: CommandMetrics;
 
   // Session duration
   durationSeconds: number;

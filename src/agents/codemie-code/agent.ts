@@ -25,7 +25,6 @@ export class CodeMieAgent {
   private tools: StructuredTool[];
   private conversationHistory: BaseMessage[] = [];
   private toolCallArgs: Map<string, Record<string, any>> = new Map(); // Store tool args by tool call ID
-  private toolStartTimes: Map<string, number> = new Map(); // Store tool start times for latency tracking
   private currentExecutionSteps: ExecutionStep[] = [];
   private currentStepNumber = 0;
   private currentLLMTokenUsage: TokenUsage | null = null; // Store token usage for associating with next tool call
@@ -578,7 +577,6 @@ export class CodeMieAgent {
             // Store tool args for later use in result processing
             // Use tool name as key since LangGraph may not preserve IDs consistently
             this.toolCallArgs.set(toolCall.name, toolCall.args);
-            this.toolStartTimes.set(toolCall.name, Date.now());
 
             onEvent({
               type: 'tool_call_start',
@@ -586,18 +584,6 @@ export class CodeMieAgent {
               toolArgs: toolCall.args
             });
 
-            // Track tool call in analytics
-            try {
-              const analytics = getAnalytics();
-              if (analytics.isEnabled) {
-                void analytics.trackToolCall(toolCall.name, toolCall.args);
-              }
-            } catch (error) {
-              // Silently fail - analytics should not block agent execution
-              if (this.config.debug) {
-                logger.debug('Analytics tracking error:', error);
-              }
-            }
 
             if (onToolEvent) {
               onToolEvent(toolCall.name);
@@ -620,13 +606,6 @@ export class CodeMieAgent {
             this.toolCallArgs.delete(toolName); // Clean up after use
           }
 
-          // Calculate tool execution latency
-          const startTime = this.toolStartTimes.get(toolName);
-          const latency = startTime ? Date.now() - startTime : undefined;
-          if (startTime) {
-            this.toolStartTimes.delete(toolName); // Clean up after use
-          }
-
           // Extract enhanced metadata from the tool result
           let toolMetadata = extractToolMetadata(toolName, result, toolArgs);
 
@@ -646,30 +625,6 @@ export class CodeMieAgent {
             result,
             toolMetadata
           });
-
-          // Track tool result in analytics with latency
-          try {
-            const analytics = getAnalytics();
-            if (analytics.isEnabled) {
-              const isError = result.toLowerCase().includes('error') || 
-                             result.toLowerCase().includes('failed');
-              
-              const attributes: Record<string, unknown> = {
-                toolName,
-                success: !isError,
-                ...toolMetadata
-              };
-
-              const metrics = latency ? { latencyMs: latency } : undefined;
-
-              void analytics.track('tool_result', attributes, metrics);
-            }
-          } catch (error) {
-            // Silently fail - analytics should not block agent execution
-            if (this.config.debug) {
-              logger.debug('Analytics tracking error:', error);
-            }
-          }
 
           if (onToolEvent) {
             onToolEvent(); // Signal tool completion
@@ -725,7 +680,6 @@ export class CodeMieAgent {
   clearHistory(): void {
     this.conversationHistory = [];
     this.toolCallArgs.clear(); // Clear stored tool args
-    this.toolStartTimes.clear(); // Clear stored tool start times
     this.currentExecutionSteps = [];
     this.currentStepNumber = 0;
     this.currentLLMTokenUsage = null;

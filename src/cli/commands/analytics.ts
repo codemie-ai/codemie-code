@@ -16,6 +16,7 @@ import {
   type AnalyticsFilters
 } from '../../utils/analytics-reader.js';
 import { getLocalToday, getDefaultLocalDateRange, getLocalDateString } from '../../utils/date-formatter.js';
+import { AgentRegistry } from '../../agents/registry.js';
 
 export function createAnalyticsCommand(): Command {
   const command = new Command('analytics');
@@ -82,8 +83,6 @@ function createStatusCommand(): Command {
         const stats = calculateStats(todayEvents);
 
         console.log(chalk.cyan('Sessions:        ') + chalk.white(stats.totalSessions));
-        console.log(chalk.cyan('User Prompts:    ') + chalk.white(stats.userPrompts));
-        console.log(chalk.cyan('Tool Calls:      ') + chalk.white(stats.toolCalls));
         console.log(chalk.cyan('API Calls:       ') + chalk.white(stats.apiRequests));
         console.log(chalk.cyan('Success Rate:    ') + chalk.white(`${stats.successRate.toFixed(1)}%`));
         console.log(chalk.cyan('Avg Latency:     ') + chalk.white(`${Math.round(stats.avgLatency)}ms`));
@@ -93,8 +92,8 @@ function createStatusCommand(): Command {
           Object.entries(stats.agentUsage)
             .sort(([, a], [, b]) => b.sessions - a.sessions)
             .slice(0, 5)
-            .forEach(([agent, usage]) => {
-              console.log(`  ${chalk.white(agent.padEnd(20))} ${chalk.white(usage.sessions)} sessions, ${chalk.white(usage.prompts)} prompts`);
+            .forEach(([, usage]) => {
+              console.log(`  ${chalk.white(usage.displayName.padEnd(20))} ${chalk.white(usage.sessions)} sessions, ${chalk.white(usage.apiCalls)} API calls`);
             });
         }
 
@@ -120,10 +119,25 @@ function createStatsCommand(): Command {
     .option('--agent <name>', 'Filter by agent name')
     .action(async (options: { from: string; to: string; agent?: string }) => {
       try {
+        // Validate agent filter against registry
+        if (options.agent) {
+          const agentNames = AgentRegistry.getAgentNames();
+          if (!agentNames.includes(options.agent)) {
+            const availableAgents = AgentRegistry.getAllAgents()
+              .map(a => `${a.name} (${a.displayName})`)
+              .join(', ');
+            logger.error(`Unknown agent: ${options.agent}`);
+            console.log(chalk.yellow(`\nAvailable agents: ${availableAgents}\n`));
+            process.exit(1);
+          }
+        }
+
         console.log(chalk.bold.cyan('\n📊 Analytics Statistics\n'));
         console.log(chalk.white(`Date Range: ${options.from} to ${options.to} (local timezone)`));
         if (options.agent) {
-          console.log(chalk.white(`Agent: ${options.agent}`));
+          const adapter = AgentRegistry.getAgent(options.agent);
+          const displayName = adapter?.displayName || options.agent;
+          console.log(chalk.white(`Agent: ${displayName}`));
         }
         console.log();
 
@@ -153,8 +167,6 @@ function createStatsCommand(): Command {
         // Display overview
         console.log(chalk.bold.cyan('📋 Overview\n'));
         console.log(chalk.cyan('Sessions:        ') + chalk.white(stats.totalSessions));
-        console.log(chalk.cyan('User Prompts:    ') + chalk.white(stats.userPrompts));
-        console.log(chalk.cyan('Tool Calls:      ') + chalk.white(stats.toolCalls));
         console.log(chalk.cyan('API Calls:       ') + chalk.white(stats.apiRequests));
         if (stats.apiErrors > 0) {
           console.log(chalk.cyan('API Errors:      ') + chalk.red(stats.apiErrors));
@@ -168,12 +180,12 @@ function createStatsCommand(): Command {
         // Display agent usage
         if (Object.keys(stats.agentUsage).length > 0) {
           console.log(chalk.bold.cyan('\n🤖 Agent Usage\n'));
-          const totalPrompts = Object.values(stats.agentUsage).reduce((sum, usage) => sum + usage.prompts, 0);
+          const totalApiCalls = Object.values(stats.agentUsage).reduce((sum, usage) => sum + usage.apiCalls, 0);
           Object.entries(stats.agentUsage)
-            .sort(([, a], [, b]) => b.prompts - a.prompts)
-            .forEach(([agent, usage]) => {
-              const percentage = totalPrompts > 0 ? ((usage.prompts / totalPrompts) * 100).toFixed(1) : '0.0';
-              console.log(`  ${chalk.white(agent.padEnd(20))} ${chalk.white(usage.prompts.toString().padStart(4))} prompts  ${chalk.white(usage.sessions.toString().padStart(3))} sessions  ${chalk.white(usage.apiCalls.toString().padStart(4))} API calls  (${percentage}%)`);
+            .sort(([, a], [, b]) => b.apiCalls - a.apiCalls)
+            .forEach(([, usage]) => {
+              const percentage = totalApiCalls > 0 ? ((usage.apiCalls / totalApiCalls) * 100).toFixed(1) : '0.0';
+              console.log(`  ${chalk.white(usage.displayName.padEnd(20))} ${chalk.white(usage.sessions.toString().padStart(3))} sessions  ${chalk.white(usage.apiCalls.toString().padStart(4))} API calls  (${percentage}%)`);
             });
         }
 
@@ -188,16 +200,6 @@ function createStatsCommand(): Command {
               const percentage = ((usage.apiCalls / totalApiCalls) * 100).toFixed(1);
               console.log(`  ${chalk.white(model.padEnd(30))} ${chalk.white(usage.apiCalls.toString().padStart(4))} calls  (${percentage}%)`);
             });
-        }
-
-        // Display tool calls breakdown
-        if (stats.toolCallsBreakdown.length > 0) {
-          console.log(chalk.bold.cyan('\n🔧 Tool Calls Breakdown\n'));
-          const totalToolCalls = stats.toolCallsBreakdown.reduce((sum, t) => sum + t.count, 0);
-          stats.toolCallsBreakdown.forEach(({ name, count }) => {
-            const percentage = totalToolCalls > 0 ? ((count / totalToolCalls) * 100).toFixed(1) : '0.0';
-            console.log(`  ${chalk.white(name.padEnd(25))} ${chalk.white(count.toString().padStart(5))} calls  (${percentage}%)`);
-          });
         }
 
         console.log();
@@ -238,11 +240,26 @@ function createExportCommand(): Command {
           process.exit(1);
         }
 
+        // Validate agent filter against registry
+        if (options.agent) {
+          const agentNames = AgentRegistry.getAgentNames();
+          if (!agentNames.includes(options.agent)) {
+            const availableAgents = AgentRegistry.getAllAgents()
+              .map(a => `${a.name} (${a.displayName})`)
+              .join(', ');
+            logger.error(`Unknown agent: ${options.agent}`);
+            console.log(chalk.yellow(`\nAvailable agents: ${availableAgents}\n`));
+            process.exit(1);
+          }
+        }
+
         console.log(chalk.bold.cyan('\n📤 Exporting Analytics Data\n'));
         console.log(chalk.white(`Date Range: ${options.from} to ${options.to} (local timezone)`));
         console.log(chalk.white(`Format: ${options.format.toUpperCase()}`));
         if (options.agent) {
-          console.log(chalk.white(`Agent Filter: ${options.agent}`));
+          const adapter = AgentRegistry.getAgent(options.agent);
+          const displayName = adapter?.displayName || options.agent;
+          console.log(chalk.white(`Agent Filter: ${displayName}`));
         }
         if (options.eventType) {
           console.log(chalk.white(`Event Type Filter: ${options.eventType}`));

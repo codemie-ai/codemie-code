@@ -14,6 +14,7 @@ import {
   localDateToUTCRange,
   getUTCFilesForLocalDate
 } from './date-formatter.js';
+import { AgentRegistry } from '../agents/registry.js';
 
 export interface AnalyticsFilters {
   agent?: string;
@@ -27,21 +28,14 @@ export interface AnalyticsStats {
   successRate: number;
   avgLatency: number;
 
-  // User interaction metrics
-  userPrompts: number;
-  toolCalls: number;
-
   // API metrics
   apiRequests: number;
   apiErrors: number;
 
-  // Tool calls breakdown (by exact tool name)
-  toolCallsBreakdown: Array<{ name: string; count: number }>;
-
   // Agent usage breakdown
   agentUsage: Record<string, {
+    displayName: string;
     sessions: number;
-    prompts: number;
     apiCalls: number;
   }>;
 
@@ -216,20 +210,15 @@ export function filterEvents(events: AnalyticsEvent[], filters: AnalyticsFilters
  */
 export function calculateStats(events: AnalyticsEvent[]): AnalyticsStats {
   const sessions = new Set<string>();
-  const toolCalls: Record<string, number> = {};
   let totalLatency = 0;
   let latencyCount = 0;
-
-  // User interaction counters
-  let userPrompts = 0;
-  let totalToolCalls = 0;
 
   // API counters
   let apiRequests = 0;
   let apiErrors = 0;
 
   // Agent usage tracking
-  const agentUsage: Record<string, { sessions: Set<string>; prompts: number; apiCalls: number }> = {};
+  const agentUsage: Record<string, { sessions: Set<string>; apiCalls: number }> = {};
 
   // Model usage tracking
   const modelUsage: Record<string, { apiCalls: number }> = {};
@@ -242,24 +231,11 @@ export function calculateStats(events: AnalyticsEvent[]): AnalyticsStats {
 
     // Track event types
     switch (event.eventType) {
-      case 'user_prompt':
-        userPrompts++;
-        if (event.agent) {
-          if (!agentUsage[event.agent]) {
-            agentUsage[event.agent] = { sessions: new Set(), prompts: 0, apiCalls: 0 };
-          }
-          agentUsage[event.agent].prompts++;
-          if (event.sessionId) {
-            agentUsage[event.agent].sessions.add(event.sessionId);
-          }
-        }
-        break;
-
       case 'api_request':
         apiRequests++;
         if (event.agent) {
           if (!agentUsage[event.agent]) {
-            agentUsage[event.agent] = { sessions: new Set(), prompts: 0, apiCalls: 0 };
+            agentUsage[event.agent] = { sessions: new Set(), apiCalls: 0 };
           }
           agentUsage[event.agent].apiCalls++;
         }
@@ -275,7 +251,7 @@ export function calculateStats(events: AnalyticsEvent[]): AnalyticsStats {
         apiErrors++;
         if (event.agent) {
           if (!agentUsage[event.agent]) {
-            agentUsage[event.agent] = { sessions: new Set(), prompts: 0, apiCalls: 0 };
+            agentUsage[event.agent] = { sessions: new Set(), apiCalls: 0 };
           }
           agentUsage[event.agent].apiCalls++;
         }
@@ -286,21 +262,6 @@ export function calculateStats(events: AnalyticsEvent[]): AnalyticsStats {
           modelUsage[event.model].apiCalls++;
         }
         break;
-
-      case 'api_response':
-        // Extract tool usage from response body (works for all agents)
-        if (event.attributes.responseBody && typeof event.attributes.responseBody === 'object') {
-          const responseBody = event.attributes.responseBody as { content?: Array<{ type?: string; name?: string }> };
-          if (Array.isArray(responseBody.content)) {
-            for (const item of responseBody.content) {
-              if (item.type === 'tool_use' && item.name) {
-                totalToolCalls++;
-                toolCalls[item.name] = (toolCalls[item.name] || 0) + 1;
-              }
-            }
-          }
-        }
-        break;
     }
 
     // Track latency
@@ -308,20 +269,15 @@ export function calculateStats(events: AnalyticsEvent[]): AnalyticsStats {
       totalLatency += event.metrics.latencyMs;
       latencyCount++;
     }
-    
-    // Ensure agent sessions are tracked even if no prompts
+
+    // Ensure agent sessions are tracked
     if (event.agent && event.sessionId) {
       if (!agentUsage[event.agent]) {
-        agentUsage[event.agent] = { sessions: new Set(), prompts: 0, apiCalls: 0 };
+        agentUsage[event.agent] = { sessions: new Set(), apiCalls: 0 };
       }
       agentUsage[event.agent].sessions.add(event.sessionId);
     }
   }
-
-  // Calculate tool calls breakdown (sorted by count, descending)
-  const toolCallsBreakdown = Object.entries(toolCalls)
-    .map(([name, count]) => ({ name, count }))
-    .sort((a, b) => b.count - a.count);
 
   // Calculate success rate from API responses
   let apiSuccessCount = 0;
@@ -339,12 +295,16 @@ export function calculateStats(events: AnalyticsEvent[]): AnalyticsStats {
 
   const successRate = apiTotalCount > 0 ? (apiSuccessCount / apiTotalCount) * 100 : 0;
 
-  // Convert agent usage to final format
-  const finalAgentUsage: Record<string, { sessions: number; prompts: number; apiCalls: number }> = {};
-  for (const [agent, data] of Object.entries(agentUsage)) {
-    finalAgentUsage[agent] = {
+  // Convert agent usage to final format with display names from registry
+  const finalAgentUsage: Record<string, { displayName: string; sessions: number; apiCalls: number }> = {};
+  for (const [agentName, data] of Object.entries(agentUsage)) {
+    // Get display name from plugin registry
+    const adapter = AgentRegistry.getAgent(agentName);
+    const displayName = adapter?.displayName || agentName;
+
+    finalAgentUsage[agentName] = {
+      displayName,
       sessions: data.sessions.size,
-      prompts: data.prompts,
       apiCalls: data.apiCalls
     };
   }
@@ -353,11 +313,8 @@ export function calculateStats(events: AnalyticsEvent[]): AnalyticsStats {
     totalSessions: sessions.size,
     successRate,
     avgLatency: latencyCount > 0 ? totalLatency / latencyCount : 0,
-    userPrompts,
-    toolCalls: totalToolCalls,
     apiRequests,
     apiErrors,
-    toolCallsBreakdown,
     agentUsage: finalAgentUsage,
     modelUsage
   };

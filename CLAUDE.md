@@ -366,52 +366,22 @@ codemie-code/
 
 **Event Types Tracked:**
 - Session lifecycle (start, end, error)
-- User interactions (prompts, responses, tool calls)
-- Code operations (file read/write/edit, git ops, commands)
+- User interactions (prompts, responses)
 - API interactions (requests, responses, errors)
 - Configuration changes (profile switches, model changes)
 - Performance metrics (latency)
 
-**Multi-Format Tool Extraction:**
-
-The analytics system automatically detects and extracts tool calls from multiple API formats:
-
-1. **Anthropic Format** (Claude):
-   ```json
-   // Response: {content: [{type: "tool_use", name: "Read", id: "toolu_123", input: {...}}]}
-   // Request: {content: [{type: "tool_result", tool_use_id: "toolu_123", is_error: false, content: "..."}]}
-   ```
-
-2. **OpenAI Format** (GPT-4, GPT-3.5):
-   ```json
-   // Response: {choices: [{message: {tool_calls: [{id: "call_abc", type: "function", function: {name: "read_file", arguments: "..."}}]}}]}
-   // Request: {messages: [{role: "tool", tool_call_id: "call_abc", content: "..."}]}
-   ```
-
-3. **Google Gemini Format**:
-   ```json
-   // Response: {candidates: [{content: {parts: [{functionCall: {name: "searchFiles", args: {...}}}]}}]}
-   // Request: {contents: [{parts: [{functionResponse: {name: "searchFiles", response: {...}}}]}]}
-   ```
-
-**Format Detection**: Automatically tries Anthropic → OpenAI → Gemini until a match is found, then stops processing.
-
 **Example Events:**
 ```jsonl
 {"timestamp":"2025-11-29T10:30:00.000Z","eventType":"session_start","sessionId":"uuid","installationId":"inst-123","agent":"claude","agentVersion":"1.0.0","cliVersion":"0.0.11","profile":"work","provider":"ai-run-sso","model":"claude-4-5-sonnet","attributes":{"workingDir":"/path","interactive":true}}
-{"timestamp":"2025-11-29T10:30:10.000Z","eventType":"tool_call","sessionId":"uuid","agent":"claude","attributes":{"toolName":"Read","toolUseId":"toolu_123","format":"anthropic","hasInput":true},"metrics":{"latencyMs":45}}
-{"timestamp":"2025-11-29T10:30:12.000Z","eventType":"tool_call","sessionId":"uuid","agent":"codex","attributes":{"toolName":"read_file","toolUseId":"call_abc","format":"openai","hasArguments":true}}
 {"timestamp":"2025-11-29T10:30:15.000Z","eventType":"api_response","sessionId":"uuid","agent":"claude","metrics":{"latencyMs":2340}}
 ```
 
 **Integration Points:**
 - `AgentCLI.handleRun()`: Auto-initializes analytics, tracks session lifecycle
-- `Analytics.trackAPIResponse()`: Unified multi-format API-level tracking that extracts tool calls and results from API request/response bodies
-  - **Supported Formats**: Anthropic, OpenAI/GPT, Google Gemini
-  - **Auto-Detection**: Automatically detects format and extracts tool metadata
-  - **Format-Agnostic**: Works across all agents regardless of underlying API
-- Built-in agent: Uses LangChain streaming API (tool tracking at message level)
-- External agents: Session tracking via universal executor (API-level tracking with multi-format support)
+- `Analytics.trackAPIResponse()`: Tracks API requests and responses with latency metrics
+- Built-in agent: Uses LangChain streaming API
+- External agents: Session tracking via universal executor
 
 ### Key Architectural Patterns
 
@@ -698,6 +668,51 @@ The plugin pattern makes adding new agents straightforward without modifying cor
 4. **Update docs**: README.md and CLAUDE.md
 
 **Why This Works**: `agent-executor.js` automatically handles the new agent based on its name, no additional code needed!
+
+### Analytics Integration - **Automatic Plugin Discovery**
+
+The analytics system is **already integrated** with the plugin system, providing automatic discovery and display of agent stats without additional code.
+
+#### How It Works
+
+**Automatic Agent Discovery**:
+- `calculateStats()` function queries `AgentRegistry` to get display names
+- Agent filters are validated against registered plugins
+- Display names are shown instead of internal IDs (e.g., "Claude Code" instead of "claude")
+
+**Key Features**:
+1. **Agent Validation**: All analytics commands validate agent filters against the registry
+   ```bash
+   # Shows error with available agents if invalid
+   codemie analytics stats --agent invalid
+   # Available agents: codemie-code (CodeMie Native), claude (Claude Code), ...
+   ```
+
+2. **Display Name Integration**: Stats automatically show friendly names
+   ```
+   🤖 Agent Usage
+
+   Claude Code         15 prompts   3 sessions   45 API calls  (65.2%)
+   CodeMie Native       8 prompts   2 sessions   20 API calls  (34.8%)
+   ```
+
+3. **No Code Changes Required**: Adding a new plugin automatically includes it in analytics
+
+**Commands with Plugin Integration**:
+- `codemie analytics status` - Shows agent activity with display names
+- `codemie analytics stats --agent <name>` - Validates and filters by agent
+- `codemie analytics export --agent <name>` - Validates agent filters
+
+**Implementation Details** (for reference):
+- `src/utils/analytics-reader.ts`: Queries `AgentRegistry.getAgent()` for display names
+- `src/cli/commands/analytics.ts`: Validates filters with `AgentRegistry.getAgentNames()`
+- Auto-enriches agent stats with `displayName` field from plugin metadata
+
+**Benefits**:
+✅ **Extensible**: New plugins automatically appear in stats
+✅ **Type-Safe**: Uses existing plugin metadata
+✅ **User-Friendly**: Shows display names, not internal IDs
+✅ **Validated**: Prevents invalid agent filters with helpful error messages
 
 ### Built-in Agent Development - **LangGraph Architecture**
 
