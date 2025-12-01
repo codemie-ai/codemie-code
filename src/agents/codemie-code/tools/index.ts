@@ -177,10 +177,12 @@ class ExecuteCommandTool extends StructuredTool {
   });
 
   private workingDirectory: string;
+  private timeout: number;
 
-  constructor(workingDirectory: string) {
+  constructor(workingDirectory: string, timeout: number = 300) {
     super();
     this.workingDirectory = workingDirectory;
+    this.timeout = timeout * 1000; // Convert seconds to milliseconds
   }
 
   async _call({ command }: z.infer<typeof this.schema>): Promise<string> {
@@ -221,7 +223,7 @@ class ExecuteCommandTool extends StructuredTool {
       try {
         const { stdout, stderr } = await execAsync(command, {
           cwd: this.workingDirectory,
-          timeout: 30000, // 30 second timeout
+          timeout: this.timeout, // Use configured timeout (default: 5 minutes)
           maxBuffer: 1024 * 1024 // 1MB output limit
         });
 
@@ -440,7 +442,7 @@ export async function createSystemTools(config: CodeMieConfig): Promise<Structur
     tools.push(new ListDirectoryTool(config.workingDirectory, config.directoryFilters));
 
     // Command execution tool
-    tools.push(new ExecuteCommandTool(config.workingDirectory));
+    tools.push(new ExecuteCommandTool(config.workingDirectory, config.timeout));
 
     // Planning and todo tools
     try {

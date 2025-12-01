@@ -6,6 +6,7 @@ import { ConfigLoader, CodeMieConfigOptions } from '../../utils/config-loader.js
 import { logger } from '../../utils/logger.js';
 import { checkProviderHealth } from '../../utils/health-checker.js';
 import { fetchCodeMieModelsFromConfig } from '../../utils/codemie-model-fetcher.js';
+import { getAnalytics } from '../../analytics/index.js';
 
 export function createConfigCommand(): Command {
   const command = new Command('config');
@@ -197,6 +198,19 @@ export function createConfigCommand(): Command {
         logger.success(`Created .codemie/config.json`);
 
         console.log(chalk.white('\nProject config created. Environment variables and CLI flags will still override these settings.'));
+
+        // Track config change
+        try {
+          const analytics = getAnalytics();
+          await analytics.track('config_change', {
+            operation: 'init_project_config',
+            directory: options.dir,
+            overrides: Object.keys(projectConfig)
+          });
+        } catch (analyticsError) {
+          // Silent fail
+          logger.debug('Analytics tracking error:', analyticsError);
+        }
       } catch (error: unknown) {
         logger.error('Failed to initialize project config:', error);
         process.exit(1);

@@ -17,6 +17,7 @@ import { extractToolMetadata } from './toolMetadata.js';
 import { extractTokenUsageFromStreamChunk, extractTokenUsageFromFinalState } from './tokenUtils.js';
 import { setGlobalToolEventCallback } from './tools/index.js';
 import { logger } from '../../utils/logger.js';
+import { getAnalytics } from '../../analytics/index.js';
 
 export class CodeMieAgent {
   private agent: any;
@@ -24,6 +25,7 @@ export class CodeMieAgent {
   private tools: StructuredTool[];
   private conversationHistory: BaseMessage[] = [];
   private toolCallArgs: Map<string, Record<string, any>> = new Map(); // Store tool args by tool call ID
+  private toolStartTimes: Map<string, number> = new Map(); // Store tool start times for latency tracking
   private currentExecutionSteps: ExecutionStep[] = [];
   private currentStepNumber = 0;
   private currentLLMTokenUsage: TokenUsage | null = null; // Store token usage for associating with next tool call
@@ -177,16 +179,16 @@ export class CodeMieAgent {
               }
             };
 
-            // Handle SSL verification consistently with SSO Gateway (rejectUnauthorized: false)
-            // SSO Gateway always allows self-signed certificates like codemie-model-fetcher does
+            // Handle SSL verification consistently with CodeMie Proxy (rejectUnauthorized: false)
+            // CodeMie Proxy always allows self-signed certificates like codemie-model-fetcher does
             process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
             // Suppress the NODE_TLS_REJECT_UNAUTHORIZED warning since this is expected behavior
-            // that matches how codemie-claude works through SSO Gateway
+            // that matches how codemie-claude works through CodeMie Proxy
             process.removeAllListeners('warning');
 
             if (this.config.debug) {
-              logger.debug('Disabled SSL verification (like SSO Gateway and codemie-model-fetcher)');
+              logger.debug('Disabled SSL verification (like CodeMie Proxy and codemie-model-fetcher)');
             }
 
             if (this.config.debug) {
@@ -373,6 +375,21 @@ export class CodeMieAgent {
           // Store token usage to associate with next tool call
           this.currentLLMTokenUsage = tokenUsage;
 
+          // Track API response in analytics
+          try {
+            const analytics = getAnalytics();
+            if (analytics.isEnabled) {
+              void analytics.trackAPIResponse({
+                latency: currentStep.endTime ? currentStep.endTime - currentStep.startTime : undefined
+              });
+            }
+          } catch (error) {
+            // Silently fail - analytics should not block agent execution
+            if (this.config.debug) {
+              logger.debug('Analytics API response tracking error:', error);
+            }
+          }
+
           if (this.config.debug) {
             logger.debug(`Token usage: ${tokenUsage.inputTokens} in, ${tokenUsage.outputTokens} out`);
           }
@@ -438,6 +455,22 @@ export class CodeMieAgent {
               if (step.type === 'llm_call' && !step.tokenUsage) {
                 step.tokenUsage = finalTokenUsage;
                 this.updateStatsWithTokenUsage(finalTokenUsage);
+
+                // Track in analytics (fallback case)
+                try {
+                  const analytics = getAnalytics();
+                  if (analytics.isEnabled) {
+                    void analytics.trackAPIResponse({
+                      latency: step.endTime ? step.endTime - step.startTime : undefined
+                    });
+                  }
+                } catch (error) {
+                  // Silently fail
+                  if (this.config.debug) {
+                    logger.debug('Analytics final state tracking error:', error);
+                  }
+                }
+
                 break;
               }
             }
@@ -545,12 +578,26 @@ export class CodeMieAgent {
             // Store tool args for later use in result processing
             // Use tool name as key since LangGraph may not preserve IDs consistently
             this.toolCallArgs.set(toolCall.name, toolCall.args);
+            this.toolStartTimes.set(toolCall.name, Date.now());
 
             onEvent({
               type: 'tool_call_start',
               toolName: toolCall.name,
               toolArgs: toolCall.args
             });
+
+            // Track tool call in analytics
+            try {
+              const analytics = getAnalytics();
+              if (analytics.isEnabled) {
+                void analytics.trackToolCall(toolCall.name, toolCall.args);
+              }
+            } catch (error) {
+              // Silently fail - analytics should not block agent execution
+              if (this.config.debug) {
+                logger.debug('Analytics tracking error:', error);
+              }
+            }
 
             if (onToolEvent) {
               onToolEvent(toolCall.name);
@@ -573,6 +620,13 @@ export class CodeMieAgent {
             this.toolCallArgs.delete(toolName); // Clean up after use
           }
 
+          // Calculate tool execution latency
+          const startTime = this.toolStartTimes.get(toolName);
+          const latency = startTime ? Date.now() - startTime : undefined;
+          if (startTime) {
+            this.toolStartTimes.delete(toolName); // Clean up after use
+          }
+
           // Extract enhanced metadata from the tool result
           let toolMetadata = extractToolMetadata(toolName, result, toolArgs);
 
@@ -592,6 +646,30 @@ export class CodeMieAgent {
             result,
             toolMetadata
           });
+
+          // Track tool result in analytics with latency
+          try {
+            const analytics = getAnalytics();
+            if (analytics.isEnabled) {
+              const isError = result.toLowerCase().includes('error') || 
+                             result.toLowerCase().includes('failed');
+              
+              const attributes: Record<string, unknown> = {
+                toolName,
+                success: !isError,
+                ...toolMetadata
+              };
+
+              const metrics = latency ? { latencyMs: latency } : undefined;
+
+              void analytics.track('tool_result', attributes, metrics);
+            }
+          } catch (error) {
+            // Silently fail - analytics should not block agent execution
+            if (this.config.debug) {
+              logger.debug('Analytics tracking error:', error);
+            }
+          }
 
           if (onToolEvent) {
             onToolEvent(); // Signal tool completion
@@ -647,6 +725,7 @@ export class CodeMieAgent {
   clearHistory(): void {
     this.conversationHistory = [];
     this.toolCallArgs.clear(); // Clear stored tool args
+    this.toolStartTimes.clear(); // Clear stored tool start times
     this.currentExecutionSteps = [];
     this.currentStepNumber = 0;
     this.currentLLMTokenUsage = null;

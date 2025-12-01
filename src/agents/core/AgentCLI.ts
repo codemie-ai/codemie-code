@@ -12,6 +12,7 @@ import { CodexPluginMetadata } from '../plugins/codex.plugin.js';
 import { CodeMieCodePluginMetadata } from '../plugins/codemie-code.plugin.js';
 import { GeminiPluginMetadata } from '../plugins/gemini.plugin.js';
 import { DeepAgentsPluginMetadata } from '../plugins/deepagents.plugin.js';
+import { initAnalytics, getAnalytics, destroyAnalytics } from '../../analytics/index.js';
 
 /**
  * Universal CLI builder for any agent
@@ -60,7 +61,6 @@ export class AgentCLI {
       .option('--api-key <key>', 'Override API key')
       .option('--base-url <url>', 'Override base URL')
       .option('--timeout <seconds>', 'Override timeout (in seconds)', parseInt)
-      .option('--debug', 'Enable debug logging (writes to file)')
       .allowUnknownOption()
       .argument('[args...]', `Arguments to pass to ${this.adapter.displayName}`)
       .action(async (args, options) => {
@@ -110,21 +110,69 @@ export class AgentCLI {
 
       const providerEnv = ConfigLoader.exportProviderEnvVars(config);
 
-      // Enable debug mode and get session directory if --debug flag is set
-      let debugSessionDir: string | null = null;
-      if (options.debug) {
-        providerEnv.CODEMIE_DEBUG = '1';
-        debugSessionDir = await logger.enableDebugMode();
-      }
+      // Initialize analytics with config
+      const fullConfig = await ConfigLoader.loadFull(process.cwd(), {
+        name: options.profile as string | undefined
+      });
+      initAnalytics(fullConfig.analytics);
+
+      // Start analytics session
+      const analytics = getAnalytics();
+      const agentVersion = await this.adapter.getVersion();
+      analytics.startSession({
+        agent: this.adapter.name,
+        agentVersion: agentVersion || 'unknown',
+        cliVersion: this.version,
+        profile: config.name || 'default',
+        provider: config.provider || 'unknown',
+        model: config.model || 'unknown',
+        workingDir: process.cwd(),
+        interactive: args.length === 0 || !args.some(arg => arg === '-p' || arg === '--print')
+      });
 
       // Collect all arguments to pass to the agent
       const agentArgs = this.collectPassThroughArgs(args, options);
 
       // Run the agent
       const profileName = config.name || 'default';
-      const debugInfo = debugSessionDir ? ` | Debug: ${debugSessionDir}` : '';
-      logger.info(`Starting ${this.adapter.displayName} | Profile: ${profileName} | Provider: ${config.provider} | Model: ${config.model}${debugInfo}`);
-      await this.adapter.run(agentArgs, providerEnv);
+      logger.info(`Starting ${this.adapter.displayName} | Profile: ${profileName} | Provider: ${config.provider} | Model: ${config.model}`);
+
+      try {
+        await this.adapter.run(agentArgs, providerEnv);
+
+        // End session on success
+        await analytics.endSession('user_exit');
+      } catch (error) {
+        // Track error with comprehensive context
+        const errorContext: Record<string, unknown> = {
+          error: error instanceof Error ? error.message : String(error),
+          errorType: error instanceof Error ? error.constructor.name : 'Unknown',
+          agent: this.adapter.name,
+          provider: config.provider,
+          model: config.model,
+          profile: config.name || 'default',
+          workingDir: process.cwd(),
+          args: agentArgs.length > 0 ? agentArgs.join(' ') : undefined
+        };
+
+        // Add stack trace in debug mode or for critical errors
+        if (error instanceof Error && error.stack) {
+          errorContext.stackTrace = error.stack;
+        }
+
+        // Check if error has additional properties (e.g., from CodeMieAgentError)
+        if (error && typeof error === 'object') {
+          const errorObj = error as Record<string, unknown>;
+          if (errorObj.code) errorContext.errorCode = errorObj.code;
+          if (errorObj.details) errorContext.errorDetails = errorObj.details;
+        }
+
+        await analytics.track('session_error', errorContext);
+        await analytics.endSession('error');
+        throw error;
+      } finally {
+        await destroyAnalytics();
+      }
     } catch (error) {
       logger.error(`Failed to run ${this.adapter.displayName}:`, error);
       process.exit(1);
@@ -159,7 +207,7 @@ export class AgentCLI {
    */
   private collectPassThroughArgs(args: string[], options: Record<string, unknown>): string[] {
     const agentArgs = [...args];
-    const knownOptions = ['profile', 'model', 'provider', 'apiKey', 'baseUrl', 'timeout', 'debug'];
+    const knownOptions = ['profile', 'model', 'provider', 'apiKey', 'baseUrl', 'timeout'];
 
     for (const [key, value] of Object.entries(options)) {
       if (knownOptions.includes(key)) continue;

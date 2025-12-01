@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { logger } from '../logger.js';
 
-describe('SSO Gateway Session ID Integration', () => {
+describe('CodeMie Proxy Session ID Integration', () => {
   it('should have a valid UUID session ID', () => {
     const sessionId = logger.getSessionId();
 

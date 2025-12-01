@@ -26,9 +26,9 @@ export interface AgentMetadata {
   supportedProviders: string[];    // ['openai', 'litellm', 'ai-run-sso']
   blockedModelPatterns?: RegExp[]; // [/^claude/i] for Codex
 
-  // === SSO Configuration ===
+  // === Proxy Configuration ===
   ssoConfig?: {
-    enabled: boolean;              // Enable SSO gateway support
+    enabled: boolean;              // Enable proxy support
     clientType: string;            // 'codemie-claude'
     envOverrides: {                // Which env vars to override
       baseUrl: string;             // 'ANTHROPIC_BASE_URL'

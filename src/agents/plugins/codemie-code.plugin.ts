@@ -27,7 +27,7 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
   supportedProviders: ['bedrock', 'openai', 'azure', 'litellm', 'ai-run-sso'],
   blockedModelPatterns: [],
 
-  // Built-in agent doesn't use SSO gateway (handles auth internally)
+  // Built-in agent doesn't use proxy (handles auth internally)
   ssoConfig: undefined,
 
   customOptions: [

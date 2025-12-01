@@ -18,7 +18,7 @@ export const GeminiPluginMetadata: AgentMetadata = {
     model: ['GEMINI_MODEL']
   },
 
-  supportedProviders: ['gemini', 'litellm'],
+  supportedProviders: ['ai-run-sso', 'gemini', 'litellm'],
   blockedModelPatterns: [/^claude/i, /^gpt/i], // Gemini models only
 
   ssoConfig: {

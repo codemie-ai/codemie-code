@@ -2,14 +2,14 @@ import { AgentMetadata, AgentAdapter, AgentConfig } from './types.js';
 import { exec } from '../../utils/exec.js';
 import { logger } from '../../utils/logger.js';
 import { spawn } from 'child_process';
-import { SSOGateway } from '../../utils/sso-gateway.js';
+import { CodeMieProxy } from '../../utils/codemie-proxy.js';
 
 /**
  * Base class for all agent adapters
  * Implements common logic shared by external agents
  */
 export abstract class BaseAgentAdapter implements AgentAdapter {
-  protected ssoGateway: SSOGateway | null = null;
+  protected proxy: CodeMieProxy | null = null;
 
   constructor(protected metadata: AgentMetadata) {}
 
@@ -105,8 +105,8 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       ...envOverrides
     };
 
-    // Setup SSO gateway if needed
-    await this.setupSSOGateway(env);
+    // Setup proxy if needed
+    await this.setupProxy(env);
 
     // Apply argument transformations
     const transformedArgs = this.metadata.argumentTransform
@@ -123,7 +123,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     }
 
     try {
-      // Spawn the CLI command
+      // Spawn the CLI command with inherited stdio
       const child = spawn(this.metadata.cliCommand, transformedArgs, {
         stdio: 'inherit',
         env
@@ -135,10 +135,10 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         });
 
         child.on('exit', async (code) => {
-          // Clean up gateway
-          if (this.ssoGateway) {
-            await this.ssoGateway.stop();
-            this.ssoGateway = null;
+          // Clean up proxy
+          if (this.proxy) {
+            await this.proxy.stop();
+            this.proxy = null;
           }
 
           // Run afterRun hook
@@ -154,25 +154,25 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         });
       });
     } catch (error) {
-      // Clean up gateway on error
-      if (this.ssoGateway) {
-        await this.ssoGateway.stop();
-        this.ssoGateway = null;
+      // Clean up proxy on error
+      if (this.proxy) {
+        await this.proxy.stop();
+        this.proxy = null;
       }
       throw error;
     }
   }
 
   /**
-   * Centralized SSO gateway setup
+   * Centralized proxy setup
    * Works for ALL agents based on their metadata
    */
-  protected async setupSSOGateway(env: NodeJS.ProcessEnv): Promise<void> {
+  protected async setupProxy(env: NodeJS.ProcessEnv): Promise<void> {
     // Only activate for ai-run-sso provider
     const isSSOProvider = env.CODEMIE_PROVIDER === 'ai-run-sso';
 
     if (!isSSOProvider || !this.metadata.ssoConfig?.enabled) {
-      return; // No SSO needed
+      return; // No proxy needed
     }
 
     try {
@@ -183,21 +183,31 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         throw new Error('No API URL found for SSO authentication');
       }
 
-      // Create and start the SSO gateway
-      this.ssoGateway = new SSOGateway({
+      // Parse timeout from environment (in seconds, convert to milliseconds)
+      const timeoutSeconds = env.CODEMIE_TIMEOUT ? parseInt(env.CODEMIE_TIMEOUT, 10) : 300;
+      const timeoutMs = timeoutSeconds * 1000;
+
+      // Extract config values from environment (includes CLI overrides)
+      const config = this.extractConfig(env);
+
+      // Create and start the proxy with full config
+      this.proxy = new CodeMieProxy({
         targetApiUrl,
-        debug: !!env.CODEMIE_DEBUG,
-        clientType: this.metadata.ssoConfig.clientType
+        clientType: this.metadata.ssoConfig.clientType,
+        timeout: timeoutMs,
+        model: config.model,
+        provider: config.provider,
+        integrationId: env.CODEMIE_INTEGRATION_ID
       });
 
-      const { url } = await this.ssoGateway.start();
+      const { url } = await this.proxy.start();
 
       const { baseUrl, apiKey } = this.metadata.ssoConfig.envOverrides;
       env[baseUrl] = url;
-      env[apiKey] = 'gateway-handled';
+      env[apiKey] = 'proxy-handled';
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      throw new Error(`SSO gateway setup failed: ${errorMessage}`);
+      throw new Error(`Proxy setup failed: ${errorMessage}`);
     }
   }
 

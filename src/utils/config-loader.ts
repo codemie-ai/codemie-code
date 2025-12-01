@@ -80,6 +80,30 @@ export class ConfigLoader {
   }
 
   /**
+   * Load full configuration including analytics
+   * Returns the complete multi-provider config with analytics settings
+   */
+  static async loadFull(
+    workingDir: string = process.cwd(),
+    cliOverrides?: { name?: string }
+  ): Promise<MultiProviderConfig> {
+    const rawConfig = await this.loadJsonConfig(this.GLOBAL_CONFIG);
+
+    if (isMultiProviderConfig(rawConfig)) {
+      return rawConfig;
+    }
+
+    // Return default multi-provider structure if legacy
+    return {
+      version: 2,
+      activeProfile: 'default',
+      profiles: {
+        default: await this.load(workingDir, cliOverrides)
+      }
+    };
+  }
+
+  /**
    * Load global config and extract active profile if multi-provider
    */
   private static async loadGlobalConfigProfile(profileName?: string): Promise<Partial<CodeMieConfigOptions>> {

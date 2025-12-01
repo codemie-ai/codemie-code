@@ -77,12 +77,5 @@ describe('Agent Shortcuts - Integration', () => {
       // Should parse flag without error
       expect(result.output || result.error).toBeDefined();
     });
-
-    it('should accept --debug flag', () => {
-      const result = runAgentCommand('node ./bin/agent-executor.js --debug --help');
-
-      // Should parse flag without error
-      expect(result.output || result.error).toBeDefined();
-    });
   });
 });

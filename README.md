@@ -2,8 +2,23 @@
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![npm version](https://img.shields.io/npm/v/@codemieai/code.svg)](https://www.npmjs.com/package/@codemieai/code)
+[![Node.js Version](https://img.shields.io/badge/node-%3E%3D24.0.0-brightgreen.svg)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.3%2B-blue.svg)](https://www.typescriptlang.org/)
 
-> Professional CLI wrapper for managing multiple AI coding agents
+> **Unified AI Coding Assistant CLI** - Manage Claude Code, OpenAI Codex, Google Gemini, and custom AI agents from one powerful command-line interface. Multi-provider support (OpenAI, Azure OpenAI, AWS Bedrock, LiteLLM, Enterprise SSO). Built-in LangGraph agent with file operations, git integration, and advanced code generation.
+
+## Why CodeMie CLI?
+
+**The all-in-one AI coding assistant for developers**
+
+✨ **One CLI, Multiple AI Agents** - Switch between Claude Code, Codex, Gemini, and more
+🔄 **Multi-Provider Support** - OpenAI, Azure, Bedrock, LiteLLM, Enterprise SSO
+🚀 **Built-in Agent** - LangGraph-based assistant with file operations & git integration
+🔐 **Enterprise Ready** - SSO authentication, audit logging, role-based access
+⚡ **Productivity Boost** - Code review, refactoring, test generation, bug fixing
+🎯 **Profile Management** - Manage work, personal, and team configurations separately
+
+Perfect for developers seeking a **GitHub Copilot alternative**, **Cursor alternative**, or unified interface for AI-powered coding assistance.
 
 ## Table of Contents
 
@@ -71,7 +86,6 @@ All agent shortcuts (`codemie-*`) share common configuration options:
 - `--model <model>` - Override model
 - `--api-key <key>` - Override API key
 - `--base-url <url>` - Override base URL
-- `--debug` - Enable debug logging
 
 ## Quick Start
 
@@ -120,7 +134,8 @@ npm install -g @codemieai/code
 ```bash
 git clone https://github.com/codemie-ai/codemie-code.git
 cd codemie-code
-npm install && npm run build && npm link
+npm install                # Installs all dependencies
+npm run build && npm link  # Build and link globally
 ```
 
 ### Verify Installation
@@ -145,9 +160,6 @@ codemie-code "Help me refactor this component"
 
 # Execute single task (via main CLI)
 codemie --task "fix bugs in src/utils"
-
-# Debug mode
-codemie-code --debug
 ```
 
 ### External Agents
@@ -544,9 +556,6 @@ codemie config init
 
 # Temporary model override
 codemie-claude --model claude-4-5-sonnet "Explain this algorithm"
-
-# Debug mode for troubleshooting
-codemie-code --debug "analyze performance issues"
 ```
 
 ### Multi-Provider Workflow Examples
@@ -601,16 +610,6 @@ codemie-claude --context large "Review this code"
 codemie-claude -p "$(cat prompt.txt)" --max-turns 50
 codemie-codex -p "Generate tests for src/utils" --output json
 
-# Debug logging (writes to ~/.codemie/debug/)
-codemie-claude --debug "analyze codebase"
-codemie-codex --debug "implement feature"
-codemie-code --debug "test task"
-
-# Debug logging (writes to ~/.codemie/debug/)
-codemie-claude --debug "analyze codebase"
-codemie-codex --debug "implement feature"
-codemie-code --debug "test task"
-
 # Health checks
 codemie doctor                   # Full system check
 codemie-code health             # Built-in agent check
@@ -631,15 +630,13 @@ codemie-claude \
   -p "$(cat /tmp/review-prompt.txt)" \
   --max-turns "${CODEMIE_MAX_TURNS:-50}" \
   --dangerously-skip-permissions \
-  --allowedTools "Bash(*),Read(*),Curl(*)" \
-  --debug
+  --allowedTools "Bash(*),Read(*),Curl(*)"
 
 # Using profile for CI/CD
 codemie-claude \
   --profile ci-litellm \
   -p "Review this PR for security issues" \
-  --max-turns 30 \
-  --debug
+  --max-turns 30
 ```
 
 ## Agents
@@ -654,14 +651,12 @@ LangGraph-based coding assistant with no installation required.
 - Clipboard support with automatic image detection
 - Interactive conversations with context memory
 - Task-focused execution mode
-- Debug mode with comprehensive logging
 
 **Usage:**
 ```bash
 codemie-code                    # Interactive mode
 codemie-code "task"             # Start with message
 codemie --task "task"           # Single task execution
-codemie-code --debug            # Debug mode
 ```
 
 ### Claude Code
@@ -760,83 +755,10 @@ LangChain's terminal interface for building agents with persistent memory. Built
 ```bash
 codemie-deepagents                   # Interactive mode
 codemie-deepagents "your task"       # Start with message
-codemie-deepagents --debug           # Debug mode
 codemie-deepagents health            # Health check
 ```
 
 **Note:** Installed via Python (pip/uv), not npm. Requires Python 3.9+ and Anthropic or OpenAI API key.
-
-## Debug Logging
-
-All CodeMie agents support comprehensive debug logging that writes to files.
-
-### Enabling Debug Mode
-
-```bash
-# Using --debug flag (recommended)
-codemie-claude --debug "your task"
-codemie-codex --debug "your task"
-codemie-code --debug "your task"
-
-# Using environment variable
-CODEMIE_DEBUG=1 codemie-claude "your task"
-
-# For entire session
-export CODEMIE_DEBUG=1
-codemie-claude "task 1"
-codemie-codex "task 2"
-```
-
-### Debug Log Files
-
-When debug mode is enabled, each session creates a timestamped directory:
-
-**Location:** `~/.codemie/debug/session-<timestamp>/`
-
-**Log Files:**
-1. **application.log** - All application activity
-   - Contains: Info, warnings, errors, debug messages
-   - Format: Plain text with timestamps
-   - Example: `[2025-11-27T12:30:00.000Z] [INFO] Starting agent...`
-
-2. **requests.jsonl** - HTTP request/response details (ai-run-sso provider only)
-   - Contains: Request/response headers, bodies, timing
-   - Format: JSONL (one JSON object per line)
-   - Security: Sensitive headers automatically redacted
-   - Example: `{"type":"request","requestId":1,"method":"POST",...}`
-
-### Console Output
-
-Debug mode keeps your console clean - you'll only see:
-```bash
-$ codemie-claude --debug "analyze code"
-Starting Claude Code | Profile: work | Provider: ai-run-sso | Model: claude-4-5-sonnet | Debug: /Users/username/.codemie/debug/session-2025-11-27T12-30-00-000Z
-```
-
-All debug details are written to files in the session directory.
-
-### Analyzing Logs
-
-**Using command-line tools:**
-```bash
-# View latest application log
-tail -f ~/.codemie/debug/session-*/application.log
-
-# Search for errors in latest session
-grep ERROR ~/.codemie/debug/session-*/application.log
-
-# Parse HTTP requests with jq
-cat ~/.codemie/debug/session-*/requests.jsonl | jq 'select(.type == "request")'
-```
-
-**Clean up old logs:**
-```bash
-# Remove session directories older than 7 days
-find ~/.codemie/debug -type d -name "session-*" -mtime +7 -exec rm -rf {} +
-
-# Remove all debug logs
-rm -rf ~/.codemie/debug
-```
 
 ## Troubleshooting
 

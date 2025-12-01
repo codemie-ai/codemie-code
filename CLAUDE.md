@@ -15,7 +15,7 @@ This project is **AI/Run CodeMie CLI** - a professional, unified CLI tool for ma
 
 ```bash
 # Installation & Setup
-npm install                 # Install dependencies
+npm install                 # Install all dependencies
 npm link                    # Link globally for local testing
 
 # Building
@@ -46,16 +46,6 @@ codemie-claude health      # Health checks
 codemie-codex health
 codemie-gemini health
 
-# Debug Logging
-codemie-claude --debug "task"   # Enable debug logging (writes to file)
-codemie-codex --debug "task"    # All agents support --debug flag
-codemie-code --debug "task"     # Debug logs: ~/.codemie/debug/
-
-# Debug Logging
-codemie-claude --debug "task"   # Enable debug logging (writes to file)
-codemie-codex --debug "task"    # All agents support --debug flag
-codemie-code --debug "task"     # Debug logs: ~/.codemie/debug/
-
 # Profile Management (Multi-Provider Support)
 codemie setup              # Add new profile or update existing
 codemie profile list       # List all provider profiles
@@ -63,6 +53,17 @@ codemie profile switch <name>  # Switch to different profile
 codemie profile show [name]    # Show profile details
 codemie profile delete <name>  # Delete a profile
 codemie-code --profile work "task"  # Use specific profile
+
+# Analytics Commands
+codemie analytics status           # Show configuration and today's stats
+codemie analytics status --json    # Output as JSON
+codemie analytics stats            # Show detailed statistics (default: last 7 days)
+codemie analytics stats --from 2025-11-01 --to 2025-11-30  # Custom date range
+codemie analytics stats --agent claude  # Filter by agent
+codemie analytics export           # Export analytics data
+codemie analytics export --format json --output data.json
+codemie analytics clear            # Clear old analytics files
+codemie analytics clear --older-than 30 --yes
 
 # Release & Publishing
 git tag -a v0.0.1 -m "Release version 0.0.1"  # Create release tag
@@ -211,6 +212,7 @@ it('should create PythonCheck instance', () => {
 2. **Built-in Agent**: CodeMie Native - a LangGraph-based coding assistant
 3. **Configuration Management**: Unified config system supporting multiple AI providers
 4. **Multiple Interfaces**: CLI commands, direct executables, and programmatic APIs
+5. **Unified Analytics**: Agent-agnostic analytics system tracking usage across all agents
 
 ## Architecture Overview
 
@@ -229,6 +231,14 @@ codemie-code/
 │   │   ├── plugins/         # Agent plugins (claude, codex, gemini, codemie-code)
 │   │   ├── codemie-code/    # Built-in agent implementation
 │   │   └── registry.ts      # Central agent registry
+│   ├── analytics/            # Unified analytics system
+│   │   ├── index.ts         # Main Analytics class
+│   │   ├── types.ts         # TypeScript types
+│   │   ├── collector.ts     # Event buffering
+│   │   ├── writer.ts        # JSONL file writer
+│   │   ├── session.ts       # Session management
+│   │   ├── privacy.ts       # Privacy utilities
+│   │   └── config.ts        # Config loading
 │   ├── workflows/            # CI/CD workflow management
 │   ├── env/                  # Configuration system
 │   ├── utils/                # Shared utilities
@@ -289,13 +299,17 @@ codemie-code/
   - `gitlab/`: GitLab CI workflows
 - **Types** (`types.ts`): TypeScript definitions for workflows
 
-#### 5. SSO Gateway System (`src/utils/sso-gateway.ts`)
+#### 5. CodeMie Proxy System (`src/utils/codemie-proxy.ts`)
 
-- **Local Proxy**: Creates HTTP server that proxies requests from external binaries
-- **Authentication**: Automatically injects SSO cookies into API requests
+- **Local Proxy Server**: Creates HTTP server that proxies requests from external agent binaries
+- **Authentication Injection**: Automatically injects SSO cookies into API requests
+- **Request/Response Forwarding**: Proxies HTTP/HTTPS traffic with streaming support
+- **Analytics Tracking**: Comprehensive tracking of all API requests/responses
+- **Multi-Format Parsing**: Extracts content from Anthropic, OpenAI, and Gemini API formats
+- **SSE Stream Processing**: Handles Server-Sent Events for streaming responses
+- **Custom Headers**: Injects CodeMie-specific headers (integration ID, model, timeout, session ID)
 - **Dynamic Ports**: Finds available ports and handles EADDRINUSE errors
-- **Request Forwarding**: Streams request/response bodies for compatibility
-- **Debug Logging**: Comprehensive request/response logging for development
+- **SSL/TLS Handling**: Supports enterprise certificates with self-signed certificate support
 
 #### 6. Built-in Agent Architecture (`src/agents/codemie-code/`)
 
@@ -311,6 +325,93 @@ codemie-code/
   - `security.ts`: Security filters and validation
 - **UI System** (`ui.ts`, `streaming/`): Modern terminal interfaces
 - **Types** (`types.ts`): Comprehensive TypeScript definitions
+
+#### 7. Analytics System (`src/analytics/`) - **Unified Tracking**
+
+**OpenTelemetry-inspired analytics across all agents:**
+
+- **Main Analytics** (`index.ts`): `Analytics` class - primary API with singleton pattern
+- **Event Collector** (`collector.ts`): Buffers events, auto-flushes on size or interval
+- **Writer** (`writer.ts`): Writes JSONL files to `~/.codemie/analytics/YYYY-MM-DD.jsonl`
+- **Session Manager** (`session.ts`): Tracks session lifecycle and metadata
+- **Privacy** (`privacy.ts`): Sensitive data redaction
+- **Configuration** (`config.ts`): Environment-aware config loading
+
+**Key Features:**
+- **Agent-Agnostic**: Single analytics system works across all 5+ agents
+- **Multi-Format Support**: Extracts tool calls from Anthropic, OpenAI/GPT, and Google Gemini API formats
+- **Privacy-First**: Sensitive data auto-redacted
+- **Minimal Overhead**: Async buffering (< 5ms per event), non-blocking writes
+- **JSONL Format**: One JSON event per line, daily log files
+- **Auto-Integration**: AgentCLI automatically initializes and tracks sessions
+
+**Configuration:**
+```json
+{
+  "analytics": {
+    "enabled": true,
+    "target": "local",
+    "localPath": "~/.codemie/analytics",
+    "flushInterval": 5000,
+    "maxBufferSize": 100
+  }
+}
+```
+
+**Environment Variables:**
+- `CODEMIE_ANALYTICS_ENABLED` - Enable/disable (true/false/1/0)
+- `CODEMIE_ANALYTICS_TARGET` - Storage target (local/remote/both)
+- `CODEMIE_ANALYTICS_ENDPOINT` - Remote endpoint URL (optional)
+- `CODEMIE_ANALYTICS_PATH` - Custom local path
+
+**Event Types Tracked:**
+- Session lifecycle (start, end, error)
+- User interactions (prompts, responses, tool calls)
+- Code operations (file read/write/edit, git ops, commands)
+- API interactions (requests, responses, errors)
+- Configuration changes (profile switches, model changes)
+- Performance metrics (latency)
+
+**Multi-Format Tool Extraction:**
+
+The analytics system automatically detects and extracts tool calls from multiple API formats:
+
+1. **Anthropic Format** (Claude):
+   ```json
+   // Response: {content: [{type: "tool_use", name: "Read", id: "toolu_123", input: {...}}]}
+   // Request: {content: [{type: "tool_result", tool_use_id: "toolu_123", is_error: false, content: "..."}]}
+   ```
+
+2. **OpenAI Format** (GPT-4, GPT-3.5):
+   ```json
+   // Response: {choices: [{message: {tool_calls: [{id: "call_abc", type: "function", function: {name: "read_file", arguments: "..."}}]}}]}
+   // Request: {messages: [{role: "tool", tool_call_id: "call_abc", content: "..."}]}
+   ```
+
+3. **Google Gemini Format**:
+   ```json
+   // Response: {candidates: [{content: {parts: [{functionCall: {name: "searchFiles", args: {...}}}]}}]}
+   // Request: {contents: [{parts: [{functionResponse: {name: "searchFiles", response: {...}}}]}]}
+   ```
+
+**Format Detection**: Automatically tries Anthropic → OpenAI → Gemini until a match is found, then stops processing.
+
+**Example Events:**
+```jsonl
+{"timestamp":"2025-11-29T10:30:00.000Z","eventType":"session_start","sessionId":"uuid","installationId":"inst-123","agent":"claude","agentVersion":"1.0.0","cliVersion":"0.0.11","profile":"work","provider":"ai-run-sso","model":"claude-4-5-sonnet","attributes":{"workingDir":"/path","interactive":true}}
+{"timestamp":"2025-11-29T10:30:10.000Z","eventType":"tool_call","sessionId":"uuid","agent":"claude","attributes":{"toolName":"Read","toolUseId":"toolu_123","format":"anthropic","hasInput":true},"metrics":{"latencyMs":45}}
+{"timestamp":"2025-11-29T10:30:12.000Z","eventType":"tool_call","sessionId":"uuid","agent":"codex","attributes":{"toolName":"read_file","toolUseId":"call_abc","format":"openai","hasArguments":true}}
+{"timestamp":"2025-11-29T10:30:15.000Z","eventType":"api_response","sessionId":"uuid","agent":"claude","metrics":{"latencyMs":2340}}
+```
+
+**Integration Points:**
+- `AgentCLI.handleRun()`: Auto-initializes analytics, tracks session lifecycle
+- `Analytics.trackAPIResponse()`: Unified multi-format API-level tracking that extracts tool calls and results from API request/response bodies
+  - **Supported Formats**: Anthropic, OpenAI/GPT, Google Gemini
+  - **Auto-Detection**: Automatically detects format and extracts tool metadata
+  - **Format-Agnostic**: Works across all agents regardless of underlying API
+- Built-in agent: Uses LangChain streaming API (tool tracking at message level)
+- External agents: Session tracking via universal executor (API-level tracking with multi-format support)
 
 ### Key Architectural Patterns
 
@@ -695,65 +796,6 @@ codemie workflow uninstall pr-review     # Uninstall workflow
 - Automatically detects GitHub/GitLab from `.git/config` remote URL
 - Override with `--github` or `--gitlab` flags
 - Validates workflow directory exists/creates if needed
-
-### Debug Logging System
-
-All CodeMie agents support debug logging that writes comprehensive logs to files.
-
-**Enabling Debug Mode:**
-```bash
-# Using --debug flag (recommended)
-codemie-claude --debug "your task"
-codemie-codex --debug "your task"
-codemie-code --debug "your task"
-
-# Using environment variable
-CODEMIE_DEBUG=1 codemie-claude "your task"
-```
-
-**Debug Session Structure:**
-Each debug session creates a timestamped directory containing all related logs:
-- Location: `~/.codemie/debug/session-<timestamp>/`
-- Contains multiple log files per session:
-  - `application.log` - General application logs (plain text)
-  - `requests.jsonl` - HTTP proxy logs (JSONL format, ai-run-sso only)
-
-**Log File Details:**
-1. **application.log** - All application activity:
-   - Format: Plain text with timestamps
-   - Contains: Info, warnings, errors, debug messages
-   - Example: `[2025-11-27T12:30:00.000Z] [INFO] Starting agent...`
-
-2. **requests.jsonl** - HTTP request/response details (ai-run-sso provider only):
-   - Format: JSONL (one JSON object per line)
-   - Contains: Request/response headers, bodies, timing, session metadata
-   - Security: Automatically redacts sensitive headers (Cookie, Authorization)
-   - Example: `{"type":"request","requestId":1,"method":"POST",...}`
-
-**Key Features:**
-- File-only output - keeps console clean
-- Unified session directory per execution
-- Automatic directory creation
-- Security-first - sensitive data redacted
-- Works with all agents (claude, codex, codemie-code, gemini)
-
-**Usage:**
-When you run with `--debug`, you'll see the session directory in the startup message:
-```bash
-$ codemie-claude --debug "analyze the codebase"
-Starting Claude Code | Profile: work | Provider: ai-run-sso | Model: claude-4-5-sonnet | Debug: /Users/username/.codemie/debug/session-2025-11-27T12-30-00-000Z
-```
-
-All debug information is written to files in the session directory.
-
-**Clean Up:**
-```bash
-# Remove session directories older than 7 days
-find ~/.codemie/debug -type d -name "session-*" -mtime +7 -exec rm -rf {} +
-
-# Remove all debug logs
-rm -rf ~/.codemie/debug
-```
 
 ---
 

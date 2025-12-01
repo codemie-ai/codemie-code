@@ -1,0 +1,153 @@
+# SEO Keywords & Search Terms for CodeMie CLI
+
+## Primary Keywords (High Priority)
+- ai coding assistant
+- ai code generation
+- cli coding assistant
+- command line ai
+- claude code cli
+- openai codex cli
+- gemini coding assistant
+- ai coding tool
+- code generation cli
+- ai code assistant
+
+## Secondary Keywords
+- github copilot alternative
+- cursor alternative
+- ai pair programming
+- automated code review
+- ai refactoring tool
+- test generation ai
+- code documentation ai
+- bug fixing assistant
+- enterprise coding assistant
+- multi-provider ai
+
+## Technical Keywords
+- langgraph agent
+- langchain cli
+- openai cli tool
+- claude anthropic cli
+- google gemini cli
+- azure openai cli
+- aws bedrock cli
+- litellm wrapper
+- sso authentication cli
+
+## Use Case Keywords
+- code review automation
+- automated refactoring
+- unit test generation
+- api documentation generator
+- bug detection ai
+- code optimization tool
+- technical debt analyzer
+- code quality improvement
+- developer productivity tool
+- ci cd integration ai
+
+## Comparison Keywords (Competitive)
+- vs github copilot
+- vs cursor
+- vs codeium
+- vs tabnine
+- vs amazon codewhisperer
+- copilot alternative open source
+- free coding assistant
+- enterprise ai coding
+
+## Long-Tail Keywords
+- how to use ai for coding
+- best ai coding assistant 2025
+- command line ai code generator
+- multi model ai coding tool
+- enterprise ai development tool
+- self hosted coding assistant
+- ai code review tool for teams
+- automated code generation cli
+- ai coding assistant with git integration
+- unified ai agent manager
+
+## Provider-Specific Keywords
+- openai api cli
+- anthropic claude cli
+- google gemini api cli
+- azure openai integration
+- aws bedrock integration
+- litellm proxy client
+- multi llm provider tool
+
+## Developer Audience Keywords
+- typescript coding assistant
+- javascript ai tool
+- python code generator
+- react refactoring tool
+- node js coding assistant
+- full stack ai helper
+- backend code review
+- frontend optimization ai
+
+## Enterprise Keywords
+- enterprise sso integration
+- team coding assistant
+- organizational ai tool
+- audit logging ai
+- rbac coding assistant
+- compliance code review
+- security focused ai
+- enterprise grade cli
+
+## Action-Oriented Keywords
+- install ai coding assistant
+- setup claude code cli
+- configure openai codex
+- manage multiple ai agents
+- switch between ai providers
+- automate code reviews
+- generate unit tests automatically
+- fix bugs with ai
+- refactor code with ai
+- document code automatically
+
+## Platform Keywords
+- npm ai package
+- node js ai tool
+- cross platform coding assistant
+- macos coding ai
+- linux coding assistant
+- windows cli tool
+- terminal ai helper
+- command line productivity
+
+## Technology Stack Keywords
+- typescript cli tool
+- commander js application
+- vitest integration
+- eslint compatible
+- git workflow automation
+- ci cd pipeline tool
+- github actions integration
+- gitlab ci integration
+
+## Problem-Solution Keywords
+- reduce code review time
+- improve code quality
+- accelerate development
+- automate documentation
+- catch bugs early
+- maintain code consistency
+- scale development team
+- standardize coding practices
+
+## Trend Keywords (2025)
+- ai agents 2025
+- autonomous coding
+- agentic workflow
+- multi agent system
+- langgraph applications
+- langchain ecosystem
+- conversational coding
+- context aware ai
+- project aware assistant
+- intelligent code generation

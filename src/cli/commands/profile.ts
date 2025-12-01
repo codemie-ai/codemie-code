@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import inquirer from 'inquirer';
 import { ConfigLoader } from '../../utils/config-loader.js';
 import { logger } from '../../utils/logger.js';
+import { getAnalytics } from '../../analytics/index.js';
 
 export function createProfileCommand(): Command {
   const command = new Command('profile');
@@ -64,8 +65,23 @@ function createSwitchCommand(): Command {
     .argument('<profile>', 'Profile name to switch to')
     .action(async (profileName: string) => {
       try {
+        const oldProfile = await ConfigLoader.getActiveProfileName();
         await ConfigLoader.switchProfile(profileName);
         console.log(chalk.green(`\n✓ Switched to profile "${profileName}"\n`));
+
+        // Track profile switch
+        try {
+          const analytics = getAnalytics();
+          const newProfile = await ConfigLoader.getProfile(profileName);
+          await analytics.track('profile_switch', {
+            fromProfile: oldProfile || 'none',
+            toProfile: profileName,
+            provider: newProfile?.provider || 'unknown'
+          });
+        } catch (analyticsError) {
+          // Silent fail
+          logger.debug('Analytics tracking error:', analyticsError);
+        }
       } catch (error: unknown) {
         logger.error('Failed to switch profile:', error);
         process.exit(1);
@@ -165,6 +181,18 @@ function createDeleteCommand(): Command {
         if (activeProfile) {
           console.log(chalk.white(`Active profile is now: ${activeProfile}\n`));
         }
+
+        // Track config change
+        try {
+          const analytics = getAnalytics();
+          await analytics.track('config_change', {
+            operation: 'delete_profile',
+            profile: profileName
+          });
+        } catch (analyticsError) {
+          // Silent fail
+          logger.debug('Analytics tracking error:', analyticsError);
+        }
       } catch (error: unknown) {
         logger.error('Failed to delete profile:', error);
         process.exit(1);
@@ -185,6 +213,19 @@ function createRenameCommand(): Command {
       try {
         await ConfigLoader.renameProfile(oldName, newName);
         console.log(chalk.green(`\n✓ Profile renamed from "${oldName}" to "${newName}"\n`));
+
+        // Track config change
+        try {
+          const analytics = getAnalytics();
+          await analytics.track('config_change', {
+            operation: 'rename_profile',
+            oldProfile: oldName,
+            newProfile: newName
+          });
+        } catch (analyticsError) {
+          // Silent fail
+          logger.debug('Analytics tracking error:', analyticsError);
+        }
       } catch (error: unknown) {
         logger.error('Failed to rename profile:', error);
         process.exit(1);
