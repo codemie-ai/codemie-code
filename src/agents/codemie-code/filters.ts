@@ -253,18 +253,18 @@ function matchesSinglePattern(text: string, pattern: string): boolean {
 
   // Convert simple glob to regex
   let regexPattern = pattern
-    .replace(/\./g, '\\.')     // Escape dots
-    .replace(/\+/g, '\\+')     // Escape plus
-    .replace(/\^/g, '\\^')     // Escape caret
-    .replace(/\$/g, '\\$')     // Escape dollar
-    .replace(/\(/g, '\\(')     // Escape parentheses
-    .replace(/\)/g, '\\)')
-    .replace(/\[/g, '\\[')     // Escape brackets
-    .replace(/\]/g, '\\]')
-    .replace(/\{/g, '\\{')     // Escape braces
-    .replace(/\}/g, '\\}')
-    .replace(/\*/g, '.*')      // * matches anything
-    .replace(/\?/g, '.');      // ? matches single char
+    .replaceAll('.', '\\.')     // Escape dots
+    .replaceAll('+', '\\+')     // Escape plus
+    .replaceAll('^', '\\^')     // Escape caret
+    .replaceAll('$', '\\$')     // Escape dollar
+    .replaceAll('(', '\\(')     // Escape parentheses
+    .replaceAll(')', '\\)')
+    .replaceAll('[', '\\[')     // Escape brackets
+    .replaceAll(']', '\\]')
+    .replaceAll('{', '\\{')     // Escape braces
+    .replaceAll('}', '\\}')
+    .replaceAll('*', '.*')      // * matches anything
+    .replaceAll('?', '.');      // ? matches single char
 
   try {
     const regex = new RegExp(`^${regexPattern}$`);

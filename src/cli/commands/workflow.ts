@@ -251,7 +251,7 @@ Configuration Guide:
         console.log(chalk.yellow('⚠ Configuration needed:'));
         validation.warnings.forEach(warning => {
           // Highlight environment variables in the warning text
-          const highlightedWarning = warning.replace(/([A-Z_]{3,})/g, chalk.cyan('$1'));
+          const highlightedWarning = warning.replaceAll(/[A-Z_]{3,}/, (match) => chalk.cyan(match));
           console.log('  ' + highlightedWarning);
         });
         console.log('');

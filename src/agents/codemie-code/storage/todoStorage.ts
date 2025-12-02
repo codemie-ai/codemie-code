@@ -164,7 +164,7 @@ export class TodoFileStorage {
     await fs.writeFile(globalTodoPath, JSON.stringify(todoFile, null, 2), 'utf-8');
 
     // Also save a timestamped backup
-    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const timestamp = new Date().toISOString().replaceAll(':', '-').replaceAll('.', '-');
     const backupPath = path.join(this.globalBackupDir, 'history', `${this.projectHash}-${timestamp}.json`);
     await fs.mkdir(path.dirname(backupPath), { recursive: true });
     await fs.writeFile(backupPath, JSON.stringify(todoFile, null, 2), 'utf-8');

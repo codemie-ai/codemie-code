@@ -60,7 +60,19 @@ export function createSetupCommand(): Command {
   command
     .description('Interactive setup wizard for CodeMie Code')
     .option('--force', 'Force re-setup even if config exists')
-    .action(async (options: { force?: boolean }) => {
+    .option('-v, --verbose', 'Enable verbose debug output with detailed API logs')
+    .action(async (options: { force?: boolean; verbose?: boolean }) => {
+      // Enable debug mode if verbose flag is set
+      if (options.verbose) {
+        process.env.CODEMIE_DEBUG = 'true';
+
+        // Show log file location
+        const logFilePath = logger.getLogFilePath();
+        if (logFilePath) {
+          console.log(chalk.dim(`Debug logs: ${logFilePath}\n`));
+        }
+      }
+
       try {
         await runSetupWizard(options.force);
       } catch (error: unknown) {

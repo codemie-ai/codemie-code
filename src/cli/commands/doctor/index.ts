@@ -3,6 +3,7 @@
  */
 
 import { Command } from 'commander';
+import chalk from 'chalk';
 import { HealthCheck, ItemWiseHealthCheck, HealthCheckResult } from './types.js';
 import { HealthCheckFormatter } from './formatter.js';
 import {
@@ -15,13 +16,26 @@ import {
   WorkflowsCheck
 } from './checks/index.js';
 import { providerCheckRegistry } from './providers/index.js';
+import { logger } from '../../../utils/logger.js';
 
 export function createDoctorCommand(): Command {
   const command = new Command('doctor');
 
   command
     .description('Check system health and configuration')
-    .action(async () => {
+    .option('-v, --verbose', 'Enable verbose debug output with detailed API logs')
+    .action(async (options: { verbose?: boolean }) => {
+      // Enable debug mode if verbose flag is set
+      if (options.verbose) {
+        process.env.CODEMIE_DEBUG = 'true';
+
+        // Show log file location
+        const logFilePath = logger.getLogFilePath();
+        if (logFilePath) {
+          console.log(chalk.dim(`Debug logs: ${logFilePath}\n`));
+        }
+      }
+
       const formatter = new HealthCheckFormatter();
       const results: HealthCheckResult[] = [];
 

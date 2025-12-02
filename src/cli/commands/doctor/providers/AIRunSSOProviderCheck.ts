@@ -12,6 +12,8 @@ import {
 } from '../../../../utils/codemie-model-fetcher.js';
 import { BaseProviderCheck } from './BaseProviderCheck.js';
 import { HealthCheckResult, HealthCheckDetail } from '../types.js';
+import { logger } from '../../../../utils/logger.js';
+import { sanitizeCookies } from '../../../../utils/sanitize.js';
 
 export class AIRunSSOProviderCheck extends BaseProviderCheck {
   readonly supportedProviders = ['ai-run-sso'];
@@ -19,6 +21,7 @@ export class AIRunSSOProviderCheck extends BaseProviderCheck {
   async check(config: CodeMieConfigOptions): Promise<HealthCheckResult> {
     const details: HealthCheckDetail[] = [];
     let success = true;
+    const verbose = logger.isDebugMode();
 
     // Check CodeMie URL
     if (config.codeMieUrl) {
@@ -64,15 +67,36 @@ export class AIRunSSOProviderCheck extends BaseProviderCheck {
           message: 'SSO credentials stored'
         });
 
+        // Verbose: Show detailed credential info
+        if (verbose) {
+          details.push({
+            status: 'info',
+            message: `API URL: ${credentials.apiUrl}`
+          });
+          details.push({
+            status: 'info',
+            message: `Cookies: ${sanitizeCookies(credentials.cookies)}`
+          });
+        }
+
         // Check expiration
         if (credentials.expiresAt) {
           const expiresIn = Math.max(0, credentials.expiresAt - Date.now());
           if (expiresIn > 0) {
             const hours = Math.floor(expiresIn / (1000 * 60 * 60));
-            details.push({
-              status: 'ok',
-              message: `Session expires in: ${hours} hours`
-            });
+            const minutes = Math.floor((expiresIn % (1000 * 60 * 60)) / (1000 * 60));
+
+            if (verbose) {
+              details.push({
+                status: 'ok',
+                message: `Session expires in: ${hours}h ${minutes}m`
+              });
+            } else {
+              details.push({
+                status: 'ok',
+                message: `Session expires in: ${hours} hours`
+              });
+            }
           } else {
             details.push({
               status: 'error',
@@ -84,20 +108,48 @@ export class AIRunSSOProviderCheck extends BaseProviderCheck {
         }
 
         // Test API access
-        const apiSpinner = ora('Testing API access...').start();
+        const apiSpinner = verbose
+          ? ora('Testing /v1/llm_models endpoint with redirect following...').start()
+          : ora('Testing API access...').start();
+
         try {
+          const startTime = Date.now();
           const models = await fetchCodeMieModelsFromConfig();
+          const duration = Date.now() - startTime;
+
           apiSpinner.stop();
-          details.push({
-            status: 'ok',
-            message: `API access working (${models.length} models available)`
-          });
+
+          if (verbose) {
+            details.push({
+              status: 'ok',
+              message: `API accessible (${duration}ms, ${models.length} models)`
+            });
+            if (models.length > 0) {
+              const sampleModels = models.slice(0, 5).join(', ') + (models.length > 5 ? '...' : '');
+              details.push({
+                status: 'info',
+                message: `Sample models: ${sampleModels}`
+              });
+            }
+          } else {
+            details.push({
+              status: 'ok',
+              message: `API access working (${models.length} models available)`
+            });
+          }
         } catch (error) {
           apiSpinner.stop();
           details.push({
             status: 'error',
             message: `API access error: ${error instanceof Error ? error.message : String(error)}`
           });
+
+          if (verbose && error instanceof Error && error.stack) {
+            details.push({
+              status: 'info',
+              message: `Error details: ${error.stack.split('\n')[0]}`
+            });
+          }
 
           if (error instanceof Error && error.message.includes('expired')) {
             details.push({
@@ -107,6 +159,30 @@ export class AIRunSSOProviderCheck extends BaseProviderCheck {
             });
           }
           success = false;
+        }
+
+        // Verbose: Network diagnostics
+        if (verbose && credentials.apiUrl) {
+          try {
+            const url = new URL(credentials.apiUrl);
+            details.push({
+              status: 'info',
+              message: `Protocol: ${url.protocol}`
+            });
+            details.push({
+              status: 'info',
+              message: `Hostname: ${url.hostname}`
+            });
+            details.push({
+              status: 'info',
+              message: `Port: ${url.port || (url.protocol === 'https:' ? '443' : '80')}`
+            });
+          } catch {
+            details.push({
+              status: 'error',
+              message: 'Invalid API URL format'
+            });
+          }
         }
 
         // Check CodeMie integrations (optional)

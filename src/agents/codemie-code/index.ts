@@ -12,6 +12,7 @@ import type { CodeMieConfig, InitializationResult, AgentStats } from './types.js
 import { CodeMieAgentError } from './types.js';
 import { hasClipboardImage, getClipboardImage } from '../../utils/clipboard.js';
 import { logger } from '../../utils/logger.js';
+import { sanitizeCookies } from '../../utils/sanitize.js';
 
 export class CodeMieCode {
   private agent: CodeMieAgent | null = null;
@@ -38,7 +39,8 @@ export class CodeMieCode {
 
       if (this.config.debug) {
         logger.debug('Configuration loaded:', getConfigSummary(this.config));
-        logger.debug('Global SSO cookies set:', !!(global as any).codemieSSOCookies);
+        const ssoCookies = (global as any).codemieSSOCookies;
+        logger.debug('Global SSO cookies:', sanitizeCookies(ssoCookies));
       }
 
       // Create system tools

@@ -359,7 +359,7 @@ export async function exportToCSV(events: AnalyticsEvent[], outputPath: string):
       event.provider,
       event.model,
       event.metrics?.latencyMs || '',
-      JSON.stringify(event.attributes).replace(/"/g, '""') // Escape quotes
+      JSON.stringify(event.attributes).replaceAll('"', '""') // Escape quotes
     ];
     writeStream.write(row.join(',') + '\n');
   }

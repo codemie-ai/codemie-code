@@ -89,25 +89,24 @@ function applyCustomizations(
 
   // Apply timeout customization
   if (options.timeout !== undefined) {
-    result = result.replace(
-      /timeout-minutes:\s*\d+/g,
+    result = result.replaceAll(
+      /timeout-minutes:\s*\d+/,
       `timeout-minutes: ${options.timeout}`
     );
   }
 
   // Apply max-turns customization
   if (options.maxTurns !== undefined) {
-    const maxTurnsPattern = /MAX_TURNS:\s*\$\{\{\s*vars\.CODEMIE_MAX_TURNS\s*\|\|\s*['"](\d+)['"]\s*\}\}/g;
-    result = result.replace(
-      maxTurnsPattern,
+    result = result.replaceAll(
+      /MAX_TURNS:\s*\$\{\{\s*vars\.CODEMIE_MAX_TURNS\s*\|\|\s*['"](\d+)['"]\s*}}/,
       `MAX_TURNS: \${{ vars.CODEMIE_MAX_TURNS || '${options.maxTurns}' }}`
     );
   }
 
   // Apply environment customization
   if (options.environment) {
-    result = result.replace(
-      /environment:\s*\w+/g,
+    result = result.replaceAll(
+      /environment:\s*\w+/,
       `environment: ${options.environment}`
     );
   }

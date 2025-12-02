@@ -137,7 +137,7 @@ export class CodeMieCodePlugin implements AgentAdapter {
       }
     }
 
-    if (!options.debug && process.env.CODEMIE_DEBUG) {
+    if (!options.debug && logger.isDebugMode()) {
       options.debug = true;
     }
 

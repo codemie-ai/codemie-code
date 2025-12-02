@@ -10,6 +10,7 @@ import type { CodeMieConfig, ProviderConfig } from './types.js';
 import { ConfigurationError } from './types.js';
 import { CredentialStore } from '../../utils/credential-store.js';
 import { logger } from '../../utils/logger.js';
+import { sanitizeCookies } from '../../utils/sanitize.js';
 
 /**
  * Load and validate configuration for the CodeMie native agent
@@ -49,7 +50,7 @@ export async function loadCodeMieConfig(
       if (baseConfig.debug) {
         logger.debug('SSO credentials loaded from store');
         logger.debug('API URL:', resolvedBaseUrl);
-        logger.debug('Cookies:', Object.keys(credentials.cookies));
+        logger.debug('Cookies:', sanitizeCookies(credentials.cookies));
       }
     }
 

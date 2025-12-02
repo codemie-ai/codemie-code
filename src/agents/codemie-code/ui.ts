@@ -901,7 +901,7 @@ export class CodeMieTerminalUI {
     }
 
     if (details) {
-      console.log(chalk.white('  ' + details.replace(/\n/g, '\n  ')));
+      console.log(chalk.white('  ' + details.replaceAll('\n', '\n  ')));
     }
   }
 

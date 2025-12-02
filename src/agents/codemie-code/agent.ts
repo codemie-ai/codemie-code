@@ -18,6 +18,7 @@ import { extractTokenUsageFromStreamChunk, extractTokenUsageFromFinalState } fro
 import { setGlobalToolEventCallback } from './tools/index.js';
 import { logger } from '../../utils/logger.js';
 import { getAnalytics } from '../../analytics/index.js';
+import { sanitizeCookies, sanitizeAuthToken } from '../../utils/sanitize.js';
 
 export class CodeMieAgent {
   private agent: any;
@@ -158,8 +159,8 @@ export class CodeMieAgent {
         // Check if we have SSO cookies to inject (following codemie-ide-plugin pattern)
         const ssoCookies = (global as any).codemieSSOCookies;
         if (this.config.debug) {
-          logger.debug(`SSO Cookies available:`, ssoCookies ? Object.keys(ssoCookies) : 'none');
-          logger.debug(`Auth token:`, this.config.authToken);
+          logger.debug(`SSO Cookies available:`, sanitizeCookies(ssoCookies));
+          logger.debug(`Auth token:`, sanitizeAuthToken(this.config.authToken));
         }
 
         if (ssoCookies && this.config.authToken === 'sso-authenticated') {
@@ -192,8 +193,7 @@ export class CodeMieAgent {
 
             if (this.config.debug) {
               logger.debug(`SSO request to ${input}`);
-              logger.debug(`Cookies: ${Object.keys(ssoCookies).join(', ')}`);
-              logger.debug(`Full cookie string length: ${cookieString.length}`);
+              logger.debug(`Cookie string length: ${cookieString.length} characters`);
             }
 
             try {

@@ -393,7 +393,7 @@ function createShowCommand(): Command {
                 head: [],
                 border: ['grey']
               },
-              colWidths: [55, 12, 12]
+              colWidths: [75, 12, 12]
             });
 
             for (const [modelName, count] of sortedModels) {

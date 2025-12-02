@@ -1,0 +1,11 @@
+# Gitleaks configuration
+# https://github.com/gitleaks/gitleaks
+
+title = "Gitleaks Configuration"
+
+# Exclude test files from secrets detection
+[allowlist]
+description = "Exclude sanitize test file containing intentional fake secrets for testing"
+paths = [
+  '''src/utils/__tests__/sanitize\.test\.ts$'''
+]
