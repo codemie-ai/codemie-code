@@ -12,7 +12,6 @@ export function createProfileCommand(): Command {
     .description('Manage provider profiles')
     .addCommand(createListCommand())
     .addCommand(createSwitchCommand())
-    .addCommand(createShowCommand())
     .addCommand(createDeleteCommand())
     .addCommand(createRenameCommand());
 
@@ -23,7 +22,7 @@ function createListCommand(): Command {
   const command = new Command('list');
 
   command
-    .description('List all provider profiles')
+    .description('List all profiles with details')
     .action(async () => {
       try {
         const profiles = await ConfigLoader.listProfiles();
@@ -33,17 +32,35 @@ function createListCommand(): Command {
           return;
         }
 
-        console.log(chalk.bold.cyan('\n📋 Provider Profiles:\n'));
+        console.log(chalk.bold.cyan('\n📋 All Profiles:\n'));
 
-        profiles.forEach(({ name, active, profile }) => {
-          const activeMarker = active ? chalk.green('● ') : chalk.white('○ ');
-          const providerLabel = chalk.white(`(${profile.provider})`);
-          const modelLabel = profile.model ? chalk.white(`- ${profile.model}`) : '';
+        profiles.forEach(({ name, active, profile }, index) => {
+          const activeLabel = active ? chalk.green(' (Active)') : '';
+          console.log(chalk.bold.cyan(`Profile: ${name}${activeLabel}`));
+          console.log(chalk.cyan('  Provider:     ') + chalk.white(profile.provider || 'N/A'));
+          console.log(chalk.cyan('  Base URL:     ') + chalk.white(profile.baseUrl || 'N/A'));
+          console.log(chalk.cyan('  Model:        ') + chalk.white(profile.model || 'N/A'));
+          console.log(chalk.cyan('  Timeout:      ') + chalk.white(`${profile.timeout || 300}s`));
+          console.log(chalk.cyan('  Debug:        ') + chalk.white(profile.debug ? 'Yes' : 'No'));
 
-          console.log(`${activeMarker}${chalk.white(name)} ${providerLabel} ${modelLabel}`);
+          if (profile.authMethod) {
+            console.log(chalk.cyan('  Auth Method:  ') + chalk.white(profile.authMethod));
+          }
 
-          if (active) {
-            console.log(chalk.white(`  └─ Active profile`));
+          if (profile.codeMieUrl) {
+            console.log(chalk.cyan('  CodeMie URL:  ') + chalk.white(profile.codeMieUrl));
+          }
+
+          if (profile.apiKey) {
+            const maskedKey = profile.apiKey.length > 12
+              ? `${profile.apiKey.substring(0, 8)}***${profile.apiKey.substring(profile.apiKey.length - 4)}`
+              : '***';
+            console.log(chalk.cyan('  API Key:      ') + chalk.white(maskedKey));
+          }
+
+          // Add separator between profiles except for the last one
+          if (index < profiles.length - 1) {
+            console.log('');
           }
         });
 
@@ -84,62 +101,6 @@ function createSwitchCommand(): Command {
         }
       } catch (error: unknown) {
         logger.error('Failed to switch profile:', error);
-        process.exit(1);
-      }
-    });
-
-  return command;
-}
-
-function createShowCommand(): Command {
-  const command = new Command('show');
-
-  command
-    .description('Show profile details')
-    .argument('[profile]', 'Profile name (defaults to active profile)')
-    .action(async (profileName?: string) => {
-      try {
-        // If no profile specified, show active profile
-        if (!profileName) {
-          profileName = await ConfigLoader.getActiveProfileName() || undefined;
-          if (!profileName) {
-            console.log(chalk.yellow('\nNo active profile found.\n'));
-            return;
-          }
-        }
-
-        const profile = await ConfigLoader.getProfile(profileName);
-
-        if (!profile) {
-          console.log(chalk.red(`\nProfile "${profileName}" not found.\n`));
-          process.exit(1);
-        }
-
-        console.log(chalk.bold.cyan(`\n📄 Profile: ${profileName}\n`));
-        console.log(chalk.cyan('Provider:     ') + chalk.white(profile.provider || 'N/A'));
-        console.log(chalk.cyan('Base URL:     ') + chalk.white(profile.baseUrl || 'N/A'));
-        console.log(chalk.cyan('Model:        ') + chalk.white(profile.model || 'N/A'));
-        console.log(chalk.cyan('Timeout:      ') + chalk.white(`${profile.timeout || 300}s`));
-        console.log(chalk.cyan('Debug:        ') + chalk.white(profile.debug ? 'Yes' : 'No'));
-
-        if (profile.authMethod) {
-          console.log(chalk.cyan('Auth Method:  ') + chalk.white(profile.authMethod));
-        }
-
-        if (profile.codeMieUrl) {
-          console.log(chalk.cyan('CodeMie URL:  ') + chalk.white(profile.codeMieUrl));
-        }
-
-        if (profile.apiKey) {
-          const maskedKey = profile.apiKey.length > 12
-            ? `${profile.apiKey.substring(0, 8)}***${profile.apiKey.substring(profile.apiKey.length - 4)}`
-            : '***';
-          console.log(chalk.cyan('API Key:      ') + chalk.white(maskedKey));
-        }
-
-        console.log('');
-      } catch (error: unknown) {
-        logger.error('Failed to show profile:', error);
         process.exit(1);
       }
     });

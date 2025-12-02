@@ -99,8 +99,6 @@ export class FirstTimeExperience {
       agent.name.startsWith('codemie-') ? agent.name : `codemie-${agent.name}`
     ).join(', ');
     console.log(chalk.white('   • Agent shortcuts: ') + chalk.green(agentShortcuts));
-
-    console.log(chalk.white('   • Configuration: ') + chalk.green('codemie config --help'));
     console.log(chalk.white('   • Workflows: ') + chalk.green('codemie workflow --help\n'));
   }
 
@@ -116,15 +114,19 @@ export class FirstTimeExperience {
 
     console.log(chalk.bold('Setup & Configuration:'));
     console.log(chalk.cyan('  codemie setup') + chalk.white('             # Interactive setup wizard'));
-    console.log(chalk.cyan('  codemie config') + chalk.white('            # Manage configuration'));
+    console.log(chalk.cyan('  codemie profile') + chalk.white('           # Manage profiles (list, switch, delete)'));
+    console.log(chalk.cyan('  codemie auth') + chalk.white('              # Manage SSO authentication\n'));
 
     console.log(chalk.bold('Verify:'));
     console.log(chalk.cyan('  codemie doctor') + chalk.white('            # Check configuration\n'));
 
     this.showAgentSections();
 
+    console.log(chalk.bold('Analytics:'));
+    console.log(chalk.cyan('  codemie analytics') + chalk.white('         # View usage statistics\n'));
+
     console.log(chalk.bold('CI/CD Workflows:'));
-    console.log(chalk.cyan('  codemie workflow') + chalk.white('        # Manage CI/CD workflows\n'));
+    console.log(chalk.cyan('  codemie workflow') + chalk.white('          # Manage CI/CD workflows\n'));
 
     console.log(chalk.white('For detailed help, run: ') + chalk.green('codemie --help\n'));
   }
@@ -204,139 +206,4 @@ export class FirstTimeExperience {
     }
   }
 
-  /**
-   * Show manual setup guide with all required environment variables
-   */
-  static showManualSetup(provider: 'litellm' | 'bedrock' | 'azure' = 'litellm'): void {
-    console.log(chalk.bold.cyan('\n╔═══════════════════════════════════════════════════════╗'));
-    console.log(chalk.bold.cyan('║          Manual Configuration Guide                   ║'));
-    console.log(chalk.bold.cyan('╚═══════════════════════════════════════════════════════╝\n'));
-
-    console.log(chalk.bold('Required Environment Variables:\n'));
-
-    switch (provider) {
-      case 'litellm':
-        console.log(chalk.white('CODEMIE_BASE_URL') + chalk.white('      = ') + chalk.cyan('"https://litellm.example.com"'));
-        console.log(chalk.white('CODEMIE_API_KEY') + chalk.white('       = ') + chalk.cyan('"your-litellm-api-key"'));
-        console.log(chalk.white('CODEMIE_MODEL') + chalk.white('         = ') + chalk.cyan('"claude-4-5-sonnet"'));
-        console.log();
-        console.log(chalk.bold('Optional Environment Variables:\n'));
-        console.log(chalk.white('CODEMIE_PROVIDER') + chalk.white('      = ') + chalk.cyan('"litellm"'));
-        console.log(chalk.white('  Controls which environment variables are passed to agents'));
-        console.log(chalk.white('  Options: litellm (default), azure, bedrock, openai\n'));
-        break;
-
-      case 'bedrock':
-        console.log(chalk.bold.white('Step 1: AWS Credentials (choose one method):\n'));
-        console.log(chalk.white('Method A: AWS CLI (Recommended)'));
-        console.log(chalk.white('  $ ') + chalk.green('aws configure'));
-        console.log(chalk.white('  Enter AWS Access Key ID: ') + chalk.cyan('AKIAIOSFODNN7EXAMPLE'));
-        console.log(chalk.white('  Enter AWS Secret Access Key: ') + chalk.cyan('wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY'));
-        console.log(chalk.white('  Enter Default region: ') + chalk.cyan('us-west-2\n'));
-
-        console.log(chalk.white('Method B: Environment Variables'));
-        console.log(chalk.white('AWS_ACCESS_KEY_ID') + chalk.white('         = ') + chalk.cyan('"AKIAIOSFODNN7EXAMPLE"'));
-        console.log(chalk.white('AWS_SECRET_ACCESS_KEY') + chalk.white('     = ') + chalk.cyan('"wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"'));
-        console.log(chalk.white('AWS_REGION') + chalk.white('                = ') + chalk.cyan('"us-west-2"\n'));
-
-        console.log(chalk.bold.white('Step 2: Bedrock Configuration:\n'));
-        console.log(chalk.white('CODEMIE_MODEL') + chalk.white('           = ') + chalk.cyan('"us.anthropic.claude-sonnet-4-5-20250929-v1:0"'));
-        console.log(chalk.white('CLAUDE_CODE_USE_BEDROCK') + chalk.white('   = ') + chalk.cyan('1'));
-        console.log(chalk.white('AWS_PROFILE') + chalk.white('               = ') + chalk.cyan('"default"') + chalk.white(' (optional if using CLI)\n'));
-        break;
-
-      case 'azure':
-        console.log(chalk.white('CODEMIE_BASE_URL') + chalk.white('      = ') + chalk.cyan('"https://your-resource.openai.azure.com"'));
-        console.log(chalk.white('CODEMIE_API_KEY') + chalk.white('       = ') + chalk.cyan('"your-azure-api-key"'));
-        console.log(chalk.white('CODEMIE_MODEL') + chalk.white('         = ') + chalk.cyan('"gpt-4"') + chalk.white(' or ') + chalk.cyan('"codex"'));
-        console.log();
-        console.log(chalk.bold('Optional Environment Variables:\n'));
-        console.log(chalk.white('CODEMIE_PROVIDER') + chalk.white('      = ') + chalk.cyan('"azure"'));
-        console.log(chalk.white('  Controls which environment variables are passed to agents'));
-        console.log(chalk.white('  Options: litellm (default), azure, bedrock, openai\n'));
-        break;
-    }
-
-    console.log(chalk.bold('Setup Commands:\n'));
-    console.log(chalk.white('# Export variables (current session only)'));
-
-    switch (provider) {
-      case 'litellm':
-        console.log(chalk.green('export CODEMIE_BASE_URL="https://litellm.example.com"'));
-        console.log(chalk.green('export CODEMIE_API_KEY="your-litellm-api-key"'));
-        console.log(chalk.green('export CODEMIE_MODEL="claude-4-5-sonnet"'));
-        break;
-
-      case 'bedrock':
-        console.log(chalk.green('export AWS_ACCESS_KEY_ID="AKIAIOSFODNN7EXAMPLE"'));
-        console.log(chalk.green('export AWS_SECRET_ACCESS_KEY="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"'));
-        console.log(chalk.green('export AWS_REGION="us-west-2"'));
-        console.log(chalk.green('export CODEMIE_MODEL="us.anthropic.claude-sonnet-4-5-20250929-v1:0"'));
-        console.log(chalk.green('export CLAUDE_CODE_USE_BEDROCK=1'));
-        break;
-
-      case 'azure':
-        console.log(chalk.green('export CODEMIE_BASE_URL="https://your-resource.openai.azure.com"'));
-        console.log(chalk.green('export CODEMIE_API_KEY="your-azure-api-key"'));
-        console.log(chalk.green('export CODEMIE_MODEL="gpt-4"'));
-        break;
-    }
-
-    console.log();
-    console.log(chalk.white('# Add to shell profile for persistence (choose your shell)'));
-    console.log(chalk.green('# For Bash:'));
-    console.log(chalk.green('cat >> ~/.bashrc << EOF'));
-
-    switch (provider) {
-      case 'litellm':
-        console.log(chalk.green('export CODEMIE_BASE_URL="https://litellm.example.com"'));
-        console.log(chalk.green('export CODEMIE_API_KEY="your-litellm-api-key"'));
-        console.log(chalk.green('export CODEMIE_MODEL="claude-4-5-sonnet"'));
-        break;
-
-      case 'bedrock':
-        console.log(chalk.green('export AWS_ACCESS_KEY_ID="AKIAIOSFODNN7EXAMPLE"'));
-        console.log(chalk.green('export AWS_SECRET_ACCESS_KEY="wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"'));
-        console.log(chalk.green('export AWS_REGION="us-west-2"'));
-        console.log(chalk.green('export CODEMIE_MODEL="us.anthropic.claude-sonnet-4-5-20250929-v1:0"'));
-        console.log(chalk.green('export CLAUDE_CODE_USE_BEDROCK=1'));
-        break;
-
-      case 'azure':
-        console.log(chalk.green('export CODEMIE_BASE_URL="https://your-resource.openai.azure.com"'));
-        console.log(chalk.green('export CODEMIE_API_KEY="your-azure-api-key"'));
-        console.log(chalk.green('export CODEMIE_MODEL="gpt-4"'));
-        break;
-    }
-
-    console.log(chalk.green('EOF'));
-    console.log(chalk.green('source ~/.bashrc'));
-    console.log();
-    console.log(chalk.green('# For Zsh:'));
-    console.log(chalk.green('# Replace ~/.bashrc with ~/.zshrc in commands above\n'));
-
-    console.log(chalk.bold('Verification:\n'));
-    console.log(chalk.white('  $ ') + chalk.green('codemie doctor') + chalk.white('              # Check configuration and test connection'));
-
-    const { builtIn, external } = this.getAgents();
-
-    if (builtIn) {
-      console.log(chalk.white('  $ ') + chalk.green('codemie-code --task "explore current repository"'));
-      console.log(chalk.white('     Or start interactive:'));
-      console.log(chalk.white('  $ ') + chalk.green('codemie-code') + chalk.white('                # Run built-in agent'));
-    }
-
-    if (external.length > 0) {
-      const firstExternal = external[0];
-      const installCmd = `codemie install ${firstExternal.name}`.padEnd(35);
-      // Handle special case where agent name already includes 'codemie-' prefix
-      const command = firstExternal.name.startsWith('codemie-') ? firstExternal.name : `codemie-${firstExternal.name}`;
-      const runCmd = command.padEnd(35);
-
-      console.log(chalk.white('  $ ') + chalk.green(installCmd) + chalk.white(`# Install ${firstExternal.displayName}`));
-      console.log(chalk.white('  $ ') + chalk.green(runCmd) + chalk.white(`# Run ${firstExternal.displayName}\n`));
-    }
-
-    console.log(chalk.white('Need help? Run: ') + chalk.green('codemie --help\n'));
-  }
 }

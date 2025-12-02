@@ -293,7 +293,7 @@ export class AgentCLI {
       }
 
       console.log(chalk.white(`  1. ${this.adapter.name} requires ${modelDescription} (e.g., ${suggestedModel})`));
-      console.log(chalk.white(`  2. Switch model: codemie config set model ${suggestedModel}`));
+      console.log(chalk.white(`  2. Update profile: codemie setup`));
       // Handle special case where adapter name already includes 'codemie-' prefix
       const command = this.adapter.name.startsWith('codemie-') ? this.adapter.name : `codemie-${this.adapter.name}`;
       console.log(chalk.white(`  3. Override for this session: ${command} --model ${suggestedModel}`));

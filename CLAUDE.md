@@ -52,10 +52,10 @@ codemie-gemini health
 
 # Profile Management (Multi-Provider Support)
 codemie setup              # Add new profile or update existing
-codemie profile list       # List all provider profiles
+codemie profile list       # List all profiles with detailed information
 codemie profile switch <name>  # Switch to different profile
-codemie profile show [name]    # Show profile details
 codemie profile delete <name>  # Delete a profile
+codemie profile rename <old> <new>  # Rename a profile
 codemie-code --profile work "task"  # Use specific profile
 
 # Analytics Commands
@@ -270,11 +270,10 @@ codemie-code/
   - `setup.ts`: Interactive multi-provider configuration wizard
   - `install.ts`/`uninstall.ts`: Agent lifecycle management
   - `doctor/`: Extensible health check system with provider-specific checks
-  - `config.ts`: Configuration inspection and testing
-  - `profile.ts`: Profile management (list, switch, show, delete, rename)
+  - `profile.ts`: Profile management (list, switch, delete, rename)
   - `workflow.ts`: CI/CD workflow installation
   - `auth.ts`: SSO authentication management
-  - `env.ts`: Environment variable management
+  - `analytics.ts`: Usage analytics and reporting
   - `version.ts`: Version information
 
 **Pattern**: Each command is a factory function (`createXCommand()`) returning a Commander instance

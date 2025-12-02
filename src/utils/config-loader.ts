@@ -560,10 +560,11 @@ export class ConfigLoader {
    * Mask sensitive values
    */
   private static maskSensitive(key: string, value: any): string {
-    const valueStr = String(value);
     const keyLower = key.toLowerCase();
 
+    // Handle sensitive values
     if (keyLower.includes('key') || keyLower.includes('token') || keyLower.includes('password')) {
+      const valueStr = String(value);
       if (valueStr.length <= 8) {
         return '***';
       }
@@ -577,7 +578,47 @@ export class ConfigLoader {
       return value.join(', ');
     }
 
-    return valueStr;
+    // Handle objects (like analytics, profiles)
+    if (typeof value === 'object' && value !== null) {
+      // Recursively mask sensitive values in nested objects
+      const masked = this.maskNestedSensitive(value);
+      return JSON.stringify(masked, null, 2);
+    }
+
+    return String(value);
+  }
+
+  /**
+   * Recursively mask sensitive values in nested objects
+   */
+  private static maskNestedSensitive(obj: any): any {
+    if (Array.isArray(obj)) {
+      return obj.map(item => this.maskNestedSensitive(item));
+    }
+
+    if (typeof obj === 'object' && obj !== null) {
+      const result: any = {};
+      for (const [key, value] of Object.entries(obj)) {
+        const keyLower = key.toLowerCase();
+        if (keyLower.includes('key') || keyLower.includes('token') || keyLower.includes('password')) {
+          const valueStr = String(value);
+          if (valueStr.length <= 8) {
+            result[key] = '***';
+          } else {
+            const start = valueStr.substring(0, 8);
+            const end = valueStr.substring(valueStr.length - 4);
+            result[key] = `${start}***${end}`;
+          }
+        } else if (typeof value === 'object' && value !== null) {
+          result[key] = this.maskNestedSensitive(value);
+        } else {
+          result[key] = value;
+        }
+      }
+      return result;
+    }
+
+    return obj;
   }
 
   /**

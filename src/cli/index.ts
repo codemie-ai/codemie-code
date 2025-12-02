@@ -7,8 +7,6 @@ import { createUninstallCommand } from './commands/uninstall.js';
 import { createDoctorCommand } from './commands/doctor/index.js';
 import { createVersionCommand } from './commands/version.js';
 import { createSetupCommand } from './commands/setup.js';
-import { createConfigCommand } from './commands/config.js';
-import { createEnvCommand } from './commands/env.js';
 import { createAuthCommand } from './commands/auth.js';
 import { createWorkflowCommand } from './commands/workflow.js';
 import { createProfileCommand } from './commands/profile.js';
@@ -42,8 +40,6 @@ program
 program.addCommand(createSetupCommand());
 program.addCommand(createProfileCommand());
 program.addCommand(createAuthCommand());
-program.addCommand(createEnvCommand());
-program.addCommand(createConfigCommand());
 program.addCommand(createListCommand());
 program.addCommand(createInstallCommand());
 program.addCommand(createUninstallCommand());

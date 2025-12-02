@@ -6,11 +6,12 @@
 codemie setup                    # Interactive configuration wizard
 codemie profile <command>        # Manage provider profiles
 codemie auth <command>           # Manage SSO authentication
+codemie analytics <command>      # View usage analytics
+codemie workflow <command>       # Manage CI/CD workflows
 codemie list                     # List all available agents
 codemie install <agent>          # Install an agent
 codemie uninstall <agent>        # Uninstall an agent
 codemie doctor                   # Health check and diagnostics
-codemie config <action>          # Manage configuration
 codemie version                  # Show version information
 ```
 
@@ -48,24 +49,29 @@ codemie-claude --profile personal-openai "review PR"
 codemie-gemini --profile lite --model gemini-2.5-flash "document code"
 ```
 
-## Configuration Commands
-
-```bash
-codemie config show              # Show current configuration with sources
-codemie config list              # List all available parameters
-codemie config test              # Test connection with current configuration
-codemie config init              # Initialize project-specific configuration
-```
-
 ## Profile Management Commands
 
+Manage multiple provider configurations (work, personal, team, etc.) with separate profiles.
+
 ```bash
-codemie profile list             # List all provider profiles
+codemie profile list             # List all profiles with detailed information
 codemie profile switch <name>    # Switch to a different profile
-codemie profile show [name]      # Show profile details (defaults to active)
 codemie profile delete <name>    # Delete a profile
 codemie profile rename <old> <new> # Rename a profile
 ```
+
+**Note:** To create or update profiles, use `codemie setup` which provides an interactive wizard.
+
+**Profile List Details:**
+The `codemie profile list` command displays comprehensive information for each profile:
+- Profile name and active status
+- Provider (ai-run-sso, openai, azure, bedrock, litellm, gemini)
+- Base URL
+- Model
+- Timeout settings
+- Debug mode status
+- Masked API keys (for security)
+- Additional provider-specific settings
 
 ## Analytics Commands
 
