@@ -120,113 +120,28 @@ export function detectLanguage(filePath: string): string | undefined {
 }
 
 /**
- * Detect file format category
+ * Detect file format (returns extension without dot, or special name for no-extension files)
+ * Examples: "ts", "py", "md", "Dockerfile", "Makefile"
  */
 export function detectFormat(filePath: string): string {
   const ext = extname(filePath).toLowerCase();
   const basename = filePath.split('/').pop()?.toLowerCase() || '';
 
-  // Test files (check first, as they may have code extensions)
-  if (
-    basename.includes('.test.') ||
-    basename.includes('.spec.') ||
-    basename.includes('_test.') ||
-    basename.includes('_spec.') ||
-    filePath.includes('/tests/') ||
-    filePath.includes('/test/') ||
-    filePath.includes('/__tests__/') ||
-    filePath.includes('/spec/')
-  ) {
-    return 'test';
+  // Files without extensions - use basename
+  if (!ext) {
+    // Special known files
+    if (basename === 'dockerfile') return 'Dockerfile';
+    if (basename === 'makefile') return 'Makefile';
+    if (basename === 'rakefile') return 'Rakefile';
+    if (basename === 'gemfile') return 'Gemfile';
+    if (basename === 'jenkinsfile') return 'Jenkinsfile';
+    if (basename.startsWith('.')) return basename; // .gitignore, .npmrc, etc.
+
+    return 'other';
   }
 
-  // Documentation
-  const docExtensions = ['.md', '.mdx', '.rst', '.txt', '.adoc', '.tex'];
-  if (docExtensions.includes(ext)) {
-    return 'docs';
-  }
-
-  // Configuration files
-  const configExtensions = [
-    '.json', '.yaml', '.yml', '.toml', '.ini', '.conf',
-    '.xml', '.properties', '.env', '.config'
-  ];
-  const configFiles = [
-    'dockerfile', 'makefile', 'rakefile', 'gemfile',
-    'package.json', 'tsconfig.json', 'jsconfig.json',
-    'webpack.config', 'rollup.config', 'vite.config',
-    '.eslintrc', '.prettierrc', '.babelrc', '.npmrc',
-    '.gitignore', '.dockerignore', '.editorconfig'
-  ];
-
-  if (
-    configExtensions.includes(ext) ||
-    configFiles.some(cfg => basename.includes(cfg))
-  ) {
-    return 'config';
-  }
-
-  // Data files
-  const dataExtensions = [
-    '.csv', '.tsv', '.parquet', '.avro',
-    '.db', '.sqlite', '.sql',
-    '.proto', '.thrift'
-  ];
-  if (dataExtensions.includes(ext)) {
-    return 'data';
-  }
-
-  // Build/CI files
-  if (
-    filePath.includes('.github/workflows/') ||
-    filePath.includes('.gitlab-ci') ||
-    basename.includes('jenkinsfile') ||
-    basename.includes('.travis.yml') ||
-    basename.includes('circle.yml')
-  ) {
-    return 'ci';
-  }
-
-  // Code files (programming languages)
-  const codeExtensions = [
-    '.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs',
-    '.py', '.pyw', '.java', '.kt', '.scala',
-    '.c', '.h', '.cpp', '.hpp', '.cc', '.cxx',
-    '.cs', '.go', '.rs', '.rb', '.php', '.swift',
-    '.sh', '.bash', '.lua', '.r', '.pl', '.ex',
-    '.erl', '.vim', '.lisp', '.clj', '.dart',
-    '.julia', '.zig', '.nim', '.m'
-  ];
-  if (codeExtensions.includes(ext)) {
-    return 'code';
-  }
-
-  // Web assets (styles, markup)
-  const webExtensions = [
-    '.html', '.htm', '.css', '.scss', '.sass', '.less',
-    '.svg'
-  ];
-  if (webExtensions.includes(ext)) {
-    return 'web';
-  }
-
-  // Assets (images, fonts, etc.)
-  const assetExtensions = [
-    '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico',
-    '.woff', '.woff2', '.ttf', '.eot', '.otf',
-    '.mp3', '.mp4', '.wav', '.ogg', '.webm'
-  ];
-  if (assetExtensions.includes(ext)) {
-    return 'asset';
-  }
-
-  // License files
-  if (basename.includes('license') || basename.includes('copying')) {
-    return 'legal';
-  }
-
-  // Default to 'other'
-  return 'other';
+  // Return extension without the leading dot
+  return ext.slice(1);
 }
 
 /**

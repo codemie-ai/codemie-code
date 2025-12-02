@@ -219,7 +219,7 @@ export interface CodemieFileModification {
   // Content metadata
   fileExtension: string;     // File extension (e.g., '.ts', '.md')
   language?: string;         // Programming language
-  format?: string;           // File format category (code, docs, config, test, data)
+  format?: string;           // File format (extension without dot, e.g., 'ts', 'py', 'md')
 }
 
 // ============================================================================
