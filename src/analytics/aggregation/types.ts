@@ -35,8 +35,31 @@ export interface CodemieSession {
   profile?: string;
 
   // Aggregates
+  /**
+   * Count of actual user prompts (from history file)
+   * What the user actually typed/initiated
+   */
+  userPromptCount: number;
+
+  /**
+   * Count of all user-type messages in session file
+   * Includes system messages, tool results, auto-generated messages
+   */
   userMessageCount: number;
+
+  /**
+   * Count of assistant responses
+   */
   assistantMessageCount: number;
+
+  /**
+   * Percentage of real user prompts out of total user messages
+   * Formula: (userPromptCount / userMessageCount) * 100
+   * Shows how much is actual user input vs system-generated messages
+   * Example: 20% means 20% user input, 80% system messages
+   */
+  userPromptPercentage?: number;
+
   toolCallCount: number;
   successfulToolCalls: number;
   failedToolCalls: number;

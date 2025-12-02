@@ -300,6 +300,11 @@ export class CodexAnalyticsAdapter extends BaseAnalyticsAdapter {
     // Get project path
     const projectPath = (descriptor.metadata.cwd as string) || '';
 
+    // Codex doesn't have a separate history file yet
+    // Use userMessageCount as userPromptCount (100% real user input)
+    const userPromptCount = userMessageEvents.length;
+    const userPromptPercentage = this.calculateUserPromptPercentage(userPromptCount, userMessageEvents.length);
+
     return {
       sessionId: descriptor.sessionId,
       agent: 'codex',
@@ -312,8 +317,10 @@ export class CodexAnalyticsAdapter extends BaseAnalyticsAdapter {
       gitCommit: sessionMeta.git?.commit_hash,
       model,
       provider: sessionMeta.model_provider || 'openai',
+      userPromptCount,              // Same as userMessageCount for Codex (no history file)
       userMessageCount: userMessageEvents.length,
       assistantMessageCount: assistantMessages.length,
+      userPromptPercentage,         // 100% for Codex (no system messages yet)
       toolCallCount: toolCalls.length,
       successfulToolCalls,
       failedToolCalls,

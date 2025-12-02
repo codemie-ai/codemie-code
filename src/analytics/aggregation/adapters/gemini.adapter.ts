@@ -19,7 +19,9 @@ import {
   countLines,
   calculateByteSize,
   calculateFileStats,
-  resolveProjectPath
+  resolveProjectPath,
+  JSONUserPromptSource,
+  UserPrompt
 } from '../core/index.js';
 import {
   SessionQueryOptions,
@@ -69,11 +71,51 @@ interface GeminiToolCall {
 }
 
 /**
+ * Gemini user prompt entry format (from ~/.gemini/tmp/{projectHash}/logs.json)
+ */
+interface GeminiUserPromptEntry {
+  prompt: string;
+  timestamp: number;
+  sessionId?: string;
+  project?: string;
+}
+
+/**
  * Gemini CLI analytics adapter
  */
 export class GeminiAnalyticsAdapter extends BaseAnalyticsAdapter {
   constructor(metadata: AdapterMetadata) {
     super(metadata);
+  }
+
+  /**
+   * Helper: Get logs.json path for a project hash
+   */
+  private getLogsPath(projectHash: string): string {
+    return join(resolvePath(this.homePath), 'tmp', projectHash, 'logs.json');
+  }
+
+  /**
+   * Initialize user prompt source for a specific project hash
+   */
+  private initUserPromptSource(projectHash: string): JSONUserPromptSource {
+    const logsPath = this.getLogsPath(projectHash);
+
+    return new JSONUserPromptSource(
+      logsPath,
+      (entry: unknown): UserPrompt => {
+        const e = entry as GeminiUserPromptEntry;
+        return {
+          prompt: e.prompt,
+          timestamp: new Date(e.timestamp),
+          sessionId: e.sessionId || 'unknown',
+          projectPath: e.project,
+          metadata: {
+            projectHash
+          }
+        };
+      }
+    );
   }
 
   async findSessions(options?: SessionQueryOptions): Promise<SessionDescriptor[]> {
@@ -220,6 +262,25 @@ export class GeminiAnalyticsAdapter extends BaseAnalyticsAdapter {
     const projectPath = descriptor.metadata.projectPath as string ||
                         (session.projectHash ? resolveProjectPath('gemini', session.projectHash) : '');
 
+    // Count actual user prompts from logs.json (if available)
+    let userPromptCount = userMessages.length; // Default to userMessageCount
+    if (session.projectHash) {
+      try {
+        const userPromptSource = this.initUserPromptSource(session.projectHash);
+        const userPrompts = await userPromptSource.readPrompts({
+          sessionId: session.sessionId
+        });
+        if (userPrompts.length > 0) {
+          userPromptCount = userPrompts.length;
+        }
+      } catch (error) {
+        // logs.json might not exist, fall back to userMessageCount
+        console.debug(`Could not read user prompts for session ${session.sessionId}: ${error}`);
+      }
+    }
+
+    const userPromptPercentage = this.calculateUserPromptPercentage(userPromptCount, userMessages.length);
+
     return {
       sessionId: session.sessionId,
       agent: 'gemini',
@@ -231,8 +292,10 @@ export class GeminiAnalyticsAdapter extends BaseAnalyticsAdapter {
       projectHash: session.projectHash,
       model,
       provider: 'gemini',
+      userPromptCount,              // From logs.json if available, else userMessageCount
       userMessageCount: userMessages.length,
       assistantMessageCount: assistantMessages.length,
+      userPromptPercentage,         // Percentage of real user input
       toolCallCount: totalToolCalls,
       successfulToolCalls,
       failedToolCalls,

@@ -20,6 +20,7 @@ import {
   CodemieToolCall,
   CodemieFileModification
 } from '../types.js';
+import { UserPromptSource, UserPrompt } from './user-prompt-source.js';
 
 /**
  * Base Analytics Adapter
@@ -37,6 +38,7 @@ export abstract class BaseAnalyticsAdapter implements AgentAnalyticsAdapter {
   // === Protected Properties ===
   protected homePath: string;
   protected sessionsPath: string;
+  protected userPromptSource?: UserPromptSource;
 
   /**
    * Constructor - Extracts metadata for all adapters
@@ -78,6 +80,53 @@ export abstract class BaseAnalyticsAdapter implements AgentAnalyticsAdapter {
     }
 
     return results;
+  }
+
+  /**
+   * Read user prompts from source (optional)
+   * Subclasses should set userPromptSource to enable this functionality
+   */
+  protected async readUserPrompts(
+    sessionId: string,
+    options?: { dateFrom?: Date; dateTo?: Date }
+  ): Promise<UserPrompt[]> {
+    if (!this.userPromptSource) {
+      return [];
+    }
+
+    return this.userPromptSource.readPrompts({
+      ...options,
+      sessionId
+    });
+  }
+
+  /**
+   * Count user prompts from source (optional)
+   * Returns 0 if no user prompt source is configured
+   */
+  protected async countUserPrompts(
+    sessionId: string,
+    options?: { dateFrom?: Date; dateTo?: Date }
+  ): Promise<number> {
+    const prompts = await this.readUserPrompts(sessionId, options);
+    return prompts.length;
+  }
+
+  /**
+   * Calculate user prompt percentage
+   * Formula: (userPromptCount / userMessageCount) * 100
+   * Returns undefined if userMessageCount is 0
+   * Shows what percentage of user messages are actual user prompts
+   * Lower percentage = more system-generated messages
+   */
+  protected calculateUserPromptPercentage(
+    userPromptCount: number,
+    userMessageCount: number
+  ): number | undefined {
+    if (userMessageCount === 0) {
+      return undefined;
+    }
+    return (userPromptCount / userMessageCount) * 100;
   }
 
   // === Abstract Methods (Agent-Specific) ===

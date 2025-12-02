@@ -214,7 +214,6 @@ function createShowCommand(): Command {
           }
 
           // Calculate summary statistics
-          const totalMessages = sessions.reduce((sum, s) => sum + s.userMessageCount + s.assistantMessageCount, 0);
           const totalTokens = sessions.reduce((sum, s) => sum + s.tokens.total, 0);
           const totalInputTokens = sessions.reduce((sum, s) => sum + s.tokens.input, 0);
           const totalOutputTokens = sessions.reduce((sum, s) => sum + s.tokens.output, 0);
@@ -238,12 +237,24 @@ function createShowCommand(): Command {
             colWidths: [25, 60]
           });
 
-          const totalPrompts = sessions.reduce((sum, s) => sum + s.userMessageCount, 0);
+          const totalUserPrompts = sessions.reduce((sum, s) => sum + s.userPromptCount, 0);
+          const totalUserMessages = sessions.reduce((sum, s) => sum + s.userMessageCount, 0);
           const totalResponses = sessions.reduce((sum, s) => sum + s.assistantMessageCount, 0);
+
+          // Calculate overall user prompt percentage
+          const overallUserPromptPercentage = totalUserMessages > 0
+            ? (totalUserPrompts / totalUserMessages) * 100
+            : 100;
+
+          // Calculate system message percentage
+          const systemMessagePercentage = 100 - overallUserPromptPercentage;
 
           summaryTable.push(
             [chalk.white('Sessions'), chalk.white(sessions.length.toString())],
-            [chalk.white('Messages'), chalk.white(`${totalMessages.toLocaleString()} (${totalPrompts.toLocaleString()} prompts + ${totalResponses.toLocaleString()} responses)`)]
+            [chalk.white('User Prompts'), chalk.white(`${totalUserPrompts.toLocaleString()} typed by user (${overallUserPromptPercentage.toFixed(1)}%)`)],
+            [chalk.white('System Messages'), chalk.white(`${(totalUserMessages - totalUserPrompts).toLocaleString()} auto-generated (${systemMessagePercentage.toFixed(1)}%)`)],
+            [chalk.white('Total User Messages'), chalk.white(`${totalUserMessages.toLocaleString()}`)],
+            [chalk.white('Assistant Messages'), chalk.white(`${totalResponses.toLocaleString()}`)]
           );
 
           console.log(summaryTable.toString());
@@ -326,21 +337,23 @@ function createShowCommand(): Command {
           console.log();
 
           // 4. BY AGENT - Agent breakdown
-          const byAgent: Record<string, { sessions: number; tokens: number; prompts: number; apiCalls: number; displayName: string }> = {};
+          const byAgent: Record<string, { sessions: number; tokens: number; userPrompts: number; userMessages: number; apiCalls: number; displayName: string }> = {};
           for (const session of sessions) {
             if (!byAgent[session.agent]) {
               const adapter = AgentRegistry.getAgent(session.agent);
               byAgent[session.agent] = {
                 sessions: 0,
                 tokens: 0,
-                prompts: 0,
+                userPrompts: 0,
+                userMessages: 0,
                 apiCalls: 0,
                 displayName: adapter?.displayName || session.agent
               };
             }
             byAgent[session.agent].sessions++;
             byAgent[session.agent].tokens += session.tokens.total;
-            byAgent[session.agent].prompts += session.userMessageCount;
+            byAgent[session.agent].userPrompts += session.userPromptCount;
+            byAgent[session.agent].userMessages += session.userMessageCount;
             // Count API calls from model usage
             byAgent[session.agent].apiCalls += Object.values(session.modelUsage).reduce((sum, count) => sum + count, 0);
           }
@@ -351,7 +364,7 @@ function createShowCommand(): Command {
 
           // Create table for agent breakdown
           const agentTable = new Table({
-            head: [chalk.cyan('Agent'), chalk.cyan('Prompts'), chalk.cyan('Sessions'), chalk.cyan('API Calls'), chalk.cyan('Share')],
+            head: [chalk.cyan('Agent'), chalk.cyan('User Prompts'), chalk.cyan('Real Input %'), chalk.cyan('Sessions'), chalk.cyan('API Calls'), chalk.cyan('Share')],
             style: {
               head: [],
               border: ['grey']
@@ -359,13 +372,20 @@ function createShowCommand(): Command {
           });
 
           for (const [, stats] of sortedAgents) {
-            const percentage = ((stats.sessions / sessions.length) * 100).toFixed(1);
+            const sessionPercentage = ((stats.sessions / sessions.length) * 100).toFixed(1);
+
+            // Calculate user prompt percentage for this agent
+            const userPromptPercentage = stats.userMessages > 0
+              ? ((stats.userPrompts / stats.userMessages) * 100).toFixed(1)
+              : '100.0';
+
             agentTable.push([
               chalk.white(stats.displayName),
-              chalk.white(stats.prompts.toString()),
+              chalk.white(stats.userPrompts.toString()),
+              chalk.white(`${userPromptPercentage}%`),
               chalk.white(stats.sessions.toString()),
               chalk.white(stats.apiCalls.toString()),
-              chalk.white(`${percentage}%`)
+              chalk.white(`${sessionPercentage}%`)
             ]);
           }
 

@@ -9,3 +9,6 @@ export * from './streaming.js';
 export * from './discovery.js';
 export * from './file-utils.js';
 export * from './project-mapping.js';
+export * from './user-prompt-source.js';
+export * from './user-prompt-sources/jsonl.js';
+export * from './user-prompt-sources/json.js';

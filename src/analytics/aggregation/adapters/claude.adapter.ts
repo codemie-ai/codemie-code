@@ -23,7 +23,9 @@ import {
   detectFormat,
   countLines,
   calculateByteSize,
-  calculateFileStats
+  calculateFileStats,
+  JSONLUserPromptSource,
+  UserPrompt
 } from '../core/index.js';
 import {
   SessionQueryOptions,
@@ -97,11 +99,40 @@ interface ClaudeSnapshot {
 }
 
 /**
+ * Claude history entry format (from ~/.claude/history.jsonl)
+ */
+interface ClaudeHistoryEntry {
+  display: string;
+  pastedContents: object;
+  timestamp: number;
+  project: string;
+  sessionId: string;
+}
+
+/**
  * Claude Code analytics adapter
  */
 export class ClaudeAnalyticsAdapter extends BaseAnalyticsAdapter {
   constructor(metadata: AdapterMetadata) {
     super(metadata);
+
+    // Initialize user prompt source
+    const historyFilePath = join(resolvePath(this.homePath), 'history.jsonl');
+    this.userPromptSource = new JSONLUserPromptSource(
+      historyFilePath,
+      (entry: unknown): UserPrompt => {
+        const e = entry as ClaudeHistoryEntry;
+        return {
+          prompt: e.display,
+          timestamp: new Date(e.timestamp),
+          sessionId: e.sessionId,
+          projectPath: e.project,
+          metadata: {
+            pastedContents: e.pastedContents
+          }
+        };
+      }
+    );
   }
 
   async findSessions(options?: SessionQueryOptions): Promise<SessionDescriptor[]> {
@@ -288,6 +319,12 @@ export class ClaudeAnalyticsAdapter extends BaseAnalyticsAdapter {
     const projectPath = (descriptor.metadata.projectPath as string) ||
                        (descriptor.metadata.cwd as string) || '';
 
+    // Count actual user prompts from history file
+    const userPromptCount = await this.countUserPrompts(descriptor.sessionId);
+
+    // Calculate user prompt percentage using base class helper
+    const userPromptPercentage = this.calculateUserPromptPercentage(userPromptCount, userMessages.length);
+
     return {
       sessionId: descriptor.sessionId,
       agent: 'claude',
@@ -299,8 +336,10 @@ export class ClaudeAnalyticsAdapter extends BaseAnalyticsAdapter {
       gitBranch: descriptor.metadata.gitBranch as string,
       model,
       provider: 'anthropic',
-      userMessageCount: userMessages.length,
+      userPromptCount,              // True user input (from history.jsonl)
+      userMessageCount: userMessages.length,  // All user-type events (from session files)
       assistantMessageCount: assistantMessages.length,
+      userPromptPercentage,         // Percentage of real user input
       toolCallCount: toolCalls.length,
       successfulToolCalls,
       failedToolCalls,
