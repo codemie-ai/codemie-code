@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Documentation
+    url: https://github.com/codemie-ai/codemie-code#readme
+    about: Check the README and docs for guides and examples
+  - name: Discussions
+    url: https://github.com/codemie-ai/codemie-code/discussions
+    about: Ask questions and discuss ideas with the community
+  - name: Security Vulnerability
+    url: https://github.com/codemie-ai/codemie-code/security/advisories/new
+    about: Report security vulnerabilities privately

@@ -1,0 +1,164 @@
+name: Bug Report
+description: Report a bug or unexpected behavior in CodeMie CLI
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug! Please fill out the sections below to help us understand and resolve the issue.
+
+  - type: checkboxes
+    id: prerequisites
+    attributes:
+      label: Prerequisites
+      description: Please confirm the following before submitting
+      options:
+        - label: I have searched existing issues to avoid duplicates
+          required: true
+        - label: I am using the latest version of CodeMie CLI
+          required: true
+        - label: I have read the [documentation](https://github.com/codemie-ai/codemie-code#readme)
+          required: false
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear and concise description of what the bug is
+      placeholder: What happened? What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Detailed steps to reproduce the behavior
+      placeholder: |
+        1. Run command '...'
+        2. Enter input '...'
+        3. See error
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What you expected to happen
+      placeholder: Describe the expected outcome
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened (include error messages if any)
+      placeholder: Describe what actually happened, paste error messages
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: CodeMie CLI Version
+      description: Output of `codemie --version`
+      placeholder: "0.0.14"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: agent
+    attributes:
+      label: Which agent are you using?
+      options:
+        - CodeMie Native (codemie-code)
+        - Claude Code (codemie-claude)
+        - OpenAI Codex (codemie-codex)
+        - Google Gemini (codemie-gemini)
+        - Deep Agents (codemie-deepagents)
+        - Not applicable / General CLI
+    validations:
+      required: true
+
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Which provider are you using?
+      options:
+        - AI/Run SSO
+        - OpenAI
+        - Azure OpenAI
+        - AWS Bedrock
+        - LiteLLM
+        - Google AI
+        - Not applicable
+    validations:
+      required: false
+
+  - type: input
+    id: model
+    attributes:
+      label: Model
+      description: Which model are you using (if applicable)?
+      placeholder: "gpt-4, claude-sonnet-4-5, gemini-pro"
+    validations:
+      required: false
+
+  - type: input
+    id: node-version
+    attributes:
+      label: Node.js Version
+      description: Output of `node --version`
+      placeholder: "v24.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - macOS
+        - Linux
+        - Windows (WSL)
+        - Windows (native)
+    validations:
+      required: true
+
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration (Redacted)
+      description: |
+        Your config from `~/.codemie/config.json` (please redact API keys and sensitive data)
+      placeholder: |
+        {
+          "version": 2,
+          "activeProfile": "work",
+          "profiles": { ... }
+        }
+      render: json
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Error Logs
+      description: Any relevant error logs or output
+      placeholder: Paste error logs here
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Add any other context about the problem here
+      placeholder: Screenshots, related issues, workarounds you tried, etc.
+    validations:
+      required: false
