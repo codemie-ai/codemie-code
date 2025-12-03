@@ -160,4 +160,27 @@ export abstract class BaseAnalyticsAdapter implements AgentAnalyticsAdapter {
    * Each agent has different tool naming
    */
   abstract extractFileModifications(descriptor: SessionDescriptor): Promise<CodemieFileModification[]>;
+
+  /**
+   * Extract raw events (messages, tool calls, file modifications)
+   * Default implementation combines existing extract methods
+   * Subclasses can override for more efficient extraction
+   */
+  async extractRawEvents(descriptor: SessionDescriptor): Promise<{
+    messages: CodemieMessage[];
+    toolCalls: CodemieToolCall[];
+    fileModifications: CodemieFileModification[];
+  }> {
+    const [messages, toolCalls, fileModifications] = await Promise.all([
+      this.extractMessages(descriptor),
+      this.extractToolCalls(descriptor),
+      this.extractFileModifications(descriptor)
+    ]);
+
+    return {
+      messages,
+      toolCalls,
+      fileModifications
+    };
+  }
 }

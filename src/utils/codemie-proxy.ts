@@ -21,6 +21,8 @@ import { CredentialStore } from './credential-store.js';
 import { SSOCredentials } from '../types/sso.js';
 import { logger } from './logger.js';
 import { getAnalytics } from '../analytics/index.js';
+import { loadAnalyticsConfig } from '../analytics/config.js';
+import { RemoteAnalyticsSubmitter } from '../analytics/remote-submission/index.js';
 import { ProxyHTTPClient } from './proxy/http-client.js';
 import {
   ProxyInterceptor,
@@ -44,6 +46,7 @@ export class CodeMieProxy {
   private httpClient: ProxyHTTPClient;
   private interceptors: ProxyInterceptor[] = [];
   private actualPort: number = 0;
+  private remoteSubmitter: RemoteAnalyticsSubmitter | null = null;
 
   constructor(private config: ProxyConfig) {
     // Initialize HTTP client with streaming support
@@ -105,6 +108,34 @@ export class CodeMieProxy {
     // this.interceptors.push(new RetryInterceptor({ maxRetries: 3 }));
     // this.interceptors.push(new CachingInterceptor());
 
+    // Initialize remote analytics submitter
+    // Runs for 'local', 'remote', or 'both' targets when analytics is enabled
+    const analyticsConfig = loadAnalyticsConfig();
+    const shouldEnableSubmitter = analyticsConfig.enabled &&
+                                   this.config.provider === 'ai-run-sso';
+
+    if (shouldEnableSubmitter) {
+      try {
+        // Convert cookies object to cookie string (only needed for remote)
+        const cookieString = Object.entries(this.credentials.cookies)
+          .map(([key, value]) => `${key}=${value}`)
+          .join('; ');
+
+        this.remoteSubmitter = new RemoteAnalyticsSubmitter({
+          enabled: true,
+          target: analyticsConfig.target,
+          baseUrl: this.config.targetApiUrl,
+          cookies: cookieString,
+          interval: parseInt(process.env.CODEMIE_ANALYTICS_REMOTE_INTERVAL || '300000', 10),
+          batchSize: parseInt(process.env.CODEMIE_ANALYTICS_REMOTE_BATCH_SIZE || '100', 10)
+        });
+        this.remoteSubmitter.start();
+        logger.debug(`Analytics submitter started (target: ${analyticsConfig.target})`);
+      } catch (error) {
+        logger.error(`Failed to start analytics submitter: ${error}`);
+      }
+    }
+
     // Find available port
     this.actualPort = this.config.port || await this.findAvailablePort();
 
@@ -145,6 +176,12 @@ export class CodeMieProxy {
    * Stop the proxy server
    */
   async stop(): Promise<void> {
+    // Stop remote analytics submitter
+    if (this.remoteSubmitter) {
+      this.remoteSubmitter.stop();
+      logger.debug('Remote analytics submitter stopped');
+    }
+
     // Flush analytics before stopping to ensure all events are written
     const analytics = getAnalytics();
     if (analytics.isEnabled) {

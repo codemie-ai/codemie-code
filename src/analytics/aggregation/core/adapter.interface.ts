@@ -61,6 +61,18 @@ export interface AgentAnalyticsAdapter {
    */
   extractFileModifications(descriptor: SessionDescriptor): Promise<CodemieFileModification[]>;
 
+  /**
+   * Extract raw events (messages, tool calls, file modifications) for granular metrics
+   * Used by remote submission system to generate backend-aligned metrics
+   * @param descriptor Session descriptor
+   * @returns Raw events from session
+   */
+  extractRawEvents(descriptor: SessionDescriptor): Promise<{
+    messages: CodemieMessage[];
+    toolCalls: CodemieToolCall[];
+    fileModifications: CodemieFileModification[];
+  }>;
+
   // === Validation ===
   /**
    * Validate that the adapter's data source is accessible

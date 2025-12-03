@@ -13,6 +13,7 @@ export interface AgentAnalyticsAdapter {
   extractMessages(descriptor: any): Promise<any[]>;
   extractToolCalls(descriptor: any): Promise<any[]>;
   extractFileModifications(descriptor: any): Promise<any[]>;
+  extractRawEvents(descriptor: any): Promise<{ messages: any[]; toolCalls: any[]; fileModifications: any[] }>;
   validateSource(): Promise<boolean>;
 }
 

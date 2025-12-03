@@ -57,6 +57,7 @@ class Logger {
    * Write a log entry to the debug log file (synchronous)
    * Format: [YYYY-MM-DD HH:MM:SS.mmm] [LEVEL] message
    * Automatically sanitizes sensitive data before writing
+   * Always writes to file regardless of debug mode
    */
   private writeToLogFile(level: string, message: string, ...args: unknown[]): void {
     if (!this.logFileInitialized) {
@@ -102,6 +103,7 @@ class Logger {
 
   /**
    * Check if debug mode is enabled
+   * Debug mode controls console output visibility, not file logging
    * @returns true if CODEMIE_DEBUG environment variable is set to 'true' or '1'
    */
   isDebugMode(): boolean {
@@ -120,23 +122,21 @@ class Logger {
   }
 
   debug(message: string, ...args: unknown[]): void {
-    // Only log debug messages when CODEMIE_DEBUG is enabled
-    if (this.isDebugMode()) {
-      // Console output
-      console.log(chalk.dim(`[DEBUG] ${message}`), ...args);
+    // Always write to log file
+    this.writeToLogFile('debug', message, ...args);
 
-      // File output (synchronous)
-      this.writeToLogFile('debug', message, ...args);
+    // Only console output when CODEMIE_DEBUG is enabled
+    if (this.isDebugMode()) {
+      console.log(chalk.dim(`[DEBUG] ${message}`), ...args);
     }
   }
 
   info(message: string, ...args: unknown[]): void {
-    console.log(chalk.blueBright(message), ...args);
+    // Always write to log file
+    this.writeToLogFile('info', message, ...args);
 
-    // Write to log file if debug mode is enabled
-    if (this.isDebugMode()) {
-      this.writeToLogFile('info', message, ...args);
-    }
+    // Console output
+    console.log(chalk.blueBright(message), ...args);
   }
 
   success(message: string, ...args: unknown[]): void {
@@ -144,35 +144,40 @@ class Logger {
   }
 
   warn(message: string, ...args: unknown[]): void {
-    console.warn(chalk.yellow(`⚠ ${message}`), ...args);
+    // Always write to log file
+    this.writeToLogFile('warn', message, ...args);
 
-    // Write to log file if debug mode is enabled
-    if (this.isDebugMode()) {
-      this.writeToLogFile('warn', message, ...args);
-    }
+    // Console output
+    console.warn(chalk.yellow(`⚠ ${message}`), ...args);
   }
 
   error(message: string, error?: Error | unknown): void {
-    console.error(chalk.red(`✗ ${message}`));
-
     let errorDetails = '';
     if (error) {
       if (error instanceof Error) {
-        console.error(chalk.red(error.message));
         errorDetails = error.message;
         if (error.stack) {
-          console.error(chalk.white(error.stack));
           errorDetails += `\n${error.stack}`;
         }
       } else {
-        console.error(chalk.red(String(error)));
         errorDetails = String(error);
       }
     }
 
-    // Write to log file if debug mode is enabled
-    if (this.isDebugMode()) {
-      this.writeToLogFile('error', message, errorDetails);
+    // Always write to log file
+    this.writeToLogFile('error', message, errorDetails);
+
+    // Console output
+    console.error(chalk.red(`✗ ${message}`));
+    if (error) {
+      if (error instanceof Error) {
+        console.error(chalk.red(error.message));
+        if (error.stack) {
+          console.error(chalk.white(error.stack));
+        }
+      } else {
+        console.error(chalk.red(String(error)));
+      }
     }
   }
 }
