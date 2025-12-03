@@ -126,3 +126,28 @@ export function calculateDuration(startTime: Date | string, endTime: Date | stri
   const end = typeof endTime === 'string' ? new Date(endTime) : endTime;
   return end.getTime() - start.getTime();
 }
+
+/**
+ * Normalize LLM model names from different provider formats
+ *
+ * Handles various model name formats:
+ * - AWS Bedrock: converse/region.provider.model-v1:0 -> model
+ * - Standard: claude-sonnet-4-5-20250929 (unchanged)
+ * - OpenAI: gpt-4.1-turbo (unchanged)
+ *
+ * @param modelName - Raw model name from analytics data
+ * @returns Normalized model name for display
+ */
+export function normalizeModelName(modelName: string): string {
+  // Extract model from AWS Bedrock converse format
+  // Format: converse/global.anthropic.claude-haiku-4-5-20251001-v1:0
+  // Result: claude-haiku-4-5-20251001
+  if (modelName.startsWith('converse/')) {
+    const match = modelName.match(/anthropic\.(claude-[a-z0-9-]+)-v\d+:/);
+    if (match) {
+      return match[1];
+    }
+  }
+
+  return modelName; // Return as-is for standard format
+}

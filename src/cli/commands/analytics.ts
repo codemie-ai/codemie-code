@@ -6,6 +6,7 @@ import { logger } from '../../utils/logger.js';
 import { AgentRegistry } from '../../agents/registry.js';
 import { ConfigLoader } from '../../utils/config-loader.js';
 import { CodemieAnalyticsAggregator } from '../../analytics/aggregation/index.js';
+import { normalizeModelName } from '../../analytics/aggregation/core/index.js';
 
 export function createAnalyticsCommand(): Command {
   const command = new Command('analytics');
@@ -396,7 +397,9 @@ function createShowCommand(): Command {
           const modelBreakdown: Record<string, number> = {};
           for (const session of sessions) {
             for (const [modelName, count] of Object.entries(session.modelUsage)) {
-              modelBreakdown[modelName] = (modelBreakdown[modelName] || 0) + count;
+              // Normalize model names for consistent display
+              const normalizedModelName = normalizeModelName(modelName);
+              modelBreakdown[normalizedModelName] = (modelBreakdown[normalizedModelName] || 0) + count;
             }
           }
 

@@ -182,6 +182,11 @@ export interface CodemieToolCall {
   toolName: string;
   toolArgs: Record<string, unknown>;
 
+  // Model used for this tool call
+  // Tracks the actual model used in the API request that generated this tool call
+  // Important for mixed-model sessions (e.g., Haiku for prefix detection, Sonnet for main agent)
+  llm_model?: string;
+
   // Result
   status: 'success' | 'failure' | 'aborted';
   result?: unknown;

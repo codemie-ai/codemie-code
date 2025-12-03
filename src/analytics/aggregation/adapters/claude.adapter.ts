@@ -24,6 +24,7 @@ import {
   countLines,
   calculateByteSize,
   calculateFileStats,
+  normalizeModelName,
   JSONLUserPromptSource,
   UserPrompt
 } from '../core/index.js';
@@ -51,6 +52,8 @@ interface ClaudeEvent {
   version?: string;
   toolUseResult?: Record<string, unknown>;
   snapshot?: ClaudeSnapshot;
+  agentId?: string;         // For agent sessions (agent-*.jsonl files)
+  isSidechain?: boolean;    // Marks agent sessions
 }
 
 interface ClaudeMessage {
@@ -135,6 +138,7 @@ export class ClaudeAnalyticsAdapter extends BaseAnalyticsAdapter {
     );
   }
 
+
   async findSessions(options?: SessionQueryOptions): Promise<SessionDescriptor[]> {
     const baseDir = resolvePath(this.homePath);
     const projectsDir = join(baseDir, 'projects');
@@ -177,29 +181,57 @@ export class ClaudeAnalyticsAdapter extends BaseAnalyticsAdapter {
             if (!eventWithSession) continue;
 
             const sessionId = eventWithSession.sessionId;
-
-            // Check if this is the main session file (named with sessionId)
             const fileName = basename(filePath, '.jsonl');
-            const isMainFile = fileName === sessionId;
 
-            // Add to session map (use eventWithSession for metadata, not firstEvent!)
-            if (!sessionMap.has(sessionId)) {
-              sessionMap.set(sessionId, {
-                files: [],
+            // IMPORTANT: Agent files (agent-*.jsonl) should be SEPARATE sessions
+            // They have isSidechain: true and their own sessionId
+            // Each agent file represents a distinct Haiku sub-agent session
+            const isAgentFile = fileName.startsWith('agent-');
+
+            // For agent files, use the file itself as the only source
+            // For main sessions, check if file is named with sessionId
+            if (isAgentFile) {
+              // Agent file - create standalone session using agentId as unique key
+              // Multiple agent files can share the same sessionId (they're sub-agents of that session)
+              // Use agentId to create unique sessions for each agent
+              const agentId = eventWithSession.agentId || fileName.replace('agent-', '').replace('.jsonl', '');
+              const uniqueSessionId = `agent-${agentId}`; // Prefix to avoid collision with main sessions
+
+              sessionMap.set(uniqueSessionId, {
+                files: [filePath],
                 metadata: {
                   cwd: eventWithSession.cwd,
                   gitBranch: eventWithSession.gitBranch,
                   version: eventWithSession.version,
-                  timestamp: eventWithSession.timestamp
+                  timestamp: eventWithSession.timestamp,
+                  isAgent: true,
+                  agentId,
+                  parentSessionId: sessionId  // Track parent session
                 }
               });
-            }
-
-            // Add main file first, agent files after
-            if (isMainFile) {
-              sessionMap.get(sessionId)!.files.unshift(filePath);
             } else {
-              sessionMap.get(sessionId)!.files.push(filePath);
+              // Main session file
+              const isMainFile = fileName === sessionId;
+
+              // Add to session map
+              if (!sessionMap.has(sessionId)) {
+                sessionMap.set(sessionId, {
+                  files: [],
+                  metadata: {
+                    cwd: eventWithSession.cwd,
+                    gitBranch: eventWithSession.gitBranch,
+                    version: eventWithSession.version,
+                    timestamp: eventWithSession.timestamp
+                  }
+                });
+              }
+
+              // Add main file first, other files after
+              if (isMainFile) {
+                sessionMap.get(sessionId)!.files.unshift(filePath);
+              } else {
+                sessionMap.get(sessionId)!.files.push(filePath);
+              }
             }
           } catch (error) {
             console.error(`Failed to read session file ${filePath}: ${error}`);
@@ -310,7 +342,9 @@ export class ClaudeAnalyticsAdapter extends BaseAnalyticsAdapter {
     const hadErrors = failedToolCalls > 0;
 
     // Extract model (from first assistant message)
-    const model = assistantMessages.find(m => m.message?.model)?.message?.model || 'claude-sonnet-4-5-20250929';
+    // Normalize model name (AWS Bedrock uses format: converse/region.provider.model-v1:0)
+    const rawModel = assistantMessages.find(m => m.message?.model)?.message?.model || 'claude-sonnet-4-5-20250929';
+    const model = normalizeModelName(rawModel);
 
     // Calculate file statistics using shared utility
     const fileStats = calculateFileStats(fileModifications);
@@ -416,6 +450,11 @@ export class ClaudeAnalyticsAdapter extends BaseAnalyticsAdapter {
               }
             }
 
+            // Extract model from the assistant message that contains this tool call
+            // Normalize model name (AWS Bedrock format needs conversion)
+            const rawModel = event.message?.model;
+            const model = rawModel ? normalizeModelName(rawModel) : undefined;
+
             toolCalls.push({
               toolCallId: toolUse.id,
               messageId: event.uuid,
@@ -423,6 +462,7 @@ export class ClaudeAnalyticsAdapter extends BaseAnalyticsAdapter {
               timestamp: new Date(event.timestamp),
               toolName: toolUse.name,
               toolArgs: toolUse.input,
+              llm_model: model, // Add normalized model to tool call
               status: resultBlock?.is_error ? 'failure' : 'success',
               result: resultBlock?.content,
               modifiedFiles: modifiedFiles.length > 0 ? modifiedFiles : undefined
@@ -495,6 +535,12 @@ export class ClaudeAnalyticsAdapter extends BaseAnalyticsAdapter {
             }
           }
 
+          // Extract model from the assistant message that contains this tool call
+          // This captures the actual model used for this specific tool call
+          // Normalize model name (AWS Bedrock format needs conversion)
+          const rawModel = event.message?.model;
+          const model = rawModel ? normalizeModelName(rawModel) : undefined;
+
           toolCalls.push({
             toolCallId: toolUse.id,
             messageId: event.uuid,
@@ -502,6 +548,7 @@ export class ClaudeAnalyticsAdapter extends BaseAnalyticsAdapter {
             timestamp: new Date(event.timestamp),
             toolName: toolUse.name,
             toolArgs: toolUse.input,
+            llm_model: model, // Add normalized model to tool call
             status: resultBlock?.is_error ? 'failure' : 'success',
             result: resultBlock?.content,
             modifiedFiles: modifiedFiles.length > 0 ? modifiedFiles : undefined

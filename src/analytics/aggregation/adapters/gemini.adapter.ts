@@ -365,6 +365,7 @@ export class GeminiAnalyticsAdapter extends BaseAnalyticsAdapter {
             timestamp: new Date(tc.timestamp),
             toolName: tc.name,
             toolArgs: tc.args,
+            llm_model: message.model, // Add model from parent message
             status: tc.status,
             result: tc.result,
             modifiedFiles: modifiedFiles.length > 0 ? modifiedFiles : undefined

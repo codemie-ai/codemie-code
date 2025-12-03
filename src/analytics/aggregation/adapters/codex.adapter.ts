@@ -379,11 +379,24 @@ export class CodexAnalyticsAdapter extends BaseAnalyticsAdapter {
     // Tool calls are implicit in the conversation flow
     // We can infer some from ghost_snapshot events (file system operations)
 
+    // Extract model from turn_context events for model tracking
+    const turnContexts = allEvents.filter(e => e.type === 'turn_context');
+    const getModelAtTimestamp = (timestamp: number): string | undefined => {
+      // Find the most recent turn_context before this timestamp
+      const relevantContexts = turnContexts
+        .filter(e => new Date(e.timestamp).getTime() <= timestamp)
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+
+      const context = relevantContexts[0]?.payload as CodexTurnContext | undefined;
+      return context?.model;
+    };
+
     // Extract ghost_snapshot events as proxy for file operations
     const ghostSnapshots = allEvents.filter(e => e.type === 'ghost_snapshot');
 
     for (const event of ghostSnapshots) {
       const snapshot = event.payload as CodexGhostSnapshot;
+      const eventTimestamp = new Date(event.timestamp).getTime();
 
       // Each ghost snapshot represents a file system state change
       toolCalls.push({
@@ -398,6 +411,7 @@ export class CodexAnalyticsAdapter extends BaseAnalyticsAdapter {
           preexisting_untracked_files: snapshot.ghost_commit.preexisting_untracked_files,
           preexisting_untracked_dirs: snapshot.ghost_commit.preexisting_untracked_dirs
         },
+        llm_model: getModelAtTimestamp(eventTimestamp), // Add model tracking
         status: 'success',
         result: snapshot.ghost_commit
       });
@@ -410,6 +424,8 @@ export class CodexAnalyticsAdapter extends BaseAnalyticsAdapter {
 
     for (const event of abortedEvents) {
       const eventMsg = event.payload as CodexEventMsg;
+      const eventTimestamp = new Date(event.timestamp).getTime();
+
       toolCalls.push({
         toolCallId: `abort-${event.timestamp}`,
         messageId: `${descriptor.sessionId}-${event.timestamp}`,
@@ -417,6 +433,7 @@ export class CodexAnalyticsAdapter extends BaseAnalyticsAdapter {
         timestamp: new Date(event.timestamp),
         toolName: 'turn_aborted',
         toolArgs: {},
+        llm_model: getModelAtTimestamp(eventTimestamp), // Add model tracking
         status: 'failure',
         error: eventMsg.error || 'Turn aborted'
       });

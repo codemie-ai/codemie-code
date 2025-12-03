@@ -24,13 +24,6 @@ import type {
   SessionMetricAttributes
 } from './types.js';
 
-/**
- * Helper: Truncate strings to 500 chars (Elasticsearch limit)
- */
-function truncate(str: string | undefined, maxLength = 500): string {
-  if (!str) return '';
-  return str.length > maxLength ? str.substring(0, maxLength) : str;
-}
 
 /**
  * Helper: Estimate API requests from messages
@@ -79,10 +72,10 @@ export function transformSessionToMetrics(
     tool_type: 'cli',
     agent: session.agent,
     agent_version: session.agentVersion,
-    llm_model: truncate(session.model),
+    llm_model: session.model,
     user_id: config.userId,
     user_name: config.userName,
-    project: truncate(session.projectPath, 500),
+    project: session.projectPath,
     session_id: session.sessionId,
   };
 
@@ -105,6 +98,8 @@ export function transformSessionToMetrics(
 
       const successAttributes: ToolSuccessAttributes = {
         ...baseAttributes,
+        // Use tool call's model if available, fallback to session model
+        llm_model: toolCall.llm_model || session.model,
         tool_name: toolCall.toolName,
         duration_ms: toolCall.durationMs || 0,
         count: 1,
@@ -131,6 +126,8 @@ export function transformSessionToMetrics(
       if (message?.tokens?.output && message.tokens.output > 0) {
         const tokenAttributes: TokenMetricAttributes = {
           ...baseAttributes,
+          // Use tool call's model if available, fallback to session model
+          llm_model: toolCall.llm_model || session.model,
           tool_name: toolCall.toolName,
           input_tokens: message.tokens.input ?? 0,
           output_tokens: message.tokens.output,
@@ -150,8 +147,10 @@ export function transformSessionToMetrics(
       // ========================================================================
       const errorAttributes: ToolErrorAttributes = {
         ...baseAttributes,
+        // Use tool call's model if available, fallback to session model
+        llm_model: toolCall.llm_model || session.model,
         tool_name: toolCall.toolName,
-        error: truncate(toolCall.error || 'Unknown error', 200),
+        error: toolCall.error || 'Unknown error',
         status: 'failure',
         duration_ms: toolCall.durationMs || 0,
         count: 1,
@@ -195,8 +194,8 @@ export function createSessionMetric(
     user_name: config.userName,
     agent: session.agent,
     agent_version: session.agentVersion,
-    llm_model: truncate(session.model),
-    project: truncate(session.projectPath, 500),
+    llm_model: session.model,
+    project: session.projectPath,
     session_id: session.sessionId,
 
     // Interaction tracking
@@ -226,7 +225,7 @@ export function createSessionMetric(
     total_execution_time: calculateTotalExecutionTime(rawData.toolCalls),
 
     // Status
-    exit_reason: truncate(options.exitReason),
+    exit_reason: options.exitReason,
     had_errors: session.hadErrors,
     status: options.status,
     is_final: options.isFinal,
