@@ -103,6 +103,7 @@ function createShowCommand(): Command {
     .option('--project <path>', 'Filter by project path')
     .option('--format <format>', 'Output format (json|table)', 'table')
     .option('--output <file>', 'Output file (for JSON format)')
+    .option('--verbose', 'Show detailed statistics with raw model names and additional metrics')
     .action(async (options: {
       from?: string;
       to?: string;
@@ -110,6 +111,7 @@ function createShowCommand(): Command {
       project?: string;
       format?: string;
       output?: string;
+      verbose?: boolean;
     }) => {
       try {
         // Check if analytics is disabled
@@ -397,15 +399,15 @@ function createShowCommand(): Command {
           const modelBreakdown: Record<string, number> = {};
           for (const session of sessions) {
             for (const [modelName, count] of Object.entries(session.modelUsage)) {
-              // Normalize model names for consistent display
-              const normalizedModelName = normalizeModelName(modelName);
-              modelBreakdown[normalizedModelName] = (modelBreakdown[normalizedModelName] || 0) + count;
+              // Normalize model names for consistent display (unless verbose mode)
+              const displayModelName = options.verbose ? modelName : normalizeModelName(modelName);
+              modelBreakdown[displayModelName] = (modelBreakdown[displayModelName] || 0) + count;
             }
           }
 
           if (Object.keys(modelBreakdown).length > 0) {
             const totalModelCalls = Object.values(modelBreakdown).reduce((sum, count) => sum + count, 0);
-            console.log(chalk.bold.white('  Models:\n'));
+            console.log(chalk.bold.white(options.verbose ? '  Models (Raw Format):\n' : '  Models:\n'));
             const sortedModels = Object.entries(modelBreakdown)
               .sort((a, b) => b[1] - a[1]);
 
@@ -695,6 +697,190 @@ function createShowCommand(): Command {
                 console.log('    ' + formatTable.toString().split('\n').join('\n    '));
               }
 
+              console.log();
+            }
+          }
+
+          // VERBOSE MODE - Additional detailed statistics
+          if (options.verbose) {
+            // Provider breakdown
+            const byProvider: Record<string, { sessions: number; tokens: number; models: Set<string> }> = {};
+            for (const session of sessions) {
+              if (!byProvider[session.provider]) {
+                byProvider[session.provider] = { sessions: 0, tokens: 0, models: new Set() };
+              }
+              byProvider[session.provider].sessions++;
+              byProvider[session.provider].tokens += session.tokens.total;
+              byProvider[session.provider].models.add(session.model);
+            }
+
+            if (Object.keys(byProvider).length > 0) {
+              console.log(chalk.bold.white('🔌 Breakdown by Provider\n'));
+              const sortedProviders = Object.entries(byProvider)
+                .sort((a, b) => b[1].sessions - a[1].sessions);
+
+              const providerTable = new Table({
+                head: [chalk.cyan('Provider'), chalk.cyan('Sessions'), chalk.cyan('Tokens'), chalk.cyan('Unique Models'), chalk.cyan('Share')],
+                style: {
+                  head: [],
+                  border: ['grey']
+                }
+              });
+
+              for (const [provider, stats] of sortedProviders) {
+                const percentage = ((stats.sessions / sessions.length) * 100).toFixed(1);
+                providerTable.push([
+                  chalk.white(provider),
+                  chalk.white(stats.sessions.toString()),
+                  chalk.white(stats.tokens.toLocaleString()),
+                  chalk.white(stats.models.size.toString()),
+                  chalk.white(`${percentage}%`)
+                ]);
+              }
+
+              console.log(providerTable.toString());
+              console.log();
+            }
+
+            // Session duration statistics
+            const sessionsWithDuration = sessions.filter(s => s.durationMs && s.durationMs > 0);
+            if (sessionsWithDuration.length > 0) {
+              const durations = sessionsWithDuration.map(s => s.durationMs!);
+              const avgDuration = durations.reduce((sum, d) => sum + d, 0) / durations.length;
+              const maxDuration = Math.max(...durations);
+              const minDuration = Math.min(...durations);
+
+              console.log(chalk.bold.white('⏱️  Session Duration\n'));
+
+              const durationTable = new Table({
+                head: [chalk.cyan('Metric'), chalk.cyan('Value')],
+                style: {
+                  head: [],
+                  border: ['grey']
+                },
+                colWidths: [25, 60]
+              });
+
+              const formatDuration = (ms: number) => {
+                const seconds = Math.floor(ms / 1000);
+                const minutes = Math.floor(seconds / 60);
+                const hours = Math.floor(minutes / 60);
+                if (hours > 0) return `${hours}h ${minutes % 60}m`;
+                if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
+                return `${seconds}s`;
+              };
+
+              durationTable.push(
+                [chalk.white('Sessions with duration'), chalk.white(sessionsWithDuration.length.toString())],
+                [chalk.white('Average duration'), chalk.white(formatDuration(avgDuration))],
+                [chalk.white('Longest session'), chalk.white(formatDuration(maxDuration))],
+                [chalk.white('Shortest session'), chalk.white(formatDuration(minDuration))]
+              );
+
+              console.log(durationTable.toString());
+              console.log();
+            }
+
+            // Tool breakdown by file modifications (byTool stats)
+            const toolFileModStats: Record<string, { count: number; linesAdded: number; linesRemoved: number }> = {};
+            for (const session of sessions) {
+              if (session.fileStats?.byTool) {
+                for (const [toolName, stats] of Object.entries(session.fileStats.byTool)) {
+                  if (!toolFileModStats[toolName]) {
+                    toolFileModStats[toolName] = { count: 0, linesAdded: 0, linesRemoved: 0 };
+                  }
+                  toolFileModStats[toolName].count += stats.count;
+                  toolFileModStats[toolName].linesAdded += stats.linesAdded;
+                  toolFileModStats[toolName].linesRemoved += stats.linesRemoved;
+                }
+              }
+            }
+
+            if (Object.keys(toolFileModStats).length > 0) {
+              console.log(chalk.bold.white('🔧 File Modification Tools\n'));
+              const sortedTools = Object.entries(toolFileModStats)
+                .sort((a, b) => b[1].linesAdded - a[1].linesAdded);
+
+              const toolFileTable = new Table({
+                head: [chalk.cyan('Tool'), chalk.cyan('Uses'), chalk.cyan('Lines Added'), chalk.cyan('Lines Removed'), chalk.cyan('Net')],
+                style: {
+                  head: [],
+                  border: ['grey']
+                }
+              });
+
+              for (const [toolName, stats] of sortedTools) {
+                const net = stats.linesAdded - stats.linesRemoved;
+                toolFileTable.push([
+                  chalk.white(toolName),
+                  chalk.white(stats.count.toString()),
+                  chalk.white(stats.linesAdded.toLocaleString()),
+                  chalk.white(stats.linesRemoved.toLocaleString()),
+                  chalk.white(net.toLocaleString())
+                ]);
+              }
+
+              console.log(toolFileTable.toString());
+              console.log();
+            }
+
+            // Git branch statistics
+            const byBranch: Record<string, number> = {};
+            for (const session of sessions) {
+              if (session.gitBranch) {
+                byBranch[session.gitBranch] = (byBranch[session.gitBranch] || 0) + 1;
+              }
+            }
+
+            if (Object.keys(byBranch).length > 0) {
+              console.log(chalk.bold.white('🌿 Git Branches\n'));
+              const sortedBranches = Object.entries(byBranch)
+                .sort((a, b) => b[1] - a[1]);
+
+              const branchTable = new Table({
+                head: [chalk.cyan('Branch'), chalk.cyan('Sessions'), chalk.cyan('Share')],
+                style: {
+                  head: [],
+                  border: ['grey']
+                }
+              });
+
+              for (const [branch, count] of sortedBranches) {
+                const percentage = ((count / sessions.length) * 100).toFixed(1);
+                branchTable.push([
+                  chalk.white(branch),
+                  chalk.white(count.toString()),
+                  chalk.white(`${percentage}%`)
+                ]);
+              }
+
+              console.log(branchTable.toString());
+              console.log();
+            }
+
+            // Error analysis
+            const sessionsWithErrors = sessions.filter(s => s.hadErrors);
+            if (sessionsWithErrors.length > 0) {
+              console.log(chalk.bold.white('⚠️  Error Analysis\n'));
+
+              const errorTable = new Table({
+                head: [chalk.cyan('Metric'), chalk.cyan('Value')],
+                style: {
+                  head: [],
+                  border: ['grey']
+                },
+                colWidths: [25, 60]
+              });
+
+              const errorRate = ((sessionsWithErrors.length / sessions.length) * 100).toFixed(1);
+              const totalFailedTools = sessions.reduce((sum, s) => sum + s.failedToolCalls, 0);
+
+              errorTable.push(
+                [chalk.white('Sessions with errors'), chalk.white(`${sessionsWithErrors.length} (${errorRate}%)`)],
+                [chalk.white('Total failed tool calls'), chalk.white(totalFailedTools.toString())]
+              );
+
+              console.log(errorTable.toString());
               console.log();
             }
           }

@@ -93,6 +93,7 @@ codemie analytics show --from 2025-11-01        # Date range
 codemie analytics show --to 2025-11-30
 codemie analytics show --agent claude           # Filter by agent
 codemie analytics show --project /path/to/proj  # Filter by project
+codemie analytics show --verbose                # Show detailed stats with raw model names
 codemie analytics show --format json            # JSON output
 codemie analytics show --output data.json       # Export to file
 ```
@@ -104,6 +105,20 @@ codemie analytics show --output data.json       # Export to file
 - Tool usage breakdown with success rates
 - Project and language breakdowns
 - Privacy-first (local storage by default)
+
+**Verbose Mode (`--verbose`):**
+When enabled, analytics show provides additional detailed metrics:
+- **Raw model names** - Display full AWS Bedrock format (e.g., `eu.anthropic.claude-haiku-4-5-20251001-v1:0`) instead of normalized names
+- **Provider breakdown** - Sessions, tokens, and unique models per provider
+- **Session duration** - Average, longest, shortest session times
+- **File modification tools** - Per-tool breakdown of lines added/removed
+- **Git branch statistics** - Session distribution across branches
+- **Error analysis** - Detailed error rates and failed tool calls
+
+Example:
+```bash
+codemie analytics show --verbose --from 2025-11-01
+```
 
 ## Workflow Commands
 

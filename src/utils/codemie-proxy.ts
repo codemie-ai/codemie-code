@@ -1,48 +1,48 @@
 /**
- * CodeMie Proxy Server - Refactored
+ * CodeMie Proxy Server - Plugin-Based Architecture
  *
- * Clean, modular proxy implementation following SOLID principles.
- * Uses interceptor pattern for extensibility (Open/Closed).
+ * KISS: Does ONE thing - forwards HTTP requests with streaming
+ * SOLID: Single responsibility, plugins injected via registry
+ * NO analytics-specific logic in core!
  *
  * Architecture:
  * - ProxyHTTPClient: Handles HTTP forwarding with streaming
- * - Interceptors: Plugin-based request/response/error handling
- * - Main Proxy: Orchestrates the flow
+ * - PluginRegistry: Manages plugin lifecycle and ordering
+ * - ProxyInterceptors: Plugin-based hooks for extensibility
+ * - Main Proxy: Orchestrates the flow with zero buffering
  *
- * KISS: Simple flow - build context → run interceptors → forward → stream
- * DRY: Reuses Analytics system, delegates to interceptors
- * SOLID: Each component has single responsibility, extensible via plugins
+ * Flow:
+ * 1. Build context
+ * 2. Run onRequest hooks
+ * 3. Forward to upstream (get response headers)
+ * 4. Run onResponseHeaders hooks
+ * 5. Stream response body (with optional chunk hooks)
+ * 6. Run onResponseComplete hooks
+ *
+ * NO BUFFERING by default!
  */
 
 import { createServer, Server, IncomingMessage, ServerResponse } from 'http';
 import { randomUUID } from 'crypto';
 import { URL } from 'url';
 import { CredentialStore } from './credential-store.js';
-import { SSOCredentials } from '../types/sso.js';
 import { logger } from './logger.js';
 import { getAnalytics } from '../analytics/index.js';
 import { loadAnalyticsConfig } from '../analytics/config.js';
 import { RemoteAnalyticsSubmitter } from '../analytics/remote-submission/index.js';
 import { ProxyHTTPClient } from './proxy/http-client.js';
-import {
-  ProxyInterceptor,
-  SSOAuthInterceptor,
-  HeaderInjectionInterceptor,
-  AnalyticsInterceptor
-} from './proxy/interceptors.js';
-import { ProxyConfig, ProxyContext, UpstreamResponse } from './proxy/types.js';
+import { ProxyConfig, ProxyContext } from './proxy/types.js';
 import { AuthenticationError, NetworkError, TimeoutError, normalizeError } from './proxy/errors.js';
-
-// Re-export types for backward compatibility
-export type GatewayConfig = ProxyConfig;
+import { getPluginRegistry } from './proxy/plugins/registry.js';
+import { PluginContext, ProxyInterceptor, ResponseMetadata } from './proxy/plugins/types.js';
+import './proxy/plugins/index.js'; // Auto-register core plugins
 
 /**
- * CodeMie Proxy - Simple HTTP proxy with interceptor support
- * KISS: Core responsibility = forward requests + run interceptors
+ * CodeMie Proxy - Plugin-based HTTP proxy with streaming
+ * KISS: Core responsibility = forward requests + run plugin hooks
  */
 export class CodeMieProxy {
   private server: Server | null = null;
-  private credentials: SSOCredentials | null = null;
   private httpClient: ProxyHTTPClient;
   private interceptors: ProxyInterceptor[] = [];
   private actualPort: number = 0;
@@ -54,89 +54,50 @@ export class CodeMieProxy {
       timeout: config.timeout || 300000,
       rejectUnauthorized: false // Allow self-signed certificates
     });
-
-    // Register interceptors (Open/Closed: add more without modifying this)
-    this.registerInterceptors();
-  }
-
-  /**
-   * Register interceptors
-   * Easy to add new interceptors without modifying handleRequest
-   */
-  private registerInterceptors(): void {
-    // Will be initialized with credentials after start()
-    // Interceptors added dynamically in start()
   }
 
   /**
    * Start the proxy server
    */
   async start(): Promise<{ port: number; url: string }> {
-    // Load SSO credentials
-    const store = CredentialStore.getInstance();
-    this.credentials = await store.retrieveSSOCredentials();
+    // 1. Load credentials (if needed for SSO)
+    let credentials: any = null;
+    if (this.config.provider === 'ai-run-sso') {
+      const store = CredentialStore.getInstance();
+      credentials = await store.retrieveSSOCredentials();
 
-    if (!this.credentials) {
-      throw new AuthenticationError(
-        'SSO credentials not found. Please run: codemie auth login'
-      );
-    }
-
-    // Now register interceptors with credentials
-    this.interceptors = [];
-
-    // 1. SSO Authentication
-    this.interceptors.push(new SSOAuthInterceptor(this.credentials));
-
-    // 2. Header Injection
-    this.interceptors.push(new HeaderInjectionInterceptor({
-      sessionId: logger.getSessionId(),
-      provider: this.config.provider,
-      integrationId: this.config.integrationId,
-      model: this.config.model,
-      timeout: this.config.timeout,
-      clientType: this.config.clientType
-    }));
-
-    // 3. Analytics tracking (only if enabled)
-    const analytics = getAnalytics();
-    if (analytics.isEnabled) {
-      this.interceptors.push(new AnalyticsInterceptor());
-    }
-
-    // Future: Add more interceptors here without touching handleRequest!
-    // this.interceptors.push(new RetryInterceptor({ maxRetries: 3 }));
-    // this.interceptors.push(new CachingInterceptor());
-
-    // Initialize remote analytics submitter
-    // Runs for 'local', 'remote', or 'both' targets when analytics is enabled
-    const analyticsConfig = loadAnalyticsConfig();
-    const shouldEnableSubmitter = analyticsConfig.enabled &&
-                                   this.config.provider === 'ai-run-sso';
-
-    if (shouldEnableSubmitter) {
-      try {
-        // Convert cookies object to cookie string (only needed for remote)
-        const cookieString = Object.entries(this.credentials.cookies)
-          .map(([key, value]) => `${key}=${value}`)
-          .join('; ');
-
-        this.remoteSubmitter = new RemoteAnalyticsSubmitter({
-          enabled: true,
-          target: analyticsConfig.target,
-          baseUrl: this.config.targetApiUrl,
-          cookies: cookieString,
-          interval: parseInt(process.env.CODEMIE_ANALYTICS_REMOTE_INTERVAL || '300000', 10),
-          batchSize: parseInt(process.env.CODEMIE_ANALYTICS_REMOTE_BATCH_SIZE || '100', 10)
-        });
-        this.remoteSubmitter.start();
-        logger.debug(`Analytics submitter started (target: ${analyticsConfig.target})`);
-      } catch (error) {
-        logger.error(`Failed to start analytics submitter: ${error}`);
+      if (!credentials) {
+        throw new AuthenticationError(
+          'SSO credentials not found. Please run: codemie auth login'
+        );
       }
     }
 
-    // Find available port
+    // 2. Enable analytics plugin if analytics is enabled
+    const analyticsConfig = loadAnalyticsConfig();
+    if (analyticsConfig.enabled) {
+      const registry = getPluginRegistry();
+      await registry.setEnabled('@codemie/proxy-analytics', true);
+    }
+
+    // 3. Build plugin context
+    const pluginContext: PluginContext = {
+      config: this.config,
+      logger,
+      credentials: credentials || undefined,
+      analytics: getAnalytics()
+    };
+
+    // 4. Initialize plugins from registry
+    const registry = getPluginRegistry();
+    this.interceptors = await registry.initialize(pluginContext);
+
+    // 5. Start remote analytics submitter (if needed)
+    if (analyticsConfig.enabled && this.config.provider === 'ai-run-sso' && credentials) {
+      await this.startRemoteAnalyticsSubmitter(credentials);
+    }
+
+    // 6. Find available port
     this.actualPort = this.config.port || await this.findAvailablePort();
 
     return new Promise((resolve, reject) => {
@@ -173,6 +134,32 @@ export class CodeMieProxy {
   }
 
   /**
+   * Start remote analytics submitter
+   */
+  private async startRemoteAnalyticsSubmitter(credentials: any): Promise<void> {
+    try {
+      const analyticsConfig = loadAnalyticsConfig();
+      const cookieString = Object.entries(credentials.cookies)
+        .map(([key, value]) => `${key}=${value}`)
+        .join('; ');
+
+      this.remoteSubmitter = new RemoteAnalyticsSubmitter({
+        enabled: true,
+        target: analyticsConfig.target,
+        baseUrl: this.config.targetApiUrl,
+        cookies: cookieString,
+        interval: parseInt(process.env.CODEMIE_ANALYTICS_REMOTE_INTERVAL || '300000', 10),
+        batchSize: parseInt(process.env.CODEMIE_ANALYTICS_REMOTE_BATCH_SIZE || '100', 10)
+      });
+
+      this.remoteSubmitter.start();
+      logger.debug(`Analytics submitter started (target: ${analyticsConfig.target})`);
+    } catch (error) {
+      logger.error(`Failed to start analytics submitter: ${error}`);
+    }
+  }
+
+  /**
    * Stop the proxy server
    */
   async stop(): Promise<void> {
@@ -192,7 +179,7 @@ export class CodeMieProxy {
     if (this.server) {
       await new Promise<void>((resolve) => {
         this.server!.close(() => {
-          logger.debug('Proxy stopped');
+          logger.debug('[CodeMieProxy] Stopped');
           resolve();
         });
       });
@@ -203,25 +190,34 @@ export class CodeMieProxy {
   }
 
   /**
-   * Core request handler - Clean, simple flow
-   * KISS: Build context → run interceptors → forward → stream
+   * Handle incoming request - STREAMING ONLY
+   *
+   * Flow:
+   * 1. Build context
+   * 2. Run onRequest hooks
+   * 3. Forward to upstream (get response headers)
+   * 4. Run onResponseHeaders hooks
+   * 5. Stream response body (with optional chunk hooks)
+   * 6. Run onResponseComplete hooks
+   *
+   * NO BUFFERING!
    */
   private async handleRequest(
     req: IncomingMessage,
     res: ServerResponse
   ): Promise<void> {
+    const startTime = Date.now();
+
     try {
-      // 1. Build context (DRY: single place for context creation)
+      // 1. Build context
       const context = await this.buildContext(req);
 
       // 2. Run onRequest interceptors
-      for (const interceptor of this.interceptors) {
-        if (interceptor.onRequest) {
-          await interceptor.onRequest(context);
-        }
-      }
+      await this.runHook('onRequest', interceptor =>
+        interceptor.onRequest?.(context)
+      );
 
-      // 3. Forward request to upstream (streaming, no buffering)
+      // 3. Forward request to upstream
       const targetUrl = this.buildTargetUrl(req.url!);
       context.targetUrl = targetUrl.toString();
 
@@ -231,26 +227,23 @@ export class CodeMieProxy {
         body: context.requestBody || undefined
       });
 
-      // 4. Read response body for analytics (buffered, but needed)
-      // This is a trade-off: analytics needs the body
-      const responseBody = await this.httpClient.readResponseBody(upstreamResponse);
+      // 4. Run onResponseHeaders hooks (BEFORE streaming)
+      await this.runHook('onResponseHeaders', interceptor =>
+        interceptor.onResponseHeaders?.(context, upstreamResponse.headers)
+      );
 
-      const response: UpstreamResponse = {
-        statusCode: upstreamResponse.statusCode || 200,
-        statusMessage: upstreamResponse.statusMessage || 'OK',
-        headers: upstreamResponse.headers,
-        body: responseBody
-      };
+      // 5. Stream response to client
+      const metadata = await this.streamResponse(
+        context,
+        upstreamResponse,
+        res,
+        startTime
+      );
 
-      // 5. Run onResponse interceptors (before streaming to client)
-      for (const interceptor of this.interceptors) {
-        if (interceptor.onResponse) {
-          await interceptor.onResponse(context, response);
-        }
-      }
-
-      // 6. Send response to client
-      this.sendResponse(res, response);
+      // 6. Run onResponseComplete hooks (AFTER streaming)
+      await this.runHook('onResponseComplete', interceptor =>
+        interceptor.onResponseComplete?.(context, metadata)
+      );
 
     } catch (error) {
       await this.handleError(error, req, res);
@@ -323,23 +316,75 @@ export class CodeMieProxy {
   }
 
   /**
-   * Send successful response to client
+   * Stream response with optional chunk transformation
    */
-  private sendResponse(res: ServerResponse, response: UpstreamResponse): void {
-    res.statusCode = response.statusCode;
+  private async streamResponse(
+    context: ProxyContext,
+    upstream: IncomingMessage,
+    downstream: ServerResponse,
+    startTime: number
+  ): Promise<ResponseMetadata> {
+    // Set status and headers
+    downstream.statusCode = upstream.statusCode || 200;
 
-    // Copy headers (skip problematic ones)
-    for (const [key, value] of Object.entries(response.headers)) {
+    for (const [key, value] of Object.entries(upstream.headers)) {
       if (!['transfer-encoding', 'connection'].includes(key.toLowerCase()) && value !== undefined) {
-        res.setHeader(key, value);
+        downstream.setHeader(key, value);
       }
     }
 
-    // Send body
-    if (response.body) {
-      res.end(response.body);
-    } else {
-      res.end();
+    // Stream with optional chunk hooks
+    let bytesSent = 0;
+
+    for await (const chunk of upstream) {
+      let processedChunk: Buffer | null = Buffer.from(chunk);
+
+      // Run onResponseChunk hooks (optional transform)
+      for (const interceptor of this.interceptors) {
+        if (interceptor.onResponseChunk && processedChunk) {
+          try {
+            processedChunk = await interceptor.onResponseChunk(context, processedChunk);
+          } catch (error) {
+            logger.error(`[CodeMieProxy] Chunk hook error:`, error);
+            // Continue streaming even if hook fails
+          }
+        }
+      }
+
+      // Write to client (if not filtered out)
+      if (processedChunk) {
+        downstream.write(processedChunk);
+        bytesSent += processedChunk.length;
+      }
+    }
+
+    downstream.end();
+
+    const durationMs = Date.now() - startTime;
+
+    return {
+      statusCode: upstream.statusCode || 200,
+      statusMessage: upstream.statusMessage || 'OK',
+      headers: upstream.headers,
+      bytesSent,
+      durationMs
+    };
+  }
+
+  /**
+   * Run interceptor hook safely (errors don't break flow)
+   */
+  private async runHook(
+    hookName: string,
+    fn: (interceptor: ProxyInterceptor) => Promise<void> | void | undefined
+  ): Promise<void> {
+    for (const interceptor of this.interceptors) {
+      try {
+        await fn(interceptor);
+      } catch (error) {
+        logger.error(`[CodeMieProxy] Hook ${hookName} error in ${interceptor.name}:`, error);
+        // Continue with other interceptors
+      }
     }
   }
 

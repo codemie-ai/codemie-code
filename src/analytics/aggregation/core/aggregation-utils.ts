@@ -131,17 +131,25 @@ export function calculateDuration(startTime: Date | string, endTime: Date | stri
  * Normalize LLM model names from different provider formats
  *
  * Handles various model name formats:
- * - AWS Bedrock: converse/region.provider.model-v1:0 -> model
- * - Standard: claude-sonnet-4-5-20250929 (unchanged)
+ * - AWS Bedrock Converse: converse/region.provider.model-v1:0 -> model
+ * - AWS Bedrock Direct: region.provider.model-v1:0 -> model
+ * - Standard Claude: claude-sonnet-4-5-20250929 (unchanged)
  * - OpenAI: gpt-4.1-turbo (unchanged)
+ * - Google: gemini-1.5-pro (unchanged)
+ *
+ * Examples:
+ * - converse/global.anthropic.claude-haiku-4-5-20251001-v1:0 -> claude-haiku-4-5-20251001
+ * - eu.anthropic.claude-haiku-4-5-20251001-v1:0 -> claude-haiku-4-5-20251001
+ * - us-east-1.anthropic.claude-opus-4-20250514-v1:0 -> claude-opus-4-20250514
+ * - claude-sonnet-4-5-20250929 -> claude-sonnet-4-5-20250929
  *
  * @param modelName - Raw model name from analytics data
  * @returns Normalized model name for display
  */
 export function normalizeModelName(modelName: string): string {
   // Extract model from AWS Bedrock converse format
-  // Format: converse/global.anthropic.claude-haiku-4-5-20251001-v1:0
-  // Result: claude-haiku-4-5-20251001
+  // Format: converse/region.provider.model-v1:0
+  // Example: converse/global.anthropic.claude-haiku-4-5-20251001-v1:0
   if (modelName.startsWith('converse/')) {
     const match = modelName.match(/anthropic\.(claude-[a-z0-9-]+)-v\d+:/);
     if (match) {
@@ -149,5 +157,18 @@ export function normalizeModelName(modelName: string): string {
     }
   }
 
-  return modelName; // Return as-is for standard format
+  // Extract model from AWS Bedrock direct format (without converse/ prefix)
+  // Format: region.provider.model-v1:0
+  // Examples:
+  // - eu.anthropic.claude-haiku-4-5-20251001-v1:0
+  // - us-east-1.anthropic.claude-opus-4-20250514-v1:0
+  // - global.anthropic.claude-sonnet-4-5-20250929-v1:0
+  // Requires at least one dot before 'anthropic' (i.e., region prefix)
+  const bedrockMatch = modelName.match(/^[a-z0-9-]+\.anthropic\.(claude-[a-z0-9-]+)-v\d+:/);
+  if (bedrockMatch) {
+    return bedrockMatch[1]; // Return the model name part
+  }
+
+  // Return as-is for standard formats (Claude, OpenAI, Google, etc.)
+  return modelName;
 }
