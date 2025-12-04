@@ -27,7 +27,7 @@ import type {
 } from './types.js';
 import { CursorManager } from './cursor-manager.js';
 import { LockManager } from './lock-manager.js';
-import { transformSessionToMetrics, createSessionMetric } from './metric-transformer.js';
+import { createSessionMetric } from './metric-transformer.js';
 import { logger } from '../../utils/logger.js';
 
 /**
@@ -213,30 +213,19 @@ export class RemoteAnalyticsSubmitter {
     const status = this.determineSessionStatus(session, rawData, sessionState);
     const metricsToSubmit: MetricPayload[] = [];
 
-    // 1. Tool-level metrics (if new tool calls)
-    if (newToolCalls.length > 0) {
+    // Track new activity for cursor updates
+    const hasNewActivity = newToolCalls.length > 0 || newMessages.length > 0;
+
+    if (hasNewActivity) {
       logger.debug(
         `Session ${sessionId}: ${newToolCalls.length} new tool calls, ` +
         `${newMessages.length} new messages`
       );
-
-      const toolMetrics = transformSessionToMetrics(
-        session,
-        {
-          messages: newMessages,
-          toolCalls: newToolCalls,
-          fileModifications: rawData.fileModifications.filter(
-            fm => newToolCalls.some(tc => tc.toolCallId === fm.toolCallId)
-          )
-        }
-      );
-
-      metricsToSubmit.push(...toolMetrics);
     } else {
-      logger.debug(`Session ${sessionId}: no new events, skipping tool metrics`);
+      logger.debug(`Session ${sessionId}: no new events`);
     }
 
-    // 2. Session metric (if session ended or resumed)
+    // Generate session metric (only when session ends or resumes)
     const sessionMetric = await this.maybeSubmitSessionMetric(
       session,
       rawData,
@@ -399,7 +388,12 @@ export class RemoteAnalyticsSubmitter {
 
     // Submit to remote endpoint if target is 'remote' or 'both'
     if (this.config.target === 'remote' || this.config.target === 'both') {
-      await this.submitToRemote(metrics);
+      // Skip remote submission if credentials not available
+      if (this.config.baseUrl && this.config.cookies) {
+        await this.submitToRemote(metrics);
+      } else {
+        logger.debug('Remote submission skipped: baseUrl or cookies not configured');
+      }
     }
   }
 
@@ -410,7 +404,7 @@ export class RemoteAnalyticsSubmitter {
     try {
       // Get today's date for filename
       const today = new Date().toISOString().split('T')[0];
-      const analyticsDir = join(homedir(), '.codemie', 'analytics', '.remote');
+      const analyticsDir = join(homedir(), '.codemie', 'analytics');
       const filePath = join(analyticsDir, `${today}.jsonl`);
 
       // Ensure directory exists
@@ -433,22 +427,19 @@ export class RemoteAnalyticsSubmitter {
 
   /**
    * Submit metrics to remote /v1/metrics endpoint
+   * Note: Caller should verify baseUrl and cookies are set before calling
    */
   private async submitToRemote(metrics: MetricPayload[]): Promise<void> {
-    if (!this.config.baseUrl || !this.config.cookies) {
-      throw new Error('baseUrl and cookies required for remote submission');
-    }
-
     // Create batches
     const batches = this.createBatches(metrics, this.config.batchSize);
 
     for (const batch of batches) {
       try {
-        const response = await fetch(`${this.config.baseUrl}/v1/metrics`, {
+        const response = await fetch(`${this.config.baseUrl!}/v1/metrics`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Cookie': this.config.cookies
+            'Cookie': this.config.cookies!
           },
           body: JSON.stringify(batch)
         });

@@ -33,11 +33,11 @@ export class LockManager {
 
   constructor(analyticsDir?: string) {
     const baseDir = analyticsDir || join(homedir(), '.codemie', 'analytics');
-    this.lockPath = join(baseDir, '.remote', '.lock');
+    this.lockPath = join(baseDir, '.lock');
   }
 
   /**
-   * Ensure lock directory exists
+   * Ensure analytics directory exists
    */
   private async ensureDir(): Promise<void> {
     const dir = join(this.lockPath, '..');

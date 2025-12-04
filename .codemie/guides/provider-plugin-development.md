@@ -439,7 +439,7 @@ export const NewProviderSetupSteps: ProviderSetupSteps = {
 ## Testing Your Provider
 
 ```bash
-# Build and link
+# Build and link for local development
 npm run build && npm link
 
 # Test setup wizard

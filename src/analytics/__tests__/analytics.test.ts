@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { Analytics } from '../index.js';
-import { readFile, rm } from 'node:fs/promises';
+import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -37,35 +37,6 @@ describe('Analytics', () => {
     expect(analytics).toBeDefined();
     expect(analytics.isEnabled).toBe(true);
   });
-
-  it('should track session lifecycle', async () => {
-    analytics.startSession({
-      agent: 'test-agent',
-      agentVersion: '1.0.0',
-      cliVersion: '0.0.11',
-      profile: 'test',
-      provider: 'openai',
-      model: 'gpt-4.1',
-      workingDir: '/test',
-      interactive: true,
-    });
-
-    await analytics.endSession('test_exit', { totalPrompts: 5 });
-
-    // Wait for flush
-    await new Promise((resolve) => setTimeout(resolve, 200));
-
-    // Verify file was created
-    const files = await readFile(
-      join(testDir, `${new Date().toISOString().split('T')[0]}.jsonl`),
-      'utf-8'
-    );
-
-    expect(files).toContain('session_start');
-    expect(files).toContain('session_end');
-    expect(files).toContain('test_exit');
-  });
-
 
   it('should not track when disabled', async () => {
     const disabledAnalytics = new Analytics({

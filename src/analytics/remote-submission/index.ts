@@ -8,7 +8,7 @@
 export { RemoteAnalyticsSubmitter } from './submitter.js';
 export { CursorManager } from './cursor-manager.js';
 export { LockManager } from './lock-manager.js';
-export { transformSessionToMetrics, createSessionMetric } from './metric-transformer.js';
+export { createSessionMetric } from './metric-transformer.js';
 export type {
   MetricPayload,
   MetricName,

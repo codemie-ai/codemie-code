@@ -134,9 +134,6 @@ class Logger {
   info(message: string, ...args: unknown[]): void {
     // Always write to log file
     this.writeToLogFile('info', message, ...args);
-
-    // Console output
-    console.log(chalk.blueBright(message), ...args);
   }
 
   success(message: string, ...args: unknown[]): void {

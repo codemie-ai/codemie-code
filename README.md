@@ -36,18 +36,18 @@ Perfect for developers seeking a powerful alternative to GitHub Copilot or Curso
 ## Quick Start
 
 ```bash
-# 1. Install
-npm install -g @codemieai/code
+# 1. Install globally
+npm install @codemieai/code
 
 # 2. Setup (interactive wizard)
-codemie setup
+npx codemie setup
 
 # 3. Start coding with the built-in agent
-codemie-code "Review my code for bugs"
+npx codemie-code "Review my code for bugs"
 
 # 4. Install and use other agents
-codemie install claude
-codemie-claude "Refactor this function"
+npx codemie install claude
+npx codemie-claude "Refactor this function"
 ```
 
 ## Installation
@@ -55,7 +55,18 @@ codemie-claude "Refactor this function"
 ### From npm (Recommended)
 
 ```bash
-npm install -g @codemieai/code
+# Install the package
+npm install @codemieai/code
+
+# Use with npx
+npx codemie --help
+```
+
+Alternatively, for frequent use, you can install globally:
+
+```bash
+npm install --global @codemieai/code
+codemie --help
 ```
 
 ### From Source

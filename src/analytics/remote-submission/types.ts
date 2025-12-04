@@ -35,11 +35,10 @@ export interface SessionMetricAttributes {
   project: string;
   session_id: string;
 
-  // Context
-  projectPath: string;
-  projectHash: string;
-  gitBranch: string;
-  gitCommit: string;
+  // Context (optional, only if available)
+  projectHash?: string;
+  gitBranch?: string;
+  gitCommit?: string;
 
   // Interaction tracking
   total_user_prompts: number;
@@ -63,7 +62,7 @@ export interface SessionMetricAttributes {
 
   // Performance
   session_duration_ms: number;
-  total_execution_time: number;
+  total_execution_time?: number;  // Optional, only if tool call durations are tracked
 
   // Status
   exit_reason: string;

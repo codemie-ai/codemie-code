@@ -111,17 +111,9 @@ export class Analytics {
       flushInterval: this.config.flushInterval,
     });
 
-    // Setup writer for local target
-    if (this.config.target === 'local' || this.config.target === 'both') {
-      this.writer = new AnalyticsWriter(this.config.localPath);
-    }
-
-    // Register flush callback
-    this.collector.onFlush(async (events) => {
-      if (this.writer) {
-        await this.writer.write(events);
-      }
-    });
+    // Writer disabled - infrastructure events no longer written to files
+    // Usage metrics are written by RemoteAnalyticsSubmitter in proxy
+    this.writer = null;
   }
 
   /**

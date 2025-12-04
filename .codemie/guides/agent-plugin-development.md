@@ -185,7 +185,7 @@ static {
 ## Step 4: Build & Test
 
 ```bash
-npm run build && npm link        # Build and link globally
+npm run build && npm link        # Build and link for local development
 codemie install newagent         # Install the agent
 codemie-newagent health          # Test health check
 codemie-newagent "hello"         # Test execution

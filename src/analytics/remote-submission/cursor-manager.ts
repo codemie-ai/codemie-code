@@ -75,11 +75,11 @@ export class CursorManager {
 
   constructor(analyticsDir?: string) {
     const baseDir = analyticsDir || join(homedir(), '.codemie', 'analytics');
-    this.cursorPath = join(baseDir, '.remote', 'cursor.json');
+    this.cursorPath = join(baseDir, 'cursor.json');
   }
 
   /**
-   * Ensure cursor directory exists
+   * Ensure analytics directory exists
    */
   private async ensureDir(): Promise<void> {
     const dir = join(this.cursorPath, '..');

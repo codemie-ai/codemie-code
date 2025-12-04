@@ -16,7 +16,7 @@ This project is **AI/Run CodeMie CLI** - a professional, unified CLI tool for ma
 ```bash
 # Installation & Setup
 npm install                 # Install all dependencies
-npm link                    # Link globally for local testing
+npm link                    # Link globally for local development
 
 # Building
 npm run build              # Compile TypeScript
@@ -311,10 +311,10 @@ codemie-code/
 - **Graceful Degradation**: Plugin failures don't break proxy flow
 - **Lifecycle Hooks**: onRequest, onResponseHeaders, onResponseChunk, onResponseComplete, onError
 
-**Core Plugins** (`src/utils/proxy/plugins/`):
+**Core Plugins** (`src/proxy/plugins/`):
 - **SSO Auth Plugin** (`sso-auth.plugin.ts`) - Priority 10: Injects SSO authentication cookies
 - **Header Injection Plugin** (`header-injection.plugin.ts`) - Priority 20: Adds CodeMie-specific headers
-- **Analytics Plugin** (`analytics.plugin.ts`) - Priority 100: Tracks request/response metadata (streaming mode)
+- **Logging Plugin** (`logging.plugin.ts`) - Priority 50: Logs detailed request/response info to log files at INFO level (`~/.codemie/logs/`)
 
 **Plugin Registry** (`plugins/registry.ts`):
 - Auto-discovery and initialization of plugins

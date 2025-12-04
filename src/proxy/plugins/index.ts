@@ -8,7 +8,7 @@
 import { getPluginRegistry } from './registry.js';
 import { SSOAuthPlugin } from './sso-auth.plugin.js';
 import { HeaderInjectionPlugin } from './header-injection.plugin.js';
-import { AnalyticsPlugin } from './analytics.plugin.js';
+import { LoggingPlugin } from './logging.plugin.js';
 
 /**
  * Register core plugins
@@ -20,15 +20,13 @@ export function registerCorePlugins(): void {
   // Register in any order (priority determines execution order)
   registry.register(new SSOAuthPlugin());
   registry.register(new HeaderInjectionPlugin());
-  registry.register(new AnalyticsPlugin(), {
-    enabled: false // Disabled by default (enabled in proxy start() if analytics is enabled)
-  });
+  registry.register(new LoggingPlugin()); // Always enabled - logs to log files at INFO level
 }
 
 // Auto-register on import
 registerCorePlugins();
 
 // Re-export for convenience
-export { SSOAuthPlugin, HeaderInjectionPlugin, AnalyticsPlugin };
+export { SSOAuthPlugin, HeaderInjectionPlugin, LoggingPlugin };
 export { getPluginRegistry, resetPluginRegistry } from './registry.js';
 export * from './types.js';

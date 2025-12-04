@@ -78,14 +78,7 @@ export class CodeMieProxy {
       }
     }
 
-    // 3. Enable analytics plugin if analytics is enabled
-    const analyticsConfig = loadAnalyticsConfig();
-    if (analyticsConfig.enabled) {
-      const registry = getPluginRegistry();
-      await registry.setEnabled('@codemie/proxy-analytics', true);
-    }
-
-    // 4. Build plugin context
+    // 3. Build plugin context
     const pluginContext: PluginContext = {
       config: this.config,
       logger,
@@ -93,13 +86,14 @@ export class CodeMieProxy {
       analytics: getAnalytics()
     };
 
-    // 5. Initialize plugins from registry
+    // 4. Initialize plugins from registry
     const registry = getPluginRegistry();
     this.interceptors = await registry.initialize(pluginContext);
 
-    // 6. Start remote analytics submitter (if needed for SSO providers)
-    if (analyticsConfig.enabled && isSSOProvider && credentials) {
-      await this.startRemoteAnalyticsSubmitter(credentials);
+    // 5. Start analytics metrics submitter (writes codemie_coding_agent_usage_total metrics)
+    const analyticsConfig = loadAnalyticsConfig();
+    if (analyticsConfig.enabled) {
+      await this.startAnalyticsMetricsSubmitter(isSSOProvider ? credentials : null);
     }
 
     // 6. Find available port
@@ -139,28 +133,37 @@ export class CodeMieProxy {
   }
 
   /**
-   * Start remote analytics submitter
+   * Start analytics metrics submitter
+   * Writes codemie_coding_agent_usage metrics to ~/.codemie/analytics/YYYY-MM-DD.jsonl
    */
-  private async startRemoteAnalyticsSubmitter(credentials: any): Promise<void> {
+  private async startAnalyticsMetricsSubmitter(credentials: any | null): Promise<void> {
     try {
       const analyticsConfig = loadAnalyticsConfig();
-      const cookieString = Object.entries(credentials.cookies)
-        .map(([key, value]) => `${key}=${value}`)
-        .join('; ');
 
-      this.remoteSubmitter = new RemoteAnalyticsSubmitter({
+      // Build config
+      const submitterConfig: any = {
         enabled: true,
         target: analyticsConfig.target,
-        baseUrl: this.config.targetApiUrl,
-        cookies: cookieString,
         interval: parseInt(process.env.CODEMIE_ANALYTICS_REMOTE_INTERVAL || '300000', 10),
         batchSize: parseInt(process.env.CODEMIE_ANALYTICS_REMOTE_BATCH_SIZE || '100', 10)
-      });
+      };
 
+      // Add remote config only if SSO provider with credentials
+      if (credentials && this.config.targetApiUrl) {
+        const cookieString = Object.entries(credentials.cookies)
+          .map(([key, value]) => `${key}=${value}`)
+          .join('; ');
+
+        submitterConfig.baseUrl = this.config.targetApiUrl;
+        submitterConfig.cookies = cookieString;
+      }
+
+      this.remoteSubmitter = new RemoteAnalyticsSubmitter(submitterConfig);
       this.remoteSubmitter.start();
-      logger.debug(`Analytics submitter started (target: ${analyticsConfig.target})`);
+
+      logger.debug(`Analytics metrics submitter started (target: ${analyticsConfig.target})`);
     } catch (error) {
-      logger.error(`Failed to start analytics submitter: ${error}`);
+      logger.error(`Failed to start analytics metrics submitter: ${error}`);
     }
   }
 
