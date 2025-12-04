@@ -298,16 +298,12 @@ export class ConfigLoader {
       throw new Error(`Profile "${profileName}" not found`);
     }
 
-    // Can't delete the active profile if it's the only one
-    if (config.activeProfile === profileName && Object.keys(config.profiles).length === 1) {
-      throw new Error('Cannot delete the only profile. Add another profile first.');
-    }
-
     delete config.profiles[profileName];
 
-    // If we deleted the active profile, switch to another one
+    // If we deleted the active profile, switch to another one (if any exist)
     if (config.activeProfile === profileName) {
-      config.activeProfile = Object.keys(config.profiles)[0];
+      const remainingProfiles = Object.keys(config.profiles);
+      config.activeProfile = remainingProfiles.length > 0 ? remainingProfiles[0] : '';
     }
 
     await this.saveMultiProviderConfig(config);
