@@ -228,10 +228,6 @@ export class RemoteAnalyticsSubmitter {
           fileModifications: rawData.fileModifications.filter(
             fm => newToolCalls.some(tc => tc.toolCallId === fm.toolCallId)
           )
-        },
-        {
-          userId: this.config.baseUrl?.includes('ai-run') ? 'INSTALLATION_ID' : 'unknown',
-          userName: process.env.USER || 'unknown'
         }
       );
 
@@ -358,13 +354,7 @@ export class RemoteAnalyticsSubmitter {
         session,
         rawData,
         {
-          userId: this.config.baseUrl?.includes('ai-run') ? 'INSTALLATION_ID' : 'unknown',
-          userName: process.env.USER || 'unknown'
-        },
-        {
-          status: 'completed',
-          exitReason: session.exitReason || 'user_exit',
-          isFinal: true
+          exitReason: session.exitReason || 'user_exit'
         }
       );
     }
@@ -375,13 +365,7 @@ export class RemoteAnalyticsSubmitter {
         session,
         rawData,
         {
-          userId: this.config.baseUrl?.includes('ai-run') ? 'INSTALLATION_ID' : 'unknown',
-          userName: process.env.USER || 'unknown'
-        },
-        {
-          status: 'timeout',
-          exitReason: 'inactivity_timeout',
-          isFinal: false
+          exitReason: 'inactivity_timeout'
         }
       );
     }
@@ -395,13 +379,7 @@ export class RemoteAnalyticsSubmitter {
           session,
           rawData,
           {
-            userId: this.config.baseUrl?.includes('ai-run') ? 'INSTALLATION_ID' : 'unknown',
-            userName: process.env.USER || 'unknown'
-          },
-          {
-            status: 'resumed',
-            exitReason: 'resumed_after_timeout',
-            isFinal: false
+            exitReason: 'resumed_after_timeout'
           }
         );
       }

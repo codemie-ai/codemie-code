@@ -12,10 +12,7 @@
  * Metric names following backend convention
  */
 export type MetricName =
-  | 'codemie_tools_usage_total'           // Tool execution success with ALL details
-  | 'codemie_tools_usage_tokens'          // Token consumption
-  | 'codemie_tools_usage_errors_total'    // Tool execution failures
-  | 'codemie_coding_agent_usage';         // Session aggregation
+  | 'codemie_coding_agent_usage_total';   // Session aggregation
 
 /**
  * Base metric payload structure (what gets sent to /v1/metrics)
@@ -26,81 +23,23 @@ export interface MetricPayload {
   time: string;  // ISO 8601
 }
 
-/**
- * Core attributes shared across all CLI tool metrics
- */
-export interface BaseMetricAttributes {
-  // Tool identification
-  tool_name: string;
-  tool_type: 'cli';
-
-  // Agent context
-  agent: string;
-  agent_version: string;
-
-  // LLM model
-  llm_model: string;
-
-  // User identification
-  user_id: string;
-  user_name: string;
-
-  // Project context
-  project: string;
-
-  // Session context
-  session_id: string;
-
-  // Always present
-  count: number;
-}
-
-/**
- * Tool execution success metric attributes (with ALL details)
- */
-export interface ToolSuccessAttributes extends BaseMetricAttributes {
-  // Performance (always present)
-  duration_ms: number;
-
-  // File modification (optional - only if file was modified)
-  file_extension?: string;
-  operation?: 'create' | 'update' | 'delete';
-  lines_added?: number;
-  lines_removed?: number;
-  was_new_file?: boolean;
-}
-
-/**
- * Token consumption metric attributes
- */
-export interface TokenMetricAttributes extends Omit<BaseMetricAttributes, 'count'> {
-  input_tokens: number;
-  output_tokens: number;
-  cache_read_input_tokens: number;
-  count: number;  // = output_tokens
-}
-
-/**
- * Tool execution failure metric attributes
- */
-export interface ToolErrorAttributes extends BaseMetricAttributes {
-  error: string;
-  status: 'failure';
-  duration_ms: number;
-}
 
 /**
  * Session aggregation metric attributes (no tool_name, different structure)
  */
 export interface SessionMetricAttributes {
   // Base context (no tool_type for session metric)
-  user_id: string;
-  user_name: string;
   agent: string;
   agent_version: string;
   llm_model: string;
   project: string;
   session_id: string;
+
+  // Context
+  projectPath: string;
+  projectHash: string;
+  gitBranch: string;
+  gitCommit: string;
 
   // Interaction tracking
   total_user_prompts: number;
@@ -114,8 +53,6 @@ export interface SessionMetricAttributes {
   total_input_tokens: number;
   total_output_tokens: number;
   total_cache_read_input_tokens: number;
-  total_money_spent: number;
-  total_cached_tokens_money_spent: number;
 
   // Code totals
   files_created: number;
@@ -131,8 +68,6 @@ export interface SessionMetricAttributes {
   // Status
   exit_reason: string;
   had_errors: boolean;
-  status: 'completed' | 'timeout' | 'resumed';
-  is_final?: boolean;  // true if explicitly ended, false if timeout
 
   count: number;  // Always 1
 }

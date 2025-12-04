@@ -12,10 +12,6 @@ export { transformSessionToMetrics, createSessionMetric } from './metric-transfo
 export type {
   MetricPayload,
   MetricName,
-  BaseMetricAttributes,
-  ToolSuccessAttributes,
-  TokenMetricAttributes,
-  ToolErrorAttributes,
   SessionMetricAttributes,
   CursorState,
   AgentCursorState,

@@ -148,6 +148,7 @@ export const SSOSetupSteps: ProviderSetupSteps = {
     const config: Partial<CodeMieConfigOptions> = {
       provider: 'ai-run-sso',
       codeMieUrl: credentials.additionalConfig?.codeMieUrl as string | undefined,
+      apiKey: "sso-provided",
       baseUrl: credentials.baseUrl,
       model: selectedModel
     };
