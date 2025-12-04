@@ -36,25 +36,44 @@ else
     echo "No previous releases found"
 fi
 
-# Determine target version
+# Determine suggested version
+SUGGESTED_VERSION=""
 if [[ -z "$VERSION" ]]; then
     # Check if current package.json version is already ahead of latest release
     if [[ -n "$LATEST_VERSION" && "$CURRENT" != "$LATEST_VERSION" ]]; then
         # package.json is ahead but not released - use it
-        VERSION="$CURRENT"
-        echo "Using unreleased version from package.json: $VERSION"
+        SUGGESTED_VERSION="$CURRENT"
+        echo "Suggested version (from package.json): $SUGGESTED_VERSION"
     elif [[ -z "$LATEST_VERSION" ]]; then
         # No releases yet - use package.json version
-        VERSION="$CURRENT"
-        echo "Using initial version from package.json: $VERSION"
+        SUGGESTED_VERSION="$CURRENT"
+        echo "Suggested version (initial): $SUGGESTED_VERSION"
     else
         # Auto-increment patch version from latest release
         IFS='.' read -r major minor patch <<< "$LATEST_VERSION"
-        VERSION="$major.$minor.$((patch + 1))"
-        echo "Auto-incrementing from $LATEST_VERSION to: $VERSION"
+        SUGGESTED_VERSION="$major.$minor.$((patch + 1))"
+        echo "Suggested version (+1 patch): $SUGGESTED_VERSION"
     fi
+
+    # Prompt user for version (unless in dry-run mode)
+    if [[ "$DRY_RUN" == "false" ]]; then
+        echo ""
+        read -p "Enter release version [$SUGGESTED_VERSION]: " USER_VERSION
+        if [[ -n "$USER_VERSION" ]]; then
+            VERSION="$USER_VERSION"
+            echo "Using custom version: $VERSION"
+        else
+            VERSION="$SUGGESTED_VERSION"
+            echo "Using suggested version: $VERSION"
+        fi
+    else
+        VERSION="$SUGGESTED_VERSION"
+    fi
+else
+    echo "Version specified via argument: $VERSION"
 fi
 
+echo ""
 echo "Target version: $VERSION"
 
 # Pre-flight checks
