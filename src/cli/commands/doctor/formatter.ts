@@ -125,7 +125,7 @@ export class HealthCheckFormatter {
   /**
    * Display summary
    */
-  async displaySummary(results: HealthCheckResult[], showTip: boolean = true): Promise<void> {
+  displaySummary(results: HealthCheckResult[]): void {
     const hasIssues = results.some(r => !r.success);
 
     if (hasIssues) {
@@ -133,12 +133,6 @@ export class HealthCheckFormatter {
       process.exit(1);
     } else {
       console.log(chalk.green('✓ All checks passed!\n'));
-
-      // Show tip if requested and not in assistant context
-      if (showTip && !process.env.CODEMIE_IN_ASSISTANT) {
-        const { tipDisplay } = await import('../../../utils/tips.js');
-        tipDisplay.showRandomTip();
-      }
     }
   }
 

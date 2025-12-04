@@ -12,6 +12,7 @@ import {
   isMultiProviderConfig,
   isLegacyConfig
 } from '../env/types.js';
+import { ProviderRegistry } from '../providers/index.js';
 
 // Re-export for backward compatibility
 export type { CodeMieConfigOptions, CodeMieIntegrationInfo, ConfigWithSource };
@@ -193,13 +194,6 @@ export class ConfigLoader {
         id: process.env.CODEMIE_INTEGRATION_ID || '',
         alias: process.env.CODEMIE_INTEGRATION_ALIAS || ''
       };
-    }
-
-    // Check for AWS Bedrock configuration
-    if (process.env.CLAUDE_CODE_USE_BEDROCK === '1') {
-      env.provider = 'bedrock';
-      env.baseUrl = 'bedrock';
-      env.apiKey = 'bedrock'; // Placeholder for AWS credentials
     }
 
     return env;
@@ -643,35 +637,8 @@ export class ConfigLoader {
   }
 
   /**
-   * Set multi-provider environment variables (OpenAI, Anthropic, Gemini)
-   * Used by LiteLLM and AI-Run SSO for maximum compatibility
-   */
-  private static setMultiProviderEnvVars(
-    env: Record<string, string>,
-    config: CodeMieConfigOptions
-  ): void {
-    if (config.baseUrl) {
-      env.OPENAI_BASE_URL = config.baseUrl;
-      env.ANTHROPIC_BASE_URL = config.baseUrl;
-      // LiteLLM Gemini integration requires GOOGLE_GEMINI_BASE_URL
-      // See: https://docs.litellm.ai/docs/tutorials/litellm_gemini_cli
-      env.GOOGLE_GEMINI_BASE_URL = config.baseUrl;
-    }
-    if (config.apiKey) {
-      env.OPENAI_API_KEY = config.apiKey;
-      env.ANTHROPIC_AUTH_TOKEN = config.apiKey;
-      env.GEMINI_API_KEY = config.apiKey;
-    }
-    if (config.model) {
-      env.OPENAI_MODEL = config.model;
-      env.ANTHROPIC_MODEL = config.model;
-      env.GEMINI_MODEL = config.model;
-    }
-  }
-
-  /**
    * Export provider-specific environment variables
-   * (for passing to external agents like Claude Code, Codex)
+   * Uses ProviderRegistry to get env mappings from provider templates
    */
   static exportProviderEnvVars(config: CodeMieConfigOptions): Record<string, string> {
     const env: Record<string, string> = {};
@@ -684,48 +651,38 @@ export class ConfigLoader {
     if (config.timeout) env.CODEMIE_TIMEOUT = String(config.timeout);
     if (config.debug) env.CODEMIE_DEBUG = String(config.debug);
 
-    // Set provider-specific vars based on provider
-    const provider = (config.provider || 'openai').toUpperCase();
+    // Get provider template from registry
+    const providerName = (config.provider || 'openai').toLowerCase();
+    const providerTemplate = ProviderRegistry.getProvider(providerName);
 
-    if (provider === 'OPENAI' || provider === 'CODEX') {
-      // OpenAI and Codex share the same configuration
-      // Note: OpenAI Codex was deprecated in March 2023
-      // Modern usage should use gpt-3.5-turbo or gpt-4 models instead
-      if (config.baseUrl) env.OPENAI_BASE_URL = config.baseUrl;
-      if (config.apiKey) env.OPENAI_API_KEY = config.apiKey;
-      if (config.model) env.OPENAI_MODEL = config.model;
+    if (providerTemplate?.envMapping) {
+      // Apply env mappings from provider template
+      const { envMapping } = providerTemplate;
 
-      // Legacy Codex environment variables (for compatibility)
-      if (provider === 'CODEX') {
-        if (config.baseUrl) env.CODEX_BASE_URL = config.baseUrl;
-        if (config.apiKey) env.CODEX_API_KEY = config.apiKey;
-        if (config.model) env.CODEX_MODEL = config.model;
+      // Map base URL
+      if (config.baseUrl && envMapping.baseUrl) {
+        for (const envVar of envMapping.baseUrl) {
+          env[envVar] = config.baseUrl;
+        }
       }
-    } else if (provider === 'AZURE') {
-      if (config.baseUrl) env.AZURE_OPENAI_ENDPOINT = config.baseUrl;
-      if (config.apiKey) env.AZURE_OPENAI_API_KEY = config.apiKey;
-      if (config.model) env.AZURE_OPENAI_DEPLOYMENT = config.model;
-    } else if (provider === 'BEDROCK') {
-      // AWS Bedrock configuration
-      env.CLAUDE_CODE_USE_BEDROCK = '1';
-      // AWS credentials should be set via AWS CLI or environment variables
-    } else if (provider === 'GEMINI') {
-      // Google Gemini API
-      // LiteLLM Gemini integration requires GOOGLE_GEMINI_BASE_URL
-      // See: https://docs.litellm.ai/docs/tutorials/litellm_gemini_cli
-      if (config.baseUrl) env.GOOGLE_GEMINI_BASE_URL = config.baseUrl;
-      if (config.apiKey) env.GEMINI_API_KEY = config.apiKey;
-      if (config.model) env.GEMINI_MODEL = config.model;
-    } else if (provider === 'LITELLM') {
-      // Generic LiteLLM proxy gateway
-      // LiteLLM can proxy for any model, so set OpenAI, Anthropic, and Gemini env vars
-      this.setMultiProviderEnvVars(env, config);
-    } else if (provider === 'AI-RUN-SSO') {
-      // CodeMie SSO authentication - credentials handled via credential store
-      // Set OpenAI, Anthropic, and Gemini env vars for compatibility
-      this.setMultiProviderEnvVars(env, config);
 
-      // Add SSO-specific environment variables
+      // Map API key
+      if (config.apiKey && envMapping.apiKey) {
+        for (const envVar of envMapping.apiKey) {
+          env[envVar] = config.apiKey;
+        }
+      }
+
+      // Map model
+      if (config.model && envMapping.model) {
+        for (const envVar of envMapping.model) {
+          env[envVar] = config.model;
+        }
+      }
+    }
+
+    // Special case: SSO-specific environment variables
+    if (providerName === 'ai-run-sso') {
       if (config.codeMieUrl) env.CODEMIE_URL = config.codeMieUrl;
       if (config.authMethod) env.CODEMIE_AUTH_METHOD = config.authMethod;
       // Only export integration ID if integration is configured

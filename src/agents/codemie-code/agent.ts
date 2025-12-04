@@ -180,7 +180,7 @@ export class CodeMieAgent {
             };
 
             // Handle SSL verification consistently with CodeMie Proxy (rejectUnauthorized: false)
-            // CodeMie Proxy always allows self-signed certificates like codemie-model-fetcher does
+            // CodeMie Proxy and SSO HTTP Client allow self-signed certificates for enterprise environments
             process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
             // Suppress the NODE_TLS_REJECT_UNAUTHORIZED warning since this is expected behavior
@@ -188,7 +188,7 @@ export class CodeMieAgent {
             process.removeAllListeners('warning');
 
             if (this.config.debug) {
-              logger.debug('Disabled SSL verification (like CodeMie Proxy and codemie-model-fetcher)');
+              logger.debug('Disabled SSL verification (like CodeMie Proxy and SSO HTTP Client)');
             }
 
             if (this.config.debug) {

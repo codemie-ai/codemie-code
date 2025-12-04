@@ -9,6 +9,7 @@ import { ConfigLoader, type CodeMieConfigOptions } from '../../utils/config-load
 import type { CodeMieConfig, ProviderConfig } from './types.js';
 import { ConfigurationError } from './types.js';
 import { CredentialStore } from '../../utils/credential-store.js';
+import { ProviderRegistry } from '../../providers/core/registry.js';
 import { logger } from '../../utils/logger.js';
 import { sanitizeCookies } from '../../utils/sanitize.js';
 
@@ -29,14 +30,16 @@ export async function loadCodeMieConfig(
     let resolvedBaseUrl = baseConfig.baseUrl!;
     let resolvedApiKey = baseConfig.apiKey!;
 
-    if (baseConfig.provider === 'ai-run-sso') {
+    // Check if provider uses SSO authentication
+    const provider = ProviderRegistry.getProvider(baseConfig.provider || '');
+    if (provider?.authType === 'sso') {
       const store = CredentialStore.getInstance();
       const credentials = await store.retrieveSSOCredentials();
 
       if (!credentials) {
         throw new ConfigurationError(
           'SSO credentials not found. Please run: codemie auth login',
-          { provider: 'ai-run-sso' }
+          { provider: baseConfig.provider }
         );
       }
 
@@ -101,13 +104,19 @@ function normalizeProvider(provider: string): CodeMieConfig['provider'] {
       return 'bedrock';
 
     case 'litellm':
-    case 'ai-run-sso':
     case 'proxy':
       return 'litellm';
 
-    default:
+    default: {
+      // For SSO providers, map to litellm (compatible API)
+      const providerTemplate = ProviderRegistry.getProvider(provider);
+      if (providerTemplate?.authType === 'sso') {
+        return 'litellm';
+      }
+
       // Default to OpenAI for unknown providers (most compatible)
       return 'openai';
+    }
   }
 }
 

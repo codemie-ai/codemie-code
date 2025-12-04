@@ -1,9 +1,10 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
-import { CodeMieSSO } from '../../utils/sso-auth.js';
+import { CodeMieSSO } from '../../providers/plugins/sso/sso.auth.js';
 import { ConfigLoader } from '../../utils/config-loader.js';
-import { fetchCodeMieModelsFromConfig } from '../../utils/codemie-model-fetcher.js';
+import { fetchCodeMieModels } from '../../providers/plugins/sso/sso.http-client.js';
+import { ProviderRegistry } from '../../providers/core/registry.js';
 import { logger } from '../../utils/logger.js';
 
 export function createAuthCommand(): Command {
@@ -121,7 +122,9 @@ async function handleStatus(): Promise<void> {
 
   console.log(chalk.bold('\n🔐 Authentication Status:\n'));
 
-  if (config.provider !== 'ai-run-sso') {
+  // Check if current provider uses SSO authentication
+  const provider = ProviderRegistry.getProvider(config.provider || '');
+  if (!provider || provider.authType !== 'sso') {
     console.log(chalk.yellow('  Provider: Not using SSO authentication'));
     console.log(chalk.white(`  Current provider: ${config.provider || 'unknown'}`));
     return;
@@ -153,7 +156,7 @@ async function handleStatus(): Promise<void> {
       // Test API access
       const spinner = ora('Testing API access...').start();
       try {
-        await fetchCodeMieModelsFromConfig();
+        await fetchCodeMieModels(credentials.apiUrl, credentials.cookies);
         spinner.succeed(chalk.green('API access working'));
       } catch (error) {
         spinner.fail(chalk.red('API access failed'));
@@ -173,7 +176,9 @@ async function handleStatus(): Promise<void> {
 async function handleRefresh(): Promise<void> {
   const config = await ConfigLoader.load();
 
-  if (config.provider !== 'ai-run-sso' || !config.codeMieUrl) {
+  // Check if current provider uses SSO authentication
+  const provider = ProviderRegistry.getProvider(config.provider || '');
+  if (!provider || provider.authType !== 'sso' || !config.codeMieUrl) {
     console.log(chalk.red('❌ Not configured for SSO authentication'));
     console.log(chalk.white('Run: codemie setup'));
     return;

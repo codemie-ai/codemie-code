@@ -28,8 +28,8 @@ const metadata = {
     model: ['OPENAI_MODEL', 'CODEX_MODEL']
   },
 
-  supportedProviders: ['openai', 'azure', 'litellm', 'ai-run-sso'],
-  blockedModelPatterns: [/^claude/i, /bedrock.*claude/i],
+  supportedProviders: ['ollama', 'litellm', 'ai-run-sso'],
+  blockedModelPatterns: [/^claude/i],
 
   ssoConfig: {
     enabled: true,

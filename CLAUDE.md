@@ -639,54 +639,41 @@ When modifying the direct agent shortcuts (`codemie-claude`, `codemie-codex`):
 
 ### Adding New Agents - **Plugin Pattern (Extensibility)**
 
-The plugin pattern makes adding new agents straightforward without modifying core code:
+**See complete guide**: @.codemie/guides/agent-plugin-development.md
 
-**Steps:**
+The plugin pattern makes adding new agents straightforward without modifying core code.
 
-1. **Create Plugin File** (`src/agents/plugins/newagent.plugin.ts`):
-   ```typescript
-   import { AgentMetadata } from '../core/types.js';
-   import { BaseAgentAdapter } from '../core/BaseAgentAdapter.js';
+**Quick Start (4 Steps)**:
+1. Create plugin file: `src/agents/plugins/{name}.plugin.ts`
+2. Register in: `src/agents/registry.ts`
+3. Add binary: `package.json` → `bin` section
+4. Build & test: `npm run build && npm link`
 
-   export const NewAgentPluginMetadata: AgentMetadata = {
-     name: 'newagent',
-     displayName: 'New Agent',
-     description: 'Description of new agent',
-     npmPackage: '@vendor/newagent-cli',
-     cliCommand: 'newagent',
-     envMapping: {
-       baseUrl: ['NEWAGENT_BASE_URL'],
-       apiKey: ['NEWAGENT_API_KEY'],
-       model: ['NEWAGENT_MODEL']
-     },
-     supportedProviders: ['openai', 'litellm'],
-     blockedModelPatterns: []  // Or specify incompatible models
-   };
+**Reference Implementations**:
+- `claude.plugin.ts` - SSO support, feature flags
+- `codex.plugin.ts` - Model injection, config setup
+- `gemini.plugin.ts` - Project mapping, multi-var fallbacks
+- `deepagents.plugin.ts` - Python/pip installation
 
-   export class NewAgentPlugin extends BaseAgentAdapter {
-     constructor() {
-       super(NewAgentPluginMetadata);
-     }
-   }
-   ```
+**Why This Works**: `agent-executor.js` automatically discovers plugins by name, enabling zero-config integration.
 
-2. **Register Plugin** (src/agents/registry.ts):
-   ```typescript
-   import { NewAgentPlugin } from './plugins/newagent.plugin.js';
+### Adding New Providers - **Plugin Pattern (Extensibility)**
 
-   AgentRegistry.adapters.set('newagent', new NewAgentPlugin());
-   ```
+**See complete guide**: @.codemie/guides/provider-plugin-development.md
 
-3. **Add to package.json bin**:
-   ```json
-   "bin": {
-     "codemie-newagent": "./bin/agent-executor.js"
-   }
-   ```
+The plugin pattern makes adding new AI providers straightforward without modifying core code.
 
-4. **Update docs**: README.md and CLAUDE.md
+**Quick Start (3 Steps)**:
+1. Create provider plugin: `src/providers/plugins/{name}/`
+2. Register components (auto-registered via imports)
+3. Build & test: `npm run build && npm link`
 
-**Why This Works**: `agent-executor.js` automatically handles the new agent based on its name, no additional code needed!
+**Reference Implementations**:
+- `ollama/` - Local provider with model installation
+- `sso/` - SSO authentication with browser login
+- `litellm/` - Universal proxy with minimal setup
+
+**Why This Works**: Auto-registration via decorators and imports enables zero-config integration with setup wizard and health checks.
 
 ### Analytics Integration - **Automatic Plugin Discovery**
 

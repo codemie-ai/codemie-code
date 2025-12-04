@@ -26,16 +26,17 @@ import { createServer, Server, IncomingMessage, ServerResponse } from 'http';
 import { randomUUID } from 'crypto';
 import { URL } from 'url';
 import { CredentialStore } from './credential-store.js';
+import { ProviderRegistry } from '../providers/core/registry.js';
 import { logger } from './logger.js';
 import { getAnalytics } from '../analytics/index.js';
 import { loadAnalyticsConfig } from '../analytics/config.js';
 import { RemoteAnalyticsSubmitter } from '../analytics/remote-submission/index.js';
-import { ProxyHTTPClient } from './proxy/http-client.js';
-import { ProxyConfig, ProxyContext } from './proxy/types.js';
-import { AuthenticationError, NetworkError, TimeoutError, normalizeError } from './proxy/errors.js';
-import { getPluginRegistry } from './proxy/plugins/registry.js';
-import { PluginContext, ProxyInterceptor, ResponseMetadata } from './proxy/plugins/types.js';
-import './proxy/plugins/index.js'; // Auto-register core plugins
+import { ProxyHTTPClient } from '../proxy/http-client.js';
+import { ProxyConfig, ProxyContext } from '../proxy/types.js';
+import { AuthenticationError, NetworkError, TimeoutError, normalizeError } from '../proxy/errors.js';
+import { getPluginRegistry } from '../proxy/plugins/registry.js';
+import { PluginContext, ProxyInterceptor, ResponseMetadata } from '../proxy/plugins/types.js';
+import '../proxy/plugins/index.js'; // Auto-register core plugins
 
 /**
  * CodeMie Proxy - Plugin-based HTTP proxy with streaming
@@ -60,9 +61,13 @@ export class CodeMieProxy {
    * Start the proxy server
    */
   async start(): Promise<{ port: number; url: string }> {
-    // 1. Load credentials (if needed for SSO)
+    // 1. Check if provider uses SSO authentication
+    const provider = ProviderRegistry.getProvider(this.config.provider || '');
+    const isSSOProvider = provider?.authType === 'sso';
+
+    // 2. Load credentials (if needed for SSO)
     let credentials: any = null;
-    if (this.config.provider === 'ai-run-sso') {
+    if (isSSOProvider) {
       const store = CredentialStore.getInstance();
       credentials = await store.retrieveSSOCredentials();
 
@@ -73,14 +78,14 @@ export class CodeMieProxy {
       }
     }
 
-    // 2. Enable analytics plugin if analytics is enabled
+    // 3. Enable analytics plugin if analytics is enabled
     const analyticsConfig = loadAnalyticsConfig();
     if (analyticsConfig.enabled) {
       const registry = getPluginRegistry();
       await registry.setEnabled('@codemie/proxy-analytics', true);
     }
 
-    // 3. Build plugin context
+    // 4. Build plugin context
     const pluginContext: PluginContext = {
       config: this.config,
       logger,
@@ -88,12 +93,12 @@ export class CodeMieProxy {
       analytics: getAnalytics()
     };
 
-    // 4. Initialize plugins from registry
+    // 5. Initialize plugins from registry
     const registry = getPluginRegistry();
     this.interceptors = await registry.initialize(pluginContext);
 
-    // 5. Start remote analytics submitter (if needed)
-    if (analyticsConfig.enabled && this.config.provider === 'ai-run-sso' && credentials) {
+    // 6. Start remote analytics submitter (if needed for SSO providers)
+    if (analyticsConfig.enabled && isSSOProvider && credentials) {
       await this.startRemoteAnalyticsSubmitter(credentials);
     }
 

@@ -22,7 +22,7 @@ const metadata = {
     model: ['GEMINI_MODEL']
   },
 
-  supportedProviders: ['ai-run-sso', 'gemini', 'litellm'],
+  supportedProviders: ['ai-run-sso', 'litellm'],
   blockedModelPatterns: [/^claude/i, /^gpt/i], // Gemini models only
 
   ssoConfig: {

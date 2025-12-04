@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+// Initialize provider plugins (triggers auto-registration)
+import '../providers/index.js';
+
 import { Command } from 'commander';
 import { createListCommand } from './commands/list.js';
 import { createInstallCommand } from './commands/install.js';
@@ -78,7 +81,7 @@ if (taskIndex !== -1 && taskIndex < process.argv.length - 1) {
     }
   })();
 } else if (process.argv.length === 2) {
-  // Show help if no command provided
+  // Show prettified help if no command provided (just "codemie")
   FirstTimeExperience.isFirstTime().then(isFirstTime => {
     if (isFirstTime) {
       // Show welcome message and recommendations for first-time users
@@ -95,5 +98,6 @@ if (taskIndex !== -1 && taskIndex < process.argv.length - 1) {
     program.help();
   });
 } else {
+  // Parse commands normally (including --help flag)
   program.parse(process.argv);
 }

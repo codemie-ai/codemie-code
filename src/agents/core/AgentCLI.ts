@@ -56,7 +56,7 @@ export class AgentCLI {
       .description(`CodeMie ${this.adapter.displayName} - ${this.adapter.description}`)
       .version(this.version)
       .option('--profile <name>', 'Use specific provider profile')
-      .option('--provider <provider>', 'Override provider (ai-run-sso, litellm, openai, azure, bedrock)')
+      .option('--provider <provider>', 'Override provider (ai-run-sso, litellm, ollama)')
       .option('-m, --model <model>', 'Override model')
       .option('--api-key <key>', 'Override API key')
       .option('--base-url <url>', 'Override base URL')

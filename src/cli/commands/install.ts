@@ -1,6 +1,5 @@
 import { Command } from 'commander';
 import { AgentRegistry } from '../../agents/registry.js';
-import { asyncTipDisplay } from '../../utils/async-tips.js';
 import { AgentInstallationError, getErrorMessage } from '../../utils/errors.js';
 import ora from 'ora';
 import chalk from 'chalk';
@@ -56,13 +55,7 @@ export function createInstallCommand(): Command {
         const spinner = ora(`Installing ${agent.displayName}...`).start();
 
         try {
-          // Show tips during installation
-          const installPromise = agent.install();
-          const stopTips = asyncTipDisplay.showDuring(installPromise);
-
-          await installPromise;
-          stopTips();
-
+          await agent.install();
           spinner.succeed(`${agent.displayName} installed successfully`);
 
           // Show how to run the newly installed agent

@@ -25,7 +25,7 @@ const metadata = {
     model: ['ANTHROPIC_MODEL']
   },
 
-  supportedProviders: ['bedrock', 'openai', 'azure', 'litellm', 'ai-run-sso'],
+  supportedProviders: ['ollama', 'litellm', 'ai-run-sso'],
   blockedModelPatterns: [], // Accepts both Claude and GPT models
 
   ssoConfig: {

@@ -3,6 +3,7 @@ import { exec } from '../../utils/exec.js';
 import { logger } from '../../utils/logger.js';
 import { spawn } from 'child_process';
 import { CodeMieProxy } from '../../utils/codemie-proxy.js';
+import { ProviderRegistry } from '../../providers/core/registry.js';
 
 /**
  * Base class for all agent adapters
@@ -202,8 +203,10 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    * Works for ALL agents based on their metadata
    */
   protected async setupProxy(env: NodeJS.ProcessEnv): Promise<void> {
-    // Only activate for ai-run-sso provider
-    const isSSOProvider = env.CODEMIE_PROVIDER === 'ai-run-sso';
+    // Check if provider uses SSO authentication
+    const providerName = env.CODEMIE_PROVIDER;
+    const provider = providerName ? ProviderRegistry.getProvider(providerName) : null;
+    const isSSOProvider = provider?.authType === 'sso';
 
     if (!isSSOProvider || !this.metadata.ssoConfig?.enabled) {
       return; // No proxy needed
@@ -242,34 +245,6 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       throw new Error(`Proxy setup failed: ${errorMessage}`);
-    }
-  }
-
-  /**
-   * Apply environment variable mappings from metadata
-   */
-  protected applyEnvMappings(config: AgentConfig, env: NodeJS.ProcessEnv): void {
-    const { envMapping } = this.metadata;
-
-    // Map base URL
-    if (config.baseUrl && envMapping.baseUrl) {
-      for (const envVar of envMapping.baseUrl) {
-        env[envVar] = config.baseUrl;
-      }
-    }
-
-    // Map API key
-    if (config.apiKey && envMapping.apiKey) {
-      for (const envVar of envMapping.apiKey) {
-        env[envVar] = config.apiKey;
-      }
-    }
-
-    // Map model
-    if (config.model && envMapping.model) {
-      for (const envVar of envMapping.model) {
-        env[envVar] = config.model;
-      }
     }
   }
 

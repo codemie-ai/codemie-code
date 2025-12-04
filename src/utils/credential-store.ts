@@ -2,7 +2,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
-import { SSOCredentials } from '../types/sso.js';
+import { SSOCredentials } from '../providers/core/types.js';
 
 const SERVICE_NAME = 'codemie-code';
 const ACCOUNT_NAME = 'sso-credentials';

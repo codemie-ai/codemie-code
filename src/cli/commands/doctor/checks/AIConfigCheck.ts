@@ -3,6 +3,7 @@
  */
 
 import { ConfigLoader } from '../../../../utils/config-loader.js';
+import { ProviderRegistry } from '../../../../providers/core/registry.js';
 import { HealthCheck, HealthCheckResult, HealthCheckDetail, ProgressCallback } from '../types.js';
 
 export class AIConfigCheck implements HealthCheck {
@@ -39,7 +40,10 @@ export class AIConfigCheck implements HealthCheck {
       const hasBaseUrl = !!config.baseUrl;
       const hasApiKey = !!config.apiKey;
       const hasModel = !!config.model;
-      const isSSOProvider = config.provider === 'ai-run-sso';
+
+      // Get provider template to check requirements
+      const providerTemplate = config.provider ? ProviderRegistry.getProvider(config.provider) : null;
+      const requiresAuth = providerTemplate?.requiresAuth ?? false; // Default to false
 
       // Track missing fields for consolidated error message
       const missingFields: string[] = [];
@@ -63,7 +67,10 @@ export class AIConfigCheck implements HealthCheck {
         missingFields.push('Provider');
       }
 
-      // For SSO, show CodeMie URL instead of API endpoint
+      // Check if provider uses SSO authentication
+      const isSSOProvider = providerTemplate?.authType === 'sso';
+
+      // For SSO providers, show CodeMie URL instead of API endpoint
       if (isSSOProvider) {
         onProgress?.('Checking CodeMie URL');
         if (config.codeMieUrl) {
@@ -87,8 +94,9 @@ export class AIConfigCheck implements HealthCheck {
         }
       }
 
-      // Don't show API Key for SSO (uses cookie-based authentication)
-      if (!isSSOProvider) {
+      // Only check API Key if provider requires authentication
+      // Note: SSO providers use cookie-based auth, so they won't have apiKey
+      if (requiresAuth) {
         onProgress?.('Checking API key');
         if (hasApiKey && config.apiKey) {
           const masked = config.apiKey.substring(0, 8) + '***' + config.apiKey.substring(config.apiKey.length - 4);
@@ -96,7 +104,8 @@ export class AIConfigCheck implements HealthCheck {
             status: 'ok',
             message: `API Key: ${masked}`
           });
-        } else {
+        } else if (!isSSOProvider) {
+          // Don't require API key for SSO providers (uses cookies)
           missingFields.push('API Key');
         }
       }

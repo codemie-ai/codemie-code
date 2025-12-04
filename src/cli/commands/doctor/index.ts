@@ -15,7 +15,8 @@ import {
   AgentsCheck,
   WorkflowsCheck
 } from './checks/index.js';
-import { providerCheckRegistry } from './providers/index.js';
+import { ProviderRegistry } from '../../../providers/core/registry.js';
+import { adaptProviderResult } from './type-adapters.js';
 import { logger } from '../../../utils/logger.js';
 
 export function createDoctorCommand(): Command {
@@ -86,14 +87,28 @@ export function createDoctorCommand(): Command {
           const config = check.getConfig();
 
           if (config && config.provider) {
-            const providerResults = await providerCheckRegistry.runChecks(config, (checkName) => {
-              formatter.startCheck(checkName);
-            });
-            results.push(...providerResults);
+            // Get health check from ProviderRegistry
+            const healthCheck = ProviderRegistry.getHealthCheck(config.provider);
 
-            // Display each provider result immediately with proper header positioning
-            for (const result of providerResults) {
-              formatter.displayCheckWithHeader(result);
+            if (healthCheck) {
+              formatter.startCheck('Provider');
+
+              try {
+                const providerResult = await healthCheck.check(config);
+                const doctorResult = adaptProviderResult(providerResult);
+                results.push(doctorResult);
+                formatter.displayCheckWithHeader(doctorResult);
+              } catch (error) {
+                // If check throws, capture error
+                results.push({
+                  name: 'Provider Check Error',
+                  success: false,
+                  details: [{
+                    status: 'error',
+                    message: `Check failed: ${error instanceof Error ? error.message : String(error)}`
+                  }]
+                });
+              }
             }
           }
         }
