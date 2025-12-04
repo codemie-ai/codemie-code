@@ -70,11 +70,23 @@ export const SSOSetupSteps: ProviderSetupSteps = {
 
     // Check for LiteLLM integrations
     const modelProxy = new SSOModelProxy(authResult.apiUrl);
-    const integrations = await modelProxy.fetchIntegrations(codeMieUrl);
+    let integrations;
+    let integrationsFetchError: string | undefined;
 
+    try {
+      integrations = await modelProxy.fetchIntegrations(codeMieUrl);
+    } catch (error) {
+      // Log error but don't fail setup - integrations are optional
+      integrationsFetchError = error instanceof Error ? error.message : String(error);
+      console.log(chalk.yellow(`⚠️  Could not fetch integrations: ${integrationsFetchError}\n`));
+      integrations = [];
+    }
+
+    // Always prompt for integration selection
     let integrationInfo: CodeMieIntegrationInfo | undefined;
+
     if (integrations.length > 0) {
-      console.log(chalk.cyan('📦 LiteLLM Integrations found\n'));
+      console.log(chalk.cyan(`📦 Found ${integrations.length} LiteLLM integration(s)\n`));
       const integrationAnswers = await inquirer.prompt([
         {
           type: 'list',
@@ -90,6 +102,13 @@ export const SSOSetupSteps: ProviderSetupSteps = {
         }
       ]);
       integrationInfo = integrationAnswers.integration;
+    } else {
+      // Show message if no integrations found
+      if (integrationsFetchError) {
+        console.log(chalk.dim('ℹ️  Proceeding without LiteLLM integration (fetch failed)\n'));
+      } else {
+        console.log(chalk.dim('ℹ️  No LiteLLM integrations configured\n'));
+      }
     }
 
     return {

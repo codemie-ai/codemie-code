@@ -92,6 +92,7 @@ export async function fetchCodeMieIntegrations(
   let currentPage = 0;
   const perPage = 50;
   let hasMorePages = true;
+  let lastError: Error | undefined;
 
   while (hasMorePages) {
     try {
@@ -104,6 +105,12 @@ export async function fetchCodeMieIntegrations(
       });
 
       const fullUrl = `${apiUrl}${endpointPath}?${queryParams.toString()}`;
+
+      if (process.env.CODEMIE_DEBUG) {
+        console.log(`[DEBUG] Fetching integrations from: ${fullUrl}`);
+      } else {
+        console.log(`[INFO] Requesting integrations from: ${fullUrl}`);
+      }
 
       const pageIntegrations = await fetchIntegrationsPage(fullUrl, cookieString);
 
@@ -119,10 +126,17 @@ export async function fetchCodeMieIntegrations(
           currentPage++;
         }
       }
-    } catch {
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
       hasMorePages = false;
     }
   }
+
+  // If we got no integrations and had an error, throw it
+  if (allIntegrations.length === 0 && lastError) {
+    throw lastError;
+  }
+
   return allIntegrations;
 }
 
@@ -154,6 +168,10 @@ async function fetchIntegrationsPage(fullUrl: string, cookieString: string): Pro
   }
 
   // Parse the response - handle flexible response structure
+  if (process.env.CODEMIE_DEBUG) {
+    console.log('[DEBUG] Integration API response:', response.data.substring(0, 500));
+  }
+
   const responseData = JSON.parse(response.data) as CodeMieIntegrationsResponse;
 
   // Extract integrations from response - try all possible locations

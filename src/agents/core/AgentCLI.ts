@@ -99,7 +99,8 @@ export class AgentCLI {
 
       // Validate essential configuration
       if (!config.baseUrl || !config.apiKey || !config.model) {
-        logger.error('Configuration incomplete. Run: codemie setup');
+        console.log(chalk.yellow('\n⚠️  Configuration incomplete'));
+        console.log(chalk.white('Run ') + chalk.cyan('codemie setup') + chalk.white(' to configure your AI provider.\n'));
         process.exit(1);
       }
 
@@ -258,7 +259,7 @@ export class AgentCLI {
       logger.error(`Provider '${provider}' is not supported by ${this.adapter.displayName}`);
       console.log(chalk.white(`\nSupported providers: ${metadata.supportedProviders.join(', ')}`));
       console.log(chalk.white('\nOptions:'));
-      console.log(chalk.white('  1. Run setup to choose a different provider: codemie setup'));
+      console.log(chalk.white('  1. Run setup to choose a different provider: ') + chalk.cyan('codemie setup'));
 
       if (this.adapter.name === 'claude') {
         console.log(chalk.white('  2. Or configure environment variables directly:'));
@@ -293,7 +294,7 @@ export class AgentCLI {
       }
 
       console.log(chalk.white(`  1. ${this.adapter.name} requires ${modelDescription} (e.g., ${suggestedModel})`));
-      console.log(chalk.white(`  2. Update profile: codemie setup`));
+      console.log(chalk.white('  2. Update profile: ') + chalk.cyan('codemie setup'));
       // Handle special case where adapter name already includes 'codemie-' prefix
       const command = this.adapter.name.startsWith('codemie-') ? this.adapter.name : `codemie-${this.adapter.name}`;
       console.log(chalk.white(`  3. Override for this session: ${command} --model ${suggestedModel}`));

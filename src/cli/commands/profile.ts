@@ -38,18 +38,23 @@ function createListCommand(): Command {
           const activeLabel = active ? chalk.green(' (Active)') : '';
           console.log(chalk.bold.cyan(`Profile: ${name}${activeLabel}`));
           console.log(chalk.cyan('  Provider:     ') + chalk.white(profile.provider || 'N/A'));
-          console.log(chalk.cyan('  Base URL:     ') + chalk.white(profile.baseUrl || 'N/A'));
+
+          if (profile.codeMieUrl) {
+            console.log(chalk.cyan('  CodeMie URL:  ') + chalk.white(profile.codeMieUrl));
+          }
+
           console.log(chalk.cyan('  Model:        ') + chalk.white(profile.model || 'N/A'));
-          console.log(chalk.cyan('  Timeout:      ') + chalk.white(`${profile.timeout || 300}s`));
-          console.log(chalk.cyan('  Debug:        ') + chalk.white(profile.debug ? 'Yes' : 'No'));
 
           if (profile.authMethod) {
             console.log(chalk.cyan('  Auth Method:  ') + chalk.white(profile.authMethod));
           }
 
-          if (profile.codeMieUrl) {
-            console.log(chalk.cyan('  CodeMie URL:  ') + chalk.white(profile.codeMieUrl));
+          if (profile.codeMieIntegration?.alias) {
+            console.log(chalk.cyan('  Integration:  ') + chalk.white(profile.codeMieIntegration.alias));
           }
+
+          console.log(chalk.cyan('  Timeout:      ') + chalk.white(`${profile.timeout || 300}s`));
+          console.log(chalk.cyan('  Debug:        ') + chalk.white(profile.debug ? 'Yes' : 'No'));
 
           if (profile.apiKey) {
             const maskedKey = profile.apiKey.length > 12

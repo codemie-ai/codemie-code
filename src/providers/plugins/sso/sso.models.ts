@@ -96,22 +96,35 @@ export class SSOModelProxy extends BaseModelProxy {
    * Fetch LiteLLM integrations
    */
   async fetchIntegrations(codeMieUrl: string): Promise<CodeMieIntegration[]> {
-    try {
-      const credentials = await this.sso.getStoredCredentials();
-      if (!credentials) {
-        logger.debug('No SSO credentials found for fetching integrations');
-        return [];
-      }
+    const credentials = await this.sso.getStoredCredentials();
+    if (!credentials) {
+      logger.debug('No SSO credentials found for fetching integrations');
+      throw new Error('No SSO credentials found. Please authenticate first.');
+    }
 
+    const apiUrl = credentials.apiUrl || codeMieUrl;
+
+    logger.debug(`Fetching integrations from: ${apiUrl}${CODEMIE_ENDPOINTS.USER_SETTINGS}`);
+
+    try {
       // Use the working utility function that handles redirects and SSL
       return await fetchCodeMieIntegrations(
-          codeMieUrl,
+          apiUrl,
           credentials.cookies,
           CODEMIE_ENDPOINTS.USER_SETTINGS
       );
     } catch (error) {
-      logger.debug('Failed to fetch SSO integrations:', error);
-      return [];
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      const errorStack = error instanceof Error ? error.stack : undefined;
+
+      // Log error details properly
+      logger.debug('Failed to fetch SSO integrations:', errorMsg);
+      if (errorStack && process.env.CODEMIE_DEBUG) {
+        logger.debug('Stack trace:', errorStack);
+      }
+
+      // Re-throw with more context
+      throw new Error(`Failed to fetch integrations: ${errorMsg}`);
     }
   }
 

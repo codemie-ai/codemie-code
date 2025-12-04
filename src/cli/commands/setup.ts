@@ -64,41 +64,44 @@ async function runSetupWizard(force?: boolean): Promise<void> {
         console.log(`${activeMarker}${chalk.white(name)} (${profile.provider})`);
       });
       console.log('');
-    }
 
-    const { action } = await inquirer.prompt([
-      {
-        type: 'list',
-        name: 'action',
-        message: 'What would you like to do?',
-        choices: [
-          { name: 'Add a new profile', value: 'add' },
-          { name: 'Update an existing profile', value: 'update' },
-          { name: 'Cancel', value: 'cancel' }
-        ]
-      }
-    ]);
-
-    if (action === 'cancel') {
-      console.log(chalk.yellow('\nSetup cancelled.\n'));
-      return;
-    }
-
-    if (action === 'update') {
-      const { selectedProfile } = await inquirer.prompt([
+      const { action } = await inquirer.prompt([
         {
           type: 'list',
-          name: 'selectedProfile',
-          message: 'Select profile to update:',
-          choices: profiles.map(p => ({ name: p.name, value: p.name }))
+          name: 'action',
+          message: 'What would you like to do?',
+          choices: [
+            { name: 'Add a new profile', value: 'add' },
+            { name: 'Update an existing profile', value: 'update' },
+            { name: 'Cancel', value: 'cancel' }
+          ]
         }
       ]);
-      profileName = selectedProfile;
-      isUpdate = true;
-      console.log(chalk.white(`\nUpdating profile: ${chalk.cyan(profileName)}\n`));
+
+      if (action === 'cancel') {
+        console.log(chalk.yellow('\nSetup cancelled.\n'));
+        return;
+      }
+
+      if (action === 'update') {
+        const { selectedProfile } = await inquirer.prompt([
+          {
+            type: 'list',
+            name: 'selectedProfile',
+            message: 'Select profile to update:',
+            choices: profiles.map(p => ({ name: p.name, value: p.name }))
+          }
+        ]);
+        profileName = selectedProfile;
+        isUpdate = true;
+        console.log(chalk.white(`\nUpdating profile: ${chalk.cyan(profileName)}\n`));
+      } else {
+        // Adding new profile - will ask for name at the end
+        console.log(chalk.white('\nConfiguring new profile...\n'));
+      }
     } else {
-      // Adding new profile - will ask for name at the end
-      console.log(chalk.white('\nConfiguring new profile...\n'));
+      // Config file exists but no profiles - treat as fresh setup
+      console.log(chalk.white("Let's configure your AI assistant.\n"));
     }
   } else {
     // First time setup - will create default profile or ask for name at the end
