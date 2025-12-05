@@ -642,7 +642,8 @@ export class ConfigLoader {
     // Always set generic CODEMIE_* vars
     if (config.provider) env.CODEMIE_PROVIDER = config.provider;
     if (config.baseUrl) env.CODEMIE_BASE_URL = config.baseUrl;
-    if (config.apiKey) env.CODEMIE_API_KEY = config.apiKey;
+    // Set CODEMIE_API_KEY even if empty string (for providers without auth)
+    if (config.apiKey !== undefined) env.CODEMIE_API_KEY = config.apiKey;
     if (config.model) env.CODEMIE_MODEL = config.model;
     if (config.timeout) env.CODEMIE_TIMEOUT = String(config.timeout);
     if (config.debug) env.CODEMIE_DEBUG = String(config.debug);
@@ -662,10 +663,11 @@ export class ConfigLoader {
         }
       }
 
-      // Map API key
-      if (config.apiKey && envMapping.apiKey) {
+      // Map API key - for providers without auth, use placeholder
+      if (envMapping.apiKey) {
+        const apiKeyValue = config.apiKey || (providerTemplate.requiresAuth === false ? 'not-required' : '');
         for (const envVar of envMapping.apiKey) {
-          env[envVar] = config.apiKey;
+          env[envVar] = apiKeyValue;
         }
       }
 

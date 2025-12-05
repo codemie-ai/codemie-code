@@ -16,6 +16,8 @@ export const OllamaTemplate = registerProvider<ProviderTemplate>({
   description: 'Popular open-source local LLM runner - optimized for coding with 16GB RAM',
   defaultPort: 11434,
   defaultBaseUrl: 'http://localhost:11434',
+  requiresAuth: false,
+  authType: 'none',
   recommendedModels: [
     'qwen2.5-coder',
     'codellama',

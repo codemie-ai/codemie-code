@@ -98,8 +98,22 @@ export class AgentCLI {
       });
 
       // Validate essential configuration
-      if (!config.baseUrl || !config.apiKey || !config.model) {
+      const missingFields: string[] = [];
+      if (!config.baseUrl) missingFields.push('baseUrl');
+      if (!config.model) missingFields.push('model');
+
+      // Only validate apiKey for providers that require authentication
+      const { ProviderRegistry } = await import('../../providers/core/registry.js');
+      const provider = config.provider ? ProviderRegistry.getProvider(config.provider) : null;
+      const requiresAuth = provider?.requiresAuth ?? true; // Default to true for safety
+
+      if (requiresAuth && !config.apiKey) {
+        missingFields.push('apiKey');
+      }
+
+      if (missingFields.length > 0) {
         console.log(chalk.yellow('\n⚠️  Configuration incomplete'));
+        console.log(chalk.white('Missing: ') + chalk.red(missingFields.join(', ')));
         console.log(chalk.white('Run ') + chalk.cyan('codemie setup') + chalk.white(' to configure your AI provider.\n'));
         process.exit(1);
       }
