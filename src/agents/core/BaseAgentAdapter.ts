@@ -35,7 +35,10 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
     logger.info(`Installing ${this.displayName}...`);
     try {
-      await exec('npm', ['install', '-g', this.metadata.npmPackage], { timeout: 120000 });
+      const result = await exec('npm', ['install', '-g', this.metadata.npmPackage], { timeout: 120000 });
+      if (result.code !== 0) {
+        throw new Error(`npm install failed with exit code ${result.code}: ${result.stderr || result.stdout}`);
+      }
       logger.success(`${this.displayName} installed successfully`);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -53,7 +56,10 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
     logger.info(`Uninstalling ${this.displayName}...`);
     try {
-      await exec('npm', ['uninstall', '-g', this.metadata.npmPackage]);
+      const result = await exec('npm', ['uninstall', '-g', this.metadata.npmPackage]);
+      if (result.code !== 0) {
+        throw new Error(`npm uninstall failed with exit code ${result.code}: ${result.stderr || result.stdout}`);
+      }
       logger.success(`${this.displayName} uninstalled successfully`);
     } catch (error: unknown) {
       const errorMessage = error instanceof Error ? error.message : String(error);
