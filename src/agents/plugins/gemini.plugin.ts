@@ -1,7 +1,5 @@
 import { AgentMetadata } from '../core/types.js';
 import { BaseAgentAdapter } from '../core/BaseAgentAdapter.js';
-import { GeminiAnalyticsAdapter } from '../../analytics/aggregation/adapters/gemini.adapter.js';
-import { registerCurrentProject } from '../../analytics/aggregation/core/project-mapping.js';
 import { mkdir, writeFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join } from 'path';
@@ -84,17 +82,11 @@ export const GeminiPluginMetadata: AgentMetadata = {
         await writeFile(settingsFile, JSON.stringify(settings, null, 2));
       }
 
-      // Register current working directory for project mapping
-      // This creates/updates ~/.codemie/gemini-project-mappings.json
-      // so analytics can resolve project hashes to actual paths
-      registerCurrentProject('gemini', process.cwd());
-
       return env;
     }
   },
 
   // Analytics adapter (uses same metadata - DRY principle!)
-  analyticsAdapter: new GeminiAnalyticsAdapter(metadata)
 };
 
 /**

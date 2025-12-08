@@ -186,34 +186,12 @@ async function handlePluginSetup(
       finalProfileName = await promptForProfileName(providerName);
     }
 
-    // Step 6: Enable analytics (only for first profile)
-    let enableAnalytics = false;
-    if (!isUpdate) {
-      const profiles = await ConfigLoader.listProfiles();
-      enableAnalytics = profiles.length === 0;
-    }
-
-    // Step 7: Save profile
+    // Step 6: Save profile
     const saveSpinner = ora('Saving profile...').start();
 
     try {
       config.name = finalProfileName!;
       await ConfigLoader.saveProfile(finalProfileName!, config as any);
-
-      // Save analytics config if first profile
-      if (enableAnalytics) {
-        const multiConfig = await ConfigLoader.loadMultiProviderConfig();
-        if (!multiConfig.analytics) {
-          multiConfig.analytics = {
-            enabled: true,
-            target: 'local',
-            localPath: '~/.codemie/analytics',
-            flushInterval: 5000,
-            maxBufferSize: 100
-          };
-          await ConfigLoader.saveMultiProviderConfig(multiConfig);
-        }
-      }
 
       saveSpinner.succeed(chalk.green(`Profile "${finalProfileName}" saved`));
 

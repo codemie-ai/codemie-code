@@ -28,9 +28,6 @@ import { URL } from 'url';
 import { CredentialStore } from './credential-store.js';
 import { ProviderRegistry } from '../providers/core/registry.js';
 import { logger } from './logger.js';
-import { getAnalytics } from '../analytics/index.js';
-import { loadAnalyticsConfig } from '../analytics/config.js';
-import { RemoteAnalyticsSubmitter } from '../analytics/remote-submission/index.js';
 import { ProxyHTTPClient } from '../proxy/http-client.js';
 import { ProxyConfig, ProxyContext } from '../proxy/types.js';
 import { AuthenticationError, NetworkError, TimeoutError, normalizeError } from '../proxy/errors.js';
@@ -47,7 +44,6 @@ export class CodeMieProxy {
   private httpClient: ProxyHTTPClient;
   private interceptors: ProxyInterceptor[] = [];
   private actualPort: number = 0;
-  private remoteSubmitter: RemoteAnalyticsSubmitter | null = null;
 
   constructor(private config: ProxyConfig) {
     // Initialize HTTP client with streaming support
@@ -82,19 +78,12 @@ export class CodeMieProxy {
     const pluginContext: PluginContext = {
       config: this.config,
       logger,
-      credentials: credentials || undefined,
-      analytics: getAnalytics()
+      credentials: credentials || undefined
     };
 
     // 4. Initialize plugins from registry
     const registry = getPluginRegistry();
     this.interceptors = await registry.initialize(pluginContext);
-
-    // 5. Start analytics metrics submitter (writes codemie_coding_agent_usage_total metrics)
-    const analyticsConfig = loadAnalyticsConfig();
-    if (analyticsConfig.enabled) {
-      await this.startAnalyticsMetricsSubmitter(isSSOProvider ? credentials : null);
-    }
 
     // 6. Find available port
     this.actualPort = this.config.port || await this.findAvailablePort();
@@ -133,57 +122,9 @@ export class CodeMieProxy {
   }
 
   /**
-   * Start analytics metrics submitter
-   * Writes codemie_coding_agent_usage metrics to ~/.codemie/analytics/YYYY-MM-DD.jsonl
-   */
-  private async startAnalyticsMetricsSubmitter(credentials: any | null): Promise<void> {
-    try {
-      const analyticsConfig = loadAnalyticsConfig();
-
-      // Build config
-      const submitterConfig: any = {
-        enabled: true,
-        target: analyticsConfig.target,
-        interval: parseInt(process.env.CODEMIE_ANALYTICS_REMOTE_INTERVAL || '300000', 10),
-        batchSize: parseInt(process.env.CODEMIE_ANALYTICS_REMOTE_BATCH_SIZE || '100', 10)
-      };
-
-      // Add remote config only if SSO provider with credentials
-      if (credentials && this.config.targetApiUrl) {
-        const cookieString = Object.entries(credentials.cookies)
-          .map(([key, value]) => `${key}=${value}`)
-          .join('; ');
-
-        submitterConfig.baseUrl = this.config.targetApiUrl;
-        submitterConfig.cookies = cookieString;
-      }
-
-      this.remoteSubmitter = new RemoteAnalyticsSubmitter(submitterConfig);
-      this.remoteSubmitter.start();
-
-      logger.debug(`Analytics metrics submitter started (target: ${analyticsConfig.target})`);
-    } catch (error) {
-      logger.error(`Failed to start analytics metrics submitter: ${error}`);
-    }
-  }
-
-  /**
    * Stop the proxy server
    */
   async stop(): Promise<void> {
-    // Stop remote analytics submitter
-    if (this.remoteSubmitter) {
-      this.remoteSubmitter.stop();
-      logger.debug('Remote analytics submitter stopped');
-    }
-
-    // Flush analytics before stopping to ensure all events are written
-    const analytics = getAnalytics();
-    if (analytics.isEnabled) {
-      logger.debug('Flushing analytics before proxy shutdown...');
-      await analytics.flush();
-    }
-
     if (this.server) {
       await new Promise<void>((resolve) => {
         this.server!.close(() => {

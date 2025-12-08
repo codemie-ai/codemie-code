@@ -1,11 +1,10 @@
 import { AgentMetadata } from '../core/types.js';
 import { BaseAgentAdapter } from '../core/BaseAgentAdapter.js';
-import { ClaudeAnalyticsAdapter } from '../../analytics/aggregation/adapters/claude.adapter.js';
 
 /**
  * Claude Code Plugin Metadata
  */
-const metadata = {
+export const ClaudePluginMetadata: AgentMetadata = {
   name: 'claude',
   displayName: 'Claude Code',
   description: 'Claude Code - official Anthropic CLI tool',
@@ -46,13 +45,6 @@ const metadata = {
       return env;
     }
   }
-};
-
-export const ClaudePluginMetadata: AgentMetadata = {
-  ...metadata,
-
-  // Analytics adapter uses same metadata (DRY principle!)
-  analyticsAdapter: new ClaudeAnalyticsAdapter(metadata)
 };
 
 /**

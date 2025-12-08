@@ -58,15 +58,6 @@ codemie profile delete <name>  # Delete a profile
 codemie profile rename <old> <new>  # Rename a profile
 codemie-code --profile work "task"  # Use specific profile
 
-# Analytics Commands
-codemie analytics                  # Show configuration and available commands
-codemie analytics enable           # Enable analytics collection
-codemie analytics disable          # Disable analytics collection
-codemie analytics show             # Show analytics from all agents
-codemie analytics show --from 2025-11-01 --to 2025-11-30  # Custom date range
-codemie analytics show --agent claude  # Filter by agent
-codemie analytics show --verbose   # Show detailed stats with raw model names and additional metrics
-
 # Release & Publishing
 git tag -a v0.0.1 -m "Release version 0.0.1"  # Create release tag
 git push origin v0.0.1                         # Push tag to trigger publish
@@ -214,7 +205,6 @@ it('should create PythonCheck instance', () => {
 2. **Built-in Agent**: CodeMie Native - a LangGraph-based coding assistant
 3. **Configuration Management**: Unified config system supporting multiple AI providers
 4. **Multiple Interfaces**: CLI commands, direct executables, and programmatic APIs
-5. **Unified Analytics**: Agent-agnostic analytics system tracking usage across all agents
 
 ## Architecture Overview
 
@@ -233,14 +223,6 @@ codemie-code/
 │   │   ├── plugins/         # Agent plugins (claude, codex, gemini, codemie-code)
 │   │   ├── codemie-code/    # Built-in agent implementation
 │   │   └── registry.ts      # Central agent registry
-│   ├── analytics/            # Unified analytics system
-│   │   ├── index.ts         # Main Analytics class
-│   │   ├── types.ts         # TypeScript types
-│   │   ├── collector.ts     # Event buffering
-│   │   ├── writer.ts        # JSONL file writer
-│   │   ├── session.ts       # Session management
-│   │   ├── privacy.ts       # Privacy utilities
-│   │   └── config.ts        # Config loading
 │   ├── workflows/            # CI/CD workflow management
 │   ├── env/                  # Configuration system
 │   ├── utils/                # Shared utilities
@@ -274,7 +256,6 @@ codemie-code/
   - `profile.ts`: Profile management (list, switch, delete, rename)
   - `workflow.ts`: CI/CD workflow installation
   - `auth.ts`: SSO authentication management
-  - `analytics.ts`: Usage analytics and reporting
   - `version.ts`: Version information
 
 **Pattern**: Each command is a factory function (`createXCommand()`) returning a Commander instance
@@ -344,63 +325,6 @@ codemie-code/
   - `security.ts`: Security filters and validation
 - **UI System** (`ui.ts`, `streaming/`): Modern terminal interfaces
 - **Types** (`types.ts`): Comprehensive TypeScript definitions
-
-#### 7. Analytics System (`src/analytics/`) - **Unified Tracking**
-
-**OpenTelemetry-inspired analytics across all agents:**
-
-- **Main Analytics** (`index.ts`): `Analytics` class - primary API with singleton pattern
-- **Event Collector** (`collector.ts`): Buffers events, auto-flushes on size or interval
-- **Writer** (`writer.ts`): Writes JSONL files to `~/.codemie/analytics/YYYY-MM-DD.jsonl`
-- **Session Manager** (`session.ts`): Tracks session lifecycle and metadata
-- **Privacy** (`privacy.ts`): Sensitive data redaction
-- **Configuration** (`config.ts`): Environment-aware config loading
-
-**Key Features:**
-- **Agent-Agnostic**: Single analytics system works across all 5+ agents
-- **Multi-Format Support**: Extracts tool calls from Anthropic, OpenAI/GPT, and Google Gemini API formats
-- **Privacy-First**: Sensitive data auto-redacted
-- **Minimal Overhead**: Async buffering (< 5ms per event), non-blocking writes
-- **JSONL Format**: One JSON event per line, daily log files
-- **Auto-Integration**: AgentCLI automatically initializes and tracks sessions
-
-**Configuration:**
-```json
-{
-  "analytics": {
-    "enabled": true,
-    "target": "local",
-    "localPath": "~/.codemie/analytics",
-    "flushInterval": 5000,
-    "maxBufferSize": 100
-  }
-}
-```
-
-**Environment Variables:**
-- `CODEMIE_ANALYTICS_ENABLED` - Enable/disable (true/false/1/0)
-- `CODEMIE_ANALYTICS_TARGET` - Storage target (local/remote/both)
-- `CODEMIE_ANALYTICS_ENDPOINT` - Remote endpoint URL (optional)
-- `CODEMIE_ANALYTICS_PATH` - Custom local path
-
-**Event Types Tracked:**
-- Session lifecycle (start, end, error)
-- User interactions (prompts, responses)
-- API interactions (requests, responses, errors)
-- Configuration changes (profile switches, model changes)
-- Performance metrics (latency)
-
-**Example Events:**
-```jsonl
-{"timestamp":"2025-11-29T10:30:00.000Z","eventType":"session_start","sessionId":"uuid","installationId":"inst-123","agent":"claude","agentVersion":"1.0.0","cliVersion":"0.0.11","profile":"work","provider":"ai-run-sso","model":"claude-4-5-sonnet","attributes":{"workingDir":"/path","interactive":true}}
-{"timestamp":"2025-11-29T10:30:15.000Z","eventType":"api_response","sessionId":"uuid","agent":"claude","metrics":{"latencyMs":2340}}
-```
-
-**Integration Points:**
-- `AgentCLI.handleRun()`: Auto-initializes analytics, tracks session lifecycle
-- `Analytics.trackAPIResponse()`: Tracks API requests and responses with latency metrics
-- Built-in agent: Uses LangChain streaming API
-- External agents: Session tracking via universal executor
 
 ### Key Architectural Patterns
 
@@ -674,50 +598,6 @@ The plugin pattern makes adding new AI providers straightforward without modifyi
 - `litellm/` - Universal proxy with minimal setup
 
 **Why This Works**: Auto-registration via decorators and imports enables zero-config integration with setup wizard and health checks.
-
-### Analytics Integration - **Automatic Plugin Discovery**
-
-The analytics system is **already integrated** with the plugin system, providing automatic discovery and display of agent stats without additional code.
-
-#### How It Works
-
-**Automatic Agent Discovery**:
-- `calculateStats()` function queries `AgentRegistry` to get display names
-- Agent filters are validated against registered plugins
-- Display names are shown instead of internal IDs (e.g., "Claude Code" instead of "claude")
-
-**Key Features**:
-1. **Agent Validation**: All analytics commands validate agent filters against the registry
-   ```bash
-   # Shows error with available agents if invalid
-   codemie analytics show --agent invalid
-   # Available agents: codemie-code (CodeMie Native), claude (Claude Code), ...
-   ```
-
-2. **Display Name Integration**: Analytics automatically show friendly names
-   ```
-   🤖 Breakdown by Agent
-
-   Claude Code         15 prompts   3 sessions   45 API calls  (65.2%)
-   CodeMie Native       8 prompts   2 sessions   20 API calls  (34.8%)
-   ```
-
-3. **No Code Changes Required**: Adding a new plugin automatically includes it in analytics
-
-**Commands with Plugin Integration**:
-- `codemie analytics show` - Shows agent activity with display names
-- `codemie analytics show --agent <name>` - Validates and filters by agent
-
-**Implementation Details** (for reference):
-- `src/utils/analytics-reader.ts`: Queries `AgentRegistry.getAgent()` for display names
-- `src/cli/commands/analytics.ts`: Validates filters with `AgentRegistry.getAgentNames()`
-- Auto-enriches agent stats with `displayName` field from plugin metadata
-
-**Benefits**:
-✅ **Extensible**: New plugins automatically appear in stats
-✅ **Type-Safe**: Uses existing plugin metadata
-✅ **User-Friendly**: Shows display names, not internal IDs
-✅ **Validated**: Prevents invalid agent filters with helpful error messages
 
 ### Built-in Agent Development - **LangGraph Architecture**
 

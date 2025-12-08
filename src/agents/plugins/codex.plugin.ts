@@ -4,7 +4,6 @@ import { mkdir, writeFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import { CodexAnalyticsAdapter } from '../../analytics/aggregation/adapters/codex.adapter.js';
 
 // Define metadata object for reusability
 const metadata = {
@@ -84,7 +83,6 @@ export const CodexPluginMetadata: AgentMetadata = {
   },
 
   // Analytics adapter uses same metadata (DRY!)
-  analyticsAdapter: new CodexAnalyticsAdapter(metadata)
 };
 
 /**

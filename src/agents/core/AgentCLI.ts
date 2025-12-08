@@ -12,7 +12,6 @@ import { CodexPluginMetadata } from '../plugins/codex.plugin.js';
 import { CodeMieCodePluginMetadata } from '../plugins/codemie-code.plugin.js';
 import { GeminiPluginMetadata } from '../plugins/gemini.plugin.js';
 import { DeepAgentsPluginMetadata } from '../plugins/deepagents.plugin.js';
-import { initAnalytics, getAnalytics, destroyAnalytics } from '../../analytics/index.js';
 
 /**
  * Universal CLI builder for any agent
@@ -125,26 +124,6 @@ export class AgentCLI {
 
       const providerEnv = ConfigLoader.exportProviderEnvVars(config);
 
-      // Initialize analytics with config
-      const fullConfig = await ConfigLoader.loadFull(process.cwd(), {
-        name: options.profile as string | undefined
-      });
-      initAnalytics(fullConfig.analytics);
-
-      // Start analytics session
-      const analytics = getAnalytics();
-      const agentVersion = await this.adapter.getVersion();
-      analytics.startSession({
-        agent: this.adapter.name,
-        agentVersion: agentVersion || 'unknown',
-        cliVersion: this.version,
-        profile: config.name || 'default',
-        provider: config.provider || 'unknown',
-        model: config.model || 'unknown',
-        workingDir: process.cwd(),
-        interactive: args.length === 0 || !args.some(arg => arg === '-p' || arg === '--print')
-      });
-
       // Collect all arguments to pass to the agent
       const agentArgs = this.collectPassThroughArgs(args, options);
 
@@ -152,42 +131,7 @@ export class AgentCLI {
       const profileName = config.name || 'default';
       logger.info(`Starting ${this.adapter.displayName} | Profile: ${profileName} | Provider: ${config.provider} | Model: ${config.model}`);
 
-      try {
-        await this.adapter.run(agentArgs, providerEnv);
-
-        // End session on success
-        await analytics.endSession('user_exit');
-      } catch (error) {
-        // Track error with comprehensive context
-        const errorContext: Record<string, unknown> = {
-          error: error instanceof Error ? error.message : String(error),
-          errorType: error instanceof Error ? error.constructor.name : 'Unknown',
-          agent: this.adapter.name,
-          provider: config.provider,
-          model: config.model,
-          profile: config.name || 'default',
-          workingDir: process.cwd(),
-          args: agentArgs.length > 0 ? agentArgs.join(' ') : undefined
-        };
-
-        // Add stack trace in debug mode or for critical errors
-        if (error instanceof Error && error.stack) {
-          errorContext.stackTrace = error.stack;
-        }
-
-        // Check if error has additional properties (e.g., from CodeMieAgentError)
-        if (error && typeof error === 'object') {
-          const errorObj = error as Record<string, unknown>;
-          if (errorObj.code) errorContext.errorCode = errorObj.code;
-          if (errorObj.details) errorContext.errorDetails = errorObj.details;
-        }
-
-        await analytics.track('session_error', errorContext);
-        await analytics.endSession('error');
-        throw error;
-      } finally {
-        await destroyAnalytics();
-      }
+      await this.adapter.run(agentArgs, providerEnv);
     } catch (error) {
       logger.error(`Failed to run ${this.adapter.displayName}:`, error);
       process.exit(1);

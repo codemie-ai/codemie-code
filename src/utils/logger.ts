@@ -143,9 +143,6 @@ class Logger {
   warn(message: string, ...args: unknown[]): void {
     // Always write to log file
     this.writeToLogFile('warn', message, ...args);
-
-    // Console output
-    console.warn(chalk.yellow(`⚠ ${message}`), ...args);
   }
 
   error(message: string, error?: Error | unknown): void {

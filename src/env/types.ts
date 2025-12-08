@@ -2,8 +2,6 @@
  * Configuration types for CodeMie Code
  */
 
-import type { AnalyticsConfig } from '../analytics/types.js';
-
 /**
  * Minimal CodeMie integration info for config storage
  */
@@ -64,7 +62,6 @@ export interface MultiProviderConfig {
   version: 2;
   activeProfile: string;
   profiles: Record<string, ProviderProfile>;
-  analytics?: AnalyticsConfig;
 }
 
 /**

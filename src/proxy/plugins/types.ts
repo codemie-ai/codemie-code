@@ -8,7 +8,6 @@
 import { IncomingHttpHeaders } from 'http';
 import { ProxyConfig, ProxyContext } from '../types.js';
 import { logger } from '../../utils/logger.js';
-import { Analytics } from '../../analytics/index.js';
 import { SSOCredentials } from '../../providers/core/types.js';
 
 /**
@@ -47,7 +46,6 @@ export interface PluginContext {
   config: ProxyConfig;
   logger: typeof logger;
   credentials?: SSOCredentials;
-  analytics?: Analytics;
   [key: string]: unknown; // Extensible
 }
 
