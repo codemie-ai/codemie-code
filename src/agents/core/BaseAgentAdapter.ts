@@ -6,6 +6,9 @@ import { CodeMieProxy } from '../../utils/codemie-proxy.js';
 import { ProviderRegistry } from '../../providers/core/registry.js';
 import { MetricsOrchestrator } from '../../metrics/MetricsOrchestrator.js';
 import type { AgentMetricsSupport } from '../../metrics/types.js';
+import { getRandomWelcomeMessage, getRandomGoodbyeMessage } from '../../utils/goodbye-messages.js';
+import chalk from 'chalk';
+import gradient from 'gradient-string';
 
 /**
  * Base class for all agent adapters
@@ -109,8 +112,6 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    * Run the agent
    */
   async run(args: string[], envOverrides?: Record<string, string>): Promise<void> {
-    logger.info(`Starting ${this.displayName}...`);
-
     // Merge environment variables
     let env: NodeJS.ProcessEnv = {
       ...process.env,
@@ -132,7 +133,23 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
       // Take pre-spawn snapshot
       await this.metricsOrchestrator.beforeAgentSpawn();
+
+      // Export session ID to environment for logging
+      env.CODEMIE_SESSION_ID = this.metricsOrchestrator.getSessionId();
     }
+
+    // Show welcome message with session info
+    const profileName = env.CODEMIE_PROFILE_NAME || 'default';
+    const sessionId = env.CODEMIE_SESSION_ID || 'n/a';
+    const provider = env.CODEMIE_PROVIDER || 'unknown';
+    const cliVersion = env.CODEMIE_CLI_VERSION || 'unknown';
+
+    console.log(''); // Empty line for spacing
+    console.log(chalk.cyan.bold(getRandomWelcomeMessage()));
+    console.log(''); // Empty line for spacing
+    console.log(chalk.white(`CodeMie CLI Version: ${cliVersion} | Profile: ${profileName} | Provider: ${provider}`));
+    console.log(chalk.white(`Session: ${sessionId}`));
+    console.log(''); // Empty line for spacing
 
     // Apply argument transformations
     const transformedArgs = this.metadata.argumentTransform
@@ -198,6 +215,10 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
           process.off('SIGINT', sigintHandler);
           process.off('SIGTERM', sigtermHandler);
 
+          // Show shutting down message
+          console.log(''); // Empty line for spacing
+          console.log(chalk.yellow('Shutting down...'));
+
           // Grace period: wait for any final API calls from the external agent
           // Many agents (Claude, Gemini, Codex) send telemetry/session data on shutdown
           if (this.proxy) {
@@ -218,6 +239,14 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
           if (this.metadata.lifecycle?.afterRun && code !== null) {
             await this.metadata.lifecycle.afterRun(code);
           }
+
+          // Show goodbye message with random easter egg
+          console.log(chalk.cyan.bold(getRandomGoodbyeMessage()));
+          console.log(''); // Spacing before powered by
+          // Create custom magenta-purple gradient for CodeMie branding
+          const codeMieGradient = gradient(['#ff00ff', '#9933ff']);
+          console.log(codeMieGradient('Powered by AI/Run CodeMie CLI'));
+          console.log(''); // Empty line for spacing
 
           if (code === 0) {
             resolve();

@@ -5,6 +5,9 @@ import { loadCodeMieConfig } from '../codemie-code/config.js';
 import { join } from 'path';
 import { readFileSync } from 'fs';
 import { getDirname } from '../../utils/dirname.js';
+import { getRandomWelcomeMessage, getRandomGoodbyeMessage } from '../../utils/goodbye-messages.js';
+import chalk from 'chalk';
+import gradient from 'gradient-string';
 
 /**
  * Built-in agent name constant - single source of truth
@@ -41,33 +44,54 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
 
   // Custom handler for built-in agent
   customRunHandler: async (args, options) => {
-    logger.info('Starting CodeMie Native Agent...');
-
     try {
       // Check if we have a valid configuration first
       const workingDir = process.cwd();
 
+      let config;
       try {
-        await loadCodeMieConfig(workingDir);
+        config = await loadCodeMieConfig(workingDir);
       } catch {
         throw new Error('CodeMie configuration required. Please run: codemie setup');
       }
 
+      // Show welcome message with session info
+      const profileName = config.name || 'default';
+      const sessionId = process.env.CODEMIE_SESSION_ID || 'n/a';
+      const cliVersion = process.env.CODEMIE_CLI_VERSION || 'unknown';
+
+      console.log(''); // Empty line for spacing
+      console.log(chalk.cyan.bold(getRandomWelcomeMessage()));
+      console.log(chalk.white(`Profile: ${profileName} | Provider: ${config.provider}`));
+      console.log(chalk.white(`CodeMie CLI Version: ${cliVersion} | Session: ${sessionId}`));
+      console.log(''); // Empty line for spacing
+
       const codeMie = new CodeMieCode(workingDir);
       await codeMie.initialize({ debug: options.debug as boolean | undefined });
 
-      if (options.task) {
-        await codeMie.executeTaskWithUI(options.task as string, {
-          planMode: (options.plan || options.planOnly) as boolean | undefined,
-          planOnly: options.planOnly as boolean | undefined
-        });
-      } else if (args.length > 0) {
-        await codeMie.executeTaskWithUI(args.join(' '));
-        if (!options.planOnly) {
+      try {
+        if (options.task) {
+          await codeMie.executeTaskWithUI(options.task as string, {
+            planMode: (options.plan || options.planOnly) as boolean | undefined,
+            planOnly: options.planOnly as boolean | undefined
+          });
+        } else if (args.length > 0) {
+          await codeMie.executeTaskWithUI(args.join(' '));
+          if (!options.planOnly) {
+            await codeMie.startInteractive();
+          }
+        } else {
           await codeMie.startInteractive();
         }
-      } else {
-        await codeMie.startInteractive();
+      } finally {
+        // Show goodbye message
+        console.log(''); // Empty line for spacing
+        console.log(chalk.cyan.bold(getRandomGoodbyeMessage()));
+        console.log(''); // Spacing before powered by
+        // Create custom magenta-purple gradient for CodeMie branding
+        const codeMieGradient = gradient(['#ff00ff', '#9933ff']);
+        console.log(codeMieGradient('Powered by AI/Run CodeMie CLI'));
+        console.log(''); // Empty line for spacing
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);

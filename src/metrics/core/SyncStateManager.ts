@@ -78,13 +78,21 @@ export class SyncStateManager {
 
   /**
    * Load sync state from session file
+   * Returns null if file doesn't exist (graceful handling for deleted files)
    */
-  async load(): Promise<SyncState> {
+  async load(): Promise<SyncState | null> {
     try {
+      // Check if session file exists
+      if (!existsSync(this.filePath)) {
+        logger.debug('[SyncStateManager] Session file does not exist, returning null');
+        return null;
+      }
+
       const session = await this.loadSession();
 
       if (!session.syncState) {
-        throw new Error('Sync state not found in session file');
+        logger.debug('[SyncStateManager] Sync state not initialized yet, returning null');
+        return null;
       }
 
       logger.debug(`[SyncStateManager] Loaded sync state: ${session.syncState.totalDeltas} deltas, ${session.syncState.totalSynced} synced`);
@@ -92,7 +100,8 @@ export class SyncStateManager {
 
     } catch (error) {
       logger.error('[SyncStateManager] Failed to load sync state:', error);
-      throw error;
+      // Return null instead of throwing to allow graceful degradation
+      return null;
     }
   }
 
@@ -135,6 +144,11 @@ export class SyncStateManager {
     try {
       const state = await this.load();
 
+      if (!state) {
+        logger.debug('[SyncStateManager] Cannot update - sync state does not exist');
+        return;
+      }
+
       state.lastProcessedLine = line;
       state.lastProcessedTimestamp = timestamp;
 
@@ -144,7 +158,7 @@ export class SyncStateManager {
 
     } catch (error) {
       logger.error('[SyncStateManager] Failed to update last processed line:', error);
-      throw error;
+      // Don't throw - allow graceful degradation
     }
   }
 
@@ -155,6 +169,11 @@ export class SyncStateManager {
     try {
       const state = await this.load();
 
+      if (!state) {
+        logger.debug('[SyncStateManager] Cannot add records - sync state does not exist');
+        return;
+      }
+
       // Add to processed records list
       state.processedRecordIds.push(...recordIds);
 
@@ -164,7 +183,7 @@ export class SyncStateManager {
 
     } catch (error) {
       logger.error('[SyncStateManager] Failed to add processed records:', error);
-      throw error;
+      // Don't throw - allow graceful degradation
     }
   }
 
@@ -176,6 +195,11 @@ export class SyncStateManager {
   async markSynced(recordIds: string[]): Promise<void> {
     try {
       const state = await this.load();
+
+      if (!state) {
+        logger.debug('[SyncStateManager] Cannot mark synced - sync state does not exist');
+        return;
+      }
 
       // Update last synced record (for resume capability)
       if (recordIds.length > 0) {
@@ -192,7 +216,7 @@ export class SyncStateManager {
 
     } catch (error) {
       logger.error('[SyncStateManager] Failed to mark records as synced:', error);
-      throw error;
+      // Don't throw - allow graceful degradation
     }
   }
 
@@ -202,6 +226,12 @@ export class SyncStateManager {
   async incrementDeltas(count: number): Promise<void> {
     try {
       const state = await this.load();
+
+      if (!state) {
+        logger.debug('[SyncStateManager] Cannot increment deltas - sync state does not exist');
+        return;
+      }
+
       state.totalDeltas += count;
       await this.save(state);
 
@@ -209,7 +239,7 @@ export class SyncStateManager {
 
     } catch (error) {
       logger.error('[SyncStateManager] Failed to increment deltas:', error);
-      throw error;
+      // Don't throw - allow graceful degradation
     }
   }
 
@@ -219,6 +249,12 @@ export class SyncStateManager {
   async incrementFailed(count: number): Promise<void> {
     try {
       const state = await this.load();
+
+      if (!state) {
+        logger.debug('[SyncStateManager] Cannot increment failed - sync state does not exist');
+        return;
+      }
+
       state.totalFailed += count;
       await this.save(state);
 
@@ -226,7 +262,7 @@ export class SyncStateManager {
 
     } catch (error) {
       logger.error('[SyncStateManager] Failed to increment failed count:', error);
-      throw error;
+      // Don't throw - allow graceful degradation
     }
   }
 
@@ -236,6 +272,12 @@ export class SyncStateManager {
   async updateStatus(status: 'active' | 'completed' | 'failed', endTime?: number): Promise<void> {
     try {
       const state = await this.load();
+
+      if (!state) {
+        logger.debug('[SyncStateManager] Cannot update status - sync state does not exist');
+        return;
+      }
+
       state.status = status;
 
       if (endTime && (status === 'completed' || status === 'failed')) {
@@ -244,11 +286,11 @@ export class SyncStateManager {
 
       await this.save(state);
 
-      logger.info(`[SyncStateManager] Updated status to: ${status}`);
+      logger.debug(`[SyncStateManager] Updated status to: ${status}`);
 
     } catch (error) {
       logger.error('[SyncStateManager] Failed to update status:', error);
-      throw error;
+      // Don't throw - allow graceful degradation
     }
   }
 

@@ -78,7 +78,7 @@ export class MetricsOrchestrator {
     }
 
     try {
-      logger.info('[MetricsOrchestrator] Taking pre-spawn snapshot...');
+      logger.debug('[MetricsOrchestrator] Taking pre-spawn snapshot...');
 
       // Get agent data paths
       const { sessionsDir } = this.metricsAdapter.getDataPaths();
@@ -86,7 +86,7 @@ export class MetricsOrchestrator {
       // Take snapshot
       this.beforeSnapshot = await this.snapshotter.snapshot(sessionsDir);
 
-      logger.info(`[MetricsOrchestrator] Pre-spawn snapshot: ${this.beforeSnapshot.files.length} files`);
+      logger.debug(`[MetricsOrchestrator] Pre-spawn snapshot: ${this.beforeSnapshot.files.length} files`);
 
       // Create session record
       this.session = {
@@ -108,7 +108,7 @@ export class MetricsOrchestrator {
 
       // Save initial session
       await this.store.saveSession(this.session);
-      logger.info(`[MetricsOrchestrator] Session created: ${this.sessionId}`);
+      logger.debug(`[MetricsOrchestrator] Session created: ${this.sessionId}`);
 
     } catch (error) {
       logger.error('[MetricsOrchestrator] Failed to take pre-spawn snapshot:', error);
@@ -126,27 +126,27 @@ export class MetricsOrchestrator {
     }
 
     try {
-      logger.info('[MetricsOrchestrator] Waiting for agent initialization...');
+      logger.debug('[MetricsOrchestrator] Waiting for agent initialization...');
 
       // Wait for agent to initialize and create session file
       const initDelay = this.metricsAdapter.getInitDelay();
       await this.sleep(initDelay);
 
-      logger.info('[MetricsOrchestrator] Taking post-spawn snapshot...');
+      logger.debug('[MetricsOrchestrator] Taking post-spawn snapshot...');
 
       // Get agent data paths
       const { sessionsDir } = this.metricsAdapter.getDataPaths();
 
       // Take snapshot
       const afterSnapshot = await this.snapshotter.snapshot(sessionsDir);
-      logger.info(`[MetricsOrchestrator] Post-spawn snapshot: ${afterSnapshot.files.length} files`);
+      logger.debug(`[MetricsOrchestrator] Post-spawn snapshot: ${afterSnapshot.files.length} files`);
 
       // Compute diff
       const newFiles = this.snapshotter.diff(this.beforeSnapshot, afterSnapshot);
-      logger.info(`[MetricsOrchestrator] Detected ${newFiles.length} new file(s)`);
+      logger.debug(`[MetricsOrchestrator] Detected ${newFiles.length} new file(s)`);
 
       // Correlate with retry
-      logger.info('[MetricsOrchestrator] Starting correlation with retry...');
+      logger.debug('[MetricsOrchestrator] Starting correlation with retry...');
       const correlation = await this.correlator.correlateWithRetry(
         {
           sessionId: this.sessionId,
@@ -169,9 +169,9 @@ export class MetricsOrchestrator {
       this.session = await this.store.loadSession(this.sessionId);
 
       if (correlation.status === 'matched') {
-        logger.success(`[MetricsOrchestrator] Session correlated: ${correlation.agentSessionId}`);
-        logger.info(`[MetricsOrchestrator]   Agent file: ${correlation.agentSessionFile}`);
-        logger.info(`[MetricsOrchestrator]   Retry count: ${correlation.retryCount}`);
+        logger.debug(`[MetricsOrchestrator] Session correlated: ${correlation.agentSessionId}`);
+        logger.debug(`[MetricsOrchestrator]   Agent file: ${correlation.agentSessionFile}`);
+        logger.debug(`[MetricsOrchestrator]   Retry count: ${correlation.retryCount}`);
 
         // Start incremental delta monitoring
         await this.startIncrementalMonitoring(correlation.agentSessionFile!);
@@ -195,7 +195,7 @@ export class MetricsOrchestrator {
     }
 
     try {
-      logger.info('[MetricsOrchestrator] Finalizing session...');
+      logger.debug('[MetricsOrchestrator] Finalizing session...');
 
       // Stop file watcher
       if (this.fileWatcher) {
@@ -208,7 +208,7 @@ export class MetricsOrchestrator {
       if (this.session.correlation.status === 'matched' &&
           this.session.correlation.agentSessionFile) {
         await this.collectDeltas(this.session.correlation.agentSessionFile);
-        logger.info('[MetricsOrchestrator] Collected final deltas');
+        logger.debug('[MetricsOrchestrator] Collected final deltas');
       }
 
       // Update sync state status with end time
@@ -222,7 +222,7 @@ export class MetricsOrchestrator {
       // Update session status
       await this.store.updateSessionStatus(this.sessionId, status);
 
-      logger.success('[MetricsOrchestrator] Session finalized');
+      logger.debug('[MetricsOrchestrator] Session finalized');
 
     } catch (error) {
       logger.error('[MetricsOrchestrator] Failed to finalize session:', error);
@@ -258,7 +258,7 @@ export class MetricsOrchestrator {
         this.session.startTime
       );
 
-      logger.info('[MetricsOrchestrator] Initialized delta-based metrics tracking');
+      logger.debug('[MetricsOrchestrator] Initialized delta-based metrics tracking');
 
       // Collect initial deltas
       await this.collectDeltas(sessionFilePath);
@@ -280,7 +280,7 @@ export class MetricsOrchestrator {
         }
       });
 
-      logger.info('[MetricsOrchestrator] Started file watching for incremental metrics');
+      logger.debug('[MetricsOrchestrator] Started file watching for incremental metrics');
 
     } catch (error) {
       logger.error('[MetricsOrchestrator] Failed to start incremental monitoring:', error);
@@ -302,6 +302,13 @@ export class MetricsOrchestrator {
       // Load current sync state
       const syncState = await this.syncStateManager.load();
 
+      // If sync state doesn't exist (file deleted or not initialized yet), skip collection
+      if (!syncState) {
+        logger.debug('[MetricsOrchestrator] Sync state not available, skipping delta collection');
+        this.isCollecting = false;
+        return;
+      }
+
       // Get already-processed record IDs from sync state
       const processedRecordIds = new Set(syncState.processedRecordIds);
 
@@ -317,7 +324,7 @@ export class MetricsOrchestrator {
         return;
       }
 
-      logger.info(`[MetricsOrchestrator] Collected ${deltas.length} new delta(s)`);
+      logger.debug(`[MetricsOrchestrator] Collected ${deltas.length} new delta(s)`);
 
       // Collect record IDs for tracking
       const newRecordIds: string[] = [];
@@ -337,7 +344,7 @@ export class MetricsOrchestrator {
       await this.syncStateManager.updateLastProcessed(lastLine, Date.now());
       await this.syncStateManager.incrementDeltas(deltas.length);
 
-      logger.info(`[MetricsOrchestrator] Processed up to line ${lastLine}`);
+      logger.debug(`[MetricsOrchestrator] Processed up to line ${lastLine}`);
 
     } catch (error) {
       logger.error('[MetricsOrchestrator] Failed to collect deltas:', error);

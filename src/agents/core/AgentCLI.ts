@@ -124,13 +124,14 @@ export class AgentCLI {
 
       const providerEnv = ConfigLoader.exportProviderEnvVars(config);
 
+      // Pass config info for welcome message display
+      providerEnv.CODEMIE_PROFILE_NAME = config.name || 'default';
+      providerEnv.CODEMIE_CLI_VERSION = this.version;
+
       // Collect all arguments to pass to the agent
       const agentArgs = this.collectPassThroughArgs(args, options);
 
-      // Run the agent
-      const profileName = config.name || 'default';
-      logger.info(`Starting ${this.adapter.displayName} | Profile: ${profileName} | Provider: ${config.provider} | Model: ${config.model}`);
-
+      // Run the agent (welcome message will be shown inside)
       await this.adapter.run(agentArgs, providerEnv);
     } catch (error) {
       logger.error(`Failed to run ${this.adapter.displayName}:`, error);
