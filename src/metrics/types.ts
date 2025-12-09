@@ -226,7 +226,8 @@ export interface MetricDelta {
     durationMs?: number;         // Tool execution time (from tool_result)
   }[];
 
-  model?: string;
+  // Model tracking (raw names, unnormalized)
+  models?: string[];             // All models used in this turn
 
   // API error details (if any tool failed)
   apiErrorMessage?: string;

@@ -147,7 +147,9 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     console.log(''); // Empty line for spacing
     console.log(chalk.cyan.bold(getRandomWelcomeMessage()));
     console.log(''); // Empty line for spacing
-    console.log(chalk.white(`CodeMie CLI Version: ${cliVersion} | Profile: ${profileName} | Provider: ${provider}`));
+    const codeMieGradient = gradient(['#ff00ff', '#9933ff']);
+    console.log(codeMieGradient(`CodeMie CLI Version: ${cliVersion}`));
+    console.log(chalk.white(`Profile: ${profileName} | Provider: ${provider}`));
     console.log(chalk.white(`Session: ${sessionId}`));
     console.log(''); // Empty line for spacing
 

@@ -85,7 +85,7 @@ export class HistoryParser {
               try {
                 const parsed = JSON.parse(currentObject.trim());
                 jsonObjects.push(parsed);
-              } catch (error) {
+              } catch {
                 logger.debug(`[HistoryParser] Failed to parse object: ${currentObject.substring(0, 100)}...`);
               }
               currentObject = '';

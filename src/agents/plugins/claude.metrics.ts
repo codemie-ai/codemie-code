@@ -5,9 +5,10 @@
  * Handles Claude-specific file formats and parsing logic.
  */
 
-import { readFile } from 'fs/promises';
-import { extname, join } from 'path';
+import { readFile, readdir } from 'fs/promises';
+import { extname, join, dirname } from 'path';
 import { homedir } from 'os';
+import { existsSync } from 'fs';
 import { BaseMetricsAdapter } from '../core/BaseMetricsAdapter.js';
 import type {
   MetricSnapshot,
@@ -19,7 +20,7 @@ import type {
   UserPrompt
 } from '../../metrics/types.js';
 import { logger } from '../../utils/logger.js';
-import { parseMultiLineJSON } from '../../utils/json-parser.js';
+import { parseMultiLineJSON, normalizeModelName } from '../../utils/json-parser.js';
 import { HistoryParser } from './history-parser.js';
 
 export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
@@ -33,6 +34,62 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
    */
   matchesSessionPattern(path: string): boolean {
     return /\.claude\/projects\/[^/]+\/[a-z0-9-]+\.jsonl$/.test(path);
+  }
+
+  /**
+   * Find all agent-*.jsonl files in the same directory as the session file
+   * Agent files contain sub-agent/tool execution data with potentially different models
+   *
+   * @param sessionFilePath - Path to the main session file
+   * @returns Array of agent file paths
+   */
+  private async findAgentFiles(sessionFilePath: string): Promise<string[]> {
+    try {
+      const dir = dirname(sessionFilePath);
+      if (!existsSync(dir)) {
+        return [];
+      }
+
+      const files = await readdir(dir);
+      const agentFiles = files
+        .filter(f => f.startsWith('agent-') && f.endsWith('.jsonl'))
+        .map(f => join(dir, f));
+
+      logger.debug(`[ClaudeMetrics] Found ${agentFiles.length} agent files in ${dir}`);
+      return agentFiles;
+    } catch (error) {
+      logger.debug(`[ClaudeMetrics] Failed to find agent files:`, error);
+      return [];
+    }
+  }
+
+  /**
+   * Parse all models from agent files
+   * Agent files may contain different models used by sub-agents/tools
+   *
+   * @param agentFilePaths - Array of agent file paths
+   * @returns Map of model names to call counts
+   */
+  private async parseModelsFromAgentFiles(agentFilePaths: string[]): Promise<Map<string, number>> {
+    const modelCalls = new Map<string, number>();
+
+    for (const filePath of agentFilePaths) {
+      try {
+        const content = await readFile(filePath, 'utf-8');
+        const jsonObjects = parseMultiLineJSON(content);
+
+        for (const obj of jsonObjects) {
+          if (obj.message?.model) {
+            const model = obj.message.model;
+            modelCalls.set(model, (modelCalls.get(model) || 0) + 1);
+          }
+        }
+      } catch (error) {
+        logger.debug(`[ClaudeMetrics] Failed to parse agent file ${filePath}:`, error);
+      }
+    }
+
+    return modelCalls;
   }
 
   /**
@@ -69,7 +126,9 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
       let outputTokens = 0;
       let cacheCreationTokens = 0;
       let cacheReadTokens = 0;
-      let model: string | undefined;
+
+      // Track all models (not just first)
+      const modelCalls = new Map<string, number>();
 
       // Tool tracking maps
       const toolCalls: ToolCallMetric[] = [];
@@ -77,9 +136,10 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
 
       for (const turn of jsonObjects) {
 
-        // Extract model (use first non-null model found)
-        if (!model && turn.message?.model) {
-          model = turn.message.model;
+        // Track all models with call counts
+        if (turn.message?.model) {
+          const model = turn.message.model;
+          modelCalls.set(model, (modelCalls.get(model) || 0) + 1);
         }
 
         // Aggregate token usage
@@ -133,8 +193,20 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
         }
       }
 
+      // Parse agent files to get models from sub-agents/tools
+      const agentFiles = await this.findAgentFiles(path);
+      const agentModels = await this.parseModelsFromAgentFiles(agentFiles);
+
+      // Merge agent models with session models
+      for (const [model, count] of agentModels) {
+        modelCalls.set(model, (modelCalls.get(model) || 0) + count);
+      }
+
       // Build aggregated tool usage summary
       const toolUsageSummary = this.buildToolUsageSummary(toolCalls);
+
+      // Get all models (raw, unnormalized)
+      const allModels = Array.from(modelCalls.keys());
 
       const snapshot: MetricSnapshot = {
         sessionId,
@@ -151,17 +223,19 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
         toolUsageSummary,
 
         turnCount: jsonObjects.length,
-        model,
+        model: allModels.length > 0 ? allModels[0] : undefined, // Primary model for backward compat
 
         metadata: {
           workingDirectory,
-          totalInputTokens: inputTokens + cacheCreationTokens + cacheReadTokens
+          totalInputTokens: inputTokens + cacheCreationTokens + cacheReadTokens,
+          models: allModels, // All raw model names (unnormalized)
+          modelCalls: Object.fromEntries(modelCalls) // Map of model -> call count
         }
       };
 
       logger.debug(
         `[ClaudeMetrics] Parsed session ${sessionId}: ${inputTokens} input, ${outputTokens} output, ` +
-        `${cacheReadTokens} cache read, ${toolCalls.length} tool calls`
+        `${cacheReadTokens} cache read, ${toolCalls.length} tool calls, ${allModels.length} models`
       );
 
       return snapshot;
@@ -481,7 +555,7 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
       // SECOND PASS: Create deltas for NEW records with usage (assistant messages)
       // Skip records that have already been processed
       const deltas: MetricDelta[] = [];
-      let model: string | undefined;
+      const sessionModels: string[] = []; // Track all unique models
       let lastUserPrompt: UserPrompt | undefined;
 
       for (const record of jsonObjects) {
@@ -495,9 +569,9 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
           continue;
         }
 
-        // Extract model from any record
-        if (!model && record.message?.model) {
-          model = record.message.model;
+        // Collect all unique models from all records (not just first)
+        if (record.message?.model && !sessionModels.includes(record.message.model)) {
+          sessionModels.push(record.message.model);
         }
 
         // Create delta for records with token usage
@@ -584,6 +658,9 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
             lastUserPrompt = undefined;
           }
 
+          // Get model for this turn
+          const turnModel = record.message?.model;
+
           // Create delta record (use message UUID as recordId for backtracking)
           const delta: Omit<MetricDelta, 'syncStatus' | 'syncAttempts'> = {
             recordId: record.uuid, // Use message UUID for backtracking
@@ -601,7 +678,7 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
             fileOperations: fileOperations.length > 0 ? fileOperations : undefined,
             userPrompts: userPrompts.length > 0 ? userPrompts : undefined,
             apiErrorMessage,
-            model
+            models: turnModel ? [turnModel] : undefined // Store raw model name(s) for this turn
           };
 
           deltas.push(delta as MetricDelta);
