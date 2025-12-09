@@ -6,7 +6,8 @@
  */
 
 import { readFile } from 'fs/promises';
-import { extname } from 'path';
+import { extname, join } from 'path';
+import { homedir } from 'os';
 import { BaseMetricsAdapter } from '../core/BaseMetricsAdapter.js';
 import type {
   MetricSnapshot,
@@ -14,10 +15,12 @@ import type {
   ToolCallMetric,
   ToolUsageSummary,
   FileOperation,
-  FileOperationType
+  FileOperationType,
+  UserPrompt
 } from '../../metrics/types.js';
 import { logger } from '../../utils/logger.js';
 import { parseMultiLineJSON } from '../../utils/json-parser.js';
+import { HistoryParser } from './history-parser.js';
 
 export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
   // Note: dataPaths now comes from ClaudePluginMetadata passed via constructor
@@ -339,6 +342,43 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
   }
 
   /**
+   * Get user prompts for a specific session
+   * Claude stores user prompts in history file (path from metadata)
+   *
+   * @param sessionId - Claude session ID
+   * @param fromTimestamp - Start timestamp (Unix ms) - optional
+   * @param toTimestamp - End timestamp (Unix ms) - optional
+   * @returns Array of user prompts
+   */
+  async getUserPrompts(
+    sessionId: string,
+    fromTimestamp?: number,
+    toTimestamp?: number
+  ): Promise<UserPrompt[]> {
+    try {
+      // Get history file path from metadata
+      if (!this.metadata?.dataPaths?.home || !this.metadata?.dataPaths?.history) {
+        logger.debug(`[ClaudeMetrics] No history path configured in metadata`);
+        return [];
+      }
+
+      const home = this.metadata.dataPaths.home.replace('~', homedir());
+      const historyPath = join(home, this.metadata.dataPaths.history);
+      const parser = new HistoryParser(historyPath);
+
+      // Get prompts for this session within time range
+      const prompts = await parser.getPromptsInRange(sessionId, fromTimestamp, toTimestamp);
+
+      logger.debug(`[ClaudeMetrics] Found ${prompts.length} user prompts for session ${sessionId}`);
+
+      return prompts;
+    } catch (error) {
+      logger.error(`[ClaudeMetrics] Failed to get user prompts for session ${sessionId}:`, error);
+      return [];
+    }
+  }
+
+  /**
    * Parse session file and extract incremental delta records
    * Returns array of delta records for turns with token usage
    *
@@ -386,12 +426,70 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
         }
       }
 
+      // Extract session ID from first record that has one
+      let extractedSessionId = '';
+      for (const record of jsonObjects) {
+        if (record.sessionId) {
+          extractedSessionId = record.sessionId;
+          break;
+        }
+      }
+      // ZERO PASS: Get user prompts from history.jsonl and build UUID map
+      // Map user prompt UUIDs to prompts for direct correlation
+      const userPromptsByUuid = new Map<string, UserPrompt>();
+      try {
+        const userPrompts = await this.getUserPrompts(extractedSessionId);
+        logger.debug(`[ClaudeMetrics] Found ${userPrompts.length} user prompts in history.jsonl for session ${extractedSessionId}`);
+
+        // Build a map of record UUIDs to user prompts
+        // We'll correlate by finding user messages that match prompts
+        for (const record of jsonObjects) {
+          if (record.type === 'user' &&
+              record.message?.role === 'user' &&
+              typeof record.message.content === 'string') {
+
+            // This is an initial user message (not a tool result)
+            const messageContent = record.message.content;
+            const recordTime = typeof record.timestamp === 'string'
+              ? new Date(record.timestamp).getTime()
+              : record.timestamp;
+
+            // Find matching prompt from history.jsonl by content or timestamp
+            const matchingPrompt = userPrompts.find(p => {
+              // Match by content (most reliable)
+              if (p.display === messageContent) {
+                return true;
+              }
+
+              // Fallback: match by timestamp (±10 seconds window for initial prompts)
+              const timeDiff = Math.abs(p.timestamp - recordTime);
+              return timeDiff <= 10000; // 10 second window
+            });
+
+            if (matchingPrompt && record.uuid) {
+              userPromptsByUuid.set(record.uuid, matchingPrompt);
+            }
+          }
+        }
+
+        logger.debug(`[ClaudeMetrics] Matched ${userPromptsByUuid.size} prompts to message UUIDs`);
+      } catch (error) {
+        logger.debug(`[ClaudeMetrics] Could not load user prompts (non-critical):`, error);
+        // Continue without user prompts - non-critical feature
+      }
+
       // SECOND PASS: Create deltas for NEW records with usage (assistant messages)
       // Skip records that have already been processed
       const deltas: MetricDelta[] = [];
       let model: string | undefined;
+      let lastUserPrompt: UserPrompt | undefined;
 
       for (const record of jsonObjects) {
+        // Track user prompts as we iterate (BEFORE processing/skipping)
+        if (record.type === 'user' && record.uuid && userPromptsByUuid.has(record.uuid)) {
+          lastUserPrompt = userPromptsByUuid.get(record.uuid);
+        }
+
         // Skip records already processed
         if (processedRecordIds.has(record.uuid)) {
           continue;
@@ -475,6 +573,17 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
             }
           }
 
+          // Include user prompt if this is the first assistant response after a user prompt
+          const userPrompts: Array<{ count: number; text?: string }> = [];
+          if (lastUserPrompt) {
+            userPrompts.push({
+              count: 1,
+              text: lastUserPrompt.display
+            });
+            // Clear after including (so we don't double-count)
+            lastUserPrompt = undefined;
+          }
+
           // Create delta record (use message UUID as recordId for backtracking)
           const delta: Omit<MetricDelta, 'syncStatus' | 'syncAttempts'> = {
             recordId: record.uuid, // Use message UUID for backtracking
@@ -490,6 +599,7 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
             tools,
             toolStatus: Object.keys(toolStatus).length > 0 ? toolStatus : undefined,
             fileOperations: fileOperations.length > 0 ? fileOperations : undefined,
+            userPrompts: userPrompts.length > 0 ? userPrompts : undefined,
             apiErrorMessage,
             model
           };

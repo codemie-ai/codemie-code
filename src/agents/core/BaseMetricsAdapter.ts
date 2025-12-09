@@ -8,7 +8,7 @@
 
 import { homedir } from 'os';
 import { join } from 'path';
-import type { AgentMetricsSupport, MetricSnapshot, MetricDelta } from '../../metrics/types.js';
+import type { AgentMetricsSupport, MetricSnapshot, MetricDelta, UserPrompt } from '../../metrics/types.js';
 import type { AgentMetadata } from './types.js';
 
 export abstract class BaseMetricsAdapter implements AgentMetricsSupport {
@@ -68,6 +68,20 @@ export abstract class BaseMetricsAdapter implements AgentMetricsSupport {
   }> {
     // Default implementation: not supported
     throw new Error(`${this.agentName}: parseIncrementalMetrics() not implemented`);
+  }
+
+  /**
+   * Get user prompts for a specific session
+   * Each agent implements this to parse their specific history format
+   * MUST be overridden by each agent adapter
+   */
+  async getUserPrompts(
+    _sessionId: string,
+    _fromTimestamp?: number,
+    _toTimestamp?: number
+  ): Promise<UserPrompt[]> {
+    // Default implementation: not supported
+    throw new Error(`${this.agentName}: getUserPrompts() not implemented`);
   }
 
   /**

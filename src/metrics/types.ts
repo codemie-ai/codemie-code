@@ -231,11 +231,28 @@ export interface MetricDelta {
   // API error details (if any tool failed)
   apiErrorMessage?: string;
 
+  // User interaction metrics
+  userPrompts?: {
+    count: number;        // Number of user prompts in this turn
+    text?: string;        // Actual prompt text (optional)
+  }[];
+
   // Sync tracking
   syncStatus: SyncStatus;
   syncedAt?: number;
   syncAttempts: number;
   syncError?: string;
+}
+
+/**
+ * User prompt record (from history file)
+ */
+export interface UserPrompt {
+  display: string;       // The actual prompt text
+  timestamp: number;     // Unix timestamp (ms)
+  project: string;       // Working directory
+  sessionId: string;     // Agent session ID
+  pastedContents?: Record<string, unknown>; // Optional pasted content
 }
 
 /**
@@ -305,6 +322,21 @@ export interface AgentMetricsSupport {
     deltas: MetricDelta[];
     lastLine: number;
   }>;
+
+  /**
+   * Get user prompts for a specific session
+   * Each agent implements this to parse their specific history format
+   *
+   * @param sessionId - Agent session ID
+   * @param fromTimestamp - Start timestamp (Unix ms) - optional
+   * @param toTimestamp - End timestamp (Unix ms) - optional
+   * @returns Array of user prompts
+   */
+  getUserPrompts(
+    sessionId: string,
+    fromTimestamp?: number,
+    toTimestamp?: number
+  ): Promise<UserPrompt[]>;
 
   /**
    * Get watermark strategy for this agent
