@@ -60,8 +60,8 @@ export abstract class BaseMetricsAdapter implements AgentMetricsSupport {
    * MUST be overridden if delta-based metrics are used
    */
   async parseIncrementalMetrics(
-    path: string,
-    processedRecordIds: Set<string>
+    _path: string,
+    _processedRecordIds: Set<string>
   ): Promise<{
     deltas: MetricDelta[];
     lastLine: number;

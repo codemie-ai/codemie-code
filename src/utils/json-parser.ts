@@ -55,7 +55,7 @@ export function parseMultiLineJSON(content: string): any[] {
       try {
         const parsed = JSON.parse(currentObject.trim());
         jsonObjects.push(parsed);
-      } catch (e) {
+      } catch {
         // Skip malformed objects
         logger.debug('[parseMultiLineJSON] Skipped malformed JSON object');
       }
@@ -81,7 +81,7 @@ export function parseJSONL(content: string): any[] {
     try {
       const parsed = JSON.parse(line);
       objects.push(parsed);
-    } catch (e) {
+    } catch {
       logger.debug('[parseJSONL] Skipped malformed JSON line');
     }
   }

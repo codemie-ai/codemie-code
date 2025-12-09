@@ -225,7 +225,6 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
       // Edit tool: use structured patch to get accurate line counts
       let added = 0;
       let removed = 0;
-      let modified = 0;
 
       for (const patch of toolUseResult.structuredPatch) {
         // Parse patch.lines array: "+line" = added, "-line" = removed, " line" = unchanged

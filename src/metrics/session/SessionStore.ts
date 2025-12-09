@@ -7,8 +7,7 @@
 
 import { readFile, writeFile, readdir, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
-import { dirname, join } from 'path';
-import { homedir } from 'os';
+import { dirname } from 'path';
 import type { MetricsSession } from '../types.js';
 import { getSessionPath, getMetricsPath, METRICS_PATHS } from '../config.js';
 import { logger } from '../../utils/logger.js';
