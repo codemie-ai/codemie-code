@@ -8,7 +8,7 @@
 
 import { homedir } from 'os';
 import { join } from 'path';
-import type { AgentMetricsSupport, MetricSnapshot } from '../../metrics/types.js';
+import type { AgentMetricsSupport, MetricSnapshot, MetricDelta } from '../../metrics/types.js';
 import type { AgentMetadata } from './types.js';
 
 export abstract class BaseMetricsAdapter implements AgentMetricsSupport {
@@ -53,6 +53,22 @@ export abstract class BaseMetricsAdapter implements AgentMetricsSupport {
    * Parse session file - MUST be overridden
    */
   abstract parseSessionFile(path: string): Promise<MetricSnapshot>;
+
+  /**
+   * Parse incremental metrics from session file
+   * Returns only new deltas, skipping already-processed record IDs
+   * MUST be overridden if delta-based metrics are used
+   */
+  async parseIncrementalMetrics(
+    path: string,
+    processedRecordIds: Set<string>
+  ): Promise<{
+    deltas: MetricDelta[];
+    lastLine: number;
+  }> {
+    // Default implementation: not supported
+    throw new Error(`${this.agentName}: parseIncrementalMetrics() not implemented`);
+  }
 
   /**
    * Get watermark strategy - default: hash

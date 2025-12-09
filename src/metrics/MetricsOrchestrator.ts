@@ -13,9 +13,12 @@ import { randomUUID } from 'crypto';
 import { FileSnapshotter } from './core/FileSnapshotter.js';
 import { SessionCorrelator } from './core/SessionCorrelator.js';
 import { SessionStore } from './session/SessionStore.js';
+import { DeltaWriter } from './core/DeltaWriter.js';
+import { SyncStateManager } from './core/SyncStateManager.js';
 import type { AgentMetricsSupport, MetricsSession, FileSnapshot } from './types.js';
 import { METRICS_CONFIG } from './config.js';
 import { logger } from '../utils/logger.js';
+import { watch } from 'fs';
 
 export interface MetricsOrchestratorOptions {
   sessionId?: string; // Optional: provide existing session ID
@@ -36,8 +39,14 @@ export class MetricsOrchestrator {
   private correlator: SessionCorrelator;
   private store: SessionStore;
 
+  // Delta-based components
+  private deltaWriter: DeltaWriter | null = null;
+  private syncStateManager: SyncStateManager | null = null;
+  private fileWatcher: ReturnType<typeof watch> | null = null;
+
   private beforeSnapshot: FileSnapshot | null = null;
   private session: MetricsSession | null = null;
+  private isCollecting: boolean = false;
 
   constructor(options: MetricsOrchestratorOptions) {
     this.sessionId = options.sessionId || randomUUID();
@@ -156,13 +165,16 @@ export class MetricsOrchestrator {
       // Update session with correlation result
       await this.store.updateSessionCorrelation(this.sessionId, correlation);
 
+      // Reload session to get updated correlation
+      this.session = await this.store.loadSession(this.sessionId);
+
       if (correlation.status === 'matched') {
         logger.success(`[MetricsOrchestrator] Session correlated: ${correlation.agentSessionId}`);
         logger.info(`[MetricsOrchestrator]   Agent file: ${correlation.agentSessionFile}`);
         logger.info(`[MetricsOrchestrator]   Retry count: ${correlation.retryCount}`);
 
-        // Parse and collect initial metrics
-        await this.collectMetrics(correlation.agentSessionFile!);
+        // Start incremental delta monitoring
+        await this.startIncrementalMonitoring(correlation.agentSessionFile!);
       } else {
         logger.warn(`[MetricsOrchestrator] Correlation failed after ${correlation.retryCount} retries`);
       }
@@ -174,38 +186,7 @@ export class MetricsOrchestrator {
   }
 
   /**
-   * Step 3: Collect metrics from agent session file
-   * Called when correlation succeeds or on agent exit
-   */
-  async collectMetrics(sessionFilePath: string): Promise<void> {
-    if (!this.isEnabled()) {
-      return;
-    }
-
-    try {
-      logger.info('[MetricsOrchestrator] Collecting metrics...');
-
-      // Parse session file
-      const snapshot = await this.metricsAdapter.parseSessionFile(sessionFilePath);
-
-      logger.info(`[MetricsOrchestrator] Metrics collected:`);
-      logger.info(`[MetricsOrchestrator]   Tokens: ${snapshot.tokens?.input} in / ${snapshot.tokens?.output} out`);
-      logger.info(`[MetricsOrchestrator]   Cost: $${snapshot.cost?.toFixed(4)}`);
-      logger.info(`[MetricsOrchestrator]   Tool calls: ${snapshot.toolCalls?.length || 0} types`);
-      logger.info(`[MetricsOrchestrator]   Turns: ${snapshot.turnCount}`);
-      logger.info(`[MetricsOrchestrator]   Model: ${snapshot.model}`);
-
-      // TODO: Save metrics to ~/.codemie/metrics/data/{agent}/{session}.json
-      // This will be part of Phase 3 or later
-
-    } catch (error) {
-      logger.error('[MetricsOrchestrator] Failed to collect metrics:', error);
-      // Don't throw - metrics failures shouldn't break agent execution
-    }
-  }
-
-  /**
-   * Step 4: Finalize session on agent exit
+   * Finalize session on agent exit
    * Called when agent process exits
    */
   async onAgentExit(exitCode: number): Promise<void> {
@@ -216,15 +197,30 @@ export class MetricsOrchestrator {
     try {
       logger.info('[MetricsOrchestrator] Finalizing session...');
 
-      // Update session status
-      const status = exitCode === 0 ? 'completed' : 'failed';
-      await this.store.updateSessionStatus(this.sessionId, status);
+      // Stop file watcher
+      if (this.fileWatcher) {
+        this.fileWatcher.close();
+        this.fileWatcher = null;
+        logger.debug('[MetricsOrchestrator] Stopped file watcher');
+      }
 
-      // If we have a correlated session file, collect final metrics
+      // Collect final deltas
       if (this.session.correlation.status === 'matched' &&
           this.session.correlation.agentSessionFile) {
-        await this.collectMetrics(this.session.correlation.agentSessionFile);
+        await this.collectDeltas(this.session.correlation.agentSessionFile);
+        logger.info('[MetricsOrchestrator] Collected final deltas');
       }
+
+      // Update sync state status with end time
+      const endTime = Date.now();
+      const status = exitCode === 0 ? 'completed' : 'failed';
+
+      if (this.syncStateManager) {
+        await this.syncStateManager.updateStatus(status, endTime);
+      }
+
+      // Update session status
+      await this.store.updateSessionStatus(this.sessionId, status);
 
       logger.success('[MetricsOrchestrator] Session finalized');
 
@@ -239,6 +235,115 @@ export class MetricsOrchestrator {
    */
   getSessionId(): string {
     return this.sessionId;
+  }
+
+  /**
+   * Start incremental monitoring with delta collection
+   */
+  private async startIncrementalMonitoring(sessionFilePath: string): Promise<void> {
+    if (!this.session || !this.session.correlation.agentSessionId) {
+      logger.warn('[MetricsOrchestrator] Cannot start monitoring without correlated session');
+      return;
+    }
+
+    try {
+      // Initialize delta writer and sync state manager
+      this.deltaWriter = new DeltaWriter(this.sessionId);
+      this.syncStateManager = new SyncStateManager(this.sessionId);
+
+      // Initialize sync state with session start time
+      await this.syncStateManager.initialize(
+        this.sessionId,
+        this.session.correlation.agentSessionId,
+        this.session.startTime
+      );
+
+      logger.info('[MetricsOrchestrator] Initialized delta-based metrics tracking');
+
+      // Collect initial deltas
+      await this.collectDeltas(sessionFilePath);
+
+      // Start file watching
+      let debounceTimer: NodeJS.Timeout | null = null;
+      const DEBOUNCE_DELAY = 5000; // 5 seconds
+
+      this.fileWatcher = watch(sessionFilePath, (eventType) => {
+        if (eventType === 'change') {
+          // Debounce: wait 5s after last change before collecting
+          if (debounceTimer) {
+            clearTimeout(debounceTimer);
+          }
+
+          debounceTimer = setTimeout(async () => {
+            await this.collectDeltas(sessionFilePath);
+          }, DEBOUNCE_DELAY);
+        }
+      });
+
+      logger.info('[MetricsOrchestrator] Started file watching for incremental metrics');
+
+    } catch (error) {
+      logger.error('[MetricsOrchestrator] Failed to start incremental monitoring:', error);
+    }
+  }
+
+  /**
+   * Collect delta metrics from agent session file
+   */
+  private async collectDeltas(sessionFilePath: string): Promise<void> {
+    // Prevent concurrent collection
+    if (this.isCollecting || !this.deltaWriter || !this.syncStateManager) {
+      return;
+    }
+
+    this.isCollecting = true;
+
+    try {
+      // Load current sync state
+      const syncState = await this.syncStateManager.load();
+
+      // Get already-processed record IDs from sync state
+      const processedRecordIds = new Set(syncState.processedRecordIds);
+
+      // Parse incremental metrics with processed record IDs
+      const { deltas, lastLine } = await this.metricsAdapter.parseIncrementalMetrics(
+        sessionFilePath,
+        processedRecordIds
+      );
+
+      if (deltas.length === 0) {
+        logger.debug('[MetricsOrchestrator] No new deltas to collect');
+        this.isCollecting = false;
+        return;
+      }
+
+      logger.info(`[MetricsOrchestrator] Collected ${deltas.length} new delta(s)`);
+
+      // Collect record IDs for tracking
+      const newRecordIds: string[] = [];
+
+      // Append each delta to JSONL
+      for (const delta of deltas) {
+        // Set CodeMie session ID
+        delta.sessionId = this.sessionId;
+
+        // Append to JSONL
+        await this.deltaWriter.appendDelta(delta);
+        newRecordIds.push(delta.recordId);
+      }
+
+      // Update sync state with processed record IDs
+      await this.syncStateManager.addProcessedRecords(newRecordIds);
+      await this.syncStateManager.updateLastProcessed(lastLine, Date.now());
+      await this.syncStateManager.incrementDeltas(deltas.length);
+
+      logger.info(`[MetricsOrchestrator] Processed up to line ${lastLine}`);
+
+    } catch (error) {
+      logger.error('[MetricsOrchestrator] Failed to collect deltas:', error);
+    } finally {
+      this.isCollecting = false;
+    }
   }
 
   /**

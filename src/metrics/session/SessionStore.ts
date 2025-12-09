@@ -7,7 +7,8 @@
 
 import { readFile, writeFile, readdir, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
-import { dirname } from 'path';
+import { dirname, join } from 'path';
+import { homedir } from 'os';
 import type { MetricsSession } from '../types.js';
 import { getSessionPath, getMetricsPath, METRICS_PATHS } from '../config.js';
 import { logger } from '../../utils/logger.js';
@@ -15,6 +16,7 @@ import { logger } from '../../utils/logger.js';
 export class SessionStore {
   /**
    * Save session to disk
+   * Path: ~/.codemie/metrics/sessions/{sessionId}.json
    */
   async saveSession(session: MetricsSession): Promise<void> {
     const sessionPath = getSessionPath(session.sessionId);
@@ -26,7 +28,7 @@ export class SessionStore {
         await mkdir(dir, { recursive: true });
       }
 
-      // Write session data
+      // Write session data (metrics path is now derived from sessionId)
       await writeFile(sessionPath, JSON.stringify(session, null, 2), 'utf-8');
 
       logger.debug(`[SessionStore] Saved session: ${session.sessionId}`);

@@ -6,32 +6,18 @@
  */
 
 import { readFile } from 'fs/promises';
-import { join } from 'path';
+import { extname } from 'path';
 import { BaseMetricsAdapter } from '../core/BaseMetricsAdapter.js';
-import type { MetricSnapshot } from '../../metrics/types.js';
+import type {
+  MetricSnapshot,
+  MetricDelta,
+  ToolCallMetric,
+  ToolUsageSummary,
+  FileOperation,
+  FileOperationType
+} from '../../metrics/types.js';
 import { logger } from '../../utils/logger.js';
-
-/**
- * Claude session file format
- */
-interface ClaudeSessionFile {
-  id: string;
-  workingDirectory?: string;
-  messages?: Array<{
-    role: string;
-    content: string;
-    usage?: {
-      input_tokens?: number;
-      output_tokens?: number;
-    };
-  }>;
-  tool_calls?: Array<{
-    name: string;
-    arguments?: unknown;
-  }>;
-  model?: string;
-  timestamp?: number;
-}
+import { parseMultiLineJSON } from '../../utils/json-parser.js';
 
 export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
   // Note: dataPaths now comes from ClaudePluginMetadata passed via constructor
@@ -58,33 +44,35 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
   }
 
   /**
-   * Parse Claude session file (JSONL format) and extract metrics
-   * Each line contains a conversation turn with message data
+   * Parse Claude session file (multi-line JSON objects) and extract metrics
+   * Each object contains a conversation turn with message data
    */
   async parseSessionFile(path: string): Promise<MetricSnapshot> {
     try {
       const content = await readFile(path, 'utf-8');
-      const lines = content.trim().split('\n').filter(line => line.trim());
+      const jsonObjects = parseMultiLineJSON(content);
 
-      if (lines.length === 0) {
+      if (jsonObjects.length === 0) {
         throw new Error('Empty session file');
       }
 
-      // Parse first line to get session metadata
-      const firstLine = JSON.parse(lines[0]);
-      const sessionId = firstLine.sessionId || '';
-      const workingDirectory = firstLine.cwd || '';
+      // Parse first object to get session metadata
+      const firstObject = jsonObjects[0];
+      const sessionId = firstObject.sessionId || '';
+      const workingDirectory = firstObject.cwd || '';
 
-      // Aggregate metrics from all lines
+      // Aggregate metrics from all objects
       let inputTokens = 0;
       let outputTokens = 0;
       let cacheCreationTokens = 0;
       let cacheReadTokens = 0;
       let model: string | undefined;
-      const toolCallCounts = new Map<string, number>();
 
-      for (const line of lines) {
-        const turn = JSON.parse(line);
+      // Tool tracking maps
+      const toolCalls: ToolCallMetric[] = [];
+      const toolUseMap = new Map<string, { name: string; timestamp: number; input?: any }>();
+
+      for (const turn of jsonObjects) {
 
         // Extract model (use first non-null model found)
         if (!model && turn.message?.model) {
@@ -100,23 +88,50 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
           cacheReadTokens += usage.cache_read_input_tokens || 0;
         }
 
-        // Count tool calls (if present in content)
-        if (turn.message?.content) {
-          const contentStr = JSON.stringify(turn.message.content);
-          // Look for common tool names in content
-          const toolPatterns = ['read_file', 'write_file', 'edit_file', 'bash', 'grep', 'glob'];
-          for (const toolName of toolPatterns) {
-            const count = (contentStr.match(new RegExp(toolName, 'g')) || []).length;
-            if (count > 0) {
-              const current = toolCallCounts.get(toolName) || 0;
-              toolCallCounts.set(toolName, current + count);
+        // Extract tool use events (from assistant messages)
+        if (turn.message?.role === 'assistant' && Array.isArray(turn.message.content)) {
+          for (const block of turn.message.content) {
+            if (block.type === 'tool_use') {
+              // Store tool_use for later correlation
+              toolUseMap.set(block.id, {
+                name: block.name,
+                timestamp: turn.timestamp || Date.now(),
+                input: block.input
+              });
+            }
+          }
+        }
+
+        // Extract tool result events (from user messages)
+        if (turn.message?.role === 'user' && Array.isArray(turn.message.content)) {
+          for (const block of turn.message.content) {
+            if (block.type === 'tool_result') {
+              const toolUse = toolUseMap.get(block.tool_use_id);
+              if (toolUse) {
+                const toolCall: ToolCallMetric = {
+                  id: block.tool_use_id,
+                  name: toolUse.name, // Use raw tool name
+                  timestamp: toolUse.timestamp,
+                  status: block.is_error ? 'error' : 'success',
+                  input: toolUse.input,
+                  error: block.is_error ? (typeof block.content === 'string' ? block.content : JSON.stringify(block.content)) : undefined
+                };
+
+                // Extract file operation details
+                const fileOp = this.extractFileOperation(toolUse.name, toolUse.input);
+                if (fileOp) {
+                  toolCall.fileOperation = fileOp;
+                }
+
+                toolCalls.push(toolCall);
+              }
             }
           }
         }
       }
 
-      // Calculate cost (including cache tokens)
-      const cost = this.calculateCost(inputTokens + cacheCreationTokens, outputTokens, model);
+      // Build aggregated tool usage summary
+      const toolUsageSummary = this.buildToolUsageSummary(toolCalls);
 
       const snapshot: MetricSnapshot = {
         sessionId,
@@ -129,14 +144,10 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
           cacheRead: cacheReadTokens > 0 ? cacheReadTokens : undefined
         },
 
-        cost,
+        toolCalls,
+        toolUsageSummary,
 
-        toolCalls: Array.from(toolCallCounts.entries()).map(([name, count]) => ({
-          name,
-          count
-        })),
-
-        turnCount: lines.length,
+        turnCount: jsonObjects.length,
         model,
 
         metadata: {
@@ -145,7 +156,10 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
         }
       };
 
-      logger.debug(`[ClaudeMetrics] Parsed session ${sessionId}: ${inputTokens} input, ${outputTokens} output, ${cacheReadTokens} cache read tokens`);
+      logger.debug(
+        `[ClaudeMetrics] Parsed session ${sessionId}: ${inputTokens} input, ${outputTokens} output, ` +
+        `${cacheReadTokens} cache read, ${toolCalls.length} tool calls`
+      );
 
       return snapshot;
     } catch (error) {
@@ -154,27 +168,161 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
     }
   }
 
+
   /**
-   * Calculate cost based on tokens and model
-   * TODO: Update with actual pricing
+   * Extract file operation details from tool input and result
+   * Uses raw tool names (provider-specific, e.g., "Write", "Edit", "Read")
+   *
+   * @param toolName - Tool name (Read, Write, Edit, etc.)
+   * @param input - Tool input parameters
+   * @param toolUseResult - Tool execution result with structured data (optional)
    */
-  private calculateCost(inputTokens: number, outputTokens: number, model?: string): number {
-    // Example pricing (per 1K tokens)
-    // Adjust these based on actual Claude pricing
-    const prices: Record<string, { input: number; output: number }> = {
-      'claude-3-5-sonnet': { input: 0.003, output: 0.015 },
-      'claude-3-opus': { input: 0.015, output: 0.075 },
-      'claude-3-sonnet': { input: 0.003, output: 0.015 },
-      'claude-3-haiku': { input: 0.00025, output: 0.00125 }
+  private extractFileOperation(
+    toolName: string,
+    input: any,
+    toolUseResult?: any
+  ): FileOperation | undefined {
+    // Map raw tool names to operation types
+    const typeMap: Record<string, FileOperationType> = {
+      'Read': 'read',
+      'Write': 'write',
+      'Edit': 'edit',
+      // Note: Bash excluded - too varied to categorize reliably
+      'Grep': 'grep',
+      'Glob': 'glob'
     };
 
-    // Default to Sonnet pricing
-    const pricing = model && prices[model] ? prices[model] : prices['claude-3-5-sonnet'];
+    const type = typeMap[toolName];
+    if (!type) return undefined;
 
-    const inputCost = (inputTokens / 1000) * pricing.input;
-    const outputCost = (outputTokens / 1000) * pricing.output;
+    const fileOp: FileOperation = { type };
 
-    return inputCost + outputCost;
+    // Extract file path from toolUseResult (most accurate) or input
+    const filePath = toolUseResult?.filePath || toolUseResult?.file?.filePath || input?.file_path || input?.path;
+
+    if (filePath) {
+      fileOp.path = filePath;
+      fileOp.format = this.extractFormat(filePath);
+      fileOp.language = this.detectLanguage(filePath);
+    } else if (input?.pattern) {
+      // For Grep/Glob operations
+      fileOp.pattern = input.pattern;
+    }
+
+    // Extract line changes from toolUseResult (most accurate source)
+    if (toolName === 'Write') {
+      // Write tool: calculate from toolUseResult.content or toolUseResult.file or input.content
+      const content = toolUseResult?.content || toolUseResult?.file?.content || input?.content;
+      if (content) {
+        const lines = content.split('\n');
+        fileOp.linesAdded = lines.length;
+      } else if (toolUseResult?.file?.numLines) {
+        fileOp.linesAdded = toolUseResult.file.numLines;
+      } else if (toolUseResult?.file?.totalLines) {
+        fileOp.linesAdded = toolUseResult.file.totalLines;
+      }
+    } else if (toolName === 'Edit' && toolUseResult?.structuredPatch) {
+      // Edit tool: use structured patch to get accurate line counts
+      let added = 0;
+      let removed = 0;
+      let modified = 0;
+
+      for (const patch of toolUseResult.structuredPatch) {
+        // Parse patch.lines array: "+line" = added, "-line" = removed, " line" = unchanged
+        for (const line of patch.lines || []) {
+          if (line.startsWith('+')) {
+            added++;
+          } else if (line.startsWith('-')) {
+            removed++;
+          }
+          // Lines starting with space are unchanged (context)
+        }
+      }
+
+      if (added > 0) fileOp.linesAdded = added;
+      if (removed > 0) fileOp.linesRemoved = removed;
+      // If no adds/removes but edit happened, count as modified
+      if (added === 0 && removed === 0 && toolUseResult.structuredPatch.length > 0) {
+        fileOp.linesModified = toolUseResult.structuredPatch[0].oldLines || 0;
+      }
+    } else if (toolName === 'Read' && toolUseResult?.file) {
+      // Read tool: no line changes, but we have file info
+      // numLines already captured above
+    }
+
+    return fileOp;
+  }
+
+  /**
+   * Extract file format from path
+   */
+  private extractFormat(path: string): string | undefined {
+    const ext = extname(path);
+    return ext ? ext.slice(1) : undefined;
+  }
+
+  /**
+   * Detect programming language from file extension
+   */
+  private detectLanguage(path: string): string | undefined {
+    const ext = extname(path).toLowerCase();
+    const langMap: Record<string, string> = {
+      '.ts': 'typescript',
+      '.tsx': 'typescript',
+      '.js': 'javascript',
+      '.jsx': 'javascript',
+      '.py': 'python',
+      '.java': 'java',
+      '.go': 'go',
+      '.rs': 'rust',
+      '.cpp': 'cpp',
+      '.c': 'c',
+      '.rb': 'ruby',
+      '.php': 'php',
+      '.swift': 'swift',
+      '.kt': 'kotlin',
+      '.md': 'markdown',
+      '.json': 'json',
+      '.yaml': 'yaml',
+      '.yml': 'yaml'
+    };
+    return langMap[ext];
+  }
+
+  /**
+   * Build aggregated tool usage summary from detailed tool calls
+   */
+  private buildToolUsageSummary(toolCalls: ToolCallMetric[]): ToolUsageSummary[] {
+    const summaryMap = new Map<string, ToolUsageSummary>();
+
+    for (const call of toolCalls) {
+      let summary = summaryMap.get(call.name);
+      if (!summary) {
+        summary = {
+          name: call.name,
+          count: 0,
+          successCount: 0,
+          errorCount: 0,
+          fileOperations: {}
+        };
+        summaryMap.set(call.name, summary);
+      }
+
+      summary.count++;
+      if (call.status === 'success') {
+        summary.successCount!++;
+      } else if (call.status === 'error') {
+        summary.errorCount!++;
+      }
+
+      // Aggregate file operations
+      if (call.fileOperation) {
+        const opType = call.fileOperation.type;
+        summary.fileOperations![opType] = (summary.fileOperations![opType] || 0) + 1;
+      }
+    }
+
+    return Array.from(summaryMap.values());
   }
 
   /**
@@ -189,5 +337,175 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
    */
   getInitDelay(): number {
     return 500;
+  }
+
+  /**
+   * Parse session file and extract incremental delta records
+   * Returns array of delta records for turns with token usage
+   *
+   * @param path - Path to agent session file
+   * @param processedRecordIds - Set of record IDs already written to metrics
+   */
+  async parseIncrementalMetrics(
+    path: string,
+    processedRecordIds: Set<string> = new Set()
+  ): Promise<{
+    deltas: MetricDelta[];
+    lastLine: number;
+  }> {
+    try {
+      const content = await readFile(path, 'utf-8');
+      const jsonObjects = parseMultiLineJSON(content);
+
+      if (jsonObjects.length === 0) {
+        return { deltas: [], lastLine: 0 };
+      }
+
+      // FIRST PASS: Build tool_result map from ALL jsonObjects
+      // This ensures we can match tool_results that come after tool_use in the file
+      const toolResultMap = new Map<string, {
+        timestamp: string;
+        isError: boolean;
+        errorMessage?: string;
+        durationMs?: number;
+        toolUseResult?: any; // Contains structured patch data for Edit operations
+      }>();
+
+      for (const record of jsonObjects) {
+        if (record.message?.role === 'user' && Array.isArray(record.message.content)) {
+          for (const block of record.message.content) {
+            if (block.type === 'tool_result') {
+              toolResultMap.set(block.tool_use_id, {
+                timestamp: record.timestamp,
+                isError: block.is_error || false,
+                errorMessage: block.is_error ? (typeof block.content === 'string' ? block.content : JSON.stringify(block.content)) : undefined,
+                durationMs: block.durationMs,
+                toolUseResult: record.toolUseResult // Contains structured patch and file details
+              });
+            }
+          }
+        }
+      }
+
+      // SECOND PASS: Create deltas for NEW records with usage (assistant messages)
+      // Skip records that have already been processed
+      const deltas: MetricDelta[] = [];
+      let model: string | undefined;
+
+      for (const record of jsonObjects) {
+        // Skip records already processed
+        if (processedRecordIds.has(record.uuid)) {
+          continue;
+        }
+
+        // Extract model from any record
+        if (!model && record.message?.model) {
+          model = record.message.model;
+        }
+
+        // Create delta for records with token usage
+        if (record.message?.usage && record.message?.role === 'assistant') {
+          // Check if this record has tool_use blocks waiting for tool_results
+          let hasUnresolvedTools = false;
+          if (Array.isArray(record.message.content)) {
+            for (const block of record.message.content) {
+              if (block.type === 'tool_use') {
+                if (!toolResultMap.has(block.id)) {
+                  hasUnresolvedTools = true;
+                  break;
+                }
+              }
+            }
+          }
+
+          // Skip records with tool_use blocks that haven't received tool_results yet
+          if (hasUnresolvedTools) {
+            logger.debug(`[ClaudeMetrics] Skipping record ${record.uuid} - waiting for tool results`);
+            continue;
+          }
+
+          const usage = record.message.usage;
+          const inputTokens = usage.input_tokens || 0;
+          const outputTokens = usage.output_tokens || 0;
+          const cacheCreationTokens = usage.cache_creation_input_tokens || 0;
+          const cacheReadTokens = usage.cache_read_input_tokens || 0;
+
+          // Extract tool_use IDs from this record
+          const tools: Record<string, number> = {};
+          const toolStatus: Record<string, { success: number; failure: number }> = {};
+          const fileOperations: any[] = [];
+          let apiErrorMessage: string | undefined;
+
+          if (Array.isArray(record.message.content)) {
+            for (const block of record.message.content) {
+              if (block.type === 'tool_use') {
+                // block IS the tool_use with name and input
+                const toolResult = toolResultMap.get(block.id);
+
+                // Only count if we have tool_result (tool was executed)
+                if (toolResult) {
+                  // Use raw tool name (provider-specific)
+                  const toolName = block.name;
+                  tools[toolName] = (tools[toolName] || 0) + 1;
+
+                  // Track success/failure
+                  if (!toolStatus[toolName]) {
+                    toolStatus[toolName] = { success: 0, failure: 0 };
+                  }
+                  if (toolResult.isError) {
+                    toolStatus[toolName].failure++;
+                    // Capture first error message
+                    if (!apiErrorMessage && toolResult.errorMessage) {
+                      apiErrorMessage = toolResult.errorMessage;
+                    }
+                  } else {
+                    toolStatus[toolName].success++;
+
+                    // Only extract file operations for successful tool calls
+                    const fileOp = this.extractFileOperation(toolName, block.input, toolResult.toolUseResult);
+                    if (fileOp) {
+                      // Add durationMs if available
+                      if (toolResult.durationMs) {
+                        fileOp.durationMs = toolResult.durationMs;
+                      }
+                      fileOperations.push(fileOp);
+                    }
+                  }
+                }
+              }
+            }
+          }
+
+          // Create delta record (use message UUID as recordId for backtracking)
+          const delta: Omit<MetricDelta, 'syncStatus' | 'syncAttempts'> = {
+            recordId: record.uuid, // Use message UUID for backtracking
+            sessionId: '',  // Will be set by caller
+            agentSessionId: record.sessionId || '',
+            timestamp: record.timestamp || new Date().toISOString(),
+            tokens: {
+              input: inputTokens,
+              output: outputTokens,
+              cacheCreation: cacheCreationTokens > 0 ? cacheCreationTokens : undefined,
+              cacheRead: cacheReadTokens > 0 ? cacheReadTokens : undefined
+            },
+            tools,
+            toolStatus: Object.keys(toolStatus).length > 0 ? toolStatus : undefined,
+            fileOperations: fileOperations.length > 0 ? fileOperations : undefined,
+            apiErrorMessage,
+            model
+          };
+
+          deltas.push(delta as MetricDelta);
+        }
+      }
+
+      return {
+        deltas,
+        lastLine: jsonObjects.length
+      };
+    } catch (error) {
+      logger.error(`[ClaudeMetrics] Failed to parse incremental metrics: ${path}`, error);
+      throw error;
+    }
   }
 }

@@ -69,7 +69,13 @@ export interface MonitoringState {
 }
 
 /**
- * Session metadata
+ * Sync status for metrics records
+ */
+export type SyncStatus = 'pending' | 'syncing' | 'synced' | 'failed';
+
+/**
+ * Session metadata (stored in ~/.codemie/metrics/sessions/{sessionId}.json)
+ * Contains both session info and sync state
  */
 export interface MetricsSession {
   sessionId: string; // CodeMie session ID (UUID)
@@ -83,10 +89,70 @@ export interface MetricsSession {
   monitoring: MonitoringState;
   watermark?: Watermark;
   status: SessionStatus;
+
+  // Embedded sync state (replaces separate sync_state.json file)
+  syncState?: SyncState;
+}
+
+/**
+ * Tool execution status
+ */
+export type ToolStatus = 'pending' | 'success' | 'error';
+
+/**
+ * File operation type
+ */
+export type FileOperationType = 'read' | 'write' | 'edit' | 'delete' | 'glob' | 'grep';
+
+/**
+ * File operation details
+ */
+export interface FileOperation {
+  type: FileOperationType;
+  path?: string;
+  pattern?: string; // For glob/grep operations
+  language?: string; // Detected language (e.g., 'typescript', 'python')
+  format?: string; // File format (e.g., 'ts', 'py', 'md')
+  linesAdded?: number;
+  linesRemoved?: number;
+  linesModified?: number;
+  durationMs?: number; // Tool execution time (from tool_result)
+}
+
+/**
+ * Detailed tool call metric
+ */
+export interface ToolCallMetric {
+  id: string; // Unique tool call ID from session
+  name: string; // Tool name (e.g., 'Read', 'Write', 'Edit', 'Bash')
+  timestamp: number; // Unix timestamp (ms)
+  status: ToolStatus;
+  input?: Record<string, unknown>; // Tool input parameters
+  error?: string; // Error message if status is 'error'
+  fileOperation?: FileOperation; // File operation details (if applicable)
+}
+
+/**
+ * Aggregated tool usage summary
+ */
+export interface ToolUsageSummary {
+  name: string;
+  count: number;
+  successCount?: number;
+  errorCount?: number;
+  fileOperations?: {
+    read?: number;
+    write?: number;
+    edit?: number;
+    delete?: number;
+    glob?: number;
+    grep?: number;
+  };
 }
 
 /**
  * Metric snapshot (extracted from agent session file)
+ * This represents the current state of all metrics for a session
  */
 export interface MetricSnapshot {
   sessionId: string; // Agent session ID
@@ -100,13 +166,11 @@ export interface MetricSnapshot {
     cacheRead?: number; // Cache read tokens (for prompt caching)
   };
 
-  cost?: number; // Calculated from tokens
+  // Detailed tool tracking
+  toolCalls?: ToolCallMetric[]; // Individual tool calls with detailed tracking
 
-  // Tool usage
-  toolCalls?: {
-    name: string;
-    count: number;
-  }[];
+  // Aggregated tool usage summary (for backward compatibility)
+  toolUsageSummary?: ToolUsageSummary[];
 
   // Session metadata
   turnCount?: number;
@@ -115,6 +179,92 @@ export interface MetricSnapshot {
 
   // Agent-specific metadata
   metadata?: Record<string, unknown>;
+}
+
+/**
+ * Delta record (JSONL line in session_metrics.jsonl)
+ * Each line represents incremental metrics for one turn
+ */
+export interface MetricDelta {
+  // Identity
+  recordId: string;              // UUID from message.uuid (for backtracking to agent session)
+  sessionId: string;             // CodeMie session ID
+  agentSessionId: string;        // Agent-specific session ID
+  timestamp: number | string;    // Unix ms or ISO string
+
+  // Incremental metrics for this turn
+  tokens: {
+    input: number;
+    output: number;
+    cacheCreation?: number;
+    cacheRead?: number;
+  };
+
+  // Tools used in this turn (counts)
+  tools: {
+    [toolName: string]: number;  // e.g., {"Read": 1, "Edit": 1}
+  };
+
+  // Tool execution status (success/failure breakdown)
+  toolStatus?: {
+    [toolName: string]: {
+      success: number;
+      failure: number;
+    };
+  };
+
+  // File operations in this turn
+  fileOperations?: {
+    type: 'read' | 'write' | 'edit' | 'delete' | 'glob' | 'grep';
+    path?: string;
+    pattern?: string;
+    language?: string;
+    format?: string;
+    linesAdded?: number;
+    linesRemoved?: number;
+    linesModified?: number;
+    durationMs?: number;         // Tool execution time (from tool_result)
+  }[];
+
+  model?: string;
+
+  // API error details (if any tool failed)
+  apiErrorMessage?: string;
+
+  // Sync tracking
+  syncStatus: SyncStatus;
+  syncedAt?: number;
+  syncAttempts: number;
+  syncError?: string;
+}
+
+/**
+ * Sync state (sync_state.json)
+ */
+export interface SyncState {
+  sessionId: string;
+  agentSessionId: string;
+
+  // Session lifecycle
+  sessionStartTime: number;      // When session started
+  sessionEndTime?: number;       // When session ended
+  status: 'active' | 'completed' | 'failed';
+
+  // Last processed line from agent file
+  lastProcessedLine: number;
+  lastProcessedTimestamp: number;
+
+  // Local processing tracking (deduplication)
+  processedRecordIds: string[];  // All record IDs written to local metrics JSONL
+
+  // Remote sync tracking
+  lastSyncedRecordId?: string;   // Last synced record ID (for resume)
+  lastSyncAt?: number;            // Last sync timestamp
+
+  // Statistics
+  totalDeltas: number;           // Total deltas created
+  totalSynced: number;           // Total synced to API
+  totalFailed: number;           // Total failed syncs
 }
 
 /**
@@ -140,9 +290,21 @@ export interface AgentMetricsSupport {
   extractSessionId(path: string): string;
 
   /**
-   * Parse session file and extract metrics
+   * Parse session file and extract metrics (full snapshot)
    */
   parseSessionFile(path: string): Promise<MetricSnapshot>;
+
+  /**
+   * Parse incremental metrics from session file
+   * Returns only new deltas since fromLine
+   */
+  parseIncrementalMetrics(
+    path: string,
+    processedRecordIds: Set<string>
+  ): Promise<{
+    deltas: MetricDelta[];
+    lastLine: number;
+  }>;
 
   /**
    * Get watermark strategy for this agent

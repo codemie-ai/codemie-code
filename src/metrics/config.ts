@@ -53,9 +53,7 @@ export const METRICS_CONFIG: MetricsConfig = {
  */
 export const METRICS_PATHS = {
   root: '.codemie/metrics',
-  sessions: 'sessions',
-  watermarks: 'watermarks',
-  data: 'data'
+  sessions: 'sessions'
 };
 
 /**
@@ -68,22 +66,26 @@ export function getMetricsPath(subpath?: string): string {
 }
 
 /**
- * Get session file path
+ * Get session metadata file path
+ * Format: ~/.codemie/metrics/sessions/{sessionId}.json
  */
 export function getSessionPath(sessionId: string): string {
   return getMetricsPath(`${METRICS_PATHS.sessions}/${sessionId}.json`);
 }
 
 /**
- * Get watermark file path
+ * Get session metrics JSONL file path
+ * Format: ~/.codemie/metrics/sessions/{sessionId}_metrics.jsonl
  */
-export function getWatermarkPath(fileHash: string): string {
-  return getMetricsPath(`${METRICS_PATHS.watermarks}/${fileHash}.json`);
+export function getSessionMetricsPath(sessionId: string): string {
+  return getMetricsPath(`${METRICS_PATHS.sessions}/${sessionId}_metrics.jsonl`);
 }
 
 /**
- * Get metrics data path
+ * Get sync state file path (embedded in session metadata)
+ * This is a legacy function - sync state is now stored in session.json
+ * @deprecated Use session.json for sync state
  */
-export function getMetricsDataPath(agentName: string, sessionId: string): string {
-  return getMetricsPath(`${METRICS_PATHS.data}/${agentName}/${sessionId}.json`);
+export function getSyncStatePath(sessionId: string): string {
+  return getMetricsPath(`${METRICS_PATHS.sessions}/${sessionId}.json`);
 }
