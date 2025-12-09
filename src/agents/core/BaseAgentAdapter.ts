@@ -4,6 +4,8 @@ import { logger } from '../../utils/logger.js';
 import { spawn } from 'child_process';
 import { CodeMieProxy } from '../../utils/codemie-proxy.js';
 import { ProviderRegistry } from '../../providers/core/registry.js';
+import { MetricsOrchestrator } from '../../metrics/MetricsOrchestrator.js';
+import type { AgentMetricsSupport } from '../../metrics/types.js';
 
 /**
  * Base class for all agent adapters
@@ -11,8 +13,17 @@ import { ProviderRegistry } from '../../providers/core/registry.js';
  */
 export abstract class BaseAgentAdapter implements AgentAdapter {
   protected proxy: CodeMieProxy | null = null;
+  protected metricsOrchestrator: MetricsOrchestrator | null = null;
 
   constructor(protected metadata: AgentMetadata) {}
+
+  /**
+   * Get metrics adapter for this agent (optional)
+   * Override in agent plugin if metrics collection is supported
+   */
+  getMetricsAdapter(): AgentMetricsSupport | null {
+    return null;
+  }
 
   get name(): string {
     return this.metadata.name;
@@ -109,6 +120,20 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     // Setup proxy if needed
     await this.setupProxy(env);
 
+    // Setup metrics orchestrator if agent supports it
+    const metricsAdapter = this.getMetricsAdapter();
+    if (metricsAdapter && env.CODEMIE_PROVIDER) {
+      this.metricsOrchestrator = new MetricsOrchestrator({
+        agentName: this.metadata.name,
+        provider: env.CODEMIE_PROVIDER,
+        workingDirectory: process.cwd(),
+        metricsAdapter
+      });
+
+      // Take pre-spawn snapshot
+      await this.metricsOrchestrator.beforeAgentSpawn();
+    }
+
     // Apply argument transformations
     const transformedArgs = this.metadata.argumentTransform
       ? this.metadata.argumentTransform(args, this.extractConfig(env))
@@ -130,7 +155,15 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         env
       });
 
-      // Define cleanup function for proxy
+      // Take post-spawn snapshot after process starts
+      if (this.metricsOrchestrator) {
+        // Don't await - let it run in background
+        this.metricsOrchestrator.afterAgentSpawn().catch(err => {
+          logger.error('[MetricsOrchestrator] Post-spawn snapshot failed:', err);
+        });
+      }
+
+      // Define cleanup function for proxy and metrics
       const cleanup = async () => {
         if (this.proxy) {
           logger.debug(`[${this.displayName}] Stopping proxy and flushing analytics...`);
@@ -171,6 +204,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
             const gracePeriodMs = 2000; // 2 seconds
             logger.debug(`[${this.displayName}] Waiting ${gracePeriodMs}ms grace period for final API calls...`);
             await new Promise(resolve => setTimeout(resolve, gracePeriodMs));
+          }
+
+          // Finalize metrics on agent exit
+          if (this.metricsOrchestrator && code !== null) {
+            await this.metricsOrchestrator.onAgentExit(code);
           }
 
           // Clean up proxy

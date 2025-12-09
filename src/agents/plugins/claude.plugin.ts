@@ -1,5 +1,7 @@
 import { AgentMetadata } from '../core/types.js';
 import { BaseAgentAdapter } from '../core/BaseAgentAdapter.js';
+import { ClaudeMetricsAdapter } from './claude.metrics.js';
+import type { AgentMetricsSupport } from '../../metrics/types.js';
 
 /**
  * Claude Code Plugin Metadata
@@ -51,7 +53,18 @@ export const ClaudePluginMetadata: AgentMetadata = {
  * Claude Code Adapter
  */
 export class ClaudePlugin extends BaseAgentAdapter {
+  private metricsAdapter: AgentMetricsSupport;
+
   constructor() {
     super(ClaudePluginMetadata);
+    // Pass metadata to metrics adapter to avoid duplication
+    this.metricsAdapter = new ClaudeMetricsAdapter('claude', ClaudePluginMetadata);
+  }
+
+  /**
+   * Get metrics adapter for this agent
+   */
+  getMetricsAdapter(): AgentMetricsSupport {
+    return this.metricsAdapter;
   }
 }

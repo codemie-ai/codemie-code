@@ -88,25 +88,18 @@ class LoggingInterceptor implements ProxyInterceptor {
   }
 
   /**
-   * Sanitize headers to remove sensitive data
+   * Filter headers to only include X-Codemie headers
    */
   private sanitizeHeaders(headers: Record<string, string>): Record<string, string> {
-    const sanitized: Record<string, string> = {};
+    const filtered: Record<string, string> = {};
 
     for (const [key, value] of Object.entries(headers)) {
-      const lowerKey = key.toLowerCase();
-
-      // Mask sensitive headers
-      if (lowerKey.includes('authorization') ||
-          lowerKey.includes('api-key') ||
-          lowerKey.includes('token') ||
-          lowerKey.includes('cookie')) {
-        sanitized[key] = '[REDACTED]';
-      } else {
-        sanitized[key] = value;
+      // Only include X-Codemie headers
+      if (key.toLowerCase().startsWith('x-codemie')) {
+        filtered[key] = value;
       }
     }
 
-    return sanitized;
+    return filtered;
   }
 }
