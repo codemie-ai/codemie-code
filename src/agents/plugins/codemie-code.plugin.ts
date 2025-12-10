@@ -6,6 +6,7 @@ import { join } from 'path';
 import { readFileSync } from 'fs';
 import { getDirname } from '../../utils/dirname.js';
 import { getRandomWelcomeMessage, getRandomGoodbyeMessage } from '../../utils/goodbye-messages.js';
+import { renderCodeMieLogo } from '../../utils/ascii-logo.js';
 import chalk from 'chalk';
 import gradient from 'gradient-string';
 
@@ -60,10 +61,20 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
       const sessionId = process.env.CODEMIE_SESSION_ID || 'n/a';
       const cliVersion = process.env.CODEMIE_CLI_VERSION || 'unknown';
 
-      console.log(''); // Empty line for spacing
+      // Display ASCII logo with configuration
+      console.log(
+        renderCodeMieLogo({
+          profile: profileName,
+          provider: config.provider,
+          model: config.model,
+          agent: BUILTIN_AGENT_NAME,
+          cliVersion,
+          sessionId
+        })
+      );
+
+      // Show random welcome message
       console.log(chalk.cyan.bold(getRandomWelcomeMessage()));
-      console.log(chalk.white(`Profile: ${profileName} | Provider: ${config.provider}`));
-      console.log(chalk.white(`CodeMie CLI Version: ${cliVersion} | Session: ${sessionId}`));
       console.log(''); // Empty line for spacing
 
       const codeMie = new CodeMieCode(workingDir);

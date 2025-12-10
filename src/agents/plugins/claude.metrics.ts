@@ -20,7 +20,7 @@ import type {
   UserPrompt
 } from '../../metrics/types.js';
 import { logger } from '../../utils/logger.js';
-import { parseMultiLineJSON, normalizeModelName } from '../../utils/json-parser.js';
+import { parseMultiLineJSON } from '../../utils/json-parser.js';
 import { HistoryParser } from './history-parser.js';
 
 export class ClaudeMetricsAdapter extends BaseMetricsAdapter {

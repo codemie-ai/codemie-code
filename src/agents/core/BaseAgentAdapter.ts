@@ -7,6 +7,7 @@ import { ProviderRegistry } from '../../providers/core/registry.js';
 import { MetricsOrchestrator } from '../../metrics/MetricsOrchestrator.js';
 import type { AgentMetricsSupport } from '../../metrics/types.js';
 import { getRandomWelcomeMessage, getRandomGoodbyeMessage } from '../../utils/goodbye-messages.js';
+import { renderCodeMieLogo } from '../../utils/ascii-logo.js';
 import chalk from 'chalk';
 import gradient from 'gradient-string';
 
@@ -143,14 +144,22 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     const sessionId = env.CODEMIE_SESSION_ID || 'n/a';
     const provider = env.CODEMIE_PROVIDER || 'unknown';
     const cliVersion = env.CODEMIE_CLI_VERSION || 'unknown';
+    const model = env.CODEMIE_MODEL || 'unknown';
 
-    console.log(''); // Empty line for spacing
+    // Display ASCII logo with configuration
+    console.log(
+      renderCodeMieLogo({
+        profile: profileName,
+        provider,
+        model,
+        agent: this.metadata.name,
+        cliVersion,
+        sessionId
+      })
+    );
+
+    // Show random welcome message
     console.log(chalk.cyan.bold(getRandomWelcomeMessage()));
-    console.log(''); // Empty line for spacing
-    const codeMieGradient = gradient(['#ff00ff', '#9933ff']);
-    console.log(codeMieGradient(`CodeMie CLI Version: ${cliVersion}`));
-    console.log(chalk.white(`Profile: ${profileName} | Provider: ${provider}`));
-    console.log(chalk.white(`Session: ${sessionId}`));
     console.log(''); // Empty line for spacing
 
     // Apply argument transformations
