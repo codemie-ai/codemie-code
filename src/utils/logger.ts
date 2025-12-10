@@ -26,6 +26,7 @@ class Logger {
   /**
    * Initialize log file path and create write stream
    * Log file format: ~/.codemie/logs/debug-YYYY-MM-DD.log
+   * Also performs cleanup of old log files (older than 5 days)
    */
   private initializeLogFile(): void {
     if (this.logFileInitialized) return;
@@ -37,6 +38,9 @@ class Logger {
       if (!fs.existsSync(logsDir)) {
         fs.mkdirSync(logsDir, { recursive: true });
       }
+
+      // Clean up old log files (older than 5 days)
+      this.cleanupOldLogs(logsDir);
 
       const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
       this.logFilePath = path.join(logsDir, `debug-${today}.log`);
@@ -50,6 +54,35 @@ class Logger {
       this.logFilePath = null;
       this.writeStream = null;
       this.logFileInitialized = true;
+    }
+  }
+
+  /**
+   * Remove log files older than 5 days
+   * Runs synchronously during logger initialization
+   */
+  private cleanupOldLogs(logsDir: string): void {
+    try {
+      const files = fs.readdirSync(logsDir);
+      const now = Date.now();
+      const fiveDaysAgo = now - (5 * 24 * 60 * 60 * 1000); // 5 days in milliseconds
+
+      for (const file of files) {
+        // Only process debug log files with date pattern
+        if (!file.match(/^debug-\d{4}-\d{2}-\d{2}\.log$/)) {
+          continue;
+        }
+
+        const filePath = path.join(logsDir, file);
+        const stats = fs.statSync(filePath);
+
+        // Delete if older than 5 days
+        if (stats.mtimeMs < fiveDaysAgo) {
+          fs.unlinkSync(filePath);
+        }
+      }
+    } catch {
+      // Silently fail - cleanup is not critical
     }
   }
 

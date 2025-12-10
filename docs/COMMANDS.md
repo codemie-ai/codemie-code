@@ -77,47 +77,53 @@ The `codemie profile list` command displays comprehensive information for each p
 
 Track and analyze your AI agent usage across all agents.
 
+> **📊 For comprehensive documentation**, see the [Analytics Command Guide](../.codemie/guides/analytics-command.md)
+
 ```bash
-# View analytics configuration and status
-codemie analytics                # Show config and available commands
-codemie analytics status         # Show today's statistics
-codemie analytics status --json  # JSON output
+# View analytics summary
+codemie analytics                # Show all analytics with aggregated metrics
 
-# Enable/disable analytics
-codemie analytics enable         # Start collecting data
-codemie analytics disable        # Stop collecting data
+# Filter by criteria
+codemie analytics --project codemie-code        # Filter by project
+codemie analytics --agent claude                # Filter by agent
+codemie analytics --branch main                 # Filter by branch
+codemie analytics --from 2025-12-01             # Date range filter
+codemie analytics --last 7d                     # Last 7 days
 
-# View detailed statistics
-codemie analytics show                          # All sessions
-codemie analytics show --from 2025-11-01        # Date range
-codemie analytics show --to 2025-11-30
-codemie analytics show --agent claude           # Filter by agent
-codemie analytics show --project /path/to/proj  # Filter by project
-codemie analytics show --verbose                # Show detailed stats with raw model names
-codemie analytics show --format json            # JSON output
-codemie analytics show --output data.json       # Export to file
+# Output options
+codemie analytics --verbose                     # Detailed session breakdown
+codemie analytics --export json                 # Export to JSON
+codemie analytics --export csv -o report.csv    # Export to CSV
+
+# View specific session
+codemie analytics --session abc-123-def         # Single session details
 ```
 
 **Analytics Features:**
-- Agent-agnostic tracking (works across all 5+ agents)
-- Session metrics (prompts, API calls, tokens)
-- Code generation stats (lines added/removed, files created/modified)
-- Tool usage breakdown with success rates
-- Project and language breakdowns
-- Privacy-first (local storage by default)
+- Hierarchical aggregation: Root → Projects → Branches → Sessions
+- Session metrics: Duration, turns, tokens, costs
+- Model distribution across all sessions
+- Tool usage breakdown with success/failure rates
+- Language/format statistics (lines added, files created/modified)
+- Cache hit rates and token efficiency metrics
+- Export to JSON/CSV for external analysis
+- Privacy-first (local storage at `~/.codemie/metrics/`)
 
-**Verbose Mode (`--verbose`):**
-When enabled, analytics show provides additional detailed metrics:
-- **Raw model names** - Display full AWS Bedrock format (e.g., `eu.anthropic.claude-haiku-4-5-20251001-v1:0`) instead of normalized names
-- **Provider breakdown** - Sessions, tokens, and unique models per provider
-- **Session duration** - Average, longest, shortest session times
-- **File modification tools** - Per-tool breakdown of lines added/removed
-- **Git branch statistics** - Session distribution across branches
-- **Error analysis** - Detailed error rates and failed tool calls
+**Example Workflows:**
 
-Example:
 ```bash
-codemie analytics show --verbose --from 2025-11-01
+# Weekly summary
+codemie analytics --last 7d
+
+# Project-specific with details
+codemie analytics --project my-project --verbose
+
+# Cost tracking
+codemie analytics --from 2025-12-01 --to 2025-12-07 --export csv -o weekly-costs.csv
+
+# Agent comparison
+codemie analytics --agent claude
+codemie analytics --agent gemini
 ```
 
 ## Workflow Commands

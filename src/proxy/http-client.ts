@@ -60,6 +60,12 @@ export class ProxyHTTPClient {
     const protocol = url.protocol === 'https:' ? https : http;
     const agent = url.protocol === 'https:' ? this.httpsAgent : this.httpAgent;
 
+    logger.debug('[http-client] Forwarding request to upstream', {
+      url: url.toString(),
+      method: options.method,
+      hasBody: !!options.body
+    });
+
     return new Promise((resolve, reject) => {
       const requestOptions: http.RequestOptions = {
         hostname: url.hostname,
@@ -72,6 +78,12 @@ export class ProxyHTTPClient {
       };
 
       const req = protocol.request(requestOptions, (res) => {
+        logger.debug('[http-client] Received response from upstream', {
+          url: url.toString(),
+          statusCode: res.statusCode,
+          statusMessage: res.statusMessage,
+          headers: res.headers
+        });
         resolve(res);
       });
 
@@ -79,6 +91,10 @@ export class ProxyHTTPClient {
         // Handle client disconnection (normal behavior when user closes agent)
         if (error.message === 'aborted' || error.code === 'ECONNABORTED' || error.code === 'ERR_STREAM_PREMATURE_CLOSE') {
           // Silent rejection for normal client disconnect - don't log as error
+          logger.debug('[http-client] Client disconnected during request', {
+            url: url.toString(),
+            errorCode: error.code
+          });
           const abortError = new Error('Client disconnected');
           (abortError as any).isAborted = true;
           reject(abortError);
@@ -94,16 +110,33 @@ export class ProxyHTTPClient {
                               error.message?.includes('ECONNRESET');
 
         if (isNetworkError) {
+          logger.error('[http-client] Network error during request', {
+            url: url.toString(),
+            errorCode: error.code,
+            errorMessage: error.message,
+            hostname: url.hostname
+          });
           reject(new NetworkError(`Cannot connect to upstream: ${error.message}`, {
             errorCode: error.code || 'NETWORK_ERROR',
             hostname: url.hostname
           }));
         } else {
+          logger.error('[http-client] Request error', {
+            url: url.toString(),
+            errorCode: error.code,
+            errorMessage: error.message,
+            errorStack: error.stack
+          });
           reject(error);
         }
       });
 
       req.on('timeout', () => {
+        logger.error('[http-client] Request timeout', {
+          url: url.toString(),
+          timeout: this.timeout,
+          method: options.method
+        });
         req.destroy();
         reject(new TimeoutError(`Request timeout after ${this.timeout}ms`, {
           timeout: this.timeout,

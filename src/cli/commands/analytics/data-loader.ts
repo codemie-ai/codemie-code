@@ -24,7 +24,6 @@ interface SessionStartEvent {
     provider: string;
     workingDirectory: string;
     startTime: number;
-    gitBranch?: string;
   };
 }
 
@@ -189,6 +188,7 @@ export class MetricsDataLoader {
       const sessionMetadata = JSON.parse(readFileSync(sessionFile, 'utf-8'));
 
       // Create synthetic start event from session metadata
+      // Note: gitBranch is stored per-delta, not per-session
       const startEvent: SessionStartEvent = {
         recordId: sessionId,
         type: 'session_start',
@@ -199,8 +199,7 @@ export class MetricsDataLoader {
         data: {
           provider: sessionMetadata.provider,
           workingDirectory: sessionMetadata.workingDirectory,
-          startTime: sessionMetadata.startTime,
-          gitBranch: sessionMetadata.gitBranch
+          startTime: sessionMetadata.startTime
         }
       };
 
@@ -286,9 +285,12 @@ export class MetricsDataLoader {
       }
     }
 
-    // Filter by branch
-    if (filter.branch && startEvent.data.gitBranch !== filter.branch) {
-      return false;
+    // Filter by branch - check if any delta in this session matches the branch
+    if (filter.branch) {
+      const hasMatchingBranch = sessionData.deltas.some(delta => delta.gitBranch === filter.branch);
+      if (!hasMatchingBranch) {
+        return false;
+      }
     }
 
     // Filter by date range

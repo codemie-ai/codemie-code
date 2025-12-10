@@ -42,7 +42,9 @@ export class SessionCorrelator {
       agentPlugin.matchesSessionPattern(f.path)
     );
 
-    logger.debug(`[SessionCorrelator] ${matchingFiles.length} files match agent pattern`);
+    logger.debug(`[SessionCorrelator] ${matchingFiles.length} files match agent pattern out of ${newFiles.length} new files`);
+    logger.debug(`[SessionCorrelator] New files: ${newFiles.map(f => f.path).join(', ')}`);
+    logger.debug(`[SessionCorrelator] Matching files: ${matchingFiles.map(f => f.path).join(', ')}`);
 
     if (matchingFiles.length === 0) {
       logger.warn('[SessionCorrelator] No files match agent pattern');

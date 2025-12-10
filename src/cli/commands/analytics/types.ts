@@ -82,7 +82,6 @@ export interface SessionAnalytics {
   agentName: string;
   provider: string;
   workingDirectory: string;
-  gitBranch?: string;
   startTime: number;
   endTime: number;
   duration: number;

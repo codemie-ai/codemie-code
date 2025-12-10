@@ -29,18 +29,45 @@ export class AnalyticsAggregator {
    */
   static aggregate(rawSessions: RawSessionData[], normalizeModels = true): RootAnalytics {
     this.shouldNormalizeModels = normalizeModels;
+
     // Build session analytics first
     const sessions = rawSessions
       .map(raw => this.buildSessionAnalytics(raw))
       .filter((s): s is SessionAnalytics => s !== null);
 
-    // Group by project → branch
+    // Group deltas by project → branch across ALL sessions
+    // Key: project → branch, Value: deltas from all sessions on that branch
+    const projectBranchDeltas = new Map<string, Map<string, MetricDelta[]>>();
+
+    // Collect all deltas grouped by project and branch
+    for (const raw of rawSessions) {
+      if (!raw.startEvent) continue;
+      const projectPath = raw.startEvent.data.workingDirectory || 'Unknown';
+
+      // Group deltas from this session by branch
+      for (const delta of raw.deltas) {
+        const branchName = delta.gitBranch || 'Unknown';
+
+        // Get or create project map
+        if (!projectBranchDeltas.has(projectPath)) {
+          projectBranchDeltas.set(projectPath, new Map());
+        }
+
+        const branchMap = projectBranchDeltas.get(projectPath)!;
+
+        // Get or create branch deltas array
+        if (!branchMap.has(branchName)) {
+          branchMap.set(branchName, []);
+        }
+
+        branchMap.get(branchName)!.push(delta);
+      }
+    }
+
+    // Build project → branch hierarchy from aggregated deltas
     const projectsMap = new Map<string, ProjectAnalytics>();
 
-    for (const session of sessions) {
-      const projectPath = session.workingDirectory || 'Unknown';
-      const branchName = session.gitBranch || 'Unknown';
-
+    for (const [projectPath, branchMap] of projectBranchDeltas) {
       // Get or create project
       if (!projectsMap.has(projectPath)) {
         projectsMap.set(projectPath, {
@@ -68,16 +95,20 @@ export class AnalyticsAggregator {
 
       const project = projectsMap.get(projectPath)!;
 
-      // Get or create branch
-      let branch = project.branches.find(b => b.branchName === branchName);
-      if (!branch) {
-        branch = {
+      // Create branch analytics from aggregated deltas
+      for (const [branchName, deltas] of branchMap) {
+        // Find which sessions contributed to this branch
+        const contributingSessions = sessions.filter(session =>
+          session.workingDirectory === projectPath
+        );
+
+        const branch: BranchAnalytics = {
           branchName,
-          sessions: [],
-          totalSessions: 0,
-          totalDuration: 0,
-          totalTokens: this.emptyTokenBreakdown(),
-          totalTurns: 0,
+          sessions: contributingSessions, // Sessions that contributed deltas to this branch
+          totalSessions: new Set(deltas.map(d => d.sessionId)).size, // Count unique sessions
+          totalDuration: 0, // Will be calculated from sessions
+          totalTokens: this.calculateTokenBreakdown(deltas),
+          totalTurns: deltas.length,
           totalFileOperations: 0,
           totalLinesAdded: 0,
           totalLinesRemoved: 0,
@@ -92,18 +123,16 @@ export class AnalyticsAggregator {
           languages: [],
           formats: []
         };
+
+        // Aggregate branch metrics from deltas
+        this.aggregateBranchFromDeltas(branch, deltas);
+
         project.branches.push(branch);
       }
-
-      // Add session to branch
-      branch.sessions.push(session);
     }
 
-    // Aggregate branch stats
+    // Aggregate project stats from branches
     for (const project of projectsMap.values()) {
-      for (const branch of project.branches) {
-        this.aggregateBranch(branch);
-      }
       this.aggregateProject(project);
     }
 
@@ -324,7 +353,6 @@ export class AnalyticsAggregator {
       agentName: startEvent.agentName,
       provider: startEvent.data.provider,
       workingDirectory: startEvent.data.workingDirectory,
-      gitBranch: startEvent.data.gitBranch,
       startTime: startEvent.data.startTime,
       endTime: endEvent?.data.endTime || Date.now(),
       duration: endEvent?.data.duration || (Date.now() - startEvent.data.startTime),
@@ -378,7 +406,197 @@ export class AnalyticsAggregator {
   }
 
   /**
-   * Aggregate branch statistics from sessions
+   * Aggregate branch statistics directly from deltas
+   * Used for branch-level aggregation across all sessions
+   */
+  private static aggregateBranchFromDeltas(branch: BranchAnalytics, deltas: MetricDelta[]): void {
+    // Calculate duration from contributing sessions
+    branch.totalDuration = branch.sessions.reduce((sum, s) => sum + s.duration, 0);
+
+    // File operations and line counts
+    const fileOps = new Map<string, { linesAdded: number; linesRemoved: number; linesModified: number }>();
+
+    for (const delta of deltas) {
+      if (delta.fileOperations) {
+        for (const op of delta.fileOperations) {
+          if (op.path) {
+            const existing = fileOps.get(op.path) || { linesAdded: 0, linesRemoved: 0, linesModified: 0 };
+            existing.linesAdded += op.linesAdded || 0;
+            existing.linesRemoved += op.linesRemoved || 0;
+            existing.linesModified += op.linesModified || 0;
+            fileOps.set(op.path, existing);
+          }
+        }
+      }
+    }
+
+    const fileOpsArray = Array.from(fileOps.values());
+    branch.totalFileOperations = fileOpsArray.length;
+    branch.totalLinesAdded = fileOpsArray.reduce((sum, f) => sum + f.linesAdded, 0);
+    branch.totalLinesRemoved = fileOpsArray.reduce((sum, f) => sum + f.linesRemoved, 0);
+    branch.totalLinesModified = fileOpsArray.reduce((sum, f) => sum + f.linesModified, 0);
+    branch.netLinesChanged = branch.totalLinesAdded - branch.totalLinesRemoved;
+
+    // Tool calls
+    let totalToolCalls = 0;
+    let successfulToolCalls = 0;
+    let failedToolCalls = 0;
+
+    for (const delta of deltas) {
+      if (delta.tools) {
+        for (const count of Object.values(delta.tools)) {
+          totalToolCalls += count;
+        }
+      }
+      if (delta.toolStatus) {
+        for (const status of Object.values(delta.toolStatus)) {
+          successfulToolCalls += status.success || 0;
+          failedToolCalls += status.failure || 0;
+        }
+      }
+    }
+
+    branch.totalToolCalls = totalToolCalls;
+    branch.successfulToolCalls = successfulToolCalls;
+    branch.failedToolCalls = failedToolCalls;
+    branch.toolSuccessRate = totalToolCalls > 0 ? (successfulToolCalls / totalToolCalls) * 100 : 0;
+
+    // Models - aggregate from deltas
+    const modelCounts = new Map<string, number>();
+    for (const delta of deltas) {
+      if (delta.models) {
+        for (const model of delta.models) {
+          const normalizedModel = this.shouldNormalizeModels ? normalizeModelName(model) : model;
+          modelCounts.set(normalizedModel, (modelCounts.get(normalizedModel) || 0) + 1);
+        }
+      }
+    }
+    const totalModelCalls = Array.from(modelCounts.values()).reduce((sum, count) => sum + count, 0);
+    branch.models = Array.from(modelCounts.entries()).map(([model, count]) => ({
+      model,
+      calls: count,
+      percentage: totalModelCalls > 0 ? (count / totalModelCalls) * 100 : 0
+    })).sort((a, b) => b.calls - a.calls);
+
+    // Tools - aggregate from deltas
+    const toolCounts = new Map<string, { total: number; success: number; failure: number }>();
+    for (const delta of deltas) {
+      if (delta.tools) {
+        for (const [toolName, count] of Object.entries(delta.tools)) {
+          const existing = toolCounts.get(toolName) || { total: 0, success: 0, failure: 0 };
+          existing.total += count;
+          toolCounts.set(toolName, existing);
+        }
+      }
+      if (delta.toolStatus) {
+        for (const [toolName, status] of Object.entries(delta.toolStatus)) {
+          const existing = toolCounts.get(toolName) || { total: 0, success: 0, failure: 0 };
+          existing.success += status.success || 0;
+          existing.failure += status.failure || 0;
+          toolCounts.set(toolName, existing);
+        }
+      }
+    }
+    branch.tools = Array.from(toolCounts.entries()).map(([toolName, counts]) => ({
+      toolName,
+      totalCalls: counts.total,
+      successCount: counts.success,
+      failureCount: counts.failure,
+      successRate: counts.total > 0 ? (counts.success / counts.total) * 100 : 0
+    })).sort((a, b) => b.totalCalls - a.totalCalls);
+
+    // Languages and formats - aggregate from file operations
+    const languageCounts = new Map<string, {
+      filesCreated: Set<string>;
+      filesModified: Set<string>;
+      linesAdded: number;
+      linesRemoved: number;
+      tokens: number;
+    }>();
+    const formatCounts = new Map<string, {
+      filesCreated: Set<string>;
+      filesModified: Set<string>;
+      linesAdded: number;
+      linesRemoved: number;
+      tokens: number;
+    }>();
+
+    // Track file operations per language/format
+    for (const delta of deltas) {
+      if (delta.fileOperations) {
+        for (const op of delta.fileOperations) {
+          const deltaTokens = (delta.tokens.input || 0) + (delta.tokens.output || 0);
+
+          if (op.language) {
+            const existing = languageCounts.get(op.language) || {
+              filesCreated: new Set(),
+              filesModified: new Set(),
+              linesAdded: 0,
+              linesRemoved: 0,
+              tokens: 0
+            };
+
+            if (op.type === 'write' && op.path) {
+              existing.filesCreated.add(op.path);
+            } else if (op.type === 'edit' && op.path) {
+              existing.filesModified.add(op.path);
+            }
+
+            existing.linesAdded += op.linesAdded || 0;
+            existing.linesRemoved += op.linesRemoved || 0;
+            existing.tokens += deltaTokens;
+            languageCounts.set(op.language, existing);
+          }
+
+          if (op.format) {
+            const existing = formatCounts.get(op.format) || {
+              filesCreated: new Set(),
+              filesModified: new Set(),
+              linesAdded: 0,
+              linesRemoved: 0,
+              tokens: 0
+            };
+
+            if (op.type === 'write' && op.path) {
+              existing.filesCreated.add(op.path);
+            } else if (op.type === 'edit' && op.path) {
+              existing.filesModified.add(op.path);
+            }
+
+            existing.linesAdded += op.linesAdded || 0;
+            existing.linesRemoved += op.linesRemoved || 0;
+            existing.tokens += deltaTokens;
+            formatCounts.set(op.format, existing);
+          }
+        }
+      }
+    }
+
+    const totalLinesForLang = Array.from(languageCounts.values()).reduce((sum, l) => sum + l.linesAdded, 0);
+    branch.languages = Array.from(languageCounts.entries()).map(([language, data]) => ({
+      language,
+      filesCreated: data.filesCreated.size,
+      filesModified: data.filesModified.size,
+      linesAdded: data.linesAdded,
+      linesRemoved: data.linesRemoved,
+      tokens: data.tokens,
+      percentage: totalLinesForLang > 0 ? (data.linesAdded / totalLinesForLang) * 100 : 0
+    })).sort((a, b) => b.linesAdded - a.linesAdded);
+
+    const totalLinesForFormat = Array.from(formatCounts.values()).reduce((sum, l) => sum + l.linesAdded, 0);
+    branch.formats = Array.from(formatCounts.entries()).map(([format, data]) => ({
+      language: format,
+      filesCreated: data.filesCreated.size,
+      filesModified: data.filesModified.size,
+      linesAdded: data.linesAdded,
+      linesRemoved: data.linesRemoved,
+      tokens: data.tokens,
+      percentage: totalLinesForFormat > 0 ? (data.linesAdded / totalLinesForFormat) * 100 : 0
+    })).sort((a, b) => b.linesAdded - a.linesAdded);
+  }
+
+  /**
+   * Aggregate branch statistics from sessions (legacy method, no longer used)
    */
   private static aggregateBranch(branch: BranchAnalytics): void {
     branch.totalSessions = branch.sessions.length;

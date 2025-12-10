@@ -191,6 +191,7 @@ export interface MetricDelta {
   sessionId: string;             // CodeMie session ID
   agentSessionId: string;        // Agent-specific session ID
   timestamp: number | string;    // Unix ms or ISO string
+  gitBranch?: string;            // Git branch at time of this turn (can change mid-session)
 
   // Incremental metrics for this turn
   tokens: {

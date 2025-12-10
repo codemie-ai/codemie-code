@@ -346,7 +346,13 @@ export class CodeMieProxy {
     res: ServerResponse
   ): Promise<void> {
     // Check if this is a normal client disconnect (abort)
-    if (error && typeof error === 'object' && (error as any).isAborted) {
+    const isAbortError = error && typeof error === 'object' &&
+      ((error as any).isAborted ||
+       (error as Error).message === 'aborted' ||
+       (error as any).code === 'ECONNABORTED' ||
+       (error as any).code === 'ERR_STREAM_PREMATURE_CLOSE');
+
+    if (isAbortError) {
       // Client disconnected normally (user closed agent) - don't log or respond
       logger.debug('[proxy] Client disconnected');
       if (!res.headersSent) {

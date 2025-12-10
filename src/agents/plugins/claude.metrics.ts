@@ -30,18 +30,27 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
    * Check if file matches Claude session pattern
    * Pattern: ~/.claude/projects/{hash}/{session-id}.jsonl
    * Note: Claude uses JSONL (JSON Lines) format, not regular JSON
-   * Matches both UUID format and agent-* format
+   * Matches UUID format but EXCLUDES agent-* files (those are sub-agents)
    */
   matchesSessionPattern(path: string): boolean {
-    return /\.claude\/projects\/[^/]+\/[a-z0-9-]+\.jsonl$/.test(path);
+    // Explicitly reject agent-* files (sub-agents/sidechains)
+    if (path.includes('/agent-') || path.includes('\\agent-')) {
+      return false;
+    }
+
+    // Match UUID session files only
+    // UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.jsonl
+    return /\.claude\/projects\/[^/]+\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl$/.test(path);
   }
 
   /**
    * Find all agent-*.jsonl files in the same directory as the session file
+   * that belong to the same Claude sessionId (filters by sessionId)
+   *
    * Agent files contain sub-agent/tool execution data with potentially different models
    *
    * @param sessionFilePath - Path to the main session file
-   * @returns Array of agent file paths
+   * @returns Array of agent file paths matching the same sessionId
    */
   private async findAgentFiles(sessionFilePath: string): Promise<string[]> {
     try {
@@ -50,13 +59,55 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
         return [];
       }
 
+      // Read the sessionId from the file (may not be on first line)
+      // First line is often file-history-snapshot without sessionId
+      const mainContent = await readFile(sessionFilePath, 'utf-8');
+      const lines = mainContent.split('\n').filter(l => l.trim());
+
+      let targetSessionId: string | undefined;
+      for (const line of lines.slice(0, 10)) { // Check first 10 lines
+        try {
+          const event = JSON.parse(line);
+          if (event.sessionId) {
+            targetSessionId = event.sessionId;
+            break;
+          }
+        } catch {
+          continue;
+        }
+      }
+
+      if (!targetSessionId) {
+        logger.debug(`[ClaudeMetrics] No sessionId found in ${sessionFilePath}`);
+        return [];
+      }
+
+      // Find all agent files in the directory
       const files = await readdir(dir);
-      const agentFiles = files
+      const agentFileCandidates = files
         .filter(f => f.startsWith('agent-') && f.endsWith('.jsonl'))
         .map(f => join(dir, f));
 
-      logger.debug(`[ClaudeMetrics] Found ${agentFiles.length} agent files in ${dir}`);
-      return agentFiles;
+      // Filter agent files by matching sessionId
+      const matchingAgentFiles: string[] = [];
+      for (const agentFile of agentFileCandidates) {
+        try {
+          const content = await readFile(agentFile, 'utf-8');
+          const firstLine = content.split('\n')[0];
+          if (firstLine) {
+            const firstEvent = JSON.parse(firstLine);
+            if (firstEvent.sessionId === targetSessionId) {
+              matchingAgentFiles.push(agentFile);
+            }
+          }
+        } catch {
+          // Skip files that can't be parsed
+          continue;
+        }
+      }
+
+      logger.debug(`[ClaudeMetrics] Found ${matchingAgentFiles.length} agent files for session ${targetSessionId}`);
+      return matchingAgentFiles;
     } catch (error) {
       logger.debug(`[ClaudeMetrics] Failed to find agent files:`, error);
       return [];
@@ -120,6 +171,7 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
       const firstObject = jsonObjects[0];
       const sessionId = firstObject.sessionId || '';
       const workingDirectory = firstObject.cwd || '';
+      const gitBranch = firstObject.gitBranch;
 
       // Aggregate metrics from all objects
       let inputTokens = 0;
@@ -227,6 +279,7 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
 
         metadata: {
           workingDirectory,
+          gitBranch,
           totalInputTokens: inputTokens + cacheCreationTokens + cacheReadTokens,
           models: allModels, // All raw model names (unnormalized)
           modelCalls: Object.fromEntries(modelCalls) // Map of model -> call count
@@ -456,12 +509,54 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
    * Parse session file and extract incremental delta records
    * Returns array of delta records for turns with token usage
    *
+   * Automatically discovers and parses ALL agent files for the session
+   * to capture sub-agents/sidechains that share the same Claude sessionId
+   *
    * @param path - Path to agent session file
    * @param processedRecordIds - Set of record IDs already written to metrics
    */
   async parseIncrementalMetrics(
     path: string,
     processedRecordIds: Set<string> = new Set()
+  ): Promise<{
+    deltas: MetricDelta[];
+    lastLine: number;
+  }> {
+    try {
+      // Find ALL agent files for this session (including sidechains)
+      const agentFiles = await this.findAgentFiles(path);
+      // Add the main file to the list if not already included
+      if (!agentFiles.includes(path)) {
+        agentFiles.unshift(path);
+      }
+
+      // Parse all agent files and merge deltas
+      const allDeltas: MetricDelta[] = [];
+      let maxLastLine = 0;
+
+      for (const agentFile of agentFiles) {
+        const { deltas, lastLine } = await this.parseAgentFileDeltas(agentFile, processedRecordIds);
+        allDeltas.push(...deltas);
+        maxLastLine = Math.max(maxLastLine, lastLine);
+      }
+
+      return {
+        deltas: allDeltas,
+        lastLine: maxLastLine
+      };
+    } catch (error) {
+      logger.error(`[ClaudeMetrics] Failed to parse incremental metrics: ${path}`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Parse a single agent file for deltas
+   * Extracted from parseIncrementalMetrics for reuse across multiple files
+   */
+  private async parseAgentFileDeltas(
+    path: string,
+    processedRecordIds: Set<string>
   ): Promise<{
     deltas: MetricDelta[];
     lastLine: number;
@@ -658,8 +753,9 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
             lastUserPrompt = undefined;
           }
 
-          // Get model for this turn
+          // Get model and gitBranch for this turn
           const turnModel = record.message?.model;
+          const gitBranch = record.gitBranch;
 
           // Create delta record (use message UUID as recordId for backtracking)
           const delta: Omit<MetricDelta, 'syncStatus' | 'syncAttempts'> = {
@@ -667,6 +763,7 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
             sessionId: '',  // Will be set by caller
             agentSessionId: record.sessionId || '',
             timestamp: record.timestamp || new Date().toISOString(),
+            gitBranch, // Git branch at time of this turn
             tokens: {
               input: inputTokens,
               output: outputTokens,
