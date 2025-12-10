@@ -12,8 +12,18 @@ export enum LogLevel {
   ERROR = 'error'
 }
 
+export interface LogContext {
+  agent?: string;
+  sessionId?: string;
+  profile?: string;
+  provider?: string;
+  model?: string;
+}
+
 class Logger {
   private sessionId: string;
+  private agentName: string | null = null;
+  private profileName: string | null = null;
   private logFilePath: string | null = null;
   private logFileInitialized = false;
   private writeStream: fs.WriteStream | null = null;
@@ -21,6 +31,34 @@ class Logger {
   constructor() {
     // Always generate session ID for analytics tracking
     this.sessionId = randomUUID();
+  }
+
+  /**
+   * Set agent name for log formatting
+   */
+  setAgentName(name: string): void {
+    this.agentName = name;
+  }
+
+  /**
+   * Get agent name
+   */
+  getAgentName(): string | null {
+    return this.agentName;
+  }
+
+  /**
+   * Set profile name for log formatting
+   */
+  setProfileName(name: string): void {
+    this.profileName = name;
+  }
+
+  /**
+   * Get profile name
+   */
+  getProfileName(): string | null {
+    return this.profileName;
   }
 
   /**
@@ -88,7 +126,7 @@ class Logger {
 
   /**
    * Write a log entry to the debug log file (synchronous)
-   * Format: [YYYY-MM-DD HH:MM:SS.mmm] [LEVEL] message
+   * Format: [YYYY-MM-DD HH:MM:SS.mmm] [LEVEL] [AGENT] [SESSION_ID] [PROFILE] message
    * Automatically sanitizes sensitive data before writing
    * Always writes to file regardless of debug mode
    */
@@ -102,13 +140,23 @@ class Logger {
     try {
       const timestamp = new Date().toISOString();
 
+      // Build log prefix using agent/session/profile set at startup
+      const agentName = this.agentName || 'system';
+
+      let prefix = `[${timestamp}] [${level.toUpperCase()}] [${agentName}] [${this.sessionId}]`;
+
+      // Add profile if set
+      if (this.profileName) {
+        prefix += ` [${this.profileName}]`;
+      }
+
       // Sanitize args before writing to file
       const sanitizedArgs = sanitizeLogArgs(...args);
 
       const argsStr = sanitizedArgs.length > 0 ? ' ' + sanitizedArgs.map(arg =>
         typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
       ).join(' ') : '';
-      const logEntry = `[${timestamp}] [${level.toUpperCase()}] ${message}${argsStr}\n`;
+      const logEntry = `${prefix} ${message}${argsStr}\n`;
 
       this.writeStream.write(logEntry);
     } catch {
@@ -160,7 +208,17 @@ class Logger {
 
     // Only console output when CODEMIE_DEBUG is enabled
     if (this.isDebugMode()) {
-      console.log(chalk.dim(`[DEBUG] ${message}`), ...args);
+      // Build console prefix using agent/session/profile set at startup
+      const agentName = this.agentName || 'system';
+
+      let prefix = `[DEBUG] [${agentName}] [${this.sessionId}]`;
+
+      // Add profile if set
+      if (this.profileName) {
+        prefix += ` [${this.profileName}]`;
+      }
+
+      console.log(chalk.dim(`${prefix} ${message}`), ...args);
     }
   }
 

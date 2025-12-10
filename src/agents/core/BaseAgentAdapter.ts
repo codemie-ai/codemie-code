@@ -299,7 +299,8 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       }
 
       // Parse timeout from environment (in seconds, convert to milliseconds)
-      const timeoutSeconds = env.CODEMIE_TIMEOUT ? parseInt(env.CODEMIE_TIMEOUT, 10) : 300;
+      // Default to 0 (unlimited) for AI requests that can take a long time
+      const timeoutSeconds = env.CODEMIE_TIMEOUT ? parseInt(env.CODEMIE_TIMEOUT, 10) : 0;
       const timeoutMs = timeoutSeconds * 1000;
 
       // Extract config values from environment (includes CLI overrides)

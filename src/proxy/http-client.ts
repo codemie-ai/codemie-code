@@ -8,7 +8,7 @@
 import { pipeline } from 'stream/promises';
 import https from 'https';
 import http from 'http';
-import { TimeoutError, NetworkError } from './errors.js';
+import { NetworkError } from './errors.js';
 import { logger } from '../utils/logger.js';
 
 export interface HTTPClientOptions {
@@ -31,21 +31,21 @@ export class ProxyHTTPClient {
   private timeout: number;
 
   constructor(options: HTTPClientOptions = {}) {
-    this.timeout = options.timeout || 300000; // 5 minutes default
+    // Use provided timeout or 0 for unlimited (AI requests can be very long)
+    this.timeout = options.timeout || 0;
 
     // Connection pooling with keep-alive
+    // NO timeout on agent - we handle it at request level
     const agentOptions = {
       rejectUnauthorized: options.rejectUnauthorized ?? false,
       keepAlive: true,
-      maxSockets: 50,
-      timeout: 30000 // Connection timeout
+      maxSockets: 50
     };
 
     this.httpsAgent = new https.Agent(agentOptions);
     this.httpAgent = new http.Agent({
       keepAlive: true,
-      maxSockets: 50,
-      timeout: 30000
+      maxSockets: 50
     });
   }
 
@@ -74,7 +74,8 @@ export class ProxyHTTPClient {
         method: options.method,
         headers: options.headers,
         agent,
-        timeout: this.timeout
+        // Only set timeout if explicitly configured (0 = unlimited)
+        timeout: Math.max(this.timeout, 0)
       };
 
       const req = protocol.request(requestOptions, (res) => {
@@ -131,18 +132,18 @@ export class ProxyHTTPClient {
         }
       });
 
-      req.on('timeout', () => {
-        logger.error('[http-client] Request timeout', {
-          url: url.toString(),
-          timeout: this.timeout,
-          method: options.method
+      // Only set timeout handler if timeout is configured
+      if (this.timeout > 0) {
+        req.on('timeout', () => {
+          logger.warn('[http-client] Request timeout (non-fatal)', {
+            url: url.toString(),
+            timeout: this.timeout,
+            method: options.method
+          });
+          // DON'T destroy the request - let it continue
+          // This prevents breaking long-running AI requests
         });
-        req.destroy();
-        reject(new TimeoutError(`Request timeout after ${this.timeout}ms`, {
-          timeout: this.timeout,
-          url: url.toString()
-        }));
-      });
+      }
 
       // Write body for POST/PUT/PATCH requests
       if (options.body) {

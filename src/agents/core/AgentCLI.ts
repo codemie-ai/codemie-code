@@ -25,6 +25,9 @@ export class AgentCLI {
     this.program = new Command();
     this.loadVersion();
     this.setupProgram();
+
+    // Set agent name in logger for consistent log formatting
+    logger.setAgentName(adapter.name);
   }
 
   /**
@@ -127,6 +130,9 @@ export class AgentCLI {
       // Pass config info for welcome message display
       providerEnv.CODEMIE_PROFILE_NAME = config.name || 'default';
       providerEnv.CODEMIE_CLI_VERSION = this.version;
+
+      // Set profile name in logger for log formatting
+      logger.setProfileName(config.name || 'default');
 
       // Collect all arguments to pass to the agent
       const agentArgs = this.collectPassThroughArgs(args, options);

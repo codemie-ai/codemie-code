@@ -45,7 +45,7 @@ export class ConfigLoader {
     const config: CodeMieConfigOptions = {
       name: 'default',
       provider: 'openai',
-      timeout: 300,
+      timeout: 0, // Unlimited timeout by default for long AI requests
       debug: false,
       allowedDirs: [],
       ignorePatterns: ['node_modules', '.git', 'dist', 'build']
@@ -495,7 +495,7 @@ export class ConfigLoader {
     const configs = [
       {
         data: {
-          timeout: 300,
+          timeout: 0, // Unlimited timeout by default for long AI requests
           debug: false
         },
         source: 'default' as const

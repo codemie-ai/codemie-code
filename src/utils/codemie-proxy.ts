@@ -182,19 +182,33 @@ export class CodeMieProxy {
       );
 
       // 5. Stream response to client
+      logger.debug(`[proxy] Starting response streaming for ${context.requestId}`);
       const metadata = await this.streamResponse(
         context,
         upstreamResponse,
         res,
         startTime
       );
+      logger.debug(`[proxy] Response streaming completed for ${context.requestId}`, {
+        statusCode: metadata.statusCode,
+        bytesSent: metadata.bytesSent
+      });
 
       // 6. Run onResponseComplete hooks (AFTER streaming)
+      logger.debug(`[proxy] Running onResponseComplete hooks for ${context.requestId}`);
       await this.runHook('onResponseComplete', interceptor =>
         interceptor.onResponseComplete?.(context, metadata)
       );
+      logger.debug(`[proxy] All hooks completed for ${context.requestId}`);
+
+      // 7. Final completion marker
+      logger.debug(`[proxy] Request handling finished for ${context.requestId}`, {
+        url: context.url,
+        durationMs: Date.now() - context.requestStartTime
+      });
 
     } catch (error) {
+      logger.debug(`[proxy] Error during request handling:`, error);
       await this.handleError(error, req, res);
     }
   }
@@ -275,17 +289,22 @@ export class CodeMieProxy {
   ): Promise<ResponseMetadata> {
     // Set status and headers
     downstream.statusCode = upstream.statusCode || 200;
+    logger.debug(`[proxy-stream] Set response status: ${upstream.statusCode} for ${context.requestId}`);
 
     for (const [key, value] of Object.entries(upstream.headers)) {
       if (!['transfer-encoding', 'connection'].includes(key.toLowerCase()) && value !== undefined) {
         downstream.setHeader(key, value);
       }
     }
+    logger.debug(`[proxy-stream] Headers set for ${context.requestId}`);
 
     // Stream with optional chunk hooks
     let bytesSent = 0;
+    let chunkCount = 0;
 
+    logger.debug(`[proxy-stream] Starting chunk iteration for ${context.requestId}`);
     for await (const chunk of upstream) {
+      chunkCount++;
       let processedChunk: Buffer | null = Buffer.from(chunk);
 
       // Run onResponseChunk hooks (optional transform)
@@ -306,8 +325,11 @@ export class CodeMieProxy {
         bytesSent += processedChunk.length;
       }
     }
+    logger.debug(`[proxy-stream] Finished chunk iteration for ${context.requestId}. Total chunks: ${chunkCount}, bytes: ${bytesSent}`);
 
+    logger.debug(`[proxy-stream] Calling downstream.end() for ${context.requestId}`);
     downstream.end();
+    logger.debug(`[proxy-stream] downstream.end() completed for ${context.requestId}`);
 
     const durationMs = Date.now() - startTime;
 
