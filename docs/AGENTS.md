@@ -6,16 +6,36 @@ LangGraph-based coding assistant with no installation required.
 
 **Features:**
 - Modern terminal UI with streaming responses
-- File operations, git integration, command execution
-- Clipboard support with automatic image detection
+- File operations with intelligent filtering
+- Command execution with progress tracking
+- Planning and todo management tools
 - Interactive conversations with context memory
 - Task-focused execution mode
+- Cross-platform support (Windows, Linux, macOS)
+
+**Available Tools:**
+- `read_file` - Read file contents with progress tracking for large files
+- `write_file` - Write content to files with automatic directory creation
+- `list_directory` - List files and directories with intelligent filtering (auto-filters node_modules, .git, build artifacts, etc.)
+- `execute_command` - Execute shell commands with security checks and progress estimation
+- `write_todos` - Create or update structured todo lists for planning
+- `update_todo_status` - Update status of specific todos (pending, in_progress, completed)
+- `append_todo` - Add new todo items to existing lists
+- `clear_todos` - Clear all todos from the list
+- `show_todos` - Display current todo list with progress information
+
+**Security Features:**
+- Path traversal prevention (restricted to working directory)
+- Dangerous command blocking (rm -rf, sudo, etc.)
+- Configurable directory and pattern filtering
+- Secure file access controls
 
 **Usage:**
 ```bash
 codemie-code                    # Interactive mode
 codemie-code "task"             # Start with message
 codemie --task "task"           # Single task execution
+codemie-code health             # Health check
 ```
 
 ## Claude Code

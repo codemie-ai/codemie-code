@@ -10,7 +10,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.3%2B-blue.svg)](https://www.typescriptlang.org/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-> **Unified AI Coding Assistant CLI** - Manage Claude Code, OpenAI Codex, Google Gemini, and custom AI agents from one powerful command-line interface. Multi-provider support (OpenAI, Azure OpenAI, AWS Bedrock, LiteLLM, Enterprise SSO). Built-in LangGraph agent with file operations, git integration, and advanced code generation.
+> **Unified AI Coding Assistant CLI** - Manage Claude Code, OpenAI Codex, Google Gemini, Deep Agents, and custom AI agents from one powerful command-line interface. Multi-provider support (OpenAI, Azure OpenAI, AWS Bedrock, LiteLLM, Ollama, Enterprise SSO). Built-in LangGraph agent with file operations, command execution, and planning tools. Cross-platform support for Windows, Linux, and macOS.
 
 ---
 
@@ -23,8 +23,9 @@
 CodeMie CLI is the all-in-one AI coding assistant for developers.
 
 - ✨ **One CLI, Multiple AI Agents** - Switch between Claude Code, Codex, Gemini, Deep Agents, and built-in agent.
-- 🔄 **Multi-Provider Support** - OpenAI, Azure, Bedrock, LiteLLM, Google Gemini, and Enterprise SSO.
-- 🚀 **Built-in Agent** - A powerful LangGraph-based assistant with file operations and git integration.
+- 🔄 **Multi-Provider Support** - OpenAI, Azure OpenAI, AWS Bedrock, LiteLLM, Ollama, and Enterprise SSO.
+- 🚀 **Built-in Agent** - A powerful LangGraph-based assistant with file operations, command execution, and planning tools.
+- 🖥️ **Cross-Platform** - Full support for Windows, Linux, and macOS with platform-specific optimizations.
 - 🔐 **Enterprise Ready** - SSO authentication, audit logging, and role-based access.
 - ⚡ **Productivity Boost** - Code review, refactoring, test generation, and bug fixing.
 - 🎯 **Profile Management** - Manage work, personal, and team configurations separately.
@@ -93,6 +94,13 @@ The CodeMie CLI provides two ways to interact with AI agents:
 
 The built-in agent is ready to use immediately and is great for a wide range of coding tasks.
 
+**Available Tools:**
+- `read_file` - Read file contents
+- `write_file` - Write content to files
+- `list_directory` - List files with intelligent filtering (auto-filters node_modules, .git, etc.)
+- `execute_command` - Execute shell commands with progress tracking
+- `write_todos` / `update_todo_status` / `append_todo` / `clear_todos` / `show_todos` - Planning and progress tracking tools
+
 ```bash
 # Start an interactive conversation
 codemie-code
@@ -103,7 +111,13 @@ codemie-code "Help me refactor this component"
 
 ### External Agents
 
-You can also install and use external agents like Claude Code, Codex, and Gemini.
+You can also install and use external agents like Claude Code, Codex, Gemini, and Deep Agents.
+
+**Available Agents:**
+- **Claude Code** (`codemie-claude`) - Anthropic's official CLI with advanced code understanding
+- **Codex** (`codemie-codex`) - OpenAI's code generation specialist
+- **Gemini CLI** (`codemie-gemini`) - Google's Gemini for coding tasks
+- **Deep Agents** (`codemie-deepagents`) - Advanced multi-agent system with specialized roles
 
 ```bash
 # Install an agent
@@ -111,6 +125,10 @@ codemie install claude
 
 # Use the agent
 codemie-claude "Review my API code"
+
+# Install Python-based agent (uses pip/uv)
+codemie install deepagents
+codemie-deepagents "Implement a REST API"
 ```
 
 For more detailed information on the available agents, see the [Agents Documentation](docs/AGENTS.md).
@@ -156,6 +174,43 @@ export CODEMIE_MODEL=gpt-4
 - **Multi-Provider Profiles** - Manage work, personal, and team configs
 
 See [Configuration Documentation](docs/CONFIGURATION.md) for detailed setup, environment variables reference, and advanced configuration.
+
+## Cross-Platform Support
+
+CodeMie CLI works seamlessly on **Windows, Linux, and macOS** with identical commands and behavior.
+
+### Supported Platforms
+
+| Platform | Status | Notes |
+|----------|--------|-------|
+| **Windows** | ✅ Full Support | Windows 10/11, PowerShell, CMD, Git Bash |
+| **Linux** | ✅ Full Support | All major distributions (Ubuntu, Debian, Fedora, Arch, etc.) |
+| **macOS** | ✅ Full Support | macOS 10.15+ (Intel and Apple Silicon) |
+
+### Platform Features
+
+All platforms support:
+- ✅ Automatic path resolution (handles `/` and `\` separators)
+- ✅ Environment variable configuration
+- ✅ Line ending detection (CRLF on Windows, LF on Unix)
+- ✅ All agent shortcuts (`codemie-code`, `codemie-claude`, etc.)
+- ✅ Interactive and non-interactive modes
+- ✅ Health checks and diagnostics
+
+### Installation & Verification
+
+```bash
+# Install on any platform
+npm install --global @codemieai/code
+
+# Verify installation works
+codemie doctor
+
+# Test agent health checks
+codemie-code health
+codemie-claude health
+codemie-codex health
+```
 
 ## Documentation
 

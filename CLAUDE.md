@@ -42,13 +42,15 @@ codemie doctor             # Verify installation and configuration
 codemie-code health        # Test built-in agent health
 
 # Direct Agent Shortcuts
-codemie-code "message"     # Built-in agent
-codemie-claude "message"   # Claude Code agent
-codemie-codex "message"    # Codex agent
-codemie-gemini "message"   # Gemini CLI agent
-codemie-claude health      # Health checks
+codemie-code "message"       # Built-in agent
+codemie-claude "message"     # Claude Code agent
+codemie-codex "message"      # Codex agent
+codemie-gemini "message"     # Gemini CLI agent
+codemie-deepagents "message" # Deep Agents (Python-based)
+codemie-claude health        # Health checks
 codemie-codex health
 codemie-gemini health
+codemie-deepagents health
 
 # Profile Management (Multi-Provider Support)
 codemie setup              # Add new profile or update existing
@@ -201,10 +203,11 @@ it('should create PythonCheck instance', () => {
 
 **AI/Run CodeMie CLI** is a professional, unified CLI wrapper for managing multiple AI coding agents, featuring:
 
-1. **External Agent Management**: Install and run external agents (Claude Code, Codex)
-2. **Built-in Agent**: CodeMie Native - a LangGraph-based coding assistant
-3. **Configuration Management**: Unified config system supporting multiple AI providers
+1. **External Agent Management**: Install and run external agents (Claude Code, Codex, Gemini, Deep Agents)
+2. **Built-in Agent**: CodeMie Native - a LangGraph-based coding assistant with file operations, command execution, and planning tools
+3. **Configuration Management**: Unified config system supporting multiple AI providers (OpenAI, Azure OpenAI, AWS Bedrock, LiteLLM, Ollama, Enterprise SSO)
 4. **Multiple Interfaces**: CLI commands, direct executables, and programmatic APIs
+5. **Cross-Platform Support**: Full support for Windows, Linux, and macOS with platform-specific optimizations
 
 ## Architecture Overview
 
@@ -239,9 +242,10 @@ codemie-code/
   - `AgentCLI`: Universal CLI builder from agent metadata
   - `BaseAgentAdapter`: Shared implementation for external agents
 - **Plugins** (`plugins/`): Self-contained agent implementations
-  - `claude.plugin.ts`: Claude Code plugin with metadata
-  - `codex.plugin.ts`: Codex plugin with OpenAI model validation
-  - `gemini.plugin.ts`: Gemini CLI plugin
+  - `claude.plugin.ts`: Claude Code plugin with SSO support and feature flags
+  - `codex.plugin.ts`: Codex plugin with OpenAI model validation and config setup
+  - `gemini.plugin.ts`: Gemini CLI plugin with project mapping
+  - `deepagents.plugin.ts`: Deep Agents plugin (Python/pip-based installation)
   - `codemie-code.plugin.ts`: Built-in agent plugin wrapper
 - **Built-in Agent** (`codemie-code/`): Full LangGraph-based implementation
 - **Universal Executor** (`bin/agent-executor.js`): Single entry point for all agent shortcuts
@@ -268,7 +272,7 @@ codemie-code/
   - Automatic migration from legacy to profile-based format
   - Profile CRUD: add, update, delete, rename, switch, list
 - **Priority**: CLI args > Env vars > Project config > Global config > Defaults
-- **Providers**: AI-Run SSO, LiteLLM, OpenAI, Azure, Bedrock
+- **Providers**: AI-Run SSO, LiteLLM, OpenAI, Azure OpenAI, AWS Bedrock, Ollama
 - **Model Validation**: Real-time model fetching via `/v1/models` endpoints
 
 #### 4. Workflow Management System (`src/workflows/`)
@@ -319,10 +323,9 @@ codemie-code/
 - **Agent Core** (`agent.ts`): `CodeMieAgent` - LangGraph integration
 - **Configuration** (`config.ts`): Provider config loading and validation
 - **Tools System** (`tools/`): Modular tool implementations
-  - `filesystem.ts`: File operations with security controls
-  - `command.ts`: Shell command execution
-  - `git.ts`: Git operations and status
-  - `security.ts`: Security filters and validation
+  - `index.ts`: Core tools (read_file, write_file, list_directory, execute_command)
+  - `planning.ts`: Planning and todo management tools (write_todos, update_todo_status, append_todo, clear_todos, show_todos)
+  - All tools include progress tracking, security filtering, and cross-platform compatibility
 - **UI System** (`ui.ts`, `streaming/`): Modern terminal interfaces
 - **Types** (`types.ts`): Comprehensive TypeScript definitions
 
@@ -374,6 +377,31 @@ interface AgentAdapter {
 - **Zod**: Runtime type validation
 - **Vitest**: Modern testing framework
 - **ESLint**: Code quality (max 0 warnings allowed)
+
+### Cross-Platform Support
+
+**See [README.md - Cross-Platform Support](README.md#cross-platform-support) for complete documentation.**
+
+CodeMie CLI is fully tested and supported on Windows, Linux, and macOS. Key implementation details:
+
+- **Windows Fix (v0.0.15+)**: Dedicated entry points per agent to avoid npm wrapper detection issues
+- **Path Handling**: All tools use Node.js `path` module for cross-platform compatibility
+- **Process Execution**: Platform-agnostic spawning with proper environment handling
+- **Line Endings**: Automatic CRLF/LF handling
+
+**Development Testing**:
+```bash
+# Build and test locally
+npm run build && npm link
+codemie doctor
+
+# Test all agent shortcuts
+codemie-code health
+codemie-claude health
+codemie-codex health
+codemie-gemini health
+codemie-deepagents health
+```
 
 ## Practical Code Patterns
 
@@ -596,6 +624,7 @@ The plugin pattern makes adding new AI providers straightforward without modifyi
 - `ollama/` - Local provider with model installation
 - `sso/` - SSO authentication with browser login
 - `litellm/` - Universal proxy with minimal setup
+- `bedrock/` - AWS Bedrock provider with credential management
 
 **Why This Works**: Auto-registration via decorators and imports enables zero-config integration with setup wizard and health checks.
 
@@ -604,10 +633,12 @@ The plugin pattern makes adding new AI providers straightforward without modifyi
 When working on CodeMie Native (`src/agents/codemie-code/`):
 
 - **Tools** (`tools/`): Modular tool implementations
-  - Add new tools in separate files with clear interfaces
-  - Implement security filtering (e.g., path traversal prevention)
-  - Follow function-as-tool pattern for LangChain integration
-  - Example: `filesystem.ts`, `command.ts`, `git.ts`
+  - Core tools in `index.ts`: `ReadFileTool`, `WriteFileTool`, `ListDirectoryTool`, `ExecuteCommandTool`
+  - Planning tools in `planning.ts`: Todo management and progress tracking
+  - All tools extend LangChain's `StructuredTool` class with Zod schemas
+  - Implement security filtering (path traversal prevention, dangerous command blocking)
+  - Include progress tracking with `emitToolProgress()` for long-running operations
+  - Cross-platform compatibility (Windows/Linux/macOS path handling)
 
 - **UI System** (`ui.ts`, `streaming/`): Terminal interface
   - Use Clack components for consistency
