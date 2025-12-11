@@ -11,6 +11,7 @@ import {
   NpmCheck,
   PythonCheck,
   UvCheck,
+  AwsCliCheck,
   AIConfigCheck,
   AgentsCheck,
   WorkflowsCheck
@@ -49,6 +50,7 @@ export function createDoctorCommand(): Command {
         new NpmCheck(),
         new PythonCheck(),
         new UvCheck(),
+        new AwsCliCheck(),
         new AIConfigCheck(),
         new AgentsCheck(),
         new WorkflowsCheck()
