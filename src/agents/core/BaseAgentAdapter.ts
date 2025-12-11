@@ -179,9 +179,13 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
     try {
       // Spawn the CLI command with inherited stdio
+      // On Windows, use shell: true to resolve .cmd/.bat executables
+      const isWindows = process.platform === 'win32';
       const child = spawn(this.metadata.cliCommand, transformedArgs, {
         stdio: 'inherit',
-        env
+        env,
+        shell: isWindows, // Windows needs shell to resolve .cmd files
+        windowsHide: isWindows // Hide console window on Windows
       });
 
       // Take post-spawn snapshot after process starts
