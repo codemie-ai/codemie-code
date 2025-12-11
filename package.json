@@ -90,6 +90,9 @@
     "url": "https://github.com/codemie-ai/codemie-code/issues"
   },
   "dependencies": {
+    "@aws-sdk/client-bedrock": "^3.949.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.948.0",
+    "@aws-sdk/credential-providers": "^3.948.0",
     "@clack/core": "^0.5.0",
     "@clack/prompts": "^0.11.0",
     "@langchain/core": "^1.0.4",

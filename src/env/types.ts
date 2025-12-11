@@ -32,6 +32,15 @@ export interface ProviderProfile {
     apiUrl?: string;
     cookiesEncrypted?: string;
   };
+
+  // AWS Bedrock-specific fields
+  awsProfile?: string;
+  awsRegion?: string;
+  awsSecretAccessKey?: string;
+
+  // Token configuration (for Claude Code with Bedrock)
+  maxOutputTokens?: number;
+  maxThinkingTokens?: number;
 }
 
 /**

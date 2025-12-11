@@ -689,6 +689,17 @@ export class ConfigLoader {
       }
     }
 
+    // Special case: AWS Bedrock-specific environment variables
+    if (providerName === 'bedrock') {
+      if (config.awsProfile) env.CODEMIE_AWS_PROFILE = config.awsProfile;
+      if (config.awsRegion) env.CODEMIE_AWS_REGION = config.awsRegion;
+      if (config.awsSecretAccessKey) env.CODEMIE_AWS_SECRET_ACCESS_KEY = config.awsSecretAccessKey;
+    }
+
+    // Token configuration (for agents that support it, e.g., Claude Code with Bedrock)
+    if (config.maxOutputTokens) env.CODEMIE_MAX_OUTPUT_TOKENS = String(config.maxOutputTokens);
+    if (config.maxThinkingTokens) env.CODEMIE_MAX_THINKING_TOKENS = String(config.maxThinkingTokens);
+
     return env;
   }
 }

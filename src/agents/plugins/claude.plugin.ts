@@ -27,7 +27,7 @@ export const ClaudePluginMetadata: AgentMetadata = {
     model: ['ANTHROPIC_MODEL']
   },
 
-  supportedProviders: ['litellm', 'ai-run-sso'],
+  supportedProviders: ['litellm', 'ai-run-sso', 'bedrock'],
   blockedModelPatterns: [],
 
   ssoConfig: {
@@ -45,6 +45,43 @@ export const ClaudePluginMetadata: AgentMetadata = {
       if (!env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS) {
         env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = '1';
       }
+
+      // Handle AWS Bedrock provider
+      if (env.CODEMIE_PROVIDER === 'bedrock') {
+        // Enable Bedrock integration (REQUIRED)
+        env.CLAUDE_CODE_USE_BEDROCK = '1';
+
+        // Set AWS region (REQUIRED - Claude Code does not read from .aws config)
+        if (env.CODEMIE_AWS_REGION) {
+          env.AWS_REGION = env.CODEMIE_AWS_REGION;
+          env.AWS_DEFAULT_REGION = env.CODEMIE_AWS_REGION;
+        }
+
+        // Set AWS credentials based on auth method
+        if (env.CODEMIE_AWS_PROFILE) {
+          // Using AWS profile
+          env.AWS_PROFILE = env.CODEMIE_AWS_PROFILE;
+        } else if (env.CODEMIE_API_KEY && env.CODEMIE_AWS_SECRET_ACCESS_KEY) {
+          // Using direct credentials
+          env.AWS_ACCESS_KEY_ID = env.CODEMIE_API_KEY;
+          env.AWS_SECRET_ACCESS_KEY = env.CODEMIE_AWS_SECRET_ACCESS_KEY;
+        }
+
+        // Set model (REQUIRED - use ANTHROPIC_MODEL for Bedrock)
+        if (env.CODEMIE_MODEL) {
+          env.ANTHROPIC_MODEL = env.CODEMIE_MODEL;
+        }
+
+        // Set output token settings for Bedrock (only if configured in profile)
+        if (env.CODEMIE_MAX_OUTPUT_TOKENS) {
+          env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = env.CODEMIE_MAX_OUTPUT_TOKENS;
+        }
+
+        if (env.CODEMIE_MAX_THINKING_TOKENS) {
+          env.MAX_THINKING_TOKENS = env.CODEMIE_MAX_THINKING_TOKENS;
+        }
+      }
+
       return env;
     }
   }
