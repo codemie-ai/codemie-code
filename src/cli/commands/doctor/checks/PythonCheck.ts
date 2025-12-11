@@ -23,6 +23,18 @@ export class PythonCheck implements HealthCheck {
       }
 
       const version = result.stdout.trim() || result.stderr.trim();
+
+      // Check for Windows Store redirect message
+      if (version.includes('Microsoft Store') || version.includes('app execution aliases')) {
+        details.push({
+          status: 'warn',
+          message: 'Python redirects to Microsoft Store (not properly installed)',
+          hint: 'Install Python from https://python.org and disable Windows Store app alias in Settings > Apps > Advanced app settings > App execution aliases'
+        });
+        // Not critical, so don't mark as failure
+        return { name: this.name, success, details };
+      }
+
       const versionMatch = version.match(/Python (\d+\.\d+\.\d+)/);
 
       if (versionMatch) {

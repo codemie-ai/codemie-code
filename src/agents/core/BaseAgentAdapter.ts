@@ -78,7 +78,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   }
 
   /**
-   * Check if agent is installed via which command
+   * Check if agent is installed (cross-platform)
    */
   async isInstalled(): Promise<boolean> {
     if (!this.metadata.cliCommand) {
@@ -86,8 +86,9 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     }
 
     try {
-      const result = await exec('which', [this.metadata.cliCommand]);
-      return result.code === 0;
+      // Use commandExists which handles Windows (where) vs Unix (which)
+      const { commandExists } = await import('../../utils/which.js');
+      return await commandExists(this.metadata.cliCommand);
     } catch {
       return false;
     }
