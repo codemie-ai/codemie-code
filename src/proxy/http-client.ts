@@ -19,7 +19,7 @@ export interface HTTPClientOptions {
 export interface ForwardRequestOptions {
   method: string;
   headers: Record<string, string>;
-  body?: string;
+  body?: Buffer | string; // Accept Buffer or string
 }
 
 /**
@@ -85,6 +85,27 @@ export class ProxyHTTPClient {
           statusMessage: res.statusMessage,
           headers: res.headers
         });
+
+        // Track response stream lifecycle
+        res.on('end', () => {
+          logger.debug('[http-client] Upstream response stream ended', {
+            url: url.toString()
+          });
+        });
+
+        res.on('close', () => {
+          logger.debug('[http-client] Upstream response connection closed', {
+            url: url.toString()
+          });
+        });
+
+        res.on('error', (error) => {
+          logger.debug('[http-client] Upstream response stream error', {
+            url: url.toString(),
+            error: error.message
+          });
+        });
+
         resolve(res);
       });
 
@@ -147,12 +168,28 @@ export class ProxyHTTPClient {
         });
       }
 
+      // Track request lifecycle
+      req.on('finish', () => {
+        logger.debug('[http-client] Request finished (all data sent)', {
+          url: url.toString()
+        });
+      });
+
+      req.on('close', () => {
+        logger.debug('[http-client] Request connection closed', {
+          url: url.toString()
+        });
+      });
+
       // Write body for POST/PUT/PATCH requests
       if (options.body) {
         req.write(options.body);
       }
 
       req.end();
+      logger.debug('[http-client] Request.end() called', {
+        url: url.toString()
+      });
     });
   }
 

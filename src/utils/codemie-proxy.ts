@@ -192,11 +192,13 @@ export class CodeMieProxy {
       const targetUrl = this.buildTargetUrl(req.url!);
       context.targetUrl = targetUrl.toString();
 
+      logger.debug(`[proxy] Forwarding request to upstream for ${context.requestId}`);
       const upstreamResponse = await this.httpClient.forward(targetUrl, {
         method: req.method!,
         headers: context.headers,
         body: context.requestBody || undefined
       });
+      logger.debug(`[proxy] Received upstream response object for ${context.requestId}`);
 
       // 4. Run onResponseHeaders hooks (BEFORE streaming)
       await this.runHook('onResponseHeaders', interceptor =>
@@ -281,20 +283,21 @@ export class CodeMieProxy {
   }
 
   /**
-   * Read request body
+   * Read request body as Buffer to preserve byte integrity
+   * CRITICAL: Must use Buffer to avoid corrupting multi-byte UTF-8 characters
    */
-  private async readBody(req: IncomingMessage): Promise<string | null> {
+  private async readBody(req: IncomingMessage): Promise<Buffer | null> {
     if (req.method !== 'POST' && req.method !== 'PUT' && req.method !== 'PATCH') {
       return null;
     }
 
     return new Promise((resolve, reject) => {
-      let body = '';
-      req.on('data', chunk => {
-        body += chunk.toString();
+      const chunks: Buffer[] = [];
+      req.on('data', (chunk: Buffer) => {
+        chunks.push(chunk);
       });
       req.on('end', () => {
-        resolve(body || null);
+        resolve(chunks.length > 0 ? Buffer.concat(chunks) : null);
       });
       req.on('error', reject);
     });
@@ -325,6 +328,31 @@ export class CodeMieProxy {
     let chunkCount = 0;
 
     logger.debug(`[proxy-stream] Starting chunk iteration for ${context.requestId}`);
+
+    // Track upstream stream lifecycle
+    upstream.on('end', () => {
+      logger.debug(`[proxy-stream] Upstream 'end' event fired for ${context.requestId}`);
+    });
+
+    upstream.on('close', () => {
+      logger.debug(`[proxy-stream] Upstream 'close' event fired for ${context.requestId}`);
+    });
+
+    // Track downstream connection state
+    let downstreamClosed = false;
+    downstream.on('close', () => {
+      logger.debug(`[proxy-stream] Downstream connection closed during streaming for ${context.requestId}`);
+      downstreamClosed = true;
+    });
+
+    downstream.on('finish', () => {
+      logger.debug(`[proxy-stream] Downstream finished event for ${context.requestId}`);
+    });
+
+    downstream.on('error', (error) => {
+      logger.debug(`[proxy-stream] Downstream error for ${context.requestId}:`, error);
+    });
+
     for await (const chunk of upstream) {
       chunkCount++;
       let processedChunk: Buffer | null = Buffer.from(chunk);
@@ -346,8 +374,20 @@ export class CodeMieProxy {
         downstream.write(processedChunk);
         bytesSent += processedChunk.length;
       }
+
+      // Check if downstream disconnected
+      if (downstreamClosed) {
+        logger.debug(`[proxy-stream] Downstream closed, stopping chunk iteration for ${context.requestId}`);
+        break;
+      }
     }
     logger.debug(`[proxy-stream] Finished chunk iteration for ${context.requestId}. Total chunks: ${chunkCount}, bytes: ${bytesSent}`);
+
+    // Explicitly destroy upstream to ensure connection closes
+    if (!upstream.destroyed) {
+      logger.debug(`[proxy-stream] Destroying upstream stream for ${context.requestId}`);
+      upstream.destroy();
+    }
 
     logger.debug(`[proxy-stream] Calling downstream.end() for ${context.requestId}`);
     downstream.end();

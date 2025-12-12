@@ -38,7 +38,7 @@ export interface ProxyContext {
   method: string;
   url: string;
   headers: Record<string, string>;
-  requestBody: string | null;
+  requestBody: Buffer | null; // Changed to Buffer to preserve byte integrity
   requestStartTime: number;
   targetUrl?: string;
   metadata: Record<string, unknown>;
