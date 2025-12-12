@@ -85,7 +85,9 @@ export class AgentCLI {
     try {
       // Check if agent is installed
       if (!(await this.adapter.isInstalled())) {
-        logger.error(`${this.adapter.displayName} is not installed. Install it first with: codemie install ${this.adapter.name}`);
+        console.log(chalk.red(`\n✗ ${this.adapter.displayName} is not installed\n`));
+        console.log(chalk.white('Install it with:\n'));
+        console.log(chalk.cyan(`  codemie install ${this.adapter.name}\n`));
         process.exit(1);
       }
 
@@ -160,8 +162,9 @@ export class AgentCLI {
           console.log(`Version: ${version}`);
         }
       } else {
-        logger.error(`${this.adapter.displayName} is not installed`);
-        console.log(`Install with: codemie install ${this.adapter.name}`);
+        console.log(chalk.red(`\n✗ ${this.adapter.displayName} is not installed\n`));
+        console.log(chalk.white('Install it with:\n'));
+        console.log(chalk.cyan(`  codemie install ${this.adapter.name}\n`));
         process.exit(1);
       }
     } catch (error) {
