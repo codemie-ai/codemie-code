@@ -34,7 +34,7 @@ const metadata = {
     enabled: true,
     clientType: 'codex-cli',
     envOverrides: {
-      baseUrl: 'OPENAI_API_BASE',
+      baseUrl: 'OPENAI_BASE_URL',
       apiKey: 'OPENAI_API_KEY'
     }
   },
