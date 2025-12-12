@@ -1,7 +1,13 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { logger } from '../logger.js';
+import { randomUUID } from 'crypto';
 
 describe('CodeMie Proxy Session ID Integration', () => {
+  beforeEach(() => {
+    // Set a test session ID before each test
+    logger.setSessionId(randomUUID());
+  });
+
   it('should have a valid UUID session ID', () => {
     const sessionId = logger.getSessionId();
 

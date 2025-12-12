@@ -47,6 +47,7 @@ export class SyncStateManager {
         lastProcessedLine: 0,
         lastProcessedTimestamp: Date.now(),
         processedRecordIds: [],
+        attachedUserPromptTexts: [],
         totalDeltas: 0,
         totalSynced: 0,
         totalFailed: 0
@@ -216,6 +217,36 @@ export class SyncStateManager {
 
     } catch (error) {
       logger.error('[SyncStateManager] Failed to mark records as synced:', error);
+      // Don't throw - allow graceful degradation
+    }
+  }
+
+  /**
+   * Add attached user prompt texts to tracking (prevents duplication)
+   */
+  async addAttachedUserPrompts(promptTexts: string[]): Promise<void> {
+    try {
+      const state = await this.load();
+
+      if (!state) {
+        logger.debug('[SyncStateManager] Cannot add attached prompts - sync state does not exist');
+        return;
+      }
+
+      // Initialize array if not present
+      if (!state.attachedUserPromptTexts) {
+        state.attachedUserPromptTexts = [];
+      }
+
+      // Add to attached prompts list
+      state.attachedUserPromptTexts.push(...promptTexts);
+
+      await this.save(state);
+
+      logger.debug(`[SyncStateManager] Added ${promptTexts.length} attached user prompt texts`);
+
+    } catch (error) {
+      logger.error('[SyncStateManager] Failed to add attached prompts:', error);
       // Don't throw - allow graceful degradation
     }
   }

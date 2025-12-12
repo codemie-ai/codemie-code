@@ -5,6 +5,7 @@
  */
 
 import { IncomingHttpHeaders } from 'http';
+import type { CodeMieConfigOptions } from '../env/types.js';
 
 /**
  * Proxy configuration
@@ -20,6 +21,8 @@ export interface ProxyConfig {
   provider?: string;
   integrationId?: string;
   sessionId?: string;
+  version?: string;         // CLI version for metrics and headers
+  profileConfig?: CodeMieConfigOptions; // Full profile config (read once at CLI level)
 }
 
 /**

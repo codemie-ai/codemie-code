@@ -54,7 +54,7 @@ codemie-deepagents health
 
 # Profile Management (Multi-Provider Support)
 codemie setup              # Add new profile or update existing
-codemie profile list       # List all profiles with detailed information
+codemie profile            # List all profiles with detailed information (default action)
 codemie profile switch <name>  # Switch to different profile
 codemie profile delete <name>  # Delete a profile
 codemie profile rename <old> <new>  # Rename a profile

@@ -9,6 +9,7 @@ import { IncomingHttpHeaders } from 'http';
 import { ProxyConfig, ProxyContext } from '../types.js';
 import { logger } from '../../utils/logger.js';
 import { SSOCredentials } from '../../providers/core/types.js';
+import type { CodeMieConfigOptions } from '../../env/types.js';
 
 /**
  * Plugin metadata and lifecycle
@@ -46,6 +47,7 @@ export interface PluginContext {
   config: ProxyConfig;
   logger: typeof logger;
   credentials?: SSOCredentials;
+  profileConfig?: CodeMieConfigOptions; // Full profile config (read once at CLI level)
   [key: string]: unknown; // Extensible
 }
 
@@ -64,6 +66,12 @@ export interface PluginConfig {
  */
 export interface ProxyInterceptor {
   name: string;
+
+  /** Called when proxy starts (for initialization) */
+  onProxyStart?(): Promise<void>;
+
+  /** Called when proxy stops (for cleanup) */
+  onProxyStop?(): Promise<void>;
 
   /** Called before forwarding request */
   onRequest?(context: ProxyContext): Promise<void>;

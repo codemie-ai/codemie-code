@@ -131,6 +131,9 @@ export class AgentCLI {
       providerEnv.CODEMIE_PROFILE_NAME = config.name || 'default';
       providerEnv.CODEMIE_CLI_VERSION = this.version;
 
+      // Serialize full profile config for proxy plugins (read once at CLI level)
+      providerEnv.CODEMIE_PROFILE_CONFIG = JSON.stringify(config);
+
       // Set profile name in logger for log formatting
       logger.setProfileName(config.name || 'default');
 

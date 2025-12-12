@@ -32,6 +32,10 @@ class HeaderInjectionInterceptor implements ProxyInterceptor {
     context.headers['X-CodeMie-Request-ID'] = context.requestId;
     context.headers['X-CodeMie-Session-ID'] = context.sessionId;
 
+    // Add CLI version header
+    const cliVersion = this.context.config.version || '0.0.0';
+    context.headers['X-CodeMie-CLI'] = `codemie-cli/${cliVersion}`;
+
     const config = this.context.config;
 
     // Check if provider requires integration header

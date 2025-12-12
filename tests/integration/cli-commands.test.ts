@@ -84,17 +84,17 @@ describe('CLI Commands - Integration', () => {
   });
 
   describe('Profile Commands', () => {
-    it('should list profiles', () => {
-      const result = cli.runSilent('profile list');
+    it('should list profiles by default', () => {
+      const result = cli.runSilent('profile');
 
       // Should not error (even with no profiles)
       expect(result.exitCode === 0 || result.exitCode === 1).toBe(true);
       expect(result.output).toBeDefined();
     });
 
-    it('should handle list command', () => {
+    it('should handle profile command without crashing', () => {
       // Should execute without crashing
-      expect(() => cli.runSilent('profile list')).not.toThrow();
+      expect(() => cli.runSilent('profile')).not.toThrow();
     });
   });
 

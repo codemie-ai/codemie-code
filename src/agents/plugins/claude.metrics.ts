@@ -514,13 +514,16 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
    *
    * @param path - Path to agent session file
    * @param processedRecordIds - Set of record IDs already written to metrics
+   * @param attachedUserPromptTexts - Set of user prompt texts already attached (persisted from sync state)
    */
   async parseIncrementalMetrics(
     path: string,
-    processedRecordIds: Set<string> = new Set()
+    processedRecordIds: Set<string> = new Set(),
+    attachedUserPromptTexts: Set<string> = new Set()
   ): Promise<{
     deltas: MetricDelta[];
     lastLine: number;
+    newlyAttachedPrompts: string[];
   }> {
     try {
       // Find ALL agent files for this session (including sidechains)
@@ -530,19 +533,26 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
         agentFiles.unshift(path);
       }
 
+      // Track initial size to determine newly attached prompts
+      const initialAttachedCount = attachedUserPromptTexts.size;
+
       // Parse all agent files and merge deltas
       const allDeltas: MetricDelta[] = [];
       let maxLastLine = 0;
 
       for (const agentFile of agentFiles) {
-        const { deltas, lastLine } = await this.parseAgentFileDeltas(agentFile, processedRecordIds);
+        const { deltas, lastLine } = await this.parseAgentFileDeltas(agentFile, processedRecordIds, attachedUserPromptTexts);
         allDeltas.push(...deltas);
         maxLastLine = Math.max(maxLastLine, lastLine);
       }
 
+      // Calculate newly attached prompts (after processing - before processing)
+      const newlyAttachedPrompts = Array.from(attachedUserPromptTexts).slice(initialAttachedCount);
+
       return {
         deltas: allDeltas,
-        lastLine: maxLastLine
+        lastLine: maxLastLine,
+        newlyAttachedPrompts
       };
     } catch (error) {
       logger.error(`[ClaudeMetrics] Failed to parse incremental metrics: ${path}`, error);
@@ -553,10 +563,15 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
   /**
    * Parse a single agent file for deltas
    * Extracted from parseIncrementalMetrics for reuse across multiple files
+   *
+   * @param path - Path to agent file
+   * @param processedRecordIds - Set of record IDs already processed
+   * @param attachedUserPrompts - Set of user prompt display texts that have been attached (shared across files)
    */
   private async parseAgentFileDeltas(
     path: string,
-    processedRecordIds: Set<string>
+    processedRecordIds: Set<string>,
+    attachedUserPrompts: Set<string> = new Set()
   ): Promise<{
     deltas: MetricDelta[];
     lastLine: number;
@@ -655,7 +670,12 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
 
       for (const record of jsonObjects) {
         // Track user prompts as we iterate (BEFORE processing/skipping)
-        if (record.type === 'user' && record.uuid && userPromptsByUuid.has(record.uuid)) {
+        // Only update lastUserPrompt for INITIAL user messages (with string content), not tool_result messages
+        if (record.type === 'user' &&
+            record.uuid &&
+            userPromptsByUuid.has(record.uuid) &&
+            record.message?.role === 'user' &&
+            typeof record.message.content === 'string') {
           lastUserPrompt = userPromptsByUuid.get(record.uuid);
         }
 
@@ -742,14 +762,17 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
             }
           }
 
-          // Include user prompt if this is the first assistant response after a user prompt
+          // Include user prompt ONLY for the first assistant response after a user prompt
+          // Use shared Set to prevent duplication across ALL agent files
           const userPrompts: Array<{ count: number; text?: string }> = [];
-          if (lastUserPrompt) {
+          if (lastUserPrompt && lastUserPrompt.display && !attachedUserPrompts.has(lastUserPrompt.display)) {
             userPrompts.push({
               count: 1,
               text: lastUserPrompt.display
             });
-            // Clear after including (so we don't double-count)
+            // Mark as attached to prevent duplicate counting across multiple assistant turns AND agent files
+            attachedUserPrompts.add(lastUserPrompt.display);
+            // Clear lastUserPrompt so it doesn't attach to subsequent assistant turns
             lastUserPrompt = undefined;
           }
 

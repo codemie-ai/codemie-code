@@ -61,10 +61,12 @@ export abstract class BaseMetricsAdapter implements AgentMetricsSupport {
    */
   async parseIncrementalMetrics(
     _path: string,
-    _processedRecordIds: Set<string>
+    _processedRecordIds: Set<string>,
+    _attachedUserPromptTexts?: Set<string>
   ): Promise<{
     deltas: MetricDelta[];
     lastLine: number;
+    newlyAttachedPrompts?: string[];
   }> {
     // Default implementation: not supported
     throw new Error(`${this.agentName}: parseIncrementalMetrics() not implemented`);

@@ -92,8 +92,8 @@ class LoggingInterceptor implements ProxyInterceptor {
       this.chunkCount++;
       this.totalBytes += chunk.length;
 
-      // Log every 10th chunk to avoid spam (or first/last chunks)
-      if (this.chunkCount === 1 || this.chunkCount % 10 === 0) {
+      // Log every 1000th chunk to avoid spam (or first/last chunks)
+      if (this.chunkCount === 1 || this.chunkCount % 1000 === 0) {
         logger.debug(
           `[proxy-streaming] ${context.url}`,
           {

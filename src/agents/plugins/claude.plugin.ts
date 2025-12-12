@@ -46,6 +46,13 @@ export const ClaudePluginMetadata: AgentMetadata = {
         env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = '1';
       }
 
+      // Disable Claude Code telemetry to prevent 404s on /api/event_logging/batch
+      // when using proxy (telemetry endpoint doesn't exist on CodeMie backend)
+      // https://code.claude.com/docs/en/settings
+      if (!env.CLAUDE_CODE_ENABLE_TELEMETRY) {
+        env.CLAUDE_CODE_ENABLE_TELEMETRY = '0';
+      }
+
       // Handle AWS Bedrock provider
       if (env.CODEMIE_PROVIDER === 'bedrock') {
         // Enable Bedrock integration (REQUIRED)

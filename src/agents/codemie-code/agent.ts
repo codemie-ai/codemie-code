@@ -81,12 +81,14 @@ export class CodeMieAgent {
             ...(this.config.baseUrl !== 'https://api.openai.com/v1' && {
               baseURL: this.config.baseUrl
             }),
-            // Add client tracking header to all OpenAI requests
+            // Add client tracking headers to all OpenAI requests
             fetch: async (input: string | URL | Request, init?: RequestInit) => {
+              const cliVersion = process.env.CODEMIE_CLI_VERSION || 'unknown';
               const updatedInit = {
                 ...init,
                 headers: {
                   ...init?.headers,
+                  'X-CodeMie-CLI': `codemie-cli/${cliVersion}`,
                   'X-CodeMie-Client': 'codemie-code'
                 }
               };

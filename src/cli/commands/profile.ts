@@ -8,8 +8,11 @@ export function createProfileCommand(): Command {
   const command = new Command('profile');
 
   command
-    .description('Manage provider profiles')
-    .addCommand(createListCommand())
+    .description('Manage provider profiles (lists profiles by default)')
+    .action(async () => {
+      // Default action: list profiles
+      await listProfiles();
+    })
     .addCommand(createSwitchCommand())
     .addCommand(createDeleteCommand())
     .addCommand(createRenameCommand());
@@ -17,65 +20,61 @@ export function createProfileCommand(): Command {
   return command;
 }
 
-function createListCommand(): Command {
-  const command = new Command('list');
+/**
+ * List all profiles with details
+ * Extracted as reusable function
+ */
+async function listProfiles(): Promise<void> {
+  try {
+    const profiles = await ConfigLoader.listProfiles();
 
-  command
-    .description('List all profiles with details')
-    .action(async () => {
-      try {
-        const profiles = await ConfigLoader.listProfiles();
+    if (profiles.length === 0) {
+      console.log(chalk.yellow('\nNo profiles found. Run "codemie setup" to create one.\n'));
+      return;
+    }
 
-        if (profiles.length === 0) {
-          console.log(chalk.yellow('\nNo profiles found. Run "codemie setup" to create one.\n'));
-          return;
-        }
+    console.log(chalk.bold.cyan('\n📋 All Profiles:\n'));
 
-        console.log(chalk.bold.cyan('\n📋 All Profiles:\n'));
+    profiles.forEach(({ name, active, profile }, index) => {
+      const activeLabel = active ? chalk.green(' (Active)') : '';
+      console.log(chalk.bold.cyan(`Profile: ${name}${activeLabel}`));
+      console.log(chalk.cyan('  Provider:     ') + chalk.white(profile.provider || 'N/A'));
 
-        profiles.forEach(({ name, active, profile }, index) => {
-          const activeLabel = active ? chalk.green(' (Active)') : '';
-          console.log(chalk.bold.cyan(`Profile: ${name}${activeLabel}`));
-          console.log(chalk.cyan('  Provider:     ') + chalk.white(profile.provider || 'N/A'));
+      if (profile.codeMieUrl) {
+        console.log(chalk.cyan('  CodeMie URL:  ') + chalk.white(profile.codeMieUrl));
+      }
 
-          if (profile.codeMieUrl) {
-            console.log(chalk.cyan('  CodeMie URL:  ') + chalk.white(profile.codeMieUrl));
-          }
+      console.log(chalk.cyan('  Model:        ') + chalk.white(profile.model || 'N/A'));
 
-          console.log(chalk.cyan('  Model:        ') + chalk.white(profile.model || 'N/A'));
+      if (profile.authMethod) {
+        console.log(chalk.cyan('  Auth Method:  ') + chalk.white(profile.authMethod));
+      }
 
-          if (profile.authMethod) {
-            console.log(chalk.cyan('  Auth Method:  ') + chalk.white(profile.authMethod));
-          }
+      if (profile.codeMieIntegration?.alias) {
+        console.log(chalk.cyan('  Integration:  ') + chalk.white(profile.codeMieIntegration.alias));
+      }
 
-          if (profile.codeMieIntegration?.alias) {
-            console.log(chalk.cyan('  Integration:  ') + chalk.white(profile.codeMieIntegration.alias));
-          }
+      console.log(chalk.cyan('  Timeout:      ') + chalk.white(`${profile.timeout || 300}s`));
+      console.log(chalk.cyan('  Debug:        ') + chalk.white(profile.debug ? 'Yes' : 'No'));
 
-          console.log(chalk.cyan('  Timeout:      ') + chalk.white(`${profile.timeout || 300}s`));
-          console.log(chalk.cyan('  Debug:        ') + chalk.white(profile.debug ? 'Yes' : 'No'));
+      if (profile.apiKey) {
+        const maskedKey = profile.apiKey.length > 12
+          ? `${profile.apiKey.substring(0, 8)}***${profile.apiKey.substring(profile.apiKey.length - 4)}`
+          : '***';
+        console.log(chalk.cyan('  API Key:      ') + chalk.white(maskedKey));
+      }
 
-          if (profile.apiKey) {
-            const maskedKey = profile.apiKey.length > 12
-              ? `${profile.apiKey.substring(0, 8)}***${profile.apiKey.substring(profile.apiKey.length - 4)}`
-              : '***';
-            console.log(chalk.cyan('  API Key:      ') + chalk.white(maskedKey));
-          }
-
-          // Add separator between profiles except for the last one
-          if (index < profiles.length - 1) {
-            console.log('');
-          }
-        });
-
+      // Add separator between profiles except for the last one
+      if (index < profiles.length - 1) {
         console.log('');
-      } catch (error: unknown) {
-        logger.error('Failed to list profiles:', error);
-        process.exit(1);
       }
     });
 
-  return command;
+    console.log('');
+  } catch (error: unknown) {
+    logger.error('Failed to list profiles:', error);
+    process.exit(1);
+  }
 }
 
 /**

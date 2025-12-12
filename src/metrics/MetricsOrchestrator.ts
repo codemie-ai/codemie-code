@@ -231,13 +231,6 @@ export class MetricsOrchestrator {
   }
 
   /**
-   * Get session ID
-   */
-  getSessionId(): string {
-    return this.sessionId;
-  }
-
-  /**
    * Start incremental monitoring with delta collection
    */
   private async startIncrementalMonitoring(sessionFilePath: string): Promise<void> {
@@ -312,10 +305,14 @@ export class MetricsOrchestrator {
       // Get already-processed record IDs from sync state
       const processedRecordIds = new Set(syncState.processedRecordIds);
 
-      // Parse incremental metrics with processed record IDs
-      const { deltas, lastLine } = await this.metricsAdapter.parseIncrementalMetrics(
+      // Get already-attached user prompt texts from sync state
+      const attachedUserPromptTexts = new Set(syncState.attachedUserPromptTexts || []);
+
+      // Parse incremental metrics with processed record IDs and attached prompts
+      const { deltas, lastLine, newlyAttachedPrompts } = await this.metricsAdapter.parseIncrementalMetrics(
         sessionFilePath,
-        processedRecordIds
+        processedRecordIds,
+        attachedUserPromptTexts
       );
 
       if (deltas.length === 0) {
@@ -343,6 +340,11 @@ export class MetricsOrchestrator {
       await this.syncStateManager.addProcessedRecords(newRecordIds);
       await this.syncStateManager.updateLastProcessed(lastLine, Date.now());
       await this.syncStateManager.incrementDeltas(deltas.length);
+
+      // Update sync state with newly attached user prompts
+      if (newlyAttachedPrompts && newlyAttachedPrompts.length > 0) {
+        await this.syncStateManager.addAttachedUserPrompts(newlyAttachedPrompts);
+      }
 
       logger.debug(`[MetricsOrchestrator] Processed up to line ${lastLine}`);
 

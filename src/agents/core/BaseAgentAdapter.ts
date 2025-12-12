@@ -2,6 +2,7 @@ import { AgentMetadata, AgentAdapter, AgentConfig } from './types.js';
 import { exec } from '../../utils/exec.js';
 import { logger } from '../../utils/logger.js';
 import { spawn } from 'child_process';
+import { randomUUID } from 'crypto';
 import { CodeMieProxy } from '../../utils/codemie-proxy.js';
 import { ProviderRegistry } from '../../providers/core/registry.js';
 import { MetricsOrchestrator } from '../../metrics/MetricsOrchestrator.js';
@@ -114,35 +115,41 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    * Run the agent
    */
   async run(args: string[], envOverrides?: Record<string, string>): Promise<void> {
+    // Generate session ID at the very start - this is the source of truth
+    // All components (logger, metrics, proxy) will use this same session ID
+    const sessionId = randomUUID();
+
     // Merge environment variables
     let env: NodeJS.ProcessEnv = {
       ...process.env,
-      ...envOverrides
+      ...envOverrides,
+      CODEMIE_SESSION_ID: sessionId
     };
 
-    // Setup proxy if needed
-    await this.setupProxy(env);
+    // Initialize logger with session ID
+    const { logger } = await import('../../utils/logger.js');
+    logger.setSessionId(sessionId);
 
-    // Setup metrics orchestrator if agent supports it
+    // Setup metrics orchestrator with the session ID
     const metricsAdapter = this.getMetricsAdapter();
     if (metricsAdapter && env.CODEMIE_PROVIDER) {
       this.metricsOrchestrator = new MetricsOrchestrator({
         agentName: this.metadata.name,
         provider: env.CODEMIE_PROVIDER,
         workingDirectory: process.cwd(),
-        metricsAdapter
+        metricsAdapter,
+        sessionId // Pass the session ID explicitly
       });
 
       // Take pre-spawn snapshot
       await this.metricsOrchestrator.beforeAgentSpawn();
-
-      // Export session ID to environment for logging
-      env.CODEMIE_SESSION_ID = this.metricsOrchestrator.getSessionId();
     }
+
+    // Setup proxy with the session ID (already in env)
+    await this.setupProxy(env);
 
     // Show welcome message with session info
     const profileName = env.CODEMIE_PROFILE_NAME || 'default';
-    const sessionId = env.CODEMIE_SESSION_ID || 'n/a';
     const provider = env.CODEMIE_PROVIDER || 'unknown';
     const cliVersion = env.CODEMIE_CLI_VERSION || 'unknown';
     const model = env.CODEMIE_MODEL || 'unknown';
@@ -311,6 +318,19 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       // Extract config values from environment (includes CLI overrides)
       const config = this.extractConfig(env);
 
+      // Get session ID from environment (set at agent start)
+      const sessionId = env.CODEMIE_SESSION_ID;
+
+      // Deserialize profile config (read once at CLI level)
+      let profileConfig = undefined;
+      if (env.CODEMIE_PROFILE_CONFIG) {
+        try {
+          profileConfig = JSON.parse(env.CODEMIE_PROFILE_CONFIG);
+        } catch (error) {
+          logger.debug('[BaseAgentAdapter] Failed to parse profile config:', error);
+        }
+      }
+
       // Create and start the proxy with full config
       this.proxy = new CodeMieProxy({
         targetApiUrl,
@@ -318,7 +338,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         timeout: timeoutMs,
         model: config.model,
         provider: config.provider,
-        integrationId: env.CODEMIE_INTEGRATION_ID
+        profile: env.CODEMIE_PROFILE_NAME,
+        integrationId: env.CODEMIE_INTEGRATION_ID,
+        sessionId,
+        version: env.CODEMIE_CLI_VERSION,
+        profileConfig
       });
 
       const { url } = await this.proxy.start();

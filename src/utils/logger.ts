@@ -1,5 +1,4 @@
 import chalk from 'chalk';
-import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -21,17 +20,14 @@ export interface LogContext {
 }
 
 class Logger {
-  private sessionId: string;
+  private sessionId: string = ''; // Will be set by agent
   private agentName: string | null = null;
   private profileName: string | null = null;
   private logFilePath: string | null = null;
   private logFileInitialized = false;
   private writeStream: fs.WriteStream | null = null;
 
-  constructor() {
-    // Always generate session ID for analytics tracking
-    this.sessionId = randomUUID();
-  }
+  constructor() {}
 
   /**
    * Set agent name for log formatting
@@ -175,6 +171,14 @@ class Logger {
   }
 
   /**
+   * Set the session ID (used when agent initializes with a specific session ID)
+   * @param sessionId - The session ID to use
+   */
+  setSessionId(sessionId: string): void {
+    this.sessionId = sessionId;
+  }
+
+  /**
    * Get the current session ID (UUID)
    * @returns Session ID (always available)
    */
@@ -252,17 +256,19 @@ class Logger {
     // Always write to log file
     this.writeToLogFile('error', message, errorDetails);
 
-    // Console output
-    console.error(chalk.red(`✗ ${message}`));
-    if (error) {
-      if (error instanceof Error) {
-        console.error(chalk.red(error.message));
-        if (error.stack) {
-          console.error(chalk.white(error.stack));
+    if (this.isDebugMode()) {
+        // Console output
+        console.error(chalk.red(`✗ ${message}`));
+        if (error) {
+            if (error instanceof Error) {
+                console.error(chalk.red(error.message));
+                if (error.stack) {
+                    console.error(chalk.white(error.stack));
+                }
+            } else {
+                console.error(chalk.red(String(error)));
+            }
         }
-      } else {
-        console.error(chalk.red(String(error)));
-      }
     }
   }
 }

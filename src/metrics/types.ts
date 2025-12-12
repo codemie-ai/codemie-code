@@ -275,6 +275,7 @@ export interface SyncState {
 
   // Local processing tracking (deduplication)
   processedRecordIds: string[];  // All record IDs written to local metrics JSONL
+  attachedUserPromptTexts?: string[];  // User prompt texts already attached to deltas (prevents duplication)
 
   // Remote sync tracking
   lastSyncedRecordId?: string;   // Last synced record ID (for resume)
@@ -319,10 +320,12 @@ export interface AgentMetricsSupport {
    */
   parseIncrementalMetrics(
     path: string,
-    processedRecordIds: Set<string>
+    processedRecordIds: Set<string>,
+    attachedUserPromptTexts?: Set<string>
   ): Promise<{
     deltas: MetricDelta[];
     lastLine: number;
+    newlyAttachedPrompts?: string[];
   }>;
 
   /**

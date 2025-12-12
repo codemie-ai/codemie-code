@@ -100,7 +100,7 @@ codemie-gemini -p "your prompt"                      # -p for gemini's non-inter
 Manage multiple provider configurations (work, personal, team, etc.) with separate profiles.
 
 ```bash
-codemie profile list             # List all profiles with detailed information
+codemie profile                  # List all profiles with detailed information (default action)
 codemie profile switch <name>    # Switch to a different profile
 codemie profile delete <name>    # Delete a profile
 codemie profile rename <old> <new> # Rename a profile
@@ -109,7 +109,7 @@ codemie profile rename <old> <new> # Rename a profile
 **Note:** To create or update profiles, use `codemie setup` which provides an interactive wizard.
 
 **Profile List Details:**
-The `codemie profile list` command displays comprehensive information for each profile:
+The `codemie profile` command displays comprehensive information for each profile:
 - Profile name and active status
 - Provider (ai-run-sso, openai, azure, bedrock, litellm, gemini)
 - Base URL
@@ -302,9 +302,9 @@ codemie auth refresh             # Refresh SSO credentials
 
 Manage multiple provider configurations.
 
-**Subcommands:**
+**Usage:**
 ```bash
-codemie profile list                    # List all profiles with details
+codemie profile                         # List all profiles with details (default action)
 codemie profile switch [profile]        # Switch active profile
 codemie profile delete [profile]        # Delete a profile
 codemie profile rename <old> <new>      # Rename a profile

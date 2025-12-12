@@ -57,7 +57,7 @@ codemie setup
 
 ```bash
 # List all profiles (shows active profile with ●)
-codemie profile list
+codemie profile
 # Output:
 # ● work-litellm (litellm) - claude-4-5-sonnet
 # ○ personal-openai (openai) - gpt-4.1

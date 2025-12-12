@@ -111,7 +111,8 @@ export class ProxyHTTPClient {
                               error.message?.includes('ECONNRESET');
 
         if (isNetworkError) {
-          logger.error('[http-client] Network error during request', {
+          // Log details to debug file only - no console spam
+          logger.debug('[http-client] Network error during request', {
             url: url.toString(),
             errorCode: error.code,
             errorMessage: error.message,
@@ -122,7 +123,8 @@ export class ProxyHTTPClient {
             hostname: url.hostname
           }));
         } else {
-          logger.error('[http-client] Request error', {
+          // Log details to debug file only - no console spam
+          logger.debug('[http-client] Request error', {
             url: url.toString(),
             errorCode: error.code,
             errorMessage: error.message,

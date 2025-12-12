@@ -15,7 +15,6 @@ const SENSITIVE_KEY_PATTERNS = [
   /secret/i,
   /credential/i,
   /private[_-]?key/i,
-  /session[_-]?id/i,
   /cookie/i,
   /authorization/i
 ];

@@ -1,8 +1,14 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { logger } from '../logger.js';
+import { randomUUID } from 'crypto';
 
 describe('Logger Session ID', () => {
-  it('should always return a session ID', () => {
+  beforeEach(() => {
+    // Set a test session ID before each test
+    logger.setSessionId(randomUUID());
+  });
+
+  it('should return the session ID that was set', () => {
     const sessionId = logger.getSessionId();
 
     expect(sessionId).toBeDefined();

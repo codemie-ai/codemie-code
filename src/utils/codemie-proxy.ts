@@ -74,16 +74,22 @@ export class CodeMieProxy {
       }
     }
 
-    // 3. Build plugin context
+    // 3. Build plugin context (includes profile config read once at CLI level)
     const pluginContext: PluginContext = {
       config: this.config,
       logger,
-      credentials: credentials || undefined
+      credentials: credentials || undefined,
+      profileConfig: this.config.profileConfig
     };
 
     // 4. Initialize plugins from registry
     const registry = getPluginRegistry();
     this.interceptors = await registry.initialize(pluginContext);
+
+    // 5. Call onProxyStart lifecycle hooks
+    await this.runHook('onProxyStart', interceptor =>
+      interceptor.onProxyStart?.()
+    );
 
     // 6. Find available port
     this.actualPort = this.config.port || await this.findAvailablePort();
@@ -125,6 +131,12 @@ export class CodeMieProxy {
    * Stop the proxy server
    */
   async stop(): Promise<void> {
+    // 1. Call onProxyStop lifecycle hooks (before stopping server)
+    await this.runHook('onProxyStop', interceptor =>
+      interceptor.onProxyStop?.()
+    );
+
+    // 2. Stop server
     if (this.server) {
       await new Promise<void>((resolve) => {
         this.server!.close(() => {
@@ -134,7 +146,7 @@ export class CodeMieProxy {
       });
     }
 
-    // Cleanup HTTP client
+    // 3. Cleanup HTTP client
     this.httpClient.close();
   }
 
@@ -165,6 +177,16 @@ export class CodeMieProxy {
       await this.runHook('onRequest', interceptor =>
         interceptor.onRequest?.(context)
       );
+
+      // 2.5. Check if request was blocked by any interceptor
+      if (context.metadata.blocked) {
+        // Request blocked - return 200 OK immediately without forwarding
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ success: true }));
+        logger.debug(`[proxy] Request blocked: ${context.url}`);
+        return;
+      }
 
       // 3. Forward request to upstream
       const targetUrl = this.buildTargetUrl(req.url!);
@@ -231,7 +253,7 @@ export class CodeMieProxy {
 
     return {
       requestId: randomUUID(),
-      sessionId: this.config.sessionId || logger.getSessionId(),
+      sessionId: this.config.sessionId || 'unknown',
       agentName: this.config.clientType || 'unknown',
       method: req.method || 'GET',
       url: req.url || '/',
@@ -386,7 +408,7 @@ export class CodeMieProxy {
     // Build minimal context for error tracking
     const context: ProxyContext = {
       requestId: randomUUID(),
-      sessionId: this.config.sessionId || logger.getSessionId(),
+      sessionId: this.config.sessionId || 'unknown',
       agentName: this.config.clientType || 'unknown',
       method: req.method || 'GET',
       url: req.url || '/',

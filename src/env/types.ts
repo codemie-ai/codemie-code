@@ -41,6 +41,17 @@ export interface ProviderProfile {
   // Token configuration (for Claude Code with Bedrock)
   maxOutputTokens?: number;
   maxThinkingTokens?: number;
+
+  // Metrics configuration
+  metrics?: {
+    enabled?: boolean;  // Enable metrics collection (default: true)
+    sync?: {
+      enabled?: boolean;  // Enable metrics sync (default: true for SSO)
+      interval?: number;  // Sync interval in ms (default: 300000 = 5 min)
+      maxRetries?: number; // Max retry attempts (default: 3)
+      dryRun?: boolean;   // Dry-run mode: log metrics without sending (default: false)
+    };
+  };
 }
 
 /**
