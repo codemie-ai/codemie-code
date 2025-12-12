@@ -10,32 +10,58 @@ import type {SessionAttributes, SessionMetric} from './types.js';
 import {logger} from '../../utils/logger.js';
 
 /**
- * Aggregate pending deltas into a single session metric
+ * Aggregate pending deltas into session metrics grouped by branch
+ * Returns one metric per branch to prevent mixing metrics between branches
  */
 export function aggregateDeltas(
   deltas: MetricDelta[],
   session: MetricsSession,
   version: string
-): SessionMetric {
+): SessionMetric[] {
   logger.debug(`[aggregator] Aggregating ${deltas.length} deltas for session ${session.sessionId}`);
 
-  // Build attributes from deltas
-  const attributes = buildSessionAttributes(deltas, session, version);
+  // Group deltas by branch
+  const deltasByBranch = new Map<string, MetricDelta[]>();
 
-  // Create session metric
-    return {
+  for (const delta of deltas) {
+    const branch = delta.gitBranch || 'unknown';
+
+    if (!deltasByBranch.has(branch)) {
+      deltasByBranch.set(branch, []);
+    }
+
+    deltasByBranch.get(branch)!.push(delta);
+  }
+
+  logger.debug(`[aggregator] Grouped deltas into ${deltasByBranch.size} branches: ${Array.from(deltasByBranch.keys()).join(', ')}`);
+
+  // Create one metric per branch
+  const metrics: SessionMetric[] = [];
+
+  for (const [branch, branchDeltas] of deltasByBranch) {
+    logger.debug(`[aggregator] Building metric for branch "${branch}" with ${branchDeltas.length} deltas`);
+
+    // Build attributes from deltas for this branch
+    const attributes = buildSessionAttributes(branchDeltas, session, version, branch);
+
+    // Create session metric for this branch
+    metrics.push({
       name: 'codemie_cli_usage_total',
       attributes
-  };
+    });
+  }
+
+  return metrics;
 }
 
 /**
- * Build session attributes from deltas
+ * Build session attributes from deltas for a specific branch
  */
 function buildSessionAttributes(
   deltas: MetricDelta[],
   session: MetricsSession,
-  version: string
+  version: string,
+  branch: string
 ): SessionAttributes {
   // Token aggregation
   let totalInput = 0;
@@ -158,6 +184,7 @@ function buildSessionAttributes(
     llm_model: primaryModel || 'unknown',
     project: session.workingDirectory,
     session_id: session.sessionId,
+    git_branch: branch,
 
     // Interaction Metrics
     total_user_prompts: userPromptCount,

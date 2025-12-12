@@ -271,72 +271,84 @@ class MetricsSyncInterceptor implements ProxyInterceptor {
         return;
       }
 
-      // 4. Aggregate pending deltas into single metric
-      const metric = aggregateDeltas(pendingDeltas, session, this.version);
+      // 4. Aggregate pending deltas into metrics grouped by branch
+      const metrics = aggregateDeltas(pendingDeltas, session, this.version);
 
-      // Debug: Log aggregated metric
-      logger.debug(`[${this.name}] Aggregated metric:`, {
-        name: metric.name,
-        attributes: {
-          // Identity
-          agent: metric.attributes.agent,
-          agent_version: metric.attributes.agent_version,
-          llm_model: metric.attributes.llm_model,
-          project: metric.attributes.project,
-          session_id: metric.attributes.session_id,
+      logger.info(`[${this.name}] Aggregated ${metrics.length} branch-specific metrics from ${pendingDeltas.length} deltas`);
 
-          // Interaction totals
-          total_user_prompts: metric.attributes.total_user_prompts,
+      // Debug: Log aggregated metrics
+      for (const metric of metrics) {
+        logger.debug(`[${this.name}] Aggregated metric for branch "${metric.attributes.git_branch}":`, {
+          name: metric.name,
+          attributes: {
+            // Identity
+            agent: metric.attributes.agent,
+            agent_version: metric.attributes.agent_version,
+            llm_model: metric.attributes.llm_model,
+            project: metric.attributes.project,
+            session_id: metric.attributes.session_id,
+            git_branch: metric.attributes.git_branch,
 
-          // Token totals
-          total_input_tokens: metric.attributes.total_input_tokens,
-          total_output_tokens: metric.attributes.total_output_tokens,
-          total_cache_read_input_tokens: metric.attributes.total_cache_read_input_tokens,
-          total_cache_creation_tokens: metric.attributes.total_cache_creation_tokens,
+            // Interaction totals
+            total_user_prompts: metric.attributes.total_user_prompts,
 
-          // Tool totals
-          total_tool_calls: metric.attributes.total_tool_calls,
-          successful_tool_calls: metric.attributes.successful_tool_calls,
-          failed_tool_calls: metric.attributes.failed_tool_calls,
+            // Token totals
+            total_input_tokens: metric.attributes.total_input_tokens,
+            total_output_tokens: metric.attributes.total_output_tokens,
+            total_cache_read_input_tokens: metric.attributes.total_cache_read_input_tokens,
+            total_cache_creation_tokens: metric.attributes.total_cache_creation_tokens,
 
-          // File operation totals
-          files_created: metric.attributes.files_created,
-          files_modified: metric.attributes.files_modified,
-          files_deleted: metric.attributes.files_deleted,
-          total_lines_added: metric.attributes.total_lines_added,
-          total_lines_removed: metric.attributes.total_lines_removed,
+            // Tool totals
+            total_tool_calls: metric.attributes.total_tool_calls,
+            successful_tool_calls: metric.attributes.successful_tool_calls,
+            failed_tool_calls: metric.attributes.failed_tool_calls,
 
-          // Session info
-          session_duration_ms: metric.attributes.session_duration_ms,
-          count: metric.attributes.count
-        }
-      });
+            // File operation totals
+            files_created: metric.attributes.files_created,
+            files_modified: metric.attributes.files_modified,
+            files_deleted: metric.attributes.files_deleted,
+            total_lines_added: metric.attributes.total_lines_added,
+            total_lines_removed: metric.attributes.total_lines_removed,
 
-      // 5. Send to API (single aggregated metric) or log in dry-run mode
-      if (this.dryRun) {
-        // Dry-run mode: Log what would be sent without actually sending
-        logger.info(`[${this.name}] [DRY-RUN] Would send metric to API:`, {
-          endpoint: `${this.apiClient['config'].baseUrl}/v1/metrics`,
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'User-Agent': `CodeMie-CLI/${this.version}`,
-            'X-CodeMie-Client': this.apiClient['config'].clientType,
-            'Cookie': '[REDACTED]'
-          },
-          payload: {
-            name: metric.name,
-            attributes: metric.attributes
+            // Session info
+            session_duration_ms: metric.attributes.session_duration_ms,
+            count: metric.attributes.count
           }
         });
-        logger.info(`[${this.name}] [DRY-RUN] Skipping actual API call - ${pendingDeltas.length} deltas would be synced`);
-      } else {
-        // Normal mode: Actually send to API
-        const response = await this.apiClient.sendMetric(metric);
+      }
 
-        if (!response.success) {
-          logger.error(`[${this.name}] Sync failed: ${response.message}`);
-          return;
+      // 5. Send each branch metric to API or log in dry-run mode
+      if (this.dryRun) {
+        // Dry-run mode: Log what would be sent without actually sending
+        for (const metric of metrics) {
+          logger.info(`[${this.name}] [DRY-RUN] Would send metric for branch "${metric.attributes.git_branch}" to API:`, {
+            endpoint: `${this.apiClient['config'].baseUrl}/v1/metrics`,
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'User-Agent': `CodeMie-CLI/${this.version}`,
+              'X-CodeMie-Client': this.apiClient['config'].clientType,
+              'Cookie': '[REDACTED]'
+            },
+            payload: {
+              name: metric.name,
+              attributes: metric.attributes
+            }
+          });
+        }
+        logger.info(`[${this.name}] [DRY-RUN] Skipping actual API calls - ${pendingDeltas.length} deltas across ${metrics.length} branches would be synced`);
+      } else {
+        // Normal mode: Send each branch metric to API
+        for (const metric of metrics) {
+          const response = await this.apiClient.sendMetric(metric);
+
+          if (!response.success) {
+            logger.error(`[${this.name}] Sync failed for branch "${metric.attributes.git_branch}": ${response.message}`);
+            // Continue with other branches even if one fails
+            continue;
+          }
+
+          logger.info(`[${this.name}] Successfully synced metric for branch "${metric.attributes.git_branch}"`);
         }
       }
 
@@ -358,7 +370,7 @@ class MetricsSyncInterceptor implements ProxyInterceptor {
       await writeJSONLAtomic(metricsFile, updatedDeltas);
 
       logger.info(
-        `[${this.name}] Successfully synced ${pendingDeltas.length} deltas`
+        `[${this.name}] Successfully synced ${pendingDeltas.length} deltas across ${metrics.length} branches`
       );
 
       // Debug: Log which deltas were marked as synced

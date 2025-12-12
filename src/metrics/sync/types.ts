@@ -26,6 +26,7 @@ export interface SessionAttributes {
   llm_model: string;                     // Most-used model in session
   project: string;                       // Working directory
   session_id: string;                    // Session UUID
+  git_branch: string;                    // Git branch for this metric
 
   // Interaction Metrics
   total_user_prompts: number;            // User prompt count

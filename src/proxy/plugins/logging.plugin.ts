@@ -2,8 +2,13 @@
  * Logging Plugin - Request/Response Logging
  * Priority: 50 (runs before analytics)
  *
- * Purpose: Logs detailed proxy request/response information
+ * Purpose: Logs detailed proxy request/response information including full bodies
  * Separates operational logging from analytics metrics
+ *
+ * Logs:
+ * - Request: method, URL, headers, full request body (parsed JSON or raw)
+ * - Response: status, headers, full response body (parsed JSON or raw)
+ * - Streaming: chunk count, bytes transferred
  *
  * Log Level: DEBUG (file + console when CODEMIE_DEBUG=1)
  * Log Location: ~/.codemie/logs/debug-YYYY-MM-DD.log
@@ -31,12 +36,25 @@ class LoggingInterceptor implements ProxyInterceptor {
   name = 'logging';
   private chunkCount = 0;
   private totalBytes = 0;
+  private responseChunks: Buffer[] = [];
 
   async onRequest(context: ProxyContext): Promise<void> {
     try {
       // Reset counters for new request
       this.chunkCount = 0;
       this.totalBytes = 0;
+      this.responseChunks = [];
+
+      // Parse request body
+      let requestBodyParsed: any = null;
+      if (context.requestBody) {
+        try {
+          requestBodyParsed = JSON.parse(context.requestBody);
+        } catch {
+          // Not JSON or parse error - log as string
+          requestBodyParsed = context.requestBody;
+        }
+      }
 
       logger.debug(
         `[proxy-request] ${context.method} ${context.url}`,
@@ -49,7 +67,8 @@ class LoggingInterceptor implements ProxyInterceptor {
           model: context.model,
           targetUrl: context.targetUrl,
           bodySize: context.requestBody?.length || 0,
-          headers: this.sanitizeHeaders(context.headers)
+          headers: this.sanitizeHeaders(context.headers),
+          requestBody: requestBodyParsed
         }
       );
     } catch (error) {
@@ -92,6 +111,9 @@ class LoggingInterceptor implements ProxyInterceptor {
       this.chunkCount++;
       this.totalBytes += chunk.length;
 
+      // Collect chunks for full response body
+      this.responseChunks.push(Buffer.from(chunk));
+
       // Log every 1000th chunk to avoid spam (or first/last chunks)
       if (this.chunkCount === 1 || this.chunkCount % 1000 === 0) {
         logger.debug(
@@ -117,6 +139,18 @@ class LoggingInterceptor implements ProxyInterceptor {
     metadata: ResponseMetadata
   ): Promise<void> {
     try {
+      // Reconstruct full response body from chunks
+      let responseBodyParsed: any = null;
+      if (this.responseChunks.length > 0) {
+        const fullBody = Buffer.concat(this.responseChunks).toString('utf-8');
+        try {
+          responseBodyParsed = JSON.parse(fullBody);
+        } catch {
+          // Not JSON or parse error - log as string
+          responseBodyParsed = fullBody;
+        }
+      }
+
       logger.debug(
         `[proxy-response] ${metadata.statusCode} ${context.url} (${metadata.durationMs}ms)`,
         {
@@ -131,7 +165,8 @@ class LoggingInterceptor implements ProxyInterceptor {
           bytesSent: metadata.bytesSent,
           durationMs: metadata.durationMs,
           totalChunks: this.chunkCount,
-          totalBytesStreamed: this.totalBytes
+          totalBytesStreamed: this.totalBytes,
+          responseBody: responseBodyParsed
         }
       );
 

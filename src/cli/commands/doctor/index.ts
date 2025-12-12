@@ -49,38 +49,27 @@ export function createDoctorCommand(): Command {
       logger.debug(`Home Directory: ${os.homedir()}`);
       logger.debug(`Temp Directory: ${os.tmpdir()}`);
 
-      // Log relevant environment variables
-      logger.debug('=== Environment Variables ===');
-      const relevantEnvVars = [
-        'NODE_ENV',
-        'PATH',
-        'CODEMIE_DEBUG',
-        'CODEMIE_CONFIG_PATH',
-        'OPENAI_API_KEY',
-        'OPENAI_BASE_URL',
-        'ANTHROPIC_AUTH_TOKEN',
-        'ANTHROPIC_BASE_URL',
-        'GEMINI_API_KEY',
-        'GOOGLE_GEMINI_BASE_URL',
-        'AWS_PROFILE',
-        'AWS_REGION',
-        'npm_config_prefix',
-        'npm_config_global_prefix',
-        'npm_execpath'
-      ];
-
-      for (const key of relevantEnvVars) {
+      // Log all environment variables (sanitized)
+      logger.debug('=== Environment Variables (All) ===');
+      const sortedEnvKeys = Object.keys(process.env).sort();
+      for (const key of sortedEnvKeys) {
         const value = process.env[key];
         if (value) {
-          // Mask API keys for security
-          if (key.includes('KEY') || key.includes('TOKEN')) {
-            const masked = value.substring(0, 8) + '***' + value.substring(value.length - 4);
+          // Mask sensitive values (API keys, tokens, secrets)
+          if (key.toLowerCase().includes('key') ||
+              key.toLowerCase().includes('token') ||
+              key.toLowerCase().includes('secret') ||
+              key.toLowerCase().includes('password')) {
+            const masked = value.length > 12
+              ? value.substring(0, 8) + '***' + value.substring(value.length - 4)
+              : '***';
             logger.debug(`${key}: ${masked}`);
           } else {
             logger.debug(`${key}: ${value}`);
           }
         }
       }
+      logger.debug('=== End Environment Variables ===');
       logger.debug('');
 
       const formatter = new HealthCheckFormatter();

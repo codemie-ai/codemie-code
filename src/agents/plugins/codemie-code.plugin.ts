@@ -6,7 +6,7 @@ import { join } from 'path';
 import { readFileSync } from 'fs';
 import { getDirname } from '../../utils/dirname.js';
 import { getRandomWelcomeMessage, getRandomGoodbyeMessage } from '../../utils/goodbye-messages.js';
-import { renderCodeMieLogo } from '../../utils/ascii-logo.js';
+import { renderCodeMieLogo, renderCompactLogo } from '../../utils/ascii-logo.js';
 import chalk from 'chalk';
 import gradient from 'gradient-string';
 
@@ -61,17 +61,31 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
       const sessionId = process.env.CODEMIE_SESSION_ID || 'n/a';
       const cliVersion = process.env.CODEMIE_CLI_VERSION || 'unknown';
 
-      // Display ASCII logo with configuration
-      console.log(
-        renderCodeMieLogo({
-          profile: profileName,
-          provider: config.provider,
-          model: config.model,
-          agent: BUILTIN_AGENT_NAME,
-          cliVersion,
-          sessionId
-        })
-      );
+      // Display ASCII logo with configuration (use compact version for narrow terminals)
+      const terminalWidth = process.stdout.columns || 80;
+      const MIN_WIDTH_FOR_FULL_LOGO = 180; // Full ASCII logo is ~170 chars wide
+
+      if (terminalWidth >= MIN_WIDTH_FOR_FULL_LOGO) {
+        console.log(
+          renderCodeMieLogo({
+            profile: profileName,
+            provider: config.provider,
+            model: config.model,
+            agent: BUILTIN_AGENT_NAME,
+            cliVersion,
+            sessionId
+          })
+        );
+      } else {
+        console.log(
+          renderCompactLogo({
+            profile: profileName,
+            provider: config.provider,
+            model: config.model,
+            agent: BUILTIN_AGENT_NAME
+          })
+        );
+      }
 
       // Show random welcome message
       console.log(chalk.cyan.bold(getRandomWelcomeMessage()));

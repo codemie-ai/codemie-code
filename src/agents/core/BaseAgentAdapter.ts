@@ -130,6 +130,28 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     const { logger } = await import('../../utils/logger.js');
     logger.setSessionId(sessionId);
 
+    // Log all environment variables for debugging (sanitized)
+    logger.debug('=== Environment Variables (All) ===');
+    const sortedEnvKeys = Object.keys(env).sort();
+    for (const key of sortedEnvKeys) {
+      const value = env[key];
+      if (value) {
+        // Mask sensitive values (API keys, tokens, secrets)
+        if (key.toLowerCase().includes('key') ||
+            key.toLowerCase().includes('token') ||
+            key.toLowerCase().includes('secret') ||
+            key.toLowerCase().includes('password')) {
+          const masked = value.length > 12
+            ? value.substring(0, 8) + '***' + value.substring(value.length - 4)
+            : '***';
+          logger.debug(`${key}: ${masked}`);
+        } else {
+          logger.debug(`${key}: ${value}`);
+        }
+      }
+    }
+    logger.debug('=== End Environment Variables ===');
+
     // Setup metrics orchestrator with the session ID
     const metricsAdapter = this.getMetricsAdapter();
     if (metricsAdapter && env.CODEMIE_PROVIDER) {
