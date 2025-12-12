@@ -47,7 +47,13 @@ export class PluginRegistry {
 
         logger.debug(`[PluginRegistry] Initialized plugin: ${plugin.id} (priority: ${plugin.priority})`);
       } catch (error) {
-        logger.error(`[PluginRegistry] Failed to initialize plugin ${plugin.id}:`, error);
+        // Log as info/debug for graceful skips, error for unexpected failures
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        if (errorMessage.includes('disabled') || errorMessage.includes('not available')) {
+          logger.info(`[PluginRegistry] Skipped plugin ${plugin.id}: ${errorMessage}`);
+        } else {
+          logger.error(`[PluginRegistry] Failed to initialize plugin ${plugin.id}:`, error);
+        }
         // Continue with other plugins (fail gracefully)
       }
     }

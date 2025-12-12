@@ -12,7 +12,9 @@ import type { CodeMieModel, CodeMieIntegration, CodeMieIntegrationsResponse } fr
  */
 export const CODEMIE_ENDPOINTS = {
   MODELS: '/v1/llm_models',
-  USER_SETTINGS: '/v1/settings/user'
+  USER_SETTINGS: '/v1/settings/user',
+  METRICS: '/v1/metrics',
+  AUTH_LOGIN: '/v1/auth/login'
 } as const;
 
 /**
@@ -34,10 +36,13 @@ export async function fetchCodeMieModels(
     rejectUnauthorized: false
   });
 
+  const cliVersion = process.env.CODEMIE_CLI_VERSION || 'unknown';
+
   const response = await client.getRaw(url, {
     'cookie': cookieString,
     'Content-Type': 'application/json',
-    'User-Agent': 'CodeMie-CLI/1.0.0',
+    'User-Agent': `codemie-cli/${cliVersion}`,
+    'X-CodeMie-CLI': `codemie-cli/${cliVersion}`,
     'X-CodeMie-Client': 'codemie-cli'
   });
 
@@ -150,10 +155,13 @@ async function fetchIntegrationsPage(fullUrl: string, cookieString: string): Pro
     rejectUnauthorized: false
   });
 
+  const cliVersion = process.env.CODEMIE_CLI_VERSION || 'unknown';
+
   const response = await client.getRaw(fullUrl, {
     'cookie': cookieString,
     'Content-Type': 'application/json',
-    'User-Agent': 'CodeMie-CLI/1.0.0',
+    'User-Agent': `codemie-cli/${cliVersion}`,
+    'X-CodeMie-CLI': `codemie-cli/${cliVersion}`,
     'X-CodeMie-Client': 'codemie-cli'
   });
 

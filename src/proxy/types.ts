@@ -5,6 +5,7 @@
  */
 
 import { IncomingHttpHeaders } from 'http';
+import type { CodeMieConfigOptions } from '../env/types.js';
 
 /**
  * Proxy configuration
@@ -15,10 +16,13 @@ export interface ProxyConfig {
   host?: string;
   clientType?: string;
   timeout?: number;
+  profile?: string;         // Profile name for traceability
   model?: string;
   provider?: string;
   integrationId?: string;
   sessionId?: string;
+  version?: string;         // CLI version for metrics and headers
+  profileConfig?: CodeMieConfigOptions; // Full profile config (read once at CLI level)
 }
 
 /**
@@ -28,6 +32,9 @@ export interface ProxyContext {
   requestId: string;
   sessionId: string;
   agentName: string;
+  profile?: string;           // Profile name (e.g., 'default', 'work')
+  provider?: string;          // Provider name (e.g., 'openai', 'ai-run-sso')
+  model?: string;             // Model name (e.g., 'gpt-4', 'claude-3-5-sonnet')
   method: string;
   url: string;
   headers: Record<string, string>;

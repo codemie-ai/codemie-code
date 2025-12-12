@@ -54,7 +54,7 @@ codemie setup
 # → Model: gpt-4.1
 
 # List profiles to verify
-codemie profile list
+codemie profile
 # ● work (litellm) - claude-4-5-sonnet
 # ○ personal (openai) - gpt-4.1
 

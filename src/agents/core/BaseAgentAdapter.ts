@@ -2,8 +2,15 @@ import { AgentMetadata, AgentAdapter, AgentConfig } from './types.js';
 import { exec } from '../../utils/exec.js';
 import { logger } from '../../utils/logger.js';
 import { spawn } from 'child_process';
+import { randomUUID } from 'crypto';
 import { CodeMieProxy } from '../../utils/codemie-proxy.js';
 import { ProviderRegistry } from '../../providers/core/registry.js';
+import { MetricsOrchestrator } from '../../metrics/MetricsOrchestrator.js';
+import type { AgentMetricsSupport } from '../../metrics/types.js';
+import { getRandomWelcomeMessage, getRandomGoodbyeMessage } from '../../utils/goodbye-messages.js';
+import { renderCodeMieLogo } from '../../utils/ascii-logo.js';
+import chalk from 'chalk';
+import gradient from 'gradient-string';
 
 /**
  * Base class for all agent adapters
@@ -11,8 +18,17 @@ import { ProviderRegistry } from '../../providers/core/registry.js';
  */
 export abstract class BaseAgentAdapter implements AgentAdapter {
   protected proxy: CodeMieProxy | null = null;
+  protected metricsOrchestrator: MetricsOrchestrator | null = null;
 
   constructor(protected metadata: AgentMetadata) {}
+
+  /**
+   * Get metrics adapter for this agent (optional)
+   * Override in agent plugin if metrics collection is supported
+   */
+  getMetricsAdapter(): AgentMetricsSupport | null {
+    return null;
+  }
 
   get name(): string {
     return this.metadata.name;
@@ -63,7 +79,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   }
 
   /**
-   * Check if agent is installed via which command
+   * Check if agent is installed (cross-platform)
    */
   async isInstalled(): Promise<boolean> {
     if (!this.metadata.cliCommand) {
@@ -71,8 +87,9 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     }
 
     try {
-      const result = await exec('which', [this.metadata.cliCommand]);
-      return result.code === 0;
+      // Use commandExists which handles Windows (where) vs Unix (which)
+      const { commandExists } = await import('../../utils/which.js');
+      return await commandExists(this.metadata.cliCommand);
     } catch {
       return false;
     }
@@ -98,16 +115,60 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    * Run the agent
    */
   async run(args: string[], envOverrides?: Record<string, string>): Promise<void> {
-    logger.info(`Starting ${this.displayName}...`);
+    // Generate session ID at the very start - this is the source of truth
+    // All components (logger, metrics, proxy) will use this same session ID
+    const sessionId = randomUUID();
 
     // Merge environment variables
     let env: NodeJS.ProcessEnv = {
       ...process.env,
-      ...envOverrides
+      ...envOverrides,
+      CODEMIE_SESSION_ID: sessionId
     };
 
-    // Setup proxy if needed
+    // Initialize logger with session ID
+    const { logger } = await import('../../utils/logger.js');
+    logger.setSessionId(sessionId);
+
+    // Setup metrics orchestrator with the session ID
+    const metricsAdapter = this.getMetricsAdapter();
+    if (metricsAdapter && env.CODEMIE_PROVIDER) {
+      this.metricsOrchestrator = new MetricsOrchestrator({
+        agentName: this.metadata.name,
+        provider: env.CODEMIE_PROVIDER,
+        workingDirectory: process.cwd(),
+        metricsAdapter,
+        sessionId // Pass the session ID explicitly
+      });
+
+      // Take pre-spawn snapshot
+      await this.metricsOrchestrator.beforeAgentSpawn();
+    }
+
+    // Setup proxy with the session ID (already in env)
     await this.setupProxy(env);
+
+    // Show welcome message with session info
+    const profileName = env.CODEMIE_PROFILE_NAME || 'default';
+    const provider = env.CODEMIE_PROVIDER || 'unknown';
+    const cliVersion = env.CODEMIE_CLI_VERSION || 'unknown';
+    const model = env.CODEMIE_MODEL || 'unknown';
+
+    // Display ASCII logo with configuration
+    console.log(
+      renderCodeMieLogo({
+        profile: profileName,
+        provider,
+        model,
+        agent: this.metadata.name,
+        cliVersion,
+        sessionId
+      })
+    );
+
+    // Show random welcome message
+    console.log(chalk.cyan.bold(getRandomWelcomeMessage()));
+    console.log(''); // Empty line for spacing
 
     // Apply argument transformations
     const transformedArgs = this.metadata.argumentTransform
@@ -125,12 +186,24 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
     try {
       // Spawn the CLI command with inherited stdio
+      // On Windows, use shell: true to resolve .cmd/.bat executables
+      const isWindows = process.platform === 'win32';
       const child = spawn(this.metadata.cliCommand, transformedArgs, {
         stdio: 'inherit',
-        env
+        env,
+        shell: isWindows, // Windows needs shell to resolve .cmd files
+        windowsHide: isWindows // Hide console window on Windows
       });
 
-      // Define cleanup function for proxy
+      // Take post-spawn snapshot after process starts
+      if (this.metricsOrchestrator) {
+        // Don't await - let it run in background
+        this.metricsOrchestrator.afterAgentSpawn().catch(err => {
+          logger.error('[MetricsOrchestrator] Post-spawn snapshot failed:', err);
+        });
+      }
+
+      // Define cleanup function for proxy and metrics
       const cleanup = async () => {
         if (this.proxy) {
           logger.debug(`[${this.displayName}] Stopping proxy and flushing analytics...`);
@@ -165,12 +238,21 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
           process.off('SIGINT', sigintHandler);
           process.off('SIGTERM', sigtermHandler);
 
+          // Show shutting down message
+          console.log(''); // Empty line for spacing
+          console.log(chalk.yellow('Shutting down...'));
+
           // Grace period: wait for any final API calls from the external agent
           // Many agents (Claude, Gemini, Codex) send telemetry/session data on shutdown
           if (this.proxy) {
             const gracePeriodMs = 2000; // 2 seconds
             logger.debug(`[${this.displayName}] Waiting ${gracePeriodMs}ms grace period for final API calls...`);
             await new Promise(resolve => setTimeout(resolve, gracePeriodMs));
+          }
+
+          // Finalize metrics on agent exit
+          if (this.metricsOrchestrator && code !== null) {
+            await this.metricsOrchestrator.onAgentExit(code);
           }
 
           // Clean up proxy
@@ -180,6 +262,14 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
           if (this.metadata.lifecycle?.afterRun && code !== null) {
             await this.metadata.lifecycle.afterRun(code);
           }
+
+          // Show goodbye message with random easter egg
+          console.log(chalk.cyan.bold(getRandomGoodbyeMessage()));
+          console.log(''); // Spacing before powered by
+          // Create custom magenta-purple gradient for CodeMie branding
+          const codeMieGradient = gradient(['#ff00ff', '#9933ff']);
+          console.log(codeMieGradient('Powered by AI/Run CodeMie CLI'));
+          console.log(''); // Empty line for spacing
 
           if (code === 0) {
             resolve();
@@ -221,11 +311,25 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       }
 
       // Parse timeout from environment (in seconds, convert to milliseconds)
-      const timeoutSeconds = env.CODEMIE_TIMEOUT ? parseInt(env.CODEMIE_TIMEOUT, 10) : 300;
+      // Default to 0 (unlimited) for AI requests that can take a long time
+      const timeoutSeconds = env.CODEMIE_TIMEOUT ? parseInt(env.CODEMIE_TIMEOUT, 10) : 0;
       const timeoutMs = timeoutSeconds * 1000;
 
       // Extract config values from environment (includes CLI overrides)
       const config = this.extractConfig(env);
+
+      // Get session ID from environment (set at agent start)
+      const sessionId = env.CODEMIE_SESSION_ID;
+
+      // Deserialize profile config (read once at CLI level)
+      let profileConfig = undefined;
+      if (env.CODEMIE_PROFILE_CONFIG) {
+        try {
+          profileConfig = JSON.parse(env.CODEMIE_PROFILE_CONFIG);
+        } catch (error) {
+          logger.debug('[BaseAgentAdapter] Failed to parse profile config:', error);
+        }
+      }
 
       // Create and start the proxy with full config
       this.proxy = new CodeMieProxy({
@@ -234,7 +338,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         timeout: timeoutMs,
         model: config.model,
         provider: config.provider,
-        integrationId: env.CODEMIE_INTEGRATION_ID
+        profile: env.CODEMIE_PROFILE_NAME,
+        integrationId: env.CODEMIE_INTEGRATION_ID,
+        sessionId,
+        version: env.CODEMIE_CLI_VERSION,
+        profileConfig
       });
 
       const { url } = await this.proxy.start();

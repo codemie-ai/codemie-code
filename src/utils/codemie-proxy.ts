@@ -28,9 +28,6 @@ import { URL } from 'url';
 import { CredentialStore } from './credential-store.js';
 import { ProviderRegistry } from '../providers/core/registry.js';
 import { logger } from './logger.js';
-import { getAnalytics } from '../analytics/index.js';
-import { loadAnalyticsConfig } from '../analytics/config.js';
-import { RemoteAnalyticsSubmitter } from '../analytics/remote-submission/index.js';
 import { ProxyHTTPClient } from '../proxy/http-client.js';
 import { ProxyConfig, ProxyContext } from '../proxy/types.js';
 import { AuthenticationError, NetworkError, TimeoutError, normalizeError } from '../proxy/errors.js';
@@ -47,7 +44,6 @@ export class CodeMieProxy {
   private httpClient: ProxyHTTPClient;
   private interceptors: ProxyInterceptor[] = [];
   private actualPort: number = 0;
-  private remoteSubmitter: RemoteAnalyticsSubmitter | null = null;
 
   constructor(private config: ProxyConfig) {
     // Initialize HTTP client with streaming support
@@ -78,23 +74,22 @@ export class CodeMieProxy {
       }
     }
 
-    // 3. Build plugin context
+    // 3. Build plugin context (includes profile config read once at CLI level)
     const pluginContext: PluginContext = {
       config: this.config,
       logger,
       credentials: credentials || undefined,
-      analytics: getAnalytics()
+      profileConfig: this.config.profileConfig
     };
 
     // 4. Initialize plugins from registry
     const registry = getPluginRegistry();
     this.interceptors = await registry.initialize(pluginContext);
 
-    // 5. Start analytics metrics submitter (writes codemie_coding_agent_usage_total metrics)
-    const analyticsConfig = loadAnalyticsConfig();
-    if (analyticsConfig.enabled) {
-      await this.startAnalyticsMetricsSubmitter(isSSOProvider ? credentials : null);
-    }
+    // 5. Call onProxyStart lifecycle hooks
+    await this.runHook('onProxyStart', interceptor =>
+      interceptor.onProxyStart?.()
+    );
 
     // 6. Find available port
     this.actualPort = this.config.port || await this.findAvailablePort();
@@ -133,57 +128,15 @@ export class CodeMieProxy {
   }
 
   /**
-   * Start analytics metrics submitter
-   * Writes codemie_coding_agent_usage metrics to ~/.codemie/analytics/YYYY-MM-DD.jsonl
-   */
-  private async startAnalyticsMetricsSubmitter(credentials: any | null): Promise<void> {
-    try {
-      const analyticsConfig = loadAnalyticsConfig();
-
-      // Build config
-      const submitterConfig: any = {
-        enabled: true,
-        target: analyticsConfig.target,
-        interval: parseInt(process.env.CODEMIE_ANALYTICS_REMOTE_INTERVAL || '300000', 10),
-        batchSize: parseInt(process.env.CODEMIE_ANALYTICS_REMOTE_BATCH_SIZE || '100', 10)
-      };
-
-      // Add remote config only if SSO provider with credentials
-      if (credentials && this.config.targetApiUrl) {
-        const cookieString = Object.entries(credentials.cookies)
-          .map(([key, value]) => `${key}=${value}`)
-          .join('; ');
-
-        submitterConfig.baseUrl = this.config.targetApiUrl;
-        submitterConfig.cookies = cookieString;
-      }
-
-      this.remoteSubmitter = new RemoteAnalyticsSubmitter(submitterConfig);
-      this.remoteSubmitter.start();
-
-      logger.debug(`Analytics metrics submitter started (target: ${analyticsConfig.target})`);
-    } catch (error) {
-      logger.error(`Failed to start analytics metrics submitter: ${error}`);
-    }
-  }
-
-  /**
    * Stop the proxy server
    */
   async stop(): Promise<void> {
-    // Stop remote analytics submitter
-    if (this.remoteSubmitter) {
-      this.remoteSubmitter.stop();
-      logger.debug('Remote analytics submitter stopped');
-    }
+    // 1. Call onProxyStop lifecycle hooks (before stopping server)
+    await this.runHook('onProxyStop', interceptor =>
+      interceptor.onProxyStop?.()
+    );
 
-    // Flush analytics before stopping to ensure all events are written
-    const analytics = getAnalytics();
-    if (analytics.isEnabled) {
-      logger.debug('Flushing analytics before proxy shutdown...');
-      await analytics.flush();
-    }
-
+    // 2. Stop server
     if (this.server) {
       await new Promise<void>((resolve) => {
         this.server!.close(() => {
@@ -193,7 +146,7 @@ export class CodeMieProxy {
       });
     }
 
-    // Cleanup HTTP client
+    // 3. Cleanup HTTP client
     this.httpClient.close();
   }
 
@@ -225,6 +178,16 @@ export class CodeMieProxy {
         interceptor.onRequest?.(context)
       );
 
+      // 2.5. Check if request was blocked by any interceptor
+      if (context.metadata.blocked) {
+        // Request blocked - return 200 OK immediately without forwarding
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ success: true }));
+        logger.debug(`[proxy] Request blocked: ${context.url}`);
+        return;
+      }
+
       // 3. Forward request to upstream
       const targetUrl = this.buildTargetUrl(req.url!);
       context.targetUrl = targetUrl.toString();
@@ -241,19 +204,33 @@ export class CodeMieProxy {
       );
 
       // 5. Stream response to client
+      logger.debug(`[proxy] Starting response streaming for ${context.requestId}`);
       const metadata = await this.streamResponse(
         context,
         upstreamResponse,
         res,
         startTime
       );
+      logger.debug(`[proxy] Response streaming completed for ${context.requestId}`, {
+        statusCode: metadata.statusCode,
+        bytesSent: metadata.bytesSent
+      });
 
       // 6. Run onResponseComplete hooks (AFTER streaming)
+      logger.debug(`[proxy] Running onResponseComplete hooks for ${context.requestId}`);
       await this.runHook('onResponseComplete', interceptor =>
         interceptor.onResponseComplete?.(context, metadata)
       );
+      logger.debug(`[proxy] All hooks completed for ${context.requestId}`);
+
+      // 7. Final completion marker
+      logger.debug(`[proxy] Request handling finished for ${context.requestId}`, {
+        url: context.url,
+        durationMs: Date.now() - context.requestStartTime
+      });
 
     } catch (error) {
+      logger.debug(`[proxy] Error during request handling:`, error);
       await this.handleError(error, req, res);
     }
   }
@@ -276,7 +253,7 @@ export class CodeMieProxy {
 
     return {
       requestId: randomUUID(),
-      sessionId: this.config.sessionId || logger.getSessionId(),
+      sessionId: this.config.sessionId || 'unknown',
       agentName: this.config.clientType || 'unknown',
       method: req.method || 'GET',
       url: req.url || '/',
@@ -334,17 +311,22 @@ export class CodeMieProxy {
   ): Promise<ResponseMetadata> {
     // Set status and headers
     downstream.statusCode = upstream.statusCode || 200;
+    logger.debug(`[proxy-stream] Set response status: ${upstream.statusCode} for ${context.requestId}`);
 
     for (const [key, value] of Object.entries(upstream.headers)) {
       if (!['transfer-encoding', 'connection'].includes(key.toLowerCase()) && value !== undefined) {
         downstream.setHeader(key, value);
       }
     }
+    logger.debug(`[proxy-stream] Headers set for ${context.requestId}`);
 
     // Stream with optional chunk hooks
     let bytesSent = 0;
+    let chunkCount = 0;
 
+    logger.debug(`[proxy-stream] Starting chunk iteration for ${context.requestId}`);
     for await (const chunk of upstream) {
+      chunkCount++;
       let processedChunk: Buffer | null = Buffer.from(chunk);
 
       // Run onResponseChunk hooks (optional transform)
@@ -365,8 +347,11 @@ export class CodeMieProxy {
         bytesSent += processedChunk.length;
       }
     }
+    logger.debug(`[proxy-stream] Finished chunk iteration for ${context.requestId}. Total chunks: ${chunkCount}, bytes: ${bytesSent}`);
 
+    logger.debug(`[proxy-stream] Calling downstream.end() for ${context.requestId}`);
     downstream.end();
+    logger.debug(`[proxy-stream] downstream.end() completed for ${context.requestId}`);
 
     const durationMs = Date.now() - startTime;
 
@@ -405,7 +390,13 @@ export class CodeMieProxy {
     res: ServerResponse
   ): Promise<void> {
     // Check if this is a normal client disconnect (abort)
-    if (error && typeof error === 'object' && (error as any).isAborted) {
+    const isAbortError = error && typeof error === 'object' &&
+      ((error as any).isAborted ||
+       (error as Error).message === 'aborted' ||
+       (error as any).code === 'ECONNABORTED' ||
+       (error as any).code === 'ERR_STREAM_PREMATURE_CLOSE');
+
+    if (isAbortError) {
       // Client disconnected normally (user closed agent) - don't log or respond
       logger.debug('[proxy] Client disconnected');
       if (!res.headersSent) {
@@ -417,7 +408,7 @@ export class CodeMieProxy {
     // Build minimal context for error tracking
     const context: ProxyContext = {
       requestId: randomUUID(),
-      sessionId: this.config.sessionId || logger.getSessionId(),
+      sessionId: this.config.sessionId || 'unknown',
       agentName: this.config.clientType || 'unknown',
       method: req.method || 'GET',
       url: req.url || '/',

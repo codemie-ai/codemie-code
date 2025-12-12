@@ -17,7 +17,6 @@ import { extractToolMetadata } from './toolMetadata.js';
 import { extractTokenUsageFromStreamChunk, extractTokenUsageFromFinalState } from './tokenUtils.js';
 import { setGlobalToolEventCallback } from './tools/index.js';
 import { logger } from '../../utils/logger.js';
-import { getAnalytics } from '../../analytics/index.js';
 import { sanitizeCookies, sanitizeAuthToken } from '../../utils/sanitize.js';
 
 export class CodeMieAgent {
@@ -82,12 +81,14 @@ export class CodeMieAgent {
             ...(this.config.baseUrl !== 'https://api.openai.com/v1' && {
               baseURL: this.config.baseUrl
             }),
-            // Add client tracking header to all OpenAI requests
+            // Add client tracking headers to all OpenAI requests
             fetch: async (input: string | URL | Request, init?: RequestInit) => {
+              const cliVersion = process.env.CODEMIE_CLI_VERSION || 'unknown';
               const updatedInit = {
                 ...init,
                 headers: {
                   ...init?.headers,
+                  'X-CodeMie-CLI': `codemie-cli/${cliVersion}`,
                   'X-CodeMie-Client': 'codemie-code'
                 }
               };
@@ -374,21 +375,6 @@ export class CodeMieAgent {
           // Store token usage to associate with next tool call
           this.currentLLMTokenUsage = tokenUsage;
 
-          // Track API response in analytics
-          try {
-            const analytics = getAnalytics();
-            if (analytics.isEnabled) {
-              void analytics.trackAPIResponse({
-                latency: currentStep.endTime ? currentStep.endTime - currentStep.startTime : undefined
-              });
-            }
-          } catch (error) {
-            // Silently fail - analytics should not block agent execution
-            if (this.config.debug) {
-              logger.debug('Analytics API response tracking error:', error);
-            }
-          }
-
           if (this.config.debug) {
             logger.debug(`Token usage: ${tokenUsage.inputTokens} in, ${tokenUsage.outputTokens} out`);
           }
@@ -454,22 +440,6 @@ export class CodeMieAgent {
               if (step.type === 'llm_call' && !step.tokenUsage) {
                 step.tokenUsage = finalTokenUsage;
                 this.updateStatsWithTokenUsage(finalTokenUsage);
-
-                // Track in analytics (fallback case)
-                try {
-                  const analytics = getAnalytics();
-                  if (analytics.isEnabled) {
-                    void analytics.trackAPIResponse({
-                      latency: step.endTime ? step.endTime - step.startTime : undefined
-                    });
-                  }
-                } catch (error) {
-                  // Silently fail
-                  if (this.config.debug) {
-                    logger.debug('Analytics final state tracking error:', error);
-                  }
-                }
-
                 break;
               }
             }

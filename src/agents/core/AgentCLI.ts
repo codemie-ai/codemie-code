@@ -12,7 +12,6 @@ import { CodexPluginMetadata } from '../plugins/codex.plugin.js';
 import { CodeMieCodePluginMetadata } from '../plugins/codemie-code.plugin.js';
 import { GeminiPluginMetadata } from '../plugins/gemini.plugin.js';
 import { DeepAgentsPluginMetadata } from '../plugins/deepagents.plugin.js';
-import { initAnalytics, getAnalytics, destroyAnalytics } from '../../analytics/index.js';
 
 /**
  * Universal CLI builder for any agent
@@ -26,6 +25,9 @@ export class AgentCLI {
     this.program = new Command();
     this.loadVersion();
     this.setupProgram();
+
+    // Set agent name in logger for consistent log formatting
+    logger.setAgentName(adapter.name);
   }
 
   /**
@@ -98,8 +100,22 @@ export class AgentCLI {
       });
 
       // Validate essential configuration
-      if (!config.baseUrl || !config.apiKey || !config.model) {
+      const missingFields: string[] = [];
+      if (!config.baseUrl) missingFields.push('baseUrl');
+      if (!config.model) missingFields.push('model');
+
+      // Only validate apiKey for providers that require authentication
+      const { ProviderRegistry } = await import('../../providers/core/registry.js');
+      const provider = config.provider ? ProviderRegistry.getProvider(config.provider) : null;
+      const requiresAuth = provider?.requiresAuth ?? true; // Default to true for safety
+
+      if (requiresAuth && !config.apiKey) {
+        missingFields.push('apiKey');
+      }
+
+      if (missingFields.length > 0) {
         console.log(chalk.yellow('\n⚠️  Configuration incomplete'));
+        console.log(chalk.white('Missing: ') + chalk.red(missingFields.join(', ')));
         console.log(chalk.white('Run ') + chalk.cyan('codemie setup') + chalk.white(' to configure your AI provider.\n'));
         process.exit(1);
       }
@@ -111,69 +127,21 @@ export class AgentCLI {
 
       const providerEnv = ConfigLoader.exportProviderEnvVars(config);
 
-      // Initialize analytics with config
-      const fullConfig = await ConfigLoader.loadFull(process.cwd(), {
-        name: options.profile as string | undefined
-      });
-      initAnalytics(fullConfig.analytics);
+      // Pass config info for welcome message display
+      providerEnv.CODEMIE_PROFILE_NAME = config.name || 'default';
+      providerEnv.CODEMIE_CLI_VERSION = this.version;
 
-      // Start analytics session
-      const analytics = getAnalytics();
-      const agentVersion = await this.adapter.getVersion();
-      analytics.startSession({
-        agent: this.adapter.name,
-        agentVersion: agentVersion || 'unknown',
-        cliVersion: this.version,
-        profile: config.name || 'default',
-        provider: config.provider || 'unknown',
-        model: config.model || 'unknown',
-        workingDir: process.cwd(),
-        interactive: args.length === 0 || !args.some(arg => arg === '-p' || arg === '--print')
-      });
+      // Serialize full profile config for proxy plugins (read once at CLI level)
+      providerEnv.CODEMIE_PROFILE_CONFIG = JSON.stringify(config);
+
+      // Set profile name in logger for log formatting
+      logger.setProfileName(config.name || 'default');
 
       // Collect all arguments to pass to the agent
       const agentArgs = this.collectPassThroughArgs(args, options);
 
-      // Run the agent
-      const profileName = config.name || 'default';
-      logger.info(`Starting ${this.adapter.displayName} | Profile: ${profileName} | Provider: ${config.provider} | Model: ${config.model}`);
-
-      try {
-        await this.adapter.run(agentArgs, providerEnv);
-
-        // End session on success
-        await analytics.endSession('user_exit');
-      } catch (error) {
-        // Track error with comprehensive context
-        const errorContext: Record<string, unknown> = {
-          error: error instanceof Error ? error.message : String(error),
-          errorType: error instanceof Error ? error.constructor.name : 'Unknown',
-          agent: this.adapter.name,
-          provider: config.provider,
-          model: config.model,
-          profile: config.name || 'default',
-          workingDir: process.cwd(),
-          args: agentArgs.length > 0 ? agentArgs.join(' ') : undefined
-        };
-
-        // Add stack trace in debug mode or for critical errors
-        if (error instanceof Error && error.stack) {
-          errorContext.stackTrace = error.stack;
-        }
-
-        // Check if error has additional properties (e.g., from CodeMieAgentError)
-        if (error && typeof error === 'object') {
-          const errorObj = error as Record<string, unknown>;
-          if (errorObj.code) errorContext.errorCode = errorObj.code;
-          if (errorObj.details) errorContext.errorDetails = errorObj.details;
-        }
-
-        await analytics.track('session_error', errorContext);
-        await analytics.endSession('error');
-        throw error;
-      } finally {
-        await destroyAnalytics();
-      }
+      // Run the agent (welcome message will be shown inside)
+      await this.adapter.run(agentArgs, providerEnv);
     } catch (error) {
       logger.error(`Failed to run ${this.adapter.displayName}:`, error);
       process.exit(1);

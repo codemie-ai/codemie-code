@@ -74,6 +74,30 @@ export function displaySetupInstructions(template: ProviderTemplate): void {
 }
 
 /**
+ * Check if a model matches any recommended pattern (using partial matching)
+ *
+ * Helper function to be used before isRecommendedModel is defined
+ */
+function matchesAnyRecommendedPattern(modelId: string, patterns?: string[]): boolean {
+  if (!patterns || patterns.length === 0) return false;
+
+  // Normalize strings for comparison (lowercase, remove special chars except hyphen)
+  const normalizeForMatching = (str: string) =>
+    str.toLowerCase().replace(/[^a-z0-9-]/g, '');
+
+  const normalizedModel = normalizeForMatching(modelId);
+
+  return patterns.some(pattern => {
+    // Exact match
+    if (modelId === pattern) return true;
+
+    // Partial match
+    const normalizedPattern = normalizeForMatching(pattern);
+    return normalizedModel.includes(normalizedPattern);
+  });
+}
+
+/**
  * Format model choice with metadata
  *
  * Enhances model display with metadata if available
@@ -84,8 +108,11 @@ export function formatModelChoice(
 ): { name: string; value: string } {
   const metadata = template?.modelMetadata?.[modelId];
 
-  // Check if model is recommended (either via metadata or recommendedModels array)
-  const isRecommended = metadata?.popular || template?.recommendedModels?.includes(modelId) || false;
+  // Check if model is recommended (with partial matching support)
+  const isRecommended =
+    metadata?.popular ||
+    matchesAnyRecommendedPattern(modelId, template?.recommendedModels) ||
+    false;
 
   // If no metadata and not recommended, return plain format
   if (!metadata && !isRecommended) {
@@ -112,10 +139,38 @@ export function formatModelChoice(
 }
 
 /**
+ * Check if a model matches a recommended pattern
+ *
+ * Supports both exact and partial matching:
+ * - Exact: "anthropic.claude-3-5-sonnet-20240620-v1:0" matches "anthropic.claude-3-5-sonnet-20240620-v1:0"
+ * - Partial: "anthropic.claude-3-5-sonnet-20240620-v1:0" matches "claude-3-5-sonnet"
+ * - Partial: "anthropic.claude-sonnet-4-5-20250929-v1:0" matches "claude-sonnet-4-5"
+ *
+ * @param modelId Full model ID from provider (e.g., "anthropic.claude-3-5-sonnet-20240620-v1:0")
+ * @param recommendedPattern Pattern to match (e.g., "claude-3-5-sonnet" or "claude-sonnet-4-5")
+ */
+function isRecommendedModel(modelId: string, recommendedPattern: string): boolean {
+  // Exact match first
+  if (modelId === recommendedPattern) {
+    return true;
+  }
+
+  // Normalize both strings for comparison (lowercase, remove special chars except hyphen)
+  const normalizeForMatching = (str: string) =>
+    str.toLowerCase().replace(/[^a-z0-9-]/g, '');
+
+  const normalizedModel = normalizeForMatching(modelId);
+  const normalizedPattern = normalizeForMatching(recommendedPattern);
+
+  // Check if the model ID contains the pattern
+  return normalizedModel.includes(normalizedPattern);
+}
+
+/**
  * Get all model choices with metadata
  *
  * Returns array of formatted model choices, sorted by:
- * 1. Recommended models first (template.recommendedModels)
+ * 1. Recommended models first (template.recommendedModels with partial matching)
  * 2. Alphabetically by model ID
  */
 export function getAllModelChoices(
@@ -124,9 +179,13 @@ export function getAllModelChoices(
 ): Array<{ name: string; value: string }> {
   // Sort models using common rules
   const sortedModels = [...models].sort((a, b) => {
-    // Check if models are recommended
-    const aRecommended = template?.recommendedModels?.includes(a) || false;
-    const bRecommended = template?.recommendedModels?.includes(b) || false;
+    // Check if models are recommended (with partial matching)
+    const aRecommended = template?.recommendedModels?.some(pattern =>
+      isRecommendedModel(a, pattern)
+    ) || false;
+    const bRecommended = template?.recommendedModels?.some(pattern =>
+      isRecommendedModel(b, pattern)
+    ) || false;
 
     // Recommended models first
     if (aRecommended && !bRecommended) return -1;

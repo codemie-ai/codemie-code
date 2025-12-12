@@ -1,5 +1,4 @@
 import chalk from 'chalk';
-import { randomUUID } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -12,20 +11,56 @@ export enum LogLevel {
   ERROR = 'error'
 }
 
+export interface LogContext {
+  agent?: string;
+  sessionId?: string;
+  profile?: string;
+  provider?: string;
+  model?: string;
+}
+
 class Logger {
-  private sessionId: string;
+  private sessionId: string = ''; // Will be set by agent
+  private agentName: string | null = null;
+  private profileName: string | null = null;
   private logFilePath: string | null = null;
   private logFileInitialized = false;
   private writeStream: fs.WriteStream | null = null;
 
-  constructor() {
-    // Always generate session ID for analytics tracking
-    this.sessionId = randomUUID();
+  constructor() {}
+
+  /**
+   * Set agent name for log formatting
+   */
+  setAgentName(name: string): void {
+    this.agentName = name;
+  }
+
+  /**
+   * Get agent name
+   */
+  getAgentName(): string | null {
+    return this.agentName;
+  }
+
+  /**
+   * Set profile name for log formatting
+   */
+  setProfileName(name: string): void {
+    this.profileName = name;
+  }
+
+  /**
+   * Get profile name
+   */
+  getProfileName(): string | null {
+    return this.profileName;
   }
 
   /**
    * Initialize log file path and create write stream
    * Log file format: ~/.codemie/logs/debug-YYYY-MM-DD.log
+   * Also performs cleanup of old log files (older than 5 days)
    */
   private initializeLogFile(): void {
     if (this.logFileInitialized) return;
@@ -37,6 +72,9 @@ class Logger {
       if (!fs.existsSync(logsDir)) {
         fs.mkdirSync(logsDir, { recursive: true });
       }
+
+      // Clean up old log files (older than 5 days)
+      this.cleanupOldLogs(logsDir);
 
       const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
       this.logFilePath = path.join(logsDir, `debug-${today}.log`);
@@ -54,8 +92,37 @@ class Logger {
   }
 
   /**
+   * Remove log files older than 5 days
+   * Runs synchronously during logger initialization
+   */
+  private cleanupOldLogs(logsDir: string): void {
+    try {
+      const files = fs.readdirSync(logsDir);
+      const now = Date.now();
+      const fiveDaysAgo = now - (5 * 24 * 60 * 60 * 1000); // 5 days in milliseconds
+
+      for (const file of files) {
+        // Only process debug log files with date pattern
+        if (!file.match(/^debug-\d{4}-\d{2}-\d{2}\.log$/)) {
+          continue;
+        }
+
+        const filePath = path.join(logsDir, file);
+        const stats = fs.statSync(filePath);
+
+        // Delete if older than 5 days
+        if (stats.mtimeMs < fiveDaysAgo) {
+          fs.unlinkSync(filePath);
+        }
+      }
+    } catch {
+      // Silently fail - cleanup is not critical
+    }
+  }
+
+  /**
    * Write a log entry to the debug log file (synchronous)
-   * Format: [YYYY-MM-DD HH:MM:SS.mmm] [LEVEL] message
+   * Format: [YYYY-MM-DD HH:MM:SS.mmm] [LEVEL] [AGENT] [SESSION_ID] [PROFILE] message
    * Automatically sanitizes sensitive data before writing
    * Always writes to file regardless of debug mode
    */
@@ -69,13 +136,23 @@ class Logger {
     try {
       const timestamp = new Date().toISOString();
 
+      // Build log prefix using agent/session/profile set at startup
+      const agentName = this.agentName || 'system';
+
+      let prefix = `[${timestamp}] [${level.toUpperCase()}] [${agentName}] [${this.sessionId}]`;
+
+      // Add profile if set
+      if (this.profileName) {
+        prefix += ` [${this.profileName}]`;
+      }
+
       // Sanitize args before writing to file
       const sanitizedArgs = sanitizeLogArgs(...args);
 
       const argsStr = sanitizedArgs.length > 0 ? ' ' + sanitizedArgs.map(arg =>
         typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)
       ).join(' ') : '';
-      const logEntry = `[${timestamp}] [${level.toUpperCase()}] ${message}${argsStr}\n`;
+      const logEntry = `${prefix} ${message}${argsStr}\n`;
 
       this.writeStream.write(logEntry);
     } catch {
@@ -91,6 +168,14 @@ class Logger {
       this.writeStream.end();
       this.writeStream = null;
     }
+  }
+
+  /**
+   * Set the session ID (used when agent initializes with a specific session ID)
+   * @param sessionId - The session ID to use
+   */
+  setSessionId(sessionId: string): void {
+    this.sessionId = sessionId;
   }
 
   /**
@@ -127,7 +212,17 @@ class Logger {
 
     // Only console output when CODEMIE_DEBUG is enabled
     if (this.isDebugMode()) {
-      console.log(chalk.dim(`[DEBUG] ${message}`), ...args);
+      // Build console prefix using agent/session/profile set at startup
+      const agentName = this.agentName || 'system';
+
+      let prefix = `[DEBUG] [${agentName}] [${this.sessionId}]`;
+
+      // Add profile if set
+      if (this.profileName) {
+        prefix += ` [${this.profileName}]`;
+      }
+
+      console.log(chalk.dim(`${prefix} ${message}`), ...args);
     }
   }
 
@@ -143,9 +238,6 @@ class Logger {
   warn(message: string, ...args: unknown[]): void {
     // Always write to log file
     this.writeToLogFile('warn', message, ...args);
-
-    // Console output
-    console.warn(chalk.yellow(`⚠ ${message}`), ...args);
   }
 
   error(message: string, error?: Error | unknown): void {
@@ -164,17 +256,19 @@ class Logger {
     // Always write to log file
     this.writeToLogFile('error', message, errorDetails);
 
-    // Console output
-    console.error(chalk.red(`✗ ${message}`));
-    if (error) {
-      if (error instanceof Error) {
-        console.error(chalk.red(error.message));
-        if (error.stack) {
-          console.error(chalk.white(error.stack));
+    if (this.isDebugMode()) {
+        // Console output
+        console.error(chalk.red(`✗ ${message}`));
+        if (error) {
+            if (error instanceof Error) {
+                console.error(chalk.red(error.message));
+                if (error.stack) {
+                    console.error(chalk.white(error.stack));
+                }
+            } else {
+                console.error(chalk.red(String(error)));
+            }
         }
-      } else {
-        console.error(chalk.red(String(error)));
-      }
     }
   }
 }

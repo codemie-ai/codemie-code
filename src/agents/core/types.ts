@@ -76,6 +76,7 @@ export interface AgentMetadata {
     sessions?: string;      // Session logs path (relative to home or absolute)
     settings?: string;      // Settings file path (relative to home or absolute)
     cache?: string;         // Cache directory (relative to home or absolute)
+    history?: string;       // User prompt history file (relative to home or absolute)
   };
 
   // === Analytics Support ===

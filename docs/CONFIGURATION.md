@@ -57,7 +57,7 @@ codemie setup
 
 ```bash
 # List all profiles (shows active profile with ●)
-codemie profile list
+codemie profile
 # Output:
 # ● work-litellm (litellm) - claude-4-5-sonnet
 # ○ personal-openai (openai) - gpt-4.1
@@ -111,11 +111,11 @@ Profiles are stored in `~/.codemie/config.json`:
 ## Supported Providers
 
 - **ai-run-sso** - AI/Run CodeMie SSO (unified enterprise gateway)
-- **gemini** - Google Gemini API (direct access)
 - **openai** - OpenAI API
 - **azure** - Azure OpenAI
 - **bedrock** - AWS Bedrock
-- **litellm** - LiteLLM Proxy
+- **litellm** - LiteLLM Proxy (universal gateway to 100+ providers)
+- **ollama** - Ollama (local models)
 
 ## Manual Configuration
 

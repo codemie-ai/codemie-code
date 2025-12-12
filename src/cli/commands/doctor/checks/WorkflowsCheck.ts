@@ -2,6 +2,7 @@
  * Repository & Workflows health check
  */
 
+import * as path from 'path';
 import { detectVCSProvider, listInstalledWorkflows } from '../../../../workflows/index.js';
 import { HealthCheck, HealthCheckResult, HealthCheckDetail } from '../types.js';
 
@@ -41,7 +42,7 @@ export class WorkflowsCheck implements HealthCheck {
             message: `${installedWorkflows.length} workflow(s) installed`
           });
           installedWorkflows.forEach(workflow => {
-            const fileName = workflow.split('/').pop();
+            const fileName = path.basename(workflow);
             details.push({
               status: 'info',
               message: `  • ${fileName}`

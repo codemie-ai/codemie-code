@@ -8,7 +8,7 @@
 import { pipeline } from 'stream/promises';
 import https from 'https';
 import http from 'http';
-import { TimeoutError, NetworkError } from './errors.js';
+import { NetworkError } from './errors.js';
 import { logger } from '../utils/logger.js';
 
 export interface HTTPClientOptions {
@@ -31,21 +31,21 @@ export class ProxyHTTPClient {
   private timeout: number;
 
   constructor(options: HTTPClientOptions = {}) {
-    this.timeout = options.timeout || 300000; // 5 minutes default
+    // Use provided timeout or 0 for unlimited (AI requests can be very long)
+    this.timeout = options.timeout || 0;
 
     // Connection pooling with keep-alive
+    // NO timeout on agent - we handle it at request level
     const agentOptions = {
       rejectUnauthorized: options.rejectUnauthorized ?? false,
       keepAlive: true,
-      maxSockets: 50,
-      timeout: 30000 // Connection timeout
+      maxSockets: 50
     };
 
     this.httpsAgent = new https.Agent(agentOptions);
     this.httpAgent = new http.Agent({
       keepAlive: true,
-      maxSockets: 50,
-      timeout: 30000
+      maxSockets: 50
     });
   }
 
@@ -60,6 +60,12 @@ export class ProxyHTTPClient {
     const protocol = url.protocol === 'https:' ? https : http;
     const agent = url.protocol === 'https:' ? this.httpsAgent : this.httpAgent;
 
+    logger.debug('[http-client] Forwarding request to upstream', {
+      url: url.toString(),
+      method: options.method,
+      hasBody: !!options.body
+    });
+
     return new Promise((resolve, reject) => {
       const requestOptions: http.RequestOptions = {
         hostname: url.hostname,
@@ -68,10 +74,17 @@ export class ProxyHTTPClient {
         method: options.method,
         headers: options.headers,
         agent,
-        timeout: this.timeout
+        // Only set timeout if explicitly configured (0 = unlimited)
+        timeout: Math.max(this.timeout, 0)
       };
 
       const req = protocol.request(requestOptions, (res) => {
+        logger.debug('[http-client] Received response from upstream', {
+          url: url.toString(),
+          statusCode: res.statusCode,
+          statusMessage: res.statusMessage,
+          headers: res.headers
+        });
         resolve(res);
       });
 
@@ -79,6 +92,10 @@ export class ProxyHTTPClient {
         // Handle client disconnection (normal behavior when user closes agent)
         if (error.message === 'aborted' || error.code === 'ECONNABORTED' || error.code === 'ERR_STREAM_PREMATURE_CLOSE') {
           // Silent rejection for normal client disconnect - don't log as error
+          logger.debug('[http-client] Client disconnected during request', {
+            url: url.toString(),
+            errorCode: error.code
+          });
           const abortError = new Error('Client disconnected');
           (abortError as any).isAborted = true;
           reject(abortError);
@@ -94,22 +111,41 @@ export class ProxyHTTPClient {
                               error.message?.includes('ECONNRESET');
 
         if (isNetworkError) {
+          // Log details to debug file only - no console spam
+          logger.debug('[http-client] Network error during request', {
+            url: url.toString(),
+            errorCode: error.code,
+            errorMessage: error.message,
+            hostname: url.hostname
+          });
           reject(new NetworkError(`Cannot connect to upstream: ${error.message}`, {
             errorCode: error.code || 'NETWORK_ERROR',
             hostname: url.hostname
           }));
         } else {
+          // Log details to debug file only - no console spam
+          logger.debug('[http-client] Request error', {
+            url: url.toString(),
+            errorCode: error.code,
+            errorMessage: error.message,
+            errorStack: error.stack
+          });
           reject(error);
         }
       });
 
-      req.on('timeout', () => {
-        req.destroy();
-        reject(new TimeoutError(`Request timeout after ${this.timeout}ms`, {
-          timeout: this.timeout,
-          url: url.toString()
-        }));
-      });
+      // Only set timeout handler if timeout is configured
+      if (this.timeout > 0) {
+        req.on('timeout', () => {
+          logger.warn('[http-client] Request timeout (non-fatal)', {
+            url: url.toString(),
+            timeout: this.timeout,
+            method: options.method
+          });
+          // DON'T destroy the request - let it continue
+          // This prevents breaking long-running AI requests
+        });
+      }
 
       // Write body for POST/PUT/PATCH requests
       if (options.body) {

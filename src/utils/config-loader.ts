@@ -45,7 +45,7 @@ export class ConfigLoader {
     const config: CodeMieConfigOptions = {
       name: 'default',
       provider: 'openai',
-      timeout: 300,
+      timeout: 0, // Unlimited timeout by default for long AI requests
       debug: false,
       allowedDirs: [],
       ignorePatterns: ['node_modules', '.git', 'dist', 'build']
@@ -495,7 +495,7 @@ export class ConfigLoader {
     const configs = [
       {
         data: {
-          timeout: 300,
+          timeout: 0, // Unlimited timeout by default for long AI requests
           debug: false
         },
         source: 'default' as const
@@ -642,7 +642,8 @@ export class ConfigLoader {
     // Always set generic CODEMIE_* vars
     if (config.provider) env.CODEMIE_PROVIDER = config.provider;
     if (config.baseUrl) env.CODEMIE_BASE_URL = config.baseUrl;
-    if (config.apiKey) env.CODEMIE_API_KEY = config.apiKey;
+    // Set CODEMIE_API_KEY even if empty string (for providers without auth)
+    if (config.apiKey !== undefined) env.CODEMIE_API_KEY = config.apiKey;
     if (config.model) env.CODEMIE_MODEL = config.model;
     if (config.timeout) env.CODEMIE_TIMEOUT = String(config.timeout);
     if (config.debug) env.CODEMIE_DEBUG = String(config.debug);
@@ -662,10 +663,11 @@ export class ConfigLoader {
         }
       }
 
-      // Map API key
-      if (config.apiKey && envMapping.apiKey) {
+      // Map API key - for providers without auth, use placeholder
+      if (envMapping.apiKey) {
+        const apiKeyValue = config.apiKey || (providerTemplate.requiresAuth === false ? 'not-required' : '');
         for (const envVar of envMapping.apiKey) {
-          env[envVar] = config.apiKey;
+          env[envVar] = apiKeyValue;
         }
       }
 
@@ -686,6 +688,17 @@ export class ConfigLoader {
         env.CODEMIE_INTEGRATION_ID = config.codeMieIntegration.id;
       }
     }
+
+    // Special case: AWS Bedrock-specific environment variables
+    if (providerName === 'bedrock') {
+      if (config.awsProfile) env.CODEMIE_AWS_PROFILE = config.awsProfile;
+      if (config.awsRegion) env.CODEMIE_AWS_REGION = config.awsRegion;
+      if (config.awsSecretAccessKey) env.CODEMIE_AWS_SECRET_ACCESS_KEY = config.awsSecretAccessKey;
+    }
+
+    // Token configuration (for agents that support it, e.g., Claude Code with Bedrock)
+    if (config.maxOutputTokens) env.CODEMIE_MAX_OUTPUT_TOKENS = String(config.maxOutputTokens);
+    if (config.maxThinkingTokens) env.CODEMIE_MAX_THINKING_TOKENS = String(config.maxThinkingTokens);
 
     return env;
   }

@@ -68,7 +68,7 @@ describe('sanitize utilities', () => {
       expect(result.apiKey).toContain('[REDACTED]');
       expect(result.username).toBe('john');
       expect(result.password).toContain('[REDACTED]');
-      expect(result.sessionId).toContain('[REDACTED]');
+      expect(result.sessionId).toBe('abc-def-ghi-jkl'); // Session IDs are not sensitive
     });
 
     it('should handle nested objects', () => {

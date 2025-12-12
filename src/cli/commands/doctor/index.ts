@@ -4,6 +4,7 @@
 
 import { Command } from 'commander';
 import chalk from 'chalk';
+import os from 'os';
 import { HealthCheck, ItemWiseHealthCheck, HealthCheckResult } from './types.js';
 import { HealthCheckFormatter } from './formatter.js';
 import {
@@ -11,6 +12,7 @@ import {
   NpmCheck,
   PythonCheck,
   UvCheck,
+  AwsCliCheck,
   AIConfigCheck,
   AgentsCheck,
   WorkflowsCheck
@@ -37,6 +39,50 @@ export function createDoctorCommand(): Command {
         }
       }
 
+      // Log system information for debugging
+      logger.debug('=== CodeMie Doctor - System Information ===');
+      logger.debug(`Platform: ${os.platform()}`);
+      logger.debug(`OS: ${os.type()} ${os.release()}`);
+      logger.debug(`Architecture: ${os.arch()}`);
+      logger.debug(`Node Version: ${process.version}`);
+      logger.debug(`Working Directory: ${process.cwd()}`);
+      logger.debug(`Home Directory: ${os.homedir()}`);
+      logger.debug(`Temp Directory: ${os.tmpdir()}`);
+
+      // Log relevant environment variables
+      logger.debug('=== Environment Variables ===');
+      const relevantEnvVars = [
+        'NODE_ENV',
+        'PATH',
+        'CODEMIE_DEBUG',
+        'CODEMIE_CONFIG_PATH',
+        'OPENAI_API_KEY',
+        'OPENAI_BASE_URL',
+        'ANTHROPIC_AUTH_TOKEN',
+        'ANTHROPIC_BASE_URL',
+        'GEMINI_API_KEY',
+        'GOOGLE_GEMINI_BASE_URL',
+        'AWS_PROFILE',
+        'AWS_REGION',
+        'npm_config_prefix',
+        'npm_config_global_prefix',
+        'npm_execpath'
+      ];
+
+      for (const key of relevantEnvVars) {
+        const value = process.env[key];
+        if (value) {
+          // Mask API keys for security
+          if (key.includes('KEY') || key.includes('TOKEN')) {
+            const masked = value.substring(0, 8) + '***' + value.substring(value.length - 4);
+            logger.debug(`${key}: ${masked}`);
+          } else {
+            logger.debug(`${key}: ${value}`);
+          }
+        }
+      }
+      logger.debug('');
+
       const formatter = new HealthCheckFormatter();
       const results: HealthCheckResult[] = [];
 
@@ -49,6 +95,7 @@ export function createDoctorCommand(): Command {
         new NpmCheck(),
         new PythonCheck(),
         new UvCheck(),
+        new AwsCliCheck(),
         new AIConfigCheck(),
         new AgentsCheck(),
         new WorkflowsCheck()
@@ -56,6 +103,9 @@ export function createDoctorCommand(): Command {
 
       // Run and display standard checks immediately
       for (const check of checks) {
+        logger.debug(`=== Running Check: ${check.name} ===`);
+        const startTime = Date.now();
+
         // Check if this is an ItemWiseHealthCheck
         const isItemWise = 'runWithItemDisplay' in check;
 
@@ -65,10 +115,20 @@ export function createDoctorCommand(): Command {
 
           // Run with item-by-item display
           const result = await (check as ItemWiseHealthCheck).runWithItemDisplay(
-            (itemName) => formatter.startItem(itemName),
-            (detail) => formatter.displayItem(detail)
+            (itemName) => {
+              logger.debug(`  Checking item: ${itemName}`);
+              formatter.startItem(itemName);
+            },
+            (detail) => {
+              logger.debug(`  Result: ${detail.status} - ${detail.message}`);
+              formatter.displayItem(detail);
+            }
           );
           results.push(result);
+
+          const elapsed = Date.now() - startTime;
+          logger.debug(`Check completed in ${elapsed}ms: ${result.success ? 'SUCCESS' : 'FAILED'}`);
+          logger.debug('');
 
           // Add blank line after section
           console.log();
@@ -76,10 +136,20 @@ export function createDoctorCommand(): Command {
           // Regular check with section-level progress
           formatter.startCheck(check.name);
           const result = await check.run((message) => {
+            logger.debug(`  Progress: ${message}`);
             formatter.updateProgress(message);
           });
           results.push(result);
           formatter.displayCheck(result);
+
+          const elapsed = Date.now() - startTime;
+          logger.debug(`Check completed in ${elapsed}ms: ${result.success ? 'SUCCESS' : 'FAILED'}`);
+          if (result.details && result.details.length > 0) {
+            result.details.forEach(detail => {
+              logger.debug(`  - ${detail.status}: ${detail.message}`);
+            });
+          }
+          logger.debug('');
         }
 
         // After AIConfigCheck, immediately run provider-specific checks
@@ -87,6 +157,10 @@ export function createDoctorCommand(): Command {
           const config = check.getConfig();
 
           if (config && config.provider) {
+            logger.debug(`=== Running Provider Check: ${config.provider} ===`);
+            logger.debug(`Base URL: ${config.baseUrl}`);
+            logger.debug(`Model: ${config.model}`);
+
             // Get health check from ProviderRegistry
             const healthCheck = ProviderRegistry.getHealthCheck(config.provider);
 
@@ -94,25 +168,43 @@ export function createDoctorCommand(): Command {
               formatter.startCheck('Provider');
 
               try {
+                const providerStartTime = Date.now();
                 const providerResult = await healthCheck.check(config);
+                const elapsed = Date.now() - providerStartTime;
+
+                logger.debug(`Provider check completed in ${elapsed}ms`);
+                logger.debug(`Status: ${providerResult.status}`);
+
                 const doctorResult = adaptProviderResult(providerResult);
                 results.push(doctorResult);
                 formatter.displayCheckWithHeader(doctorResult);
               } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                logger.error(`Provider check failed: ${errorMessage}`);
+                if (error instanceof Error && error.stack) {
+                  logger.debug(`Stack trace: ${error.stack}`);
+                }
+
                 // If check throws, capture error
                 results.push({
                   name: 'Provider Check Error',
                   success: false,
                   details: [{
                     status: 'error',
-                    message: `Check failed: ${error instanceof Error ? error.message : String(error)}`
+                    message: `Check failed: ${errorMessage}`
                   }]
                 });
               }
+            } else {
+              logger.debug(`No health check available for provider: ${config.provider}`);
             }
           }
         }
       }
+
+      logger.debug('=== All Checks Completed ===');
+      const successCount = results.filter(r => r.success).length;
+      logger.debug(`Passed: ${successCount}/${results.length}`);
 
       // Display summary
       await formatter.displaySummary(results);
