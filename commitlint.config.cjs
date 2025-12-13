@@ -34,6 +34,7 @@ module.exports = {
         'config', // Configuration management
         'proxy', // Proxy system
         'workflows', // Workflow management
+        'ci', // CI/CD pipeline
         'analytics', // Analytics system
         'utils', // Utility functions
         'deps', // Dependencies
