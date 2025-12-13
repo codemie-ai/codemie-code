@@ -16,7 +16,7 @@ jobs:
       # Conventional Commits pattern: type(scope): description
       # Examples: feat(cli): add new command, fix: resolve bug
       VALIDATION_PATTERN: '^(feat|fix|docs|style|refactor|perf|test|chore|ci)(\([a-z-]+\))?!?: [a-z].*$'
-      MAX_LENGTH: '72'
+      MAX_LENGTH: '100'
 
     steps:
       - name: Checkout code
