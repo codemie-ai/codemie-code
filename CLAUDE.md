@@ -30,7 +30,7 @@ npm run test:run           # Run tests once (no watch mode)
 # Code Quality & Validation
 npm run lint               # Check code style with ESLint (max 0 warnings)
 npm run lint:fix           # Fix linting issues automatically
-npm run validate:commit    # Validate last commit message (Conventional Commits)
+npm run commitlint:last    # Validate last commit message (Conventional Commits)
 npm run validate:secrets   # Check for exposed secrets (requires Docker)
 npm run license-check      # Check dependency licenses
 npm run ci                 # Run full CI: commit validation + license + lint + build + tests

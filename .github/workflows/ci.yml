@@ -12,36 +12,28 @@ jobs:
     name: Commit & PR Validation
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
-    env:
-      # Conventional Commits pattern: type(scope): description
-      # Examples: feat(cli): add new command, fix: resolve bug
-      VALIDATION_PATTERN: '^(feat|fix|docs|style|refactor|perf|test|chore|ci)(\([a-z-]+\))?!?: [a-z].*$'
-      MAX_LENGTH: '100'
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 2
+          fetch-depth: 0
 
-      - name: Validate commit message
-        run: |
-          python3 .github/scripts/validate_commit.py \
-            --pattern "$VALIDATION_PATTERN" \
-            --max-length $MAX_LENGTH \
-            --verbose
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate commit messages
+        run: npx commitlint --from ${{ github.event.pull_request.base.sha }} --to HEAD --verbose
 
       - name: Validate PR title
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          python3 .github/scripts/validate_pr_title.py \
-            --pattern "$VALIDATION_PATTERN" \
-            --max-length $MAX_LENGTH \
-            --pr-number ${{ github.event.pull_request.number }} \
-            --repo ${{ github.repository }} \
-            --verbose
+        run: echo "${{ github.event.pull_request.title }}" | npx commitlint --verbose
 
   secrets-detection:
     name: Secrets Detection

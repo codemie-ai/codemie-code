@@ -223,7 +223,7 @@ npm run ci:full
 
 ```bash
 # Validate your last commit message
-npm run validate:commit
+npm run commitlint:last
 
 # Check for exposed secrets (requires Docker)
 npm run validate:secrets
