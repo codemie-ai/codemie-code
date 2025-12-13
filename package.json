@@ -37,8 +37,15 @@
     "license-check": "npx license-checker --summary --onlyAllow 'MIT;Apache-2.0;ISC;BSD-2-Clause;BSD-3-Clause;0BSD;CC0-1.0;Unlicense;BlueOak-1.0.0;Python-2.0;CC-BY-4.0;Apache*;(MIT OR CC0-1.0)'",
     "ci": "npm run validate:commit && npm run license-check && npm run lint && npm run build && npm run test:unit && npm run test:integration",
     "ci:full": "npm run validate:commit && npm run validate:secrets && npm run license-check && npm run lint && npm run build && npm run test:unit && npm run test:integration",
+    "prepare": "husky",
     "prepublishOnly": "npm run build",
     "prepack": "npm run build"
+  },
+  "lint-staged": {
+    "*.ts": [
+      "eslint --max-warnings=0",
+      "vitest related --run"
+    ]
   },
   "keywords": [
     "ai",
@@ -113,6 +120,8 @@
     "zod": "^4.1.12"
   },
   "devDependencies": {
+    "@commitlint/cli": "^20.2.0",
+    "@commitlint/config-conventional": "^20.2.0",
     "@eslint/js": "^9.38.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.5",
@@ -122,6 +131,8 @@
     "@typescript-eslint/parser": "^8.46.2",
     "@vitest/ui": "^4.0.10",
     "eslint": "^9.38.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.7",
     "typescript": "^5.3.3",
     "vitest": "^4.0.10"
   },
