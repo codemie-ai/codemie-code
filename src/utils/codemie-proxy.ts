@@ -173,10 +173,10 @@ export class CodeMieProxy {
       // 1. Build context
       const context = await this.buildContext(req);
 
-      // 2. Run onRequest interceptors
+      // 2. Run onRequest interceptors (with early termination if blocked)
       await this.runHook('onRequest', interceptor =>
         interceptor.onRequest?.(context)
-      );
+      , context);
 
       // 2.5. Check if request was blocked by any interceptor
       if (context.metadata.blocked) {
@@ -406,14 +406,22 @@ export class CodeMieProxy {
 
   /**
    * Run interceptor hook safely (errors don't break flow)
+   * For onRequest hooks: stop execution if any plugin blocks the request
    */
   private async runHook(
     hookName: string,
-    fn: (interceptor: ProxyInterceptor) => Promise<void> | void | undefined
+    fn: (interceptor: ProxyInterceptor) => Promise<void> | void | undefined,
+    context?: ProxyContext
   ): Promise<void> {
     for (const interceptor of this.interceptors) {
       try {
         await fn(interceptor);
+
+        // For onRequest hooks: check if request was blocked and stop early
+        if (hookName === 'onRequest' && context?.metadata.blocked) {
+          logger.debug(`[proxy] Request blocked by ${interceptor.name}, skipping remaining onRequest hooks`);
+          break;
+        }
       } catch (error) {
         logger.error(`[CodeMieProxy] Hook ${hookName} error in ${interceptor.name}:`, error);
         // Continue with other interceptors

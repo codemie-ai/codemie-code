@@ -27,12 +27,6 @@ export const BedrockTemplate = registerProvider<ProviderTemplate>({
   supportsModelInstallation: false,
   supportsStreaming: true,
 
-  envMapping: {
-    baseUrl: ['AWS_BEDROCK_ENDPOINT', 'AWS_ENDPOINT_URL'],
-    apiKey: ['AWS_ACCESS_KEY_ID'],
-    model: ['AWS_BEDROCK_MODEL', 'BEDROCK_MODEL']
-  },
-
   setupInstructions: `
 # AWS Bedrock Setup Instructions
 

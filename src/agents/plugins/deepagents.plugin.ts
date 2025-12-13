@@ -22,17 +22,14 @@ export const DeepAgentsPluginMetadata: AgentMetadata = {
 
   supportedProviders: ['ollama', 'litellm', 'ai-run-sso'],
   blockedModelPatterns: [], // Accepts both Claude and OpenAI models
+  recommendedModels: ['claude-4-5-sonnet', 'gpt-4.1', 'gpt-4o'],
 
   // Note: Deep Agents CLI doesn't support CLI arguments for API configuration
   // All configuration must be done via environment variables
 
   ssoConfig: {
     enabled: true,
-    clientType: 'codemie-deepagents',
-    envOverrides: {
-      baseUrl: 'OPENAI_BASE_URL', // Deep Agents uses OpenAI SDK for custom base URLs
-      apiKey: 'OPENAI_API_KEY'     // Use OpenAI env vars when proxying through SSO/LiteLLM
-    }
+    clientType: 'codemie-deepagents'
   },
 
   lifecycle: {

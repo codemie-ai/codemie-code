@@ -15,35 +15,35 @@ export const OllamaTemplate = registerProvider<ProviderTemplate>({
   displayName: 'Ollama',
   description: 'Popular open-source local LLM runner - optimized for coding with 16GB RAM',
   defaultPort: 11434,
-  defaultBaseUrl: 'http://localhost:11434',
+  defaultBaseUrl: 'http://localhost:11434/v1',
   requiresAuth: false,
   authType: 'none',
   recommendedModels: [
     'qwen2.5-coder',
-    'codellama',
-    'deepseek-coder-v2'
+    'qwen3-vl:235b-cloud',
+    'deepseek-coder-v2',
+    'deepseek-v3.1:671b-cloud'
   ],
   modelMetadata: {
     'qwen2.5-coder': {
       name: 'Qwen 2.5 Coder',
-      description: 'Excellent for coding tasks (7B, ~5GB)',
+      description: 'Excellent for coding tasks with tool support (7B, ~5GB)',
     },
-    'codellama': {
-      name: 'Code Llama',
-      description: 'Optimized for code generation (7B, ~3.8GB)',
+    'qwen3-vl:235b-cloud': {
+      name: 'Qwen 3 VL',
+      description: 'Latest Qwen model with vision and tool support (235B)',
     },
     'deepseek-coder-v2': {
       name: 'DeepSeek Coder V2',
-      description: 'Advanced coding model (16B, ~9GB)',
+      description: 'Advanced coding model with tool support (16B, ~9GB)',
+    },
+    'deepseek-v3.1:671b-cloud': {
+      name: 'DeepSeek V3.1',
+      description: 'Latest DeepSeek model with advanced reasoning (671B)',
     }
   },
   capabilities: ['streaming', 'tools', 'embeddings', 'model-management'],
   supportsModelInstallation: true,
-  envMapping: {
-    baseUrl: ['OPENAI_BASE_URL'],
-    apiKey: ['OPENAI_API_KEY'],
-    model: ['OPENAI_MODEL']
-  },
   healthCheckEndpoint: '/api/tags',
   setupInstructions: `
 # Ollama Setup Instructions
@@ -76,11 +76,16 @@ codemie models install ollama/llama3.2
 codemie models list ollama
 \`\`\`
 
-## Recommended Coding Models (16GB RAM Compatible)
+## Recommended Coding Models (Tool Support Required)
 
-- **qwen2.5-coder**: Excellent for coding tasks (7B parameters, ~5GB)
-- **codellama**: Optimized for code generation (7B parameters, ~3.8GB)
-- **deepseek-coder-v2**: Advanced coding model (16B parameters, ~9GB)
+**Important**: Agents like Codex require models with function calling/tool support.
+
+- **qwen2.5-coder**: Excellent for coding tasks with tool support (7B, ~5GB)
+- **qwen3-vl:235b-cloud**: Latest Qwen with vision and tool support (235B)
+- **deepseek-coder-v2**: Advanced coding model with tool support (16B, ~9GB)
+- **deepseek-v3.1:671b-cloud**: Latest DeepSeek with advanced reasoning (671B)
+
+**Note**: Models without tool support (like codellama) will fail with agents that require function calling.
 
 ## Documentation
 

@@ -25,11 +25,6 @@ export const SSOTemplate = registerProvider<ProviderTemplate>({
   capabilities: ['streaming', 'tools', 'sso-auth', 'function-calling', 'embeddings'],
   supportsModelInstallation: false,
   supportsStreaming: true,
-  envMapping: {
-    baseUrl: ['OPENAI_BASE_URL', 'ANTHROPIC_BASE_URL', 'GOOGLE_GEMINI_BASE_URL'],
-    apiKey: ['OPENAI_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'GEMINI_API_KEY'],
-    model: ['OPENAI_MODEL', 'ANTHROPIC_MODEL', 'GEMINI_MODEL']
-  },
   customProperties: {
     requiresIntegration: true,
     sessionDuration: 86400000 // 24 hours

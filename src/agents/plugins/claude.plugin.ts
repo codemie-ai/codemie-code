@@ -29,14 +29,11 @@ export const ClaudePluginMetadata: AgentMetadata = {
 
   supportedProviders: ['litellm', 'ai-run-sso', 'bedrock'],
   blockedModelPatterns: [],
+  recommendedModels: ['claude-4-5-sonnet', 'claude-4-opus', 'gpt-4.1'],
 
   ssoConfig: {
     enabled: true,
-    clientType: 'codemie-claude',
-    envOverrides: {
-      baseUrl: 'ANTHROPIC_BASE_URL',
-      apiKey: 'ANTHROPIC_AUTH_TOKEN'
-    }
+    clientType: 'codemie-claude'
   },
 
   lifecycle: {

@@ -59,11 +59,8 @@ export const AdvancedAgentMetadata: AgentMetadata = {
   // === SSO/Proxy Support (for ai-run-sso provider) ===
   ssoConfig: {
     enabled: true,
-    clientType: 'codemie-newagent',          // Unique client identifier
-    envOverrides: {
-      baseUrl: 'NEWAGENT_BASE_URL',          // Which env var to override with proxy URL
-      apiKey: 'NEWAGENT_API_KEY'             // Which env var to override with proxy token
-    }
+    clientType: 'codemie-newagent'           // Unique client identifier
+    // Proxy auto-detects env vars from envMapping (uses first value from each array)
   },
 
   // === Model Injection (if agent needs --model flag) ===
@@ -385,10 +382,6 @@ interface AgentMetadata {
   ssoConfig?: {
     enabled: boolean;
     clientType: string;                      // Unique client identifier
-    envOverrides: {
-      baseUrl: string;                       // Env var to override with proxy URL
-      apiKey: string;                        // Env var to override with proxy token
-    };
   };
 
   // === CLI Options ===
@@ -439,7 +432,7 @@ interface AgentMetadata {
 
 ### Proxy/SSO not working
 - Verify `ssoConfig.enabled = true`
-- Check `envOverrides` match agent's expected variables
+- Check `envMapping` defines baseUrl and apiKey (proxy uses first value from each array)
 - Confirm `clientType` is unique across plugins
 - Test with: `codemie-{name} --provider ai-run-sso "test"`
 

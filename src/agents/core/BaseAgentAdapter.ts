@@ -4,9 +4,11 @@ import { logger } from '../../utils/logger.js';
 import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
 import { CodeMieProxy } from '../../utils/codemie-proxy.js';
+import { ProxyConfig } from '../../proxy/types.js';
 import { ProviderRegistry } from '../../providers/core/registry.js';
 import { MetricsOrchestrator } from '../../metrics/MetricsOrchestrator.js';
 import type { AgentMetricsSupport } from '../../metrics/types.js';
+import type { CodeMieConfigOptions } from '../../env/types.js';
 import { getRandomWelcomeMessage, getRandomGoodbyeMessage } from '../../utils/goodbye-messages.js';
 import { renderCodeMieLogo } from '../../utils/ascii-logo.js';
 import chalk from 'chalk';
@@ -130,28 +132,6 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     const { logger } = await import('../../utils/logger.js');
     logger.setSessionId(sessionId);
 
-    // Log all environment variables for debugging (sanitized)
-    logger.debug('=== Environment Variables (All) ===');
-    const sortedEnvKeys = Object.keys(env).sort();
-    for (const key of sortedEnvKeys) {
-      const value = env[key];
-      if (value) {
-        // Mask sensitive values (API keys, tokens, secrets)
-        if (key.toLowerCase().includes('key') ||
-            key.toLowerCase().includes('token') ||
-            key.toLowerCase().includes('secret') ||
-            key.toLowerCase().includes('password')) {
-          const masked = value.length > 12
-            ? value.substring(0, 8) + '***' + value.substring(value.length - 4)
-            : '***';
-          logger.debug(`${key}: ${masked}`);
-        } else {
-          logger.debug(`${key}: ${value}`);
-        }
-      }
-    }
-    logger.debug('=== End Environment Variables ===');
-
     // Setup metrics orchestrator with the session ID
     const metricsAdapter = this.getMetricsAdapter();
     if (metricsAdapter && env.CODEMIE_PROVIDER) {
@@ -197,7 +177,58 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       ? this.metadata.argumentTransform(args, this.extractConfig(env))
       : args;
 
-    // Run lifecycle hook
+    // Transform CODEMIE_* → agent-specific env vars (based on envMapping)
+    env = this.transformEnvVars(env);
+
+    // Log configuration (CODEMIE_* + transformed agent-specific vars)
+    logger.debug('=== Agent Configuration ===');
+    const codemieVars = Object.keys(env)
+      .filter(k => k.startsWith('CODEMIE_'))
+      .sort();
+
+    for (const key of codemieVars) {
+      const value = env[key];
+      if (value) {
+        if (key.includes('KEY') || key.includes('TOKEN')) {
+          const masked = value.length > 12
+            ? value.substring(0, 8) + '***' + value.substring(value.length - 4)
+            : '***';
+          logger.debug(`${key}: ${masked}`);
+        } else if (key === 'CODEMIE_PROFILE_CONFIG') {
+          logger.debug(`${key}: <config object>`);
+        } else {
+          logger.debug(`${key}: ${value}`);
+        }
+      }
+    }
+
+    if (this.metadata.envMapping) {
+      const agentVars = [
+        ...(this.metadata.envMapping.baseUrl || []),
+        ...(this.metadata.envMapping.apiKey || []),
+        ...(this.metadata.envMapping.model || [])
+      ].sort();
+
+      if (agentVars.length > 0) {
+        logger.debug('--- Agent-Specific Variables ---');
+        for (const key of agentVars) {
+          const value = env[key];
+          if (value) {
+            if (key.toLowerCase().includes('key') || key.toLowerCase().includes('token')) {
+              const masked = value.length > 12
+                ? value.substring(0, 8) + '***' + value.substring(value.length - 4)
+                : '***';
+              logger.debug(`${key}: ${masked}`);
+            } else {
+              logger.debug(`${key}: ${value}`);
+            }
+          }
+        }
+      }
+    }
+    logger.debug('=== End Configuration ===');
+
+    // Run lifecycle hook (can override or extend env transformations)
     if (this.metadata.lifecycle?.beforeRun) {
       env = await this.metadata.lifecycle.beforeRun(env, this.extractConfig(env));
     }
@@ -207,6 +238,9 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     }
 
     try {
+      // Log command execution
+      logger.debug(`Executing: ${this.metadata.cliCommand} ${transformedArgs.join(' ')}`);
+
       // Spawn the CLI command with inherited stdio
       // On Windows, use shell: true to resolve .cmd/.bat executables
       const isWindows = process.platform === 'win32';
@@ -280,9 +314,9 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
           // Clean up proxy
           await cleanup();
 
-          // Run afterRun hook
+          // Run afterRun hook (pass environment for cleanup logic)
           if (this.metadata.lifecycle?.afterRun && code !== null) {
-            await this.metadata.lifecycle.afterRun(code);
+            await this.metadata.lifecycle.afterRun(code, env);
           }
 
           // Show goodbye message with random easter egg
@@ -311,67 +345,78 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   }
 
   /**
+   * Check if proxy should be used for this agent/provider combination
+   */
+  private shouldUseProxy(env: NodeJS.ProcessEnv): boolean {
+    const providerName = env.CODEMIE_PROVIDER;
+    if (!providerName) return false;
+
+    const provider = ProviderRegistry.getProvider(providerName);
+    const isSSOProvider = provider?.authType === 'sso';
+    const isProxyEnabled = this.metadata.ssoConfig?.enabled ?? false;
+
+    return isSSOProvider && isProxyEnabled;
+  }
+
+  /**
+   * Build proxy configuration from environment variables
+   */
+  private buildProxyConfig(env: NodeJS.ProcessEnv): ProxyConfig {
+    // Get and validate target URL
+    const targetApiUrl = env.CODEMIE_BASE_URL;
+    if (!targetApiUrl) {
+      throw new Error('No API URL found for SSO authentication');
+    }
+
+    // Parse timeout (seconds → milliseconds, default 0 = unlimited)
+    const timeoutSeconds = env.CODEMIE_TIMEOUT ? parseInt(env.CODEMIE_TIMEOUT, 10) : 0;
+    const timeoutMs = timeoutSeconds * 1000;
+
+    // Parse profile config from JSON
+    let profileConfig: CodeMieConfigOptions | undefined = undefined;
+    if (env.CODEMIE_PROFILE_CONFIG) {
+      try {
+        profileConfig = JSON.parse(env.CODEMIE_PROFILE_CONFIG) as CodeMieConfigOptions;
+      } catch (error) {
+        logger.warn('[BaseAgentAdapter] Failed to parse profile config:', error);
+      }
+    }
+
+    return {
+      targetApiUrl,
+      clientType: this.metadata.ssoConfig?.clientType || 'unknown',
+      timeout: timeoutMs,
+      model: env.CODEMIE_MODEL,
+      provider: env.CODEMIE_PROVIDER,
+      profile: env.CODEMIE_PROFILE_NAME,
+      integrationId: env.CODEMIE_INTEGRATION_ID,
+      sessionId: env.CODEMIE_SESSION_ID,
+      version: env.CODEMIE_CLI_VERSION,
+      profileConfig
+    };
+  }
+
+  /**
    * Centralized proxy setup
    * Works for ALL agents based on their metadata
    */
   protected async setupProxy(env: NodeJS.ProcessEnv): Promise<void> {
-    // Check if provider uses SSO authentication
-    const providerName = env.CODEMIE_PROVIDER;
-    const provider = providerName ? ProviderRegistry.getProvider(providerName) : null;
-    const isSSOProvider = provider?.authType === 'sso';
-
-    if (!isSSOProvider || !this.metadata.ssoConfig?.enabled) {
-      return; // No proxy needed
+    // Early return if proxy not needed
+    if (!this.shouldUseProxy(env)) {
+      return;
     }
 
     try {
-      // Get the target API URL
-      const targetApiUrl = env.CODEMIE_BASE_URL || env.OPENAI_BASE_URL;
+      // Build proxy configuration
+      const config = this.buildProxyConfig(env);
 
-      if (!targetApiUrl) {
-        throw new Error('No API URL found for SSO authentication');
-      }
-
-      // Parse timeout from environment (in seconds, convert to milliseconds)
-      // Default to 0 (unlimited) for AI requests that can take a long time
-      const timeoutSeconds = env.CODEMIE_TIMEOUT ? parseInt(env.CODEMIE_TIMEOUT, 10) : 0;
-      const timeoutMs = timeoutSeconds * 1000;
-
-      // Extract config values from environment (includes CLI overrides)
-      const config = this.extractConfig(env);
-
-      // Get session ID from environment (set at agent start)
-      const sessionId = env.CODEMIE_SESSION_ID;
-
-      // Deserialize profile config (read once at CLI level)
-      let profileConfig = undefined;
-      if (env.CODEMIE_PROFILE_CONFIG) {
-        try {
-          profileConfig = JSON.parse(env.CODEMIE_PROFILE_CONFIG);
-        } catch (error) {
-          logger.debug('[BaseAgentAdapter] Failed to parse profile config:', error);
-        }
-      }
-
-      // Create and start the proxy with full config
-      this.proxy = new CodeMieProxy({
-        targetApiUrl,
-        clientType: this.metadata.ssoConfig.clientType,
-        timeout: timeoutMs,
-        model: config.model,
-        provider: config.provider,
-        profile: env.CODEMIE_PROFILE_NAME,
-        integrationId: env.CODEMIE_INTEGRATION_ID,
-        sessionId,
-        version: env.CODEMIE_CLI_VERSION,
-        profileConfig
-      });
-
+      // Create and start the proxy
+      this.proxy = new CodeMieProxy(config);
       const { url } = await this.proxy.start();
 
-      const { baseUrl, apiKey } = this.metadata.ssoConfig.envOverrides;
-      env[baseUrl] = url;
-      env[apiKey] = 'proxy-handled';
+      // Update environment with proxy URL
+      env.CODEMIE_BASE_URL = url;
+      env.CODEMIE_API_KEY = 'proxy-handled';
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       throw new Error(`Proxy setup failed: ${errorMessage}`);
@@ -387,7 +432,69 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       model: env.CODEMIE_MODEL,
       baseUrl: env.CODEMIE_BASE_URL,
       apiKey: env.CODEMIE_API_KEY,
-      timeout: env.CODEMIE_TIMEOUT ? parseInt(env.CODEMIE_TIMEOUT, 10) : undefined
+      timeout: env.CODEMIE_TIMEOUT ? parseInt(env.CODEMIE_TIMEOUT, 10) : undefined,
+      profileName: env.CODEMIE_PROFILE_NAME
     };
+  }
+
+  /**
+   * Transform CODEMIE_* environment variables to agent-specific format
+   * based on agent's envMapping metadata.
+   *
+   * This is called automatically before lifecycle.beforeRun hook.
+   * Agents can still override this in their lifecycle hooks for custom logic.
+   *
+   * IMPORTANT: Clears existing agent-specific vars first to prevent
+   * contamination from previous shell sessions.
+   */
+  protected transformEnvVars(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+    const { envMapping } = this.metadata;
+
+    if (!envMapping) {
+      return env;
+    }
+
+    // Step 1: Clear all agent-specific env vars first to prevent contamination
+    // from previous shell sessions
+    if (envMapping.baseUrl) {
+      for (const envVar of envMapping.baseUrl) {
+        delete env[envVar];
+      }
+    }
+    if (envMapping.apiKey) {
+      for (const envVar of envMapping.apiKey) {
+        delete env[envVar];
+      }
+    }
+    if (envMapping.model) {
+      for (const envVar of envMapping.model) {
+        delete env[envVar];
+      }
+    }
+
+    // Step 2: Set new values from CODEMIE_* vars
+    // Transform base URL
+    if (env.CODEMIE_BASE_URL && envMapping.baseUrl) {
+      for (const envVar of envMapping.baseUrl) {
+        env[envVar] = env.CODEMIE_BASE_URL;
+      }
+    }
+
+    // Transform API key (always set, even if empty)
+    if (envMapping.apiKey) {
+      const apiKeyValue = env.CODEMIE_API_KEY || '';
+      for (const envVar of envMapping.apiKey) {
+        env[envVar] = apiKeyValue;
+      }
+    }
+
+    // Transform model
+    if (env.CODEMIE_MODEL && envMapping.model) {
+      for (const envVar of envMapping.model) {
+        env[envVar] = env.CODEMIE_MODEL;
+      }
+    }
+
+    return env;
   }
 }

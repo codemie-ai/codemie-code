@@ -69,13 +69,6 @@ export interface ProviderTemplate {
   supportsModelInstallation: boolean; // Can install models locally
   supportsStreaming?: boolean;       // Supports streaming responses (default: true)
 
-  // Environment Variable Mapping
-  envMapping?: {                     // Environment variable mapping for external agents
-    baseUrl?: string[];              // ['OPENAI_BASE_URL', 'ANTHROPIC_BASE_URL']
-    apiKey?: string[];               // ['OPENAI_API_KEY', 'ANTHROPIC_AUTH_TOKEN']
-    model?: string[];                // ['OPENAI_MODEL', 'ANTHROPIC_MODEL']
-  };
-
   // Health & Setup
   healthCheckEndpoint?: string;      // Endpoint for health check
   setupInstructions?: string;        // Markdown installation guide

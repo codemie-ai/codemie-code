@@ -231,13 +231,6 @@ export class AgentCLI {
       console.log(chalk.white(`\nSupported providers: ${metadata.supportedProviders.join(', ')}`));
       console.log(chalk.white('\nOptions:'));
       console.log(chalk.white('  1. Run setup to choose a different provider: ') + chalk.cyan('codemie setup'));
-
-      if (this.adapter.name === 'claude') {
-        console.log(chalk.white('  2. Or configure environment variables directly:'));
-        console.log(chalk.white('     export ANTHROPIC_BASE_URL="https://litellm....."'));
-        console.log(chalk.white('     export ANTHROPIC_AUTH_TOKEN="sk...."'));
-        console.log(chalk.white('     export ANTHROPIC_MODEL="claude-4-5-sonnet"'));
-      }
       return false;
     }
 
@@ -249,26 +242,21 @@ export class AgentCLI {
       logger.error(`Model '${model}' is not compatible with ${this.adapter.displayName}`);
       console.log(chalk.white('\nOptions:'));
 
-      // Provide agent-specific model suggestions
-      let suggestedModel = 'gpt-4.1';
-      let modelDescription = 'OpenAI-compatible models';
+      // Get recommended models from agent metadata
+      const recommendedModels = metadata.recommendedModels;
 
-      if (this.adapter.name === 'gemini') {
-        suggestedModel = 'gemini-2.5-flash';
-        modelDescription = 'Gemini models';
-      } else if (this.adapter.name === 'claude') {
-        suggestedModel = 'claude-4-5-sonnet';
-        modelDescription = 'Claude or GPT models';
-      } else if (this.adapter.name === 'codex') {
-        suggestedModel = 'gpt-4.1';
-        modelDescription = 'OpenAI-compatible models';
+      if (recommendedModels && recommendedModels.length > 0) {
+        const modelExamples = recommendedModels.slice(0, 3).join(', ');
+        const suggestedModel = recommendedModels[0];
+        const command = this.adapter.name.startsWith('codemie-') ? this.adapter.name : `codemie-${this.adapter.name}`;
+
+        console.log(chalk.white(`  1. ${this.adapter.displayName} requires compatible models (e.g., ${modelExamples})`));
+        console.log(chalk.white('  2. Update profile: ') + chalk.cyan('codemie setup'));
+        console.log(chalk.white(`  3. Override for this session: ${command} --model ${suggestedModel}`));
+      } else {
+        console.log(chalk.white('  1. Update profile: ') + chalk.cyan('codemie setup'));
       }
 
-      console.log(chalk.white(`  1. ${this.adapter.name} requires ${modelDescription} (e.g., ${suggestedModel})`));
-      console.log(chalk.white('  2. Update profile: ') + chalk.cyan('codemie setup'));
-      // Handle special case where adapter name already includes 'codemie-' prefix
-      const command = this.adapter.name.startsWith('codemie-') ? this.adapter.name : `codemie-${this.adapter.name}`;
-      console.log(chalk.white(`  3. Override for this session: ${command} --model ${suggestedModel}`));
       return false;
     }
 

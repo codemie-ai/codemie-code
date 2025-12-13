@@ -40,15 +40,12 @@ export interface AgentMetadata {
   // === Compatibility Rules ===
   supportedProviders: string[];    // ['openai', 'litellm', 'ai-run-sso']
   blockedModelPatterns?: RegExp[]; // [/^claude/i] for Codex
+  recommendedModels?: string[];    // ['gpt-4.1', 'gpt-4o'] - suggested models for error messages
 
   // === Proxy Configuration ===
   ssoConfig?: {
     enabled: boolean;              // Enable proxy support
     clientType: string;            // 'codemie-claude'
-    envOverrides: {                // Which env vars to override
-      baseUrl: string;             // 'ANTHROPIC_BASE_URL'
-      apiKey: string;              // 'ANTHROPIC_AUTH_TOKEN'
-    };
   };
 
   // === CLI Options ===
@@ -62,7 +59,7 @@ export interface AgentMetadata {
 
   lifecycle?: {
     beforeRun?: (env: NodeJS.ProcessEnv, config: AgentConfig) => Promise<NodeJS.ProcessEnv>;
-    afterRun?: (exitCode: number) => Promise<void>;
+    afterRun?: (exitCode: number, env: NodeJS.ProcessEnv) => Promise<void>;
   };
 
   // === Built-in Agent Support ===
@@ -92,6 +89,7 @@ export interface AgentConfig {
   baseUrl?: string;
   apiKey?: string;
   timeout?: number;
+  profileName?: string;
 }
 
 /**

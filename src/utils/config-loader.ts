@@ -70,7 +70,41 @@ export class ConfigLoader {
       // No .env file, that's fine
     }
     const envConfig = this.loadFromEnv();
-    Object.assign(config, this.removeUndefined(envConfig));
+
+    // If a profile is explicitly selected, only apply env vars that aren't profile-specific
+    // This prevents environment contamination from overriding the selected profile
+    if (cliOverrides?.name) {
+      // Only apply env vars for fields not explicitly set in CLI overrides
+      const filteredEnvConfig = { ...envConfig };
+      const filtered: string[] = [];
+
+      // Don't override profile's baseUrl, apiKey, model, provider unless explicitly in CLI
+      if (!cliOverrides.baseUrl && filteredEnvConfig.baseUrl) {
+        delete filteredEnvConfig.baseUrl;
+        filtered.push('baseUrl');
+      }
+      if (!cliOverrides.apiKey && filteredEnvConfig.apiKey) {
+        delete filteredEnvConfig.apiKey;
+        filtered.push('apiKey');
+      }
+      if (!cliOverrides.model && filteredEnvConfig.model) {
+        delete filteredEnvConfig.model;
+        filtered.push('model');
+      }
+      if (!cliOverrides.provider && filteredEnvConfig.provider) {
+        delete filteredEnvConfig.provider;
+        filtered.push('provider');
+      }
+
+      if (filtered.length > 0 && config.debug) {
+        console.log(`[ConfigLoader] Profile protection: filtered environment vars: ${filtered.join(', ')}`);
+      }
+
+      Object.assign(config, this.removeUndefined(filteredEnvConfig));
+    } else {
+      // No explicit profile selected, use normal priority
+      Object.assign(config, this.removeUndefined(envConfig));
+    }
 
     // 1. CLI arguments (highest priority)
     if (cliOverrides) {
@@ -633,51 +667,29 @@ export class ConfigLoader {
   }
 
   /**
-   * Export provider-specific environment variables
-   * Uses ProviderRegistry to get env mappings from provider templates
+   * Export generic CODEMIE_* environment variables
+   *
+   * Agents are responsible for transforming CODEMIE_* vars to their own format
+   * (e.g., ANTHROPIC_*, OPENAI_*, GEMINI_*) in their lifecycle.beforeRun hooks.
    */
   static exportProviderEnvVars(config: CodeMieConfigOptions): Record<string, string> {
     const env: Record<string, string> = {};
 
-    // Always set generic CODEMIE_* vars
-    if (config.provider) env.CODEMIE_PROVIDER = config.provider;
-    if (config.baseUrl) env.CODEMIE_BASE_URL = config.baseUrl;
-    // Set CODEMIE_API_KEY even if empty string (for providers without auth)
-    if (config.apiKey !== undefined) env.CODEMIE_API_KEY = config.apiKey;
-    if (config.model) env.CODEMIE_MODEL = config.model;
-    if (config.timeout) env.CODEMIE_TIMEOUT = String(config.timeout);
-    if (config.debug) env.CODEMIE_DEBUG = String(config.debug);
-
-    // Get provider template from registry
+    // Get provider template for auth check
     const providerName = (config.provider || 'openai').toLowerCase();
     const providerTemplate = ProviderRegistry.getProvider(providerName);
 
-    if (providerTemplate?.envMapping) {
-      // Apply env mappings from provider template
-      const { envMapping } = providerTemplate;
+    // Set generic CODEMIE_* vars (used by all agents)
+    if (config.provider) env.CODEMIE_PROVIDER = config.provider;
+    if (config.baseUrl) env.CODEMIE_BASE_URL = config.baseUrl;
 
-      // Map base URL
-      if (config.baseUrl && envMapping.baseUrl) {
-        for (const envVar of envMapping.baseUrl) {
-          env[envVar] = config.baseUrl;
-        }
-      }
+    // Set CODEMIE_API_KEY with appropriate default for providers without auth
+    const apiKeyValue = config.apiKey || (providerTemplate?.requiresAuth === false ? 'not-required' : '');
+    env.CODEMIE_API_KEY = apiKeyValue;
 
-      // Map API key - for providers without auth, use placeholder
-      if (envMapping.apiKey) {
-        const apiKeyValue = config.apiKey || (providerTemplate.requiresAuth === false ? 'not-required' : '');
-        for (const envVar of envMapping.apiKey) {
-          env[envVar] = apiKeyValue;
-        }
-      }
-
-      // Map model
-      if (config.model && envMapping.model) {
-        for (const envVar of envMapping.model) {
-          env[envVar] = config.model;
-        }
-      }
-    }
+    if (config.model) env.CODEMIE_MODEL = config.model;
+    if (config.timeout) env.CODEMIE_TIMEOUT = String(config.timeout);
+    if (config.debug) env.CODEMIE_DEBUG = String(config.debug);
 
     // Special case: SSO-specific environment variables
     if (providerName === 'ai-run-sso') {

@@ -22,14 +22,11 @@ const metadata = {
 
   supportedProviders: ['ai-run-sso', 'litellm'],
   blockedModelPatterns: [/^claude/i, /^gpt/i], // Gemini models only
+  recommendedModels: ['gemini-2.5-flash', 'gemini-2.5-pro'],
 
   ssoConfig: {
     enabled: true,
-    clientType: 'gemini-cli',
-    envOverrides: {
-      baseUrl: 'GOOGLE_GEMINI_BASE_URL',
-      apiKey: 'GEMINI_API_KEY'
-    }
+    clientType: 'gemini-cli'
   },
 
   // Data paths (used by lifecycle hooks and analytics)

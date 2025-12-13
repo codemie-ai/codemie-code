@@ -36,8 +36,13 @@ class SSOAuthInterceptor implements ProxyInterceptor {
       .map(([key, value]) => `${key}=${value}`)
       .join('; ');
 
-    context.headers['Cookie'] = cookieHeader;
+    // Use lowercase 'cookie' to match Node.js HTTP header conventions
+    context.headers['cookie'] = cookieHeader;
 
-    logger.debug(`[${this.name}] Injected SSO cookies`);
+    logger.debug(`[${this.name}] Injected SSO cookies:`, {
+      cookieCount: Object.keys(this.credentials.cookies).length,
+      cookieNames: Object.keys(this.credentials.cookies),
+      headerLength: cookieHeader.length
+    });
   }
 }

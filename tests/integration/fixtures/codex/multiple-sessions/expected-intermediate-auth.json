@@ -1,0 +1,5 @@
+{
+  "ANTHROPIC_API_KEY": "sk-ant-user-key",
+  "OPENAI_API_KEY": "not-required",
+  "OPENAI_API_BASE": "http://localhost:11434/v1"
+}

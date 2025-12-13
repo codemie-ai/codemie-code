@@ -25,12 +25,6 @@ export const LiteLLMTemplate = registerProvider<ProviderTemplate>({
   capabilities: ['streaming', 'tools', 'function-calling'],
   supportsModelInstallation: false,
   supportsStreaming: true,
-  envMapping: {
-    // LiteLLM is a universal proxy - set all common env vars for compatibility
-    baseUrl: ['OPENAI_BASE_URL', 'ANTHROPIC_BASE_URL', 'GOOGLE_GEMINI_BASE_URL'],
-    apiKey: ['OPENAI_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'GEMINI_API_KEY'],
-    model: ['OPENAI_MODEL', 'ANTHROPIC_MODEL', 'GEMINI_MODEL']
-  },
   setupInstructions: `
 # LiteLLM Setup Instructions
 
