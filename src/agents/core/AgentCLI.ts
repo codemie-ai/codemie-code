@@ -145,6 +145,13 @@ export class AgentCLI {
       // Run the agent (welcome message will be shown inside)
       await this.adapter.run(agentArgs, providerEnv);
     } catch (error) {
+      // Show user-friendly error message in console first
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error(chalk.red(`\n✗ Failed to run ${this.adapter.displayName}\n`));
+      console.error(chalk.white(errorMessage));
+      console.error('');
+
+      // Log detailed error for debugging
       logger.error(`Failed to run ${this.adapter.displayName}:`, error);
       process.exit(1);
     }

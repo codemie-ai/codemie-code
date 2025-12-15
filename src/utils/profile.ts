@@ -2,24 +2,9 @@ import chalk from 'chalk';
 import gradient from 'gradient-string';
 
 /**
- * CodeMie CLI ASCII Logo with aligned column layout
- *
- * Displays the AI/Run CodeMie CLI logo with configuration details
- */
-
-const LOGO_ASCII = String.raw`
-  ██████╗ ██████╗ ██████╗ ███████╗███╗   ███╗██╗███████╗     ██████╗██╗     ██╗
- ██╔════╝██╔═══██╗██╔══██╗██╔════╝████╗ ████║██║██╔════╝    ██╔════╝██║     ██║
- ██║     ██║   ██║██║  ██║█████╗  ██╔████╔██║██║█████╗      ██║     ██║     ██║
- ██║     ██║   ██║██║  ██║██╔══╝  ██║╚██╔╝██║██║██╔══╝      ██║     ██║     ██║
- ╚██████╗╚██████╔╝██████╔╝███████╗██║ ╚═╝ ██║██║███████╗    ╚██████╗███████╗██║
-  ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝╚═╝     ╚═╝╚═╝╚══════╝     ╚═════╝╚══════╝╚═╝
-`;
-
-/**
  * Renders the CodeMie ASCII logo with configuration details
  */
-export function renderCodeMieLogo(config: {
+export function renderProfileInfo(config: {
   profile?: string;
   provider?: string;
   model?: string;
@@ -37,10 +22,6 @@ export function renderCodeMieLogo(config: {
 
   // Build complete output with logo and info
   const outputLines: string[] = [];
-  outputLines.push(''); // Empty line for spacing
-
-  // Add ASCII logo
-  outputLines.push(LOGO_ASCII);
   outputLines.push(''); // Empty line for spacing
 
   // Configuration details
