@@ -23,7 +23,7 @@ module.exports = {
         'revert', // Revert previous commits
       ],
     ],
-    // Allowed scopes for better organization
+    // Allowed scopes for better organization (optional)
     'scope-enum': [
       2,
       'always',
@@ -41,8 +41,8 @@ module.exports = {
         'tests', // Test infrastructure
       ],
     ],
-    // Make scope optional (warning if empty)
-    'scope-empty': [1, 'never'],
+    // Scope is completely optional (no warning)
+    'scope-empty': [0, 'never'],
     // Enforce subject case (lowercase start)
     'subject-case': [2, 'always', 'lower-case'],
     // Subject max length
