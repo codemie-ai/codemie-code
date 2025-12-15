@@ -12,7 +12,6 @@ import type { CodeMieConfigOptions } from '../../env/types.js';
 import { getRandomWelcomeMessage, getRandomGoodbyeMessage } from '../../utils/goodbye-messages.js';
 import { renderProfileInfo } from '../../utils/profile.js';
 import chalk from 'chalk';
-import gradient from 'gradient-string';
 
 /**
  * Base class for all agent adapters
@@ -322,9 +321,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
           // Show goodbye message with random easter egg
           console.log(chalk.cyan.bold(getRandomGoodbyeMessage()));
           console.log(''); // Spacing before powered by
-          // Create custom magenta-purple gradient for CodeMie branding
-          const codeMieGradient = gradient(['#ff00ff', '#9933ff']);
-          console.log(codeMieGradient('Powered by AI/Run CodeMie CLI'));
+          console.log(chalk.cyan('Powered by AI/Run CodeMie CLI'));
           console.log(''); // Empty line for spacing
 
           if (code === 0) {

@@ -46,6 +46,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Uses official Gitleaks GitHub Action (optimized for CI)
+      # Local validation uses Docker container (npm run validate:secrets)
+      # Both share the same .gitleaks.toml configuration
       - name: Run Gitleaks
         uses: gitleaks/gitleaks-action@v2
         env:
@@ -81,5 +84,14 @@ jobs:
       - name: Check licenses
         run: npm run license-check
 
-      - name: Run CI (lint + build + tests)
-        run: npm run ci
+      - name: Lint code
+        run: npm run lint
+
+      - name: Build project
+        run: npm run build
+
+      - name: Run unit tests
+        run: npm run test:unit
+
+      - name: Run integration tests
+        run: npm run test:integration

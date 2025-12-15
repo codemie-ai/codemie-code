@@ -1,1 +1,28 @@
+# Run lint-staged (lint + test changed files)
 npx lint-staged
+
+# Check for secrets (only if Docker daemon is running)
+if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+  echo "🔍 Checking for secrets with Gitleaks..."
+  npm run validate:secrets || {
+    echo "⚠️  Secrets detected! Please remove sensitive data before committing."
+    exit 1
+  }
+else
+  # Docker not available - provide helpful hints based on installed alternatives
+  if command -v colima >/dev/null 2>&1; then
+    echo "⚠️  Docker daemon not running - Colima is installed"
+    echo "💡 Run 'colima start' to enable secrets detection locally"
+  elif command -v podman >/dev/null 2>&1; then
+    echo "⚠️  Docker daemon not running - Podman is installed"
+    echo "💡 Run 'podman machine start' to enable secrets detection locally"
+  elif command -v orbstack >/dev/null 2>&1; then
+    echo "⚠️  Docker daemon not running - OrbStack is installed"
+    echo "💡 Start OrbStack to enable secrets detection locally"
+  elif command -v docker >/dev/null 2>&1; then
+    echo "⚠️  Docker installed but daemon not running"
+    echo "💡 Start Docker Desktop to enable secrets detection locally"
+  else
+    echo "⚠️  Docker not available - skipping secrets detection (will run in CI)"
+  fi
+fi

@@ -8,7 +8,6 @@ import { getDirname } from '../../utils/dirname.js';
 import { getRandomWelcomeMessage, getRandomGoodbyeMessage } from '../../utils/goodbye-messages.js';
 import { renderProfileInfo } from '../../utils/profile.js';
 import chalk from 'chalk';
-import gradient from 'gradient-string';
 
 /**
  * Built-in agent name constant - single source of truth
@@ -97,9 +96,7 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
         console.log(''); // Empty line for spacing
         console.log(chalk.cyan.bold(getRandomGoodbyeMessage()));
         console.log(''); // Spacing before powered by
-        // Create custom magenta-purple gradient for CodeMie branding
-        const codeMieGradient = gradient(['#ff00ff', '#9933ff']);
-        console.log(codeMieGradient('Powered by AI/Run CodeMie CLI'));
+        console.log(chalk.cyan('Powered by AI/Run CodeMie CLI'));
         console.log(''); // Empty line for spacing
       }
     } catch (error) {

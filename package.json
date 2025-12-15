@@ -16,6 +16,7 @@
   "files": [
     "dist",
     "bin",
+    "scripts",
     "src/workflows/templates/**/*.yml",
     "README.md",
     "LICENSE"
@@ -34,10 +35,10 @@
     "lint:fix": "eslint 'src/**/*.ts' --fix",
     "commitlint": "commitlint --edit",
     "commitlint:last": "commitlint --from HEAD~1 --to HEAD --verbose",
-    "validate:secrets": "docker run --rm -v \"$(pwd):/path\" ghcr.io/gitleaks/gitleaks:latest detect --source=\"/path\" --verbose --no-git",
+    "validate:secrets": "node scripts/validate-secrets.js",
     "license-check": "npx license-checker --summary --onlyAllow 'MIT;Apache-2.0;ISC;BSD-2-Clause;BSD-3-Clause;0BSD;CC0-1.0;Unlicense;BlueOak-1.0.0;Python-2.0;CC-BY-4.0;Apache*;(MIT OR CC0-1.0)'",
-    "ci": "npm run lint && npm run build && npm run test:unit && npm run test:integration",
-    "ci:full": "npm run validate:secrets && npm run license-check && npm run lint && npm run build && npm run test:unit && npm run test:integration",
+    "ci": "npm run license-check && npm run lint && npm run build && npm run test:unit && npm run test:integration",
+    "ci:full": "npm run commitlint:last && npm run ci",
     "prepare": "husky",
     "prepublishOnly": "npm run build",
     "prepack": "npm run build"
@@ -46,6 +47,9 @@
     "*.ts": [
       "eslint --max-warnings=0",
       "vitest related --run"
+    ],
+    "package.json": [
+      "npm run license-check"
     ]
   },
   "keywords": [
@@ -112,7 +116,6 @@
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^5.1.0",
-    "gradient-string": "^3.0.0",
     "inquirer": "^9.2.12",
     "keytar": "^7.9.0",
     "minimatch": "^10.1.1",

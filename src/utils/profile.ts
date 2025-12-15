@@ -1,5 +1,4 @@
 import chalk from 'chalk';
-import gradient from 'gradient-string';
 
 /**
  * Renders the CodeMie ASCII logo with configuration details
@@ -12,14 +11,6 @@ export function renderProfileInfo(config: {
   cliVersion?: string;
   sessionId?: string;
 }): string {
-  const codeMieGradient = gradient([
-    '#ff00ff', // Bright magenta
-    '#cc00ff', // Purple-magenta
-    '#9933ff', // Purple
-    '#6666ff', // Blue-purple
-    '#00ccff'  // Cyan
-  ]);
-
   // Build complete output with logo and info
   const outputLines: string[] = [];
   outputLines.push(''); // Empty line for spacing
@@ -46,44 +37,6 @@ export function renderProfileInfo(config: {
 
   outputLines.push(''); // Empty line for spacing
 
-  // Apply gradient to entire output
-  return codeMieGradient(outputLines.join('\n'));
-}
-
-/**
- * Compact version for narrow terminals
- */
-export function renderCompactLogo(config: {
-  profile?: string;
-  provider?: string;
-  model?: string;
-  agent?: string;
-}): string {
-  const codeMieGradient = gradient([
-    '#ff00ff', // Bright magenta
-    '#cc00ff', // Purple-magenta
-    '#9933ff', // Purple
-    '#6666ff', // Blue-purple
-    '#00ccff'  // Cyan
-  ]);
-
-  const compactAscii = `
-   ╔════════════════════╗
-   ║  AI/Run CodeMie    ║
-   ║       CLI          ║
-   ╚════════════════════╝`;
-
-  const output: string[] = [];
-  output.push('');
-  output.push(codeMieGradient(compactAscii));
-  output.push('');
-  if (config.profile && config.provider) {
-    output.push(chalk.white(`${config.profile} │ ${config.provider}`));
-  }
-  if (config.model) {
-    output.push(chalk.white(`Model: ${config.model}`));
-  }
-  output.push('');
-
-  return output.join('\n');
+  // Apply cyan color to entire output
+  return chalk.cyan(outputLines.join('\n'));
 }
