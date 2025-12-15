@@ -38,7 +38,11 @@ jobs:
   secrets-detection:
     name: Secrets Detection
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    needs: [validate-commits]
+    if: |
+      always() &&
+      github.event_name == 'pull_request' &&
+      (needs.validate-commits.result == 'success' || needs.validate-commits.result == 'skipped')
 
     steps:
       - name: Checkout code
@@ -58,10 +62,11 @@ jobs:
   build-and-test:
     name: Build & Test
     runs-on: ubuntu-latest
-    needs: [validate-commits]
+    needs: [validate-commits, secrets-detection]
     if: |
       always() &&
-      (needs.validate-commits.result == 'success' || needs.validate-commits.result == 'skipped')
+      (needs.validate-commits.result == 'success' || needs.validate-commits.result == 'skipped') &&
+      (needs.secrets-detection.result == 'success' || needs.secrets-detection.result == 'skipped')
 
     steps:
       - name: Checkout code
