@@ -197,6 +197,7 @@ function buildSessionAttributes(
     repository: session.workingDirectory,
     session_id: session.sessionId,
     branch: branch,
+    ...(session.project && { project: session.project }),
 
     // Interaction Metrics
     total_user_prompts: userPromptCount,

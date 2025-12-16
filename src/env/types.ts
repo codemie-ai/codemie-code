@@ -27,6 +27,7 @@ export interface ProviderProfile {
   // SSO-specific fields
   authMethod?: 'manual' | 'sso';
   codeMieUrl?: string;
+  codeMieProject?: string;  // Selected project/application name
   codeMieIntegration?: CodeMieIntegrationInfo;
   ssoConfig?: {
     apiUrl?: string;
@@ -68,6 +69,7 @@ export interface LegacyConfig {
   ignorePatterns?: string[];
   authMethod?: 'manual' | 'sso';
   codeMieUrl?: string;
+  codeMieProject?: string;  // Selected project/application name
   codeMieIntegration?: CodeMieIntegrationInfo;
   ssoConfig?: {
     apiUrl?: string;

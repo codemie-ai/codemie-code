@@ -27,6 +27,7 @@ export interface SessionAttributes {
   repository: string;                    // Repository name (parent/current format)
   session_id: string;                    // Session UUID
   branch: string;                        // Git branch for this metric
+  project?: string;                      // SSO project name (optional, only for ai-run-sso provider)
 
   // Interaction Metrics
   total_user_prompts: number;            // User prompt count

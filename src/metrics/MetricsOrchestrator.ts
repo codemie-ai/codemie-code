@@ -24,6 +24,7 @@ export interface MetricsOrchestratorOptions {
   sessionId?: string; // Optional: provide existing session ID
   agentName: string;
   provider: string;
+  project?: string; // SSO project name (optional, only for ai-run-sso provider)
   workingDirectory: string;
   metricsAdapter: AgentMetricsSupport;
 }
@@ -32,6 +33,7 @@ export class MetricsOrchestrator {
   private sessionId: string;
   private agentName: string;
   private provider: string;
+  private project?: string;
   private workingDirectory: string;
   private metricsAdapter: AgentMetricsSupport;
 
@@ -52,6 +54,7 @@ export class MetricsOrchestrator {
     this.sessionId = options.sessionId || randomUUID();
     this.agentName = options.agentName;
     this.provider = options.provider;
+    this.project = options.project;
     this.workingDirectory = options.workingDirectory;
     this.metricsAdapter = options.metricsAdapter;
 
@@ -93,6 +96,7 @@ export class MetricsOrchestrator {
         sessionId: this.sessionId,
         agentName: this.agentName,
         provider: this.provider,
+        ...(this.project && { project: this.project }),
         startTime: Date.now(),
         workingDirectory: this.workingDirectory,
         status: 'active',

@@ -8,11 +8,28 @@ import { HTTPClient } from '../../core/base/http-client.js';
 import type { CodeMieModel, CodeMieIntegration, CodeMieIntegrationsResponse } from '../../core/types.js';
 
 /**
+ * User info response from /v1/user endpoint
+ */
+export interface CodeMieUserInfo {
+  userId: string;
+  name: string;
+  username: string;
+  isAdmin: boolean;
+  applications: string[];
+  applicationsAdmin: string[];
+  picture: string;
+  knowledgeBases: string[];
+  userType?: string;
+}
+
+/**
  * CodeMie API endpoints
  */
 export const CODEMIE_ENDPOINTS = {
   MODELS: '/v1/llm_models',
   USER_SETTINGS: '/v1/settings/user',
+  USER: '/v1/user',
+  ADMIN_APPLICATIONS: '/v1/admin/applications',
   METRICS: '/v1/metrics',
   AUTH_LOGIN: '/v1/auth/login'
 } as const;
@@ -82,6 +99,105 @@ export async function fetchCodeMieModels(
 }
 
 /**
+ * Fetch user information including accessible applications
+ *
+ * @param apiUrl - CodeMie API base URL
+ * @param cookies - SSO session cookies
+ * @returns User info with applications array
+ * @throws Error if request fails or response invalid
+ */
+export async function fetchCodeMieUserInfo(
+  apiUrl: string,
+  cookies: Record<string, string>
+): Promise<CodeMieUserInfo> {
+  const cookieString = Object.entries(cookies)
+    .map(([key, value]) => `${key}=${value}`)
+    .join(';');
+
+  const url = `${apiUrl}${CODEMIE_ENDPOINTS.USER}`;
+
+  const client = new HTTPClient({
+    timeout: 10000,
+    maxRetries: 3,
+    rejectUnauthorized: false
+  });
+
+  const cliVersion = process.env.CODEMIE_CLI_VERSION || 'unknown';
+
+  const response = await client.getRaw(url, {
+    'cookie': cookieString,
+    'Content-Type': 'application/json',
+    'User-Agent': `codemie-cli/${cliVersion}`,
+    'X-CodeMie-CLI': `codemie-cli/${cliVersion}`,
+    'X-CodeMie-Client': 'codemie-cli'
+  });
+
+  // Handle HTTP errors
+  if (!response.statusCode || response.statusCode < 200 || response.statusCode >= 300) {
+    if (response.statusCode === 401 || response.statusCode === 403) {
+      throw new Error('SSO session expired - please run setup again');
+    }
+    throw new Error(`Failed to fetch user info: ${response.statusCode} ${response.statusMessage}`);
+  }
+
+  // Parse response
+  const userInfo = JSON.parse(response.data) as CodeMieUserInfo;
+
+  // Validate response structure
+  if (!userInfo || !Array.isArray(userInfo.applications)) {
+    throw new Error('Invalid user info response: missing applications array');
+  }
+
+  return userInfo;
+}
+
+/**
+ * Fetch application details (non-blocking, best-effort)
+ *
+ * @param apiUrl - CodeMie API base URL
+ * @param cookies - SSO session cookies
+ * @returns Application names array (same as /v1/user for now)
+ */
+export async function fetchApplicationDetails(
+  apiUrl: string,
+  cookies: Record<string, string>
+): Promise<string[]> {
+  try {
+    const cookieString = Object.entries(cookies)
+      .map(([key, value]) => `${key}=${value}`)
+      .join(';');
+
+    const url = `${apiUrl}${CODEMIE_ENDPOINTS.ADMIN_APPLICATIONS}?limit=1000`;
+
+    const client = new HTTPClient({
+      timeout: 5000,
+      maxRetries: 1,
+      rejectUnauthorized: false
+    });
+
+    const cliVersion = process.env.CODEMIE_CLI_VERSION || 'unknown';
+
+    const response = await client.getRaw(url, {
+      'cookie': cookieString,
+      'Content-Type': 'application/json',
+      'User-Agent': `codemie-cli/${cliVersion}`,
+      'X-CodeMie-CLI': `codemie-cli/${cliVersion}`,
+      'X-CodeMie-Client': 'codemie-cli'
+    });
+
+    if (response.statusCode !== 200) {
+      return [];
+    }
+
+    const data = JSON.parse(response.data) as { applications: string[] };
+    return data.applications || [];
+  } catch {
+    // Non-blocking: return empty array on error
+    return [];
+  }
+}
+
+/**
  * Fetch integrations from CodeMie SSO API (paginated)
  */
 export async function fetchCodeMieIntegrations(
@@ -113,8 +229,6 @@ export async function fetchCodeMieIntegrations(
 
       if (process.env.CODEMIE_DEBUG) {
         console.log(`[DEBUG] Fetching integrations from: ${fullUrl}`);
-      } else {
-        console.log(`[INFO] Requesting integrations from: ${fullUrl}`);
       }
 
       const pageIntegrations = await fetchIntegrationsPage(fullUrl, cookieString);

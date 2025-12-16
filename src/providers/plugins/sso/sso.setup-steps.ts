@@ -20,6 +20,7 @@ import { ProviderRegistry } from '../../core/registry.js';
 import { SSOTemplate } from './sso.template.js';
 import { CodeMieSSO } from './sso.auth.js';
 import { SSOModelProxy } from './sso.models.js';
+import { fetchCodeMieUserInfo } from './sso.http-client.js';
 
 /**
  * SSO setup steps implementation
@@ -68,13 +69,72 @@ export const SSOSetupSteps: ProviderSetupSteps = {
 
     console.log(chalk.green('✓ Authentication successful!\n'));
 
+    // === NEW STEP: Fetch applications and select project ===
+    let selectedProject: string | undefined;
+
+    try {
+      console.log(chalk.cyan('📂 Fetching available projects...\n'));
+
+      // Ensure API URL and cookies are available
+      if (!authResult.apiUrl || !authResult.cookies) {
+        throw new Error('API URL or cookies not found in authentication result');
+      }
+
+      // Fetch user's accessible applications
+      const userInfo = await fetchCodeMieUserInfo(
+        authResult.apiUrl,
+        authResult.cookies
+      );
+
+      // Validate applications array
+      if (!userInfo.applications || userInfo.applications.length === 0) {
+        throw new Error('No projects found for your account. Please contact your administrator.');
+      }
+
+      // Sort applications alphabetically
+      const applications = [...userInfo.applications].sort((a, b) =>
+        a.localeCompare(b, undefined, { sensitivity: 'base' })
+      );
+
+      // Auto-select if only one project
+      if (applications.length === 1) {
+        selectedProject = applications[0];
+        console.log(chalk.green(`✓ Auto-selected project: ${chalk.bold(selectedProject)}\n`));
+      } else {
+        // Multiple projects - prompt user to select
+        console.log(chalk.dim(`Found ${applications.length} accessible project(s)\n`));
+
+        const projectAnswers = await inquirer.prompt([
+          {
+            type: 'list',
+            name: 'project',
+            message: 'Select your project:',
+            choices: applications.map(app => ({
+              name: app,
+              value: app
+            })),
+            pageSize: 15
+          }
+        ]);
+
+        selectedProject = projectAnswers.project;
+        console.log(chalk.green(`✓ Selected project: ${chalk.bold(selectedProject)}\n`));
+      }
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.log(chalk.red(`✗ Project selection failed: ${errorMsg}\n`));
+
+      // Fail fast - project selection is required
+      throw new Error(`Project selection required: ${errorMsg}`);
+    }
+
     // Check for LiteLLM integrations
     const modelProxy = new SSOModelProxy(authResult.apiUrl);
     let integrations;
     let integrationsFetchError: string | undefined;
 
     try {
-      integrations = await modelProxy.fetchIntegrations(codeMieUrl);
+      integrations = await modelProxy.fetchIntegrations(codeMieUrl, selectedProject);
     } catch (error) {
       // Log error but don't fail setup - integrations are optional
       integrationsFetchError = error instanceof Error ? error.message : String(error);
@@ -86,7 +146,8 @@ export const SSOSetupSteps: ProviderSetupSteps = {
     let integrationInfo: CodeMieIntegrationInfo | undefined;
 
     if (integrations.length > 0) {
-      console.log(chalk.cyan(`📦 Found ${integrations.length} LiteLLM integration(s)\n`));
+      const projectLabel = selectedProject ? ` for project "${selectedProject}"` : '';
+      console.log(chalk.cyan(`📦 Found ${integrations.length} LiteLLM integration(s)${projectLabel}\n`));
       const integrationAnswers = await inquirer.prompt([
         {
           type: 'list',
@@ -104,10 +165,11 @@ export const SSOSetupSteps: ProviderSetupSteps = {
       integrationInfo = integrationAnswers.integration;
     } else {
       // Show message if no integrations found
+      const projectLabel = selectedProject ? ` for project "${selectedProject}"` : '';
       if (integrationsFetchError) {
-        console.log(chalk.dim('ℹ️  Proceeding without LiteLLM integration (fetch failed)\n'));
+        console.log(chalk.dim(`ℹ️  Proceeding without LiteLLM integration (fetch failed)\n`));
       } else {
-        console.log(chalk.dim('ℹ️  No LiteLLM integrations configured\n'));
+        console.log(chalk.dim(`ℹ️  No LiteLLM integrations configured${projectLabel}\n`));
       }
     }
 
@@ -115,6 +177,7 @@ export const SSOSetupSteps: ProviderSetupSteps = {
       baseUrl: authResult.apiUrl,
       additionalConfig: {
         codeMieUrl,
+        codeMieProject: selectedProject,
         codeMieIntegration: integrationInfo,
         apiUrl: authResult.apiUrl
       }
@@ -148,6 +211,7 @@ export const SSOSetupSteps: ProviderSetupSteps = {
     const config: Partial<CodeMieConfigOptions> = {
       provider: 'ai-run-sso',
       codeMieUrl: credentials.additionalConfig?.codeMieUrl as string | undefined,
+      codeMieProject: credentials.additionalConfig?.codeMieProject as string | undefined,
       apiKey: "sso-provided",
       baseUrl: credentials.baseUrl,
       model: selectedModel

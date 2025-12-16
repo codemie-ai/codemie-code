@@ -48,11 +48,28 @@ export class BmadPlugin extends BaseFrameworkAdapter {
   }
 
   /**
-   * Uninstall BMAD - Not needed (npx-on-demand)
+   * Uninstall BMAD - Remove .bmad directory if initialized
    */
   async uninstall(): Promise<void> {
-    logger.info('BMAD uses npx on-demand. Nothing to uninstall.');
-    logger.info('To remove BMAD from a project, delete the .bmad/ directory.');
+    const cwd = process.cwd();
+
+    // Check if initialized in current directory
+    if (!(await this.isInitialized(cwd))) {
+      logger.info('BMAD is not initialized in the current directory.');
+      return;
+    }
+
+    // Remove .bmad directory
+    const { rm } = await import('fs/promises');
+    const { join } = await import('path');
+    const bmadDir = join(cwd, '.bmad');
+
+    try {
+      await rm(bmadDir, { recursive: true, force: true });
+      logger.info(`Removed ${bmadDir}`);
+    } catch (error) {
+      throw new Error(`Failed to remove .bmad directory: ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   /**
@@ -97,11 +114,24 @@ export class BmadPlugin extends BaseFrameworkAdapter {
   }
 
   /**
-   * Check if BMAD is installed - always true (npx-on-demand)
+   * Check if BMAD is installed or initialized
+   * For npx-on-demand frameworks, check if initialized in current project
    */
   async isInstalled(): Promise<boolean> {
-    // BMAD doesn't require installation, npx handles it on-demand
-    return true;
+    // Check if initialized in current directory
+    const isInit = await this.isInitialized(process.cwd());
+
+    if (isInit) {
+      return true;
+    }
+
+    // Check if bmad-method is globally installed via npm
+    try {
+      const result = await exec('npm', ['list', '-g', 'bmad-method'], { timeout: 5000 });
+      return result.code === 0;
+    } catch {
+      return false;
+    }
   }
 
   /**

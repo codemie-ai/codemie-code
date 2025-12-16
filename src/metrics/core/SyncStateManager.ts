@@ -8,8 +8,7 @@
 
 import { readFile, writeFile, mkdir, rename } from 'fs/promises';
 import { existsSync } from 'fs';
-import { tmpdir } from 'os';
-import { dirname } from 'path';
+import { dirname, join } from 'path';
 import { randomUUID } from 'crypto';
 import type { SyncState, MetricsSession } from '../types.js';
 import { logger } from '../../utils/logger.js';
@@ -123,8 +122,8 @@ export class SyncStateManager {
         await mkdir(dir, { recursive: true });
       }
 
-      // Write to temp file first (atomic write)
-      const tempFile = `${tmpdir()}/session_${randomUUID()}.json`;
+      // Write to temp file first (atomic write) - use same directory to avoid cross-device rename
+      const tempFile = join(dir, `.session_${randomUUID()}.json.tmp`);
       await writeFile(tempFile, JSON.stringify(session, null, 2), 'utf-8');
 
       // Rename to final location (atomic operation)

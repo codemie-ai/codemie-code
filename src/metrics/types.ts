@@ -81,6 +81,7 @@ export interface MetricsSession {
   sessionId: string; // CodeMie session ID (UUID)
   agentName: string; // 'claude', 'gemini', 'codex'
   provider: string; // 'ai-run-sso', etc.
+  project?: string; // SSO project name (optional, only for ai-run-sso provider)
   startTime: number; // Unix timestamp (ms)
   endTime?: number; // Unix timestamp (ms)
   workingDirectory: string; // CWD where agent was launched

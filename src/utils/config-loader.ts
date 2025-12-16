@@ -694,6 +694,7 @@ export class ConfigLoader {
     // Special case: SSO-specific environment variables
     if (providerName === 'ai-run-sso') {
       if (config.codeMieUrl) env.CODEMIE_URL = config.codeMieUrl;
+      if (config.codeMieProject) env.CODEMIE_PROJECT = config.codeMieProject;
       if (config.authMethod) env.CODEMIE_AUTH_METHOD = config.authMethod;
       // Only export integration ID if integration is configured
       if (config.codeMieIntegration?.id) {

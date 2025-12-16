@@ -1,6 +1,5 @@
 import { Command } from 'commander';
 import { AgentRegistry } from '../../agents/registry.js';
-import { logger } from '../../utils/logger.js';
 import { AgentNotFoundError, getErrorMessage } from '../../utils/errors.js';
 import ora from 'ora';
 import chalk from 'chalk';
@@ -80,7 +79,7 @@ export function createUninstallCommand(): Command {
         if (agent) {
           // Check if installed
           if (!(await agent.isInstalled())) {
-            logger.info(`${agent.displayName} is not installed`);
+            console.log(chalk.blueBright(`${agent.displayName} is not installed`));
             return;
           }
 
@@ -103,7 +102,7 @@ export function createUninstallCommand(): Command {
         if (framework) {
           // Check if installed
           if (!(await framework.isInstalled())) {
-            logger.info(`${framework.metadata.displayName} is not installed`);
+            console.log(chalk.blueBright(`${framework.metadata.displayName} is not installed`));
             return;
           }
 

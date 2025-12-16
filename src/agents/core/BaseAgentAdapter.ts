@@ -145,6 +145,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       this.metricsOrchestrator = new MetricsOrchestrator({
         agentName: this.metadata.name,
         provider: env.CODEMIE_PROVIDER,
+        project: env.CODEMIE_PROJECT,
         workingDirectory: process.cwd(),
         metricsAdapter,
         sessionId // Pass the session ID explicitly

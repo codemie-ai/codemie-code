@@ -93,9 +93,13 @@ export class SSOModelProxy extends BaseModelProxy {
   }
 
   /**
-   * Fetch LiteLLM integrations
+   * Fetch LiteLLM integrations filtered by project (optional)
+   *
+   * @param codeMieUrl - CodeMie organization URL
+   * @param projectName - Optional project name for filtering
+   * @returns Array of integrations (filtered if projectName provided)
    */
-  async fetchIntegrations(codeMieUrl: string): Promise<CodeMieIntegration[]> {
+  async fetchIntegrations(codeMieUrl: string, projectName?: string): Promise<CodeMieIntegration[]> {
     const credentials = await this.sso.getStoredCredentials();
     if (!credentials) {
       logger.debug('No SSO credentials found for fetching integrations');
@@ -105,14 +109,29 @@ export class SSOModelProxy extends BaseModelProxy {
     const apiUrl = credentials.apiUrl || codeMieUrl;
 
     logger.debug(`Fetching integrations from: ${apiUrl}${CODEMIE_ENDPOINTS.USER_SETTINGS}`);
+    if (projectName) {
+      logger.debug(`Filtering by project: ${projectName}`);
+    }
 
     try {
-      // Use the working utility function that handles redirects and SSL
-      return await fetchCodeMieIntegrations(
+      // Fetch all integrations
+      const allIntegrations = await fetchCodeMieIntegrations(
           apiUrl,
           credentials.cookies,
           CODEMIE_ENDPOINTS.USER_SETTINGS
       );
+
+      // Filter by project_name if specified
+      if (projectName) {
+        const filtered = allIntegrations.filter(
+          integration => integration.project_name === projectName
+        );
+
+        logger.debug(`Filtered ${allIntegrations.length} integrations to ${filtered.length} for project "${projectName}"`);
+        return filtered;
+      }
+
+      return allIntegrations;
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       const errorStack = error instanceof Error ? error.stack : undefined;
