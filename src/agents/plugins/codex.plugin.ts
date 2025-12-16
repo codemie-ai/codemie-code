@@ -279,19 +279,12 @@ const metadata = {
     clientType: 'codex-cli'
   },
 
-  // Pass profile to Codex (uses config.toml profiles)
-  argumentTransform: (args, config) => {
-    const hasProfileArg = args.some((arg, idx) =>
-      (arg === '--profile') && idx < args.length - 1
-    );
-
-    // Use CodeMie profile name (matches beforeRun setup)
-    const profileName = config.profileName || config.provider || 'default';
-    if (!hasProfileArg) {
-      return ['--profile', profileName, ...args];
+  flagMappings: {
+    '--task': {
+      type: 'subcommand' as const,
+      target: 'exec',
+      position: 'before' as const
     }
-
-    return args;
   }
 };
 
@@ -303,6 +296,21 @@ export const CodexPluginMetadata: AgentMetadata = {
 
   // Lifecycle hook uses dataPaths from metadata (DRY!)
   lifecycle: {
+    enrichArgs: (args, config) => {
+      // Pass profile to Codex (uses config.toml profiles)
+      const hasProfileArg = args.some((arg, idx) =>
+        (arg === '--profile') && idx < args.length - 1
+      );
+
+      // Use CodeMie profile name (matches beforeRun setup)
+      const profileName = config.profileName || config.provider || 'default';
+      if (!hasProfileArg) {
+        return ['--profile', profileName, ...args];
+      }
+
+      return args;
+    },
+
     beforeRun: async (env) => {
       const codexDir = join(homedir(), metadata.dataPaths.home.replace('~/', ''));
       const authFile = join(codexDir, metadata.dataPaths.settings);

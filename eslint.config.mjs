@@ -38,6 +38,6 @@ export default [
     },
   },
   {
-    ignores: ['dist/**', 'node_modules/**', '**/*.js', '**/*.test.ts', '**/__tests__/**'],
+    ignores: ['dist/**', 'node_modules/**', '**/*.js', 'tests/**', 'src/**/__tests__/**', 'src/**/*.test.ts'],
   },
 ];

@@ -207,11 +207,11 @@ class Logger {
   }
 
   debug(message: string, ...args: unknown[]): void {
-    // Always write to log file
-    this.writeToLogFile('debug', message, ...args);
 
     // Only console output when CODEMIE_DEBUG is enabled
     if (this.isDebugMode()) {
+      // Write to log file
+      this.writeToLogFile('debug', message, ...args);
       // Build console prefix using agent/session/profile set at startup
       const agentName = this.agentName || 'system';
 

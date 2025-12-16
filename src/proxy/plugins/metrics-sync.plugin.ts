@@ -46,7 +46,7 @@ export class MetricsSyncPlugin implements ProxyPlugin {
       throw new Error('Metrics sync disabled by configuration');
     }
 
-    logger.info('[MetricsSyncPlugin] Initializing metrics sync');
+    logger.debug('[MetricsSyncPlugin] Initializing metrics sync');
 
     // Check if dry-run mode is enabled
     const dryRun = this.isDryRunEnabled(context);
@@ -271,23 +271,34 @@ class MetricsSyncInterceptor implements ProxyInterceptor {
         return;
       }
 
-      // 4. Aggregate pending deltas into metrics grouped by branch
-      const metrics = aggregateDeltas(pendingDeltas, session, this.version);
+      // 4. Get agent metrics config for post-processing (lazy-load to avoid circular dependency)
+      let agentConfig;
+      try {
+        const {AgentRegistry} = await import('../../agents/registry.js');
+        const agent = AgentRegistry.getAgent(session.agentName);
+        agentConfig = agent?.getMetricsConfig();
+      } catch (error) {
+        logger.debug(`[${this.name}] Could not load AgentRegistry: ${error}`);
+        agentConfig = undefined;
+      }
+
+      // 5. Aggregate pending deltas into metrics grouped by branch
+      const metrics = aggregateDeltas(pendingDeltas, session, this.version, agentConfig);
 
       logger.info(`[${this.name}] Aggregated ${metrics.length} branch-specific metrics from ${pendingDeltas.length} deltas`);
 
       // Debug: Log aggregated metrics
       for (const metric of metrics) {
-        logger.debug(`[${this.name}] Aggregated metric for branch "${metric.attributes.git_branch}":`, {
+        logger.debug(`[${this.name}] Aggregated metric for branch "${metric.attributes.branch}":`, {
           name: metric.name,
           attributes: {
             // Identity
             agent: metric.attributes.agent,
             agent_version: metric.attributes.agent_version,
             llm_model: metric.attributes.llm_model,
-            project: metric.attributes.project,
+            repository: metric.attributes.repository,
             session_id: metric.attributes.session_id,
-            git_branch: metric.attributes.git_branch,
+            branch: metric.attributes.branch,
 
             // Interaction totals
             total_user_prompts: metric.attributes.total_user_prompts,
@@ -321,7 +332,7 @@ class MetricsSyncInterceptor implements ProxyInterceptor {
       if (this.dryRun) {
         // Dry-run mode: Log what would be sent without actually sending
         for (const metric of metrics) {
-          logger.info(`[${this.name}] [DRY-RUN] Would send metric for branch "${metric.attributes.git_branch}" to API:`, {
+          logger.info(`[${this.name}] [DRY-RUN] Would send metric for branch "${metric.attributes.branch}" to API:`, {
             endpoint: `${this.apiClient['config'].baseUrl}/v1/metrics`,
             method: 'POST',
             headers: {
@@ -343,12 +354,12 @@ class MetricsSyncInterceptor implements ProxyInterceptor {
           const response = await this.apiClient.sendMetric(metric);
 
           if (!response.success) {
-            logger.error(`[${this.name}] Sync failed for branch "${metric.attributes.git_branch}": ${response.message}`);
+            logger.error(`[${this.name}] Sync failed for branch "${metric.attributes.branch}": ${response.message}`);
             // Continue with other branches even if one fails
             continue;
           }
 
-          logger.info(`[${this.name}] Successfully synced metric for branch "${metric.attributes.git_branch}"`);
+          logger.info(`[${this.name}] Successfully synced metric for branch "${metric.attributes.branch}"`);
         }
       }
 

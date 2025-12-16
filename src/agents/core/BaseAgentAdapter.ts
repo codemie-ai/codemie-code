@@ -31,6 +31,14 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     return null;
   }
 
+  /**
+   * Get metrics configuration for this agent
+   * Used by post-processor to filter/sanitize metrics
+   */
+  getMetricsConfig(): import('./types.js').AgentMetricsConfig | undefined {
+    return this.metadata.metricsConfig;
+  }
+
   get name(): string {
     return this.metadata.name;
   }
@@ -171,10 +179,21 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     console.log(chalk.cyan.bold(getRandomWelcomeMessage()));
     console.log(''); // Empty line for spacing
 
-    // Apply argument transformations
-    const transformedArgs = this.metadata.argumentTransform
-      ? this.metadata.argumentTransform(args, this.extractConfig(env))
-      : args;
+    // Enrich args with agent-specific defaults (e.g., --profile, --model)
+    let enrichedArgs = args;
+    if (this.metadata.lifecycle?.enrichArgs) {
+      enrichedArgs = this.metadata.lifecycle.enrichArgs(args, this.extractConfig(env));
+    }
+
+    // Apply argument transformations using declarative flagMappings
+    let transformedArgs: string[];
+
+    if (this.metadata.flagMappings) {
+      const { transformFlags } = await import('./flag-transform.js');
+      transformedArgs = transformFlags(enrichedArgs, this.metadata.flagMappings, this.extractConfig(env));
+    } else {
+      transformedArgs = enrichedArgs;
+    }
 
     // Transform CODEMIE_* → agent-specific env vars (based on envMapping)
     env = this.transformEnvVars(env);

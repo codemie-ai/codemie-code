@@ -105,7 +105,7 @@ export class FirstTimeExperience {
   /**
    * Show quick start guide for users who have configuration
    */
-  static showQuickStart(): void {
+  static async showQuickStart(): Promise<void> {
     console.log(chalk.bold.cyan('\n╔═══════════════════════════════════════╗'));
     console.log(chalk.bold.cyan('║         CodeMie CLI Wrapper           ║'));
     console.log(chalk.bold.cyan('╚═══════════════════════════════════════╝\n'));
@@ -120,7 +120,7 @@ export class FirstTimeExperience {
     console.log(chalk.bold('Verify:'));
     console.log(chalk.cyan('  codemie doctor') + chalk.white('            # Check configuration\n'));
 
-    this.showAgentSections();
+    await this.showAgentSectionsAsync();
 
     console.log(chalk.bold('Analytics:'));
     console.log(chalk.cyan('  codemie analytics') + chalk.white('         # View usage statistics\n'));
@@ -132,9 +132,9 @@ export class FirstTimeExperience {
   }
 
   /**
-   * Dynamically generate agent sections from registry
+   * Dynamically generate agent and framework sections from registries
    */
-  private static showAgentSections(): void {
+  private static async showAgentSectionsAsync(): Promise<void> {
     const { external } = this.getAgents();
 
     if (external.length > 0) {
@@ -147,6 +147,26 @@ export class FirstTimeExperience {
       });
 
       console.log(chalk.cyan('  codemie uninstall <agent>') + chalk.white('  # Remove an agent\n'));
+    }
+
+    // Show frameworks section
+    try {
+      const { FrameworkRegistry } = await import('../frameworks/index.js');
+      const frameworks = FrameworkRegistry.getAllFrameworks();
+
+      if (frameworks.length > 0) {
+        console.log(chalk.bold('Manage Frameworks:'));
+        console.log(chalk.cyan('  codemie list') + chalk.white('              # List available frameworks'));
+
+        frameworks.forEach(framework => {
+          const paddedCommand = `codemie install ${framework.metadata.name}`.padEnd(28);
+          console.log(chalk.cyan(`  ${paddedCommand}`) + chalk.white(`# Install ${framework.metadata.displayName}`));
+        });
+
+        console.log();
+      }
+    } catch {
+      // Framework registry not available, skip
     }
 
     console.log(chalk.bold('Run Agents:'));

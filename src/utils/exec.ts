@@ -6,6 +6,7 @@ export interface ExecOptions {
   env?: Record<string, string>;
   timeout?: number;
   shell?: boolean; // Allow override for specific cases
+  interactive?: boolean; // Allow interactive mode (stdio: 'inherit')
 }
 
 export interface ExecResult {
@@ -35,11 +36,15 @@ export async function exec(
     const isWindows = os.platform() === 'win32';
     const useShell = options.shell !== undefined ? options.shell : isWindows;
 
+    // Interactive mode: inherit stdio for user prompts
+    const stdio = options.interactive ? 'inherit' : 'pipe';
+
     const child = spawn(command, args, {
       cwd: options.cwd || process.cwd(),
       env: { ...process.env, ...options.env },
       shell: useShell,
-      windowsHide: true // Hide console window on Windows
+      windowsHide: true, // Hide console window on Windows
+      stdio
     });
 
     let stdout = '';
@@ -54,13 +59,16 @@ export async function exec(
       }
     };
 
-    child.stdout?.on('data', (data) => {
-      stdout += data.toString();
-    });
+    // Only capture output if not in interactive mode
+    if (!options.interactive) {
+      child.stdout?.on('data', (data) => {
+        stdout += data.toString();
+      });
 
-    child.stderr?.on('data', (data) => {
-      stderr += data.toString();
-    });
+      child.stderr?.on('data', (data) => {
+        stderr += data.toString();
+      });
+    }
 
     child.on('error', (error) => {
       cleanup();
@@ -69,11 +77,20 @@ export async function exec(
 
     child.on('close', (code) => {
       cleanup();
-      resolve({
+
+      const result = {
         code: code || 0,
         stdout: stdout.trim(),
         stderr: stderr.trim()
-      });
+      };
+
+      // In interactive mode, reject on non-zero exit codes
+      // In non-interactive mode, always resolve (caller checks exit code)
+      if (options.interactive && code !== 0) {
+        reject(new Error(`Command exited with code ${code}`));
+      } else {
+        resolve(result);
+      }
     });
 
     // Handle timeout

@@ -36,6 +36,18 @@ export const ClaudePluginMetadata: AgentMetadata = {
     clientType: 'codemie-claude'
   },
 
+  flagMappings: {
+    '--task': {
+      type: 'flag',
+      target: '-p'
+    }
+  },
+
+  // Metrics configuration: exclude Bash tool errors from API metrics
+  metricsConfig: {
+    excludeErrorsFromTools: ['Bash']
+  },
+
   lifecycle: {
     async beforeRun(env) {
       // Disable experimental betas if not already set

@@ -45,7 +45,14 @@ export const METRICS_CONFIG: MetricsConfig = {
    */
   watermark: {
     ttl: 24 * 60 * 60 * 1000 // 24 hours
-  }
+  },
+
+  /**
+   * Post-processing configuration
+   * Global default: exclude errors from shell tools (contains sensitive command output)
+   * Individual agents can override this via their metricsConfig.excludeErrorsFromTools
+   */
+  excludeErrorsFromTools: ['Bash', 'Execute', 'Shell']
 };
 
 /**

@@ -3,6 +3,9 @@
 // Initialize provider plugins (triggers auto-registration)
 import '../providers/index.js';
 
+// Initialize framework plugins (triggers auto-registration)
+import '../frameworks/plugins/index.js';
+
 import { Command } from 'commander';
 import { createListCommand } from './commands/list.js';
 import { createInstallCommand } from './commands/install.js';
@@ -82,13 +85,13 @@ if (taskIndex !== -1 && taskIndex < process.argv.length - 1) {
   })();
 } else if (process.argv.length === 2) {
   // Show prettified help if no command provided (just "codemie")
-  FirstTimeExperience.isFirstTime().then(isFirstTime => {
+  FirstTimeExperience.isFirstTime().then(async isFirstTime => {
     if (isFirstTime) {
       // Show welcome message and recommendations for first-time users
-      FirstTimeExperience.showWelcomeMessage();
+      await FirstTimeExperience.showWelcomeMessage();
     } else {
       // Show quick start guide for returning users
-      FirstTimeExperience.showQuickStart();
+      await FirstTimeExperience.showQuickStart();
     }
   }).catch(() => {
     // Fallback to default help if detection fails

@@ -10,3 +10,4 @@ export { AwsCliCheck } from './AwsCliCheck.js';
 export { AIConfigCheck } from './AIConfigCheck.js';
 export { AgentsCheck } from './AgentsCheck.js';
 export { WorkflowsCheck } from './WorkflowsCheck.js';
+export { FrameworksCheck } from './FrameworksCheck.js';

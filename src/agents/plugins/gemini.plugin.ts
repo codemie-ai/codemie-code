@@ -29,6 +29,13 @@ const metadata = {
     clientType: 'gemini-cli'
   },
 
+  flagMappings: {
+    '--task': {
+      type: 'flag' as const,
+      target: '-p'
+    }
+  },
+
   // Data paths (used by lifecycle hooks and analytics)
   dataPaths: {
     home: '~/.gemini',
@@ -43,21 +50,20 @@ const metadata = {
 export const GeminiPluginMetadata: AgentMetadata = {
   ...metadata,
 
-  // Gemini CLI uses -m flag for model selection
-  argumentTransform: (args, config) => {
-    const hasModelArg = args.some((arg, idx) =>
-      (arg === '-m' || arg === '--model') && idx < args.length - 1
-    );
-
-    if (!hasModelArg && config.model) {
-      return ['-m', config.model, ...args];
-    }
-
-    return args;
-  },
-
   // Lifecycle hook to ensure settings file exists (uses metadata.dataPaths)
   lifecycle: {
+    enrichArgs: (args, config) => {
+      // Gemini CLI uses -m flag for model selection
+      const hasModelArg = args.some((arg, idx) =>
+        (arg === '-m' || arg === '--model') && idx < args.length - 1
+      );
+
+      if (!hasModelArg && config.model) {
+        return ['-m', config.model, ...args];
+      }
+
+      return args;
+    },
     beforeRun: async (env) => {
       const geminiDir = join(homedir(), metadata.dataPaths.home.replace('~/', ''));
       const settingsFile = join(geminiDir, metadata.dataPaths.settings);

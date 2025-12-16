@@ -121,6 +121,7 @@
     "minimatch": "^10.1.1",
     "open": "^8.4.2",
     "ora": "^7.0.1",
+    "strip-ansi": "^7.1.2",
     "zod": "^4.1.12"
   },
   "devDependencies": {

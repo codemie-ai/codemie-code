@@ -2,6 +2,40 @@
  * Core types for the plugin-based agent architecture
  */
 
+/**
+ * Mapping types for flag transformation
+ */
+export type FlagMappingType = 'flag' | 'subcommand' | 'positional';
+
+/**
+ * Declarative mapping configuration for a single flag
+ */
+export interface FlagMapping {
+  /** How to transform this flag */
+  type: FlagMappingType;
+
+  /** Target flag or subcommand name (null for positional) */
+  target: string | null;
+
+  /** For subcommands: where to place value relative to other args */
+  position?: 'before' | 'after';
+}
+
+/**
+ * Multiple flag mappings (key = source flag, value = transformation)
+ * Similar to envMapping pattern
+ *
+ * @example
+ * flagMappings: {
+ *   '--task': { type: 'flag', target: '-p' },
+ *   '--profile': { type: 'flag', target: '--workspace' },
+ *   '--timeout': { type: 'flag', target: '-t' }
+ * }
+ */
+export interface FlagMappings {
+  [sourceFlag: string]: FlagMapping;
+}
+
 // Forward declaration for circular dependency
 // Full interface defined in src/analytics/aggregation/core/adapter.interface.ts
 export interface AgentAnalyticsAdapter {
@@ -55,11 +89,13 @@ export interface AgentMetadata {
   }>;
 
   // === Runtime Behavior ===
-  argumentTransform?: (args: string[], config: AgentConfig) => string[];
+  /** Declarative mapping for multiple CLI flags */
+  flagMappings?: FlagMappings;
 
   lifecycle?: {
     beforeRun?: (env: NodeJS.ProcessEnv, config: AgentConfig) => Promise<NodeJS.ProcessEnv>;
     afterRun?: (exitCode: number, env: NodeJS.ProcessEnv) => Promise<void>;
+    enrichArgs?: (args: string[], config: AgentConfig) => string[];
   };
 
   // === Built-in Agent Support ===
@@ -78,6 +114,26 @@ export interface AgentMetadata {
 
   // === Analytics Support ===
   analyticsAdapter?: AgentAnalyticsAdapter;  // Optional analytics adapter
+
+  // === Metrics Configuration ===
+  /**
+   * Metrics collection configuration for this agent
+   * Controls which tool errors are excluded from metrics sent to API
+   */
+  metricsConfig?: AgentMetricsConfig;
+}
+
+/**
+ * Agent-specific metrics configuration
+ * Used by post-processor to filter/sanitize metrics before API transmission
+ */
+export interface AgentMetricsConfig {
+  /**
+   * List of tool names whose errors should be excluded from metrics
+   * Example: ['Bash', 'Execute', 'Shell']
+   * This prevents sensitive command output from being sent to the API
+   */
+  excludeErrorsFromTools?: string[];
 }
 
 /**
@@ -104,4 +160,5 @@ export interface AgentAdapter {
   isInstalled(): Promise<boolean>;
   run(args: string[], env?: Record<string, string>): Promise<void>;
   getVersion(): Promise<string | null>;
+  getMetricsConfig(): AgentMetricsConfig | undefined;
 }

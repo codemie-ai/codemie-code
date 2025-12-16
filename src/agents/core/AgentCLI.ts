@@ -76,6 +76,20 @@ export class AgentCLI {
       .action(async () => {
         await this.handleHealthCheck();
       });
+
+    // Add init command for frameworks (skip for built-in agent and deepagents)
+    if (this.adapter.name !== BUILTIN_AGENT_NAME && this.adapter.name !== 'deepagents') {
+      this.program
+        .command('init')
+        .description('Initialize development framework')
+        .argument('[framework]', 'Framework to initialize (speckit, bmad)')
+        .option('-l, --list', 'List available frameworks')
+        .option('--force', 'Force re-initialization')
+        .option('--project-name <name>', 'Project name for framework initialization')
+        .action(async (framework, options) => {
+          await this.handleInit(framework, options);
+        });
+    }
   }
 
   /**
@@ -176,6 +190,81 @@ export class AgentCLI {
       }
     } catch (error) {
       logger.error('Health check failed:', error);
+      process.exit(1);
+    }
+  }
+
+  /**
+   * Handle framework initialization command
+   */
+  private async handleInit(framework: string | undefined, options: Record<string, unknown>): Promise<void> {
+    try {
+      // Import framework registry
+      const { FrameworkRegistry } = await import('../../frameworks/index.js');
+
+      // Handle --list flag
+      if (options.list) {
+        const frameworks = FrameworkRegistry.getFrameworksForAgent(this.adapter.name);
+
+        if (frameworks.length === 0) {
+          console.log(chalk.yellow('\n⚠️  No frameworks available for this agent\n'));
+          return;
+        }
+
+        console.log(chalk.bold('\n📦 Available Frameworks:\n'));
+        for (const fw of frameworks) {
+          console.log(chalk.cyan(`  ${fw.metadata.name}`) + chalk.white(` - ${fw.metadata.description}`));
+          if (fw.metadata.docsUrl) {
+            console.log(chalk.gray(`    Docs: ${fw.metadata.docsUrl}`));
+          }
+        }
+        console.log('');
+        return;
+      }
+
+      // Framework name is required if not listing
+      if (!framework) {
+        console.log(chalk.red('\n✗ Framework name is required\n'));
+        console.log(chalk.white('Usage:\n'));
+        console.log(chalk.cyan(`  codemie-${this.adapter.name} init <framework>\n`));
+        console.log(chalk.white('List available frameworks:\n'));
+        console.log(chalk.cyan(`  codemie-${this.adapter.name} init --list\n`));
+        process.exit(1);
+      }
+
+      // Get framework adapter
+      const frameworkAdapter = FrameworkRegistry.getFramework(framework);
+      if (!frameworkAdapter) {
+        console.log(chalk.red(`\n✗ Unknown framework '${framework}'\n`));
+        console.log(chalk.white('List available frameworks:\n'));
+        console.log(chalk.cyan(`  codemie-${this.adapter.name} init --list\n`));
+        process.exit(1);
+      }
+
+      // Check if agent is supported by framework
+      const agentMapping = frameworkAdapter.getAgentMapping(this.adapter.name);
+      if (!agentMapping) {
+        console.log(chalk.red(`\n✗ Framework '${framework}' does not support agent '${this.adapter.name}'\n`));
+        const supportedAgents = frameworkAdapter.metadata.supportedAgents || [];
+        if (supportedAgents.length > 0) {
+          console.log(chalk.white(`Supported agents: ${supportedAgents.join(', ')}\n`));
+        }
+        process.exit(1);
+      }
+
+      // Initialize framework
+      await frameworkAdapter.init(this.adapter.name, {
+        force: options.force as boolean | undefined,
+        projectName: options.projectName as string | undefined,
+        cwd: process.cwd()
+      });
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error(chalk.red(`\n✗ Framework initialization failed\n`));
+      console.error(chalk.white(errorMessage));
+      console.error('');
+      logger.error('Framework initialization failed:', error);
       process.exit(1);
     }
   }

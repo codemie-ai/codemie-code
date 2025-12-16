@@ -186,4 +186,9 @@ export class CodeMieCodePlugin implements AgentAdapter {
       return 'unknown (built-in)';
     }
   }
+
+  getMetricsConfig(): import('../core/types.js').AgentMetricsConfig | undefined {
+    // Built-in agent doesn't have specific metrics config
+    return undefined;
+  }
 }

@@ -15,7 +15,8 @@ import {
   AwsCliCheck,
   AIConfigCheck,
   AgentsCheck,
-  WorkflowsCheck
+  WorkflowsCheck,
+  FrameworksCheck
 } from './checks/index.js';
 import { ProviderRegistry } from '../../../providers/core/registry.js';
 import { adaptProviderResult } from './type-adapters.js';
@@ -87,7 +88,8 @@ export function createDoctorCommand(): Command {
         new AwsCliCheck(),
         new AIConfigCheck(),
         new AgentsCheck(),
-        new WorkflowsCheck()
+        new WorkflowsCheck(),
+        new FrameworksCheck()
       ];
 
       // Run and display standard checks immediately

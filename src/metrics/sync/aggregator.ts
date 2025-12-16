@@ -7,16 +7,24 @@
 
 import type {MetricDelta, MetricsSession} from '../types.js';
 import type {SessionAttributes, SessionMetric} from './types.js';
+import type {AgentMetricsConfig} from '../../agents/core/types.js';
 import {logger} from '../../utils/logger.js';
+import {postProcessMetric} from './post-processor.js';
 
 /**
  * Aggregate pending deltas into session metrics grouped by branch
  * Returns one metric per branch to prevent mixing metrics between branches
+ *
+ * @param deltas - Metric deltas to aggregate
+ * @param session - Metrics session information
+ * @param version - CLI version
+ * @param agentConfig - Optional agent-specific metrics configuration (for post-processing)
  */
 export function aggregateDeltas(
   deltas: MetricDelta[],
   session: MetricsSession,
-  version: string
+  version: string,
+  agentConfig?: AgentMetricsConfig
 ): SessionMetric[] {
   logger.debug(`[aggregator] Aggregating ${deltas.length} deltas for session ${session.sessionId}`);
 
@@ -45,10 +53,14 @@ export function aggregateDeltas(
     const attributes = buildSessionAttributes(branchDeltas, session, version, branch);
 
     // Create session metric for this branch
-    metrics.push({
+    const metric: SessionMetric = {
       name: 'codemie_cli_usage_total',
       attributes
-    });
+    };
+
+    // Post-process metric to sanitize sensitive data
+    const sanitized = postProcessMetric(metric, agentConfig);
+    metrics.push(sanitized);
   }
 
   return metrics;
@@ -182,9 +194,9 @@ function buildSessionAttributes(
     agent: session.agentName,
     agent_version: version,
     llm_model: primaryModel || 'unknown',
-    project: session.workingDirectory,
+    repository: session.workingDirectory,
     session_id: session.sessionId,
-    git_branch: branch,
+    branch: branch,
 
     // Interaction Metrics
     total_user_prompts: userPromptCount,

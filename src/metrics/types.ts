@@ -390,4 +390,12 @@ export interface MetricsConfig {
   watermark: {
     ttl: number; // Time-to-live (ms) - 24h
   };
+
+  // Post-processing configuration
+  /**
+   * Global list of tool names whose errors should be excluded from metrics
+   * Agents can override this via their metricsConfig.excludeErrorsFromTools
+   * Example: ['Bash', 'Execute', 'Shell']
+   */
+  excludeErrorsFromTools?: string[];
 }

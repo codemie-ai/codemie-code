@@ -32,6 +32,13 @@ export const DeepAgentsPluginMetadata: AgentMetadata = {
     clientType: 'codemie-deepagents'
   },
 
+  flagMappings: {
+    '--task': {
+      type: 'positional',
+      target: null
+    }
+  },
+
   lifecycle: {
     async beforeRun(env) {
       // Ensure required API key is set

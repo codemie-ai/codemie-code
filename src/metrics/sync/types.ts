@@ -24,9 +24,9 @@ export interface SessionAttributes {
   agent: string;                         // 'claude', 'gemini', 'codex', 'codemie-code'
   agent_version: string;                 // CLI version
   llm_model: string;                     // Most-used model in session
-  project: string;                       // Working directory
+  repository: string;                    // Repository name (parent/current format)
   session_id: string;                    // Session UUID
-  git_branch: string;                    // Git branch for this metric
+  branch: string;                        // Git branch for this metric
 
   // Interaction Metrics
   total_user_prompts: number;            // User prompt count
