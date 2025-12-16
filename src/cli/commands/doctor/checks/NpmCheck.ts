@@ -2,7 +2,7 @@
  * npm health check
  */
 
-import { exec } from '../../../../utils/exec.js';
+import * as npm from '../../../../utils/npm.js';
 import { HealthCheck, HealthCheckResult, HealthCheckDetail } from '../types.js';
 
 export class NpmCheck implements HealthCheck {
@@ -12,13 +12,14 @@ export class NpmCheck implements HealthCheck {
     const details: HealthCheckDetail[] = [];
     let success = true;
 
-    try {
-      const result = await exec('npm', ['--version']);
+    const version = await npm.getVersion();
+
+    if (version) {
       details.push({
         status: 'ok',
-        message: `Version ${result.stdout}`
+        message: `Version ${version}`
       });
-    } catch {
+    } else {
       details.push({
         status: 'error',
         message: 'npm not found',

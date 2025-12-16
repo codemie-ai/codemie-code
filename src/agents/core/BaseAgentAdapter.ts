@@ -1,4 +1,6 @@
 import { AgentMetadata, AgentAdapter, AgentConfig } from './types.js';
+import * as npm from '../../utils/npm.js';
+import { NpmError } from '../../utils/errors.js';
 import { exec } from '../../utils/exec.js';
 import { logger } from '../../utils/logger.js';
 import { spawn } from 'child_process';
@@ -59,13 +61,13 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       throw new Error(`${this.displayName} is built-in and cannot be installed`);
     }
 
-    logger.info(`Installing ${this.displayName}...`);
     try {
-      await exec('npm', ['install', '-g', this.metadata.npmPackage], { timeout: 120000 });
-      logger.success(`${this.displayName} installed successfully`);
+      await npm.installGlobal(this.metadata.npmPackage);
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      throw new Error(`Failed to install ${this.displayName}: ${errorMessage}`);
+      if (error instanceof NpmError) {
+        throw new Error(`Failed to install ${this.displayName}: ${error.message}`);
+      }
+      throw error;
     }
   }
 
@@ -77,13 +79,13 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       throw new Error(`${this.displayName} is built-in and cannot be uninstalled`);
     }
 
-    logger.info(`Uninstalling ${this.displayName}...`);
     try {
-      await exec('npm', ['uninstall', '-g', this.metadata.npmPackage]);
-      logger.success(`${this.displayName} uninstalled successfully`);
+      await npm.uninstallGlobal(this.metadata.npmPackage);
     } catch (error: unknown) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      throw new Error(`Failed to uninstall ${this.displayName}: ${errorMessage}`);
+      if (error instanceof NpmError) {
+        throw new Error(`Failed to uninstall ${this.displayName}: ${error.message}`);
+      }
+      throw error;
     }
   }
 

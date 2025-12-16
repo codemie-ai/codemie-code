@@ -8,6 +8,7 @@
  * Initialization: npx bmad-method@alpha install
  */
 
+import * as npm from '../../utils/npm.js';
 import { exec } from '../../utils/exec.js';
 import { logger } from '../../utils/logger.js';
 import { BaseFrameworkAdapter } from '../core/BaseFrameworkAdapter.js';
@@ -92,14 +93,7 @@ export class BmadPlugin extends BaseFrameworkAdapter {
       // Run npx bmad-method@alpha install
       logger.info('Running BMAD installation via npx (this may take a minute)...');
 
-      const args = ['bmad-method@alpha', 'install'];
-
-      // Add --force if specified
-      if (force) {
-        args.push('--force');
-      }
-
-      await exec('npx', args, {
+      await npm.npxRun('bmad-method@alpha', ['install', ...(force ? ['--force'] : [])], {
         cwd,
         timeout: 300000, // 5 minutes for npm download + user input
         interactive: true // Allow user to answer prompts
@@ -126,12 +120,7 @@ export class BmadPlugin extends BaseFrameworkAdapter {
     }
 
     // Check if bmad-method is globally installed via npm
-    try {
-      const result = await exec('npm', ['list', '-g', 'bmad-method'], { timeout: 5000 });
-      return result.code === 0;
-    } catch {
-      return false;
-    }
+    return await npm.listGlobal('bmad-method');
   }
 
   /**
