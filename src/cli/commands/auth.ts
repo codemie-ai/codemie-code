@@ -92,6 +92,16 @@ async function handleLogin(url?: string): Promise<void> {
       spinner.succeed(chalk.green('SSO authentication successful'));
       console.log(chalk.cyan(`🔗 Connected to: ${codeMieUrl}`));
       console.log(chalk.cyan(`🔑 Credentials stored securely`));
+
+      console.log('');
+      console.log(chalk.bold('  Next Steps:'));
+      console.log('');
+      console.log('  ' + chalk.white('• Check auth status:') + '    ' + chalk.cyan('codemie auth status'));
+      console.log('  ' + chalk.white('• Refresh token:') + '        ' + chalk.cyan('codemie auth refresh'));
+      console.log('  ' + chalk.white('• Create profile:') + '       ' + chalk.cyan('codemie setup'));
+      console.log('  ' + chalk.white('• Verify system:') + '        ' + chalk.cyan('codemie doctor'));
+      console.log('  ' + chalk.white('• Explore more:') + '         ' + chalk.cyan('codemie --help'));
+      console.log('');
     } else {
       spinner.fail(chalk.red('SSO authentication failed'));
       console.log(chalk.red(`Error: ${result.error}`));

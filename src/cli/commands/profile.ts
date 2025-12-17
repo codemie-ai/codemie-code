@@ -71,6 +71,15 @@ async function listProfiles(): Promise<void> {
     });
 
     console.log('');
+    console.log(chalk.dim('──────────────────────────────────────────────────'));
+    console.log(chalk.bold('  Next Steps:'));
+    console.log('');
+    console.log('  ' + chalk.white('• Switch active profile:') + '  ' + chalk.cyan('codemie profile switch'));
+    console.log('  ' + chalk.white('• Check auth status:') + '      ' + chalk.cyan('codemie auth status'));
+    console.log('  ' + chalk.white('• Create new profile:') + '     ' + chalk.cyan('codemie setup'));
+    console.log('  ' + chalk.white('• Remove a profile:') + '       ' + chalk.cyan('codemie profile delete'));
+    console.log('  ' + chalk.white('• Explore more:') + '           ' + chalk.cyan('codemie --help'));
+    console.log('');
   } catch (error: unknown) {
     logger.error('Failed to list profiles:', error);
     process.exit(1);

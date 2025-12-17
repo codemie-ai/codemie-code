@@ -8,6 +8,8 @@
  * Initialization: npx bmad-method@alpha install
  */
 
+import { existsSync } from 'fs';
+import { join } from 'path';
 import * as npm from '../../utils/npm.js';
 import { exec } from '../../utils/exec.js';
 import { logger } from '../../utils/logger.js';
@@ -29,7 +31,7 @@ export const BmadMetadata: FrameworkMetadata = {
   cliCommand: undefined, // No global CLI, uses npx
   isAgentSpecific: false, // Framework-agnostic
   supportedAgents: [], // Empty means all agents
-  initDirectory: '.bmad'
+  initDirectory: '_bmad' // Primary directory, but we check for .bmad too
 };
 
 /**
@@ -49,27 +51,46 @@ export class BmadPlugin extends BaseFrameworkAdapter {
   }
 
   /**
-   * Uninstall BMAD - Remove .bmad directory if initialized
+   * Check if BMAD is initialized (checks both .bmad and configured init directory)
+   */
+  async isInitialized(cwd: string = process.cwd()): Promise<boolean> {
+    const dotBmadExists = existsSync(join(cwd, '.bmad'));
+    const initDirExists = this.metadata.initDirectory 
+      ? existsSync(join(cwd, this.metadata.initDirectory))
+      : false;
+      
+    return dotBmadExists || initDirExists;
+  }
+
+  /**
+   * Uninstall BMAD - Remove .bmad or configured init directory if initialized
    */
   async uninstall(): Promise<void> {
     const cwd = process.cwd();
+    const { rm } = await import('fs/promises');
 
-    // Check if initialized in current directory
-    if (!(await this.isInitialized(cwd))) {
-      logger.info('BMAD is not initialized in the current directory.');
-      return;
+    let removed = false;
+
+    // Check and remove .bmad
+    const dotBmad = join(cwd, '.bmad');
+    if (existsSync(dotBmad)) {
+      await rm(dotBmad, { recursive: true, force: true });
+      logger.info(`Removed ${dotBmad}`);
+      removed = true;
     }
 
-    // Remove .bmad directory
-    const { rm } = await import('fs/promises');
-    const { join } = await import('path');
-    const bmadDir = join(cwd, '.bmad');
+    // Check and remove configured init directory (e.g. _bmad) if different from .bmad
+    if (this.metadata.initDirectory && this.metadata.initDirectory !== '.bmad') {
+      const initDir = join(cwd, this.metadata.initDirectory);
+      if (existsSync(initDir)) {
+        await rm(initDir, { recursive: true, force: true });
+        logger.info(`Removed ${initDir}`);
+        removed = true;
+      }
+    }
 
-    try {
-      await rm(bmadDir, { recursive: true, force: true });
-      logger.info(`Removed ${bmadDir}`);
-    } catch (error) {
-      throw new Error(`Failed to remove .bmad directory: ${error instanceof Error ? error.message : String(error)}`);
+    if (!removed) {
+      logger.info('BMAD is not initialized in the current directory.');
     }
   }
 
@@ -83,7 +104,7 @@ export class BmadPlugin extends BaseFrameworkAdapter {
     // Check if already initialized
     if (!force && (await this.isInitialized(cwd))) {
       throw new Error(
-        `BMAD already initialized in ${cwd} (.bmad/ exists). Use --force to re-initialize.`
+        `BMAD already initialized in ${cwd} (.bmad/ or _bmad/ exists). Use --force to re-initialize.`
       );
     }
 
