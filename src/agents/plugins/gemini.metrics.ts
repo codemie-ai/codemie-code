@@ -5,7 +5,7 @@
  * Handles Gemini-specific file formats (JSON) and parsing logic.
  */
 
-import { readFile, readdir } from 'fs/promises';
+import { readFile } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
 import { existsSync } from 'fs';
@@ -289,7 +289,7 @@ export class GeminiMetricsAdapter extends BaseMetricsAdapter {
             sessionId: '', // Set by caller (MetricsOrchestrator)
             agentSessionId: session.sessionId || '',
             timestamp: message.timestamp,
-            gitBranch: undefined, // Set by caller from MetricsSession metadata
+            gitBranch: undefined, // Populated by MetricsOrchestrator during collection (fresh git detection)
             tokens: {
               input: message.tokens.input || 0,
               // Output = output tokens + thoughts tokens (model's internal reasoning)
@@ -349,64 +349,57 @@ export class GeminiMetricsAdapter extends BaseMetricsAdapter {
         return [];
       }
 
-      // Optimization: Use cached projectHash from last parseSessionFile/parseIncrementalMetrics call
-      // This avoids scanning all project directories when we already know which one to check
-      const projectHashesToCheck: string[] = [];
-      if (this.lastProjectHash) {
-        projectHashesToCheck.push(this.lastProjectHash);
-      } else {
-        // Fallback: scan all directories (only happens on first call before any parsing)
-        projectHashesToCheck.push(...(await readdir(tmpDir)));
+      // Use cached projectHash from parseSessionFile/parseIncrementalMetrics call
+      // This is always available when getUserPrompts is called from normal flow
+      if (!this.lastProjectHash) {
+        logger.debug('[GeminiMetrics] No projectHash available - cannot determine logs.json location');
+        return [];
       }
 
-      for (const projectHash of projectHashesToCheck) {
-        const logsPath = join(tmpDir, projectHash, 'logs.json');
-        if (existsSync(logsPath)) {
-          try {
-            const content = await readFile(logsPath, 'utf-8');
-            const logs = JSON.parse(content);
+      const logsPath = join(tmpDir, this.lastProjectHash, 'logs.json');
+      if (!existsSync(logsPath)) {
+        return [];
+      }
 
-            // Validate logs structure
-            if (!Array.isArray(logs)) {
-              logger.debug(`[GeminiMetrics] Invalid logs.json format in ${projectHash}: not an array`);
-              continue;
-            }
+      try {
+        const content = await readFile(logsPath, 'utf-8');
+        const logs = JSON.parse(content);
 
-            const prompts = logs
-              .filter((log: any) => {
-                // Validate log entry has required fields
-                if (!log || !log.sessionId || !log.timestamp || !log.message) {
-                  return false;
-                }
-                return log.sessionId === sessionId;
-              })
-              .filter((log: any) => {
-                const ts = new Date(log.timestamp).getTime();
-                if (isNaN(ts)) return false; // Invalid timestamp
-                if (fromTimestamp && ts < fromTimestamp) return false;
-                if (toTimestamp && ts > toTimestamp) return false;
-                return true;
-              })
-              .map((log: any) => ({
-                display: log.message,
-                timestamp: new Date(log.timestamp).getTime(),
-                project: '', // workingDirectory comes from MetricsSession
-                sessionId: log.sessionId,
-                messageId: log.messageId // Preserve messageId for correlation
-              }));
-
-            if (prompts.length > 0) {
-              return prompts;
-            }
-          } catch (parseError) {
-            // JSON parse failed or file read error - skip this directory
-            logger.debug(`[GeminiMetrics] Failed to parse logs.json in ${projectHash}:`, parseError);
-            continue;
-          }
+        // Validate logs structure
+        if (!Array.isArray(logs)) {
+          logger.debug(`[GeminiMetrics] Invalid logs.json format in ${this.lastProjectHash}: not an array`);
+          return [];
         }
-      }
 
-      return [];
+        const prompts = logs
+          .filter((log: any) => {
+            // Validate log entry has required fields
+            if (!log || !log.sessionId || !log.timestamp || !log.message) {
+              return false;
+            }
+            return log.sessionId === sessionId;
+          })
+          .filter((log: any) => {
+            const ts = new Date(log.timestamp).getTime();
+            if (isNaN(ts)) return false; // Invalid timestamp
+            if (fromTimestamp && ts < fromTimestamp) return false;
+            if (toTimestamp && ts > toTimestamp) return false;
+            return true;
+          })
+          .map((log: any) => ({
+            display: log.message,
+            timestamp: new Date(log.timestamp).getTime(),
+            project: '', // workingDirectory comes from MetricsSession
+            sessionId: log.sessionId,
+            messageId: log.messageId // Preserve messageId for correlation
+          }));
+
+        return prompts;
+      } catch (parseError) {
+        // JSON parse failed or file read error
+        logger.debug(`[GeminiMetrics] Failed to parse logs.json in ${this.lastProjectHash}:`, parseError);
+        return [];
+      }
     } catch (error) {
       logger.debug(`[GeminiMetrics] Failed to get user prompts:`, error);
       return [];

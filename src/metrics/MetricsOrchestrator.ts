@@ -19,6 +19,7 @@ import type { AgentMetricsSupport, MetricsSession, FileSnapshot } from './types.
 import { METRICS_CONFIG } from './config.js';
 import { logger } from '../utils/logger.js';
 import { watch } from 'fs';
+import { detectGitBranch } from './utils/git.js';
 
 export interface MetricsOrchestratorOptions {
   sessionId?: string; // Optional: provide existing session ID
@@ -91,6 +92,9 @@ export class MetricsOrchestrator {
 
       logger.debug(`[MetricsOrchestrator] Pre-spawn snapshot: ${this.beforeSnapshot.files.length} files`);
 
+      // Detect git branch from working directory
+      const gitBranch = await detectGitBranch(this.workingDirectory);
+
       // Create session record
       this.session = {
         sessionId: this.sessionId,
@@ -99,6 +103,7 @@ export class MetricsOrchestrator {
         ...(this.project && { project: this.project }),
         startTime: Date.now(),
         workingDirectory: this.workingDirectory,
+        ...(gitBranch && { gitBranch }), // Include branch if detected
         status: 'active',
         correlation: {
           status: 'pending',
@@ -327,6 +332,9 @@ export class MetricsOrchestrator {
 
       logger.debug(`[MetricsOrchestrator] Collected ${deltas.length} new delta(s)`);
 
+      // Detect current git branch (fresh detection to capture branch switches)
+      const currentBranch = await detectGitBranch(this.workingDirectory);
+
       // Collect record IDs for tracking
       const newRecordIds: string[] = [];
 
@@ -334,6 +342,16 @@ export class MetricsOrchestrator {
       for (const delta of deltas) {
         // Set CodeMie session ID
         delta.sessionId = this.sessionId;
+
+        // Populate gitBranch for all deltas (override adapter value with current branch)
+        // This ensures branch switches mid-session are captured correctly
+        // Claude provides it from session file, but we override with fresh detection
+        if (currentBranch) {
+          delta.gitBranch = currentBranch;
+        } else if (!delta.gitBranch) {
+          // Fallback to adapter value if we couldn't detect (e.g., not a git repo)
+          delta.gitBranch = undefined;
+        }
 
         // Append to JSONL
         await this.deltaWriter.appendDelta(delta);

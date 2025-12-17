@@ -85,6 +85,7 @@ export interface MetricsSession {
   startTime: number; // Unix timestamp (ms)
   endTime?: number; // Unix timestamp (ms)
   workingDirectory: string; // CWD where agent was launched
+  gitBranch?: string; // Git branch at session start (optional, detected from workingDirectory)
 
   correlation: CorrelationResult;
   monitoring: MonitoringState;
