@@ -212,7 +212,15 @@ export function displaySetupSuccess(
   console.log(chalk.cyan(`🔗 Provider: ${provider}`));
   console.log(chalk.cyan(`🤖 Model: ${model}`));
   console.log(chalk.cyan(`📁 Config: ~/.codemie/config.json\n`));
-  console.log(chalk.bold(`🚀 Ready to use! Try: ${chalk.white('codemie-code "test task"')}\n`));
+  
+  console.log(chalk.bold('  Next Steps:'));
+  console.log('');
+  console.log('  ' + chalk.white('• Verify setup:') + '           ' + chalk.cyan('codemie doctor'));
+  console.log('  ' + chalk.white('• Run native task:') + '        ' + chalk.cyan('codemie --task "analyze project"'));
+  console.log('  ' + chalk.white('• Install an agent:') + '       ' + chalk.cyan('codemie install claude'));
+  console.log('  ' + chalk.white('• Run agent task:') + '         ' + chalk.cyan('codemie-claude --task "fix bugs"'));
+  console.log('  ' + chalk.white('• Explore more:') + '           ' + chalk.cyan('codemie --help'));
+  console.log('');
 }
 
 /**

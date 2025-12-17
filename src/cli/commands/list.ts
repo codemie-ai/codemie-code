@@ -81,6 +81,19 @@ export function createListCommand(): Command {
             logger.info('No frameworks installed');
           }
         }
+
+        console.log('');
+        console.log(chalk.dim('──────────────────────────────────────────────────'));
+        console.log(chalk.bold('  Next Steps:'));
+        console.log('');
+        console.log('  ' + chalk.white('• Install an agent:') + '      ' + chalk.cyan('codemie install <agent>'));
+        console.log('  ' + chalk.white('• Run an agent:') + '          ' + chalk.cyan('codemie-<agent>'));
+        console.log('  ' + chalk.white('• Run a quick task:') + '      ' + chalk.cyan('codemie --task "your task"'));
+        console.log('  ' + chalk.white('• Install framework:') + '     ' + chalk.cyan('codemie install <framework>'));
+        console.log('  ' + chalk.white('• Initialize framework:') + '    ' + chalk.cyan('codemie-<agent> init'));
+        console.log('  ' + chalk.white('• Explore more:') + '          ' + chalk.cyan('codemie --help'));
+        console.log('');
+
       } catch (error: unknown) {
         logger.error('Failed to list agents and frameworks:', error);
         process.exit(1);
