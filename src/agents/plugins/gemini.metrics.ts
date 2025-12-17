@@ -289,7 +289,7 @@ export class GeminiMetricsAdapter extends BaseMetricsAdapter {
             sessionId: '', // Set by caller (MetricsOrchestrator)
             agentSessionId: session.sessionId || '',
             timestamp: message.timestamp,
-            gitBranch: undefined, // Populated by MetricsOrchestrator during collection (fresh git detection)
+            gitBranch: undefined,
             tokens: {
               input: message.tokens.input || 0,
               // Output = output tokens + thoughts tokens (model's internal reasoning)

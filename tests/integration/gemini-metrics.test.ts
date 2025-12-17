@@ -36,7 +36,7 @@ describe('GeminiMetricsAdapter - Full Pipeline Integration Test', () => {
   const fixturesDir = join(__dirname, 'fixtures', 'gemini');
   // Using real Gemini session data from production
   const sessionFilePath = join(fixturesDir, 'session-2025-12-01T21-45-5b959dae.json');
-  const testSessionId = 'test-session-' + Date.now();
+  const testSessionId = 'gemini-test-session-' + Date.now() + '-' + Math.random().toString(36).substring(7);
 
   let adapter: GeminiMetricsAdapter;
   let deltaWriter: DeltaWriter;

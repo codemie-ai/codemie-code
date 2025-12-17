@@ -40,7 +40,7 @@ describe('ClaudeMetricsAdapter - Full Pipeline Integration Test', () => {
   const tempTestDir = join(tmpdir(), 'claude-metrics-test-' + Date.now());
 
   const sessionFilePath = join(tempTestDir, '4c2ddfdc-b619-4525-8d03-1950fb1b0257.jsonl');
-  const testSessionId = 'test-session-' + Date.now();
+  const testSessionId = 'claude-test-session-' + Date.now() + '-' + Math.random().toString(36).substring(7);
 
   let adapter: ClaudeMetricsAdapter;
   let deltaWriter: DeltaWriter;

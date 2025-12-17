@@ -713,7 +713,7 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
             sessionId: '',  // Will be set by caller
             agentSessionId: record.sessionId || '',
             timestamp: record.timestamp || new Date().toISOString(),
-            gitBranch, // Claude's branch value, overridden by MetricsOrchestrator with fresh detection
+            gitBranch,
             tokens: {
               input: inputTokens,
               output: outputTokens,

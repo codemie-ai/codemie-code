@@ -332,9 +332,6 @@ export class MetricsOrchestrator {
 
       logger.debug(`[MetricsOrchestrator] Collected ${deltas.length} new delta(s)`);
 
-      // Detect current git branch (fresh detection to capture branch switches)
-      const currentBranch = await detectGitBranch(this.workingDirectory);
-
       // Collect record IDs for tracking
       const newRecordIds: string[] = [];
 
@@ -343,14 +340,9 @@ export class MetricsOrchestrator {
         // Set CodeMie session ID
         delta.sessionId = this.sessionId;
 
-        // Populate gitBranch for all deltas (override adapter value with current branch)
-        // This ensures branch switches mid-session are captured correctly
-        // Claude provides it from session file, but we override with fresh detection
-        if (currentBranch) {
-          delta.gitBranch = currentBranch;
-        } else if (!delta.gitBranch) {
-          // Fallback to adapter value if we couldn't detect (e.g., not a git repo)
-          delta.gitBranch = undefined;
+        // Set gitBranch if not already present in delta
+        if (!delta.gitBranch) {
+          delta.gitBranch = await detectGitBranch(this.workingDirectory);
         }
 
         // Append to JSONL
