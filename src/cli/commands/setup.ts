@@ -45,8 +45,9 @@ export function createSetupCommand(): Command {
 }
 
 async function runSetupWizard(force?: boolean): Promise<void> {
-  console.log(chalk.bold.cyan('\n╔═══════════════════════════════════════╗'));
-  console.log(chalk.bold.cyan('║   Welcome to CodeMie Code Setup!     ║'));
+  console.log(chalk.bold.cyan('\n'));
+  console.log(chalk.bold.cyan('╔═══════════════════════════════════════╗'));
+  console.log(chalk.bold.cyan('║   Welcome to CodeMie Code Setup!      ║'));
   console.log(chalk.bold.cyan('╚═══════════════════════════════════════╝\n'));
 
   // Check if config already exists

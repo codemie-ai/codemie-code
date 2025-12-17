@@ -4,6 +4,8 @@ import { mkdir, writeFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
+import { GeminiMetricsAdapter } from './gemini.metrics.js';
+import type { AgentMetricsSupport } from '../../metrics/types.js';
 
 // Define metadata first (used by both lifecycle and analytics)
 const metadata = {
@@ -22,11 +24,11 @@ const metadata = {
 
   supportedProviders: ['ai-run-sso', 'litellm'],
   blockedModelPatterns: [/^claude/i, /^gpt/i], // Gemini models only
-  recommendedModels: ['gemini-2.5-flash', 'gemini-2.5-pro'],
+  recommendedModels: ['gemini-3-pro'],
 
   ssoConfig: {
     enabled: true,
-    clientType: 'gemini-cli'
+    clientType: 'codemie-gemini'
   },
 
   flagMappings: {
@@ -87,16 +89,21 @@ export const GeminiPluginMetadata: AgentMetadata = {
 
       return env;
     }
-  },
-
-  // Analytics adapter (uses same metadata - DRY principle!)
+  }
 };
 
 /**
  * Gemini CLI Adapter
  */
 export class GeminiPlugin extends BaseAgentAdapter {
+  private metricsAdapter: AgentMetricsSupport;
+
   constructor() {
     super(GeminiPluginMetadata);
+    this.metricsAdapter = new GeminiMetricsAdapter(GeminiPluginMetadata);
+  }
+
+  getMetricsAdapter(): AgentMetricsSupport {
+    return this.metricsAdapter;
   }
 }

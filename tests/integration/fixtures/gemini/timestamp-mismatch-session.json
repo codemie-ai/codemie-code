@@ -1,0 +1,1 @@
+{"sessionId":"test-timestamp-mismatch","messages":[{"id":"user-1","type":"user","timestamp":"2025-12-17T15:31:27.525Z","content":"show tools"},{"id":"msg-1","type":"gemini","timestamp":"2025-12-17T15:31:38.095Z","tokens":{"input":100,"output":50,"cached":0}}]}

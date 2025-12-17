@@ -6,7 +6,7 @@
  */
 
 import { readFile, readdir } from 'fs/promises';
-import { extname, join, dirname } from 'path';
+import { join, dirname } from 'path';
 import { homedir } from 'os';
 import { existsSync } from 'fs';
 import { BaseMetricsAdapter } from '../core/BaseMetricsAdapter.js';
@@ -14,7 +14,6 @@ import type {
   MetricSnapshot,
   MetricDelta,
   ToolCallMetric,
-  ToolUsageSummary,
   FileOperation,
   FileOperationType,
   UserPrompt
@@ -380,78 +379,6 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
     }
 
     return fileOp;
-  }
-
-  /**
-   * Extract file format from path
-   */
-  private extractFormat(path: string): string | undefined {
-    const ext = extname(path);
-    return ext ? ext.slice(1) : undefined;
-  }
-
-  /**
-   * Detect programming language from file extension
-   */
-  private detectLanguage(path: string): string | undefined {
-    const ext = extname(path).toLowerCase();
-    const langMap: Record<string, string> = {
-      '.ts': 'typescript',
-      '.tsx': 'typescript',
-      '.js': 'javascript',
-      '.jsx': 'javascript',
-      '.py': 'python',
-      '.java': 'java',
-      '.go': 'go',
-      '.rs': 'rust',
-      '.cpp': 'cpp',
-      '.c': 'c',
-      '.rb': 'ruby',
-      '.php': 'php',
-      '.swift': 'swift',
-      '.kt': 'kotlin',
-      '.md': 'markdown',
-      '.json': 'json',
-      '.yaml': 'yaml',
-      '.yml': 'yaml'
-    };
-    return langMap[ext];
-  }
-
-  /**
-   * Build aggregated tool usage summary from detailed tool calls
-   */
-  private buildToolUsageSummary(toolCalls: ToolCallMetric[]): ToolUsageSummary[] {
-    const summaryMap = new Map<string, ToolUsageSummary>();
-
-    for (const call of toolCalls) {
-      let summary = summaryMap.get(call.name);
-      if (!summary) {
-        summary = {
-          name: call.name,
-          count: 0,
-          successCount: 0,
-          errorCount: 0,
-          fileOperations: {}
-        };
-        summaryMap.set(call.name, summary);
-      }
-
-      summary.count++;
-      if (call.status === 'success') {
-        summary.successCount!++;
-      } else if (call.status === 'error') {
-        summary.errorCount!++;
-      }
-
-      // Aggregate file operations
-      if (call.fileOperation) {
-        const opType = call.fileOperation.type;
-        summary.fileOperations![opType] = (summary.fileOperations![opType] || 0) + 1;
-      }
-    }
-
-    return Array.from(summaryMap.values());
   }
 
   /**

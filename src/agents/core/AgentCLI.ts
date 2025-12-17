@@ -63,6 +63,7 @@ export class AgentCLI {
       .option('--api-key <key>', 'Override API key')
       .option('--base-url <url>', 'Override base URL')
       .option('--timeout <seconds>', 'Override timeout (in seconds)', parseInt)
+      .option('--task <prompt>', 'Execute a single task (agent-specific flag mapping)')
       .allowUnknownOption()
       .argument('[args...]', `Arguments to pass to ${this.adapter.displayName}`)
       .action(async (args, options) => {
@@ -273,18 +274,25 @@ export class AgentCLI {
   /**
    * Collect pass-through arguments from Commander options
    */
-  private collectPassThroughArgs(args: string[], options: Record<string, unknown>): string[] {
+  private collectPassThroughArgs(
+    args: string[],
+    options: Record<string, unknown>
+  ): string[] {
     const agentArgs = [...args];
-    const knownOptions = ['profile', 'model', 'provider', 'apiKey', 'baseUrl', 'timeout'];
+    // Config-only options (not passed to agent, handled by CodeMie CLI)
+    const configOnlyOptions = ['profile', 'provider', 'apiKey', 'baseUrl', 'timeout'];
 
     for (const [key, value] of Object.entries(options)) {
-      if (knownOptions.includes(key)) continue;
+      // Skip config-only options (handled by CodeMie CLI layer)
+      if (configOnlyOptions.includes(key)) continue;
 
-      if (key.length === 1) {
-        agentArgs.push(`-${key}`);
-      } else {
-        agentArgs.push(`--${key}`);
-      }
+      // Build flag key (--task or -t)
+      const flagKey = key.length === 1 ? `-${key}` : `--${key}`;
+
+      // Include all remaining options:
+      // 1. Options with flagMappings (will be transformed in BaseAgentAdapter)
+      // 2. Unknown options (allowUnknownOption enabled, pass through as-is)
+      agentArgs.push(flagKey);
 
       if (value !== true && value !== undefined) {
         agentArgs.push(String(value));

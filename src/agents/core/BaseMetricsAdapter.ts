@@ -7,8 +7,15 @@
  */
 
 import { homedir } from 'os';
-import { join } from 'path';
-import type { AgentMetricsSupport, MetricSnapshot, MetricDelta, UserPrompt } from '../../metrics/types.js';
+import { join, extname } from 'path';
+import type {
+  AgentMetricsSupport,
+  MetricSnapshot,
+  MetricDelta,
+  UserPrompt,
+  ToolCallMetric,
+  ToolUsageSummary
+} from '../../metrics/types.js';
 import type { AgentMetadata } from './types.js';
 
 export abstract class BaseMetricsAdapter implements AgentMetricsSupport {
@@ -109,5 +116,88 @@ export abstract class BaseMetricsAdapter implements AgentMetricsSupport {
     const home = homedir();
     const agentDir = join(home, `.${this.agentName}`);
     return subpath ? join(agentDir, subpath) : agentDir;
+  }
+
+  // ==========================================
+  // Shared Utility Methods
+  // ==========================================
+
+  /**
+   * Extract file format/extension from path
+   * @param path - File path
+   * @returns File extension without dot (e.g., 'ts', 'py') or undefined
+   */
+  protected extractFormat(path: string): string | undefined {
+    const ext = extname(path);
+    return ext ? ext.slice(1) : undefined;
+  }
+
+  /**
+   * Detect programming language from file extension
+   * @param path - File path
+   * @returns Language name (e.g., 'typescript', 'python') or undefined
+   */
+  protected detectLanguage(path: string): string | undefined {
+    const ext = extname(path).toLowerCase();
+    const langMap: Record<string, string> = {
+      '.ts': 'typescript',
+      '.tsx': 'typescript',
+      '.js': 'javascript',
+      '.jsx': 'javascript',
+      '.py': 'python',
+      '.java': 'java',
+      '.go': 'go',
+      '.rs': 'rust',
+      '.cpp': 'cpp',
+      '.c': 'c',
+      '.rb': 'ruby',
+      '.php': 'php',
+      '.swift': 'swift',
+      '.kt': 'kotlin',
+      '.md': 'markdown',
+      '.json': 'json',
+      '.yaml': 'yaml',
+      '.yml': 'yaml'
+    };
+    return langMap[ext];
+  }
+
+  /**
+   * Build aggregated tool usage summary from detailed tool calls
+   * Aggregates: count, success/error counts, file operation type counts
+   * @param toolCalls - Array of detailed tool call metrics
+   * @returns Array of aggregated summaries per tool
+   */
+  protected buildToolUsageSummary(toolCalls: ToolCallMetric[]): ToolUsageSummary[] {
+    const summaryMap = new Map<string, ToolUsageSummary>();
+
+    for (const call of toolCalls) {
+      let summary = summaryMap.get(call.name);
+      if (!summary) {
+        summary = {
+          name: call.name,
+          count: 0,
+          successCount: 0,
+          errorCount: 0,
+          fileOperations: {}
+        };
+        summaryMap.set(call.name, summary);
+      }
+
+      summary.count++;
+      if (call.status === 'success') {
+        summary.successCount!++;
+      } else if (call.status === 'error') {
+        summary.errorCount!++;
+      }
+
+      // Aggregate file operations by type
+      if (call.fileOperation) {
+        const opType = call.fileOperation.type;
+        summary.fileOperations![opType] = (summary.fileOperations![opType] || 0) + 1;
+      }
+    }
+
+    return Array.from(summaryMap.values());
   }
 }
