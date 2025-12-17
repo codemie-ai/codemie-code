@@ -169,9 +169,16 @@ export const OllamaSetupSteps: ProviderSetupSteps = {
    * Build configuration for Ollama
    */
   buildConfig(credentials: ProviderCredentials, model: string): Partial<CodeMieConfigOptions> {
+    // Ensure baseURL includes /v1 for OpenAI-compatible API
+    // Ollama supports OpenAI-compatible endpoints at /v1/chat/completions
+    let baseUrl = credentials.baseUrl || OllamaTemplate.defaultBaseUrl;
+    if (!baseUrl.endsWith('/v1') && !baseUrl.includes('/v1/')) {
+      baseUrl = `${baseUrl}/v1`;
+    }
+
     return {
       provider: 'ollama',
-      baseUrl: credentials.baseUrl,
+      baseUrl,
       apiKey: '', // Ollama doesn't use API keys
       model,
       timeout: 300,
