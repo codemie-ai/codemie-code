@@ -84,6 +84,12 @@ export class CodeMieAgent {
             // Add client tracking headers to all OpenAI requests
             fetch: async (input: string | URL | Request, init?: RequestInit) => {
               const cliVersion = process.env.CODEMIE_CLI_VERSION || 'unknown';
+              const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+
+              if (this.config.debug) {
+                logger.debug(`OpenAI request to: ${url}`);
+              }
+
               const updatedInit = {
                 ...init,
                 headers: {
@@ -92,7 +98,15 @@ export class CodeMieAgent {
                   'X-CodeMie-Client': 'codemie-code'
                 }
               };
-              return fetch(input, updatedInit);
+
+              try {
+                return await fetch(input, updatedInit);
+              } catch (error) {
+                if (this.config.debug) {
+                  logger.debug(`Fetch error for ${url}:`, error);
+                }
+                throw error;
+              }
             }
           },
           ...commonConfig
@@ -491,6 +505,10 @@ export class CodeMieAgent {
 
       if (this.config.debug) {
         logger.debug(`Agent error:`, error);
+        // Log configuration details for debugging
+        logger.debug(`Provider: ${this.config.provider}`);
+        logger.debug(`Base URL: ${this.config.baseUrl}`);
+        logger.debug(`Model: ${this.config.model}`);
       }
 
       onEvent({
