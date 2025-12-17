@@ -5,12 +5,12 @@
  * Handles both listing installed models and discovering available models.
  */
 
-import type { CodeMieConfigOptions } from '../../../env/types.js';
-import type { ModelInfo, InstallProgress } from '../../core/types.js';
-import { BaseModelProxy } from '../../core/base/BaseModelProxy.js';
-import { ProviderRegistry } from '../../core/registry.js';
-import { OllamaTemplate } from './ollama.template.js';
-import { logger } from '../../../utils/logger.js';
+import type {CodeMieConfigOptions} from '../../../env/types.js';
+import type {InstallProgress, ModelInfo} from '../../core/types.js';
+import {BaseModelProxy} from '../../core/index.js';
+import {ProviderRegistry} from '../../core/registry.js';
+import {OllamaTemplate} from './ollama.template.js';
+import {logger} from '../../../utils/logger.js';
 
 /**
  * Ollama API response types
@@ -126,7 +126,7 @@ export class OllamaModelProxy extends BaseModelProxy {
 
   /**
    * Fetch available models (for setup/discovery)
-   * Returns installed coding models if available, otherwise returns recommended models from template
+   * Returns installed models if available
    */
   async fetchModels(config: CodeMieConfigOptions): Promise<ModelInfo[]> {
     try {
@@ -137,42 +137,33 @@ export class OllamaModelProxy extends BaseModelProxy {
       // Try to fetch installed models from Ollama
       const installedModels = await proxy.listModels();
 
-      // If we have installed coding models, return them with enriched metadata
+      // Return all installed models
       if (installedModels.length > 0) {
-        const codingModels = installedModels
-          .filter(m => isCodingModel(m.id))
-          .map(m => {
-            const metadata = getCodingModelMetadata(m.id);
-            return {
-              id: m.id,
-              name: metadata.name || m.name || m.id,
-              description: metadata.description,
-              size: m.size,
-              popular: metadata.popular || false
-            };
-          });
-
-        // Return installed coding models if we have any
-        if (codingModels.length > 0) {
-          return codingModels;
-        }
+        return installedModels.map(m => {
+          const metadata = getCodingModelMetadata(m.id);
+          return {
+            id: m.id,
+            name: metadata.name || m.name || m.id,
+            description: metadata.description,
+            size: m.size,
+            popular: metadata.popular || false
+          };
+        });
       }
     } catch (error) {
       logger.debug('Failed to fetch installed Ollama models:', error);
     }
 
     // Fall back to template's recommended models with metadata from template
-    const recommendedModels = OllamaTemplate.recommendedModels.map(modelId => {
-      const metadata = OllamaTemplate.modelMetadata?.[modelId];
-      return {
-        id: modelId,
-        name: metadata?.name || modelId,
-        description: metadata?.description,
-        popular: metadata?.popular ?? true // All recommended models are popular by default
-      };
+      return OllamaTemplate.recommendedModels.map(modelId => {
+        const metadata = OllamaTemplate.modelMetadata?.[modelId];
+        return {
+            id: modelId,
+            name: metadata?.name || modelId,
+            description: metadata?.description,
+            popular: metadata?.popular ?? true // All recommended models are popular by default
+        };
     });
-
-    return recommendedModels;
   }
 
   /**

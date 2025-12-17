@@ -15,7 +15,7 @@ export const OllamaTemplate = registerProvider<ProviderTemplate>({
   displayName: 'Ollama',
   description: 'Popular open-source local LLM runner - optimized for coding with 16GB RAM',
   defaultPort: 11434,
-  defaultBaseUrl: 'http://localhost:11434/v1',
+  defaultBaseUrl: 'http://localhost:11434',
   requiresAuth: false,
   authType: 'none',
   recommendedModels: [
@@ -24,27 +24,9 @@ export const OllamaTemplate = registerProvider<ProviderTemplate>({
     'deepseek-coder-v2',
     'deepseek-v3.1:671b-cloud'
   ],
-  modelMetadata: {
-    'qwen2.5-coder': {
-      name: 'Qwen 2.5 Coder',
-      description: 'Excellent for coding tasks with tool support (7B, ~5GB)',
-    },
-    'qwen3-vl:235b-cloud': {
-      name: 'Qwen 3 VL',
-      description: 'Latest Qwen model with vision and tool support (235B)',
-    },
-    'deepseek-coder-v2': {
-      name: 'DeepSeek Coder V2',
-      description: 'Advanced coding model with tool support (16B, ~9GB)',
-    },
-    'deepseek-v3.1:671b-cloud': {
-      name: 'DeepSeek V3.1',
-      description: 'Latest DeepSeek model with advanced reasoning (671B)',
-    }
-  },
   capabilities: ['streaming', 'tools', 'embeddings', 'model-management'],
   supportsModelInstallation: true,
-  healthCheckEndpoint: '/api/tags',
+  healthCheckEndpoint: '/api/version',
   setupInstructions: `
 # Ollama Setup Instructions
 
@@ -60,21 +42,6 @@ curl -fsSL https://ollama.com/install.sh | sh
 
 ### Windows
 Download from: https://ollama.com/download
-
-## Starting Ollama
-
-Ollama runs as a background service after installation.
-
-### Verify Running
-\`\`\`bash
-curl http://localhost:11434/api/tags
-\`\`\`
-
-### Using CodeMie
-\`\`\`bash
-codemie models install ollama/llama3.2
-codemie models list ollama
-\`\`\`
 
 ## Recommended Coding Models (Tool Support Required)
 
