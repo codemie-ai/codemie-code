@@ -70,11 +70,13 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
       );
 
       // Display profile configuration (with auth status if SSO)
+      // For SSO: display codeMieUrl (base URL), validate against baseUrl (API URL)
       console.log(
         await renderProfileInfo({
           profile: profileName,
           provider: config.provider,
-          baseUrl: config.baseUrl || config.codeMieUrl,
+          baseUrl: config.codeMieUrl || config.baseUrl, // Display URL
+          apiUrl: config.baseUrl, // API URL for auth validation
           model: config.model,
           timeout: config.timeout,
           debug: config.debug,

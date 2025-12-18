@@ -13,8 +13,9 @@ function formatField(label: string, value: string, color = chalk.cyan): string {
 
 /**
  * Get SSO authentication status for display
+ * Checks if credentials exist AND match the provided base URL
  */
-export async function getSSOAuthStatus(): Promise<string[]> {
+export async function getSSOAuthStatus(baseUrl: string): Promise<string[]> {
   const lines: string[] = [];
   const { CredentialStore } = await import('./credential-store.js');
   const store = CredentialStore.getInstance();
@@ -23,16 +24,29 @@ export async function getSSOAuthStatus(): Promise<string[]> {
   if (!credentials) {
     lines.push(formatField('Auth Status', 'Not authenticated', chalk.yellow));
   } else {
-    const isExpired = credentials.expiresAt && Date.now() > credentials.expiresAt;
-    const status = isExpired ? 'Expired' : 'Valid';
-    const statusColor = isExpired ? chalk.red : chalk.green;
-    lines.push(formatField('Auth Status', status, statusColor));
+    // Check if credentials are for the current profile's URL
+    const normalizeUrl = (url: string) => url.replace(/\/+$/, ''); // Remove trailing slashes
+    const storedUrl = normalizeUrl(credentials.apiUrl);
+    const currentUrl = normalizeUrl(baseUrl);
 
-    if (credentials.expiresAt && !isExpired) {
-      const expiresIn = Math.max(0, credentials.expiresAt - Date.now());
-      const hours = Math.floor(expiresIn / (1000 * 60 * 60));
-      const minutes = Math.floor((expiresIn % (1000 * 60 * 60)) / (1000 * 60));
-      lines.push(formatField('Expires in', `${hours}h ${minutes}m`));
+    if (storedUrl !== currentUrl) {
+      // Credentials exist but for a different URL
+      lines.push(formatField('Auth Status', 'Wrong URL', chalk.yellow));
+      lines.push(formatField('Stored for', credentials.apiUrl, chalk.dim));
+      lines.push(formatField('Current URL', baseUrl, chalk.dim));
+    } else {
+      // Credentials match the current URL - check expiration
+      const isExpired = credentials.expiresAt && Date.now() > credentials.expiresAt;
+      const status = isExpired ? 'Expired' : 'Valid';
+      const statusColor = isExpired ? chalk.red : chalk.green;
+      lines.push(formatField('Auth Status', status, statusColor));
+
+      if (credentials.expiresAt && !isExpired) {
+        const expiresIn = Math.max(0, credentials.expiresAt - Date.now());
+        const hours = Math.floor(expiresIn / (1000 * 60 * 60));
+        const minutes = Math.floor((expiresIn % (1000 * 60 * 60)) / (1000 * 60));
+        lines.push(formatField('Expires in', `${hours}h ${minutes}m`));
+      }
     }
   }
 
@@ -69,6 +83,7 @@ export async function renderProfileInfo(config: {
   profile?: string;
   provider?: string;
   baseUrl?: string;
+  apiUrl?: string; // API URL for auth validation (SSO only)
   model?: string;
   timeout?: number;
   debug?: boolean;
@@ -93,9 +108,13 @@ export async function renderProfileInfo(config: {
   }
 
   // SSO credential status for ai-run-sso profiles
-  if (config.showAuthStatus && config.provider === 'ai-run-sso' && config.baseUrl) {
-    const authStatusLines = await getSSOAuthStatus();
-    outputLines.push(...authStatusLines);
+  // Use apiUrl for validation if provided, otherwise fallback to baseUrl
+  if (config.showAuthStatus && config.provider === 'ai-run-sso') {
+    const validationUrl = config.apiUrl || config.baseUrl;
+    if (validationUrl) {
+      const authStatusLines = await getSSOAuthStatus(validationUrl);
+      outputLines.push(...authStatusLines);
+    }
   }
 
   // Timeout

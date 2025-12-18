@@ -163,8 +163,10 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       }
     }
 
-    // Capture original base URL BEFORE proxy modifies it
-    const originalBaseUrl = env.CODEMIE_BASE_URL || env.OPENAI_BASE_URL;
+    // Capture URLs BEFORE proxy modifies env
+    // For SSO: CODEMIE_URL is the base URL (for display), CODEMIE_BASE_URL is API URL (for auth validation)
+    const displayUrl = env.CODEMIE_URL || env.CODEMIE_BASE_URL || env.OPENAI_BASE_URL;
+    const apiUrl = env.CODEMIE_BASE_URL; // API URL for auth validation
 
     // Setup proxy with the session ID (already in env)
     await this.setupProxy(env);
@@ -191,7 +193,8 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       await renderProfileInfo({
         profile: profileName,
         provider,
-        baseUrl: originalBaseUrl,
+        baseUrl: displayUrl,
+        apiUrl, // For auth validation
         model,
         timeout,
         debug,
