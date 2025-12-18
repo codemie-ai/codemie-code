@@ -64,6 +64,7 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
             profile: profileName,
             provider: config.provider,
             model: config.model,
+            codeMieUrl: config.codeMieUrl,
             agent: BUILTIN_AGENT_NAME,
             cliVersion,
             sessionId

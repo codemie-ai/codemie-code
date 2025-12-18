@@ -171,6 +171,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     const provider = env.CODEMIE_PROVIDER || 'unknown';
     const cliVersion = env.CODEMIE_CLI_VERSION || 'unknown';
     const model = env.CODEMIE_MODEL || 'unknown';
+    const codeMieUrl = env.CODEMIE_URL;
 
     // Display ASCII logo with configuration
     console.log(
@@ -178,6 +179,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         profile: profileName,
         provider,
         model,
+        codeMieUrl,
         agent: this.metadata.name,
         cliVersion,
         sessionId

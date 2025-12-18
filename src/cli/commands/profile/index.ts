@@ -1,8 +1,11 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
-import { ConfigLoader } from '../../utils/config-loader.js';
-import { logger } from '../../utils/logger.js';
+import { ConfigLoader } from '../../../utils/config-loader.js';
+import { logger } from '../../../utils/logger.js';
+import { ProfileDisplay } from '../../../utils/profile-display.js';
+import { ProviderRegistry } from '../../../providers/core/registry.js';
+import { createLoginCommand, createLogoutCommand, createRefreshCommand } from './auth.js';
 
 export function createProfileCommand(): Command {
   const command = new Command('profile');
@@ -13,6 +16,10 @@ export function createProfileCommand(): Command {
       // Default action: list profiles
       await listProfiles();
     })
+    .addCommand(createStatusCommand())
+    .addCommand(createLoginCommand())
+    .addCommand(createLogoutCommand())
+    .addCommand(createRefreshCommand())
     .addCommand(createSwitchCommand())
     .addCommand(createDeleteCommand())
     .addCommand(createRenameCommand());
@@ -22,68 +29,96 @@ export function createProfileCommand(): Command {
 
 /**
  * List all profiles with details
- * Extracted as reusable function
+ * Uses ProfileDisplay utility for consistent formatting
  */
 async function listProfiles(): Promise<void> {
   try {
     const profiles = await ConfigLoader.listProfiles();
-
-    if (profiles.length === 0) {
-      console.log(chalk.yellow('\nNo profiles found. Run "codemie setup" to create one.\n'));
-      return;
-    }
-
-    console.log(chalk.bold.cyan('\n📋 All Profiles:\n'));
-
-    profiles.forEach(({ name, active, profile }, index) => {
-      const activeLabel = active ? chalk.green(' (Active)') : '';
-      console.log(chalk.bold.cyan(`Profile: ${name}${activeLabel}`));
-      console.log(chalk.cyan('  Provider:     ') + chalk.white(profile.provider || 'N/A'));
-
-      if (profile.codeMieUrl) {
-        console.log(chalk.cyan('  CodeMie URL:  ') + chalk.white(profile.codeMieUrl));
-      }
-
-      console.log(chalk.cyan('  Model:        ') + chalk.white(profile.model || 'N/A'));
-
-      if (profile.authMethod) {
-        console.log(chalk.cyan('  Auth Method:  ') + chalk.white(profile.authMethod));
-      }
-
-      if (profile.codeMieIntegration?.alias) {
-        console.log(chalk.cyan('  Integration:  ') + chalk.white(profile.codeMieIntegration.alias));
-      }
-
-      console.log(chalk.cyan('  Timeout:      ') + chalk.white(`${profile.timeout || 300}s`));
-      console.log(chalk.cyan('  Debug:        ') + chalk.white(profile.debug ? 'Yes' : 'No'));
-
-      if (profile.apiKey) {
-        const maskedKey = profile.apiKey.length > 12
-          ? `${profile.apiKey.substring(0, 8)}***${profile.apiKey.substring(profile.apiKey.length - 4)}`
-          : '***';
-        console.log(chalk.cyan('  API Key:      ') + chalk.white(maskedKey));
-      }
-
-      // Add separator between profiles except for the last one
-      if (index < profiles.length - 1) {
-        console.log('');
-      }
-    });
-
-    console.log('');
-    console.log(chalk.dim('──────────────────────────────────────────────────'));
-    console.log(chalk.bold('  Next Steps:'));
-    console.log('');
-    console.log('  ' + chalk.white('• Switch active profile:') + '  ' + chalk.cyan('codemie profile switch'));
-    console.log('  ' + chalk.white('• Check auth status:') + '      ' + chalk.cyan('codemie auth status'));
-    console.log('  ' + chalk.white('• Create new profile:') + '     ' + chalk.cyan('codemie setup'));
-    console.log('  ' + chalk.white('• Remove a profile:') + '       ' + chalk.cyan('codemie profile delete'));
-    console.log('  ' + chalk.white('• Explore more:') + '           ' + chalk.cyan('codemie --help'));
-    console.log('');
+    ProfileDisplay.formatList(profiles);
   } catch (error: unknown) {
     logger.error('Failed to list profiles:', error);
     process.exit(1);
   }
+}
+
+/**
+ * Create status command
+ * Shows active profile + auth status, prompts for re-auth if invalid
+ */
+function createStatusCommand(): Command {
+  const command = new Command('status');
+
+  command
+    .description('Show active profile and authentication status')
+    .action(async () => {
+      try {
+        await handleStatus();
+      } catch (error: unknown) {
+        logger.error('Failed to get profile status:', error);
+        process.exit(1);
+      }
+    });
+
+  return command;
+}
+
+/**
+ * Handle status command
+ * Display profile info + auth status, prompt for re-auth if invalid
+ */
+async function handleStatus(): Promise<void> {
+  const config = await ConfigLoader.load();
+  const profiles = await ConfigLoader.listProfiles();
+  const activeProfileName = await ConfigLoader.getActiveProfileName();
+
+  // Find active profile
+  const activeProfileInfo = profiles.find(p => p.name === activeProfileName);
+  if (!activeProfileInfo) {
+    console.log(chalk.yellow('\nNo active profile found. Run "codemie setup" to create one.\n'));
+    return;
+  }
+
+  // Check if provider supports auth validation
+  const provider = ProviderRegistry.getProvider(config.provider || '');
+  const setupSteps = provider ? ProviderRegistry.getSetupSteps(config.provider || '') : null;
+
+  // Get auth status if provider implements validation
+  let authStatus;
+  if (setupSteps?.validateAuth) {
+    try {
+      const validationResult = await setupSteps.validateAuth(config);
+
+      if (validationResult.valid) {
+        authStatus = setupSteps.getAuthStatus
+          ? await setupSteps.getAuthStatus(config)
+          : undefined;
+      } else {
+        // Show error
+        console.log(chalk.red(`\n${validationResult.error}\n`));
+
+        // Prompt for re-authentication if provider supports it
+        if (setupSteps.promptForReauth) {
+          const reauthed = await setupSteps.promptForReauth(config);
+
+          if (reauthed) {
+            // Re-fetch auth status after successful re-authentication
+            authStatus = setupSteps.getAuthStatus
+              ? await setupSteps.getAuthStatus(config)
+              : undefined;
+            console.log(chalk.green('\n✓ Authentication refreshed successfully\n'));
+          } else {
+            console.log(chalk.yellow('\n⚠️  Authentication required to use this profile\n'));
+            return;
+          }
+        }
+      }
+    } catch (error) {
+      logger.error('Auth status check error:', error);
+    }
+  }
+
+  // Display profile + auth status
+  ProfileDisplay.formatStatus(activeProfileInfo, authStatus);
 }
 
 /**

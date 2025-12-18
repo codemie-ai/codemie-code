@@ -64,7 +64,7 @@ export class SSOHealthCheck extends BaseHealthCheck {
       details.push({
         status: 'error',
         message: 'SSO credentials not found',
-        hint: 'Run: codemie auth login'
+        hint: 'Run: codemie profile login'
       });
       return {
         provider: 'ai-run-sso',
@@ -84,7 +84,7 @@ export class SSOHealthCheck extends BaseHealthCheck {
       details.push({
         status: 'error',
         message: 'SSO session expired',
-        hint: 'Run: codemie auth login'
+        hint: 'Run: codemie profile login'
       });
       return {
         provider: 'ai-run-sso',
@@ -102,7 +102,7 @@ export class SSOHealthCheck extends BaseHealthCheck {
       details.push({
         status: expiresInHours < 1 ? 'warning' : 'ok',
         message: `Session expires in ${expiresInHours} hour(s)`,
-        hint: expiresInHours < 1 ? 'Consider refreshing session: codemie auth login' : undefined
+        hint: expiresInHours < 1 ? 'Consider refreshing session: codemie profile login' : undefined
       });
     }
 

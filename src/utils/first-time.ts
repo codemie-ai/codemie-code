@@ -115,7 +115,7 @@ export class FirstTimeExperience {
     console.log(chalk.bold('Setup & Configuration:'));
     console.log(chalk.cyan('  codemie setup') + chalk.white('             # Interactive setup wizard'));
     console.log(chalk.cyan('  codemie profile') + chalk.white('           # Manage profiles (list, switch, delete)'));
-    console.log(chalk.cyan('  codemie auth') + chalk.white('              # Manage SSO authentication\n'));
+    console.log(chalk.cyan('  codemie profile') + chalk.white('      # Manage SSO authentication\n'));
 
     console.log(chalk.bold('Verify:'));
     console.log(chalk.cyan('  codemie doctor') + chalk.white('            # Check configuration\n'));

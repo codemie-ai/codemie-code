@@ -13,9 +13,8 @@ import { createUninstallCommand } from './commands/uninstall.js';
 import { createDoctorCommand } from './commands/doctor/index.js';
 import { createVersionCommand } from './commands/version.js';
 import { createSetupCommand } from './commands/setup.js';
-import { createAuthCommand } from './commands/auth.js';
 import { createWorkflowCommand } from './commands/workflow.js';
-import { createProfileCommand } from './commands/profile.js';
+import { createProfileCommand } from './commands/profile/index.js';
 import { createAnalyticsCommand } from './commands/analytics/index.js';
 import { FirstTimeExperience } from '../utils/first-time.js';
 import chalk from 'chalk';
@@ -45,7 +44,6 @@ program
 // Add commands
 program.addCommand(createSetupCommand());
 program.addCommand(createProfileCommand());
-program.addCommand(createAuthCommand());
 program.addCommand(createListCommand());
 program.addCommand(createInstallCommand());
 program.addCommand(createUninstallCommand());

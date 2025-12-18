@@ -52,7 +52,7 @@ export class SSOModelProxy extends BaseModelProxy {
     try {
       const credentials = await this.sso.getStoredCredentials();
       if (!credentials) {
-        throw new Error('No SSO credentials found. Run: codemie auth login');
+        throw new Error('No SSO credentials found. Run: codemie profile login');
       }
 
       return await this.fetchModelsFromAPI(credentials.apiUrl, credentials.cookies);

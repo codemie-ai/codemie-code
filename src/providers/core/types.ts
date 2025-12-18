@@ -272,6 +272,45 @@ export interface ProviderSetupSteps {
    * Optional: Post-setup actions
    */
   postSetup?(config: Partial<CodeMieConfigOptions>): Promise<void>;
+
+  /**
+   * Optional: Validate authentication status
+   *
+   * Provider-specific auth validation (e.g., SSO credential checks)
+   */
+  validateAuth?(config: CodeMieConfigOptions): Promise<AuthValidationResult>;
+
+  /**
+   * Optional: Prompt for re-authentication
+   *
+   * Interactive re-auth flow when validation fails
+   */
+  promptForReauth?(config: CodeMieConfigOptions): Promise<boolean>;
+
+  /**
+   * Optional: Get authentication status for display
+   *
+   * Returns current auth status information
+   */
+  getAuthStatus?(config: CodeMieConfigOptions): Promise<AuthStatus>;
+}
+
+/**
+ * Authentication validation result
+ */
+export interface AuthValidationResult {
+  valid: boolean;
+  error?: string;
+  expiresAt?: number;
+}
+
+/**
+ * Authentication status information
+ */
+export interface AuthStatus {
+  authenticated: boolean;
+  expiresAt?: number;
+  apiUrl?: string;
 }
 
 /**

@@ -3,44 +3,102 @@ import { formatErrorWithExplanation, type ErrorContext } from './error-context.j
 import { logger } from './logger.js';
 
 /**
- * Renders the CodeMie ASCII logo with configuration details
+ * Authentication status for display
+ */
+export interface AuthStatusDisplay {
+  authenticated: boolean;
+  expiresAt?: number;
+  apiUrl?: string;
+}
+
+/**
+ * Renders the CodeMie profile information in a unified table format
  */
 export function renderProfileInfo(config: {
   profile?: string;
   provider?: string;
   model?: string;
+  codeMieUrl?: string;
+  authStatus?: AuthStatusDisplay;
   agent?: string;
   cliVersion?: string;
   sessionId?: string;
+  isActive?: boolean;
 }): string {
   // Build complete output with logo and info
   const outputLines: string[] = [];
   outputLines.push(''); // Empty line for spacing
 
+  // Helper to format a row with colored label and value
+  const formatRow = (label: string, value: string, valueColor?: (text: string) => string) => {
+    const colorFn = valueColor || chalk.white;
+    return chalk.cyan(label.padEnd(13) + '│ ') + colorFn(value);
+  };
+
   // Configuration details
   if (config.cliVersion) {
-    outputLines.push(`CLI Version  │ ${config.cliVersion}`);
+    outputLines.push(formatRow('CLI Version', config.cliVersion));
   }
   if (config.profile) {
-    outputLines.push(`Profile      │ ${config.profile}`);
+    // Highlight active profile with explicit "Active" label in green bold
+    if (config.isActive) {
+      outputLines.push(chalk.cyan('Profile'.padEnd(13) + '│ ') + chalk.white(config.profile) + ' ' + chalk.green.bold('(Active)'));
+    } else {
+      outputLines.push(formatRow('Profile', config.profile));
+    }
   }
   if (config.provider) {
-    outputLines.push(`Provider     │ ${config.provider}`);
+    outputLines.push(formatRow('Provider', config.provider));
   }
   if (config.model) {
-    outputLines.push(`Model        │ ${config.model}`);
+    outputLines.push(formatRow('Model', config.model));
   }
+  if (config.codeMieUrl) {
+    outputLines.push(formatRow('CodeMie URL', config.codeMieUrl));
+  }
+
+  // Auth status inline
+  if (config.authStatus) {
+    const { authenticated, expiresAt, apiUrl } = config.authStatus;
+
+    if (authenticated) {
+      let statusText = '✓ Authenticated';
+      let isExpired = false;
+
+      if (expiresAt) {
+        const expiresIn = Math.max(0, expiresAt - Date.now());
+        const hours = Math.floor(expiresIn / (1000 * 60 * 60));
+        const minutes = Math.floor((expiresIn % (1000 * 60 * 60)) / (1000 * 60));
+
+        if (expiresIn > 0) {
+          statusText += ` (expires in ${hours}h ${minutes}m)`;
+        } else {
+          statusText = '✗ Expired';
+          isExpired = true;
+        }
+      }
+
+      if (apiUrl) {
+        outputLines.push(formatRow('Auth Status', statusText, isExpired ? chalk.red : chalk.green));
+        outputLines.push(formatRow('API URL', apiUrl));
+      } else {
+        outputLines.push(formatRow('Auth Status', statusText, isExpired ? chalk.red : chalk.green));
+      }
+    } else {
+      outputLines.push(formatRow('Auth Status', '✗ Not authenticated', chalk.red));
+    }
+  }
+
   if (config.agent) {
-    outputLines.push(`Agent        │ ${config.agent}`);
+    outputLines.push(formatRow('Agent', config.agent));
   }
   if (config.sessionId) {
-    outputLines.push(`Session      │ ${config.sessionId}`);
+    outputLines.push(formatRow('Session', config.sessionId));
   }
 
   outputLines.push(''); // Empty line for spacing
 
-  // Apply cyan color to entire output
-  return chalk.cyan(outputLines.join('\n'));
+  return outputLines.join('\n');
 }
 
 /**

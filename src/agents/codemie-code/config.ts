@@ -38,7 +38,7 @@ export async function loadCodeMieConfig(
 
       if (!credentials) {
         throw new ConfigurationError(
-          'SSO credentials not found. Please run: codemie auth login',
+          'SSO credentials not found. Please run: codemie profile login',
           { provider: baseConfig.provider }
         );
       }
