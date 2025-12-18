@@ -69,7 +69,7 @@ export class CodeMieProxy {
 
       if (!credentials) {
         throw new AuthenticationError(
-          'SSO credentials not found. Please run: codemie auth login'
+          'SSO credentials not found. Please run: codemie profile login'
         );
       }
     }

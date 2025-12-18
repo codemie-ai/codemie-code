@@ -25,16 +25,16 @@ If you need to authenticate separately or refresh your credentials:
 
 ```bash
 # Authenticate with AI/Run CodeMie SSO
-codemie auth login --url https://your-airun-codemie-instance.com
+codemie profile login --url https://your-airun-codemie-instance.com
 
 # Check authentication status
-codemie auth status
+codemie profile status
 
 # Refresh expired tokens
-codemie auth refresh
+codemie profile refresh
 
 # Logout and clear credentials
-codemie auth logout
+codemie profile logout
 ```
 
 ## Token Management
@@ -47,7 +47,7 @@ AI/Run CodeMie CLI automatically refreshes tokens when they expire. For manual r
 
 ```bash
 # Refresh SSO credentials (extends session)
-codemie auth refresh
+codemie profile refresh
 ```
 
 **When to refresh manually:**
@@ -61,7 +61,7 @@ codemie auth refresh
 Check your current authentication state:
 
 ```bash
-codemie auth status
+codemie profile status
 ```
 
 **Status information includes:**
@@ -76,15 +76,15 @@ Common authentication issues and solutions:
 
 ```bash
 # Token expired
-codemie auth refresh
+codemie profile refresh
 
 # Connection issues
 codemie doctor                    # Full system diagnostics
-codemie auth status              # Check auth-specific issues
+codemie profile status           # Check auth-specific issues
 
 # Complete re-authentication
-codemie auth logout
-codemie auth login --url https://your-airun-codemie-instance.com
+codemie profile logout
+codemie profile login --url https://your-airun-codemie-instance.com
 
 # Reset all configuration
 codemie config reset

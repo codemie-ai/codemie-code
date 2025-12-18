@@ -12,7 +12,7 @@ import { MetricsOrchestrator } from '../../metrics/MetricsOrchestrator.js';
 import type { AgentMetricsSupport } from '../../metrics/types.js';
 import type { CodeMieConfigOptions } from '../../env/types.js';
 import { getRandomWelcomeMessage, getRandomGoodbyeMessage } from '../../utils/goodbye-messages.js';
-import { renderProfileInfo } from '../../utils/profile.js';
+import { renderExecutionContext, renderProfileInfo } from '../../utils/profile.js';
 import chalk from 'chalk';
 
 /**
@@ -163,6 +163,9 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       }
     }
 
+    // Capture original base URL BEFORE proxy modifies it
+    const originalBaseUrl = env.CODEMIE_BASE_URL || env.OPENAI_BASE_URL;
+
     // Setup proxy with the session ID (already in env)
     await this.setupProxy(env);
 
@@ -171,16 +174,28 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     const provider = env.CODEMIE_PROVIDER || 'unknown';
     const cliVersion = env.CODEMIE_CLI_VERSION || 'unknown';
     const model = env.CODEMIE_MODEL || 'unknown';
+    const timeout = env.CODEMIE_TIMEOUT ? parseInt(env.CODEMIE_TIMEOUT, 10) : undefined;
+    const debug = env.CODEMIE_DEBUG === 'true';
 
-    // Display ASCII logo with configuration
+    // Display execution context (runtime information)
     console.log(
-      renderProfileInfo({
-        profile: profileName,
-        provider,
-        model,
+      renderExecutionContext({
         agent: this.metadata.name,
         cliVersion,
         sessionId
+      })
+    );
+
+    // Display profile configuration (with auth status if SSO)
+    console.log(
+      await renderProfileInfo({
+        profile: profileName,
+        provider,
+        baseUrl: originalBaseUrl,
+        model,
+        timeout,
+        debug,
+        showAuthStatus: true
       })
     );
 

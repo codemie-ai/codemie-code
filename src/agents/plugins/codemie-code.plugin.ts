@@ -6,7 +6,7 @@ import { join } from 'path';
 import { readFileSync } from 'fs';
 import { getDirname } from '../../utils/dirname.js';
 import { getRandomWelcomeMessage, getRandomGoodbyeMessage } from '../../utils/goodbye-messages.js';
-import { renderProfileInfo } from '../../utils/profile.js';
+import { renderExecutionContext, renderProfileInfo } from '../../utils/profile.js';
 import chalk from 'chalk';
 
 /**
@@ -59,14 +59,26 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
       const profileName = config.name || 'default';
       const sessionId = process.env.CODEMIE_SESSION_ID || 'n/a';
       const cliVersion = process.env.CODEMIE_CLI_VERSION || 'unknown';
+
+      // Display execution context (runtime information)
       console.log(
-        renderProfileInfo({
-            profile: profileName,
-            provider: config.provider,
-            model: config.model,
-            agent: BUILTIN_AGENT_NAME,
-            cliVersion,
-            sessionId
+        renderExecutionContext({
+          agent: BUILTIN_AGENT_NAME,
+          cliVersion,
+          sessionId
+        })
+      );
+
+      // Display profile configuration (with auth status if SSO)
+      console.log(
+        await renderProfileInfo({
+          profile: profileName,
+          provider: config.provider,
+          baseUrl: config.baseUrl || config.codeMieUrl,
+          model: config.model,
+          timeout: config.timeout,
+          debug: config.debug,
+          showAuthStatus: true
         })
       );
 

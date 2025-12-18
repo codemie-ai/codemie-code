@@ -150,8 +150,7 @@ The CodeMie CLI has a rich set of commands for managing agents, configuration, a
 codemie setup            # Interactive configuration wizard
 codemie list             # List all available agents
 codemie install <agent>  # Install an agent
-codemie profile <cmd>    # Manage provider profiles
-codemie auth <cmd>       # Manage SSO authentication
+codemie profile <cmd>    # Manage provider profiles and SSO authentication
 codemie analytics        # View usage analytics (sessions, tokens, costs, tools)
 codemie workflow <cmd>   # Manage CI/CD workflows
 codemie doctor           # Health check and diagnostics

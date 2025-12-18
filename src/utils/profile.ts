@@ -3,44 +3,114 @@ import { formatErrorWithExplanation, type ErrorContext } from './error-context.j
 import { logger } from './logger.js';
 
 /**
- * Renders the CodeMie ASCII logo with configuration details
+ * Format a field with consistent padding and styling
  */
-export function renderProfileInfo(config: {
-  profile?: string;
-  provider?: string;
-  model?: string;
+function formatField(label: string, value: string, color = chalk.cyan): string {
+  const padding = 13 - label.length;
+  const spaces = ' '.repeat(Math.max(0, padding));
+  return color(`  ${label}:${spaces}`) + chalk.white(value);
+}
+
+/**
+ * Get SSO authentication status for display
+ */
+export async function getSSOAuthStatus(): Promise<string[]> {
+  const lines: string[] = [];
+  const { CredentialStore } = await import('./credential-store.js');
+  const store = CredentialStore.getInstance();
+
+  const credentials = await store.retrieveSSOCredentials();
+  if (!credentials) {
+    lines.push(formatField('Auth Status', 'Not authenticated', chalk.yellow));
+  } else {
+    const isExpired = credentials.expiresAt && Date.now() > credentials.expiresAt;
+    const status = isExpired ? 'Expired' : 'Valid';
+    const statusColor = isExpired ? chalk.red : chalk.green;
+    lines.push(formatField('Auth Status', status, statusColor));
+
+    if (credentials.expiresAt && !isExpired) {
+      const expiresIn = Math.max(0, credentials.expiresAt - Date.now());
+      const hours = Math.floor(expiresIn / (1000 * 60 * 60));
+      const minutes = Math.floor((expiresIn % (1000 * 60 * 60)) / (1000 * 60));
+      lines.push(formatField('Expires in', `${hours}h ${minutes}m`));
+    }
+  }
+
+  return lines;
+}
+
+/**
+ * Render execution context (runtime information)
+ */
+export function renderExecutionContext(config: {
   agent?: string;
   cliVersion?: string;
   sessionId?: string;
 }): string {
-  // Build complete output with logo and info
   const outputLines: string[] = [];
-  outputLines.push(''); // Empty line for spacing
 
-  // Configuration details
-  if (config.cliVersion) {
-    outputLines.push(`CLI Version  │ ${config.cliVersion}`);
-  }
-  if (config.profile) {
-    outputLines.push(`Profile      │ ${config.profile}`);
-  }
-  if (config.provider) {
-    outputLines.push(`Provider     │ ${config.provider}`);
-  }
-  if (config.model) {
-    outputLines.push(`Model        │ ${config.model}`);
-  }
   if (config.agent) {
-    outputLines.push(`Agent        │ ${config.agent}`);
+    outputLines.push(formatField('Agent', config.agent));
+  }
+  if (config.cliVersion) {
+    outputLines.push(formatField('CLI Version', config.cliVersion));
   }
   if (config.sessionId) {
-    outputLines.push(`Session      │ ${config.sessionId}`);
+    outputLines.push(formatField('Session', config.sessionId));
+  }
+
+  return outputLines.join('\n');
+}
+
+/**
+ * Renders the CodeMie ASCII logo with configuration details
+ */
+export async function renderProfileInfo(config: {
+  profile?: string;
+  provider?: string;
+  baseUrl?: string;
+  model?: string;
+  timeout?: number;
+  debug?: boolean;
+  showAuthStatus?: boolean;
+}): Promise<string> {
+  const outputLines: string[] = [];
+
+  // Profile configuration
+  if (config.profile) {
+    outputLines.push(formatField('Profile', config.profile));
+  }
+  if (config.provider) {
+    outputLines.push(formatField('Provider', config.provider));
+  }
+  if (config.baseUrl) {
+    // Determine label based on provider
+    const urlLabel = config.provider === 'ai-run-sso' ? 'CodeMie URL' : 'Base URL';
+    outputLines.push(formatField(urlLabel, config.baseUrl));
+  }
+  if (config.model) {
+    outputLines.push(formatField('Model', config.model));
+  }
+
+  // SSO credential status for ai-run-sso profiles
+  if (config.showAuthStatus && config.provider === 'ai-run-sso' && config.baseUrl) {
+    const authStatusLines = await getSSOAuthStatus();
+    outputLines.push(...authStatusLines);
+  }
+
+  // Timeout
+  if (config.timeout !== undefined) {
+    outputLines.push(formatField('Timeout', `${config.timeout}s`));
+  }
+
+  // Debug
+  if (config.debug !== undefined) {
+    outputLines.push(formatField('Debug', config.debug ? 'Yes' : 'No'));
   }
 
   outputLines.push(''); // Empty line for spacing
 
-  // Apply cyan color to entire output
-  return chalk.cyan(outputLines.join('\n'));
+  return outputLines.join('\n');
 }
 
 /**

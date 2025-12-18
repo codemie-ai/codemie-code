@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import inquirer from 'inquirer';
 import { ConfigLoader } from '../../utils/config-loader.js';
 import { logger } from '../../utils/logger.js';
+import { renderProfileInfo } from '../../utils/profile.js';
 
 export function createProfileCommand(): Command {
   const command = new Command('profile');
@@ -15,7 +16,11 @@ export function createProfileCommand(): Command {
     })
     .addCommand(createSwitchCommand())
     .addCommand(createDeleteCommand())
-    .addCommand(createRenameCommand());
+    .addCommand(createRenameCommand())
+    .addCommand(createStatusCommand())
+    .addCommand(createLoginCommand())
+    .addCommand(createLogoutCommand())
+    .addCommand(createRefreshCommand());
 
   return command;
 }
@@ -75,7 +80,7 @@ async function listProfiles(): Promise<void> {
     console.log(chalk.bold('  Next Steps:'));
     console.log('');
     console.log('  ' + chalk.white('• Switch active profile:') + '  ' + chalk.cyan('codemie profile switch'));
-    console.log('  ' + chalk.white('• Check auth status:') + '      ' + chalk.cyan('codemie auth status'));
+    console.log('  ' + chalk.white('• Check auth status:') + '      ' + chalk.cyan('codemie profile status'));
     console.log('  ' + chalk.white('• Create new profile:') + '     ' + chalk.cyan('codemie setup'));
     console.log('  ' + chalk.white('• Remove a profile:') + '       ' + chalk.cyan('codemie profile delete'));
     console.log('  ' + chalk.white('• Explore more:') + '           ' + chalk.cyan('codemie --help'));
@@ -258,4 +263,205 @@ function createRenameCommand(): Command {
     });
 
   return command;
+}
+
+function createStatusCommand(): Command {
+  const command = new Command('status');
+
+  command
+    .description('Show authentication status for active profile')
+    .action(async () => {
+      try {
+        await handleStatus();
+      } catch (error: unknown) {
+        logger.error('Status check failed:', error);
+        process.exit(1);
+      }
+    });
+
+  return command;
+}
+
+function createLoginCommand(): Command {
+  const command = new Command('login');
+
+  command
+    .description('Authenticate with AI/Run CodeMie SSO for active profile')
+    .option('--url <url>', 'AI/Run CodeMie URL to authenticate with')
+    .action(async (options: { url?: string }) => {
+      try {
+        await handleLogin(options.url);
+      } catch (error: unknown) {
+        logger.error('Login failed:', error);
+        process.exit(1);
+      }
+    });
+
+  return command;
+}
+
+function createLogoutCommand(): Command {
+  const command = new Command('logout');
+
+  command
+    .description('Clear SSO credentials and logout for active profile')
+    .action(async () => {
+      try {
+        await handleLogout();
+      } catch (error: unknown) {
+        logger.error('Logout failed:', error);
+        process.exit(1);
+      }
+    });
+
+  return command;
+}
+
+function createRefreshCommand(): Command {
+  const command = new Command('refresh');
+
+  command
+    .description('Refresh SSO credentials for active profile')
+    .action(async () => {
+      try {
+        await handleRefresh();
+      } catch (error: unknown) {
+        logger.error('Refresh failed:', error);
+        process.exit(1);
+      }
+    });
+
+  return command;
+}
+
+async function handleLogin(url?: string): Promise<void> {
+  const config = await ConfigLoader.load();
+
+  const codeMieUrl = url || config.codeMieUrl;
+  if (!codeMieUrl) {
+    console.log(chalk.red('❌ No AI/Run CodeMie URL configured or provided'));
+    console.log(chalk.white('Use: codemie profile login --url https://your-airun-codemie-instance.com'));
+    return;
+  }
+
+  const ora = (await import('ora')).default;
+  const spinner = ora('Launching SSO authentication...').start();
+
+  try {
+    const { CodeMieSSO } = await import('../../providers/plugins/sso/sso.auth.js');
+    const sso = new CodeMieSSO();
+    const result = await sso.authenticate({ codeMieUrl, timeout: 120000 });
+
+    if (result.success) {
+      spinner.succeed(chalk.green('SSO authentication successful'));
+      console.log(chalk.cyan(`🔗 Connected to: ${codeMieUrl}`));
+      console.log(chalk.cyan(`🔑 Credentials stored securely`));
+
+      console.log('');
+      console.log(chalk.bold('  Next Steps:'));
+      console.log('');
+      console.log('  ' + chalk.white('• Check auth status:') + '    ' + chalk.cyan('codemie profile status'));
+      console.log('  ' + chalk.white('• Refresh token:') + '        ' + chalk.cyan('codemie profile refresh'));
+      console.log('  ' + chalk.white('• Create profile:') + '       ' + chalk.cyan('codemie setup'));
+      console.log('  ' + chalk.white('• Verify system:') + '        ' + chalk.cyan('codemie doctor'));
+      console.log('  ' + chalk.white('• Explore more:') + '         ' + chalk.cyan('codemie --help'));
+      console.log('');
+    } else {
+      spinner.fail(chalk.red('SSO authentication failed'));
+      console.log(chalk.red(`Error: ${result.error}`));
+    }
+  } catch (error) {
+    spinner.fail(chalk.red('Authentication error'));
+    console.log(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+  }
+}
+
+async function handleLogout(): Promise<void> {
+  const config = await ConfigLoader.load();
+  const baseUrl = config.codeMieUrl || config.baseUrl;
+
+  if (!baseUrl) {
+    console.log(chalk.red('❌ No base URL configured'));
+    console.log(chalk.white('Run: codemie setup'));
+    return;
+  }
+
+  const ora = (await import('ora')).default;
+  const spinner = ora('Clearing SSO credentials...').start();
+
+  try {
+    const { CodeMieSSO } = await import('../../providers/plugins/sso/sso.auth.js');
+    const sso = new CodeMieSSO();
+    await sso.clearStoredCredentials();
+
+    spinner.succeed(chalk.green('Successfully logged out'));
+    console.log(chalk.white(`SSO credentials cleared for ${baseUrl}`));
+  } catch (error) {
+    spinner.fail(chalk.red('Logout failed'));
+    console.log(chalk.red(`Error: ${error instanceof Error ? error.message : String(error)}`));
+  }
+}
+
+async function handleStatus(): Promise<void> {
+  const config = await ConfigLoader.load();
+  const profileName = await ConfigLoader.getActiveProfileName();
+  const baseUrl = config.codeMieUrl || config.baseUrl;
+
+  console.log(chalk.bold('\n📋 Profile Status:\n'));
+
+  // Use common renderProfileInfo helper
+  console.log(await renderProfileInfo({
+    profile: profileName || 'default',
+    provider: config.provider,
+    baseUrl,
+    model: config.model,
+    timeout: config.timeout,
+    debug: config.debug,
+    showAuthStatus: true
+  }));
+
+  // For SSO profiles, add API health check
+  if (config.provider === 'ai-run-sso' && baseUrl) {
+    try {
+      const { CredentialStore } = await import('../../utils/credential-store.js');
+      const store = CredentialStore.getInstance();
+      const credentials = await store.retrieveSSOCredentials();
+
+      if (credentials) {
+        // Test API access
+        const ora = (await import('ora')).default;
+        const spinner = ora('Testing API access...').start();
+        try {
+          const { fetchCodeMieModels } = await import('../../providers/plugins/sso/sso.http-client.js');
+          await fetchCodeMieModels(credentials.apiUrl, credentials.cookies);
+          spinner.succeed(chalk.green('API access working'));
+        } catch (error) {
+          spinner.fail(chalk.red('API access failed'));
+          console.log(chalk.red(`  Error: ${error instanceof Error ? error.message : String(error)}`));
+        }
+      }
+    } catch (error) {
+      console.log(chalk.red(`  Error: ${error instanceof Error ? error.message : String(error)}`));
+    }
+  }
+}
+
+async function handleRefresh(): Promise<void> {
+  const config = await ConfigLoader.load();
+
+  // Check if current provider uses SSO authentication
+  const baseUrl = config.codeMieUrl || config.baseUrl;
+
+  if (config.provider !== 'ai-run-sso' || !baseUrl) {
+    console.log(chalk.red('❌ Not configured for SSO authentication'));
+    console.log(chalk.white('Run: codemie setup'));
+    return;
+  }
+
+  // Clear existing credentials and re-authenticate
+  const { CodeMieSSO } = await import('../../providers/plugins/sso/sso.auth.js');
+  const sso = new CodeMieSSO();
+  await sso.clearStoredCredentials();
+
+  await handleLogin(baseUrl);
 }

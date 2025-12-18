@@ -8,8 +8,7 @@ codemie --version                # Show version information
 codemie --task "task"            # Execute single task with built-in agent and exit
 
 codemie setup                    # Interactive configuration wizard
-codemie profile <command>        # Manage provider profiles
-codemie auth <command>           # Manage SSO authentication
+codemie profile <command>        # Manage provider profiles and SSO authentication
 codemie analytics [options]      # View usage analytics
 codemie workflow <command>       # Manage CI/CD workflows
 codemie list [options]           # List all available agents
@@ -281,26 +280,9 @@ codemie doctor [options]
 - Provider connectivity and health endpoints
 - Configuration file validity
 
-### `codemie auth`
-
-Manage SSO authentication with AI/Run CodeMie platform.
-
-**Subcommands:**
-```bash
-codemie auth login [options]     # Authenticate with AI/Run CodeMie SSO
-codemie auth logout              # Clear SSO credentials and logout
-codemie auth status              # Show authentication status
-codemie auth refresh             # Refresh SSO credentials
-```
-
-**Login Options:**
-- Opens browser for SSO authentication
-- Stores credentials securely
-- Tests connection before completing
-
 ### `codemie profile`
 
-Manage multiple provider configurations.
+Manage multiple provider configurations and SSO authentication.
 
 **Usage:**
 ```bash
@@ -308,6 +290,10 @@ codemie profile                         # List all profiles with details (defaul
 codemie profile switch [profile]        # Switch active profile
 codemie profile delete [profile]        # Delete a profile
 codemie profile rename <old> <new>      # Rename a profile
+codemie profile status                  # Show authentication status for active profile
+codemie profile login [--url <url>]     # Authenticate with AI/Run CodeMie SSO
+codemie profile logout                  # Clear SSO credentials and logout
+codemie profile refresh                 # Refresh SSO credentials
 ```
 
 **Profile List Output:**
