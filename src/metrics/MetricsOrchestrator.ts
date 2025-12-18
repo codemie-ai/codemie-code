@@ -20,6 +20,7 @@ import { METRICS_CONFIG } from './config.js';
 import { logger } from '../utils/logger.js';
 import { watch } from 'fs';
 import { detectGitBranch } from './utils/git.js';
+import { createErrorContext, formatErrorForLog } from '../utils/error-context.js';
 
 export interface MetricsOrchestratorOptions {
   sessionId?: string; // Optional: provide existing session ID
@@ -74,13 +75,9 @@ export class MetricsOrchestrator {
   /**
    * Step 1: Take snapshot before agent spawn
    * Called before spawning the agent process
+   * Note: This method is only called when metrics are enabled
    */
   async beforeAgentSpawn(): Promise<void> {
-    if (!this.isEnabled()) {
-      logger.debug('[MetricsOrchestrator] Metrics disabled for provider:', this.provider);
-      return;
-    }
-
     try {
       logger.debug('[MetricsOrchestrator] Taking pre-spawn snapshot...');
 
@@ -120,7 +117,27 @@ export class MetricsOrchestrator {
       logger.debug(`[MetricsOrchestrator] Session created: ${this.sessionId}`);
 
     } catch (error) {
-      logger.error('[MetricsOrchestrator] Failed to take pre-spawn snapshot:', error);
+      // Disable metrics for the rest of the session to prevent log pollution
+      process.env.CODEMIE_METRICS_DISABLED = '1';
+
+      // Create comprehensive error context for logging
+      const errorContext = createErrorContext(error, {
+        sessionId: this.sessionId,
+        agent: this.agentName,
+        provider: this.provider,
+        ...(this.project && { model: this.project })
+      });
+
+      logger.error(
+        '[MetricsOrchestrator] Failed to take pre-spawn snapshot',
+        formatErrorForLog(errorContext)
+      );
+
+      // Store raw error for display to user (not ErrorContext)
+      if (this.session) {
+        (this.session as any).initError = error;
+      }
+
       // Don't throw - metrics failures shouldn't break agent execution
     }
   }
@@ -128,6 +145,7 @@ export class MetricsOrchestrator {
   /**
    * Step 2: Take snapshot after agent spawn + correlate
    * Called after spawning the agent process
+   * Note: This method is only called when metrics are enabled
    */
   async afterAgentSpawn(): Promise<void> {
     if (!this.isEnabled() || !this.beforeSnapshot || !this.session) {
@@ -189,7 +207,24 @@ export class MetricsOrchestrator {
       }
 
     } catch (error) {
-      logger.error('[MetricsOrchestrator] Failed in post-spawn phase:', error);
+      // Create comprehensive error context for logging
+      const errorContext = createErrorContext(error, {
+        sessionId: this.sessionId,
+        agent: this.agentName,
+        provider: this.provider,
+        ...(this.project && { model: this.project })
+      });
+
+      logger.error(
+        '[MetricsOrchestrator] Failed in post-spawn phase',
+        formatErrorForLog(errorContext)
+      );
+
+      // Store raw error for display to user (not ErrorContext)
+      if (this.session) {
+        (this.session as any).postSpawnError = error;
+      }
+
       // Don't throw - metrics failures shouldn't break agent execution
     }
   }
@@ -197,6 +232,7 @@ export class MetricsOrchestrator {
   /**
    * Finalize session on agent exit
    * Called when agent process exits
+   * Note: This method is only called when metrics are enabled
    */
   async onAgentExit(exitCode: number): Promise<void> {
     if (!this.isEnabled() || !this.session) {
@@ -234,7 +270,19 @@ export class MetricsOrchestrator {
       logger.debug('[MetricsOrchestrator] Session finalized');
 
     } catch (error) {
-      logger.error('[MetricsOrchestrator] Failed to finalize session:', error);
+      // Create comprehensive error context for logging
+      const errorContext = createErrorContext(error, {
+        sessionId: this.sessionId,
+        agent: this.agentName,
+        provider: this.provider,
+        ...(this.project && { model: this.project })
+      });
+
+      logger.error(
+        '[MetricsOrchestrator] Failed to finalize session',
+        formatErrorForLog(errorContext)
+      );
+
       // Don't throw - metrics failures shouldn't break agent execution
     }
   }
@@ -243,8 +291,7 @@ export class MetricsOrchestrator {
    * Start incremental monitoring with delta collection
    */
   private async startIncrementalMonitoring(sessionFilePath: string): Promise<void> {
-    if (!this.session || !this.session.correlation.agentSessionId) {
-      logger.warn('[MetricsOrchestrator] Cannot start monitoring without correlated session');
+    if (!this.isEnabled() || !this.session || !this.session.correlation.agentSessionId) {
       return;
     }
 
@@ -293,8 +340,8 @@ export class MetricsOrchestrator {
    * Collect delta metrics from agent session file
    */
   private async collectDeltas(sessionFilePath: string): Promise<void> {
-    // Prevent concurrent collection
-    if (this.isCollecting || !this.deltaWriter || !this.syncStateManager) {
+    // Prevent concurrent collection or if metrics disabled
+    if (!this.isEnabled() || this.isCollecting || !this.deltaWriter || !this.syncStateManager) {
       return;
     }
 
@@ -363,10 +410,42 @@ export class MetricsOrchestrator {
       logger.debug(`[MetricsOrchestrator] Processed up to line ${lastLine}`);
 
     } catch (error) {
-      logger.error('[MetricsOrchestrator] Failed to collect deltas:', error);
+      // Create comprehensive error context for logging
+      const errorContext = createErrorContext(error, {
+        sessionId: this.sessionId,
+        agent: this.agentName,
+        provider: this.provider,
+        ...(this.project && { model: this.project })
+      });
+
+      logger.error(
+        '[MetricsOrchestrator] Failed to collect deltas',
+        formatErrorForLog(errorContext)
+      );
     } finally {
       this.isCollecting = false;
     }
+  }
+
+  /**
+   * Get initialization errors for display to user
+   * Returns the first error that occurred during metrics initialization
+   */
+  getInitializationError(): unknown | null {
+    if (!this.session) {
+      return null;
+    }
+
+    // Check for errors in order of occurrence
+    const sessionWithErrors = this.session as any;
+    return sessionWithErrors.initError || sessionWithErrors.postSpawnError || null;
+  }
+
+  /**
+   * Check if metrics initialization had any errors
+   */
+  hasInitializationError(): boolean {
+    return this.getInitializationError() !== null;
   }
 
   /**

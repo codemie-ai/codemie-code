@@ -11,6 +11,7 @@ import { dirname } from 'path';
 import type { MetricsSession } from '../types.js';
 import { getSessionPath, getMetricsPath, METRICS_PATHS } from '../config.js';
 import { logger } from '../../utils/logger.js';
+import { createErrorContext, formatErrorForLog } from '../../utils/error-context.js';
 
 export class SessionStore {
   /**
@@ -32,7 +33,8 @@ export class SessionStore {
 
       logger.debug(`[SessionStore] Saved session: ${session.sessionId}`);
     } catch (error) {
-      logger.error(`[SessionStore] Failed to save session: ${session.sessionId}`, error);
+      const errorContext = createErrorContext(error, { sessionId: session.sessionId });
+      logger.error(`[SessionStore] Failed to save session: ${session.sessionId}`, formatErrorForLog(errorContext));
       throw error;
     }
   }
@@ -55,7 +57,8 @@ export class SessionStore {
       logger.debug(`[SessionStore] Loaded session: ${sessionId}`);
       return session;
     } catch (error) {
-      logger.error(`[SessionStore] Failed to load session: ${sessionId}`, error);
+      const errorContext = createErrorContext(error, { sessionId });
+      logger.error(`[SessionStore] Failed to load session: ${sessionId}`, formatErrorForLog(errorContext));
       return null;
     }
   }
@@ -86,7 +89,8 @@ export class SessionStore {
 
       return sessions;
     } catch (error) {
-      logger.error('[SessionStore] Failed to list sessions', error);
+      const errorContext = createErrorContext(error);
+      logger.error('[SessionStore] Failed to list sessions', formatErrorForLog(errorContext));
       return [];
     }
   }

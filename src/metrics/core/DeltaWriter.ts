@@ -12,6 +12,7 @@ import { dirname } from 'path';
 import type { MetricDelta, SyncStatus } from '../types.js';
 import { logger } from '../../utils/logger.js';
 import { getSessionMetricsPath } from '../config.js';
+import { createErrorContext, formatErrorForLog } from '../../utils/error-context.js';
 
 export class DeltaWriter {
   private readonly filePath: string;
@@ -49,7 +50,8 @@ export class DeltaWriter {
       return delta.recordId;
 
     } catch (error) {
-      logger.error('[DeltaWriter] Failed to append delta:', error);
+      const errorContext = createErrorContext(error);
+      logger.error('[DeltaWriter] Failed to append delta', formatErrorForLog(errorContext));
       throw error;
     }
   }
@@ -69,7 +71,8 @@ export class DeltaWriter {
       return lines.map(line => JSON.parse(line) as MetricDelta);
 
     } catch (error) {
-      logger.error('[DeltaWriter] Failed to read deltas:', error);
+      const errorContext = createErrorContext(error);
+      logger.error('[DeltaWriter] Failed to read deltas', formatErrorForLog(errorContext));
       throw error;
     }
   }
@@ -112,7 +115,8 @@ export class DeltaWriter {
       logger.debug(`[DeltaWriter] Updated sync status for ${recordIds.length} records to: ${status}`);
 
     } catch (error) {
-      logger.error('[DeltaWriter] Failed to update sync status:', error);
+      const errorContext = createErrorContext(error);
+      logger.error('[DeltaWriter] Failed to update sync status', formatErrorForLog(errorContext));
       throw error;
     }
   }
@@ -126,7 +130,8 @@ export class DeltaWriter {
       return allDeltas.filter(delta => delta.syncStatus === status);
 
     } catch (error) {
-      logger.error(`[DeltaWriter] Failed to filter by status ${status}:`, error);
+      const errorContext = createErrorContext(error);
+      logger.error(`[DeltaWriter] Failed to filter by status ${status}`, formatErrorForLog(errorContext));
       throw error;
     }
   }
@@ -159,7 +164,8 @@ export class DeltaWriter {
       return stats;
 
     } catch (error) {
-      logger.error('[DeltaWriter] Failed to get sync stats:', error);
+      const errorContext = createErrorContext(error);
+      logger.error('[DeltaWriter] Failed to get sync stats', formatErrorForLog(errorContext));
       throw error;
     }
   }

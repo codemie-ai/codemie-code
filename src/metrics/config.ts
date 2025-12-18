@@ -12,8 +12,15 @@ import type { MetricsConfig } from './types.js';
 export const METRICS_CONFIG: MetricsConfig = {
   /**
    * Metrics only enabled for ai-run-sso provider
+   * Can be disabled at runtime via CODEMIE_METRICS_DISABLED env var
    */
-  enabled: (provider: string) => provider === 'ai-run-sso',
+  enabled: (provider: string) => {
+    // Check if metrics are disabled at runtime
+    if (process.env.CODEMIE_METRICS_DISABLED === '1') {
+      return false;
+    }
+    return provider === 'ai-run-sso';
+  },
 
   /**
    * Agent-specific initialization delays (ms)

@@ -142,19 +142,25 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     logger.setSessionId(sessionId);
 
     // Setup metrics orchestrator with the session ID
+    // Only create if metrics are enabled for the provider
     const metricsAdapter = this.getMetricsAdapter();
     if (metricsAdapter && env.CODEMIE_PROVIDER) {
-      this.metricsOrchestrator = new MetricsOrchestrator({
-        agentName: this.metadata.name,
-        provider: env.CODEMIE_PROVIDER,
-        project: env.CODEMIE_PROJECT,
-        workingDirectory: process.cwd(),
-        metricsAdapter,
-        sessionId // Pass the session ID explicitly
-      });
+      const { METRICS_CONFIG } = await import('../../metrics/config.js');
 
-      // Take pre-spawn snapshot
-      await this.metricsOrchestrator.beforeAgentSpawn();
+      // Check if metrics are enabled for this provider before creating orchestrator
+      if (METRICS_CONFIG.enabled(env.CODEMIE_PROVIDER)) {
+        this.metricsOrchestrator = new MetricsOrchestrator({
+          agentName: this.metadata.name,
+          provider: env.CODEMIE_PROVIDER,
+          project: env.CODEMIE_PROJECT,
+          workingDirectory: process.cwd(),
+          metricsAdapter,
+          sessionId // Pass the session ID explicitly
+        });
+
+        // Take pre-spawn snapshot
+        await this.metricsOrchestrator.beforeAgentSpawn();
+      }
     }
 
     // Setup proxy with the session ID (already in env)
@@ -181,6 +187,26 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     // Show random welcome message
     console.log(chalk.cyan.bold(getRandomWelcomeMessage()));
     console.log(''); // Empty line for spacing
+
+    // Display metrics initialization errors (non-blocking)
+    if (this.metricsOrchestrator?.hasInitializationError()) {
+      const metricsError = this.metricsOrchestrator.getInitializationError();
+      if (metricsError) {
+        const { displayWarningMessage } = await import('../../utils/profile.js');
+        displayWarningMessage(
+          'Metrics Collection Disabled',
+          metricsError,
+          {
+            sessionId,
+            agent: this.metadata.name,
+            provider,
+            model,
+            profile: profileName
+          },
+          { severity: 'warning' }
+        );
+      }
+    }
 
     // Enrich args with agent-specific defaults (e.g., --profile, --model)
     let enrichedArgs = args;
