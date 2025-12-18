@@ -13,6 +13,19 @@ import type { SSOAuthConfig, SSOAuthResult, SSOCredentials } from '../../core/ty
 import { CredentialStore } from '../../../utils/credential-store.js';
 
 /**
+ * Normalize URL to base (protocol + host)
+ * E.g., https://host.com/path -> https://host.com
+ */
+function normalizeToBase(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return url;
+  }
+}
+
+/**
  * CodeMie SSO Authentication
  *
  * Provides browser-based SSO authentication for CodeMie provider
@@ -52,7 +65,7 @@ export class CodeMieSSO {
         };
 
         const store = CredentialStore.getInstance();
-        await store.storeSSOCredentials(credentials);
+        await store.storeSSOCredentials(credentials, this.codeMieUrl);
       }
 
       return result;
@@ -68,15 +81,39 @@ export class CodeMieSSO {
   }
 
   /**
-   * Get stored SSO credentials
+   * Get stored SSO credentials with fallback and URL validation
+   *
+   * @param url - Base URL or API URL to look up credentials for
+   * @param allowFallback - Whether to fall back to global credentials (default: true)
+   * @returns Credentials if found and valid, null otherwise
    */
-  async getStoredCredentials(): Promise<SSOCredentials | null> {
+  async getStoredCredentials(url?: string, allowFallback = true): Promise<SSOCredentials | null> {
+    if (!url) {
+      const store = CredentialStore.getInstance();
+      return store.retrieveSSOCredentials();
+    }
+
     const store = CredentialStore.getInstance();
-    const credentials = await store.retrieveSSOCredentials();
+    const baseUrl = normalizeToBase(url);
+
+    let credentials = await store.retrieveSSOCredentials(baseUrl);
+
+    // Fallback to global credentials for backward compatibility
+    if (!credentials && allowFallback) {
+      credentials = await store.retrieveSSOCredentials();
+
+      // Verify that fallback credentials match the requested URL
+      if (credentials) {
+        const credentialBase = normalizeToBase(credentials.apiUrl);
+        if (credentialBase !== baseUrl) {
+          credentials = null;
+        }
+      }
+    }
 
     // Check if credentials are expired
     if (credentials && credentials.expiresAt && Date.now() > credentials.expiresAt) {
-      await store.clearSSOCredentials();
+      await store.clearSSOCredentials(baseUrl);
       return null;
     }
 
@@ -86,9 +123,9 @@ export class CodeMieSSO {
   /**
    * Clear stored credentials
    */
-  async clearStoredCredentials(): Promise<void> {
+  async clearStoredCredentials(baseUrl?: string): Promise<void> {
     const store = CredentialStore.getInstance();
-    await store.clearSSOCredentials();
+    await store.clearSSOCredentials(baseUrl);
   }
 
   /**

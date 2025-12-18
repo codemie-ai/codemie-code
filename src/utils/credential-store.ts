@@ -7,6 +7,7 @@ import { SSOCredentials } from '../providers/core/types.js';
 const SERVICE_NAME = 'codemie-code';
 const ACCOUNT_NAME = 'sso-credentials';
 const FALLBACK_FILE = path.join(os.homedir(), '.codemie', 'sso-credentials.enc');
+const CREDENTIALS_DIR = path.join(os.homedir(), '.codemie', 'credentials');
 
 /**
  * Lazy load keytar to avoid requiring system dependencies during test imports
@@ -42,30 +43,52 @@ export class CredentialStore {
     return CredentialStore.instance;
   }
 
-  async storeSSOCredentials(credentials: SSOCredentials): Promise<void> {
+  /**
+   * Generate a storage key for a given base URL
+   * @param baseUrl - The base URL to hash
+   * @returns Storage key (e.g., "sso-abc123...")
+   */
+  private getUrlStorageKey(baseUrl: string): string {
+    const normalized = baseUrl.replace(/\/$/, '').toLowerCase();
+    const hash = crypto.createHash('sha256').update(normalized).digest('hex');
+    return `sso-${hash}`;
+  }
+
+  async storeSSOCredentials(credentials: SSOCredentials, baseUrl?: string): Promise<void> {
     const encrypted = this.encrypt(JSON.stringify(credentials));
 
+    // Determine storage key based on whether baseUrl is provided
+    const accountName = baseUrl ? this.getUrlStorageKey(baseUrl) : ACCOUNT_NAME;
+    const filePath = baseUrl
+      ? path.join(CREDENTIALS_DIR, `${this.getUrlStorageKey(baseUrl)}.enc`)
+      : FALLBACK_FILE;
+
+    // Store to keychain if available (best effort, don't fail if it errors)
     const keytarModule = await getKeytar();
     if (keytarModule) {
       try {
-        // Try secure keychain storage first
-        await keytarModule.setPassword(SERVICE_NAME, ACCOUNT_NAME, encrypted);
-        return;
+        await keytarModule.setPassword(SERVICE_NAME, accountName, encrypted);
       } catch {
-        // Fall through to file storage
+        // Continue to file storage even if keychain fails
       }
     }
 
-    // Use encrypted file storage as fallback
-    await this.storeToFile(encrypted);
+    // Always store to file as well for consistency
+    await this.storeToFile(encrypted, filePath);
   }
 
-  async retrieveSSOCredentials(): Promise<SSOCredentials | null> {
+  async retrieveSSOCredentials(baseUrl?: string): Promise<SSOCredentials | null> {
+    // Determine storage key based on whether baseUrl is provided
+    const accountName = baseUrl ? this.getUrlStorageKey(baseUrl) : ACCOUNT_NAME;
+    const filePath = baseUrl
+      ? path.join(CREDENTIALS_DIR, `${this.getUrlStorageKey(baseUrl)}.enc`)
+      : FALLBACK_FILE;
+
     // Try keychain first if available
     const keytarModule = await getKeytar();
     if (keytarModule) {
       try {
-        const encrypted = await keytarModule.getPassword(SERVICE_NAME, ACCOUNT_NAME);
+        const encrypted = await keytarModule.getPassword(SERVICE_NAME, accountName);
         if (encrypted) {
           const decrypted = this.decrypt(encrypted);
           return JSON.parse(decrypted);
@@ -77,7 +100,7 @@ export class CredentialStore {
 
     // Always try file storage as fallback
     try {
-      const encrypted = await this.retrieveFromFile();
+      const encrypted = await this.retrieveFromFile(filePath);
       if (encrypted) {
         const decrypted = this.decrypt(encrypted);
         return JSON.parse(decrypted);
@@ -89,12 +112,18 @@ export class CredentialStore {
     return null;
   }
 
-  async clearSSOCredentials(): Promise<void> {
+  async clearSSOCredentials(baseUrl?: string): Promise<void> {
+    // Determine storage key based on whether baseUrl is provided
+    const accountName = baseUrl ? this.getUrlStorageKey(baseUrl) : ACCOUNT_NAME;
+    const filePath = baseUrl
+      ? path.join(CREDENTIALS_DIR, `${this.getUrlStorageKey(baseUrl)}.enc`)
+      : FALLBACK_FILE;
+
     // Clear keychain if available
     const keytarModule = await getKeytar();
     if (keytarModule) {
       try {
-        await keytarModule.deletePassword(SERVICE_NAME, ACCOUNT_NAME);
+        await keytarModule.deletePassword(SERVICE_NAME, accountName);
       } catch {
         // Ignore errors, will try file storage next
       }
@@ -102,7 +131,7 @@ export class CredentialStore {
 
     // Also clear file storage
     try {
-      await fs.unlink(FALLBACK_FILE);
+      await fs.unlink(filePath);
     } catch {
       // Ignore file not found errors
     }
@@ -135,15 +164,15 @@ export class CredentialStore {
     return crypto.createHash('sha256').update(machineId).digest('hex');
   }
 
-  private async storeToFile(encrypted: string): Promise<void> {
-    const dir = path.dirname(FALLBACK_FILE);
+  private async storeToFile(encrypted: string, filePath: string): Promise<void> {
+    const dir = path.dirname(filePath);
     await fs.mkdir(dir, { recursive: true });
-    await fs.writeFile(FALLBACK_FILE, encrypted, 'utf8');
+    await fs.writeFile(filePath, encrypted, 'utf8');
   }
 
-  private async retrieveFromFile(): Promise<string | null> {
+  private async retrieveFromFile(filePath: string): Promise<string | null> {
     try {
-      return await fs.readFile(FALLBACK_FILE, 'utf8');
+      return await fs.readFile(filePath, 'utf8');
     } catch {
       return null;
     }

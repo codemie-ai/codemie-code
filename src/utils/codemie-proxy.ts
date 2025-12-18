@@ -25,7 +25,6 @@
 import { createServer, Server, IncomingMessage, ServerResponse } from 'http';
 import { randomUUID } from 'crypto';
 import { URL } from 'url';
-import { CredentialStore } from './credential-store.js';
 import { ProviderRegistry } from '../providers/core/registry.js';
 import { logger } from './logger.js';
 import { ProxyHTTPClient } from '../proxy/http-client.js';
@@ -64,12 +63,13 @@ export class CodeMieProxy {
     // 2. Load credentials (if needed for SSO)
     let credentials: any = null;
     if (isSSOProvider) {
-      const store = CredentialStore.getInstance();
-      credentials = await store.retrieveSSOCredentials();
+      const { CodeMieSSO } = await import('../providers/plugins/sso/sso.auth.js');
+      const sso = new CodeMieSSO();
+      credentials = await sso.getStoredCredentials(this.config.targetApiUrl);
 
       if (!credentials) {
         throw new AuthenticationError(
-          'SSO credentials not found. Please run: codemie profile login'
+          `SSO credentials not found for ${this.config.targetApiUrl}. Please run: codemie profile login --url ${this.config.targetApiUrl}`
         );
       }
     }

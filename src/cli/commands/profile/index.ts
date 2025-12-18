@@ -5,6 +5,7 @@ import { ConfigLoader } from '../../../utils/config-loader.js';
 import { logger } from '../../../utils/logger.js';
 import { ProfileDisplay } from '../../../utils/profile-display.js';
 import { ProviderRegistry } from '../../../providers/core/registry.js';
+import { handleAuthValidationFailure } from '../../../providers/core/auth-validation.js';
 import { createLoginCommand, createLogoutCommand, createRefreshCommand } from './auth.js';
 
 export function createProfileCommand(): Command {
@@ -93,23 +94,17 @@ async function handleStatus(): Promise<void> {
           ? await setupSteps.getAuthStatus(config)
           : undefined;
       } else {
-        // Show error
-        console.log(chalk.red(`\n${validationResult.error}\n`));
+        const reauthed = await handleAuthValidationFailure(validationResult, setupSteps, config);
 
-        // Prompt for re-authentication if provider supports it
-        if (setupSteps.promptForReauth) {
-          const reauthed = await setupSteps.promptForReauth(config);
-
-          if (reauthed) {
-            // Re-fetch auth status after successful re-authentication
-            authStatus = setupSteps.getAuthStatus
-              ? await setupSteps.getAuthStatus(config)
-              : undefined;
-            console.log(chalk.green('\n✓ Authentication refreshed successfully\n'));
-          } else {
-            console.log(chalk.yellow('\n⚠️  Authentication required to use this profile\n'));
-            return;
-          }
+        if (reauthed) {
+          // Re-fetch auth status after successful re-authentication
+          authStatus = setupSteps.getAuthStatus
+            ? await setupSteps.getAuthStatus(config)
+            : undefined;
+          console.log(chalk.green('\n✓ Authentication refreshed successfully\n'));
+        } else {
+          console.log(chalk.yellow('\n⚠️  Authentication required to use this profile\n'));
+          return;
         }
       }
     } catch (error) {

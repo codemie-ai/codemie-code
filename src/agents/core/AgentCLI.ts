@@ -146,16 +146,10 @@ export class AgentCLI {
           const validationResult = await setupSteps.validateAuth(config);
 
           if (!validationResult.valid) {
-            console.log(chalk.red(`\n✗ ${validationResult.error}\n`));
+            const { handleAuthValidationFailure } = await import('../../providers/core/auth-validation.js');
+            const reauthed = await handleAuthValidationFailure(validationResult, setupSteps, config);
 
-            // Prompt for re-auth if provider supports it
-            if (setupSteps.promptForReauth) {
-              const reauthed = await setupSteps.promptForReauth(config);
-              if (!reauthed) {
-                console.log(chalk.yellow('\n⚠️  Authentication required\n'));
-                process.exit(1);
-              }
-            } else {
+            if (!reauthed) {
               console.log(chalk.yellow('\n⚠️  Authentication required\n'));
               process.exit(1);
             }

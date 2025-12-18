@@ -102,8 +102,11 @@ async function handleLogout(): Promise<void> {
   const spinner = ora('Clearing SSO credentials...').start();
 
   try {
+    const config = await ConfigLoader.load();
+    const baseUrl = config.codeMieUrl || config.baseUrl;
+
     const sso = new CodeMieSSO();
-    await sso.clearStoredCredentials();
+    await sso.clearStoredCredentials(baseUrl);
 
     spinner.succeed(chalk.green('Successfully logged out'));
     console.log(chalk.white('SSO credentials have been cleared'));
@@ -126,7 +129,7 @@ async function handleRefresh(): Promise<void> {
 
   // Clear existing credentials and re-authenticate
   const sso = new CodeMieSSO();
-  await sso.clearStoredCredentials();
+  await sso.clearStoredCredentials(config.codeMieUrl);
 
   await handleLogin(config.codeMieUrl);
 }

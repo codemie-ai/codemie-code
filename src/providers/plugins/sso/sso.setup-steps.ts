@@ -235,24 +235,23 @@ export const SSOSetupSteps: ProviderSetupSteps = {
    *
    * Checks credential validity, expiration, and API access
    */
-  async validateAuth(): Promise<AuthValidationResult> {
+  async validateAuth(config: CodeMieConfigOptions): Promise<AuthValidationResult> {
     try {
+      const baseUrl = config.codeMieUrl || config.baseUrl;
+      if (!baseUrl) {
+        return {
+          valid: false,
+          error: 'No CodeMie URL configured'
+        };
+      }
+
       const sso = new CodeMieSSO();
-      const credentials = await sso.getStoredCredentials();
+      const credentials = await sso.getStoredCredentials(baseUrl);
 
       if (!credentials) {
         return {
           valid: false,
-          error: 'No SSO credentials found. Please run: codemie profile login'
-        };
-      }
-
-      // Check expiration
-      if (credentials.expiresAt && Date.now() > credentials.expiresAt) {
-        return {
-          valid: false,
-          error: 'SSO credentials expired. Please run: codemie profile refresh',
-          expiresAt: credentials.expiresAt
+          error: `No SSO credentials found for ${baseUrl}. Please run: codemie profile login --url ${baseUrl}`
         };
       }
 
@@ -285,6 +284,9 @@ export const SSOSetupSteps: ProviderSetupSteps = {
    */
   async promptForReauth(config: CodeMieConfigOptions): Promise<boolean> {
     try {
+      // Show warning about credentials
+      console.log(chalk.yellow('\n⚠️  Authentication required\n'));
+
       // Prompt user
       const { confirm } = await inquirer.prompt([
         {
@@ -330,10 +332,11 @@ export const SSOSetupSteps: ProviderSetupSteps = {
    *
    * Returns current auth status information
    */
-  async getAuthStatus(): Promise<AuthStatus> {
+  async getAuthStatus(config: CodeMieConfigOptions): Promise<AuthStatus> {
     try {
+      const baseUrl = config.codeMieUrl || config.baseUrl;
       const sso = new CodeMieSSO();
-      const credentials = await sso.getStoredCredentials();
+      const credentials = await sso.getStoredCredentials(baseUrl);
 
       if (!credentials) {
         return { authenticated: false };
