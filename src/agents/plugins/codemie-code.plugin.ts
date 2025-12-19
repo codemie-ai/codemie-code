@@ -51,20 +51,26 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
       let config;
       try {
         config = await loadCodeMieConfig(workingDir);
-      } catch {
-        throw new Error('CodeMie configuration required. Please run: codemie setup');
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        logger.error('Configuration loading failed:', errorMessage);
+        throw new Error(`CodeMie configuration required: ${errorMessage}. Please run: codemie setup`);
       }
 
       // Show welcome message with session info
-      const profileName = config.name || 'default';
+      // Read from environment variables (same as BaseAgentAdapter)
+      const profileName = process.env.CODEMIE_PROFILE_NAME || config.name || 'default';
+      const provider = process.env.CODEMIE_PROVIDER || config.displayProvider || config.provider;
+      const model = process.env.CODEMIE_MODEL || config.model;
+      const codeMieUrl = process.env.CODEMIE_URL || config.codeMieUrl;
       const sessionId = process.env.CODEMIE_SESSION_ID || 'n/a';
       const cliVersion = process.env.CODEMIE_CLI_VERSION || 'unknown';
       console.log(
         renderProfileInfo({
             profile: profileName,
-            provider: config.provider,
-            model: config.model,
-            codeMieUrl: config.codeMieUrl,
+            provider,
+            model,
+            codeMieUrl,
             agent: BUILTIN_AGENT_NAME,
             cliVersion,
             sessionId

@@ -37,6 +37,12 @@ export interface CodeMieConfig {
 
   /** Directory filtering configuration */
   directoryFilters?: FilterConfig;
+
+  /** Profile name */
+  name?: string;
+
+  /** CodeMie base URL (for SSO providers) */
+  codeMieUrl?: string;
 }
 
 /**

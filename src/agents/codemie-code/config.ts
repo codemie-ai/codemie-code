@@ -34,12 +34,14 @@ export async function loadCodeMieConfig(
     const provider = ProviderRegistry.getProvider(baseConfig.provider || '');
     if (provider?.authType === 'sso') {
       const store = CredentialStore.getInstance();
-      const credentials = await store.retrieveSSOCredentials();
+      // Retrieve credentials using the codeMieUrl from profile for URL-specific storage
+      const codeMieUrl = (baseConfig as any).codeMieUrl || baseConfig.baseUrl;
+      const credentials = await store.retrieveSSOCredentials(codeMieUrl);
 
       if (!credentials) {
         throw new ConfigurationError(
           'SSO credentials not found. Please run: codemie profile login',
-          { provider: baseConfig.provider }
+          { provider: baseConfig.provider, codeMieUrl }
         );
       }
 
@@ -67,7 +69,9 @@ export async function loadCodeMieConfig(
       displayProvider: originalProvider, // Keep original for display
       timeout: baseConfig.timeout || 300,
       workingDirectory: workDir,
-      debug: baseConfig.debug || false
+      debug: baseConfig.debug || false,
+      name: baseConfig.name, // Profile name for display
+      codeMieUrl: (baseConfig as any).codeMieUrl // CodeMie URL for SSO providers
     };
 
     // Validate agent-specific requirements
