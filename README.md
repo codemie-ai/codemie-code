@@ -37,47 +37,60 @@ Perfect for developers seeking a powerful alternative to GitHub Copilot or Curso
 ## Quick Start
 
 ```bash
+# Install globally for best experience
+npm install -g @codemieai/code
+
 # 1. Setup (interactive wizard)
-npx @codemieai/code setup
+codemie setup
 
 # 2. Check system health
-npx @codemieai/code doctor
+codemie doctor
 
 # 3. Install an external agent (e.g., Claude Code)
+codemie install claude
+
+# 4. Use the installed agent
+codemie-claude "Review my API code"
+
+# 5. Use the built-in agent
+codemie-code "Analyze this codebase"
+
+# 6. Execute a single task and exit
+codemie --task "Generate unit tests"
+```
+
+**Prefer not to install globally?** Use npx with the full package name:
+
+```bash
+npx @codemieai/code setup
+npx @codemieai/code doctor
 npx @codemieai/code install claude
-
-# 4. Use the installed agent interactively
-npx codemie-claude
-
-# 5. Next Steps: Use the embedded agent
-npx codemie-code "Review my code for bugs"
-
-# 6. Advanced Usage
-# Execute a single task directly via the main CLI
-npx @codemieai/code --task "Analyze this project structure"
-
-# Start the embedded agent in full interactive mode
-npx codemie-code
+# Note: Agent shortcuts require global installation
 ```
 
 ## Installation
 
-### From npm (Recommended)
+### Global Installation (Recommended)
+
+For the best experience with all features and agent shortcuts:
 
 ```bash
-# Install the package
+npm install -g @codemieai/code
+codemie --help
+```
+
+### Local/Project Installation
+
+For project-specific usage:
+
+```bash
 npm install @codemieai/code
 
 # Use with npx
-npx codemie --help
+npx @codemieai/code --help
 ```
 
-Alternatively, for frequent use, you can install globally:
-
-```bash
-npm install --global @codemieai/code
-codemie --help
-```
+**Note:** Agent shortcuts (`codemie-claude`, `codemie-code`, etc.) require global installation.
 
 ### From Source
 
