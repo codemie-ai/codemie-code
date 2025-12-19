@@ -211,8 +211,7 @@ export class MetricsOrchestrator {
       }
 
       // Correlate with retry
-      logger.info('[MetricsOrchestrator] 🔗 Starting session matching...');
-      logger.debug('[MetricsOrchestrator] Attempting to correlate CodeMie session with agent session file');
+      logger.debug('[MetricsOrchestrator] Starting correlation with retry...');
       const correlation = await this.correlator.correlateWithRetry(
         {
           sessionId: this.sessionId,
@@ -242,8 +241,7 @@ export class MetricsOrchestrator {
         // Start incremental delta monitoring
         await this.startIncrementalMonitoring(correlation.agentSessionFile!);
       } else {
-        logger.warn(`[MetricsOrchestrator] ⚠️  Unable to track session metrics - session file not found`);
-        logger.debug(`[MetricsOrchestrator] Correlation status: ${correlation.status}, retries: ${correlation.retryCount}`);
+        logger.warn(`[MetricsOrchestrator] Correlation failed after ${correlation.retryCount} retries`);
       }
 
     } catch (error) {
@@ -347,7 +345,6 @@ export class MetricsOrchestrator {
         this.session.startTime
       );
 
-      logger.info('[MetricsOrchestrator] 👀 Monitoring session activity in real-time');
       logger.debug('[MetricsOrchestrator] Initialized delta-based metrics tracking');
 
       // Collect initial deltas
