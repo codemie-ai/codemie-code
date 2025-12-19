@@ -10,6 +10,7 @@
 
 import { exec, ExecOptions } from './exec.js';
 import { logger } from './logger.js';
+import os from 'os';
 
 /**
  * Base options for npm operations
@@ -65,10 +66,12 @@ export async function installGlobal(
   logger.info(`Installing ${packageSpec} globally...`);
 
   try {
+    const isWindows = os.platform() === 'win32';
     const execOptions: ExecOptions = {
       cwd: options.cwd,
       env: options.env,
-      timeout
+      timeout,
+      shell: isWindows // npm is a .cmd file on Windows
     };
 
     const result = await exec('npm', ['install', '-g', packageSpec], execOptions);
@@ -107,10 +110,12 @@ export async function uninstallGlobal(
   logger.info(`Uninstalling ${packageName} globally...`);
 
   try {
+    const isWindows = os.platform() === 'win32';
     const execOptions: ExecOptions = {
       cwd: options.cwd,
       env: options.env,
-      timeout
+      timeout,
+      shell: isWindows // npm is a .cmd file on Windows
     };
 
     const result = await exec('npm', ['uninstall', '-g', packageName], execOptions);
@@ -150,10 +155,12 @@ export async function listGlobal(
   const timeout = options.timeout ?? 5000; // 5 seconds default
 
   try {
+    const isWindows = os.platform() === 'win32';
     const execOptions: ExecOptions = {
       cwd: options.cwd,
       env: options.env,
-      timeout
+      timeout,
+      shell: isWindows // npm is a .cmd file on Windows
     };
 
     const result = await exec('npm', ['list', '-g', packageName], execOptions);
@@ -187,10 +194,12 @@ export async function getVersion(
   const timeout = options.timeout ?? 5000; // 5 seconds default
 
   try {
+    const isWindows = os.platform() === 'win32';
     const execOptions: ExecOptions = {
       cwd: options.cwd,
       env: options.env,
-      timeout
+      timeout,
+      shell: isWindows // npm is a .cmd file on Windows
     };
 
     const result = await exec('npm', ['--version'], execOptions);
@@ -228,11 +237,13 @@ export async function npxRun(
   logger.info(`Running npx ${command} ${args.join(' ')}...`);
 
   try {
+    const isWindows = os.platform() === 'win32';
     const execOptions: ExecOptions = {
       cwd: options.cwd,
       env: options.env,
       timeout,
-      interactive: options.interactive
+      interactive: options.interactive,
+      shell: isWindows // npx is a .cmd file on Windows
     };
 
     await exec('npx', [command, ...args], execOptions);

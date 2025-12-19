@@ -297,12 +297,23 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       logger.debug(`Executing: ${this.metadata.cliCommand} ${transformedArgs.join(' ')}`);
 
       // Spawn the CLI command with inherited stdio
-      // On Windows, use shell: true to resolve .cmd/.bat executables
+      // On Windows, resolve full path to avoid shell: true deprecation (DEP0190)
       const isWindows = process.platform === 'win32';
-      const child = spawn(this.metadata.cliCommand, transformedArgs, {
+      let commandPath = this.metadata.cliCommand;
+
+      // Resolve full path on Windows to avoid using shell: true
+      if (isWindows) {
+        const { getCommandPath } = await import('../../utils/which.js');
+        const resolvedPath = await getCommandPath(this.metadata.cliCommand);
+        if (resolvedPath) {
+          commandPath = resolvedPath;
+          logger.debug(`Resolved command path: ${resolvedPath}`);
+        }
+      }
+
+      const child = spawn(commandPath, transformedArgs, {
         stdio: 'inherit',
         env,
-        shell: isWindows, // Windows needs shell to resolve .cmd files
         windowsHide: isWindows // Hide console window on Windows
       });
 

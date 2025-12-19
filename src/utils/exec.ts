@@ -18,7 +18,7 @@ export interface ExecResult {
 /**
  * Execute command with cross-platform support
  *
- * On Windows, uses shell: true to properly resolve .cmd/.bat/.exe executables
+ * On Windows, resolves full path to avoid shell: true deprecation (DEP0190)
  * On Unix, uses shell: false for better security
  *
  * @param command - Command to execute (e.g., 'npm', 'python', 'which')
@@ -31,10 +31,15 @@ export async function exec(
   options: ExecOptions = {}
 ): Promise<ExecResult> {
   return new Promise((resolve, reject) => {
-    // On Windows, we need shell: true to resolve .cmd/.bat/.exe
-    // On Unix, shell: false is safer and sufficient
     const isWindows = os.platform() === 'win32';
-    const useShell = options.shell !== undefined ? options.shell : isWindows;
+
+    // Determine if we should use shell
+    // - If explicitly set in options, respect it
+    // - Otherwise, avoid shell for security (resolve path on Windows instead)
+    let useShell = false;
+    if (options.shell !== undefined) {
+      useShell = options.shell;
+    }
 
     // Interactive mode: inherit stdio for user prompts
     const stdio = options.interactive ? 'inherit' : 'pipe';
@@ -43,7 +48,7 @@ export async function exec(
       cwd: options.cwd || process.cwd(),
       env: { ...process.env, ...options.env },
       shell: useShell,
-      windowsHide: true, // Hide console window on Windows
+      windowsHide: isWindows, // Hide console window on Windows
       stdio
     });
 
