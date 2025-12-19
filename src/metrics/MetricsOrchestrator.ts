@@ -91,6 +91,19 @@ export class MetricsOrchestrator {
       logger.info(`[MetricsOrchestrator] 📋 Baseline: ${this.beforeSnapshot.files.length} existing session file${this.beforeSnapshot.files.length !== 1 ? 's' : ''}`);
       logger.debug(`[MetricsOrchestrator] Pre-spawn snapshot complete: ${this.beforeSnapshot.files.length} files`);
 
+      // Show sample of baseline files for debugging
+      if (this.beforeSnapshot.files.length > 0) {
+        const sampleSize = Math.min(3, this.beforeSnapshot.files.length);
+        const sample = this.beforeSnapshot.files.slice(0, sampleSize).map(f => f.path);
+        logger.info(`[MetricsOrchestrator] 📄 Sample files (first ${sampleSize}):`);
+        for (const filePath of sample) {
+          logger.info(`[MetricsOrchestrator]    → ${filePath}`);
+        }
+        if (this.beforeSnapshot.files.length > sampleSize) {
+          logger.info(`[MetricsOrchestrator]    ... and ${this.beforeSnapshot.files.length - sampleSize} more`);
+        }
+      }
+
       // Detect git branch from working directory
       const gitBranch = await detectGitBranch(this.workingDirectory);
 
@@ -171,15 +184,31 @@ export class MetricsOrchestrator {
       logger.info(`[MetricsOrchestrator] 📂 Found ${afterSnapshot.files.length} total session file${afterSnapshot.files.length !== 1 ? 's' : ''} in directory`);
       logger.debug(`[MetricsOrchestrator] Pre-spawn: ${this.beforeSnapshot.files.length} files, Post-spawn: ${afterSnapshot.files.length} files`);
 
+      // Show sample of post-spawn files for comparison
+      if (afterSnapshot.files.length > 0 && afterSnapshot.files.length !== this.beforeSnapshot.files.length) {
+        const sampleSize = Math.min(3, afterSnapshot.files.length);
+        const sample = afterSnapshot.files.slice(0, sampleSize).map(f => f.path);
+        logger.info(`[MetricsOrchestrator] 📄 Post-spawn files (first ${sampleSize}):`);
+        for (const filePath of sample) {
+          logger.info(`[MetricsOrchestrator]    → ${filePath}`);
+        }
+        if (afterSnapshot.files.length > sampleSize) {
+          logger.info(`[MetricsOrchestrator]    ... and ${afterSnapshot.files.length - sampleSize} more`);
+        }
+      }
+
       // Compute diff
       const newFiles = this.snapshotter.diff(this.beforeSnapshot, afterSnapshot);
       if (newFiles.length > 0) {
         logger.info(`[MetricsOrchestrator] ✨ ${newFiles.length} new file${newFiles.length !== 1 ? 's' : ''} created since agent start`);
-        logger.info(`[MetricsOrchestrator]    ${newFiles.map(f => `→ ${f.path.split('/').slice(-2).join('/')}`).join(', ')}`);
+        // Use path.basename for cross-platform display
+        const { basename } = await import('path');
+        logger.info(`[MetricsOrchestrator]    ${newFiles.map(f => `→ ${basename(f.path)}`).join(', ')}`);
+        logger.debug(`[MetricsOrchestrator] New files (full paths): ${newFiles.map(f => f.path).join(', ')}`);
       } else {
         logger.info(`[MetricsOrchestrator] ⏳ No new files yet - will retry...`);
+        logger.debug(`[MetricsOrchestrator] Diff result: 0 new files (baseline had ${this.beforeSnapshot.files.length}, post-spawn has ${afterSnapshot.files.length})`);
       }
-      logger.debug(`[MetricsOrchestrator] New files (full paths): ${newFiles.map(f => f.path).join(', ')}`);
 
       // Correlate with retry
       logger.info('[MetricsOrchestrator] 🔗 Starting session matching...');

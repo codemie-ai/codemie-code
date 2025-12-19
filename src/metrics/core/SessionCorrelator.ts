@@ -27,7 +27,18 @@ export class SessionCorrelator {
     const { newFiles, agentPlugin, workingDirectory } = input;
 
     logger.info(`[SessionCorrelator] 🔍 Analyzing ${newFiles.length} candidate file${newFiles.length !== 1 ? 's' : ''}...`);
-    logger.debug(`[SessionCorrelator] Files to analyze: ${newFiles.map(f => f.path.split('/').slice(-1)[0]).join(', ')}`);
+
+    // Show candidate files at INFO level for debugging
+    if (newFiles.length > 0) {
+      logger.info(`[SessionCorrelator] 📋 Candidate files:`);
+      const sampleSize = Math.min(5, newFiles.length);
+      for (let i = 0; i < sampleSize; i++) {
+        logger.info(`[SessionCorrelator]    ${i + 1}. ${newFiles[i].path}`);
+      }
+      if (newFiles.length > sampleSize) {
+        logger.info(`[SessionCorrelator]    ... and ${newFiles.length - sampleSize} more`);
+      }
+    }
 
     // Case 1: No new files
     if (newFiles.length === 0) {
@@ -46,15 +57,32 @@ export class SessionCorrelator {
 
     if (matchingFiles.length > 0) {
       logger.info(`[SessionCorrelator] ✓ ${matchingFiles.length} file${matchingFiles.length !== 1 ? 's' : ''} match${matchingFiles.length === 1 ? 'es' : ''} pattern`);
-      logger.info(`[SessionCorrelator]    ${matchingFiles.map(f => `→ ${f.path.split('/').slice(-1)[0]}`).join(', ')}`);
+      // Use path.basename for cross-platform display
+      const { basename } = await import('path');
+      logger.info(`[SessionCorrelator]    ${matchingFiles.map(f => `→ ${basename(f.path)}`).join(', ')}`);
     }
     logger.debug(`[SessionCorrelator] Pattern matching: ${matchingFiles.length}/${newFiles.length} files passed`);
-    logger.debug(`[SessionCorrelator] All files: ${newFiles.map(f => f.path).join(', ')}`);
-    logger.debug(`[SessionCorrelator] Pattern matches: ${matchingFiles.map(f => f.path).join(', ')}`);
+
+    // Show which files were filtered out and why
+    if (matchingFiles.length < newFiles.length) {
+      const filtered = newFiles.filter(f => !matchingFiles.includes(f));
+      logger.debug(`[SessionCorrelator] Filtered out ${filtered.length} files (pattern mismatch): ${filtered.map(f => f.path).join(', ')}`);
+    }
 
     if (matchingFiles.length === 0) {
       logger.warn('[SessionCorrelator] ⚠️  No session files match expected pattern - correlation failed');
-      logger.info(`[SessionCorrelator]    Expected pattern for ${input.agentName}`);
+      logger.info(`[SessionCorrelator]    Agent: ${input.agentName}`);
+      logger.info(`[SessionCorrelator]    Working directory: ${workingDirectory}`);
+
+      // Show why files were rejected
+      if (newFiles.length > 0) {
+        logger.info(`[SessionCorrelator]    None of the ${newFiles.length} candidate files matched the pattern`);
+        // Test first file and explain why it failed
+        const testFile = newFiles[0].path;
+        logger.debug(`[SessionCorrelator]    Testing pattern on: ${testFile}`);
+        logger.debug(`[SessionCorrelator]    matchesSessionPattern() returned: ${agentPlugin.matchesSessionPattern(testFile)}`);
+      }
+
       return {
         status: 'failed',
         retryCount: 0

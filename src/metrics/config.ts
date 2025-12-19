@@ -33,10 +33,12 @@ export const METRICS_CONFIG: MetricsConfig = {
 
   /**
    * Retry configuration for correlation
+   * Exponential backoff: 500ms → 1s → 2s → 4s → 8s → 16s → 32s → 32s
+   * Total wait time: ~1.6 minutes
    */
   retry: {
-    attempts: 5,
-    delays: [500, 1000, 2000, 4000, 8000] // Exponential backoff
+    attempts: 8,
+    delays: [500, 1000, 2000, 4000, 8000, 16000, 32000, 32000] // Exponential backoff capped at 32s
   },
 
   /**
