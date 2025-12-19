@@ -26,11 +26,12 @@ export class SessionCorrelator {
   async correlate(input: CorrelationInput): Promise<CorrelationResult> {
     const { newFiles, agentPlugin, workingDirectory } = input;
 
-    logger.debug(`[SessionCorrelator] Correlating session with ${newFiles.length} new files`);
+    logger.info(`[SessionCorrelator] 🔍 Analyzing ${newFiles.length} candidate file${newFiles.length !== 1 ? 's' : ''}...`);
+    logger.debug(`[SessionCorrelator] Files to analyze: ${newFiles.map(f => f.path.split('/').slice(-1)[0]).join(', ')}`);
 
     // Case 1: No new files
     if (newFiles.length === 0) {
-      logger.debug('[SessionCorrelator] No new files detected');
+      logger.warn('[SessionCorrelator] ⚠️  No session files detected - will retry');
       return {
         status: 'pending',
         retryCount: 0
@@ -38,16 +39,22 @@ export class SessionCorrelator {
     }
 
     // Case 2: Filter files by agent pattern
+    logger.info(`[SessionCorrelator] 🔎 Step 1: Filtering by agent session pattern...`);
     const matchingFiles = newFiles.filter(f =>
       agentPlugin.matchesSessionPattern(f.path)
     );
 
-    logger.debug(`[SessionCorrelator] ${matchingFiles.length} files match agent pattern out of ${newFiles.length} new files`);
-    logger.debug(`[SessionCorrelator] New files: ${newFiles.map(f => f.path).join(', ')}`);
-    logger.debug(`[SessionCorrelator] Matching files: ${matchingFiles.map(f => f.path).join(', ')}`);
+    if (matchingFiles.length > 0) {
+      logger.info(`[SessionCorrelator] ✓ ${matchingFiles.length} file${matchingFiles.length !== 1 ? 's' : ''} match${matchingFiles.length === 1 ? 'es' : ''} pattern`);
+      logger.info(`[SessionCorrelator]    ${matchingFiles.map(f => `→ ${f.path.split('/').slice(-1)[0]}`).join(', ')}`);
+    }
+    logger.debug(`[SessionCorrelator] Pattern matching: ${matchingFiles.length}/${newFiles.length} files passed`);
+    logger.debug(`[SessionCorrelator] All files: ${newFiles.map(f => f.path).join(', ')}`);
+    logger.debug(`[SessionCorrelator] Pattern matches: ${matchingFiles.map(f => f.path).join(', ')}`);
 
     if (matchingFiles.length === 0) {
-      logger.warn('[SessionCorrelator] No files match agent pattern');
+      logger.warn('[SessionCorrelator] ⚠️  No session files match expected pattern - correlation failed');
+      logger.info(`[SessionCorrelator]    Expected pattern for ${input.agentName}`);
       return {
         status: 'failed',
         retryCount: 0
@@ -55,12 +62,19 @@ export class SessionCorrelator {
     }
 
     // Case 3: Filter by working directory (parse file content)
+    logger.info(`[SessionCorrelator] 🔎 Step 2: Checking working directory match...`);
+    logger.debug(`[SessionCorrelator] Working directory: ${workingDirectory}`);
     const filesWithWorkingDir = await this.filterByWorkingDirectory(
       matchingFiles,
       workingDirectory
     );
 
-    logger.debug(`[SessionCorrelator] ${filesWithWorkingDir.length} files contain working directory`);
+    if (filesWithWorkingDir.length > 0) {
+      logger.info(`[SessionCorrelator] ✓ ${filesWithWorkingDir.length} file${filesWithWorkingDir.length !== 1 ? 's' : ''} contain${filesWithWorkingDir.length === 1 ? 's' : ''} working directory`);
+    } else {
+      logger.info(`[SessionCorrelator] ⚠️  No files contain working directory - using first pattern match`);
+    }
+    logger.debug(`[SessionCorrelator] Working directory matches: ${filesWithWorkingDir.length}/${matchingFiles.length} files`);
 
     // Pick first match (simple strategy)
     const matchedFile = filesWithWorkingDir.length > 0
@@ -70,7 +84,8 @@ export class SessionCorrelator {
     // Extract session ID
     const agentSessionId = agentPlugin.extractSessionId(matchedFile.path);
 
-    logger.info(`[SessionCorrelator] Matched: ${matchedFile.path} → ${agentSessionId}`);
+    logger.info(`[SessionCorrelator] 🔗 Session matched: ${agentSessionId}`);
+    logger.info(`[SessionCorrelator]    Session file: ${matchedFile.path}`);
 
     return {
       status: 'matched',
@@ -99,11 +114,13 @@ export class SessionCorrelator {
     for (let attempt = 0; attempt < METRICS_CONFIG.retry.attempts; attempt++) {
       const delay = METRICS_CONFIG.retry.delays[attempt];
 
-      logger.debug(`[SessionCorrelator] Retry attempt ${attempt + 1} after ${delay}ms`);
+      logger.info(`[SessionCorrelator] 🔄 Retry ${attempt + 1}/${METRICS_CONFIG.retry.attempts} after ${delay}ms...`);
+      logger.debug(`[SessionCorrelator] Waiting ${delay}ms before retry ${attempt + 1}`);
 
       await this.sleep(delay);
 
       // Take new snapshot
+      logger.debug(`[SessionCorrelator] Taking new snapshot for retry ${attempt + 1}`);
       const newFiles = await snapshotFn();
 
       // Retry correlation
@@ -115,13 +132,13 @@ export class SessionCorrelator {
       result.retryCount = attempt + 1;
 
       if (result.status === 'matched') {
-        logger.info(`[SessionCorrelator] Matched on retry attempt ${attempt + 1}`);
+        logger.info(`[SessionCorrelator] 🔗 Session matched on retry ${attempt + 1}`);
         return result;
       }
     }
 
     // All retries exhausted
-    logger.warn(`[SessionCorrelator] Failed to correlate after ${METRICS_CONFIG.retry.attempts} attempts`);
+    logger.warn(`[SessionCorrelator] ❌ Session matching failed after ${METRICS_CONFIG.retry.attempts} attempts - metrics collection disabled`);
     result.status = 'failed';
     return result;
   }

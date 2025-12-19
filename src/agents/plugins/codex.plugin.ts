@@ -1,9 +1,7 @@
 import { AgentMetadata } from '../core/types.js';
 import { BaseAgentAdapter } from '../core/BaseAgentAdapter.js';
-import { mkdir, writeFile, readFile } from 'fs/promises';
+import { writeFile, readFile } from 'fs/promises';
 import { existsSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
 
 /**
  * Helper functions
@@ -92,6 +90,74 @@ export async function cleanupAuthJson(authFile: string, sessionEnv?: NodeJS.Proc
   await atomicWrite(authFile, JSON.stringify(cleanedAuth, null, 2));
 }
 
+/**
+ * Remove orphaned model_providers that are no longer referenced by any session
+ */
+function removeOrphanedProviders(configContent: string): string {
+  // Find all model_provider references in session blocks (inside CODEMIE SESSION markers)
+  const sessionBlocksRegex = /# --- CODEMIE SESSION START:[\s\S]*?# --- CODEMIE SESSION END: [^\n]+/g;
+  const sessionBlocks = configContent.match(sessionBlocksRegex) || [];
+
+  // Extract referenced providers from session blocks
+  const referencedProviders = new Set<string>();
+  for (const block of sessionBlocks) {
+    const providerMatch = block.match(/model_provider\s*=\s*"([^"]+)"/);
+    if (providerMatch) {
+      referencedProviders.add(providerMatch[1]);
+    }
+  }
+
+  // Also check for references outside session blocks (pre-existing config)
+  const contentOutsideBlocks = configContent.replace(sessionBlocksRegex, '');
+  const externalProviderMatches = contentOutsideBlocks.matchAll(/model_provider\s*=\s*"([^"]+)"/g);
+  for (const match of externalProviderMatches) {
+    referencedProviders.add(match[1]);
+  }
+
+  // Find all model_providers sections
+  const lines = configContent.split('\n');
+  const providerLinesToRemove = new Set<number>();
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const providerMatch = line.match(/^\[model_providers\.([^\]]+)\]/);
+
+    if (providerMatch) {
+      const providerName = providerMatch[1];
+
+      // Check if this provider is referenced
+      if (!referencedProviders.has(providerName)) {
+        // Mark provider section for removal (header + all subsequent non-empty, non-section lines)
+        providerLinesToRemove.add(i);
+
+        // Mark subsequent lines until next section or empty line
+        for (let j = i + 1; j < lines.length; j++) {
+          const nextLine = lines[j];
+
+          // Stop at next section or session marker
+          if (nextLine.match(/^\s*\[/) || nextLine.match(/^# --- CODEMIE SESSION/)) {
+            break;
+          }
+
+          // Stop at empty line (end of section)
+          if (nextLine.trim() === '') {
+            providerLinesToRemove.add(j);
+            break;
+          }
+
+          // Mark this line for removal (part of provider section)
+          providerLinesToRemove.add(j);
+        }
+      }
+    }
+  }
+
+  // Remove marked lines
+  const cleanedLines = lines.filter((_, index) => !providerLinesToRemove.has(index));
+
+  return cleanedLines.join('\n');
+}
+
 export async function cleanupConfigToml(configFile: string, sessionEnv?: NodeJS.ProcessEnv): Promise<void> {
   if (!existsSync(configFile)) return;
 
@@ -112,6 +178,9 @@ export async function cleanupConfigToml(configFile: string, sessionEnv?: NodeJS.
     configContent = configContent.replace(sessionBlockRegex, '');
     configContent = configContent.replace(/^\s*\n+/gm, '\n').replace(/^\n/, ''); // Clean up empty lines
 
+    // Remove orphaned providers
+    configContent = removeOrphanedProviders(configContent);
+
     await atomicWrite(configFile, configContent);
     return;
   }
@@ -130,18 +199,15 @@ export async function cleanupConfigToml(configFile: string, sessionEnv?: NodeJS.
   configContent = configContent.replace(sessionBlockRegex, '');
   configContent = configContent.replace(/^\s*\n+/gm, '\n').replace(/^\n/, ''); // Clean up empty lines
 
+  // Remove orphaned providers (providers with no profile references)
+  configContent = removeOrphanedProviders(configContent);
+
   await atomicWrite(configFile, configContent);
 }
 
 /**
  * Setup helper functions
  */
-
-async function ensureCodexDirectory(codexDir: string): Promise<void> {
-  if (!existsSync(codexDir)) {
-    await mkdir(codexDir, { recursive: true });
-  }
-}
 
 async function loadExistingAuth(authFile: string): Promise<Record<string, string>> {
   if (!existsSync(authFile)) {
@@ -202,17 +268,67 @@ export async function setupAuthJson(authFile: string, env: NodeJS.ProcessEnv): P
   await atomicWrite(authFile, JSON.stringify(authConfig, null, 2));
 }
 
-function buildSessionBlock(providerName: string, baseUrl: string, model: string): string {
+/**
+ * Ensure model provider exists in global config (outside session blocks)
+ * Returns updated content with provider section if it was missing
+ */
+function ensureModelProvider(
+  existingContent: string,
+  providerName: string,
+  baseUrl: string
+): string {
+  // Check if provider already exists anywhere in the file
+  const providerSectionExists = existingContent.includes(`[model_providers.${providerName}]`);
+
+  if (providerSectionExists) {
+    return existingContent; // No changes needed
+  }
+
+  // Add provider section at the top (before any session blocks)
+  const providerSection =
+    `[model_providers.${providerName}]\n` +
+    `name = "${providerName}"\n` +
+    `base_url = "${baseUrl}"\n\n`;
+
+  // If file is empty, just add the provider
+  if (!existingContent) {
+    return providerSection;
+  }
+
+  // Find first session block marker
+  const firstSessionMatch = existingContent.match(/# --- CODEMIE SESSION START:/);
+
+  if (firstSessionMatch) {
+    // Insert provider before first session block
+    const insertPos = firstSessionMatch.index || 0;
+    return (
+      existingContent.substring(0, insertPos) +
+      providerSection +
+      existingContent.substring(insertPos)
+    );
+  }
+
+  // No session blocks yet, prepend provider section
+  return providerSection + existingContent;
+}
+
+/**
+ * Build session-specific block (without model_providers - that's global now)
+ * Uses unique profile name per session to avoid TOML duplicate key errors
+ */
+function buildSessionBlock(
+  providerName: string,
+  model: string
+): string {
   // Generate unique session ID (timestamp + provider)
   const sessionId = `${providerName}-${Date.now()}`;
+  // Use session ID as unique profile name to avoid duplicates
+  const uniqueProfileName = sessionId;
 
   let content = '';
   content += `# --- CODEMIE SESSION START: ${sessionId} ---\n`;
-  content += `profile = "${providerName}"\n\n`;
-  content += `[model_providers.${providerName}]\n`;
-  content += `name = "${providerName}"\n`;
-  content += `base_url = "${baseUrl}"\n\n`;
-  content += `[profiles.${providerName}]\n`;
+  content += `profile = "${uniqueProfileName}"\n\n`;
+  content += `[profiles.${uniqueProfileName}]\n`;
   content += `model_provider = "${providerName}"\n`;
   content += `model = "${model}"\n`;
   content += `# --- CODEMIE SESSION END: ${sessionId} ---\n`;
@@ -236,14 +352,19 @@ export async function setupConfigToml(configFile: string, env: NodeJS.ProcessEnv
     existingContent = await readFile(configFile, 'utf-8');
   }
 
-  // Build session block
-  const sessionBlock = buildSessionBlock(providerName, baseUrl, model);
+  // Step 1: Ensure model provider exists globally (outside session blocks)
+  existingContent = ensureModelProvider(existingContent, providerName, baseUrl);
 
-  // Append session block to existing content
+  // Step 2: Build session-specific block
+  const sessionBlock = buildSessionBlock(providerName, model);
+
+  // Step 3: Append session block to content
   const newContent = existingContent ? `${existingContent}\n${sessionBlock}` : sessionBlock;
 
-  // Store session ID for cleanup
-  env.CODEMIE_SESSION_ID = sessionBlock.match(/# --- CODEMIE SESSION START: (.*?) ---/)?.[1] || '';
+  // Store session ID and profile name for cleanup and CLI args
+  const sessionId = sessionBlock.match(/# --- CODEMIE SESSION START: (.*?) ---/)?.[1] || '';
+  env.CODEMIE_SESSION_ID = sessionId;
+  env.CODEMIE_CODEX_PROFILE = sessionId; // Unique profile name for --profile arg
 
   await atomicWrite(configFile, newContent);
 }
@@ -259,9 +380,11 @@ const metadata = {
 
   // Data paths used by lifecycle hooks and analytics
   dataPaths: {
-    home: '~/.codex',
+    home: '.codex',
     sessions: 'sessions',  // Relative to home
-    settings: 'auth.json'  // Relative to home
+    settings: 'auth.json',  // Relative to home
+    config: 'config.toml',  // Configuration storage
+    user_prompts: 'history.jsonl'  // User prompt history (for future metrics adapter)
   },
 
   envMapping: {
@@ -302,40 +425,50 @@ export const CodexPluginMetadata: AgentMetadata = {
         (arg === '--profile') && idx < args.length - 1
       );
 
-      // Use CodeMie profile name (matches beforeRun setup)
-      const profileName = config.profileName || config.provider || 'default';
       if (!hasProfileArg) {
+        // Use unique profile name from env (set by beforeRun), fallback to config
+        const profileName = process.env.CODEMIE_CODEX_PROFILE || config.profileName || config.provider || 'default';
         return ['--profile', profileName, ...args];
       }
 
       return args;
     },
 
-    beforeRun: async (env) => {
-      const codexDir = join(homedir(), metadata.dataPaths.home.replace('~/', ''));
-      const authFile = join(codexDir, metadata.dataPaths.settings);
-      const configFile = join(codexDir, 'config.toml');
+    beforeRun: async function(this: BaseAgentAdapter, env: NodeJS.ProcessEnv) {
+      // Use base methods for directory and path resolution
+      await this.ensureDirectory(this.resolveDataPath());
 
-      await ensureCodexDirectory(codexDir);
+      const authFile = this.resolveDataPath(metadata.dataPaths.settings);
+      const configFile = this.resolveDataPath(metadata.dataPaths.config);
+
+      // Complex setup logic (TOML manipulation, session tracking)
       await setupAuthJson(authFile, env);
       await setupConfigToml(configFile, env);
+
+      // Copy unique profile name to parent process env so enrichArgs can access it
+      if (env.CODEMIE_CODEX_PROFILE) {
+        process.env.CODEMIE_CODEX_PROFILE = env.CODEMIE_CODEX_PROFILE;
+      }
 
       return env;
     },
 
-    afterRun: async (exitCode, sessionEnv) => {
-      // Cleanup session-specific configuration after session ends
-      const codexDir = join(homedir(), metadata.dataPaths.home.replace('~/', ''));
-      const authFile = join(codexDir, metadata.dataPaths.settings);
-      const configFile = join(codexDir, 'config.toml');
+    afterRun: async function(this: BaseAgentAdapter, exitCode: number, sessionEnv?: NodeJS.ProcessEnv) {
+      // Use base methods for path resolution
+      const authFile = this.resolveDataPath(metadata.dataPaths.settings);
+      const configFile = this.resolveDataPath(metadata.dataPaths.config);
 
       try {
+        // Complex cleanup logic (session counting, TOML manipulation)
         await cleanupAuthJson(authFile, sessionEnv, configFile);
         await cleanupConfigToml(configFile, sessionEnv);
       } catch (error) {
         // Ignore cleanup errors (session already ended, non-critical)
         const { logger } = await import('../../utils/logger.js');
         logger.debug(`Cleanup failed (non-critical): ${error instanceof Error ? error.message : String(error)}`);
+      } finally {
+        // Clean up parent process env
+        delete process.env.CODEMIE_CODEX_PROFILE;
       }
     }
   },

@@ -76,9 +76,10 @@ describe('Codex Configuration Merge', () => {
       // Compare auth (exact match for JSON structure)
       expect(JSON.parse(afterSetupAuth)).toEqual(JSON.parse(expectedAuth));
 
-      // Compare config (session ID is dynamic, check structure matches expected pattern)
+      // Compare config (session ID and profile name are dynamic, check structure matches expected pattern)
       expect(afterSetupConfig).toMatch(/# --- CODEMIE SESSION START: ollama-\d+ ---/);
-      expect(afterSetupConfig).toContain('[profiles.ollama]');
+      expect(afterSetupConfig).toMatch(/\[profiles\.ollama-\d+\]/); // Unique profile per session
+      expect(afterSetupConfig).toMatch(/profile = "ollama-\d+"/); // Profile reference matches session ID
 
       // Step 5: Run cleanup logic
       await cleanupAuthJson(authFile, sessionEnv, configFile);

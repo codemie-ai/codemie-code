@@ -7,7 +7,6 @@
 
 import { readFile } from 'fs/promises';
 import { join } from 'path';
-import { homedir } from 'os';
 import { existsSync } from 'fs';
 import { BaseMetricsAdapter } from '../core/BaseMetricsAdapter.js';
 import type {
@@ -20,6 +19,7 @@ import type {
 } from '../../metrics/types.js';
 import { logger } from '../../utils/logger.js';
 import type { AgentMetadata } from '../core/types.js';
+import { getFilename } from '../../utils/path-utils.js';
 
 export class GeminiMetricsAdapter extends BaseMetricsAdapter {
   // Cache projectHash from last parsed session to optimize getUserPrompts()
@@ -32,29 +32,49 @@ export class GeminiMetricsAdapter extends BaseMetricsAdapter {
   /**
    * Extract projectHash from Gemini session file path
    * Path format: ~/.gemini/tmp/{projectHash}/chats/session-*.json
+   *
+   * Uses base method extractPlaceholder() which reads from metadata template
+   * Cross-platform: works on Windows/Linux/Mac
    */
   private extractProjectHashFromPath(path: string): string | null {
-    const match = path.match(/\.gemini\/tmp\/([^/]+)\/chats\//);
-    return match ? match[1] : null;
+    return this.extractPlaceholder(path, 'projectHash');
   }
 
   /**
    * Check if file matches Gemini session pattern
    * Pattern: ~/.gemini/tmp/{projectHash}/chats/session-{date}-{id}.json
    * Note: Gemini uses JSON format, not JSONL
-   * Flexible hex ID matching (8+ chars) to support future format changes
+   *
+   * Uses base method matchesSessionsStructure() which reads metadata.dataPaths
+   * Cross-platform: works on Windows/Linux/Mac (no hardcoded path separators)
    */
   matchesSessionPattern(path: string): boolean {
-    return /\.gemini\/tmp\/[^/]+\/chats\/session-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-[a-f0-9]+\.json$/.test(path);
+    // Validate structure using metadata template: .gemini/tmp/{projectHash}/chats/
+    if (!this.matchesSessionsStructure(path)) {
+      return false;
+    }
+
+    // Validate filename pattern (cross-platform)
+    const filename = getFilename(path);
+
+    // Gemini pattern: session-{YYYY}-{MM}-{DD}T{HH}-{MM}-{hex8+}.json
+    // Flexible hex ID matching (8+ chars) to support future format changes
+    return /^session-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-[a-f0-9]+\.json$/.test(filename);
   }
 
   /**
    * Extract session ID from Gemini file path
-   * Example: ~/.gemini/tmp/abc123/chats/session-2025-12-17T11-51-e5279324.json → session-2025-12-17T11-51-e5279324
+   * Example: ~/.gemini/tmp/abc123/chats/session-2025-12-17T11-51-e5279324.json → 2025-12-17T11-51-e5279324
+   *
+   * Cross-platform: uses getFilename() which handles both / and \ separators
    */
   extractSessionId(path: string): string {
-    const match = path.match(/session-[^/]+\.json$/);
-    return match?.[0].replace(/^session-/, '').replace(/\.json$/, '') || '';
+    // Extract filename only (cross-platform)
+    const filename = getFilename(path);
+
+    // Remove 'session-' prefix and '.json' extension
+    // Example: 'session-2025-12-17T11-51-e5279324.json' → '2025-12-17T11-51-e5279324'
+    return filename.replace(/^session-/, '').replace(/\.json$/, '');
   }
 
   /**
@@ -189,8 +209,11 @@ export class GeminiMetricsAdapter extends BaseMetricsAdapter {
       const session = JSON.parse(content);
 
       if (!session.messages || session.messages.length === 0) {
+        logger.debug(`[GeminiMetrics] Session file empty or no messages found`);
         return { deltas: [], lastLine: 0, newlyAttachedPrompts: [] };
       }
+
+      logger.debug(`[GeminiMetrics] Analyzing session with ${session.messages.length} total message${session.messages.length !== 1 ? 's' : ''}`);
 
       // Load user prompts from logs.json
       const userPrompts = await this.getUserPrompts(session.sessionId);
@@ -341,22 +364,47 @@ export class GeminiMetricsAdapter extends BaseMetricsAdapter {
         return [];
       }
 
-      const home = this.metadata.dataPaths.home.replace('~', homedir());
+      const home = this.getHomeDir();
 
-      // Scan all project directories in ~/.gemini/tmp/
-      const tmpDir = join(home, 'tmp');
-      if (!existsSync(tmpDir)) {
+      // Parse sessions template to extract directory structure
+      // Template: 'tmp/{projectHash}/chats' → ['tmp', '{projectHash}', 'chats']
+      const sessionsParts = this.parseSessionsTemplate();
+      if (sessionsParts.length === 0) {
+        logger.debug('[GeminiMetrics] No sessions template configured');
+        return [];
+      }
+
+      // Build path to project directories by taking segments before first placeholder
+      // 'tmp/{projectHash}/chats' → 'tmp'
+      const staticSegments: string[] = [];
+      for (const segment of sessionsParts) {
+        if (this.isDynamicSegment(segment)) {
+          break; // Stop at first placeholder
+        }
+        staticSegments.push(segment);
+      }
+
+      // Construct base path: ~/.gemini/tmp
+      const projectsBaseDir = join(home, ...staticSegments);
+      if (!existsSync(projectsBaseDir)) {
         return [];
       }
 
       // Use cached projectHash from parseSessionFile/parseIncrementalMetrics call
       // This is always available when getUserPrompts is called from normal flow
       if (!this.lastProjectHash) {
-        logger.debug('[GeminiMetrics] No projectHash available - cannot determine logs.json location');
+        logger.debug('[GeminiMetrics] No projectHash available - cannot determine logs location');
         return [];
       }
 
-      const logsPath = join(tmpDir, this.lastProjectHash, 'logs.json');
+      // Get user prompts filename from metadata
+      if (!this.metadata?.dataPaths?.user_prompts) {
+        logger.debug('[GeminiMetrics] No user_prompts path configured in metadata');
+        return [];
+      }
+
+      // Build full path: ~/.gemini/tmp/{projectHash}/logs.json
+      const logsPath = join(projectsBaseDir, this.lastProjectHash, this.metadata.dataPaths.user_prompts);
       if (!existsSync(logsPath)) {
         return [];
       }
@@ -495,12 +543,25 @@ export class GeminiMetricsAdapter extends BaseMetricsAdapter {
    * Pattern: ~/.gemini/tmp/{projectHash}/chats/
    */
   getDataPaths(): { sessionsDir: string; settingsDir?: string } {
-    const home = this.metadata?.dataPaths?.home?.replace('~', homedir()) || join(homedir(), '.gemini');
+    const home = this.getHomeDir();
 
-    // Return tmp directory - FileSnapshotter will scan subdirectories
+    // Parse sessions template to extract directory structure
+    // Template: 'tmp/{projectHash}/chats' → ['tmp', '{projectHash}', 'chats']
+    const sessionsParts = this.parseSessionsTemplate();
+
+    // Build path by taking segments before first placeholder
+    const staticSegments: string[] = [];
+    for (const segment of sessionsParts) {
+      if (this.isDynamicSegment(segment)) {
+        break;
+      }
+      staticSegments.push(segment);
+    }
+
+    // Return base directory - FileSnapshotter will scan subdirectories
     // Pattern matching in matchesSessionPattern() handles the rest
     return {
-      sessionsDir: join(home, 'tmp'),
+      sessionsDir: staticSegments.length > 0 ? join(home, ...staticSegments) : home,
       settingsDir: home
     };
   }

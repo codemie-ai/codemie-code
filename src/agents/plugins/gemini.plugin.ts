@@ -1,9 +1,5 @@
 import { AgentMetadata } from '../core/types.js';
 import { BaseAgentAdapter } from '../core/BaseAgentAdapter.js';
-import { mkdir, writeFile } from 'fs/promises';
-import { existsSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
 import { GeminiMetricsAdapter } from './gemini.metrics.js';
 import type { AgentMetricsSupport } from '../../metrics/types.js';
 
@@ -40,9 +36,10 @@ const metadata = {
 
   // Data paths (used by lifecycle hooks and analytics)
   dataPaths: {
-    home: '~/.gemini',
+    home: '.gemini',
     sessions: 'tmp/{projectHash}/chats',
-    settings: 'settings.json'
+    settings: 'settings.json',
+    user_prompts: 'logs.json'  // User prompt history (stored in project directories as logs.json)
   }
 };
 
@@ -52,7 +49,8 @@ const metadata = {
 export const GeminiPluginMetadata: AgentMetadata = {
   ...metadata,
 
-  // Lifecycle hook to ensure settings file exists (uses metadata.dataPaths)
+  // Lifecycle hook to ensure settings file exists
+  // Uses BaseAgentAdapter methods for cross-platform file operations
   lifecycle: {
     enrichArgs: (args, config) => {
       // Gemini CLI uses -m flag for model selection
@@ -66,26 +64,21 @@ export const GeminiPluginMetadata: AgentMetadata = {
 
       return args;
     },
-    beforeRun: async (env) => {
-      const geminiDir = join(homedir(), metadata.dataPaths.home.replace('~/', ''));
-      const settingsFile = join(geminiDir, metadata.dataPaths.settings);
+    beforeRun: async function(this: BaseAgentAdapter, env: NodeJS.ProcessEnv) {
+      // Ensure .gemini directory exists (uses base method)
+      await this.ensureDirectory(this.resolveDataPath());
 
-      // Create ~/.gemini directory if it doesn't exist
-      if (!existsSync(geminiDir)) {
-        await mkdir(geminiDir, { recursive: true });
-      }
-
-      // Create settings.json if it doesn't exist
-      if (!existsSync(settingsFile)) {
-        const settings = {
+      // Ensure settings.json exists with default content (uses base method)
+      await this.ensureJsonFile(
+        this.resolveDataPath(metadata.dataPaths.settings),
+        {
           security: {
             auth: {
               selectedType: 'gemini-api-key'
             }
           }
-        };
-        await writeFile(settingsFile, JSON.stringify(settings, null, 2));
-      }
+        }
+      );
 
       return env;
     }

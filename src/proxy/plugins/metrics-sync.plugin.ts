@@ -156,7 +156,8 @@ class MetricsSyncInterceptor implements ProxyInterceptor {
    * Called when proxy starts - initialize background timer
    */
   async onProxyStart(): Promise<void> {
-    logger.info(`[${this.name}] Starting metrics sync (interval: ${this.syncInterval}ms)`);
+    const intervalMinutes = Math.round(this.syncInterval / 60000);
+    logger.info(`[${this.name}] 📊 Metrics collection enabled - syncing every ${intervalMinutes} minute${intervalMinutes !== 1 ? 's' : ''}`);
 
     // Start background timer
     this.syncTimer = setInterval(() => {
@@ -172,7 +173,7 @@ class MetricsSyncInterceptor implements ProxyInterceptor {
    * Called when proxy stops - cleanup and final sync
    */
   async onProxyStop(): Promise<void> {
-    logger.info(`[${this.name}] Stopping metrics sync`);
+    logger.debug(`[${this.name}] Stopping metrics sync`);
 
     // Stop timer
     if (this.syncTimer) {
@@ -183,7 +184,7 @@ class MetricsSyncInterceptor implements ProxyInterceptor {
     // Final sync (ensure all pending metrics are sent)
     try {
       await this.syncMetrics();
-      logger.info(`[${this.name}] Final sync completed`);
+      logger.info(`[${this.name}] ✅ Session metrics saved`);
     } catch (error) {
       logger.error(`[${this.name}] Final sync failed:`, error);
     }
@@ -215,7 +216,7 @@ class MetricsSyncInterceptor implements ProxyInterceptor {
         return;
       }
 
-      logger.info(`[${this.name}] Syncing ${pendingDeltas.length} pending deltas`);
+      logger.info(`[${this.name}] 📤 Syncing usage data (${pendingDeltas.length} interaction${pendingDeltas.length !== 1 ? 's' : ''})`);
 
       // Debug: Log collected deltas
       logger.debug(`[${this.name}] Collected pending deltas:`, {

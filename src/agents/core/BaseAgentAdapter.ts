@@ -14,6 +14,10 @@ import type { CodeMieConfigOptions } from '../../env/types.js';
 import { getRandomWelcomeMessage, getRandomGoodbyeMessage } from '../../utils/goodbye-messages.js';
 import { renderProfileInfo } from '../../utils/profile.js';
 import chalk from 'chalk';
+import { existsSync } from 'fs';
+import { mkdir, writeFile } from 'fs/promises';
+import { join } from 'path';
+import { resolveHomeDir } from '../../utils/path-utils.js';
 
 /**
  * Base class for all agent adapters
@@ -210,7 +214,17 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       }
     }
 
+    // Transform CODEMIE_* → agent-specific env vars (based on envMapping)
+    env = this.transformEnvVars(env);
+
+    // Run lifecycle hook BEFORE enrichArgs (can override or extend env transformations)
+    // This ensures config files are set up and env vars are ready before enrichArgs uses them
+    if (this.metadata.lifecycle?.beforeRun) {
+      env = await this.metadata.lifecycle.beforeRun.call(this, env, this.extractConfig(env));
+    }
+
     // Enrich args with agent-specific defaults (e.g., --profile, --model)
+    // Must run AFTER beforeRun so env vars like CODEMIE_CODEX_PROFILE are available
     let enrichedArgs = args;
     if (this.metadata.lifecycle?.enrichArgs) {
       enrichedArgs = this.metadata.lifecycle.enrichArgs(args, this.extractConfig(env));
@@ -225,9 +239,6 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     } else {
       transformedArgs = enrichedArgs;
     }
-
-    // Transform CODEMIE_* → agent-specific env vars (based on envMapping)
-    env = this.transformEnvVars(env);
 
     // Log configuration (CODEMIE_* + transformed agent-specific vars)
     logger.debug('=== Agent Configuration ===');
@@ -276,11 +287,6 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       }
     }
     logger.debug('=== End Configuration ===');
-
-    // Run lifecycle hook (can override or extend env transformations)
-    if (this.metadata.lifecycle?.beforeRun) {
-      env = await this.metadata.lifecycle.beforeRun(env, this.extractConfig(env));
-    }
 
     if (!this.metadata.cliCommand) {
       throw new Error(`${this.displayName} has no CLI command configured`);
@@ -365,7 +371,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
           // Run afterRun hook (pass environment for cleanup logic)
           if (this.metadata.lifecycle?.afterRun && code !== null) {
-            await this.metadata.lifecycle.afterRun(code, env);
+            await this.metadata.lifecycle.afterRun.call(this, code, env);
           }
 
           // Show goodbye message with random easter egg
@@ -543,5 +549,84 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     }
 
     return env;
+  }
+
+  // ==========================================
+  // Lifecycle Helper Utilities
+  // ==========================================
+
+  /**
+   * Resolve path relative to agent's data directory
+   * Uses metadata.dataPaths.home as base
+   *
+   * Cross-platform: works on Windows/Linux/Mac
+   *
+   * @param segments - Path segments to join (relative to home)
+   * @returns Absolute path in agent's data directory
+   *
+   * @example
+   * // For Gemini with metadata.dataPaths.home = '.gemini'
+   * this.resolveDataPath('settings.json')
+   * // Returns: /Users/john/.gemini/settings.json (Mac)
+   * // Returns: C:\Users\john\.gemini\settings.json (Windows)
+   *
+   * @example
+   * // Multiple segments
+   * this.resolveDataPath('tmp', 'cache')
+   * // Returns: /Users/john/.gemini/tmp/cache
+   */
+  protected resolveDataPath(...segments: string[]): string {
+    if (!this.metadata.dataPaths?.home) {
+      throw new Error(`${this.displayName}: metadata.dataPaths.home is not defined`);
+    }
+
+    const home = resolveHomeDir(this.metadata.dataPaths.home);
+    return segments.length > 0 ? join(home, ...segments) : home;
+  }
+
+  /**
+   * Ensure a directory exists, creating it recursively if needed
+   * Cross-platform directory creation with proper error handling
+   *
+   * @param dirPath - Absolute path to directory
+   *
+   * @example
+   * await this.ensureDirectory(this.resolveDataPath())
+   * // Creates ~/.gemini if it doesn't exist
+   *
+   * @example
+   * await this.ensureDirectory(this.resolveDataPath('tmp', 'cache'))
+   * // Creates ~/.gemini/tmp/cache recursively
+   */
+  protected async ensureDirectory(dirPath: string): Promise<void> {
+    if (!existsSync(dirPath)) {
+      await mkdir(dirPath, { recursive: true });
+      logger.debug(`[${this.displayName}] Created directory: ${dirPath}`);
+    }
+  }
+
+  /**
+   * Ensure a JSON file exists with default content
+   * Creates file with proper formatting (2-space indent) if it doesn't exist
+   *
+   * @param filePath - Absolute path to file
+   * @param defaultContent - Default content as JavaScript object
+   *
+   * @example
+   * await this.ensureJsonFile(
+   *   this.resolveDataPath('settings.json'),
+   *   { security: { auth: { selectedType: 'api-key' } } }
+   * )
+   * // Creates ~/.gemini/settings.json if missing
+   */
+  protected async ensureJsonFile(
+    filePath: string,
+    defaultContent: Record<string, unknown>
+  ): Promise<void> {
+    if (!existsSync(filePath)) {
+      const content = JSON.stringify(defaultContent, null, 2);
+      await writeFile(filePath, content, 'utf-8');
+      logger.debug(`[${this.displayName}] Created file: ${filePath}`);
+    }
   }
 }

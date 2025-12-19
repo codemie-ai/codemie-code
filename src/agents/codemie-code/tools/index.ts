@@ -13,6 +13,7 @@ import { promisify } from 'util';
 import path from 'path';
 import { filterDirectoryEntries, createFilterConfig, DEFAULT_FILTER_CONFIG, generateFilterStats } from '../filters.js';
 import { logger } from '../../../utils/logger.js';
+import { isPathWithinDirectory } from '../../../utils/path-utils.js';
 
 const execAsync = promisify(exec);
 
@@ -39,8 +40,8 @@ class ReadFileTool extends StructuredTool {
       // Resolve path relative to working directory
       const resolvedPath = path.resolve(this.workingDirectory, filePath);
 
-      // Basic security check - ensure we're not escaping working directory
-      if (!resolvedPath.startsWith(this.workingDirectory)) {
+      // Security check - ensure we're not escaping working directory
+      if (!isPathWithinDirectory(this.workingDirectory, resolvedPath)) {
         throw new Error('Access denied: Path is outside working directory');
       }
 
@@ -148,8 +149,8 @@ class WriteFileTool extends StructuredTool {
       // Resolve path relative to working directory
       const resolvedPath = path.resolve(this.workingDirectory, filePath);
 
-      // Basic security check - ensure we're not escaping working directory
-      if (!resolvedPath.startsWith(this.workingDirectory)) {
+      // Security check - ensure we're not escaping working directory
+      if (!isPathWithinDirectory(this.workingDirectory, resolvedPath)) {
         throw new Error('Access denied: Path is outside working directory');
       }
 
@@ -308,7 +309,7 @@ class ListDirectoryTool extends StructuredTool {
         : this.workingDirectory;
 
       // Security check
-      if (!targetPath.startsWith(this.workingDirectory)) {
+      if (!isPathWithinDirectory(this.workingDirectory, targetPath)) {
         throw new Error('Access denied: Path is outside working directory');
       }
 

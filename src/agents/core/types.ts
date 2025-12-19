@@ -93,8 +93,8 @@ export interface AgentMetadata {
   flagMappings?: FlagMappings;
 
   lifecycle?: {
-    beforeRun?: (env: NodeJS.ProcessEnv, config: AgentConfig) => Promise<NodeJS.ProcessEnv>;
-    afterRun?: (exitCode: number, env: NodeJS.ProcessEnv) => Promise<void>;
+    beforeRun?: (this: any, env: NodeJS.ProcessEnv, config: AgentConfig) => Promise<NodeJS.ProcessEnv>;
+    afterRun?: (this: any, exitCode: number, env: NodeJS.ProcessEnv) => Promise<void>;
     enrichArgs?: (args: string[], config: AgentConfig) => string[];
   };
 
@@ -109,7 +109,7 @@ export interface AgentMetadata {
     sessions?: string;      // Session logs path (relative to home or absolute)
     settings?: string;      // Settings file path (relative to home or absolute)
     cache?: string;         // Cache directory (relative to home or absolute)
-    history?: string;       // User prompt history file (relative to home or absolute)
+    user_prompts?: string;  // User prompt history file (relative to home or absolute)
   };
 
   // === Analytics Support ===

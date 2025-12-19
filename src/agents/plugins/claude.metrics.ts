@@ -7,7 +7,6 @@
 
 import { readFile, readdir } from 'fs/promises';
 import { join, dirname } from 'path';
-import { homedir } from 'os';
 import { existsSync } from 'fs';
 import { BaseMetricsAdapter } from '../core/BaseMetricsAdapter.js';
 import type {
@@ -21,6 +20,12 @@ import type {
 import { logger } from '../../utils/logger.js';
 import { parseMultiLineJSON } from '../../utils/json-parser.js';
 import { HistoryParser } from './history-parser.js';
+import {
+  getFilename,
+  matchesPathStructure,
+  validatePathDepth,
+  isValidUuidFilename
+} from '../../utils/path-utils.js';
 
 export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
   // Note: dataPaths now comes from ClaudePluginMetadata passed via constructor
@@ -30,16 +35,40 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
    * Pattern: ~/.claude/projects/{hash}/{session-id}.jsonl
    * Note: Claude uses JSONL (JSON Lines) format, not regular JSON
    * Matches UUID format but EXCLUDES agent-* files (those are sub-agents)
+   *
+   * Cross-platform implementation using reusable path utilities
    */
-  matchesSessionPattern(path: string): boolean {
-    // Explicitly reject agent-* files (sub-agents/sidechains)
-    if (path.includes('/agent-') || path.includes('\\agent-')) {
+  matchesSessionPattern(filePath: string): boolean {
+    // Get constants from metadata (dataPaths passed via constructor)
+    if (!this.metadata?.dataPaths?.home || !this.metadata?.dataPaths?.sessions) {
       return false;
     }
 
-    // Match UUID session files only
-    // UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.jsonl
-    return /\.claude\/projects\/[^/]+\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl$/.test(path);
+    const claudeDir = this.metadata.dataPaths.home; // '.claude'
+    const projectsDir = this.metadata.dataPaths.sessions; // 'projects'
+    const sessionExt = '.jsonl';
+
+    // Check structure: .claude/projects/{hash}/{uuid}.jsonl
+    // Uses cross-platform path utilities that normalize separators
+    if (!matchesPathStructure(filePath, claudeDir, [projectsDir])) {
+      return false;
+    }
+
+    // Validate depth: .claude + projects + hash + filename = 3 segments after .claude
+    if (!validatePathDepth(filePath, claudeDir, 3)) {
+      return false;
+    }
+
+    // Get the filename (last part)
+    const filename = getFilename(filePath);
+
+    // Explicitly reject agent-* files (sub-agents/sidechains)
+    if (filename.startsWith('agent-')) {
+      return false;
+    }
+
+    // Validate UUID format in filename
+    return isValidUuidFilename(filename, sessionExt);
   }
 
   /**
@@ -410,14 +439,13 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
     toTimestamp?: number
   ): Promise<UserPrompt[]> {
     try {
-      // Get history file path from metadata
-      if (!this.metadata?.dataPaths?.home || !this.metadata?.dataPaths?.history) {
-        logger.debug(`[ClaudeMetrics] No history path configured in metadata`);
+      // Get user prompts file path from metadata
+      if (!this.metadata?.dataPaths?.home || !this.metadata?.dataPaths?.user_prompts) {
+        logger.debug(`[ClaudeMetrics] No user prompts path configured in metadata`);
         return [];
       }
 
-      const home = this.metadata.dataPaths.home.replace('~', homedir());
-      const historyPath = join(home, this.metadata.dataPaths.history);
+      const historyPath = this.getUserPromptsPath();
       const parser = new HistoryParser(historyPath);
 
       // Get prompts for this session within time range
@@ -460,6 +488,8 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
         agentFiles.unshift(path);
       }
 
+      logger.debug(`[ClaudeMetrics] Analyzing ${agentFiles.length} session file${agentFiles.length !== 1 ? 's' : ''} (including sidechains)`);
+
       // Track initial size to determine newly attached prompts
       const initialAttachedCount = attachedUserPromptTexts.size;
 
@@ -469,6 +499,9 @@ export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
 
       for (const agentFile of agentFiles) {
         const { deltas, lastLine } = await this.parseAgentFileDeltas(agentFile, processedRecordIds, attachedUserPromptTexts);
+        if (deltas.length > 0) {
+          logger.debug(`[ClaudeMetrics] Found ${deltas.length} new interaction${deltas.length !== 1 ? 's' : ''} in ${agentFile.split('/').pop()}`);
+        }
         allDeltas.push(...deltas);
         maxLastLine = Math.max(maxLastLine, lastLine);
       }

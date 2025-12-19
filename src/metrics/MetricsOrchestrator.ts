@@ -79,15 +79,17 @@ export class MetricsOrchestrator {
    */
   async beforeAgentSpawn(): Promise<void> {
     try {
-      logger.debug('[MetricsOrchestrator] Taking pre-spawn snapshot...');
+      logger.info('[MetricsOrchestrator] 📸 Preparing to track session metrics...');
 
       // Get agent data paths
       const { sessionsDir } = this.metricsAdapter.getDataPaths();
+      logger.debug(`[MetricsOrchestrator] Taking pre-spawn snapshot of: ${sessionsDir}`);
 
       // Take snapshot
       this.beforeSnapshot = await this.snapshotter.snapshot(sessionsDir);
 
-      logger.debug(`[MetricsOrchestrator] Pre-spawn snapshot: ${this.beforeSnapshot.files.length} files`);
+      logger.info(`[MetricsOrchestrator] 📋 Baseline: ${this.beforeSnapshot.files.length} existing session file${this.beforeSnapshot.files.length !== 1 ? 's' : ''}`);
+      logger.debug(`[MetricsOrchestrator] Pre-spawn snapshot complete: ${this.beforeSnapshot.files.length} files`);
 
       // Detect git branch from working directory
       const gitBranch = await detectGitBranch(this.workingDirectory);
@@ -114,7 +116,8 @@ export class MetricsOrchestrator {
 
       // Save initial session
       await this.store.saveSession(this.session);
-      logger.debug(`[MetricsOrchestrator] Session created: ${this.sessionId}`);
+      logger.info(`[MetricsOrchestrator] 📝 Session created: ${this.sessionId}`);
+      logger.debug(`[MetricsOrchestrator] Agent: ${this.agentName}, Provider: ${this.provider}`);
 
     } catch (error) {
       // Disable metrics for the rest of the session to prevent log pollution
@@ -153,27 +156,34 @@ export class MetricsOrchestrator {
     }
 
     try {
-      logger.debug('[MetricsOrchestrator] Waiting for agent initialization...');
+      logger.info(`[MetricsOrchestrator] 🚀 Agent started - waiting for session file creation...`);
 
       // Wait for agent to initialize and create session file
       const initDelay = this.metricsAdapter.getInitDelay();
       await this.sleep(initDelay);
 
-      logger.debug('[MetricsOrchestrator] Taking post-spawn snapshot...');
-
       // Get agent data paths
       const { sessionsDir } = this.metricsAdapter.getDataPaths();
+      logger.info(`[MetricsOrchestrator] 🔎 Scanning directory: ${sessionsDir}`);
 
       // Take snapshot
       const afterSnapshot = await this.snapshotter.snapshot(sessionsDir);
-      logger.debug(`[MetricsOrchestrator] Post-spawn snapshot: ${afterSnapshot.files.length} files`);
+      logger.info(`[MetricsOrchestrator] 📂 Found ${afterSnapshot.files.length} total session file${afterSnapshot.files.length !== 1 ? 's' : ''} in directory`);
+      logger.debug(`[MetricsOrchestrator] Pre-spawn: ${this.beforeSnapshot.files.length} files, Post-spawn: ${afterSnapshot.files.length} files`);
 
       // Compute diff
       const newFiles = this.snapshotter.diff(this.beforeSnapshot, afterSnapshot);
-      logger.debug(`[MetricsOrchestrator] Detected ${newFiles.length} new file(s)`);
+      if (newFiles.length > 0) {
+        logger.info(`[MetricsOrchestrator] ✨ ${newFiles.length} new file${newFiles.length !== 1 ? 's' : ''} created since agent start`);
+        logger.info(`[MetricsOrchestrator]    ${newFiles.map(f => `→ ${f.path.split('/').slice(-2).join('/')}`).join(', ')}`);
+      } else {
+        logger.info(`[MetricsOrchestrator] ⏳ No new files yet - will retry...`);
+      }
+      logger.debug(`[MetricsOrchestrator] New files (full paths): ${newFiles.map(f => f.path).join(', ')}`);
 
       // Correlate with retry
-      logger.debug('[MetricsOrchestrator] Starting correlation with retry...');
+      logger.info('[MetricsOrchestrator] 🔗 Starting session matching...');
+      logger.debug('[MetricsOrchestrator] Attempting to correlate CodeMie session with agent session file');
       const correlation = await this.correlator.correlateWithRetry(
         {
           sessionId: this.sessionId,
@@ -203,7 +213,8 @@ export class MetricsOrchestrator {
         // Start incremental delta monitoring
         await this.startIncrementalMonitoring(correlation.agentSessionFile!);
       } else {
-        logger.warn(`[MetricsOrchestrator] Correlation failed after ${correlation.retryCount} retries`);
+        logger.warn(`[MetricsOrchestrator] ⚠️  Unable to track session metrics - session file not found`);
+        logger.debug(`[MetricsOrchestrator] Correlation status: ${correlation.status}, retries: ${correlation.retryCount}`);
       }
 
     } catch (error) {
@@ -307,6 +318,7 @@ export class MetricsOrchestrator {
         this.session.startTime
       );
 
+      logger.info('[MetricsOrchestrator] 👀 Monitoring session activity in real-time');
       logger.debug('[MetricsOrchestrator] Initialized delta-based metrics tracking');
 
       // Collect initial deltas
@@ -365,6 +377,7 @@ export class MetricsOrchestrator {
       const attachedUserPromptTexts = new Set(syncState.attachedUserPromptTexts || []);
 
       // Parse incremental metrics with processed record IDs and attached prompts
+      logger.info(`[MetricsOrchestrator] 🔍 Scanning session for new activity...`);
       const { deltas, lastLine, newlyAttachedPrompts } = await this.metricsAdapter.parseIncrementalMetrics(
         sessionFilePath,
         processedRecordIds,
@@ -377,10 +390,15 @@ export class MetricsOrchestrator {
         return;
       }
 
-      logger.debug(`[MetricsOrchestrator] Collected ${deltas.length} new delta(s)`);
+      logger.info(`[MetricsOrchestrator] 📊 Found ${deltas.length} new interaction${deltas.length !== 1 ? 's' : ''} to record`);
 
       // Collect record IDs for tracking
       const newRecordIds: string[] = [];
+
+      // Calculate summary statistics for logging
+      let totalTokens = 0;
+      let totalTools = 0;
+      let totalFiles = 0;
 
       // Append each delta to JSONL
       for (const delta of deltas) {
@@ -390,6 +408,17 @@ export class MetricsOrchestrator {
         // Set gitBranch if not already present in delta
         if (!delta.gitBranch) {
           delta.gitBranch = await detectGitBranch(this.workingDirectory);
+        }
+
+        // Accumulate statistics
+        if (delta.tokens) {
+          totalTokens += (delta.tokens.input || 0) + (delta.tokens.output || 0);
+        }
+        if (delta.tools) {
+          totalTools += Object.values(delta.tools).reduce((sum, count) => sum + count, 0);
+        }
+        if (delta.fileOperations) {
+          totalFiles += delta.fileOperations.length;
         }
 
         // Append to JSONL
@@ -407,6 +436,14 @@ export class MetricsOrchestrator {
         await this.syncStateManager.addAttachedUserPrompts(newlyAttachedPrompts);
       }
 
+      // Log summary with meaningful statistics
+      const parts: string[] = [];
+      if (totalTokens > 0) parts.push(`${totalTokens.toLocaleString()} tokens`);
+      if (totalTools > 0) parts.push(`${totalTools} tool${totalTools !== 1 ? 's' : ''}`);
+      if (totalFiles > 0) parts.push(`${totalFiles} file${totalFiles !== 1 ? 's' : ''}`);
+
+      const summary = parts.length > 0 ? ` (${parts.join(', ')})` : '';
+      logger.info(`[MetricsOrchestrator] ✅ Recorded${summary}`);
       logger.debug(`[MetricsOrchestrator] Processed up to line ${lastLine}`);
 
     } catch (error) {
