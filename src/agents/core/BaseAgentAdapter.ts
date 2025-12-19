@@ -359,7 +359,25 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       process.once('SIGTERM', sigtermHandler);
 
       return new Promise((resolve, reject) => {
-        child.on('error', (error) => {
+        child.on('error', async (error) => {
+          // Remove signal handlers to prevent memory leaks
+          process.off('SIGINT', sigintHandler);
+          process.off('SIGTERM', sigtermHandler);
+
+          // Finalize metrics with error status
+          if (this.metricsOrchestrator) {
+            await this.metricsOrchestrator.onAgentExit(1); // Exit code 1 = spawn error
+          }
+
+          // Lifecycle hook: session end (provider-aware)
+          await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, 1, env);
+
+          // Clean up proxy
+          await cleanup();
+
+          // Lifecycle hook: afterRun (provider-aware)
+          await executeAfterRun(this, this.metadata.lifecycle, this.metadata.name, 1, env);
+
           reject(new Error(`Failed to start ${this.displayName}: ${error.message}`));
         });
 
@@ -412,11 +430,23 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         });
       });
     } catch (error) {
+      // Finalize metrics with error status
+      if (this.metricsOrchestrator) {
+        await this.metricsOrchestrator.onAgentExit(1); // Exit code 1 = error
+      }
+
+      // Lifecycle hook: session end (provider-aware)
+      await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, 1, env);
+
       // Clean up proxy on error
       if (this.proxy) {
         await this.proxy.stop();
         this.proxy = null;
       }
+
+      // Lifecycle hook: afterRun (provider-aware)
+      await executeAfterRun(this, this.metadata.lifecycle, this.metadata.name, 1, env);
+
       throw error;
     }
   }
