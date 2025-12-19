@@ -9,7 +9,6 @@ codemie --task "task"            # Execute single task with built-in agent and e
 
 codemie setup                    # Interactive configuration wizard
 codemie profile <command>        # Manage provider profiles
-codemie auth <command>           # Manage SSO authentication
 codemie analytics [options]      # View usage analytics
 codemie workflow <command>       # Manage CI/CD workflows
 codemie list [options]           # List all available agents
@@ -100,10 +99,14 @@ codemie-gemini -p "your prompt"                      # -p for gemini's non-inter
 Manage multiple provider configurations (work, personal, team, etc.) with separate profiles.
 
 ```bash
-codemie profile                  # List all profiles with detailed information (default action)
-codemie profile switch <name>    # Switch to a different profile
-codemie profile delete <name>    # Delete a profile
-codemie profile rename <old> <new> # Rename a profile
+codemie profile                      # List all profiles with detailed information (default action)
+codemie profile status               # Show active profile and authentication status
+codemie profile switch <name>        # Switch to a different profile
+codemie profile delete <name>        # Delete a profile
+codemie profile rename <old> <new>   # Rename a profile
+codemie profile login [--url <url>]  # Authenticate with AI/Run CodeMie SSO
+codemie profile logout               # Clear SSO credentials
+codemie profile refresh              # Refresh SSO credentials
 ```
 
 **Note:** To create or update profiles, use `codemie setup` which provides an interactive wizard.
@@ -118,6 +121,13 @@ The `codemie profile` command displays comprehensive information for each profil
 - Debug mode status
 - Masked API keys (for security)
 - Additional provider-specific settings
+
+**SSO Authentication:**
+For profiles using AI/Run CodeMie SSO provider:
+- `login` - Opens browser for SSO authentication, stores credentials securely
+- `logout` - Clears stored SSO credentials
+- `status` - Shows active profile with auth status, prompts for re-auth if invalid
+- `refresh` - Re-authenticates with existing SSO configuration
 
 ## Analytics Commands
 
@@ -281,36 +291,23 @@ codemie doctor [options]
 - Provider connectivity and health endpoints
 - Configuration file validity
 
-### `codemie auth`
-
-Manage SSO authentication with AI/Run CodeMie platform.
-
-**Subcommands:**
-```bash
-codemie auth login [options]     # Authenticate with AI/Run CodeMie SSO
-codemie auth logout              # Clear SSO credentials and logout
-codemie auth status              # Show authentication status
-codemie auth refresh             # Refresh SSO credentials
-```
-
-**Login Options:**
-- Opens browser for SSO authentication
-- Stores credentials securely
-- Tests connection before completing
-
 ### `codemie profile`
 
-Manage multiple provider configurations.
+Manage multiple provider configurations and SSO authentication.
 
 **Usage:**
 ```bash
 codemie profile                         # List all profiles with details (default action)
+codemie profile status                  # Show active profile and authentication status
 codemie profile switch [profile]        # Switch active profile
 codemie profile delete [profile]        # Delete a profile
 codemie profile rename <old> <new>      # Rename a profile
+codemie profile login [--url <url>]     # Authenticate with AI/Run CodeMie SSO
+codemie profile logout                  # Clear SSO credentials and logout
+codemie profile refresh                 # Refresh SSO credentials
 ```
 
-**Profile List Output:**
+**Profile Management:**
 - Active profile indicator (●)
 - Profile name
 - Provider type
@@ -318,6 +315,12 @@ codemie profile rename <old> <new>      # Rename a profile
 - Base URL
 - Masked API key (for security)
 - Timeout and other settings
+
+**SSO Authentication:**
+- `login` - Opens browser for SSO authentication, stores credentials securely
+- `logout` - Clears stored SSO credentials
+- `status` - Shows active profile with auth status, prompts for re-auth if invalid
+- `refresh` - Re-authenticates with existing SSO configuration
 
 ### `codemie workflow`
 
