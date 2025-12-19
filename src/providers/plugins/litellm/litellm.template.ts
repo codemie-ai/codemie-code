@@ -19,12 +19,16 @@ export const LiteLLMTemplate = registerProvider<ProviderTemplate>({
   authType: 'api-key',
   priority: 14,
   defaultProfileName: 'litellm',
+
+  supportedAgents: ['*'],
+
+  // Recommended models for UI hints (⭐ stars and sorting)
   recommendedModels: [
     'claude-4-5-sonnet'
   ],
-  capabilities: ['streaming', 'tools', 'function-calling'],
+
   supportsModelInstallation: false,
-  supportsStreaming: true,
+
   setupInstructions: `
 # LiteLLM Setup Instructions
 

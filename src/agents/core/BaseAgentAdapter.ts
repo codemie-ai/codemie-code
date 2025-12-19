@@ -23,7 +23,16 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   protected proxy: CodeMieProxy | null = null;
   protected metricsOrchestrator: MetricsOrchestrator | null = null;
 
-  constructor(protected metadata: AgentMetadata) {}
+  constructor(protected _metadata: AgentMetadata) {}
+
+  /**
+   * Expose full metadata for compatibility checks
+   * This enables AgentCLI and other consumers to access agent metadata
+   * without hardcoded imports (resolves circular dependency)
+   */
+  get metadata(): AgentMetadata {
+    return this._metadata;
+  }
 
   /**
    * Get metrics adapter for this agent (optional)
@@ -38,31 +47,31 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    * Used by post-processor to filter/sanitize metrics
    */
   getMetricsConfig(): import('./types.js').AgentMetricsConfig | undefined {
-    return this.metadata.metricsConfig;
+    return this._metadata.metricsConfig;
   }
 
   get name(): string {
-    return this.metadata.name;
+    return this._metadata.name;
   }
 
   get displayName(): string {
-    return this.metadata.displayName;
+    return this._metadata.displayName;
   }
 
   get description(): string {
-    return this.metadata.description;
+    return this._metadata.description;
   }
 
   /**
    * Install agent via npm
    */
   async install(): Promise<void> {
-    if (!this.metadata.npmPackage) {
+    if (!this._metadata.npmPackage) {
       throw new Error(`${this.displayName} is built-in and cannot be installed`);
     }
 
     try {
-      await npm.installGlobal(this.metadata.npmPackage);
+      await npm.installGlobal(this._metadata.npmPackage);
     } catch (error: unknown) {
       if (error instanceof NpmError) {
         throw new Error(`Failed to install ${this.displayName}: ${error.message}`);
@@ -75,12 +84,12 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    * Uninstall agent via npm
    */
   async uninstall(): Promise<void> {
-    if (!this.metadata.npmPackage) {
+    if (!this._metadata.npmPackage) {
       throw new Error(`${this.displayName} is built-in and cannot be uninstalled`);
     }
 
     try {
-      await npm.uninstallGlobal(this.metadata.npmPackage);
+      await npm.uninstallGlobal(this._metadata.npmPackage);
     } catch (error: unknown) {
       if (error instanceof NpmError) {
         throw new Error(`Failed to uninstall ${this.displayName}: ${error.message}`);
@@ -93,14 +102,14 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    * Check if agent is installed (cross-platform)
    */
   async isInstalled(): Promise<boolean> {
-    if (!this.metadata.cliCommand) {
+    if (!this._metadata.cliCommand) {
       return true; // Built-in agents are always "installed"
     }
 
     try {
       // Use commandExists which handles Windows (where) vs Unix (which)
       const { commandExists } = await import('../../utils/which.js');
-      return await commandExists(this.metadata.cliCommand);
+      return await commandExists(this._metadata.cliCommand);
     } catch {
       return false;
     }
@@ -110,12 +119,12 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    * Get agent version
    */
   async getVersion(): Promise<string | null> {
-    if (!this.metadata.cliCommand) {
+    if (!this._metadata.cliCommand) {
       return null;
     }
 
     try {
-      const result = await exec(this.metadata.cliCommand, ['--version']);
+      const result = await exec(this._metadata.cliCommand, ['--version']);
       return result.stdout.trim();
     } catch {
       return null;
@@ -150,7 +159,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       // Check if metrics are enabled for this provider before creating orchestrator
       if (METRICS_CONFIG.enabled(env.CODEMIE_PROVIDER)) {
         this.metricsOrchestrator = new MetricsOrchestrator({
-          agentName: this.metadata.name,
+          agentName: this._metadata.name,
           provider: env.CODEMIE_PROVIDER,
           project: env.CODEMIE_PROJECT,
           workingDirectory: process.cwd(),
@@ -180,7 +189,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         provider,
         model,
         codeMieUrl,
-        agent: this.metadata.name,
+        agent: this._metadata.name,
         cliVersion,
         sessionId
       })
@@ -200,7 +209,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
           metricsError,
           {
             sessionId,
-            agent: this.metadata.name,
+            agent: this._metadata.name,
             provider,
             model,
             profile: profileName
@@ -212,16 +221,16 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
     // Enrich args with agent-specific defaults (e.g., --profile, --model)
     let enrichedArgs = args;
-    if (this.metadata.lifecycle?.enrichArgs) {
-      enrichedArgs = this.metadata.lifecycle.enrichArgs(args, this.extractConfig(env));
+    if (this._metadata.lifecycle?.enrichArgs) {
+      enrichedArgs = this._metadata.lifecycle.enrichArgs(args, this.extractConfig(env));
     }
 
     // Apply argument transformations using declarative flagMappings
     let transformedArgs: string[];
 
-    if (this.metadata.flagMappings) {
+    if (this._metadata.flagMappings) {
       const { transformFlags } = await import('./flag-transform.js');
-      transformedArgs = transformFlags(enrichedArgs, this.metadata.flagMappings, this.extractConfig(env));
+      transformedArgs = transformFlags(enrichedArgs, this._metadata.flagMappings, this.extractConfig(env));
     } else {
       transformedArgs = enrichedArgs;
     }
@@ -251,11 +260,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       }
     }
 
-    if (this.metadata.envMapping) {
+    if (this._metadata.envMapping) {
       const agentVars = [
-        ...(this.metadata.envMapping.baseUrl || []),
-        ...(this.metadata.envMapping.apiKey || []),
-        ...(this.metadata.envMapping.model || [])
+        ...(this._metadata.envMapping.baseUrl || []),
+        ...(this._metadata.envMapping.apiKey || []),
+        ...(this._metadata.envMapping.model || [])
       ].sort();
 
       if (agentVars.length > 0) {
@@ -278,22 +287,22 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     logger.debug('=== End Configuration ===');
 
     // Run lifecycle hook (can override or extend env transformations)
-    if (this.metadata.lifecycle?.beforeRun) {
-      env = await this.metadata.lifecycle.beforeRun(env, this.extractConfig(env));
+    if (this._metadata.lifecycle?.beforeRun) {
+      env = await this._metadata.lifecycle.beforeRun(env, this.extractConfig(env));
     }
 
-    if (!this.metadata.cliCommand) {
+    if (!this._metadata.cliCommand) {
       throw new Error(`${this.displayName} has no CLI command configured`);
     }
 
     try {
       // Log command execution
-      logger.debug(`Executing: ${this.metadata.cliCommand} ${transformedArgs.join(' ')}`);
+      logger.debug(`Executing: ${this._metadata.cliCommand} ${transformedArgs.join(' ')}`);
 
       // Spawn the CLI command with inherited stdio
       // On Windows, use shell: true to resolve .cmd/.bat executables
       const isWindows = process.platform === 'win32';
-      const child = spawn(this.metadata.cliCommand, transformedArgs, {
+      const child = spawn(this._metadata.cliCommand, transformedArgs, {
         stdio: 'inherit',
         env,
         shell: isWindows, // Windows needs shell to resolve .cmd files
@@ -364,8 +373,8 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
           await cleanup();
 
           // Run afterRun hook (pass environment for cleanup logic)
-          if (this.metadata.lifecycle?.afterRun && code !== null) {
-            await this.metadata.lifecycle.afterRun(code, env);
+          if (this._metadata.lifecycle?.afterRun && code !== null) {
+            await this._metadata.lifecycle.afterRun(code, env);
           }
 
           // Show goodbye message with random easter egg
@@ -400,7 +409,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
     const provider = ProviderRegistry.getProvider(providerName);
     const isSSOProvider = provider?.authType === 'sso';
-    const isProxyEnabled = this.metadata.ssoConfig?.enabled ?? false;
+    const isProxyEnabled = this._metadata.ssoConfig?.enabled ?? false;
 
     return isSSOProvider && isProxyEnabled;
   }
@@ -431,7 +440,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
     return {
       targetApiUrl,
-      clientType: this.metadata.ssoConfig?.clientType || 'unknown',
+      clientType: this._metadata.ssoConfig?.clientType || 'unknown',
       timeout: timeoutMs,
       model: env.CODEMIE_MODEL,
       provider: env.CODEMIE_PROVIDER,

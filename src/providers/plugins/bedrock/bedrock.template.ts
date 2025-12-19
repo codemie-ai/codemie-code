@@ -19,13 +19,26 @@ export const BedrockTemplate = registerProvider<ProviderTemplate>({
   authType: 'api-key', // Using AWS credentials (access key + secret key)
   priority: 15,
   defaultProfileName: 'bedrock',
+
+  // Agent Compatibility: Supports Claude agent (Anthropic SDK)
+  supportedAgents: ['claude', 'codemie-code'],
+
+  // Recommended models for UI hints (⭐ stars and sorting)
   recommendedModels: [
     'claude-sonnet-4-5',      // Latest Claude Sonnet 4.5
   ],
 
-  capabilities: ['streaming', 'tools', 'function-calling', 'vision'],
   supportsModelInstallation: false,
-  supportsStreaming: true,
+
+  envExport: (providerConfig) => {
+    const env: Record<string, string> = {};
+    if (providerConfig.awsProfile) env.CODEMIE_AWS_PROFILE = String(providerConfig.awsProfile);
+    if (providerConfig.awsRegion) env.CODEMIE_AWS_REGION = String(providerConfig.awsRegion);
+    if (providerConfig.awsSecretAccessKey) env.CODEMIE_AWS_SECRET_ACCESS_KEY = String(providerConfig.awsSecretAccessKey);
+    if (providerConfig.maxOutputTokens) env.CODEMIE_MAX_OUTPUT_TOKENS = String(providerConfig.maxOutputTokens);
+    if (providerConfig.maxThinkingTokens) env.CODEMIE_MAX_THINKING_TOKENS = String(providerConfig.maxThinkingTokens);
+    return env;
+  },
 
   setupInstructions: `
 # AWS Bedrock Setup Instructions

@@ -111,8 +111,12 @@ export const OllamaSetupSteps: ProviderSetupSteps = {
 
       return models.map(m => m.id);
     } catch {
-      // If fetch fails, return recommended models
-      return OllamaTemplate.recommendedModels;
+      return [
+        'qwen2.5-coder',
+        'qwen3-vl:235b-cloud',
+        'deepseek-coder-v2',
+        'deepseek-v3.1:671b-cloud'
+      ];
     }
   },
 

@@ -27,7 +27,6 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
 
   envMapping: {},
 
-  supportedProviders: ['ollama', 'litellm', 'ai-run-sso'],
   blockedModelPatterns: [],
 
   // Built-in agent doesn't use proxy (handles auth internally)
@@ -64,7 +63,7 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
             profile: profileName,
             provider: config.provider,
             model: config.model,
-            codeMieUrl: config.codeMieUrl,
+            codeMieUrl: config.providerConfig?.codeMieUrl as string | undefined,
             agent: BUILTIN_AGENT_NAME,
             cliVersion,
             sessionId
@@ -129,6 +128,10 @@ export class CodeMieCodePlugin implements AgentAdapter {
   name = BUILTIN_AGENT_NAME;
   displayName = 'CodeMie Native';
   description = 'CodeMie Native Agent - Built-in LangGraph-based coding assistant';
+
+  get metadata() {
+    return CodeMieCodePluginMetadata;
+  }
 
   async install(): Promise<void> {
     logger.info('CodeMie Native is built-in and already available');

@@ -24,24 +24,13 @@ export interface ProviderProfile {
   allowedDirs?: string[];
   ignorePatterns?: string[];
 
-  // SSO-specific fields
-  authMethod?: 'manual' | 'sso';
-  codeMieUrl?: string;
-  codeMieProject?: string;  // Selected project/application name
-  codeMieIntegration?: CodeMieIntegrationInfo;
-  ssoConfig?: {
-    apiUrl?: string;
-    cookiesEncrypted?: string;
-  };
-
-  // AWS Bedrock-specific fields
-  awsProfile?: string;
-  awsRegion?: string;
-  awsSecretAccessKey?: string;
-
-  // Token configuration (for Claude Code with Bedrock)
-  maxOutputTokens?: number;
-  maxThinkingTokens?: number;
+  // Provider-specific configuration (generic)
+  // Providers define their own schema via envExport hook
+  // Examples:
+  //   SSO: { codeMieUrl, codeMieProject, codeMieIntegration, ssoConfig }
+  //   Bedrock: { awsProfile, awsRegion, awsSecretAccessKey, maxOutputTokens, maxThinkingTokens }
+  //   Ollama: { modelInstallation }
+  providerConfig?: Record<string, unknown>;
 
   // Metrics configuration
   metrics?: {

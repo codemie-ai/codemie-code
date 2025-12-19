@@ -9,7 +9,6 @@ import type { CodeMieConfigOptions } from '../../../env/types.js';
 import type { ModelInfo, CodeMieIntegration } from '../../core/types.js';
 import { BaseModelProxy } from '../../core/base/BaseModelProxy.js';
 import { ProviderRegistry } from '../../core/registry.js';
-import { SSOTemplate } from './sso.template.js';
 import { CodeMieSSO } from './sso.auth.js';
 import { fetchCodeMieModels, fetchCodeMieIntegrations, CODEMIE_ENDPOINTS } from './sso.http-client.js';
 import { logger } from '../../../utils/logger.js';
@@ -66,10 +65,21 @@ export class SSOModelProxy extends BaseModelProxy {
    * Fetch models for setup wizard
    *
    * Returns models from CodeMie SSO API
+   * @param config - Configuration with optional fresh credentials in providerConfig
    */
   async fetchModels(config: CodeMieConfigOptions): Promise<ModelInfo[]> {
     try {
-      // Try to get credentials
+      // Check if fresh credentials are provided (during setup)
+      const freshCookies = config.providerConfig?.cookies as Record<string, string> | undefined;
+      const freshApiUrl = config.providerConfig?.apiUrl as string | undefined;
+
+      if (freshCookies && freshApiUrl) {
+        // Use fresh credentials from setup flow
+        logger.debug('Using fresh credentials from setup flow');
+        return await this.fetchModelsFromAPI(freshApiUrl, freshCookies);
+      }
+
+      // Try to get stored credentials (post-setup)
       const credentials = await this.sso.getStoredCredentials();
 
       if (!credentials) {
@@ -78,8 +88,7 @@ export class SSOModelProxy extends BaseModelProxy {
         return [];
       }
 
-      // Use API URL from credentials or config
-      const apiUrl = credentials.apiUrl || config.codeMieUrl;
+      const apiUrl = credentials.apiUrl || (config.providerConfig?.codeMieUrl as string | undefined);
       if (!apiUrl) {
         throw new Error('No CodeMie URL configured');
       }
@@ -97,10 +106,16 @@ export class SSOModelProxy extends BaseModelProxy {
    *
    * @param codeMieUrl - CodeMie organization URL
    * @param projectName - Optional project name for filtering
+   * @param freshCredentials - Optional fresh credentials (used during setup before saving)
    * @returns Array of integrations (filtered if projectName provided)
    */
-  async fetchIntegrations(codeMieUrl: string, projectName?: string): Promise<CodeMieIntegration[]> {
-    const credentials = await this.sso.getStoredCredentials();
+  async fetchIntegrations(
+    codeMieUrl: string,
+    projectName?: string,
+    freshCredentials?: { apiUrl: string; cookies: Record<string, string> }
+  ): Promise<CodeMieIntegration[]> {
+    // Use fresh credentials if provided (during setup), otherwise get stored credentials
+    const credentials = freshCredentials || await this.sso.getStoredCredentials();
     if (!credentials) {
       logger.debug('No SSO credentials found for fetching integrations');
       throw new Error('No SSO credentials found. Please authenticate first.');
@@ -159,19 +174,11 @@ export class SSOModelProxy extends BaseModelProxy {
         return [];
       }
 
-      // Transform model IDs to ModelInfo format
-      // Mark recommended models as popular for highlighting (⭐)
-      const models = modelIds.map(id => {
-        const isRecommended = SSOTemplate.recommendedModels.includes(id);
-
-        return {
-          id,
-          name: id, // Use label from API
-          popular: isRecommended // Adds ⭐ to recommended models
-        };
-      });
-
-      return models;
+      return modelIds.map(id => ({
+        id,
+        name: id,
+        popular: false
+      }));
     } catch (error) {
       throw new Error(`Failed to fetch models from SSO API: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }

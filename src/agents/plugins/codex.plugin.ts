@@ -270,7 +270,6 @@ const metadata = {
     model: ['OPENAI_MODEL', 'CODEX_MODEL']
   },
 
-  supportedProviders: ['ollama', 'litellm', 'ai-run-sso'],
   blockedModelPatterns: [/^claude/i],
   recommendedModels: ['gpt-4.1', 'gpt-4o', 'qwen2.5-coder'],
 

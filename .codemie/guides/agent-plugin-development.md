@@ -39,8 +39,10 @@ export const NewAgentPluginMetadata: AgentMetadata = {
   },
 
   // === Compatibility Rules ===
-  supportedProviders: ['litellm', 'ai-run-sso'],
-  blockedModelPatterns: []                   // Block incompatible models: [/^claude/i]
+  // Note: Provider compatibility is now declared by providers (supportedAgents)
+  // Agents only need to specify model restrictions
+  blockedModelPatterns: [],                  // Block incompatible models: [/^claude/i]
+  recommendedModels: ['gpt-4.1', 'gpt-4o']   // Suggested models for error messages
 };
 
 export class NewAgentPlugin extends BaseAgentAdapter {
@@ -63,27 +65,39 @@ export const AdvancedAgentMetadata: AgentMetadata = {
     // Proxy auto-detects env vars from envMapping (uses first value from each array)
   },
 
-  // === Model Injection (if agent needs --model flag) ===
-  argumentTransform: (args, config) => {
-    const hasModel = args.some((arg, i) =>
-      (arg === '-m' || arg === '--model') && i < args.length - 1
-    );
-    if (!hasModel && config.model) {
-      return ['--model', config.model, ...args];  // Prepend model arg
+  // === CLI Flag Mapping (Declarative Approach - Preferred) ===
+  flagMappings: {
+    '--task': {                              // CodeMie CLI flag
+      type: 'flag',                          // Transform to another flag
+      target: '-p'                           // Target agent flag
+    },
+    '--timeout': {
+      type: 'flag',
+      target: '-t'
     }
-    return args;
+  },
+
+  // === Metrics Configuration (Optional) ===
+  metricsConfig: {
+    excludeErrorsFromTools: ['Bash', 'Execute']  // Don't send sensitive tool errors to API
   },
 
   // === Lifecycle Hooks ===
   lifecycle: {
+    enrichArgs: (args, config) => {
+      // Add default flags before agent execution
+      // Example: inject --profile based on CodeMie config
+      return ['--profile', config.profileName || 'default', ...args];
+    },
     async beforeRun(env, config) {
       // Setup required directories, config files
       // Transform environment variables
       // Validate prerequisites
       return env;  // Return modified env
     },
-    async afterRun(exitCode) {
+    async afterRun(exitCode, env) {
       // Cleanup, telemetry
+      // Access to session env for cleanup logic
     }
   },
 
@@ -285,27 +299,110 @@ envMapping: {
 }
 ```
 
-### Pattern 6: Model Argument Injection (Codex, Gemini)
+### Pattern 6: Declarative Flag Mapping (Claude, Codex) - **Preferred**
 
-**Use Case**: Agent CLI requires model as explicit argument
+**Use Case**: Transform CodeMie CLI flags to agent-specific flags
+
+**Why Declarative?** Cleaner, more maintainable than imperative `argumentTransform` functions.
 
 ```typescript
-argumentTransform: (args, config) => {
-  // Check if model is already specified
-  const hasModelArg = args.some((arg, idx) =>
-    (arg === '-m' || arg === '--model') && idx < args.length - 1
-  );
-
-  // Inject model if not present
-  if (!hasModelArg && config.model) {
-    return ['--model', config.model, ...args];
+// Example 1: Simple flag transformation (Claude)
+flagMappings: {
+  '--task': {
+    type: 'flag',      // Transform to another flag
+    target: '-p'       // CodeMie --task becomes Claude -p
   }
+}
 
-  return args;
+// Example 2: Subcommand transformation (Codex)
+flagMappings: {
+  '--task': {
+    type: 'subcommand',     // Insert subcommand
+    target: 'exec',         // Inserts 'exec' subcommand
+    position: 'before'      // Place subcommand before task value
+  }
+}
+// Result: codemie-codex --task "fix bug" → codex exec "fix bug"
+
+// Example 3: Positional argument (hypothetical)
+flagMappings: {
+  '--task': {
+    type: 'positional',     // Convert to positional arg
+    target: null            // No flag, just value
+  }
+}
+// Result: codemie-agent --task "hello" → agent "hello"
+```
+
+**For Model Injection:**
+
+Use `enrichArgs` lifecycle hook for model/profile injection (runs before flag mapping):
+
+```typescript
+lifecycle: {
+  enrichArgs: (args, config) => {
+    const hasModelArg = args.some((arg, idx) =>
+      (arg === '-m' || arg === '--model') && idx < args.length - 1
+    );
+    if (!hasModelArg && config.model) {
+      return ['--model', config.model, ...args];
+    }
+    return args;
+  }
 }
 ```
 
-### Pattern 7: Project Mapping for Analytics (Gemini)
+### Pattern 7: Metrics Configuration (Claude)
+
+**Use Case**: Exclude sensitive tool errors from API metrics collection
+
+**Why?** Bash/Execute tool errors may contain sensitive command output that shouldn't be sent to the API.
+
+```typescript
+metricsConfig: {
+  excludeErrorsFromTools: ['Bash', 'Execute', 'Shell']
+}
+```
+
+This configuration tells the metrics post-processor to filter out errors from specified tools before sending data to the API.
+
+### Pattern 8: Session Management (Codex)
+
+**Use Case**: Multi-session config file management with proper cleanup
+
+**Problem**: Multiple concurrent agent sessions can pollute config files if not properly managed.
+
+**Solution**: Session-based config with cleanup in `afterRun`:
+
+```typescript
+lifecycle: {
+  async beforeRun(env, config) {
+    // Generate unique session ID (already done by BaseAgentAdapter)
+    const sessionId = env.CODEMIE_SESSION_ID;
+
+    // Write session-specific config with markers
+    const sessionBlock = `
+# --- CODEMIE SESSION START: ${sessionId} ---
+[profile.${config.profileName}]
+model = "${config.model}"
+# --- CODEMIE SESSION END: ${sessionId} ---
+    `.trim();
+
+    await appendConfigFile(sessionBlock);
+    return env;
+  },
+
+  async afterRun(exitCode, env) {
+    // Clean up session-specific config
+    const sessionId = env.CODEMIE_SESSION_ID;
+    await removeSessionBlock(sessionId);
+  }
+}
+```
+
+See `codex.plugin.ts` for complete multi-session implementation.
+
+### Pattern 9: Project Mapping for Analytics (Gemini)
 
 **Use Case**: Agent uses hashed project IDs, need mapping for analytics
 
@@ -375,8 +472,15 @@ interface AgentMetadata {
   };
 
   // === Compatibility Rules ===
-  supportedProviders: string[];              // ['openai', 'litellm', 'ai-run-sso']
+  // Note: Provider compatibility is declared by providers (supportedAgents)
+  // See Compatibility Architecture Guide for details
   blockedModelPatterns?: RegExp[];           // [/^claude/i] - block incompatible models
+  recommendedModels?: string[];              // ['gpt-4.1', 'gpt-4o'] - for error messages
+
+  // === Agent Capabilities ===
+  capabilities?: {
+    supportsFrameworkInit?: boolean;         // Support framework init command (default: true)
+  };
 
   // === Proxy Configuration (SSO) ===
   ssoConfig?: {
@@ -391,11 +495,12 @@ interface AgentMetadata {
   }>;
 
   // === Runtime Behavior ===
-  argumentTransform?: (args: string[], config: AgentConfig) => string[];
+  flagMappings?: FlagMappings;               // Declarative flag transformation (preferred)
 
   lifecycle?: {
+    enrichArgs?: (args: string[], config: AgentConfig) => string[];
     beforeRun?: (env: NodeJS.ProcessEnv, config: AgentConfig) => Promise<NodeJS.ProcessEnv>;
-    afterRun?: (exitCode: number) => Promise<void>;
+    afterRun?: (exitCode: number, env: NodeJS.ProcessEnv) => Promise<void>;
   };
 
   // === Data Paths (for analytics) ===
@@ -404,10 +509,34 @@ interface AgentMetadata {
     sessions?: string;                       // Session logs (relative to home)
     settings?: string;                       // Settings file (relative to home)
     cache?: string;                          // Cache directory (relative to home)
+    history?: string;                        // User prompt history (relative to home)
   };
 
   // === Analytics Support ===
   analyticsAdapter?: AgentAnalyticsAdapter;  // Optional analytics adapter
+
+  // === Metrics Configuration ===
+  metricsConfig?: AgentMetricsConfig;        // Metrics filtering rules
+}
+
+/**
+ * Flag mapping types
+ */
+export interface FlagMappings {
+  [sourceFlag: string]: FlagMapping;
+}
+
+export interface FlagMapping {
+  type: 'flag' | 'subcommand' | 'positional';
+  target: string | null;
+  position?: 'before' | 'after';             // For subcommands
+}
+
+/**
+ * Metrics configuration
+ */
+export interface AgentMetricsConfig {
+  excludeErrorsFromTools?: string[];         // Tool names to exclude from metrics
 }
 ```
 
@@ -427,8 +556,8 @@ interface AgentMetadata {
 
 ### Model validation errors
 - Check `blockedModelPatterns` configuration
-- Verify `supportedProviders` list
-- Review model validation in `BaseAgentAdapter`
+- Verify `recommendedModels` are configured for helpful error messages
+- Review model validation in `AgentCLI.validateCompatibility()`
 
 ### Proxy/SSO not working
 - Verify `ssoConfig.enabled = true`

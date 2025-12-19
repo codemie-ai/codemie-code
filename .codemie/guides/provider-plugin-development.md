@@ -434,6 +434,129 @@ export const NewProviderSetupSteps: ProviderSetupSteps = {
 };
 ```
 
+### Pattern 6: Auth Validation (SSO)
+
+**Use Case**: Validate authentication before agent execution, prompt for re-auth if expired
+
+**Why?** SSO credentials expire. Pre-flight validation prevents failed agent launches.
+
+```typescript
+export const SSOSetupSteps: ProviderSetupSteps = {
+  // ... other methods ...
+
+  /**
+   * Validate SSO authentication status
+   */
+  async validateAuth(config: CodeMieConfigOptions): Promise<AuthValidationResult> {
+    try {
+      const codeMieUrl = config.providerConfig?.codeMieUrl as string;
+      const sso = new CodeMieSSO();
+      const credentials = await sso.getStoredCredentials(codeMieUrl);
+
+      if (!credentials) {
+        return {
+          valid: false,
+          error: `No SSO credentials found for ${codeMieUrl}. Please run: codemie profile login --url ${codeMieUrl}`
+        };
+      }
+
+      // Test API access
+      await fetchCodeMieModels(credentials.apiUrl, credentials.cookies);
+
+      return {
+        valid: true,
+        expiresAt: credentials.expiresAt
+      };
+    } catch (error) {
+      return {
+        valid: false,
+        error: error instanceof Error ? error.message : String(error)
+      };
+    }
+  },
+
+  /**
+   * Prompt user for re-authentication
+   */
+  async promptForReauth(config: CodeMieConfigOptions): Promise<boolean> {
+    const { confirm } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'confirm',
+        message: 'Re-authenticate now?',
+        default: true
+      }
+    ]);
+
+    if (!confirm) return false;
+
+    const sso = new CodeMieSSO();
+    const result = await sso.authenticate({
+      codeMieUrl: config.codeMieUrl,
+      timeout: 120000
+    });
+
+    return result.success;
+  }
+};
+```
+
+**Integration:** AgentCLI automatically calls `validateAuth()` before spawning agent. If validation fails, it calls `promptForReauth()`.
+
+### Pattern 7: Environment Export Hook (SSO)
+
+**Use Case**: Transform provider-specific config to environment variables
+
+**Why?** Different providers need different env vars. The `envExport` hook provides custom transformation.
+
+```typescript
+// Template with envExport hook
+export const SSOTemplate = registerProvider<ProviderTemplate>({
+  name: 'ai-run-sso',
+  // ... other fields ...
+
+  /**
+   * Custom environment variable export
+   */
+  envExport: (providerConfig) => {
+    const env: Record<string, string> = {};
+
+    // SSO-specific vars
+    if (providerConfig.codeMieUrl) {
+      env.CODEMIE_URL = String(providerConfig.codeMieUrl);
+    }
+
+    if (providerConfig.codeMieProject) {
+      env.CODEMIE_PROJECT = String(providerConfig.codeMieProject);
+    }
+
+    // Integration ID for LiteLLM
+    if (providerConfig.codeMieIntegration) {
+      const integration = providerConfig.codeMieIntegration as { id?: string };
+      if (integration.id) {
+        env.CODEMIE_INTEGRATION_ID = integration.id;
+      }
+    }
+
+    // SSO session config
+    if (providerConfig.ssoConfig) {
+      const ssoConfig = providerConfig.ssoConfig as Record<string, unknown>;
+      if (ssoConfig.apiUrl) {
+        env.CODEMIE_API_URL = String(ssoConfig.apiUrl);
+      }
+    }
+
+    return env;
+  }
+});
+```
+
+**How It Works:**
+1. Setup wizard stores provider-specific config in `providerConfig` field
+2. During agent execution, `ConfigLoader.exportProviderEnvVars()` calls `envExport()`
+3. Returned env vars are merged with standard CODEMIE_* vars
+4. Agent receives complete environment
+
 ---
 
 ## Testing Your Provider
@@ -507,28 +630,60 @@ interface ProviderTemplate {
   priority?: number;                     // Display order (0=highest)
   defaultProfileName?: string;           // Suggested profile name
 
-  // === Model Configuration ===
-  recommendedModels: string[];           // Default models
-  modelMetadata?: Record<string, ModelMetadata>; // Enriched info
+  // === Agent Compatibility (Unidirectional: Provider → Agent) ===
+  supportedAgents?: string[];            // ['claude', 'codex'] or ['*'] for all
+  unsupportedAgents?: string[];          // Explicit exclusions (overrides supportedAgents)
 
-  // === Capabilities ===
-  capabilities: ProviderCapability[];    // Supported features
-  supportsModelInstallation: boolean;    // Can install models locally
-  supportsStreaming?: boolean;           // Streaming support (default: true)
+  // === Provider-Level Features (Infrastructure Only) ===
+  supportsModelInstallation?: boolean;   // Can install models locally (e.g., Ollama)
 
-  // === Environment Variable Mapping ===
-  envMapping?: {
-    baseUrl?: string[];                  // Env var fallback chain
-    apiKey?: string[];
-    model?: string[];
-  };
+  // === Environment Export Hook ===
+  envExport?: (providerConfig: Record<string, unknown>) => Record<string, string>;
 
   // === Health & Setup ===
   healthCheckEndpoint?: string;          // Endpoint for health check
   setupInstructions?: string;            // Markdown installation guide
 
   // === Custom Extensions ===
-  customProperties?: Record<string, unknown>; // Provider-specific data
+  customProperties?: Record<string, unknown>; // Provider-specific metadata
+}
+
+/**
+ * Provider setup steps interface (extended)
+ */
+interface ProviderSetupSteps {
+  name: string;
+  getCredentials(isUpdate?: boolean): Promise<ProviderCredentials>;
+  fetchModels(credentials: ProviderCredentials): Promise<string[]>;
+  buildConfig(credentials: ProviderCredentials, selectedModel: string): Partial<CodeMieConfigOptions>;
+
+  // Optional methods
+  installModel?(credentials: ProviderCredentials, selectedModel: string, availableModels: string[]): Promise<void>;
+  validate?(config: Partial<CodeMieConfigOptions>): Promise<ValidationResult>;
+  postSetup?(config: Partial<CodeMieConfigOptions>): Promise<void>;
+
+  // Auth validation methods (for SSO, OAuth providers)
+  validateAuth?(config: CodeMieConfigOptions): Promise<AuthValidationResult>;
+  promptForReauth?(config: CodeMieConfigOptions): Promise<boolean>;
+  getAuthStatus?(config: CodeMieConfigOptions): Promise<AuthStatus>;
+}
+
+/**
+ * Auth validation result
+ */
+interface AuthValidationResult {
+  valid: boolean;
+  error?: string;
+  expiresAt?: number;
+}
+
+/**
+ * Auth status information
+ */
+interface AuthStatus {
+  authenticated: boolean;
+  expiresAt?: number;
+  apiUrl?: string;
 }
 ```
 

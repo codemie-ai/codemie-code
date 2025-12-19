@@ -20,9 +20,12 @@ export const DeepAgentsPluginMetadata: AgentMetadata = {
     model: [] // Model selection: uses Claude Sonnet 4 by default; switches to OpenAI when OPENAI_API_KEY is set
   },
 
-  supportedProviders: ['ollama', 'litellm', 'ai-run-sso'],
   blockedModelPatterns: [], // Accepts both Claude and OpenAI models
   recommendedModels: ['claude-4-5-sonnet', 'gpt-4.1', 'gpt-4o'],
+
+  capabilities: {
+    supportsFrameworkInit: false
+  },
 
   // Note: Deep Agents CLI doesn't support CLI arguments for API configuration
   // All configuration must be done via environment variables

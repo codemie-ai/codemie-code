@@ -138,7 +138,12 @@ export const SSOSetupSteps: ProviderSetupSteps = {
     let integrationsFetchError: string | undefined;
 
     try {
-      integrations = await modelProxy.fetchIntegrations(codeMieUrl, selectedProject);
+      // Pass fresh credentials from authResult (not yet saved to storage)
+      integrations = await modelProxy.fetchIntegrations(
+        codeMieUrl,
+        selectedProject,
+        { apiUrl: authResult.apiUrl!, cookies: authResult.cookies! }
+      );
     } catch (error) {
       // Log error but don't fail setup - integrations are optional
       integrationsFetchError = error instanceof Error ? error.message : String(error);
@@ -183,7 +188,8 @@ export const SSOSetupSteps: ProviderSetupSteps = {
         codeMieUrl,
         codeMieProject: selectedProject,
         codeMieIntegration: integrationInfo,
-        apiUrl: authResult.apiUrl
+        apiUrl: authResult.apiUrl,
+        cookies: authResult.cookies  // Include cookies for model fetching
       }
     };
   },
@@ -196,8 +202,12 @@ export const SSOSetupSteps: ProviderSetupSteps = {
   async fetchModels(credentials: ProviderCredentials): Promise<string[]> {
     const modelProxy = new SSOModelProxy(credentials.baseUrl);
     const models = await modelProxy.fetchModels({
-      codeMieUrl: credentials.additionalConfig?.codeMieUrl,
-      baseUrl: credentials.baseUrl
+      baseUrl: credentials.baseUrl,
+      providerConfig: {
+        codeMieUrl: credentials.additionalConfig?.codeMieUrl,
+        apiUrl: credentials.additionalConfig?.apiUrl,
+        cookies: credentials.additionalConfig?.cookies  // Pass fresh cookies
+      }
     } as CodeMieConfigOptions);
 
     return models.map(m => m.id);
@@ -212,22 +222,30 @@ export const SSOSetupSteps: ProviderSetupSteps = {
     credentials: ProviderCredentials,
     selectedModel: string
   ): Partial<CodeMieConfigOptions> {
-    const config: Partial<CodeMieConfigOptions> = {
-      provider: 'ai-run-sso',
-      codeMieUrl: credentials.additionalConfig?.codeMieUrl as string | undefined,
-      codeMieProject: credentials.additionalConfig?.codeMieProject as string | undefined,
-      apiKey: "sso-provided",
-      baseUrl: credentials.baseUrl,
-      model: selectedModel
+    const providerConfig: Record<string, unknown> = {
+      codeMieUrl: credentials.additionalConfig?.codeMieUrl,
+      codeMieProject: credentials.additionalConfig?.codeMieProject,
+      authMethod: 'sso'
     };
 
-    // Only include codeMieIntegration if it has a value
+    // Add integration info if available
     const integration = credentials.additionalConfig?.codeMieIntegration as CodeMieIntegrationInfo | undefined;
     if (integration) {
-      config.codeMieIntegration = integration;
+      providerConfig.codeMieIntegration = integration;
     }
 
-    return config;
+    // Add SSO config if available
+    if (credentials.additionalConfig?.ssoConfig) {
+      providerConfig.ssoConfig = credentials.additionalConfig.ssoConfig;
+    }
+
+    return {
+      provider: 'ai-run-sso',
+      apiKey: "sso-provided",
+      baseUrl: credentials.baseUrl,
+      model: selectedModel,
+      providerConfig
+    };
   },
 
   /**
@@ -237,7 +255,8 @@ export const SSOSetupSteps: ProviderSetupSteps = {
    */
   async validateAuth(config: CodeMieConfigOptions): Promise<AuthValidationResult> {
     try {
-      const baseUrl = config.codeMieUrl || config.baseUrl;
+      const codeMieUrl = config.providerConfig?.codeMieUrl as string | undefined;
+      const baseUrl = codeMieUrl || config.baseUrl;
       if (!baseUrl) {
         return {
           valid: false,
@@ -302,7 +321,8 @@ export const SSOSetupSteps: ProviderSetupSteps = {
       }
 
       // Run authentication
-      const codeMieUrl = config.codeMieUrl;
+      // Support both new providerConfig and legacy codeMieUrl field
+      const codeMieUrl = (config.providerConfig?.codeMieUrl as string | undefined) || config.baseUrl;
       if (!codeMieUrl) {
         console.log(chalk.red('\n✗ No CodeMie URL configured\n'));
         return false;
@@ -334,7 +354,7 @@ export const SSOSetupSteps: ProviderSetupSteps = {
    */
   async getAuthStatus(config: CodeMieConfigOptions): Promise<AuthStatus> {
     try {
-      const baseUrl = config.codeMieUrl || config.baseUrl;
+      const baseUrl = (config.providerConfig?.codeMieUrl as string | undefined) || config.baseUrl;
       const sso = new CodeMieSSO();
       const credentials = await sso.getStoredCredentials(baseUrl);
 

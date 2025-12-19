@@ -18,13 +18,17 @@ export const OllamaTemplate = registerProvider<ProviderTemplate>({
   defaultBaseUrl: 'http://localhost:11434',
   requiresAuth: false,
   authType: 'none',
+
+  // Agent Compatibility: OpenAI-compatible API
+  supportedAgents: ['codex', 'gemini', 'codemie-code'],
+
   recommendedModels: [
     'qwen2.5-coder',
     'qwen3-vl:235b-cloud',
     'deepseek-coder-v2',
     'deepseek-v3.1:671b-cloud'
   ],
-  capabilities: ['streaming', 'tools', 'embeddings', 'model-management'],
+
   supportsModelInstallation: true,
   healthCheckEndpoint: '/api/version',
   setupInstructions: `

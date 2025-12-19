@@ -60,14 +60,19 @@ export interface ProviderTemplate {
   priority?: number;                 // Display priority (0=highest, used for sorting)
   defaultProfileName?: string;       // Suggested profile name in setup wizard
 
-  // Model Configuration
-  recommendedModels: string[];       // Default recommended models
-  modelMetadata?: Record<string, ModelMetadata>; // Enriched model information
+  // Agent Compatibility (Unidirectional: Provider → Agent)
+  supportedAgents?: string[];        // Explicit list of supported agents ['claude', 'codex'] or ['*'] for all
+  unsupportedAgents?: string[];      // Explicit exclusions (takes precedence over supportedAgents)
 
-  // Capabilities
-  capabilities: ProviderCapability[]; // Supported features
-  supportsModelInstallation: boolean; // Can install models locally
-  supportsStreaming?: boolean;       // Supports streaming responses (default: true)
+  // Model Configuration
+  recommendedModels?: string[];      // Suggested models for setup wizard
+  modelMetadata?: Record<string, ModelMetadata>; // Enriched model information for display
+
+  // Provider-Level Features (Infrastructure Only)
+  supportsModelInstallation?: boolean; // Can install models locally (e.g., Ollama: true, others: false)
+
+  // Environment Variable Export Hook
+  envExport?: (providerConfig: Record<string, unknown>) => Record<string, string>;
 
   // Health & Setup
   healthCheckEndpoint?: string;      // Endpoint for health check

@@ -38,8 +38,8 @@ export class SSOHealthCheck extends BaseHealthCheck {
   async check(config: CodeMieConfigOptions): Promise<HealthCheckResult> {
     const details: HealthCheckDetail[] = [];
 
-    // 1. Check CodeMie URL
-    if (!config.codeMieUrl) {
+    const codeMieUrl = config.providerConfig?.codeMieUrl as string | undefined;
+    if (!codeMieUrl) {
       details.push({
         status: 'error',
         message: 'CodeMie URL not configured',
@@ -55,7 +55,7 @@ export class SSOHealthCheck extends BaseHealthCheck {
 
     details.push({
       status: 'ok',
-      message: `CodeMie URL: ${config.codeMieUrl}`
+      message: `CodeMie URL: ${codeMieUrl}`
     });
 
     // 2. Check credentials

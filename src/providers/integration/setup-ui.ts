@@ -108,13 +108,11 @@ export function formatModelChoice(
 ): { name: string; value: string } {
   const metadata = template?.modelMetadata?.[modelId];
 
-  // Check if model is recommended (with partial matching support)
   const isRecommended =
     metadata?.popular ||
     matchesAnyRecommendedPattern(modelId, template?.recommendedModels) ||
     false;
 
-  // If no metadata and not recommended, return plain format
   if (!metadata && !isRecommended) {
     return { name: modelId, value: modelId };
   }
@@ -177,9 +175,7 @@ export function getAllModelChoices(
   models: string[],
   template?: ProviderTemplate
 ): Array<{ name: string; value: string }> {
-  // Sort models using common rules
   const sortedModels = [...models].sort((a, b) => {
-    // Check if models are recommended (with partial matching)
     const aRecommended = template?.recommendedModels?.some(pattern =>
       isRecommendedModel(a, pattern)
     ) || false;
@@ -187,11 +183,9 @@ export function getAllModelChoices(
       isRecommendedModel(b, pattern)
     ) || false;
 
-    // Recommended models first
     if (aRecommended && !bRecommended) return -1;
     if (!aRecommended && bRecommended) return 1;
 
-    // Then sort alphabetically
     return a.localeCompare(b);
   });
 

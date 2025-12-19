@@ -27,7 +27,6 @@ export const ClaudePluginMetadata: AgentMetadata = {
     model: ['ANTHROPIC_MODEL']
   },
 
-  supportedProviders: ['litellm', 'ai-run-sso', 'bedrock'],
   blockedModelPatterns: [],
   recommendedModels: ['claude-4-5-sonnet', 'claude-4-opus', 'gpt-4.1'],
 

@@ -72,9 +72,15 @@ export interface AgentMetadata {
   };
 
   // === Compatibility Rules ===
-  supportedProviders: string[];    // ['openai', 'litellm', 'ai-run-sso']
+  // Note: Provider compatibility is now declared by providers (supportedAgents)
+  // Agents no longer need to know about providers (unidirectional dependency)
   blockedModelPatterns?: RegExp[]; // [/^claude/i] for Codex
   recommendedModels?: string[];    // ['gpt-4.1', 'gpt-4o'] - suggested models for error messages
+
+  // === Agent Capabilities ===
+  capabilities?: {
+    supportsFrameworkInit?: boolean; // Whether agent supports framework initialization (default: true)
+  };
 
   // === Proxy Configuration ===
   ssoConfig?: {
@@ -155,6 +161,7 @@ export interface AgentAdapter {
   name: string;
   displayName: string;
   description: string;
+  metadata: AgentMetadata; // Expose full metadata for compatibility checks
   install(): Promise<void>;
   uninstall(): Promise<void>;
   isInstalled(): Promise<boolean>;

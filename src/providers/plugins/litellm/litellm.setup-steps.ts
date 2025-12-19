@@ -46,8 +46,7 @@ export const LiteLLMSetupSteps: ProviderSetupSteps = {
       const models = await modelProxy.listModels();
       return models.map(m => m.id);
     } catch {
-      // If fetch fails, return recommended models
-      return LiteLLMTemplate.recommendedModels;
+      return ['claude-4-5-sonnet'];
     }
   },
 

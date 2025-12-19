@@ -19,12 +19,39 @@ export const SSOTemplate = registerProvider<ProviderTemplate>({
   authType: 'sso',
   priority: 0, // Highest priority (shown first)
   defaultProfileName: 'codemie-sso',
+
+  supportedAgents: ['*'], // Supports all agents
+
+  // Recommended models for UI hints (⭐ stars and sorting)
   recommendedModels: [
-    'claude-4-5-sonnet',
+    'claude-4-5-sonnet'
   ],
-  capabilities: ['streaming', 'tools', 'sso-auth', 'function-calling', 'embeddings'],
+
   supportsModelInstallation: false,
-  supportsStreaming: true,
+
+  envExport: (providerConfig) => {
+    const env: Record<string, string> = {};
+
+    // SSO-specific environment variables only
+    if (providerConfig.codeMieUrl) env.CODEMIE_URL = String(providerConfig.codeMieUrl);
+    if (providerConfig.codeMieProject) env.CODEMIE_PROJECT = String(providerConfig.codeMieProject);
+    if (providerConfig.authMethod) env.CODEMIE_AUTH_METHOD = String(providerConfig.authMethod);
+
+    // Integration ID
+    if (providerConfig.codeMieIntegration) {
+      const integration = providerConfig.codeMieIntegration as { id?: string };
+      if (integration.id) env.CODEMIE_INTEGRATION_ID = integration.id;
+    }
+
+    // SSO session config
+    if (providerConfig.ssoConfig) {
+      const ssoConfig = providerConfig.ssoConfig as Record<string, unknown>;
+      if (ssoConfig.apiUrl) env.CODEMIE_API_URL = String(ssoConfig.apiUrl);
+    }
+
+    return env;
+  },
+
   customProperties: {
     requiresIntegration: true,
     sessionDuration: 86400000 // 24 hours

@@ -154,16 +154,18 @@ export class OllamaModelProxy extends BaseModelProxy {
       logger.debug('Failed to fetch installed Ollama models:', error);
     }
 
-    // Fall back to template's recommended models with metadata from template
-      return OllamaTemplate.recommendedModels.map(modelId => {
-        const metadata = OllamaTemplate.modelMetadata?.[modelId];
-        return {
-            id: modelId,
-            name: metadata?.name || modelId,
-            description: metadata?.description,
-            popular: metadata?.popular ?? true // All recommended models are popular by default
-        };
-    });
+    const fallbackModels = [
+      'qwen2.5-coder',
+      'qwen3-vl:235b-cloud',
+      'deepseek-coder-v2',
+      'deepseek-v3.1:671b-cloud'
+    ];
+
+    return fallbackModels.map(modelId => ({
+      id: modelId,
+      name: modelId,
+      popular: true
+    }));
   }
 
   /**

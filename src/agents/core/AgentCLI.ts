@@ -7,11 +7,7 @@ import { ConfigLoader, CodeMieConfigOptions } from '../../utils/config-loader.js
 import { logger } from '../../utils/logger.js';
 import { getDirname } from '../../utils/dirname.js';
 import { BUILTIN_AGENT_NAME } from '../registry.js';
-import { ClaudePluginMetadata } from '../plugins/claude.plugin.js';
-import { CodexPluginMetadata } from '../plugins/codex.plugin.js';
-import { CodeMieCodePluginMetadata } from '../plugins/codemie-code.plugin.js';
-import { GeminiPluginMetadata } from '../plugins/gemini.plugin.js';
-import { DeepAgentsPluginMetadata } from '../plugins/deepagents.plugin.js';
+import { validateCompatibility } from './compatibility.js';
 
 /**
  * Universal CLI builder for any agent
@@ -78,8 +74,9 @@ export class AgentCLI {
         await this.handleHealthCheck();
       });
 
-    // Add init command for frameworks (skip for built-in agent and deepagents)
-    if (this.adapter.name !== BUILTIN_AGENT_NAME && this.adapter.name !== 'deepagents') {
+    // Add init command for frameworks (check agent capabilities)
+    const supportsFrameworkInit = this.adapter.metadata.capabilities?.supportsFrameworkInit ?? true;
+    if (this.adapter.name !== BUILTIN_AGENT_NAME && supportsFrameworkInit) {
       this.program
         .command('init')
         .description('Initialize development framework')
@@ -327,43 +324,25 @@ export class AgentCLI {
   }
 
   /**
-   * Get agent metadata (single source of truth)
-   */
-  private getAgentMetadata() {
-    const metadataMap: Record<string, typeof ClaudePluginMetadata> = {
-      'claude': ClaudePluginMetadata,
-      'codex': CodexPluginMetadata,
-      [BUILTIN_AGENT_NAME]: CodeMieCodePluginMetadata,
-      'gemini': GeminiPluginMetadata,
-      'deepagents': DeepAgentsPluginMetadata
-    };
-    return metadataMap[this.adapter.name];
-  }
-
-  /**
    * Validate provider and model compatibility
+   * Uses centralized compatibility system (unidirectional: Provider → Agent)
    */
   private validateCompatibility(config: CodeMieConfigOptions): boolean {
-    const metadata = this.getAgentMetadata();
-    if (!metadata) {
-      logger.error(`Unknown agent '${this.adapter.name}'`);
-      return false;
-    }
-
     const provider = config.provider || 'unknown';
     const model = config.model || 'unknown';
 
-    // Check provider compatibility
-    if (!metadata.supportedProviders.includes(provider)) {
-      logger.error(`Provider '${provider}' is not supported by ${this.adapter.displayName}`);
-      console.log(chalk.white(`\nSupported providers: ${metadata.supportedProviders.join(', ')}`));
+    // 1. Check provider-agent compatibility (via provider declarations)
+    try {
+      validateCompatibility(this.adapter.name, provider);
+    } catch (error) {
+      logger.error((error as Error).message);
       console.log(chalk.white('\nOptions:'));
-      console.log(chalk.white('  1. Run setup to choose a different provider: ') + chalk.cyan('codemie setup'));
+      console.log(chalk.white('  1. Run setup to choose a compatible provider: ') + chalk.cyan('codemie setup'));
       return false;
     }
 
-    // Check model compatibility
-    const blockedPatterns = metadata.blockedModelPatterns || [];
+    // 2. Check model compatibility (agent-side validation)
+    const blockedPatterns = this.adapter.metadata.blockedModelPatterns || [];
     const isBlocked = blockedPatterns.some(pattern => pattern.test(model));
 
     if (isBlocked) {
@@ -371,7 +350,7 @@ export class AgentCLI {
       console.log(chalk.white('\nOptions:'));
 
       // Get recommended models from agent metadata
-      const recommendedModels = metadata.recommendedModels;
+      const recommendedModels = this.adapter.metadata.recommendedModels;
 
       if (recommendedModels && recommendedModels.length > 0) {
         const modelExamples = recommendedModels.slice(0, 3).join(', ');

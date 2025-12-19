@@ -70,13 +70,13 @@ export class AIConfigCheck implements HealthCheck {
       // Check if provider uses SSO authentication
       const isSSOProvider = providerTemplate?.authType === 'sso';
 
-      // For SSO providers, show CodeMie URL instead of API endpoint
       if (isSSOProvider) {
         onProgress?.('Checking CodeMie URL');
-        if (config.codeMieUrl) {
+        const codeMieUrl = config.providerConfig?.codeMieUrl as string | undefined;
+        if (codeMieUrl) {
           details.push({
             status: 'ok',
-            message: `CodeMie URL: ${config.codeMieUrl}`
+            message: `CodeMie URL: ${codeMieUrl}`
           });
         } else {
           missingFields.push('CodeMie URL');

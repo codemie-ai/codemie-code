@@ -11,7 +11,6 @@ import type {
 } from '../../core/types.js';
 import type { CodeMieConfigOptions } from '../../../env/types.js';
 import { ProviderRegistry } from '../../core/registry.js';
-import { BedrockTemplate } from './bedrock.template.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
@@ -322,10 +321,9 @@ export const BedrockSetupSteps: ProviderSetupSteps = {
       const chalk = (await import('chalk')).default;
       console.log(chalk.yellow('\n⚠ Could not fetch models from Bedrock'));
       console.log(chalk.dim(`  Error: ${error instanceof Error ? error.message : 'Unknown error'}`));
-      console.log(chalk.dim('  Using recommended models instead\n'));
+      console.log(chalk.dim('  Using fallback models instead\n'));
 
-      // Fallback to recommended models
-      return BedrockTemplate.recommendedModels;
+      return ['claude-sonnet-4-5'];
     }
   },
 
@@ -333,29 +331,28 @@ export const BedrockSetupSteps: ProviderSetupSteps = {
    * Build configuration for AWS Bedrock
    */
   buildConfig(credentials: ProviderCredentials, model: string): Partial<CodeMieConfigOptions> {
-    const config: Partial<CodeMieConfigOptions> = {
-      provider: 'bedrock',
-      baseUrl: credentials.baseUrl,
-      model,
-      timeout: 300,
-      debug: false
+    const providerConfig: Record<string, unknown> = {
+      awsRegion: credentials.additionalConfig?.awsRegion
     };
 
-    // Store AWS credentials
+    let apiKey: string;
     if (credentials.additionalConfig?.awsProfile) {
-      // Using AWS profile
-      config.awsProfile = credentials.additionalConfig.awsProfile as string;
-      // Add placeholder apiKey to pass validation (not used, credentials come from AWS profile)
-      config.apiKey = 'aws-profile';
+      providerConfig.awsProfile = credentials.additionalConfig.awsProfile;
+      apiKey = 'aws-profile';
     } else {
-      // Using direct credentials
-      config.apiKey = credentials.apiKey;
-      config.awsSecretAccessKey = credentials.additionalConfig?.awsSecretAccessKey as string;
+      providerConfig.awsSecretAccessKey = credentials.additionalConfig?.awsSecretAccessKey;
+      apiKey = credentials.apiKey || '';
     }
 
-    config.awsRegion = credentials.additionalConfig?.awsRegion as string;
-
-    return config;
+    return {
+      provider: 'bedrock',
+      baseUrl: credentials.baseUrl,
+      apiKey,
+      model,
+      timeout: 300,
+      debug: false,
+      providerConfig
+    };
   }
 };
 
