@@ -5,6 +5,7 @@
  */
 
 import type { CodeMieConfigOptions } from '../../env/types.js';
+import type { ProviderLifecycleHooks } from '../../agents/core/types.js';
 
 /**
  * Provider capabilities
@@ -75,6 +76,24 @@ export interface ProviderTemplate {
 
   // Custom Extensions
   customProperties?: Record<string, unknown>; // Provider-specific metadata
+
+  // Agent Lifecycle Hooks (Pluggable)
+  /**
+   * Provider-specific hooks for agents
+   * Key = agent name ('claude', 'codex', 'gemini')
+   * Value = lifecycle hooks for that agent
+   *
+   * @example
+   * agentHooks: {
+   *   'claude': {
+   *     beforeRun: async (env, config) => {
+   *       env.CLAUDE_CODE_USE_BEDROCK = '1';
+   *       return env;
+   *     }
+   *   }
+   * }
+   */
+  agentHooks?: Record<string, ProviderLifecycleHooks>;
 }
 
 /**

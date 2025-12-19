@@ -14,7 +14,7 @@ import type {
   LanguageStats,
   FileOperationSummary
 } from './types.js';
-import type { MetricDelta } from '../../../metrics/types.js';
+import type { MetricDelta } from '../../../agents/core/metrics/types.js';
 import type { RawSessionData } from './data-loader.js';
 import { normalizeModelName } from './model-normalizer.js';
 

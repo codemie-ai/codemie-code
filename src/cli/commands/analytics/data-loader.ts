@@ -6,7 +6,7 @@
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import type { MetricDelta } from '../../../metrics/types.js';
+import type { MetricDelta } from '../../../agents/core/metrics/types.js';
 import type { AnalyticsFilter } from './types.js';
 
 /**

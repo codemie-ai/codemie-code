@@ -16,7 +16,7 @@ import type {
   FileOperation,
   FileOperationType,
   UserPrompt
-} from '../../metrics/types.js';
+} from '../core/metrics/types.js';
 import { logger } from '../../utils/logger.js';
 import type { AgentMetadata } from '../core/types.js';
 import { getFilename } from '../../utils/path-utils.js';

@@ -1,7 +1,7 @@
 import { AgentMetadata } from '../core/types.js';
 import { BaseAgentAdapter } from '../core/BaseAgentAdapter.js';
 import { GeminiMetricsAdapter } from './gemini.metrics.js';
-import type { AgentMetricsSupport } from '../../metrics/types.js';
+import type { AgentMetricsSupport } from '../core/metrics/types.js';
 
 // Define metadata first (used by both lifecycle and analytics)
 const metadata = {

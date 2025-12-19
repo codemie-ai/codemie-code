@@ -1,6 +1,6 @@
 /**
  * Analytics types and interfaces
- * Reuses core types from src/metrics/types.ts
+ * Reuses core types from src/agents/core/metrics/types.ts
  */
 
 import type {
@@ -8,7 +8,7 @@ import type {
   SyncStatus,
   FileOperation,
   ToolStatus
-} from '../../../metrics/types.js';
+} from '../../../agents/core/metrics/types.js';
 
 // Re-export core types used by analytics
 export type { MetricDelta, SyncStatus, FileOperation, ToolStatus };

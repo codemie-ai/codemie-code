@@ -15,7 +15,7 @@ import type {
   UserPrompt,
   ToolCallMetric,
   ToolUsageSummary
-} from '../../metrics/types.js';
+} from './metrics/types.js';
 import type { AgentMetadata } from './types.js';
 
 export abstract class BaseMetricsAdapter implements AgentMetricsSupport {
@@ -143,11 +143,11 @@ export abstract class BaseMetricsAdapter implements AgentMetricsSupport {
   }
 
   /**
-   * Get initialization delay - default: 500ms
+   * Get initialization delay - default: 1000ms
    * Override if agent needs different delay
    */
   getInitDelay(): number {
-    return 500; // Default: 500ms
+    return 1000; // Default: 1000ms
   }
 
   // ==========================================

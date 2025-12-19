@@ -33,3 +33,6 @@ coverage/
 # TypeScript cache
 *.tsbuildinfo
 .claude/settings.local.json
+
+_bmad*
+.claude/**/bmad/*

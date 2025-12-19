@@ -16,12 +16,10 @@ import { exec } from './exec.js';
 export async function commandExists(command: string): Promise<boolean> {
   try {
     const isWindows = os.platform() === 'win32';
-    const whichCommand = isWindows ? 'where' : 'which';
+    // On Windows, use full path to where.exe to avoid shell: true deprecation (DEP0190)
+    const whichCommand = isWindows ? 'C:\\Windows\\System32\\where.exe' : 'which';
 
-    // On Windows, 'where' is a built-in shell command, so we need shell: true
-    const result = await exec(whichCommand, [command], {
-      shell: isWindows
-    });
+    const result = await exec(whichCommand, [command]);
     return result.code === 0;
   } catch {
     return false;
@@ -37,12 +35,10 @@ export async function commandExists(command: string): Promise<boolean> {
 export async function getCommandPath(command: string): Promise<string | null> {
   try {
     const isWindows = os.platform() === 'win32';
-    const whichCommand = isWindows ? 'where' : 'which';
+    // On Windows, use full path to where.exe to avoid shell: true deprecation (DEP0190)
+    const whichCommand = isWindows ? 'C:\\Windows\\System32\\where.exe' : 'which';
 
-    // On Windows, 'where' is a built-in shell command, so we need shell: true
-    const result = await exec(whichCommand, [command], {
-      shell: isWindows
-    });
+    const result = await exec(whichCommand, [command]);
 
     if (result.code === 0) {
       // On Windows, 'where' can return multiple paths, take the first one

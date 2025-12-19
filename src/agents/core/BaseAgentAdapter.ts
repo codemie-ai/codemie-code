@@ -5,11 +5,11 @@ import { exec } from '../../utils/exec.js';
 import { logger } from '../../utils/logger.js';
 import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
-import { CodeMieProxy } from '../../utils/codemie-proxy.js';
-import { ProxyConfig } from '../../proxy/types.js';
+import { CodeMieProxy } from '../../providers/plugins/sso/proxy/sso.proxy.js';
+import { ProxyConfig } from '../../providers/plugins/sso/proxy/proxy-types.js';
 import { ProviderRegistry } from '../../providers/core/registry.js';
-import { MetricsOrchestrator } from '../../metrics/MetricsOrchestrator.js';
-import type { AgentMetricsSupport } from '../../metrics/types.js';
+import { MetricsOrchestrator } from './metrics/MetricsOrchestrator.js';
+import type { AgentMetricsSupport } from './metrics/types.js';
 import type { CodeMieConfigOptions } from '../../env/types.js';
 import { getRandomWelcomeMessage, getRandomGoodbyeMessage } from '../../utils/goodbye-messages.js';
 import { renderProfileInfo } from '../../utils/profile.js';
@@ -18,6 +18,13 @@ import { existsSync } from 'fs';
 import { mkdir, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { resolveHomeDir } from '../../utils/path-utils.js';
+import {
+  executeOnSessionStart,
+  executeBeforeRun,
+  executeEnrichArgs,
+  executeOnSessionEnd,
+  executeAfterRun
+} from './lifecycle-helpers.js';
 
 /**
  * Base class for all agent adapters
@@ -44,6 +51,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   getMetricsConfig(): import('./types.js').AgentMetricsConfig | undefined {
     return this.metadata.metricsConfig;
   }
+
 
   get name(): string {
     return this.metadata.name;
@@ -138,7 +146,8 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     let env: NodeJS.ProcessEnv = {
       ...process.env,
       ...envOverrides,
-      CODEMIE_SESSION_ID: sessionId
+      CODEMIE_SESSION_ID: sessionId,
+      CODEMIE_AGENT: this.metadata.name
     };
 
     // Initialize logger with session ID
@@ -149,7 +158,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     // Only create if metrics are enabled for the provider
     const metricsAdapter = this.getMetricsAdapter();
     if (metricsAdapter && env.CODEMIE_PROVIDER) {
-      const { METRICS_CONFIG } = await import('../../metrics/config.js');
+      const { METRICS_CONFIG } = await import('./metrics-config.js');
 
       // Check if metrics are enabled for this provider before creating orchestrator
       if (METRICS_CONFIG.enabled(env.CODEMIE_PROVIDER)) {
@@ -169,6 +178,9 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
     // Setup proxy with the session ID (already in env)
     await this.setupProxy(env);
+
+    // Lifecycle hook: session start (provider-aware)
+    await executeOnSessionStart(this, this.metadata.lifecycle, this.metadata.name, sessionId, env);
 
     // Show welcome message with session info
     const profileName = env.CODEMIE_PROFILE_NAME || 'default';
@@ -217,18 +229,14 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     // Transform CODEMIE_* → agent-specific env vars (based on envMapping)
     env = this.transformEnvVars(env);
 
-    // Run lifecycle hook BEFORE enrichArgs (can override or extend env transformations)
-    // This ensures config files are set up and env vars are ready before enrichArgs uses them
-    if (this.metadata.lifecycle?.beforeRun) {
-      env = await this.metadata.lifecycle.beforeRun.call(this, env, this.extractConfig(env));
-    }
+    // Lifecycle hook: beforeRun (provider-aware)
+    // Can override or extend env transformations, setup config files
+    env = await executeBeforeRun(this, this.metadata.lifecycle, this.metadata.name, env, this.extractConfig(env));
 
+    // Lifecycle hook: enrichArgs (provider-aware)
     // Enrich args with agent-specific defaults (e.g., --profile, --model)
     // Must run AFTER beforeRun so env vars like CODEMIE_CODEX_PROFILE are available
-    let enrichedArgs = args;
-    if (this.metadata.lifecycle?.enrichArgs) {
-      enrichedArgs = this.metadata.lifecycle.enrichArgs(args, this.extractConfig(env));
-    }
+    let enrichedArgs = executeEnrichArgs(this.metadata.lifecycle, this.metadata.name, args, this.extractConfig(env));
 
     // Apply argument transformations using declarative flagMappings
     let transformedArgs: string[];
@@ -377,12 +385,17 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
             await this.metricsOrchestrator.onAgentExit(code);
           }
 
+          // Lifecycle hook: session end (provider-aware)
+          if (code !== null) {
+            await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, code, env);
+          }
+
           // Clean up proxy
           await cleanup();
 
-          // Run afterRun hook (pass environment for cleanup logic)
-          if (this.metadata.lifecycle?.afterRun && code !== null) {
-            await this.metadata.lifecycle.afterRun.call(this, code, env);
+          // Lifecycle hook: afterRun (provider-aware)
+          if (code !== null) {
+            await executeAfterRun(this, this.metadata.lifecycle, this.metadata.name, code, env);
           }
 
           // Show goodbye message with random easter egg

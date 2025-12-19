@@ -8,8 +8,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { CodeMieProxy } from '../../src/utils/codemie-proxy.js';
-import { ProxyConfig } from '../../src/proxy/types.js';
+import { CodeMieProxy } from '../../src/providers/plugins/sso/proxy/sso.proxy.js';
+import { ProxyConfig } from '../../src/providers/plugins/sso/proxy/proxy-types.js';
 import http from 'http';
 
 describe('Endpoint Blocking Integration', () => {
