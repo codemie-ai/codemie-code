@@ -42,7 +42,7 @@ export async function getCommandPath(command: string): Promise<string | null> {
 
     if (result.code === 0) {
       // On Windows, 'where' can return multiple paths, take the first one
-      const paths = result.stdout.split('\n').filter(p => p.trim());
+      const paths = result.stdout.split('\n').map(p => p.trim()).filter(p => p);
       return paths[0] || null;
     }
 
