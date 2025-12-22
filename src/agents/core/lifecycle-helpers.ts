@@ -43,40 +43,63 @@
  */
 
 import type { AgentLifecycle, AgentConfig, ProviderLifecycleHooks } from './types.js';
+// CRITICAL: Import providers/index to trigger plugin auto-registration
+// Provider plugins register themselves on import via registerProvider() decorator
+import '../../providers/index.js';
 import { ProviderRegistry } from '../../providers/core/registry.js';
 
 /**
- * Resolve the appropriate hook based on provider
+ * Resolve the appropriate hook based on provider with automatic chaining
  *
- * Priority (loose coupling):
- * 1. Provider plugin's agent-specific hook (provider owns the logic)
- * 2. Provider plugin's wildcard hook ('*' for all agents)
- * 3. Agent's default hook (fallback)
+ * Execution order (chain of responsibility):
+ * 1. Provider plugin's wildcard hook ('*' for all agents) - runs first
+ * 2. Provider plugin's agent-specific hook - runs second (on top of wildcard result)
+ * 3. Agent's default hook (fallback if no provider hooks exist)
+ *
+ * When both wildcard and agent-specific hooks exist, they are automatically chained:
+ * - Wildcard hook executes first, transforms env
+ * - Agent-specific hook executes second, receives wildcard's result
+ * - Final env is returned
  *
  * @param lifecycle - Agent lifecycle configuration
  * @param hookName - Name of the hook to resolve
  * @param provider - Current provider name
  * @param agentName - Current agent name
- * @returns Resolved hook function or undefined
+ * @returns Resolved/composed hook function or undefined
  */
-function resolveHook<K extends keyof ProviderLifecycleHooks>(
+async function resolveHook<K extends keyof ProviderLifecycleHooks>(
   lifecycle: AgentLifecycle | undefined,
   hookName: K,
   provider: string | undefined,
   agentName: string | undefined
-): ProviderLifecycleHooks[K] | undefined {
-  // 1. Try provider plugin's agent hook (provider owns the customization)
+): Promise<ProviderLifecycleHooks[K] | undefined> {
+  // 1. Try provider plugin's hooks (wildcard + agent-specific)
   if (provider && agentName) {
     const providerPlugin = ProviderRegistry.getProvider(provider);
 
-    // 1a. Check agent-specific hook first
+    const wildcardHook = providerPlugin?.agentHooks?.['*']?.[hookName];
     const specificHook = providerPlugin?.agentHooks?.[agentName]?.[hookName];
+
+    // Chain hooks: wildcard first, then agent-specific
+    if (wildcardHook && specificHook) {
+      // Both hooks exist - chain them
+      return (async (...args: any[]) => {
+        // Execute wildcard hook first
+        const intermediateResult = await (wildcardHook as any)(...args);
+        // Execute agent-specific hook with wildcard's result
+        // For beforeRun: args[0] is env, so replace it with intermediate result
+        const finalArgs = [...args];
+        finalArgs[0] = intermediateResult;
+        return await (specificHook as any)(...finalArgs);
+      }) as ProviderLifecycleHooks[K];
+    }
+
+    // Only agent-specific hook exists
     if (specificHook) {
       return specificHook as ProviderLifecycleHooks[K];
     }
 
-    // 1b. Check wildcard hook ('*' for all agents)
-    const wildcardHook = providerPlugin?.agentHooks?.['*']?.[hookName];
+    // Only wildcard hook exists
     if (wildcardHook) {
       return wildcardHook as ProviderLifecycleHooks[K];
     }
@@ -111,7 +134,7 @@ export async function executeOnSessionStart(
 
   logger.info(`[lifecycle-helpers] Resolving onSessionStart hook for agent="${agentName}", provider="${provider}"`);
 
-  const hook = resolveHook(lifecycle, 'onSessionStart', provider, agentName);
+  const hook = await resolveHook(lifecycle, 'onSessionStart', provider, agentName);
 
   if (hook) {
     logger.info(`[lifecycle-helpers] onSessionStart hook found, executing...`);
@@ -142,7 +165,7 @@ export async function executeBeforeRun(
   config: AgentConfig
 ): Promise<NodeJS.ProcessEnv> {
   const provider = env.CODEMIE_PROVIDER;
-  const hook = resolveHook(lifecycle, 'beforeRun', provider, agentName);
+  const hook = await resolveHook(lifecycle, 'beforeRun', provider, agentName);
 
   if (hook) {
     return await hook.call(context, env, config);
@@ -163,14 +186,14 @@ export async function executeBeforeRun(
  * @param config - Agent configuration
  * @returns Enriched arguments
  */
-export function executeEnrichArgs(
+export async function executeEnrichArgs(
   lifecycle: AgentLifecycle | undefined,
   agentName: string,
   args: string[],
   config: AgentConfig
-): string[] {
+): Promise<string[]> {
   const provider = config.provider;
-  const hook = resolveHook(lifecycle, 'enrichArgs', provider, agentName);
+  const hook = await resolveHook(lifecycle, 'enrichArgs', provider, agentName);
 
   if (hook) {
     return hook(args, config);
@@ -203,7 +226,7 @@ export async function executeOnSessionEnd(
 
   logger.info(`[lifecycle-helpers] Resolving onSessionEnd hook for agent="${agentName}", provider="${provider}", exitCode=${exitCode}`);
 
-  const hook = resolveHook(lifecycle, 'onSessionEnd', provider, agentName);
+  const hook = await resolveHook(lifecycle, 'onSessionEnd', provider, agentName);
 
   if (hook) {
     logger.info(`[lifecycle-helpers] onSessionEnd hook found, executing...`);
@@ -233,7 +256,7 @@ export async function executeAfterRun(
   env: NodeJS.ProcessEnv
 ): Promise<void> {
   const provider = env.CODEMIE_PROVIDER;
-  const hook = resolveHook(lifecycle, 'afterRun', provider, agentName);
+  const hook = await resolveHook(lifecycle, 'afterRun', provider, agentName);
 
   if (hook) {
     await hook.call(context, exitCode, env);

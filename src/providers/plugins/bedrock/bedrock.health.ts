@@ -32,6 +32,34 @@ export class BedrockHealthCheck extends BaseHealthCheck {
   }
 
   /**
+   * Override check() to extract AWS credentials from config before running health check
+   */
+  async check(config: import('../../../env/types.js').CodeMieConfigOptions): Promise<import('../../core/types.js').HealthCheckResult> {
+    // Extract AWS credentials from config
+    const awsRegion = config.awsRegion || 'us-east-1';
+    const awsProfile = config.awsProfile;
+    const awsSecretAccessKey = config.awsSecretAccessKey;
+
+    // Extract access key ID from apiKey (when not using profile)
+    let accessKeyId: string | undefined;
+    if (config.apiKey && config.apiKey !== 'aws-profile') {
+      accessKeyId = config.apiKey;
+    }
+
+    // Update instance credentials
+    this.region = awsRegion;
+    this.profile = awsProfile;
+    this.accessKeyId = accessKeyId;
+    this.secretAccessKey = awsSecretAccessKey;
+
+    // Reset model proxy to force re-initialization with new credentials
+    this.modelProxy = null;
+
+    // Call base check() which will use updated credentials
+    return super.check(config);
+  }
+
+  /**
    * Initialize model proxy with credentials
    */
   private initModelProxy(): void {

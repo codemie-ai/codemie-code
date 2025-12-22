@@ -27,6 +27,85 @@ export const BedrockTemplate = registerProvider<ProviderTemplate>({
   supportsModelInstallation: false,
   supportsStreaming: true,
 
+  // Provider-specific agent hooks
+  agentHooks: {
+    // Wildcard hook: Transform AWS credentials for ALL agents
+    '*': {
+      beforeRun: async (env, _config) => {
+        // Transform CODEMIE_AWS_* → AWS_* (standard AWS environment variables)
+        // External agents expect standard AWS env vars, not CODEMIE_AWS_* variants
+
+        // Determine authentication method: profile vs direct credentials
+        const usingAwsProfile = env.CODEMIE_AWS_PROFILE &&
+                               env.CODEMIE_API_KEY === 'aws-profile';
+
+        if (usingAwsProfile) {
+          // Profile-based authentication
+          env.AWS_PROFILE = env.CODEMIE_AWS_PROFILE;
+
+          // CRITICAL: When using AWS_PROFILE, must delete explicit credentials
+          // AWS SDK prioritizes env vars over profile, causing "invalid token" errors
+          delete env.AWS_ACCESS_KEY_ID;
+          delete env.AWS_SECRET_ACCESS_KEY;
+          delete env.AWS_SESSION_TOKEN;
+        } else {
+          // Direct credentials (access key + secret key)
+          if (env.CODEMIE_API_KEY && env.CODEMIE_API_KEY !== 'aws-profile') {
+            env.AWS_ACCESS_KEY_ID = env.CODEMIE_API_KEY;
+          }
+          if (env.CODEMIE_AWS_SECRET_ACCESS_KEY) {
+            env.AWS_SECRET_ACCESS_KEY = env.CODEMIE_AWS_SECRET_ACCESS_KEY;
+          }
+          // Clear profile to avoid conflicts
+          delete env.AWS_PROFILE;
+        }
+
+        // AWS Region (REQUIRED - some tools don't read from ~/.aws/config)
+        if (env.CODEMIE_AWS_REGION) {
+          env.AWS_REGION = env.CODEMIE_AWS_REGION;
+          env.AWS_DEFAULT_REGION = env.CODEMIE_AWS_REGION;
+        }
+
+        return env;
+      }
+    },
+    // Claude-specific Bedrock configuration
+    // https://code.claude.com/docs/en/amazon-bedrock
+    'claude': {
+      beforeRun: async (env, _config) => {
+        // Note: AWS credentials already set by wildcard ('*') hook via automatic chaining
+
+        // Enable Bedrock mode in Claude Code (required)
+        env.CLAUDE_CODE_USE_BEDROCK = '1';
+
+        // IMPORTANT: Clear ANTHROPIC_AUTH_TOKEN when using Bedrock
+        // Claude Code uses AWS credentials only (not API keys) for Bedrock
+        // The envMapping transformation set this to 'aws-profile', which causes
+        // "403 Invalid API Key format" errors
+        delete env.ANTHROPIC_AUTH_TOKEN;
+
+        // Clear base URL as well - Bedrock doesn't use HTTP endpoints
+        delete env.ANTHROPIC_BASE_URL;
+
+        // Set model if specified (Bedrock uses inference profile IDs)
+        if (env.CODEMIE_MODEL) {
+          env.ANTHROPIC_MODEL = env.CODEMIE_MODEL;
+        }
+
+        // Recommended token settings for Bedrock burndown throttling
+        // https://code.claude.com/docs/en/amazon-bedrock#output-token-configuration
+        if (!env.CLAUDE_CODE_MAX_OUTPUT_TOKENS) {
+          env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = '4096';
+        }
+        if (!env.MAX_THINKING_TOKENS) {
+          env.MAX_THINKING_TOKENS = '1024';
+        }
+
+        return env;
+      }
+    }
+  },
+
   setupInstructions: `
 # AWS Bedrock Setup Instructions
 
