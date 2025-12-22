@@ -24,9 +24,10 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "test": "vitest",
+    "test": "npm run test:unit && npm run test:integration && npm run test:e2e",
     "test:unit": "vitest run src",
     "test:integration": "vitest run tests/integration",
+    "test:e2e": "vitest run tests/e2e --fileParallelism=false",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest --watch",
     "test:ui": "vitest --ui",
@@ -44,9 +45,16 @@
     "prepack": "npm run build"
   },
   "lint-staged": {
-    "*.ts": [
+    "src/**/*.ts": [
       "eslint --max-warnings=0 --no-warn-ignored",
       "vitest related --run"
+    ],
+    "tests/integration/**/*.ts": [
+      "eslint --max-warnings=0 --no-warn-ignored",
+      "vitest related --run"
+    ],
+    "tests/e2e/**/*.ts": [
+      "eslint --max-warnings=0 --no-warn-ignored"
     ],
     "package.json": [
       "npm run license-check"

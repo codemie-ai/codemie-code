@@ -35,8 +35,8 @@ import { homedir } from 'os';
 import { mkdir, writeFile, readFile, rm } from 'fs/promises';
 import { existsSync } from 'fs';
 import { execSync } from 'child_process';
-import { createCLIRunner, type CommandResult } from '../helpers/index.js';
-import type { MultiProviderConfig, CodeMieConfigOptions } from '../../src/env/types.js';
+import { createCLIRunner, type CommandResult } from '../helpers';
+import type { MultiProviderConfig, CodeMieConfigOptions } from '../../src/env/types';
 
 // Test data structure for each provider
 interface ProviderTestData {
