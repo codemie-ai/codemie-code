@@ -5,6 +5,12 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { cleanupAuthJson, cleanupConfigToml, setupAuthJson, setupConfigToml } from '../../src/agents/plugins/codex.plugin.js';
 
+/**
+ * Normalize line endings for cross-platform string comparison
+ * Converts CRLF (\r\n) to LF (\n) for consistent testing on Windows and Unix
+ */
+const normalizeLineEndings = (str: string): string => str.replace(/\r\n/g, '\n');
+
 describe('Codex Configuration Merge', () => {
   let testDir: string;
   let authFile: string;
@@ -89,8 +95,8 @@ describe('Codex Configuration Merge', () => {
       const afterCleanupAuth = await readFile(authFile, 'utf-8');
       const afterCleanupConfig = await readFile(configFile, 'utf-8');
 
-      expect(afterCleanupAuth.trim()).toBe(inputAuth.trim());
-      expect(afterCleanupConfig.trim()).toBe(inputConfig.trim());
+      expect(normalizeLineEndings(afterCleanupAuth.trim())).toBe(normalizeLineEndings(inputAuth.trim()));
+      expect(normalizeLineEndings(afterCleanupConfig.trim())).toBe(normalizeLineEndings(inputConfig.trim()));
     });
   });
 
@@ -168,7 +174,7 @@ describe('Codex Configuration Merge', () => {
     const afterCleanup2Auth = await readFile(authFile, 'utf-8');
     const afterCleanup2Config = await readFile(configFile, 'utf-8');
 
-    expect(afterCleanup2Auth.trim()).toBe(inputAuth.trim());
-    expect(afterCleanup2Config.trim()).toBe(inputConfig.trim());
+    expect(normalizeLineEndings(afterCleanup2Auth.trim())).toBe(normalizeLineEndings(inputAuth.trim()));
+    expect(normalizeLineEndings(afterCleanup2Config.trim())).toBe(normalizeLineEndings(inputConfig.trim()));
   });
 });
