@@ -108,14 +108,15 @@ export const BedrockTemplate = registerProvider<ProviderTemplate>({
           env.ANTHROPIC_MODEL = env.CODEMIE_MODEL;
         }
 
-        // Recommended token settings for Bedrock burndown throttling
+        // Token settings for Bedrock burndown throttling
         // https://code.claude.com/docs/en/amazon-bedrock#output-token-configuration
-        if (!env.CLAUDE_CODE_MAX_OUTPUT_TOKENS) {
-          env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = '4096';
-        }
-        if (!env.MAX_THINKING_TOKENS) {
-          env.MAX_THINKING_TOKENS = '1024';
-        }
+        // Use user-configured values if available, otherwise use recommended defaults
+        env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = env.CODEMIE_MAX_OUTPUT_TOKENS || '4096';
+        env.MAX_THINKING_TOKENS = env.CODEMIE_MAX_THINKING_TOKENS || '1024';
+
+        // Clean up intermediate variables
+        delete env.CODEMIE_MAX_OUTPUT_TOKENS;
+        delete env.CODEMIE_MAX_THINKING_TOKENS;
 
         return env;
       }
