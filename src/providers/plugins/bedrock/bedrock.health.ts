@@ -5,8 +5,7 @@
  * Uses BaseHealthCheck for common patterns.
  */
 
-import type { ModelInfo, HealthCheckResult } from '../../core/types.js';
-import type { CodeMieConfigOptions } from '../../../env/types.js';
+import type { ModelInfo } from '../../core/types.js';
 import { BaseHealthCheck } from '../../core/base/BaseHealthCheck.js';
 import { ProviderRegistry } from '../../core/registry.js';
 import { BedrockTemplate } from './bedrock.template.js';
@@ -73,20 +72,6 @@ export class BedrockHealthCheck extends BaseHealthCheck {
         this.region
       );
     }
-  }
-
-  /**
-   * Override check to extract credentials from config
-   */
-  async check(config: CodeMieConfigOptions): Promise<HealthCheckResult> {
-    // Extract Bedrock-specific credentials from config
-    this.accessKeyId = config.apiKey;
-    this.secretAccessKey = config.awsSecretAccessKey;
-    this.region = config.awsRegion || 'us-east-1';
-    this.config.baseUrl = config.baseUrl || this.config.baseUrl;
-
-    // Now call parent check with credentials set
-    return super.check(config);
   }
 
   /**

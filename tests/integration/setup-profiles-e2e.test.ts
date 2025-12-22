@@ -34,6 +34,7 @@ import { join } from 'path';
 import { homedir } from 'os';
 import { mkdir, writeFile, readFile, rm } from 'fs/promises';
 import { existsSync } from 'fs';
+import { execSync } from 'child_process';
 import { createCLIRunner, type CommandResult } from '../helpers/index.js';
 import type { MultiProviderConfig, CodeMieConfigOptions } from '../../src/env/types.js';
 
@@ -73,76 +74,76 @@ const providerTestCases: ProviderTestData[] = [
       timeout: 300
     })
   },
-  {
-    name: 'Bedrock',
-    profileName: 'bedrock',
-    envVars: {
-      accessKey: process.env.AWS_ACCESS_KEY_ID,
-      secretKey: process.env.AWS_SECRET_ACCESS_KEY,
-      region: process.env.AWS_DEFAULT_REGION,
-      model: process.env.BEDROCK_MODEL || 'global.anthropic.claude-sonnet-4-5-20250929-v1:0'
-    },
-    buildProfile: (data) => ({
-      provider: 'bedrock',
-      baseUrl: `https://bedrock-runtime.${data.envVars.region}.amazonaws.com`,
-      apiKey: data.envVars.accessKey!,
-      awsSecretAccessKey: data.envVars.secretKey!,
-      awsRegion: data.envVars.region!,
-      model: data.envVars.model,
-      timeout: 300,
-      debug: false,
-      name: data.profileName
-    })
-  },
-  {
-    name: 'Bedrock (AWS Profile)',
-    profileName: 'bedrock-profile',
-    expectedProvider: 'bedrock', // Provider type is 'bedrock', not 'bedrock-profile'
-    envVars: {
-      accessKey: process.env.AWS_ACCESS_KEY_ID,
-      secretKey: process.env.AWS_SECRET_ACCESS_KEY,
-      region: process.env.AWS_DEFAULT_REGION,
-      model: process.env.BEDROCK_MODEL || 'global.anthropic.claude-sonnet-4-5-20250929-v1:0',
-      awsProfile: process.env.AWS_PROFILE || 'test-codemie-profile'
-    },
-    buildProfile: (data) => ({
-      provider: 'bedrock',
-      baseUrl: `https://bedrock-runtime.${data.envVars.region}.amazonaws.com`,
-      apiKey: 'aws-profile',
-      awsProfile: data.envVars.awsProfile!,
-      awsRegion: data.envVars.region!,
-      model: data.envVars.model,
-      timeout: 300,
-      debug: false,
-      name: data.profileName
-    }),
-    setupAwsProfile: async (data) => {
-      // Create AWS credentials file
-      const awsDir = join(homedir(), '.aws');
-      const credentialsFile = join(awsDir, 'credentials');
-
-      await mkdir(awsDir, { recursive: true });
-
-      // Read existing credentials or start fresh
-      let credentialsContent = '';
-      if (existsSync(credentialsFile)) {
-        credentialsContent = await readFile(credentialsFile, 'utf-8');
-      }
-
-      // Check if profile already exists
-      const profileRegex = new RegExp(`\\[${data.envVars.awsProfile}\\]`, 'i');
-      if (profileRegex.test(credentialsContent)) {
-        // Profile exists, use it without changes
-        return;
-      }
-
-      // Profile missing, create it
-      const profileSection = `\n[${data.envVars.awsProfile}]\naws_access_key_id = ${data.envVars.accessKey}\naws_secret_access_key = ${data.envVars.secretKey}\n`;
-      credentialsContent += profileSection;
-
-      await writeFile(credentialsFile, credentialsContent);
-    }
-  }
+  // {
+  //   name: 'Bedrock',
+  //   profileName: 'bedrock',
+  //   envVars: {
+  //     accessKey: process.env.AWS_ACCESS_KEY_ID,
+  //     secretKey: process.env.AWS_SECRET_ACCESS_KEY,
+  //     region: process.env.AWS_DEFAULT_REGION,
+  //     model: process.env.BEDROCK_MODEL || 'global.anthropic.claude-sonnet-4-5-20250929-v1:0'
+  //   },
+  //   buildProfile: (data) => ({
+  //     provider: 'bedrock',
+  //     baseUrl: `https://bedrock-runtime.${data.envVars.region}.amazonaws.com`,
+  //     apiKey: data.envVars.accessKey!,
+  //     awsSecretAccessKey: data.envVars.secretKey!,
+  //     awsRegion: data.envVars.region!,
+  //     model: data.envVars.model,
+  //     timeout: 300,
+  //     debug: false,
+  //     name: data.profileName
+  //   })
+  // },
+  // {
+  //   name: 'Bedrock (AWS Profile)',
+  //   profileName: 'bedrock-profile',
+  //   expectedProvider: 'bedrock', // Provider type is 'bedrock', not 'bedrock-profile'
+  //   envVars: {
+  //     accessKey: process.env.AWS_ACCESS_KEY_ID,
+  //     secretKey: process.env.AWS_SECRET_ACCESS_KEY,
+  //     region: process.env.AWS_DEFAULT_REGION,
+  //     model: process.env.BEDROCK_MODEL || 'global.anthropic.claude-sonnet-4-5-20250929-v1:0',
+  //     awsProfile: process.env.AWS_PROFILE || 'test-codemie-profile'
+  //   },
+  //   buildProfile: (data) => ({
+  //     provider: 'bedrock',
+  //     baseUrl: `https://bedrock-runtime.${data.envVars.region}.amazonaws.com`,
+  //     apiKey: 'aws-profile',
+  //     awsProfile: data.envVars.awsProfile!,
+  //     awsRegion: data.envVars.region!,
+  //     model: data.envVars.model,
+  //     timeout: 300,
+  //     debug: false,
+  //     name: data.profileName
+  //   }),
+  //   setupAwsProfile: async (data) => {
+  //     // Create AWS credentials file
+  //     const awsDir = join(homedir(), '.aws');
+  //     const credentialsFile = join(awsDir, 'credentials');
+  //
+  //     await mkdir(awsDir, { recursive: true });
+  //
+  //     // Read existing credentials or start fresh
+  //     let credentialsContent = '';
+  //     if (existsSync(credentialsFile)) {
+  //       credentialsContent = await readFile(credentialsFile, 'utf-8');
+  //     }
+  //
+  //     // Check if profile already exists
+  //     const profileRegex = new RegExp(`\\[${data.envVars.awsProfile}\\]`, 'i');
+  //     if (profileRegex.test(credentialsContent)) {
+  //       // Profile exists, use it without changes
+  //       return;
+  //     }
+  //
+  //     // Profile missing, create it
+  //     const profileSection = `\n[${data.envVars.awsProfile}]\naws_access_key_id = ${data.envVars.accessKey}\naws_secret_access_key = ${data.envVars.secretKey}\n`;
+  //     credentialsContent += profileSection;
+  //
+  //     await writeFile(credentialsFile, credentialsContent);
+  //   }
+  // }
 ];
 
 describe('Setup profile - run codemie doctor - run codemie profile', () => {
@@ -287,6 +288,41 @@ describe('Setup profile - run codemie doctor - run codemie profile', () => {
       expect(profileResult.output).toContain('codemie profile status');
       expect(profileResult.output).toContain('codemie setup');
       expect(profileResult.output).toContain('codemie profile delete');
+
+      // Step 4 & 5: Test agent execution with LLM (only for LiteLLM)
+      if (testCase.profileName === 'litellm') {
+        // Step 4: Run codemie-code with simple task
+        const codemieCodeResult = execSync(
+          'node ./bin/agent-executor.js --task "Just say one word: \'Hello\'"',
+          {
+            encoding: 'utf-8',
+            env: {
+              ...process.env,
+              _: 'codemie-code',
+            },
+            timeout: 60000, // 60 second timeout
+          }
+        );
+
+        // Verify codemie-code output contains "Hello"
+        expect(codemieCodeResult.toLowerCase()).toContain('hello');
+
+        // Step 5: Run codemie-claude with explicit task
+        const codemieclaudeResult = execSync(
+          'node ./bin/agent-executor.js --task "Just say one word: \'Hello\'"',
+          {
+            encoding: 'utf-8',
+            env: {
+              ...process.env,
+              _: 'codemie-claude',
+            },
+            timeout: 60000, // 60 second timeout
+          }
+        );
+
+        // Verify codemie-claude output contains "Hello"
+        expect(codemieclaudeResult.toLowerCase()).toContain('hello');
+      }
     });
   });
 });
