@@ -100,3 +100,31 @@ jobs:
 
       - name: Run integration tests
         run: npm run test:integration
+
+  test-windows:
+    name: Test (Windows)
+    runs-on: windows-latest
+    needs: [validate-commits, secrets-detection]
+    if: |
+      always() &&
+      (needs.validate-commits.result == 'success' || needs.validate-commits.result == 'skipped') &&
+      (needs.secrets-detection.result == 'success' || needs.secrets-detection.result == 'skipped')
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build project
+        run: npm run build
+
+      - name: Run integration tests
+        run: npm run test:integration

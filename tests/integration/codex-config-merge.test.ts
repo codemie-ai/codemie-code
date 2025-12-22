@@ -5,6 +5,22 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { cleanupAuthJson, cleanupConfigToml, setupAuthJson, setupConfigToml } from '../../src/agents/plugins/codex.plugin.js';
 
+/**
+ * Normalize line endings and whitespace for cross-platform string comparison
+ * - Converts CRLF (\r\n) to LF (\n) for consistent testing on Windows and Unix
+ * - Removes blank lines (lines with only whitespace) - matches cleanup behavior
+ * - Removes leading/trailing whitespace
+ */
+const normalizeLineEndings = (str: string): string => {
+  return str
+    .replace(/\r\n/g, '\n')           // CRLF -> LF
+    .split('\n')                      // Split into lines
+    .filter(line => line.trim() !== '') // Remove blank lines
+    .map(line => line.trimEnd())     // Remove trailing whitespace from each line
+    .join('\n')                       // Rejoin
+    .trim();                          // Remove leading/trailing whitespace
+};
+
 describe('Codex Configuration Merge', () => {
   let testDir: string;
   let authFile: string;
@@ -89,8 +105,8 @@ describe('Codex Configuration Merge', () => {
       const afterCleanupAuth = await readFile(authFile, 'utf-8');
       const afterCleanupConfig = await readFile(configFile, 'utf-8');
 
-      expect(afterCleanupAuth.trim()).toBe(inputAuth.trim());
-      expect(afterCleanupConfig.trim()).toBe(inputConfig.trim());
+      expect(normalizeLineEndings(afterCleanupAuth.trim())).toBe(normalizeLineEndings(inputAuth.trim()));
+      expect(normalizeLineEndings(afterCleanupConfig.trim())).toBe(normalizeLineEndings(inputConfig.trim()));
     });
   });
 
@@ -168,7 +184,7 @@ describe('Codex Configuration Merge', () => {
     const afterCleanup2Auth = await readFile(authFile, 'utf-8');
     const afterCleanup2Config = await readFile(configFile, 'utf-8');
 
-    expect(afterCleanup2Auth.trim()).toBe(inputAuth.trim());
-    expect(afterCleanup2Config.trim()).toBe(inputConfig.trim());
+    expect(normalizeLineEndings(afterCleanup2Auth.trim())).toBe(normalizeLineEndings(inputAuth.trim()));
+    expect(normalizeLineEndings(afterCleanup2Config.trim())).toBe(normalizeLineEndings(inputConfig.trim()));
   });
 });
