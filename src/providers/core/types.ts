@@ -77,6 +77,27 @@ export interface ProviderTemplate {
   // Custom Extensions
   customProperties?: Record<string, unknown>; // Provider-specific metadata
 
+  // Environment Variable Export (Pluggable)
+  /**
+   * Provider-specific environment variable export function
+   * Transforms provider-specific config fields to CODEMIE_* env vars
+   *
+   * This allows providers to export their custom fields without hardcoding
+   * logic in ConfigLoader. Providers own their env transformation logic.
+   *
+   * @param config - Provider profile configuration
+   * @returns Record of environment variables to export
+   *
+   * @example
+   * exportEnvVars: (config) => {
+   *   const env: Record<string, string> = {};
+   *   if (config.awsProfile) env.CODEMIE_AWS_PROFILE = config.awsProfile;
+   *   if (config.awsRegion) env.CODEMIE_AWS_REGION = config.awsRegion;
+   *   return env;
+   * }
+   */
+  exportEnvVars?: (config: CodeMieConfigOptions) => Record<string, string>;
+
   // Agent Lifecycle Hooks (Pluggable)
   /**
    * Provider-specific hooks for agents

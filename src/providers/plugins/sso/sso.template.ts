@@ -32,6 +32,23 @@ export const SSOTemplate = registerProvider<ProviderTemplate>({
     sessionDuration: 86400000 // 24 hours
   },
 
+  // Environment Variable Export
+  exportEnvVars: (config) => {
+    const env: Record<string, string> = {};
+
+    // SSO-specific environment variables
+    if (config.codeMieUrl) env.CODEMIE_URL = config.codeMieUrl;
+    if (config.codeMieProject) env.CODEMIE_PROJECT = config.codeMieProject;
+    if (config.authMethod) env.CODEMIE_AUTH_METHOD = config.authMethod;
+
+    // Only export integration ID if integration is configured
+    if (config.codeMieIntegration?.id) {
+      env.CODEMIE_INTEGRATION_ID = config.codeMieIntegration.id;
+    }
+
+    return env;
+  },
+
   // Agent lifecycle hooks for session metrics
   agentHooks: {
     '*': {
