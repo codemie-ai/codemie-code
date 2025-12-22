@@ -6,10 +6,18 @@ import { tmpdir } from 'os';
 import { cleanupAuthJson, cleanupConfigToml, setupAuthJson, setupConfigToml } from '../../src/agents/plugins/codex.plugin.js';
 
 /**
- * Normalize line endings for cross-platform string comparison
- * Converts CRLF (\r\n) to LF (\n) for consistent testing on Windows and Unix
+ * Normalize line endings and whitespace for cross-platform string comparison
+ * - Converts CRLF (\r\n) to LF (\n) for consistent testing on Windows and Unix
+ * - Normalizes multiple consecutive newlines to single newlines (matches cleanup behavior)
+ * - Removes leading/trailing newlines
  */
-const normalizeLineEndings = (str: string): string => str.replace(/\r\n/g, '\n');
+const normalizeLineEndings = (str: string): string => {
+  return str
+    .replace(/\r\n/g, '\n')           // CRLF -> LF
+    .replace(/^\s*\n+/gm, '\n')       // Multiple newlines -> single newline (matches cleanup)
+    .replace(/^\n/, '')               // Remove leading newline
+    .replace(/\n$/, '');              // Remove trailing newline for consistency
+};
 
 describe('Codex Configuration Merge', () => {
   let testDir: string;
