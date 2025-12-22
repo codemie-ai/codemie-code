@@ -322,6 +322,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       const child = spawn(commandPath, transformedArgs, {
         stdio: 'inherit',
         env,
+        shell: isWindows, // Windows requires shell for .cmd/.bat executables
         windowsHide: isWindows // Hide console window on Windows
       });
 

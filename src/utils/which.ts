@@ -42,7 +42,12 @@ export async function getCommandPath(command: string): Promise<string | null> {
 
     if (result.code === 0) {
       // On Windows, 'where' can return multiple paths, take the first one
-      const paths = result.stdout.split('\n').filter(p => p.trim());
+      // Split by any line ending (\n, \r\n, or \r) for maximum compatibility
+      // This handles Unix (\n), Windows (\r\n), and old Mac (\r) line endings
+      const paths = result.stdout
+        .split(/\r?\n|\r/)  // Split by \r\n, \n, or \r
+        .map(p => p.trim())
+        .filter(p => p);
       return paths[0] || null;
     }
 
