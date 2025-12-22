@@ -675,7 +675,7 @@ export class ConfigLoader {
   static exportProviderEnvVars(config: CodeMieConfigOptions): Record<string, string> {
     const env: Record<string, string> = {};
 
-    // Get provider template for auth check
+    // Get provider template for auth check and env export
     const providerName = (config.provider || 'openai').toLowerCase();
     const providerTemplate = ProviderRegistry.getProvider(providerName);
 
@@ -691,27 +691,12 @@ export class ConfigLoader {
     if (config.timeout) env.CODEMIE_TIMEOUT = String(config.timeout);
     if (config.debug) env.CODEMIE_DEBUG = String(config.debug);
 
-    // Special case: SSO-specific environment variables
-    if (providerName === 'ai-run-sso') {
-      if (config.codeMieUrl) env.CODEMIE_URL = config.codeMieUrl;
-      if (config.codeMieProject) env.CODEMIE_PROJECT = config.codeMieProject;
-      if (config.authMethod) env.CODEMIE_AUTH_METHOD = config.authMethod;
-      // Only export integration ID if integration is configured
-      if (config.codeMieIntegration?.id) {
-        env.CODEMIE_INTEGRATION_ID = config.codeMieIntegration.id;
-      }
+    // Provider-specific environment variables (pluggable)
+    // Each provider defines its own exportEnvVars function
+    if (providerTemplate?.exportEnvVars) {
+      const providerEnv = providerTemplate.exportEnvVars(config);
+      Object.assign(env, providerEnv);
     }
-
-    // Special case: AWS Bedrock-specific environment variables
-    if (providerName === 'bedrock') {
-      if (config.awsProfile) env.CODEMIE_AWS_PROFILE = config.awsProfile;
-      if (config.awsRegion) env.CODEMIE_AWS_REGION = config.awsRegion;
-      if (config.awsSecretAccessKey) env.CODEMIE_AWS_SECRET_ACCESS_KEY = config.awsSecretAccessKey;
-    }
-
-    // Token configuration (for agents that support it, e.g., Claude Code with Bedrock)
-    if (config.maxOutputTokens) env.CODEMIE_MAX_OUTPUT_TOKENS = String(config.maxOutputTokens);
-    if (config.maxThinkingTokens) env.CODEMIE_MAX_THINKING_TOKENS = String(config.maxThinkingTokens);
 
     return env;
   }

@@ -27,6 +27,22 @@ export const BedrockTemplate = registerProvider<ProviderTemplate>({
   supportsModelInstallation: false,
   supportsStreaming: true,
 
+  // Environment Variable Export
+  exportEnvVars: (config) => {
+    const env: Record<string, string> = {};
+
+    // AWS Bedrock-specific environment variables
+    if (config.awsProfile) env.CODEMIE_AWS_PROFILE = config.awsProfile;
+    if (config.awsRegion) env.CODEMIE_AWS_REGION = config.awsRegion;
+    if (config.awsSecretAccessKey) env.CODEMIE_AWS_SECRET_ACCESS_KEY = config.awsSecretAccessKey;
+
+    // Token configuration (for Claude Code with Bedrock)
+    if (config.maxOutputTokens) env.CODEMIE_MAX_OUTPUT_TOKENS = String(config.maxOutputTokens);
+    if (config.maxThinkingTokens) env.CODEMIE_MAX_THINKING_TOKENS = String(config.maxThinkingTokens);
+
+    return env;
+  },
+
   // Provider-specific agent hooks
   agentHooks: {
     // Wildcard hook: Transform AWS credentials for ALL agents
