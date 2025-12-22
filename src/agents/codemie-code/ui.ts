@@ -206,6 +206,16 @@ export class CodeMieTerminalUI {
               return;
             }
 
+        // Backspace - MUST be checked FIRST before Ctrl+H to avoid conflicts
+        // Some terminals (Windows/macOS/Linux) send \b (\u0008) for Backspace, which conflicts with Ctrl+H
+        if (data === '\u007F' || data === '\b') {
+          if (currentLine.length > 0) {
+            currentLine = currentLine.slice(0, -1);
+            process.stdout.write('\b \b');
+          }
+          return;
+        }
+
         // Hotkeys for mode switching
         // Ctrl+P - Toggle plan mode
         if (data === '\u0010') {
@@ -279,15 +289,6 @@ export class CodeMieTerminalUI {
             writePrompt();
             process.stdout.write(currentLine);
           });
-          return;
-        }
-
-        // Backspace
-        if (data === '\u007F' || data === '\b') {
-          if (currentLine.length > 0) {
-            currentLine = currentLine.slice(0, -1);
-            process.stdout.write('\b \b');
-          }
           return;
         }
 
