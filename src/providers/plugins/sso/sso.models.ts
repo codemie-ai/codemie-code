@@ -43,14 +43,23 @@ export class SSOModelProxy extends BaseModelProxy {
   }
 
   /**
+   * Update the base URL for credential lookup
+   * Required because SSO credentials are stored per-URL
+   */
+  setBaseUrl(url: string): void {
+    this.baseUrl = url;
+  }
+
+  /**
    * List models from SSO API
    *
    * Note: This is mainly for consistency with the interface.
    * For SSO, listModels and fetchModels are essentially the same.
+   * Uses baseUrl from instance to lookup credentials.
    */
   async listModels(): Promise<ModelInfo[]> {
     try {
-      const credentials = await this.sso.getStoredCredentials();
+      const credentials = await this.sso.getStoredCredentials(this.baseUrl);
       if (!credentials) {
         throw new Error('No SSO credentials found. Run: codemie profile login');
       }
@@ -69,8 +78,9 @@ export class SSOModelProxy extends BaseModelProxy {
    */
   async fetchModels(config: CodeMieConfigOptions): Promise<ModelInfo[]> {
     try {
-      // Try to get credentials
-      const credentials = await this.sso.getStoredCredentials();
+      // Try to get credentials with URL parameter
+      const lookupUrl = config.codeMieUrl || config.baseUrl;
+      const credentials = await this.sso.getStoredCredentials(lookupUrl);
 
       if (!credentials) {
         // If no credentials yet, return empty array (setup wizard will handle auth)
@@ -100,9 +110,9 @@ export class SSOModelProxy extends BaseModelProxy {
    * @returns Array of integrations (filtered if projectName provided)
    */
   async fetchIntegrations(codeMieUrl: string, projectName?: string): Promise<CodeMieIntegration[]> {
-    const credentials = await this.sso.getStoredCredentials();
+    const credentials = await this.sso.getStoredCredentials(codeMieUrl);
     if (!credentials) {
-      logger.debug('No SSO credentials found for fetching integrations');
+      logger.debug(`No SSO credentials found for URL: ${codeMieUrl}`);
       throw new Error('No SSO credentials found. Please authenticate first.');
     }
 

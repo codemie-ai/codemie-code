@@ -59,7 +59,7 @@ export class SSOHealthCheck extends BaseHealthCheck {
     });
 
     // 2. Check credentials
-    const credentials = await this.sso.getStoredCredentials();
+    const credentials = await this.sso.getStoredCredentials(config.codeMieUrl);
     if (!credentials) {
       details.push({
         status: 'error',
@@ -108,6 +108,8 @@ export class SSOHealthCheck extends BaseHealthCheck {
 
     // 4. Test API access and validate configured model
     try {
+      // Update modelProxy baseUrl for credential lookup
+      this.modelProxy.setBaseUrl(config.codeMieUrl);
       const models = await this.modelProxy.listModels();
 
       // Validate configured model is available
