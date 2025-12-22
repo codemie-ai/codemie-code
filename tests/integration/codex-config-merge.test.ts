@@ -8,15 +8,17 @@ import { cleanupAuthJson, cleanupConfigToml, setupAuthJson, setupConfigToml } fr
 /**
  * Normalize line endings and whitespace for cross-platform string comparison
  * - Converts CRLF (\r\n) to LF (\n) for consistent testing on Windows and Unix
- * - Normalizes multiple consecutive newlines to single newlines (matches cleanup behavior)
- * - Removes leading/trailing newlines
+ * - Removes blank lines (lines with only whitespace) - matches cleanup behavior
+ * - Removes leading/trailing whitespace
  */
 const normalizeLineEndings = (str: string): string => {
   return str
     .replace(/\r\n/g, '\n')           // CRLF -> LF
-    .replace(/^\s*\n+/gm, '\n')       // Multiple newlines -> single newline (matches cleanup)
-    .replace(/^\n/, '')               // Remove leading newline
-    .replace(/\n$/, '');              // Remove trailing newline for consistency
+    .split('\n')                      // Split into lines
+    .filter(line => line.trim() !== '') // Remove blank lines
+    .map(line => line.trimEnd())     // Remove trailing whitespace from each line
+    .join('\n')                       // Rejoin
+    .trim();                          // Remove leading/trailing whitespace
 };
 
 describe('Codex Configuration Merge', () => {
