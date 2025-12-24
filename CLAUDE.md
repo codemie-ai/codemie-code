@@ -4,12 +4,48 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 This project is **AI/Run CodeMie CLI** - a professional, unified CLI tool for managing multiple AI coding agents.
 
+---
+
+## Navigation: Hierarchical Documentation
+
+**This project uses hierarchical CLAUDE.md files** for token-efficient, context-aware documentation:
+
+- **Root CLAUDE.md** (this file): Always loaded - provides project overview, core principles, and navigation
+- **Subdirectory CLAUDE.md files**: Auto-loaded when working in specific areas
+
+### Where to Find Detailed Context
+
+| Working in... | Auto-loads... | Contains... |
+|--------------|---------------|-------------|
+| `src/agents/**` | `src/agents/CLAUDE.md` | Agent plugin development, lifecycle hooks, integration patterns |
+| `src/providers/**` | `src/providers/CLAUDE.md` | Provider plugin development, agent hooks, setup wizard patterns |
+| `src/cli/**` | `src/cli/CLAUDE.md` | CLI command patterns, factory pattern, testing |
+| `src/analytics/**` | `src/analytics/CLAUDE.md` | Analytics system, aggregation, metrics, CLI usage |
+| `src/workflows/**` | `src/workflows/CLAUDE.md` | Workflow management, template development, VCS integration |
+
+**Token Savings**: This structure reduces context by 30-70% depending on work location, enabling faster responses and more focused guidance.
+
+### Memory Maintenance Commands
+
+Keep CLAUDE.md files accurate and efficient with these commands:
+
+- `/memory-add` - Capture session learnings at end of work
+- `/memory-init [dir]` - Document directory architecture when starting new work
+- `/memory-refresh` - Monthly audit of all CLAUDE.md files for accuracy
+
+See `.claude/commands/README.md` for complete usage guide.
+
+---
+
 ## Critical First Step: ALWAYS Read Documentation
 
 **MANDATORY**: Before writing ANY code, you MUST:
 1. Read the `README.md` file - this is your PRIMARY source of truth
 2. Review this CLAUDE.md for architectural patterns and conventions
-3. Study reference implementations mentioned in this guide
+3. Check if a subdirectory CLAUDE.md exists for your working area
+4. Study reference implementations mentioned in this guide
+
+---
 
 ## Common Commands
 
@@ -25,45 +61,38 @@ npm run dev                # Watch mode for development
 # Testing
 npm run test               # Run tests with Vitest
 npm run test:ui            # Run tests with interactive UI
-npm run test:run           # Run tests once (no watch mode)
 
-# Code Quality & Validation
-npm run lint               # Check code style with ESLint (max 0 warnings)
-npm run lint:fix           # Fix linting issues automatically
-npm run commitlint:last    # Validate last commit message (Conventional Commits)
-npm run validate:secrets   # Check for exposed secrets (requires Docker)
-npm run license-check      # Check dependency licenses
-npm run ci                 # Run full CI: commit validation + license + lint + build + tests
-npm run ci:full            # CI + secrets detection (requires Docker)
+# Code Quality
+npm run lint               # Check code style (max 0 warnings)
+npm run lint:fix           # Fix linting issues
+npm run ci                 # Run full CI pipeline
 
 # Development Workflow
 npm run build && npm link  # Build and link for testing
-codemie doctor             # Verify installation and configuration
-codemie-code health        # Test built-in agent health
+codemie doctor             # Verify installation
+codemie-code health        # Test built-in agent
 
-# Direct Agent Shortcuts
-codemie-code "message"       # Built-in agent
-codemie-claude "message"     # Claude Code agent
-codemie-codex "message"      # Codex agent
-codemie-gemini "message"     # Gemini CLI agent
-codemie-deepagents "message" # Deep Agents (Python-based)
-codemie-claude health        # Health checks
-codemie-codex health
-codemie-gemini health
-codemie-deepagents health
+# Agent Shortcuts
+codemie-claude "message"   # Claude Code
+codemie-codex "message"    # Codex
+codemie-gemini "message"   # Gemini CLI
+codemie-deepagents "message" # Deep Agents
 
-# Profile Management (Multi-Provider Support)
-codemie setup              # Add new profile or update existing
-codemie profile            # List all profiles with detailed information (default action)
-codemie profile switch <name>  # Switch to different profile
-codemie profile delete <name>  # Delete a profile
-codemie profile rename <old> <new>  # Rename a profile
+# Profile Management
+codemie setup              # Configure provider
+codemie profile            # List profiles
 codemie-code --profile work "task"  # Use specific profile
 
-# Release & Publishing
-git tag -a v0.0.1 -m "Release version 0.0.1"  # Create release tag
-git push origin v0.0.1                         # Push tag to trigger publish
+# Analytics
+codemie analytics          # View usage metrics
+codemie analytics --agent claude --last 7d  # Filtered view
+
+# Workflows
+codemie workflow list      # List CI/CD workflows
+codemie workflow install pr-review  # Install workflow
 ```
+
+---
 
 ## Core Principles
 
@@ -73,7 +102,6 @@ git push origin v0.0.1                         # Push tag to trigger publish
 - Write simple, straightforward code that's easy to understand
 - Avoid over-engineering and unnecessary complexity
 - Remove redundant code, scripts, and configuration
-- If something can be done in fewer lines/steps, do it
 - Question every piece of complexity - is it truly needed?
 - **Example**: Use plugin pattern instead of individual adapter files for each agent
 
@@ -81,7 +109,6 @@ git push origin v0.0.1                         # Push tag to trigger publish
 - Never duplicate code, logic, or configuration
 - Extract common patterns into reusable functions/utilities
 - Reuse existing utilities from `src/utils/` before creating new ones
-- If you find yourself copying code, refactor it into a shared function
 - One source of truth for each piece of knowledge
 - **Example**: `agent-executor.js` handles all agent shortcuts instead of separate bin files
 
@@ -89,46 +116,25 @@ git push origin v0.0.1                         # Push tag to trigger publish
 - Design for easy addition of new features without modifying existing code
 - Use plugin/adapter patterns for agent integration
 - Define clear interfaces that new implementations can follow
-- Separate concerns: core logic from specific implementations
 - **Example**: Add new agents by creating a plugin, not modifying registry
 
 ### Reusability
 - Write modular, composable functions with single responsibilities
 - Avoid tight coupling between components
 - Use dependency injection for testability
-- Create generic utilities that work across different contexts
 - **Example**: `ConfigLoader` works for all providers, not provider-specific loaders
 
 ### Maintainability
 - Clear naming conventions that reflect purpose
 - Comprehensive type definitions with TypeScript
 - Consistent error handling patterns
-- Well-structured directory organization
 - **Example**: `src/agents/plugins/` contains all agent implementations
 
 ### Clean Variable Management
 - **Avoid unused variables entirely** - remove variables that are not used
 - **Never prefix with underscore** (`_variable`) unless absolutely necessary
-- **Only use underscore prefix when:**
-  - Required by external API or framework (destructuring with some unused parameters)
-  - TypeScript/ESLint requires it for valid syntax in edge cases
-  - Part of a pattern where the variable must exist but isn't used in current implementation
-- **Prefer refactoring over underscore prefixes:**
-  - Remove unused parameters from function signatures
-  - Use object destructuring with only needed properties
-  - Extract only required values from arrays/objects
-- **Example of proper approach:**
-  ```typescript
-  // ❌ Avoid - unused variable with underscore
-  const [first, _second, third] = array;
-
-  // ✅ Better - only destructure what you need
-  const [first, , third] = array;  // Use empty slot for unused middle element
-
-  // ✅ Or restructure to avoid unused variables
-  const first = array[0];
-  const third = array[2];
-  ```
+- **Only use underscore when**: Required by external API or framework
+- **Prefer refactoring**: Remove unused parameters, use only needed properties
 
 **Remember:** Simple, clean code is better than clever, complex code.
 
@@ -136,415 +142,119 @@ git push origin v0.0.1                         # Push tag to trigger publish
 
 **Favor integration tests over unit tests** - Test real behavior, not implementation details.
 
-#### Core Principles
+- **Integration Tests First**: Test actual user experience end-to-end
+- **Minimal Unit Tests**: Only for complex algorithms or utilities
+- **Quality Over Quantity**: 1 good integration test > 10 fragile unit tests
 
-1. **Integration Tests First**
-   - Test the actual user experience end-to-end
-   - Run real commands and verify actual output
-   - Cover critical user workflows
-   - Example: `tests/integration/cli-commands.test.ts`
-
-2. **Minimal Unit Tests**
-   - Only unit test complex algorithms or utilities
-   - Avoid testing implementation details
-   - Don't mock everything - use real dependencies when possible
-   - Example: Type guards, configuration parsers
-
-3. **Quality Over Quantity**
-   - 1 good integration test > 10 fragile unit tests
-   - Test what matters to users, not internal functions
-   - Keep tests simple and maintainable
-   - Tests should be obvious and easy to understand
-
-4. **Test Structure**
-   - `tests/integration/` - End-to-end tests of CLI commands
-   - `src/**/__tests__/` - Unit tests only when necessary
-   - Integration tests verify real behavior
-   - Unit tests verify isolated logic
-
-#### When to Write Tests
-
-**Always write integration tests for:**
-- New CLI commands
-- New agent shortcuts
-- Critical user workflows
-- Doctor health checks
-
-**Only write unit tests for:**
-- Complex algorithms
-- Type guards and validators
-- Utility functions with edge cases
-- Pure functions with clear inputs/outputs
-
-**Don't write tests for:**
-- Trivial getters/setters
-- Simple pass-through functions
-- Code that's tested via integration tests
-
-#### Example: Doctor Command Testing
-
-```typescript
-// ✅ Good - Integration test
-it('should check Python', () => {
-  const result = cli.runSilent('doctor');
-  expect(result.output).toMatch(/Python/i);
-});
-
-// ❌ Avoid - Unnecessary unit test
-it('should create PythonCheck instance', () => {
-  const check = new PythonCheck();
-  expect(check.name).toBe('Python');
-});
-```
-
-**Remember:** Tests should give confidence, not false security. Integration tests catch real bugs.
+---
 
 ## Project Overview
 
-**AI/Run CodeMie CLI** is a professional, unified CLI wrapper for managing multiple AI coding agents, featuring:
+**AI/Run CodeMie CLI** is a professional, unified CLI wrapper for managing multiple AI coding agents:
 
 1. **External Agent Management**: Install and run external agents (Claude Code, Codex, Gemini, Deep Agents)
-2. **Built-in Agent**: CodeMie Native - a LangGraph-based coding assistant with file operations, command execution, and planning tools
-3. **Configuration Management**: Unified config system supporting multiple AI providers (OpenAI, Azure OpenAI, AWS Bedrock, LiteLLM, Ollama, Enterprise SSO)
+2. **Built-in Agent**: CodeMie Native - a LangGraph-based coding assistant
+3. **Configuration Management**: Unified config supporting multiple AI providers
 4. **Multiple Interfaces**: CLI commands, direct executables, and programmatic APIs
-5. **Cross-Platform Support**: Full support for Windows, Linux, and macOS with platform-specific optimizations
+5. **Cross-Platform**: Full support for Windows, Linux, and macOS
+6. **Analytics**: Track usage, tokens, costs, and tool usage across all agents
 
-## Architecture Overview
+---
 
-### High-Level Structure
+## High-Level Architecture
+
+### Core Components
 
 ```
 codemie-code/
 ├── bin/                       # Executable entry points
-│   ├── codemie.js            # Main CLI (commands: setup, install, doctor, etc.)
-│   └── agent-executor.js     # Universal agent executor (all shortcuts: codemie-*)
+│   ├── codemie.js            # Main CLI
+│   ├── agent-executor.js     # CodeMie Native (built-in) agent
+│   ├── codemie-claude.js     # Claude Code agent entry
+│   ├── codemie-codex.js      # Codex agent entry
+│   ├── codemie-gemini.js     # Gemini agent entry
+│   └── codemie-deepagents.js # Deep Agents entry
 ├── src/
-│   ├── cli/                  # CLI commands
-│   │   └── commands/         # Individual command modules
-│   ├── agents/               # Agent system (plugin-based)
-│   │   ├── core/            # Core abstractions (AgentAdapter, AgentCLI)
-│   │   ├── plugins/         # Agent plugins (claude, codex, gemini, codemie-code)
-│   │   ├── codemie-code/    # Built-in agent implementation
-│   │   └── registry.ts      # Central agent registry
-│   ├── workflows/            # CI/CD workflow management
+│   ├── cli/                  # CLI commands → See src/cli/CLAUDE.md
+│   ├── agents/               # Agent system → See src/agents/CLAUDE.md
+│   ├── providers/            # Provider system → See src/providers/CLAUDE.md
+│   ├── analytics/            # Analytics system → See src/analytics/CLAUDE.md
+│   ├── workflows/            # Workflow management → See src/workflows/CLAUDE.md
+│   ├── frameworks/           # Framework integrations (BMAD, SpecKit)
 │   ├── env/                  # Configuration system
-│   ├── utils/                # Shared utilities
-│   └── index.ts             # Main package exports
+│   ├── migrations/           # Config migration framework
+│   └── utils/                # Shared utilities
 ```
 
-### Core Components
+### Key Patterns
 
-#### 1. Agent System (`src/agents/`) - **Plugin-Based Architecture**
+#### 1. Plugin Pattern (Agents & Providers)
+- Agents and providers are plugins, not hardcoded
+- Auto-registration via decorators
+- Open/Closed Principle: open for extension, closed for modification
 
-- **Registry** (`registry.ts`): Centralized registration of all agent plugins
-- **Core** (`core/`): Base abstractions for extensibility
-  - `AgentAdapter`: Interface that all agents implement
-  - `AgentCLI`: Universal CLI builder from agent metadata
-  - `BaseAgentAdapter`: Shared implementation for external agents
-- **Plugins** (`plugins/`): Self-contained agent implementations
-  - `claude.plugin.ts`: Claude Code plugin with SSO support and feature flags
-  - `codex.plugin.ts`: Codex plugin with OpenAI model validation and config setup
-  - `gemini.plugin.ts`: Gemini CLI plugin with project mapping
-  - `deepagents.plugin.ts`: Deep Agents plugin (Python/pip-based installation)
-  - `codemie-code.plugin.ts`: Built-in agent plugin wrapper
-- **Built-in Agent** (`codemie-code/`): Full LangGraph-based implementation
-- **Universal Executor** (`bin/agent-executor.js`): Single entry point for all agent shortcuts
+#### 2. Lifecycle Hooks (Loose Coupling)
+- Agents are provider-agnostic
+- Providers customize agents via hooks at runtime
+- Automatic hook chaining (wildcard → agent-specific)
+- Zero compile-time dependencies
 
-#### 2. CLI System (`src/cli/`) - **Modular Command Pattern**
+#### 3. Configuration Hierarchy
+1. CLI arguments (highest priority)
+2. Environment variables
+3. Project config (`.codemie/`)
+4. Global config (`~/.codemie/`)
+5. Default values (lowest priority)
 
-- **Main CLI** (`index.ts`): Commander.js orchestrator - minimal, delegates to commands
-- **Commands** (`commands/`): Self-contained command modules
-  - `setup.ts`: Interactive multi-provider configuration wizard
-  - `install.ts`/`uninstall.ts`: Agent lifecycle management
-  - `doctor/`: Extensible health check system with provider-specific checks
-  - `profile.ts`: Profile management (list, switch, delete, rename)
-  - `workflow.ts`: CI/CD workflow installation
-  - `auth.ts`: SSO authentication management
-  - `version.ts`: Version information
+#### 4. Multi-Provider Profiles
+- Version 2 config supports multiple named profiles
+- One active profile used by default
+- Use `--profile <name>` to override
+- Automatic migration from legacy v1 configs
 
-**Pattern**: Each command is a factory function (`createXCommand()`) returning a Commander instance
+---
 
-#### 3. Configuration System (`src/env/`)
+## Technology Stack
 
-- **Types** (`types.ts`): Multi-provider configuration types and type guards
-- **ConfigLoader** (`utils/config-loader.ts`): Multi-provider profile management
-  - Supports both legacy (v1) and multi-provider (v2) configs
-  - Automatic migration from legacy to profile-based format
-  - Profile CRUD: add, update, delete, rename, switch, list
-- **Priority**: CLI args > Env vars > Project config > Global config > Defaults
-- **Providers**: AI-Run SSO, LiteLLM, OpenAI, Azure OpenAI, AWS Bedrock, Ollama
-- **Model Validation**: Real-time model fetching via `/v1/models` endpoints
-
-#### 4. Workflow Management System (`src/workflows/`)
-
-- **Registry** (`registry.ts`): Manages workflow templates (GitHub Actions, GitLab CI)
-- **Detector** (`detector.ts`): Auto-detects VCS provider from git remote
-- **Installer** (`installer.ts`): Installs and customizes workflow templates
-- **Templates** (`templates/`): Pre-built workflow templates
-  - `github/`: GitHub Actions workflows (pr-review, inline-fix, code-ci)
-  - `gitlab/`: GitLab CI workflows
-- **Types** (`types.ts`): TypeScript definitions for workflows
-
-#### 5. CodeMie Proxy System - **Plugin Architecture**
-
-**True streaming proxy with zero buffering** - refactored from monolithic to plugin-based architecture.
-
-**Core Architecture** (`src/utils/codemie-proxy.ts`):
-- **Zero Buffering**: Streams responses directly to client (no body buffering)
-- **Plugin System**: Extensible via plugin registry (`src/utils/proxy/plugins/`)
-- **Priority-Based Execution**: Plugins run in order based on priority (0-1000)
-- **Graceful Degradation**: Plugin failures don't break proxy flow
-- **Lifecycle Hooks**: onRequest, onResponseHeaders, onResponseChunk, onResponseComplete, onError
-
-**Core Plugins** (`src/proxy/plugins/`):
-- **SSO Auth Plugin** (`sso-auth.plugin.ts`) - Priority 10: Injects SSO authentication cookies
-- **Header Injection Plugin** (`header-injection.plugin.ts`) - Priority 20: Adds CodeMie-specific headers
-- **Logging Plugin** (`logging.plugin.ts`) - Priority 50: Logs detailed request/response info to log files at INFO level (`~/.codemie/logs/`)
-
-**Plugin Registry** (`plugins/registry.ts`):
-- Auto-discovery and initialization of plugins
-- Runtime enable/disable support
-- Priority-based sorting for execution order
-- Dependency injection via PluginContext
-
-**Key Features**:
-- **Performance**: ~90% less memory usage (no buffering)
-- **Extensibility**: Add plugins via registry without modifying proxy core
-- **Streaming**: True HTTP streaming with optional chunk transformation hooks
-- **SOLID Principles**: Single responsibility per plugin, Open/Closed for extensions
-- **Dynamic Ports**: Finds available ports and handles EADDRINUSE errors
-- **SSL/TLS Handling**: Supports enterprise certificates with self-signed certificate support
-
-#### 6. Built-in Agent Architecture (`src/agents/codemie-code/`)
-
-**Multi-layered architecture:**
-
-- **Main Interface** (`index.ts`): `CodeMieCode` class - primary API
-- **Agent Core** (`agent.ts`): `CodeMieAgent` - LangGraph integration
-- **Configuration** (`config.ts`): Provider config loading and validation
-- **Tools System** (`tools/`): Modular tool implementations
-  - `index.ts`: Core tools (read_file, write_file, list_directory, execute_command)
-  - `planning.ts`: Planning and todo management tools (write_todos, update_todo_status, append_todo, clear_todos, show_todos)
-  - All tools include progress tracking, security filtering, and cross-platform compatibility
-- **UI System** (`ui.ts`, `streaming/`): Modern terminal interfaces
-- **Types** (`types.ts`): Comprehensive TypeScript definitions
-
-### Key Architectural Patterns
-
-#### Agent Adapter Pattern
-All agents implement the `AgentAdapter` interface:
-```typescript
-interface AgentAdapter {
-  name: string;
-  displayName: string;
-  description: string;
-  install(): Promise<void>;
-  uninstall(): Promise<void>;
-  isInstalled(): Promise<boolean>;
-  run(args: string[], env?: Record<string, string>): Promise<void>;
-  getVersion(): Promise<string | null>;
-}
-```
-
-#### Configuration Hierarchy
-1. CLI arguments (`--profile`, `--model`, etc.) - highest priority
-2. Environment variables (`CODEMIE_*`, `OPENAI_*`, etc.)
-3. Project-local config (`.codemie/codemie-cli.config.json`)
-4. Global config file (`~/.codemie/codemie-cli.config.json`)
-5. Default values - lowest priority
-
-#### Multi-Provider Profile System
-- **Configuration Format**: Version 2 supports multiple named profiles
-- **Profile Storage**: `~/.codemie/codemie-cli.config.json` with `version: 2` field
-- **Active Profile**: One profile marked as active, used by default
-- **Profile Selection**: Use `--profile <name>` flag to override active profile
-- **Automatic Migration**: Legacy (v1) configs auto-convert to "default" profile
-- **Non-Destructive Setup**: `codemie setup` offers "Add new" or "Update existing"
-
-#### Execution Modes
-- **Interactive**: Full terminal UI with streaming responses
-- **Task Mode**: Single task execution with `--task` flag
-- **Health Checks**: Connection and configuration validation
-
-### Technology Stack
-
-- **Node.js**: Requires Node.js >=24.0.0 for ES2024 features
+- **Node.js**: Requires >=24.0.0 for ES2024 features
 - **TypeScript**: Full type safety with ES2024 + NodeNext modules
 - **Commander.js**: CLI framework with subcommands
-- **LangChain/LangGraph**: Agent orchestration and tool calling
-- **Clack**: Modern terminal user interface
-- **Chalk**: Terminal styling and colors
-- **Zod**: Runtime type validation
+- **LangChain/LangGraph**: Agent orchestration (built-in agent)
+- **Clack**: Modern terminal UI
 - **Vitest**: Modern testing framework
 - **ESLint**: Code quality (max 0 warnings allowed)
 
-### Cross-Platform Support
+---
 
-**See [README.md - Cross-Platform Support](README.md#cross-platform-support) for complete documentation.**
+## Cross-Platform Support
 
-CodeMie CLI is fully tested and supported on Windows, Linux, and macOS. Key implementation details:
+CodeMie CLI is fully tested on Windows, Linux, and macOS:
 
-- **Windows Fix (v0.0.15+)**: Dedicated entry points per agent to avoid npm wrapper detection issues
-- **Path Handling**: All tools use Node.js `path` module for cross-platform compatibility
-- **Process Execution**: Platform-agnostic spawning with proper environment handling
+- **Windows Fix (v0.0.15+)**: Dedicated entry points per agent
+- **Path Handling**: All tools use Node.js `path` module
+- **Process Execution**: Platform-agnostic spawning
 - **Line Endings**: Automatic CRLF/LF handling
 
-**Development Testing**:
+**Testing**:
 ```bash
-# Build and test locally
 npm run build && npm link
 codemie doctor
-
-# Test all agent shortcuts
-codemie-code health
-codemie-claude health
-codemie-codex health
-codemie-gemini health
-codemie-deepagents health
+codemie-{agent} health  # Test all agents
 ```
 
-## Practical Code Patterns
-
-### 1. Plugin Pattern for Extensibility
-
-**Use Case**: Adding new agents without modifying existing code
-
-**Implementation**:
-```typescript
-// Define metadata (declarative, no logic)
-export const AgentMetadata: AgentMetadata = {
-  name: 'agent-name',
-  // ... configuration
-};
-
-// Implement adapter (reuses BaseAgentAdapter)
-export class AgentPlugin extends BaseAgentAdapter {
-  constructor() {
-    super(AgentMetadata);
-  }
-}
-
-// Register in one place
-AgentRegistry.adapters.set('agent-name', new AgentPlugin());
-```
-
-**Benefits**: Open/Closed Principle - open for extension, closed for modification
-
-### 2. Configuration Loader Pattern for Reusability
-
-**Use Case**: Loading configuration from multiple sources with priority
-
-**Implementation**:
-```typescript
-// Single loader handles all scenarios
-const config = await ConfigLoader.load(workingDir, {
-  name: profileName,     // Optional profile selection
-  model: cliModel,       // Optional CLI overrides
-  provider: cliProvider
-});
-
-// Priority: CLI > Env > Project > Global > Default
-```
-
-**Benefits**: Single source of truth, consistent behavior across all commands
-
-### 3. Factory Pattern for Commands
-
-**Use Case**: Creating modular, testable CLI commands
-
-**Implementation**:
-```typescript
-export function createSetupCommand(): Command {
-  return new Command('setup')
-    .description('...')
-    .action(async () => {
-      // Command logic here
-    });
-}
-
-// In main CLI
-program.addCommand(createSetupCommand());
-```
-
-**Benefits**: Easy to test, compose, and maintain independently
-
-### 4. Adapter Pattern for Agent Integration
-
-**Use Case**: Uniform interface for different external agents
-
-**Implementation**:
-```typescript
-// All agents implement same interface
-interface AgentAdapter {
-  install(): Promise<void>;
-  run(args: string[], env?: Record<string, string>): Promise<void>;
-  // ... other methods
-}
-
-// Client code works with any agent
-const agent = AgentRegistry.getAgent(name);
-await agent.run(args, env);
-```
-
-**Benefits**: Decouples CLI from specific agent implementations
-
-### 5. Type Guards for Type Safety
-
-**Use Case**: Runtime validation of configuration formats
-
-**Implementation**:
-```typescript
-export function isMultiProviderConfig(config: unknown): config is MultiProviderConfig {
-  return (
-    typeof config === 'object' &&
-    config !== null &&
-    'version' in config &&
-    config.version === 2
-  );
-}
-
-// Usage
-if (isMultiProviderConfig(rawConfig)) {
-  // TypeScript knows it's MultiProviderConfig
-  const profile = rawConfig.profiles[rawConfig.activeProfile];
-}
-```
-
-**Benefits**: Type-safe with runtime checks, prevents errors
-
-### 6. Universal Executor Pattern for DRY
-
-**Use Case**: Single bin file handles multiple executables
-
-**Implementation**:
-```typescript
-// Detects agent from executable name
-const executableName = basename(process.argv[1]);
-const agentName = executableName.replace('codemie-', '');
-
-// Loads appropriate plugin
-const agent = AgentRegistry.getAgent(agentName);
-const cli = new AgentCLI(agent);
-await cli.run(process.argv);
-```
-
-**Benefits**: One implementation for all shortcuts, reduces duplication
+---
 
 ## Development Guidelines
 
 ### Working with Multi-Provider Configuration
 
-When working with the configuration system:
+1. **Profile Management**:
+   - Use `ConfigLoader.saveProfile(name, profile)` to add/update
+   - Use `ConfigLoader.switchProfile(name)` to change active
+   - Never directly overwrite config files - use ConfigLoader methods
 
-1. **Profile Management Pattern**:
-   - Use `ConfigLoader.saveProfile(name, profile)` to add/update profiles
-   - Use `ConfigLoader.switchProfile(name)` to change active profile
-   - Use `ConfigLoader.listProfiles()` to get all profiles with active status
-   - Never directly overwrite `~/.codemie/codemie-cli.config.json` - use ConfigLoader methods
-
-2. **Configuration Loading Priority**:
+2. **Configuration Loading**:
    ```typescript
-   // Load with profile support
    const config = await ConfigLoader.load(process.cwd(), {
      name: profileName,  // Optional profile selection
      model: cliModel,    // Optional CLI overrides
@@ -552,181 +262,27 @@ When working with the configuration system:
    });
    ```
 
-3. **Migration Pattern**:
-   - Use `loadMultiProviderConfig()` which auto-migrates legacy configs
-   - Type guards: `isMultiProviderConfig()` and `isLegacyConfig()`
-   - Legacy configs become "default" profile automatically
-
-4. **Setup Wizard Pattern** (`setup.ts`):
-   - Check existing profiles with `ConfigLoader.listProfiles()`
-   - Offer "Add new" or "Update existing" options
-   - Prompt for unique profile name when adding
-   - Use `ConfigLoader.saveProfile()` instead of `saveGlobalConfig()`
+3. **Migration**: Use `loadMultiProviderConfig()` which auto-migrates legacy configs
 
 ### Working with Agent Shortcuts
 
-When modifying the direct agent shortcuts (`codemie-claude`, `codemie-codex`):
+All shortcuts support CLI overrides:
+- `--profile`: Select provider profile
+- `--provider`: Override provider
+- `--model`: Override model
+- `--api-key`: Override API key
+- `--base-url`: Override base URL
 
-1. **Configuration Override Pattern**: All shortcuts support CLI overrides for:
-   - `--profile`: Select specific provider profile (contains all provider settings)
-   - `--provider`: Override provider (ai-run-sso, litellm, openai, azure, bedrock)
-   - `--model`: Override model selection
-   - `--api-key`: Override API key
-   - `--base-url`: Override base URL
-   - `--timeout`: Override timeout
+**Pass-through**: Use `allowUnknownOption()` and filter known config options before forwarding to agent.
 
-   Note: These flags are config-only and will not be passed to the underlying agent binary
+### Cross-Module Development
 
-2. **Pass-through Architecture**: Use `allowUnknownOption()` to allow unknown options, and `collectPassThroughArgs()` method filters out known config options before forwarding to the underlying agent
+When working across multiple modules:
 
-3. **Model Validation**:
-   - Codex must validate OpenAI-compatible models only
-   - Claude accepts both Claude and GPT models
-   - Provide helpful error messages with actionable suggestions
-
-4. **Health Check Pattern**: Each shortcut should implement a `health` subcommand that:
-   - Verifies agent installation
-   - Shows version information
-   - Tests basic configuration
-
-### Adding New Agents - **Plugin Pattern (Extensibility)**
-
-**See complete guide**: @.codemie/guides/agent-plugin-development.md
-
-The plugin pattern makes adding new agents straightforward without modifying core code.
-
-**Quick Start (4 Steps)**:
-1. Create plugin file: `src/agents/plugins/{name}.plugin.ts`
-2. Register in: `src/agents/registry.ts`
-3. Add binary: `package.json` → `bin` section
-4. Build & test: `npm run build && npm link`
-
-**Reference Implementations**:
-- `claude.plugin.ts` - SSO support, feature flags
-- `codex.plugin.ts` - Model injection, config setup
-- `gemini.plugin.ts` - Project mapping, multi-var fallbacks
-- `deepagents.plugin.ts` - Python/pip installation
-
-**Why This Works**: `agent-executor.js` automatically discovers plugins by name, enabling zero-config integration.
-
-### Adding New Providers - **Plugin Pattern (Extensibility)**
-
-**See complete guide**: @.codemie/guides/provider-plugin-development.md
-
-The plugin pattern makes adding new AI providers straightforward without modifying core code.
-
-**Quick Start (3 Steps)**:
-1. Create provider plugin: `src/providers/plugins/{name}/`
-2. Register components (auto-registered via imports)
-3. Build & test: `npm run build && npm link`
-
-**Reference Implementations**:
-- `ollama/` - Local provider with model installation
-- `sso/` - SSO authentication with browser login
-- `litellm/` - Universal proxy with minimal setup
-- `bedrock/` - AWS Bedrock provider with credential management
-
-**Why This Works**: Auto-registration via decorators and imports enables zero-config integration with setup wizard and health checks.
-
-### Built-in Agent Development - **LangGraph Architecture**
-
-When working on CodeMie Native (`src/agents/codemie-code/`):
-
-- **Tools** (`tools/`): Modular tool implementations
-  - Core tools in `index.ts`: `ReadFileTool`, `WriteFileTool`, `ListDirectoryTool`, `ExecuteCommandTool`
-  - Planning tools in `planning.ts`: Todo management and progress tracking
-  - All tools extend LangChain's `StructuredTool` class with Zod schemas
-  - Implement security filtering (path traversal prevention, dangerous command blocking)
-  - Include progress tracking with `emitToolProgress()` for long-running operations
-  - Cross-platform compatibility (Windows/Linux/macOS path handling)
-
-- **UI System** (`ui.ts`, `streaming/`): Terminal interface
-  - Use Clack components for consistency
-  - Implement streaming event handlers for real-time updates
-  - Separate UI concerns from business logic
-
-- **Configuration** (`config.ts`): Provider-agnostic config loading
-  - Use `ConfigLoader` for multi-provider support
-  - Validate configuration before agent initialization
-  - Support CLI overrides and environment variables
-
-- **Error Handling**: Structured, contextual errors
-  - Create specific error classes for different failure modes
-  - Include actionable error messages with suggestions
-  - Log errors appropriately for debugging
-
-- **Planning** (`modes/`): Planning system architecture (optional feature)
-  - Context-aware planning that explores codebase first
-  - Todo-based tracking with quality validation
-  - Persistent state management across sessions
-
-### Workflow Management
-
-#### Workflow Installation System
-
-The `src/workflows/` module manages CI/CD workflow installation:
-
-**Key Features:**
-- Auto-detect VCS provider (GitHub/GitLab) from git remote
-- Template-based workflow installation
-- Customizable configurations (timeout, max-turns, environment)
-- Dependency validation
-- Interactive and non-interactive modes
-
-**Available Commands:**
-```bash
-codemie workflow list                    # List available workflows
-codemie workflow list --installed        # Show only installed workflows
-codemie workflow install pr-review       # Install PR review workflow
-codemie workflow install --interactive   # Interactive installation
-codemie workflow uninstall pr-review     # Uninstall workflow
-```
-
-**Available Workflows:**
-- **pr-review**: Automated code review on pull requests
-- **inline-fix**: Quick code fixes from PR comments
-- **code-ci**: Full feature implementation from issues
-
-**Adding New Workflows:**
-
-1. **Create Template File:**
-   - GitHub: `src/workflows/templates/github/your-workflow.yml`
-   - GitLab: `src/workflows/templates/gitlab/your-workflow.yml`
-
-2. **Register Template:**
-   ```typescript
-   // In src/workflows/templates/github/metadata.ts (or gitlab)
-   {
-     id: 'your-workflow',
-     name: 'Your Workflow Name',
-     description: 'Workflow description',
-     provider: 'github',
-     version: '1.0.0',
-     category: 'code-review', // or 'automation', 'ci-cd', 'security'
-     triggers: [...],
-     permissions: {...},
-     config: {...},
-     templatePath: path.join(__dirname, 'your-workflow.yml'),
-     dependencies: {...}
-   }
-   ```
-
-3. **Template Variables:**
-   Templates support the following customizable variables:
-   - `timeout-minutes`: Workflow timeout
-   - `MAX_TURNS`: Maximum AI turns
-   - `environment`: GitHub environment name
-
-4. **Test Installation:**
-   ```bash
-   npm run build && npm link
-   codemie workflow install your-workflow --dry-run
-   ```
-
-**VCS Detection:**
-- Automatically detects GitHub/GitLab from `.git/config` remote URL
-- Override with `--github` or `--gitlab` flags
-- Validates workflow directory exists/creates if needed
+1. **Read subdirectory CLAUDE.md** for context-specific guidance
+2. **Follow plugin patterns** described in module documentation
+3. **Use existing utilities** from `src/utils/` before creating new ones
+4. **Maintain loose coupling** via hooks and interfaces
 
 ---
 
@@ -740,7 +296,67 @@ When writing code for this project, ask yourself:
 ✅ **Reusability**: Are components modular and composable?
 ✅ **Maintainability**: Will others understand this in 6 months?
 ✅ **Plugin Pattern**: Should this be a plugin instead of core modification?
+✅ **Loose Coupling**: Are agents provider-agnostic? Do providers use hooks?
 ✅ **Type Safety**: Are types defined and validated?
 ✅ **Error Handling**: Are error messages actionable?
-✅ **Testing**: Integration test > unit test? (1 good integration test > 10 unit tests)
+✅ **Testing**: Integration test > unit test?
 ✅ **Documentation**: Will this require doc updates?
+
+---
+
+## Additional Documentation
+
+### User-Facing Documentation (`docs/`)
+
+- **[CONFIGURATION.md](docs/CONFIGURATION.md)** - Setup wizard, environment variables, profiles
+- **[COMMANDS.md](docs/COMMANDS.md)** - Complete command reference
+- **[AGENTS.md](docs/AGENTS.md)** - Detailed agent documentation
+- **[AUTHENTICATION.md](docs/AUTHENTICATION.md)** - SSO setup, token management
+- **[EXAMPLES.md](docs/EXAMPLES.md)** - Common workflows and examples
+
+### Architecture Documentation (`docs/`)
+
+- **[ARCHITECTURE-CONFIGURATION.md](docs/ARCHITECTURE-CONFIGURATION.md)** - Configuration flow architecture
+- **[ARCHITECTURE-PROXY.md](docs/ARCHITECTURE-PROXY.md)** - SSO proxy system architecture
+
+### Developer Guides (Subdirectories)
+
+- **[src/agents/CLAUDE.md](src/agents/CLAUDE.md)** - Agent plugin development (auto-loads)
+- **[src/providers/CLAUDE.md](src/providers/CLAUDE.md)** - Provider plugin development (auto-loads)
+- **[src/cli/CLAUDE.md](src/cli/CLAUDE.md)** - CLI command development (auto-loads)
+- **[src/analytics/CLAUDE.md](src/analytics/CLAUDE.md)** - Analytics system (auto-loads)
+- **[src/workflows/CLAUDE.md](src/workflows/CLAUDE.md)** - Workflow management (auto-loads)
+
+---
+
+## Summary: Hooks-Based Architecture
+
+The CodeMie CLI architecture is built on a **hooks-based plugin system** that achieves complete separation of concerns:
+
+**Core Principles:**
+1. **Agents are provider-agnostic** - No hardcoded provider logic in agent code
+2. **Providers customize agents via hooks** - Registered in `ProviderTemplate.agentHooks`
+3. **Runtime resolution** - `lifecycle-helpers.ts` resolves hooks based on active provider
+4. **Automatic chaining** - Wildcard hooks run first, agent-specific hooks run second
+5. **Zero dependencies** - Agents and providers never import each other
+
+**Benefits:**
+- ✅ Testability: Components test independently
+- ✅ Maintainability: Provider changes don't affect agent code
+- ✅ Extensibility: Add providers/agents without modifying existing code
+- ✅ Flexibility: Different providers can customize same agent differently
+- ✅ Clarity: Clear separation of responsibilities
+
+**Example**: Bedrock provider uses wildcard hook to transform AWS credentials for ALL agents, then Claude-specific hook enables Bedrock mode. Claude agent has zero knowledge of Bedrock.
+
+---
+
+## Local Development Notes
+
+For personal notes, create `CLAUDE.local.md` (gitignored):
+- Sandbox URLs and credentials
+- Local configurations
+- WIP features and experiments
+- Personal reminders
+
+This file is automatically ignored and won't be committed to the repository.

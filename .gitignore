@@ -36,3 +36,7 @@ coverage/
 
 _bmad*
 .claude/**/bmad/*
+
+# Claude Code local memory
+CLAUDE.local.md
+**/CLAUDE.local.md
