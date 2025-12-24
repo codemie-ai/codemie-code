@@ -17,7 +17,7 @@ codemie setup
 2. Guide you through the authentication flow
 3. Test the connection with health checks
 4. Fetch and display available models
-5. Save secure credentials to `~/.codemie/config.json`
+5. Save secure credentials to `~/.codemie/codemie-cli.config.json`
 
 ### Manual SSO Authentication
 

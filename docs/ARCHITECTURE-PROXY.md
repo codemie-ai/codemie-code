@@ -547,7 +547,7 @@ Proxy Stop
 - `CODEMIE_METRICS_MAX_RETRIES`: Max retry attempts (default: 3)
 
 **Profile Configuration**:
-- Location: `~/.codemie/config.json`
+- Location: `~/.codemie/codemie-cli.config.json`
 - Path: `profiles[name].metrics.sync`
 - Properties: enabled, interval, maxRetries
 
@@ -813,7 +813,7 @@ src/proxy/
 - CODEMIE_DEBUG
 
 **Profile Configuration** (plugin-specific):
-- Location: ~/.codemie/config.json
+- Location: ~/.codemie/codemie-cli.config.json
 - Provider-specific settings
 - Metrics sync configuration
 

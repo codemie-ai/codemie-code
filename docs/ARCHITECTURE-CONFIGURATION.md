@@ -11,8 +11,8 @@
 ```
 1. CLI Arguments      (Highest)  → --profile, --model, --provider, --api-key, --base-url, --timeout
 2. Environment Vars   (High)     → CODEMIE_*, OPENAI_*, ANTHROPIC_*, etc.
-3. Project Config     (Medium)   → .codemie/config.json (local)
-4. Global Config      (Low)      → ~/.codemie/config.json
+3. Project Config     (Medium)   → .codemie/codemie-cli.config.json (local)
+4. Global Config      (Low)      → ~/.codemie/codemie-cli.config.json
 5. Built-in Defaults  (Lowest)   → Hardcoded in ConfigLoader
 ```
 
@@ -26,7 +26,7 @@
 ├─────────────────────────────────────────────────────────────────────┤
 │  CLI:   codemie-claude --profile work --model claude-3-5-sonnet     │
 │  ENV:   CODEMIE_PROVIDER=ai-run-sso                                 │
-│  FILE:  ~/.codemie/config.json (active profile: work)               │
+│  FILE:  ~/.codemie/codemie-cli.config.json (active profile: work)               │
 └────────────────────────────┬────────────────────────────────────────┘
                              │
                              ▼

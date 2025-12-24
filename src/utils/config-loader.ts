@@ -27,8 +27,8 @@ export type { CodeMieConfigOptions, CodeMieIntegrationInfo, ConfigWithSource };
  */
 export class ConfigLoader {
   private static GLOBAL_CONFIG_DIR = path.join(os.homedir(), '.codemie');
-  private static GLOBAL_CONFIG = path.join(ConfigLoader.GLOBAL_CONFIG_DIR, 'config.json');
-  private static LOCAL_CONFIG = '.codemie/config.json';
+  private static GLOBAL_CONFIG = path.join(ConfigLoader.GLOBAL_CONFIG_DIR, 'codemie-cli.config.json');
+  private static LOCAL_CONFIG = '.codemie/codemie-cli.config.json';
 
   // Cache for multi-provider config
   private static multiProviderCache: MultiProviderConfig | null = null;
@@ -51,12 +51,12 @@ export class ConfigLoader {
       ignorePatterns: ['node_modules', '.git', 'dist', 'build']
     };
 
-    // 4. Global config (~/.codemie/config.json)
+    // 4. Global config (~/.codemie/codemie-cli.config.json)
     // Load from active profile if multi-provider, otherwise load as-is
     const globalConfig = await this.loadGlobalConfigProfile(cliOverrides?.name);
     Object.assign(config, this.removeUndefined(globalConfig));
 
-    // 3. Project-local config (.codemie/config.json)
+    // 3. Project-local config (.codemie/codemie-cli.config.json)
     const localConfigPath = path.join(workingDir, this.LOCAL_CONFIG);
     const localConfig = await this.loadJsonConfig(localConfigPath);
     Object.assign(config, this.removeUndefined(localConfig));

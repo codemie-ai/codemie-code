@@ -55,7 +55,7 @@ export class TempWorkspace {
    * Write a CodeMie config file
    */
   writeConfig(config: any): string {
-    return this.writeJSON('.codemie/config.json', config);
+    return this.writeJSON('.codemie/codemie-cli.config.json', config);
   }
 
   /**

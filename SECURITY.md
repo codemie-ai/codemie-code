@@ -55,7 +55,7 @@ When using CodeMie CLI:
    - Use environment variables or secure config files
    - Run `npm run validate:secrets` before committing (requires Docker)
 
-2. **Configuration Files**: The `~/.codemie/config.json` file may contain sensitive data
+2. **Configuration Files**: The `~/.codemie/codemie-cli.config.json` file may contain sensitive data
    - Ensure proper file permissions (readable only by you)
    - Do not share this file or include it in backups without redacting secrets
 
@@ -80,7 +80,7 @@ When using CodeMie CLI:
 ## Known Security Considerations
 
 ### API Key Handling
-- API keys are stored in plain text in `~/.codemie/config.json`
+- API keys are stored in plain text in `~/.codemie/codemie-cli.config.json`
 - Ensure this file has restricted permissions (600 on Unix-like systems)
 - Consider using environment variables for ephemeral sessions
 

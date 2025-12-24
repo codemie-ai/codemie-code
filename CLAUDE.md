@@ -349,13 +349,13 @@ interface AgentAdapter {
 #### Configuration Hierarchy
 1. CLI arguments (`--profile`, `--model`, etc.) - highest priority
 2. Environment variables (`CODEMIE_*`, `OPENAI_*`, etc.)
-3. Project-local config (`.codemie/config.json`)
-4. Global config file (`~/.codemie/config.json`)
+3. Project-local config (`.codemie/codemie-cli.config.json`)
+4. Global config file (`~/.codemie/codemie-cli.config.json`)
 5. Default values - lowest priority
 
 #### Multi-Provider Profile System
 - **Configuration Format**: Version 2 supports multiple named profiles
-- **Profile Storage**: `~/.codemie/config.json` with `version: 2` field
+- **Profile Storage**: `~/.codemie/codemie-cli.config.json` with `version: 2` field
 - **Active Profile**: One profile marked as active, used by default
 - **Profile Selection**: Use `--profile <name>` flag to override active profile
 - **Automatic Migration**: Legacy (v1) configs auto-convert to "default" profile
@@ -540,7 +540,7 @@ When working with the configuration system:
    - Use `ConfigLoader.saveProfile(name, profile)` to add/update profiles
    - Use `ConfigLoader.switchProfile(name)` to change active profile
    - Use `ConfigLoader.listProfiles()` to get all profiles with active status
-   - Never directly overwrite `~/.codemie/config.json` - use ConfigLoader methods
+   - Never directly overwrite `~/.codemie/codemie-cli.config.json` - use ConfigLoader methods
 
 2. **Configuration Loading Priority**:
    ```typescript

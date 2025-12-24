@@ -9,7 +9,7 @@ export interface EnvConfig {
 
 export class EnvManager {
   private static CONFIG_DIR = path.join(os.homedir(), '.codemie');
-  private static CONFIG_FILE = path.join(EnvManager.CONFIG_DIR, 'config.json');
+  private static CONFIG_FILE = path.join(EnvManager.CONFIG_DIR, 'codemie-cli.config.json');
 
   static async loadGlobalConfig(): Promise<EnvConfig> {
     try {
