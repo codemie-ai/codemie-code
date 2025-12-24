@@ -133,8 +133,6 @@ For profiles using AI/Run CodeMie SSO provider:
 
 Track and analyze your AI agent usage across all agents.
 
-> **📊 For comprehensive documentation**, see the [Analytics Command Guide](../.codemie/guides/analytics-command.md)
-
 ```bash
 # View analytics summary
 codemie analytics                # Show all analytics with aggregated metrics
@@ -379,7 +377,7 @@ codemie analytics [options]
 - Cache hit rates
 - Language/format statistics
 
-For comprehensive analytics documentation, see [Analytics Command Guide](../.codemie/guides/analytics-command.md).
+For detailed usage examples and filtering options, see the [Analytics Commands](#analytics-commands) section above.
 
 ### `codemie version`
 

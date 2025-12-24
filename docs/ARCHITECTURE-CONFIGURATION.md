@@ -1,8 +1,8 @@
 # Configuration Architecture
 
-**Version**: 1.0
-**Last Updated**: 2025-12-11
-**Purpose**: Reference guide for understanding how configuration flows through the system from user input to agents, adapters, and proxy plugins.
+**Version**: 2.0
+**Last Updated**: 2025-12-24
+**Purpose**: Reference guide for understanding how configuration flows through the system from user input to agents, adapters, proxy plugins, and the hooks-based lifecycle system.
 
 ---
 
@@ -84,10 +84,6 @@
 │  - ANTHROPIC_BASE_URL     = https://codemie.ai                      │
 │  - ANTHROPIC_API_KEY      = (SSO session token)                     │
 │                                                                     │
-│  SSO-SPECIFIC (if provider=ai-run-sso):                             │
-│  - CODEMIE_URL            = https://codemie.ai                      │
-│  - CODEMIE_INTEGRATION_ID = (if configured)                         │
-│                                                                     │
 │  ADDITIONAL (added by AgentCLI):                                    │
 │  - CODEMIE_PROFILE_NAME   = work                                    │
 │  - CODEMIE_CLI_VERSION    = 0.0.16                                  │
@@ -95,15 +91,144 @@
                              │
                              ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  STEP 4: BaseAgentAdapter.run()                                     │
-│  Location: src/agents/core/BaseAgentAdapter.ts:116                  │
+│  STEP 3A: ProviderTemplate.exportEnvVars() [PLUGGABLE]              │
+│  Location: src/providers/plugins/{provider}/{provider}.template.ts  │
 ├─────────────────────────────────────────────────────────────────────┤
-│  Receives: envOverrides (environment variables from Step 3)         │
+│  Provider-specific environment variable export (if defined):        │
+│                                                                     │
+│  Example - SSO Provider:                                            │
+│  exportEnvVars: (config) => {                                       │
+│    const env = {};                                                  │
+│    if (config.codeMieUrl) env.CODEMIE_URL = config.codeMieUrl;      │
+│    if (config.codeMieProject) env.CODEMIE_PROJECT = ...;            │
+│    if (config.codeMieIntegration?.id)                               │
+│      env.CODEMIE_INTEGRATION_ID = ...;                              │
+│    return env;                                                      │
+│  }                                                                  │
+│                                                                     │
+│  Example - Bedrock Provider:                                        │
+│  exportEnvVars: (config) => {                                       │
+│    const env = {};                                                  │
+│    if (config.awsProfile) env.CODEMIE_AWS_PROFILE = ...;            │
+│    if (config.awsRegion) env.CODEMIE_AWS_REGION = ...;              │
+│    if (config.awsSecretAccessKey)                                   │
+│      env.CODEMIE_AWS_SECRET_ACCESS_KEY = ...;                       │
+│    return env;                                                      │
+│  }                                                                  │
+│                                                                     │
+│  Result: Provider-specific CODEMIE_* env vars added                 │
+│  - CODEMIE_URL            = https://codemie.ai                      │
+│  - CODEMIE_INTEGRATION_ID = (if configured)                         │
+│  - CODEMIE_AWS_PROFILE    = bedrock (if Bedrock)                   │
+│  - CODEMIE_AWS_REGION     = us-east-1 (if Bedrock)                 │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  STEP 4: BaseAgentAdapter.run()                                     │
+│  Location: src/agents/core/BaseAgentAdapter.ts:140                  │
+├─────────────────────────────────────────────────────────────────────┤
+│  Receives: envOverrides (environment variables from Step 3/3A)      │
+│                                                                     │
+│  Generates session ID:                                              │
+│  sessionId = randomUUID()                                           │
 │                                                                     │
 │  Merges with process.env:                                           │
-│  env = { ...process.env, ...envOverrides }                          │
+│  env = {                                                            │
+│    ...process.env,                                                  │
+│    ...envOverrides,                                                 │
+│    CODEMIE_SESSION_ID: sessionId,                                   │
+│    CODEMIE_AGENT: this.metadata.name                                │
+│  }                                                                  │
 │                                                                     │
 │  Calls: setupProxy(env)  [if SSO provider]                          │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  STEP 4A: Lifecycle Hook - onSessionStart() [OPTIONAL]              │
+│  Location: src/agents/core/lifecycle-helpers.ts:125                 │
+├─────────────────────────────────────────────────────────────────────┤
+│  Hook Resolution Priority (Chain of Responsibility):                │
+│  1. Provider wildcard hook ('*' for all agents)                     │
+│  2. Provider agent-specific hook (e.g., 'claude')                   │
+│  3. Agent default hook (fallback)                                   │
+│                                                                     │
+│  Example - SSO Provider Wildcard Hook:                              │
+│  agentHooks: {                                                      │
+│    '*': {  // Applies to ALL agents                                 │
+│      async onSessionStart(sessionId, env) {                         │
+│        // Send session start metric to backend                      │
+│        await handler.sendSessionStart({                             │
+│          sessionId, agentName, provider, project, model             │
+│        }, 'started');                                               │
+│      }                                                              │
+│    }                                                                │
+│  }                                                                  │
+│                                                                     │
+│  Example - Gemini Agent Default Hook:                               │
+│  lifecycle: {                                                       │
+│    async onSessionStart(sessionId, env) {                           │
+│      // Register current project for analytics mapping              │
+│      registerCurrentProject('gemini', process.cwd());               │
+│    }                                                                │
+│  }                                                                  │
+│                                                                     │
+│  Use Cases: Session metrics, project registration, early init       │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│  STEP 4B: Lifecycle Hook - beforeRun() [OPTIONAL]                   │
+│  Location: src/agents/core/lifecycle-helpers.ts:160                 │
+├─────────────────────────────────────────────────────────────────────┤
+│  Hook Resolution Priority (with Automatic Chaining):                │
+│  1. Provider wildcard hook runs FIRST                               │
+│  2. Provider agent-specific hook runs SECOND (receives result)      │
+│  3. Agent default hook runs as FALLBACK (if no provider hooks)      │
+│                                                                     │
+│  Example - Bedrock Provider (Automatic Chaining):                   │
+│                                                                     │
+│  Wildcard Hook (runs FIRST for ALL agents):                         │
+│  agentHooks: {                                                      │
+│    '*': {                                                           │
+│      async beforeRun(env, config) {                                 │
+│        // Transform CODEMIE_AWS_* → AWS_* for all agents            │
+│        if (env.CODEMIE_AWS_PROFILE) {                               │
+│          env.AWS_PROFILE = env.CODEMIE_AWS_PROFILE;                 │
+│          delete env.AWS_ACCESS_KEY_ID;  // Avoid conflicts          │
+│        }                                                            │
+│        if (env.CODEMIE_AWS_REGION) {                                │
+│          env.AWS_REGION = env.CODEMIE_AWS_REGION;                   │
+│        }                                                            │
+│        return env;                                                  │
+│      }                                                              │
+│    },                                                               │
+│                                                                     │
+│  Claude-Specific Hook (runs SECOND, receives wildcard result):      │
+│    'claude': {                                                      │
+│      async beforeRun(env, config) {                                 │
+│        // AWS credentials already set by wildcard hook!             │
+│        // Now add Claude-specific Bedrock configuration             │
+│        env.CLAUDE_CODE_USE_BEDROCK = '1';                           │
+│        delete env.ANTHROPIC_AUTH_TOKEN;  // Use AWS creds only      │
+│        if (env.CODEMIE_MODEL) {                                     │
+│          env.ANTHROPIC_MODEL = env.CODEMIE_MODEL;                   │
+│        }                                                            │
+│        return env;                                                  │
+│      }                                                              │
+│    }                                                                │
+│  }                                                                  │
+│                                                                     │
+│  Chaining Logic (lifecycle-helpers.ts):                             │
+│  if (wildcardHook && specificHook) {                                │
+│    // Execute wildcard first                                        │
+│    const intermediateEnv = await wildcardHook(env, config);         │
+│    // Execute specific hook with wildcard result                    │
+│    return await specificHook(intermediateEnv, config);              │
+│  }                                                                  │
+│                                                                     │
+│  Use Cases: Env transformation, config files, credential setup      │
 └────────────────────────────┬────────────────────────────────────────┘
                              │
                              ▼
