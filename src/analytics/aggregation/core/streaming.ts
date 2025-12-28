@@ -15,89 +15,17 @@ import { createInterface } from 'node:readline';
  */
 export async function* streamJSONL(filePath: string): AsyncGenerator<any> {
   const fileStream = createReadStream(filePath, { encoding: 'utf-8' });
-  const rl = createInterface({ input: fileStream, crlfDelay: Infinity });
+  const rl = createInterface({ input: fileStream });
 
-  const iterator = rl[Symbol.asyncIterator]();
-  try {
-    while (true) {
-      const res = await iterator.next();
-      if (res.done) break;
-      let line = res.value as string;
-      let trimmed = line.trim();
-      if (!trimmed) continue;
-
-      // Attempt a direct parse first
+  for await (const line of rl) {
+    const trimmed = line.trim();
+    if (trimmed) {
       try {
-        const parsed = JSON.parse(trimmed);
-        if (Array.isArray(parsed)) {
-          for (const item of parsed) yield item;
-        } else {
-          yield parsed;
-        }
-        continue;
-      } catch {
-        // fall through to recovery attempts
+        yield JSON.parse(trimmed);
+      } catch (error) {
+        // Skip invalid JSON lines
+        console.error(`Failed to parse JSONL line: ${error}`);
       }
-
-      // If the line is a JSON array, yield each item
-      if (trimmed.startsWith('[')) {
-        try {
-          const arr = JSON.parse(trimmed);
-          if (Array.isArray(arr)) {
-            for (const item of arr) yield item;
-            continue;
-          }
-        } catch {
-          // ignore and try other recovery strategies
-        }
-      }
-
-      // If multiple JSON objects were concatenated on a single line (}{), split and parse
-      if (trimmed.includes('}{')) {
-        const parts = trimmed.split(/}\s*{/);
-        for (let i = 0; i < parts.length; i++) {
-          const piece = i === 0
-            ? parts[i] + '}'
-            : i === parts.length - 1
-              ? '{' + parts[i]
-              : '{' + parts[i] + '}';
-
-          try {
-            yield JSON.parse(piece);
-          } catch (pieceErr) {
-            console.error(`Failed to parse JSONL fragment: ${pieceErr}`);
-          }
-        }
-        continue;
-      }
-
-      // Otherwise attempt to accumulate subsequent lines (handles pretty-printed / multi-line JSON)
-      let buffer = trimmed;
-      const MAX_LINES = 1000;
-      let appended = 0;
-      let lastError: unknown = null;
-      while (appended < MAX_LINES) {
-        const next = await iterator.next();
-        if (next.done) break;
-        buffer += '\n' + (next.value as string);
-        appended++;
-        try {
-          yield JSON.parse(buffer);
-          buffer = '';
-          break;
-        } catch (bufErr) {
-          lastError = bufErr;
-          // continue appending
-        }
-      }
-
-      if (buffer) {
-        console.error(`Failed to parse JSONL line: ${lastError}`);
-      }
-    }
-  } finally {
-    try { rl.close(); } catch {
-      // ignore close errors
     }
   }
 }
