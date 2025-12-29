@@ -4,11 +4,18 @@
  * Tests the complete user flow with multiple profiles where LiteLLM is the default.
  * Tests codemie-code (built-in), codemie-claude, and codemie-gemini (external) agents.
  *
+ * PREREQUISITES:
+ * - Run `npm run build && npm link` before running tests to ensure local wrappers are installed
+ * - Ensure 4 profiles are configured in ~/.codemie/config.json:
+ *   - litellm (default)
+ *   - gemini-profile
+ *   - bedrock-creds
+ *   - bedrock-profile
+ *
  * Test scenarios:
- * 1. Setup 4 profiles (litellm as default, gemini-profile, bedrock-creds, bedrock-profile)
- * 2. codemie-code: default profile, model override, profile override, both overrides
- * 3. codemie-claude: default profile, model override, multiple profile overrides (litellm, bedrock-creds, bedrock-profile), both overrides
- * 4. codemie-gemini: default profile with gemini model, model override, profile override, both overrides
+ * 1. codemie-code: default profile, model override, profile override, both overrides
+ * 2. codemie-claude: default profile, model override, multiple profile overrides (litellm, bedrock-creds, bedrock-profile), both overrides
+ * 3. codemie-gemini: default profile with gemini model, model override, profile override, both overrides
  *
  * REQUIRED ENVIRONMENT VARIABLES:
  *
@@ -149,150 +156,129 @@ describe('Multi-Agent Multi-Profile E2E', () => {
     // ==================== codemie-code tests ====================
     {
       agent: 'codemie-code',
-      command: 'node ./bin/agent-executor.js',
       description: 'should use default litellm profile without profile flag',
       profile: undefined,
-      model: undefined,
-      needsEnvVar: true
+      model: undefined
     },
     {
       agent: 'codemie-code',
-      command: 'node ./bin/agent-executor.js',
       description: 'should override model while using default profile',
       profile: undefined,
-      model: 'gpt-4o-mini',
-      needsEnvVar: true
+      model: 'gpt-4o-mini'
     },
     {
       agent: 'codemie-code',
-      command: 'node ./bin/agent-executor.js',
       description: 'should override profile to gemini-profile',
       profile: 'gemini-profile',
-      model: undefined,
-      needsEnvVar: true
+      model: undefined
     },
     {
       agent: 'codemie-code',
-      command: 'node ./bin/agent-executor.js',
       description: 'should override both profile and model',
       profile: 'gemini-profile',
-      model: 'claude-haiku-4-5-20251001',
-      needsEnvVar: true
+      model: 'claude-haiku-4-5-20251001'
     },
     // ==================== codemie-claude tests ====================
     {
       agent: 'codemie-claude',
-      command: 'node ./bin/codemie-claude.js',
       description: 'should use default litellm profile without profile flag',
       profile: undefined,
-      model: undefined,
-      needsEnvVar: false
+      model: undefined
     },
     {
       agent: 'codemie-claude',
-      command: 'node ./bin/codemie-claude.js',
       description: 'should override model while using default profile',
       profile: undefined,
-      model: 'claude-haiku-4-5-20251001',
-      needsEnvVar: false
+      model: 'claude-haiku-4-5-20251001'
     },
     {
       agent: 'codemie-claude',
-      command: 'node ./bin/codemie-claude.js',
       description: 'should override profile to gemini-profile',
       profile: 'gemini-profile',
-      model: undefined,
-      needsEnvVar: false
+      model: undefined
     },
     {
       agent: 'codemie-claude',
-      command: 'node ./bin/codemie-claude.js',
       description: 'should override profile to gemini-profile with model override',
       profile: 'gemini-profile',
-      model: 'claude-haiku-4-5-20251001',
-      needsEnvVar: false
+      model: 'claude-haiku-4-5-20251001'
     },
     {
       agent: 'codemie-claude',
-      command: 'node ./bin/codemie-claude.js',
       description: 'should override profile to bedrock-creds',
       profile: 'bedrock-creds',
-      model: undefined,
-      needsEnvVar: false
+      model: undefined
     },
     {
       agent: 'codemie-claude',
-      command: 'node ./bin/codemie-claude.js',
       description: 'should override profile to bedrock-creds with model override',
       profile: 'bedrock-creds',
-      model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0',
-      needsEnvVar: false
+      model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0'
     },
     {
       agent: 'codemie-claude',
-      command: 'node ./bin/codemie-claude.js',
       description: 'should override profile to bedrock-profile',
       profile: 'bedrock-profile',
-      model: undefined,
-      needsEnvVar: false
+      model: undefined
     },
     {
       agent: 'codemie-claude',
-      command: 'node ./bin/codemie-claude.js',
       description: 'should override profile to bedrock-profile with model override',
       profile: 'bedrock-profile',
-      model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0',
-      needsEnvVar: false
+      model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0'
     },
     // ==================== codemie-gemini tests ====================
     {
       agent: 'codemie-gemini',
-      command: 'node ./bin/codemie-gemini.js',
       description: 'should override model while using default profile',
       profile: undefined,
-      model: 'gemini-3-pro',
-      needsEnvVar: false
+      model: 'gemini-3-pro'
     },
     {
       agent: 'codemie-gemini',
-      command: 'node ./bin/codemie-gemini.js',
       description: 'should override profile to gemini-profile',
       profile: 'gemini-profile',
-      model: undefined,
-      needsEnvVar: false
+      model: undefined
     },
     {
       agent: 'codemie-gemini',
-      command: 'node ./bin/codemie-gemini.js',
       description: 'should override both profile and model',
       profile: 'gemini-profile',
-      model: 'gemini-3-pro',
-      needsEnvVar: false
+      model: 'gemini-3-pro'
     }
   ];
 
   it.each(testCases)(
     '$agent: $description',
-    async ({ command, profile, model, needsEnvVar }) => {
-      const parts = [command];
+    async ({ agent, profile, model }) => {
+      // Build command parts
+      const parts: string[] = [];
 
       if (profile) {
         parts.push(`--profile ${profile}`);
       }
 
       if (model) {
-        parts.push(`--model "${model}"`);
+        parts.push(`--model ${model}`);
       }
 
-      parts.push('--task "Just say one word: \'Hello\'"');
+      // All agents support --task flag through their flagMappings
+      parts.push(`--task "Just say one word: 'Hello'"`);
 
-      const result = execSync(parts.join(' '), {
+      const argsString = parts.join(' ');
+
+      // Determine the correct bin file for each agent
+      const binFile = agent === 'codemie-code'
+        ? './bin/agent-executor.js'
+        : `./bin/${agent}.js`;
+
+      const output = execSync(`node ${binFile} ${argsString}`, {
         encoding: 'utf-8',
-        env: needsEnvVar ? { ...process.env, _: 'codemie-code' } : { ...process.env },
-        timeout: 60000,
+        env: { ...process.env },
+        timeout: 60000
       });
 
-      expect(result.toLowerCase()).toContain('hello');
+      expect(output.toLowerCase()).toContain('hello');
     }
   );
 });
