@@ -118,6 +118,44 @@ describe('CLI Commands - Integration', () => {
     });
   });
 
+  describe('Update Command', () => {
+    it('should display help information', () => {
+      const output = cli.run('update --help');
+
+      // Should show usage information
+      expect(output).toMatch(/Update installed AI coding agents/i);
+    });
+
+    it('should show --check option in help', () => {
+      const output = cli.run('update --help');
+
+      // Should include check option
+      expect(output).toMatch(/--check/);
+    });
+
+    it('should handle unknown agent gracefully', () => {
+      const result = cli.runSilent('update nonexistent-agent-xyz');
+
+      // Should fail with non-zero exit code
+      expect(result.exitCode).not.toBe(0);
+      // Should show error message
+      expect(result.output + (result.error || '')).toMatch(/not found|Available agents/i);
+    });
+
+    it('should handle built-in agent update attempt', () => {
+      const result = cli.runSilent('update codemie-code');
+
+      // Should exit successfully but inform user
+      expect(result.output).toMatch(/built-in|cannot be updated/i);
+    });
+
+    it('should execute --check without crashing', () => {
+      // Note: This test requires network access to npm registry
+      // It may take a few seconds but should not crash
+      expect(() => cli.runSilent('update --check')).not.toThrow();
+    });
+  });
+
   describe('Help Command', () => {
     it('should display help information', () => {
       const output = cli.run('--help');
@@ -131,6 +169,13 @@ describe('CLI Commands - Integration', () => {
 
       // Should list main commands
       expect(output).toMatch(/setup|install|list|doctor/i);
+    });
+
+    it('should show update command in help', () => {
+      const output = cli.run('--help');
+
+      // Should list update command
+      expect(output).toMatch(/update/i);
     });
   });
 

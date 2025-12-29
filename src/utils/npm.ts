@@ -211,6 +211,46 @@ export async function getVersion(
 }
 
 /**
+ * Get latest version of a package from npm registry
+ *
+ * @param packageName - Package name to check (e.g., '@anthropic-ai/claude-code')
+ * @param options - Options including timeout
+ * @returns Latest version string, or null if package not found
+ *
+ * @example
+ * ```typescript
+ * const latest = await getLatestVersion('@anthropic-ai/claude-code');
+ * // Returns: '1.0.51' or null
+ * ```
+ */
+export async function getLatestVersion(
+  packageName: string,
+  options: NpmOptions = {}
+): Promise<string | null> {
+  const timeout = options.timeout ?? 10000; // 10 seconds default
+
+  try {
+    const isWindows = os.platform() === 'win32';
+    const execOptions: ExecOptions = {
+      cwd: options.cwd,
+      env: options.env,
+      timeout,
+      shell: isWindows // npm is a .cmd file on Windows
+    };
+
+    const result = await exec('npm', ['view', packageName, 'version'], execOptions);
+
+    if (result.code !== 0) {
+      return null;
+    }
+
+    return result.stdout.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Run a command via npx
  *
  * @param command - Command to run (e.g., 'create-react-app')

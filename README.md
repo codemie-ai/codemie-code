@@ -163,6 +163,7 @@ The CodeMie CLI has a rich set of commands for managing agents, configuration, a
 codemie setup            # Interactive configuration wizard
 codemie list             # List all available agents
 codemie install <agent>  # Install an agent
+codemie update <agent>   # Update installed agents
 codemie profile          # Manage provider profiles
 codemie analytics        # View usage analytics (sessions, tokens, costs, tools)
 codemie workflow <cmd>   # Manage CI/CD workflows

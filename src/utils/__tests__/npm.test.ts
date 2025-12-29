@@ -233,6 +233,65 @@ describe('npm utility', () => {
     });
   });
 
+  describe('getLatestVersion', () => {
+    it('should return latest version from npm registry', async () => {
+      mockExec.mockResolvedValue({ code: 0, stdout: '1.0.51\n', stderr: '' });
+
+      const version = await npm.getLatestVersion('@anthropic-ai/claude-code');
+
+      expect(version).toBe('1.0.51');
+      expect(mockExec).toHaveBeenCalledWith(
+        'npm',
+        ['view', '@anthropic-ai/claude-code', 'version'],
+        expect.objectContaining({ timeout: 10000 })
+      );
+    });
+
+    it('should return null when package is not found', async () => {
+      mockExec.mockResolvedValue({ code: 1, stdout: '', stderr: 'npm ERR! 404' });
+
+      const version = await npm.getLatestVersion('nonexistent-package-xyz');
+
+      expect(version).toBeNull();
+    });
+
+    it('should return null when exec throws error', async () => {
+      mockExec.mockRejectedValue(new Error('Network error'));
+
+      const version = await npm.getLatestVersion('test-package');
+
+      expect(version).toBeNull();
+    });
+
+    it('should return null when stdout is empty', async () => {
+      mockExec.mockResolvedValue({ code: 0, stdout: '', stderr: '' });
+
+      const version = await npm.getLatestVersion('test-package');
+
+      expect(version).toBeNull();
+    });
+
+    it('should use custom timeout', async () => {
+      mockExec.mockResolvedValue({ code: 0, stdout: '2.0.0', stderr: '' });
+
+      await npm.getLatestVersion('test-package', { timeout: 5000 });
+
+      expect(mockExec).toHaveBeenCalledWith(
+        'npm',
+        ['view', 'test-package', 'version'],
+        expect.objectContaining({ timeout: 5000 })
+      );
+    });
+
+    it('should trim whitespace from version output', async () => {
+      mockExec.mockResolvedValue({ code: 0, stdout: '  3.0.0  \n', stderr: '' });
+
+      const version = await npm.getLatestVersion('test-package');
+
+      expect(version).toBe('3.0.0');
+    });
+  });
+
   describe('npxRun', () => {
     it('should run npx command successfully', async () => {
       mockExec.mockResolvedValue({ code: 0, stdout: '', stderr: '' });
