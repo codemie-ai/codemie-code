@@ -1,6 +1,0 @@
-{
-  "OPENAI_API_KEY": "not-required",
-  "OPENAI_API_BASE": "http://localhost:11434/v1",
-  "REAL_OPENAI_KEY": "sk-proj-real-openai-key...",
-  "CUSTOM_KEY": "some-value"
-}

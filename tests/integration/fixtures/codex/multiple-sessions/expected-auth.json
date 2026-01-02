@@ -1,7 +1,0 @@
-{
-  "ANTHROPIC_API_KEY": "sk-ant-user-key",
-  "OPENAI_API_KEY": "not-required",
-  "OPENAI_API_BASE": "http://localhost:11434/v1",
-  "GEMINI_API_KEY": "not-required",
-  "GOOGLE_GEMINI_BASE_URL": "http://localhost:8080/v1"
-}
