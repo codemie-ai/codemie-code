@@ -19,8 +19,8 @@ import type { AgentMetricsSupport, MetricsSession, FileSnapshot } from './types.
 import { METRICS_CONFIG } from '../metrics-config.js';
 import { logger } from '../../../utils/logger.js';
 import { watch } from 'fs';
-import { detectGitBranch } from '../../../utils/git.js';
-import { createErrorContext, formatErrorForLog } from '../../../utils/error-context.js';
+import { detectGitBranch } from '../../../utils/processes.js';
+import { createErrorContext, formatErrorForLog } from '../../../utils/errors.js';
 
 export interface MetricsOrchestratorOptions {
   sessionId?: string; // Optional: provide existing session ID

@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
 import { CodeMieSSO } from '../../../providers/plugins/sso/sso.auth.js';
-import { ConfigLoader } from '../../../utils/config-loader.js';
+import { ConfigLoader } from '../../../utils/config.js';
 import { ProviderRegistry } from '../../../providers/core/registry.js';
 import { logger } from '../../../utils/logger.js';
 

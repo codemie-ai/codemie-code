@@ -1,6 +1,6 @@
 import * as fs from 'fs/promises';
 import { logger } from '../utils/logger.js';
-import { getCodemieHome, getCodemiePath } from '../utils/codemie-home.js';
+import { getCodemieHome, getCodemiePath } from '../utils/paths.js';
 
 export interface EnvConfig {
   [key: string]: string;

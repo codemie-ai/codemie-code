@@ -1,19 +1,23 @@
 /**
- * Cross-Platform Path Utilities
+ * Path Utilities
  *
- * Provides platform-agnostic path operations that work consistently
- * across Windows, macOS, and Linux by normalizing all paths to forward slashes.
- *
- * This module consolidates all path-related logic including:
- * - Path normalization and splitting
+ * Consolidated path operations including:
+ * - Cross-platform path normalization
  * - Path structure validation
  * - Security checks (directory traversal prevention)
  * - UUID validation for session files
- * - File extension validation
+ * - CodeMie home directory resolution
+ * - ESM module path utilities
  */
 
 import path from 'path';
 import { homedir } from 'os';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
+
+// ============================================================================
+// Path Normalization and Manipulation
+// ============================================================================
 
 /**
  * Normalize path separators to forward slashes for cross-platform consistency
@@ -84,6 +88,10 @@ export function getFilename(filePath: string): string {
 function findBaseIndex(parts: string[], baseDirName: string): number {
   return parts.findIndex(part => part === baseDirName);
 }
+
+// ============================================================================
+// Path Structure Validation
+// ============================================================================
 
 /**
  * Check if a path matches a specific structure
@@ -266,7 +274,6 @@ export function isValidUuidFilename(filename: string, extension: string): boolea
   return isValidUuid(nameWithoutExt);
 }
 
-
 // ============================================================================
 // Home Directory Utilities
 // ============================================================================
@@ -292,4 +299,77 @@ export function isValidUuidFilename(filename: string, extension: string): boolea
  */
 export function resolveHomeDir(relativePath: string): string {
   return path.join(homedir(), relativePath);
+}
+
+// ============================================================================
+// CodeMie Home Directory Resolution
+// ============================================================================
+
+/**
+ * Get CodeMie home directory
+ *
+ * Respects CODEMIE_HOME environment variable for custom locations.
+ * This enables:
+ * - Test isolation (each test gets unique temp directory)
+ * - Power user customization (relocate data/config)
+ * - Multiple instances (development, staging, production)
+ *
+ * Precedent: CARGO_HOME, POETRY_HOME, NVM_DIR, PYENV_ROOT
+ *
+ * Priority:
+ * 1. CODEMIE_HOME environment variable
+ * 2. ~/.codemie (default)
+ *
+ * @returns Absolute path to CodeMie home directory
+ *
+ * @example
+ * // Default
+ * getCodemieHome() // => '/Users/john/.codemie'
+ *
+ * // Custom location
+ * process.env.CODEMIE_HOME = '/data/codemie';
+ * getCodemieHome() // => '/data/codemie'
+ *
+ * // Test isolation
+ * process.env.CODEMIE_HOME = '/tmp/codemie-test-12345';
+ * getCodemieHome() // => '/tmp/codemie-test-12345'
+ */
+export function getCodemieHome(): string {
+  if (process.env.CODEMIE_HOME) {
+    return process.env.CODEMIE_HOME;
+  }
+
+  return path.join(homedir(), '.codemie');
+}
+
+/**
+ * Get path within CodeMie home directory
+ *
+ * @param paths Path segments to join with home directory
+ * @returns Absolute path within CodeMie home
+ *
+ * @example
+ * getCodemiePath('logs') // => '/Users/john/.codemie/logs'
+ * getCodemiePath('metrics', 'sessions') // => '/Users/john/.codemie/metrics/sessions'
+ */
+export function getCodemiePath(...paths: string[]): string {
+  return path.join(getCodemieHome(), ...paths);
+}
+
+// ============================================================================
+// ESM Module Path Utilities
+// ============================================================================
+
+/**
+ * Get the directory name of the current module (ESM equivalent of __dirname)
+ *
+ * @param importMetaUrl - Pass import.meta.url from the calling module
+ * @returns The directory path
+ *
+ * @example
+ * // In an ES module:
+ * const __dirname = getDirname(import.meta.url);
+ */
+export function getDirname(importMetaUrl: string): string {
+  return dirname(fileURLToPath(importMetaUrl));
 }

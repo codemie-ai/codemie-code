@@ -8,7 +8,7 @@ import https from 'https';
 import http from 'http';
 import { URL } from 'url';
 import { logger } from '../../../utils/logger.js';
-import { sanitizeHeaders } from '../../../utils/sanitize.js';
+import { sanitizeHeaders } from '../../../utils/security.js';
 
 export interface HTTPClientConfig {
   timeout?: number;                  // Timeout in milliseconds (default: 5000)

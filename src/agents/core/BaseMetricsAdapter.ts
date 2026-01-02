@@ -7,7 +7,7 @@
  */
 
 import { join, extname } from 'path';
-import { resolveHomeDir, splitPath } from '../../utils/path-utils.js';
+import { resolveHomeDir, splitPath } from '../../utils/paths.js';
 import type {
   AgentMetricsSupport,
   MetricSnapshot,

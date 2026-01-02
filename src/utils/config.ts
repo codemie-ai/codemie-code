@@ -12,7 +12,7 @@ import {
   isLegacyConfig
 } from '../env/types.js';
 import { ProviderRegistry } from '../providers/index.js';
-import { getCodemieHome, getCodemiePath } from './codemie-home.js';
+import { getCodemieHome, getCodemiePath } from './paths.js';
 
 // Re-export for backward compatibility
 export type { CodeMieConfigOptions, CodeMieIntegrationInfo, ConfigWithSource };
@@ -699,5 +699,36 @@ export class ConfigLoader {
     }
 
     return env;
+  }
+}
+
+// ============================================================================
+// Installation ID Management
+// ============================================================================
+
+import { randomUUID } from 'node:crypto';
+
+const INSTALLATION_ID_PATH = getCodemiePath('installation-id');
+
+/**
+ * Get or create installation ID
+ * Returns a persistent UUID that uniquely identifies this CodeMie installation
+ */
+export async function getInstallationId(): Promise<string> {
+  try {
+    // Try to read existing ID
+    const { readFile } = await import('node:fs/promises');
+    const id = await readFile(INSTALLATION_ID_PATH, 'utf-8');
+    return id.trim();
+  } catch {
+    // Generate new ID if file doesn't exist
+    const id = randomUUID();
+
+    // Save for future use (directory already exists via getCodemiePath)
+    const { writeFile, mkdir } = await import('node:fs/promises');
+    await mkdir(getCodemieHome(), { recursive: true });
+    await writeFile(INSTALLATION_ID_PATH, id, 'utf-8');
+
+    return id;
   }
 }

@@ -7,7 +7,7 @@ import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import type { MetricDelta } from '../../../agents/core/metrics/types.js';
 import type { AnalyticsFilter } from './types.js';
-import { getCodemiePath } from '../../../utils/codemie-home.js';
+import { getCodemiePath } from '../../../utils/paths.js';
 
 /**
  * Session start event (special record type)

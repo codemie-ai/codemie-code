@@ -4,7 +4,7 @@ import type { Migration, MigrationResult } from './types.js';
 import { MigrationRegistry } from './registry.js';
 import { isMultiProviderConfig, isLegacyConfig } from '../env/types.js';
 import { logger } from '../utils/logger.js';
-import { getCodemieHome } from '../utils/codemie-home.js';
+import { getCodemieHome } from '../utils/paths.js';
 
 /**
  * Migration 001: Rename config.json to codemie-cli.config.json

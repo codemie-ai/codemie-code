@@ -1,11 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import * as npm from '../npm.js';
 import { NpmError, NpmErrorCode } from '../errors.js';
-
-// Mock the exec module
-vi.mock('../exec.js', () => ({
-  exec: vi.fn()
-}));
+import * as exec from '../exec.js';
 
 // Mock the logger module
 vi.mock('../logger.js', () => ({
@@ -17,14 +12,13 @@ vi.mock('../logger.js', () => ({
   }
 }));
 
-import { exec } from '../exec.js';
 import { logger } from '../logger.js';
 
-const mockExec = vi.mocked(exec);
-
 describe('npm utility', () => {
+  let execSpy: ReturnType<typeof vi.spyOn>;
+
   beforeEach(() => {
-    vi.clearAllMocks();
+    execSpy = vi.spyOn(exec, 'exec');
   });
 
   afterEach(() => {
@@ -33,11 +27,12 @@ describe('npm utility', () => {
 
   describe('installGlobal', () => {
     it('should install package successfully', async () => {
-      mockExec.mockResolvedValue({ code: 0, stdout: '', stderr: '' });
+      execSpy.mockResolvedValue({ code: 0, stdout: '', stderr: '' });
 
-      await npm.installGlobal('test-package');
+      const { installGlobal } = await import('../processes.js');
+      await installGlobal('test-package');
 
-      expect(mockExec).toHaveBeenCalledWith(
+      expect(execSpy).toHaveBeenCalledWith(
         'npm',
         ['install', '-g', 'test-package'],
         expect.objectContaining({ timeout: 120000 })
@@ -51,11 +46,12 @@ describe('npm utility', () => {
     });
 
     it('should install package with version', async () => {
-      mockExec.mockResolvedValue({ code: 0, stdout: '', stderr: '' });
+      execSpy.mockResolvedValue({ code: 0, stdout: '', stderr: '' });
 
-      await npm.installGlobal('test-package', { version: '1.0.0' });
+      const { installGlobal } = await import('../processes.js');
+      await installGlobal('test-package', { version: '1.0.0' });
 
-      expect(mockExec).toHaveBeenCalledWith(
+      expect(execSpy).toHaveBeenCalledWith(
         'npm',
         ['install', '-g', 'test-package@1.0.0'],
         expect.objectContaining({ timeout: 120000 })
@@ -66,12 +62,13 @@ describe('npm utility', () => {
     });
 
     it('should throw NpmError with TIMEOUT code on timeout', async () => {
-      mockExec.mockRejectedValue(new Error('Command timed out after 120000ms'));
+      execSpy.mockRejectedValue(new Error('Command timed out after 120000ms'));
 
-      await expect(npm.installGlobal('test-package')).rejects.toThrow(NpmError);
+      const { installGlobal } = await import('../processes.js');
+      await expect(installGlobal('test-package')).rejects.toThrow(NpmError);
 
       try {
-        await npm.installGlobal('test-package');
+        await installGlobal('test-package');
       } catch (error) {
         expect(error).toBeInstanceOf(NpmError);
         expect((error as NpmError).code).toBe(NpmErrorCode.TIMEOUT);
@@ -79,10 +76,11 @@ describe('npm utility', () => {
     });
 
     it('should throw NpmError with PERMISSION_ERROR code on EACCES', async () => {
-      mockExec.mockRejectedValue(new Error('EACCES: permission denied'));
+      execSpy.mockRejectedValue(new Error('EACCES: permission denied'));
 
+      const { installGlobal } = await import('../processes.js');
       try {
-        await npm.installGlobal('test-package');
+        await installGlobal('test-package');
       } catch (error) {
         expect(error).toBeInstanceOf(NpmError);
         expect((error as NpmError).code).toBe(NpmErrorCode.PERMISSION_ERROR);
@@ -91,10 +89,11 @@ describe('npm utility', () => {
     });
 
     it('should throw NpmError with NETWORK_ERROR code on network failure', async () => {
-      mockExec.mockRejectedValue(new Error('ENOTFOUND registry.npmjs.org'));
+      execSpy.mockRejectedValue(new Error('ENOTFOUND registry.npmjs.org'));
 
+      const { installGlobal } = await import('../processes.js');
       try {
-        await npm.installGlobal('test-package');
+        await installGlobal('test-package');
       } catch (error) {
         expect(error).toBeInstanceOf(NpmError);
         expect((error as NpmError).code).toBe(NpmErrorCode.NETWORK_ERROR);
@@ -103,10 +102,11 @@ describe('npm utility', () => {
     });
 
     it('should throw NpmError with NOT_FOUND code on package not found', async () => {
-      mockExec.mockRejectedValue(new Error('404 Not Found - GET https://registry.npmjs.org/nonexistent-package'));
+      execSpy.mockRejectedValue(new Error('404 Not Found - GET https://registry.npmjs.org/nonexistent-package'));
 
+      const { installGlobal } = await import('../processes.js');
       try {
-        await npm.installGlobal('nonexistent-package');
+        await installGlobal('nonexistent-package');
       } catch (error) {
         expect(error).toBeInstanceOf(NpmError);
         expect((error as NpmError).code).toBe(NpmErrorCode.NOT_FOUND);
@@ -115,11 +115,12 @@ describe('npm utility', () => {
     });
 
     it('should use custom timeout', async () => {
-      mockExec.mockResolvedValue({ code: 0, stdout: '', stderr: '' });
+      execSpy.mockResolvedValue({ code: 0, stdout: '', stderr: '' });
 
-      await npm.installGlobal('test-package', { timeout: 60000 });
+      const { installGlobal } = await import('../processes.js');
+      await installGlobal('test-package', { timeout: 60000 });
 
-      expect(mockExec).toHaveBeenCalledWith(
+      expect(execSpy).toHaveBeenCalledWith(
         'npm',
         ['install', '-g', 'test-package'],
         expect.objectContaining({ timeout: 60000 })
@@ -129,11 +130,12 @@ describe('npm utility', () => {
 
   describe('uninstallGlobal', () => {
     it('should uninstall package successfully', async () => {
-      mockExec.mockResolvedValue({ code: 0, stdout: '', stderr: '' });
+      execSpy.mockResolvedValue({ code: 0, stdout: '', stderr: '' });
 
-      await npm.uninstallGlobal('test-package');
+      const { uninstallGlobal } = await import('../processes.js');
+      await uninstallGlobal('test-package');
 
-      expect(mockExec).toHaveBeenCalledWith(
+      expect(execSpy).toHaveBeenCalledWith(
         'npm',
         ['uninstall', '-g', 'test-package'],
         expect.objectContaining({ timeout: 30000 })
@@ -147,22 +149,22 @@ describe('npm utility', () => {
     });
 
     it('should throw NpmError on failure', async () => {
-      mockExec.mockRejectedValue(new Error('Package not installed'));
+      execSpy.mockRejectedValue(new Error('Package not installed'));
 
-      await expect(npm.uninstallGlobal('test-package')).rejects.toThrow(
-        NpmError
-      );
+      const { uninstallGlobal } = await import('../processes.js');
+      await expect(uninstallGlobal('test-package')).rejects.toThrow(NpmError);
     });
   });
 
   describe('listGlobal', () => {
     it('should return true when package is installed (exit code 0)', async () => {
-      mockExec.mockResolvedValue({ code: 0, stdout: 'npm@10.2.4', stderr: '' });
+      execSpy.mockResolvedValue({ code: 0, stdout: 'npm@10.2.4', stderr: '' });
 
-      const result = await npm.listGlobal('npm');
+      const { listGlobal } = await import('../processes.js');
+      const result = await listGlobal('npm');
 
       expect(result).toBe(true);
-      expect(mockExec).toHaveBeenCalledWith(
+      expect(execSpy).toHaveBeenCalledWith(
         'npm',
         ['list', '-g', 'npm'],
         expect.objectContaining({ timeout: 5000 })
@@ -170,17 +172,19 @@ describe('npm utility', () => {
     });
 
     it('should return false when package is not installed (exit code 1)', async () => {
-      mockExec.mockResolvedValue({ code: 1, stdout: '', stderr: '' });
+      execSpy.mockResolvedValue({ code: 1, stdout: '', stderr: '' });
 
-      const result = await npm.listGlobal('definitely-not-installed-package-xyz');
+      const { listGlobal } = await import('../processes.js');
+      const result = await listGlobal('definitely-not-installed-package-xyz');
 
       expect(result).toBe(false);
     });
 
     it('should return false when exec throws error', async () => {
-      mockExec.mockRejectedValue(new Error('Command failed'));
+      execSpy.mockRejectedValue(new Error('Command failed'));
 
-      const result = await npm.listGlobal('test-package');
+      const { listGlobal } = await import('../processes.js');
+      const result = await listGlobal('test-package');
 
       expect(result).toBe(false);
     });
@@ -188,12 +192,13 @@ describe('npm utility', () => {
 
   describe('getVersion', () => {
     it('should parse and return npm version correctly', async () => {
-      mockExec.mockResolvedValue({ code: 0, stdout: '10.2.4', stderr: '' });
+      execSpy.mockResolvedValue({ code: 0, stdout: '10.2.4', stderr: '' });
 
-      const version = await npm.getVersion();
+      const { getVersion } = await import('../processes.js');
+      const version = await getVersion();
 
       expect(version).toBe('10.2.4');
-      expect(mockExec).toHaveBeenCalledWith(
+      expect(execSpy).toHaveBeenCalledWith(
         'npm',
         ['--version'],
         expect.objectContaining({ timeout: 5000 })
@@ -201,33 +206,36 @@ describe('npm utility', () => {
     });
 
     it('should handle pre-release versions', async () => {
-      mockExec.mockResolvedValue({
+      execSpy.mockResolvedValue({
         code: 0,
         stdout: '10.0.0-beta.1',
         stderr: ''
       });
 
-      const version = await npm.getVersion();
+      const { getVersion } = await import('../processes.js');
+      const version = await getVersion();
 
       expect(version).toBe('10.0.0');
     });
 
     it('should return null when npm is not found', async () => {
-      mockExec.mockRejectedValue(new Error('npm: command not found'));
+      execSpy.mockRejectedValue(new Error('npm: command not found'));
 
-      const version = await npm.getVersion();
+      const { getVersion } = await import('../processes.js');
+      const version = await getVersion();
 
       expect(version).toBeNull();
     });
 
     it('should return null when version cannot be parsed', async () => {
-      mockExec.mockResolvedValue({
+      execSpy.mockResolvedValue({
         code: 0,
         stdout: 'invalid version',
         stderr: ''
       });
 
-      const version = await npm.getVersion();
+      const { getVersion } = await import('../processes.js');
+      const version = await getVersion();
 
       expect(version).toBeNull();
     });
@@ -235,12 +243,13 @@ describe('npm utility', () => {
 
   describe('getLatestVersion', () => {
     it('should return latest version from npm registry', async () => {
-      mockExec.mockResolvedValue({ code: 0, stdout: '1.0.51\n', stderr: '' });
+      execSpy.mockResolvedValue({ code: 0, stdout: '1.0.51\n', stderr: '' });
 
-      const version = await npm.getLatestVersion('@anthropic-ai/claude-code');
+      const { getLatestVersion } = await import('../processes.js');
+      const version = await getLatestVersion('@anthropic-ai/claude-code');
 
       expect(version).toBe('1.0.51');
-      expect(mockExec).toHaveBeenCalledWith(
+      expect(execSpy).toHaveBeenCalledWith(
         'npm',
         ['view', '@anthropic-ai/claude-code', 'version'],
         expect.objectContaining({ timeout: 10000 })
@@ -248,35 +257,39 @@ describe('npm utility', () => {
     });
 
     it('should return null when package is not found', async () => {
-      mockExec.mockResolvedValue({ code: 1, stdout: '', stderr: 'npm ERR! 404' });
+      execSpy.mockResolvedValue({ code: 1, stdout: '', stderr: 'npm ERR! 404' });
 
-      const version = await npm.getLatestVersion('nonexistent-package-xyz');
+      const { getLatestVersion } = await import('../processes.js');
+      const version = await getLatestVersion('nonexistent-package-xyz');
 
       expect(version).toBeNull();
     });
 
     it('should return null when exec throws error', async () => {
-      mockExec.mockRejectedValue(new Error('Network error'));
+      execSpy.mockRejectedValue(new Error('Network error'));
 
-      const version = await npm.getLatestVersion('test-package');
+      const { getLatestVersion } = await import('../processes.js');
+      const version = await getLatestVersion('test-package');
 
       expect(version).toBeNull();
     });
 
     it('should return null when stdout is empty', async () => {
-      mockExec.mockResolvedValue({ code: 0, stdout: '', stderr: '' });
+      execSpy.mockResolvedValue({ code: 0, stdout: '', stderr: '' });
 
-      const version = await npm.getLatestVersion('test-package');
+      const { getLatestVersion } = await import('../processes.js');
+      const version = await getLatestVersion('test-package');
 
       expect(version).toBeNull();
     });
 
     it('should use custom timeout', async () => {
-      mockExec.mockResolvedValue({ code: 0, stdout: '2.0.0', stderr: '' });
+      execSpy.mockResolvedValue({ code: 0, stdout: '2.0.0', stderr: '' });
 
-      await npm.getLatestVersion('test-package', { timeout: 5000 });
+      const { getLatestVersion } = await import('../processes.js');
+      await getLatestVersion('test-package', { timeout: 5000 });
 
-      expect(mockExec).toHaveBeenCalledWith(
+      expect(execSpy).toHaveBeenCalledWith(
         'npm',
         ['view', 'test-package', 'version'],
         expect.objectContaining({ timeout: 5000 })
@@ -284,9 +297,10 @@ describe('npm utility', () => {
     });
 
     it('should trim whitespace from version output', async () => {
-      mockExec.mockResolvedValue({ code: 0, stdout: '  3.0.0  \n', stderr: '' });
+      execSpy.mockResolvedValue({ code: 0, stdout: '  3.0.0  \n', stderr: '' });
 
-      const version = await npm.getLatestVersion('test-package');
+      const { getLatestVersion } = await import('../processes.js');
+      const version = await getLatestVersion('test-package');
 
       expect(version).toBe('3.0.0');
     });
@@ -294,11 +308,12 @@ describe('npm utility', () => {
 
   describe('npxRun', () => {
     it('should run npx command successfully', async () => {
-      mockExec.mockResolvedValue({ code: 0, stdout: '', stderr: '' });
+      execSpy.mockResolvedValue({ code: 0, stdout: '', stderr: '' });
 
-      await npm.npxRun('create-react-app', ['my-app']);
+      const { npxRun } = await import('../processes.js');
+      await npxRun('create-react-app', ['my-app']);
 
-      expect(mockExec).toHaveBeenCalledWith(
+      expect(execSpy).toHaveBeenCalledWith(
         'npx',
         ['create-react-app', 'my-app'],
         expect.objectContaining({ timeout: 300000, interactive: undefined })
@@ -312,11 +327,12 @@ describe('npm utility', () => {
     });
 
     it('should run with interactive mode', async () => {
-      mockExec.mockResolvedValue({ code: 0, stdout: '', stderr: '' });
+      execSpy.mockResolvedValue({ code: 0, stdout: '', stderr: '' });
 
-      await npm.npxRun('create-react-app', ['my-app'], { interactive: true });
+      const { npxRun } = await import('../processes.js');
+      await npxRun('create-react-app', ['my-app'], { interactive: true });
 
-      expect(mockExec).toHaveBeenCalledWith(
+      expect(execSpy).toHaveBeenCalledWith(
         'npx',
         ['create-react-app', 'my-app'],
         expect.objectContaining({ interactive: true })
@@ -324,11 +340,12 @@ describe('npm utility', () => {
     });
 
     it('should use custom timeout', async () => {
-      mockExec.mockResolvedValue({ code: 0, stdout: '', stderr: '' });
+      execSpy.mockResolvedValue({ code: 0, stdout: '', stderr: '' });
 
-      await npm.npxRun('eslint', ['src/'], { timeout: 60000 });
+      const { npxRun } = await import('../processes.js');
+      await npxRun('eslint', ['src/'], { timeout: 60000 });
 
-      expect(mockExec).toHaveBeenCalledWith(
+      expect(execSpy).toHaveBeenCalledWith(
         'npx',
         ['eslint', 'src/'],
         expect.objectContaining({ timeout: 60000 })
@@ -336,19 +353,21 @@ describe('npm utility', () => {
     });
 
     it('should throw NpmError on failure', async () => {
-      mockExec.mockRejectedValue(new Error('Command failed'));
+      execSpy.mockRejectedValue(new Error('Command failed'));
 
+      const { npxRun } = await import('../processes.js');
       await expect(
-        npm.npxRun('create-react-app', ['my-app'])
+        npxRun('create-react-app', ['my-app'])
       ).rejects.toThrow(NpmError);
     });
 
     it('should handle empty args array', async () => {
-      mockExec.mockResolvedValue({ code: 0, stdout: '', stderr: '' });
+      execSpy.mockResolvedValue({ code: 0, stdout: '', stderr: '' });
 
-      await npm.npxRun('some-command');
+      const { npxRun } = await import('../processes.js');
+      await npxRun('some-command');
 
-      expect(mockExec).toHaveBeenCalledWith(
+      expect(execSpy).toHaveBeenCalledWith(
         'npx',
         ['some-command'],
         expect.objectContaining({ timeout: 300000 })

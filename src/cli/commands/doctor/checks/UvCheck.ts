@@ -2,7 +2,7 @@
  * UV (Python package installer) health check
  */
 
-import { exec } from '../../../../utils/exec.js';
+import { exec } from '../../../../utils/processes.js';
 import { HealthCheck, HealthCheckResult, HealthCheckDetail } from '../types.js';
 
 export class UvCheck implements HealthCheck {

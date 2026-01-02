@@ -25,7 +25,7 @@ describe('getCommandPath', () => {
       stderr: ''
     });
 
-    const { getCommandPath } = await import('../which.js');
+    const { getCommandPath } = await import('../processes.js');
     const result = await getCommandPath('claude');
 
     // Should return path WITHOUT trailing \r
@@ -42,7 +42,7 @@ describe('getCommandPath', () => {
       stderr: ''
     });
 
-    const { getCommandPath } = await import('../which.js');
+    const { getCommandPath } = await import('../processes.js');
     const result = await getCommandPath('node');
 
     // Should return first path, properly trimmed
@@ -57,7 +57,7 @@ describe('getCommandPath', () => {
       stderr: ''
     });
 
-    const { getCommandPath } = await import('../which.js');
+    const { getCommandPath } = await import('../processes.js');
     const result = await getCommandPath('node');
 
     // Should return path without trailing \n
@@ -73,7 +73,7 @@ describe('getCommandPath', () => {
       stderr: ''
     });
 
-    const { getCommandPath } = await import('../which.js');
+    const { getCommandPath } = await import('../processes.js');
     const result = await getCommandPath('python3');
 
     // Should return first path, properly trimmed
@@ -88,7 +88,7 @@ describe('getCommandPath', () => {
       stderr: ''
     });
 
-    const { getCommandPath } = await import('../which.js');
+    const { getCommandPath } = await import('../processes.js');
     const result = await getCommandPath('node');
 
     // Should return first path, properly trimmed
@@ -102,7 +102,7 @@ describe('getCommandPath', () => {
       stderr: 'INFO: Could not find files for the given pattern(s).'
     });
 
-    const { getCommandPath } = await import('../which.js');
+    const { getCommandPath } = await import('../processes.js');
     const result = await getCommandPath('nonexistent');
 
     expect(result).toBeNull();
@@ -111,7 +111,7 @@ describe('getCommandPath', () => {
   it('should return null on execution error', async () => {
     execSpy.mockRejectedValue(new Error('Command failed'));
 
-    const { getCommandPath } = await import('../which.js');
+    const { getCommandPath } = await import('../processes.js');
     const result = await getCommandPath('test');
 
     expect(result).toBeNull();
@@ -125,7 +125,7 @@ describe('getCommandPath', () => {
       stderr: ''
     });
 
-    const { getCommandPath } = await import('../which.js');
+    const { getCommandPath } = await import('../processes.js');
     const result = await getCommandPath('cmd');
 
     expect(result).toBe('C:\\path\\to\\cmd.exe');
@@ -150,7 +150,7 @@ describe('commandExists', () => {
       stderr: ''
     });
 
-    const { commandExists } = await import('../which.js');
+    const { commandExists } = await import('../processes.js');
     const result = await commandExists('cmd');
 
     expect(result).toBe(true);
@@ -163,7 +163,7 @@ describe('commandExists', () => {
       stderr: 'INFO: Could not find files for the given pattern(s).'
     });
 
-    const { commandExists } = await import('../which.js');
+    const { commandExists } = await import('../processes.js');
     const result = await commandExists('nonexistent');
 
     expect(result).toBe(false);
@@ -172,7 +172,7 @@ describe('commandExists', () => {
   it('should return false on execution error', async () => {
     execSpy.mockRejectedValue(new Error('Command failed'));
 
-    const { commandExists } = await import('../which.js');
+    const { commandExists } = await import('../processes.js');
     const result = await commandExists('test');
 
     expect(result).toBe(false);

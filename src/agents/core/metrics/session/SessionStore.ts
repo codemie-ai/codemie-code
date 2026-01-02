@@ -11,7 +11,7 @@ import { dirname } from 'path';
 import type { MetricsSession } from '../types.js';
 import { getSessionPath, getMetricsPath, METRICS_PATHS } from '../../metrics-config.js';
 import { logger } from '../../../../utils/logger.js';
-import { createErrorContext, formatErrorForLog } from '../../../../utils/error-context.js';
+import { createErrorContext, formatErrorForLog } from '../../../../utils/errors.js';
 
 export class SessionStore {
   /**

@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { commandExists, getCommandPath } from '../../../src/utils/which.js';
+import { commandExists, getCommandPath } from '../../../src/utils/processes.js';
 
 describe('which utility', () => {
   describe('commandExists', () => {

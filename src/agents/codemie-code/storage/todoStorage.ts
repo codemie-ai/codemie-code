@@ -8,7 +8,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import type { Todo } from '../types.js';
-import { getCodemiePath } from '../../../utils/codemie-home.js';
+import { getCodemiePath } from '../../../utils/paths.js';
 
 export interface TodoStorageConfig {
   workingDirectory: string;

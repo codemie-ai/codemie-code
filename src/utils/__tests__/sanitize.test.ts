@@ -6,7 +6,7 @@ import {
   sanitizeAuthToken,
   sanitizeLogArgs,
   sanitizeHeaders
-} from '../sanitize.js';
+} from '../security.js';
 
 describe('sanitize utilities', () => {
   describe('sanitizeValue', () => {

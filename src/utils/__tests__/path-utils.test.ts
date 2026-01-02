@@ -14,7 +14,7 @@ import {
   matchesPathStructure,
   validatePathDepth,
   resolveHomeDir
-} from '../path-utils.js';
+} from '../paths.js';
 
 // Test-only helper functions
 function findDirectoryIndex(filePath: string, dirName: string): number {

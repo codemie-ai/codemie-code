@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { getDirname } from '../dirname.js';
+import { getDirname } from '../paths.js';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 

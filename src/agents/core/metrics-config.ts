@@ -6,7 +6,7 @@
 
 import type { MetricsConfig } from './types.js';
 import { join } from 'path';
-import { getCodemieHome } from '../../utils/codemie-home.js';
+import { getCodemieHome } from '../../utils/paths.js';
 
 /**
  * Default metrics configuration

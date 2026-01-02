@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import { ConfigLoader } from './config-loader.js';
+import { ConfigLoader } from './config.js';
 import { AgentRegistry, BUILTIN_AGENT_NAME } from '../agents/registry.js';
 import type { AgentAdapter } from '../agents/core/types.js';
 

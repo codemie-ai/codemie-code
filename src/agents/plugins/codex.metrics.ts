@@ -17,8 +17,8 @@ import type {
   FileOperationType
 } from '../core/metrics/types.js';
 import { logger } from '../../utils/logger.js';
-import { parseMultiLineJSON } from '../../utils/json-parser.js';
-import { getFilename } from '../../utils/path-utils.js';
+import { parseMultiLineJSON } from '../../utils/parsers.js';
+import { getFilename } from '../../utils/paths.js';
 import type { AgentMetadata } from '../core/types.js';
 
 export class CodexMetricsAdapter extends BaseMetricsAdapter {

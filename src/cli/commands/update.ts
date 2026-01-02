@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { AgentRegistry } from '../../agents/registry.js';
 import { AgentAdapter } from '../../agents/core/types.js';
 import { AgentNotFoundError, getErrorMessage } from '../../utils/errors.js';
-import * as npm from '../../utils/npm.js';
+import * as npm from '../../utils/processes.js';
 import ora from 'ora';
 import chalk from 'chalk';
 import inquirer from 'inquirer';

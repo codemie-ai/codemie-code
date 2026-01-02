@@ -1,8 +1,8 @@
 import chalk from 'chalk';
 import * as fs from 'fs';
 import * as path from 'path';
-import { sanitizeLogArgs } from './sanitize.js';
-import { getCodemiePath } from './codemie-home.js';
+import { sanitizeLogArgs } from './security.js';
+import { getCodemiePath } from './paths.js';
 
 export enum LogLevel {
   DEBUG = 'debug',

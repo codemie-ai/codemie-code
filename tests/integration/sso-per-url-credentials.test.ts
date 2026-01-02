@@ -28,7 +28,7 @@ vi.mock('../../src/providers/plugins/sso/sso.http-client.js', () => ({
   }
 }));
 
-import { CredentialStore } from '../../src/utils/credential-store.js';
+import { CredentialStore } from '../../src/utils/security.js';
 import { CodeMieSSO } from '../../src/providers/plugins/sso/sso.auth.js';
 import { SSOSetupSteps } from '../../src/providers/plugins/sso/sso.setup-steps.js';
 import { CODEMIE_ENDPOINTS } from '../../src/providers/plugins/sso/sso.http-client.js';

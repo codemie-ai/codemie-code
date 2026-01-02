@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
-import { ConfigLoader } from '../../../utils/config-loader.js';
+import { ConfigLoader } from '../../../utils/config.js';
 import { logger } from '../../../utils/logger.js';
 import { ProfileDisplay } from '../../../utils/profile-display.js';
 import { ProviderRegistry } from '../../../providers/core/registry.js';

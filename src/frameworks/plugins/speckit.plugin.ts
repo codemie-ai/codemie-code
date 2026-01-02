@@ -9,7 +9,7 @@
  */
 
 import { platform } from 'os';
-import { exec } from '../../utils/exec.js';
+import { exec } from '../../utils/processes.js';
 import { logger } from '../../utils/logger.js';
 import { BaseFrameworkAdapter } from '../core/BaseFrameworkAdapter.js';
 import type { FrameworkMetadata, FrameworkInitOptions } from '../core/types.js';

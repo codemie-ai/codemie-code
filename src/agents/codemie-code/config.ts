@@ -5,13 +5,13 @@
  * agent-specific configuration loading and validation.
  */
 
-import { ConfigLoader, type CodeMieConfigOptions } from '../../utils/config-loader.js';
+import { ConfigLoader, type CodeMieConfigOptions } from '../../utils/config.js';
 import type { CodeMieConfig, ProviderConfig } from './types.js';
 import { ConfigurationError } from './types.js';
-import { CredentialStore } from '../../utils/credential-store.js';
+import { CredentialStore } from '../../utils/security.js';
 import { ProviderRegistry } from '../../providers/core/registry.js';
 import { logger } from '../../utils/logger.js';
-import { sanitizeCookies } from '../../utils/sanitize.js';
+import { sanitizeCookies } from '../../utils/security.js';
 
 /**
  * Load and validate configuration for the CodeMie native agent

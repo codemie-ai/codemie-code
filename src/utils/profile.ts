@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import { formatErrorWithExplanation, type ErrorContext } from './error-context.js';
+import { formatErrorWithExplanation, type ErrorContext } from './errors.js';
 import { logger } from './logger.js';
 
 /**

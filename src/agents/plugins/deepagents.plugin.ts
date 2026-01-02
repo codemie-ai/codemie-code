@@ -1,6 +1,6 @@
 import { AgentMetadata } from '../core/types.js';
 import { BaseAgentAdapter } from '../core/BaseAgentAdapter.js';
-import { exec } from '../../utils/exec.js';
+import { exec } from '../../utils/processes.js';
 import { logger } from '../../utils/logger.js';
 
 /**

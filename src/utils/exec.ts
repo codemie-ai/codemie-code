@@ -1,3 +1,10 @@
+/**
+ * Base Command Execution Utility
+ *
+ * Foundational cross-platform command execution that other process utilities build upon.
+ * Separated from higher-level utilities to enable proper testing and mocking.
+ */
+
 import { spawn } from 'child_process';
 import os from 'os';
 

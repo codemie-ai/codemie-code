@@ -21,7 +21,7 @@ import { FirstTimeExperience } from '../utils/first-time.js';
 import chalk from 'chalk';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { getDirname } from '../utils/dirname.js';
+import { getDirname } from '../utils/paths.js';
 
 const program = new Command();
 

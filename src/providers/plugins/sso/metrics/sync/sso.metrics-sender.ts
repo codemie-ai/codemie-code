@@ -19,7 +19,7 @@ import { MetricsApiClient } from './sso.metrics-api-client.js';
 import type { SessionMetric, MetricsApiConfig, MetricsSyncResponse } from './sso.metrics-types.js';
 import type { MetricsSession } from '../../../../../agents/core/metrics/types.js';
 import { logger } from '../../../../../utils/logger.js';
-import { detectGitBranch } from '../../../../../utils/git.js';
+import { detectGitBranch } from '../../../../../utils/processes.js';
 
 /**
  * Session start status

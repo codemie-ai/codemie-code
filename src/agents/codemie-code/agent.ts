@@ -17,7 +17,7 @@ import { extractToolMetadata } from './toolMetadata.js';
 import { extractTokenUsageFromStreamChunk, extractTokenUsageFromFinalState } from './tokenUtils.js';
 import { setGlobalToolEventCallback } from './tools/index.js';
 import { logger } from '../../utils/logger.js';
-import { sanitizeCookies, sanitizeAuthToken } from '../../utils/sanitize.js';
+import { sanitizeCookies, sanitizeAuthToken } from '../../utils/security.js';
 
 export class CodeMieAgent {
   private agent: any;

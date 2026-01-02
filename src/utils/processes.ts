@@ -1,16 +1,75 @@
 /**
- * NPM utility wrapper for consistent npm operations
+ * High-Level Process Utilities
  *
- * Provides type-safe API for common npm operations with:
- * - Consistent timeout management
- * - Specialized error handling
- * - Comprehensive logging
- * - Cross-platform support
+ * Command detection, npm package management, and git operations.
+ * Built on top of the foundational exec utility.
  */
 
-import { exec, ExecOptions } from './exec.js';
-import { logger } from './logger.js';
+import { exec as childProcessExec } from 'child_process';
+import { promisify } from 'util';
 import os from 'os';
+import { logger } from './logger.js';
+import { exec, type ExecOptions, type ExecResult } from './exec.js';
+
+const execAsync = promisify(childProcessExec);
+
+// ============================================================================
+// Command Detection
+// ============================================================================
+
+/**
+ * Check if a command is available in PATH
+ *
+ * @param command - Command name to check (e.g., 'npm', 'python', 'git')
+ * @returns True if command exists, false otherwise
+ */
+export async function commandExists(command: string): Promise<boolean> {
+  try {
+    const isWindows = os.platform() === 'win32';
+    // On Windows, use full path to where.exe to avoid shell: true deprecation (DEP0190)
+    const whichCommand = isWindows ? 'C:\\Windows\\System32\\where.exe' : 'which';
+
+    const result = await exec(whichCommand, [command]);
+    return result.code === 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Get the full path to a command
+ *
+ * @param command - Command name to locate
+ * @returns Full path to command, or null if not found
+ */
+export async function getCommandPath(command: string): Promise<string | null> {
+  try {
+    const isWindows = os.platform() === 'win32';
+    // On Windows, use full path to where.exe to avoid shell: true deprecation (DEP0190)
+    const whichCommand = isWindows ? 'C:\\Windows\\System32\\where.exe' : 'which';
+
+    const result = await exec(whichCommand, [command]);
+
+    if (result.code === 0) {
+      // On Windows, 'where' can return multiple paths, take the first one
+      // Split by any line ending (\n, \r\n, or \r) for maximum compatibility
+      // This handles Unix (\n), Windows (\r\n), and old Mac (\r) line endings
+      const paths = result.stdout
+        .split(/\r?\n|\r/)  // Split by \r\n, \n, or \r
+        .map(p => p.trim())
+        .filter(p => p);
+      return paths[0] || null;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// ============================================================================
+// npm Package Management
+// ============================================================================
 
 /**
  * Base options for npm operations
@@ -293,3 +352,41 @@ export async function npxRun(
     throw parseNpmError(error, `Failed to run npx ${command}`);
   }
 }
+
+// ============================================================================
+// Git Operations
+// ============================================================================
+
+/**
+ * Detect current git branch from working directory
+ *
+ * @param cwd - Working directory path
+ * @returns Git branch name or undefined if not in a git repo
+ */
+export async function detectGitBranch(cwd: string): Promise<string | undefined> {
+  try {
+    const { stdout } = await execAsync('git rev-parse --abbrev-ref HEAD', {
+      cwd,
+      timeout: 5000 // 5 second timeout
+    });
+
+    const branch = stdout.trim();
+
+    // Handle detached HEAD state
+    if (branch === 'HEAD') {
+      logger.debug('[GitUtils] Detached HEAD state detected');
+      return undefined;
+    }
+
+    logger.debug(`[GitUtils] Detected git branch: ${branch}`);
+    return branch;
+  } catch (error) {
+    // Not a git repo or git command failed
+    logger.debug('[GitUtils] Failed to detect git branch:', error);
+    return undefined;
+  }
+}
+
+// Re-export exec function and types for convenience
+export { exec };
+export type { ExecOptions, ExecResult };

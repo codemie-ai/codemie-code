@@ -3,7 +3,7 @@ import * as path from 'path';
 import type { Migration, MigrationHistory, MigrationRecord } from './types.js';
 import { MigrationRegistry } from './registry.js';
 import { logger } from '../utils/logger.js';
-import { getCodemiePath } from '../utils/codemie-home.js';
+import { getCodemiePath } from '../utils/paths.js';
 
 /**
  * Migration tracker
