@@ -299,7 +299,10 @@ it('test', async () => {
 After any utils reorganization:
 1. Always clean dist/ before committing: `rm -rf dist && npm run build`
 2. Verify no stale compiled files remain: `git status dist/`
-3. Run full test suite to ensure all imports work: `npm test`
+3. Run complete test suite to ensure all imports work:
+   - Unit tests: `npm test`
+   - Integration tests: `npm run test:integration`
+   - Both must pass (762+ tests total)
 
 ## Future Considerations
 
