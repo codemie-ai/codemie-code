@@ -19,7 +19,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 describe('Analytics E2E Test - Golden Dataset Validation', () => {
-  const fixturesDir = join(__dirname, 'fixtures', 'claude');
+  const fixturesDir = join(__dirname, 'metrics', 'fixtures', 'claude');
   const testSessionId = '71a17a83-ff99-4d05-964b-0bd56892faec';
   const testMetricsDir = join(homedir(), '.codemie', 'metrics', 'sessions');
   const testSessionFile = join(testMetricsDir, `${testSessionId}.json`);
