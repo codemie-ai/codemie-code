@@ -1,4 +1,4 @@
-name: CI (Optimized)
+name: CI
 
 on:
   push:
