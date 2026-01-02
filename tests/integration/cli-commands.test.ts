@@ -21,7 +21,7 @@ describe('CLI Commands - Integration', () => {
       // Execute once, validate many times
       listResult = cli.runSilent('list');
       listOutput = listResult.output;
-    });
+    }, 30000); // 30s timeout for Windows
 
     it('should list all available agents', () => {
       // Should show all registered agents
@@ -42,7 +42,7 @@ describe('CLI Commands - Integration', () => {
     beforeAll(() => {
       // Execute once, validate many times (saves ~20 seconds!)
       doctorResult = cli.runSilent('doctor');
-    });
+    }, 30000); // 30s timeout for Windows
 
     it('should run system diagnostics', () => {
       // Should include system check header (even if some checks fail)
