@@ -40,7 +40,7 @@ describe('CLI Commands - Integration', () => {
     let doctorResult: CommandResult;
 
     beforeAll(() => {
-      // Execute once, validate many times (saves ~20 seconds!)
+      // Execute once, validate many times
       doctorResult = cli.runSilent('doctor');
     }, 30000); // 30s timeout for Windows
 
