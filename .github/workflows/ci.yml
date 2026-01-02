@@ -94,14 +94,6 @@ jobs:
           path: dist/
           retention-days: 1
 
-      # Upload node_modules to avoid reinstalling in test jobs
-      - name: Upload dependencies
-        uses: actions/upload-artifact@v4
-        with:
-          name: node_modules
-          path: node_modules/
-          retention-days: 1
-
   # Test jobs run in parallel, reuse build artifacts
   test-ubuntu:
     name: Test (Ubuntu)
@@ -116,19 +108,17 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '24'
+          cache: 'npm'
 
-      # Download pre-built artifacts (much faster than npm ci + build)
+      - name: Install dependencies
+        run: npm ci
+
+      # Download pre-built dist (skip build step, saves ~15-20s)
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
           name: dist
           path: dist/
-
-      - name: Download dependencies
-        uses: actions/download-artifact@v4
-        with:
-          name: node_modules
-          path: node_modules/
 
       - name: Run unit tests
         run: npm run test:unit
@@ -149,19 +139,17 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '24'
+          cache: 'npm'
 
-      # Download pre-built artifacts (saves ~20-30s on Windows)
+      - name: Install dependencies
+        run: npm ci
+
+      # Download pre-built dist (skip build step, saves ~25-30s on Windows)
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
           name: dist
           path: dist/
-
-      - name: Download dependencies
-        uses: actions/download-artifact@v4
-        with:
-          name: node_modules
-          path: node_modules/
 
       - name: Run unit tests
         run: npm run test:unit
