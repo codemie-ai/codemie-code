@@ -294,6 +294,13 @@ it('test', async () => {
 
 ---
 
+## Testing Windows Compatibility
+
+After any utils reorganization:
+1. Always clean dist/ before committing: `rm -rf dist && npm run build`
+2. Verify no stale compiled files remain: `git status dist/`
+3. Run full test suite to ensure all imports work: `npm test`
+
 ## Future Considerations
 
 **If adding new utilities**:
