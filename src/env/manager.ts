@@ -1,15 +1,14 @@
 import * as fs from 'fs/promises';
-import * as path from 'path';
-import * as os from 'os';
 import { logger } from '../utils/logger.js';
+import { getCodemieHome, getCodemiePath } from '../utils/codemie-home.js';
 
 export interface EnvConfig {
   [key: string]: string;
 }
 
 export class EnvManager {
-  private static CONFIG_DIR = path.join(os.homedir(), '.codemie');
-  private static CONFIG_FILE = path.join(EnvManager.CONFIG_DIR, 'codemie-cli.config.json');
+  private static CONFIG_DIR = getCodemieHome();
+  private static CONFIG_FILE = getCodemiePath('codemie-cli.config.json');
 
   static async loadGlobalConfig(): Promise<EnvConfig> {
     try {

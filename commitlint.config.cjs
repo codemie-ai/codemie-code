@@ -43,8 +43,8 @@ module.exports = {
     ],
     // Scope is completely optional (no warning)
     'scope-empty': [0, 'never'],
-    // Enforce subject case (lowercase start)
-    'subject-case': [2, 'always', 'lower-case'],
+    // Allow flexible subject case (lowercase or sentence-case)
+    'subject-case': [0],  // Disabled to allow natural capitalization
     // Subject max length
     'subject-max-length': [2, 'always', 100],
     // Body max line length

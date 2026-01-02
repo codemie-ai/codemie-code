@@ -5,9 +5,9 @@
 
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
-import { homedir } from 'os';
 import type { MetricDelta } from '../../../agents/core/metrics/types.js';
 import type { AnalyticsFilter } from './types.js';
+import { getCodemiePath } from '../../../utils/codemie-home.js';
 
 /**
  * Session start event (special record type)
@@ -131,7 +131,7 @@ export class MetricsDataLoader {
   private sessionsDir: string;
 
   constructor(sessionsDir?: string) {
-    this.sessionsDir = sessionsDir || join(homedir(), '.codemie', 'metrics', 'sessions');
+    this.sessionsDir = sessionsDir || getCodemiePath('metrics', 'sessions');
   }
 
   /**

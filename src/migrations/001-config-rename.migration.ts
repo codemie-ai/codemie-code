@@ -1,10 +1,10 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import * as os from 'os';
 import type { Migration, MigrationResult } from './types.js';
 import { MigrationRegistry } from './registry.js';
 import { isMultiProviderConfig, isLegacyConfig } from '../env/types.js';
 import { logger } from '../utils/logger.js';
+import { getCodemieHome } from '../utils/codemie-home.js';
 
 /**
  * Migration 001: Rename config.json to codemie-cli.config.json
@@ -18,7 +18,7 @@ class ConfigRenameMigration implements Migration {
   minVersion = '0.1.0';
   deprecatedIn = '1.0.0';
 
-  private readonly GLOBAL_DIR = path.join(os.homedir(), '.codemie');
+  private readonly GLOBAL_DIR = getCodemieHome();
   private readonly PROJECT_DIR = path.join(process.cwd(), '.codemie');
 
   private readonly OLD_FILENAME = 'config.json';

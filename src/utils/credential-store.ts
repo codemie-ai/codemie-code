@@ -3,11 +3,12 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
 import { SSOCredentials } from '../providers/core/types.js';
+import { getCodemiePath } from './codemie-home.js';
 
 const SERVICE_NAME = 'codemie-code';
 const ACCOUNT_NAME = 'sso-credentials';
-const FALLBACK_FILE = path.join(os.homedir(), '.codemie', 'sso-credentials.enc');
-const CREDENTIALS_DIR = path.join(os.homedir(), '.codemie', 'credentials');
+const FALLBACK_FILE = getCodemiePath('sso-credentials.enc');
+const CREDENTIALS_DIR = getCodemiePath('credentials');
 
 /**
  * Lazy load keytar to avoid requiring system dependencies during test imports

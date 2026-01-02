@@ -6,9 +6,9 @@
 
 import { promises as fs } from 'fs';
 import path from 'path';
-import os from 'os';
 import crypto from 'crypto';
 import type { Todo } from '../types.js';
+import { getCodemiePath } from '../../../utils/codemie-home.js';
 
 export interface TodoStorageConfig {
   workingDirectory: string;
@@ -50,7 +50,7 @@ export class TodoFileStorage {
     this.projectHash = this.generateProjectHash(this.workingDirectory);
 
     // Global backup storage path
-    this.globalBackupDir = path.join(os.homedir(), '.codemie', 'todos');
+    this.globalBackupDir = getCodemiePath('todos');
 
     // Generate session ID
     this.sessionId = this.generateSessionId();

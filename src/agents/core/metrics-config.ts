@@ -5,6 +5,8 @@
  */
 
 import type { MetricsConfig } from './types.js';
+import { join } from 'path';
+import { getCodemieHome } from '../../utils/codemie-home.js';
 
 /**
  * Default metrics configuration
@@ -76,9 +78,8 @@ export const METRICS_PATHS = {
  * Get full path for metrics storage
  */
 export function getMetricsPath(subpath?: string): string {
-  const homedir = process.env.HOME || process.env.USERPROFILE || '~';
-  const base = `${homedir}/${METRICS_PATHS.root}`;
-  return subpath ? `${base}/${subpath}` : base;
+  const base = join(getCodemieHome(), 'metrics');
+  return subpath ? join(base, subpath) : base;
 }
 
 /**

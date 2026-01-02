@@ -6,6 +6,18 @@ export default defineConfig({
     environment: 'node',
     include: ['src/**/*.test.ts', 'src/**/*.spec.ts', 'tests/**/*.test.ts'],
     exclude: ['node_modules', 'dist'],
+
+    // Enable parallel execution with isolated environments
+    pool: 'threads',
+    poolOptions: {
+      threads: {
+        maxThreads: 8,
+        minThreads: 2,
+      },
+    },
+    // Isolate each test file for safety
+    isolate: true,
+
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],

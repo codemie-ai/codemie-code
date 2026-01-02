@@ -1,8 +1,8 @@
 import chalk from 'chalk';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
 import { sanitizeLogArgs } from './sanitize.js';
+import { getCodemiePath } from './codemie-home.js';
 
 export enum LogLevel {
   DEBUG = 'debug',
@@ -66,7 +66,7 @@ class Logger {
     if (this.logFileInitialized) return;
 
     try {
-      const logsDir = path.join(os.homedir(), '.codemie', 'logs');
+      const logsDir = getCodemiePath('logs');
 
       // Create directory synchronously
       if (!fs.existsSync(logsDir)) {

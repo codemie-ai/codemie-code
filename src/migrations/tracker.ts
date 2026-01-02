@@ -1,16 +1,16 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import * as os from 'os';
 import type { Migration, MigrationHistory, MigrationRecord } from './types.js';
 import { MigrationRegistry } from './registry.js';
 import { logger } from '../utils/logger.js';
+import { getCodemiePath } from '../utils/codemie-home.js';
 
 /**
  * Migration tracker
  * Manages migration history file and tracks which migrations have been applied
  */
 export class MigrationTracker {
-  private static readonly HISTORY_FILE = path.join(os.homedir(), '.codemie', 'migrations.json');
+  private static readonly HISTORY_FILE = getCodemiePath('migrations.json');
 
   /**
    * Load migration history from file

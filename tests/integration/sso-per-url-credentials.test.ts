@@ -9,6 +9,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdir } from 'fs/promises';
 import { join } from 'path';
 import { homedir } from 'os';
+import { setupTestIsolation } from '../helpers/test-isolation.js';
 
 // Mock SSO HTTP client to avoid real API calls
 vi.mock('../../src/providers/plugins/sso/sso.http-client.js', () => ({
@@ -65,6 +66,9 @@ const GLOBAL_CREDENTIALS: SSOCredentials = {
 };
 
 describe('SSO Per-URL Credential Management', () => {
+  // Setup isolated CODEMIE_HOME for this test suite
+  setupTestIsolation();
+
   describe('API Endpoints', () => {
     it('should include include_all=true parameter in MODELS endpoint', () => {
       expect(CODEMIE_ENDPOINTS.MODELS).toBe('/v1/llm_models?include_all=true');

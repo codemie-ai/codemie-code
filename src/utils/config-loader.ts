@@ -1,6 +1,5 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import * as os from 'os';
 import dotenv from 'dotenv';
 import chalk from 'chalk';
 import {
@@ -13,6 +12,7 @@ import {
   isLegacyConfig
 } from '../env/types.js';
 import { ProviderRegistry } from '../providers/index.js';
+import { getCodemieHome, getCodemiePath } from './codemie-home.js';
 
 // Re-export for backward compatibility
 export type { CodeMieConfigOptions, CodeMieIntegrationInfo, ConfigWithSource };
@@ -26,8 +26,8 @@ export type { CodeMieConfigOptions, CodeMieIntegrationInfo, ConfigWithSource };
  * - Multi-provider profiles (version 2)
  */
 export class ConfigLoader {
-  private static GLOBAL_CONFIG_DIR = path.join(os.homedir(), '.codemie');
-  private static GLOBAL_CONFIG = path.join(ConfigLoader.GLOBAL_CONFIG_DIR, 'codemie-cli.config.json');
+  private static GLOBAL_CONFIG_DIR = getCodemieHome();
+  private static GLOBAL_CONFIG = getCodemiePath('codemie-cli.config.json');
   private static LOCAL_CONFIG = '.codemie/codemie-cli.config.json';
 
   // Cache for multi-provider config

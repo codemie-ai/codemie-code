@@ -8,8 +8,12 @@
 import { describe, it, expect } from 'vitest';
 import { NpmCheck } from '../../src/cli/commands/doctor/checks/NpmCheck.js';
 import { PythonCheck } from '../../src/cli/commands/doctor/checks/PythonCheck.js';
+import { setupTestIsolation } from '../helpers/test-isolation.js';
 
 describe('Doctor Command - Windows Compatibility', () => {
+  // Setup isolated CODEMIE_HOME for this test suite
+  setupTestIsolation();
+
   describe('NpmCheck', () => {
     it('should detect npm when installed (cross-platform)', async () => {
       const check = new NpmCheck();
