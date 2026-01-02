@@ -5,8 +5,8 @@
  */
 
 import {describe, it, expect, beforeEach} from 'vitest';
-import {aggregateDeltas} from '../../src/providers/plugins/sso/metrics/sync/sso.metrics-aggregator.js';
-import type {MetricDelta, MetricsSession} from '../../src/providers/plugins/sso/metrics/types.js';
+import {aggregateDeltas} from '../../../src/providers/plugins/sso/metrics/sync/sso.metrics-aggregator.js';
+import type {MetricDelta, MetricsSession} from '../../../src/providers/plugins/sso/metrics/types.js';
 
 describe('Metrics Post-Processing Integration', () => {
   let mockSession: MetricsSession;

@@ -450,6 +450,143 @@ lifecycle: {
 }
 ```
 
+### Pattern 8: Metrics Support (Codex)
+
+Agents can provide metrics adapters to enable analytics collection. The Codex implementation demonstrates the complete pattern:
+
+#### Codex-Specific Metrics Architecture
+
+**File Structure**:
+- `codex.plugin.ts` - Main plugin with `getMetricsAdapter()` method
+- `codex.metrics.ts` - Metrics adapter implementation extending `BaseMetricsAdapter`
+- Tests split by concern:
+  - `__tests__/codex.metrics.test.ts` - Unit tests for path matching and parsing logic
+  - `../../tests/integration/codex-metrics.test.ts` - Integration tests with real fixture data
+
+**Key Implementation Details**:
+
+1. **Date-Based Session Structure**: Codex uses hierarchical date structure `~/.codex/sessions/{YYYY}/{MM}/{DD}/rollout-{date}T{time}-{uuid}.jsonl`
+   - Pattern matching must handle dynamic date paths
+   - `getDataPaths()` returns base directory for scanning
+   - `matchesSessionPattern()` validates full structure including date folders
+
+2. **Session File Format**: JSONL with event stream
+   - `session_meta` - Contains session ID, working directory, git branch, model provider
+   - `turn_context` - Tracks model per turn
+   - `event_msg` with `token_count` - Contains cumulative token usage
+   - `response_item` with `function_call` / `function_call_output` - Tool call pairs
+
+3. **Token Calculation Strategy**:
+   - Codex provides **cumulative** token counts in `total_token_usage`
+   - Calculate deltas: `Math.max(0, current - previous)` to get incremental usage
+   - **Always combine output + reasoning tokens**: `output_tokens + reasoning_output_tokens`
+   - Use `last_token_usage` for validation (Codex's own delta calculation)
+   - Skip duplicate `token_count` events (produce 0 delta)
+
+4. **Tool Call Correlation**:
+   - Two-pass algorithm:
+     - First pass: Build map of `function_call` events by `call_id`
+     - Second pass: Match `function_call_output` with requests using `call_id`
+   - Parse double-encoded JSON: `JSON.parse(event.payload.output)`
+   - Extract exit codes, duration, and error messages from metadata
+   - Create file operations from tool arguments
+
+5. **Cross-Platform Path Handling**:
+   - Use regex with `[\\/]` for both Unix and Windows separators
+   - Case-insensitive directory matching: `pathLower.includes('.codex')`
+   - Extract filename with utility: `getFilename(path)` handles both path formats
+
+6. **Performance Optimization - Date Filtering**:
+   - Default: Only match today's sessions (`dateFilter` defaults to current date)
+   - Pass `null` to match all dates (used for historical analysis)
+   - Reduces filesystem operations by 95%+ for real-time monitoring
+
+7. **Watermark Strategy**: Use `object` strategy with record IDs
+   - Format: `{sessionId}:{timestamp}:{eventIndex}`
+   - Prevents duplicate processing across incremental scans
+
+**Plugin Integration**:
+```typescript
+export class CodexPlugin extends BaseAgentAdapter {
+  private metricsAdapter: AgentMetricsSupport;
+
+  constructor() {
+    super(CodexPluginMetadata);
+    // Pass metadata to avoid duplication
+    this.metricsAdapter = new CodexMetricsAdapter(CodexPluginMetadata);
+  }
+
+  getMetricsAdapter(): AgentMetricsSupport {
+    return this.metricsAdapter;
+  }
+}
+```
+
+**Configuration via CLI Arguments**:
+Codex now uses CLI-based configuration instead of `config.toml` modification:
+```typescript
+enrichArgs: (args, config) => {
+  const cliArgs: string[] = [];
+  const providerName = config.profileName || config.provider || 'codemie';
+
+  // Define model provider via --config flags
+  if (baseUrl) {
+    cliArgs.push('--config', `model_providers.${providerName}.name="${providerName}"`);
+    cliArgs.push('--config', `model_providers.${providerName}.base_url="${baseUrl}"`);
+
+    // Set wire_api (defaults to "responses", override via CODEMIE_CODEX_WIRE_API)
+    const wireApi = process.env.CODEMIE_CODEX_WIRE_API || 'responses';
+    cliArgs.push('--config', `model_providers.${providerName}.wire_api="${wireApi}"`);
+
+    cliArgs.push('--config', `model_provider="${providerName}"`);
+  }
+
+  return [...cliArgs, ...args];
+}
+```
+
+**Testing Strategy**:
+- **Unit tests** (`__tests__/`): Pattern matching, parsing logic, edge cases
+  - Must include: `getWatermarkStrategy()`, `getInitDelay()`, `getDataPaths()`
+  - Cross-platform path validation (Unix, Windows, mixed separators)
+  - Agent-specific pattern validation (UUID format, date structure, etc.)
+- **Integration tests** (`../../tests/integration/metrics/`): Full pipeline with real session fixtures
+  - Location: Metrics tests moved to dedicated `metrics/` subfolder
+  - Specialized documentation: `tests/integration/metrics/CLAUDE.md`
+- **Golden dataset verification**: Delta totals MUST equal snapshot totals (mathematical proof)
+- **Performance**: Integration tests must complete in < 200ms per file
+
+**Critical Unit Tests (Mandatory)**:
+```typescript
+describe('Adapter Configuration', () => {
+  it('should use correct watermark strategy', () => {
+    // Claude: 'hash' | Codex: 'object' | Gemini: 'line'
+    expect(adapter.getWatermarkStrategy()).toBe('hash');
+  });
+
+  it('should have correct initialization delay', () => {
+    expect(adapter.getInitDelay()).toBe(500); // Standard: 500ms
+  });
+
+  it('should detect correct data paths', () => {
+    const dataPaths = adapter.getDataPaths();
+    expect(dataPaths.sessionsDir).toContain('.agent');
+  });
+});
+```
+
+**Integration Test Requirements** (see `tests/integration/metrics/CLAUDE.md`):
+- **Mandatory verification suite**: 6 sections (adapter config, session ID, snapshot, deltas, pipeline, end-to-end)
+- **Mathematical verification**: `Σ(deltas.tokens) === snapshot.tokens` (critical!)
+- **Golden dataset**: Expected values documented in `fixtures/{agent}/README.md`
+- **Minimum 17-20 tests** per agent with complete verification
+- Use real production session files (< 50KB)
+- Parse once in `beforeAll`, validate in test cases
+
+**Reference Implementations**:
+- Unit: `src/agents/plugins/__tests__/codex.metrics.test.ts` (34 tests, 4ms)
+- Integration: `tests/integration/metrics/codex-metrics.test.ts` (48 tests, 15ms)
+
 ---
 
 ## Built-in Agent Development (LangGraph)

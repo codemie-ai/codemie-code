@@ -3,118 +3,136 @@
  *
  * Tests the main codemie CLI commands by executing them directly
  * and verifying their output and behavior.
+ *
+ * Performance: Commands executed once in beforeAll, validated multiple times
  */
 
-import { describe, it, expect } from 'vitest';
-import { createCLIRunner } from '../helpers/index.js';
+import { describe, it, expect, beforeAll } from 'vitest';
+import { createCLIRunner, type CommandResult } from '../helpers/index.js';
 
 const cli = createCLIRunner();
 
 describe('CLI Commands - Integration', () => {
   describe('List Command', () => {
-    it('should list all available agents', () => {
-      const output = cli.run('list');
+    let listOutput: string;
+    let listResult: CommandResult;
 
+    beforeAll(() => {
+      // Execute once, validate many times
+      listResult = cli.runSilent('list');
+      listOutput = listResult.output;
+    });
+
+    it('should list all available agents', () => {
       // Should show all registered agents
-      expect(output).toContain('claude');
-      expect(output).toContain('codex');
-      expect(output).toContain('gemini');
-      expect(output).toContain('codemie-code');
+      expect(listOutput).toContain('claude');
+      expect(listOutput).toContain('codex');
+      expect(listOutput).toContain('gemini');
+      expect(listOutput).toContain('codemie-code');
     });
 
     it('should complete successfully', () => {
-      expect(cli.succeeds('list')).toBe(true);
+      expect(listResult.exitCode).toBe(0);
     });
   });
 
   describe('Doctor Command', () => {
-    it('should run system diagnostics', () => {
-      const result = cli.runSilent('doctor');
+    let doctorResult: CommandResult;
 
+    beforeAll(() => {
+      // Execute once, validate many times (saves ~20 seconds!)
+      doctorResult = cli.runSilent('doctor');
+    });
+
+    it('should run system diagnostics', () => {
       // Should include system check header (even if some checks fail)
-      expect(result.output).toMatch(/System Check|Health Check|Diagnostics/i);
+      expect(doctorResult.output).toMatch(/System Check|Health Check|Diagnostics/i);
     });
 
     it('should check Node.js version', () => {
-      const result = cli.runSilent('doctor');
-
       // Should verify Node.js installation (even if profile checks fail)
-      expect(result.output).toMatch(/Node\.?js|node version/i);
+      expect(doctorResult.output).toMatch(/Node\.?js|node version/i);
     });
 
     it('should check npm', () => {
-      const result = cli.runSilent('doctor');
-
       // Should verify npm installation
-      expect(result.output).toMatch(/npm/i);
+      expect(doctorResult.output).toMatch(/npm/i);
     });
 
     it('should check Python', () => {
-      const result = cli.runSilent('doctor');
-
       // Should check Python installation (may be present or not)
-      expect(result.output).toMatch(/Python/i);
+      expect(doctorResult.output).toMatch(/Python/i);
     });
 
     it('should check uv', () => {
-      const result = cli.runSilent('doctor');
-
       // Should check uv installation (optional)
-      expect(result.output).toMatch(/uv/i);
+      expect(doctorResult.output).toMatch(/uv/i);
     });
 
     it('should execute without crashing', () => {
       // Doctor may return non-zero exit code if no profile configured
       // but it should still run and not crash
-      expect(() => cli.runSilent('doctor')).not.toThrow();
+      expect(doctorResult).toBeDefined();
+      expect(doctorResult.output).toBeDefined();
     });
   });
 
   describe('Version Command', () => {
-    it('should display version number', () => {
-      const output = cli.run('version');
+    let versionResult: CommandResult;
 
+    beforeAll(() => {
+      versionResult = cli.runSilent('version');
+    });
+
+    it('should display version number', () => {
       // Should show semantic version format
-      expect(output).toMatch(/\d+\.\d+\.\d+/);
+      expect(versionResult.output).toMatch(/\d+\.\d+\.\d+/);
     });
 
     it('should complete successfully', () => {
-      expect(cli.succeeds('version')).toBe(true);
+      expect(versionResult.exitCode).toBe(0);
     });
   });
 
   describe('Profile Commands', () => {
-    it('should list profiles by default', () => {
-      const result = cli.runSilent('profile');
+    let profileResult: CommandResult;
 
+    beforeAll(() => {
+      profileResult = cli.runSilent('profile');
+    });
+
+    it('should list profiles by default', () => {
       // Should not error (even with no profiles)
-      expect(result.exitCode === 0 || result.exitCode === 1).toBe(true);
-      expect(result.output).toBeDefined();
+      expect(profileResult.exitCode === 0 || profileResult.exitCode === 1).toBe(true);
+      expect(profileResult.output).toBeDefined();
     });
 
     it('should handle profile command without crashing', () => {
       // Should execute without crashing
-      expect(() => cli.runSilent('profile')).not.toThrow();
+      expect(profileResult).toBeDefined();
+      expect(profileResult.output).toBeDefined();
     });
   });
 
   describe('Workflow Commands', () => {
-    it('should list available workflows', () => {
-      const output = cli.run('workflow list');
+    let workflowResult: CommandResult;
 
+    beforeAll(() => {
+      workflowResult = cli.runSilent('workflow list');
+    });
+
+    it('should list available workflows', () => {
       // Should show available workflow templates
-      expect(output).toMatch(/pr-review|inline-fix|code-ci/i);
+      expect(workflowResult.output).toMatch(/pr-review|inline-fix|code-ci/i);
     });
 
     it('should show workflow details', () => {
-      const output = cli.run('workflow list');
-
       // Should include workflow descriptions or names
-      expect(output.length).toBeGreaterThan(0);
+      expect(workflowResult.output.length).toBeGreaterThan(0);
     });
 
     it('should complete successfully', () => {
-      expect(cli.succeeds('workflow list')).toBe(true);
+      expect(workflowResult.exitCode).toBe(0);
     });
   });
 
@@ -157,18 +175,20 @@ describe('CLI Commands - Integration', () => {
   });
 
   describe('Help Command', () => {
-    it('should display help information', () => {
-      const output = cli.run('--help');
+    let helpOutput: string;
 
+    beforeAll(() => {
+      helpOutput = cli.run('--help');
+    });
+
+    it('should display help information', () => {
       // Should show usage information
-      expect(output).toMatch(/Usage|Commands|Options/i);
+      expect(helpOutput).toMatch(/Usage|Commands|Options/i);
     });
 
     it('should show available commands', () => {
-      const output = cli.run('--help');
-
       // Should list main commands
-      expect(output).toMatch(/setup|install|list|doctor/i);
+      expect(helpOutput).toMatch(/setup|install|list|doctor/i);
     });
 
     it('should show update command in help', () => {
@@ -180,18 +200,20 @@ describe('CLI Commands - Integration', () => {
   });
 
   describe('Error Handling', () => {
-    it('should handle invalid commands gracefully', () => {
-      const result = cli.runSilent('invalid-command-xyz');
+    let errorResult: CommandResult;
 
+    beforeAll(() => {
+      errorResult = cli.runSilent('invalid-command-xyz');
+    });
+
+    it('should handle invalid commands gracefully', () => {
       // Should fail with non-zero exit code
-      expect(result.exitCode).not.toBe(0);
+      expect(errorResult.exitCode).not.toBe(0);
     });
 
     it('should provide helpful error messages', () => {
-      const result = cli.runSilent('invalid-command-xyz');
-
       // Should include error information or help text
-      expect(result.error || result.output).toBeDefined();
+      expect(errorResult.error || errorResult.output).toBeDefined();
     });
   });
 });

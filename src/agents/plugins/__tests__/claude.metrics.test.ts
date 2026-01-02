@@ -36,6 +36,23 @@ describe('ClaudeMetricsAdapter - Cross-Platform Path Detection', () => {
     adapter = new ClaudeMetricsAdapter('claude', mockMetadata);
   });
 
+  describe('Adapter Configuration', () => {
+    it('should use hash-based watermark strategy', () => {
+      expect(adapter.getWatermarkStrategy()).toBe('hash');
+    });
+
+    it('should have 500ms initialization delay', () => {
+      expect(adapter.getInitDelay()).toBe(500);
+    });
+
+    it('should detect correct data paths', () => {
+      const dataPaths = adapter.getDataPaths();
+      expect(dataPaths.sessionsDir).toContain('.claude');
+      expect(dataPaths.sessionsDir).toContain('projects');
+      expect(dataPaths.settingsDir).toContain('.claude');
+    });
+  });
+
   describe('UUID Validation', () => {
     it('should accept valid UUID v4 with lowercase hex', () => {
       const path = '/home/user/.claude/projects/abc123/f52d1386-9d4c-4671-a31e-62dd6600a759.jsonl';

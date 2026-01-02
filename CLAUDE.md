@@ -22,6 +22,8 @@ This project is **AI/Run CodeMie CLI** - a professional, unified CLI tool for ma
 | `src/cli/**` | `src/cli/CLAUDE.md` | CLI command patterns, factory pattern, testing |
 | `src/analytics/**` | `src/analytics/CLAUDE.md` | Analytics system, aggregation, metrics, CLI usage |
 | `src/workflows/**` | `src/workflows/CLAUDE.md` | Workflow management, template development, VCS integration |
+| `tests/integration/**` | `tests/integration/CLAUDE.md` | Integration testing patterns, performance optimization, fixture management |
+| `tests/integration/metrics/**` | `tests/integration/metrics/CLAUDE.md` | Agent metrics testing with full verification suite, golden dataset validation |
 
 **Token Savings**: This structure reduces context by 30-70% depending on work location, enabling faster responses and more focused guidance.
 

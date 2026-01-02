@@ -1,0 +1,48 @@
+{
+  "sessionId": "8f3c2a1b-4d5e-4f6a-9b8c-7d6e5f4a3b2c",
+  "agentName": "codex",
+  "provider": "ai-run-sso",
+  "startTime": 1767366503000,
+  "workingDirectory": "/path/to/codemie-ai/codemie-code",
+  "gitBranch": "codex",
+  "status": "completed",
+  "correlation": {
+    "status": "matched",
+    "retryCount": 0,
+    "agentSessionFile": "~/.codex/sessions/2026/01/02/rollout-2026-01-02T16-58-23-019b7f37-8646-7b42-af3b-3a02bcaed870.jsonl",
+    "agentSessionId": "019b7f37-8646-7b42-af3b-3a02bcaed870",
+    "detectedAt": 1767366504000
+  },
+  "monitoring": {
+    "isActive": false,
+    "changeCount": 0
+  },
+  "syncState": {
+    "sessionId": "8f3c2a1b-4d5e-4f6a-9b8c-7d6e5f4a3b2c",
+    "agentSessionId": "019b7f37-8646-7b42-af3b-3a02bcaed870",
+    "sessionStartTime": 1767366503000,
+    "status": "completed",
+    "lastProcessedLine": 38,
+    "lastProcessedTimestamp": 1767366530345,
+    "processedRecordIds": [
+      "019b7f37-8646-7b42-af3b-3a02bcaed870:2026-01-02T14:58:27.494Z:9",
+      "019b7f37-8646-7b42-af3b-3a02bcaed870:2026-01-02T14:58:27.496Z:10",
+      "019b7f37-8646-7b42-af3b-3a02bcaed870:2026-01-02T14:58:28.438Z:12",
+      "019b7f37-8646-7b42-af3b-3a02bcaed870:2026-01-02T14:58:30.081Z:15",
+      "019b7f37-8646-7b42-af3b-3a02bcaed870:2026-01-02T14:58:30.586Z:16",
+      "019b7f37-8646-7b42-af3b-3a02bcaed870:2026-01-02T14:58:31.294Z:18",
+      "019b7f37-8646-7b42-af3b-3a02bcaed870:2026-01-02T14:58:36.595Z:23",
+      "019b7f37-8646-7b42-af3b-3a02bcaed870:2026-01-02T14:58:36.636Z:24",
+      "019b7f37-8646-7b42-af3b-3a02bcaed870:2026-01-02T14:58:37.297Z:26",
+      "019b7f37-8646-7b42-af3b-3a02bcaed870:2026-01-02T14:58:42.039Z:30",
+      "019b7f37-8646-7b42-af3b-3a02bcaed870:2026-01-02T14:58:42.040Z:31",
+      "019b7f37-8646-7b42-af3b-3a02bcaed870:2026-01-02T14:58:44.660Z:33",
+      "019b7f37-8646-7b42-af3b-3a02bcaed870:2026-01-02T14:58:50.345Z:37"
+    ],
+    "totalDeltas": 13,
+    "totalSynced": 0,
+    "totalFailed": 0,
+    "sessionEndTime": 1767366530346
+  },
+  "endTime": 1767366530348
+}

@@ -1,5 +1,7 @@
 import { AgentMetadata } from '../core/types.js';
 import { BaseAgentAdapter } from '../core/BaseAgentAdapter.js';
+import { CodexMetricsAdapter } from './codex.metrics.js';
+import type { AgentMetricsSupport } from '../core/metrics/types.js';
 import { writeFile, readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 
@@ -141,10 +143,10 @@ const metadata = {
   // Data paths used by lifecycle hooks and analytics
   dataPaths: {
     home: '.codex',
-    sessions: 'sessions',  // Relative to home
+    sessions: 'sessions/{year}/{month}/{day}',  // Date-based structure
     settings: 'auth.json',  // Relative to home
     config: 'config.toml',  // Configuration storage
-    user_prompts: 'history.jsonl'  // User prompt history (for future metrics adapter)
+    user_prompts: 'history.jsonl'  // User prompt history
   },
 
   envMapping: {
@@ -245,7 +247,18 @@ export const CodexPluginMetadata: AgentMetadata = {
  * Codex Adapter
  */
 export class CodexPlugin extends BaseAgentAdapter {
+  private metricsAdapter: AgentMetricsSupport;
+
   constructor() {
     super(CodexPluginMetadata);
+    // Pass metadata to metrics adapter to avoid duplication
+    this.metricsAdapter = new CodexMetricsAdapter(CodexPluginMetadata);
+  }
+
+  /**
+   * Get metrics adapter for this agent
+   */
+  getMetricsAdapter(): AgentMetricsSupport {
+    return this.metricsAdapter;
   }
 }

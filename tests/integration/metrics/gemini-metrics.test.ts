@@ -24,10 +24,10 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { unlinkSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { GeminiMetricsAdapter } from '../../src/agents/plugins/gemini.metrics.js';
-import { GeminiPluginMetadata } from '../../src/agents/plugins/gemini.plugin.js';
-import { DeltaWriter } from '../../src/agents/core/metrics/core/DeltaWriter.js';
-import type { MetricDelta } from '../../src/agents/core/metrics/types.js';
+import { GeminiMetricsAdapter } from '../../../src/agents/plugins/gemini.metrics.js';
+import { GeminiPluginMetadata } from '../../../src/agents/plugins/gemini.plugin.js';
+import { DeltaWriter } from '../../../src/agents/core/metrics/core/DeltaWriter.js';
+import type { MetricDelta } from '../../../src/agents/core/metrics/types.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
