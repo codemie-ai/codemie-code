@@ -21,12 +21,20 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
-      # Use npx directly - no npm ci needed (saves ~10-12s)
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
       - name: Validate commit messages
-        run: npx --yes @commitlint/cli@latest --from ${{ github.event.pull_request.base.sha }} --to HEAD --verbose
+        run: npx commitlint --from ${{ github.event.pull_request.base.sha }} --to HEAD --verbose
 
       - name: Validate PR title
-        run: echo "${{ github.event.pull_request.title }}" | npx --yes @commitlint/cli@latest --verbose
+        run: echo "${{ github.event.pull_request.title }}" | npx commitlint --verbose
 
   secrets-detection:
     name: Secrets Detection
