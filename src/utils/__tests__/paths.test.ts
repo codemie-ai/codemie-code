@@ -256,8 +256,10 @@ describe('Path Utilities - Cross-Platform', () => {
 
   describe('getDirname', () => {
     it('should return the directory path from import.meta.url', () => {
-      // Create a mock URL for testing
-      const mockUrl = 'file:///Users/test/project/src/utils/module.js';
+      // Create a mock URL for testing (platform-aware)
+      const mockUrl = process.platform === 'win32'
+        ? 'file:///C:/Users/test/project/src/utils/module.js'
+        : 'file:///Users/test/project/src/utils/module.js';
 
       // Expected result: directory of the mock URL
       const expected = dirname(fileURLToPath(mockUrl));
@@ -270,7 +272,11 @@ describe('Path Utilities - Cross-Platform', () => {
     });
 
     it('should handle different file paths correctly', () => {
-      const mockUrl = 'file:///home/user/app/index.js';
+      // Use platform-appropriate file URL
+      const mockUrl = process.platform === 'win32'
+        ? 'file:///C:/home/user/app/index.js'
+        : 'file:///home/user/app/index.js';
+
       const expected = dirname(fileURLToPath(mockUrl));
       const result = getDirname(mockUrl);
 
@@ -278,7 +284,11 @@ describe('Path Utilities - Cross-Platform', () => {
     });
 
     it('should return a string', () => {
-      const mockUrl = 'file:///test/path/file.js';
+      // Use platform-appropriate file URL
+      const mockUrl = process.platform === 'win32'
+        ? 'file:///C:/test/path/file.js'
+        : 'file:///test/path/file.js';
+
       const result = getDirname(mockUrl);
 
       expect(typeof result).toBe('string');
