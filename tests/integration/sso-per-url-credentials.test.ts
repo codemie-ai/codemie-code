@@ -18,7 +18,7 @@ vi.mock('../../src/providers/plugins/sso/sso.http-client.js', () => ({
     applications: ['test-app']
   }),
   CODEMIE_ENDPOINTS: {
-    MODELS: '/v1/llm_models',
+    MODELS: '/v1/llm_models?include_all=true',
     USER_SETTINGS: '/v1/settings/user',
     USER: '/v1/user',
     ADMIN_APPLICATIONS: '/v1/admin/applications',
@@ -30,6 +30,7 @@ vi.mock('../../src/providers/plugins/sso/sso.http-client.js', () => ({
 import { CredentialStore } from '../../src/utils/credential-store.js';
 import { CodeMieSSO } from '../../src/providers/plugins/sso/sso.auth.js';
 import { SSOSetupSteps } from '../../src/providers/plugins/sso/sso.setup-steps.js';
+import { CODEMIE_ENDPOINTS } from '../../src/providers/plugins/sso/sso.http-client.js';
 import type { SSOCredentials } from '../../src/providers/core/types.js';
 import type { CodeMieConfigOptions } from '../../src/env/types.js';
 
@@ -64,6 +65,20 @@ const GLOBAL_CREDENTIALS: SSOCredentials = {
 };
 
 describe('SSO Per-URL Credential Management', () => {
+  describe('API Endpoints', () => {
+    it('should include include_all=true parameter in MODELS endpoint', () => {
+      expect(CODEMIE_ENDPOINTS.MODELS).toBe('/v1/llm_models?include_all=true');
+    });
+
+    it('should have correct endpoint paths for all API endpoints', () => {
+      expect(CODEMIE_ENDPOINTS.USER_SETTINGS).toBe('/v1/settings/user');
+      expect(CODEMIE_ENDPOINTS.USER).toBe('/v1/user');
+      expect(CODEMIE_ENDPOINTS.ADMIN_APPLICATIONS).toBe('/v1/admin/applications');
+      expect(CODEMIE_ENDPOINTS.METRICS).toBe('/v1/metrics');
+      expect(CODEMIE_ENDPOINTS.AUTH_LOGIN).toBe('/v1/auth/login');
+    });
+  });
+
   beforeEach(async () => {
     // Ensure credentials directory exists
     const credentialsDir = join(homedir(), '.codemie', 'credentials');
