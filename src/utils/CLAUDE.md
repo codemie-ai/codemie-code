@@ -18,7 +18,8 @@ src/utils/
 ├── config.ts            # Configuration loading and management
 ├── parsers.ts           # JSON parsing utilities
 ├── logger.ts            # Logging utilities
-├── profile.ts           # Profile management
+├── profile.ts           # Profile display primitives (agents)
+├── profile-display.ts   # CLI profile display patterns
 └── first-time.ts        # First-time setup detection
 ```
 
@@ -153,6 +154,39 @@ static async deleteProfile(name: string): Promise<void>
 // Installation tracking
 getInstallationId(): Promise<string>
 ```
+
+### profile.ts - Profile Display Primitives
+
+**Purpose**: Low-level profile rendering primitives used by agents.
+
+**Key Functions**:
+```typescript
+// Profile rendering
+renderProfileInfo(config: ProfileConfig): string
+displayWarningMessage(title: string, error: unknown, sessionContext?: ErrorContext['session']): void
+```
+
+**Used By**: BaseAgentAdapter, codemie-code plugin (agents only)
+
+**Important**: Do NOT merge with profile-display.ts - they serve different consumers:
+- profile.ts → Agents (low-level primitives)
+- profile-display.ts → CLI (high-level display patterns)
+
+### profile-display.ts - CLI Profile Display
+
+**Purpose**: High-level CLI-specific profile display patterns.
+
+**Key Classes**:
+```typescript
+// CLI display utilities
+ProfileDisplay.format(info: ProfileInfo): string
+ProfileDisplay.formatList(profiles: ProfileInfo[]): void
+ProfileDisplay.formatStatus(info: ProfileInfo, authStatus?: AuthStatus): void
+```
+
+**Used By**: CLI profile command only
+
+**Dependency**: Uses profile.ts (renderProfileInfo) for low-level rendering.
 
 ---
 
