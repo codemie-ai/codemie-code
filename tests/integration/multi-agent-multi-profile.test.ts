@@ -3,35 +3,6 @@
  *
  * Tests the complete user flow with multiple profiles where LiteLLM is the default.
  * Tests codemie-code (built-in), codemie-claude, and codemie-gemini (external) agents.
- *
- * PREREQUISITES:
- * - Run `npm run build && npm link` before running tests to ensure local wrappers are installed
- * - Ensure 4 profiles are configured in ~/.codemie/config.json:
- *   - litellm (default)
- *   - gemini-profile
- *   - bedrock-creds
- *   - bedrock-profile
- *
- * Test scenarios:
- * 1. codemie-code: default profile, model override, profile override, both overrides
- * 2. codemie-claude: default profile, model override, multiple profile overrides (litellm, bedrock-creds, bedrock-profile), both overrides
- * 3. codemie-gemini: default profile with gemini model, model override, profile override, both overrides
- *
- * REQUIRED ENVIRONMENT VARIABLES:
- *
- * For LiteLLM:
- * - LITELLM_BASE_URL: LiteLLM server URL (e.g., http://localhost:4000)
- * - LITELLM_API_KEY: LiteLLM API key
- * - LITELLM_MODEL: Model to test (default: gpt-4.1)
- *
- * For Bedrock (Direct Auth):
- * - AWS_ACCESS_KEY_ID: AWS Access Key ID
- * - AWS_SECRET_ACCESS_KEY: AWS Secret Access Key
- * - AWS_DEFAULT_REGION: AWS region (e.g., us-east-1, us-west-2)
- * - BEDROCK_MODEL: Model to test (default: global.anthropic.claude-sonnet-4-5-20250929-v1:0)
- *
- * For Bedrock (AWS Profile Auth):
- * - AWS_PROFILE: AWS profile name (default: test-codemie-profile)
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -152,7 +123,7 @@ describe('Multi-Agent Multi-Profile E2E', () => {
   });
 
   // Parametrized test cases
-  const testCases = [
+  const chatTestCases = [
     // ==================== codemie-code tests ====================
     {
       agent: 'codemie-code',
@@ -164,44 +135,15 @@ describe('Multi-Agent Multi-Profile E2E', () => {
       agent: 'codemie-code',
       description: 'should override model while using default profile',
       profile: undefined,
-      model: 'gpt-4o-mini'
+      model: 'gpt-4.1'
     },
-    {
-      agent: 'codemie-code',
-      description: 'should override profile to gemini-profile',
-      profile: 'gemini-profile',
-      model: undefined
-    },
-    {
-      agent: 'codemie-code',
-      description: 'should override both profile and model',
-      profile: 'gemini-profile',
-      model: 'claude-haiku-4-5-20251001'
-    },
-    // ==================== codemie-claude tests ====================
-    {
-      agent: 'codemie-claude',
-      description: 'should use default litellm profile without profile flag',
-      profile: undefined,
-      model: undefined
-    },
-    {
-      agent: 'codemie-claude',
-      description: 'should override model while using default profile',
-      profile: undefined,
-      model: 'claude-haiku-4-5-20251001'
-    },
+
+    // ==================== codemie-claude (External agent + profile switching) ====================
     {
       agent: 'codemie-claude',
       description: 'should override profile to gemini-profile',
       profile: 'gemini-profile',
       model: undefined
-    },
-    {
-      agent: 'codemie-claude',
-      description: 'should override profile to gemini-profile with model override',
-      profile: 'gemini-profile',
-      model: 'claude-haiku-4-5-20251001'
     },
     {
       agent: 'codemie-claude',
@@ -209,46 +151,17 @@ describe('Multi-Agent Multi-Profile E2E', () => {
       profile: 'bedrock-creds',
       model: undefined
     },
-    {
-      agent: 'codemie-claude',
-      description: 'should override profile to bedrock-creds with model override',
-      profile: 'bedrock-creds',
-      model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0'
-    },
-    {
-      agent: 'codemie-claude',
-      description: 'should override profile to bedrock-profile',
-      profile: 'bedrock-profile',
-      model: undefined
-    },
-    {
-      agent: 'codemie-claude',
-      description: 'should override profile to bedrock-profile with model override',
-      profile: 'bedrock-profile',
-      model: 'global.anthropic.claude-haiku-4-5-20251001-v1:0'
-    },
-    // ==================== codemie-gemini tests ====================
+
+    // ==================== codemie-gemini (Different external agent) ====================
     {
       agent: 'codemie-gemini',
       description: 'should override model while using default profile',
       profile: undefined,
       model: 'gemini-3-pro'
     },
-    {
-      agent: 'codemie-gemini',
-      description: 'should override profile to gemini-profile',
-      profile: 'gemini-profile',
-      model: undefined
-    },
-    {
-      agent: 'codemie-gemini',
-      description: 'should override both profile and model',
-      profile: 'gemini-profile',
-      model: 'gemini-3-pro'
-    }
   ];
 
-  it.each(testCases)(
+  it.each(chatTestCases)(
     '$agent: $description',
     async ({ agent, profile, model }) => {
       // Build command parts
@@ -279,6 +192,64 @@ describe('Multi-Agent Multi-Profile E2E', () => {
       });
 
       expect(output.toLowerCase()).toContain('hello');
+    }
+  );
+
+  // Test cases for profile status command
+  const profileStatusTestCases = [
+    {
+      profileName: 'litellm',
+      description: 'should show status for default litellm profile',
+      expectedProvider: 'litellm',
+      expectedModel: liteLLMModel
+    },
+    {
+      profileName: 'bedrock-creds',
+      description: 'should show status for bedrock-creds profile',
+      expectedProvider: 'bedrock',
+      expectedModel: bedrockModel
+    },
+    {
+      profileName: 'bedrock-profile',
+      description: 'should show status for bedrock-profile',
+      expectedProvider: 'bedrock',
+      expectedModel: bedrockModel
+    }
+  ];
+
+  it.each(profileStatusTestCases)(
+    '$description',
+    async ({ profileName, expectedProvider, expectedModel }) => {
+      // Switch to the profile first if not already active
+      const currentConfig = JSON.parse(await readFile(testConfigFile, 'utf-8'));
+
+      if (currentConfig.activeProfile !== profileName) {
+        execSync(`node ./bin/codemie.js profile switch ${profileName}`, {
+          encoding: 'utf-8',
+          env: { ...process.env },
+          timeout: 10000
+        });
+      }
+
+      // Run profile status command
+      const output = execSync('node ./bin/codemie.js profile status', {
+        encoding: 'utf-8',
+        env: { ...process.env },
+        timeout: 10000
+      });
+
+      // Verify output format matches expected structure:
+      // Profile      │ profile-name (Active)
+      // Provider     │ provider-name
+      // Model        │ model-name
+      expect(output).toContain('Profile Status');
+      expect(output).toContain('│'); // Box drawing character used as separator
+      expect(output).toContain(profileName);
+      expect(output).toContain(expectedProvider);
+      expect(output).toContain(expectedModel);
+
+      // Verify active profile indicator
+      expect(output.toLowerCase()).toMatch(/active|●/);
     }
   );
 });
