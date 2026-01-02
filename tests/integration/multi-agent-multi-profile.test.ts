@@ -168,7 +168,7 @@ describe('Multi-Agent Multi-Profile E2E', () => {
     },
     {
       agent: 'codemie-code',
-      description: 'should override profile to gemini-profile',
+      description: 'should overrcide profile to gemini-profile',
       profile: 'gemini-profile',
       model: undefined
     },
