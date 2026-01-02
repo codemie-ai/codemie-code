@@ -78,11 +78,6 @@ jobs:
           node-version: '24'
           cache: 'npm'
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libsecret-1-dev
-
       - name: Install dependencies
         run: npm ci
 
@@ -125,6 +120,9 @@ jobs:
 
       - name: Build project
         run: npm run build
+
+      - name: Run unit tests
+        run: npm run test:unit
 
       - name: Run integration tests
         run: npm run test:integration
