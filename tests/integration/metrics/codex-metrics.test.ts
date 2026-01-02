@@ -92,7 +92,8 @@ describe('CodexMetricsAdapter - Full Pipeline Integration Test', () => {
   describe('Adapter Configuration', () => {
     it('should detect correct data paths', () => {
       const dataPaths = adapter.getDataPaths();
-      expect(dataPaths.sessionsDir).toContain('.codex/sessions');
+      expect(dataPaths.sessionsDir).toContain('.codex');
+      expect(dataPaths.sessionsDir).toContain('sessions');
       expect(dataPaths.settingsDir).toContain('.codex');
     });
 
