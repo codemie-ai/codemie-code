@@ -5,9 +5,9 @@
  */
 
 import chalk from 'chalk';
-import type { CodeMieConfigOptions } from '../env/types.js';
-import type { AuthStatus } from '../providers/core/types.js';
-import { renderProfileInfo, type AuthStatusDisplay } from './profile.js';
+import type { CodeMieConfigOptions } from '../../../env/types.js';
+import type { AuthStatus } from '../../../providers/core/types.js';
+import { renderProfileInfo, type AuthStatusDisplay } from '../../../utils/profile.js';
 
 /**
  * Profile information for display

@@ -19,8 +19,7 @@ src/utils/
 ├── parsers.ts           # JSON parsing utilities
 ├── logger.ts            # Logging utilities
 ├── profile.ts           # Profile display primitives (agents)
-├── profile-display.ts   # CLI profile display patterns
-└── first-time.ts        # First-time setup detection
+└── goodbye-messages.ts  # Random welcome/goodbye messages (agents)
 ```
 
 ---
@@ -168,25 +167,7 @@ displayWarningMessage(title: string, error: unknown, sessionContext?: ErrorConte
 
 **Used By**: BaseAgentAdapter, codemie-code plugin (agents only)
 
-**Important**: Do NOT merge with profile-display.ts - they serve different consumers:
-- profile.ts → Agents (low-level primitives)
-- profile-display.ts → CLI (high-level display patterns)
-
-### profile-display.ts - CLI Profile Display
-
-**Purpose**: High-level CLI-specific profile display patterns.
-
-**Key Classes**:
-```typescript
-// CLI display utilities
-ProfileDisplay.format(info: ProfileInfo): string
-ProfileDisplay.formatList(profiles: ProfileInfo[]): void
-ProfileDisplay.formatStatus(info: ProfileInfo, authStatus?: AuthStatus): void
-```
-
-**Used By**: CLI profile command only
-
-**Dependency**: Uses profile.ts (renderProfileInfo) for low-level rendering.
+**Note**: CLI-specific profile display utilities are in `src/cli/commands/profile/display.ts`, following the pattern of keeping CLI-specific helpers with CLI commands (see `doctor/formatter.ts`, `analytics/formatter.ts`).
 
 ---
 

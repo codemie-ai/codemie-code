@@ -17,7 +17,7 @@ import { createSetupCommand } from './commands/setup.js';
 import { createWorkflowCommand } from './commands/workflow.js';
 import { createProfileCommand } from './commands/profile/index.js';
 import { createAnalyticsCommand } from './commands/analytics/index.js';
-import { FirstTimeExperience } from '../utils/first-time.js';
+import { FirstTimeExperience } from './first-time.js';
 import chalk from 'chalk';
 import { readFileSync } from 'fs';
 import { join } from 'path';
