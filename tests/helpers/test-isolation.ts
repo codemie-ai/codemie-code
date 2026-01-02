@@ -65,7 +65,7 @@ export function setupTestIsolation(options: {
     if (!options.preserveTempDir && testHome) {
       try {
         rmSync(testHome, { recursive: true, force: true });
-      } catch (error) {
+      } catch {
         // Ignore cleanup errors (may be locked on Windows)
         console.warn(`Failed to cleanup test home: ${testHome}`);
       }

@@ -1,11 +1,12 @@
 /**
- * Tests for cross-platform command finder utility
+ * Integration tests for cross-platform command utilities
+ * Tests real command execution (no mocks)
  */
 
 import { describe, it, expect } from 'vitest';
-import { commandExists, getCommandPath } from '../../../src/utils/processes.js';
+import { commandExists, getCommandPath } from '../../src/utils/processes.js';
 
-describe('which utility', () => {
+describe('processes utility - integration', () => {
   describe('commandExists', () => {
     it('should find node command (always available in test env)', async () => {
       const exists = await commandExists('node');

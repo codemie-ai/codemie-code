@@ -21,7 +21,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { unlinkSync, existsSync } from 'fs';
+import { unlinkSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { GeminiMetricsAdapter } from '../../../src/agents/plugins/gemini.metrics.js';

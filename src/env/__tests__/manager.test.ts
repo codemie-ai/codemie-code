@@ -7,16 +7,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { EnvManager } from '../manager.js';
 import { TempWorkspace } from '../../../tests/helpers/temp-workspace.js';
-import { join } from 'path';
-import * as os from 'os';
 
 describe('EnvManager', () => {
   let workspace: TempWorkspace;
-  let originalHome: string;
 
   beforeEach(() => {
     workspace = new TempWorkspace('codemie-env-test-');
-    originalHome = os.homedir();
 
     // Mock homedir to use temp workspace
     // Note: This is a simplified test - in real scenarios we'd need proper mocking

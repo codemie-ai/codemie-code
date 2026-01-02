@@ -10,7 +10,6 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { copyFileSync, mkdirSync, unlinkSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { homedir } from 'os';
 import { MetricsDataLoader } from '../../src/cli/commands/analytics/data-loader.js';
 import { AnalyticsAggregator } from '../../src/cli/commands/analytics/aggregator.js';
 import { setupTestIsolation, getTestHome } from '../helpers/test-isolation.js';

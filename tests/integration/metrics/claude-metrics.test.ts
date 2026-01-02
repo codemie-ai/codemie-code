@@ -20,7 +20,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { unlinkSync, existsSync, copyFileSync, mkdirSync } from 'fs';
+import { unlinkSync, copyFileSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';

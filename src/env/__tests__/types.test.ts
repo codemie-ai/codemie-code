@@ -8,8 +8,6 @@ import { describe, it, expect } from 'vitest';
 import {
   isMultiProviderConfig,
   isLegacyConfig,
-  MultiProviderConfig,
-  LegacyConfig,
   ProviderProfile,
 } from '../types.js';
 

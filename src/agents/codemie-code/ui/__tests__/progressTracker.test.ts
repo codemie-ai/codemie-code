@@ -4,7 +4,7 @@
  * Verifies progress tracking, todo updates, and visual feedback functionality
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { ProgressTracker, getProgressTracker, resetProgressTracker } from '../progressTracker.js';
 import type { Todo, TodoUpdateEvent } from '../../types.js';
 
