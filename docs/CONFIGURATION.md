@@ -12,7 +12,7 @@ The wizard will:
 - Guide you through provider selection
 - Test your credentials via health endpoints
 - Fetch available models in real-time
-- Save configuration to `~/.codemie/config.json`
+- Save configuration to `~/.codemie/codemie-cli.config.json`
 
 **Multi-Provider Support**: If you already have profiles configured, the wizard will offer to:
 - Add a new profile (prompts for unique name)
@@ -79,7 +79,7 @@ codemie profile show work-litellm
 
 ### Profile Configuration File
 
-Profiles are stored in `~/.codemie/config.json`:
+Profiles are stored in `~/.codemie/codemie-cli.config.json`:
 
 ```json
 {
@@ -236,7 +236,7 @@ export GEMINI_MODEL="gemini-2.5-flash"
 
 ### Configuration File
 
-Location: `~/.codemie/config.json`
+Location: `~/.codemie/codemie-cli.config.json`
 
 ```json
 {

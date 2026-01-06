@@ -133,7 +133,7 @@ body:
     attributes:
       label: Configuration (Redacted)
       description: |
-        Your config from `~/.codemie/config.json` (please redact API keys and sensitive data)
+        Your config from `~/.codemie/codemie-cli.config.json` (please redact API keys and sensitive data)
       placeholder: |
         {
           "version": 2,

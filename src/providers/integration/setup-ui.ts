@@ -211,7 +211,7 @@ export function displaySetupSuccess(
   console.log(chalk.bold.green(`\n✅ Profile "${profileName}" configured successfully!\n`));
   console.log(chalk.cyan(`🔗 Provider: ${provider}`));
   console.log(chalk.cyan(`🤖 Model: ${model}`));
-  console.log(chalk.cyan(`📁 Config: ~/.codemie/config.json\n`));
+  console.log(chalk.cyan(`📁 Config: ~/.codemie/codemie-cli.config.json\n`));
   
   console.log(chalk.bold('  Next Steps:'));
   console.log('');

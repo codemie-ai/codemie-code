@@ -8,6 +8,7 @@ on:
   workflow_call:
 
 jobs:
+  # Quick validation jobs run in parallel
   validate-commits:
     name: Validate Commits & PR
     runs-on: ubuntu-latest
@@ -38,11 +39,8 @@ jobs:
   secrets-detection:
     name: Secrets Detection
     runs-on: ubuntu-latest
-    needs: [validate-commits]
-    if: |
-      always() &&
-      github.event_name == 'pull_request' &&
-      (needs.validate-commits.result == 'success' || needs.validate-commits.result == 'skipped')
+    # Run in parallel with validate-commits
+    if: github.event_name == 'pull_request'
 
     steps:
       - name: Checkout code
@@ -50,17 +48,15 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Uses official Gitleaks GitHub Action (optimized for CI)
-      # Local validation uses Docker container (npm run validate:secrets)
-      # Both share the same .gitleaks.toml configuration
       - name: Run Gitleaks
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITLEAKS_ENABLE_SUMMARY: true
 
-  build-and-test:
-    name: Build & Test
+  # Build once, share artifacts with test jobs
+  build:
+    name: Build
     runs-on: ubuntu-latest
     needs: [validate-commits, secrets-detection]
     if: |
@@ -78,11 +74,6 @@ jobs:
           node-version: '24'
           cache: 'npm'
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libsecret-1-dev
-
       - name: Install dependencies
         run: npm ci
 
@@ -95,20 +86,19 @@ jobs:
       - name: Build project
         run: npm run build
 
-      - name: Run unit tests
-        run: npm run test:unit
+      # Upload build artifacts to share with test jobs
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 1
 
-      - name: Run integration tests
-        run: npm run test:integration
-
-  test-windows:
-    name: Test (Windows)
-    runs-on: windows-latest
-    needs: [validate-commits, secrets-detection]
-    if: |
-      always() &&
-      (needs.validate-commits.result == 'success' || needs.validate-commits.result == 'skipped') &&
-      (needs.secrets-detection.result == 'success' || needs.secrets-detection.result == 'skipped')
+  # Test jobs run in parallel, reuse build artifacts
+  test-ubuntu:
+    name: Test (Ubuntu)
+    runs-on: ubuntu-latest
+    needs: [build]
 
     steps:
       - name: Checkout code
@@ -123,8 +113,46 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build project
-        run: npm run build
+      # Download pre-built dist (skip build step, saves ~15-20s)
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Run unit tests
+        run: npm run test:unit
+
+      - name: Run integration tests
+        run: npm run test:integration
+
+  test-windows:
+    name: Test (Windows)
+    runs-on: windows-latest
+    needs: [build]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Download pre-built dist (skip build step, saves ~25-30s on Windows)
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Run unit tests
+        run: npm run test:unit
 
       - name: Run integration tests
         run: npm run test:integration

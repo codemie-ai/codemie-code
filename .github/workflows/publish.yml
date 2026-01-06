@@ -40,11 +40,6 @@ jobs:
           registry=https://registry.npmjs.org/
           EOF
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libsecret-1-dev
-
       - name: Install dependencies
         run: npm ci
 

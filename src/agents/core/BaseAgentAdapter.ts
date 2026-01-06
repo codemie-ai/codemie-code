@@ -1,7 +1,7 @@
 import { AgentMetadata, AgentAdapter, AgentConfig } from './types.js';
-import * as npm from '../../utils/npm.js';
+import * as npm from '../../utils/processes.js';
 import { NpmError } from '../../utils/errors.js';
-import { exec } from '../../utils/exec.js';
+import { exec } from '../../utils/processes.js';
 import { logger } from '../../utils/logger.js';
 import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
@@ -17,7 +17,7 @@ import chalk from 'chalk';
 import { existsSync } from 'fs';
 import { mkdir, writeFile } from 'fs/promises';
 import { join } from 'path';
-import { resolveHomeDir } from '../../utils/path-utils.js';
+import { resolveHomeDir } from '../../utils/paths.js';
 import {
   executeOnSessionStart,
   executeBeforeRun,
@@ -111,7 +111,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
     try {
       // Use commandExists which handles Windows (where) vs Unix (which)
-      const { commandExists } = await import('../../utils/which.js');
+      const { commandExists } = await import('../../utils/processes.js');
       return await commandExists(this.metadata.cliCommand);
     } catch {
       return false;
@@ -312,7 +312,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
       // Resolve full path on Windows to avoid using shell: true
       if (isWindows) {
-        const { getCommandPath } = await import('../../utils/which.js');
+        const { getCommandPath } = await import('../../utils/processes.js');
         const resolvedPath = await getCommandPath(this.metadata.cliCommand);
         if (resolvedPath) {
           commandPath = resolvedPath;

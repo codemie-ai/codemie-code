@@ -4,7 +4,7 @@ import { CodeMieCode } from '../codemie-code/index.js';
 import { loadCodeMieConfig } from '../codemie-code/config.js';
 import { join } from 'path';
 import { readFileSync } from 'fs';
-import { getDirname } from '../../utils/dirname.js';
+import { getDirname } from '../../utils/paths.js';
 import { getRandomWelcomeMessage, getRandomGoodbyeMessage } from '../../utils/goodbye-messages.js';
 import { renderProfileInfo } from '../../utils/profile.js';
 import chalk from 'chalk';

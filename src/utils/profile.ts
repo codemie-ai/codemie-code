@@ -1,5 +1,5 @@
 import chalk from 'chalk';
-import { formatErrorWithExplanation, type ErrorContext } from './error-context.js';
+import { formatErrorWithExplanation, type ErrorContext } from './errors.js';
 import { logger } from './logger.js';
 
 /**
@@ -180,35 +180,3 @@ export function displayWarningMessage(
   console.error(lines.join('\n'));
 }
 
-/**
- * Display a simple info message after profile info
- *
- * @param message - Message to display
- * @param details - Optional additional details
- *
- * @example
- * ```typescript
- * displayInfoMessage('Metrics collection is disabled for this provider', {
- *   provider: 'openai',
- *   reason: 'Not supported'
- * });
- * ```
- */
-export function displayInfoMessage(
-  message: string,
-  details?: Record<string, string>
-): void {
-  const lines: string[] = [];
-  lines.push(''); // Spacing
-  lines.push(chalk.cyan('ℹ️  ' + message));
-
-  if (details) {
-    Object.entries(details).forEach(([key, value]) => {
-      lines.push(chalk.cyan.dim(`   ${key}: ${value}`));
-    });
-  }
-
-  lines.push(''); // Spacing
-
-  console.error(lines.join('\n'));
-}

@@ -26,7 +26,7 @@ export interface CodeMieUserInfo {
  * CodeMie API endpoints
  */
 export const CODEMIE_ENDPOINTS = {
-  MODELS: '/v1/llm_models',
+  MODELS: '/v1/llm_models?include_all=true',
   USER_SETTINGS: '/v1/settings/user',
   USER: '/v1/user',
   ADMIN_APPLICATIONS: '/v1/admin/applications',

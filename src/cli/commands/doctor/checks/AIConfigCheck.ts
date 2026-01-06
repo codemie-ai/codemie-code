@@ -2,7 +2,7 @@
  * AI Configuration health check
  */
 
-import { ConfigLoader } from '../../../../utils/config-loader.js';
+import { ConfigLoader } from '../../../../utils/config.js';
 import { ProviderRegistry } from '../../../../providers/core/registry.js';
 import { HealthCheck, HealthCheckResult, HealthCheckDetail, ProgressCallback } from '../types.js';
 

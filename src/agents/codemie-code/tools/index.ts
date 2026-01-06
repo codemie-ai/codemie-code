@@ -13,7 +13,7 @@ import { promisify } from 'util';
 import path from 'path';
 import { filterDirectoryEntries, createFilterConfig, DEFAULT_FILTER_CONFIG, generateFilterStats } from '../filters.js';
 import { logger } from '../../../utils/logger.js';
-import { isPathWithinDirectory } from '../../../utils/path-utils.js';
+import { isPathWithinDirectory } from '../../../utils/paths.js';
 
 const execAsync = promisify(exec);
 

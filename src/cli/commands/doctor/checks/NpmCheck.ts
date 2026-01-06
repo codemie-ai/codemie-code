@@ -2,7 +2,7 @@
  * npm health check
  */
 
-import * as npm from '../../../../utils/npm.js';
+import * as npm from '../../../../utils/processes.js';
 import { HealthCheck, HealthCheckResult, HealthCheckDetail } from '../types.js';
 
 export class NpmCheck implements HealthCheck {

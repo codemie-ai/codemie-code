@@ -10,17 +10,18 @@ import { Command } from 'commander';
 import { createListCommand } from './commands/list.js';
 import { createInstallCommand } from './commands/install.js';
 import { createUninstallCommand } from './commands/uninstall.js';
+import { createUpdateCommand } from './commands/update.js';
 import { createDoctorCommand } from './commands/doctor/index.js';
 import { createVersionCommand } from './commands/version.js';
 import { createSetupCommand } from './commands/setup.js';
 import { createWorkflowCommand } from './commands/workflow.js';
 import { createProfileCommand } from './commands/profile/index.js';
 import { createAnalyticsCommand } from './commands/analytics/index.js';
-import { FirstTimeExperience } from '../utils/first-time.js';
+import { FirstTimeExperience } from './first-time.js';
 import chalk from 'chalk';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { getDirname } from '../utils/dirname.js';
+import { getDirname } from '../utils/paths.js';
 
 const program = new Command();
 
@@ -47,6 +48,7 @@ program.addCommand(createProfileCommand());
 program.addCommand(createListCommand());
 program.addCommand(createInstallCommand());
 program.addCommand(createUninstallCommand());
+program.addCommand(createUpdateCommand());
 program.addCommand(createDoctorCommand());
 program.addCommand(createVersionCommand());
 program.addCommand(createWorkflowCommand());

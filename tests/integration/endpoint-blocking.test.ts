@@ -11,8 +11,12 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { CodeMieProxy } from '../../src/providers/plugins/sso/proxy/sso.proxy.js';
 import { ProxyConfig } from '../../src/providers/plugins/sso/proxy/proxy-types.js';
 import http from 'http';
+import { setupTestIsolation } from '../helpers/test-isolation.js';
 
 describe('Endpoint Blocking Integration', () => {
+  // Setup isolated CODEMIE_HOME for this test suite
+  setupTestIsolation();
+
   let proxy: CodeMieProxy;
   let proxyUrl: string;
   let upstreamCallCount = 0;

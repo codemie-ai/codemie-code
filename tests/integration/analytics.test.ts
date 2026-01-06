@@ -10,23 +10,33 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { copyFileSync, mkdirSync, unlinkSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { homedir } from 'os';
 import { MetricsDataLoader } from '../../src/cli/commands/analytics/data-loader.js';
 import { AnalyticsAggregator } from '../../src/cli/commands/analytics/aggregator.js';
+import { setupTestIsolation, getTestHome } from '../helpers/test-isolation.js';
 
 // ESM equivalent of __dirname
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 describe('Analytics E2E Test - Golden Dataset Validation', () => {
-  const fixturesDir = join(__dirname, 'fixtures', 'claude');
+  // Setup isolated CODEMIE_HOME for this test suite
+  setupTestIsolation();
+
+  const fixturesDir = join(__dirname, 'metrics', 'fixtures', 'claude');
   const testSessionId = '71a17a83-ff99-4d05-964b-0bd56892faec';
-  const testMetricsDir = join(homedir(), '.codemie', 'metrics', 'sessions');
-  const testSessionFile = join(testMetricsDir, `${testSessionId}.json`);
-  const testMetricsFile = join(testMetricsDir, `${testSessionId}_metrics.jsonl`);
+
+  // Use getTestHome() to get isolated test directory
+  let testMetricsDir: string;
+  let testSessionFile: string;
+  let testMetricsFile: string;
 
   beforeAll(() => {
-    // Setup: Copy expected files to ~/.codemie/metrics/sessions/
+    // Initialize paths with isolated test home
+    testMetricsDir = join(getTestHome(), 'metrics', 'sessions');
+    testSessionFile = join(testMetricsDir, `${testSessionId}.json`);
+    testMetricsFile = join(testMetricsDir, `${testSessionId}_metrics.jsonl`);
+
+    // Setup: Copy expected files to isolated test directory
     mkdirSync(testMetricsDir, { recursive: true });
     copyFileSync(join(fixturesDir, 'expected-session.json'), testSessionFile);
     copyFileSync(join(fixturesDir, 'expected-metrics.jsonl'), testMetricsFile);

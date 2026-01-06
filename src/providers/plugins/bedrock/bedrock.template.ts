@@ -27,6 +27,22 @@ export const BedrockTemplate = registerProvider<ProviderTemplate>({
   supportsModelInstallation: false,
   supportsStreaming: true,
 
+  // Environment Variable Export
+  exportEnvVars: (config) => {
+    const env: Record<string, string> = {};
+
+    // AWS Bedrock-specific environment variables
+    if (config.awsProfile) env.CODEMIE_AWS_PROFILE = config.awsProfile;
+    if (config.awsRegion) env.CODEMIE_AWS_REGION = config.awsRegion;
+    if (config.awsSecretAccessKey) env.CODEMIE_AWS_SECRET_ACCESS_KEY = config.awsSecretAccessKey;
+
+    // Token configuration (for Claude Code with Bedrock)
+    if (config.maxOutputTokens) env.CODEMIE_MAX_OUTPUT_TOKENS = String(config.maxOutputTokens);
+    if (config.maxThinkingTokens) env.CODEMIE_MAX_THINKING_TOKENS = String(config.maxThinkingTokens);
+
+    return env;
+  },
+
   // Provider-specific agent hooks
   agentHooks: {
     // Wildcard hook: Transform AWS credentials for ALL agents
@@ -92,14 +108,15 @@ export const BedrockTemplate = registerProvider<ProviderTemplate>({
           env.ANTHROPIC_MODEL = env.CODEMIE_MODEL;
         }
 
-        // Recommended token settings for Bedrock burndown throttling
+        // Token settings for Bedrock burndown throttling
         // https://code.claude.com/docs/en/amazon-bedrock#output-token-configuration
-        if (!env.CLAUDE_CODE_MAX_OUTPUT_TOKENS) {
-          env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = '4096';
-        }
-        if (!env.MAX_THINKING_TOKENS) {
-          env.MAX_THINKING_TOKENS = '1024';
-        }
+        // Use user-configured values if available, otherwise use recommended defaults
+        env.CLAUDE_CODE_MAX_OUTPUT_TOKENS = env.CODEMIE_MAX_OUTPUT_TOKENS || '4096';
+        env.MAX_THINKING_TOKENS = env.CODEMIE_MAX_THINKING_TOKENS || '1024';
+
+        // Clean up intermediate variables
+        delete env.CODEMIE_MAX_OUTPUT_TOKENS;
+        delete env.CODEMIE_MAX_THINKING_TOKENS;
 
         return env;
       }

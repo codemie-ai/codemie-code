@@ -7,8 +7,12 @@
 
 import { describe, it, expect } from 'vitest';
 import { execSync } from 'child_process';
+import { setupTestIsolation } from '../helpers/test-isolation.js';
 
 describe('Agent Shortcuts - Integration', () => {
+  // Setup isolated CODEMIE_HOME for this test suite
+  setupTestIsolation();
+
   // Helper to run agent commands with timeout
   const runAgentCommand = (command: string, timeoutMs: number = 5000): { output: string; exitCode: number; error?: string } => {
     try {

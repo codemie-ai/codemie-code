@@ -2,7 +2,7 @@
  * Python version health check
  */
 
-import { exec } from '../../../../utils/exec.js';
+import { exec } from '../../../../utils/processes.js';
 import { HealthCheck, HealthCheckResult, HealthCheckDetail } from '../types.js';
 
 export class PythonCheck implements HealthCheck {

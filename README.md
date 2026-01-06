@@ -163,6 +163,7 @@ The CodeMie CLI has a rich set of commands for managing agents, configuration, a
 codemie setup            # Interactive configuration wizard
 codemie list             # List all available agents
 codemie install <agent>  # Install an agent
+codemie update <agent>   # Update installed agents
 codemie profile          # Manage provider profiles
 codemie analytics        # View usage analytics (sessions, tokens, costs, tools)
 codemie workflow <cmd>   # Manage CI/CD workflows
@@ -179,7 +180,6 @@ Comprehensive guides are available in the `docs/` directory:
 
 - **[Configuration](docs/CONFIGURATION.md)** - Setup wizard, environment variables, multi-provider profiles, manual configuration
 - **[Commands](docs/COMMANDS.md)** - Complete command reference including analytics and workflow commands
-- **[Analytics](.codemie/guides/analytics-command.md)** - Detailed usage analytics guide with filtering, export options, and metrics
 - **[Agents](docs/AGENTS.md)** - Detailed information about each agent (Claude Code, Codex, Gemini, Deep Agents, built-in)
 - **[Authentication](docs/AUTHENTICATION.md)** - SSO setup, token management, enterprise authentication
 - **[Examples](docs/EXAMPLES.md)** - Common workflows, multi-provider examples, CI/CD integration

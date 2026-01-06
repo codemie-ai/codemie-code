@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { getDirname } from '../../utils/dirname.js';
+import { getDirname } from '../../utils/paths.js';
 
 export function createVersionCommand(): Command {
   const command = new Command('version');

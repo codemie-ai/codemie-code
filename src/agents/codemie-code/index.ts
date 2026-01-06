@@ -12,7 +12,7 @@ import type { CodeMieConfig, InitializationResult, AgentStats } from './types.js
 import { CodeMieAgentError } from './types.js';
 import { hasClipboardImage, getClipboardImage } from '../../utils/clipboard.js';
 import { logger } from '../../utils/logger.js';
-import { sanitizeCookies } from '../../utils/sanitize.js';
+import { sanitizeCookies } from '../../utils/security.js';
 
 export class CodeMieCode {
   private agent: CodeMieAgent | null = null;

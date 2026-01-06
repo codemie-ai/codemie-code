@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import inquirer from 'inquirer';
 import chalk from 'chalk';
 import ora from 'ora';
-import { ConfigLoader } from '../../utils/config-loader.js';
+import { ConfigLoader } from '../../utils/config.js';
 import { logger } from '../../utils/logger.js';
 import { ProviderRegistry } from '../../providers/index.js';
 import {

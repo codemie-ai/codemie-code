@@ -10,7 +10,7 @@ import { URL } from 'url';
 import open from 'open';
 import chalk from 'chalk';
 import type { SSOAuthConfig, SSOAuthResult, SSOCredentials } from '../../core/types.js';
-import { CredentialStore } from '../../../utils/credential-store.js';
+import { CredentialStore } from '../../../utils/security.js';
 
 /**
  * Normalize URL to base (protocol + host)

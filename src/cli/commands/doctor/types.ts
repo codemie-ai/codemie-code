@@ -2,7 +2,7 @@
  * Health check types and interfaces
  */
 
-import { CodeMieConfigOptions } from '../../../utils/config-loader.js';
+import { CodeMieConfigOptions } from '../../../utils/config.js';
 
 /**
  * Status of a health check item

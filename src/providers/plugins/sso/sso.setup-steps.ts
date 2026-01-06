@@ -23,7 +23,7 @@ import { ProviderRegistry } from '../../core/registry.js';
 import { SSOTemplate } from './sso.template.js';
 import { CodeMieSSO } from './sso.auth.js';
 import { SSOModelProxy } from './sso.models.js';
-import { fetchCodeMieUserInfo, fetchCodeMieModels } from './sso.http-client.js';
+import { fetchCodeMieUserInfo, fetchCodeMieModels, fetchCodeMieIntegrations } from './sso.http-client.js';
 import { logger } from '../../../utils/logger.js';
 
 /**
@@ -133,12 +133,25 @@ export const SSOSetupSteps: ProviderSetupSteps = {
     }
 
     // Check for LiteLLM integrations
-    const modelProxy = new SSOModelProxy(authResult.apiUrl);
     let integrations;
     let integrationsFetchError: string | undefined;
 
     try {
-      integrations = await modelProxy.fetchIntegrations(codeMieUrl, selectedProject);
+      // Use authResult.cookies directly (same as userInfo fetch) instead of retrieving from storage
+      // This ensures we use the same authenticated session for all API calls during setup
+      const allIntegrations = await fetchCodeMieIntegrations(
+        authResult.apiUrl,
+        authResult.cookies
+      );
+
+      // Filter by project if specified
+      if (selectedProject) {
+        integrations = allIntegrations.filter(
+          integration => integration.project_name === selectedProject
+        );
+      } else {
+        integrations = allIntegrations;
+      }
     } catch (error) {
       // Log error but don't fail setup - integrations are optional
       integrationsFetchError = error instanceof Error ? error.message : String(error);

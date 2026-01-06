@@ -19,7 +19,7 @@ import type {
 } from '../core/metrics/types.js';
 import { logger } from '../../utils/logger.js';
 import type { AgentMetadata } from '../core/types.js';
-import { getFilename } from '../../utils/path-utils.js';
+import { getFilename } from '../../utils/paths.js';
 
 export class GeminiMetricsAdapter extends BaseMetricsAdapter {
   // Cache projectHash from last parsed session to optimize getUserPrompts()

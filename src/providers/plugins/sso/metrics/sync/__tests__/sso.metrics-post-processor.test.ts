@@ -4,7 +4,7 @@
  * Tests for metrics sanitization logic
  */
 
-import {describe, it, expect, beforeEach, vi} from 'vitest';
+import {describe, it, expect, beforeEach} from 'vitest';
 import {
   postProcessMetric,
   truncateProjectPath,
@@ -12,7 +12,6 @@ import {
   filterAndSanitizeErrors
 } from '../sso.metrics-post-processor.js';
 import type {SessionMetric} from '../sso.metrics-types.js';
-import type {MetricsSession} from '../../types.js';
 
 describe('truncateProjectPath', () => {
   it('should truncate full path to parent/current format', () => {
@@ -142,27 +141,9 @@ describe('filterAndSanitizeErrors', () => {
 });
 
 describe('postProcessMetric', () => {
-  let mockSession: MetricsSession;
   let mockMetric: SessionMetric;
 
   beforeEach(() => {
-    mockSession = {
-      sessionId: 'test-session-id',
-      agentName: 'claude',
-      provider: 'ai-run-sso',
-      startTime: Date.now(),
-      workingDirectory: '/Users/Nikita/repos/EPMCDME/codemie-ai/codemie-code',
-      correlation: {
-        status: 'matched',
-        retryCount: 0
-      },
-      monitoring: {
-        isActive: false,
-        changeCount: 0
-      },
-      status: 'active'
-    };
-
     mockMetric = {
       name: 'codemie_cli_usage_total',
       attributes: {

@@ -1,6 +1,6 @@
 {
   "name": "@codemieai/code",
-  "version": "0.0.26",
+  "version": "0.0.28",
   "description": "Unified AI coding assistant CLI - Manage Claude Code, Codex, Gemini & custom agents. Multi-provider support (OpenAI, Azure, LiteLLM, SSO). Built-in LangGraph agent with file operations & git integration.",
   "type": "module",
   "main": "dist/index.js",
@@ -31,8 +31,8 @@
     "test:watch": "vitest --watch",
     "test:ui": "vitest --ui",
     "test:run": "vitest run",
-    "lint": "eslint 'src/**/*.ts' --max-warnings=0",
-    "lint:fix": "eslint 'src/**/*.ts' --fix",
+    "lint": "eslint '{src,tests}/**/*.ts' --max-warnings=0",
+    "lint:fix": "eslint '{src,tests}/**/*.ts' --fix",
     "commitlint": "commitlint --edit",
     "commitlint:last": "commitlint --from HEAD~1 --to HEAD --verbose",
     "validate:secrets": "node scripts/validate-secrets.js",

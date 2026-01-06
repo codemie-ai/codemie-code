@@ -6,7 +6,7 @@ export type { AgentAdapter } from './agents/registry.js';
 
 // Utils
 export { logger } from './utils/logger.js';
-export { exec } from './utils/exec.js';
+export { exec } from './utils/processes.js';
 export * from './utils/errors.js';
 
 // Environment

@@ -7,7 +7,7 @@
 
 import { existsSync } from 'fs';
 import { join } from 'path';
-import { exec } from '../../utils/exec.js';
+import { exec } from '../../utils/processes.js';
 import { logger } from '../../utils/logger.js';
 import type {
   FrameworkAdapter,

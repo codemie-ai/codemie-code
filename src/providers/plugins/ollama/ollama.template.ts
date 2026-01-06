@@ -27,6 +27,18 @@ export const OllamaTemplate = registerProvider<ProviderTemplate>({
   capabilities: ['streaming', 'tools', 'embeddings', 'model-management'],
   supportsModelInstallation: true,
   healthCheckEndpoint: '/api/version',
+
+  // Agent lifecycle hooks
+  agentHooks: {
+    // Codex-specific hook: Ollama uses "chat" API (not "responses")
+    'codex': {
+      beforeRun: async (env) => {
+        env.CODEMIE_CODEX_WIRE_API = 'chat';
+        return env;
+      }
+    }
+  },
+
   setupInstructions: `
 # Ollama Setup Instructions
 

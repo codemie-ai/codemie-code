@@ -105,6 +105,6 @@ export function createCLIRunner(): CLIRunner {
 /**
  * Create a CLI runner for a specific agent shortcut
  */
-export function createAgentRunner(agentName: string): CLIRunner {
+export function createAgentRunner(_agentName: string): CLIRunner {
   return new CLIRunner(`./bin/agent-executor.js`);
 }
