@@ -11,6 +11,7 @@ import { SSOAuthPlugin } from './sso-auth.plugin.js';
 import { HeaderInjectionPlugin } from './header-injection.plugin.js';
 import { LoggingPlugin } from './logging.plugin.js';
 import { SSOMetricsSyncPlugin } from '../../metrics/sync/sso.metrics-sync.plugin.js';
+import { SSOConversationSyncPlugin } from '../../conversations/sync/sso.conversation-sync.plugin.js';
 
 /**
  * Register core plugins
@@ -25,6 +26,7 @@ export function registerCorePlugins(): void {
   registry.register(new HeaderInjectionPlugin());
   registry.register(new LoggingPlugin()); // Always enabled - logs to log files at INFO level
   registry.register(new SSOMetricsSyncPlugin()); // SSO capability - gracefully skips if not in SSO mode
+  registry.register(new SSOConversationSyncPlugin()); // SSO capability - syncs Claude conversations (priority 101)
 }
 
 // Auto-register on import
@@ -33,5 +35,6 @@ registerCorePlugins();
 // Re-export for convenience
 export { EndpointBlockerPlugin, SSOAuthPlugin, HeaderInjectionPlugin, LoggingPlugin };
 export { SSOMetricsSyncPlugin } from '../../metrics/sync/sso.metrics-sync.plugin.js';
+export { SSOConversationSyncPlugin } from '../../conversations/sync/sso.conversation-sync.plugin.js';
 export { getPluginRegistry, resetPluginRegistry } from './registry.js';
 export * from './types.js';

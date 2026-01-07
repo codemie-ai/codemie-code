@@ -1,0 +1,145 @@
+{
+  "history": [
+    {
+      "role": "User",
+      "message": "show tools",
+      "history_index": 0,
+      "date": "2025-12-22T11:40:39.974Z",
+      "message_raw": "show tools",
+      "file_names": []
+    },
+    {
+      "role": "Assistant",
+      "message": "Failed after 8 error(s): API Error (403): Invalid API Key format: Must start with pre-defined prefix",
+      "message_raw": "Failed after 8 error(s)",
+      "history_index": 0,
+      "date": "2025-12-22T11:41:50.624Z",
+      "response_time": 70.65,
+      "assistant_id": "5a430368-9e91-4564-be20-989803bf4da2",
+      "thoughts": [
+        {
+          "id": "3b87b174-8f7b-4e1d-9fe5-38625cfce9ce",
+          "metadata": {
+            "timestamp": "2025-12-22T11:40:40.551Z",
+            "error_status": 403
+          },
+          "in_progress": false,
+          "author_type": "Agent",
+          "author_name": "Claude Code",
+          "message": "API Error (403): Invalid API Key format: Must start with pre-defined prefix",
+          "input_text": "",
+          "output_format": "error",
+          "error": true,
+          "children": []
+        },
+        {
+          "id": "78a1fe63-ce6e-4f3b-ba97-387bfefaf3ae",
+          "metadata": {
+            "timestamp": "2025-12-22T11:40:41.304Z",
+            "error_status": 403
+          },
+          "in_progress": false,
+          "author_type": "Agent",
+          "author_name": "Claude Code",
+          "message": "API Error (403): Invalid API Key format: Must start with pre-defined prefix",
+          "input_text": "",
+          "output_format": "error",
+          "error": true,
+          "children": []
+        },
+        {
+          "id": "6fb7579c-0465-4182-8694-3528f505b570",
+          "metadata": {
+            "timestamp": "2025-12-22T11:40:42.635Z",
+            "error_status": 403
+          },
+          "in_progress": false,
+          "author_type": "Agent",
+          "author_name": "Claude Code",
+          "message": "API Error (403): Invalid API Key format: Must start with pre-defined prefix",
+          "input_text": "",
+          "output_format": "error",
+          "error": true,
+          "children": []
+        },
+        {
+          "id": "f2562419-2cd7-4852-82e6-12cc99e985a1",
+          "metadata": {
+            "timestamp": "2025-12-22T11:40:44.897Z",
+            "error_status": 403
+          },
+          "in_progress": false,
+          "author_type": "Agent",
+          "author_name": "Claude Code",
+          "message": "API Error (403): Invalid API Key format: Must start with pre-defined prefix",
+          "input_text": "",
+          "output_format": "error",
+          "error": true,
+          "children": []
+        },
+        {
+          "id": "9c8d12fb-f644-4df6-80a6-d402a3105211",
+          "metadata": {
+            "timestamp": "2025-12-22T11:40:49.821Z",
+            "error_status": 403
+          },
+          "in_progress": false,
+          "author_type": "Agent",
+          "author_name": "Claude Code",
+          "message": "API Error (403): Invalid API Key format: Must start with pre-defined prefix",
+          "input_text": "",
+          "output_format": "error",
+          "error": true,
+          "children": []
+        },
+        {
+          "id": "e63bfeed-feef-4f94-b55c-d84b16c25f99",
+          "metadata": {
+            "timestamp": "2025-12-22T11:40:58.868Z",
+            "error_status": 403
+          },
+          "in_progress": false,
+          "author_type": "Agent",
+          "author_name": "Claude Code",
+          "message": "API Error (403): Invalid API Key format: Must start with pre-defined prefix",
+          "input_text": "",
+          "output_format": "error",
+          "error": true,
+          "children": []
+        },
+        {
+          "id": "6df2d631-54e7-4fcb-863e-ea11164395fd",
+          "metadata": {
+            "timestamp": "2025-12-22T11:41:16.681Z",
+            "error_status": 403
+          },
+          "in_progress": false,
+          "author_type": "Agent",
+          "author_name": "Claude Code",
+          "message": "API Error (403): Invalid API Key format: Must start with pre-defined prefix",
+          "input_text": "",
+          "output_format": "error",
+          "error": true,
+          "children": []
+        },
+        {
+          "id": "ea6ce502-8760-4544-b083-1854b8d7f0c0",
+          "metadata": {
+            "timestamp": "2025-12-22T11:41:50.624Z",
+            "error_status": 403
+          },
+          "in_progress": false,
+          "author_type": "Agent",
+          "author_name": "Claude Code",
+          "message": "API Error (403): Invalid API Key format: Must start with pre-defined prefix",
+          "input_text": "",
+          "output_format": "error",
+          "error": true,
+          "children": []
+        }
+      ]
+    }
+  ],
+  "assistantId": "5a430368-9e91-4564-be20-989803bf4da2",
+  "folder": "Claude Imports"
+}
