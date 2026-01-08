@@ -262,7 +262,50 @@ describe('ClaudeSessionAdapter', () => {
         .toThrow('empty');
     });
 
-    it('should throw error for session without sessionId', async () => {
+    it('should handle file-history-snapshot as first line', async () => {
+      const sessionFile = join(tempDir, 'snapshot-first-session.jsonl');
+      const messages: any[] = [
+        // First line: file-history-snapshot without sessionId
+        {
+          type: 'file-history-snapshot',
+          messageId: 'snapshot-1',
+          snapshot: {
+            messageId: 'snapshot-1',
+            trackedFileBackups: {},
+            timestamp: '2024-01-01T00:00:00Z'
+          },
+          isSnapshotUpdate: false
+        },
+        // Second line: actual message with sessionId (only needs to be in one message)
+        {
+          type: 'user',
+          uuid: 'msg-1',
+          sessionId: 'session-123',
+          timestamp: '2024-01-01T00:00:01Z',
+          message: { role: 'user', content: 'Hello' }
+        },
+        {
+          type: 'assistant',
+          uuid: 'msg-2',
+          timestamp: '2024-01-01T00:00:02Z',
+          message: {
+            role: 'assistant',
+            content: 'Hi there!',
+            usage: { input_tokens: 10, output_tokens: 20 }
+          }
+        }
+      ];
+
+      await writeJSONLAtomic(sessionFile, messages);
+
+      const parsed = await adapter.parseSessionFile(sessionFile);
+
+      expect(parsed.sessionId).toBe('session-123');
+      expect(parsed.messages).toHaveLength(3);
+      expect(parsed.metadata.createdAt).toBe('2024-01-01T00:00:01Z');
+    });
+
+    it('should throw error for session without sessionId in any message', async () => {
       const sessionFile = join(tempDir, 'invalid-session.jsonl');
       const messages = [
         {

@@ -294,15 +294,8 @@ export class MetricsOrchestrator {
         logger.debug('[MetricsOrchestrator] Collected final deltas');
       }
 
-      // Update sync state status with end time
-      const endTime = Date.now();
-      const status = exitCode === 0 ? 'completed' : 'failed';
-
-      if (this.syncStateManager) {
-        await this.syncStateManager.updateStatus(status, endTime);
-      }
-
       // Update session status
+      const status = exitCode === 0 ? 'completed' : 'failed';
       await this.store.updateSessionStatus(this.sessionId, status);
 
       logger.debug('[MetricsOrchestrator] Session finalized');
@@ -338,12 +331,8 @@ export class MetricsOrchestrator {
       this.deltaWriter = new DeltaWriter(this.sessionId);
       this.syncStateManager = new SyncStateManager(this.sessionId);
 
-      // Initialize sync state with session start time
-      await this.syncStateManager.initialize(
-        this.sessionId,
-        this.session.correlation.agentSessionId,
-        this.session.startTime
-      );
+      // Initialize metrics sync state
+      await this.syncStateManager.initialize();
 
       logger.info('[MetricsOrchestrator] Monitoring session activity in real-time');
       logger.debug('[MetricsOrchestrator] Initialized delta-based metrics tracking');

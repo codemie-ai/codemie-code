@@ -26,7 +26,6 @@ import type { SessionAdapter } from '../adapters/base/BaseSessionAdapter.js';
 import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../processors/base/BaseProcessor.js';
 import { MetricsProcessor } from '../processors/metrics/metrics-processor.js';
 import { ConversationsProcessor } from '../processors/conversations/conversation-processor.js';
-import { discoverSessionFiles } from '../utils/session-discovery.js';
 
 export class SSOSessionSyncPlugin implements ProxyPlugin {
   id = '@codemie/sso-session-sync';
@@ -245,25 +244,35 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
     this.isSyncing = true;
 
     try {
-      // 1. Discover session files via adapter
-      const sessionFiles = await discoverSessionFiles(this.adapter);
+      // 1. Load session metadata from SessionStore (already correlated by metrics)
+      const { SessionStore } = await import('../../../../../agents/core/metrics/session/SessionStore.js');
+      const sessionStore = new SessionStore();
+      const sessionMetadata = await sessionStore.loadSession(this.sessionId);
 
-      if (sessionFiles.length === 0) {
-        logger.debug(`[${this.name}] No session files found`);
+      if (!sessionMetadata) {
+        logger.debug(`[${this.name}] Session metadata not found for ${this.sessionId}`);
         return;
       }
 
-      // 2. Process ALL sessions - processors handle their own incremental logic (Phase 4.1)
-      logger.info(`[${this.name}] Found ${sessionFiles.length} session file${sessionFiles.length !== 1 ? 's' : ''} to process`);
+      // 2. Check if session is correlated to agent session file
+      if (sessionMetadata.correlation.status !== 'matched') {
+        logger.debug(`[${this.name}] Session not yet correlated (status: ${sessionMetadata.correlation.status})`);
+        return;
+      }
 
-      // 3. Process each session
-      for (const sessionFile of sessionFiles) {
-        try {
-          await this.processSession(sessionFile);
-        } catch (error: any) {
-          logger.error(`[${this.name}] Failed to process ${sessionFile}:`, error.message);
-          // Continue with other sessions even if one fails
-        }
+      if (!sessionMetadata.correlation.agentSessionFile) {
+        logger.debug(`[${this.name}] No agent session file in correlation data`);
+        return;
+      }
+
+      // 3. Process the correlated session file
+      const agentSessionFile = sessionMetadata.correlation.agentSessionFile;
+      logger.info(`[${this.name}] Processing correlated session: ${agentSessionFile}`);
+
+      try {
+        await this.processSession(agentSessionFile);
+      } catch (error: any) {
+        logger.error(`[${this.name}] Failed to process session:`, error.message);
       }
 
     } catch (error) {
@@ -286,7 +295,12 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
     // Parse session file via adapter (agent-specific parsing)
     const session = await this.adapter.parseSessionFile(sessionFile);
 
-    logger.debug(`[${this.name}] Processing session ${session.sessionId} from ${sessionFile}`);
+    // CRITICAL: Override sessionId to use codemie session ID (not agent's session ID)
+    // This ensures processors can look up the correct SessionStore entry
+    const originalAgentSessionId = session.sessionId;
+    session.sessionId = this.sessionId;
+
+    logger.debug(`[${this.name}] Processing session ${this.sessionId} (agent session: ${originalAgentSessionId}) from ${sessionFile}`);
 
     // Track results from each processor
     const results: Record<string, ProcessingResult> = {};
@@ -326,7 +340,7 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
     const totalCount = Object.keys(results).length;
 
     logger.info(
-      `[${this.name}] Processed session ${session.sessionId} (${successCount}/${totalCount} processors succeeded)`
+      `[${this.name}] Processed session ${this.sessionId} (${successCount}/${totalCount} processors succeeded)`
     );
   }
 }

@@ -10,7 +10,7 @@ import { readFile, writeFile, mkdir, rename } from 'fs/promises';
 import { existsSync } from 'fs';
 import { dirname, join } from 'path';
 import { randomUUID } from 'crypto';
-import type { SyncState, MetricsSession } from '../types.js';
+import type { MetricsSyncState, MetricsSession } from '../types.js';
 import { logger } from '../../../../utils/logger.js';
 import { getSessionPath } from '../../metrics-config.js';
 
@@ -24,26 +24,21 @@ export class SyncStateManager {
   }
 
   /**
-   * Initialize new sync state (embedded in session file)
+   * Initialize new metrics sync state (embedded in session file)
    */
-  async initialize(sessionId: string, agentSessionId: string, sessionStartTime: number): Promise<SyncState> {
+  async initialize(): Promise<MetricsSyncState> {
     try {
       // Check if session exists and already has sync state
       if (existsSync(this.filePath)) {
         const session = await this.loadSession();
-        if (session.syncState) {
-          logger.debug('[SyncStateManager] Sync state already exists, loading...');
-          return session.syncState;
+        if (session.sync?.metrics) {
+          logger.debug('[SyncStateManager] Metrics sync state already exists, loading...');
+          return session.sync.metrics;
         }
       }
 
-      // Create new sync state
-      const syncState: SyncState = {
-        sessionId,
-        agentSessionId,
-        sessionStartTime,
-        status: 'active',
-        lastProcessedLine: 0,
+      // Create new metrics sync state
+      const metricsSync: MetricsSyncState = {
         lastProcessedTimestamp: Date.now(),
         processedRecordIds: [],
         attachedUserPromptTexts: [],
@@ -53,13 +48,13 @@ export class SyncStateManager {
       };
 
       // Save to session file
-      await this.save(syncState);
+      await this.save(metricsSync);
 
-      logger.info('[SyncStateManager] Initialized new sync state');
-      return syncState;
+      logger.info('[SyncStateManager] Initialized new metrics sync state');
+      return metricsSync;
 
     } catch (error) {
-      logger.error('[SyncStateManager] Failed to initialize sync state:', error);
+      logger.error('[SyncStateManager] Failed to initialize metrics sync state:', error);
       throw error;
     }
   }
@@ -77,10 +72,10 @@ export class SyncStateManager {
   }
 
   /**
-   * Load sync state from session file
+   * Load metrics sync state from session file
    * Returns null if file doesn't exist (graceful handling for deleted files)
    */
-  async load(): Promise<SyncState | null> {
+  async load(): Promise<MetricsSyncState | null> {
     try {
       // Check if session file exists
       if (!existsSync(this.filePath)) {
@@ -90,31 +85,36 @@ export class SyncStateManager {
 
       const session = await this.loadSession();
 
-      if (!session.syncState) {
-        logger.debug('[SyncStateManager] Sync state not initialized yet, returning null');
+      if (!session.sync?.metrics) {
+        logger.debug('[SyncStateManager] Metrics sync state not initialized yet, returning null');
         return null;
       }
 
-      logger.debug(`[SyncStateManager] Loaded sync state: ${session.syncState.totalDeltas} deltas, ${session.syncState.totalSynced} synced`);
-      return session.syncState;
+      logger.debug(`[SyncStateManager] Loaded metrics sync state: ${session.sync.metrics.totalDeltas} deltas, ${session.sync.metrics.totalSynced} synced`);
+      return session.sync.metrics;
 
     } catch (error) {
-      logger.error('[SyncStateManager] Failed to load sync state:', error);
+      logger.error('[SyncStateManager] Failed to load metrics sync state:', error);
       // Return null instead of throwing to allow graceful degradation
       return null;
     }
   }
 
   /**
-   * Save sync state to session file (atomic write)
+   * Save metrics sync state to session file (atomic write)
    */
-  async save(state: SyncState): Promise<void> {
+  async save(metricsSync: MetricsSyncState): Promise<void> {
     try {
       // Load current session
       const session = await this.loadSession();
 
-      // Update sync state
-      session.syncState = state;
+      // Initialize sync object if needed
+      if (!session.sync) {
+        session.sync = {};
+      }
+
+      // Update metrics sync state
+      session.sync.metrics = metricsSync;
 
       // Ensure directory exists
       const dir = dirname(this.filePath);
@@ -129,10 +129,10 @@ export class SyncStateManager {
       // Rename to final location (atomic operation)
       await rename(tempFile, this.filePath);
 
-      logger.debug('[SyncStateManager] Saved sync state');
+      logger.debug('[SyncStateManager] Saved metrics sync state');
 
     } catch (error) {
-      logger.error('[SyncStateManager] Failed to save sync state:', error);
+      logger.error('[SyncStateManager] Failed to save metrics sync state:', error);
       throw error;
     }
   }
@@ -292,34 +292,6 @@ export class SyncStateManager {
 
     } catch (error) {
       logger.error('[SyncStateManager] Failed to increment failed count:', error);
-      // Don't throw - allow graceful degradation
-    }
-  }
-
-  /**
-   * Update session status
-   */
-  async updateStatus(status: 'active' | 'completed' | 'failed', endTime?: number): Promise<void> {
-    try {
-      const state = await this.load();
-
-      if (!state) {
-        logger.debug('[SyncStateManager] Cannot update status - sync state does not exist');
-        return;
-      }
-
-      state.status = status;
-
-      if (endTime && (status === 'completed' || status === 'failed')) {
-        state.sessionEndTime = endTime;
-      }
-
-      await this.save(state);
-
-      logger.debug(`[SyncStateManager] Updated status to: ${status}`);
-
-    } catch (error) {
-      logger.error('[SyncStateManager] Failed to update status:', error);
       // Don't throw - allow graceful degradation
     }
   }

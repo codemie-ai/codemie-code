@@ -1,17 +1,17 @@
 /**
- * Integration Test: ConversationsProcessor - Incremental Tracking Incremental Tracking
+ * Integration Test: ConversationsProcessor - Incremental Tracking
  *
- * Tests the NEW conversation sync pipeline with incremental tracking using mock data:
+ * Tests the conversation sync pipeline with incremental tracking using mock data:
  * 1. Create mock ParsedSession with messages
- * 2. Create SessionStore metadata with processedRecordIds (simulating metrics processor)
- * 3. Process with ConversationsProcessor (NEW - Incremental Tracking architecture)
+ * 2. Create SessionStore metadata (correlation only, no metrics dependency)
+ * 3. Process with ConversationsProcessor (independent incremental tracking)
  * 4. Validate incremental tracking, conversationId management, and processor behavior
  *
  * Test Scenarios:
- * - Incremental sync: Only NEW messages processed
- * - conversationId management: Set from sessionId (no UUID generation)
- * - Metrics dependency: Waits for metrics processor to populate processedRecordIds
- * - Session reset: Re-syncs all when UUID not found
+ * - Incremental sync: Only NEW messages processed (via lastSyncedMessageUuid)
+ * - conversationId management: Set from sessionId on first sync
+ * - Independent tracking: No dependency on metrics processedRecordIds
+ * - Session reset: Re-syncs all when lastSyncedMessageUuid not found
  * - Error handling: Graceful handling of edge cases
  *
  * CRITICAL: This tests Incremental Tracking logic - zero tolerance for failures
@@ -79,7 +79,7 @@ describe('ConversationsProcessor - Incremental Tracking Integration Test', () =>
       correlation: {
         status: 'matched',
         agentSessionFile: '/tmp/mock-session.jsonl',
-        agentSessionId: 'mock-agent-session-id',
+        agentSessionId: testSessionId,  // Use testSessionId (codemie ID, not agent ID)
         detectedAt: Date.now(),
         retryCount: 0
       },
@@ -88,17 +88,14 @@ describe('ConversationsProcessor - Incremental Tracking Integration Test', () =>
         changeCount: 0
       },
       status: 'active',
-      syncState: {
-        sessionId: testSessionId,
-        agentSessionId: 'mock-agent-session-id',
-        sessionStartTime: Date.now(),
-        status: 'active',
-        lastProcessedLine: 0,
-        lastProcessedTimestamp: Date.now(),
-        processedRecordIds: [], // Start empty - will be populated by individual tests
-        totalDeltas: 0,
-        totalSynced: 0,
-        totalFailed: 0
+      sync: {
+        metrics: {
+          lastProcessedTimestamp: Date.now(),
+          processedRecordIds: [], // Start empty - will be populated by individual tests
+          totalDeltas: 0,
+          totalSynced: 0,
+          totalFailed: 0
+        }
       }
     };
 
@@ -127,24 +124,9 @@ describe('ConversationsProcessor - Incremental Tracking Integration Test', () =>
     }
   });
 
-  describe('Incremental Tracking - Incremental Tracking', () => {
-    it('should use processedRecordIds from metrics SessionStore', async () => {
-      // First, populate processedRecordIds (simulating metrics processor)
-      const sessionMetadata = await sessionStore.loadSession(testSessionId);
-      const allMessages = parsedSession.messages as any[];
-      sessionMetadata!.syncState!.processedRecordIds = allMessages.map((m: any) => m.uuid).filter(Boolean);
-      await sessionStore.saveSession(sessionMetadata!);
-
-      // Verify it was saved
-      const reloadedMetadata = await sessionStore.loadSession(testSessionId);
-      expect(reloadedMetadata).toBeDefined();
-      expect(reloadedMetadata!.syncState).toBeDefined();
-      expect(reloadedMetadata!.syncState!.processedRecordIds).toBeDefined();
-      expect(reloadedMetadata!.syncState!.processedRecordIds.length).toBe(10); // 10 mock messages
-    });
-
-    it('should process all messages on first sync', async () => {
-      // processedRecordIds already populated by first test (simulating metrics processor ran first)
+  describe('Incremental Tracking', () => {
+    it('should process all messages on first sync (no conversationId)', async () => {
+      // First sync - no conversationId or lastSyncedMessageUuid
       const result = await processor.process(parsedSession, processingContext);
 
       expect(result.success).toBe(true);
@@ -158,7 +140,7 @@ describe('ConversationsProcessor - Incremental Tracking Integration Test', () =>
 
       // Verify conversationId was saved
       const sessionMetadata = await sessionStore.loadSession(testSessionId);
-      expect(sessionMetadata!.syncState!.conversationId).toBe(testSessionId);
+      expect(sessionMetadata!.sync!.conversations!.conversationId).toBe(testSessionId);
     });
 
     it('should skip when no new messages', async () => {
@@ -173,15 +155,20 @@ describe('ConversationsProcessor - Incremental Tracking Integration Test', () =>
     });
 
     it('should process only NEW messages (incremental sync)', async () => {
-      // Reset session metadata
+      // Reset session metadata with lastSyncedMessageUuid
       const sessionMetadata = await sessionStore.loadSession(testSessionId);
       const allMessages = parsedSession.messages as any[];
 
-      // Simulate metrics processor processed only first 5 messages
-      sessionMetadata!.syncState!.processedRecordIds = allMessages
-        .slice(0, 5)
-        .map((m: any) => m.uuid)
-        .filter(Boolean);
+      // Simulate previous sync processed first 5 messages
+      const fifthMessageUuid = (allMessages[4] as any).uuid;
+      if (!sessionMetadata!.sync!.conversations) {
+        sessionMetadata!.sync!.conversations = {
+          lastSyncAt: Date.now()
+        };
+      }
+      sessionMetadata!.sync!.conversations!.conversationId = testSessionId;
+      sessionMetadata!.sync!.conversations!.lastSyncedMessageUuid = fifthMessageUuid;
+      sessionMetadata!.sync!.conversations!.lastSyncAt = Date.now();
 
       await sessionStore.saveSession(sessionMetadata!);
 
@@ -191,57 +178,14 @@ describe('ConversationsProcessor - Incremental Tracking Integration Test', () =>
       expect(result.success).toBe(true);
       expect(result.message).toContain('new messages');
 
-      // Verify it processed the remaining messages
+      // Verify it processed the remaining messages (6-10 = 5 messages)
       const expectedNewCount = allMessages.length - 5;
       expect(result.message).toContain(expectedNewCount.toString());
     });
 
-    it('should wait for metrics processor when processedRecordIds is empty', async () => {
-      // Create session metadata with empty processedRecordIds
-      const emptySessionId = 'empty-test-' + Date.now();
-      const emptySessionMetadata: MetricsSession = {
-        sessionId: emptySessionId,
-        agentName: 'claude',
-        provider: 'ai-run-sso',
-        startTime: Date.now(),
-        workingDirectory: '/tmp/test',
-        correlation: {
-          status: 'matched',
-          agentSessionFile: '/tmp/mock-session.jsonl',
-          agentSessionId: 'mock-agent-session-id',
-          detectedAt: Date.now(),
-          retryCount: 0
-        },
-        monitoring: {
-          isActive: true,
-          changeCount: 0
-        },
-        status: 'active',
-        syncState: {
-          sessionId: emptySessionId,
-          agentSessionId: 'mock-agent-session-id',
-          sessionStartTime: Date.now(),
-          status: 'active',
-          lastProcessedLine: 0,
-          lastProcessedTimestamp: Date.now(),
-          processedRecordIds: [], // Empty - metrics hasn't run yet
-          totalDeltas: 0,
-          totalSynced: 0,
-          totalFailed: 0
-        }
-      };
-
-      await sessionStore.saveSession(emptySessionMetadata);
-
-      const emptyParsedSession = { ...parsedSession, sessionId: emptySessionId };
-      const result = await processor.process(emptyParsedSession, processingContext);
-
-      expect(result.success).toBe(true);
-      expect(result.message).toBe('Waiting for metrics');
-    });
 
     it('should handle session reset (UUID not found)', async () => {
-      // Create session metadata with invalid UUID
+      // Create session metadata with invalid lastSyncedMessageUuid
       const resetSessionId = 'reset-test-' + Date.now();
       const resetSessionMetadata: MetricsSession = {
         sessionId: resetSessionId,
@@ -252,7 +196,7 @@ describe('ConversationsProcessor - Incremental Tracking Integration Test', () =>
         correlation: {
           status: 'matched',
           agentSessionFile: '/tmp/mock-session.jsonl',
-          agentSessionId: 'mock-agent-session-id',
+          agentSessionId: resetSessionId,
           detectedAt: Date.now(),
           retryCount: 0
         },
@@ -261,17 +205,19 @@ describe('ConversationsProcessor - Incremental Tracking Integration Test', () =>
           changeCount: 0
         },
         status: 'active',
-        syncState: {
-          sessionId: resetSessionId,
-          agentSessionId: 'mock-agent-session-id',
-          sessionStartTime: Date.now(),
-          status: 'active',
-          lastProcessedLine: 0,
-          lastProcessedTimestamp: Date.now(),
-          processedRecordIds: ['invalid-uuid-not-in-session'], // UUID not in session
-          totalDeltas: 0,
-          totalSynced: 0,
-          totalFailed: 0
+        sync: {
+          metrics: {
+            lastProcessedTimestamp: Date.now(),
+            processedRecordIds: [],
+            totalDeltas: 0,
+            totalSynced: 0,
+            totalFailed: 0
+          },
+          conversations: {
+            conversationId: resetSessionId,
+            lastSyncedMessageUuid: 'invalid-uuid-not-in-session', // UUID not in session
+            lastSyncAt: Date.now()
+          }
         }
       };
 
@@ -291,7 +237,10 @@ describe('ConversationsProcessor - Incremental Tracking Integration Test', () =>
 
       // Create session with existing conversationId
       const sessionMetadata = await sessionStore.loadSession(testSessionId);
-      sessionMetadata!.syncState!.conversationId = existingConvId;
+      if (!sessionMetadata!.sync!.conversations) {
+        sessionMetadata!.sync!.conversations = { lastSyncAt: Date.now() };
+      }
+      sessionMetadata!.sync!.conversations!.conversationId = existingConvId;
       await sessionStore.saveSession(sessionMetadata!);
 
       // Process - should use existing conversationId
@@ -301,10 +250,10 @@ describe('ConversationsProcessor - Incremental Tracking Integration Test', () =>
 
       // Verify it used the existing ID
       const updatedMetadata = await sessionStore.loadSession(testSessionId);
-      expect(updatedMetadata!.syncState!.conversationId).toBe(existingConvId);
+      expect(updatedMetadata!.sync!.conversations!.conversationId).toBe(existingConvId);
     });
 
-    it('should save conversationId only on first sync', async () => {
+    it('should save conversationId and lastSyncedMessageUuid on first sync', async () => {
       const newSessionId = 'new-conv-test-' + Date.now();
       const allMessages = parsedSession.messages as any[];
 
@@ -317,7 +266,7 @@ describe('ConversationsProcessor - Incremental Tracking Integration Test', () =>
         correlation: {
           status: 'matched',
           agentSessionFile: '/tmp/mock-session.jsonl',
-          agentSessionId: 'mock-agent-session-id',
+          agentSessionId: newSessionId,
           detectedAt: Date.now(),
           retryCount: 0
         },
@@ -326,18 +275,15 @@ describe('ConversationsProcessor - Incremental Tracking Integration Test', () =>
           changeCount: 0
         },
         status: 'active',
-        syncState: {
-          sessionId: newSessionId,
-          agentSessionId: 'mock-agent-session-id',
-          sessionStartTime: Date.now(),
-          status: 'active',
-          lastProcessedLine: allMessages.length,
-          lastProcessedTimestamp: Date.now(),
-          processedRecordIds: allMessages.map((m: any) => m.uuid).filter(Boolean),
-          totalDeltas: allMessages.length,
-          totalSynced: 0,
-          totalFailed: 0
-          // No conversationId initially
+        sync: {
+          metrics: {
+            lastProcessedTimestamp: Date.now(),
+            processedRecordIds: [],
+            totalDeltas: 0,
+            totalSynced: 0,
+            totalFailed: 0
+          }
+          // No conversations sync state initially
         }
       };
 
@@ -345,11 +291,112 @@ describe('ConversationsProcessor - Incremental Tracking Integration Test', () =>
 
       const newParsedSession = { ...parsedSession, sessionId: newSessionId };
 
-      // First sync - should save conversationId
+      // First sync - should save conversationId and lastSyncedMessageUuid
       await processor.process(newParsedSession, processingContext);
 
       const afterFirstSync = await sessionStore.loadSession(newSessionId);
-      expect(afterFirstSync!.syncState!.conversationId).toBe(newSessionId);
+      expect(afterFirstSync!.sync!.conversations!.conversationId).toBe(newSessionId);
+      expect(afterFirstSync!.sync!.conversations!.lastSyncedMessageUuid).toBeDefined();
+      expect(afterFirstSync!.sync!.conversations!.lastSyncAt).toBeDefined();
+
+      // Verify lastSyncedMessageUuid is the last message's UUID
+      const lastMessageUuid = (allMessages[allMessages.length - 1] as any).uuid;
+      expect(afterFirstSync!.sync!.conversations!.lastSyncedMessageUuid).toBe(lastMessageUuid);
+
+      // Verify lastSyncedHistoryIndex is set
+      expect(afterFirstSync!.sync!.conversations!.lastSyncedHistoryIndex).toBeDefined();
+      expect(afterFirstSync!.sync!.conversations!.lastSyncedHistoryIndex).toBeGreaterThanOrEqual(0);
+    });
+
+    it('should increment history index correctly on subsequent syncs', async () => {
+      const incrementalSessionId = 'incremental-index-' + Date.now();
+
+      // Create initial session with 3 messages (will have index 0)
+      const initialMessages = Array.from({ length: 3 }, (_, i) => ({
+        uuid: `msg-initial-${i}`,
+        timestamp: Date.now() + i * 1000,
+        type: 'user' as const,
+        sessionId: incrementalSessionId,
+        message: {
+          role: 'user',
+          content: `Initial message ${i}`
+        }
+      }));
+
+      const initialSession: MetricsSession = {
+        sessionId: incrementalSessionId,
+        agentName: 'claude',
+        provider: 'ai-run-sso',
+        startTime: Date.now(),
+        workingDirectory: '/tmp/test',
+        correlation: {
+          status: 'matched',
+          agentSessionFile: '/tmp/mock-session.jsonl',
+          agentSessionId: incrementalSessionId,
+          detectedAt: Date.now(),
+          retryCount: 0
+        },
+        monitoring: {
+          isActive: true,
+          changeCount: 0
+        },
+        status: 'active',
+        sync: {
+          metrics: {
+            lastProcessedTimestamp: Date.now(),
+            processedRecordIds: [],
+            totalDeltas: 0,
+            totalSynced: 0,
+            totalFailed: 0
+          }
+        }
+      };
+
+      await sessionStore.saveSession(initialSession);
+
+      // First sync
+      const firstParsedSession = {
+        ...parsedSession,
+        sessionId: incrementalSessionId,
+        messages: initialMessages
+      };
+
+      await processor.process(firstParsedSession, processingContext);
+
+      const afterFirstSync = await sessionStore.loadSession(incrementalSessionId);
+      const firstSyncLastIndex = afterFirstSync!.sync!.conversations!.lastSyncedHistoryIndex!;
+
+      // Add 2 more messages
+      const newMessages = Array.from({ length: 2 }, (_, i) => ({
+        uuid: `msg-new-${i}`,
+        timestamp: Date.now() + (i + 3) * 1000,
+        type: 'user' as const,
+        sessionId: incrementalSessionId,
+        message: {
+          role: 'user',
+          content: `New message ${i}`
+        }
+      }));
+
+      // Update session with lastSyncedMessageUuid pointing to last initial message
+      afterFirstSync!.sync!.conversations!.lastSyncedMessageUuid = initialMessages[initialMessages.length - 1].uuid;
+      await sessionStore.saveSession(afterFirstSync!);
+
+      // Second sync with all messages (initial + new)
+      const secondParsedSession = {
+        ...parsedSession,
+        sessionId: incrementalSessionId,
+        messages: [...initialMessages, ...newMessages]
+      };
+
+      await processor.process(secondParsedSession, processingContext);
+
+      const afterSecondSync = await sessionStore.loadSession(incrementalSessionId);
+      const secondSyncLastIndex = afterSecondSync!.sync!.conversations!.lastSyncedHistoryIndex!;
+
+      // Verify history index incremented correctly
+      // Second sync should start at firstSyncLastIndex + 1
+      expect(secondSyncLastIndex).toBeGreaterThan(firstSyncLastIndex);
     });
   });
 
