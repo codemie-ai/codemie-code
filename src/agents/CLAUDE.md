@@ -46,6 +46,111 @@ Full LangGraph-based coding assistant with:
 - Planning and todo management
 - Multi-provider support via ConfigLoader
 
+### Session Infrastructure (`core/session/` and `core/metrics/`)
+
+**Separation of Concerns**: Session management is separated from metrics collection for clarity and reusability.
+
+#### Session Infrastructure (`core/session/`)
+
+Shared by ALL processors (metrics, conversations, future processors):
+
+- **`types.ts`**: Core session types used across all processors
+  - `Session`: Central session metadata with correlation, monitoring, sync state
+  - `FileInfo`, `FileSnapshot`: Directory snapshot types
+  - `CorrelationResult`, `CorrelationStatus`: Session file correlation
+  - `SessionStatus`: Session lifecycle states (`active`, `completed`, `failed`)
+  - `SyncState`: Hierarchical sync state (`session.sync.metrics`, `session.sync.conversations`)
+  - `MetricsSyncState`, `ConversationsSyncState`: Processor-specific sync state
+
+- **`SessionOrchestrator.ts`**: Central session lifecycle manager
+  - Creates session metadata before agent spawn
+  - Correlates CodeMie session with agent session files
+  - Monitors session activity and collects metrics deltas
+  - **Two-Phase Completion Pattern**:
+    1. `prepareForExit()`: Stop monitoring, collect final deltas
+    2. Proxy cleanup triggers sync (metrics + conversations)
+    3. `markSessionComplete()`: Mark session status AFTER sync completes
+  - Used by both metrics and conversations processors
+
+- **`SessionStore.ts`**: Session persistence to `~/.codemie/metrics/sessions/{sessionId}.json`
+- **`SessionCorrelator.ts`**: Correlates CodeMie sessions with agent session files
+- **`FileSnapshotter.ts`**: Directory snapshots for correlation (before/after agent spawn)
+
+#### Metrics Infrastructure (`core/metrics/`)
+
+Metrics-specific functionality:
+
+- **`types.ts`**: Metrics-specific types + minimal re-exports
+  - Only re-export types actually used by external consumers
+  - Metrics types: `MetricDelta`, `MetricSnapshot`, `ToolCallMetric`, `Watermark`, etc.
+  - Re-exports: `Session`, `SyncStatus`, `MetricsSyncState` (needed by metrics code)
+
+- **`DeltaWriter.ts`**: Writes metrics deltas to `~/.codemie/metrics/{sessionId}_metrics.jsonl`
+- **`MetricsSyncStateManager.ts`**: Manages `session.sync.metrics` state
+  - Tracks processed record IDs, last processed line, sync statistics
+  - Prevents duplicate delta processing during incremental collection
+
+#### Type Organization Best Practices
+
+1. **Import from Source**: Components should import types from their source module
+   ```typescript
+   // ✅ CORRECT: Import session types from session/types.ts
+   import type { Session, FileSnapshot } from './types.js';
+
+   // ❌ WRONG: Import session types from metrics/types.ts
+   import type { Session } from '../metrics/types.js';
+   ```
+
+2. **Minimal Re-exports**: Only re-export types actually used by external consumers
+   ```typescript
+   // ✅ CORRECT: metrics/types.ts only re-exports what's needed
+   export type { Session, SyncStatus, MetricsSyncState } from '../session/types.js';
+
+   // ❌ WRONG: Re-exporting everything "just in case"
+   export type { FileInfo, FileSnapshot, ... } from '../session/types.js';
+   ```
+
+3. **Use `export type { } from` syntax**: Cleaner than separate import + export
+   ```typescript
+   // ✅ CORRECT: Single statement
+   export type { Session } from '../session/types.js';
+
+   // ❌ AVOID: Separate statements
+   import type { Session } from '../session/types.js';
+   export type { Session };
+   ```
+
+#### Two-Phase Session Completion Pattern
+
+**Problem**: Need to ensure metrics and conversations are synced BEFORE marking session as completed.
+
+**Solution**: Split completion into two phases in `BaseAgentAdapter`:
+
+```typescript
+// Phase 1: Prepare for exit (collect final data)
+if (this.sessionOrchestrator && code !== null) {
+  await this.sessionOrchestrator.prepareForExit();
+}
+
+// Lifecycle hooks run (onSessionEnd)
+await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, code, env);
+
+// Proxy cleanup triggers final sync
+// SSOSessionSyncPlugin.onProxyStop() syncs metrics + conversations
+await cleanup();
+
+// Phase 2: Mark session complete (AFTER sync)
+if (this.sessionOrchestrator && code !== null) {
+  await this.sessionOrchestrator.markSessionComplete(code);
+}
+```
+
+**Key Points**:
+- `prepareForExit()`: Stop file watcher, collect final deltas
+- Proxy cleanup triggers `SSOSessionSyncPlugin.onProxyStop()` which runs all processors
+- `markSessionComplete()`: Update session status ONLY after sync completes
+- Ensures `session.status` accurately reflects sync completion
+
 ---
 
 ## Critical Principle: Provider-Agnostic Design
