@@ -8,7 +8,7 @@ import { randomUUID } from 'crypto';
 import { CodeMieProxy } from '../../providers/plugins/sso/proxy/sso.proxy.js';
 import { ProxyConfig } from '../../providers/plugins/sso/proxy/proxy-types.js';
 import { ProviderRegistry } from '../../providers/core/registry.js';
-import { MetricsOrchestrator } from './metrics/MetricsOrchestrator.js';
+import { SessionOrchestrator } from './session/SessionOrchestrator.js';
 import type { AgentMetricsSupport } from './metrics/types.js';
 import type { CodeMieConfigOptions } from '../../env/types.js';
 import { getRandomWelcomeMessage, getRandomGoodbyeMessage } from '../../utils/goodbye-messages.js';
@@ -32,7 +32,7 @@ import {
  */
 export abstract class BaseAgentAdapter implements AgentAdapter {
   protected proxy: CodeMieProxy | null = null;
-  protected metricsOrchestrator: MetricsOrchestrator | null = null;
+  protected sessionOrchestrator: SessionOrchestrator | null = null;
 
   constructor(protected metadata: AgentMetadata) {}
 
@@ -162,7 +162,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
       // Check if metrics are enabled for this provider before creating orchestrator
       if (METRICS_CONFIG.enabled(env.CODEMIE_PROVIDER)) {
-        this.metricsOrchestrator = new MetricsOrchestrator({
+        this.sessionOrchestrator = new SessionOrchestrator({
           agentName: this.metadata.name,
           provider: env.CODEMIE_PROVIDER,
           project: env.CODEMIE_PROJECT,
@@ -172,7 +172,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         });
 
         // Take pre-spawn snapshot
-        await this.metricsOrchestrator.beforeAgentSpawn();
+        await this.sessionOrchestrator.beforeAgentSpawn();
       }
     }
 
@@ -207,8 +207,8 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     console.log(''); // Empty line for spacing
 
     // Display metrics initialization errors (non-blocking)
-    if (this.metricsOrchestrator?.hasInitializationError()) {
-      const metricsError = this.metricsOrchestrator.getInitializationError();
+    if (this.sessionOrchestrator?.hasInitializationError()) {
+      const metricsError = this.sessionOrchestrator.getInitializationError();
       if (metricsError) {
         const { displayWarningMessage } = await import('../../utils/profile.js');
         displayWarningMessage(
@@ -328,10 +328,10 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       });
 
       // Take post-spawn snapshot after process starts
-      if (this.metricsOrchestrator) {
+      if (this.sessionOrchestrator) {
         // Don't await - let it run in background
-        this.metricsOrchestrator.afterAgentSpawn().catch(err => {
-          logger.error('[MetricsOrchestrator] Post-spawn snapshot failed:', err);
+        this.sessionOrchestrator.afterAgentSpawn().catch(err => {
+          logger.error('[SessionOrchestrator] Post-spawn snapshot failed:', err);
         });
       }
 
@@ -366,16 +366,21 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
           process.off('SIGINT', sigintHandler);
           process.off('SIGTERM', sigtermHandler);
 
-          // Finalize metrics with error status
-          if (this.metricsOrchestrator) {
-            await this.metricsOrchestrator.onAgentExit(1); // Exit code 1 = spawn error
+          // Phase 1: Prepare metrics for exit
+          if (this.sessionOrchestrator) {
+            await this.sessionOrchestrator.prepareForExit();
           }
 
           // Lifecycle hook: session end (provider-aware)
           await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, 1, env);
 
-          // Clean up proxy
+          // Clean up proxy (triggers final sync)
           await cleanup();
+
+          // Phase 2: Mark session as failed (AFTER sync completes)
+          if (this.sessionOrchestrator) {
+            await this.sessionOrchestrator.markSessionComplete(1); // Exit code 1 = spawn error
+          }
 
           // Lifecycle hook: afterRun (provider-aware)
           await executeAfterRun(this, this.metadata.lifecycle, this.metadata.name, 1, env);
@@ -400,9 +405,9 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
             await new Promise(resolve => setTimeout(resolve, gracePeriodMs));
           }
 
-          // Finalize metrics on agent exit
-          if (this.metricsOrchestrator && code !== null) {
-            await this.metricsOrchestrator.onAgentExit(code);
+          // Phase 1: Prepare metrics for exit (collect final deltas, but don't mark complete)
+          if (this.sessionOrchestrator && code !== null) {
+            await this.sessionOrchestrator.prepareForExit();
           }
 
           // Lifecycle hook: session end (provider-aware)
@@ -410,8 +415,17 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
             await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, code, env);
           }
 
-          // Clean up proxy
+          // Clean up proxy (triggers final sync of BOTH metrics AND conversations)
+          // SSOSessionSyncPlugin.onProxyStop() runs all processors:
+          //   - MetricsProcessor: syncs pending deltas from _metrics.jsonl
+          //   - ConversationsProcessor: syncs new messages from agent session file
           await cleanup();
+
+          // Phase 2: Mark session as completed (AFTER sync completes)
+          // This ensures session status is only set to 'completed' after all data is synced
+          if (this.sessionOrchestrator && code !== null) {
+            await this.sessionOrchestrator.markSessionComplete(code);
+          }
 
           // Lifecycle hook: afterRun (provider-aware)
           if (code !== null) {
@@ -432,18 +446,23 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         });
       });
     } catch (error) {
-      // Finalize metrics with error status
-      if (this.metricsOrchestrator) {
-        await this.metricsOrchestrator.onAgentExit(1); // Exit code 1 = error
+      // Phase 1: Prepare metrics for exit
+      if (this.sessionOrchestrator) {
+        await this.sessionOrchestrator.prepareForExit();
       }
 
       // Lifecycle hook: session end (provider-aware)
       await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, 1, env);
 
-      // Clean up proxy on error
+      // Clean up proxy on error (triggers final sync)
       if (this.proxy) {
         await this.proxy.stop();
         this.proxy = null;
+      }
+
+      // Phase 2: Mark session as failed (AFTER sync completes)
+      if (this.sessionOrchestrator) {
+        await this.sessionOrchestrator.markSessionComplete(1); // Exit code 1 = error
       }
 
       // Lifecycle hook: afterRun (provider-aware)

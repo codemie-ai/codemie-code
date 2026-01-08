@@ -309,7 +309,7 @@ export class GeminiMetricsAdapter extends BaseMetricsAdapter {
           // Create delta record
           const delta: Omit<MetricDelta, 'syncStatus' | 'syncAttempts'> = {
             recordId: message.id,
-            sessionId: '', // Set by caller (MetricsOrchestrator)
+            sessionId: '', // Set by caller (SessionOrchestrator)
             agentSessionId: session.sessionId || '',
             timestamp: message.timestamp,
             gitBranch: undefined,
@@ -437,7 +437,7 @@ export class GeminiMetricsAdapter extends BaseMetricsAdapter {
           .map((log: any) => ({
             display: log.message,
             timestamp: new Date(log.timestamp).getTime(),
-            project: '', // workingDirectory comes from MetricsSession
+            project: '', // workingDirectory comes from Session
             sessionId: log.sessionId,
             messageId: log.messageId // Preserve messageId for correlation
           }));

@@ -487,7 +487,7 @@ export class CodexMetricsAdapter extends BaseMetricsAdapter {
         prompts.push({
           display: entry.text || '',
           timestamp,
-          project: '', // Populated from MetricsSession workingDirectory
+          project: '', // Populated from Session workingDirectory
           sessionId: entry.session_id
         });
       }

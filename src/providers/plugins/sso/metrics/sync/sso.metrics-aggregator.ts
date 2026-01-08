@@ -5,7 +5,8 @@
  * Reuses patterns from analytics system.
  */
 
-import type {MetricDelta, MetricsSession} from '../../../../../agents/core/metrics/types.js';
+import type { MetricDelta } from '../../../../../agents/core/metrics/types.js';
+import type { Session } from '../../../../../agents/core/session/types.js';
 import type {SessionAttributes, SessionMetric} from './sso.metrics-types.js';
 import type {AgentMetricsConfig} from '../../../../../agents/core/types.js';
 import {logger} from '../../../../../utils/logger.js';
@@ -23,7 +24,7 @@ import {MetricsSender} from './sso.metrics-sender.js';
  */
 export function aggregateDeltas(
   deltas: MetricDelta[],
-  session: MetricsSession,
+  session: Session,
   version: string,
   agentConfig?: AgentMetricsConfig
 ): SessionMetric[] {
@@ -72,7 +73,7 @@ export function aggregateDeltas(
  */
 function buildSessionAttributes(
   deltas: MetricDelta[],
-  session: MetricsSession,
+  session: Session,
   version: string,
   branch: string
 ): SessionAttributes {
@@ -256,7 +257,7 @@ function getMostUsedModel(modelCounts: Record<string, number>): string | null {
  * This calculates the time span covered by this batch of metrics,
  * not the total session duration.
  */
-function calculateDurationFromDeltas(deltas: MetricDelta[], session: MetricsSession): number {
+function calculateDurationFromDeltas(deltas: MetricDelta[], session: Session): number {
   if (deltas.length === 0) {
     return 0;
   }

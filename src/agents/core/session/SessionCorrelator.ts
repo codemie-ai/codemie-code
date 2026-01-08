@@ -6,9 +6,10 @@
  */
 
 import { readFile } from 'fs/promises';
-import type { FileInfo, CorrelationResult, AgentMetricsSupport } from '../types.js';
-import { logger } from '../../../../utils/logger.js';
-import { METRICS_CONFIG } from '../../metrics-config.js';
+import type { FileInfo, CorrelationResult } from './types.js';
+import type { AgentMetricsSupport } from '../metrics/types.js';
+import { logger } from '../../../utils/logger.js';
+import { METRICS_CONFIG } from '../metrics-config.js';
 
 export interface CorrelationInput {
   sessionId: string;

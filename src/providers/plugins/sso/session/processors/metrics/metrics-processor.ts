@@ -20,7 +20,7 @@ import type { ParsedSession } from '../../adapters/base/BaseSessionAdapter.js';
 import { logger } from '../../../../../../utils/logger.js';
 import { MetricsSender } from './metrics-api-client.js';
 import { aggregateDeltas } from './metrics-aggregator.js';
-import { SessionStore } from '../../../../../../agents/core/metrics/session/SessionStore.js';
+import { SessionStore } from '../../../../../../agents/core/session/SessionStore.js';
 import { getSessionMetricsPath } from '../../../../../../agents/core/metrics-config.js';
 import { readJSONL } from '../../utils/jsonl-reader.js';
 import { writeJSONLAtomic } from '../../utils/jsonl-writer.js';

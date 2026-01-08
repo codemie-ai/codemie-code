@@ -218,9 +218,11 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
     }
 
     // Final sync (ensure all sessions are processed)
+    // This syncs BOTH metrics and conversations
     try {
+      logger.info(`[${this.name}] Final sync starting (metrics + conversations)...`);
       await this.syncSessions();
-      logger.info(`[${this.name}] Session data saved`);
+      logger.info(`[${this.name}] Session data saved successfully`);
     } catch (error) {
       logger.error(`[${this.name}] Final sync failed:`, error);
     }
@@ -244,8 +246,8 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
     this.isSyncing = true;
 
     try {
-      // 1. Load session metadata from SessionStore (already correlated by metrics)
-      const { SessionStore } = await import('../../../../../agents/core/metrics/session/SessionStore.js');
+      // 1. Load session metadata from SessionStore (already correlated by session orchestrator)
+      const { SessionStore } = await import('../../../../../agents/core/session/SessionStore.js');
       const sessionStore = new SessionStore();
       const sessionMetadata = await sessionStore.loadSession(this.sessionId);
 
@@ -339,8 +341,18 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
     const successCount = Object.values(results).filter(r => r.success).length;
     const totalCount = Object.keys(results).length;
 
+    // Log detailed results for each processor
+    const processedItems: string[] = [];
+    for (const [processorName, result] of Object.entries(results)) {
+      if (result.success) {
+        processedItems.push(`${processorName} (✓)`);
+      } else {
+        processedItems.push(`${processorName} (✗)`);
+      }
+    }
+
     logger.info(
-      `[${this.name}] Processed session ${this.sessionId} (${successCount}/${totalCount} processors succeeded)`
+      `[${this.name}] Processed session ${this.sessionId} (${successCount}/${totalCount} processors succeeded): ${processedItems.join(', ')}`
     );
   }
 }

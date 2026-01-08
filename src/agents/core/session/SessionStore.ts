@@ -8,17 +8,17 @@
 import { readFile, writeFile, readdir, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import { dirname } from 'path';
-import type { MetricsSession } from '../types.js';
-import { getSessionPath, getMetricsPath, METRICS_PATHS } from '../../metrics-config.js';
-import { logger } from '../../../../utils/logger.js';
-import { createErrorContext, formatErrorForLog } from '../../../../utils/errors.js';
+import type { Session } from './types.js';
+import { getSessionPath, getMetricsPath, METRICS_PATHS } from '../metrics-config.js';
+import { logger } from '../../../utils/logger.js';
+import { createErrorContext, formatErrorForLog } from '../../../utils/errors.js';
 
 export class SessionStore {
   /**
    * Save session to disk
    * Path: ~/.codemie/metrics/sessions/{sessionId}.json
    */
-  async saveSession(session: MetricsSession): Promise<void> {
+  async saveSession(session: Session): Promise<void> {
     const sessionPath = getSessionPath(session.sessionId);
 
     try {
@@ -28,7 +28,7 @@ export class SessionStore {
         await mkdir(dir, { recursive: true });
       }
 
-      // Write session data (metrics path is now derived from sessionId)
+      // Write session data
       await writeFile(sessionPath, JSON.stringify(session, null, 2), 'utf-8');
 
       logger.debug(`[SessionStore] Saved session: ${session.sessionId}`);
@@ -42,7 +42,7 @@ export class SessionStore {
   /**
    * Load session from disk
    */
-  async loadSession(sessionId: string): Promise<MetricsSession | null> {
+  async loadSession(sessionId: string): Promise<Session | null> {
     const sessionPath = getSessionPath(sessionId);
 
     if (!existsSync(sessionPath)) {
@@ -52,7 +52,7 @@ export class SessionStore {
 
     try {
       const content = await readFile(sessionPath, 'utf-8');
-      const session = JSON.parse(content) as MetricsSession;
+      const session = JSON.parse(content) as Session;
 
       logger.debug(`[SessionStore] Loaded session: ${sessionId}`);
       return session;
@@ -66,7 +66,7 @@ export class SessionStore {
   /**
    * List all sessions
    */
-  async listSessions(): Promise<MetricsSession[]> {
+  async listSessions(): Promise<Session[]> {
     const sessionsDir = getMetricsPath(METRICS_PATHS.sessions);
 
     if (!existsSync(sessionsDir)) {
@@ -75,7 +75,7 @@ export class SessionStore {
 
     try {
       const files = await readdir(sessionsDir);
-      const sessions: MetricsSession[] = [];
+      const sessions: Session[] = [];
 
       for (const file of files) {
         if (file.endsWith('.json')) {
@@ -98,7 +98,7 @@ export class SessionStore {
   /**
    * List active sessions (status === 'active')
    */
-  async listActiveSessions(): Promise<MetricsSession[]> {
+  async listActiveSessions(): Promise<Session[]> {
     const allSessions = await this.listSessions();
     return allSessions.filter(s => s.status === 'active');
   }
@@ -106,7 +106,7 @@ export class SessionStore {
   /**
    * Update session status
    */
-  async updateSessionStatus(sessionId: string, status: MetricsSession['status']): Promise<void> {
+  async updateSessionStatus(sessionId: string, status: Session['status']): Promise<void> {
     const session = await this.loadSession(sessionId);
 
     if (!session) {
@@ -126,7 +126,7 @@ export class SessionStore {
    */
   async updateSessionCorrelation(
     sessionId: string,
-    correlation: Partial<MetricsSession['correlation']>
+    correlation: Partial<Session['correlation']>
   ): Promise<void> {
     const session = await this.loadSession(sessionId);
 
@@ -147,7 +147,7 @@ export class SessionStore {
    */
   async updateSessionWatermark(
     sessionId: string,
-    watermark: MetricsSession['watermark']
+    watermark: Session['watermark']
   ): Promise<void> {
     const session = await this.loadSession(sessionId);
 
@@ -164,7 +164,7 @@ export class SessionStore {
    */
   async updateMonitoringState(
     sessionId: string,
-    monitoring: Partial<MetricsSession['monitoring']>
+    monitoring: Partial<Session['monitoring']>
   ): Promise<void> {
     const session = await this.loadSession(sessionId);
 

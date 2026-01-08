@@ -9,10 +9,10 @@
 import { appendFile, readFile, writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import { dirname } from 'path';
-import type { MetricDelta, SyncStatus } from '../types.js';
-import { logger } from '../../../../utils/logger.js';
-import { getSessionMetricsPath } from '../../metrics-config.js';
-import { createErrorContext, formatErrorForLog } from '../../../../utils/errors.js';
+import type { MetricDelta, SyncStatus } from './types.js';
+import { logger } from '../../../utils/logger.js';
+import { getSessionMetricsPath } from '../metrics-config.js';
+import { createErrorContext, formatErrorForLog } from '../../../utils/errors.js';
 
 export class DeltaWriter {
   private readonly filePath: string;

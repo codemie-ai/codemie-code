@@ -17,7 +17,7 @@
 
 import { MetricsApiClient } from './sso.metrics-api-client.js';
 import type { SessionMetric, MetricsApiConfig, MetricsSyncResponse } from './sso.metrics-types.js';
-import type { MetricsSession } from '../../../../../agents/core/metrics/types.js';
+import type { Session } from '../../../../../agents/core/session/types.js';
 import { logger } from '../../../../../utils/logger.js';
 import { detectGitBranch } from '../../../../../utils/processes.js';
 
@@ -94,7 +94,7 @@ export class MetricsSender {
    * @param error - Optional error information (required if status=failed)
    */
   async sendSessionStart(
-    session: Pick<MetricsSession, 'sessionId' | 'agentName' | 'provider' | 'project' | 'startTime' | 'workingDirectory'> & { model?: string },
+    session: Pick<Session, 'sessionId' | 'agentName' | 'provider' | 'project' | 'startTime' | 'workingDirectory'> & { model?: string },
     workingDirectory: string,
     status: SessionStartStatus = 'started',
     error?: SessionError
@@ -190,7 +190,7 @@ export class MetricsSender {
    * @param error - Optional error information (for failed sessions)
    */
   async sendSessionEnd(
-    session: Pick<MetricsSession, 'sessionId' | 'agentName' | 'provider' | 'project' | 'startTime' | 'workingDirectory'> & { model?: string },
+    session: Pick<Session, 'sessionId' | 'agentName' | 'provider' | 'project' | 'startTime' | 'workingDirectory'> & { model?: string },
     workingDirectory: string,
     status: SessionEndStatus,
     durationMs: number,

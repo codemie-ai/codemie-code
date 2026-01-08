@@ -21,7 +21,7 @@ import { logger } from '../../../../../utils/logger.js';
 import { MetricsSender } from './sso.metrics-sender.js';
 import { readJSONL, writeJSONLAtomic } from './sso.jsonl-writer.js';
 import { aggregateDeltas } from './sso.metrics-aggregator.js';
-import { SessionStore } from '../../../../../agents/core/metrics/session/SessionStore.js';
+import { SessionStore } from '../../../../../agents/core/session/SessionStore.js';
 import { getSessionMetricsPath } from '../../../../../agents/core/metrics-config.js';
 
 export class SSOMetricsSyncPlugin implements ProxyPlugin {

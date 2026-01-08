@@ -21,9 +21,9 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { mkdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { SessionStore } from '../../../../../src/agents/core/metrics/session/SessionStore.js';
+import { SessionStore } from '../../../../../src/agents/core/session/SessionStore.js';
 import { ConversationsProcessor } from '../../../../../src/providers/plugins/sso/session/processors/conversations/conversation-processor.js';
-import type { MetricsSession } from '../../../../../src/agents/core/metrics/types.js';
+import type { Session } from '../../../../../src/agents/core/session/types.js';
 import type { ParsedSession } from '../../../../../src/providers/plugins/sso/session/adapters/base/BaseSessionAdapter.js';
 import type { ProcessingContext } from '../../../../../src/providers/plugins/sso/session/processors/base/BaseProcessor.js';
 
@@ -70,7 +70,7 @@ describe('ConversationsProcessor - Incremental Tracking Integration Test', () =>
 
     // 5. Create mock session metadata WITHOUT processedRecordIds
     // This simulates the state before FIRST sync (metrics processor hasn't run yet)
-    const sessionMetadata: MetricsSession = {
+    const sessionMetadata: Session = {
       sessionId: testSessionId,
       agentName: 'claude',
       provider: 'ai-run-sso',
@@ -187,7 +187,7 @@ describe('ConversationsProcessor - Incremental Tracking Integration Test', () =>
     it('should handle session reset (UUID not found)', async () => {
       // Create session metadata with invalid lastSyncedMessageUuid
       const resetSessionId = 'reset-test-' + Date.now();
-      const resetSessionMetadata: MetricsSession = {
+      const resetSessionMetadata: Session = {
         sessionId: resetSessionId,
         agentName: 'claude',
         provider: 'ai-run-sso',
@@ -257,7 +257,7 @@ describe('ConversationsProcessor - Incremental Tracking Integration Test', () =>
       const newSessionId = 'new-conv-test-' + Date.now();
       const allMessages = parsedSession.messages as any[];
 
-      const newSessionMetadata: MetricsSession = {
+      const newSessionMetadata: Session = {
         sessionId: newSessionId,
         agentName: 'claude',
         provider: 'ai-run-sso',
@@ -323,7 +323,7 @@ describe('ConversationsProcessor - Incremental Tracking Integration Test', () =>
         }
       }));
 
-      const initialSession: MetricsSession = {
+      const initialSession: Session = {
         sessionId: incrementalSessionId,
         agentName: 'claude',
         provider: 'ai-run-sso',

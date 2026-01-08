@@ -8,8 +8,8 @@
 import { readdir, stat } from 'fs/promises';
 import { join } from 'path';
 import { existsSync } from 'fs';
-import type { FileSnapshot, FileInfo } from '../types.js';
-import { logger } from '../../../../utils/logger.js';
+import type { FileSnapshot, FileInfo } from './types.js';
+import { logger } from '../../../utils/logger.js';
 
 export class FileSnapshotter {
   /**

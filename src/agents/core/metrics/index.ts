@@ -8,5 +8,5 @@
 export * from './types.js';
 
 // Core components
-export { DeltaWriter } from './core/DeltaWriter.js';
-export { SyncStateManager } from './core/SyncStateManager.js';
+export { DeltaWriter } from './DeltaWriter.js';
+export { MetricsSyncStateManager } from './MetricsSyncStateManager.js';

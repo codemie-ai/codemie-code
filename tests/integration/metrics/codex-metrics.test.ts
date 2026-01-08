@@ -23,7 +23,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { CodexMetricsAdapter } from '../../../src/agents/plugins/codex.metrics.js';
 import { CodexPluginMetadata } from '../../../src/agents/plugins/codex.plugin.js';
-import { DeltaWriter } from '../../../src/agents/core/metrics/core/DeltaWriter.js';
+import { DeltaWriter } from '../../../src/agents/core/metrics/DeltaWriter.js';
 import type { MetricDelta, MetricSnapshot } from '../../../src/agents/core/metrics/types.js';
 
 // ESM equivalent of __dirname
