@@ -92,13 +92,7 @@ export interface MetricsSession {
   watermark?: Watermark;
   status: SessionStatus;
 
-  /**
-   * @deprecated Use sync field instead
-   * Legacy flat sync state - will be removed in v1.0.0
-   */
-  syncState?: LegacySyncState;
-
-  // ✅ New hierarchical sync state
+  // Hierarchical sync state
   sync?: SyncState;
 }
 
@@ -316,40 +310,6 @@ export interface ConversationsSyncState {
 export interface SyncState {
   metrics?: MetricsSyncState;
   conversations?: ConversationsSyncState;
-}
-
-/**
- * @deprecated Use new hierarchical SyncState instead
- * Legacy flat sync state - will be removed in v1.0.0
- */
-export interface LegacySyncState {
-  // Session tracking (DEAD FIELDS - will be removed)
-  sessionId?: string;
-  agentSessionId?: string;
-  sessionStartTime?: number;
-  sessionEndTime?: number;
-  status?: 'active' | 'completed' | 'failed';
-
-  // Metrics processing tracking
-  lastProcessedLine?: number;
-  lastProcessedTimestamp: number;
-  processedRecordIds: string[];
-  attachedUserPromptTexts?: string[];
-
-  // Remote sync tracking
-  lastSyncedRecordId?: string;
-  lastSyncAt?: number;
-
-  // Statistics
-  totalDeltas: number;
-  totalSynced: number;
-  totalFailed: number;
-
-  // Conversation sync tracking (independent from metrics)
-  conversationId?: string;
-  lastSyncedMessageUuid?: string;
-  lastSyncedHistoryIndex?: number;
-  lastConversationSyncAt?: number;
 }
 
 /**

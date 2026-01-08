@@ -581,10 +581,7 @@ describe('ClaudeMetricsAdapter - Full Pipeline Integration Test', () => {
       expect(expectedSession).toHaveProperty('status');
       expect(expectedSession).toHaveProperty('correlation');
       expect(expectedSession).toHaveProperty('monitoring');
-      // Support both old and new structure (for backward compatibility with fixtures)
-      const hasSync = Object.prototype.hasOwnProperty.call(expectedSession, 'sync') ||
-                      Object.prototype.hasOwnProperty.call(expectedSession, 'syncState');
-      expect(hasSync).toBe(true);
+      expect(expectedSession).toHaveProperty('sync');
     });
 
     it('should have correlation metadata with correct agent session', async () => {
@@ -625,9 +622,8 @@ describe('ClaudeMetricsAdapter - Full Pipeline Integration Test', () => {
       );
       const expectedSession = JSON.parse(expectedSessionContent);
 
-      // Support both old and new structure
-      const metricsSync = expectedSession.sync?.metrics || expectedSession.syncState;
-      expect(metricsSync).toBeDefined();
+      expect(expectedSession.sync?.metrics).toBeDefined();
+      const metricsSync = expectedSession.sync.metrics;
 
       // Verify metrics sync structure
       expect(metricsSync).toHaveProperty('lastProcessedTimestamp');
@@ -662,8 +658,8 @@ describe('ClaudeMetricsAdapter - Full Pipeline Integration Test', () => {
         .filter(line => line.length > 0)
         .map(line => JSON.parse(line));
 
-      // Support both old and new structure
-      const metricsSync = expectedSession.sync?.metrics || expectedSession.syncState;
+      expect(expectedSession.sync?.metrics).toBeDefined();
+      const metricsSync = expectedSession.sync.metrics;
 
       // Get recordIds from both
       const sessionRecordIds = new Set(metricsSync.processedRecordIds);
