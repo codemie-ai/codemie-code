@@ -62,28 +62,27 @@ describe('Unified Session Sync Plugin - Orchestrator', () => {
       join(projectDir1, 'agent-50243ee8.jsonl')
     );
 
-    // Create session metadata (required by metrics processor)
+    // Create session metadata with proper correlation (required by session sync)
     sessionStore = new SessionStore();
     const metricsSession: MetricsSession = {
       sessionId: testMetricsSessionId,
       agentName: 'claude',
+      provider: 'ai-run-sso',
       workingDirectory: '/tmp/test',
       gitBranch: 'main',
       status: 'active',
+      startTime: Date.now(),
       correlation: {
-        instanceId: 'test-instance',
-        parentSessionId: null
-      },
-      watermark: {
-        strategy: 'hash',
-        value: 'test-hash'
+        status: 'matched',
+        agentSessionFile: join(projectDir1, `${sessionId1}.jsonl`),
+        agentSessionId: sessionId1,
+        detectedAt: Date.now(),
+        retryCount: 0
       },
       monitoring: {
-        performanceMarkers: [],
-        resourceUsage: {}
-      },
-      startedAt: Date.now(),
-      updatedAt: Date.now()
+        isActive: true,
+        changeCount: 0
+      }
     };
     await sessionStore.saveSession(metricsSession);
 
@@ -218,7 +217,7 @@ describe('Unified Session Sync Plugin - Orchestrator', () => {
   });
 
   describe('Session Discovery and Processing', () => {
-    it('should discover session files via adapter', async () => {
+    it('should load correlated session from SessionStore', async () => {
       const context: PluginContext = {
         config: {
           sessionId: testMetricsSessionId,
@@ -242,7 +241,7 @@ describe('Unified Session Sync Plugin - Orchestrator', () => {
         // Trigger sync manually (don't wait for timer)
         await (interceptor as any).syncSessions();
 
-        // Verify sessions were discovered and processed
+        // Verify adapter was initialized and session was processed
         // Note: Actual validation is in processor tests, here we just verify pipeline runs
         expect((interceptor as any).adapter).toBeDefined();
       } finally {
@@ -252,13 +251,30 @@ describe('Unified Session Sync Plugin - Orchestrator', () => {
       }
     });
 
-    it('should handle empty session directory gracefully', async () => {
-      const emptyDir = join(tempTestDir, 'empty-sessions');
-      mkdirSync(emptyDir, { recursive: true });
+    it('should handle uncorrelated session gracefully', async () => {
+      // Create session without correlation
+      const uncorrelatedSessionId = 'uncorrelated-' + Date.now();
+      const uncorrelatedSession: MetricsSession = {
+        sessionId: uncorrelatedSessionId,
+        agentName: 'claude',
+        provider: 'ai-run-sso',
+        workingDirectory: '/tmp/test',
+        status: 'active',
+        startTime: Date.now(),
+        correlation: {
+          status: 'pending',
+          retryCount: 0
+        },
+        monitoring: {
+          isActive: true,
+          changeCount: 0
+        }
+      };
+      await sessionStore.saveSession(uncorrelatedSession);
 
       const context: PluginContext = {
         config: {
-          sessionId: testMetricsSessionId,
+          sessionId: uncorrelatedSessionId,
           targetApiUrl: 'https://api.example.com',
           clientType: 'codemie-claude',
           version: '0.0.28'
@@ -269,13 +285,13 @@ describe('Unified Session Sync Plugin - Orchestrator', () => {
 
       process.env.CODEMIE_SESSION_DRY_RUN = '1';
       const originalHome = process.env.HOME;
-      process.env.HOME = emptyDir;
+      process.env.HOME = tempTestDir;
 
       try {
         interceptor = await plugin.createInterceptor(context);
         await interceptor.onProxyStart();
 
-        // Sync should complete without errors
+        // Sync should complete without errors (skips uncorrelated sessions)
         await expect((interceptor as any).syncSessions()).resolves.not.toThrow();
       } finally {
         await interceptor.onProxyStop();

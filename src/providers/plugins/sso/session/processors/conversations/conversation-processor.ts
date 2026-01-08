@@ -4,20 +4,20 @@
  * Processes parsed session data to sync conversations to CodeMie API with incremental tracking.
  *
  * Responsibilities:
- * - Extract NEW messages from ParsedSession (incremental tracking via processedRecordIds)
+ * - Extract NEW messages from ParsedSession (incremental tracking via lastSyncedMessageUuid)
  * - Transform to Codemie conversation format (via agent's conversations adapter)
  * - Send ONLY new messages to conversations API
- * - Track conversationId (set from sessionId, no UUID generation)
+ * - Track conversationId and lastSyncedMessageUuid (independent from metrics)
  *
  * IMPORTANT: This processor is agent-agnostic.
  * Agent-specific logic (transformer) is loaded from agent plugin.
  *
  * Design:
- * - Uses metrics SessionStore for message-level tracking (processedRecordIds)
- * - conversationId = sessionId (copied on first sync, no UUID generation)
- * - Only syncs NEW messages (incremental updates)
- * - Waits for metrics processor to populate processedRecordIds
- * - On first sync (no conversationId), processes all messages in processedRecordIds
+ * - Uses SessionStore for conversation sync state tracking (independent from metrics)
+ * - conversationId = sessionId (set on first sync)
+ * - Only syncs NEW messages after lastSyncedMessageUuid (incremental updates)
+ * - On first sync (no conversationId), processes ALL messages
+ * - On subsequent syncs, only processes messages after lastSyncedMessageUuid
  */
 
 import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../base/BaseProcessor.js';
@@ -52,7 +52,7 @@ export class ConversationsProcessor implements SessionProcessor {
         return { success: true, message: 'No messages to process' };
       }
 
-      // Check 2: Load session metadata from metrics SessionStore
+      // Check 2: Load session metadata from SessionStore
       const { SessionStore } = await import('../../../../../../agents/core/metrics/session/SessionStore.js');
       const sessionStore = new SessionStore();
       const sessionMetadata = await sessionStore.loadSession(session.sessionId);
@@ -62,40 +62,36 @@ export class ConversationsProcessor implements SessionProcessor {
         return { success: false, message: 'Session metadata not found' };
       }
 
-      // Check 3: Get processed records (wait for metrics if empty)
-      const processedRecordIds = sessionMetadata.syncState?.processedRecordIds || [];
+      // Check 3: Determine if this is first sync (no conversationId yet)
+      const isFirstSync = !sessionMetadata.sync?.conversations?.conversationId;
+      const lastSyncedMessageUuid = sessionMetadata.sync?.conversations?.lastSyncedMessageUuid;
 
-      if (processedRecordIds.length === 0) {
-        logger.debug(`[${this.name}] Waiting for metrics processor to populate processedRecordIds`);
-        return { success: true, message: 'Waiting for metrics' };
-      }
-
-      // Check 4: Determine if this is first sync (no conversationId yet)
-      const isFirstSync = !sessionMetadata.syncState?.conversationId;
-
-      // Check 5: Find new messages (incremental tracking)
+      // Check 4: Find new messages (incremental tracking)
       let newMessages: any[];
 
       if (isFirstSync) {
-        // First sync: Process all messages in processedRecordIds
+        // First sync: Process ALL messages
         newMessages = messages;
         logger.info(`[${this.name}] First sync for session ${session.sessionId}, processing all ${messages.length} messages`);
+      } else if (!lastSyncedMessageUuid) {
+        // Have conversationId but no lastSyncedMessageUuid (shouldn't happen, but handle gracefully)
+        newMessages = messages;
+        logger.warn(`[${this.name}] Missing lastSyncedMessageUuid for session ${session.sessionId}, re-syncing all messages`);
       } else {
-        // Subsequent syncs: Only process NEW messages
-        const lastProcessedUuid = processedRecordIds[processedRecordIds.length - 1];
-        const lastProcessedIndex = messages.findIndex((m: any) => m.uuid === lastProcessedUuid);
+        // Subsequent syncs: Only process NEW messages after lastSyncedMessageUuid
+        const lastSyncedIndex = messages.findIndex((m: any) => m.uuid === lastSyncedMessageUuid);
 
-        if (lastProcessedIndex === -1) {
-          // UUID not found - session reset
+        if (lastSyncedIndex === -1) {
+          // UUID not found - session reset or file changed
           newMessages = messages;
-          logger.warn(`[${this.name}] Session reset detected for ${session.sessionId}, re-syncing all ${messages.length} messages`);
-        } else if (lastProcessedIndex === messages.length - 1) {
+          logger.warn(`[${this.name}] Last synced message not found (UUID: ${lastSyncedMessageUuid}), re-syncing all ${messages.length} messages`);
+        } else if (lastSyncedIndex === messages.length - 1) {
           // No new messages
           logger.debug(`[${this.name}] No new messages for session ${session.sessionId}`);
           return { success: true, message: 'No new messages' };
         } else {
-          // Extract new messages (after last processed)
-          newMessages = messages.slice(lastProcessedIndex + 1);
+          // Extract new messages (after last synced)
+          newMessages = messages.slice(lastSyncedIndex + 1);
           logger.info(`[${this.name}] Processing ${newMessages.length} new messages for session ${session.sessionId}`);
         }
       }
@@ -121,13 +117,23 @@ export class ConversationsProcessor implements SessionProcessor {
       }
 
       // Get or create conversationId (from sessionId, no UUID generation)
-      const conversationId = sessionMetadata.syncState?.conversationId || session.sessionId;
+      const conversationId = sessionMetadata.sync?.conversations?.conversationId || session.sessionId;
+
+      // Calculate starting history index for incremental syncs
+      // If we have lastSyncedHistoryIndex, next index is lastSyncedHistoryIndex + 1
+      // Otherwise start at 0 (first sync)
+      const startingHistoryIndex = sessionMetadata.sync?.conversations?.lastSyncedHistoryIndex !== undefined
+        ? sessionMetadata.sync.conversations.lastSyncedHistoryIndex + 1
+        : 0;
+
+      logger.debug(`[${this.name}] Starting history index: ${startingHistoryIndex}`);
 
       // Transform only new messages to Codemie format via agent's adapter
       const history = conversationsAdapter.transformMessages(
         newMessages,
         '5a430368-9e91-4564-be20-989803bf4da2',  // assistant_id (from original)
-        agentDisplayName
+        agentDisplayName,
+        startingHistoryIndex  // Pass starting index for incremental sync
       );
 
       if (history.length === 0) {
@@ -161,17 +167,43 @@ export class ConversationsProcessor implements SessionProcessor {
         return { success: false, message: `Failed to sync conversation: ${response.message}` };
       }
 
-      // Save conversationId (if first sync) - set from sessionId
-      if (!sessionMetadata.syncState?.conversationId) {
-        // Update syncState with conversationId
-        sessionMetadata.syncState = {
-          ...sessionMetadata.syncState!,
-          conversationId: session.sessionId  // Copy sessionId to conversationId
-        };
-        await sessionStore.saveSession(sessionMetadata);
-        logger.debug(`[${this.name}] Saved conversationId=${session.sessionId} for session ${session.sessionId}`);
+      // Update sync.conversations with conversationId, lastSyncedMessageUuid, and lastSyncedHistoryIndex
+      const lastMessageUuid = (newMessages[newMessages.length - 1] as any)?.uuid;
+
+      // Calculate lastSyncedHistoryIndex from transformed history
+      // Find the maximum history_index in the transformed history
+      const maxHistoryIndex = history.reduce((max, entry) => Math.max(max, entry.history_index), -1);
+
+      // Initialize sync object if needed
+      if (!sessionMetadata.sync) {
+        sessionMetadata.sync = {};
       }
 
+      if (!sessionMetadata.sync.conversations) {
+        // Create new conversations sync state
+        sessionMetadata.sync.conversations = {
+          conversationId: session.sessionId,
+          lastSyncedMessageUuid: lastMessageUuid,
+          lastSyncedHistoryIndex: maxHistoryIndex,
+          lastSyncAt: Date.now(),
+          totalMessagesSynced: history.length,
+          totalSyncAttempts: 1
+        };
+      } else {
+        // Update existing conversations sync state
+        sessionMetadata.sync.conversations.conversationId = session.sessionId;
+        sessionMetadata.sync.conversations.lastSyncedMessageUuid = lastMessageUuid;
+        sessionMetadata.sync.conversations.lastSyncedHistoryIndex = maxHistoryIndex;
+        sessionMetadata.sync.conversations.lastSyncAt = Date.now();
+        sessionMetadata.sync.conversations.totalMessagesSynced =
+          (sessionMetadata.sync.conversations.totalMessagesSynced || 0) + history.length;
+        sessionMetadata.sync.conversations.totalSyncAttempts =
+          (sessionMetadata.sync.conversations.totalSyncAttempts || 0) + 1;
+      }
+
+      await sessionStore.saveSession(sessionMetadata);
+
+      logger.debug(`[${this.name}] Updated conversation sync state: conversationId=${session.sessionId}, lastSyncedMessageUuid=${lastMessageUuid}, lastSyncedHistoryIndex=${maxHistoryIndex}`);
       logger.info(`[${this.name}] Successfully synced conversation ${conversationId} (${response.new_messages} new, ${response.total_messages} total)`);
 
       return {

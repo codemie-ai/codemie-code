@@ -65,17 +65,45 @@ export class ClaudeSessionAdapter implements SessionAdapter {
         throw new Error('Session file is empty or has no valid messages');
       }
 
-      // Extract session ID from first message
-      const sessionId = messages[0].sessionId;
+      // Extract session ID from first message with sessionId (may not be first line)
+      // First line can be file-history-snapshot or other metadata without sessionId
+      let sessionId: string | undefined;
+      for (const message of messages.slice(0, 10)) { // Check first 10 messages
+        if (message.sessionId) {
+          sessionId = message.sessionId;
+          break;
+        }
+      }
+
       if (!sessionId) {
-        throw new Error('Session ID not found in first message');
+        throw new Error('Session ID not found in any message');
+      }
+
+      // Extract timestamps from first/last messages that have them
+      let createdAt: string | undefined;
+      let updatedAt: string | undefined;
+
+      // Find first message with timestamp
+      for (const message of messages) {
+        if (message.timestamp) {
+          createdAt = message.timestamp;
+          break;
+        }
+      }
+
+      // Find last message with timestamp (iterate backwards)
+      for (let i = messages.length - 1; i >= 0; i--) {
+        if (messages[i].timestamp) {
+          updatedAt = messages[i].timestamp;
+          break;
+        }
       }
 
       // Extract metadata from session
       const metadata = {
         projectPath: filePath,
-        createdAt: messages[0].timestamp,
-        updatedAt: messages[messages.length - 1].timestamp
+        createdAt,
+        updatedAt
       };
 
       // Extract metrics from messages

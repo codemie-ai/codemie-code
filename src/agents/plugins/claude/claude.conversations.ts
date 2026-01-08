@@ -18,9 +18,15 @@ export interface AgentConversationsSupport {
    * @param messages - Raw session messages
    * @param assistantId - Assistant ID for the conversation
    * @param agentName - Agent display name
+   * @param startingHistoryIndex - Starting index for incremental syncs (optional, default 0)
    * @returns Transformed conversation history
    */
-  transformMessages(messages: any[], assistantId: string, agentName: string): CodemieHistoryEntry[];
+  transformMessages(
+    messages: any[],
+    assistantId: string,
+    agentName: string,
+    startingHistoryIndex?: number
+  ): CodemieHistoryEntry[];
 }
 
 /**
@@ -32,7 +38,12 @@ export class ClaudeConversationsAdapter implements AgentConversationsSupport {
    * Transform Claude messages to Codemie history format
    * Delegates to Claude-specific transformer
    */
-  transformMessages(messages: any[], assistantId: string, agentName: string): CodemieHistoryEntry[] {
-    return transformMessages(messages, assistantId, agentName);
+  transformMessages(
+    messages: any[],
+    assistantId: string,
+    agentName: string,
+    startingHistoryIndex: number = 0
+  ): CodemieHistoryEntry[] {
+    return transformMessages(messages, assistantId, agentName, startingHistoryIndex);
   }
 }

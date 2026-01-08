@@ -24,10 +24,16 @@ import { shouldFilterMessage, isToolResult, extractCommand } from './claude.conv
  * @param messages - Claude session messages
  * @param assistantId - Assistant ID to use for assistant messages (optional)
  * @param agentName - Agent display name for intermediate thoughts (e.g., 'Claude Code')
+ * @param startingHistoryIndex - Starting index for incremental syncs (default: 0)
  */
-export function transformMessages(messages: ClaudeMessage[], assistantId?: string, agentName?: string): CodemieHistoryEntry[] {
+export function transformMessages(
+  messages: ClaudeMessage[],
+  assistantId?: string,
+  agentName?: string,
+  startingHistoryIndex: number = 0
+): CodemieHistoryEntry[] {
   const history: CodemieHistoryEntry[] = [];
-  let historyIndex = 0;
+  let historyIndex = startingHistoryIndex;
 
   // Build tool results map (tool_use_id → result content)
   const toolResultsMap = buildToolResultsMap(messages);

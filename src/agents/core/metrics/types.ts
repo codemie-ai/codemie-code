@@ -92,8 +92,14 @@ export interface MetricsSession {
   watermark?: Watermark;
   status: SessionStatus;
 
-  // Embedded sync state (replaces separate sync_state.json file)
-  syncState?: SyncState;
+  /**
+   * @deprecated Use sync field instead
+   * Legacy flat sync state - will be removed in v1.0.0
+   */
+  syncState?: LegacySyncState;
+
+  // ✅ New hierarchical sync state
+  sync?: SyncState;
 }
 
 /**
@@ -260,36 +266,90 @@ export interface UserPrompt {
 }
 
 /**
- * Sync state (sync_state.json)
+ * Metrics sync state (MetricsProcessor)
  */
-export interface SyncState {
-  sessionId: string;
-  agentSessionId: string;
-
-  // Session lifecycle
-  sessionStartTime: number;      // When session started
-  sessionEndTime?: number;       // When session ended
-  status: 'active' | 'completed' | 'failed';
-
-  // Last processed line from agent file
-  lastProcessedLine: number;
+export interface MetricsSyncState {
+  // Processing state (incremental tracking)
+  lastProcessedLine?: number;
   lastProcessedTimestamp: number;
+  processedRecordIds: string[];
+  attachedUserPromptTexts?: string[];
 
-  // Local processing tracking (deduplication)
-  processedRecordIds: string[];  // All record IDs written to local metrics JSONL
-  attachedUserPromptTexts?: string[];  // User prompt texts already attached to deltas (prevents duplication)
-
-  // Remote sync tracking
-  lastSyncedRecordId?: string;   // Last synced record ID (for resume)
-  lastSyncAt?: number;            // Last sync timestamp
+  // Remote sync state
+  lastSyncedRecordId?: string;
+  lastSyncAt?: number;
 
   // Statistics
-  totalDeltas: number;           // Total deltas created
-  totalSynced: number;           // Total synced to API
-  totalFailed: number;           // Total failed syncs
+  totalDeltas: number;
+  totalSynced: number;
+  totalFailed: number;
 
-  // === Conversation tracking ===
-  conversationId?: string;       // Codemie conversation UUID (set to sessionId on first sync)
+  // Error tracking
+  lastSyncError?: string;
+}
+
+/**
+ * Conversations sync state (ConversationsProcessor)
+ */
+export interface ConversationsSyncState {
+  // Conversation identity
+  conversationId?: string;
+
+  // Incremental tracking
+  lastSyncedMessageUuid?: string;
+  lastSyncedHistoryIndex?: number;
+
+  // Remote sync state
+  lastSyncAt?: number;
+
+  // Statistics
+  totalMessagesSynced?: number;
+  totalSyncAttempts?: number;
+
+  // Error tracking
+  lastSyncError?: string;
+}
+
+/**
+ * Hierarchical sync state (per-processor sections)
+ */
+export interface SyncState {
+  metrics?: MetricsSyncState;
+  conversations?: ConversationsSyncState;
+}
+
+/**
+ * @deprecated Use new hierarchical SyncState instead
+ * Legacy flat sync state - will be removed in v1.0.0
+ */
+export interface LegacySyncState {
+  // Session tracking (DEAD FIELDS - will be removed)
+  sessionId?: string;
+  agentSessionId?: string;
+  sessionStartTime?: number;
+  sessionEndTime?: number;
+  status?: 'active' | 'completed' | 'failed';
+
+  // Metrics processing tracking
+  lastProcessedLine?: number;
+  lastProcessedTimestamp: number;
+  processedRecordIds: string[];
+  attachedUserPromptTexts?: string[];
+
+  // Remote sync tracking
+  lastSyncedRecordId?: string;
+  lastSyncAt?: number;
+
+  // Statistics
+  totalDeltas: number;
+  totalSynced: number;
+  totalFailed: number;
+
+  // Conversation sync tracking (independent from metrics)
+  conversationId?: string;
+  lastSyncedMessageUuid?: string;
+  lastSyncedHistoryIndex?: number;
+  lastConversationSyncAt?: number;
 }
 
 /**

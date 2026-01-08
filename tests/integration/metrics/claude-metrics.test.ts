@@ -581,7 +581,10 @@ describe('ClaudeMetricsAdapter - Full Pipeline Integration Test', () => {
       expect(expectedSession).toHaveProperty('status');
       expect(expectedSession).toHaveProperty('correlation');
       expect(expectedSession).toHaveProperty('monitoring');
-      expect(expectedSession).toHaveProperty('syncState');
+      // Support both old and new structure (for backward compatibility with fixtures)
+      const hasSync = Object.prototype.hasOwnProperty.call(expectedSession, 'sync') ||
+                      Object.prototype.hasOwnProperty.call(expectedSession, 'syncState');
+      expect(hasSync).toBe(true);
     });
 
     it('should have correlation metadata with correct agent session', async () => {
@@ -622,24 +625,21 @@ describe('ClaudeMetricsAdapter - Full Pipeline Integration Test', () => {
       );
       const expectedSession = JSON.parse(expectedSessionContent);
 
-      // Verify sync state structure
-      expect(expectedSession.syncState).toHaveProperty('sessionId');
-      expect(expectedSession.syncState).toHaveProperty('agentSessionId');
-      expect(expectedSession.syncState).toHaveProperty('sessionStartTime');
-      expect(expectedSession.syncState).toHaveProperty('status');
-      expect(expectedSession.syncState).toHaveProperty('lastProcessedLine');
-      expect(expectedSession.syncState).toHaveProperty('lastProcessedTimestamp');
-      expect(expectedSession.syncState).toHaveProperty('processedRecordIds');
-      expect(expectedSession.syncState).toHaveProperty('totalDeltas');
-      expect(expectedSession.syncState).toHaveProperty('totalSynced');
-      expect(expectedSession.syncState).toHaveProperty('totalFailed');
+      // Support both old and new structure
+      const metricsSync = expectedSession.sync?.metrics || expectedSession.syncState;
+      expect(metricsSync).toBeDefined();
 
-      // Verify sync state values
-      expect(expectedSession.syncState.agentSessionId).toBe('4c2ddfdc-b619-4525-8d03-1950fb1b0257');
-      expect(expectedSession.syncState.status).toBe('active');
-      expect(Array.isArray(expectedSession.syncState.processedRecordIds)).toBe(true);
-      expect(expectedSession.syncState.processedRecordIds.length).toBeGreaterThan(0);
-      expect(expectedSession.syncState.totalDeltas).toBe(11); // Expected has 11 deltas
+      // Verify metrics sync structure
+      expect(metricsSync).toHaveProperty('lastProcessedTimestamp');
+      expect(metricsSync).toHaveProperty('processedRecordIds');
+      expect(metricsSync).toHaveProperty('totalDeltas');
+      expect(metricsSync).toHaveProperty('totalSynced');
+      expect(metricsSync).toHaveProperty('totalFailed');
+
+      // Verify values
+      expect(Array.isArray(metricsSync.processedRecordIds)).toBe(true);
+      expect(metricsSync.processedRecordIds.length).toBeGreaterThan(0);
+      expect(metricsSync.totalDeltas).toBe(11); // Expected has 11 deltas
     });
 
     it('should have processedRecordIds matching expected metrics', async () => {
@@ -662,8 +662,11 @@ describe('ClaudeMetricsAdapter - Full Pipeline Integration Test', () => {
         .filter(line => line.length > 0)
         .map(line => JSON.parse(line));
 
+      // Support both old and new structure
+      const metricsSync = expectedSession.sync?.metrics || expectedSession.syncState;
+
       // Get recordIds from both
-      const sessionRecordIds = new Set(expectedSession.syncState.processedRecordIds);
+      const sessionRecordIds = new Set(metricsSync.processedRecordIds);
       const metricsRecordIds = new Set(expectedDeltas.map(d => d.recordId));
 
       // All recordIds in metrics should be in session's processedRecordIds
@@ -672,8 +675,8 @@ describe('ClaudeMetricsAdapter - Full Pipeline Integration Test', () => {
       }
 
       // Counts should match
-      expect(sessionRecordIds.size).toBe(expectedSession.syncState.totalDeltas);
-      expect(metricsRecordIds.size).toBe(expectedSession.syncState.totalDeltas);
+      expect(sessionRecordIds.size).toBe(metricsSync.totalDeltas);
+      expect(metricsRecordIds.size).toBe(metricsSync.totalDeltas);
     });
   });
 });
