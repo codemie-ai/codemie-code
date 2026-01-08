@@ -16,28 +16,26 @@
     "isActive": false,
     "changeCount": 0
   },
-  "syncState": {
-    "sessionId": "71a17a83-ff99-4d05-964b-0bd56892faec",
-    "agentSessionId": "4c2ddfdc-b619-4525-8d03-1950fb1b0257",
-    "sessionStartTime": 1765395456088,
-    "status": "active",
-    "lastProcessedLine": 25,
-    "lastProcessedTimestamp": 1765395516247,
-    "processedRecordIds": [
-      "f4dfad6e-e564-4e66-b8b0-b469f5204e23",
-      "577abb77-0627-4ec9-a641-7708745d5be5",
-      "f79ed9b8-e9f1-4849-be86-bd5a9ee3f935",
-      "f582332c-f5b8-4409-a441-a73e49e8ddee",
-      "52b81d3c-1cf1-465a-a524-5ff5c78644aa",
-      "45d4ee27-34b3-4412-b520-9cbdcdbc1b71",
-      "828969aa-a728-45e9-9c8d-5be0d2ca378d",
-      "3ac43b34-2909-42a6-a100-08748e1b7de3",
-      "a4299e9e-9076-4535-a993-77a445dd38e6",
-      "02f91b26-c53a-4b44-b8b8-cef85f9565ec",
-      "556d2e86-494c-4e6f-ba98-ce28538213d1"
-    ],
-    "totalDeltas": 11,
-    "totalSynced": 0,
-    "totalFailed": 0
+  "sync": {
+    "metrics": {
+      "lastProcessedLine": 25,
+      "lastProcessedTimestamp": 1765395516247,
+      "processedRecordIds": [
+        "f4dfad6e-e564-4e66-b8b0-b469f5204e23",
+        "577abb77-0627-4ec9-a641-7708745d5be5",
+        "f79ed9b8-e9f1-4849-be86-bd5a9ee3f935",
+        "f582332c-f5b8-4409-a441-a73e49e8ddee",
+        "52b81d3c-1cf1-465a-a524-5ff5c78644aa",
+        "45d4ee27-34b3-4412-b520-9cbdcdbc1b71",
+        "828969aa-a728-45e9-9c8d-5be0d2ca378d",
+        "3ac43b34-2909-42a6-a100-08748e1b7de3",
+        "a4299e9e-9076-4535-a993-77a445dd38e6",
+        "02f91b26-c53a-4b44-b8b8-cef85f9565ec",
+        "556d2e86-494c-4e6f-ba98-ce28538213d1"
+      ],
+      "totalDeltas": 11,
+      "totalSynced": 0,
+      "totalFailed": 0
+    }
   }
 }
