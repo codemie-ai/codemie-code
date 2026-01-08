@@ -170,10 +170,6 @@ jobs:
           name: dist
           path: dist/
 
-      # Link CLI globally for agent installation
-      - name: Link CLI globally
-        run: npm link
-
       # Install required agents for integration tests
       - name: Install Claude Code agent
         run: codemie install claude
