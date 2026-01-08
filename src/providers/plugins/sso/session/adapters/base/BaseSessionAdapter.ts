@@ -71,8 +71,7 @@ export interface SessionAdapter {
   /**
    * Parse session file to unified format.
    * @param filePath - Absolute path to session file
-   * @param sessionId - CodeMie session ID (already correlated)
    * @returns Parsed session in agent-agnostic format
    */
-  parseSessionFile(filePath: string, sessionId: string): Promise<ParsedSession>;
+  parseSessionFile(filePath: string): Promise<ParsedSession>;
 }

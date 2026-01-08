@@ -17,7 +17,7 @@
 
 import { MetricsApiClient } from '../../../metrics/sync/sso.metrics-api-client.js';
 import type { SessionMetric, MetricsApiConfig, MetricsSyncResponse } from './metrics-types.js';
-import type { Session } from '../../../../../../agents/core/session/types.js';
+import type { MetricsSession } from '../../../../../../agents/core/metrics/types.js';
 import { logger } from '../../../../../../utils/logger.js';
 import { detectGitBranch } from '../../../../../../utils/processes.js';
 
@@ -43,7 +43,6 @@ export interface SessionError {
 export interface MetricsSenderOptions {
   baseUrl: string;
   cookies?: string;
-  apiKey?: string;    // API key for localhost development (user-id header)
   timeout?: number;
   retryAttempts?: number;
   version?: string;
@@ -76,7 +75,6 @@ export class MetricsSender {
     const config: MetricsApiConfig = {
       baseUrl: options.baseUrl,
       cookies: options.cookies,
-      apiKey: options.apiKey,
       timeout: options.timeout,
       retryAttempts: options.retryAttempts,
       version: options.version,
@@ -96,7 +94,7 @@ export class MetricsSender {
    * @param error - Optional error information (required if status=failed)
    */
   async sendSessionStart(
-    session: Pick<Session, 'sessionId' | 'agentName' | 'provider' | 'project' | 'startTime' | 'workingDirectory'> & { model?: string },
+    session: Pick<MetricsSession, 'sessionId' | 'agentName' | 'provider' | 'project' | 'startTime' | 'workingDirectory'> & { model?: string },
     workingDirectory: string,
     status: SessionStartStatus = 'started',
     error?: SessionError
@@ -192,7 +190,7 @@ export class MetricsSender {
    * @param error - Optional error information (for failed sessions)
    */
   async sendSessionEnd(
-    session: Pick<Session, 'sessionId' | 'agentName' | 'provider' | 'project' | 'startTime' | 'workingDirectory'> & { model?: string },
+    session: Pick<MetricsSession, 'sessionId' | 'agentName' | 'provider' | 'project' | 'startTime' | 'workingDirectory'> & { model?: string },
     workingDirectory: string,
     status: SessionEndStatus,
     durationMs: number,

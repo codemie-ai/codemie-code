@@ -22,11 +22,10 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { ClaudeMetricsAdapter } from '../../../../../src/agents/plugins/claude/claude.metrics.js';
 import { ClaudePluginMetadata } from '../../../../../src/agents/plugins/claude/claude.plugin.js';
-import { DeltaWriter } from '../../../../../src/agents/core/metrics/DeltaWriter.js';
-import { SessionStore } from '../../../../../src/agents/core/session/SessionStore.js';
+import { DeltaWriter } from '../../../../../src/agents/core/metrics/core/DeltaWriter.js';
+import { SessionStore } from '../../../../../src/agents/core/metrics/session/SessionStore.js';
 import { MetricsProcessor } from '../../../../../src/providers/plugins/sso/session/processors/metrics/metrics-processor.js';
-import type { MetricDelta } from '../../../../../src/agents/core/metrics/types.js';
-import type { Session } from '../../../../../src/agents/core/session/types.js';
+import type { MetricDelta, MetricsSession } from '../../../../../src/agents/core/metrics/types.js';
 import type { ParsedSession } from '../../../../../src/providers/plugins/sso/session/adapters/base/BaseSessionAdapter.js';
 import type { ProcessingContext } from '../../../../../src/providers/plugins/sso/session/processors/base/BaseProcessor.js';
 
@@ -73,25 +72,26 @@ describe('MetricsProcessor - Full Pipeline Integration Test', () => {
 
     // 4. Create session metadata (required by processor)
     sessionStore = new SessionStore();
-    const session: Session = {
+    const session: MetricsSession = {
       sessionId: testSessionId,
       agentName: 'claude',
-      provider: 'ai-run-sso',
       workingDirectory: '/tmp/test',
       gitBranch: 'main',
       status: 'active',
-      startTime: Date.now(),
       correlation: {
-        status: 'matched',
-        agentSessionFile: sessionFilePath,
-        agentSessionId: '4c2ddfdc-b619-4525-8d03-1950fb1b0257',
-        detectedAt: Date.now(),
-        retryCount: 0
+        instanceId: 'test-instance',
+        parentSessionId: null
+      },
+      watermark: {
+        strategy: 'hash',
+        value: 'test-hash'
       },
       monitoring: {
-        isActive: true,
-        changeCount: 0
-      }
+        performanceMarkers: [],
+        resourceUsage: {}
+      },
+      startedAt: Date.now(),
+      updatedAt: Date.now()
     };
     await sessionStore.saveSession(session);
 

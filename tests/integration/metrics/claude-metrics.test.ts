@@ -26,7 +26,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { ClaudeMetricsAdapter } from '../../../src/agents/plugins/claude/claude.metrics.js';
 import { ClaudePluginMetadata } from '../../../src/agents/plugins/claude/claude.plugin.js';
-import { DeltaWriter } from '../../../src/agents/core/metrics/DeltaWriter.js';
+import { DeltaWriter } from '../../../src/agents/core/metrics/core/DeltaWriter.js';
 import type { MetricDelta } from '../../../src/agents/core/metrics/types.js';
 
 // ESM equivalent of __dirname
@@ -581,7 +581,7 @@ describe('ClaudeMetricsAdapter - Full Pipeline Integration Test', () => {
       expect(expectedSession).toHaveProperty('status');
       expect(expectedSession).toHaveProperty('correlation');
       expect(expectedSession).toHaveProperty('monitoring');
-      expect(expectedSession).toHaveProperty('sync');
+      expect(expectedSession).toHaveProperty('syncState');
     });
 
     it('should have correlation metadata with correct agent session', async () => {
@@ -622,20 +622,24 @@ describe('ClaudeMetricsAdapter - Full Pipeline Integration Test', () => {
       );
       const expectedSession = JSON.parse(expectedSessionContent);
 
-      expect(expectedSession.sync?.metrics).toBeDefined();
-      const metricsSync = expectedSession.sync.metrics;
+      // Verify sync state structure
+      expect(expectedSession.syncState).toHaveProperty('sessionId');
+      expect(expectedSession.syncState).toHaveProperty('agentSessionId');
+      expect(expectedSession.syncState).toHaveProperty('sessionStartTime');
+      expect(expectedSession.syncState).toHaveProperty('status');
+      expect(expectedSession.syncState).toHaveProperty('lastProcessedLine');
+      expect(expectedSession.syncState).toHaveProperty('lastProcessedTimestamp');
+      expect(expectedSession.syncState).toHaveProperty('processedRecordIds');
+      expect(expectedSession.syncState).toHaveProperty('totalDeltas');
+      expect(expectedSession.syncState).toHaveProperty('totalSynced');
+      expect(expectedSession.syncState).toHaveProperty('totalFailed');
 
-      // Verify metrics sync structure
-      expect(metricsSync).toHaveProperty('lastProcessedTimestamp');
-      expect(metricsSync).toHaveProperty('processedRecordIds');
-      expect(metricsSync).toHaveProperty('totalDeltas');
-      expect(metricsSync).toHaveProperty('totalSynced');
-      expect(metricsSync).toHaveProperty('totalFailed');
-
-      // Verify values
-      expect(Array.isArray(metricsSync.processedRecordIds)).toBe(true);
-      expect(metricsSync.processedRecordIds.length).toBeGreaterThan(0);
-      expect(metricsSync.totalDeltas).toBe(11); // Expected has 11 deltas
+      // Verify sync state values
+      expect(expectedSession.syncState.agentSessionId).toBe('4c2ddfdc-b619-4525-8d03-1950fb1b0257');
+      expect(expectedSession.syncState.status).toBe('active');
+      expect(Array.isArray(expectedSession.syncState.processedRecordIds)).toBe(true);
+      expect(expectedSession.syncState.processedRecordIds.length).toBeGreaterThan(0);
+      expect(expectedSession.syncState.totalDeltas).toBe(11); // Expected has 11 deltas
     });
 
     it('should have processedRecordIds matching expected metrics', async () => {
@@ -658,11 +662,8 @@ describe('ClaudeMetricsAdapter - Full Pipeline Integration Test', () => {
         .filter(line => line.length > 0)
         .map(line => JSON.parse(line));
 
-      expect(expectedSession.sync?.metrics).toBeDefined();
-      const metricsSync = expectedSession.sync.metrics;
-
       // Get recordIds from both
-      const sessionRecordIds = new Set(metricsSync.processedRecordIds);
+      const sessionRecordIds = new Set(expectedSession.syncState.processedRecordIds);
       const metricsRecordIds = new Set(expectedDeltas.map(d => d.recordId));
 
       // All recordIds in metrics should be in session's processedRecordIds
@@ -671,8 +672,8 @@ describe('ClaudeMetricsAdapter - Full Pipeline Integration Test', () => {
       }
 
       // Counts should match
-      expect(sessionRecordIds.size).toBe(metricsSync.totalDeltas);
-      expect(metricsRecordIds.size).toBe(metricsSync.totalDeltas);
+      expect(sessionRecordIds.size).toBe(expectedSession.syncState.totalDeltas);
+      expect(metricsRecordIds.size).toBe(expectedSession.syncState.totalDeltas);
     });
   });
 });

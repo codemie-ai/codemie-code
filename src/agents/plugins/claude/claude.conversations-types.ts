@@ -58,7 +58,7 @@ export interface ContentItem {
   name?: string;
   input?: Record<string, unknown>;
   tool_use_id?: string;
-  content?: string | Array<{ type: string; text?: string }>;  // Can be string or array (e.g., Task tool)
+  content?: string;
   isError?: boolean;
 }
 
@@ -159,24 +159,4 @@ export interface ConversationApiError {
   message: string;       // Error message
   details?: string;      // Detailed error information
   help?: string;         // Help text for resolving the error
-}
-
-/**
- * Sync state for conversation transformer
- * Tracks where we left off in the message stream
- */
-export interface SyncState {
-  lastSyncedMessageUuid?: string;  // Last message UUID we processed
-  lastSyncedHistoryIndex: number;  // Last history index we're on
-}
-
-/**
- * Result of message transformation with state updates
- * Returned by transformer to indicate what was transformed and how to update sync state
- */
-export interface TransformResult {
-  history: CodemieHistoryEntry[];   // Transformed history entries to sync
-  isTurnContinuation: boolean;      // Whether this is a turn continuation (vs new turn)
-  lastProcessedMessageUuid: string; // Last message UUID processed (update sync state with this)
-  currentHistoryIndex: number;      // Current history index (update sync state with this)
 }

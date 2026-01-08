@@ -1,14 +1,13 @@
 /**
- * Conversation Transformer (Refactored)
+ * Conversation Transformer
  *
- * Stateless transformer that uses sync state to determine incremental updates
+ * Transforms Claude session messages to Codemie conversation format
  *
- * Key Improvements:
- * - Accepts sync state (lastSyncedMessageUuid, lastSyncedHistoryIndex)
- * - Returns structured result with continuation flag
- * - Tool results trigger turn continuation (not filtered)
- * - Skips messages without uuid (snapshots, summaries)
- * - Deterministic and testable
+ * Key Transformations:
+ * - Message pairing: User → Assistant with tool calls
+ * - Tool call → Thought mapping (with observation)
+ * - Token aggregation across message pairs
+ * - Duration calculation (user → final assistant)
  */
 
 import type {
@@ -21,456 +20,245 @@ import type {
 import { shouldFilterMessage, isToolResult, extractCommand } from './claude.conversations-filters.js';
 
 /**
- * Result of message transformation with state updates
+ * Transform Claude messages to Codemie history format
+ * @param messages - Claude session messages
+ * @param assistantId - Assistant ID to use for assistant messages (optional)
+ * @param agentName - Agent display name for intermediate thoughts (e.g., 'Claude Code')
  */
-export interface TransformResult {
-  history: CodemieHistoryEntry[];
-  isTurnContinuation: boolean;
-  lastProcessedMessageUuid: string;
-  currentHistoryIndex: number;
-}
+export function transformMessages(messages: ClaudeMessage[], assistantId?: string, agentName?: string): CodemieHistoryEntry[] {
+  const history: CodemieHistoryEntry[] = [];
+  let historyIndex = 0;
 
-/**
- * Sync state input for transformer
- */
-export interface SyncState {
-  lastSyncedMessageUuid?: string;
-  lastSyncedHistoryIndex: number;
-}
+  // Build tool results map (tool_use_id → result content)
+  const toolResultsMap = buildToolResultsMap(messages);
 
-/**
- * Transform Claude messages to Codemie history format (stateless)
- *
- * @param messages - ALL Claude session messages
- * @param syncState - Current sync state (where we left off)
- * @param assistantId - Assistant ID for assistant messages
- * @param agentName - Agent display name (e.g., 'Claude Code')
- * @returns Transform result with history and updated state
- */
-export function transformMessages(
-  messages: ClaudeMessage[],
-  syncState: SyncState,
-  assistantId?: string,
-  agentName?: string
-): TransformResult {
-  // ============================================================
-  // STEP 1: Find starting point based on last synced message
-  // ============================================================
-  let startIndex = 0;
-  if (syncState.lastSyncedMessageUuid) {
-    const lastSyncedIndex = messages.findIndex(
-      m => m.uuid === syncState.lastSyncedMessageUuid
-    );
-    if (lastSyncedIndex >= 0) {
-      startIndex = lastSyncedIndex + 1; // Start AFTER last synced
-    }
-  }
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
 
-  const newMessages = messages.slice(startIndex);
-
-  // No new messages - return early
-  if (newMessages.length === 0) {
-    return {
-      history: [],
-      isTurnContinuation: false,
-      lastProcessedMessageUuid: syncState.lastSyncedMessageUuid || '',
-      currentHistoryIndex: syncState.lastSyncedHistoryIndex
-    };
-  }
-
-  // ============================================================
-  // STEP 2: Find first relevant message
-  // ✅ CRITICAL FIX: Tool results trigger turn continuation!
-  // ============================================================
-  let firstRealMessage: ClaudeMessage | null = null;
-
-  for (const msg of newMessages) {
-    // Skip messages without uuid (snapshots, summaries)
-    if (!msg.uuid) continue;
-
-    // ✅ FIX: Tool results are NOT filtered here - they trigger continuation!
-    if (msg.type === 'user' && isToolResult(msg)) {
-      firstRealMessage = msg;
-      break;
+    // Skip non-conversation messages
+    if (msg.type !== 'user' && msg.type !== 'assistant') {
+      continue;
     }
 
-    // Filter system messages (but not tool results)
-    if (shouldFilterMessage(msg)) continue;
-
-    // Found first real message
-    firstRealMessage = msg;
-    break;
-  }
-
-  // All new messages are filtered - update UUID and return
-  if (!firstRealMessage) {
-    let lastUuid = syncState.lastSyncedMessageUuid || '';
-    for (let i = newMessages.length - 1; i >= 0; i--) {
-      if (newMessages[i].uuid) {
-        lastUuid = newMessages[i].uuid;
-        break;
-      }
+    // Skip filtered messages (conversation splitters, system messages, tool results)
+    if (shouldFilterMessage(msg)) {
+      continue;
     }
 
-    return {
-      history: [],
-      isTurnContinuation: false,
-      lastProcessedMessageUuid: lastUuid,
-      currentHistoryIndex: syncState.lastSyncedHistoryIndex
-    };
-  }
+    // User message followed by assistant response
+    if (msg.type === 'user') {
+      const userText = extractUserMessage(msg);
 
-  // ============================================================
-  // STEP 3: Determine if turn continuation or new turn
-  // ============================================================
-  const isNewUserMessage = firstRealMessage.type === 'user' &&
-                          !isToolResult(firstRealMessage);
-  const isTurnContinuation = !isNewUserMessage;
+      // Collect ALL assistant messages, meta messages, and system errors in this turn
+      const assistantMessages: ClaudeMessage[] = [];
+      const metaMessages: ClaudeMessage[] = [];
+      const systemErrors: ClaudeMessage[] = [];
+      let j = i + 1;
 
-  // ============================================================
-  // STEP 4: Determine history index for this batch
-  // ============================================================
-  let currentHistoryIndex = syncState.lastSyncedHistoryIndex;
-  if (!isTurnContinuation) {
-    // New turn - increment history index
-    currentHistoryIndex++;
-  }
+      // Look ahead to find all assistant messages, meta messages, and system errors in this turn
+      while (j < messages.length) {
+        const nextMsg = messages[j];
 
-  // ============================================================
-  // STEP 5: Build turn messages and transform
-  // ============================================================
-  let history: CodemieHistoryEntry[];
-  let lastProcessedMessageUuid = '';
-
-  if (isTurnContinuation) {
-    // --------------------------------------------------------
-    // TURN CONTINUATION: Re-transform entire turn from start
-    // --------------------------------------------------------
-
-    // Find turn start (walk backwards from last synced message)
-    const lastSyncedIndex = syncState.lastSyncedMessageUuid
-      ? messages.findIndex(m => m.uuid === syncState.lastSyncedMessageUuid)
-      : -1;
-
-    let turnStartIndex = 0;
-    if (lastSyncedIndex >= 0) {
-      for (let i = lastSyncedIndex; i >= 0; i--) {
-        const msg = messages[i];
-        if (!msg.uuid) continue;
-        if (msg.type === 'user' && !shouldFilterMessage(msg) && !isToolResult(msg)) {
-          turnStartIndex = i;
+        if (nextMsg.type === 'assistant') {
+          assistantMessages.push(nextMsg);
+        } else if (nextMsg.type === 'user' && (nextMsg as any).isMeta) {
+          // Collect meta messages (skill prompts, system-injected content)
+          metaMessages.push(nextMsg);
+        } else if (nextMsg.type === 'system' && nextMsg.subtype === 'api_error') {
+          // Collect system API errors (403, 429, etc.)
+          systemErrors.push(nextMsg);
+        } else if (nextMsg.type === 'user' && !isToolResult(nextMsg)) {
+          // Hit next user prompt - stop
           break;
         }
+
+        j++;
       }
-    }
 
-    // Find turn end (first real user message after current position)
-    let turnEndIndex = messages.length;
-    for (let i = startIndex; i < messages.length; i++) {
-      const msg = messages[i];
-      if (!msg.uuid) continue;
-      if (msg.type === 'user' && !shouldFilterMessage(msg) && !isToolResult(msg)) {
-        turnEndIndex = i;
-        break;
-      }
-    }
+      // Always add the user message first
+      history.push({
+        role: 'User',
+        message: userText,
+        history_index: historyIndex,
+        date: msg.timestamp,
+        message_raw: userText,  // Raw user input
+        file_names: []
+      });
 
-    // Extract turn messages
-    const turnMessages = messages.slice(turnStartIndex, turnEndIndex);
+      if (assistantMessages.length > 0) {
+        const finalAssistantMsg = assistantMessages[assistantMessages.length - 1];
 
-    // Transform the entire turn
-    const turnHistory = transformTurn(
-      turnMessages,
-      currentHistoryIndex,
-      assistantId,
-      agentName
-    );
+        // Collect thoughts: Meta messages + Tool calls + Intermediate assistant messages
+        const allThoughts: Thought[] = [];
 
-    // Return only Assistant entry (User already synced in previous sync)
-    history = turnHistory.filter(entry => entry.role === 'Assistant');
+        // Process meta messages first (skill prompts, system-injected content)
+        for (const metaMsg of metaMessages) {
+          const metaText = extractTextContent(metaMsg);
+          if (metaText.trim()) {
+            allThoughts.push(createCodemieThought(
+              metaMsg.uuid,
+              metaText,
+              agentName || 'Claude Code',
+              metaMsg.timestamp
+            ));
+          }
+        }
 
-    // Find last processed message UUID in this batch
-    for (let i = turnEndIndex - 1; i >= turnStartIndex; i--) {
-      if (messages[i].uuid) {
-        lastProcessedMessageUuid = messages[i].uuid;
-        break;
-      }
-    }
+        // Process each assistant message
+        for (let k = 0; k < assistantMessages.length; k++) {
+          const assistantMsg = assistantMessages[k];
+          const isIntermediateMsg = k < assistantMessages.length - 1;
 
-  } else {
-    // --------------------------------------------------------
-    // NEW TURN: Transform from first user message onwards
-    // --------------------------------------------------------
+          // Check if assistant message contains error (like UnknownOperationException)
+          const hasError = assistantMsg.message?.Output?.__type || assistantMsg.message?.error;
+          if (hasError) {
+            const errorType = assistantMsg.message?.Output?.__type || 'Error';
+            const errorMsg = assistantMsg.message?.error?.message || errorType;
+            allThoughts.push({
+              id: assistantMsg.uuid,
+              parent_id: undefined,
+              metadata: {
+                timestamp: assistantMsg.timestamp,
+                error_type: errorType
+              },
+              in_progress: false,
+              author_type: 'Agent',
+              author_name: agentName || assistantMsg.message?.model || 'claude',
+              message: `Error: ${errorMsg}`,
+              input_text: '',  // Empty to avoid duplication with user message
+              output_format: 'error',
+              error: true,
+              children: []
+            });
+            continue; // Skip normal processing for error messages
+          }
 
-    // Find the index of the first user message in original messages array
-    let firstUserIndex = startIndex;
-    for (let i = startIndex; i < messages.length; i++) {
-      const msg = messages[i];
-      if (!msg.uuid) continue;
-      if (msg.type === 'user' && !shouldFilterMessage(msg) && !isToolResult(msg)) {
-        firstUserIndex = i;
-        break;
-      }
-    }
+          // Extract tool calls from this assistant message
+          const toolCalls = extractToolCalls(assistantMsg);
+          for (const toolCall of toolCalls) {
+            allThoughts.push(createToolThought(toolCall, toolResultsMap.get(toolCall.id)));
+          }
 
-    // Find turn end (start scanning AFTER the first user message)
-    let turnEndIndex = messages.length;
-    for (let i = firstUserIndex + 1; i < messages.length; i++) {
-      const msg = messages[i];
-      if (!msg.uuid) continue;
-      if (msg.type === 'user' && !shouldFilterMessage(msg) && !isToolResult(msg)) {
-        turnEndIndex = i;
-        break;
-      }
-    }
+          // If this is an intermediate assistant message (not the final one),
+          // convert it to a Codemie thought to preserve the intermediate response
+          // IMPORTANT: Preserve ALL intermediate messages (zero-tolerance)
+          if (isIntermediateMsg) {
+            const intermediateText = extractTextContent(assistantMsg);
+            // Only create agent thought if there's actual text content
+            // Tool-only messages are already captured as Tool thoughts above
+            if (intermediateText.trim()) {
+              allThoughts.push(createCodemieThought(
+                assistantMsg.uuid,
+                intermediateText,
+                agentName || assistantMsg.message?.model || 'claude',
+                assistantMsg.timestamp
+              ));
+            }
+          }
+        }
 
-    // Extract turn messages (from first user message to turn end)
-    const turnMessages = messages.slice(firstUserIndex, turnEndIndex);
+        // Aggregate tokens from ALL assistant messages
+        let totalInputTokens = 0;
+        let totalOutputTokens = 0;
+        let totalCacheCreationTokens = 0;
+        let totalCacheReadTokens = 0;
 
-    // Transform the turn
-    history = transformTurn(
-      turnMessages,
-      currentHistoryIndex,
-      assistantId,
-      agentName
-    );
+        for (const assistantMsg of assistantMessages) {
+          const usage = assistantMsg.message?.usage;
+          if (usage) {
+            totalInputTokens += usage.input_tokens || 0;
+            totalOutputTokens += usage.output_tokens || 0;
+            totalCacheCreationTokens += usage.cache_creation_input_tokens || 0;
+            totalCacheReadTokens += usage.cache_read_input_tokens || 0;
+          }
+        }
 
-    // Find last processed message UUID
-    for (let i = turnEndIndex - 1; i >= firstUserIndex; i--) {
-      if (messages[i].uuid) {
-        lastProcessedMessageUuid = messages[i].uuid;
-        break;
-      }
-    }
-  }
+        // Assistant response (use final assistant message text)
+        const assistantText = extractTextContent(finalAssistantMsg);
 
-  // ============================================================
-  // STEP 6: Return result
-  // ============================================================
-  return {
-    history,
-    isTurnContinuation,
-    lastProcessedMessageUuid,
-    currentHistoryIndex
-  };
-}
+        // Check if final message has error
+        const finalHasError = finalAssistantMsg.message?.Output?.__type || finalAssistantMsg.message?.error;
+        const errorMessage = finalHasError
+          ? `Error: ${finalAssistantMsg.message?.Output?.__type || finalAssistantMsg.message?.error?.message || 'Unknown error'}`
+          : assistantText;
 
-/**
- * Transform a single turn (user message + assistant responses)
- * Extracted from original transformer for reuse
- */
-function transformTurn(
-  turnMessages: ClaudeMessage[],
-  historyIndex: number,
-  assistantId?: string,
-  agentName?: string
-): CodemieHistoryEntry[] {
-  const history: CodemieHistoryEntry[] = [];
+        // Skip empty assistant messages only if no text, no thoughts, and no errors
+        // Error responses are valuable and should be synced as assistant messages with error thoughts
+        if (!errorMessage.trim() && allThoughts.length === 0) {
+          // Don't sync empty assistant response
+          historyIndex++;
+          i = j - 1;
+          continue;
+        }
 
-  // Build tool results map
-  const toolResultsMap = buildToolResultsMap(turnMessages);
+        // Calculate response_time (user message → FINAL assistant response)
+        const response_time = calculateDuration(msg.timestamp, finalAssistantMsg.timestamp);
 
-  // Find user message (should be first non-filtered message)
-  let userMessage: ClaudeMessage | null = null;
-  for (const msg of turnMessages) {
-    if (msg.type === 'user' && !shouldFilterMessage(msg) && !isToolResult(msg)) {
-      userMessage = msg;
-      break;
-    }
-  }
-
-  if (!userMessage) {
-    // No user message found - incomplete turn
-    return [];
-  }
-
-  // Add user message
-  const userText = extractUserMessage(userMessage);
-  history.push({
-    role: 'User',
-    message: userText,
-    history_index: historyIndex,
-    date: userMessage.timestamp,
-    message_raw: userText,
-    file_names: []
-  });
-
-  // Collect assistant messages, meta messages, system errors
-  const assistantMessages: ClaudeMessage[] = [];
-  const metaMessages: ClaudeMessage[] = [];
-  const systemErrors: ClaudeMessage[] = [];
-
-  for (const msg of turnMessages) {
-    if (msg.type === 'assistant') {
-      assistantMessages.push(msg);
-    } else if (msg.type === 'user' && (msg as any).isMeta) {
-      metaMessages.push(msg);
-    } else if (msg.type === 'system' && msg.subtype === 'api_error') {
-      systemErrors.push(msg);
-    }
-  }
-
-  if (assistantMessages.length > 0) {
-    const finalAssistantMsg = assistantMessages[assistantMessages.length - 1];
-
-    // Collect all thoughts
-    const allThoughts: Thought[] = [];
-
-    // Process meta messages
-    for (const metaMsg of metaMessages) {
-      const metaText = extractTextContent(metaMsg);
-      if (metaText.trim()) {
-        allThoughts.push(createCodemieThought(
-          metaMsg.uuid,
-          metaText,
-          agentName || 'Claude Code',
-          metaMsg.timestamp
-        ));
-      }
-    }
-
-    // Process each assistant message
-    for (let k = 0; k < assistantMessages.length; k++) {
-      const assistantMsg = assistantMessages[k];
-      const isIntermediateMsg = k < assistantMessages.length - 1;
-
-      // Check for errors
-      const hasError = assistantMsg.message?.Output?.__type || assistantMsg.message?.error;
-      if (hasError) {
-        const errorType = assistantMsg.message?.Output?.__type || 'Error';
-        const errorMsg = assistantMsg.message?.error?.message || errorType;
-        allThoughts.push({
-          id: assistantMsg.uuid,
-          parent_id: undefined,
-          metadata: {
-            timestamp: assistantMsg.timestamp,
-            error_type: errorType
-          },
-          in_progress: false,
-          author_type: 'Agent',
-          author_name: agentName || assistantMsg.message?.model || 'claude',
-          message: `Error: ${errorMsg}`,
-          input_text: '',
-          output_format: 'error',
-          error: true,
-          children: []
+        history.push({
+          role: 'Assistant',
+          message: errorMessage,  // Use error message if present, otherwise assistant text
+          message_raw: finalHasError ? errorMessage : assistantText,
+          history_index: historyIndex,
+          date: finalAssistantMsg.timestamp,
+          response_time,
+          input_tokens: totalInputTokens,
+          output_tokens: totalOutputTokens,
+          cache_creation_input_tokens: totalCacheCreationTokens,
+          cache_read_input_tokens: totalCacheReadTokens,
+          assistant_id: assistantId,
+          thoughts: allThoughts.length > 0 ? allThoughts : undefined
         });
-        continue;
-      }
 
-      // Extract tool calls
-      const toolCalls = extractToolCalls(assistantMsg);
-      for (const toolCall of toolCalls) {
-        const toolResult = toolResultsMap.get(toolCall.id);
+        historyIndex++;
+        i = j - 1; // Skip to end of this turn
+      } else if (systemErrors.length > 0) {
+        // No successful assistant response, but have system errors
+        // Create assistant message with error thoughts
+        const errorThoughts: Thought[] = systemErrors.map(error => {
+          const errorMsg = error.error?.error?.Message || error.error?.error?.message || 'Unknown error';
+          const errorStatus = error.error?.status || 'unknown';
+          return {
+            id: error.uuid,
+            parent_id: undefined,
+            metadata: {
+              timestamp: error.timestamp,
+              error_status: errorStatus
+            },
+            in_progress: false,
+            author_type: 'Agent',
+            author_name: agentName || 'claude',
+            message: `API Error (${errorStatus}): ${errorMsg}`,
+            input_text: '',  // Empty to avoid duplication with user message
+            output_format: 'error',
+            error: true,
+            children: []
+          };
+        });
 
-        // ✅ IMPORTANT: Add tool if it has result OR is in intermediate message
-        const shouldAddTool = toolResult !== undefined || isIntermediateMsg;
+        // Use last error timestamp for assistant message
+        const lastError = systemErrors[systemErrors.length - 1];
+        const response_time = calculateDuration(msg.timestamp, lastError.timestamp);
 
-        if (shouldAddTool) {
-          allThoughts.push(createToolThought(toolCall, toolResult));
-        }
-      }
+        history.push({
+          role: 'Assistant',
+          message: `Failed after ${systemErrors.length} error(s): ${errorThoughts[0].message}`,
+          message_raw: `Failed after ${systemErrors.length} error(s)`,
+          history_index: historyIndex,
+          date: lastError.timestamp,
+          response_time,
+          assistant_id: assistantId,
+          thoughts: errorThoughts
+        });
 
-      // Add intermediate text as thoughts
-      if (isIntermediateMsg) {
-        const intermediateText = extractTextContent(assistantMsg);
-        if (intermediateText.trim()) {
-          allThoughts.push(createCodemieThought(
-            assistantMsg.uuid,
-            intermediateText,
-            agentName || assistantMsg.message?.model || 'claude',
-            assistantMsg.timestamp
-          ));
-        }
+        historyIndex++;
+        i = j - 1;
+      } else {
+        // No assistant response and no errors - incomplete session
+        // Still increment history index for the user message
+        historyIndex++;
+        i = j - 1; // Skip ahead to avoid double-processing
       }
     }
-
-    // Aggregate tokens
-    let totalInputTokens = 0;
-    let totalOutputTokens = 0;
-    let totalCacheCreationTokens = 0;
-    let totalCacheReadTokens = 0;
-
-    for (const assistantMsg of assistantMessages) {
-      const usage = assistantMsg.message?.usage;
-      if (usage) {
-        totalInputTokens += usage.input_tokens || 0;
-        totalOutputTokens += usage.output_tokens || 0;
-        totalCacheCreationTokens += usage.cache_creation_input_tokens || 0;
-        totalCacheReadTokens += usage.cache_read_input_tokens || 0;
-      }
-    }
-
-    // Extract final assistant text
-    const assistantText = extractTextContent(finalAssistantMsg);
-    const finalHasError = finalAssistantMsg.message?.Output?.__type ||
-                         finalAssistantMsg.message?.error;
-    let errorMessage = finalHasError
-      ? `Error: ${finalAssistantMsg.message?.Output?.__type ||
-                  finalAssistantMsg.message?.error?.message || 'Unknown error'}`
-      : assistantText;
-
-    // Skip empty responses with no thoughts
-    if (!errorMessage.trim() && allThoughts.length === 0) {
-      return history; // Just User entry
-    }
-
-    // Calculate response time
-    const response_time = calculateDuration(userMessage.timestamp, finalAssistantMsg.timestamp);
-
-    // Add assistant entry
-    history.push({
-      role: 'Assistant',
-      message: errorMessage,
-      message_raw: finalHasError ? errorMessage : (assistantText || errorMessage),
-      history_index: historyIndex,
-      date: finalAssistantMsg.timestamp,
-      response_time,
-      input_tokens: totalInputTokens,
-      output_tokens: totalOutputTokens,
-      cache_creation_input_tokens: totalCacheCreationTokens,
-      cache_read_input_tokens: totalCacheReadTokens,
-      assistant_id: assistantId,
-      thoughts: allThoughts.length > 0 ? allThoughts : undefined
-    });
-
-  } else if (systemErrors.length > 0) {
-    // Handle system errors
-    const errorThoughts: Thought[] = systemErrors.map(error => {
-      const errorMsg = error.error?.error?.Message ||
-                      error.error?.error?.message || 'Unknown error';
-      const errorStatus = error.error?.status || 'unknown';
-      return {
-        id: error.uuid,
-        parent_id: undefined,
-        metadata: {
-          timestamp: error.timestamp,
-          error_status: errorStatus
-        },
-        in_progress: false,
-        author_type: 'Agent',
-        author_name: agentName || 'claude',
-        message: `API Error (${errorStatus}): ${errorMsg}`,
-        input_text: '',
-        output_format: 'error',
-        error: true,
-        children: []
-      };
-    });
-
-    const lastError = systemErrors[systemErrors.length - 1];
-    const response_time = calculateDuration(userMessage.timestamp, lastError.timestamp);
-
-    history.push({
-      role: 'Assistant',
-      message: `Failed after ${systemErrors.length} error(s): ${errorThoughts[0].message}`,
-      message_raw: `Failed after ${systemErrors.length} error(s)`,
-      history_index: historyIndex,
-      date: lastError.timestamp,
-      response_time,
-      assistant_id: assistantId,
-      thoughts: errorThoughts
-    });
   }
 
   return history;
@@ -491,21 +279,8 @@ function buildToolResultsMap(messages: ClaudeMessage[]): Map<string, { content: 
           if (item.type === 'tool_result') {
             // Check both is_error (API format) and isError (type format)
             const isError = (item as any).is_error === true || item.isError === true;
-
-            // Extract text from content (can be string or array of content items)
-            let textContent = '';
-            if (typeof item.content === 'string') {
-              textContent = item.content;
-            } else if (Array.isArray(item.content)) {
-              // Tool result content can be array (e.g., Task tool returns full response with content array)
-              textContent = item.content
-                .filter((c: any) => c.type === 'text')
-                .map((c: any) => c.text || '')
-                .join('\n\n');
-            }
-
             map.set(item.tool_use_id || '', {
-              content: textContent,
+              content: item.content || '',
               isError
             });
           }
@@ -589,17 +364,15 @@ function extractToolCalls(msg: ClaudeMessage): ToolUse[] {
 /**
  * Create Thought object from tool call and result
  * Maps to API schema from codemie-sdk
- * @param toolCall - The tool_use from Claude message
- * @param toolResult - The tool result/observation (if available)
  */
 function createToolThought(
   toolCall: ToolUse,
   toolResult?: { content: string; isError: boolean }
 ): Thought {
   return {
-    id: toolCall.id,                                 // Use tool_use_id as unique identifier
+    id: toolCall.id,
     parent_id: undefined,
-    metadata: {},                                    // Empty metadata (tool_use_id is now primary ID)
+    metadata: {},
     in_progress: false,
     input_text: JSON.stringify(toolCall.input),      // Tool input as JSON string
     message: toolResult?.content || '',              // Tool result/observation

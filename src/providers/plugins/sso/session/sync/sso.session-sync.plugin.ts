@@ -26,6 +26,7 @@ import type { SessionAdapter } from '../adapters/base/BaseSessionAdapter.js';
 import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../processors/base/BaseProcessor.js';
 import { MetricsProcessor } from '../processors/metrics/metrics-processor.js';
 import { ConversationsProcessor } from '../processors/conversations/conversation-processor.js';
+import { discoverSessionFiles } from '../utils/session-discovery.js';
 
 export class SSOSessionSyncPlugin implements ProxyPlugin {
   id = '@codemie/sso-session-sync';
@@ -141,27 +142,15 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
       logger.info('[sso-session-sync] Dry-run mode enabled - sessions will be logged but not sent');
     }
 
-    // Check for localhost development override
-    const devApiUrl = process.env.CODEMIE_DEV_API_URL;
-    const devApiKey = process.env.CODEMIE_DEV_API_KEY;
-
-    // Use dev settings if both are provided
-    const isLocalDev = !!devApiUrl && !!devApiKey;
-
-    if (isLocalDev) {
-      logger.info(`[sso-session-sync] Local development mode: using ${devApiUrl} with user-id header`);
-    }
-
-    // Build cookie header (only if not in local dev mode)
-    const cookieHeader = isLocalDev ? '' : Object.entries(cookies)
+    // Build cookie header
+    const cookieHeader = Object.entries(cookies)
       .map(([key, value]) => `${key}=${value}`)
       .join('; ');
 
     // Create processing context (shared by all processors)
     this.context = {
-      apiBaseUrl: isLocalDev ? devApiUrl : baseUrl,
+      apiBaseUrl: baseUrl,
       cookies: cookieHeader,
-      apiKey: isLocalDev ? devApiKey : undefined,
       clientType,
       version,
       dryRun
@@ -173,9 +162,9 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
       new ConversationsProcessor()
     ].sort((a, b) => a.priority - b.priority);
 
-    // Get sync interval from env or default to 2 minutes
+    // Get sync interval from env or default to 5 minutes
     this.syncInterval = Number.parseInt(
-      process.env.CODEMIE_SESSION_SYNC_INTERVAL || '120000',
+      process.env.CODEMIE_SESSION_SYNC_INTERVAL || '300000',
       10
     );
   }
@@ -230,13 +219,11 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
     }
 
     // Final sync (ensure all sessions are processed)
-    // This syncs BOTH metrics and conversations
     try {
-      logger.info(`[${this.name}] sync: phase=final session_id=${this.sessionId}`);
       await this.syncSessions();
-      logger.info(`[${this.name}] sync: phase=final status=success session_id=${this.sessionId}`);
+      logger.info(`[${this.name}] Session data saved`);
     } catch (error) {
-      logger.error(`[${this.name}] sync: phase=final status=error session_id=${this.sessionId}`, error);
+      logger.error(`[${this.name}] Final sync failed:`, error);
     }
   }
 
@@ -258,35 +245,25 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
     this.isSyncing = true;
 
     try {
-      // 1. Load session metadata from SessionStore (already correlated by session orchestrator)
-      const { SessionStore } = await import('../../../../../agents/core/session/SessionStore.js');
-      const sessionStore = new SessionStore();
-      const sessionMetadata = await sessionStore.loadSession(this.sessionId);
+      // 1. Discover session files via adapter
+      const sessionFiles = await discoverSessionFiles(this.adapter);
 
-      if (!sessionMetadata) {
-        logger.debug(`[${this.name}] sync: skipped reason=no_metadata session_id=${this.sessionId}`);
+      if (sessionFiles.length === 0) {
+        logger.debug(`[${this.name}] No session files found`);
         return;
       }
 
-      // 2. Check if session is correlated to agent session file
-      if (sessionMetadata.correlation.status !== 'matched') {
-        logger.debug(`[${this.name}] sync: skipped reason=not_correlated status=${sessionMetadata.correlation.status} session_id=${this.sessionId}`);
-        return;
-      }
+      // 2. Process ALL sessions - processors handle their own incremental logic (Phase 4.1)
+      logger.info(`[${this.name}] Found ${sessionFiles.length} session file${sessionFiles.length !== 1 ? 's' : ''} to process`);
 
-      if (!sessionMetadata.correlation.agentSessionFile) {
-        logger.debug(`[${this.name}] sync: skipped reason=no_agent_file session_id=${this.sessionId}`);
-        return;
-      }
-
-      // 3. Process the correlated session file
-      const agentSessionFile = sessionMetadata.correlation.agentSessionFile;
-      logger.debug(`[${this.name}] sync: processing file=${agentSessionFile}`);
-
-      try {
-        await this.processSession(agentSessionFile);
-      } catch (error: any) {
-        logger.error(`[${this.name}] Failed to process session:`, error.message);
+      // 3. Process each session
+      for (const sessionFile of sessionFiles) {
+        try {
+          await this.processSession(sessionFile);
+        } catch (error: any) {
+          logger.error(`[${this.name}] Failed to process ${sessionFile}:`, error.message);
+          // Continue with other sessions even if one fails
+        }
       }
 
     } catch (error) {
@@ -307,10 +284,9 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
     }
 
     // Parse session file via adapter (agent-specific parsing)
-    // Pass CodeMie session ID directly - it's already been correlated by SessionOrchestrator
-    const session = await this.adapter.parseSessionFile(sessionFile, this.sessionId);
+    const session = await this.adapter.parseSessionFile(sessionFile);
 
-    logger.debug(`[${this.name}] Processing session ${this.sessionId} from ${sessionFile}`);
+    logger.debug(`[${this.name}] Processing session ${session.sessionId} from ${sessionFile}`);
 
     // Track results from each processor
     const results: Record<string, ProcessingResult> = {};
@@ -349,30 +325,8 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
     const successCount = Object.values(results).filter(r => r.success).length;
     const totalCount = Object.keys(results).length;
 
-    // Build structured log with processor-specific details
-    const processorDetails: string[] = [];
-
-    for (const [processorName, result] of Object.entries(results)) {
-      if (result.success) {
-        // Extract metadata for detailed logging
-        const meta = result.metadata || {};
-
-        if (processorName === 'metrics' && meta.deltasProcessed !== undefined) {
-          processorDetails.push(`metrics: synced=${meta.deltasProcessed} branches=${meta.branchCount || 0}`);
-        } else if (processorName === 'conversations' && meta.messagesProcessed !== undefined) {
-          const turnType = meta.isTurnContinuation ? 'continuation' : 'new_turn';
-          processorDetails.push(`conversations: messages=${meta.messagesProcessed} type=${turnType}`);
-        } else {
-          // Fallback for processors without specific metadata
-          processorDetails.push(`${processorName}: status=success`);
-        }
-      } else {
-        processorDetails.push(`${processorName}: status=failed error="${result.message || 'unknown'}"`);
-      }
-    }
-
     logger.info(
-      `[${this.name}] sync: session_id=${this.sessionId} processors=${successCount}/${totalCount} ${processorDetails.join(' ')}`
+      `[${this.name}] Processed session ${session.sessionId} (${successCount}/${totalCount} processors succeeded)`
     );
   }
 }

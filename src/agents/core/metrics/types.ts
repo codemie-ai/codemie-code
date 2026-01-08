@@ -1,13 +1,37 @@
 /**
  * Metrics Collection Types
  *
- * Metrics-specific type definitions for the metrics collection system.
- * For core session types, see ../session/types.js
+ * Core type definitions for the metrics collection system.
+ * Supports file-based metrics gathering from agent session files.
  */
 
-import type { SyncStatus } from '../session/types.js';
+/**
+ * File snapshot information
+ */
+export interface FileInfo {
+  path: string;
+  size: number;
+  createdAt: number; // Unix timestamp (ms)
+  modifiedAt: number; // Unix timestamp (ms)
+}
 
-export type { SyncStatus, MetricsSyncState, Session } from '../session/types.js';
+/**
+ * Snapshot of directory state at a point in time
+ */
+export interface FileSnapshot {
+  timestamp: number; // Unix timestamp (ms)
+  files: FileInfo[];
+}
+
+/**
+ * Correlation status
+ */
+export type CorrelationStatus = 'pending' | 'matched' | 'failed';
+
+/**
+ * Session status
+ */
+export type SessionStatus = 'active' | 'completed' | 'recovered' | 'failed';
 
 /**
  * Watermark type (per-agent strategy)
@@ -22,6 +46,54 @@ export interface Watermark {
   value: string; // Hash string, line number, or object IDs
   updatedAt: number; // Unix timestamp (ms)
   expiresAt: number; // Unix timestamp (ms) - startTime + 24h
+}
+
+/**
+ * Correlation result
+ */
+export interface CorrelationResult {
+  status: CorrelationStatus;
+  agentSessionFile?: string; // Path to matched file
+  agentSessionId?: string; // Extracted session ID
+  detectedAt?: number; // Unix timestamp (ms)
+  retryCount: number;
+}
+
+/**
+ * Monitoring state
+ */
+export interface MonitoringState {
+  isActive: boolean;
+  lastCheckTime?: number; // Unix timestamp (ms)
+  changeCount: number;
+}
+
+/**
+ * Sync status for metrics records
+ */
+export type SyncStatus = 'pending' | 'syncing' | 'synced' | 'failed';
+
+/**
+ * Session metadata (stored in ~/.codemie/metrics/sessions/{sessionId}.json)
+ * Contains both session info and sync state
+ */
+export interface MetricsSession {
+  sessionId: string; // CodeMie session ID (UUID)
+  agentName: string; // 'claude', 'gemini', 'codex'
+  provider: string; // 'ai-run-sso', etc.
+  project?: string; // SSO project name (optional, only for ai-run-sso provider)
+  startTime: number; // Unix timestamp (ms)
+  endTime?: number; // Unix timestamp (ms)
+  workingDirectory: string; // CWD where agent was launched
+  gitBranch?: string; // Git branch at session start (optional, detected from workingDirectory)
+
+  correlation: CorrelationResult;
+  monitoring: MonitoringState;
+  watermark?: Watermark;
+  status: SessionStatus;
+
+  // Embedded sync state (replaces separate sync_state.json file)
+  syncState?: SyncState;
 }
 
 /**
@@ -185,6 +257,39 @@ export interface UserPrompt {
   project: string;       // Working directory
   sessionId: string;     // Agent session ID
   pastedContents?: Record<string, unknown>; // Optional pasted content
+}
+
+/**
+ * Sync state (sync_state.json)
+ */
+export interface SyncState {
+  sessionId: string;
+  agentSessionId: string;
+
+  // Session lifecycle
+  sessionStartTime: number;      // When session started
+  sessionEndTime?: number;       // When session ended
+  status: 'active' | 'completed' | 'failed';
+
+  // Last processed line from agent file
+  lastProcessedLine: number;
+  lastProcessedTimestamp: number;
+
+  // Local processing tracking (deduplication)
+  processedRecordIds: string[];  // All record IDs written to local metrics JSONL
+  attachedUserPromptTexts?: string[];  // User prompt texts already attached to deltas (prevents duplication)
+
+  // Remote sync tracking
+  lastSyncedRecordId?: string;   // Last synced record ID (for resume)
+  lastSyncAt?: number;            // Last sync timestamp
+
+  // Statistics
+  totalDeltas: number;           // Total deltas created
+  totalSynced: number;           // Total synced to API
+  totalFailed: number;           // Total failed syncs
+
+  // === Conversation tracking ===
+  conversationId?: string;       // Codemie conversation UUID (set to sessionId on first sync)
 }
 
 /**
