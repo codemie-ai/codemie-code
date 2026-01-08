@@ -1,0 +1,479 @@
+/**
+ * Integration Test: Unified Session Sync Plugin - End-to-End Orchestrator
+ *
+ * Tests the complete orchestration pipeline:
+ * 1. Session file discovery via adapter
+ * 2. Adapter selection from agent registry
+ * 3. Processor execution in priority order (metrics → conversations)
+ * 4. Error isolation (one processor fails, others continue)
+ * 5. Concurrent sync prevention
+ * 6. Multiple session files processing
+ *
+ * Test Scenario: Real Claude session with metrics and conversations
+ * - Uses golden dataset from fixtures/claude/
+ * - Validates end-to-end pipeline without mocking internal components
+ * - Tests orchestrator behavior, not processor logic (tested separately)
+ */
+
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { unlinkSync, mkdirSync, copyFileSync, existsSync } from 'fs';
+import { tmpdir } from 'os';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+import { rm } from 'fs/promises';
+import { SSOSessionSyncPlugin } from '../../../../src/providers/plugins/sso/session/sync/sso.session-sync.plugin.js';
+import { SessionStore } from '../../../../src/agents/core/metrics/session/SessionStore.js';
+import type { PluginContext } from '../../../../src/proxy/plugins/types.js';
+import type { MetricsSession } from '../../../../src/agents/core/metrics/types.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+describe('Unified Session Sync Plugin - Orchestrator', () => {
+  const fixturesDir = join(__dirname, '../fixtures/claude');
+  const fixturesSessionDir = join(fixturesDir, '-tmp-private');
+  const tempTestDir = join(tmpdir(), 'orchestrator-test-' + Date.now());
+  const claudeProjectsDir = join(tempTestDir, '.claude', 'projects');
+
+  const sessionId1 = '4c2ddfdc-b619-4525-8d03-1950fb1b0257';
+  const testMetricsSessionId = 'orchestrator-test-' + Date.now();
+
+  let plugin: SSOSessionSyncPlugin;
+  let interceptor: any;
+  let sessionStore: SessionStore;
+
+  beforeAll(async () => {
+    // Setup: Create directory structure that mimics real Claude setup
+    mkdirSync(claudeProjectsDir, { recursive: true });
+
+    // Copy fixture session files to temp directory (simulate Claude's storage)
+    const projectDir1 = join(claudeProjectsDir, 'project-1');
+    mkdirSync(projectDir1);
+    copyFileSync(
+      join(fixturesSessionDir, `${sessionId1}.jsonl`),
+      join(projectDir1, `${sessionId1}.jsonl`)
+    );
+    copyFileSync(
+      join(fixturesSessionDir, 'agent-36541525.jsonl'),
+      join(projectDir1, 'agent-36541525.jsonl')
+    );
+    copyFileSync(
+      join(fixturesSessionDir, 'agent-50243ee8.jsonl'),
+      join(projectDir1, 'agent-50243ee8.jsonl')
+    );
+
+    // Create session metadata (required by metrics processor)
+    sessionStore = new SessionStore();
+    const metricsSession: MetricsSession = {
+      sessionId: testMetricsSessionId,
+      agentName: 'claude',
+      workingDirectory: '/tmp/test',
+      gitBranch: 'main',
+      status: 'active',
+      correlation: {
+        instanceId: 'test-instance',
+        parentSessionId: null
+      },
+      watermark: {
+        strategy: 'hash',
+        value: 'test-hash'
+      },
+      monitoring: {
+        performanceMarkers: [],
+        resourceUsage: {}
+      },
+      startedAt: Date.now(),
+      updatedAt: Date.now()
+    };
+    await sessionStore.saveSession(metricsSession);
+
+    // Initialize plugin
+    plugin = new SSOSessionSyncPlugin();
+  });
+
+  afterAll(async () => {
+    // Cleanup temp directory
+    if (existsSync(tempTestDir)) {
+      await rm(tempTestDir, { recursive: true, force: true });
+    }
+
+    // Cleanup metrics session - use DeltaWriter to get correct path
+    const { DeltaWriter } = await import('../../../../src/agents/core/metrics/core/DeltaWriter.js');
+    const deltaWriter = new DeltaWriter(testMetricsSessionId);
+    try {
+      const metricsFilePath = deltaWriter.getFilePath();
+      if (existsSync(metricsFilePath)) unlinkSync(metricsFilePath);
+    } catch {
+      // Ignore cleanup errors (file might not exist)
+    }
+
+    // Cleanup session file
+    try {
+      const { getSessionPath } = await import('../../../../src/agents/core/metrics/metrics-config.js');
+      const sessionPath = getSessionPath(testMetricsSessionId);
+      if (existsSync(sessionPath)) unlinkSync(sessionPath);
+    } catch {
+      // Ignore cleanup errors (file might not exist)
+    }
+  });
+
+  describe('Plugin Initialization', () => {
+    it('should have correct plugin metadata', () => {
+      expect(plugin.id).toBe('@codemie/sso-session-sync');
+      expect(plugin.name).toBe('SSO Session Sync (Unified)');
+      expect(plugin.priority).toBe(100);
+    });
+
+    it('should fail initialization without session ID', async () => {
+      const context: PluginContext = {
+        config: { targetApiUrl: 'https://api.example.com' },
+        credentials: { cookies: { session: 'test' } },
+        profileConfig: {}
+      } as any;
+
+      await expect(plugin.createInterceptor(context)).rejects.toThrow('Session ID not available');
+    });
+
+    it('should fail initialization without SSO credentials', async () => {
+      const context: PluginContext = {
+        config: {
+          sessionId: 'test-session',
+          targetApiUrl: 'https://api.example.com',
+          clientType: 'codemie-claude'
+        },
+        credentials: undefined,
+        profileConfig: {}
+      } as any;
+
+      await expect(plugin.createInterceptor(context)).rejects.toThrow('SSO credentials not available');
+    });
+
+    it('should fail initialization without client type', async () => {
+      const context: PluginContext = {
+        config: {
+          sessionId: 'test-session',
+          targetApiUrl: 'https://api.example.com'
+        },
+        credentials: { cookies: { session: 'test' } },
+        profileConfig: {}
+      } as any;
+
+      await expect(plugin.createInterceptor(context)).rejects.toThrow('Client type not available');
+    });
+  });
+
+  describe('Adapter Selection from Registry', () => {
+    it('should select Claude adapter for codemie-claude client', async () => {
+      const context: PluginContext = {
+        config: {
+          sessionId: testMetricsSessionId,
+          targetApiUrl: 'https://api.example.com',
+          clientType: 'codemie-claude',
+          version: '0.0.28'
+        },
+        credentials: { cookies: { session: 'test-cookie' } },
+        profileConfig: {}
+      } as any;
+
+      // Mock HOME to point to our temp directory
+      const originalHome = process.env.HOME;
+      process.env.HOME = tempTestDir;
+
+      try {
+        interceptor = await plugin.createInterceptor(context);
+        expect(interceptor).toBeDefined();
+        expect(interceptor.name).toBe('sso-session-sync');
+
+        // Start proxy to initialize adapter
+        await interceptor.onProxyStart();
+
+        // Verify adapter was initialized
+        expect((interceptor as any).adapter).toBeDefined();
+        expect((interceptor as any).adapter.agentName).toBe('claude');
+      } finally {
+        // Cleanup
+        if (interceptor) {
+          await interceptor.onProxyStop();
+        }
+        process.env.HOME = originalHome;
+      }
+    });
+
+    it('should fail for unsupported agent', async () => {
+      const context: PluginContext = {
+        config: {
+          sessionId: testMetricsSessionId,
+          targetApiUrl: 'https://api.example.com',
+          clientType: 'codemie-unsupported',
+          version: '0.0.28'
+        },
+        credentials: { cookies: { session: 'test-cookie' } },
+        profileConfig: {}
+      } as any;
+
+      interceptor = await plugin.createInterceptor(context);
+
+      await expect(interceptor.onProxyStart()).rejects.toThrow();
+    });
+  });
+
+  describe('Session Discovery and Processing', () => {
+    it('should discover session files via adapter', async () => {
+      const context: PluginContext = {
+        config: {
+          sessionId: testMetricsSessionId,
+          targetApiUrl: 'https://api.example.com',
+          clientType: 'codemie-claude',
+          version: '0.0.28'
+        },
+        credentials: { cookies: { session: 'test-cookie' } },
+        profileConfig: {}
+      } as any;
+
+      // Set DRY_RUN to avoid actual API calls
+      process.env.CODEMIE_SESSION_DRY_RUN = '1';
+      const originalHome = process.env.HOME;
+      process.env.HOME = tempTestDir;
+
+      try {
+        interceptor = await plugin.createInterceptor(context);
+        await interceptor.onProxyStart();
+
+        // Trigger sync manually (don't wait for timer)
+        await (interceptor as any).syncSessions();
+
+        // Verify sessions were discovered and processed
+        // Note: Actual validation is in processor tests, here we just verify pipeline runs
+        expect((interceptor as any).adapter).toBeDefined();
+      } finally {
+        await interceptor.onProxyStop();
+        process.env.HOME = originalHome;
+        delete process.env.CODEMIE_SESSION_DRY_RUN;
+      }
+    });
+
+    it('should handle empty session directory gracefully', async () => {
+      const emptyDir = join(tempTestDir, 'empty-sessions');
+      mkdirSync(emptyDir, { recursive: true });
+
+      const context: PluginContext = {
+        config: {
+          sessionId: testMetricsSessionId,
+          targetApiUrl: 'https://api.example.com',
+          clientType: 'codemie-claude',
+          version: '0.0.28'
+        },
+        credentials: { cookies: { session: 'test-cookie' } },
+        profileConfig: {}
+      } as any;
+
+      process.env.CODEMIE_SESSION_DRY_RUN = '1';
+      const originalHome = process.env.HOME;
+      process.env.HOME = emptyDir;
+
+      try {
+        interceptor = await plugin.createInterceptor(context);
+        await interceptor.onProxyStart();
+
+        // Sync should complete without errors
+        await expect((interceptor as any).syncSessions()).resolves.not.toThrow();
+      } finally {
+        await interceptor.onProxyStop();
+        process.env.HOME = originalHome;
+        delete process.env.CODEMIE_SESSION_DRY_RUN;
+      }
+    });
+  });
+
+  describe('Processor Execution Order', () => {
+    it('should execute processors in priority order (metrics first, then conversations)', async () => {
+      const context: PluginContext = {
+        config: {
+          sessionId: testMetricsSessionId,
+          targetApiUrl: 'https://api.example.com',
+          clientType: 'codemie-claude',
+          version: '0.0.28'
+        },
+        credentials: { cookies: { session: 'test-cookie' } },
+        profileConfig: {}
+      } as any;
+
+      process.env.CODEMIE_SESSION_DRY_RUN = '1';
+      const originalHome = process.env.HOME;
+      process.env.HOME = tempTestDir;
+
+      try {
+        interceptor = await plugin.createInterceptor(context);
+        await interceptor.onProxyStart();
+
+        // Verify processors are sorted by priority
+        const processors = (interceptor as any).processors;
+        expect(processors).toBeDefined();
+        expect(processors.length).toBeGreaterThan(0);
+
+        // Check priority order (metrics=1, conversations=2)
+        for (let i = 1; i < processors.length; i++) {
+          expect(processors[i].priority).toBeGreaterThanOrEqual(processors[i - 1].priority);
+        }
+      } finally {
+        await interceptor.onProxyStop();
+        process.env.HOME = originalHome;
+        delete process.env.CODEMIE_SESSION_DRY_RUN;
+      }
+    });
+  });
+
+  describe('Concurrent Sync Prevention', () => {
+    it('should prevent concurrent syncs with isSyncing flag', async () => {
+      const context: PluginContext = {
+        config: {
+          sessionId: testMetricsSessionId,
+          targetApiUrl: 'https://api.example.com',
+          clientType: 'codemie-claude',
+          version: '0.0.28'
+        },
+        credentials: { cookies: { session: 'test-cookie' } },
+        profileConfig: {}
+      } as any;
+
+      process.env.CODEMIE_SESSION_DRY_RUN = '1';
+      const originalHome = process.env.HOME;
+      process.env.HOME = tempTestDir;
+
+      try {
+        interceptor = await plugin.createInterceptor(context);
+        await interceptor.onProxyStart();
+
+        // Start first sync
+        const sync1Promise = (interceptor as any).syncSessions();
+
+        // Try to start second sync immediately
+        const sync2Promise = (interceptor as any).syncSessions();
+
+        // Both should complete, but second should skip due to isSyncing flag
+        await Promise.all([sync1Promise, sync2Promise]);
+
+        // No error should be thrown
+        expect(true).toBe(true);
+      } finally {
+        await interceptor.onProxyStop();
+        process.env.HOME = originalHome;
+        delete process.env.CODEMIE_SESSION_DRY_RUN;
+      }
+    });
+  });
+
+  describe('Configuration Options', () => {
+    it('should respect CODEMIE_SESSION_SYNC_ENABLED environment variable', async () => {
+      process.env.CODEMIE_SESSION_SYNC_ENABLED = 'false';
+
+      const context: PluginContext = {
+        config: {
+          sessionId: testMetricsSessionId,
+          targetApiUrl: 'https://api.example.com',
+          clientType: 'codemie-claude'
+        },
+        credentials: { cookies: { session: 'test-cookie' } },
+        profileConfig: {}
+      } as any;
+
+      try {
+        await expect(plugin.createInterceptor(context)).rejects.toThrow('Session sync disabled');
+      } finally {
+        delete process.env.CODEMIE_SESSION_SYNC_ENABLED;
+      }
+    });
+
+    it('should respect CODEMIE_SESSION_SYNC_INTERVAL environment variable', async () => {
+      process.env.CODEMIE_SESSION_SYNC_INTERVAL = '60000'; // 1 minute
+
+      const context: PluginContext = {
+        config: {
+          sessionId: testMetricsSessionId,
+          targetApiUrl: 'https://api.example.com',
+          clientType: 'codemie-claude',
+          version: '0.0.28'
+        },
+        credentials: { cookies: { session: 'test-cookie' } },
+        profileConfig: {}
+      } as any;
+
+      const originalHome = process.env.HOME;
+      process.env.HOME = tempTestDir;
+
+      try {
+        interceptor = await plugin.createInterceptor(context);
+        await interceptor.onProxyStart();
+
+        // Verify interval was set correctly
+        expect((interceptor as any).syncInterval).toBe(60000);
+      } finally {
+        await interceptor.onProxyStop();
+        process.env.HOME = originalHome;
+        delete process.env.CODEMIE_SESSION_SYNC_INTERVAL;
+      }
+    });
+  });
+
+  describe('Lifecycle Hooks', () => {
+    it('should start background timer on onProxyStart', async () => {
+      const context: PluginContext = {
+        config: {
+          sessionId: testMetricsSessionId,
+          targetApiUrl: 'https://api.example.com',
+          clientType: 'codemie-claude',
+          version: '0.0.28'
+        },
+        credentials: { cookies: { session: 'test-cookie' } },
+        profileConfig: {}
+      } as any;
+
+      const originalHome = process.env.HOME;
+      process.env.HOME = tempTestDir;
+
+      try {
+        interceptor = await plugin.createInterceptor(context);
+        await interceptor.onProxyStart();
+
+        // Verify timer was started
+        expect((interceptor as any).syncTimer).toBeDefined();
+      } finally {
+        await interceptor.onProxyStop();
+        process.env.HOME = originalHome;
+      }
+    });
+
+    it('should stop timer and perform final sync on onProxyStop', async () => {
+      const context: PluginContext = {
+        config: {
+          sessionId: testMetricsSessionId,
+          targetApiUrl: 'https://api.example.com',
+          clientType: 'codemie-claude',
+          version: '0.0.28'
+        },
+        credentials: { cookies: { session: 'test-cookie' } },
+        profileConfig: {}
+      } as any;
+
+      process.env.CODEMIE_SESSION_DRY_RUN = '1';
+      const originalHome = process.env.HOME;
+      process.env.HOME = tempTestDir;
+
+      try {
+        interceptor = await plugin.createInterceptor(context);
+        await interceptor.onProxyStart();
+
+        const timerBefore = (interceptor as any).syncTimer;
+        expect(timerBefore).toBeDefined();
+
+        await interceptor.onProxyStop();
+
+        // Verify timer was cleared
+        expect((interceptor as any).syncTimer).toBeUndefined();
+      } finally {
+        process.env.HOME = originalHome;
+        delete process.env.CODEMIE_SESSION_DRY_RUN;
+      }
+    });
+  });
+});

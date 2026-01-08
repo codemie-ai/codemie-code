@@ -24,8 +24,8 @@ import { unlinkSync, copyFileSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { ClaudeMetricsAdapter } from '../../../src/agents/plugins/claude.metrics.js';
-import { ClaudePluginMetadata } from '../../../src/agents/plugins/claude.plugin.js';
+import { ClaudeMetricsAdapter } from '../../../src/agents/plugins/claude/claude.metrics.js';
+import { ClaudePluginMetadata } from '../../../src/agents/plugins/claude/claude.plugin.js';
 import { DeltaWriter } from '../../../src/agents/core/metrics/core/DeltaWriter.js';
 import type { MetricDelta } from '../../../src/agents/core/metrics/types.js';
 

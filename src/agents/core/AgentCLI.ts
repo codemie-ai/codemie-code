@@ -7,7 +7,7 @@ import { ConfigLoader, CodeMieConfigOptions } from '../../utils/config.js';
 import { logger } from '../../utils/logger.js';
 import { getDirname } from '../../utils/paths.js';
 import { BUILTIN_AGENT_NAME } from '../registry.js';
-import { ClaudePluginMetadata } from '../plugins/claude.plugin.js';
+import { ClaudePluginMetadata } from '../plugins/claude/claude.plugin.js';
 import { CodexPluginMetadata } from '../plugins/codex.plugin.js';
 import { CodeMieCodePluginMetadata } from '../plugins/codemie-code.plugin.js';
 import { GeminiPluginMetadata } from '../plugins/gemini.plugin.js';

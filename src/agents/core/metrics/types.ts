@@ -287,6 +287,9 @@ export interface SyncState {
   totalDeltas: number;           // Total deltas created
   totalSynced: number;           // Total synced to API
   totalFailed: number;           // Total failed syncs
+
+  // === Conversation tracking ===
+  conversationId?: string;       // Codemie conversation UUID (set to sessionId on first sync)
 }
 
 /**

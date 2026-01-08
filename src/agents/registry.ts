@@ -1,4 +1,4 @@
-import { ClaudePlugin } from './plugins/claude.plugin.js';
+import { ClaudePlugin } from './plugins/claude/claude.plugin.js';
 import { CodexPlugin } from './plugins/codex.plugin.js';
 import { CodeMieCodePlugin } from './plugins/codemie-code.plugin.js';
 import { GeminiPlugin } from './plugins/gemini.plugin.js';

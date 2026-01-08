@@ -1,7 +1,11 @@
-import { AgentMetadata } from '../core/types.js';
-import { BaseAgentAdapter } from '../core/BaseAgentAdapter.js';
+import { AgentMetadata } from '../../core/types.js';
+import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import { ClaudeMetricsAdapter } from './claude.metrics.js';
-import type { AgentMetricsSupport } from '../core/metrics/types.js';
+import type { AgentMetricsSupport } from '../../core/metrics/types.js';
+import { ClaudeConversationsAdapter } from './claude.conversations.js';
+import type { AgentConversationsSupport } from './claude.conversations.js';
+import { ClaudeSessionAdapter } from './claude.session-adapter.js';
+import type { SessionAdapter } from '../../../providers/plugins/sso/session/adapters/base/BaseSessionAdapter.js';
 
 /**
  * Claude Code Plugin Metadata
@@ -73,11 +77,17 @@ export const ClaudePluginMetadata: AgentMetadata = {
  */
 export class ClaudePlugin extends BaseAgentAdapter {
   private metricsAdapter: AgentMetricsSupport;
+  private conversationsAdapter: AgentConversationsSupport;
+  private sessionAdapter: SessionAdapter;
 
   constructor() {
     super(ClaudePluginMetadata);
     // Pass metadata to metrics adapter to avoid duplication
     this.metricsAdapter = new ClaudeMetricsAdapter('claude', ClaudePluginMetadata);
+    // Initialize conversations adapter
+    this.conversationsAdapter = new ClaudeConversationsAdapter();
+    // Initialize session adapter with metadata for unified session sync
+    this.sessionAdapter = new ClaudeSessionAdapter(ClaudePluginMetadata);
   }
 
   /**
@@ -85,5 +95,19 @@ export class ClaudePlugin extends BaseAgentAdapter {
    */
   getMetricsAdapter(): AgentMetricsSupport {
     return this.metricsAdapter;
+  }
+
+  /**
+   * Get conversations adapter for this agent
+   */
+  getConversationsAdapter(): AgentConversationsSupport {
+    return this.conversationsAdapter;
+  }
+
+  /**
+   * Get session adapter for this agent (used by unified session sync)
+   */
+  getSessionAdapter(): SessionAdapter {
+    return this.sessionAdapter;
   }
 }

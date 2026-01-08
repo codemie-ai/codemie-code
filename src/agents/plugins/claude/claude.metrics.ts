@@ -8,7 +8,7 @@
 import { readFile, readdir } from 'fs/promises';
 import { join, dirname } from 'path';
 import { existsSync } from 'fs';
-import { BaseMetricsAdapter } from '../core/BaseMetricsAdapter.js';
+import { BaseMetricsAdapter } from '../../core/BaseMetricsAdapter.js';
 import type {
   MetricSnapshot,
   MetricDelta,
@@ -16,16 +16,16 @@ import type {
   FileOperation,
   FileOperationType,
   UserPrompt
-} from '../core/metrics/types.js';
-import { logger } from '../../utils/logger.js';
-import { parseMultiLineJSON } from '../../utils/parsers.js';
+} from '../../core/metrics/types.js';
+import { logger } from '../../../utils/logger.js';
+import { parseMultiLineJSON } from '../../../utils/parsers.js';
 import { HistoryParser } from './history-parser.js';
 import {
   getFilename,
   matchesPathStructure,
   validatePathDepth,
   isValidUuidFilename
-} from '../../utils/paths.js';
+} from '../../../utils/paths.js';
 
 export class ClaudeMetricsAdapter extends BaseMetricsAdapter {
   // Note: dataPaths now comes from ClaudePluginMetadata passed via constructor

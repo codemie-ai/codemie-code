@@ -7,8 +7,8 @@
 
 import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
-import type { UserPrompt } from '../core/metrics/types.js';
-import { logger } from '../../utils/logger.js';
+import type { UserPrompt } from '../../core/metrics/types.js';
+import { logger } from '../../../utils/logger.js';
 
 export interface HistoryParserOptions {
   /**

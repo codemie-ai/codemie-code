@@ -1,0 +1,311 @@
+/**
+ * Claude Session Adapter Unit Tests
+ *
+ * Tests for Claude-specific session parsing
+ */
+
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtemp, rm } from 'fs/promises';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { ClaudeSessionAdapter } from '../claude.session-adapter.js';
+import { ClaudePluginMetadata } from '../claude.plugin.js';
+import type { ClaudeMessage } from '../claude-message-types.js';
+import { writeJSONLAtomic } from '../../../../providers/plugins/sso/session/utils/jsonl-writer.js';
+import { existsSync } from 'fs';
+
+describe('ClaudeSessionAdapter', () => {
+  let adapter: ClaudeSessionAdapter;
+  let tempDir: string;
+
+  beforeEach(async () => {
+    adapter = new ClaudeSessionAdapter(ClaudePluginMetadata);
+    tempDir = await mkdtemp(join(tmpdir(), 'claude-adapter-test-'));
+  });
+
+  afterEach(async () => {
+    if (existsSync(tempDir)) {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  describe('getSessionPaths', () => {
+    it('should return Claude projects directory', () => {
+      const paths = adapter.getSessionPaths();
+      expect(paths.baseDir).toContain('.claude');
+      expect(paths.baseDir).toContain('projects');
+    });
+  });
+
+  describe('matchesSessionPattern', () => {
+    it('should match UUID.jsonl pattern', () => {
+      const validPaths = [
+        '/path/to/123e4567-e89b-12d3-a456-426614174000.jsonl',
+        'C:\\Users\\Dev\\.claude\\projects\\project1\\abc123.jsonl'
+      ];
+
+      for (const path of validPaths) {
+        expect(adapter.matchesSessionPattern(path)).toBe(true);
+      }
+    });
+
+    it('should exclude agent-*.jsonl files', () => {
+      const invalidPaths = [
+        '/path/to/agent-metrics.jsonl',
+        '/path/to/agent-conversations.jsonl'
+      ];
+
+      for (const path of invalidPaths) {
+        expect(adapter.matchesSessionPattern(path)).toBe(false);
+      }
+    });
+
+    it('should only match .jsonl files', () => {
+      expect(adapter.matchesSessionPattern('/path/to/session.json')).toBe(false);
+      expect(adapter.matchesSessionPattern('/path/to/session.txt')).toBe(false);
+      expect(adapter.matchesSessionPattern('/path/to/session')).toBe(false);
+    });
+  });
+
+  describe('parseSessionFile', () => {
+    it('should parse simple session with messages', async () => {
+      const sessionFile = join(tempDir, 'test-session.jsonl');
+      const messages: ClaudeMessage[] = [
+        {
+          type: 'user',
+          uuid: 'msg-1',
+          sessionId: 'session-123',
+          timestamp: '2024-01-01T00:00:00Z',
+          message: {
+            role: 'user',
+            content: 'Hello, Claude!'
+          }
+        },
+        {
+          type: 'assistant',
+          uuid: 'msg-2',
+          sessionId: 'session-123',
+          timestamp: '2024-01-01T00:00:01Z',
+          message: {
+            role: 'assistant',
+            content: 'Hello! How can I help you today?',
+            usage: {
+              input_tokens: 10,
+              output_tokens: 20
+            }
+          }
+        }
+      ];
+
+      await writeJSONLAtomic(sessionFile, messages);
+
+      const parsed = await adapter.parseSessionFile(sessionFile);
+
+      expect(parsed.sessionId).toBe('session-123');
+      expect(parsed.agentName).toBe('claude');
+      expect(parsed.messages).toHaveLength(2);
+      expect(parsed.metadata.projectPath).toBe(sessionFile);
+    });
+
+    it('should extract token metrics', async () => {
+      const sessionFile = join(tempDir, 'metrics-session.jsonl');
+      const messages: ClaudeMessage[] = [
+        {
+          type: 'user',
+          uuid: 'msg-1',
+          sessionId: 'session-metrics',
+          timestamp: '2024-01-01T00:00:00Z',
+          message: { role: 'user', content: 'test' }
+        },
+        {
+          type: 'assistant',
+          uuid: 'msg-2',
+          sessionId: 'session-metrics',
+          timestamp: '2024-01-01T00:00:01Z',
+          message: {
+            role: 'assistant',
+            content: 'response',
+            usage: {
+              input_tokens: 100,
+              output_tokens: 200,
+              cache_read_input_tokens: 50,
+              cache_creation_input_tokens: 25
+            }
+          }
+        },
+        {
+          type: 'assistant',
+          uuid: 'msg-3',
+          sessionId: 'session-metrics',
+          timestamp: '2024-01-01T00:00:02Z',
+          message: {
+            role: 'assistant',
+            content: 'another response',
+            usage: {
+              input_tokens: 150,
+              output_tokens: 250
+            }
+          }
+        }
+      ];
+
+      await writeJSONLAtomic(sessionFile, messages);
+
+      const parsed = await adapter.parseSessionFile(sessionFile);
+
+      expect(parsed.metrics?.tokens?.input).toBe(250);  // 100 + 150
+      expect(parsed.metrics?.tokens?.output).toBe(450);  // 200 + 250
+      expect(parsed.metrics?.tokens?.cacheRead).toBe(50);
+      expect(parsed.metrics?.tokens?.cacheWrite).toBe(25);
+    });
+
+    it('should extract tool usage', async () => {
+      const sessionFile = join(tempDir, 'tools-session.jsonl');
+      const messages: ClaudeMessage[] = [
+        {
+          type: 'user',
+          uuid: 'msg-1',
+          sessionId: 'session-tools',
+          timestamp: '2024-01-01T00:00:00Z',
+          message: { role: 'user', content: 'read a file' }
+        },
+        {
+          type: 'assistant',
+          uuid: 'msg-2',
+          sessionId: 'session-tools',
+          timestamp: '2024-01-01T00:00:01Z',
+          message: {
+            role: 'assistant',
+            content: [
+              { type: 'text', text: 'I will read the file' },
+              { type: 'tool_use', id: 'tool-1', name: 'Read', input: { path: 'test.ts' } }
+            ]
+          }
+        },
+        {
+          type: 'assistant',
+          uuid: 'msg-3',
+          sessionId: 'session-tools',
+          timestamp: '2024-01-01T00:00:02Z',
+          message: {
+            role: 'assistant',
+            content: [
+              { type: 'tool_use', id: 'tool-2', name: 'Edit', input: { path: 'test.ts' } },
+              { type: 'tool_use', id: 'tool-3', name: 'Read', input: { path: 'other.ts' } }
+            ]
+          }
+        }
+      ];
+
+      await writeJSONLAtomic(sessionFile, messages);
+
+      const parsed = await adapter.parseSessionFile(sessionFile);
+
+      expect(parsed.metrics?.tools?.Read).toBe(2);
+      expect(parsed.metrics?.tools?.Edit).toBe(1);
+    });
+
+    it('should track tool success and failure', async () => {
+      const sessionFile = join(tempDir, 'tool-status-session.jsonl');
+      const messages: ClaudeMessage[] = [
+        {
+          type: 'user',
+          uuid: 'msg-1',
+          sessionId: 'session-tool-status',
+          timestamp: '2024-01-01T00:00:00Z',
+          message: { role: 'user', content: 'test' }
+        },
+        {
+          type: 'assistant',
+          uuid: 'msg-2',
+          sessionId: 'session-tool-status',
+          timestamp: '2024-01-01T00:00:01Z',
+          message: {
+            role: 'assistant',
+            content: [
+              { type: 'tool_use', id: 'tool-1', name: 'Read', input: { path: 'test.ts' } },
+              { type: 'tool_use', id: 'tool-2', name: 'Edit', input: { path: 'test.ts' } },
+              { type: 'tool_use', id: 'tool-3', name: 'Read', input: { path: 'bad.ts' } }
+            ]
+          }
+        },
+        {
+          type: 'user',
+          uuid: 'msg-3',
+          sessionId: 'session-tool-status',
+          timestamp: '2024-01-01T00:00:02Z',
+          message: {
+            role: 'user',
+            content: [
+              { type: 'tool_result', tool_use_id: 'tool-1', content: 'file content', isError: false },
+              { type: 'tool_result', tool_use_id: 'tool-2', content: 'success', isError: false },
+              { type: 'tool_result', tool_use_id: 'tool-3', content: 'file not found', isError: true }
+            ]
+          }
+        }
+      ];
+
+      await writeJSONLAtomic(sessionFile, messages);
+
+      const parsed = await adapter.parseSessionFile(sessionFile);
+
+      expect(parsed.metrics?.toolStatus?.Read).toEqual({ success: 1, failure: 1 });
+      expect(parsed.metrics?.toolStatus?.Edit).toEqual({ success: 1, failure: 0 });
+    });
+
+    it('should throw error for empty session file', async () => {
+      const sessionFile = join(tempDir, 'empty-session.jsonl');
+      await writeJSONLAtomic(sessionFile, []);
+
+      await expect(adapter.parseSessionFile(sessionFile))
+        .rejects
+        .toThrow('empty');
+    });
+
+    it('should throw error for session without sessionId', async () => {
+      const sessionFile = join(tempDir, 'invalid-session.jsonl');
+      const messages = [
+        {
+          type: 'user',
+          uuid: 'msg-1',
+          // Missing sessionId
+          timestamp: '2024-01-01T00:00:00Z',
+          message: { role: 'user', content: 'test' }
+        }
+      ];
+
+      await writeJSONLAtomic(sessionFile, messages);
+
+      await expect(adapter.parseSessionFile(sessionFile))
+        .rejects
+        .toThrow('Session ID not found');
+    });
+
+    it('should handle messages without usage data', async () => {
+      const sessionFile = join(tempDir, 'no-usage-session.jsonl');
+      const messages: ClaudeMessage[] = [
+        {
+          type: 'user',
+          uuid: 'msg-1',
+          sessionId: 'session-no-usage',
+          timestamp: '2024-01-01T00:00:00Z',
+          message: { role: 'user', content: 'test' }
+        },
+        {
+          type: 'assistant',
+          uuid: 'msg-2',
+          sessionId: 'session-no-usage',
+          timestamp: '2024-01-01T00:00:01Z',
+          message: { role: 'assistant', content: 'response' }
+        }
+      ];
+
+      await writeJSONLAtomic(sessionFile, messages);
+
+      const parsed = await adapter.parseSessionFile(sessionFile);
+
+      expect(parsed.metrics?.tokens?.input).toBe(0);
+      expect(parsed.metrics?.tokens?.output).toBe(0);
+    });
+  });
+});
