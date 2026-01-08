@@ -53,7 +53,7 @@ export class ConversationsProcessor implements SessionProcessor {
       }
 
       // Check 2: Load session metadata from SessionStore
-      const { SessionStore } = await import('../../../../../../agents/core/metrics/session/SessionStore.js');
+      const { SessionStore } = await import('../../../../../../agents/core/session/SessionStore.js');
       const sessionStore = new SessionStore();
       const sessionMetadata = await sessionStore.loadSession(session.sessionId);
 

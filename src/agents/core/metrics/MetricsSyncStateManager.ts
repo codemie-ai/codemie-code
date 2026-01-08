@@ -1,20 +1,22 @@
 /**
- * Sync State Manager
+ * Metrics Sync State Manager
  *
- * Manages sync state embedded in session metadata file.
- * Tracks which records have been synced to prevent duplicates.
- * Sync state is stored in: ~/.codemie/metrics/sessions/{sessionId}.json
+ * Manages METRICS sync state embedded in session metadata file.
+ * Tracks which metric records have been synced to prevent duplicates.
+ * Sync state is stored in: session.sync.metrics within ~/.codemie/metrics/sessions/{sessionId}.json
+ *
+ * Note: This is metrics-specific. Conversations have their own sync state.
  */
 
 import { readFile, writeFile, mkdir, rename } from 'fs/promises';
 import { existsSync } from 'fs';
 import { dirname, join } from 'path';
 import { randomUUID } from 'crypto';
-import type { MetricsSyncState, MetricsSession } from '../types.js';
-import { logger } from '../../../../utils/logger.js';
-import { getSessionPath } from '../../metrics-config.js';
+import type { MetricsSyncState, Session } from './types.js';
+import { logger } from '../../../utils/logger.js';
+import { getSessionPath } from '../metrics-config.js';
 
-export class SyncStateManager {
+export class MetricsSyncStateManager {
   private readonly sessionId: string;
   private readonly filePath: string;
 
@@ -32,7 +34,7 @@ export class SyncStateManager {
       if (existsSync(this.filePath)) {
         const session = await this.loadSession();
         if (session.sync?.metrics) {
-          logger.debug('[SyncStateManager] Metrics sync state already exists, loading...');
+          logger.debug('[MetricsSyncStateManager] Metrics sync state already exists, loading...');
           return session.sync.metrics;
         }
       }
@@ -50,11 +52,11 @@ export class SyncStateManager {
       // Save to session file
       await this.save(metricsSync);
 
-      logger.info('[SyncStateManager] Initialized new metrics sync state');
+      logger.info('[MetricsSyncStateManager] Initialized new metrics sync state');
       return metricsSync;
 
     } catch (error) {
-      logger.error('[SyncStateManager] Failed to initialize metrics sync state:', error);
+      logger.error('[MetricsSyncStateManager] Failed to initialize metrics sync state:', error);
       throw error;
     }
   }
@@ -62,13 +64,13 @@ export class SyncStateManager {
   /**
    * Load session file
    */
-  private async loadSession(): Promise<MetricsSession> {
+  private async loadSession(): Promise<Session> {
     if (!existsSync(this.filePath)) {
       throw new Error(`Session file does not exist: ${this.filePath}`);
     }
 
     const content = await readFile(this.filePath, 'utf-8');
-    return JSON.parse(content) as MetricsSession;
+    return JSON.parse(content) as Session;
   }
 
   /**
@@ -79,22 +81,22 @@ export class SyncStateManager {
     try {
       // Check if session file exists
       if (!existsSync(this.filePath)) {
-        logger.debug('[SyncStateManager] Session file does not exist, returning null');
+        logger.debug('[MetricsSyncStateManager] Session file does not exist, returning null');
         return null;
       }
 
       const session = await this.loadSession();
 
       if (!session.sync?.metrics) {
-        logger.debug('[SyncStateManager] Metrics sync state not initialized yet, returning null');
+        logger.debug('[MetricsSyncStateManager] Metrics sync state not initialized yet, returning null');
         return null;
       }
 
-      logger.debug(`[SyncStateManager] Loaded metrics sync state: ${session.sync.metrics.totalDeltas} deltas, ${session.sync.metrics.totalSynced} synced`);
+      logger.debug(`[MetricsSyncStateManager] Loaded metrics sync state: ${session.sync.metrics.totalDeltas} deltas, ${session.sync.metrics.totalSynced} synced`);
       return session.sync.metrics;
 
     } catch (error) {
-      logger.error('[SyncStateManager] Failed to load metrics sync state:', error);
+      logger.error('[MetricsSyncStateManager] Failed to load metrics sync state:', error);
       // Return null instead of throwing to allow graceful degradation
       return null;
     }
@@ -129,10 +131,10 @@ export class SyncStateManager {
       // Rename to final location (atomic operation)
       await rename(tempFile, this.filePath);
 
-      logger.debug('[SyncStateManager] Saved metrics sync state');
+      logger.debug('[MetricsSyncStateManager] Saved metrics sync state');
 
     } catch (error) {
-      logger.error('[SyncStateManager] Failed to save metrics sync state:', error);
+      logger.error('[MetricsSyncStateManager] Failed to save metrics sync state:', error);
       throw error;
     }
   }
@@ -145,7 +147,7 @@ export class SyncStateManager {
       const state = await this.load();
 
       if (!state) {
-        logger.debug('[SyncStateManager] Cannot update - sync state does not exist');
+        logger.debug('[MetricsSyncStateManager] Cannot update - sync state does not exist');
         return;
       }
 
@@ -154,10 +156,10 @@ export class SyncStateManager {
 
       await this.save(state);
 
-      logger.debug(`[SyncStateManager] Updated last processed line: ${line}`);
+      logger.debug(`[MetricsSyncStateManager] Updated last processed line: ${line}`);
 
     } catch (error) {
-      logger.error('[SyncStateManager] Failed to update last processed line:', error);
+      logger.error('[MetricsSyncStateManager] Failed to update last processed line:', error);
       // Don't throw - allow graceful degradation
     }
   }
@@ -170,7 +172,7 @@ export class SyncStateManager {
       const state = await this.load();
 
       if (!state) {
-        logger.debug('[SyncStateManager] Cannot add records - sync state does not exist');
+        logger.debug('[MetricsSyncStateManager] Cannot add records - sync state does not exist');
         return;
       }
 
@@ -179,10 +181,10 @@ export class SyncStateManager {
 
       await this.save(state);
 
-      logger.debug(`[SyncStateManager] Added ${recordIds.length} processed record IDs`);
+      logger.debug(`[MetricsSyncStateManager] Added ${recordIds.length} processed record IDs`);
 
     } catch (error) {
-      logger.error('[SyncStateManager] Failed to add processed records:', error);
+      logger.error('[MetricsSyncStateManager] Failed to add processed records:', error);
       // Don't throw - allow graceful degradation
     }
   }
@@ -197,7 +199,7 @@ export class SyncStateManager {
       const state = await this.load();
 
       if (!state) {
-        logger.debug('[SyncStateManager] Cannot mark synced - sync state does not exist');
+        logger.debug('[MetricsSyncStateManager] Cannot mark synced - sync state does not exist');
         return;
       }
 
@@ -212,10 +214,10 @@ export class SyncStateManager {
 
       await this.save(state);
 
-      logger.debug(`[SyncStateManager] Marked ${recordIds.length} records as synced`);
+      logger.debug(`[MetricsSyncStateManager] Marked ${recordIds.length} records as synced`);
 
     } catch (error) {
-      logger.error('[SyncStateManager] Failed to mark records as synced:', error);
+      logger.error('[MetricsSyncStateManager] Failed to mark records as synced:', error);
       // Don't throw - allow graceful degradation
     }
   }
@@ -228,7 +230,7 @@ export class SyncStateManager {
       const state = await this.load();
 
       if (!state) {
-        logger.debug('[SyncStateManager] Cannot add attached prompts - sync state does not exist');
+        logger.debug('[MetricsSyncStateManager] Cannot add attached prompts - sync state does not exist');
         return;
       }
 
@@ -242,10 +244,10 @@ export class SyncStateManager {
 
       await this.save(state);
 
-      logger.debug(`[SyncStateManager] Added ${promptTexts.length} attached user prompt texts`);
+      logger.debug(`[MetricsSyncStateManager] Added ${promptTexts.length} attached user prompt texts`);
 
     } catch (error) {
-      logger.error('[SyncStateManager] Failed to add attached prompts:', error);
+      logger.error('[MetricsSyncStateManager] Failed to add attached prompts:', error);
       // Don't throw - allow graceful degradation
     }
   }
@@ -258,17 +260,17 @@ export class SyncStateManager {
       const state = await this.load();
 
       if (!state) {
-        logger.debug('[SyncStateManager] Cannot increment deltas - sync state does not exist');
+        logger.debug('[MetricsSyncStateManager] Cannot increment deltas - sync state does not exist');
         return;
       }
 
       state.totalDeltas += count;
       await this.save(state);
 
-      logger.debug(`[SyncStateManager] Incremented delta count by ${count}`);
+      logger.debug(`[MetricsSyncStateManager] Incremented delta count by ${count}`);
 
     } catch (error) {
-      logger.error('[SyncStateManager] Failed to increment deltas:', error);
+      logger.error('[MetricsSyncStateManager] Failed to increment deltas:', error);
       // Don't throw - allow graceful degradation
     }
   }
@@ -281,17 +283,17 @@ export class SyncStateManager {
       const state = await this.load();
 
       if (!state) {
-        logger.debug('[SyncStateManager] Cannot increment failed - sync state does not exist');
+        logger.debug('[MetricsSyncStateManager] Cannot increment failed - sync state does not exist');
         return;
       }
 
       state.totalFailed += count;
       await this.save(state);
 
-      logger.debug(`[SyncStateManager] Incremented failed count by ${count}`);
+      logger.debug(`[MetricsSyncStateManager] Incremented failed count by ${count}`);
 
     } catch (error) {
-      logger.error('[SyncStateManager] Failed to increment failed count:', error);
+      logger.error('[MetricsSyncStateManager] Failed to increment failed count:', error);
       // Don't throw - allow graceful degradation
     }
   }

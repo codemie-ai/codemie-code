@@ -10,7 +10,6 @@ import { ProxyConfig } from '../../providers/plugins/sso/proxy/proxy-types.js';
 import { ProviderRegistry } from '../../providers/core/registry.js';
 import { SessionOrchestrator } from './session/SessionOrchestrator.js';
 import type { AgentMetricsSupport } from './metrics/types.js';
-import type { SessionLifecycleAdapter } from './session/types.js';
 import type { CodeMieConfigOptions } from '../../env/types.js';
 import { getRandomWelcomeMessage, getRandomGoodbyeMessage } from '../../utils/goodbye-messages.js';
 import { renderProfileInfo } from '../../utils/profile.js';
@@ -53,61 +52,6 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     return this.metadata.metricsConfig;
   }
 
-  /**
-   * Create SessionOrchestrator with session transition handler.
-   * Implements session lifecycle detection per spec/session-lifecycle-detection.md
-   *
-   * When a session end is detected (e.g., /clear in Claude):
-   * 1. Current session is finalized
-   * 2. New session is created with correlation to new agent session file
-   * 3. Monitoring continues on new session
-   */
-  protected async createSessionOrchestratorWithTransitionHandler(
-    sessionId: string,
-    provider: string,
-    project: string | undefined,
-    metricsAdapter: AgentMetricsSupport,
-    lifecycleAdapter: SessionLifecycleAdapter | undefined
-  ): Promise<SessionOrchestrator> {
-    const { SessionOrchestrator } = await import('./session/SessionOrchestrator.js');
-
-    return new SessionOrchestrator({
-      sessionId,
-      agentName: this.metadata.name,
-      provider,
-      project,
-      workingDirectory: process.cwd(),
-      metricsAdapter,
-      lifecycleAdapter,
-      // Session transition callback (per spec Step 1.5)
-      onSessionTransition: async (event) => {
-        const { logger } = await import('../../utils/logger.js');
-        logger.info(
-          `[${this.metadata.name}] Session transition detected: ` +
-          `${event.oldSessionId} → new file: ${event.newSessionFile}`
-        );
-
-        // Create new orchestrator for new session
-        // Note: This orchestrator will auto-correlate with the new file
-        const newSessionId = randomUUID();
-        logger.setSessionId(newSessionId);
-
-        this.sessionOrchestrator = await this.createSessionOrchestratorWithTransitionHandler(
-          newSessionId,
-          provider,
-          project,
-          metricsAdapter,
-          lifecycleAdapter
-        );
-
-        // Start monitoring new session
-        await this.sessionOrchestrator.beforeAgentSpawn();
-        await this.sessionOrchestrator.afterAgentSpawn();
-
-        logger.info(`[${this.metadata.name}] New session created: ${newSessionId}`);
-      }
-    });
-  }
 
   get name(): string {
     return this.metadata.name;
@@ -218,19 +162,14 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
       // Check if metrics are enabled for this provider before creating orchestrator
       if (METRICS_CONFIG.enabled(env.CODEMIE_PROVIDER)) {
-        // Check if plugin provides lifecycle adapter
-        const lifecycleAdapter = typeof (this as any).getLifecycleAdapter === 'function'
-          ? (this as any).getLifecycleAdapter()
-          : undefined;
-
-        // Create orchestrator with session transition handler
-        this.sessionOrchestrator = await this.createSessionOrchestratorWithTransitionHandler(
-          sessionId,
-          env.CODEMIE_PROVIDER,
-          env.CODEMIE_PROJECT,
+        this.sessionOrchestrator = new SessionOrchestrator({
+          agentName: this.metadata.name,
+          provider: env.CODEMIE_PROVIDER,
+          project: env.CODEMIE_PROJECT,
+          workingDirectory: process.cwd(),
           metricsAdapter,
-          lifecycleAdapter
-        );
+          sessionId // Pass the session ID explicitly
+        });
 
         // Take pre-spawn snapshot
         await this.sessionOrchestrator.beforeAgentSpawn();

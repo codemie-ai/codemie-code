@@ -25,13 +25,25 @@ export class SessionCorrelator {
    * Picks first match after filtering by working directory
    */
   async correlate(input: CorrelationInput): Promise<CorrelationResult> {
-    const { newFiles, agentPlugin, workingDirectory, agentName } = input;
+    const { newFiles, agentPlugin, workingDirectory } = input;
 
-    logger.debug(`[SessionCorrelator] correlate: candidates=${newFiles.length} agent=${agentName} cwd=${workingDirectory}`);
+    logger.info(`[SessionCorrelator] Analyzing ${newFiles.length} candidate file${newFiles.length !== 1 ? 's' : ''}...`);
+
+    // Show candidate files at INFO level for debugging
+    if (newFiles.length > 0) {
+      logger.info(`[SessionCorrelator] Candidate files:`);
+      const sampleSize = Math.min(5, newFiles.length);
+      for (let i = 0; i < sampleSize; i++) {
+        logger.info(`[SessionCorrelator]    ${i + 1}. ${newFiles[i].path}`);
+      }
+      if (newFiles.length > sampleSize) {
+        logger.info(`[SessionCorrelator]    ... and ${newFiles.length - sampleSize} more`);
+      }
+    }
 
     // Case 1: No new files
     if (newFiles.length === 0) {
-      logger.warn('[SessionCorrelator] correlate: status=pending reason=no_files');
+      logger.warn('[SessionCorrelator] No session files detected - will retry');
       return {
         status: 'pending',
         retryCount: 0
@@ -39,43 +51,59 @@ export class SessionCorrelator {
     }
 
     // Case 2: Filter files by agent pattern
+    logger.info(`[SessionCorrelator] Step 1: Filtering by agent session pattern...`);
     const matchingFiles = newFiles.filter(f =>
       agentPlugin.matchesSessionPattern(f.path)
     );
 
-    logger.debug(`[SessionCorrelator] pattern_filter: total=${newFiles.length} matched=${matchingFiles.length}`);
+    if (matchingFiles.length > 0) {
+      logger.info(`[SessionCorrelator] ${matchingFiles.length} file${matchingFiles.length !== 1 ? 's' : ''} match${matchingFiles.length === 1 ? 'es' : ''} pattern`);
+      // Use path.basename for cross-platform display
+      const { basename } = await import('path');
+      logger.info(`[SessionCorrelator]    ${matchingFiles.map(f => `→ ${basename(f.path)}`).join(', ')}`);
+    }
+    logger.debug(`[SessionCorrelator] Pattern matching: ${matchingFiles.length}/${newFiles.length} files passed`);
+
+    // Show which files were filtered out and why
+    if (matchingFiles.length < newFiles.length) {
+      const filtered = newFiles.filter(f => !matchingFiles.includes(f));
+      logger.debug(`[SessionCorrelator] Filtered out ${filtered.length} files (pattern mismatch): ${filtered.map(f => f.path).join(', ')}`);
+    }
 
     if (matchingFiles.length === 0) {
-      logger.warn(`[SessionCorrelator] correlate: status=failed reason=no_pattern_matches agent=${agentName}`);
+      logger.warn('[SessionCorrelator] No session files match expected pattern - correlation failed');
+      logger.info(`[SessionCorrelator]    Agent: ${input.agentName}`);
+      logger.info(`[SessionCorrelator]    Working directory: ${workingDirectory}`);
+
+      // Show why files were rejected
+      if (newFiles.length > 0) {
+        logger.info(`[SessionCorrelator]    None of the ${newFiles.length} candidate files matched the pattern`);
+        // Test first file and explain why it failed
+        const testFile = newFiles[0].path;
+        logger.debug(`[SessionCorrelator]    Testing pattern on: ${testFile}`);
+        logger.debug(`[SessionCorrelator]    matchesSessionPattern() returned: ${agentPlugin.matchesSessionPattern(testFile)}`);
+      }
+
       return {
         status: 'failed',
         retryCount: 0
       };
     }
 
-    // Tier 1: Single file fast path (no content check needed)
-    if (matchingFiles.length === 1) {
-      const matchedFile = matchingFiles[0];
-      const agentSessionId = agentPlugin.extractSessionId(matchedFile.path);
-
-      logger.info(`[SessionCorrelator] correlate: status=matched strategy=fast_path session_id=${agentSessionId} file=${matchedFile.path}`);
-
-      return {
-        status: 'matched',
-        agentSessionFile: matchedFile.path,
-        agentSessionId,
-        detectedAt: Date.now(),
-        retryCount: 0
-      };
-    }
-
-    // Tier 2: Multiple files - filter by working directory (partial content check)
+    // Case 3: Filter by working directory (parse file content)
+    logger.info(`[SessionCorrelator] Step 2: Checking working directory match...`);
+    logger.debug(`[SessionCorrelator] Working directory: ${workingDirectory}`);
     const filesWithWorkingDir = await this.filterByWorkingDirectory(
       matchingFiles,
       workingDirectory
     );
 
-    logger.debug(`[SessionCorrelator] workdir_filter: total=${matchingFiles.length} matched=${filesWithWorkingDir.length}`);
+    if (filesWithWorkingDir.length > 0) {
+      logger.info(`[SessionCorrelator] ${filesWithWorkingDir.length} file${filesWithWorkingDir.length !== 1 ? 's' : ''} contain${filesWithWorkingDir.length === 1 ? 's' : ''} working directory`);
+    } else {
+      logger.info(`[SessionCorrelator] No files contain working directory - using first pattern match`);
+    }
+    logger.debug(`[SessionCorrelator] Working directory matches: ${filesWithWorkingDir.length}/${matchingFiles.length} files`);
 
     // Pick first match (simple strategy)
     const matchedFile = filesWithWorkingDir.length > 0
@@ -84,9 +112,9 @@ export class SessionCorrelator {
 
     // Extract session ID
     const agentSessionId = agentPlugin.extractSessionId(matchedFile.path);
-    const strategy = filesWithWorkingDir.length > 0 ? 'workdir_match' : 'pattern_fallback';
 
-    logger.info(`[SessionCorrelator] correlate: status=matched strategy=${strategy} session_id=${agentSessionId} file=${matchedFile.path}`);
+    logger.info(`[SessionCorrelator] Session matched: ${agentSessionId}`);
+    logger.info(`[SessionCorrelator]    Session file: ${matchedFile.path}`);
 
     return {
       status: 'matched',
@@ -115,12 +143,16 @@ export class SessionCorrelator {
     for (let attempt = 0; attempt < METRICS_CONFIG.retry.attempts; attempt++) {
       const delay = METRICS_CONFIG.retry.delays[attempt];
 
-      logger.debug(`[SessionCorrelator] retry: attempt=${attempt + 1}/${METRICS_CONFIG.retry.attempts} delay=${delay}ms`);
+      logger.info(`[SessionCorrelator] Retry ${attempt + 1}/${METRICS_CONFIG.retry.attempts} after ${delay}ms...`);
+      logger.debug(`[SessionCorrelator] Waiting ${delay}ms before retry ${attempt + 1}`);
 
       await this.sleep(delay);
 
-      // Take new snapshot and retry correlation
+      // Take new snapshot
+      logger.debug(`[SessionCorrelator] Taking new snapshot for retry ${attempt + 1}`);
       const newFiles = await snapshotFn();
+
+      // Retry correlation
       result = await this.correlate({
         ...input,
         newFiles
@@ -129,20 +161,19 @@ export class SessionCorrelator {
       result.retryCount = attempt + 1;
 
       if (result.status === 'matched') {
-        logger.info(`[SessionCorrelator] correlate: status=matched retry=${attempt + 1}`);
+        logger.info(`[SessionCorrelator] Session matched on retry ${attempt + 1}`);
         return result;
       }
     }
 
     // All retries exhausted
-    logger.warn(`[SessionCorrelator] correlate: status=failed reason=retries_exhausted attempts=${METRICS_CONFIG.retry.attempts}`);
+    logger.warn(`[SessionCorrelator] ❌ Session matching failed after ${METRICS_CONFIG.retry.attempts} attempts - metrics collection disabled`);
     result.status = 'failed';
     return result;
   }
 
   /**
    * Filter files by working directory content
-   * Optimized to read only first 10 + last 10 lines instead of entire file
    */
   private async filterByWorkingDirectory(
     files: FileInfo[],
@@ -152,41 +183,19 @@ export class SessionCorrelator {
 
     for (const file of files) {
       try {
-        const hasMatch = await this.checkWorkingDirectoryInLines(file.path, workingDirectory);
-        if (hasMatch) {
+        const content = await readFile(file.path, 'utf-8');
+
+        // Check if file content contains working directory path
+        if (content.includes(workingDirectory)) {
           filtered.push(file);
         }
       } catch (error) {
-        logger.debug(`[SessionCorrelator] read_error: file=${file.path}`, error);
+        // Skip files that can't be read
+        logger.debug(`[SessionCorrelator] Failed to read file: ${file.path}`, error);
       }
     }
 
     return filtered;
-  }
-
-  /**
-   * Check if working directory appears in first 10 or last 10 lines
-   * This optimization avoids reading entire files (which can be 37KB+)
-   * Working directory typically appears in:
-   *   - First lines: Session metadata (most common)
-   *   - Last lines: Final conversation turns (edge case)
-   */
-  private async checkWorkingDirectoryInLines(
-    filePath: string,
-    workingDirectory: string
-  ): Promise<boolean> {
-    const content = await readFile(filePath, 'utf-8');
-    const lines = content.split('\n');
-
-    // Check first 10 lines (session metadata - most common location)
-    const head = lines.slice(0, 10).join('\n');
-    if (head.includes(workingDirectory)) {
-      return true;
-    }
-
-    // Check last 10 lines (edge case: working directory in final conversation turn)
-    const tail = lines.slice(-10).join('\n');
-    return tail.includes(workingDirectory);
   }
 
   /**

@@ -22,9 +22,9 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { rm } from 'fs/promises';
 import { SSOSessionSyncPlugin } from '../../../../src/providers/plugins/sso/session/sync/sso.session-sync.plugin.js';
-import { SessionStore } from '../../../../src/agents/core/metrics/session/SessionStore.js';
+import { SessionStore } from '../../../../src/agents/core/session/SessionStore.js';
 import type { PluginContext } from '../../../../src/proxy/plugins/types.js';
-import type { MetricsSession } from '../../../../src/agents/core/metrics/types.js';
+import type { Session } from '../../../../src/agents/core/session/types.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -64,7 +64,7 @@ describe('Unified Session Sync Plugin - Orchestrator', () => {
 
     // Create session metadata with proper correlation (required by session sync)
     sessionStore = new SessionStore();
-    const metricsSession: MetricsSession = {
+    const session: Session = {
       sessionId: testMetricsSessionId,
       agentName: 'claude',
       provider: 'ai-run-sso',
@@ -84,7 +84,7 @@ describe('Unified Session Sync Plugin - Orchestrator', () => {
         changeCount: 0
       }
     };
-    await sessionStore.saveSession(metricsSession);
+    await sessionStore.saveSession(session);
 
     // Initialize plugin
     plugin = new SSOSessionSyncPlugin();
@@ -97,7 +97,7 @@ describe('Unified Session Sync Plugin - Orchestrator', () => {
     }
 
     // Cleanup metrics session - use DeltaWriter to get correct path
-    const { DeltaWriter } = await import('../../../../src/agents/core/metrics/core/DeltaWriter.js');
+    const { DeltaWriter } = await import('../../../../src/agents/core/metrics/DeltaWriter.js');
     const deltaWriter = new DeltaWriter(testMetricsSessionId);
     try {
       const metricsFilePath = deltaWriter.getFilePath();
@@ -254,7 +254,7 @@ describe('Unified Session Sync Plugin - Orchestrator', () => {
     it('should handle uncorrelated session gracefully', async () => {
       // Create session without correlation
       const uncorrelatedSessionId = 'uncorrelated-' + Date.now();
-      const uncorrelatedSession: MetricsSession = {
+      const uncorrelatedSession: Session = {
         sessionId: uncorrelatedSessionId,
         agentName: 'claude',
         provider: 'ai-run-sso',
