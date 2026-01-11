@@ -38,6 +38,24 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   constructor(protected metadata: AgentMetadata) {}
 
   /**
+   * Replace session orchestrator with new one
+   * Used during session transition to track new session
+   */
+  async replaceOrchestrator(newOrchestrator: SessionOrchestrator): Promise<void> {
+    const { logger } = await import('../../utils/logger.js');
+
+    // Destroy old orchestrator if exists
+    if (this.sessionOrchestrator) {
+      logger.debug(`[${this.metadata.name}] Destroying old orchestrator`);
+      await this.sessionOrchestrator.destroy();
+    }
+
+    // Set new orchestrator
+    this.sessionOrchestrator = newOrchestrator;
+    logger.info(`[${this.metadata.name}] Orchestrator replaced with new session: ${newOrchestrator.getSession().sessionId}`);
+  }
+
+  /**
    * Get metrics adapter for this agent (optional)
    * Override in agent plugin if metrics collection is supported
    */
@@ -79,32 +97,40 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       workingDirectory: process.cwd(),
       metricsAdapter,
       lifecycleAdapter,
-      // Session transition callback (per spec Step 1.5)
+      // Session transition callback
+      // Purpose: Replace orchestrator after transition completes
       onSessionTransition: async (event) => {
         const { logger } = await import('../../utils/logger.js');
+        const newSessionId = event.newSessionFile.split('/').pop()?.replace('.jsonl', '') || 'unknown';
         logger.info(
-          `[${this.metadata.name}] Session transition detected: ` +
-          `${event.oldSessionId} → new file: ${event.newSessionFile}`
+          `[${this.metadata.name}] Session transition completed: ` +
+          `${event.oldSessionId} → ${newSessionId}`
         );
 
-        // Create new orchestrator for new session
-        // Note: This orchestrator will auto-correlate with the new file
-        const newSessionId = randomUUID();
-        logger.setSessionId(newSessionId);
-
-        this.sessionOrchestrator = await this.createSessionOrchestratorWithTransitionHandler(
-          newSessionId,
-          provider,
-          project,
-          metricsAdapter,
-          lifecycleAdapter
-        );
-
-        // Start monitoring new session
-        await this.sessionOrchestrator.beforeAgentSpawn();
-        await this.sessionOrchestrator.afterAgentSpawn();
-
-        logger.info(`[${this.metadata.name}] New session created: ${newSessionId}`);
+        // Replace orchestrator with new one
+        await this.replaceOrchestrator(event.newOrchestrator);
+      },
+      // Lifecycle event callback
+      // Purpose: Execute lifecycle hooks for session start/end
+      onLifecycleEvent: async (eventType, data) => {
+        const env = process.env;
+        if (eventType === 'sessionStart') {
+          await executeOnSessionStart(
+            this,
+            this.metadata.lifecycle,
+            this.metadata.name,
+            data, // sessionId
+            env
+          );
+        } else if (eventType === 'sessionEnd') {
+          await executeOnSessionEnd(
+            this,
+            this.metadata.lifecycle,
+            this.metadata.name,
+            data, // exitCode
+            env
+          );
+        }
       }
     });
   }
@@ -466,26 +492,24 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
             await new Promise(resolve => setTimeout(resolve, gracePeriodMs));
           }
 
-          // Phase 1: Prepare metrics for exit (collect final deltas, but don't mark complete)
+          // Use extracted endSession() method
           if (this.sessionOrchestrator && code !== null) {
-            await this.sessionOrchestrator.prepareForExit();
-          }
-
-          // Lifecycle hook: session end (provider-aware)
-          if (code !== null) {
-            await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, code, env);
-          }
-
-          // Clean up proxy (triggers final sync of BOTH metrics AND conversations)
-          // SSOSessionSyncPlugin.onProxyStop() runs all processors:
-          //   - MetricsProcessor: syncs pending deltas from _metrics.jsonl
-          //   - ConversationsProcessor: syncs new messages from agent session file
-          await cleanup();
-
-          // Phase 2: Mark session as completed (AFTER sync completes)
-          // This ensures session status is only set to 'completed' after all data is synced
-          if (this.sessionOrchestrator && code !== null) {
-            await this.sessionOrchestrator.markSessionComplete(code);
+            await this.sessionOrchestrator.endSession(code, {
+              beforeCleanup: async () => {
+                // Lifecycle hook: session end (provider-aware)
+                await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, code, env);
+              },
+              cleanup: async () => {
+                // Clean up proxy (triggers final sync of BOTH metrics AND conversations)
+                // SSOSessionSyncPlugin.onProxyStop() runs all processors:
+                //   - MetricsProcessor: syncs pending deltas from _metrics.jsonl
+                //   - ConversationsProcessor: syncs new messages from agent session file
+                await cleanup();
+              }
+            });
+          } else if (code === null) {
+            // If code is null, just clean up without session finalization
+            await cleanup();
           }
 
           // Lifecycle hook: afterRun (provider-aware)

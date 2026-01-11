@@ -21,7 +21,7 @@ import { SessionCorrelator } from './SessionCorrelator.js';
 import { SessionStore } from './SessionStore.js';
 import { DeltaWriter } from '../metrics/DeltaWriter.js';
 import { MetricsSyncStateManager } from '../metrics/MetricsSyncStateManager.js';
-import type { Session, FileSnapshot, SessionLifecycleAdapter } from './types.js';
+import type { Session, FileSnapshot, FileInfo, SessionLifecycleAdapter } from './types.js';
 import type { AgentMetricsSupport } from '../metrics/types.js';
 import { METRICS_CONFIG } from '../metrics-config.js';
 import { logger } from '../../../utils/logger.js';
@@ -30,9 +30,10 @@ import { detectGitBranch } from '../../../utils/processes.js';
 import { createErrorContext, formatErrorForLog } from '../../../utils/errors.js';
 
 export interface SessionTransitionEvent {
-  oldSessionId: string;
-  newSessionFile: string;
-  transitionTimestamp: number;
+  oldSessionId: string; // OLD agent session ID (e.g., 344a4572) for END metrics
+  newSessionFile: string; // NEW agent session file path
+  transitionTimestamp: number; // When /clear was executed
+  newOrchestrator: SessionOrchestrator; // New orchestrator instance for replacement
 }
 
 export interface SessionOrchestratorOptions {
@@ -44,6 +45,7 @@ export interface SessionOrchestratorOptions {
   metricsAdapter: AgentMetricsSupport;
   lifecycleAdapter?: SessionLifecycleAdapter; // Optional: for session lifecycle detection
   onSessionTransition?: (event: SessionTransitionEvent) => void | Promise<void>; // Optional: callback for session transitions
+  onLifecycleEvent?: (event: 'sessionStart' | 'sessionEnd', data: any) => Promise<void>; // Optional: callback for lifecycle events
 }
 
 export class SessionOrchestrator {
@@ -55,6 +57,7 @@ export class SessionOrchestrator {
   private metricsAdapter: AgentMetricsSupport;
   private lifecycleAdapter?: SessionLifecycleAdapter;
   private onSessionTransition?: (event: SessionTransitionEvent) => void | Promise<void>;
+  private onLifecycleEvent?: (event: 'sessionStart' | 'sessionEnd', data: any) => Promise<void>;
 
   private snapshotter: FileSnapshotter;
   private correlator: SessionCorrelator;
@@ -79,6 +82,7 @@ export class SessionOrchestrator {
     this.metricsAdapter = options.metricsAdapter;
     this.lifecycleAdapter = options.lifecycleAdapter;
     this.onSessionTransition = options.onSessionTransition;
+    this.onLifecycleEvent = options.onLifecycleEvent;
 
     this.snapshotter = new FileSnapshotter();
     this.correlator = new SessionCorrelator();
@@ -377,6 +381,63 @@ export class SessionOrchestrator {
   }
 
   /**
+   * End session with full stop flow
+   * Provides hooks for lifecycle callbacks to be injected by caller
+   * Reusable by both normal exit and transition flows
+   */
+  async endSession(
+    exitCode: number,
+    options?: {
+      beforeCleanup?: () => Promise<void>;
+      cleanup?: () => Promise<void>;
+    }
+  ): Promise<void> {
+    // Phase 1: Collect final deltas and stop monitoring
+    logger.info('[SessionOrchestrator] Ending session - collecting final metrics');
+    await this.prepareForExit();
+
+    // Phase 2: Allow caller to inject lifecycle hooks (e.g., onSessionEnd)
+    if (options?.beforeCleanup) {
+      logger.debug('[SessionOrchestrator] Executing beforeCleanup callback');
+      await options.beforeCleanup();
+    }
+
+    // Phase 3: Trigger immediate sync (if cleanup provided)
+    if (options?.cleanup) {
+      logger.debug('[SessionOrchestrator] Executing cleanup callback');
+      await options.cleanup();
+    }
+
+    // Phase 4: Mark session as completed
+    logger.info('[SessionOrchestrator] Marking session complete');
+    await this.markSessionComplete(exitCode);
+  }
+
+  /**
+   * Destroy orchestrator and clean up resources
+   * Called before replacing orchestrator during transition
+   */
+  async destroy(): Promise<void> {
+    logger.info('[SessionOrchestrator] Destroying orchestrator');
+
+    // Stop file watcher if active
+    if (this.fileWatcher) {
+      this.fileWatcher.close();
+      this.fileWatcher = null;
+      logger.debug('[SessionOrchestrator] Closed file watcher');
+    }
+
+    // Clear discovery interval
+    if (this.discoveryInterval) {
+      clearInterval(this.discoveryInterval);
+      this.discoveryInterval = null;
+      logger.debug('[SessionOrchestrator] Cleared discovery interval');
+    }
+
+    logger.debug('[SessionOrchestrator] Orchestrator destroyed');
+  }
+
+  /**
    * Finalize session on agent exit (Backward compatibility wrapper)
    * Called when agent process exits
    * Note: This method is kept for backward compatibility
@@ -434,7 +495,9 @@ export class SessionOrchestrator {
         this.discoveryInterval = setInterval(() => {
           void this.discoverNewSessions();
         }, DISCOVERY_INTERVAL);
-        logger.debug('[SessionOrchestrator] Started periodic session lifecycle discovery');
+        logger.info('[SessionOrchestrator] Periodic discovery enabled (checking every 30s for session end)');
+      } else {
+        logger.warn('[SessionOrchestrator] No lifecycle adapter - session transitions disabled');
       }
 
     } catch (error) {
@@ -580,6 +643,16 @@ export class SessionOrchestrator {
   }
 
   /**
+   * Get current session metadata
+   */
+  getSession(): Session {
+    if (!this.session) {
+      throw new Error('Session not initialized');
+    }
+    return this.session;
+  }
+
+  /**
    * Periodic discovery loop for session lifecycle events
    * Checks for session end and triggers transitions
    */
@@ -591,16 +664,49 @@ export class SessionOrchestrator {
     try {
       // Check for session end
       if (this.lifecycleAdapter && this.session.correlation.status === 'matched') {
+        logger.debug(`[SessionOrchestrator] Checking for session end (agentSessionId=${this.session.correlation.agentSessionId})`);
+
         const sessionEndTimestamp = await this.lifecycleAdapter.detectSessionEnd(
           this.session.correlation.agentSessionId!,
           this.session.startTime
         );
 
         if (sessionEndTimestamp) {
-          logger.info(`[SessionOrchestrator] Session end detected at ${sessionEndTimestamp}`);
-          await this.handleSessionTransition(sessionEndTimestamp);
+          logger.info(`[SessionOrchestrator] Session end detected at ${new Date(sessionEndTimestamp).toISOString()}`);
+
+          // Execute transition with lifecycle callbacks
+          const newOrchestrator = await this.handleSessionTransition(
+            sessionEndTimestamp,
+            {
+              executeOnSessionEnd: async (exitCode: number) => {
+                // Call onSessionEnd hook via callback if provided
+                if (this.onLifecycleEvent) {
+                  await this.onLifecycleEvent('sessionEnd', exitCode);
+                }
+              },
+              executeOnSessionStart: async (sessionId: string) => {
+                // Call onSessionStart hook via callback if provided
+                if (this.onLifecycleEvent) {
+                  await this.onLifecycleEvent('sessionStart', sessionId);
+                }
+              }
+            }
+          );
+
+          // Trigger transition callback to replace orchestrator in adapter
+          if (this.onSessionTransition) {
+            await this.onSessionTransition({
+              oldSessionId: this.session!.correlation.agentSessionId!,
+              newSessionFile: newOrchestrator.getSession().correlation.agentSessionFile!,
+              transitionTimestamp: sessionEndTimestamp,
+              newOrchestrator
+            });
+          }
+
           return; // Stop monitoring current session
         }
+
+        logger.debug('[SessionOrchestrator] No session end detected - continuing monitoring');
       }
 
       // Future: Add file discovery logic for new sessions here if needed
@@ -610,54 +716,156 @@ export class SessionOrchestrator {
   }
 
   /**
-   * Handle session transition: finalize current, create new
+   * Handle session transition when /clear is executed
+   *
+   * Follows Scenario 2 (Stop) + Scenario 1 (Start) pattern:
+   * - End old session completely (with lifecycle hooks and sync)
+   * - Create new session with new orchestrator
+   * - Return new orchestrator for adapter to use
    */
-  private async handleSessionTransition(transitionTimestamp: number): Promise<void> {
-    logger.info('[SessionOrchestrator] Finalizing current session');
+  private async handleSessionTransition(
+    transitionTimestamp: number,
+    lifecycleCallbacks: {
+      executeOnSessionEnd: (exitCode: number) => Promise<void>;
+      executeOnSessionStart: (sessionId: string) => Promise<void>;
+    }
+  ): Promise<SessionOrchestrator> {
+    const oldSessionFile = this.session!.correlation.agentSessionFile!;
+    const oldAgentSessionId = this.session!.correlation.agentSessionId!;
 
-    // 1. Finalize current session
-    await this.prepareForExit();
-    await this.markSessionComplete(0);
+    logger.info(`[SessionOrchestrator] Session transition starting: ${oldAgentSessionId} → new session`);
 
-    // 2. Find new session file in SAME directory
-    const currentFile = this.session!.correlation.agentSessionFile!;
-    const { dirname, basename } = await import('path');
-    const currentDir = dirname(currentFile);
+    // ========================================
+    // STEP 1: End Old Session (Scenario 2)
+    // ========================================
+    const { randomUUID } = await import('crypto');
+    const newSessionId = randomUUID();
+    logger.info(`[SessionOrchestrator] Ending old session: ${oldAgentSessionId}`);
 
-    logger.debug(`[SessionOrchestrator] Scanning: ${currentDir}`);
+    // Mark old session with transition link (before ending)
+    this.session!.transitionedTo = newSessionId;
+    await this.store.saveSession(this.session!);
 
-    const snapshot = await this.snapshotter.snapshot(currentDir);
+    // Use extracted endSession() method
+    await this.endSession(0, {
+      beforeCleanup: async () => {
+        // Send END metric via standard lifecycle hook
+        logger.info(`[SessionOrchestrator] Sending END metric for old session`);
+        await lifecycleCallbacks.executeOnSessionEnd(0);
+        logger.info(`[SessionOrchestrator] END metric sent for old session`);
+      },
+      cleanup: async () => {
+        // Trigger immediate sync
+        logger.info(`[SessionOrchestrator] Triggering final sync for old session`);
+        // Note: Cleanup will be passed from BaseAgentAdapter
+      }
+    });
 
-    // Filter: created after transition, exclude current, match pattern
-    const newFiles = snapshot.files.filter(f =>
-      f.modifiedAt > transitionTimestamp + 2000 && // 2s buffer
-      f.path !== currentFile &&
-      this.metricsAdapter.matchesSessionPattern(f.path)
+    logger.info(`[SessionOrchestrator] Old session ended and marked completed`);
+
+    // ========================================
+    // STEP 2: Start New Session (Scenario 1)
+    // ========================================
+    logger.info(`[SessionOrchestrator] Creating new session: ${newSessionId}`);
+
+    // Create new orchestrator for new session
+    const newOrchestrator = new SessionOrchestrator({
+      sessionId: newSessionId,
+      agentName: this.agentName,
+      provider: this.session!.provider,
+      project: this.session!.project,
+      workingDirectory: this.workingDirectory,
+      metricsAdapter: this.metricsAdapter,
+      lifecycleAdapter: this.lifecycleAdapter,
+      onSessionTransition: this.onSessionTransition // Pass same callback
+    });
+
+    // Send START metric for new session
+    logger.info(`[SessionOrchestrator] Sending START metric for new session`);
+    await lifecycleCallbacks.executeOnSessionStart(newSessionId);
+    logger.info(`[SessionOrchestrator] START metric sent for new session`);
+
+    // Initialize new orchestrator (baseline snapshot)
+    logger.info(`[SessionOrchestrator] Initializing new orchestrator`);
+    await newOrchestrator.beforeAgentSpawn();
+
+    // Link new session back to old session
+    newOrchestrator.session!.transitionedFrom = this.sessionId;
+    await newOrchestrator.store.saveSession(newOrchestrator.session!);
+
+    // Find and correlate new agent session file
+    logger.info(`[SessionOrchestrator] Searching for new agent session file...`);
+    logger.debug(`[SessionOrchestrator] Transition at: ${new Date(transitionTimestamp).toISOString()}`);
+
+    // Helper function to get candidates (same as before)
+    const { dirname } = await import('path');
+    const currentDir = dirname(oldSessionFile);
+
+    const getCandidates = async (): Promise<FileInfo[]> => {
+      const snapshot = await newOrchestrator.snapshotter.snapshot(currentDir);
+
+      const candidates = snapshot.files.filter(f =>
+        f.createdAt >= transitionTimestamp - 200 &&
+        f.path !== oldSessionFile
+      );
+
+      if (candidates.length > 0) {
+        logger.debug(`[SessionOrchestrator] Found ${candidates.length} candidate(s)`);
+      }
+
+      return candidates;
+    };
+
+    // Get initial candidates
+    const initialCandidates = await getCandidates();
+
+    // Correlate new orchestrator with new agent session file
+    const correlation = await newOrchestrator.correlator.correlateWithRetry(
+      {
+        sessionId: newSessionId,
+        agentName: this.agentName,
+        workingDirectory: this.workingDirectory,
+        newFiles: initialCandidates,
+        agentPlugin: this.metricsAdapter
+      },
+      getCandidates
     );
 
-    if (newFiles.length === 0) {
-      logger.info('[SessionOrchestrator] No new session file found');
-      return;
+    if (correlation.status !== 'matched') {
+      logger.error(`[SessionOrchestrator] Failed to find new session after ${correlation.retryCount} retries`);
+      throw new Error('Failed to correlate new session after transition');
     }
 
-    // Take earliest new file
-    newFiles.sort((a, b) => a.modifiedAt - b.modifiedAt);
-    const newSessionFile = newFiles[0];
+    const newAgentSessionId = correlation.agentSessionId!;
+    logger.info(`[SessionOrchestrator] New session correlated with agent file: ${newAgentSessionId}`);
 
-    logger.info(`[SessionOrchestrator] New session: ${basename(newSessionFile.path)}`);
+    // Update new orchestrator's correlation
+    newOrchestrator.session!.correlation = correlation;
+    await newOrchestrator.store.saveSession(newOrchestrator.session!);
 
-    // 3. Invoke transition callback if provided
-    if (this.onSessionTransition) {
-      try {
-        await this.onSessionTransition({
-          oldSessionId: this.sessionId,
-          newSessionFile: newSessionFile.path,
-          transitionTimestamp
-        });
-      } catch (error) {
-        logger.error('[SessionOrchestrator] Session transition callback failed:', error);
-      }
-    }
+    // Start monitoring new agent session
+    logger.info(`[SessionOrchestrator] Starting monitoring for new session`);
+    await newOrchestrator.startIncrementalMonitoring(correlation.agentSessionFile!);
+
+    // ========================================
+    // STEP 3: Complete Transition
+    // ========================================
+    logger.info(
+      `[SessionOrchestrator] ✓ Transition complete: ` +
+      `${oldAgentSessionId} (${this.sessionId}) → ${newAgentSessionId} (${newSessionId})`
+    );
+
+    // Log summary
+    logger.info('='.repeat(60));
+    logger.info(`[SessionOrchestrator] Session Transition Summary:`);
+    logger.info(`  Old CodeMie Session: ${this.sessionId}`);
+    logger.info(`  Old Agent Session:   ${oldAgentSessionId}`);
+    logger.info(`  New CodeMie Session: ${newSessionId}`);
+    logger.info(`  New Agent Session:   ${newAgentSessionId}`);
+    logger.info('='.repeat(60));
+
+    // Return new orchestrator so caller can replace it
+    return newOrchestrator;
   }
 
   /**

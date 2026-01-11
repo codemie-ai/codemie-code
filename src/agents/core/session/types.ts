@@ -138,6 +138,10 @@ export interface Session {
 
   // Hierarchical sync state
   sync?: SyncState;
+
+  // Session transition tracking
+  transitionedFrom?: string; // Previous CodeMie session ID if this is a transition
+  transitionedTo?: string;   // Next CodeMie session ID if this session transitioned
 }
 
 /**
