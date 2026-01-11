@@ -141,15 +141,27 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
       logger.info('[sso-session-sync] Dry-run mode enabled - sessions will be logged but not sent');
     }
 
-    // Build cookie header
-    const cookieHeader = Object.entries(cookies)
+    // Check for localhost development override
+    const devApiUrl = process.env.CODEMIE_DEV_API_URL;
+    const devApiKey = process.env.CODEMIE_DEV_API_KEY;
+
+    // Use dev settings if both are provided
+    const isLocalDev = !!devApiUrl && !!devApiKey;
+
+    if (isLocalDev) {
+      logger.info(`[sso-session-sync] Local development mode: using ${devApiUrl} with user-id header`);
+    }
+
+    // Build cookie header (only if not in local dev mode)
+    const cookieHeader = isLocalDev ? '' : Object.entries(cookies)
       .map(([key, value]) => `${key}=${value}`)
       .join('; ');
 
     // Create processing context (shared by all processors)
     this.context = {
-      apiBaseUrl: baseUrl,
+      apiBaseUrl: isLocalDev ? devApiUrl : baseUrl,
       cookies: cookieHeader,
+      apiKey: isLocalDev ? devApiKey : undefined,
       clientType,
       version,
       dryRun
@@ -161,9 +173,9 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
       new ConversationsProcessor()
     ].sort((a, b) => a.priority - b.priority);
 
-    // Get sync interval from env or default to 5 minutes
+    // Get sync interval from env or default to 2 minutes
     this.syncInterval = Number.parseInt(
-      process.env.CODEMIE_SESSION_SYNC_INTERVAL || '300000',
+      process.env.CODEMIE_SESSION_SYNC_INTERVAL || '120000',
       10
     );
   }

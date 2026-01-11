@@ -86,6 +86,7 @@ export interface MetricsApiError {
 export interface MetricsApiConfig {
   baseUrl: string;       // API base URL
   cookies?: string;      // SSO cookies (session token)
+  apiKey?: string;       // API key for localhost development (user-id header)
   timeout?: number;      // Request timeout (ms)
   retryAttempts?: number; // Max retry attempts
   retryDelays?: number[]; // Backoff delays [1s, 2s, 5s]

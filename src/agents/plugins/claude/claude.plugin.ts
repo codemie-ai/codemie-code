@@ -6,6 +6,8 @@ import { ClaudeConversationsAdapter } from './claude.conversations.js';
 import type { AgentConversationsSupport } from './claude.conversations.js';
 import { ClaudeSessionAdapter } from './claude.session-adapter.js';
 import type { SessionAdapter } from '../../../providers/plugins/sso/session/adapters/base/BaseSessionAdapter.js';
+import { ClaudeLifecycleAdapter } from './claude.lifecycle-adapter.js';
+import type { SessionLifecycleAdapter } from '../../core/session/types.js';
 
 /**
  * Claude Code Plugin Metadata
@@ -79,6 +81,7 @@ export class ClaudePlugin extends BaseAgentAdapter {
   private metricsAdapter: AgentMetricsSupport;
   private conversationsAdapter: AgentConversationsSupport;
   private sessionAdapter: SessionAdapter;
+  private lifecycleAdapter: SessionLifecycleAdapter;
 
   constructor() {
     super(ClaudePluginMetadata);
@@ -88,6 +91,8 @@ export class ClaudePlugin extends BaseAgentAdapter {
     this.conversationsAdapter = new ClaudeConversationsAdapter();
     // Initialize session adapter with metadata for unified session sync
     this.sessionAdapter = new ClaudeSessionAdapter(ClaudePluginMetadata);
+    // Initialize lifecycle adapter for session transition detection
+    this.lifecycleAdapter = new ClaudeLifecycleAdapter();
   }
 
   /**
@@ -109,5 +114,12 @@ export class ClaudePlugin extends BaseAgentAdapter {
    */
   getSessionAdapter(): SessionAdapter {
     return this.sessionAdapter;
+  }
+
+  /**
+   * Provide lifecycle adapter for session transition detection
+   */
+  getLifecycleAdapter(): SessionLifecycleAdapter {
+    return this.lifecycleAdapter;
   }
 }

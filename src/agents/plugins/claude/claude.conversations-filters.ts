@@ -46,7 +46,8 @@ const SYSTEM_MESSAGE_PATTERNS = [
   // Local command output wrappers
   '<local-command-stdout>',
   // User interruptions (cancelled requests)
-  '[Request interrupted by user]',
+  // Note: No closing bracket to match all variants like "for tool use", "for command", etc.
+  '[Request interrupted by user',
   // Add more patterns as needed
 ];
 
@@ -140,17 +141,32 @@ export function isSystemMessage(msg: ClaudeMessage): boolean {
 }
 
 /**
- * Check if message is a tool result
+ * Check if message is a tool result (only tool results, no text)
  * Tool results are NOT user prompts - they are incorporated into thoughts
  *
+ * IMPORTANT: Only filters messages with ONLY tool_result content.
+ * Messages with both text and tool_result should be processed normally
+ * to extract the text content.
+ *
  * @param msg - Claude message to check
- * @returns true if message is a tool result
+ * @returns true if message contains ONLY tool results (no text content)
  */
 export function isToolResult(msg: ClaudeMessage): boolean {
   if (msg.type !== 'user') return false;
   const content = msg.message?.content;
   if (!Array.isArray(content)) return false;
-  return content.some((item: ContentItem) => item.type === 'tool_result');
+
+  // Check if message has tool_result content
+  const hasToolResult = content.some((item: ContentItem) => item.type === 'tool_result');
+  if (!hasToolResult) return false;
+
+  // Check if message also has text content
+  const hasText = content.some((item: ContentItem) =>
+    item.type === 'text' && item.text?.trim()
+  );
+
+  // Only filter if message has tool_result AND no text content
+  return hasToolResult && !hasText;
 }
 
 /**

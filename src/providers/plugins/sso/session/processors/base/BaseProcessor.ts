@@ -17,6 +17,8 @@ export interface ProcessingContext {
   apiBaseUrl: string;
   /** Authentication cookies */
   cookies: string;
+  /** API key for localhost development (user-id header) */
+  apiKey?: string;
   /** Client type identifier */
   clientType: string;
   /** Client version */
