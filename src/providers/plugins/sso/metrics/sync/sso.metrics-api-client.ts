@@ -20,6 +20,7 @@ export class MetricsApiClient {
     this.config = {
       baseUrl: config.baseUrl,
       cookies: config.cookies || '',
+      apiKey: config.apiKey || '',
       timeout: config.timeout || 30000,
       retryAttempts: config.retryAttempts || 3,
       retryDelays: config.retryDelays || [1000, 2000, 5000],
@@ -86,8 +87,12 @@ export class MetricsApiClient {
       'X-CodeMie-Client': this.config.clientType
     };
 
-    // Add cookies if present (SSO authentication)
-    if (this.config.cookies) {
+    // Add authentication headers
+    if (this.config.apiKey) {
+      // Localhost development: user-id header only
+      headers['user-id'] = this.config.apiKey;
+    } else if (this.config.cookies) {
+      // SSO: Cookie header
       headers['Cookie'] = this.config.cookies;
     }
 

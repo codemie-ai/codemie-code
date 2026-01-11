@@ -190,4 +190,27 @@ export class HistoryParser {
 
     return map;
   }
+
+  /**
+   * Find /clear command in session after given timestamp
+   * @returns Timestamp of /clear if found, null otherwise
+   */
+  async findClearCommand(
+    sessionId: string,
+    afterTimestamp: number
+  ): Promise<number | null> {
+    const prompts = await this.getPromptsInRange(sessionId, afterTimestamp);
+
+    for (const prompt of prompts) {
+      // Support both formats:
+      // - XML format: <command-name>/clear</command-name>
+      // - Plain format: /clear
+      if (prompt.display.includes('<command-name>/clear</command-name>') ||
+          prompt.display === '/clear ') {
+        return prompt.timestamp;
+      }
+    }
+
+    return null;
+  }
 }

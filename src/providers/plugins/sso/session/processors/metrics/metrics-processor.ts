@@ -178,6 +178,7 @@ export class MetricsProcessor implements SessionProcessor {
       const metricsSender = new MetricsSender({
         baseUrl: context.apiBaseUrl,
         cookies: context.cookies,
+        apiKey: context.apiKey,
         timeout: 30000,
         retryAttempts: 3,
         version: context.version,

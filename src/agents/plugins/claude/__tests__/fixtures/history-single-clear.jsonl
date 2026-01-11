@@ -1,0 +1,18 @@
+{
+  "sessionId": "test-session-1",
+  "timestamp": 1704672000000,
+  "display": "implement feature X",
+  "project": ""
+}
+{
+  "sessionId": "test-session-1",
+  "timestamp": 1704672100000,
+  "display": "<command-name>/clear</command-name>",
+  "project": ""
+}
+{
+  "sessionId": "test-session-1",
+  "timestamp": 1704672200000,
+  "display": "continue with feature Y",
+  "project": ""
+}

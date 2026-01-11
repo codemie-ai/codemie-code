@@ -1,0 +1,18 @@
+{
+  "sessionId": "test-session-4",
+  "timestamp": 1704672000000,
+  "display": "old task",
+  "project": ""
+}
+{
+  "sessionId": "test-session-4",
+  "timestamp": 1704672050000,
+  "display": "<command-name>/clear</command-name>",
+  "project": ""
+}
+{
+  "sessionId": "test-session-4",
+  "timestamp": 1704672100000,
+  "display": "new task after clear",
+  "project": ""
+}

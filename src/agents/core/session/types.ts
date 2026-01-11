@@ -139,3 +139,21 @@ export interface Session {
   // Hierarchical sync state
   sync?: SyncState;
 }
+
+/**
+ * Agent-provided interface for detecting session lifecycle events
+ * Each agent implements based on their user prompt storage
+ */
+export interface SessionLifecycleAdapter {
+  /**
+   * Check if session has ended (e.g., /clear command)
+   *
+   * @param agentSessionId - Agent's session identifier
+   * @param afterTimestamp - Only check events after this time
+   * @returns Timestamp of session end event, or null if still active
+   */
+  detectSessionEnd(
+    agentSessionId: string,
+    afterTimestamp: number
+  ): Promise<number | null>;
+}

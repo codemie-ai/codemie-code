@@ -66,9 +66,9 @@ export class ClaudeSessionAdapter implements SessionAdapter {
       }
 
       // Extract session ID from first message with sessionId (may not be first line)
-      // First line can be file-history-snapshot or other metadata without sessionId
+      // First lines can be summary/metadata without sessionId
       let sessionId: string | undefined;
-      for (const message of messages.slice(0, 10)) { // Check first 10 messages
+      for (const message of messages.slice(0, 20)) { // Check first 20 messages (increased from 10)
         if (message.sessionId) {
           sessionId = message.sessionId;
           break;
@@ -76,7 +76,7 @@ export class ClaudeSessionAdapter implements SessionAdapter {
       }
 
       if (!sessionId) {
-        throw new Error('Session ID not found in any message');
+        throw new Error('Session ID not found in first 20 messages');
       }
 
       // Extract timestamps from first/last messages that have them

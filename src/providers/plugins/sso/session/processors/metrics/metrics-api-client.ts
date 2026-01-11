@@ -43,6 +43,7 @@ export interface SessionError {
 export interface MetricsSenderOptions {
   baseUrl: string;
   cookies?: string;
+  apiKey?: string;    // API key for localhost development (user-id header)
   timeout?: number;
   retryAttempts?: number;
   version?: string;
@@ -75,6 +76,7 @@ export class MetricsSender {
     const config: MetricsApiConfig = {
       baseUrl: options.baseUrl,
       cookies: options.cookies,
+      apiKey: options.apiKey,
       timeout: options.timeout,
       retryAttempts: options.retryAttempts,
       version: options.version,

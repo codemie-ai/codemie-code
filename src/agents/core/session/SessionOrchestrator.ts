@@ -21,13 +21,19 @@ import { SessionCorrelator } from './SessionCorrelator.js';
 import { SessionStore } from './SessionStore.js';
 import { DeltaWriter } from '../metrics/DeltaWriter.js';
 import { MetricsSyncStateManager } from '../metrics/MetricsSyncStateManager.js';
-import type { Session, FileSnapshot } from './types.js';
+import type { Session, FileSnapshot, SessionLifecycleAdapter } from './types.js';
 import type { AgentMetricsSupport } from '../metrics/types.js';
 import { METRICS_CONFIG } from '../metrics-config.js';
 import { logger } from '../../../utils/logger.js';
 import { watch } from 'fs';
 import { detectGitBranch } from '../../../utils/processes.js';
 import { createErrorContext, formatErrorForLog } from '../../../utils/errors.js';
+
+export interface SessionTransitionEvent {
+  oldSessionId: string;
+  newSessionFile: string;
+  transitionTimestamp: number;
+}
 
 export interface SessionOrchestratorOptions {
   sessionId?: string; // Optional: provide existing session ID
@@ -36,6 +42,8 @@ export interface SessionOrchestratorOptions {
   project?: string; // SSO project name (optional, only for ai-run-sso provider)
   workingDirectory: string;
   metricsAdapter: AgentMetricsSupport;
+  lifecycleAdapter?: SessionLifecycleAdapter; // Optional: for session lifecycle detection
+  onSessionTransition?: (event: SessionTransitionEvent) => void | Promise<void>; // Optional: callback for session transitions
 }
 
 export class SessionOrchestrator {
@@ -45,6 +53,8 @@ export class SessionOrchestrator {
   private project?: string;
   private workingDirectory: string;
   private metricsAdapter: AgentMetricsSupport;
+  private lifecycleAdapter?: SessionLifecycleAdapter;
+  private onSessionTransition?: (event: SessionTransitionEvent) => void | Promise<void>;
 
   private snapshotter: FileSnapshotter;
   private correlator: SessionCorrelator;
@@ -54,6 +64,7 @@ export class SessionOrchestrator {
   private deltaWriter: DeltaWriter | null = null;
   private metricsSyncStateManager: MetricsSyncStateManager | null = null;
   private fileWatcher: ReturnType<typeof watch> | null = null;
+  private discoveryInterval: NodeJS.Timeout | null = null;
 
   private beforeSnapshot: FileSnapshot | null = null;
   private session: Session | null = null;
@@ -66,6 +77,8 @@ export class SessionOrchestrator {
     this.project = options.project;
     this.workingDirectory = options.workingDirectory;
     this.metricsAdapter = options.metricsAdapter;
+    this.lifecycleAdapter = options.lifecycleAdapter;
+    this.onSessionTransition = options.onSessionTransition;
 
     this.snapshotter = new FileSnapshotter();
     this.correlator = new SessionCorrelator();
@@ -287,6 +300,13 @@ export class SessionOrchestrator {
     try {
       logger.debug('[SessionOrchestrator] Preparing session for exit...');
 
+      // Stop discovery interval
+      if (this.discoveryInterval) {
+        clearInterval(this.discoveryInterval);
+        this.discoveryInterval = null;
+        logger.debug('[SessionOrchestrator] Stopped discovery interval');
+      }
+
       // Stop file watcher
       if (this.fileWatcher) {
         this.fileWatcher.close();
@@ -407,6 +427,15 @@ export class SessionOrchestrator {
       });
 
       logger.debug('[SessionOrchestrator] Started file watching for incremental metrics');
+
+      // Start periodic discovery for session lifecycle events (30s interval)
+      if (this.lifecycleAdapter) {
+        const DISCOVERY_INTERVAL = 30000; // 30 seconds
+        this.discoveryInterval = setInterval(() => {
+          void this.discoverNewSessions();
+        }, DISCOVERY_INTERVAL);
+        logger.debug('[SessionOrchestrator] Started periodic session lifecycle discovery');
+      }
 
     } catch (error) {
       logger.error('[SessionOrchestrator] Failed to start incremental monitoring:', error);
@@ -548,6 +577,87 @@ export class SessionOrchestrator {
    */
   hasInitializationError(): boolean {
     return this.getInitializationError() !== null;
+  }
+
+  /**
+   * Periodic discovery loop for session lifecycle events
+   * Checks for session end and triggers transitions
+   */
+  private async discoverNewSessions(): Promise<void> {
+    if (!this.isEnabled() || !this.session) {
+      return;
+    }
+
+    try {
+      // Check for session end
+      if (this.lifecycleAdapter && this.session.correlation.status === 'matched') {
+        const sessionEndTimestamp = await this.lifecycleAdapter.detectSessionEnd(
+          this.session.correlation.agentSessionId!,
+          this.session.startTime
+        );
+
+        if (sessionEndTimestamp) {
+          logger.info(`[SessionOrchestrator] Session end detected at ${sessionEndTimestamp}`);
+          await this.handleSessionTransition(sessionEndTimestamp);
+          return; // Stop monitoring current session
+        }
+      }
+
+      // Future: Add file discovery logic for new sessions here if needed
+    } catch (error) {
+      logger.error('[SessionOrchestrator] Discovery failed:', error);
+    }
+  }
+
+  /**
+   * Handle session transition: finalize current, create new
+   */
+  private async handleSessionTransition(transitionTimestamp: number): Promise<void> {
+    logger.info('[SessionOrchestrator] Finalizing current session');
+
+    // 1. Finalize current session
+    await this.prepareForExit();
+    await this.markSessionComplete(0);
+
+    // 2. Find new session file in SAME directory
+    const currentFile = this.session!.correlation.agentSessionFile!;
+    const { dirname, basename } = await import('path');
+    const currentDir = dirname(currentFile);
+
+    logger.debug(`[SessionOrchestrator] Scanning: ${currentDir}`);
+
+    const snapshot = await this.snapshotter.snapshot(currentDir);
+
+    // Filter: created after transition, exclude current, match pattern
+    const newFiles = snapshot.files.filter(f =>
+      f.modifiedAt > transitionTimestamp + 2000 && // 2s buffer
+      f.path !== currentFile &&
+      this.metricsAdapter.matchesSessionPattern(f.path)
+    );
+
+    if (newFiles.length === 0) {
+      logger.info('[SessionOrchestrator] No new session file found');
+      return;
+    }
+
+    // Take earliest new file
+    newFiles.sort((a, b) => a.modifiedAt - b.modifiedAt);
+    const newSessionFile = newFiles[0];
+
+    logger.info(`[SessionOrchestrator] New session: ${basename(newSessionFile.path)}`);
+
+    // 3. Invoke transition callback if provided
+    if (this.onSessionTransition) {
+      try {
+        await this.onSessionTransition({
+          oldSessionId: this.sessionId,
+          newSessionFile: newSessionFile.path,
+          transitionTimestamp
+        });
+      } catch (error) {
+        logger.error('[SessionOrchestrator] Session transition callback failed:', error);
+      }
+    }
   }
 
   /**
