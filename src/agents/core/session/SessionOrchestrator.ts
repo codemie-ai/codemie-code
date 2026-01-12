@@ -99,30 +99,13 @@ export class SessionOrchestrator {
    */
   async beforeAgentSpawn(): Promise<void> {
     try {
-      logger.info('[SessionOrchestrator] Preparing to track session metrics...');
-
       // Get agent data paths
       const { sessionsDir } = this.metricsAdapter.getDataPaths();
-      logger.debug(`[SessionOrchestrator] Taking pre-spawn snapshot of: ${sessionsDir}`);
+      logger.debug(`[SessionOrchestrator] snapshot: phase=pre_spawn dir=${sessionsDir}`);
 
       // Take snapshot
       this.beforeSnapshot = await this.snapshotter.snapshot(sessionsDir);
-
-      logger.info(`[SessionOrchestrator] Baseline: ${this.beforeSnapshot.files.length} existing session file${this.beforeSnapshot.files.length !== 1 ? 's' : ''}`);
-      logger.debug(`[SessionOrchestrator] Pre-spawn snapshot complete: ${this.beforeSnapshot.files.length} files`);
-
-      // Show sample of baseline files for debugging
-      if (this.beforeSnapshot.files.length > 0) {
-        const sampleSize = Math.min(3, this.beforeSnapshot.files.length);
-        const sample = this.beforeSnapshot.files.slice(0, sampleSize).map(f => f.path);
-        logger.info(`[SessionOrchestrator] Sample files (first ${sampleSize}):`);
-        for (const filePath of sample) {
-          logger.info(`[SessionOrchestrator]    → ${filePath}`);
-        }
-        if (this.beforeSnapshot.files.length > sampleSize) {
-          logger.info(`[SessionOrchestrator]    ... and ${this.beforeSnapshot.files.length - sampleSize} more`);
-        }
-      }
+      logger.debug(`[SessionOrchestrator] snapshot: phase=pre_spawn files=${this.beforeSnapshot.files.length}`);
 
       // Detect git branch from working directory
       const gitBranch = await detectGitBranch(this.workingDirectory);
@@ -149,8 +132,7 @@ export class SessionOrchestrator {
 
       // Save initial session
       await this.store.saveSession(this.session);
-      logger.info(`[SessionOrchestrator] Session created: ${this.sessionId}`);
-      logger.debug(`[SessionOrchestrator] Agent: ${this.agentName}, Provider: ${this.provider}`);
+      logger.info(`[SessionOrchestrator] session_created: id=${this.sessionId} agent=${this.agentName} provider=${this.provider}`);
 
     } catch (error) {
       // Disable metrics for the rest of the session to prevent log pollution
@@ -189,49 +171,22 @@ export class SessionOrchestrator {
     }
 
     try {
-      logger.info(`[SessionOrchestrator] Agent started - waiting for session file creation...`);
-
       // Wait for agent to initialize and create session file
       const initDelay = this.metricsAdapter.getInitDelay();
-      await this.sleep(initDelay);
-
-      // Get agent data paths
       const { sessionsDir } = this.metricsAdapter.getDataPaths();
-      logger.info(`[SessionOrchestrator] Scanning directory: ${sessionsDir}`);
+      logger.debug(`[SessionOrchestrator] snapshot: phase=post_spawn delay=${initDelay}ms dir=${sessionsDir}`);
+
+      await this.sleep(initDelay);
 
       // Take snapshot
       const afterSnapshot = await this.snapshotter.snapshot(sessionsDir);
-      logger.info(`[SessionOrchestrator] Found ${afterSnapshot.files.length} total session file${afterSnapshot.files.length !== 1 ? 's' : ''} in directory`);
-      logger.debug(`[SessionOrchestrator] Pre-spawn: ${this.beforeSnapshot.files.length} files, Post-spawn: ${afterSnapshot.files.length} files`);
-
-      // Show sample of post-spawn files for comparison
-      if (afterSnapshot.files.length > 0 && afterSnapshot.files.length !== this.beforeSnapshot.files.length) {
-        const sampleSize = Math.min(3, afterSnapshot.files.length);
-        const sample = afterSnapshot.files.slice(0, sampleSize).map(f => f.path);
-        logger.info(`[SessionOrchestrator] Post-spawn files (first ${sampleSize}):`);
-        for (const filePath of sample) {
-          logger.info(`[SessionOrchestrator]    → ${filePath}`);
-        }
-        if (afterSnapshot.files.length > sampleSize) {
-          logger.info(`[SessionOrchestrator]    ... and ${afterSnapshot.files.length - sampleSize} more`);
-        }
-      }
+      logger.debug(`[SessionOrchestrator] snapshot: phase=post_spawn pre=${this.beforeSnapshot.files.length} post=${afterSnapshot.files.length}`);
 
       // Compute diff
       const newFiles = this.snapshotter.diff(this.beforeSnapshot, afterSnapshot);
-      if (newFiles.length > 0) {
-        logger.info(`[SessionOrchestrator] ${newFiles.length} new file${newFiles.length !== 1 ? 's' : ''} created since agent start`);
-        // Use path.basename for cross-platform display
-        const { basename } = await import('path');
-        logger.info(`[SessionOrchestrator]    ${newFiles.map(f => `→ ${basename(f.path)}`).join(', ')}`);
-        logger.debug(`[SessionOrchestrator] New files (full paths): ${newFiles.map(f => f.path).join(', ')}`);
-      } else {
-        logger.info(`[SessionOrchestrator] No new files yet - will retry...`);
-        logger.debug(`[SessionOrchestrator] Diff result: 0 new files (baseline had ${this.beforeSnapshot.files.length}, post-spawn has ${afterSnapshot.files.length})`);
-      }
+      logger.debug(`[SessionOrchestrator] diff: new_files=${newFiles.length}`);
 
       // Correlate with retry
-      logger.debug('[SessionOrchestrator] Starting correlation with retry...');
       const correlation = await this.correlator.correlateWithRetry(
         {
           sessionId: this.sessionId,
@@ -254,14 +209,12 @@ export class SessionOrchestrator {
       this.session = await this.store.loadSession(this.sessionId);
 
       if (correlation.status === 'matched') {
-        logger.debug(`[SessionOrchestrator] Session correlated: ${correlation.agentSessionId}`);
-        logger.debug(`[SessionOrchestrator]   Agent file: ${correlation.agentSessionFile}`);
-        logger.debug(`[SessionOrchestrator]   Retry count: ${correlation.retryCount}`);
+        logger.info(`[SessionOrchestrator] correlation: status=matched session_id=${correlation.agentSessionId} retries=${correlation.retryCount}`);
 
         // Start incremental delta monitoring
         await this.startIncrementalMonitoring(correlation.agentSessionFile!);
       } else {
-        logger.warn(`[SessionOrchestrator] Correlation failed after ${correlation.retryCount} retries`);
+        logger.warn(`[SessionOrchestrator] correlation: status=failed retries=${correlation.retryCount}`);
       }
 
     } catch (error) {

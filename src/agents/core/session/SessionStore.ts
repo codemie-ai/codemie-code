@@ -1,8 +1,8 @@
 /**
  * Session Store
  *
- * Manages persistence of metrics session data to JSON files.
- * One file per session: ~/.codemie/metrics/sessions/{sessionId}.json
+ * Manages persistence of session data to JSON files.
+ * One file per session: ~/.codemie/sessions/{sessionId}.json
  */
 
 import { readFile, writeFile, readdir, mkdir } from 'fs/promises';
@@ -16,7 +16,7 @@ import { createErrorContext, formatErrorForLog } from '../../../utils/errors.js'
 export class SessionStore {
   /**
    * Save session to disk
-   * Path: ~/.codemie/metrics/sessions/{sessionId}.json
+   * Path: ~/.codemie/sessions/{sessionId}.json
    */
   async saveSession(session: Session): Promise<void> {
     const sessionPath = getSessionPath(session.sessionId);

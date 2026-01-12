@@ -56,27 +56,13 @@ export class ClaudeSessionAdapter implements SessionAdapter {
    * Parse Claude session file to unified format.
    * Extracts both raw messages (for conversations) and metrics (for metrics processor).
    */
-  async parseSessionFile(filePath: string): Promise<ParsedSession> {
+  async parseSessionFile(filePath: string, sessionId: string): Promise<ParsedSession> {
     try {
       // Read JSONL file
       const messages = await readJSONL<ClaudeMessage>(filePath);
 
       if (messages.length === 0) {
         throw new Error('Session file is empty or has no valid messages');
-      }
-
-      // Extract session ID from first message with sessionId (may not be first line)
-      // First lines can be summary/metadata without sessionId
-      let sessionId: string | undefined;
-      for (const message of messages.slice(0, 20)) { // Check first 20 messages (increased from 10)
-        if (message.sessionId) {
-          sessionId = message.sessionId;
-          break;
-        }
-      }
-
-      if (!sessionId) {
-        throw new Error('Session ID not found in first 20 messages');
       }
 
       // Extract timestamps from first/last messages that have them

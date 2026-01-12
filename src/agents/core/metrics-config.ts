@@ -68,34 +68,36 @@ export const METRICS_CONFIG: MetricsConfig = {
 
 /**
  * Storage paths
+ * All session data consolidated under ~/.codemie/sessions/
  */
 export const METRICS_PATHS = {
-  root: '.codemie/metrics',
-  sessions: 'sessions'
+  root: '.codemie/sessions',
+  sessions: '' // Empty string - sessions are directly in root
 };
 
 /**
- * Get full path for metrics storage
+ * Get full path for session storage
+ * Base: ~/.codemie/sessions/
  */
 export function getMetricsPath(subpath?: string): string {
-  const base = join(getCodemieHome(), 'metrics');
+  const base = join(getCodemieHome(), 'sessions');
   return subpath ? join(base, subpath) : base;
 }
 
 /**
  * Get session metadata file path
- * Format: ~/.codemie/metrics/sessions/{sessionId}.json
+ * Format: ~/.codemie/sessions/{sessionId}.json
  */
 export function getSessionPath(sessionId: string): string {
-  return getMetricsPath(`${METRICS_PATHS.sessions}/${sessionId}.json`);
+  return join(getCodemieHome(), 'sessions', `${sessionId}.json`);
 }
 
 /**
  * Get session metrics JSONL file path
- * Format: ~/.codemie/metrics/sessions/{sessionId}_metrics.jsonl
+ * Format: ~/.codemie/sessions/{sessionId}_metrics.jsonl
  */
 export function getSessionMetricsPath(sessionId: string): string {
-  return getMetricsPath(`${METRICS_PATHS.sessions}/${sessionId}_metrics.jsonl`);
+  return join(getCodemieHome(), 'sessions', `${sessionId}_metrics.jsonl`);
 }
 
 /**
@@ -104,5 +106,5 @@ export function getSessionMetricsPath(sessionId: string): string {
  * @deprecated Use session.json for sync state
  */
 export function getSyncStatePath(sessionId: string): string {
-  return getMetricsPath(`${METRICS_PATHS.sessions}/${sessionId}.json`);
+  return join(getCodemieHome(), 'sessions', `${sessionId}.json`);
 }
