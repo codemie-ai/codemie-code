@@ -99,9 +99,9 @@ describe('ClaudeSessionAdapter', () => {
 
       await writeJSONLAtomic(sessionFile, messages);
 
-      const parsed = await adapter.parseSessionFile(sessionFile);
+      const parsed = await adapter.parseSessionFile(sessionFile, 'codemie-session-123');
 
-      expect(parsed.sessionId).toBe('session-123');
+      expect(parsed.sessionId).toBe('codemie-session-123');
       expect(parsed.agentName).toBe('claude');
       expect(parsed.messages).toHaveLength(2);
       expect(parsed.metadata.projectPath).toBe(sessionFile);
@@ -151,7 +151,7 @@ describe('ClaudeSessionAdapter', () => {
 
       await writeJSONLAtomic(sessionFile, messages);
 
-      const parsed = await adapter.parseSessionFile(sessionFile);
+      const parsed = await adapter.parseSessionFile(sessionFile, 'codemie-session-metrics');
 
       expect(parsed.metrics?.tokens?.input).toBe(250);  // 100 + 150
       expect(parsed.metrics?.tokens?.output).toBe(450);  // 200 + 250
@@ -199,7 +199,7 @@ describe('ClaudeSessionAdapter', () => {
 
       await writeJSONLAtomic(sessionFile, messages);
 
-      const parsed = await adapter.parseSessionFile(sessionFile);
+      const parsed = await adapter.parseSessionFile(sessionFile, 'codemie-session-tools');
 
       expect(parsed.metrics?.tools?.Read).toBe(2);
       expect(parsed.metrics?.tools?.Edit).toBe(1);
@@ -247,7 +247,7 @@ describe('ClaudeSessionAdapter', () => {
 
       await writeJSONLAtomic(sessionFile, messages);
 
-      const parsed = await adapter.parseSessionFile(sessionFile);
+      const parsed = await adapter.parseSessionFile(sessionFile, 'codemie-session-tool-status');
 
       expect(parsed.metrics?.toolStatus?.Read).toEqual({ success: 1, failure: 1 });
       expect(parsed.metrics?.toolStatus?.Edit).toEqual({ success: 1, failure: 0 });
@@ -257,7 +257,7 @@ describe('ClaudeSessionAdapter', () => {
       const sessionFile = join(tempDir, 'empty-session.jsonl');
       await writeJSONLAtomic(sessionFile, []);
 
-      await expect(adapter.parseSessionFile(sessionFile))
+      await expect(adapter.parseSessionFile(sessionFile, 'codemie-session-empty'))
         .rejects
         .toThrow('empty');
     });
@@ -298,31 +298,13 @@ describe('ClaudeSessionAdapter', () => {
 
       await writeJSONLAtomic(sessionFile, messages);
 
-      const parsed = await adapter.parseSessionFile(sessionFile);
+      const parsed = await adapter.parseSessionFile(sessionFile, 'codemie-session-snapshot');
 
-      expect(parsed.sessionId).toBe('session-123');
+      expect(parsed.sessionId).toBe('codemie-session-snapshot');
       expect(parsed.messages).toHaveLength(3);
       expect(parsed.metadata.createdAt).toBe('2024-01-01T00:00:01Z');
     });
 
-    it('should throw error for session without sessionId in any message', async () => {
-      const sessionFile = join(tempDir, 'invalid-session.jsonl');
-      const messages = [
-        {
-          type: 'user',
-          uuid: 'msg-1',
-          // Missing sessionId
-          timestamp: '2024-01-01T00:00:00Z',
-          message: { role: 'user', content: 'test' }
-        }
-      ];
-
-      await writeJSONLAtomic(sessionFile, messages);
-
-      await expect(adapter.parseSessionFile(sessionFile))
-        .rejects
-        .toThrow('Session ID not found');
-    });
 
     it('should handle messages without usage data', async () => {
       const sessionFile = join(tempDir, 'no-usage-session.jsonl');
@@ -345,7 +327,7 @@ describe('ClaudeSessionAdapter', () => {
 
       await writeJSONLAtomic(sessionFile, messages);
 
-      const parsed = await adapter.parseSessionFile(sessionFile);
+      const parsed = await adapter.parseSessionFile(sessionFile, 'codemie-session-no-usage');
 
       expect(parsed.metrics?.tokens?.input).toBe(0);
       expect(parsed.metrics?.tokens?.output).toBe(0);

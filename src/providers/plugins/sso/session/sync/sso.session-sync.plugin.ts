@@ -232,11 +232,11 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
     // Final sync (ensure all sessions are processed)
     // This syncs BOTH metrics and conversations
     try {
-      logger.info(`[${this.name}] Final sync starting (metrics + conversations)...`);
+      logger.info(`[${this.name}] sync: phase=final session_id=${this.sessionId}`);
       await this.syncSessions();
-      logger.info(`[${this.name}] Session data saved successfully`);
+      logger.info(`[${this.name}] sync: phase=final status=success session_id=${this.sessionId}`);
     } catch (error) {
-      logger.error(`[${this.name}] Final sync failed:`, error);
+      logger.error(`[${this.name}] sync: phase=final status=error session_id=${this.sessionId}`, error);
     }
   }
 
@@ -264,24 +264,24 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
       const sessionMetadata = await sessionStore.loadSession(this.sessionId);
 
       if (!sessionMetadata) {
-        logger.debug(`[${this.name}] Session metadata not found for ${this.sessionId}`);
+        logger.debug(`[${this.name}] sync: skipped reason=no_metadata session_id=${this.sessionId}`);
         return;
       }
 
       // 2. Check if session is correlated to agent session file
       if (sessionMetadata.correlation.status !== 'matched') {
-        logger.debug(`[${this.name}] Session not yet correlated (status: ${sessionMetadata.correlation.status})`);
+        logger.debug(`[${this.name}] sync: skipped reason=not_correlated status=${sessionMetadata.correlation.status} session_id=${this.sessionId}`);
         return;
       }
 
       if (!sessionMetadata.correlation.agentSessionFile) {
-        logger.debug(`[${this.name}] No agent session file in correlation data`);
+        logger.debug(`[${this.name}] sync: skipped reason=no_agent_file session_id=${this.sessionId}`);
         return;
       }
 
       // 3. Process the correlated session file
       const agentSessionFile = sessionMetadata.correlation.agentSessionFile;
-      logger.info(`[${this.name}] Processing correlated session: ${agentSessionFile}`);
+      logger.debug(`[${this.name}] sync: processing file=${agentSessionFile}`);
 
       try {
         await this.processSession(agentSessionFile);
@@ -307,14 +307,10 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
     }
 
     // Parse session file via adapter (agent-specific parsing)
-    const session = await this.adapter.parseSessionFile(sessionFile);
+    // Pass CodeMie session ID directly - it's already been correlated by SessionOrchestrator
+    const session = await this.adapter.parseSessionFile(sessionFile, this.sessionId);
 
-    // CRITICAL: Override sessionId to use codemie session ID (not agent's session ID)
-    // This ensures processors can look up the correct SessionStore entry
-    const originalAgentSessionId = session.sessionId;
-    session.sessionId = this.sessionId;
-
-    logger.debug(`[${this.name}] Processing session ${this.sessionId} (agent session: ${originalAgentSessionId}) from ${sessionFile}`);
+    logger.debug(`[${this.name}] Processing session ${this.sessionId} from ${sessionFile}`);
 
     // Track results from each processor
     const results: Record<string, ProcessingResult> = {};
@@ -353,18 +349,30 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
     const successCount = Object.values(results).filter(r => r.success).length;
     const totalCount = Object.keys(results).length;
 
-    // Log detailed results for each processor
-    const processedItems: string[] = [];
+    // Build structured log with processor-specific details
+    const processorDetails: string[] = [];
+
     for (const [processorName, result] of Object.entries(results)) {
       if (result.success) {
-        processedItems.push(`${processorName} (✓)`);
+        // Extract metadata for detailed logging
+        const meta = result.metadata || {};
+
+        if (processorName === 'metrics' && meta.deltasProcessed !== undefined) {
+          processorDetails.push(`metrics: synced=${meta.deltasProcessed} branches=${meta.branchCount || 0}`);
+        } else if (processorName === 'conversations' && meta.messagesProcessed !== undefined) {
+          const turnType = meta.isTurnContinuation ? 'continuation' : 'new_turn';
+          processorDetails.push(`conversations: messages=${meta.messagesProcessed} type=${turnType}`);
+        } else {
+          // Fallback for processors without specific metadata
+          processorDetails.push(`${processorName}: status=success`);
+        }
       } else {
-        processedItems.push(`${processorName} (✗)`);
+        processorDetails.push(`${processorName}: status=failed error="${result.message || 'unknown'}"`);
       }
     }
 
     logger.info(
-      `[${this.name}] Processed session ${this.sessionId} (${successCount}/${totalCount} processors succeeded): ${processedItems.join(', ')}`
+      `[${this.name}] sync: session_id=${this.sessionId} processors=${successCount}/${totalCount} ${processorDetails.join(' ')}`
     );
   }
 }
