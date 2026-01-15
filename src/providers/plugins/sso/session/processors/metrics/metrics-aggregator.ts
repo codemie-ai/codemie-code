@@ -77,6 +77,12 @@ function buildSessionAttributes(
   version: string,
   branch: string
 ): SessionAttributes {
+  // Use agent session ID from session correlation for API calls
+  // This is the canonical source of truth set during SessionStart
+  // Fallback: If correlation not set, try deltas, then session ID
+  const agentSessionId = session.correlation?.agentSessionId
+    || deltas[0]?.agentSessionId
+    || session.sessionId;
   // Token aggregation
   let totalInput = 0;
   let totalOutput = 0;
@@ -108,14 +114,16 @@ function buildSessionAttributes(
   // Aggregate all deltas
   for (const delta of deltas) {
     // Tokens
-    totalInput += delta.tokens.input || 0;
-    totalOutput += delta.tokens.output || 0;
-    totalCacheRead += delta.tokens.cacheRead || 0;
-    totalCacheCreation += delta.tokens.cacheCreation || 0;
+    totalInput += delta.tokens?.input || 0;
+    totalOutput += delta.tokens?.output || 0;
+    totalCacheRead += delta.tokens?.cacheRead || 0;
+    totalCacheCreation += delta.tokens?.cacheCreation || 0;
 
-    // Tools
-    for (const [toolName, count] of Object.entries(delta.tools)) {
-      toolCounts[toolName] = (toolCounts[toolName] || 0) + count;
+    // Tools (defensive: old deltas might not have tools field)
+    if (delta.tools) {
+      for (const [toolName, count] of Object.entries(delta.tools)) {
+        toolCounts[toolName] = (toolCounts[toolName] || 0) + count;
+      }
     }
 
     // Tool status
@@ -197,7 +205,7 @@ function buildSessionAttributes(
     agent_version: version,
     llm_model: primaryModel || 'unknown',
     repository: session.workingDirectory,
-    session_id: session.sessionId,
+    session_id: agentSessionId,  // Use agent session ID for API correlation
     branch: branch,
     ...(session.project && { project: session.project }),
 

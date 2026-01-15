@@ -9,9 +9,7 @@
     "codemie": "./bin/codemie.js",
     "codemie-code": "./bin/agent-executor.js",
     "codemie-claude": "./bin/codemie-claude.js",
-    "codemie-codex": "./bin/codemie-codex.js",
-    "codemie-gemini": "./bin/codemie-gemini.js",
-    "codemie-deepagents": "./bin/codemie-deepagents.js"
+    "codemie-gemini": "./bin/codemie-gemini.js"
   },
   "files": [
     "dist",
@@ -22,7 +20,8 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && npm run copy-plugin",
+    "copy-plugin": "mkdir -p dist/agents/plugins/claude/plugin && cp -r src/agents/plugins/claude/plugin/. dist/agents/plugins/claude/plugin/",
     "dev": "tsc --watch",
     "test": "vitest",
     "test:unit": "vitest run src",

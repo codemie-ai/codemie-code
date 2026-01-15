@@ -12,8 +12,8 @@ describe('AgentRegistry', () => {
     it('should register all default agents', () => {
       const agentNames = AgentRegistry.getAgentNames();
 
-      // Should have all 5 default agents
-      expect(agentNames).toHaveLength(5);
+      // Should have all 3 default agents (codemie-code, claude, gemini)
+      expect(agentNames).toHaveLength(3);
     });
 
     it('should register built-in agent', () => {
@@ -30,25 +30,11 @@ describe('AgentRegistry', () => {
       expect(agent?.name).toBe('claude');
     });
 
-    it('should register Codex plugin', () => {
-      const agent = AgentRegistry.getAgent('codex');
-
-      expect(agent).toBeDefined();
-      expect(agent?.name).toBe('codex');
-    });
-
     it('should register Gemini plugin', () => {
       const agent = AgentRegistry.getAgent('gemini');
 
       expect(agent).toBeDefined();
       expect(agent?.name).toBe('gemini');
-    });
-
-    it('should register DeepAgents plugin', () => {
-      const agent = AgentRegistry.getAgent('deepagents');
-
-      expect(agent).toBeDefined();
-      expect(agent?.name).toBe('deepagents');
     });
   });
 
@@ -62,7 +48,7 @@ describe('AgentRegistry', () => {
     it('should return all registered agents', () => {
       const agents = AgentRegistry.getAllAgents();
 
-      expect(agents).toHaveLength(5);
+      expect(agents).toHaveLength(3);
       expect(agents.every((agent) => agent.name)).toBe(true);
     });
 
@@ -71,9 +57,7 @@ describe('AgentRegistry', () => {
 
       expect(names).toContain(BUILTIN_AGENT_NAME);
       expect(names).toContain('claude');
-      expect(names).toContain('codex');
       expect(names).toContain('gemini');
-      expect(names).toContain('deepagents');
     });
   });
 

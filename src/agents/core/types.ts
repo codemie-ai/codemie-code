@@ -231,24 +231,10 @@ export interface MetricsConfig {
   // Provider filter
   enabled: (provider: string) => boolean;
 
-  // Agent-specific init delays
-  initDelay: Record<string, number>;
-
   // Retry configuration
   retry: {
     attempts: number;
     delays: number[]; // Exponential backoff delays
-  };
-
-  // Monitoring configuration
-  monitoring: {
-    pollInterval: number; // Polling fallback interval (ms)
-    debounceDelay: number; // Debounce delay before collection (ms)
-  };
-
-  // Watermark configuration
-  watermark: {
-    ttl: number; // Time-to-live (ms) - 24h
   };
 
   // Post-processing configuration

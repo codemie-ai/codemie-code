@@ -125,7 +125,7 @@ export interface RawSessionData {
 }
 
 /**
- * Load all metric files from ~/.codemie/metrics/sessions/
+ * Load all metric files from ~/.codemie/sessions/
  */
 export class MetricsDataLoader {
   private sessionsDir: string;

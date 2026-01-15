@@ -15,21 +15,169 @@
  * Only works with ai-run-sso provider which provides authentication cookies.
  */
 
-import { MetricsApiClient } from '../../../metrics/sync/sso.metrics-api-client.js';
-import type { SessionMetric, MetricsApiConfig, MetricsSyncResponse } from './metrics-types.js';
+import type { SessionMetric, MetricsApiConfig, MetricsSyncResponse, MetricsApiError } from './metrics-types.js';
 import type { Session } from '../../../../../../agents/core/session/types.js';
 import { logger } from '../../../../../../utils/logger.js';
 import { detectGitBranch } from '../../../../../../utils/processes.js';
+import { CODEMIE_ENDPOINTS } from '../../../sso.http-client.js';
 
 /**
- * Session start status
+ * Low-level HTTP client for sending metrics to CodeMie API
+ * Features:
+ * - Exponential backoff retry
+ * - SSO cookie authentication or apiKey authentication
+ * - JSON batch sending
+ * - Error classification (retryable vs non-retryable)
  */
-export type SessionStartStatus = 'started' | 'failed';
+class MetricsApiClient {
+  private readonly config: Required<MetricsApiConfig>;
+
+  constructor(config: MetricsApiConfig) {
+    this.config = {
+      baseUrl: config.baseUrl,
+      cookies: config.cookies || '',
+      apiKey: config.apiKey || '',
+      timeout: config.timeout || 30000,
+      retryAttempts: config.retryAttempts || 3,
+      retryDelays: config.retryDelays || [1000, 2000, 5000],
+      version: config.version || process.env.CODEMIE_CLI_VERSION || 'unknown',
+      clientType: config.clientType || 'codemie-cli'
+    };
+  }
+
+  async sendMetric(metric: SessionMetric): Promise<MetricsSyncResponse> {
+    let lastError: Error | undefined;
+
+    for (let attempt = 0; attempt <= this.config.retryAttempts; attempt++) {
+      try {
+        if (attempt > 0) {
+          const delay = this.config.retryDelays[attempt - 1] || 5000;
+          logger.debug(`[MetricsApiClient] Retry attempt ${attempt} after ${delay}ms`);
+          await this.sleep(delay);
+        }
+
+        return await this.sendRequest(metric);
+
+      } catch (error) {
+        lastError = error as Error;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorName = error instanceof Error ? error.name : 'Unknown';
+        const statusCode = (error as any).statusCode;
+
+        if (!this.isRetryable(error as Error)) {
+          logger.error(`[MetricsApiClient] Non-retryable error [${errorName}]: ${errorMessage}${statusCode ? ` (HTTP ${statusCode})` : ''}`);
+          throw error;
+        }
+
+        logger.warn(`[MetricsApiClient] Attempt ${attempt + 1} failed [${errorName}]: ${errorMessage}${statusCode ? ` (HTTP ${statusCode})` : ''}`);
+      }
+    }
+
+    throw new Error(`Failed after ${this.config.retryAttempts} retries: ${lastError?.message}`);
+  }
+
+  private async sendRequest(metric: SessionMetric): Promise<MetricsSyncResponse> {
+    const url = `${this.config.baseUrl}${CODEMIE_ENDPOINTS.METRICS}`;
+    const body = JSON.stringify(metric);
+
+    logger.debug(`[MetricsApiClient] Sending metric to ${url}. Body ${body}`);
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'User-Agent': `codemie-cli/${this.config.version}`,
+      'X-CodeMie-CLI': `codemie-cli/${this.config.version}`,
+      'X-CodeMie-Client': this.config.clientType
+    };
+
+    if (this.config.apiKey) {
+      headers['user-id'] = this.config.apiKey;
+    } else if (this.config.cookies) {
+      headers['Cookie'] = this.config.cookies;
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), this.config.timeout);
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers,
+        body,
+        signal: controller.signal
+      });
+
+      clearTimeout(timeoutId);
+
+      const data = await response.json() as MetricsSyncResponse | MetricsApiError;
+
+      if (!response.ok) {
+        if ('code' in data && 'details' in data) {
+          const errorData = data as MetricsApiError;
+          let errorMessage = `API returned ${response.status}: ${errorData.message}`;
+          if (errorData.details) errorMessage += `\nDetails: ${errorData.details}`;
+          if (errorData.help) errorMessage += `\nHelp: ${errorData.help}`;
+
+          const error = new Error(errorMessage);
+          (error as any).statusCode = response.status;
+          (error as any).response = data;
+          throw error;
+        }
+
+        const errorMessage = 'message' in data ? data.message : response.statusText;
+        const error = new Error(`API returned ${response.status}: ${errorMessage}`);
+        (error as any).statusCode = response.status;
+        (error as any).response = data;
+        throw error;
+      }
+
+      const successData = data as MetricsSyncResponse;
+      logger.debug(`[MetricsApiClient] Response from ${url}: success=${successData.success}, message="${successData.message}"`);
+
+      if (!successData.success) {
+        const error = new Error(`API reported failure: ${successData.message}`);
+        (error as any).response = data;
+        throw error;
+      }
+
+      logger.info(`[MetricsApiClient] Successfully sent metric: ${successData.message}`);
+      return successData;
+
+    } catch (error) {
+      clearTimeout(timeoutId);
+      if ((error as Error).name === 'AbortError') {
+        throw new Error(`Request timeout after ${this.config.timeout}ms`);
+      }
+      throw error;
+    }
+  }
+
+  private isRetryable(error: Error): boolean {
+    const statusCode = (error as any).statusCode;
+    if (!statusCode) return true;  // Network errors
+    if (statusCode >= 500 || statusCode === 429) return true;  // Server errors and rate limit
+    return false;  // 4xx errors (except 429)
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+}
 
 /**
- * Session end status
+ * Session start status object with reason
  */
-export type SessionEndStatus = 'completed' | 'failed' | 'interrupted';
+export interface SessionStartStatus {
+  status: 'started' | 'failed';
+  reason?: string;  // Optional reason (e.g., "startup", error message)
+}
+
+/**
+ * Session end status object with reason
+ */
+export interface SessionEndStatus {
+  status: 'completed' | 'failed' | 'interrupted';
+  reason?: string;  // Optional reason (e.g., "exit", "logout", error message)
+}
 
 /**
  * Session lifecycle error
@@ -92,13 +240,13 @@ export class MetricsSender {
    *
    * @param session - Session metadata (with optional model)
    * @param workingDirectory - Current working directory (for git branch detection)
-   * @param status - Session start status (started/failed)
+   * @param status - Session start status object with status and optional reason
    * @param error - Optional error information (required if status=failed)
    */
   async sendSessionStart(
     session: Pick<Session, 'sessionId' | 'agentName' | 'provider' | 'project' | 'startTime' | 'workingDirectory'> & { model?: string },
     workingDirectory: string,
-    status: SessionStartStatus = 'started',
+    status: SessionStartStatus = { status: 'started' },
     error?: SessionError
   ): Promise<MetricsSyncResponse> {
     // Detect git branch
@@ -135,15 +283,16 @@ export class MetricsSender {
 
       // Session metadata
       session_duration_ms: 0,
-      had_errors: status === 'failed',
+      had_errors: status.status === 'failed',
       count: 1,
 
       // Lifecycle status
-      status
+      status: status.status,
+      ...(status.reason && { reason: status.reason })
     };
 
     // Add error details if session start failed
-    if (status === 'failed' && error) {
+    if (status.status === 'failed' && error) {
       attributes.errors = {
         [error.type]: [error.code ? `[${error.code}] ${error.message}` : error.message]
       };
@@ -165,7 +314,8 @@ export class MetricsSender {
             session_id: metric.attributes.session_id,
             branch: metric.attributes.branch,
             repository: metric.attributes.repository,
-            status,
+            status: status.status,
+            reason: status.reason,
             ...(error && { error_type: error.type })
           }
         }
@@ -187,7 +337,7 @@ export class MetricsSender {
    *
    * @param session - Session metadata (with optional model)
    * @param workingDirectory - Current working directory (for git branch detection)
-   * @param status - Session end status (completed/failed/interrupted)
+   * @param status - Session end status object with status and optional reason
    * @param durationMs - Session duration in milliseconds
    * @param error - Optional error information (for failed sessions)
    */
@@ -232,15 +382,16 @@ export class MetricsSender {
 
       // Session metadata
       session_duration_ms: durationMs,
-      had_errors: status === 'failed',
+      had_errors: status.status === 'failed',
       count: 1,
 
       // Lifecycle status
-      status
+      status: status.status,
+      ...(status.reason && { reason: status.reason })
     };
 
     // Add error details if session ended with error
-    if (status === 'failed' && error) {
+    if (status.status === 'failed' && error) {
       attributes.errors = {
         [error.type]: [error.code ? `[${error.code}] ${error.message}` : error.message]
       };
@@ -262,7 +413,8 @@ export class MetricsSender {
             session_id: metric.attributes.session_id,
             branch: metric.attributes.branch,
             repository: metric.attributes.repository,
-            status,
+            status: status.status,
+            reason: status.reason,
             duration_ms: durationMs,
             ...(error && { error_type: error.type })
           }

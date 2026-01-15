@@ -12,10 +12,6 @@
     "agentSessionId": "4c2ddfdc-b619-4525-8d03-1950fb1b0257",
     "detectedAt": 1765395458136
   },
-  "monitoring": {
-    "isActive": false,
-    "changeCount": 0
-  },
   "syncState": {
     "sessionId": "71a17a83-ff99-4d05-964b-0bd56892faec",
     "agentSessionId": "4c2ddfdc-b619-4525-8d03-1950fb1b0257",

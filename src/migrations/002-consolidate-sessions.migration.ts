@@ -9,7 +9,7 @@ import { getCodemieHome } from '../utils/paths.js';
  * Migration 002: Consolidate session storage
  *
  * Migrates session files from old structure to new consolidated structure:
- * - OLD: ~/.codemie/metrics/sessions/*.json + *.jsonl
+ * - OLD: ~/.codemie/sessions/*.json + *.jsonl
  * - OLD: ~/.codemie/conversations/sessions/*.jsonl
  * - NEW: ~/.codemie/sessions/*.json + *.jsonl (all files)
  */

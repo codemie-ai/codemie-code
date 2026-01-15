@@ -11,7 +11,7 @@ import path from 'path';
 import stripAnsi from 'strip-ansi';
 import type {SessionMetric} from './metrics-types.js';
 import type {AgentMetricsConfig} from '../../../../../../agents/core/types.js';
-import {METRICS_CONFIG} from '../../../../../../agents/core/metrics-config.js';
+import {METRICS_CONFIG} from '../../../../../../agents/core/session/session-config.js';
 import {logger} from '../../../../../../utils/logger.js';
 
 /**

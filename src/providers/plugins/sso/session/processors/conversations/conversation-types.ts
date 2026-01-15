@@ -1,69 +1,80 @@
 /**
- * Generic Conversation API Types
+ * Conversation Payload Types
  *
- * These types are agent-agnostic and define the API contract
- * for conversation sync endpoints.
+ * Type definitions for conversation payloads and API client.
  */
 
 /**
- * Codemie conversation history entry (target format for API)
+ * Conversation payload record stored in JSONL
+ * Used for tracking conversation sync status
  */
-export interface CodemieHistoryEntry {
-  role: 'User' | 'Assistant';
-  message: string;
-  history_index: number;
-  date: string;
-  message_raw?: string;  // Raw user input (user messages only)
-  file_names?: string[];
-  input_tokens?: number;
-  output_tokens?: number;
-  cache_creation_input_tokens?: number;
-  cache_read_input_tokens?: number;
-  assistant_id?: string;
-  thoughts?: Thought[];
-  response_time?: number;  // Processing time in seconds (assistant messages only)
+export interface ConversationPayloadRecord {
+  /** Timestamp when sync was attempted */
+  timestamp: number;
+
+  /** Whether this was a turn continuation */
+  isTurnContinuation: boolean;
+
+  /** History indices being synced */
+  historyIndices: number[];
+
+  /** Number of messages in payload */
+  messageCount: number;
+
+  /** Last processed message UUID from transformation (for sync state tracking) */
+  lastProcessedMessageUuid?: string;
+
+  /** The exact payload sent to API */
+  payload: {
+    conversationId: string;
+    history: any[];
+  };
+
+  /** Sync result status */
+  status: 'pending' | 'success' | 'failed';
+
+  /** Error message if failed */
+  error?: string;
+
+  /** Response metadata (if available) */
+  response?: {
+    statusCode?: number;
+    syncedCount?: number;
+  };
 }
 
 /**
- * Thought interface - represents a tool call with its input and result
- * Source: codemie-sdk (src/models/conversation.ts)
- */
-export interface Thought {
-  id: string;
-  parent_id?: string;
-  metadata: Record<string, unknown>;
-  in_progress: boolean;
-  input_text?: string;
-  message?: string;
-  author_type: string;
-  author_name: string;
-  output_format: string;
-  error?: boolean;
-  children: string[];
-}
-
-/**
- * Conversation API client configuration
+ * Configuration for ConversationApiClient
  */
 export interface ConversationApiConfig {
-  baseUrl: string;       // API base URL
-  cookies?: string;      // SSO cookies (session token)
-  apiKey?: string;       // API key for localhost development
-  timeout?: number;      // Request timeout (ms)
-  retryAttempts?: number; // Max retry attempts
-  version?: string;      // CLI version
-  clientType?: string;   // Client type (codemie-claude, etc.)
-  dryRun?: boolean;      // Dry-run mode (log but don't send)
+  baseUrl: string;
+  cookies?: string;
+  apiKey?: string;
+  timeout?: number;
+  retryAttempts?: number;
+  version?: string;
+  clientType?: string;
+  dryRun?: boolean;
 }
 
 /**
- * API response for successful conversation sync
+ * Response from conversation sync API
  */
 export interface ConversationSyncResponse {
-  success: boolean;      // Whether the conversation was synced successfully
-  message: string;       // Result message
+  success: boolean;
+  message: string;
   conversation_id?: string;
   new_messages?: number;
   total_messages?: number;
   created?: boolean;
+}
+
+/**
+ * CodeMie history entry format for API
+ */
+export interface CodemieHistoryEntry {
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp?: number;
+  [key: string]: any;
 }

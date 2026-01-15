@@ -40,3 +40,5 @@ _bmad*
 # Claude Code local memory
 CLAUDE.local.md
 **/CLAUDE.local.md
+# Test comparison outputs
+tests/integration/comparison-output/

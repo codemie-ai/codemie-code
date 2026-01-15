@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, rm } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { ClaudeSessionAdapter } from '../claude.session-adapter.js';
+import { ClaudeSessionAdapter } from '../claude.session.js';
 import { ClaudePluginMetadata } from '../claude.plugin.js';
 import type { ClaudeMessage } from '../claude-message-types.js';
 import { writeJSONLAtomic } from '../../../../providers/plugins/sso/session/utils/jsonl-writer.js';
@@ -102,7 +102,7 @@ describe('ClaudeSessionAdapter', () => {
       const parsed = await adapter.parseSessionFile(sessionFile, 'codemie-session-123');
 
       expect(parsed.sessionId).toBe('codemie-session-123');
-      expect(parsed.agentName).toBe('claude');
+      expect(parsed.agentName).toBe('Claude Code');
       expect(parsed.messages).toHaveLength(2);
       expect(parsed.metadata.projectPath).toBe(sessionFile);
     });
@@ -253,13 +253,15 @@ describe('ClaudeSessionAdapter', () => {
       expect(parsed.metrics?.toolStatus?.Edit).toEqual({ success: 1, failure: 0 });
     });
 
-    it('should throw error for empty session file', async () => {
+    it('should handle empty session file gracefully', async () => {
       const sessionFile = join(tempDir, 'empty-session.jsonl');
       await writeJSONLAtomic(sessionFile, []);
 
-      await expect(adapter.parseSessionFile(sessionFile, 'codemie-session-empty'))
-        .rejects
-        .toThrow('empty');
+      const parsed = await adapter.parseSessionFile(sessionFile, 'codemie-session-empty');
+
+      expect(parsed.sessionId).toBe('codemie-session-empty');
+      expect(parsed.messages).toEqual([]);
+      expect(parsed.agentName).toBe('Claude Code');
     });
 
     it('should handle file-history-snapshot as first line', async () => {

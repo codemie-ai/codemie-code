@@ -1,0 +1,207 @@
+# API Patterns
+
+## Quick Summary
+
+API endpoint patterns for [PROJECT_NAME]: CRUD operations, validation, authentication, and error responses.
+
+**Category**: API
+**Complexity**: Medium
+**Prerequisites**: [FRAMEWORK], HTTP, [AUTH_METHOD]
+
+---
+
+## 🚨 SIZE LIMIT WARNING
+
+**This generated guide MUST be 200-400 lines maximum.**
+
+**When filling this template**:
+- ✅ Code examples: 5-15 lines (NEVER > 20)
+- ✅ ONE example per pattern
+- ✅ Use file:line references, not full code
+- ✅ Use tables for multiple patterns
+- ❌ NO multiple examples for same pattern
+- ❌ NO verbose explanations
+- ❌ NO copying entire functions
+
+**Validate line count after generation**: `wc -l [this-file]`
+**If > 400 lines**: Condense immediately before continuing!
+
+---
+
+## Endpoint Structure
+
+```
+[base_url]/
+├── [resource1]/
+│   ├── GET    /           List all
+│   ├── POST   /           Create
+│   ├── GET    /:id        Get one
+│   ├── PUT    /:id        Update
+│   └── DELETE /:id        Delete
+└── [resource2]/
+```
+
+**Source**: `[path/to/routes]`
+
+---
+
+## CRUD Patterns
+
+### Create (POST)
+
+```[language]
+# Source: [file:lines]
+[create_endpoint]
+```
+
+**Status**: 201 Created | 400 Bad Request | 401 Unauthorized
+
+---
+
+### Read (GET)
+
+```[language]
+# Source: [file:lines]
+[read_endpoint]
+```
+
+**Status**: 200 OK | 404 Not Found
+
+---
+
+### Update (PUT/PATCH)
+
+```[language]
+# Source: [file:lines]
+[update_endpoint]
+```
+
+**Status**: 200 OK | 404 Not Found | 400 Bad Request
+
+---
+
+### Delete (DELETE)
+
+```[language]
+# Source: [file:lines]
+[delete_endpoint]
+```
+
+**Status**: 204 No Content | 404 Not Found
+
+---
+
+## Request Validation
+
+```[language]
+# Source: [file:lines]
+[validation_example]
+```
+
+**Validation Error Response**:
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Validation failed",
+    "details": [
+      {"field": "[field]", "message": "[error]"}
+    ]
+  }
+}
+```
+
+---
+
+## Authentication & Authorization
+
+```[language]
+# Source: [file:lines]
+[auth_middleware]
+```
+
+**Status**: 401 Unauthorized | 403 Forbidden
+
+---
+
+## Pagination
+
+```[language]
+# Source: [file:lines]
+[pagination_example]
+```
+
+**Query Params**: `page`, `limit`, `sort`, `order`
+
+**Response**:
+```json
+{
+  "data": [],
+  "pagination": {
+    "page": 1,
+    "limit": 20,
+    "total": 100,
+    "pages": 5
+  }
+}
+```
+
+---
+
+## Error Responses
+
+| Status | Type | Example |
+|--------|------|---------|
+| 400 | Bad Request | Invalid input |
+| 401 | Unauthorized | Missing/invalid token |
+| 403 | Forbidden | Insufficient permissions |
+| 404 | Not Found | Resource doesn't exist |
+| 422 | Unprocessable | Validation failed |
+| 500 | Server Error | Internal error |
+
+**Format**:
+```json
+{
+  "error": {
+    "code": "[ERROR_CODE]",
+    "message": "[human-readable]",
+    "details": "[additional info]"
+  }
+}
+```
+
+---
+
+## Rate Limiting
+
+```[language]
+# Source: [file:lines]
+[rate_limit_config]
+```
+
+**Headers**:
+- `X-RateLimit-Limit`: Max requests
+- `X-RateLimit-Remaining`: Requests left
+- `X-RateLimit-Reset`: Reset time
+
+---
+
+## Best Practices
+
+| ✅ DO | ❌ DON'T |
+|-------|----------|
+| Use proper HTTP methods | GET for mutations |
+| Return appropriate status codes | Always 200 |
+| Validate all input | Trust client data |
+| Use consistent naming | Mix conventions |
+| Version your API | Break clients |
+
+---
+
+## References
+
+- **Routes**: `[path/to/routes]`
+- **Models**: `[path/to/models]`
+- **API Docs**: [URL]
+
+---

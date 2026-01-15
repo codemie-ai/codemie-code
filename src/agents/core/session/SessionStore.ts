@@ -5,11 +5,11 @@
  * One file per session: ~/.codemie/sessions/{sessionId}.json
  */
 
-import { readFile, writeFile, readdir, mkdir } from 'fs/promises';
+import { readFile, writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import { dirname } from 'path';
 import type { Session } from './types.js';
-import { getSessionPath, getMetricsPath, METRICS_PATHS } from '../metrics-config.js';
+import { getSessionPath } from './session-config.js';
 import { logger } from '../../../utils/logger.js';
 import { createErrorContext, formatErrorForLog } from '../../../utils/errors.js';
 
@@ -63,50 +63,11 @@ export class SessionStore {
     }
   }
 
-  /**
-   * List all sessions
-   */
-  async listSessions(): Promise<Session[]> {
-    const sessionsDir = getMetricsPath(METRICS_PATHS.sessions);
-
-    if (!existsSync(sessionsDir)) {
-      return [];
-    }
-
-    try {
-      const files = await readdir(sessionsDir);
-      const sessions: Session[] = [];
-
-      for (const file of files) {
-        if (file.endsWith('.json')) {
-          const sessionId = file.replace('.json', '');
-          const session = await this.loadSession(sessionId);
-          if (session) {
-            sessions.push(session);
-          }
-        }
-      }
-
-      return sessions;
-    } catch (error) {
-      const errorContext = createErrorContext(error);
-      logger.error('[SessionStore] Failed to list sessions', formatErrorForLog(errorContext));
-      return [];
-    }
-  }
 
   /**
-   * List active sessions (status === 'active')
+   * Update session status and reason
    */
-  async listActiveSessions(): Promise<Session[]> {
-    const allSessions = await this.listSessions();
-    return allSessions.filter(s => s.status === 'active');
-  }
-
-  /**
-   * Update session status
-   */
-  async updateSessionStatus(sessionId: string, status: Session['status']): Promise<void> {
+  async updateSessionStatus(sessionId: string, status: Session['status'], reason?: string): Promise<void> {
     const session = await this.loadSession(sessionId);
 
     if (!session) {
@@ -114,68 +75,12 @@ export class SessionStore {
     }
 
     session.status = status;
+    if (reason) {
+      session.reason = reason;
+    }
     if (status === 'completed' || status === 'recovered' || status === 'failed') {
       session.endTime = Date.now();
     }
-
-    await this.saveSession(session);
-  }
-
-  /**
-   * Update session correlation
-   */
-  async updateSessionCorrelation(
-    sessionId: string,
-    correlation: Partial<Session['correlation']>
-  ): Promise<void> {
-    const session = await this.loadSession(sessionId);
-
-    if (!session) {
-      throw new Error(`Session not found: ${sessionId}`);
-    }
-
-    session.correlation = {
-      ...session.correlation,
-      ...correlation
-    };
-
-    await this.saveSession(session);
-  }
-
-  /**
-   * Update session watermark
-   */
-  async updateSessionWatermark(
-    sessionId: string,
-    watermark: Session['watermark']
-  ): Promise<void> {
-    const session = await this.loadSession(sessionId);
-
-    if (!session) {
-      throw new Error(`Session not found: ${sessionId}`);
-    }
-
-    session.watermark = watermark;
-    await this.saveSession(session);
-  }
-
-  /**
-   * Update monitoring state
-   */
-  async updateMonitoringState(
-    sessionId: string,
-    monitoring: Partial<Session['monitoring']>
-  ): Promise<void> {
-    const session = await this.loadSession(sessionId);
-
-    if (!session) {
-      throw new Error(`Session not found: ${sessionId}`);
-    }
-
-    session.monitoring = {
-      ...session.monitoring,
-      ...monitoring
-    };
 
     await this.saveSession(session);
   }

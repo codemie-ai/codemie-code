@@ -517,7 +517,7 @@ Proxy Stop
 
 #### 6.4.4 Data Flow
 
-**Local Metrics Storage**: `~/.codemie/metrics/sessions/`
+**Local Metrics Storage**: `~/.codemie/sessions/`
 - `{sessionId}.json`: Session metadata
 - `{sessionId}_metrics.jsonl`: Delta records (one per line)
 

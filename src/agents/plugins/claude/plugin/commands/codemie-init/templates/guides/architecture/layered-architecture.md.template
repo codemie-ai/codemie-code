@@ -1,0 +1,143 @@
+# Layered Architecture
+
+## Quick Summary
+
+[PROJECT_NAME] implements [N]-tier architecture: [Layer1] → [Layer2] → [Layer3].
+
+**Category**: Architecture
+**Complexity**: Medium
+**Prerequisites**: [LANGUAGE], [FRAMEWORK]
+
+---
+
+## 🚨 SIZE LIMIT WARNING
+
+**This generated guide MUST be 200-400 lines maximum.**
+
+**When filling this template**:
+- ✅ Code examples: 5-15 lines (NEVER > 20)
+- ✅ ONE example per pattern
+- ✅ Use file:line references, not full code
+- ✅ Use tables for multiple patterns
+- ❌ NO multiple examples for same pattern
+- ❌ NO verbose explanations
+- ❌ NO copying entire functions
+
+**Validate line count after generation**: `wc -l [this-file]`
+**If > 400 lines**: Condense immediately before continuing!
+
+---
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────┐
+│  [Layer 1] ([path/])            │  ← HTTP interface
+│  Request/Response handling      │
+└────────────┬────────────────────┘
+             ↓ calls
+┌─────────────────────────────────┐
+│  [Layer 2] ([path/])            │  ← Business logic
+│  Orchestration                  │
+└────────────┬────────────────────┘
+             ↓ calls
+┌─────────────────────────────────┐
+│  [Layer 3] ([path/])            │  ← Data access
+│  Persistence                    │
+└────────────┬────────────────────┘
+             ↓
+        [Database]
+```
+
+---
+
+## Layer Responsibilities
+
+### [Layer 1] - [Name]
+
+**Purpose**: [Brief description]
+
+```[language]
+# Source: [file:lines]
+[layer1_example]
+```
+
+**Does**: Validation, routing, response formatting
+**Doesn't**: Business logic, database access
+
+---
+
+### [Layer 2] - [Name]
+
+**Purpose**: [Brief description]
+
+```[language]
+# Source: [file:lines]
+[layer2_example]
+```
+
+**Does**: Business logic, orchestration
+**Doesn't**: HTTP handling, direct DB access
+
+---
+
+### [Layer 3] - [Name]
+
+**Purpose**: [Brief description]
+
+```[language]
+# Source: [file:lines]
+[layer3_example]
+```
+
+**Does**: Database queries, data access
+**Doesn't**: Business logic, HTTP handling
+
+---
+
+## Communication Rules
+
+| ✅ Allowed | ❌ Not Allowed |
+|-----------|---------------|
+| Layer1 → Layer2 → Layer3 | Skip layers |
+| Pass data via models/DTOs | Share state |
+| Async/await throughout | Blocking calls |
+
+---
+
+## Error Flow
+
+```
+[Layer3 Error]
+    ↓ raise
+[Layer2 Transform]
+    ↓ raise
+[Layer1 HTTP Response]
+```
+
+**Example**:
+```[language]
+# Source: [file:lines]
+[error_flow_example]
+```
+
+---
+
+## Testing Strategy
+
+| Layer | Test Type | Mock |
+|-------|-----------|------|
+| [Layer1] | Unit | Layer2 |
+| [Layer2] | Unit | Layer3 |
+| [Layer3] | Unit | Database |
+| All | Integration | Nothing |
+
+---
+
+## References
+
+- **[Layer1]**: `[path/]`
+- **[Layer2]**: `[path/]`
+- **[Layer3]**: `[path/]`
+
+---

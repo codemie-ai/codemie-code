@@ -350,7 +350,7 @@ export function getCodemieHome(): string {
  *
  * @example
  * getCodemiePath('logs') // => '/Users/john/.codemie/logs'
- * getCodemiePath('metrics', 'sessions') // => '/Users/john/.codemie/metrics/sessions'
+ * getCodemiePath('metrics', 'sessions') // => '/Users/john/.codemie/sessions'
  */
 export function getCodemiePath(...paths: string[]): string {
   return path.join(getCodemieHome(), ...paths);

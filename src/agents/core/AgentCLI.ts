@@ -8,10 +8,8 @@ import { logger } from '../../utils/logger.js';
 import { getDirname } from '../../utils/paths.js';
 import { BUILTIN_AGENT_NAME } from '../registry.js';
 import { ClaudePluginMetadata } from '../plugins/claude/claude.plugin.js';
-import { CodexPluginMetadata } from '../plugins/codex.plugin.js';
 import { CodeMieCodePluginMetadata } from '../plugins/codemie-code.plugin.js';
 import { GeminiPluginMetadata } from '../plugins/gemini.plugin.js';
-import { DeepAgentsPluginMetadata } from '../plugins/deepagents.plugin.js';
 
 /**
  * Universal CLI builder for any agent
@@ -332,10 +330,8 @@ export class AgentCLI {
   private getAgentMetadata() {
     const metadataMap: Record<string, typeof ClaudePluginMetadata> = {
       'claude': ClaudePluginMetadata,
-      'codex': CodexPluginMetadata,
       [BUILTIN_AGENT_NAME]: CodeMieCodePluginMetadata,
       'gemini': GeminiPluginMetadata,
-      'deepagents': DeepAgentsPluginMetadata
     };
     return metadataMap[this.adapter.name];
   }

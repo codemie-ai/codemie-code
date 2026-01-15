@@ -1,0 +1,9 @@
+{
+  "name": "codemie",
+  "description": "Event-driven observability for Claude Code. Captures session events and syncs metrics/conversations to CodeMie platform.",
+  "author": {
+    "name": "AI/Run CodeMie",
+    "email": "support@codemieai.com"
+  },
+  "version": "1.0.0"
+}

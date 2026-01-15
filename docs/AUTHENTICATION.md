@@ -98,5 +98,6 @@ AI/Run CodeMie SSO provides enterprise-grade features:
 - **Secure Token Storage**: Credentials stored in system keychain
 - **Automatic Refresh**: Seamless token renewal without interruption
 - **Multi-Model Access**: Access to Claude, GPT, and other models through unified gateway
+- **Automatic Plugin Installation**: Claude Code plugin auto-installs for session tracking
 - **Audit Logging**: Enterprise audit trails for security compliance
 - **Role-Based Access**: Model access based on organizational permissions

@@ -1,7 +1,5 @@
 import { AgentMetadata } from '../core/types.js';
 import { BaseAgentAdapter } from '../core/BaseAgentAdapter.js';
-import { GeminiMetricsAdapter } from './gemini.metrics.js';
-import type { AgentMetricsSupport } from '../core/metrics/types.js';
 
 // Define metadata first (used by both lifecycle and analytics)
 const metadata = {
@@ -89,14 +87,8 @@ export const GeminiPluginMetadata: AgentMetadata = {
  * Gemini CLI Adapter
  */
 export class GeminiPlugin extends BaseAgentAdapter {
-  private metricsAdapter: AgentMetricsSupport;
 
   constructor() {
     super(GeminiPluginMetadata);
-    this.metricsAdapter = new GeminiMetricsAdapter(GeminiPluginMetadata);
-  }
-
-  getMetricsAdapter(): AgentMetricsSupport {
-    return this.metricsAdapter;
   }
 }

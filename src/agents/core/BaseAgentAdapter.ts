@@ -5,12 +5,8 @@ import { exec } from '../../utils/processes.js';
 import { logger } from '../../utils/logger.js';
 import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
-import { CodeMieProxy } from '../../providers/plugins/sso/proxy/sso.proxy.js';
-import { ProxyConfig } from '../../providers/plugins/sso/proxy/proxy-types.js';
-import { ProviderRegistry } from '../../providers/core/registry.js';
-import { SessionOrchestrator } from './session/SessionOrchestrator.js';
-import type { AgentMetricsSupport } from './metrics/types.js';
-import type { SessionLifecycleAdapter } from './session/types.js';
+import type { CodeMieProxy, ProxyConfig } from '../../providers/plugins/sso/index.js';
+import { ProviderRegistry } from '../../providers/index.js';
 import type { CodeMieConfigOptions } from '../../env/types.js';
 import { getRandomWelcomeMessage, getRandomGoodbyeMessage } from '../../utils/goodbye-messages.js';
 import { renderProfileInfo } from '../../utils/profile.js';
@@ -33,17 +29,9 @@ import {
  */
 export abstract class BaseAgentAdapter implements AgentAdapter {
   protected proxy: CodeMieProxy | null = null;
-  protected sessionOrchestrator: SessionOrchestrator | null = null;
 
   constructor(protected metadata: AgentMetadata) {}
 
-  /**
-   * Get metrics adapter for this agent (optional)
-   * Override in agent plugin if metrics collection is supported
-   */
-  getMetricsAdapter(): AgentMetricsSupport | null {
-    return null;
-  }
 
   /**
    * Get metrics configuration for this agent
@@ -51,62 +39,6 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    */
   getMetricsConfig(): import('./types.js').AgentMetricsConfig | undefined {
     return this.metadata.metricsConfig;
-  }
-
-  /**
-   * Create SessionOrchestrator with session transition handler.
-   * Implements session lifecycle detection per spec/session-lifecycle-detection.md
-   *
-   * When a session end is detected (e.g., /clear in Claude):
-   * 1. Current session is finalized
-   * 2. New session is created with correlation to new agent session file
-   * 3. Monitoring continues on new session
-   */
-  protected async createSessionOrchestratorWithTransitionHandler(
-    sessionId: string,
-    provider: string,
-    project: string | undefined,
-    metricsAdapter: AgentMetricsSupport,
-    lifecycleAdapter: SessionLifecycleAdapter | undefined
-  ): Promise<SessionOrchestrator> {
-    const { SessionOrchestrator } = await import('./session/SessionOrchestrator.js');
-
-    return new SessionOrchestrator({
-      sessionId,
-      agentName: this.metadata.name,
-      provider,
-      project,
-      workingDirectory: process.cwd(),
-      metricsAdapter,
-      lifecycleAdapter,
-      // Session transition callback (per spec Step 1.5)
-      onSessionTransition: async (event) => {
-        const { logger } = await import('../../utils/logger.js');
-        logger.info(
-          `[${this.metadata.name}] Session transition detected: ` +
-          `${event.oldSessionId} → new file: ${event.newSessionFile}`
-        );
-
-        // Create new orchestrator for new session
-        // Note: This orchestrator will auto-correlate with the new file
-        const newSessionId = randomUUID();
-        logger.setSessionId(newSessionId);
-
-        this.sessionOrchestrator = await this.createSessionOrchestratorWithTransitionHandler(
-          newSessionId,
-          provider,
-          project,
-          metricsAdapter,
-          lifecycleAdapter
-        );
-
-        // Start monitoring new session
-        await this.sessionOrchestrator.beforeAgentSpawn();
-        await this.sessionOrchestrator.afterAgentSpawn();
-
-        logger.info(`[${this.metadata.name}] New session created: ${newSessionId}`);
-      }
-    });
   }
 
   get name(): string {
@@ -210,33 +142,6 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     const { logger } = await import('../../utils/logger.js');
     logger.setSessionId(sessionId);
 
-    // Setup metrics orchestrator with the session ID
-    // Only create if metrics are enabled for the provider
-    const metricsAdapter = this.getMetricsAdapter();
-    if (metricsAdapter && env.CODEMIE_PROVIDER) {
-      const { METRICS_CONFIG } = await import('./metrics-config.js');
-
-      // Check if metrics are enabled for this provider before creating orchestrator
-      if (METRICS_CONFIG.enabled(env.CODEMIE_PROVIDER)) {
-        // Check if plugin provides lifecycle adapter
-        const lifecycleAdapter = typeof (this as any).getLifecycleAdapter === 'function'
-          ? (this as any).getLifecycleAdapter()
-          : undefined;
-
-        // Create orchestrator with session transition handler
-        this.sessionOrchestrator = await this.createSessionOrchestratorWithTransitionHandler(
-          sessionId,
-          env.CODEMIE_PROVIDER,
-          env.CODEMIE_PROJECT,
-          metricsAdapter,
-          lifecycleAdapter
-        );
-
-        // Take pre-spawn snapshot
-        await this.sessionOrchestrator.beforeAgentSpawn();
-      }
-    }
-
     // Setup proxy with the session ID (already in env)
     await this.setupProxy(env);
 
@@ -267,32 +172,16 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     console.log(chalk.cyan.bold(getRandomWelcomeMessage()));
     console.log(''); // Empty line for spacing
 
-    // Display metrics initialization errors (non-blocking)
-    if (this.sessionOrchestrator?.hasInitializationError()) {
-      const metricsError = this.sessionOrchestrator.getInitializationError();
-      if (metricsError) {
-        const { displayWarningMessage } = await import('../../utils/profile.js');
-        displayWarningMessage(
-          'Metrics Collection Disabled',
-          metricsError,
-          {
-            sessionId,
-            agent: this.metadata.name,
-            provider,
-            model,
-            profile: profileName
-          },
-          { severity: 'warning' }
-        );
-      }
-    }
-
     // Transform CODEMIE_* → agent-specific env vars (based on envMapping)
     env = this.transformEnvVars(env);
 
     // Lifecycle hook: beforeRun (provider-aware)
     // Can override or extend env transformations, setup config files
     env = await executeBeforeRun(this, this.metadata.lifecycle, this.metadata.name, env, this.extractConfig(env));
+
+    // Merge modified env back into process.env
+    // This ensures enrichArgs hook can access variables set by beforeRun
+    Object.assign(process.env, env);
 
     // Lifecycle hook: enrichArgs (provider-aware)
     // Enrich args with agent-specific defaults (e.g., --profile, --model)
@@ -388,14 +277,6 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         windowsHide: isWindows // Hide console window on Windows
       });
 
-      // Take post-spawn snapshot after process starts
-      if (this.sessionOrchestrator) {
-        // Don't await - let it run in background
-        this.sessionOrchestrator.afterAgentSpawn().catch(err => {
-          logger.error('[SessionOrchestrator] Post-spawn snapshot failed:', err);
-        });
-      }
-
       // Define cleanup function for proxy and metrics
       const cleanup = async () => {
         if (this.proxy) {
@@ -427,21 +308,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
           process.off('SIGINT', sigintHandler);
           process.off('SIGTERM', sigtermHandler);
 
-          // Phase 1: Prepare metrics for exit
-          if (this.sessionOrchestrator) {
-            await this.sessionOrchestrator.prepareForExit();
-          }
-
           // Lifecycle hook: session end (provider-aware)
           await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, 1, env);
 
           // Clean up proxy (triggers final sync)
           await cleanup();
-
-          // Phase 2: Mark session as failed (AFTER sync completes)
-          if (this.sessionOrchestrator) {
-            await this.sessionOrchestrator.markSessionComplete(1); // Exit code 1 = spawn error
-          }
 
           // Lifecycle hook: afterRun (provider-aware)
           await executeAfterRun(this, this.metadata.lifecycle, this.metadata.name, 1, env);
@@ -466,27 +337,13 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
             await new Promise(resolve => setTimeout(resolve, gracePeriodMs));
           }
 
-          // Phase 1: Prepare metrics for exit (collect final deltas, but don't mark complete)
-          if (this.sessionOrchestrator && code !== null) {
-            await this.sessionOrchestrator.prepareForExit();
-          }
-
           // Lifecycle hook: session end (provider-aware)
           if (code !== null) {
             await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, code, env);
           }
 
-          // Clean up proxy (triggers final sync of BOTH metrics AND conversations)
-          // SSOSessionSyncPlugin.onProxyStop() runs all processors:
-          //   - MetricsProcessor: syncs pending deltas from _metrics.jsonl
-          //   - ConversationsProcessor: syncs new messages from agent session file
+          // Clean up proxy
           await cleanup();
-
-          // Phase 2: Mark session as completed (AFTER sync completes)
-          // This ensures session status is only set to 'completed' after all data is synced
-          if (this.sessionOrchestrator && code !== null) {
-            await this.sessionOrchestrator.markSessionComplete(code);
-          }
 
           // Lifecycle hook: afterRun (provider-aware)
           if (code !== null) {
@@ -507,10 +364,6 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         });
       });
     } catch (error) {
-      // Phase 1: Prepare metrics for exit
-      if (this.sessionOrchestrator) {
-        await this.sessionOrchestrator.prepareForExit();
-      }
 
       // Lifecycle hook: session end (provider-aware)
       await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, 1, env);
@@ -519,11 +372,6 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       if (this.proxy) {
         await this.proxy.stop();
         this.proxy = null;
-      }
-
-      // Phase 2: Mark session as failed (AFTER sync completes)
-      if (this.sessionOrchestrator) {
-        await this.sessionOrchestrator.markSessionComplete(1); // Exit code 1 = error
       }
 
       // Lifecycle hook: afterRun (provider-aware)

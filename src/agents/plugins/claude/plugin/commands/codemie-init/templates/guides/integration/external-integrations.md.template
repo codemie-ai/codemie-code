@@ -1,0 +1,160 @@
+# External Integrations
+
+## Quick Summary
+
+External service integration patterns for [PROJECT_NAME]: API clients, authentication, retries, and error handling.
+
+**Category**: Integration
+**Complexity**: Medium-High
+**Prerequisites**: HTTP clients, async/await, API fundamentals
+
+---
+
+## 🚨 SIZE LIMIT WARNING
+
+**This generated guide MUST be 200-400 lines maximum.**
+
+**When filling this template**:
+- ✅ Code examples: 5-15 lines (NEVER > 20)
+- ✅ ONE example per pattern
+- ✅ Use file:line references, not full code
+- ✅ Use tables for multiple patterns
+- ❌ NO multiple examples for same pattern
+- ❌ NO verbose explanations
+- ❌ NO copying entire functions
+
+**Validate line count after generation**: `wc -l [this-file]`
+**If > 400 lines**: Condense immediately before continuing!
+
+---
+
+## Integrated Services
+
+| Service | Purpose | Auth | Source |
+|---------|---------|------|--------|
+| [Service1] | [Purpose] | [Method] | [file:lines] |
+| [Service2] | [Purpose] | [Method] | [file:lines] |
+
+---
+
+## Client Pattern
+
+```[language]
+# Source: [file:lines]
+[client_class]
+```
+
+**Components**: Base URL, auth, retries, timeouts
+
+---
+
+## Authentication
+
+### API Key
+
+```[language]
+# Source: [file:lines]
+[api_key_auth]
+```
+
+### OAuth2
+
+```[language]
+# Source: [file:lines]
+[oauth2_auth]
+```
+
+**Token Management**: Store securely, refresh before expiry
+
+---
+
+## Error Handling
+
+```[language]
+# Source: [file:lines]
+[error_handling]
+```
+
+| Status | Action |
+|--------|--------|
+| 4xx | Log, don't retry (usually) |
+| 5xx | Log, retry with backoff |
+| Timeout | Retry with backoff |
+
+---
+
+## Retry Logic
+
+```[language]
+# Source: [file:lines]
+[retry_pattern]
+```
+
+**Strategy**: Exponential backoff
+**Max Retries**: [N]
+**When**: 5xx, timeouts, connection errors
+**When Not**: 4xx (usually), auth failures
+
+---
+
+## Rate Limiting
+
+```[language]
+# Source: [file:lines]
+[rate_limit]
+```
+
+**Headers**: `X-RateLimit-*`, `Retry-After`
+
+---
+
+## Timeouts
+
+```[language]
+# Source: [file:lines]
+[timeout_config]
+```
+
+**Types**: Connection | Read | Total
+
+---
+
+## Best Practices
+
+| ✅ DO | ❌ DON'T |
+|-------|----------|
+| Retry with backoff | Infinite retries |
+| Set timeouts | Wait forever |
+| Log external calls | Silent failures |
+| Cache when possible | Call repeatedly |
+| Store secrets securely | Hardcode API keys |
+
+---
+
+## Security
+
+- ✅ Env vars / secrets manager
+- ✅ HTTPS only
+- ✅ Validate TLS certs
+- ❌ Log API keys
+- ❌ Ignore cert errors
+
+---
+
+## Testing
+
+```[language]
+# Source: [test_file:lines]
+[mock_example]
+```
+
+**Strategy**: Mock in unit tests, use test APIs in integration tests
+
+---
+
+## References
+
+- **Clients**: `[path/to/clients]`
+- **Service Docs**: [Links]
+
+---

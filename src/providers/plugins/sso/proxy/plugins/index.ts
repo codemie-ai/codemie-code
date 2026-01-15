@@ -10,7 +10,7 @@ import { EndpointBlockerPlugin } from './endpoint-blocker.plugin.js';
 import { SSOAuthPlugin } from './sso-auth.plugin.js';
 import { HeaderInjectionPlugin } from './header-injection.plugin.js';
 import { LoggingPlugin } from './logging.plugin.js';
-import { SSOSessionSyncPlugin } from '../../session/sync/sso.session-sync.plugin.js';
+import { SSOSessionSyncPlugin } from './sso.session-sync.plugin.js';
 
 /**
  * Register core plugins
@@ -24,8 +24,6 @@ export function registerCorePlugins(): void {
   registry.register(new SSOAuthPlugin());
   registry.register(new HeaderInjectionPlugin());
   registry.register(new LoggingPlugin()); // Always enabled - logs to log files at INFO level
-
-  // Unified session sync plugin (replaces metrics + conversations plugins)
   registry.register(new SSOSessionSyncPlugin()); // Priority 100 - syncs sessions via multiple processors
 }
 
@@ -34,6 +32,6 @@ registerCorePlugins();
 
 // Re-export for convenience
 export { EndpointBlockerPlugin, SSOAuthPlugin, HeaderInjectionPlugin, LoggingPlugin };
-export { SSOSessionSyncPlugin } from '../../session/sync/sso.session-sync.plugin.js';
+export { SSOSessionSyncPlugin } from './sso.session-sync.plugin.js';
 export { getPluginRegistry, resetPluginRegistry } from './registry.js';
 export * from './types.js';

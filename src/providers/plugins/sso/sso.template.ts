@@ -8,8 +8,7 @@
  */
 
 import type { ProviderTemplate } from '../../core/types.js';
-import { registerProvider } from '../../core/decorators.js';
-import { createSSOLifecycleHandler } from './metrics/sync/sso.lifecycle-handler.js';
+import { registerProvider } from '../../core/index.js';
 import { logger } from '../../../utils/logger.js';
 
 export const SSOTemplate = registerProvider<ProviderTemplate>({
@@ -53,69 +52,71 @@ export const SSOTemplate = registerProvider<ProviderTemplate>({
   // Agent lifecycle hooks for session metrics
   agentHooks: {
     '*': {
-      // Universal hooks for all agents when using SSO provider
-      async onSessionStart(sessionId: string, env: NodeJS.ProcessEnv): Promise<void> {
-        // IMPORTANT:
-        // - Use CODEMIE_URL for credential lookup (original SSO URL)
-        // - Use CODEMIE_BASE_URL for API requests (proxy URL with cookie injection)
-        const ssoUrl = env.CODEMIE_URL;
-        const apiUrl = env.CODEMIE_BASE_URL;
+    },
 
-        if (!ssoUrl || !apiUrl) {
-          logger.info('[SSO] URLs not available for session metrics');
-          return;
+    // Claude-specific hooks for plugin installation
+    'claude': {
+      /**
+       * Install Claude plugin before running agent
+       * Only applies when using ai-run-sso provider
+       */
+      async beforeRun(env: NodeJS.ProcessEnv): Promise<NodeJS.ProcessEnv> {
+        const { ClaudePluginInstaller } = await import('../../../agents/plugins/claude/claude.plugin-installer.js');
+
+        logger.info('[SSO-Claude] Checking CodeMie plugin for Claude Code...');
+
+        const result = await ClaudePluginInstaller.install();
+
+        if (!result.success) {
+          logger.error(`[SSO-Claude] Plugin installation failed: ${result.error}`);
+          logger.warn('[SSO-Claude] Continuing without plugin - hooks will not be available');
+        } else if (result.action === 'copied') {
+          const versionInfo = result.sourceVersion ? ` (v${result.sourceVersion})` : '';
+          logger.info(`[SSO-Claude] Plugin installed to ${result.targetPath}${versionInfo}`);
+        } else if (result.action === 'updated') {
+          const versionInfo = result.installedVersion && result.sourceVersion
+            ? ` (v${result.installedVersion} → v${result.sourceVersion})`
+            : '';
+          logger.info(`[SSO-Claude] Plugin updated at ${result.targetPath}${versionInfo}`);
+        } else {
+          const versionInfo = result.sourceVersion ? ` (v${result.sourceVersion})` : '';
+          logger.debug(`[SSO-Claude] Plugin already up-to-date at ${result.targetPath}${versionInfo}`);
         }
 
-        const handler = await createSSOLifecycleHandler(
-          ssoUrl,
-          apiUrl,
-          env.CODEMIE_CLI_VERSION,
-          'codemie-cli'
-        );
+        // Store target path in env for enrichArgs hook
+        env.CODEMIE_CLAUDE_PLUGIN_DIR = result.targetPath;
 
-        if (!handler) {
-          logger.info('[SSO] Could not create lifecycle handler for session start');
-          return;
-        }
-
-        // Store handler in env for later use
-        (env as any).__SSO_LIFECYCLE_HANDLER = handler;
-
-        logger.info('[SSO] Sending session start metric...');
-
-        // Send session start metric (fire-and-forget, errors are logged but not thrown)
-        await handler.sendSessionStart(
-          {
-            sessionId,
-            agentName: env.CODEMIE_AGENT || 'unknown',
-            provider: env.CODEMIE_PROVIDER || 'ai-run-sso',
-            project: env.CODEMIE_PROJECT,
-            llm_model: env.CODEMIE_MODEL,
-            startTime: Date.now(),
-            workingDirectory: process.cwd()
-          },
-          'started'
-        );
-
-        logger.info('[SSO] Session start metric processing complete (check logs for status)');
+        return env;
       },
 
-      async onSessionEnd(exitCode: number, env: NodeJS.ProcessEnv): Promise<void> {
-        const handler = (env as any).__SSO_LIFECYCLE_HANDLER;
-        if (!handler) {
-          logger.info('[SSO] No lifecycle handler available for session end');
-          return;
+      /**
+       * Inject --plugin-dir flag for Claude Code
+       * Only applies when using ai-run-sso provider
+       *
+       * Note: enrichArgs is synchronous, so we read the plugin path
+       * from process.env that was set by beforeRun hook
+       */
+      enrichArgs(args: string[]): string[] {
+        // Get plugin directory from env (set by beforeRun)
+        const pluginDir = process.env.CODEMIE_CLAUDE_PLUGIN_DIR;
+
+        if (!pluginDir) {
+          logger.warn('[SSO-Claude] Plugin directory not found in env, skipping --plugin-dir injection');
+          return args;
         }
 
-        logger.info(`[SSO] Sending session end metric (exitCode=${exitCode})...`);
+        // Check if --plugin-dir already specified
+        const hasPluginDir = args.some(arg => arg === '--plugin-dir');
 
-        // Send session end metric (fire-and-forget, errors are logged but not thrown)
-        await handler.sendSessionEnd(exitCode);
+        if (hasPluginDir) {
+          logger.debug('[SSO-Claude] --plugin-dir already specified, skipping injection');
+          return args;
+        }
 
-        logger.info('[SSO] Session end metric processing complete (check logs for status)');
+        logger.info(`[SSO-Claude] Injecting --plugin-dir ${pluginDir}`);
 
-        // Cleanup
-        delete (env as any).__SSO_LIFECYCLE_HANDLER;
+        // Prepend --plugin-dir to arguments
+        return ['--plugin-dir', pluginDir, ...args];
       }
     }
   }
