@@ -191,6 +191,316 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   }
 
   /**
+   * Run the agent with output capture (for programmatic use)
+   * 
+   * @param args - Arguments to pass to the agent
+   * @param envOverrides - Environment variable overrides
+   * @param options - Execution options
+   * @param options.captureOutput - If true, capture stdout/stderr instead of inheriting
+   * @returns Promise that resolves with output when captureOutput is true
+   */
+  async runWithOutput(
+    args: string[],
+    envOverrides?: Record<string, string>,
+    options?: { captureOutput?: boolean }
+  ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
+    return new Promise(async (resolve, reject) => {
+      let hasResolved = false;
+      let timeoutId: NodeJS.Timeout | null = null;
+      let env: NodeJS.ProcessEnv = { ...process.env, ...envOverrides }; // Declare env outside try block
+
+      // Set maximum timeout (10 minutes)
+      timeoutId = setTimeout(() => {
+        if (!hasResolved) {
+          hasResolved = true;
+          logger.error(`[${this.displayName}] Execution timeout after 10 minutes`);
+          reject(new Error(`Execution timeout: ${this.displayName} did not complete within 10 minutes`));
+        }
+      }, 10 * 60 * 1000);
+
+      const cleanupTimeout = () => {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+      };
+
+      try {
+        // Generate session ID at the very start - this is the source of truth
+        const sessionId = randomUUID();
+
+        // Merge environment variables
+        env = {
+          ...process.env,
+          ...envOverrides,
+          CODEMIE_SESSION_ID: sessionId,
+          CODEMIE_AGENT: this.metadata.name
+        };
+
+        // Initialize logger with session ID
+        logger.setSessionId(sessionId);
+        logger.debug(`[${this.displayName}] Starting runWithOutput with args: ${args.join(' ')}`);
+
+        // Setup metrics orchestrator with the session ID
+        const metricsAdapter = this.getMetricsAdapter();
+        if (metricsAdapter && env.CODEMIE_PROVIDER) {
+          const { METRICS_CONFIG } = await import('./metrics-config.js');
+
+          if (METRICS_CONFIG.enabled(env.CODEMIE_PROVIDER)) {
+            const lifecycleAdapter = typeof (this as any).getLifecycleAdapter === 'function'
+              ? (this as any).getLifecycleAdapter()
+              : undefined;
+
+            this.sessionOrchestrator = await this.createSessionOrchestratorWithTransitionHandler(
+              sessionId,
+              env.CODEMIE_PROVIDER,
+              env.CODEMIE_PROJECT,
+              metricsAdapter,
+              lifecycleAdapter
+            );
+
+            await this.sessionOrchestrator.beforeAgentSpawn();
+            logger.debug(`[${this.displayName}] Metrics orchestrator initialized`);
+          }
+        }
+
+        // Setup proxy with the session ID
+        await this.setupProxy(env);
+        logger.debug(`[${this.displayName}] Proxy setup complete`);
+
+        // Lifecycle hook: session start
+        await executeOnSessionStart(this, this.metadata.lifecycle, this.metadata.name, sessionId, env);
+
+        // Build welcome message (same as regular run() method)
+        const profileName = env.CODEMIE_PROFILE_NAME || 'default';
+        const provider = env.CODEMIE_PROVIDER || 'unknown';
+        const cliVersion = env.CODEMIE_CLI_VERSION || 'unknown';
+        const model = env.CODEMIE_MODEL || 'unknown';
+        const codeMieUrl = env.CODEMIE_URL;
+
+        // Capture welcome message to stdout
+        const welcomeMessage = renderProfileInfo({
+          profile: profileName,
+          provider,
+          model,
+          codeMieUrl,
+          agent: this.metadata.name,
+          cliVersion,
+          sessionId
+        }) + '\n' + getRandomWelcomeMessage() + '\n\n';
+
+        // Transform CODEMIE_* → agent-specific env vars
+        env = this.transformEnvVars(env);
+
+        // Lifecycle hook: beforeRun
+        env = await executeBeforeRun(this, this.metadata.lifecycle, this.metadata.name, env, this.extractConfig(env));
+
+        // Lifecycle hook: enrichArgs
+        let enrichedArgs = await executeEnrichArgs(this.metadata.lifecycle, this.metadata.name, args, this.extractConfig(env));
+
+        // Apply argument transformations
+        let transformedArgs: string[];
+        if (this.metadata.flagMappings) {
+          const { transformFlags } = await import('./flag-transform.js');
+          transformedArgs = transformFlags(enrichedArgs, this.metadata.flagMappings, this.extractConfig(env));
+        } else {
+          transformedArgs = enrichedArgs;
+        }
+
+        logger.debug(`[${this.displayName}] Transformed args: ${transformedArgs.join(' ')}`);
+
+        if (!this.metadata.cliCommand) {
+          cleanupTimeout();
+          reject(new Error(`${this.displayName} has no CLI command configured`));
+          return;
+        }
+
+        const isWindows = process.platform === 'win32';
+        let commandPath = this.metadata.cliCommand;
+
+        // Resolve full path on Windows
+        if (isWindows) {
+          const { getCommandPath } = await import('../../utils/processes.js');
+          const resolvedPath = await getCommandPath(this.metadata.cliCommand);
+          if (resolvedPath) {
+            commandPath = resolvedPath;
+            logger.debug(`[${this.displayName}] Resolved command path: ${resolvedPath}`);
+          } else {
+            logger.warn(`[${this.displayName}] Could not resolve command path, using: ${commandPath}`);
+          }
+        }
+
+        logger.debug(`[${this.displayName}] Spawning process: ${commandPath} ${transformedArgs.join(' ')}`);
+
+        // Use pipe stdio to capture output
+        // IMPORTANT: Use 'ignore' for stdin to prevent process from waiting for input
+        const child = spawn(commandPath, transformedArgs, {
+          stdio: ['ignore', 'pipe', 'pipe'], // ignore stdin, pipe stdout/stderr
+          env,
+          shell: isWindows,
+          windowsHide: isWindows
+        });
+
+        let stdout = welcomeMessage; // Start with welcome message
+        let stderr = '';
+        let stdoutEnded = false;
+        let stderrEnded = false;
+        let processExited = false;
+        let exitCode: number | null = null;
+
+        logger.debug(`[${this.displayName}] Process spawned, PID: ${child.pid}`);
+
+        child.stdout.on('data', (data) => {
+          const text = data.toString();
+          stdout += text;
+          logger.debug(`[${this.displayName}] stdout chunk: ${text.length} bytes`);
+        });
+
+        child.stdout.on('end', () => {
+          logger.debug(`[${this.displayName}] stdout stream ended`);
+          stdoutEnded = true;
+          checkComplete();
+        });
+
+        child.stderr.on('data', (data) => {
+          const text = data.toString();
+          stderr += text;
+          logger.debug(`[${this.displayName}] stderr chunk: ${text.length} bytes`);
+        });
+
+        child.stderr.on('end', () => {
+          logger.debug(`[${this.displayName}] stderr stream ended`);
+          stderrEnded = true;
+          checkComplete();
+        });
+
+        // Take post-spawn snapshot
+        if (this.sessionOrchestrator) {
+          this.sessionOrchestrator.afterAgentSpawn().catch(err => {
+            logger.error('[SessionOrchestrator] Post-spawn snapshot failed:', err);
+          });
+        }
+
+        // Define cleanup function
+        const cleanup = async () => {
+          if (this.proxy) {
+            logger.debug(`[${this.displayName}] Stopping proxy and flushing analytics...`);
+            await this.proxy.stop();
+            this.proxy = null;
+            logger.debug(`[${this.displayName}] Proxy cleanup complete`);
+          }
+        };
+
+        // Helper to check if we can resolve
+        const checkComplete = async () => {
+          if (hasResolved) return;
+          
+          // Wait for process to exit AND streams to end
+          if (processExited && stdoutEnded && stderrEnded) {
+            hasResolved = true;
+            cleanupTimeout();
+
+            logger.debug(`[${this.displayName}] Process completed, exit code: ${exitCode}`);
+
+            // Prepare metrics for exit
+            if (this.sessionOrchestrator) {
+              await this.sessionOrchestrator.prepareForExit();
+            }
+
+            // Lifecycle hook: session end
+            await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, exitCode || 0, env);
+
+            // Clean up proxy (triggers final sync)
+            await cleanup();
+
+            // Mark session as completed
+            if (this.sessionOrchestrator) {
+              await this.sessionOrchestrator.markSessionComplete(exitCode || 0);
+            }
+
+            // Lifecycle hook: after run
+            await executeAfterRun(this, this.metadata.lifecycle, this.metadata.name, exitCode || 0, env);
+
+            resolve({ stdout, stderr, exitCode });
+          }
+        };
+
+        child.on('close', async (code) => {
+          logger.debug(`[${this.displayName}] Process closed with code: ${code}`);
+          exitCode = code;
+          processExited = true;
+
+          // Wait for streams to end (they should end shortly after process closes)
+          let waitCount = 0;
+          const maxWait = 20; // Wait up to 4 seconds
+          while ((!stdoutEnded || !stderrEnded) && waitCount < maxWait) {
+            await new Promise(resolve => setTimeout(resolve, 200));
+            waitCount++;
+          }
+
+          if (!stdoutEnded || !stderrEnded) {
+            logger.warn(`[${this.displayName}] Streams did not end after process close, forcing completion`);
+            stdoutEnded = true;
+            stderrEnded = true;
+          }
+
+          await checkComplete();
+        });
+
+        child.on('error', async (error) => {
+          cleanupTimeout();
+          logger.error(`[${this.displayName}] Process spawn error:`, error);
+
+          if (hasResolved) return;
+          hasResolved = true;
+
+          // Prepare metrics for exit
+          if (this.sessionOrchestrator) {
+            await this.sessionOrchestrator.prepareForExit();
+          }
+
+          await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, 1, env);
+          await cleanup();
+
+          if (this.sessionOrchestrator) {
+            await this.sessionOrchestrator.markSessionComplete(1);
+          }
+
+          await executeAfterRun(this, this.metadata.lifecycle, this.metadata.name, 1, env);
+
+          reject(new Error(`Failed to start ${this.displayName}: ${error.message}`));
+        });
+      } catch (error) {
+        cleanupTimeout();
+        
+        if (hasResolved) return;
+        hasResolved = true;
+
+        logger.error(`[${this.displayName}] Execution error:`, error);
+
+        // Prepare metrics for exit
+        if (this.sessionOrchestrator) {
+          await this.sessionOrchestrator.prepareForExit();
+        }
+
+        await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, 1, env);
+        if (this.proxy) {
+          await this.proxy.stop();
+          this.proxy = null;
+        }
+
+        if (this.sessionOrchestrator) {
+          await this.sessionOrchestrator.markSessionComplete(1);
+        }
+
+        await executeAfterRun(this, this.metadata.lifecycle, this.metadata.name, 1, env);
+
+        reject(error);
+      }
+    });
+  }
+
+  /**
    * Run the agent
    */
   async run(args: string[], envOverrides?: Record<string, string>): Promise<void> {
