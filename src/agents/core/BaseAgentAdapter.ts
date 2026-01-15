@@ -191,6 +191,44 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   }
 
   /**
+   * Cleanup proxy and stop it
+   */
+  private async cleanupProxy(): Promise<void> {
+    if (this.proxy) {
+      await this.proxy.stop();
+      this.proxy = null;
+    }
+  }
+
+  /**
+   * Execute cleanup sequence for session exit
+   * This includes metrics preparation, lifecycle hooks, proxy cleanup, and session completion
+   */
+  private async executeCleanupSequence(
+    exitCode: number,
+    env: NodeJS.ProcessEnv
+  ): Promise<void> {
+    // Prepare metrics for exit
+    if (this.sessionOrchestrator) {
+      await this.sessionOrchestrator.prepareForExit();
+    }
+
+    // Lifecycle hook: session end
+    await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, exitCode, env);
+
+    // Clean up proxy (triggers final sync)
+    await this.cleanupProxy();
+
+    // Mark session as completed
+    if (this.sessionOrchestrator) {
+      await this.sessionOrchestrator.markSessionComplete(exitCode);
+    }
+
+    // Lifecycle hook: after run
+    await executeAfterRun(this, this.metadata.lifecycle, this.metadata.name, exitCode, env);
+  }
+
+  /**
    * Run the agent with output capture (for programmatic use)
    * 
    * @param args - Arguments to pass to the agent
@@ -207,13 +245,12 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     return new Promise(async (resolve, reject) => {
       let hasResolved = false;
       let timeoutId: NodeJS.Timeout | null = null;
-      let env: NodeJS.ProcessEnv = { ...process.env, ...envOverrides }; // Declare env outside try block
+      let env: NodeJS.ProcessEnv = { ...process.env, ...envOverrides };
 
       // Set maximum timeout (10 minutes)
       timeoutId = setTimeout(() => {
         if (!hasResolved) {
           hasResolved = true;
-          logger.error(`[${this.displayName}] Execution timeout after 10 minutes`);
           reject(new Error(`Execution timeout: ${this.displayName} did not complete within 10 minutes`));
         }
       }, 10 * 60 * 1000);
@@ -239,7 +276,6 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
         // Initialize logger with session ID
         logger.setSessionId(sessionId);
-        logger.debug(`[${this.displayName}] Starting runWithOutput with args: ${args.join(' ')}`);
 
         // Setup metrics orchestrator with the session ID
         const metricsAdapter = this.getMetricsAdapter();
@@ -260,13 +296,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
             );
 
             await this.sessionOrchestrator.beforeAgentSpawn();
-            logger.debug(`[${this.displayName}] Metrics orchestrator initialized`);
           }
         }
 
         // Setup proxy with the session ID
         await this.setupProxy(env);
-        logger.debug(`[${this.displayName}] Proxy setup complete`);
 
         // Lifecycle hook: session start
         await executeOnSessionStart(this, this.metadata.lifecycle, this.metadata.name, sessionId, env);
@@ -307,8 +341,6 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
           transformedArgs = enrichedArgs;
         }
 
-        logger.debug(`[${this.displayName}] Transformed args: ${transformedArgs.join(' ')}`);
-
         if (!this.metadata.cliCommand) {
           cleanupTimeout();
           reject(new Error(`${this.displayName} has no CLI command configured`));
@@ -324,13 +356,8 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
           const resolvedPath = await getCommandPath(this.metadata.cliCommand);
           if (resolvedPath) {
             commandPath = resolvedPath;
-            logger.debug(`[${this.displayName}] Resolved command path: ${resolvedPath}`);
-          } else {
-            logger.warn(`[${this.displayName}] Could not resolve command path, using: ${commandPath}`);
           }
         }
-
-        logger.debug(`[${this.displayName}] Spawning process: ${commandPath} ${transformedArgs.join(' ')}`);
 
         // Use pipe stdio to capture output
         // IMPORTANT: Use 'ignore' for stdin to prevent process from waiting for input
@@ -348,48 +375,30 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         let processExited = false;
         let exitCode: number | null = null;
 
-        logger.debug(`[${this.displayName}] Process spawned, PID: ${child.pid}`);
-
         child.stdout.on('data', (data) => {
-          const text = data.toString();
-          stdout += text;
-          logger.debug(`[${this.displayName}] stdout chunk: ${text.length} bytes`);
+          stdout += data.toString();
         });
 
         child.stdout.on('end', () => {
-          logger.debug(`[${this.displayName}] stdout stream ended`);
           stdoutEnded = true;
           checkComplete();
         });
 
         child.stderr.on('data', (data) => {
-          const text = data.toString();
-          stderr += text;
-          logger.debug(`[${this.displayName}] stderr chunk: ${text.length} bytes`);
+          stderr += data.toString();
         });
 
         child.stderr.on('end', () => {
-          logger.debug(`[${this.displayName}] stderr stream ended`);
           stderrEnded = true;
           checkComplete();
         });
 
         // Take post-spawn snapshot
         if (this.sessionOrchestrator) {
-          this.sessionOrchestrator.afterAgentSpawn().catch(err => {
-            logger.error('[SessionOrchestrator] Post-spawn snapshot failed:', err);
+          this.sessionOrchestrator.afterAgentSpawn().catch(() => {
+            // Ignore errors in background snapshot
           });
         }
-
-        // Define cleanup function
-        const cleanup = async () => {
-          if (this.proxy) {
-            logger.debug(`[${this.displayName}] Stopping proxy and flushing analytics...`);
-            await this.proxy.stop();
-            this.proxy = null;
-            logger.debug(`[${this.displayName}] Proxy cleanup complete`);
-          }
-        };
 
         // Helper to check if we can resolve
         const checkComplete = async () => {
@@ -400,33 +409,12 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
             hasResolved = true;
             cleanupTimeout();
 
-            logger.debug(`[${this.displayName}] Process completed, exit code: ${exitCode}`);
-
-            // Prepare metrics for exit
-            if (this.sessionOrchestrator) {
-              await this.sessionOrchestrator.prepareForExit();
-            }
-
-            // Lifecycle hook: session end
-            await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, exitCode || 0, env);
-
-            // Clean up proxy (triggers final sync)
-            await cleanup();
-
-            // Mark session as completed
-            if (this.sessionOrchestrator) {
-              await this.sessionOrchestrator.markSessionComplete(exitCode || 0);
-            }
-
-            // Lifecycle hook: after run
-            await executeAfterRun(this, this.metadata.lifecycle, this.metadata.name, exitCode || 0, env);
-
+            await this.executeCleanupSequence(exitCode || 0, env);
             resolve({ stdout, stderr, exitCode });
           }
         };
 
         child.on('close', async (code) => {
-          logger.debug(`[${this.displayName}] Process closed with code: ${code}`);
           exitCode = code;
           processExited = true;
 
@@ -439,7 +427,6 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
           }
 
           if (!stdoutEnded || !stderrEnded) {
-            logger.warn(`[${this.displayName}] Streams did not end after process close, forcing completion`);
             stdoutEnded = true;
             stderrEnded = true;
           }
@@ -449,25 +436,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
         child.on('error', async (error) => {
           cleanupTimeout();
-          logger.error(`[${this.displayName}] Process spawn error:`, error);
 
           if (hasResolved) return;
           hasResolved = true;
 
-          // Prepare metrics for exit
-          if (this.sessionOrchestrator) {
-            await this.sessionOrchestrator.prepareForExit();
-          }
-
-          await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, 1, env);
-          await cleanup();
-
-          if (this.sessionOrchestrator) {
-            await this.sessionOrchestrator.markSessionComplete(1);
-          }
-
-          await executeAfterRun(this, this.metadata.lifecycle, this.metadata.name, 1, env);
-
+          await this.executeCleanupSequence(1, env);
           reject(new Error(`Failed to start ${this.displayName}: ${error.message}`));
         });
       } catch (error) {
@@ -476,25 +449,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         if (hasResolved) return;
         hasResolved = true;
 
-        logger.error(`[${this.displayName}] Execution error:`, error);
-
-        // Prepare metrics for exit
-        if (this.sessionOrchestrator) {
-          await this.sessionOrchestrator.prepareForExit();
-        }
-
-        await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, 1, env);
-        if (this.proxy) {
-          await this.proxy.stop();
-          this.proxy = null;
-        }
-
-        if (this.sessionOrchestrator) {
-          await this.sessionOrchestrator.markSessionComplete(1);
-        }
-
-        await executeAfterRun(this, this.metadata.lifecycle, this.metadata.name, 1, env);
-
+        await this.executeCleanupSequence(1, env);
         reject(error);
       }
     });
