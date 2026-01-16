@@ -1,0 +1,168 @@
+# Database Patterns
+
+## Quick Summary
+
+Database patterns for [PROJECT_NAME]: models, queries, transactions, and migrations using [ORM] with [DATABASE].
+
+**Category**: Data
+**Complexity**: Medium-High
+**Prerequisites**: SQL, [ORM], [DATABASE]
+
+---
+
+## 🚨 SIZE LIMIT WARNING
+
+**This generated guide MUST be 200-400 lines maximum.**
+
+**When filling this template**:
+- ✅ Code examples: 5-15 lines (NEVER > 20)
+- ✅ ONE example per pattern
+- ✅ Use file:line references, not full code
+- ✅ Use tables for multiple patterns
+- ❌ NO multiple examples for same pattern
+- ❌ NO verbose explanations
+- ❌ NO copying entire functions
+
+**Validate line count after generation**: `wc -l [this-file]`
+**If > 400 lines**: Condense immediately before continuing!
+
+---
+
+## Connection Configuration
+
+```[language]
+# Source: [file:lines]
+[connection_config]
+```
+
+**Connection String**: `[database]://[user]:[pass]@[host]:[port]/[db]`
+
+---
+
+## Model Definition
+
+```[language]
+# Source: [file:lines]
+[model_example]
+```
+
+**Relationships**: [Describe key relationships]
+
+---
+
+## CRUD Operations
+
+### Create
+
+```[language]
+# Source: [file:lines]
+[create_example]
+```
+
+### Read
+
+```[language]
+# Source: [file:lines]
+[read_example]
+```
+
+### Update
+
+```[language]
+# Source: [file:lines]
+[update_example]
+```
+
+### Delete
+
+```[language]
+# Source: [file:lines]
+[delete_example]
+```
+
+---
+
+## Transactions
+
+```[language]
+# Source: [file:lines]
+[transaction_example]
+```
+
+**When to Use**:
+- Multiple related writes
+- Data consistency requirements
+
+**Rules**:
+- Keep short
+- Avoid external API calls in transactions
+- Handle rollback
+
+---
+
+## Pagination
+
+```[language]
+# Source: [file:lines]
+[pagination_example]
+```
+
+**Pattern**: Offset-based | Cursor-based
+
+---
+
+## N+1 Prevention
+
+```[language]
+# Problem: N+1
+[n_plus_1_problem]
+
+# Solution: Eager loading
+[n_plus_1_solution]
+```
+
+---
+
+## Migrations
+
+```bash
+# Create migration
+[create_migration]
+
+# Run migrations
+[run_migrations]
+
+# Rollback
+[rollback_migration]
+```
+
+**Rules**:
+- Always include rollback
+- Test on copy of prod data
+- Never modify existing migrations
+
+---
+
+## Raw Queries
+
+```[language]
+# ALWAYS parameterized - Source: [file:lines]
+[parameterized_query]
+
+# NEVER string interpolation (SQL injection!)
+[bad_query_example]
+```
+
+---
+
+## Best Practices
+
+| ✅ DO | ❌ DON'T |
+|-------|----------|
+| Use parameterized queries | String interpolation in SQL |
+| Close connections | Leave connections open |
+| Use transactions for multi-step writes | Individual commits |
+| Add indexes to queried columns | Index everything |
+| Eager load when needed | Lazy load always (N+1) |
+
+---

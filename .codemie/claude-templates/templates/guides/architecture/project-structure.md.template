@@ -1,0 +1,127 @@
+# Project Structure
+
+## Quick Summary
+
+[PROJECT_NAME] directory layout and organization guide.
+
+**Category**: Architecture
+**Complexity**: Simple
+**Prerequisites**: File system basics
+
+---
+
+## 🚨 SIZE LIMIT WARNING
+
+**This generated guide MUST be 200-400 lines maximum.**
+
+**When filling this template**:
+- ✅ Code examples: 5-15 lines (NEVER > 20)
+- ✅ ONE example per pattern
+- ✅ Use file:line references, not full code
+- ✅ Use tables for multiple patterns
+- ❌ NO multiple examples for same pattern
+- ❌ NO verbose explanations
+- ❌ NO copying entire functions
+
+**Validate line count after generation**: `wc -l [this-file]`
+**If > 400 lines**: Condense immediately before continuing!
+
+---
+
+## Directory Structure
+
+```
+[project-root]/
+├── [src]/              Source code
+├── [tests]/            Tests
+├── [config]/           Configuration
+├── [docs]/             Documentation
+├── .gitignore
+├── [build-config]      Build/dependency file
+└── README.md
+```
+
+---
+
+## Source Organization
+
+```
+[src]/
+├── [layer1]/           [Layer 1 description]
+│   └── [module]/
+├── [layer2]/           [Layer 2 description]
+│   └── [module]/
+├── [layer3]/           [Layer 3 description]
+│   └── [module]/
+├── [shared]/           Common utilities
+│   ├── exceptions
+│   ├── constants
+│   └── utils
+└── [main]              Entry point
+```
+
+---
+
+## Test Organization
+
+```
+[tests]/
+├── unit/               Mirrors source structure
+│   └── [module]/
+│       └── test_[file]
+├── integration/
+│   └── test_[feature]
+└── fixtures/
+```
+
+---
+
+## File Naming
+
+| Type | Convention | Example |
+|------|------------|---------|
+| Modules | [convention] | `[example]` |
+| Tests | [convention] | `test_[name]` |
+| Config | [convention] | `[example]` |
+
+---
+
+## Module Boundaries
+
+```
+[Layer1] (Top)
+    ↓
+[Layer2] (Middle)
+    ↓
+[Layer3] (Bottom)
+    ↓
+[Shared/Core]
+```
+
+**Rules**:
+- ✅ Upper → Lower
+- ✅ All → Shared
+- ❌ Lower → Upper
+- ❌ Circular dependencies
+
+---
+
+## Finding Code
+
+| Need | Location |
+|------|----------|
+| API endpoints | `[path]` |
+| Business logic | `[path]` |
+| Data models | `[path]` |
+| Database | `[path]` |
+| Exceptions | `[path]` |
+| Config | `[path]` |
+
+---
+
+## References
+
+- **Source**: `[src-directory]/`
+- **Tests**: `[test-directory]/`
+
+---

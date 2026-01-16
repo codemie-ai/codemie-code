@@ -64,7 +64,7 @@ This document references detailed guides stored in `.codemie/guides/`. Key refer
 | 🚨 **Check Guides First** | ANY new prompt/task | ALWAYS check relevant guides BEFORE searching codebase → [Guide Imports](#-guide-imports) |
 | 🚨 **Testing** | User says "write tests", "run tests" | ONLY then work on tests → [Testing Policy](#testing-policy) |
 | 🚨 **Git Ops** | User says "commit", "push", "create PR" | ONLY then do git operations → [Git Policy](#git-operations-policy) |
-| 🚨 **Node Environment** | ANY TypeScript/npm command | No activation needed (Node.js >=24.0.0) → [Env Policy](#environment-policy) |
+| 🚨 **Node Environment** | ANY TypeScript/npm command | No activation needed (Node.js >=20.0.0) → [Env Policy](#environment-policy) |
 | 🚨 **Shell** | ANY shell command | ONLY bash/Linux syntax → [Shell Policy](#shell-environment-policy) |
 
 **Emergency Recovery**: If commands fail → Check [Troubleshooting](#-troubleshooting-quick-reference)
@@ -315,7 +315,7 @@ try {
 
 ## 🛠️ DEVELOPMENT COMMANDS
 
-**🚨 CRITICAL**: No virtual environment needed - Node.js >=24.0.0 required
+**🚨 CRITICAL**: No virtual environment needed - Node.js >=20.0.0 required
 
 ### Common Commands
 
@@ -368,7 +368,7 @@ codemie-code health  # Test built-in agent
 
 | Need to Check | Command | What to Look For |
 |---------------|---------|------------------|
-| Node.js version | `node --version` | >=24.0.0 required |
+| Node.js version | `node --version` | >=20.0.0 required |
 | npm version | `npm --version` | Should be bundled with Node.js |
 | Global packages | `npm list -g --depth=0` | Should show @codemieai/code if installed |
 | CodeMie health | `codemie doctor` | All checks should pass |
@@ -379,7 +379,7 @@ codemie-code health  # Test built-in agent
 
 | Situation | Action |
 |-----------|--------|
-| **Commands failing** | 1. Verify Node.js >=24.0.0 (`node --version`)<br>2. Reinstall dependencies (`rm -rf node_modules && npm install`)<br>3. Rebuild project (`npm run build`)<br>4. Re-link global (`npm link`) |
+| **Commands failing** | 1. Verify Node.js >=20.0.0 (`node --version`)<br>2. Reinstall dependencies (`rm -rf node_modules && npm install`)<br>3. Rebuild project (`npm run build`)<br>4. Re-link global (`npm link`) |
 | **Build errors** | 1. Clean dist directory (`rm -rf dist/`)<br>2. Check TypeScript errors (`npx tsc --noEmit`)<br>3. Fix import paths (.js extensions required)<br>4. Rebuild (`npm run build`) |
 | **Pattern unclear** | 1. Search .codemie/guides/ for pattern<br>2. Check related patterns in Quick Reference<br>3. Ask user if ambiguous |
 | **Tests failing** | 1. Check if using dynamic imports for mocking<br>2. Verify test isolation (no shared state)<br>3. Check if environment variables are set<br>4. Run single test file to isolate issue |
@@ -393,7 +393,7 @@ codemie-code health  # Test built-in agent
 | Component | Tool | Version | Purpose |
 |-----------|------|---------|---------|
 | Language | TypeScript | 5.3+ | Type-safe development |
-| Runtime | Node.js | 24.0.0+ | JavaScript execution environment |
+| Runtime | Node.js | 20.0.0+ | JavaScript execution environment |
 | Framework | LangGraph | 1.0.2+ | Agent orchestration and state management |
 | Framework | LangChain | 1.0.4+ | LLM integration and tool calling |
 | Testing | Vitest | 4.0.10+ | Fast unit testing framework |
@@ -546,11 +546,11 @@ codemie-code health  # Test built-in agent
 **Why**: CodeMie Code is a Node.js CLI tool that runs in the system Node.js environment
 
 **Requirements**:
-- Node.js >=24.0.0 installed
+- Node.js >=20.0.0 installed
 - npm bundled with Node.js
 - No virtual environment or activation step
 
-**How to Verify**: `node --version` should show >=24.0.0
+**How to Verify**: `node --version` should show >=20.0.0
 
 **Alternative**: Use nvm (Node Version Manager) for managing Node.js versions
 
@@ -587,7 +587,7 @@ codemie-code health  # Test built-in agent
 - 🚨 **Check Guides First**: ALWAYS check relevant guides BEFORE searching codebase
 - 🚨 **Testing**: Only when explicitly requested
 - 🚨 **Git**: Only when explicitly requested
-- 🚨 **Environment**: No activation needed (Node.js >=24.0.0)
+- 🚨 **Environment**: No activation needed (Node.js >=20.0.0)
 - 🚨 **Shell**: Bash/Linux only
 
 ### Decision Making Framework

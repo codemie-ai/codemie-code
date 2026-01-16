@@ -281,7 +281,7 @@ codemie doctor [options]
 - `-v, --verbose` - Enable verbose debug output with detailed API logs
 
 **Checks:**
-- Node.js version (requires >=24.0.0)
+- Node.js version (requires >=20.0.0)
 - Python version (if using Python-based agents)
 - Git installation and configuration
 - AWS CLI (if using Bedrock)

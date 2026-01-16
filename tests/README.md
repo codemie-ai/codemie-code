@@ -235,7 +235,7 @@ testTimeout: 30000,  // 30 seconds
 
 ### Tests fail locally but pass in CI
 
-- Check Node.js version (must be >=24.0.0)
+- Check Node.js version (must be >=20.0.0)
 - Ensure clean state (no leftover config files)
 - Run `npm run build` before testing
 

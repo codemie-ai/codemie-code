@@ -59,6 +59,7 @@ export class ConversationsProcessor implements SessionProcessor {
   /**
    * Transform ParsedSession.messages to conversation history and write to JSONL
    * Writes payload with status 'pending' for later sync by SSO provider
+   * Processes one turn per invocation (incremental mode for real-time hooks)
    */
   private async processMessages(
     session: ParsedSession,
@@ -69,9 +70,17 @@ export class ConversationsProcessor implements SessionProcessor {
 
       // Load sync state for incremental processing
       const sessionMetadata = await this.sessionStore.loadSession(session.sessionId);
+      if (!sessionMetadata) {
+        logger.warn(`[${this.name}] Session metadata not found: ${session.sessionId}`);
+        return {
+          success: false,
+          message: 'Session metadata not found - session must be created before processing'
+        };
+      }
+
       const syncState = {
-        lastSyncedMessageUuid: sessionMetadata?.sync?.conversations?.lastSyncedMessageUuid,
-        lastSyncedHistoryIndex: sessionMetadata?.sync?.conversations?.lastSyncedHistoryIndex ?? -1
+        lastSyncedMessageUuid: sessionMetadata.sync?.conversations?.lastSyncedMessageUuid,
+        lastSyncedHistoryIndex: sessionMetadata.sync?.conversations?.lastSyncedHistoryIndex ?? -1
       };
 
       logger.debug(`[${this.name}] Using sync state:`, {
@@ -79,6 +88,17 @@ export class ConversationsProcessor implements SessionProcessor {
         lastSyncedHistoryIndex: syncState.lastSyncedHistoryIndex
       });
 
+      const conversationsPath = getSessionConversationPath(session.sessionId);
+      const { appendFile, mkdir } = await import('fs/promises');
+      const { dirname } = await import('path');
+      const { existsSync } = await import('fs');
+
+      const outputDir = dirname(conversationsPath);
+      if (!existsSync(outputDir)) {
+        await mkdir(outputDir, { recursive: true });
+      }
+
+      // Process ONE turn (incremental mode)
       const result = await this.transformMessages(
         session.messages as any[],
         syncState,
@@ -92,21 +112,10 @@ export class ConversationsProcessor implements SessionProcessor {
         return { success: true, message: 'No history generated', metadata: { recordsProcessed: 0 } };
       }
 
-      const conversationsPath = getSessionConversationPath(session.sessionId);
-      const { appendFile, mkdir } = await import('fs/promises');
-      const { dirname } = await import('path');
-      const { existsSync } = await import('fs');
-
-      const outputDir = dirname(conversationsPath);
-      if (!existsSync(outputDir)) {
-        await mkdir(outputDir, { recursive: true });
-      }
-
       // Extract history indices from the result
       const historyIndices = result.history.map((entry: any) => entry.history_index);
 
       // Create payload record with status 'pending'
-      // IMPORTANT: Use agent session ID for API correlation, not CodeMie local session ID
       const payloadRecord = {
         timestamp: Date.now(),
         isTurnContinuation: result.isTurnContinuation,
@@ -121,34 +130,28 @@ export class ConversationsProcessor implements SessionProcessor {
 
       await appendFile(conversationsPath, JSON.stringify(payloadRecord) + '\n');
 
-      // Update session sync state to track transformation progress (not sync progress)
-      // Note: Sync counters (totalMessagesSynced, lastSyncAt) are updated by ConversationSyncProcessor
+      // Update session sync state
       try {
         const currentSession = await this.sessionStore.loadSession(session.sessionId);
         if (currentSession) {
-          // Ensure sync structure exists
           currentSession.sync ??= {};
           currentSession.sync.conversations ??= {};
-
-          // Update lastSyncedMessageUuid and lastSyncedHistoryIndex for incremental transformation
-          // This tracks which messages have been transformed, not synced
           currentSession.sync.conversations.lastSyncedMessageUuid = result.lastProcessedMessageUuid;
           currentSession.sync.conversations.lastSyncedHistoryIndex = result.currentHistoryIndex;
 
           await this.sessionStore.saveSession(currentSession);
 
-          logger.debug(`[${this.name}] Updated transformation state: lastSyncedMessageUuid=${result.lastProcessedMessageUuid}, lastSyncedHistoryIndex=${result.currentHistoryIndex}`);
+          logger.debug(`[${this.name}] Updated sync state: lastSyncedMessageUuid=${result.lastProcessedMessageUuid}, lastSyncedHistoryIndex=${result.currentHistoryIndex}`);
         }
       } catch (error) {
-        // Non-critical - log but don't fail
-        logger.warn(`[${this.name}] Failed to update transformation state:`, error);
+        logger.warn(`[${this.name}] Failed to update sync state:`, error);
       }
 
-      logger.info(`[${this.name}] Generated and wrote ${result.history.length} conversation messages with status 'pending'`);
+      logger.info(`[${this.name}] Generated 1 turn with ${result.history.length} conversation messages`);
 
       return {
         success: true,
-        message: `Generated ${result.history.length} messages`,
+        message: 'Generated 1 turn',
         metadata: { recordsProcessed: result.history.length }
       };
 
@@ -196,6 +199,9 @@ export class ConversationsProcessor implements SessionProcessor {
 
       // Skip system messages
       if (msg.type === 'system') continue;
+
+      // Skip non-conversational message types (progress, file-history-snapshot, queue-operation, etc.)
+      if (msg.type !== 'user' && msg.type !== 'assistant') continue;
 
       if (msg.type === 'user' && this.isToolResult(msg)) {
         firstRealMessage = msg;

@@ -21,10 +21,47 @@
  * @module agents/core/extension/BaseExtensionInstaller
  */
 
-import { mkdir, cp, access, readFile } from 'fs/promises';
-import { join, dirname } from 'path';
-import { constants } from 'fs';
+import { mkdir, cp, access, readFile, writeFile, readdir, stat } from 'fs/promises';
+import { join, dirname, relative } from 'path';
+import { constants, existsSync } from 'fs';
 import { logger } from '../../../utils/logger.js';
+
+/**
+ * Configuration for selective local file copying
+ * Read from manifest's localCopy section
+ */
+export interface LocalCopyConfig {
+  /** Whether local copy is enabled */
+  enabled: boolean;
+  /** Pattern matching strategy: whitelist, blacklist, or hybrid */
+  strategy: 'whitelist' | 'blacklist' | 'hybrid';
+  /** Glob patterns to include */
+  includes: string[];
+  /** Glob patterns to exclude */
+  excludes: string[];
+  /** Target directory name */
+  targetDir: string;
+  /** Preserve directory tree structure */
+  preserveStructure: boolean;
+  /** File overwrite policy: always, never, or newer */
+  overwritePolicy: 'always' | 'never' | 'newer';
+}
+
+/**
+ * Result of local copy operation
+ */
+export interface LocalCopyResult {
+  /** Whether local copy succeeded */
+  success: boolean;
+  /** Target path where files were copied */
+  targetPath: string;
+  /** List of files that were copied */
+  copiedFiles: string[];
+  /** List of files that were skipped */
+  skippedFiles: string[];
+  /** List of errors encountered */
+  errors: string[];
+}
 
 /**
  * Common result type for extension installation
@@ -42,6 +79,8 @@ export interface ExtensionInstallationResult {
   sourceVersion?: string;
   /** Installed extension version (before update) */
   installedVersion?: string;
+  /** Local copy result (optional - only if localCopy is enabled in manifest) */
+  localCopy?: LocalCopyResult;
 }
 
 /**
@@ -142,6 +181,276 @@ export abstract class BaseExtensionInstaller {
       return json.version || null;
     } catch {
       return null;
+    }
+  }
+
+  /**
+   * Read local copy configuration from manifest
+   *
+   * @returns LocalCopyConfig if enabled, null otherwise
+   */
+  protected async readLocalCopyFromManifest(): Promise<LocalCopyConfig | null> {
+    try {
+      const sourcePath = this.getSourcePath();
+      const manifestPath = join(sourcePath, this.getManifestPath());
+      const content = await readFile(manifestPath, 'utf-8');
+      const manifest = JSON.parse(content);
+
+      if (!manifest.localCopy?.enabled) return null;
+
+      // Apply defaults
+      return {
+        enabled: true,
+        strategy: manifest.localCopy.strategy || 'hybrid',
+        includes: manifest.localCopy.includes || [],
+        excludes: manifest.localCopy.excludes || [],
+        targetDir: manifest.localCopy.targetDir || '.codemie',
+        preserveStructure: manifest.localCopy.preserveStructure ?? true,
+        overwritePolicy: manifest.localCopy.overwritePolicy || 'newer'
+      };
+    } catch (error) {
+      logger.debug(`[${this.agentName}] Failed to read local copy config: ${error}`);
+      return null;
+    }
+  }
+
+  /**
+   * Install extension files to local working directory
+   *
+   * @param sourcePath - Source directory path (global installation)
+   * @param config - Local copy configuration
+   * @returns Result with copied files, skipped files, and errors
+   */
+  protected async installLocal(
+    sourcePath: string,
+    config: LocalCopyConfig
+  ): Promise<LocalCopyResult> {
+    const { resolveLocalTargetPath } = await import('../../../utils/paths.js');
+
+    const result: LocalCopyResult = {
+      success: false,
+      targetPath: '',
+      copiedFiles: [],
+      skippedFiles: [],
+      errors: []
+    };
+
+    try {
+      // 1. Resolve target directory
+      result.targetPath = resolveLocalTargetPath(config.targetDir);
+      logger.info(`[${this.agentName}] Local copy target: ${result.targetPath}`);
+
+      // 2. Check version (skip if up-to-date)
+      const sourceVersion = await this.getVersion(sourcePath);
+      if (!await this.shouldUpdateLocal(result.targetPath, sourceVersion || 'unknown')) {
+        result.success = true;
+        result.skippedFiles.push('All files (already up-to-date)');
+        return result;
+      }
+
+      // 3. Ensure target directory exists
+      await mkdir(result.targetPath, { recursive: true });
+
+      // 4. Walk source directory and copy selectively
+      const filesInfo = await this.walkDirectory(sourcePath, sourcePath, config);
+
+      for (const file of filesInfo.include) {
+        try {
+          const sourceFull = join(sourcePath, file);
+          const targetFull = join(result.targetPath, file);
+
+          // Ensure parent directory exists
+          await mkdir(dirname(targetFull), { recursive: true });
+
+          // Copy with overwrite policy
+          if (await this.shouldCopyFile(sourceFull, targetFull, config.overwritePolicy)) {
+            await cp(sourceFull, targetFull, { force: true });
+            result.copiedFiles.push(file);
+            logger.debug(`[${this.agentName}] Copied: ${file}`);
+          } else {
+            result.skippedFiles.push(file);
+          }
+        } catch (error) {
+          const errorMsg = `Failed to copy ${file}: ${error}`;
+          result.errors.push(errorMsg);
+          logger.warn(`[${this.agentName}] ${errorMsg}`);
+        }
+      }
+
+      // 5. Write version tracking file
+      await this.writeVersionFile(result.targetPath, sourceVersion);
+
+      result.success = result.errors.length === 0;
+      logger.info(
+        `[${this.agentName}] Local copy: ${result.copiedFiles.length} copied, ` +
+        `${result.skippedFiles.length} skipped, ${result.errors.length} errors`
+      );
+
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      result.errors.push(errorMsg);
+      logger.error(`[${this.agentName}] Local copy failed: ${errorMsg}`);
+    }
+
+    return result;
+  }
+
+  /**
+   * Recursively walk directory and filter files
+   *
+   * @param basePath - Base source path
+   * @param currentPath - Current directory being walked
+   * @param config - Local copy configuration
+   * @returns Lists of included and excluded files
+   */
+  protected async walkDirectory(
+    basePath: string,
+    currentPath: string,
+    config: LocalCopyConfig
+  ): Promise<{ include: string[]; exclude: string[] }> {
+    const result = { include: [] as string[], exclude: [] as string[] };
+    const entries = await readdir(currentPath, { withFileTypes: true });
+
+    for (const entry of entries) {
+      const fullPath = join(currentPath, entry.name);
+      const relativePath = relative(basePath, fullPath);
+
+      if (entry.isDirectory()) {
+        // Recurse into directory
+        const nested = await this.walkDirectory(basePath, fullPath, config);
+        result.include.push(...nested.include);
+        result.exclude.push(...nested.exclude);
+      } else {
+        // Apply filter
+        if (this.shouldIncludeFile(relativePath, config)) {
+          result.include.push(relativePath);
+        } else {
+          result.exclude.push(relativePath);
+        }
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Check if file should be included based on pattern matching strategy
+   *
+   * @param relativePath - File path relative to base
+   * @param config - Local copy configuration
+   * @returns true if file should be included
+   */
+  protected shouldIncludeFile(relativePath: string, config: LocalCopyConfig): boolean {
+    // Import glob matcher (placeholder - will be implemented)
+    // TODO: Import actual pattern matcher from filters module
+    const matchesPattern = (path: string, pattern: string): boolean => {
+      // Simple glob matching - replace with actual implementation
+      const regexPattern = pattern
+        .replace(/\*/g, '.*')
+        .replace(/\?/g, '.');
+      return new RegExp(`^${regexPattern}$`).test(path);
+    };
+
+    if (config.strategy === 'whitelist') {
+      return config.includes.some(pattern => matchesPattern(relativePath, pattern));
+    }
+
+    if (config.strategy === 'blacklist') {
+      return !config.excludes.some(pattern => matchesPattern(relativePath, pattern));
+    }
+
+    // Hybrid: match includes, then apply excludes
+    const included = config.includes.some(pattern => matchesPattern(relativePath, pattern));
+    if (!included) return false;
+
+    const excluded = config.excludes.some(pattern => matchesPattern(relativePath, pattern));
+    return !excluded;
+  }
+
+  /**
+   * Check if file should be copied based on overwrite policy
+   *
+   * @param sourcePath - Source file path
+   * @param targetPath - Target file path
+   * @param policy - Overwrite policy
+   * @returns true if file should be copied
+   */
+  protected async shouldCopyFile(
+    sourcePath: string,
+    targetPath: string,
+    policy: 'always' | 'never' | 'newer'
+  ): Promise<boolean> {
+    if (policy === 'always') return true;
+    if (policy === 'never' && existsSync(targetPath)) return false;
+
+    // 'newer' policy: compare timestamps
+    if (policy === 'newer' && existsSync(targetPath)) {
+      try {
+        const [sourceStats, targetStats] = await Promise.all([
+          stat(sourcePath),
+          stat(targetPath)
+        ]);
+        return sourceStats.mtime > targetStats.mtime;
+      } catch {
+        return true; // Copy if stat fails
+      }
+    }
+
+    return true; // Copy if target doesn't exist
+  }
+
+  /**
+   * Write version file to track local installation
+   *
+   * @param targetPath - Target directory path
+   * @param version - Extension version
+   */
+  protected async writeVersionFile(
+    targetPath: string,
+    version: string | null
+  ): Promise<void> {
+    const versionFile = join(targetPath, `${this.agentName}.extension.json`);
+
+    const versionInfo = {
+      version: version || 'unknown',
+      installedAt: new Date().toISOString()
+    };
+
+    try {
+      await writeFile(versionFile, JSON.stringify(versionInfo, null, 2), 'utf-8');
+      logger.debug(`[${this.agentName}] Version file written: ${versionFile}`);
+    } catch (error) {
+      logger.warn(`[${this.agentName}] Failed to write version file: ${error}`);
+    }
+  }
+
+  /**
+   * Check if local extension should be updated
+   *
+   * @param targetPath - Target directory path
+   * @param sourceVersion - Source extension version
+   * @returns true if update is needed
+   */
+  protected async shouldUpdateLocal(
+    targetPath: string,
+    sourceVersion: string
+  ): Promise<boolean> {
+    const versionFile = join(targetPath, `${this.agentName}.extension.json`);
+
+    try {
+      const content = await readFile(versionFile, 'utf-8');
+      const versionInfo = JSON.parse(content);
+
+      if (versionInfo.version === sourceVersion) {
+        logger.debug(`[${this.agentName}] Local extension already at v${sourceVersion}`);
+        return false;
+      }
+
+      logger.info(`[${this.agentName}] Updating local: v${versionInfo.version} → v${sourceVersion}`);
+      return true;
+    } catch {
+      // No version file or invalid = first install
+      return true;
     }
   }
 
@@ -322,7 +631,29 @@ export abstract class BaseExtensionInstaller {
         logger.debug(`[${this.agentName}] Extension already up-to-date at ${result.targetPath}${versionInfo}`);
       }
 
-      // 7. Return detailed result
+      // 7. Perform local copy to working directory (NEW)
+      logger.info(`[${this.agentName}] Checking local copy configuration...`);
+      const localConfig = await this.readLocalCopyFromManifest();
+
+      if (localConfig?.enabled) {
+        logger.info(`[${this.agentName}] Local copy enabled, copying to working directory...`);
+        const localResult = await this.installLocal(sourcePath, localConfig);
+        result.localCopy = localResult;
+
+        if (localResult.success && localResult.copiedFiles.length > 0) {
+          logger.info(
+            `[${this.agentName}] Local copy: ${localResult.copiedFiles.length} files copied to ${localResult.targetPath}`
+          );
+        } else if (localResult.success) {
+          logger.debug(`[${this.agentName}] Local copy: already up-to-date`);
+        } else {
+          logger.warn(`[${this.agentName}] Local copy failed with ${localResult.errors.length} errors`);
+        }
+      } else {
+        logger.debug(`[${this.agentName}] Local copy not enabled, skipping`);
+      }
+
+      // 8. Return detailed result
       logger.info(`[${this.agentName}] Installation complete - returning result`);
       return result;
     } catch (error) {

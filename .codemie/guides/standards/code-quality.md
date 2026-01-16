@@ -93,7 +93,7 @@ export default [
 
 | Option | Value | Purpose |
 |--------|-------|---------|
-| **target** | ES2022 | Modern Node.js (>=24.0.0) |
+| **target** | ES2022 | Modern Node.js (>=20.0.0) |
 | **module** | NodeNext | ESM with `.js` imports |
 | **strict** | true | Maximum type safety |
 | **noImplicitAny** | false | Allow implicit any (pragmatic) |

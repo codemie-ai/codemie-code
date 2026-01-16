@@ -89,6 +89,25 @@ function findBaseIndex(parts: string[], baseDirName: string): number {
   return parts.findIndex(part => part === baseDirName);
 }
 
+/**
+ * Resolve local target path for extension files
+ *
+ * Returns the path where extension files should be copied in the current working directory.
+ * Always uses process.cwd() for predictable behavior.
+ *
+ * @param baseTargetDir - Base target directory name (default: '.codemie')
+ * @returns Absolute path to target directory in current working directory
+ *
+ * @example
+ * // Running from /Users/john/project
+ * resolveLocalTargetPath('.codemie')
+ * // Returns: '/Users/john/project/.codemie'
+ */
+export function resolveLocalTargetPath(baseTargetDir: string = '.codemie'): string {
+  const cwd = process.cwd();
+  return path.join(cwd, baseTargetDir);
+}
+
 // ============================================================================
 // Path Structure Validation
 // ============================================================================

@@ -1,0 +1,143 @@
+# Testing Patterns
+
+## Quick Summary
+
+Testing patterns for [PROJECT_NAME] using [TEST_FRAMEWORK]: unit tests, integration tests, fixtures, and mocking.
+
+**Category**: Testing
+**Complexity**: Medium
+**Prerequisites**: [TEST_FRAMEWORK], testing fundamentals
+
+---
+
+## 🚨 SIZE LIMIT WARNING
+
+**This generated guide MUST be 200-400 lines maximum.**
+
+**When filling this template**:
+- ✅ Code examples: 5-15 lines (NEVER > 20)
+- ✅ ONE example per pattern
+- ✅ Use file:line references, not full code
+- ✅ Use tables for multiple patterns
+- ❌ NO multiple examples for same pattern
+- ❌ NO verbose explanations
+- ❌ NO copying entire functions
+
+**Validate line count after generation**: `wc -l [this-file]`
+**If > 400 lines**: Condense immediately before continuing!
+
+---
+
+## Test Structure
+
+```
+tests/
+├── unit/                   Mirror source structure
+│   └── [module]/
+│       └── test_[file].[ext]
+├── integration/
+│   └── test_[feature].[ext]
+└── fixtures/
+    └── [fixture_files]
+```
+
+**Naming**: `test_[scenario]_[expected_outcome]`
+
+---
+
+## Unit Test Pattern
+
+```[language]
+# Source: [test_file:lines]
+[unit_test_example]
+```
+
+**Structure**: Arrange → Act → Assert
+
+---
+
+## Fixtures
+
+```[language]
+# Source: [conftest_or_setup:lines]
+[fixture_example]
+```
+
+**Scopes**: function | class | module | session
+
+---
+
+## Mocking
+
+```[language]
+# Source: [test_file:lines]
+[mock_example]
+```
+
+**Mock**: External APIs, database (for unit tests), file system, time
+
+---
+
+## Parameterized Tests
+
+```[language]
+# Source: [test_file:lines]
+[parameterized_example]
+```
+
+---
+
+## Integration Tests
+
+```[language]
+# Source: [test_file:lines]
+[integration_test_example]
+```
+
+**Characteristics**: Multiple components, real dependencies (test DB)
+
+---
+
+## Test Commands
+
+```bash
+# Run all tests
+[run_all]
+
+# Run specific file
+[run_file]
+
+# Run with coverage
+[coverage]
+```
+
+---
+
+## Coverage
+
+**Targets**:
+- Overall: [X]%
+- Critical paths: [Y]%
+
+**Focus on**: Business logic, error handling, edge cases
+
+---
+
+## Best Practices
+
+| ✅ DO | ❌ DON'T |
+|-------|----------|
+| One assertion per test | Multiple scenarios in one test |
+| Descriptive test names | `test1`, `test2` |
+| Arrange-Act-Assert | Mixed concerns |
+| Mock external dependencies | Real APIs in unit tests |
+| Keep tests fast | Long-running tests |
+
+---
+
+## References
+
+- **Tests**: `[test_directory]/`
+- **Fixtures**: `[fixture_location]`
+
+---
