@@ -184,6 +184,78 @@ This plugin is part of the CodeMie CLI's hooks-based architecture:
 
 See `docs/ARCHITECTURE-HOOKS-SYSTEM.md` for complete architecture documentation.
 
+## Local Installation to Working Directory
+
+The plugin supports copying template files to your project's working directory (`.codemie/` by default). This is useful for:
+
+- **Project-specific templates**: Custom Claude templates per project
+- **Offline usage**: Templates available without global installation
+- **Version control**: Commit templates with your project
+
+### Configuration
+
+Local installation is configured via `.claude-plugin/local-install.json`:
+
+```json
+{
+  "enabled": true,
+  "strategy": "hybrid",
+  "includes": [
+    "claude-templates/**"
+  ],
+  "excludes": [
+    "**/*.test.js",
+    "**/.DS_Store",
+    "**/node_modules/**"
+  ],
+  "targetDir": ".codemie",
+  "preserveStructure": true,
+  "overwritePolicy": "newer"
+}
+```
+
+**Configuration Options:**
+
+- `enabled`: Enable/disable local copy (default: `true`)
+- `strategy`: Pattern matching strategy
+  - `whitelist`: Only copy files matching `includes`
+  - `blacklist`: Copy all files except those matching `excludes`
+  - `hybrid`: Copy files matching `includes`, then apply `excludes`
+- `includes`: Glob patterns for files to include
+- `excludes`: Glob patterns for files to exclude
+- `targetDir`: Target directory name (relative to working directory)
+- `preserveStructure`: Preserve directory structure (default: `true`)
+- `overwritePolicy`: File overwrite behavior
+  - `always`: Always overwrite existing files
+  - `never`: Never overwrite existing files
+  - `newer`: Only overwrite if source is newer (default)
+
+### How It Works
+
+When the plugin is installed globally (via SSO provider), it also:
+
+1. Checks if local installation is enabled
+2. Copies matching files to working directory
+3. Tracks version to avoid redundant copies
+4. Skips up-to-date files based on `overwritePolicy`
+
+**Example:**
+```bash
+# Plugin installed to ~/.codemie/claude-plugin/ (global)
+# Templates copied to ./codemie/claude-templates/ (local)
+# Your project can now use templates without global lookup
+```
+
+### Disabling Local Installation
+
+To disable local copying, set `enabled: false` in `local-install.json`:
+
+```json
+{
+  "enabled": false
+}
+```
+
 ## Development
 
 ### Plugin Structure
@@ -191,11 +263,13 @@ See `docs/ARCHITECTURE-HOOKS-SYSTEM.md` for complete architecture documentation.
 ```
 plugin/
 ├── .claude-plugin/
-│   └── plugin.json          # Plugin manifest (name, description, author)
+│   ├── plugin.json          # Plugin manifest (name, description, author)
+│   └── local-install.json   # Local installation configuration
 ├── hooks/
 │   └── hooks.json           # Hooks configuration (event → command mapping)
 ├── commands/
 │   └── status.md            # /codemie-status command
+├── claude-templates/        # Templates for local copy
 └── README.md                # This file
 ```
 

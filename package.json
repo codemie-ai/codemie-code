@@ -21,7 +21,7 @@
   ],
   "scripts": {
     "build": "tsc && npm run copy-plugin",
-    "copy-plugin": "mkdir -p dist/agents/plugins/claude/plugin && cp -r src/agents/plugins/claude/plugin/. dist/agents/plugins/claude/plugin/ && mkdir -p dist/agents/plugins/gemini/extension && cp -r src/agents/plugins/gemini/extension/. dist/agents/plugins/gemini/extension/",
+    "copy-plugin": "rm -rf dist/agents/plugins/claude/plugin dist/agents/plugins/gemini/extension && mkdir -p dist/agents/plugins/claude/plugin && cp -r src/agents/plugins/claude/plugin/. dist/agents/plugins/claude/plugin/ && mkdir -p dist/agents/plugins/gemini/extension && cp -r src/agents/plugins/gemini/extension/. dist/agents/plugins/gemini/extension/",
     "dev": "tsc --watch",
     "test": "vitest",
     "test:unit": "vitest run src",

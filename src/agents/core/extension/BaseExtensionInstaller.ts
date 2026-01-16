@@ -187,27 +187,59 @@ export abstract class BaseExtensionInstaller {
   /**
    * Read local copy configuration from manifest
    *
+   * Reads from local-install.json first (preferred), with fallback to plugin.json
+   * for backward compatibility.
+   *
    * @returns LocalCopyConfig if enabled, null otherwise
    */
   protected async readLocalCopyFromManifest(): Promise<LocalCopyConfig | null> {
     try {
       const sourcePath = this.getSourcePath();
-      const manifestPath = join(sourcePath, this.getManifestPath());
-      const content = await readFile(manifestPath, 'utf-8');
-      const manifest = JSON.parse(content);
+      const manifestDir = dirname(join(sourcePath, this.getManifestPath()));
 
-      if (!manifest.localCopy?.enabled) return null;
+      // Try reading from separate local-install.json file first (preferred)
+      const localInstallPath = join(manifestDir, 'local-install.json');
+      try {
+        const localInstallContent = await readFile(localInstallPath, 'utf-8');
+        const localConfig = JSON.parse(localInstallContent);
 
-      // Apply defaults
-      return {
-        enabled: true,
-        strategy: manifest.localCopy.strategy || 'hybrid',
-        includes: manifest.localCopy.includes || [],
-        excludes: manifest.localCopy.excludes || [],
-        targetDir: manifest.localCopy.targetDir || '.codemie',
-        preserveStructure: manifest.localCopy.preserveStructure ?? true,
-        overwritePolicy: manifest.localCopy.overwritePolicy || 'newer'
-      };
+        if (!localConfig.enabled) return null;
+
+        logger.debug(`[${this.agentName}] Loaded local copy config from local-install.json`);
+
+        // Apply defaults
+        return {
+          enabled: true,
+          strategy: localConfig.strategy || 'hybrid',
+          includes: localConfig.includes || [],
+          excludes: localConfig.excludes || [],
+          targetDir: localConfig.targetDir || '.codemie',
+          preserveStructure: localConfig.preserveStructure ?? true,
+          overwritePolicy: localConfig.overwritePolicy || 'newer'
+        };
+      } catch {
+        // Fallback to reading from plugin.json (backward compatibility)
+        logger.debug(`[${this.agentName}] local-install.json not found, checking plugin.json`);
+
+        const manifestPath = join(sourcePath, this.getManifestPath());
+        const content = await readFile(manifestPath, 'utf-8');
+        const manifest = JSON.parse(content);
+
+        if (!manifest.localCopy?.enabled) return null;
+
+        logger.debug(`[${this.agentName}] Loaded local copy config from plugin.json (deprecated)`);
+
+        // Apply defaults
+        return {
+          enabled: true,
+          strategy: manifest.localCopy.strategy || 'hybrid',
+          includes: manifest.localCopy.includes || [],
+          excludes: manifest.localCopy.excludes || [],
+          targetDir: manifest.localCopy.targetDir || '.codemie',
+          preserveStructure: manifest.localCopy.preserveStructure ?? true,
+          overwritePolicy: manifest.localCopy.overwritePolicy || 'newer'
+        };
+      }
     } catch (error) {
       logger.debug(`[${this.agentName}] Failed to read local copy config: ${error}`);
       return null;
