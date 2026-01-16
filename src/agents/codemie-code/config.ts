@@ -96,7 +96,6 @@ function normalizeProvider(provider: string): CodeMieConfig['provider'] {
   switch (normalized) {
     case 'openai':
     case 'gpt':
-    case 'codex':
       return 'openai';
 
     case 'azure':

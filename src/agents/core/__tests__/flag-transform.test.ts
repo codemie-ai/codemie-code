@@ -204,17 +204,6 @@ describe('transformFlags', () => {
       expect(result).toEqual(['-p', 'fix bug in auth', '--profile', 'work']);
     });
 
-    it('should transform for Codex (subcommand type)', () => {
-      const args = ['--task', 'add unit tests', '--model', 'gpt-4'];
-      const mappings: FlagMappings = {
-        '--task': { type: 'subcommand', target: 'exec', position: 'before' }
-      };
-
-      const result = transformFlags(args, mappings, mockConfig);
-
-      expect(result).toEqual(['exec', 'add unit tests', '--model', 'gpt-4']);
-    });
-
     it('should transform for Gemini (flag type)', () => {
       const args = ['--task', 'refactor code', '-m', 'gemini-2.5-flash'];
       const mappings: FlagMappings = {

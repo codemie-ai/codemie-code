@@ -76,8 +76,8 @@ export class AgentCLI {
         await this.handleHealthCheck();
       });
 
-    // Add init command for frameworks (skip for built-in agent and deepagents)
-    if (this.adapter.name !== BUILTIN_AGENT_NAME && this.adapter.name !== 'deepagents') {
+    // Add init command for frameworks (skip for built-in agent)
+    if (this.adapter.name !== BUILTIN_AGENT_NAME) {
       this.program
         .command('init')
         .description('Initialize development framework')

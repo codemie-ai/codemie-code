@@ -91,7 +91,7 @@ When using CodeMie CLI:
 
 ### Code Execution
 - The CLI can execute shell commands through built-in tools
-- External agents (Claude Code, Codex) run with your user permissions
+- External agents (Claude Code, Gemini) run with your user permissions
 - Review code before executing suggested commands
 
 ## Compliance

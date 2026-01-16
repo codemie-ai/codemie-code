@@ -18,7 +18,7 @@ export function createAnalyticsCommand(): Command {
     .description('Display aggregated metrics and analytics from sessions')
     .option('--session <id>', 'Filter by session ID')
     .option('--project <pattern>', 'Filter by project path (basename, partial, or full path)')
-    .option('--agent <name>', 'Filter by agent name (claude, gemini, codex, etc.)')
+    .option('--agent <name>', 'Filter by agent name (claude, gemini, etc.)')
     .option('--branch <name>', 'Filter by git branch')
     .option('--from <date>', 'Filter sessions from date (YYYY-MM-DD)')
     .option('--to <date>', 'Filter sessions to date (YYYY-MM-DD)')

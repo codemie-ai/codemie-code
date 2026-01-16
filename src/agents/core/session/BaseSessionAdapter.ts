@@ -2,7 +2,7 @@
  * Base Session Adapter
  *
  * Defines the contract for agent-specific session parsing.
- * Each agent (Claude, Codex, Gemini) implements this interface to parse
+ * Each agent (Claude, Gemini) implements this interface to parse
  * their session file format into a unified ParsedSession format.
  */
 
@@ -80,7 +80,7 @@ export interface AggregatedResult {
  * Each agent implements this to provide agent-specific parsing logic.
  */
 export interface SessionAdapter {
-  /** Agent name (e.g., 'claude', 'codex', 'gemini') */
+  /** Agent name (e.g., 'claude', 'gemini') */
   readonly agentName: string;
 
   /**

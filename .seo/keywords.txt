@@ -6,7 +6,6 @@
 - cli coding assistant
 - command line ai
 - claude code cli
-- openai codex cli
 - gemini coding assistant
 - ai coding tool
 - code generation cli
@@ -101,7 +100,6 @@
 ## Action-Oriented Keywords
 - install ai coding assistant
 - setup claude code cli
-- configure openai codex
 - manage multiple ai agents
 - switch between ai providers
 - automate code reviews

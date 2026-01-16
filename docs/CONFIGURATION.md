@@ -71,7 +71,7 @@ codemie-code "analyze this code"
 
 # Override with specific profile for one command
 codemie-claude --profile work-litellm "review PR"
-codemie-codex --profile personal-openai "generate tests"
+codemie-gemini --profile personal-openai "generate tests"
 
 # Show profile details
 codemie profile show work-litellm
@@ -252,7 +252,6 @@ Location: `~/.codemie/codemie-cli.config.json`
 
 AI/Run CodeMie CLI automatically validates model compatibility:
 
-- **Codex**: OpenAI models only (gpt-4, gpt-4.1, gpt-5, etc.)
 - **Claude**: Both Claude and GPT models
 - **Gemini CLI**: Gemini models only (gemini-2.5-flash, gemini-2.5-pro, gemini-1.5-pro, etc.)
 - **CodeMie Native**: All supported models

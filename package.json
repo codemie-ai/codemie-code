@@ -1,7 +1,7 @@
 {
   "name": "@codemieai/code",
   "version": "0.0.28",
-  "description": "Unified AI coding assistant CLI - Manage Claude Code, Codex, Gemini & custom agents. Multi-provider support (OpenAI, Azure, LiteLLM, SSO). Built-in LangGraph agent with file operations & git integration.",
+  "description": "Unified AI coding assistant CLI - Manage Claude Code, Gemini & custom agents. Multi-provider support (OpenAI, Azure, LiteLLM, SSO). Built-in LangGraph agent with file operations & git integration.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -61,7 +61,6 @@
     "claude",
     "claude-code",
     "openai",
-    "codex",
     "gemini",
     "anthropic",
     "gpt",

@@ -96,7 +96,7 @@ export interface SyncState {
  */
 export interface Session {
   sessionId: string; // CodeMie session ID (UUID)
-  agentName: string; // 'claude', 'gemini', 'codex'
+  agentName: string; // 'claude', 'gemini'
   provider: string; // 'ai-run-sso', etc.
   project?: string; // SSO project name (optional, only for ai-run-sso provider)
   startTime: number; // Unix timestamp (ms)

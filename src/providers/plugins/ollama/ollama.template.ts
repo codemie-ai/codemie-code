@@ -29,15 +29,7 @@ export const OllamaTemplate = registerProvider<ProviderTemplate>({
   healthCheckEndpoint: '/api/version',
 
   // Agent lifecycle hooks
-  agentHooks: {
-    // Codex-specific hook: Ollama uses "chat" API (not "responses")
-    'codex': {
-      beforeRun: async (env) => {
-        env.CODEMIE_CODEX_WIRE_API = 'chat';
-        return env;
-      }
-    }
-  },
+  agentHooks: {},
 
   setupInstructions: `
 # Ollama Setup Instructions
@@ -57,7 +49,7 @@ Download from: https://ollama.com/download
 
 ## Recommended Coding Models (Tool Support Required)
 
-**Important**: Agents like Codex require models with function calling/tool support.
+**Important**: Some agents require models with function calling/tool support.
 
 - **qwen2.5-coder**: Excellent for coding tasks with tool support (7B, ~5GB)
 - **qwen3-vl:235b-cloud**: Latest Qwen with vision and tool support (235B)

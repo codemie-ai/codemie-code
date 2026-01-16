@@ -301,9 +301,9 @@ export function isValidUuidFilename(filename: string, extension: string): boolea
  * Resolve a path relative to the user's home directory
  *
  * Joins the user's home directory with the provided relative path.
- * Useful for agent data directories like '.claude', '.codex', '.gemini', etc.
+ * Useful for agent data directories like '.claude', '.gemini', etc.
  *
- * @param relativePath - Relative path from home directory (e.g., '.claude', '.codex')
+ * @param relativePath - Relative path from home directory (e.g., '.claude', '.gemini')
  * @returns Absolute path in user's home directory
  *
  * @example
@@ -313,8 +313,8 @@ export function isValidUuidFilename(filename: string, extension: string): boolea
  * // Returns: '/home/user/.claude' (on Linux)
  *
  * @example
- * resolveHomeDir('.codex/auth.json')
- * // Returns: '/Users/john/.codex/auth.json'
+ * resolveHomeDir('.gemini/auth.json')
+ * // Returns: '/Users/john/.gemini/auth.json'
  */
 export function resolveHomeDir(relativePath: string): string {
   return path.join(homedir(), relativePath);

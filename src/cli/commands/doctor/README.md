@@ -196,7 +196,6 @@ The system currently supports these providers:
 - **azure**: Azure OpenAI with endpoint validation
 - **litellm**: LiteLLM proxy gateway
 - **gemini**: Google Gemini API
-- **codex**: OpenAI Codex (legacy)
 
 Each provider can have custom health checks tailored to its authentication method and features.
 

@@ -40,7 +40,7 @@ Integration tests verify the system works correctly by executing CLI commands di
 it('should list all available agents', () => {
   const output = cli.run('list');
   expect(output).toContain('claude');
-  expect(output).toContain('codex');
+  expect(output).toContain('gemini');
 });
 ```
 

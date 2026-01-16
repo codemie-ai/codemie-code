@@ -76,9 +76,7 @@ body:
       options:
         - CodeMie Native (codemie-code)
         - Claude Code (codemie-claude)
-        - OpenAI Codex (codemie-codex)
         - Google Gemini (codemie-gemini)
-        - Deep Agents (codemie-deepagents)
         - Not applicable / General CLI
     validations:
       required: true

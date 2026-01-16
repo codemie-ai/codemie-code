@@ -25,7 +25,7 @@ export interface SessionMetric {
  */
 export interface SessionAttributes {
   // Identity
-  agent: string;                         // 'claude', 'gemini', 'codex', 'codemie-code'
+  agent: string;                         // 'claude', 'gemini', 'codemie-code'
   agent_version: string;                 // CLI version
   llm_model: string;                     // Most-used model in session
   repository: string;                    // Repository name (parent/current format)
@@ -91,5 +91,5 @@ export interface MetricsApiConfig {
   retryAttempts?: number; // Max retry attempts
   retryDelays?: number[]; // Backoff delays [1s, 2s, 5s]
   version?: string;      // CLI version (from CODEMIE_CLI_VERSION env var)
-  clientType?: string;   // Client type (codemie-claude, codex-cli, gemini-cli, etc.)
+  clientType?: string;   // Client type (codemie-claude, gemini-cli, etc.)
 }

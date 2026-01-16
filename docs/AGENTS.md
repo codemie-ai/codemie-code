@@ -59,27 +59,6 @@ codemie-claude -p "message"      # Non-interactive/print mode
 codemie-claude health            # Health check
 ```
 
-## Codex
-
-OpenAI's code generation assistant optimized for completion tasks.
-
-**Installation:** `codemie install codex`
-
-**Features:**
-- Code completion and generation
-- Function generation and bug fixing
-- Code explanation and documentation
-- Non-interactive mode with `-p` flag
-- **Requires OpenAI-compatible models only**
-
-**Usage:**
-```bash
-codemie-codex                    # Interactive mode
-codemie-codex "message"          # Start with message
-codemie-codex -p "message"       # Non-interactive mode
-codemie-codex health             # Health check
-```
-
 ## Gemini CLI
 
 Google's Gemini AI coding assistant with advanced code understanding.
@@ -115,26 +94,6 @@ codemie-gemini "your prompt"            # With initial message
 codemie-gemini -p "your prompt"         # Non-interactive mode (Gemini-specific)
 codemie-gemini -m gemini-2.5-flash      # Specify model (Gemini-specific)
 codemie-gemini --model gemini-2.5-flash "analyze code"  # With config override
-```
-
-## Deep Agents CLI
-
-LangChain's terminal interface for building agents with persistent memory. Built on LangGraph with planning capabilities, file system tools, and subagent delegation.
-
-**Installation:** `codemie install deepagents`
-
-**Links:**
-- [Documentation](https://docs.langchain.com/oss/javascript/deepagents/cli)
-- [Overview](https://docs.langchain.com/oss/javascript/deepagents/overview)
-- [Middleware](https://docs.langchain.com/oss/javascript/deepagents/middleware)
-- [Subagents](https://docs.langchain.com/oss/javascript/deepagents/subagents)
-- [Customization](https://docs.langchain.com/oss/javascript/deepagents/customization)
-
-**Usage:**
-```bash
-codemie-deepagents                   # Interactive mode
-codemie-deepagents "your task"       # Start with message
-codemie-deepagents health            # Health check
 ```
 
 **Note:** Installed via Python (pip/uv), not npm. Requires Python 3.9+ and Anthropic or OpenAI API key.

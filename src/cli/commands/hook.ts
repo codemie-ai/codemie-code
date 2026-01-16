@@ -348,7 +348,7 @@ async function handlePreCompact(event: BaseHookEvent): Promise<void> {
  * Maps agent-specific event names to internal event names
  *
  * @param eventName - Original event name from hook
- * @param agentName - Agent name (claude, gemini, codex)
+ * @param agentName - Agent name (claude, gemini)
  * @returns Normalized internal event name
  */
 function normalizeEventName(eventName: string, agentName: string): string {

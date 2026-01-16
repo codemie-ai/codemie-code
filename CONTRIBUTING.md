@@ -67,7 +67,7 @@ The scope provides additional contextual information and is contained within par
 feat(analytics): add API response tracking for all agents
 
 Implement comprehensive tracking of API requests and responses across
-all agent types (Claude, Codex, Gemini, CodeMie Native).
+all agent types (Claude, Gemini, CodeMie Native).
 
 Includes automatic content extraction from multiple API formats and
 privacy-first redaction of sensitive data.

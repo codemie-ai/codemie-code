@@ -147,7 +147,7 @@ export interface AgentAnalyticsAdapter {
  */
 export interface AgentMetadata {
   // === Identity ===
-  name: string;                    // 'claude', 'codex', 'gemini'
+  name: string;                    // 'claude', 'gemini'
   displayName: string;             // 'Claude Code'
   description: string;
 
@@ -164,7 +164,7 @@ export interface AgentMetadata {
 
   // === Compatibility Rules ===
   supportedProviders: string[];    // ['openai', 'litellm', 'ai-run-sso']
-  blockedModelPatterns?: RegExp[]; // [/^claude/i] for Codex
+  blockedModelPatterns?: RegExp[]; // Optional: Block certain model patterns
   recommendedModels?: string[];    // ['gpt-4.1', 'gpt-4o'] - suggested models for error messages
 
   // === Proxy Configuration ===
@@ -192,7 +192,7 @@ export interface AgentMetadata {
 
   // === Data Paths ===
   dataPaths?: {
-    home: string;        // Main directory: '~/.gemini', '~/.claude', '~/.codex'
+    home: string;        // Main directory: '~/.gemini', '~/.claude'
     settings?: string;   // Settings file path (relative to home, agent-specific)
   };
 

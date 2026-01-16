@@ -13,7 +13,7 @@
  * Architecture Benefits:
  * - Zero duplication: Sessions read once, processed multiple times
  * - Pluggable: Add processors without modifying plugin
- * - Agent-agnostic: Supports Claude, Codex, Gemini via adapters
+ * - Agent-agnostic: Supports Claude, Gemini via adapters
  * - Reusable: Shared utilities for discovery and I/O
  *
  * SOLID: Single responsibility = orchestrate session sync across processors

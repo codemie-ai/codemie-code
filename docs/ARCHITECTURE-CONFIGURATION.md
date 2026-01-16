@@ -367,7 +367,7 @@ CODEMIE_INTEGRATION_ID=<integration-uuid>
 
 Provider templates define which vars to set:
 
-**OpenAI-compatible agents** (Codex, Gemini):
+**OpenAI-compatible agents** (Gemini):
 ```bash
 OPENAI_BASE_URL=https://codemie.ai
 OPENAI_API_KEY=<session-token>
