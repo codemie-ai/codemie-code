@@ -6,7 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { homedir } from 'os';
-import { join } from 'path';
+import { join, isAbsolute } from 'path';
 import type { AgentMetadata } from '../../../core/types.js';
 
 // Mock fs/promises before any imports
@@ -52,7 +52,7 @@ describe('ClaudePluginInstaller', () => {
 
     it('should return absolute path', () => {
       const targetPath = installer.getTargetPath();
-      expect(targetPath.startsWith('/')).toBe(true);
+      expect(isAbsolute(targetPath)).toBe(true);
     });
   });
 
