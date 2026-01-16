@@ -3,11 +3,14 @@
  *
  * KISS: Does one thing well - forwards HTTP requests with streaming.
  * Memory efficient: Returns streams directly, no buffering.
+ * Proxy support: Respects HTTP_PROXY/HTTPS_PROXY environment variables.
  */
 
 import { pipeline } from 'stream/promises';
 import https from 'https';
 import http from 'http';
+import { HttpsProxyAgent } from 'https-proxy-agent';
+import { HttpProxyAgent } from 'http-proxy-agent';
 import { NetworkError } from './proxy-errors.js';
 import { logger } from '../../../../utils/logger.js';
 
@@ -23,6 +26,18 @@ export interface ForwardRequestOptions {
 }
 
 /**
+ * Parse proxy URL from environment variables
+ */
+function getProxyUrl(protocol: 'http:' | 'https:'): string | undefined {
+  // Check protocol-specific proxy first, then fall back to generic HTTP_PROXY
+  if (protocol === 'https:') {
+    return process.env.HTTPS_PROXY || process.env.https_proxy ||
+           process.env.HTTP_PROXY || process.env.http_proxy;
+  }
+  return process.env.HTTP_PROXY || process.env.http_proxy;
+}
+
+/**
  * Simple streaming HTTP client for proxy forwarding
  */
 export class ProxyHTTPClient {
@@ -34,19 +49,39 @@ export class ProxyHTTPClient {
     // Use provided timeout or 0 for unlimited (AI requests can be very long)
     this.timeout = options.timeout || 0;
 
+    // Check for proxy configuration from environment variables
+    const httpsProxyUrl = getProxyUrl('https:');
+    const httpProxyUrl = getProxyUrl('http:');
+
     // Connection pooling with keep-alive
     // NO timeout on agent - we handle it at request level
-    const agentOptions = {
+    const baseAgentOptions = {
       rejectUnauthorized: options.rejectUnauthorized ?? false,
       keepAlive: true,
       maxSockets: 50
     };
 
-    this.httpsAgent = new https.Agent(agentOptions);
-    this.httpAgent = new http.Agent({
-      keepAlive: true,
-      maxSockets: 50
-    });
+    // Create HTTPS agent (with proxy support if configured)
+    if (httpsProxyUrl) {
+      logger.debug('[proxy-http-client] Using HTTPS proxy:', httpsProxyUrl);
+      this.httpsAgent = new HttpsProxyAgent(httpsProxyUrl, baseAgentOptions);
+    } else {
+      this.httpsAgent = new https.Agent(baseAgentOptions);
+    }
+
+    // Create HTTP agent (with proxy support if configured)
+    if (httpProxyUrl) {
+      logger.debug('[proxy-http-client] Using HTTP proxy:', httpProxyUrl);
+      this.httpAgent = new HttpProxyAgent(httpProxyUrl, {
+        keepAlive: true,
+        maxSockets: 50
+      });
+    } else {
+      this.httpAgent = new http.Agent({
+        keepAlive: true,
+        maxSockets: 50
+      });
+    }
   }
 
   /**
