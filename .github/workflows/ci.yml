@@ -120,11 +120,30 @@ jobs:
           name: dist
           path: dist/
 
+      # Link CLI globally for agent installation
+      - name: Link CLI globally
+        run: npm link
+
+      # Install required agents for integration tests
+      - name: Install Claude Code agent
+        run: codemie install claude
+        continue-on-error: false
+
+      - name: Install Gemini CLI agent
+        run: codemie install gemini
+        continue-on-error: false
+
       - name: Run unit tests
         run: npm run test:unit
 
       - name: Run integration tests
         run: npm run test:integration
+        env:
+          LITELLM_BASE_URL: ${{ secrets.LITELLM_BASE_URL }}
+          LITELLM_API_KEY: ${{ secrets.LITELLM_API_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
 
   test-windows:
     name: Test (Windows)
@@ -156,3 +175,10 @@ jobs:
 
       - name: Run integration tests
         run: npm run test:integration
+        env:
+          TEST_AGENT_FILTER: codemie-code
+          LITELLM_BASE_URL: ${{ secrets.LITELLM_BASE_URL }}
+          LITELLM_API_KEY: ${{ secrets.LITELLM_API_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
