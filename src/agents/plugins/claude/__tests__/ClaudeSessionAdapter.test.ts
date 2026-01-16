@@ -29,44 +29,6 @@ describe('ClaudeSessionAdapter', () => {
     }
   });
 
-  describe('getSessionPaths', () => {
-    it('should return Claude projects directory', () => {
-      const paths = adapter.getSessionPaths();
-      expect(paths.baseDir).toContain('.claude');
-      expect(paths.baseDir).toContain('projects');
-    });
-  });
-
-  describe('matchesSessionPattern', () => {
-    it('should match UUID.jsonl pattern', () => {
-      const validPaths = [
-        '/path/to/123e4567-e89b-12d3-a456-426614174000.jsonl',
-        'C:\\Users\\Dev\\.claude\\projects\\project1\\abc123.jsonl'
-      ];
-
-      for (const path of validPaths) {
-        expect(adapter.matchesSessionPattern(path)).toBe(true);
-      }
-    });
-
-    it('should exclude agent-*.jsonl files', () => {
-      const invalidPaths = [
-        '/path/to/agent-metrics.jsonl',
-        '/path/to/agent-conversations.jsonl'
-      ];
-
-      for (const path of invalidPaths) {
-        expect(adapter.matchesSessionPattern(path)).toBe(false);
-      }
-    });
-
-    it('should only match .jsonl files', () => {
-      expect(adapter.matchesSessionPattern('/path/to/session.json')).toBe(false);
-      expect(adapter.matchesSessionPattern('/path/to/session.txt')).toBe(false);
-      expect(adapter.matchesSessionPattern('/path/to/session')).toBe(false);
-    });
-  });
-
   describe('parseSessionFile', () => {
     it('should parse simple session with messages', async () => {
       const sessionFile = join(tempDir, 'test-session.jsonl');

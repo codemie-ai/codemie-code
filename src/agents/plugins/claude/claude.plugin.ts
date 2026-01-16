@@ -18,9 +18,7 @@ export const ClaudePluginMetadata: AgentMetadata = {
 
   // Data paths (used by lifecycle hooks and analytics)
   dataPaths: {
-    home: '.claude',
-    sessions: 'projects',
-    user_prompts: 'history.jsonl'  // User prompt history
+    home: '.claude'
   },
 
   envMapping: {

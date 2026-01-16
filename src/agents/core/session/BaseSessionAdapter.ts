@@ -84,19 +84,6 @@ export interface SessionAdapter {
   readonly agentName: string;
 
   /**
-   * Get session storage paths for this agent.
-   * @returns Base directory and optional project subdirectories
-   */
-  getSessionPaths(): { baseDir: string; projectDirs?: string[] };
-
-  /**
-   * Check if file matches this agent's session file pattern.
-   * @param filePath - Absolute path to file
-   * @returns True if file is a session file for this agent
-   */
-  matchesSessionPattern(filePath: string): boolean;
-
-  /**
    * Parse session file to unified format.
    * @param filePath - Absolute path to session file
    * @param sessionId - CodeMie session ID (already correlated)

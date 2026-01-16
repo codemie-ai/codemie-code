@@ -6,7 +6,6 @@
  */
 
 import { join, dirname, basename } from 'path';
-import { homedir } from 'os';
 import { existsSync } from 'fs';
 import { readdir } from 'fs/promises';
 import type { SessionAdapter, ParsedSession, AggregatedResult } from '../../core/session/BaseSessionAdapter.js';
@@ -30,8 +29,8 @@ export class ClaudeSessionAdapter implements SessionAdapter {
   private processors: SessionProcessor[] = [];
 
   constructor(private readonly metadata: AgentMetadata) {
-    if (!metadata.dataPaths?.home || !metadata.dataPaths?.sessions) {
-      throw new Error('Agent metadata must provide dataPaths.home and dataPaths.sessions');
+    if (!metadata.dataPaths?.home) {
+      throw new Error('Agent metadata must provide dataPaths.home');
     }
 
     // Initialize and register processors internally
@@ -51,32 +50,6 @@ export class ClaudeSessionAdapter implements SessionAdapter {
     this.registerProcessor(new ConversationsProcessor());
 
     logger.debug(`[claude-adapter] Initialized ${this.processors.length} processors`);
-  }
-
-  /**
-   * Get Claude session storage paths.
-   * Sessions are stored in ~/.claude/projects/{projectId}/{sessionId}.jsonl
-   * Uses metadata from agent plugin
-   */
-  getSessionPaths(): { baseDir: string; projectDirs?: string[] } {
-    // Safe to use non-null assertions - validated in constructor
-    const home = this.metadata.dataPaths!.home!; // '.claude'
-    const sessions = this.metadata.dataPaths!.sessions!; // 'projects'
-
-    return {
-      baseDir: join(homedir(), home, sessions)
-    };
-  }
-
-  /**
-   * Check if file matches Claude session pattern.
-   * Matches: UUID.jsonl (excludes agent-*.jsonl)
-   */
-  matchesSessionPattern(filePath: string): boolean {
-    const filename = filePath.split(/[\\/]/).pop();
-    if (!filename) return false;
-
-    return filename.endsWith('.jsonl') && !filename.startsWith('agent-');
   }
 
   /**

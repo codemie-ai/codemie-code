@@ -192,11 +192,8 @@ export interface AgentMetadata {
 
   // === Data Paths ===
   dataPaths?: {
-    home: string;           // Main directory: '~/.gemini', '~/.claude', '~/.codex'
-    sessions?: string;      // Session logs path (relative to home or absolute)
-    settings?: string;      // Settings file path (relative to home or absolute)
-    cache?: string;         // Cache directory (relative to home or absolute)
-    user_prompts?: string;  // User prompt history file (relative to home or absolute)
+    home: string;        // Main directory: '~/.gemini', '~/.claude', '~/.codex'
+    settings?: string;   // Settings file path (relative to home, agent-specific)
   };
 
   // === Analytics Support ===

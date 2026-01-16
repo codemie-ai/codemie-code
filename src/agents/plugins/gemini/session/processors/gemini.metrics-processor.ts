@@ -14,6 +14,7 @@ import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../.
 import type { ParsedSession } from '../../../../core/session/BaseSessionAdapter.js';
 import { logger } from '../../../../../utils/logger.js';
 import type { MetricDelta } from '../../../../core/metrics/types.js';
+import { extractFormat, detectLanguage } from '../../../../../utils/file-operations.js';
 
 /**
  * Gemini message structure (from gemini.session-adapter.ts)
@@ -29,6 +30,7 @@ interface GeminiMessage {
     args: Record<string, unknown>;
     status: 'success' | 'error';
     timestamp: string;
+    result?: any[];
   }>;
   thoughts?: string[];
   model?: string;
@@ -149,6 +151,14 @@ export class GeminiMetricsProcessor implements SessionProcessor {
         // Extract tool usage from toolCalls
         if (msg.toolCalls && msg.toolCalls.length > 0) {
           const toolStatus: Record<string, { success: number; failure: number }> = {};
+          const fileOperations: Array<{
+            type: string;
+            path?: string;
+            linesAdded?: number;
+            linesRemoved?: number;
+            format?: string;
+            language?: string;
+          }> = [];
 
           for (const tool of msg.toolCalls) {
             // Count tool usage (populate directly on delta.tools)
@@ -161,6 +171,12 @@ export class GeminiMetricsProcessor implements SessionProcessor {
 
             if (tool.status === 'success') {
               toolStatus[tool.name].success++;
+
+              // Extract file operations for successful tool calls
+              const fileOp = this.extractFileOperation(tool.name, tool.args, tool.result);
+              if (fileOp) {
+                fileOperations.push(fileOp);
+              }
             } else if (tool.status === 'error') {
               toolStatus[tool.name].failure++;
             }
@@ -169,6 +185,11 @@ export class GeminiMetricsProcessor implements SessionProcessor {
           // Add toolStatus if we have any
           if (Object.keys(toolStatus).length > 0) {
             (delta as any).toolStatus = toolStatus;
+          }
+
+          // Add file operations if we have any
+          if (fileOperations.length > 0) {
+            (delta as any).fileOperations = fileOperations;
           }
         }
 
@@ -188,5 +209,62 @@ export class GeminiMetricsProcessor implements SessionProcessor {
     }
 
     return deltas;
+  }
+
+  /**
+   * Extract file operation from Gemini tool call
+   */
+  private extractFileOperation(
+    toolName: string,
+    args: Record<string, unknown>,
+    result?: any[]
+  ): { type: string; path?: string; format?: string; language?: string; linesAdded?: number; linesRemoved?: number } | undefined {
+    const typeMap: Record<string, string> = {
+      'write_file': 'write',
+      'Write': 'write',
+      'replace': 'edit',
+      'edit_file': 'edit',
+      'Edit': 'edit',
+      'read_file': 'read',
+      'Read': 'read',
+      'delete_file': 'delete'
+    };
+
+    const type = typeMap[toolName];
+    if (!type) return undefined;
+
+    const fileOp: any = { type };
+    const filePath = args.file_path as string | undefined;
+
+    if (filePath) {
+      fileOp.path = filePath;
+      fileOp.format = extractFormat(filePath);
+      fileOp.language = detectLanguage(filePath);
+    }
+
+    // Calculate line counts from tool arguments
+    if (toolName === 'write_file' || toolName === 'Write') {
+      const content = args.content as string | undefined;
+      if (content) {
+        const lines = content.split('\n');
+        fileOp.linesAdded = lines.length;
+      }
+    }
+
+    // For edit operations, try to extract line counts from result
+    // Note: Gemini result structure may vary, add defensive checks
+    if ((toolName === 'replace' || toolName === 'edit_file' || toolName === 'Edit') && result) {
+      const output = result[0]?.functionResponse?.response?.output;
+      if (typeof output === 'object' && output !== null) {
+        if (output.linesAdded !== undefined) {
+          fileOp.linesAdded = output.linesAdded;
+        }
+        if (output.linesRemoved !== undefined) {
+          fileOp.linesRemoved = output.linesRemoved;
+        }
+      }
+    }
+
+    return fileOp;
   }
 }

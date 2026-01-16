@@ -288,6 +288,41 @@ describe('MetricsProcessor - Full Pipeline Integration Test', () => {
 
       expect(hasWrite || hasEdit).toBe(true);
     });
+
+    it('should extract file operations with line counts', async () => {
+      const deltas = await metricsWriter.readAll();
+
+      // Find delta with Write operation
+      const writeDeltas = deltas.filter(d =>
+        d.fileOperations?.some(op => op.type === 'write')
+      );
+      expect(writeDeltas.length).toBeGreaterThan(0);
+
+      const writeOp = writeDeltas[0].fileOperations?.[0];
+      expect(writeOp).toBeDefined();
+      expect(writeOp?.type).toBe('write');
+      expect(writeOp?.path).toBeDefined();
+      expect(writeOp?.linesAdded).toBeGreaterThan(0);
+      expect(writeOp?.format).toBeDefined();
+      expect(writeOp?.language).toBeDefined();
+    });
+
+    it('should extract Edit operations with lines added and removed', async () => {
+      const deltas = await metricsWriter.readAll();
+
+      // Find delta with Edit operation
+      const editDeltas = deltas.filter(d =>
+        d.fileOperations?.some(op => op.type === 'edit')
+      );
+      expect(editDeltas.length).toBeGreaterThan(0);
+
+      const editOp = editDeltas[0].fileOperations?.[0];
+      expect(editOp).toBeDefined();
+      expect(editOp?.type).toBe('edit');
+      expect(editOp?.path).toBeDefined();
+      // At least one of these should be present
+      expect(editOp?.linesAdded !== undefined || editOp?.linesRemoved !== undefined).toBe(true);
+    });
   });
 
   describe('Idempotency', () => {

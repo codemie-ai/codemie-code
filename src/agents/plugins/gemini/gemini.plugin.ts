@@ -40,9 +40,7 @@ const metadata = {
   // Data paths (used by lifecycle hooks and analytics)
   dataPaths: {
     home: '.gemini',
-    sessions: 'tmp/{projectHash}/chats',
-    settings: 'settings.json',
-    user_prompts: 'logs.json'  // User prompt history (stored in project directories as logs.json)
+    settings: 'settings.json'
   },
 
   // Hook configuration: event name mapping

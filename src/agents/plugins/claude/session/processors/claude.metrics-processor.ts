@@ -15,6 +15,7 @@ import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../.
 import type { ParsedSession } from '../../../../core/session/BaseSessionAdapter.js';
 import { logger } from '../../../../../utils/logger.js';
 import type { MetricDelta } from '../../../../core/metrics/types.js';
+import { extractFormat, detectLanguage } from '../../../../../utils/file-operations.js';
 
 export class MetricsProcessor implements SessionProcessor {
   readonly name = 'metrics';
@@ -137,6 +138,21 @@ export class MetricsProcessor implements SessionProcessor {
       }
     }
 
+    // Build tool use result map (tool_use_id → toolUseResult from USER message)
+    const toolUseResultMap = new Map<string, any>();
+    for (const msg of messages) {
+      if (msg.type === 'user' && msg.toolUseResult) {
+        // Find the tool_result content item to get tool_use_id
+        if (msg.message?.content && Array.isArray(msg.message.content)) {
+          for (const item of msg.message.content) {
+            if (item.type === 'tool_result' && item.tool_use_id) {
+              toolUseResultMap.set(item.tool_use_id, msg.toolUseResult);
+            }
+          }
+        }
+      }
+    }
+
     // Build user prompts map: uuid → text content
     const userPromptsMap = new Map<string, string>();
     for (const msg of messages) {
@@ -213,7 +229,8 @@ export class MetricsProcessor implements SessionProcessor {
               toolStatus[toolName].success++;
 
               // Extract file operations for successful tool calls
-              const fileOp = this.extractFileOperation(toolName, block.input, msg.toolUseResult);
+              const toolUseResult = toolUseResultMap.get(block.id);
+              const fileOp = this.extractFileOperation(toolName, block.input, toolUseResult);
               if (fileOp) {
                 fileOperations.push(fileOp);
               }
@@ -286,8 +303,8 @@ export class MetricsProcessor implements SessionProcessor {
 
     if (filePath) {
       fileOp.path = filePath;
-      fileOp.format = this.extractFormat(filePath);
-      fileOp.language = this.detectLanguage(filePath);
+      fileOp.format = extractFormat(filePath);
+      fileOp.language = detectLanguage(filePath);
     } else if (input?.pattern) {
       fileOp.pattern = input.pattern;
     }
@@ -318,42 +335,5 @@ export class MetricsProcessor implements SessionProcessor {
     }
 
     return fileOp;
-  }
-
-  /**
-   * Extract file format from path
-   */
-  private extractFormat(path: string): string | undefined {
-    const lastDot = path.lastIndexOf('.');
-    if (lastDot === -1 || lastDot === path.length - 1) return undefined;
-    return path.slice(lastDot + 1);
-  }
-
-  /**
-   * Detect programming language from file extension
-   */
-  private detectLanguage(path: string): string | undefined {
-    const ext = path.slice(path.lastIndexOf('.')).toLowerCase();
-    const langMap: Record<string, string> = {
-      '.ts': 'typescript',
-      '.tsx': 'typescript',
-      '.js': 'javascript',
-      '.jsx': 'javascript',
-      '.py': 'python',
-      '.java': 'java',
-      '.go': 'go',
-      '.rs': 'rust',
-      '.cpp': 'cpp',
-      '.c': 'c',
-      '.rb': 'ruby',
-      '.php': 'php',
-      '.swift': 'swift',
-      '.kt': 'kotlin',
-      '.md': 'markdown',
-      '.json': 'json',
-      '.yaml': 'yaml',
-      '.yml': 'yaml'
-    };
-    return langMap[ext];
   }
 }

@@ -11,8 +11,6 @@
  * - Session metadata at root level (sessionId, projectHash, timestamps)
  */
 
-import { join, basename } from 'path';
-import { homedir } from 'os';
 import { readFile } from 'fs/promises';
 import type { SessionAdapter, ParsedSession, AggregatedResult } from '../../core/session/BaseSessionAdapter.js';
 import type { SessionProcessor, ProcessingContext } from '../../core/session/BaseProcessor.js';
@@ -86,8 +84,8 @@ export class GeminiSessionAdapter implements SessionAdapter {
   private processors: SessionProcessor[] = [];
 
   constructor(private readonly metadata: AgentMetadata) {
-    if (!metadata.dataPaths?.home || !metadata.dataPaths?.sessions) {
-      throw new Error('Agent metadata must provide dataPaths.home and dataPaths.sessions');
+    if (!metadata.dataPaths?.home) {
+      throw new Error('Agent metadata must provide dataPaths.home');
     }
 
     // Initialize and register processors internally
@@ -107,32 +105,6 @@ export class GeminiSessionAdapter implements SessionAdapter {
     this.registerProcessor(new GeminiConversationsProcessor());
 
     logger.debug(`[gemini-adapter] Initialized ${this.processors.length} processors`);
-  }
-
-  /**
-   * Get Gemini session storage paths.
-   * Sessions are stored in ~/.gemini/tmp/{projectHash}/chats/session-{date}-{id}.json
-   * Uses metadata from agent plugin
-   */
-  getSessionPaths(): { baseDir: string; projectDirs?: string[] } {
-    // Safe to use non-null assertions - validated in constructor
-    const home = this.metadata.dataPaths!.home!; // '.gemini'
-    // sessions path is 'tmp/{projectHash}/chats', but we scan from tmp base dir
-
-    // Return base path to tmp directory - we'll scan subdirectories
-    return {
-      baseDir: join(homedir(), home, 'tmp')
-    };
-  }
-
-  /**
-   * Check if file matches Gemini session pattern.
-   * Matches: session-{date}-{id}.json
-   * Example: session-2026-01-14T19-23-405de5f5.json
-   */
-  matchesSessionPattern(filePath: string): boolean {
-    const filename = basename(filePath);
-    return /^session-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-.+\.json$/.test(filename);
   }
 
   /**
