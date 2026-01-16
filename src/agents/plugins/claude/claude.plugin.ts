@@ -2,6 +2,8 @@ import { AgentMetadata } from '../../core/types.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import { ClaudeSessionAdapter } from './claude.session.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
+import { ClaudePluginInstaller } from './claude.plugin-installer.js';
+import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
 
 /**
  * Claude Code Plugin Metadata
@@ -73,11 +75,14 @@ export const ClaudePluginMetadata: AgentMetadata = {
  */
 export class ClaudePlugin extends BaseAgentAdapter {
   private sessionAdapter: SessionAdapter;
+  private extensionInstaller: BaseExtensionInstaller;
 
   constructor() {
     super(ClaudePluginMetadata);
     // Initialize session adapter with metadata for unified session sync
     this.sessionAdapter = new ClaudeSessionAdapter(ClaudePluginMetadata);
+    // Initialize extension installer with metadata (agent name from metadata)
+    this.extensionInstaller = new ClaudePluginInstaller(ClaudePluginMetadata);
   }
 
   /**
@@ -85,5 +90,13 @@ export class ClaudePlugin extends BaseAgentAdapter {
    */
   getSessionAdapter(): SessionAdapter {
     return this.sessionAdapter;
+  }
+
+  /**
+   * Get extension installer for this agent
+   * Returns installer to handle plugin installation
+   */
+  getExtensionInstaller(): BaseExtensionInstaller {
+    return this.extensionInstaller;
   }
 }

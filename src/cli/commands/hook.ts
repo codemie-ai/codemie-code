@@ -2,37 +2,15 @@ import { Command } from 'commander';
 import { logger } from '../../utils/logger.js';
 import { AgentRegistry } from '../../agents/registry.js';
 import { getSessionPath, getSessionMetricsPath, getSessionConversationPath } from '../../agents/core/session/session-config.js';
+import type { BaseHookEvent, HookTransformer } from '../../agents/core/types.js';
 
 /**
  * Hook event handlers for agent lifecycle events
- * Called by Claude Code plugin hooks via stdin JSON
+ * Called by agent plugin hooks via stdin JSON
  *
  * This is a unified hook handler that routes based on hook_event_name
- * from the JSON payload. All Claude Code hooks send their event type.
+ * from the JSON payload. All agent hooks send their event type.
  */
-
-/**
- * Hook event types from Claude Code
- */
-type HookEventName =
-  | 'SessionStart'
-  | 'SessionEnd'
-  | 'PermissionRequest'
-  | 'Stop'
-  | 'SubagentStop'
-  | 'PreCompact';
-
-/**
- * Base event structure - all hooks include these fields
- * See: https://code.claude.com/docs/en/hooks#hook-input
- */
-interface BaseHookEvent {
-  session_id: string;              // Claude's session ID
-  transcript_path: string;         // Path to conversation JSON (agent session file)
-  permission_mode: string;         // "default", "plan", "acceptEdits", "dontAsk", or "bypassPermissions"
-  hook_event_name: HookEventName;
-  cwd?: string;                    // Current working directory (not present in all hooks)
-}
 
 /**
  * SessionStart event
@@ -375,6 +353,8 @@ async function handlePreCompact(event: BaseHookEvent): Promise<void> {
  */
 function normalizeEventName(eventName: string, agentName: string): string {
   try {
+    logger.info(`[hook:normalize] Input: eventName="${eventName}", agentName="${agentName}"`);
+
     // Get agent from registry
     const agent = AgentRegistry.getAgent(agentName);
     if (!agent) {
@@ -385,18 +365,22 @@ function normalizeEventName(eventName: string, agentName: string): string {
     // Check if agent has event name mapping
     const eventMapping = (agent as any).metadata?.hookConfig?.eventNameMapping;
     if (!eventMapping) {
+      logger.info(`[hook:normalize] No mapping defined for agent ${agentName}, using event name as-is`);
       // No mapping defined - assume agent uses internal names (like Claude)
       return eventName;
     }
 
+    logger.info(`[hook:normalize] Available mappings for ${agentName}: ${JSON.stringify(Object.keys(eventMapping))}`);
+
     // Apply mapping
     const normalizedName = eventMapping[eventName];
     if (normalizedName) {
-      logger.debug(`[hook:router] Normalized event: ${eventName} → ${normalizedName} (agent=${agentName})`);
+      logger.info(`[hook:normalize] Mapped: ${eventName} → ${normalizedName} (agent=${agentName})`);
       return normalizedName;
     }
 
     // Event not in mapping - return original
+    logger.info(`[hook:normalize] No mapping found for "${eventName}", using original name`);
     return eventName;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -409,51 +393,59 @@ function normalizeEventName(eventName: string, agentName: string): string {
  * Route event to appropriate handler based on hook_event_name
  * Handles events gracefully with detailed logging and error context
  *
- * @param event - The hook event to route
+ * @param event - The hook event to route (may be transformed)
  * @param rawInput - Raw JSON input string
  * @param sessionId - The CodeMie session ID to use for all operations
+ * @param agentName - The agent name for event normalization
  */
-async function routeHookEvent(event: BaseHookEvent, rawInput: string, sessionId: string): Promise<void> {
+async function routeHookEvent(event: BaseHookEvent, rawInput: string, sessionId: string, agentName: string): Promise<void> {
   const startTime = Date.now();
 
   try {
-    // Get agent name from environment
-    const agentName = process.env.CODEMIE_AGENT || 'unknown';
-
     // Normalize event name using agent-specific mapping
     const originalEventName = event.hook_event_name;
+    logger.info(`[hook:router] Routing event: original="${originalEventName}", agent="${agentName}"`);
+
     const normalizedEventName = normalizeEventName(originalEventName, agentName);
+    logger.info(`[hook:router] Normalized event name: "${normalizedEventName}"`);
 
     switch (normalizedEventName) {
       case 'SessionStart':
+        logger.info(`[hook:router] Calling handleSessionStart`);
         await handleSessionStart(event as SessionStartEvent, rawInput, sessionId);
         break;
       case 'SessionEnd':
+        logger.info(`[hook:router] Calling handleSessionEnd`);
         await handleSessionEnd(event as SessionEndEvent, sessionId);
         break;
       case 'PermissionRequest':
+        logger.info(`[hook:router] Calling handlePermissionRequest`);
         await handlePermissionRequest(event, rawInput);
         break;
       case 'Stop':
+        logger.info(`[hook:router] Calling handleStop`);
         await handleStop(event, sessionId);
         break;
       case 'SubagentStop':
+        logger.info(`[hook:router] Calling handleSubagentStop`);
         await handleSubagentStop(event as SubagentStopEvent, sessionId);
         break;
       case 'PreCompact':
+        logger.info(`[hook:router] Calling handlePreCompact`);
         await handlePreCompact(event);
         break;
       default:
+        logger.info(`[hook:router] Unsupported event: ${normalizedEventName} (silently ignored)`);
         return;
     }
 
     const duration = Date.now() - startTime;
-    logger.debug(`[hook:router] Event handled successfully: ${normalizedEventName} (${duration}ms)`);
+    logger.info(`[hook:router] Event handled successfully: ${normalizedEventName} (${duration}ms)`);
 
   } catch (error: unknown) {
     const duration = Date.now() - startTime;
     const message = error instanceof Error ? error.message : String(error);
-    const normalizedEventName = normalizeEventName(event.hook_event_name, process.env.CODEMIE_AGENT || 'unknown');
+    const normalizedEventName = normalizeEventName(event.hook_event_name, agentName);
     logger.error(
       `[hook:router] Event handler failed: ${normalizedEventName} (${duration}ms) error="${message}"`
     );
@@ -906,13 +898,37 @@ export function createHookCommand(): Command {
         // This ensures consistent session ID across all hooks
         const sessionId = initializeLoggerContext();
 
+        // Get agent name from environment
+        const agentName = process.env.CODEMIE_AGENT || 'unknown';
+
+        // Apply hook transformation if agent provides a transformer
+        let transformedEvent: BaseHookEvent = event;
+        try {
+          const agent = AgentRegistry.getAgent(agentName);
+          if (agent) {
+            const transformer = (agent as any).getHookTransformer?.() as HookTransformer | undefined;
+            if (transformer) {
+              logger.debug(`[hook] Applying ${agentName} hook transformer`);
+              transformedEvent = transformer.transform(event);
+              logger.debug(`[hook] Transformation complete: ${event.hook_event_name} → ${transformedEvent.hook_event_name}`);
+            } else {
+              logger.debug(`[hook] No transformer available for ${agentName}, using event as-is`);
+            }
+          }
+        } catch (transformError) {
+          const transformMsg = transformError instanceof Error ? transformError.message : String(transformError);
+          logger.error(`[hook] Transformation failed: ${transformMsg}, using original event`);
+          // Continue with original event on transformation failure
+          transformedEvent = event;
+        }
+
         // Log hook invocation
         logger.info(
-          `[hook] Processing ${event.hook_event_name} event (codemie_session=${sessionId.slice(0, 8)}..., agent_session=${event.session_id.slice(0, 8)}...)`
+          `[hook] Processing ${transformedEvent.hook_event_name} event (codemie_session=${sessionId.slice(0, 8)}..., agent_session=${transformedEvent.session_id.slice(0, 8)}...)`
         );
 
-        // Route to appropriate handler with determined session ID
-        await routeHookEvent(event, input, sessionId);
+        // Route to appropriate handler with transformed event and session ID
+        await routeHookEvent(transformedEvent, input, sessionId, agentName);
 
         // Log successful completion
         const totalDuration = Date.now() - hookStartTime;

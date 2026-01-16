@@ -8,8 +8,8 @@
  */
 
 import type { ProviderTemplate } from '../../core/types.js';
+import type { AgentConfig } from '../../../agents/core/types.js';
 import { registerProvider } from '../../core/index.js';
-import { logger } from '../../../utils/logger.js';
 
 export const SSOTemplate = registerProvider<ProviderTemplate>({
   name: 'ai-run-sso',
@@ -51,44 +51,67 @@ export const SSOTemplate = registerProvider<ProviderTemplate>({
 
   // Agent lifecycle hooks for session metrics
   agentHooks: {
+    /**
+     * Wildcard hook for ALL agents - generic extension installation
+     * Checks if agent has getExtensionInstaller() method
+     * Installer handles all logging internally
+     *
+     * Correct signature: (env, config) - matches lifecycle-helpers.ts
+     * Agent name is available in config.agent (not as third parameter)
+     */
     '*': {
-    },
-
-    // Claude-specific hooks for plugin installation
-    'claude': {
-      /**
-       * Install Claude plugin before running agent
-       * Only applies when using ai-run-sso provider
-       */
-      async beforeRun(env: NodeJS.ProcessEnv): Promise<NodeJS.ProcessEnv> {
-        const { ClaudePluginInstaller } = await import('../../../agents/plugins/claude/claude.plugin-installer.js');
-
-        logger.info('[SSO-Claude] Checking CodeMie plugin for Claude Code...');
-
-        const result = await ClaudePluginInstaller.install();
-
-        if (!result.success) {
-          logger.error(`[SSO-Claude] Plugin installation failed: ${result.error}`);
-          logger.warn('[SSO-Claude] Continuing without plugin - hooks will not be available');
-        } else if (result.action === 'copied') {
-          const versionInfo = result.sourceVersion ? ` (v${result.sourceVersion})` : '';
-          logger.info(`[SSO-Claude] Plugin installed to ${result.targetPath}${versionInfo}`);
-        } else if (result.action === 'updated') {
-          const versionInfo = result.installedVersion && result.sourceVersion
-            ? ` (v${result.installedVersion} → v${result.sourceVersion})`
-            : '';
-          logger.info(`[SSO-Claude] Plugin updated at ${result.targetPath}${versionInfo}`);
-        } else {
-          const versionInfo = result.sourceVersion ? ` (v${result.sourceVersion})` : '';
-          logger.debug(`[SSO-Claude] Plugin already up-to-date at ${result.targetPath}${versionInfo}`);
+      async beforeRun(env: NodeJS.ProcessEnv, config: AgentConfig): Promise<NodeJS.ProcessEnv> {
+        // Get agent name from config (not from third parameter)
+        const agentName = config.agent;
+        if (!agentName) {
+          return env; // No agent name, skip silently
         }
 
-        // Store target path in env for enrichArgs hook
-        env.CODEMIE_CLAUDE_PLUGIN_DIR = result.targetPath;
+        // Dynamic import to avoid circular dependency
+        // AgentRegistry imports all plugins, which would cause circular dependency
+        // if imported at module level (SSO template is loaded as side effect)
+        const { AgentRegistry } = await import('../../../agents/registry.js');
+
+        // Get agent from registry
+        const agent = AgentRegistry.getAgent(agentName);
+        if (!agent) {
+          return env; // Agent not found, skip silently
+        }
+
+        // Check if agent has extension installer
+        const installer = (agent as any).getExtensionInstaller?.();
+        if (!installer) {
+          return env; // No installer, skip silently
+        }
+
+        // Run installer with error handling (logging happens INSIDE installer)
+        try {
+          const result = await installer.install();
+
+          // Store target path in env (for enrichArgs if needed)
+          env[`CODEMIE_${agentName.toUpperCase()}_EXTENSION_DIR`] = result.targetPath;
+
+          if (!result.success) {
+            // Installation failed but returned a result
+            const { logger } = await import('../../../utils/logger.js');
+            logger.warn(`[${agentName}] Extension installation returned failure: ${result.error || 'unknown error'}`);
+            logger.warn(`[${agentName}] Continuing without extension - hooks may not be available`);
+          }
+        } catch (error) {
+          // Installation threw an exception
+          const { logger } = await import('../../../utils/logger.js');
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          logger.error(`[${agentName}] Extension installation threw exception: ${errorMsg}`);
+          logger.warn(`[${agentName}] Continuing without extension - hooks may not be available`);
+          // Don't throw - continue agent startup even if extension fails
+        }
 
         return env;
-      },
+      }
+    },
 
+    // Claude-specific: inject --plugin-dir flag
+    'claude': {
       /**
        * Inject --plugin-dir flag for Claude Code
        * Only applies when using ai-run-sso provider
@@ -96,12 +119,11 @@ export const SSOTemplate = registerProvider<ProviderTemplate>({
        * Note: enrichArgs is synchronous, so we read the plugin path
        * from process.env that was set by beforeRun hook
        */
-      enrichArgs(args: string[]): string[] {
+      enrichArgs(args: string[], _config: AgentConfig): string[] {
         // Get plugin directory from env (set by beforeRun)
-        const pluginDir = process.env.CODEMIE_CLAUDE_PLUGIN_DIR;
+        const pluginDir = process.env.CODEMIE_CLAUDE_EXTENSION_DIR;
 
         if (!pluginDir) {
-          logger.warn('[SSO-Claude] Plugin directory not found in env, skipping --plugin-dir injection');
           return args;
         }
 
@@ -109,11 +131,8 @@ export const SSOTemplate = registerProvider<ProviderTemplate>({
         const hasPluginDir = args.some(arg => arg === '--plugin-dir');
 
         if (hasPluginDir) {
-          logger.debug('[SSO-Claude] --plugin-dir already specified, skipping injection');
           return args;
         }
-
-        logger.info(`[SSO-Claude] Injecting --plugin-dir ${pluginDir}`);
 
         // Prepend --plugin-dir to arguments
         return ['--plugin-dir', pluginDir, ...args];

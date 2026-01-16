@@ -1,13 +1,13 @@
 /**
- * Claude Plugin Installer
+ * Gemini Extension Installer
  *
- * Handles automatic installation of Claude plugin to user's home directory
+ * Handles automatic installation of Gemini extension to user's home directory
  * for SSO provider integration.
  *
- * Extends BaseExtensionInstaller to provide Claude-specific paths.
+ * Extends BaseExtensionInstaller to provide Gemini-specific paths.
  * All installation logic is inherited from the base class.
  *
- * @module agents/plugins/claude/plugin-installer
+ * @module agents/plugins/gemini/extension-installer
  */
 
 import { join, dirname } from 'path';
@@ -17,19 +17,14 @@ import { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstal
 import type { AgentMetadata } from '../../core/types.js';
 
 /**
- * Re-export result type for backward compatibility
- */
-export type { ExtensionInstallationResult as PluginInstallationResult } from '../../core/extension/BaseExtensionInstaller.js';
-
-/**
- * Claude Plugin Installer
+ * Gemini Extension Installer
  *
- * Installs CodeMie plugin for Claude Code to enable session tracking,
+ * Installs CodeMie extension for Gemini CLI to enable session tracking,
  * metrics collection, and conversation sync.
  *
- * Reduces from 260 lines to ~40 lines by extending BaseExtensionInstaller.
+ * Reduces implementation to ~40 lines by extending BaseExtensionInstaller.
  */
-export class ClaudePluginInstaller extends BaseExtensionInstaller {
+export class GeminiExtensionInstaller extends BaseExtensionInstaller {
   /**
    * Constructor
    * @param metadata - Agent metadata containing name, displayName, etc.
@@ -39,29 +34,29 @@ export class ClaudePluginInstaller extends BaseExtensionInstaller {
   }
 
   /**
-   * Get the source plugin directory path
+   * Get the source extension directory path
    * Works in both development and npm package contexts
    */
   protected getSourcePath(): string {
     const currentFile = fileURLToPath(import.meta.url);
-    const claudePluginDir = dirname(currentFile);
-    return join(claudePluginDir, 'plugin');
+    const geminiPluginDir = dirname(currentFile);
+    return join(geminiPluginDir, 'extension');
   }
 
   /**
    * Get the target installation directory
-   * @returns ~/.codemie/claude-plugin
+   * @returns ~/.gemini/extensions/codemie
    */
   getTargetPath(): string {
-    return join(homedir(), '.codemie', 'claude-plugin');
+    return join(homedir(), '.gemini', 'extensions', 'codemie');
   }
 
   /**
    * Get the manifest file path (relative to base directory)
-   * @returns .claude-plugin/plugin.json
+   * @returns gemini-extension.json
    */
   protected getManifestPath(): string {
-    return '.claude-plugin/plugin.json';
+    return 'gemini-extension.json';
   }
 
   /**
@@ -69,6 +64,6 @@ export class ClaudePluginInstaller extends BaseExtensionInstaller {
    * @returns Array of relative file paths
    */
   protected getCriticalFiles(): string[] {
-    return ['.claude-plugin/plugin.json', 'hooks/hooks.json', 'README.md'];
+    return ['gemini-extension.json', 'hooks/hooks.json', 'README.md'];
   }
 }

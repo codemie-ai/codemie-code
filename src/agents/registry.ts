@@ -1,6 +1,6 @@
 import { ClaudePlugin } from './plugins/claude/claude.plugin.js';
 import { CodeMieCodePlugin } from './plugins/codemie-code.plugin.js';
-import { GeminiPlugin } from './plugins/gemini.plugin.js';
+import { GeminiPlugin } from './plugins/gemini/gemini.plugin.js';
 import { AgentAdapter, AgentAnalyticsAdapter } from './core/types.js';
 
 // Re-export for backwards compatibility

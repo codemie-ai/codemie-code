@@ -1,0 +1,65 @@
+{
+  "description": "CodeMie session tracking hooks for Gemini CLI",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "codemie hook",
+            "name": "CodeMie Session Start",
+            "timeout": 10000
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "codemie hook",
+            "name": "CodeMie Session End",
+            "timeout": 30000
+          }
+        ]
+      }
+    ],
+    "AfterAgent": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "codemie hook",
+            "name": "CodeMie Stop Hook",
+            "timeout": 5000
+          }
+        ]
+      }
+    ],
+    "PreCompress": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "codemie hook",
+            "name": "CodeMie PreCompact Hook",
+            "timeout": 3000
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "codemie hook",
+            "name": "CodeMie Permission Request",
+            "timeout": 3000
+          }
+        ]
+      }
+    ]
+  }
+}

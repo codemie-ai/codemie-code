@@ -1,0 +1,150 @@
+# Code Quality Standards
+
+## Quick Summary
+
+Code quality standards for [PROJECT_NAME]: linting, formatting, type safety, and naming conventions.
+
+**Category**: Standards
+**Complexity**: Simple
+**Prerequisites**: [LANGUAGE], [LINTER], [FORMATTER]
+
+---
+
+## 🚨 SIZE LIMIT WARNING
+
+**This generated guide MUST be 200-400 lines maximum.**
+
+**When filling this template**:
+- ✅ Code examples: 5-15 lines (NEVER > 20)
+- ✅ ONE example per pattern
+- ✅ Use file:line references, not full code
+- ✅ Use tables for multiple patterns
+- ❌ NO multiple examples for same pattern
+- ❌ NO verbose explanations
+- ❌ NO copying entire functions
+
+**Validate line count after generation**: `wc -l [this-file]`
+**If > 400 lines**: Condense immediately before continuing!
+
+---
+
+## Tools
+
+| Tool | Purpose | Config |
+|------|---------|--------|
+| [Linter] | Code quality | `[config_file]` |
+| [Formatter] | Formatting | `[config_file]` |
+| [Type Checker] | Type checking | `[config_file]` |
+
+---
+
+## Commands
+
+```bash
+# Lint (check)
+[lint_check]
+
+# Lint (fix)
+[lint_fix]
+
+# Format
+[format]
+
+# Type check
+[type_check]
+```
+
+---
+
+## Naming Conventions
+
+| Element | Convention | Example |
+|---------|------------|---------|
+| Variables | [convention] | `[example]` |
+| Functions | [convention] | `[example]` |
+| Classes | [convention] | `[Example]` |
+| Constants | [convention] | `[EXAMPLE]` |
+| Files | [convention] | `[example]` |
+
+---
+
+## Type Annotations
+
+```[language]
+# Source: [file:lines]
+[type_example]
+```
+
+**Required**:
+- ✅ All function parameters
+- ✅ All function returns
+- ✅ Public APIs
+
+---
+
+## Imports
+
+```[language]
+# Order
+[import_example]
+```
+
+**Order**: Standard library → Third-party → Local
+**Rules**: One per line, sorted, no wildcards
+
+---
+
+## Code Structure
+
+**Guidelines**:
+- Functions < [X] lines
+- Files < [Y] lines
+- One responsibility per function
+- Limit parameters < [Z]
+
+---
+
+## Comments
+
+```[language]
+# Source: [file:lines]
+[docstring_example]
+```
+
+**When to Comment**:
+- ✅ Public APIs
+- ✅ Complex algorithms
+- ✅ Non-obvious decisions
+- ❌ Self-explanatory code
+
+---
+
+## Pre-Commit Hooks
+
+```bash
+# Install
+[install_hooks]
+```
+
+**Checks**: Linting, formatting, type checking
+
+---
+
+## Best Practices
+
+| ✅ DO | ❌ DON'T |
+|-------|----------|
+| Descriptive names | Single letters (except i, j, k in loops) |
+| Keep functions small | 100+ line functions |
+| Use type hints | Skip types |
+| Follow conventions | Mix styles |
+| Early returns | Deep nesting |
+
+---
+
+## References
+
+- **Config**: `[config_files]`
+- **Linter Docs**: [Link]
+
+---

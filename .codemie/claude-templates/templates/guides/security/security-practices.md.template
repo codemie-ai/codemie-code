@@ -1,0 +1,170 @@
+# Security Practices
+
+## Quick Summary
+
+Security patterns for [PROJECT_NAME]: authentication, authorization, input validation, and secrets management.
+
+**Category**: Security
+**Complexity**: High
+**Prerequisites**: OWASP Top 10, [AUTH_METHOD]
+
+---
+
+## 🚨 SIZE LIMIT WARNING
+
+**This generated guide MUST be 200-400 lines maximum.**
+
+**When filling this template**:
+- ✅ Code examples: 5-15 lines (NEVER > 20)
+- ✅ ONE example per pattern
+- ✅ Use file:line references, not full code
+- ✅ Use tables for multiple patterns
+- ❌ NO multiple examples for same pattern
+- ❌ NO verbose explanations
+- ❌ NO copying entire functions
+
+**Validate line count after generation**: `wc -l [this-file]`
+**If > 400 lines**: Condense immediately before continuing!
+
+---
+
+## Authentication
+
+### Pattern
+
+```[language]
+# Source: [file:lines]
+[auth_pattern]
+```
+
+**Method**: [JWT / OAuth2 / API Key / Session]
+**Token Storage**: [Where tokens are stored]
+**Expiration**: [Token lifetime]
+
+---
+
+## Authorization
+
+### Pattern
+
+```[language]
+# Source: [file:lines]
+[authz_pattern]
+```
+
+**Roles**: [List roles and permissions]
+
+---
+
+## Input Validation
+
+### Pattern
+
+```[language]
+# Source: [file:lines]
+[validation_pattern]
+```
+
+**Rules**:
+- ✅ Validate all input at boundaries
+- ✅ Use validation library/framework
+- ✅ Whitelist (not blacklist)
+- ❌ Trust user input
+
+---
+
+## Secrets Management
+
+### Environment Variables
+
+```bash
+# NEVER commit these
+[SECRET_KEY]=[use env var]
+[API_KEY]=[use secrets manager in prod]
+[DB_PASSWORD]=[use secrets manager in prod]
+```
+
+**Rules**:
+- ✅ Environment variables for dev
+- ✅ Secrets manager for production
+- ✅ Rotate regularly
+- ❌ Hardcode in code
+- ❌ Commit to git
+- ❌ Log secrets
+
+---
+
+## SQL Injection Prevention
+
+```[language]
+# Good: Parameterized
+[good_sql_example]
+
+# Bad: String interpolation
+[bad_sql_example]
+```
+
+**Rule**: ALWAYS use parameterized queries
+
+---
+
+## XSS Prevention
+
+```[language]
+# Source: [file:lines]
+[xss_prevention]
+```
+
+**Rules**:
+- ✅ Escape output
+- ✅ Use framework defaults
+- ✅ Content Security Policy headers
+- ❌ Trust user content
+
+---
+
+## Security Headers
+
+```[language]
+# Source: [file:lines]
+[security_headers]
+```
+
+**Required Headers**:
+- `[Header1]`: `[Value]`
+- `[Header2]`: `[Value]`
+
+---
+
+## HTTPS/TLS
+
+**Rules**:
+- ✅ HTTPS everywhere in production
+- ✅ Valid TLS certificates
+- ✅ Minimum TLS 1.2+
+- ❌ Plain HTTP for sensitive data
+
+---
+
+## Security Checklist
+
+- [ ] Authentication on protected endpoints
+- [ ] Authorization checks enforced
+- [ ] All input validated
+- [ ] SQL queries parameterized
+- [ ] Secrets in env vars (not code)
+- [ ] HTTPS in production
+- [ ] Security headers configured
+- [ ] Sensitive data encrypted
+- [ ] Error messages don't leak info
+- [ ] Logging excludes secrets/PII
+
+---
+
+## References
+
+- **Auth Implementation**: `[path/to/auth]`
+- **Validation**: `[path/to/validation]`
+- **OWASP Top 10**: https://owasp.org/www-project-top-ten/
+
+---

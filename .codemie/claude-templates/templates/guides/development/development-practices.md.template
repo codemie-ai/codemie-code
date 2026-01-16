@@ -1,0 +1,210 @@
+# Development Practices
+
+## Quick Summary
+
+Core development practices for [PROJECT_NAME]: error handling, logging, and configuration patterns.
+
+**Category**: Development
+**Complexity**: Medium
+**Prerequisites**: [LANGUAGE] fundamentals, [FRAMEWORK]
+
+---
+
+## 🚨 SIZE LIMIT WARNING
+
+**This generated guide MUST be 200-400 lines maximum.**
+
+**When filling this template**:
+- ✅ Code examples: 5-15 lines (NEVER > 20)
+- ✅ ONE example per pattern
+- ✅ Use file:line references, not full code
+- ✅ Use tables for multiple patterns
+- ❌ NO multiple examples for same pattern
+- ❌ NO verbose explanations
+- ❌ NO copying entire functions
+
+**Validate line count after generation**: `wc -l [this-file]`
+**If > 400 lines**: Condense immediately before continuing!
+
+---
+
+## Error Handling
+
+### Exception Hierarchy
+
+| Exception | When to Use | HTTP Status | Source |
+|-----------|-------------|-------------|--------|
+| `[ValidationError]` | Invalid input | 400 | [file:lines] |
+| `[NotFoundError]` | Resource missing | 404 | [file:lines] |
+| `[AuthError]` | Auth failed | 401/403 | [file:lines] |
+| `[ServerError]` | Internal error | 500 | [file:lines] |
+
+### Pattern: Raise & Handle
+
+```[language]
+# Raise - Source: [file:lines]
+[raise_example]
+
+# Handle - Source: [file:lines]
+[handler_example]
+```
+
+### Error Response Format
+
+```json
+{
+  "error": {
+    "code": "[ERROR_CODE]",
+    "message": "[human-readable]",
+    "details": "[context]"
+  }
+}
+```
+
+**Rules**:
+- ✅ Specific exceptions (not bare `except:`)
+- ✅ Log with context
+- ✅ Return consistent format
+- ❌ Expose internal details
+
+---
+
+## Logging
+
+### Configuration
+
+```[language]
+# Source: [file:lines]
+[logging_config]
+```
+
+### Log Levels
+
+| Level | When | Example |
+|-------|------|---------|
+| DEBUG | Development details | `[example]` |
+| INFO | Normal operations | `[example]` |
+| WARNING | Recoverable issues | `[example]` |
+| ERROR | Failures | `[example]` |
+
+### Pattern: Structured Logging
+
+```[language]
+# Good - Source: [file:lines]
+[good_logging]
+
+# Bad
+[bad_logging]
+```
+
+**Rules**:
+- ✅ Include context (user_id, request_id, etc.)
+- ✅ Use appropriate levels
+- ❌ Log secrets/PII
+- ❌ Log in hot paths
+
+---
+
+## Configuration
+
+### Environment Variables
+
+**Required**:
+```bash
+[VAR1]=[description]
+[VAR2]=[description]
+```
+
+**Optional** (with defaults):
+```bash
+[VAR3]=[description] # default: [value]
+```
+
+### Pattern: Load Config
+
+```[language]
+# Source: [file:lines]
+[config_loading]
+```
+
+### Multi-Environment
+
+```[language]
+# Source: [file:lines]
+[env_detection]
+```
+
+**Environments**: development | staging | production
+
+**Rules**:
+- ✅ Use env vars for deployment-specific config
+- ✅ Validate at startup
+- ✅ Never commit `.env` files
+- ❌ Hardcode secrets
+
+---
+
+## Setup Guide
+
+### Quick Start
+
+```bash
+# Install
+[install_command]
+
+# Configure
+[config_command]
+
+# Run
+[run_command]
+```
+
+### Environment Setup
+
+```bash
+# 1. Activate environment
+[activate_command]
+
+# 2. Install dependencies
+[dependency_command]
+
+# 3. Setup database (if needed)
+[db_setup_command]
+
+# 4. Run
+[dev_server_command]
+```
+
+**Verify**: [URL or command to verify setup]
+
+---
+
+## Common Commands
+
+| Task | Command | Notes |
+|------|---------|-------|
+| Run dev | `[command]` | [Notes] |
+| Lint | `[command]` | Auto-fix with `[fix_flag]` |
+| Format | `[command]` | [Notes] |
+| Test | `[command]` | ONLY if user requests |
+| Build | `[command]` | [Notes] |
+
+---
+
+## Troubleshooting
+
+| Symptom | Likely Cause | Fix |
+|---------|--------------|-----|
+| [error_pattern] | [cause] | [solution] |
+| [error_pattern] | [cause] | [solution] |
+
+---
+
+## References
+
+- **Error Handling**: `[path/to/exceptions]`
+- **Logging Config**: `[path/to/logging/config]`
+- **Configuration**: `[path/to/config]`
+- **Setup Docs**: `README.md`
+
+---

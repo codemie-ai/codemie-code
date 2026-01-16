@@ -14,10 +14,13 @@ import { rmSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import { ClaudePluginInstaller } from '../../src/agents/plugins/claude/claude.plugin-installer.js';
+import { ClaudePluginMetadata } from '../../src/agents/plugins/claude/claude.plugin.js';
 import { SSOTemplate } from '../../src/providers/plugins/sso/sso.template.js';
+import type { AgentConfig } from '../../src/agents/core/types.js';
 
 describe('SSO Provider - Claude Plugin Auto-Install', () => {
   const pluginTargetDir = join(homedir(), '.codemie', 'claude-plugin');
+  let installer: ClaudePluginInstaller;
 
   beforeEach(() => {
     // Clean up plugin directory before each test
@@ -26,7 +29,10 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
     }
 
     // Clean env
-    delete process.env.CODEMIE_CLAUDE_PLUGIN_DIR;
+    delete process.env.CODEMIE_CLAUDE_EXTENSION_DIR;
+
+    // Create installer instance
+    installer = new ClaudePluginInstaller(ClaudePluginMetadata);
   });
 
   afterEach(() => {
@@ -35,7 +41,7 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
       rmSync(pluginTargetDir, { recursive: true, force: true });
     }
 
-    delete process.env.CODEMIE_CLAUDE_PLUGIN_DIR;
+    delete process.env.CODEMIE_CLAUDE_EXTENSION_DIR;
   });
 
   describe('Plugin Installation (beforeRun hook)', () => {
@@ -43,14 +49,15 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
       // Verify plugin doesn't exist
       expect(existsSync(pluginTargetDir)).toBe(false);
 
-      // Get Claude-specific beforeRun hook
-      const claudeHooks = SSOTemplate.agentHooks?.['claude'];
-      expect(claudeHooks).toBeDefined();
-      expect(claudeHooks?.beforeRun).toBeDefined();
+      // Get wildcard beforeRun hook (handles all agents)
+      const wildcardHooks = SSOTemplate.agentHooks?.['*'];
+      expect(wildcardHooks).toBeDefined();
+      expect(wildcardHooks?.beforeRun).toBeDefined();
 
-      // Execute beforeRun hook
+      // Execute beforeRun hook with agent config
       const env: NodeJS.ProcessEnv = {};
-      const updatedEnv = await claudeHooks!.beforeRun!(env);
+      const config: AgentConfig = { agent: 'claude', agentDisplayName: 'Claude Code' };
+      const updatedEnv = await wildcardHooks!.beforeRun!(env, config);
 
       // Verify plugin was installed
       expect(existsSync(pluginTargetDir)).toBe(true);
@@ -60,25 +67,26 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
       expect(existsSync(join(pluginTargetDir, 'hooks', 'hooks.json'))).toBe(true);
       expect(existsSync(join(pluginTargetDir, 'README.md'))).toBe(true);
 
-      // Verify env was updated
-      expect(updatedEnv.CODEMIE_CLAUDE_PLUGIN_DIR).toBe(pluginTargetDir);
+      // Verify env was updated with correct key
+      expect(updatedEnv.CODEMIE_CLAUDE_EXTENSION_DIR).toBe(pluginTargetDir);
     });
 
     it('should skip installation if plugin already exists', async () => {
       // Pre-install plugin
-      const result1 = await ClaudePluginInstaller.install();
+      const result1 = await installer.install();
       expect(result1.success).toBe(true);
       expect(result1.action).toBe('copied');
 
-      // Get Claude-specific beforeRun hook
-      const claudeHooks = SSOTemplate.agentHooks?.['claude'];
+      // Get wildcard beforeRun hook
+      const wildcardHooks = SSOTemplate.agentHooks?.['*'];
 
       // Execute beforeRun hook second time
       const env: NodeJS.ProcessEnv = {};
-      const updatedEnv = await claudeHooks!.beforeRun!(env);
+      const config: AgentConfig = { agent: 'claude', agentDisplayName: 'Claude Code' };
+      const updatedEnv = await wildcardHooks!.beforeRun!(env, config);
 
       // Verify env was still updated
-      expect(updatedEnv.CODEMIE_CLAUDE_PLUGIN_DIR).toBe(pluginTargetDir);
+      expect(updatedEnv.CODEMIE_CLAUDE_EXTENSION_DIR).toBe(pluginTargetDir);
 
       // Plugin should still exist
       expect(existsSync(pluginTargetDir)).toBe(true);
@@ -92,19 +100,20 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
       const pluginJsonPath = join(pluginTargetDir, '.claude-plugin');
       mkdirSync(pluginJsonPath, { recursive: true });
 
-      const claudeHooks = SSOTemplate.agentHooks?.['claude'];
+      const wildcardHooks = SSOTemplate.agentHooks?.['*'];
 
       // Execute beforeRun hook - should not throw
       const env: NodeJS.ProcessEnv = {};
-      await expect(claudeHooks!.beforeRun!(env)).resolves.not.toThrow();
+      const config: AgentConfig = { agent: 'claude', agentDisplayName: 'Claude Code' };
+      await expect(wildcardHooks!.beforeRun!(env, config)).resolves.not.toThrow();
     });
   });
 
   describe('Flag Injection (enrichArgs hook)', () => {
     it('should inject --plugin-dir flag when plugin is installed', async () => {
       // Pre-install plugin and set env
-      await ClaudePluginInstaller.install();
-      process.env.CODEMIE_CLAUDE_PLUGIN_DIR = pluginTargetDir;
+      await installer.install();
+      process.env.CODEMIE_CLAUDE_EXTENSION_DIR = pluginTargetDir;
 
       // Get Claude-specific enrichArgs hook
       const claudeHooks = SSOTemplate.agentHooks?.['claude'];
@@ -128,7 +137,7 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
 
     it('should skip injection if --plugin-dir already specified', async () => {
       // Set env
-      process.env.CODEMIE_CLAUDE_PLUGIN_DIR = pluginTargetDir;
+      process.env.CODEMIE_CLAUDE_EXTENSION_DIR = pluginTargetDir;
 
       const claudeHooks = SSOTemplate.agentHooks?.['claude'];
 
@@ -146,7 +155,7 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
 
     it('should skip injection if env not set', async () => {
       // Don't set env
-      delete process.env.CODEMIE_CLAUDE_PLUGIN_DIR;
+      delete process.env.CODEMIE_CLAUDE_EXTENSION_DIR;
 
       const claudeHooks = SSOTemplate.agentHooks?.['claude'];
 
@@ -163,13 +172,15 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
   });
 
   describe('Provider-Specific Behavior', () => {
-    it('should have Claude-specific hooks registered', () => {
-      // Verify SSO template has Claude hooks
+    it('should have wildcard and Claude-specific hooks registered', () => {
+      // Verify SSO template has wildcard hook for installation
       expect(SSOTemplate.agentHooks).toBeDefined();
-      expect(SSOTemplate.agentHooks?.['claude']).toBeDefined();
+      expect(SSOTemplate.agentHooks?.['*']).toBeDefined();
+      expect(SSOTemplate.agentHooks?.['*']?.beforeRun).toBeDefined();
 
+      // Verify Claude-specific enrichArgs hook
+      expect(SSOTemplate.agentHooks?.['claude']).toBeDefined();
       const claudeHooks = SSOTemplate.agentHooks?.['claude'];
-      expect(claudeHooks?.beforeRun).toBeDefined();
       expect(claudeHooks?.enrichArgs).toBeDefined();
     });
 
@@ -185,18 +196,20 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
 
   describe('Full Integration Flow', () => {
     it('should complete full flow: install → inject', async () => {
-      // Step 1: beforeRun - Install plugin
-      const claudeHooks = SSOTemplate.agentHooks?.['claude'];
+      // Step 1: beforeRun - Install plugin (wildcard hook)
+      const wildcardHooks = SSOTemplate.agentHooks?.['*'];
       const env: NodeJS.ProcessEnv = {};
-      const updatedEnv = await claudeHooks!.beforeRun!(env);
+      const config: AgentConfig = { agent: 'claude', agentDisplayName: 'Claude Code' };
+      const updatedEnv = await wildcardHooks!.beforeRun!(env, config);
 
       // Verify plugin installed
       expect(existsSync(pluginTargetDir)).toBe(true);
-      expect(updatedEnv.CODEMIE_CLAUDE_PLUGIN_DIR).toBe(pluginTargetDir);
+      expect(updatedEnv.CODEMIE_CLAUDE_EXTENSION_DIR).toBe(pluginTargetDir);
 
       // Step 2: enrichArgs - Inject flag (simulate env propagation)
-      process.env.CODEMIE_CLAUDE_PLUGIN_DIR = updatedEnv.CODEMIE_CLAUDE_PLUGIN_DIR;
+      process.env.CODEMIE_CLAUDE_EXTENSION_DIR = updatedEnv.CODEMIE_CLAUDE_EXTENSION_DIR;
 
+      const claudeHooks = SSOTemplate.agentHooks?.['claude'];
       const args = ['test', 'task'];
       const enrichedArgs = claudeHooks!.enrichArgs!(args, {} as any);
 
@@ -205,17 +218,18 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
     });
 
     it('should be idempotent (safe to run multiple times)', async () => {
-      const claudeHooks = SSOTemplate.agentHooks?.['claude'];
+      const wildcardHooks = SSOTemplate.agentHooks?.['*'];
+      const config: AgentConfig = { agent: 'claude', agentDisplayName: 'Claude Code' };
 
       // First run
       const env1: NodeJS.ProcessEnv = {};
-      const updatedEnv1 = await claudeHooks!.beforeRun!(env1);
-      expect(updatedEnv1.CODEMIE_CLAUDE_PLUGIN_DIR).toBe(pluginTargetDir);
+      const updatedEnv1 = await wildcardHooks!.beforeRun!(env1, config);
+      expect(updatedEnv1.CODEMIE_CLAUDE_EXTENSION_DIR).toBe(pluginTargetDir);
 
       // Second run
       const env2: NodeJS.ProcessEnv = {};
-      const updatedEnv2 = await claudeHooks!.beforeRun!(env2);
-      expect(updatedEnv2.CODEMIE_CLAUDE_PLUGIN_DIR).toBe(pluginTargetDir);
+      const updatedEnv2 = await wildcardHooks!.beforeRun!(env2, config);
+      expect(updatedEnv2.CODEMIE_CLAUDE_EXTENSION_DIR).toBe(pluginTargetDir);
 
       // Plugin should still exist and be valid
       expect(existsSync(pluginTargetDir)).toBe(true);
@@ -225,8 +239,9 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
 
   describe('Plugin Structure Validation', () => {
     it('should install complete plugin structure', async () => {
-      const claudeHooks = SSOTemplate.agentHooks?.['claude'];
-      await claudeHooks!.beforeRun!({});
+      const wildcardHooks = SSOTemplate.agentHooks?.['*'];
+      const config: AgentConfig = { agent: 'claude', agentDisplayName: 'Claude Code' };
+      await wildcardHooks!.beforeRun!({}, config);
 
       // Verify directory structure
       expect(existsSync(join(pluginTargetDir, '.claude-plugin'))).toBe(true);
@@ -248,7 +263,7 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
 
   describe('Version Tracking', () => {
     it('should report correct action and version on first install', async () => {
-      const result = await ClaudePluginInstaller.install();
+      const result = await installer.install();
 
       expect(result.success).toBe(true);
       expect(result.action).toBe('copied');
@@ -259,11 +274,11 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
 
     it('should skip installation if versions match', async () => {
       // First install
-      const result1 = await ClaudePluginInstaller.install();
+      const result1 = await installer.install();
       expect(result1.action).toBe('copied');
 
       // Second install - should skip
-      const result2 = await ClaudePluginInstaller.install();
+      const result2 = await installer.install();
       expect(result2.success).toBe(true);
       expect(result2.action).toBe('already_exists');
       expect(result2.sourceVersion).toBe('1.0.0');
@@ -272,7 +287,7 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
 
     it('should detect version in installed plugin', async () => {
       // Install first
-      await ClaudePluginInstaller.install();
+      await installer.install();
 
       // Read plugin.json to verify version
       const { readFileSync } = await import('fs');

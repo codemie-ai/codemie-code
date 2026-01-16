@@ -1,0 +1,11 @@
+{
+  "name": "codemie",
+  "displayName": "CodeMie",
+  "description": "Event-driven observability for Gemini CLI. Captures session events and syncs metrics/conversations to CodeMie platform.",
+  "version": "1.0.0",
+  "author": {
+    "name": "AI/Run CodeMie",
+    "email": "support@codemieai.com"
+  },
+  "homepage": "https://codemie.lab.epam.com"
+}

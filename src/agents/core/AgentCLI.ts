@@ -9,7 +9,7 @@ import { getDirname } from '../../utils/paths.js';
 import { BUILTIN_AGENT_NAME } from '../registry.js';
 import { ClaudePluginMetadata } from '../plugins/claude/claude.plugin.js';
 import { CodeMieCodePluginMetadata } from '../plugins/codemie-code.plugin.js';
-import { GeminiPluginMetadata } from '../plugins/gemini.plugin.js';
+import { GeminiPluginMetadata } from '../plugins/gemini/gemini.plugin.js';
 
 /**
  * Universal CLI builder for any agent

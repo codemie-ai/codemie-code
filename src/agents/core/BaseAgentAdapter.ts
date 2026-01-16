@@ -466,6 +466,8 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    */
   private extractConfig(env: NodeJS.ProcessEnv): AgentConfig {
     return {
+      agent: this.metadata.name,               // Add: from metadata
+      agentDisplayName: this.metadata.displayName, // Add: from metadata
       provider: env.CODEMIE_PROVIDER,
       model: env.CODEMIE_MODEL,
       baseUrl: env.CODEMIE_BASE_URL,

@@ -1,0 +1,177 @@
+# Git Workflow
+
+## Quick Summary
+
+Git workflow for [PROJECT_NAME]: branching, commits, pull requests, and code review.
+
+**Category**: Standards
+**Complexity**: Simple
+**Prerequisites**: Git basics
+
+---
+
+## 🚨 SIZE LIMIT WARNING
+
+**This generated guide MUST be 200-400 lines maximum.**
+
+**When filling this template**:
+- ✅ Code examples: 5-15 lines (NEVER > 20)
+- ✅ ONE example per pattern
+- ✅ Use file:line references, not full code
+- ✅ Use tables for multiple patterns
+- ❌ NO multiple examples for same pattern
+- ❌ NO verbose explanations
+- ❌ NO copying entire functions
+
+**Validate line count after generation**: `wc -l [this-file]`
+**If > 400 lines**: Condense immediately before continuing!
+
+---
+
+## Branching Strategy
+
+| Branch Type | Pattern | Purpose |
+|-------------|---------|---------|
+| Main | `main` | Production code |
+| Feature | `feature/[name]` | New features |
+| Bugfix | `bugfix/[name]` | Bug fixes |
+| Hotfix | `hotfix/[name]` | Emergency fixes |
+
+**Project Pattern**: [Your specific pattern]
+
+---
+
+## Workflow
+
+```bash
+# 1. Create branch
+git checkout main
+git pull
+git checkout -b feature/[name]
+
+# 2. Work & commit
+git add [files]
+git commit -m "[type]: [message]"
+
+# 3. Push
+git push origin feature/[name]
+
+# 4. Create PR via UI/CLI
+```
+
+---
+
+## Commit Format
+
+```
+[type]([scope]): [subject]
+
+[optional body]
+
+[optional footer]
+```
+
+**Types**: feat | fix | docs | style | refactor | test | chore
+
+**Examples**:
+- `feat(auth): add OAuth2 login`
+- `fix(api): resolve timeout issue`
+- `docs(readme): update setup instructions`
+
+---
+
+## Commit Rules
+
+| ✅ DO | ❌ DON'T |
+|-------|----------|
+| Atomic commits | Mix unrelated changes |
+| Descriptive messages | "fix stuff" |
+| Present tense | Past tense |
+| Reference issues | Skip context |
+
+---
+
+## Pull Request
+
+### PR Title
+
+```
+[type]([scope]): [description]
+```
+
+### PR Template
+
+```markdown
+## Summary
+[Brief description]
+
+## Changes
+- [Change 1]
+- [Change 2]
+
+## Testing
+- [ ] Tests added/updated
+- [ ] Manual testing done
+
+## Checklist
+- [ ] Code follows standards
+- [ ] Tests pass
+- [ ] No merge conflicts
+```
+
+---
+
+## Code Review Checklist
+
+- [ ] Code follows project standards
+- [ ] Logic is correct
+- [ ] Tests are adequate
+- [ ] No security issues
+- [ ] Documentation updated
+
+---
+
+## Merge Strategy
+
+**Project Standard**: [Merge commit / Squash / Rebase]
+
+```bash
+# After PR approved
+[merge_command]
+
+# Delete branch
+git branch -d feature/[name]
+```
+
+---
+
+## Common Commands
+
+```bash
+# Status
+git status
+
+# Stage
+git add [files]
+
+# Commit
+git commit -m "message"
+
+# Push
+git push origin [branch]
+
+# Pull
+git pull origin [branch]
+
+# Undo last commit (keep changes)
+git reset --soft HEAD~1
+```
+
+---
+
+## References
+
+- **Branch Pattern**: [Details]
+- **PR Process**: [Link if documented]
+
+---

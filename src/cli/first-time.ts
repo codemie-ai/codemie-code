@@ -115,7 +115,6 @@ export class FirstTimeExperience {
     console.log(chalk.bold('Setup & Configuration:'));
     console.log(chalk.cyan('  codemie setup') + chalk.white('             # Interactive setup wizard'));
     console.log(chalk.cyan('  codemie profile') + chalk.white('           # Manage profiles (list, switch, delete)'));
-    console.log(chalk.cyan('  codemie profile') + chalk.white('      # Manage SSO authentication\n'));
 
     console.log(chalk.bold('Verify:'));
     console.log(chalk.cyan('  codemie doctor') + chalk.white('            # Check configuration\n'));
@@ -125,8 +124,8 @@ export class FirstTimeExperience {
     console.log(chalk.bold('Analytics:'));
     console.log(chalk.cyan('  codemie analytics') + chalk.white('         # View usage statistics\n'));
 
-    console.log(chalk.bold('CI/CD Workflows:'));
-    console.log(chalk.cyan('  codemie workflow') + chalk.white('          # Manage CI/CD workflows\n'));
+    console.log(chalk.bold('List:'));
+    console.log(chalk.cyan('  codemie list') + chalk.white('              # List all available agents and framework\n'));
 
     console.log(chalk.white('For detailed help, run: ') + chalk.green('codemie --help\n'));
   }
