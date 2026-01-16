@@ -12,6 +12,7 @@ import {
   getAllModelChoices,
   displaySetupInstructions
 } from '../../providers/integration/setup-ui.js';
+import { FirstTimeExperience } from '../first-time.js';
 
 
 export function createSetupCommand(): Command {
@@ -45,10 +46,8 @@ export function createSetupCommand(): Command {
 }
 
 async function runSetupWizard(force?: boolean): Promise<void> {
-  console.log(chalk.bold.cyan('\n'));
-  console.log(chalk.bold.cyan('╔═══════════════════════════════════════╗'));
-  console.log(chalk.bold.cyan('║   Welcome to CodeMie Code Setup!      ║'));
-  console.log(chalk.bold.cyan('╚═══════════════════════════════════════╝\n'));
+  // Show ecosystem introduction
+  FirstTimeExperience.showEcosystemIntro();
 
   // Check if config already exists
   const hasConfig = await ConfigLoader.hasGlobalConfig();
