@@ -593,8 +593,52 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   }
 
   /**
+   * Deep merge two objects
+   * Adds new fields from source to target, preserves existing values in target
+   *
+   * @param target - Existing object
+   * @param source - Default/new fields to merge
+   * @returns Merged object
+   *
+   * Rules:
+   * - If key doesn't exist in target → add it from source
+   * - If key exists and both values are objects → recursively merge
+   * - If key exists and value is not an object → keep target value (preserve user data)
+   */
+  private deepMerge(
+    target: Record<string, unknown>,
+    source: Record<string, unknown>
+  ): Record<string, unknown> {
+    const result = { ...target };
+
+    for (const key in source) {
+      if (!(key in result)) {
+        // Key doesn't exist in target → add it from source
+        result[key] = source[key];
+      } else if (
+        typeof result[key] === 'object' &&
+        result[key] !== null &&
+        !Array.isArray(result[key]) &&
+        typeof source[key] === 'object' &&
+        source[key] !== null &&
+        !Array.isArray(source[key])
+      ) {
+        // Both are objects (not arrays, not null) → recursive merge
+        result[key] = this.deepMerge(
+          result[key] as Record<string, unknown>,
+          source[key] as Record<string, unknown>
+        );
+      }
+      // Else: key exists → keep existing value (preserve user customization)
+    }
+
+    return result;
+  }
+
+  /**
    * Ensure a JSON file exists with default content
    * Creates file with proper formatting (2-space indent) if it doesn't exist
+   * Updates existing file by merging new fields without overwriting existing values
    *
    * @param filePath - Absolute path to file
    * @param defaultContent - Default content as JavaScript object
@@ -605,15 +649,45 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    *   { security: { auth: { selectedType: 'api-key' } } }
    * )
    * // Creates ~/.gemini/settings.json if missing
+   * // Or updates existing file by adding missing fields
    */
   protected async ensureJsonFile(
     filePath: string,
     defaultContent: Record<string, unknown>
   ): Promise<void> {
     if (!existsSync(filePath)) {
+      // File doesn't exist → create new file with default content
       const content = JSON.stringify(defaultContent, null, 2);
       await writeFile(filePath, content, 'utf-8');
       logger.debug(`[${this.displayName}] Created file: ${filePath}`);
+    } else {
+      // File exists → merge new fields with existing content
+      try {
+        const { readFile } = await import('fs/promises');
+        const existingRaw = await readFile(filePath, 'utf-8');
+        const existingContent = JSON.parse(existingRaw) as Record<string, unknown>;
+
+        // Deep merge: add new fields, preserve existing values
+        const merged = this.deepMerge(existingContent, defaultContent);
+
+        // Only write if there are changes
+        const existingJson = JSON.stringify(existingContent);
+        const mergedJson = JSON.stringify(merged);
+
+        if (mergedJson !== existingJson) {
+          const content = JSON.stringify(merged, null, 2);
+          await writeFile(filePath, content, 'utf-8');
+          logger.debug(`[${this.displayName}] Updated file with new fields: ${filePath}`);
+        } else {
+          logger.debug(`[${this.displayName}] File up to date: ${filePath}`);
+        }
+      } catch (error) {
+        // If file is corrupted or can't be read, log warning and overwrite with defaults
+        logger.warn(`[${this.displayName}] Failed to merge ${filePath}, overwriting with defaults:`, error);
+        const content = JSON.stringify(defaultContent, null, 2);
+        await writeFile(filePath, content, 'utf-8');
+        logger.debug(`[${this.displayName}] Overwrote corrupted file: ${filePath}`);
+      }
     }
   }
 }

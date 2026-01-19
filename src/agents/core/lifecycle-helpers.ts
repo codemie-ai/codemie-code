@@ -99,13 +99,29 @@ async function resolveHook<K extends keyof ProviderLifecycleHooks>(
       return specificHook as ProviderLifecycleHooks[K];
     }
 
-    // Only wildcard hook exists
+    // Only wildcard hook exists - chain with agent's default hook if available
     if (wildcardHook) {
+      const agentDefaultHook = lifecycle?.[hookName];
+
+      // If agent has a default hook, chain wildcard → agent default
+      if (agentDefaultHook) {
+        return (async function(this: any, ...args: any[]) {
+          // Execute wildcard hook first (provider customization)
+          const intermediateResult = await (wildcardHook as any).call(this, ...args);
+          // Execute agent's default hook with wildcard's result
+          // Replace first arg (env) with intermediate result
+          const finalArgs = [...args];
+          finalArgs[0] = intermediateResult;
+          return await (agentDefaultHook as any).call(this, ...finalArgs);
+        }) as ProviderLifecycleHooks[K];
+      }
+
+      // No agent default hook, just return wildcard
       return wildcardHook as ProviderLifecycleHooks[K];
     }
   }
 
-  // 2. Fall back to agent's default hook
+  // 2. Fall back to agent's default hook (no provider hooks)
   if (!lifecycle) return undefined;
   return lifecycle[hookName];
 }
