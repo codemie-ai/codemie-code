@@ -21,7 +21,7 @@
   ],
   "scripts": {
     "build": "tsc && npm run copy-plugin",
-    "copy-plugin": "rm -rf dist/agents/plugins/claude/plugin dist/agents/plugins/gemini/extension && mkdir -p dist/agents/plugins/claude/plugin && cp -r src/agents/plugins/claude/plugin/. dist/agents/plugins/claude/plugin/ && mkdir -p dist/agents/plugins/gemini/extension && cp -r src/agents/plugins/gemini/extension/. dist/agents/plugins/gemini/extension/",
+    "copy-plugin": "node scripts/copy-plugins.js",
     "dev": "tsc --watch",
     "test": "vitest",
     "test:unit": "vitest run src",
@@ -35,7 +35,7 @@
     "commitlint": "commitlint --edit",
     "commitlint:last": "commitlint --from HEAD~1 --to HEAD --verbose",
     "validate:secrets": "node scripts/validate-secrets.js",
-    "license-check": "npx license-checker --summary --onlyAllow 'MIT;Apache-2.0;ISC;BSD-2-Clause;BSD-3-Clause;0BSD;CC0-1.0;Unlicense;BlueOak-1.0.0;Python-2.0;CC-BY-4.0;Apache*;(MIT OR CC0-1.0)'",
+    "license-check": "node scripts/license-check.js",
     "ci": "npm run license-check && npm run lint && npm run build && npm run test:unit && npm run test:integration",
     "ci:full": "npm run commitlint:last && npm run ci",
     "prepare": "husky",
