@@ -305,24 +305,6 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         // Lifecycle hook: session start
         await executeOnSessionStart(this, this.metadata.lifecycle, this.metadata.name, sessionId, env);
 
-        // Build welcome message (same as regular run() method)
-        const profileName = env.CODEMIE_PROFILE_NAME || 'default';
-        const provider = env.CODEMIE_PROVIDER || 'unknown';
-        const cliVersion = env.CODEMIE_CLI_VERSION || 'unknown';
-        const model = env.CODEMIE_MODEL || 'unknown';
-        const codeMieUrl = env.CODEMIE_URL;
-
-        // Capture welcome message to stdout
-        const welcomeMessage = renderProfileInfo({
-          profile: profileName,
-          provider,
-          model,
-          codeMieUrl,
-          agent: this.metadata.name,
-          cliVersion,
-          sessionId
-        }) + '\n' + getRandomWelcomeMessage() + '\n\n';
-
         // Transform CODEMIE_* → agent-specific env vars
         env = this.transformEnvVars(env);
 
@@ -368,7 +350,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
           windowsHide: isWindows
         });
 
-        let stdout = welcomeMessage; // Start with welcome message
+        let stdout = ''; // Start with empty string (no welcome message for programmatic use)
         let stderr = '';
         let stdoutEnded = false;
         let stderrEnded = false;
