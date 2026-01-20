@@ -6,6 +6,7 @@
  */
 
 import type { FilterConfig } from './filters.js';
+import type { HooksConfiguration } from '../../hooks/types.js';
 
 /**
  * Configuration interface for the CodeMie agent
@@ -43,6 +44,15 @@ export interface CodeMieConfig {
 
   /** CodeMie base URL (for SSO providers) */
   codeMieUrl?: string;
+
+  /** Session ID for hook execution context */
+  sessionId?: string;
+
+  /** Transcript file path for hook execution context */
+  transcriptPath?: string;
+
+  /** Hooks configuration */
+  hooks?: HooksConfiguration;
 }
 
 /**

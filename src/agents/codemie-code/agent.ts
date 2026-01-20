@@ -18,6 +18,8 @@ import { extractTokenUsageFromStreamChunk, extractTokenUsageFromFinalState } fro
 import { setGlobalToolEventCallback } from './tools/index.js';
 import { logger } from '../../utils/logger.js';
 import { sanitizeCookies, sanitizeAuthToken } from '../../utils/security.js';
+import { HookExecutor } from '../../hooks/executor.js';
+import type { HookExecutionContext } from '../../hooks/types.js';
 
 export class CodeMieAgent {
   private agent: any;
@@ -29,6 +31,7 @@ export class CodeMieAgent {
   private currentStepNumber = 0;
   private currentLLMTokenUsage: TokenUsage | null = null; // Store token usage for associating with next tool call
   private isFirstLLMCall = true; // Track if this is the initial user input processing
+  private hookExecutor: HookExecutor | null = null; // Hook executor for lifecycle hooks
   private stats: AgentStats = {
     inputTokens: 0,
     outputTokens: 0,
@@ -56,6 +59,33 @@ export class CodeMieAgent {
       tools: this.tools,
       messageModifier: getSystemPrompt(config.workingDirectory)
     });
+
+    // Initialize hook executor if hooks are configured
+    if (config.hooks) {
+      const hookContext: HookExecutionContext = {
+        sessionId: config.sessionId || 'unknown',
+        workingDir: config.workingDirectory,
+        transcriptPath: config.transcriptPath || '',
+        permissionMode: 'auto', // TODO: Make this configurable
+        agentName: 'codemie-code',
+        profileName: config.name || 'default',
+      };
+
+      // Prepare LLM config for prompt hooks (use same config as agent)
+      const llmConfig = {
+        apiKey: config.authToken,
+        baseUrl: config.baseUrl,
+        model: config.model,
+        timeout: config.timeout * 1000,
+        debug: config.debug,
+      };
+
+      this.hookExecutor = new HookExecutor(config.hooks, hookContext, llmConfig);
+
+      if (config.debug) {
+        logger.debug('Hook executor initialized with prompt support');
+      }
+    }
 
     if (config.debug) {
       logger.debug(`CodeMie Agent initialized with ${tools.length} tools`);
@@ -343,6 +373,35 @@ export class CodeMieAgent {
         logger.debug(`Processing message: ${message.substring(0, 100)}...`);
       }
 
+      // Execute UserPromptSubmit hooks
+      if (this.hookExecutor && message.trim()) {
+        try {
+          const hookResult = await this.hookExecutor.executeUserPromptSubmit(message);
+
+          // Handle blocking decision
+          if (hookResult.decision === 'block') {
+            logger.warn('UserPromptSubmit hook blocked prompt');
+            onEvent({
+              type: 'error',
+              error: hookResult.reason || 'Prompt blocked by hook'
+            });
+            return; // Exit without processing
+          }
+
+          // Add context to conversation
+          if (hookResult.additionalContext) {
+            if (this.config.debug) {
+              logger.debug('UserPromptSubmit hook provided context');
+            }
+            // Prepend context to the message
+            message = `${hookResult.additionalContext}\n\n${message}`;
+          }
+        } catch (error) {
+          logger.error(`UserPromptSubmit hook failed: ${error}`);
+          // Continue execution
+        }
+      }
+
       // Add user message to conversation history (with optional images)
       const userMessage = this.createHumanMessage(message, images);
       this.conversationHistory.push(userMessage);
@@ -394,7 +453,7 @@ export class CodeMieAgent {
           }
         }
 
-        this.processStreamChunk(chunk, onEvent, (toolStarted) => {
+        await this.processStreamChunk(chunk, onEvent, (toolStarted) => {
           if (toolStarted) {
             // Complete current LLM step if it exists
             if (currentStep && currentStep.type === 'llm_call') {
@@ -470,6 +529,36 @@ export class CodeMieAgent {
       this.stats.executionTime = Date.now() - startTime;
       this.stats.executionSteps = [...this.currentExecutionSteps];
 
+      // Execute Stop hooks
+      if (this.hookExecutor) {
+        try {
+          const stopHookResult = await this.hookExecutor.executeStop();
+
+          if (stopHookResult.decision === 'block') {
+            logger.info(`Stop hook blocked completion: ${stopHookResult.reason}`);
+
+            // Add context message if provided
+            const contextMessage = stopHookResult.reason || 'Continuing execution as requested by hook';
+
+            // Notify user via content event
+            onEvent({
+              type: 'content_chunk',
+              content: `\n\n[Hook: ${contextMessage}]\n\n`
+            });
+
+            // Reset execution state for continuation
+            this.currentExecutionSteps = [];
+            this.currentStepNumber = 0;
+
+            // Recurse with empty message to continue agent loop
+            return this.chatStream('', onEvent);
+          }
+        } catch (error) {
+          logger.error(`Stop hook failed: ${error}`);
+          // Continue with normal completion
+        }
+      }
+
       // Notify thinking end and completion
       onEvent({ type: 'thinking_end' });
       onEvent({ type: 'complete' });
@@ -540,11 +629,11 @@ export class CodeMieAgent {
   /**
    * Process individual stream chunks from LangGraph
    */
-  private processStreamChunk(
+  private async processStreamChunk(
     chunk: any,
     onEvent: EventCallback,
     onToolEvent?: (toolStarted?: string) => void
-  ): void {
+  ): Promise<void> {
     try {
       // Handle agent node updates (LLM responses)
       if (chunk.agent?.messages) {
@@ -562,6 +651,43 @@ export class CodeMieAgent {
         // Handle tool calls
         if (lastMessage?.tool_calls && lastMessage.tool_calls.length > 0) {
           for (const toolCall of lastMessage.tool_calls) {
+            // Execute PreToolUse hooks
+            if (this.hookExecutor) {
+              try {
+                const hookResult = await this.hookExecutor.executePreToolUse(
+                  toolCall.name,
+                  toolCall.args,
+                  toolCall.id
+                );
+
+                // Handle blocking decision
+                if (hookResult.decision === 'deny' || hookResult.decision === 'block') {
+                  logger.warn(`PreToolUse hook blocked tool: ${toolCall.name}`);
+                  onEvent({
+                    type: 'error',
+                    error: hookResult.reason || `Tool ${toolCall.name} blocked by hook`
+                  });
+                  continue; // Skip this tool call
+                }
+
+                // Apply input modifications
+                if (hookResult.updatedInput) {
+                  if (this.config.debug) {
+                    logger.debug(`PreToolUse hook modified input for: ${toolCall.name}`);
+                  }
+                  toolCall.args = { ...toolCall.args, ...hookResult.updatedInput };
+                }
+
+                // Log additional context if provided
+                if (hookResult.additionalContext && this.config.debug) {
+                  logger.debug(`PreToolUse hook context: ${hookResult.additionalContext}`);
+                }
+              } catch (error) {
+                logger.error(`PreToolUse hook failed: ${error}`);
+                // Continue execution (hooks should not break agent)
+              }
+            }
+
             // Store tool args for later use in result processing
             // Use tool name as key since LangGraph may not preserve IDs consistently
             this.toolCallArgs.set(toolCall.name, toolCall.args);
@@ -605,6 +731,26 @@ export class CodeMieAgent {
             };
             // Clear the stored token usage after associating it
             this.currentLLMTokenUsage = null;
+          }
+
+          // Execute PostToolUse hooks
+          if (this.hookExecutor) {
+            try {
+              const hookResult = await this.hookExecutor.executePostToolUse(
+                toolName,
+                toolArgs || {},
+                result,
+                toolMetadata as Record<string, unknown>
+              );
+
+              // Log hook results (PostToolUse is informational, no blocking)
+              if (hookResult.decision && this.config.debug) {
+                logger.debug(`PostToolUse hook decision for ${toolName}: ${hookResult.decision}`);
+              }
+            } catch (error) {
+              logger.error(`PostToolUse hook failed: ${error}`);
+              // Continue execution
+            }
           }
 
           onEvent({
