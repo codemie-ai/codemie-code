@@ -896,6 +896,11 @@ export class ConversationsProcessor implements SessionProcessor {
           continue;
         }
 
+        // Skip records without message (e.g., progress records)
+        if (!record.message) {
+          continue;
+        }
+
         const content = record.message.content;
 
         if (typeof content === 'string') {
@@ -937,6 +942,11 @@ export class ConversationsProcessor implements SessionProcessor {
 
       for (const record of records) {
         if (record.sessionId !== sessionId) {
+          continue;
+        }
+
+        // Skip records without message (e.g., progress records)
+        if (!record.message) {
           continue;
         }
 
