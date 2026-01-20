@@ -938,7 +938,9 @@ export function createHookCommand(): Command {
 
         // Flush logger before exit to ensure write completes
         await logger.close();
-        process.exit(0); // Success
+        // Use process.exitCode instead of process.exit() to allow graceful shutdown
+        // This prevents Windows libuv UV_HANDLE_CLOSING assertion failures
+        process.exitCode = 0;
 
       } catch (error: unknown) {
         const totalDuration = Date.now() - hookStartTime;
@@ -961,7 +963,9 @@ export function createHookCommand(): Command {
 
         // Flush logger before exit
         await logger.close();
-        process.exit(1); // Non-blocking warning
+        // Use process.exitCode instead of process.exit() to allow graceful shutdown
+        // This prevents Windows libuv UV_HANDLE_CLOSING assertion failures
+        process.exitCode = 1;
       }
     });
 }
