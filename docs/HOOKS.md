@@ -16,6 +16,7 @@ The CodeMie Code hooks system allows you to execute custom shell commands or LLM
 
 Hooks allow you to:
 
+- **Inject context at session start** (SessionStart)
 - **Block or modify tool execution** (PreToolUse)
 - **Track and log tool usage** (PostToolUse)
 - **Add context to user prompts** (UserPromptSubmit)
@@ -237,6 +238,45 @@ Executed **before** processing a user's prompt. Can block or add context.
 }
 ```
 
+### SessionStart
+
+Executed at **session initialization** before the first message is processed. Can block session start, inject system context, and support iterative feedback loops.
+
+**Use cases:**
+- Detect and inject environment information (OS, architecture, etc.)
+- Validate prerequisites (dependencies, environment variables)
+- Check system requirements before starting
+- Add session-wide context for the agent
+
+**Input:**
+```json
+{
+  "hook_event_name": "SessionStart",
+  "session_id": "session-id",
+  "cwd": "/path/to/project",
+  "agent_name": "codemie-code",
+  "profile_name": "default",
+  "permission_mode": "auto"
+}
+```
+
+**Output:**
+```json
+{
+  "decision": "allow" | "block",
+  "reason": "Human-readable explanation",
+  "additionalContext": "Context injected as system message for agent"
+}
+```
+
+**Decisions:**
+- `allow` - Session starts normally
+- `block` - Block session start (with exit code 2, supports retry loop)
+
+**Special Features:**
+- **System Context Injection**: Any output in `additionalContext` is injected as a system message, making it available to the agent throughout the session
+- **Retry Loop**: If hook returns exit code 2 (blocking error) with feedback, the session start will retry up to `maxHookRetries` times (default: 5)
+
 ### Stop
 
 Executed when the agent **completes**. Can prevent stopping and continue execution.
@@ -390,7 +430,51 @@ echo "$CODEMIE_HOOK_INPUT" >> ~/.codemie/tool-usage.log
 echo '{"decision": "allow"}'
 ```
 
-### Example 3: Add Environment Context
+### Example 3: Detect OS at Session Start
+
+**Configuration:**
+```json
+{
+  "SessionStart": [
+    {
+      "matcher": "*",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "/usr/local/bin/detect-os.sh",
+          "timeout": 30000
+        }
+      ]
+    }
+  ]
+}
+```
+
+**Hook script (`detect-os.sh`):**
+```bash
+#!/bin/bash
+
+# Detect operating system and architecture
+OS_NAME=$(uname -s)
+OS_ARCH=$(uname -m)
+NODE_VERSION=$(node --version 2>/dev/null || echo "not installed")
+
+# Return as additional context (will be injected as system message)
+echo "{
+  \"decision\": \"allow\",
+  \"additionalContext\": \"Operating System: $OS_NAME\\nArchitecture: $OS_ARCH\\nNode.js: $NODE_VERSION\"
+}"
+```
+
+**Result**: The agent will receive this context as a system message and can use it throughout the session:
+```
+[SessionStart Hook Output]:
+Operating System: Darwin
+Architecture: arm64
+Node.js: v20.11.0
+```
+
+### Example 4: Add Environment Context
 
 **Configuration:**
 ```json
@@ -426,7 +510,7 @@ echo "{
 }"
 ```
 
-### Example 4: Verify Tests Before Stopping
+### Example 5: Verify Tests Before Stopping
 
 **Configuration:**
 ```json
@@ -464,7 +548,7 @@ else
 fi
 ```
 
-### Example 5: LLM-Based Decision (Prompt Hook)
+### Example 6: LLM-Based Decision (Prompt Hook)
 
 **Configuration:**
 ```json

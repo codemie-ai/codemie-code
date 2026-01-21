@@ -242,6 +242,37 @@ export class HookExecutor {
 	}
 
 	/**
+	 * Execute SessionStart hooks
+	 * Runs at the beginning of a session, can block session start and inject context
+	 *
+	 * @returns Aggregated result from all hooks
+	 */
+	async executeSessionStart(): Promise<AggregatedHookResult> {
+		logger.debug('Executing SessionStart hooks');
+
+		const matchers = this.config.SessionStart || [];
+		// SessionStart hooks don't use matchers (always run)
+		const allHooks = matchers.flatMap((m) => m.hooks);
+
+		if (allHooks.length === 0) {
+			logger.debug('No SessionStart hooks configured');
+			return this.createEmptyResult();
+		}
+
+		const input: HookInput = {
+			hook_event_name: 'SessionStart',
+			session_id: this.context.sessionId,
+			transcript_path: this.context.transcriptPath,
+			cwd: this.context.workingDir,
+			permission_mode: this.context.permissionMode,
+			agent_name: this.context.agentName,
+			profile_name: this.context.profileName,
+		};
+
+		return this.executeHooks(allHooks, input);
+	}
+
+	/**
 	 * Find hooks that match a tool name
 	 *
 	 * @param matchers - Array of hook matchers with patterns

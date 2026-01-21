@@ -8,7 +8,7 @@ import { createReactAgent } from '@langchain/langgraph/prebuilt';
 import { ChatOpenAI } from '@langchain/openai';
 import type { StructuredTool } from '@langchain/core/tools';
 import type { BaseMessage } from '@langchain/core/messages';
-import { HumanMessage } from '@langchain/core/messages';
+import { HumanMessage, SystemMessage } from '@langchain/core/messages';
 import type { CodeMieConfig, EventCallback, AgentStats, ExecutionStep, TokenUsage } from './types.js';
 import type { ClipboardImage } from '../../utils/clipboard.js';
 import { getSystemPrompt } from './prompts.js';
@@ -379,6 +379,66 @@ export class CodeMieAgent {
         logger.debug(`Processing message: ${message.substring(0, 100)}...`);
       }
 
+      // Execute SessionStart hooks (only on first message)
+      if (this.hookExecutor && this.conversationHistory.length === 0) {
+        try {
+          const sessionStartResult = await this.hookExecutor.executeSessionStart();
+
+          // Handle blocking decision
+          if (sessionStartResult.decision === 'block') {
+            const reason = sessionStartResult.reason || 'Session blocked by SessionStart hook';
+            const context = sessionStartResult.additionalContext;
+
+            // Check if we should retry (exit code 2 behavior)
+            if (context && this.hookLoopCounter < (this.getMaxHookRetries())) {
+              this.hookLoopCounter++;
+              logger.warn(`SessionStart hook blocked (attempt ${this.hookLoopCounter}/${this.getMaxHookRetries()})`);
+
+              // Build feedback message
+              const hookFeedback = [reason, context].filter(Boolean).join('\n\n');
+
+              // Clear hook cache for retry
+              this.hookExecutor.clearCache();
+
+              // Retry with feedback
+              return this.chatStream(`[Hook feedback]: ${hookFeedback}`, onEvent, images);
+            } else {
+              // Max retries reached or no feedback - block session
+              if (this.hookLoopCounter >= this.getMaxHookRetries()) {
+                logger.error(`SessionStart hook blocked after ${this.hookLoopCounter} attempts - aborting session`);
+                onEvent({
+                  type: 'error',
+                  error: `Session blocked after ${this.hookLoopCounter} attempts: ${reason}`
+                });
+              } else {
+                logger.warn('SessionStart hook blocked session start');
+                onEvent({
+                  type: 'error',
+                  error: reason
+                });
+              }
+              return; // Exit without starting session
+            }
+          }
+
+          // Inject hook output as system context
+          if (sessionStartResult.additionalContext) {
+            if (this.config.debug) {
+              logger.debug('SessionStart hook provided context, injecting into conversation');
+            }
+
+            // Add SessionStart output as system message before user message
+            const systemMessage = new SystemMessage(
+              `[SessionStart Hook Output]:\n${sessionStartResult.additionalContext}`
+            );
+            this.conversationHistory.push(systemMessage);
+          }
+        } catch (error) {
+          logger.error(`SessionStart hook failed: ${error}`);
+          // Continue session start (fail open)
+        }
+      }
+
       // Execute UserPromptSubmit hooks
       if (this.hookExecutor && message.trim()) {
         try {
@@ -559,7 +619,7 @@ export class CodeMieAgent {
             logger.info(`Stop hook blocked completion: ${stopHookResult.reason}`);
 
             // Check if we've reached the retry limit
-            const maxRetries = this.config.maxHookRetries || 5;
+            const maxRetries = this.getMaxHookRetries();
             if (this.hookLoopCounter >= maxRetries) {
               logger.warn(`Hook retry limit reached (${maxRetries} attempts)`);
 
@@ -966,6 +1026,13 @@ export class CodeMieAgent {
         error: error instanceof Error ? error.message : String(error)
       };
     }
+  }
+
+  /**
+   * Get maximum hook retry attempts from config
+   */
+  private getMaxHookRetries(): number {
+    return this.config.maxHookRetries || 5;
   }
 
   /**
