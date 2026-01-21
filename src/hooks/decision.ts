@@ -18,20 +18,29 @@ export class DecisionParser {
 	 * @returns Parsed hook result or default allow decision
 	 */
 	static parse(stdout: string, stderr: string, exitCode: number): HookResult {
-		// Handle exit code 2 (blocking error)
+		// Handle exit code 2 (blocking error - requires agent retry)
 		if (exitCode === 2) {
+			// Extract feedback from both stderr and stdout for agent to process
+			const feedback = [stderr, stdout.trim()].filter(Boolean).join('\n\n');
+
 			return {
 				decision: 'block',
 				reason: stderr || 'Hook returned blocking error (exit code 2)',
+				additionalContext: feedback || undefined,
 			};
 		}
 
-		// Handle non-zero exit codes (non-blocking errors)
+		// Handle non-zero exit codes (non-blocking errors - informational)
 		if (exitCode !== 0) {
 			logger.warn(`Hook failed with exit code ${exitCode}: ${stderr}`);
+
+			// Include output as informational feedback for agent
+			const feedback = [stderr, stdout.trim()].filter(Boolean).join('\n\n');
+
 			return {
 				decision: 'allow',
 				reason: `Hook failed but execution continues (exit code ${exitCode})`,
+				additionalContext: feedback || undefined,
 			};
 		}
 
@@ -45,11 +54,12 @@ export class DecisionParser {
 		try {
 			const result = JSON.parse(trimmedOutput) as HookResult;
 			return this.validateResult(result);
-		} catch (error) {
-			logger.warn(`Hook returned invalid JSON, treating as allow: ${error}`);
+		} catch {
+			// Not valid JSON - treat as informational output
+			logger.debug(`Hook returned non-JSON output, treating as informational`);
 			return {
 				decision: 'allow',
-				reason: 'Hook output was not valid JSON',
+				additionalContext: trimmedOutput,
 			};
 		}
 	}

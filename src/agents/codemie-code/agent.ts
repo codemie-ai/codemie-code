@@ -32,6 +32,7 @@ export class CodeMieAgent {
   private currentLLMTokenUsage: TokenUsage | null = null; // Store token usage for associating with next tool call
   private isFirstLLMCall = true; // Track if this is the initial user input processing
   private hookExecutor: HookExecutor | null = null; // Hook executor for lifecycle hooks
+  private hookLoopCounter = 0; // Track Stop hook retry attempts
   private stats: AgentStats = {
     inputTokens: 0,
     outputTokens: 0,
@@ -343,6 +344,11 @@ export class CodeMieAgent {
     this.currentStepNumber = 0;
     this.isFirstLLMCall = true;
 
+    // Reset hook loop counter only for new user messages (not recursive calls)
+    if (message.trim() && !message.startsWith('[Hook feedback]')) {
+      this.hookLoopCounter = 0;
+    }
+
     // Set up global tool event callback for progress reporting
     setGlobalToolEventCallback((event) => {
       onEvent({
@@ -532,26 +538,70 @@ export class CodeMieAgent {
       // Execute Stop hooks
       if (this.hookExecutor) {
         try {
-          const stopHookResult = await this.hookExecutor.executeStop();
+          const stopHookResult = await this.hookExecutor.executeStop(
+            this.currentExecutionSteps,
+            {
+              toolCalls: this.stats.toolCalls,
+              successfulTools: this.stats.successfulTools,
+              failedTools: this.stats.failedTools,
+            }
+          );
+
+          // Display additional context from hooks if present (even if not blocking)
+          if (stopHookResult.additionalContext) {
+            onEvent({
+              type: 'content_chunk',
+              content: stopHookResult.additionalContext
+            });
+          }
 
           if (stopHookResult.decision === 'block') {
             logger.info(`Stop hook blocked completion: ${stopHookResult.reason}`);
 
-            // Add context message if provided
-            const contextMessage = stopHookResult.reason || 'Continuing execution as requested by hook';
+            // Check if we've reached the retry limit
+            const maxRetries = this.config.maxHookRetries || 5;
+            if (this.hookLoopCounter >= maxRetries) {
+              logger.warn(`Hook retry limit reached (${maxRetries} attempts)`);
 
-            // Notify user via content event
-            onEvent({
-              type: 'content_chunk',
-              content: `\n\n[Hook: ${contextMessage}]\n\n`
-            });
+              // TODO: Ask user for guidance (continue/abort/ignore)
+              // For now, emit warning and force completion
+              onEvent({
+                type: 'content_chunk',
+                content: `\n\n[Warning: Hook retry limit (${maxRetries}) reached. Completing execution.]\n\n`
+              });
 
-            // Reset execution state for continuation
-            this.currentExecutionSteps = [];
-            this.currentStepNumber = 0;
+              // Fall through to normal completion
+            } else {
+              // Increment retry counter
+              this.hookLoopCounter++;
 
-            // Recurse with empty message to continue agent loop
-            return this.chatStream('', onEvent);
+              // Construct feedback message from hook output
+              const hookFeedback = [
+                stopHookResult.reason || 'Hook requested continuation',
+                stopHookResult.additionalContext
+              ]
+                .filter(Boolean)
+                .join('\n\n');
+
+              // Notify user about hook retry
+              onEvent({
+                type: 'content_chunk',
+                content: `\n\n[Hook retry ${this.hookLoopCounter}/${maxRetries}: ${stopHookResult.reason || 'Continuing execution'}]\n\n`
+              });
+
+              // Reset execution state for continuation
+              this.currentExecutionSteps = [];
+              this.currentStepNumber = 0;
+
+              // Clear hook cache to allow Stop hooks to run again
+              if (this.hookExecutor) {
+                this.hookExecutor.clearCache();
+              }
+
+              // Recurse with hook feedback to guide agent
+              const feedbackMessage = `[Hook feedback]: ${hookFeedback}`;
+              return this.chatStream(feedbackMessage, onEvent);
+            }
           }
         } catch (error) {
           logger.error(`Stop hook failed: ${error}`);
@@ -733,6 +783,14 @@ export class CodeMieAgent {
             this.currentLLMTokenUsage = null;
           }
 
+          // Store metadata in the execution step for this tool
+          const toolStep = this.currentExecutionSteps
+            .filter(step => step.type === 'tool_execution' && step.toolName === toolName)
+            .pop(); // Get the most recent step for this tool
+          if (toolStep && toolMetadata) {
+            toolStep.toolMetadata = toolMetadata;
+          }
+
           // Execute PostToolUse hooks
           if (this.hookExecutor) {
             try {
@@ -746,6 +804,14 @@ export class CodeMieAgent {
               // Log hook results (PostToolUse is informational, no blocking)
               if (hookResult.decision && this.config.debug) {
                 logger.debug(`PostToolUse hook decision for ${toolName}: ${hookResult.decision}`);
+              }
+
+              // Display additional context from hooks if present
+              if (hookResult.additionalContext) {
+                onEvent({
+                  type: 'content_chunk',
+                  content: hookResult.additionalContext
+                });
               }
             } catch (error) {
               logger.error(`PostToolUse hook failed: ${error}`);

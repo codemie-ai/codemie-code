@@ -41,7 +41,7 @@ describe('DecisionParser', () => {
 		it('should handle invalid JSON as allow', () => {
 			const result = DecisionParser.parse('not json', '', 0);
 			expect(result.decision).toBe('allow');
-			expect(result.reason).toBe('Hook output was not valid JSON');
+			expect(result.additionalContext).toBe('not json');
 		});
 	});
 

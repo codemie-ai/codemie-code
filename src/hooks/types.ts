@@ -48,6 +48,22 @@ export interface HookInput {
 
 	/** Profile name */
 	profile_name?: string;
+
+	/** Tool execution history (for Stop hooks) */
+	tool_execution_history?: Array<{
+		toolName: string;
+		success: boolean;
+		exitCode?: number;
+		duration?: number;
+		errorMessage?: string;
+	}>;
+
+	/** Execution statistics (for Stop hooks) */
+	execution_stats?: {
+		totalToolCalls: number;
+		successfulTools: number;
+		failedTools: number;
+	};
 }
 
 /**

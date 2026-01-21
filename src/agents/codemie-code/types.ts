@@ -53,6 +53,9 @@ export interface CodeMieConfig {
 
   /** Hooks configuration */
   hooks?: HooksConfiguration;
+
+  /** Maximum number of times to retry when Stop hook returns exit code 2 (default: 5) */
+  maxHookRetries?: number;
 }
 
 /**
@@ -82,6 +85,9 @@ export interface ToolMetadata {
 
   /** Command that was executed */
   command?: string;
+
+  /** Exit code from command execution (for execute_command tool) */
+  exitCode?: number;
 
   /** Execution time in milliseconds */
   executionTime?: number;
@@ -329,6 +335,9 @@ export interface ExecutionStep {
 
   /** Tool result success status (only for tool_execution type) */
   toolSuccess?: boolean;
+
+  /** Tool metadata (only for tool_execution type) */
+  toolMetadata?: ToolMetadata;
 
   /** Error message if step failed */
   error?: string;

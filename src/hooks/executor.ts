@@ -189,9 +189,14 @@ export class HookExecutor {
 	 * Execute Stop hooks
 	 * Runs when agent completes, can prevent stopping and continue execution
 	 *
+	 * @param executionSteps - Optional array of execution steps with tool history
+	 * @param stats - Optional execution statistics
 	 * @returns Aggregated result from all hooks
 	 */
-	async executeStop(): Promise<AggregatedHookResult> {
+	async executeStop(
+		executionSteps?: Array<any>,
+		stats?: { toolCalls: number; successfulTools: number; failedTools: number },
+	): Promise<AggregatedHookResult> {
 		logger.debug('Executing Stop hooks');
 
 		const matchers = this.config.Stop || [];
@@ -203,6 +208,18 @@ export class HookExecutor {
 			return this.createEmptyResult();
 		}
 
+		// Format tool execution history from execution steps
+		const toolExecutionHistory =
+			executionSteps
+				?.filter((step) => step.type === 'tool_execution')
+				.map((step) => ({
+					toolName: step.toolName || 'unknown',
+					success: step.toolSuccess ?? false,
+					exitCode: step.toolMetadata?.exitCode,
+					duration: step.duration,
+					errorMessage: step.error || step.toolMetadata?.errorMessage,
+				})) || [];
+
 		const input: HookInput = {
 			hook_event_name: 'Stop',
 			session_id: this.context.sessionId,
@@ -211,6 +228,14 @@ export class HookExecutor {
 			permission_mode: this.context.permissionMode,
 			agent_name: this.context.agentName,
 			profile_name: this.context.profileName,
+			tool_execution_history: toolExecutionHistory.length > 0 ? toolExecutionHistory : undefined,
+			execution_stats: stats
+				? {
+						totalToolCalls: stats.toolCalls,
+						successfulTools: stats.successfulTools,
+						failedTools: stats.failedTools,
+					}
+				: undefined,
 		};
 
 		return this.executeHooks(allHooks, input);
@@ -391,8 +416,17 @@ export class HookExecutor {
 					CODEMIE_HOOK_INPUT: stdin, // Pass input via env for now
 				},
 				cwd: this.context.workingDir,
+				shell: true, // Enable shell execution for proper command parsing
 			},
 		);
+
+		// Log raw output for debugging
+		if (result.stdout) {
+			logger.debug(`Hook stdout: ${result.stdout}`);
+		}
+		if (result.stderr) {
+			logger.debug(`Hook stderr: ${result.stderr}`);
+		}
 
 		// Parse result based on exit code and output
 		return DecisionParser.parse(result.stdout, result.stderr, result.code);
