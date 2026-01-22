@@ -71,7 +71,9 @@ export async function loadCodeMieConfig(
       workingDirectory: workDir,
       debug: baseConfig.debug || false,
       name: baseConfig.name, // Profile name for display
-      codeMieUrl: (baseConfig as any).codeMieUrl // CodeMie URL for SSO providers
+      codeMieUrl: (baseConfig as any).codeMieUrl, // CodeMie URL for SSO providers
+      hooks: (baseConfig as any).hooks, // Pass through hooks configuration
+      maxHookRetries: (baseConfig as any).maxHookRetries || 5 // Default to 5 retries
     };
 
     // Validate agent-specific requirements

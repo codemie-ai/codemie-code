@@ -2,6 +2,8 @@
  * Configuration types for CodeMie Code
  */
 
+import type { HooksConfiguration } from '../hooks/types.js';
+
 /**
  * Minimal CodeMie integration info for config storage
  */
@@ -53,6 +55,9 @@ export interface ProviderProfile {
       dryRun?: boolean;   // Dry-run mode: log metrics without sending (default: false)
     };
   };
+
+  // Hooks configuration
+  hooks?: HooksConfiguration;
 }
 
 /**
