@@ -4,6 +4,58 @@ This directory contains example hook scripts for the CodeMie hooks system.
 
 ## Available Hooks
 
+### format-code.sh (PostToolUse Hook)
+
+Automatically formats TypeScript code after file modifications using ESLint --fix:
+- **Triggers on**: Write, Edit, NotebookEdit tools (file modification operations)
+- **What it does**: Runs `eslint --fix` on modified `.ts` files
+- **Non-blocking**: Always succeeds (formatting is best-effort)
+
+**Usage**: Add to your profile configuration:
+
+```json
+{
+  "profiles": {
+    "default": {
+      "hooks": {
+        "PostToolUse": [
+          {
+            "matcher": "Write|Edit|NotebookEdit",
+            "hooks": [
+              {
+                "type": "command",
+                "command": "/absolute/path/to/codemie-code/hooks/format-code.sh"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}
+```
+
+**Behavior**:
+- ✅ Runs after Write/Edit/NotebookEdit completes
+- ✅ Only processes `.ts` files (skips others)
+- ✅ Applies ESLint auto-fixes (formatting, unused imports, etc.)
+- ✅ Non-blocking (doesn't fail even if ESLint errors exist)
+
+**Example Workflow**:
+1. Agent writes code to `src/utils/helper.ts`
+2. PostToolUse hook triggers automatically
+3. ESLint --fix runs on `helper.ts`
+4. Formatting applied (semicolons, indentation, spacing)
+5. Unused imports removed automatically
+6. Agent continues (hook always succeeds)
+
+**Benefits**:
+- Consistent code style automatically
+- Reduces formatting noise in Stop hook
+- Catches fixable issues immediately
+
+---
+
 ### check-quality.sh (Stop Hook)
 
 Runs the **EXACT same checks as git pre-commit hook** before the agent completes:
