@@ -6,9 +6,13 @@ This directory contains example hook scripts for the CodeMie hooks system.
 
 ### check-quality.sh (Stop Hook)
 
-Runs code quality checks before the agent completes execution:
-- **ESLint**: Checks for code style and quality issues
-- **Tests**: Runs the full test suite
+Runs the **EXACT same checks as git pre-commit hook** before the agent completes:
+- **lint-staged**: ESLint on changed `.ts` files (zero warnings required)
+- **vitest related**: Tests for changed files only (fast, targeted)
+- **license-check**: Validates package.json licenses
+- **validate:secrets**: Gitleaks secret detection (if Docker available)
+
+This ensures the agent maintains the same quality standards as manual commits.
 
 **Usage**: Add to your profile configuration:
 
@@ -38,17 +42,23 @@ Runs code quality checks before the agent completes execution:
 **Behavior**:
 - **Exit 0**: All checks passed - agent can complete
 - **Exit 2**: Checks failed - agent receives feedback and must fix issues
-- **Retry Loop**: Agent gets up to 5 attempts to fix issues
+- **Retry Loop**: Agent gets up to 5 attempts (configurable via `maxHookRetries`)
 
 **Example Workflow**:
-1. Agent makes code changes
-2. Stop hook runs linting and tests
+1. Agent makes code changes to `src/utils/helper.ts`
+2. Stop hook runs (same as git pre-commit):
+   - ESLint checks `src/utils/helper.ts` only
+   - Vitest runs tests related to `src/utils/helper.ts` only
+   - License check validates dependencies
+   - Gitleaks scans for secrets
 3. If failures detected:
-   - Hook returns exit code 2 with failure details
-   - Agent receives feedback: "ESLint found 3 errors in file.ts..."
+   - Hook returns exit code 2 with specific errors
+   - Agent receives feedback: "ESLint found 3 errors in helper.ts..."
    - Agent fixes the issues
-   - Hook runs again
+   - Hook runs again (only on changed files)
 4. When all checks pass, agent completes successfully
+
+**Performance**: Much faster than running all tests (checks only changed files)
 
 ## Creating Custom Hooks
 
