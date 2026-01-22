@@ -510,7 +510,7 @@ echo "{
 }"
 ```
 
-### Example 5: Verify Tests Before Stopping
+### Example 5: Verify Code Quality Before Stopping
 
 **Configuration:**
 ```json
@@ -520,8 +520,8 @@ echo "{
       "hooks": [
         {
           "type": "command",
-          "command": "/usr/local/bin/check-tests.sh",
-          "timeout": 120000
+          "command": "/path/to/codemie-code/hooks/check-quality.sh",
+          "timeout": 300000
         }
       ]
     }
@@ -529,24 +529,33 @@ echo "{
 }
 ```
 
-**Hook script (`check-tests.sh`):**
+**Hook script (`check-quality.sh`):**
+This example is included in the `hooks/` directory of the codemie-code repository.
+
+The hook runs the same checks as the git pre-commit hook:
+- **ESLint**: Code style and quality checks
+- **Tests**: Full test suite validation
+
+**Behavior:**
 ```bash
-#!/bin/bash
+# On success (exit 0)
+{"decision": "allow", "reason": "All code quality checks passed"}
 
-# Run tests
-npm test > /dev/null 2>&1
-
-if [ $? -eq 0 ]; then
-  # Tests passed, allow stopping
-  echo '{"decision": "allow"}'
-else
-  # Tests failed, continue execution
-  echo "{
-    \"decision\": \"block\",
-    \"reason\": \"Tests are failing. Please fix the tests before completing.\"
-  }"
-fi
+# On failure (exit 2)
+{"decision": "block", "reason": "Code quality checks failed",
+ "additionalContext": "ESLint Errors:\n..."}
 ```
+
+**Iterative Fix Loop:**
+1. Agent makes code changes
+2. Stop hook runs linting + tests
+3. If failures: Hook blocks with detailed feedback
+4. Agent sees errors: "ESLint found 3 errors in file.ts line 42..."
+5. Agent fixes issues automatically
+6. Hook runs again (up to maxHookRetries times)
+7. When checks pass, agent completes successfully
+
+This ensures code quality is maintained automatically without manual intervention.
 
 ### Example 6: LLM-Based Decision (Prompt Hook)
 
