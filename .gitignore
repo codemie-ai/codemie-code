@@ -36,6 +36,7 @@ coverage/
 
 _bmad*
 .claude/**/bmad/*
+.codemie/claude-templates/templates
 
 # Claude Code local memory
 CLAUDE.local.md
