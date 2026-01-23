@@ -18,6 +18,7 @@ import { extractTokenUsageFromStreamChunk, extractTokenUsageFromFinalState } fro
 import { setGlobalToolEventCallback } from './tools/index.js';
 import { logger } from '../../utils/logger.js';
 import { sanitizeCookies, sanitizeAuthToken } from '../../utils/security.js';
+import { buildAuthHeader } from '../../utils/auth-header.js';
 import { HookExecutor } from '../../hooks/executor.js';
 import type { HookExecutionContext } from '../../hooks/types.js';
 
@@ -259,20 +260,26 @@ export class CodeMieAgent {
           };
         } else {
           // Even without SSO cookies, we still want to add the client tracking header
-          // Explicitly add Authorization header for non-SSO LiteLLM
+          // Build custom authorization header (supports custom header name and value format)
+          const authHeader = buildAuthHeader({
+            apiKey: this.config.authToken,
+            headerName: this.config.authHeader,
+            valueFormat: this.config.authValue
+          });
+
           ssoConfig.fetch = async (input: string | URL | Request, init?: RequestInit) => {
             const updatedInit = {
               ...init,
               headers: {
                 ...init?.headers,
-                'Authorization': `Bearer ${this.config.authToken}`,
+                [authHeader.name]: authHeader.value,
                 'X-CodeMie-Client': 'codemie-code' // Track client type for request metrics
               }
             };
 
             if (this.config.debug) {
               logger.debug(`Non-SSO LiteLLM request to ${input}`);
-              logger.debug(`Authorization header set with API key`);
+              logger.debug(`${authHeader.name} header set with API key`);
             }
 
             return fetch(input, updatedInit);
@@ -280,6 +287,9 @@ export class CodeMieAgent {
 
           if (this.config.debug) {
             logger.debug(`LiteLLM provider configured with API key authentication`);
+            if (this.config.authHeader || this.config.authValue) {
+              logger.debug(`Custom auth header: ${authHeader.name}: ${authHeader.value.substring(0, 20)}...`);
+            }
           }
         }
 

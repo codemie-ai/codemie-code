@@ -43,6 +43,8 @@ All agent shortcuts support these options:
 --api-key <key>          # Override API key
 --base-url <url>         # Override base URL
 --timeout <seconds>      # Override timeout (in seconds)
+--auth-header <name>     # Custom authorization header name (default: Authorization)
+--auth-value <format>    # Authorization value format with {key} placeholder (default: Bearer {key})
 ```
 
 ### Built-in Agent (codemie-code)

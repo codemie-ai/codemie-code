@@ -92,7 +92,9 @@ Profiles are stored in `~/.codemie/codemie-cli.config.json`:
       "baseUrl": "https://litellm.company.com",
       "apiKey": "sk-***",
       "model": "claude-4-5-sonnet",
-      "timeout": 300
+      "timeout": 300,
+      "authHeader": "api-key",
+      "authValue": "{key}"
     },
     "personal-openai": {
       "name": "personal-openai",
@@ -133,6 +135,8 @@ Environment variables override config file values and are useful for CI/CD, Dock
 | `CODEMIE_MODEL` | Model to use | - | `claude-sonnet-4-5-20250929` |
 | `CODEMIE_TIMEOUT` | Request timeout in milliseconds | `300000` | `600000` |
 | `CODEMIE_DEBUG` | Enable debug logging | `false` | `true` |
+| `CODEMIE_AUTH_HEADER` | Custom authorization header name | `Authorization` | `api-key` |
+| `CODEMIE_AUTH_VALUE` | Authorization value format with `{key}` placeholder | `Bearer {key}` | `{key}` |
 
 #### AI/Run SSO Configuration
 
@@ -195,6 +199,27 @@ export CODEMIE_BASE_URL=http://localhost:4000
 export CODEMIE_MODEL=claude-sonnet-4-5-20250929
 
 codemie-claude "Refactor this function"
+```
+
+**Using LiteLLM with custom authorization header:**
+```bash
+# API expects "api-key: {key}" instead of "Authorization: Bearer {key}"
+export CODEMIE_PROVIDER=litellm
+export CODEMIE_BASE_URL=http://localhost:4000
+export CODEMIE_API_KEY=sk-xxx
+export CODEMIE_AUTH_HEADER=api-key
+export CODEMIE_AUTH_VALUE="{key}"
+
+codemie-claude "Review this code"
+```
+
+**Using custom auth scheme via CLI:**
+```bash
+# Custom header with prefix
+codemie-code --api-key sk-xxx --auth-header "X-API-Key" --auth-value "Token {key}"
+
+# Raw key without Bearer prefix
+codemie-claude --provider litellm --api-key sk-xxx --auth-header "api-key" --auth-value "{key}"
 ```
 
 **Enable analytics:**

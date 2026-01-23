@@ -58,6 +58,10 @@ export interface ProviderProfile {
 
   // Hooks configuration
   hooks?: HooksConfiguration;
+
+  // Custom authorization header configuration
+  authHeader?: string;  // Header name (default: 'Authorization')
+  authValue?: string;   // Value format with {key} placeholder (default: 'Bearer {key}')
 }
 
 /**

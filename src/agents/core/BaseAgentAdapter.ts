@@ -384,6 +384,10 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
   /**
    * Check if proxy should be used for this agent/provider combination
+   *
+   * Proxy is used for:
+   * 1. SSO providers (for cookie-based auth)
+   * 2. LiteLLM provider with custom auth headers (for header transformation)
    */
   private shouldUseProxy(env: NodeJS.ProcessEnv): boolean {
     const providerName = env.CODEMIE_PROVIDER;
@@ -393,7 +397,21 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     const isSSOProvider = provider?.authType === 'sso';
     const isProxyEnabled = this.metadata.ssoConfig?.enabled ?? false;
 
-    return isSSOProvider && isProxyEnabled;
+    // Case 1: SSO provider with proxy enabled in agent config
+    if (isSSOProvider && isProxyEnabled) {
+      return true;
+    }
+
+    // Case 2: LiteLLM provider with custom auth headers
+    // Use proxy to transform auth headers for external agents
+    const isLiteLLM = providerName.toLowerCase() === 'litellm';
+    const hasCustomAuth = !!(env.CODEMIE_AUTH_HEADER || env.CODEMIE_AUTH_VALUE);
+
+    if (isLiteLLM && hasCustomAuth) {
+      return true;
+    }
+
+    return false;
   }
 
   /**
@@ -430,7 +448,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       integrationId: env.CODEMIE_INTEGRATION_ID,
       sessionId: env.CODEMIE_SESSION_ID,
       version: env.CODEMIE_CLI_VERSION,
-      profileConfig
+      profileConfig,
+      // API key authentication (for non-SSO providers like litellm)
+      apiKey: env.CODEMIE_API_KEY,
+      authHeader: env.CODEMIE_AUTH_HEADER,
+      authValue: env.CODEMIE_AUTH_VALUE
     };
   }
 

@@ -61,6 +61,8 @@ export class AgentCLI {
       .option('--api-key <key>', 'Override API key')
       .option('--base-url <url>', 'Override base URL')
       .option('--timeout <seconds>', 'Override timeout (in seconds)', parseInt)
+      .option('--auth-header <name>', 'Custom authorization header name (default: Authorization)')
+      .option('--auth-value <format>', 'Authorization value format using {key} placeholder (default: Bearer {key})')
       .option('--task <prompt>', 'Execute a single task (agent-specific flag mapping)')
       .allowUnknownOption()
       .argument('[args...]', `Arguments to pass to ${this.adapter.displayName}`)
@@ -111,7 +113,9 @@ export class AgentCLI {
         model: options.model as string | undefined,
         apiKey: options.apiKey as string | undefined,
         baseUrl: options.baseUrl as string | undefined,
-        timeout: options.timeout as number | undefined
+        timeout: options.timeout as number | undefined,
+        authHeader: options.authHeader as string | undefined,
+        authValue: options.authValue as string | undefined
       });
 
       // Validate essential configuration
@@ -302,7 +306,7 @@ export class AgentCLI {
   ): string[] {
     const agentArgs = [...args];
     // Config-only options (not passed to agent, handled by CodeMie CLI)
-    const configOnlyOptions = ['profile', 'provider', 'apiKey', 'baseUrl', 'timeout'];
+    const configOnlyOptions = ['profile', 'provider', 'apiKey', 'baseUrl', 'timeout', 'authHeader', 'authValue'];
 
     for (const [key, value] of Object.entries(options)) {
       // Skip config-only options (handled by CodeMie CLI layer)
