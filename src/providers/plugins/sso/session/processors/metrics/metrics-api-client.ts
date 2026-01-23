@@ -17,6 +17,7 @@
 
 import type { SessionMetric, MetricsApiConfig, MetricsSyncResponse, MetricsApiError } from './metrics-types.js';
 import type { Session } from '../../../../../../agents/core/session/types.js';
+import type { MCPConfigSummary } from '../../../../../../agents/core/types.js';
 import { logger } from '../../../../../../utils/logger.js';
 import { detectGitBranch } from '../../../../../../utils/processes.js';
 import { CODEMIE_ENDPOINTS } from '../../../sso.http-client.js';
@@ -242,12 +243,14 @@ export class MetricsSender {
    * @param workingDirectory - Current working directory (for git branch detection)
    * @param status - Session start status object with status and optional reason
    * @param error - Optional error information (required if status=failed)
+   * @param mcpSummary - Optional MCP configuration summary
    */
   async sendSessionStart(
     session: Pick<Session, 'sessionId' | 'agentName' | 'provider' | 'project' | 'startTime' | 'workingDirectory'> & { model?: string },
     workingDirectory: string,
     status: SessionStartStatus = { status: 'started' },
-    error?: SessionError
+    error?: SessionError,
+    mcpSummary?: MCPConfigSummary
   ): Promise<MetricsSyncResponse> {
     // Detect git branch
     const branch = await detectGitBranch(workingDirectory);
@@ -288,7 +291,19 @@ export class MetricsSender {
 
       // Lifecycle status
       status: status.status,
-      ...(status.reason && { reason: status.reason })
+      ...(status.reason && { reason: status.reason }),
+
+      // MCP Configuration (only if provided)
+      ...(mcpSummary && {
+        mcp_total_servers: mcpSummary.totalServers,
+        mcp_local_servers: mcpSummary.localServers,
+        mcp_project_servers: mcpSummary.projectServers,
+        mcp_user_servers: mcpSummary.userServers,
+        mcp_server_names: mcpSummary.serverNames,
+        mcp_local_server_names: mcpSummary.localServerNames,
+        mcp_project_server_names: mcpSummary.projectServerNames,
+        mcp_user_server_names: mcpSummary.userServerNames
+      })
     };
 
     // Add error details if session start failed
