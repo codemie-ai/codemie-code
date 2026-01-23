@@ -16,7 +16,7 @@
   "author": "AI/Run Team",
   "license": "Apache-2.0",
   "dependencies": {
-    "@codemieai/code": "file:../../codemieai-code-0.0.33.tgz",
+    "@codemieai/code": "file:../../codemieai-code-0.0.31.tgz",
     "dotenv": "^16.3.1"
   }
 }
