@@ -1,7 +1,7 @@
 # Codemie Init - Generate Project Documentation
 
 **Command Name**: `codemie-init`
-**Description**: Initialize Codemie documentation for any project - analyze structure and generate AI-optimized guides
+**Description**: Initialize Codeie documentation for any project - analyze structure and generate AI-optimized guides
 **Category**: Documentation Generation
 **Complexity**: High
 
