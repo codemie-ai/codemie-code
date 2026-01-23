@@ -48,6 +48,25 @@ export const ClaudePluginMetadata: AgentMetadata = {
     excludeErrorsFromTools: ['Bash']
   },
 
+  // MCP configuration paths for Claude Code
+  // - Local: ~/.claude.json → projects[cwd].mcpServers (project-specific, private)
+  // - Project: .mcp.json → mcpServers (shared with team)
+  // - User: ~/.claude.json → mcpServers (top-level, available across all projects)
+  mcpConfig: {
+    local: {
+      path: '~/.claude.json',
+      jsonPath: 'projects.{cwd}.mcpServers'
+    },
+    project: {
+      path: '.mcp.json',
+      jsonPath: 'mcpServers'
+    },
+    user: {
+      path: '~/.claude.json',
+      jsonPath: 'mcpServers'
+    }
+  },
+
   lifecycle: {
     // Default hooks for ALL providers (provider-agnostic)
     async beforeRun(env) {

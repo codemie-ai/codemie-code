@@ -43,6 +43,21 @@ const metadata = {
     settings: 'settings.json'
   },
 
+  // MCP configuration paths for Gemini CLI
+  // - User: ~/.gemini/settings.json → mcpServers (available across all projects)
+  // - Project: .gemini/settings.json → mcpServers (project-specific)
+  // Note: Gemini doesn't have a "local" scope like Claude
+  mcpConfig: {
+    project: {
+      path: '.gemini/settings.json',
+      jsonPath: 'mcpServers'
+    },
+    user: {
+      path: '~/.gemini/settings.json',
+      jsonPath: 'mcpServers'
+    }
+  },
+
   // Hook configuration: event name mapping
   hookConfig: {
     /**

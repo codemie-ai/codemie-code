@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { logger } from '../../utils/logger.js';
 import { AgentRegistry } from '../../agents/registry.js';
 import { getSessionPath, getSessionMetricsPath, getSessionConversationPath } from '../../agents/core/session/session-config.js';
-import type { BaseHookEvent, HookTransformer } from '../../agents/core/types.js';
+import type { BaseHookEvent, HookTransformer, MCPConfigSummary } from '../../agents/core/types.js';
 
 /**
  * Hook event handlers for agent lifecycle events
@@ -553,6 +553,18 @@ async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: stri
     // Determine working directory
     const workingDirectory = event.cwd || process.cwd();
 
+    // Detect MCP servers using agent-specific configuration (non-blocking)
+    let mcpSummary: MCPConfigSummary | undefined;
+    try {
+      const agent = AgentRegistry.getAgent(agentName);
+      if (agent?.getMCPConfigSummary) {
+        mcpSummary = await agent.getMCPConfigSummary(workingDirectory);
+        logger.debug('[hook:SessionStart] MCP detection', { total: mcpSummary.totalServers });
+      }
+    } catch (error) {
+      logger.debug('[hook:SessionStart] MCP detection failed, continuing without MCP data', error);
+    }
+
     // Load SSO credentials
     const { CodeMieSSO } = await import('../../providers/plugins/sso/sso.auth.js');
     const sso = new CodeMieSSO();
@@ -600,7 +612,9 @@ async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: stri
         workingDirectory
       },
       workingDirectory,
-      status
+      status,
+      undefined,   // error
+      mcpSummary   // MCP configuration summary
     );
 
     logger.info('[hook:SessionStart] Session start metrics sent successfully');

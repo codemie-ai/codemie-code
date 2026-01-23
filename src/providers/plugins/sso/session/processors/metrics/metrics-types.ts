@@ -58,6 +58,19 @@ export interface SessionAttributes {
   session_duration_ms: number;           // Duration in milliseconds
   had_errors: boolean;                   // Boolean error flag
   errors?: Record<string, string[]>;     // Tool name -> array of error messages (only if had_errors: true)
+
+  // MCP Configuration - Counts (optional, only at session start)
+  mcp_total_servers?: number;            // Total MCP servers across all scopes
+  mcp_local_servers?: number;            // MCP servers in local scope (.claude.json in project)
+  mcp_project_servers?: number;          // MCP servers in project scope (.mcp.json)
+  mcp_user_servers?: number;             // MCP servers in user scope (~/.claude.json)
+
+  // MCP Configuration - Server Names (optional, only at session start)
+  mcp_server_names?: string[];           // All unique server names
+  mcp_local_server_names?: string[];     // Server names in local scope
+  mcp_project_server_names?: string[];   // Server names in project scope
+  mcp_user_server_names?: string[];      // Server names in user scope
+
   count: number;                         // Always 1 (Prometheus compatibility)
 }
 

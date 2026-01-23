@@ -1,4 +1,4 @@
-import { AgentMetadata, AgentAdapter, AgentConfig } from './types.js';
+import { AgentMetadata, AgentAdapter, AgentConfig, MCPConfigSummary } from './types.js';
 import * as npm from '../../utils/processes.js';
 import { NpmError } from '../../utils/errors.js';
 import { exec } from '../../utils/processes.js';
@@ -16,6 +16,7 @@ import { existsSync } from 'fs';
 import { mkdir, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { resolveHomeDir } from '../../utils/paths.js';
+import { getMCPConfigSummary as getMCPConfigSummaryUtil } from '../../utils/mcp-config.js';
 import {
   executeOnSessionStart,
   executeBeforeRun,
@@ -40,6 +41,17 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    */
   getMetricsConfig(): import('./types.js').AgentMetricsConfig | undefined {
     return this.metadata.metricsConfig;
+  }
+
+  /**
+   * Get MCP configuration summary for this agent
+   * Uses agent's mcpConfig metadata to read config files
+   *
+   * @param cwd - Current working directory
+   * @returns MCP configuration summary with counts and server names
+   */
+  async getMCPConfigSummary(cwd: string): Promise<MCPConfigSummary> {
+    return getMCPConfigSummaryUtil(this.metadata.mcpConfig, cwd);
   }
 
   get name(): string {

@@ -205,6 +205,80 @@ export interface AgentMetadata {
    * Controls which tool errors are excluded from metrics sent to API
    */
   metricsConfig?: AgentMetricsConfig;
+
+  // === MCP Configuration ===
+  /**
+   * MCP (Model Context Protocol) server configuration paths
+   * Agent-specific locations for MCP config files
+   */
+  mcpConfig?: AgentMCPConfig;
+}
+
+/**
+ * MCP configuration source definition
+ * Describes where to find MCP servers in a config file
+ */
+export interface MCPConfigSource {
+  /**
+   * Path to config file
+   * - Absolute: starts with '~/' (resolved to home dir)
+   * - Relative: resolved from cwd
+   */
+  path: string;
+
+  /**
+   * JSON path to mcpServers object
+   * Supports nested paths like 'projects.{cwd}.mcpServers'
+   * {cwd} is replaced with actual working directory
+   */
+  jsonPath: string;
+}
+
+/**
+ * Agent-specific MCP configuration
+ * Defines where this agent stores MCP server configs
+ */
+export interface AgentMCPConfig {
+  /**
+   * Local scope: Project-specific, private to user
+   * Example: Claude uses ~/.claude.json → projects[cwd].mcpServers
+   */
+  local?: MCPConfigSource;
+
+  /**
+   * Project scope: Shared with team (version controlled)
+   * Example: .mcp.json in project root
+   */
+  project?: MCPConfigSource;
+
+  /**
+   * User scope: Available across all projects
+   * Example: Gemini uses ~/.gemini/settings.json → mcpServers
+   */
+  user?: MCPConfigSource;
+}
+
+/**
+ * MCP configuration summary for metrics
+ * Contains counts and server names per scope
+ */
+export interface MCPConfigSummary {
+  /** Total server count across all scopes */
+  totalServers: number;
+  /** Server count in local scope */
+  localServers: number;
+  /** Server count in project scope */
+  projectServers: number;
+  /** Server count in user scope */
+  userServers: number;
+  /** All unique server names */
+  serverNames: string[];
+  /** Server names in local scope */
+  localServerNames: string[];
+  /** Server names in project scope */
+  projectServerNames: string[];
+  /** Server names in user scope */
+  userServerNames: string[];
 }
 
 /**
@@ -353,4 +427,13 @@ export interface AgentAdapter {
    * @returns BaseExtensionInstaller instance or undefined
    */
   getExtensionInstaller?(): BaseExtensionInstaller | undefined;
+
+  /**
+   * Get MCP configuration summary for this agent
+   * Returns counts and server names for session metrics
+   *
+   * @param cwd - Current working directory
+   * @returns MCP configuration summary
+   */
+  getMCPConfigSummary?(cwd: string): Promise<MCPConfigSummary>;
 }
