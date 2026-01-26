@@ -278,7 +278,8 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         const { getCommandPath } = await import('../../utils/processes.js');
         const resolvedPath = await getCommandPath(this.metadata.cliCommand);
         if (resolvedPath) {
-          commandPath = resolvedPath;
+          // Quote path if it contains spaces to handle Windows paths correctly
+          commandPath = resolvedPath.includes(' ') ? `"${resolvedPath}"` : resolvedPath;
           logger.debug(`Resolved command path: ${resolvedPath}`);
         }
       }
