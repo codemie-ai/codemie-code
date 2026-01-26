@@ -54,6 +54,11 @@ export interface SessionAttributes {
   total_lines_added: number;             // Lines added
   total_lines_removed: number;           // Lines removed
 
+  // Cost Metrics
+  money_spent?: number;                           // Total cost (sum of all token costs)
+  cached_tokens_money_spent?: number;             // Cache read tokens cost
+  cache_creation_tokens_money_spent?: number;     // Cache creation tokens cost
+
   // Session Metadata
   session_duration_ms: number;           // Duration in milliseconds
   had_errors: boolean;                   // Boolean error flag
