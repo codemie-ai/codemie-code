@@ -851,9 +851,9 @@ async function sendSessionEndMetrics(event: SessionEndEvent, sessionId: string, 
       return;
     }
 
-    // Calculate duration
-    // Use active duration if available, otherwise fall back to wall-clock time
-    const durationMs = session.activeDurationMs || (Date.now() - session.startTime);
+    // Calculate durations
+    const wallClockDurationMs = Date.now() - session.startTime;
+    const activeDurationMs = session.activeDurationMs || undefined;
 
     // Build status object with reason from event
     // Status is "completed" for normal session endings, with reason from Claude (e.g., "exit", "logout")
@@ -904,14 +904,16 @@ async function sendSessionEndMetrics(event: SessionEndEvent, sessionId: string, 
       },
       session.workingDirectory,
       status,
-      durationMs
-      // error parameter omitted - undefined for normal termination
+      wallClockDurationMs,
+      undefined, // error parameter - undefined for normal termination
+      activeDurationMs
     );
 
     logger.info('[hook:SessionEnd] Session end metrics sent successfully', {
       status,
       reason: event.reason,
-      durationMs
+      wallClockDurationMs,
+      activeDurationMs
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
