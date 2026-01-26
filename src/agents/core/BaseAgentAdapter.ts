@@ -284,7 +284,21 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         }
       }
 
-      const child = spawn(commandPath, transformedArgs, {
+      // When shell: true is needed (Windows), merge args into command to avoid DEP0190
+      // Node.js deprecation warning: shell mode doesn't escape array arguments, only concatenates them
+      let finalCommand = commandPath;
+      let finalArgs = transformedArgs;
+
+      if (isWindows && transformedArgs.length > 0) {
+        // Quote arguments containing spaces or special characters
+        const quotedArgs = transformedArgs.map(arg =>
+          arg.includes(' ') || arg.includes('"') ? `"${arg.replace(/"/g, '\\"')}"` : arg
+        );
+        finalCommand = `${commandPath} ${quotedArgs.join(' ')}`;
+        finalArgs = [];
+      }
+
+      const child = spawn(finalCommand, finalArgs, {
         stdio: 'inherit',
         env,
         shell: isWindows, // Windows requires shell for .cmd/.bat executables

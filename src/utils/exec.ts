@@ -51,7 +51,21 @@ export async function exec(
     // Interactive mode: inherit stdio for user prompts
     const stdio = options.interactive ? 'inherit' : 'pipe';
 
-    const child = spawn(command, args, {
+    // When using shell: true, merge args into command string to avoid DEP0190
+    // Node.js deprecation warning: shell mode doesn't escape array arguments, only concatenates them
+    let finalCommand = command;
+    let finalArgs = args;
+
+    if (useShell && args.length > 0) {
+      // Quote arguments that contain spaces or special characters
+      const quotedArgs = args.map(arg =>
+        arg.includes(' ') || arg.includes('"') ? `"${arg.replace(/"/g, '\\"')}"` : arg
+      );
+      finalCommand = `${command} ${quotedArgs.join(' ')}`;
+      finalArgs = [];
+    }
+
+    const child = spawn(finalCommand, finalArgs, {
       cwd: options.cwd || process.cwd(),
       env: { ...process.env, ...options.env },
       shell: useShell,
