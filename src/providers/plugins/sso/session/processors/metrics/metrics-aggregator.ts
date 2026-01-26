@@ -195,8 +195,8 @@ function buildSessionAttributes(
   const successfulToolCalls = Object.values(toolSuccess).reduce((sum, count) => sum + count, 0);
   const failedToolCalls = Object.values(toolFailures).reduce((sum, count) => sum + count, 0);
 
-  // Calculate session duration from deltas (incremental batch duration)
-  const sessionDuration = calculateDurationFromDeltas(deltas, session);
+  // Use active duration if available, otherwise calculate from deltas
+  const sessionDuration = session.activeDurationMs || calculateDurationFromDeltas(deltas, session);
 
   // Build attributes
   const attributes: any = {
