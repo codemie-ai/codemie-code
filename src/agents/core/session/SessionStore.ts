@@ -84,4 +84,62 @@ export class SessionStore {
 
     await this.saveSession(session);
   }
+
+  /**
+   * Start activity tracking for a session
+   * Sets activityStartedAt to current time if not already set (prevents double-counting)
+   *
+   * @param sessionId - The session ID to start tracking
+   */
+  async startActivityTracking(sessionId: string): Promise<void> {
+    const session = await this.loadSession(sessionId);
+
+    if (!session) {
+      logger.warn(`[SessionStore] Cannot start activity tracking - session not found: ${sessionId}`);
+      return;
+    }
+
+    // Guard: skip if already tracking (prevents double-counting from multiple prompts without Stop)
+    if (session.activityStartedAt !== undefined) {
+      logger.debug(`[SessionStore] Activity tracking already started for session: ${sessionId}`);
+      return;
+    }
+
+    session.activityStartedAt = Date.now();
+    await this.saveSession(session);
+
+    logger.debug(`[SessionStore] Started activity tracking for session: ${sessionId}`);
+  }
+
+  /**
+   * Accumulate active duration for a session
+   * Calculates duration since activityStartedAt, adds to activeDurationMs, clears activityStartedAt
+   *
+   * @param sessionId - The session ID to accumulate duration for
+   * @returns The duration accumulated in this call (0 if no active period)
+   */
+  async accumulateActiveDuration(sessionId: string): Promise<number> {
+    const session = await this.loadSession(sessionId);
+
+    if (!session) {
+      logger.warn(`[SessionStore] Cannot accumulate duration - session not found: ${sessionId}`);
+      return 0;
+    }
+
+    // Guard: return 0 if no active period (Stop without UserPromptSubmit)
+    if (session.activityStartedAt === undefined) {
+      logger.debug(`[SessionStore] No active period to accumulate for session: ${sessionId}`);
+      return 0;
+    }
+
+    const duration = Date.now() - session.activityStartedAt;
+    session.activeDurationMs = (session.activeDurationMs || 0) + duration;
+    session.activityStartedAt = undefined; // Clear to mark as idle
+
+    await this.saveSession(session);
+
+    logger.debug(`[SessionStore] Accumulated ${duration}ms for session: ${sessionId} (total: ${session.activeDurationMs}ms)`);
+
+    return duration;
+  }
 }

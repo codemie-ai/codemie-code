@@ -37,6 +37,18 @@
         ]
       }
     ],
+    "BeforeAgent": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "codemie hook",
+            "name": "CodeMie User Prompt Submit",
+            "timeout": 2000
+          }
+        ]
+      }
+    ],
     "PreCompress": [
       {
         "hooks": [

@@ -108,6 +108,10 @@ export interface Session {
   status: SessionStatus;
   reason?: string; // Session end reason (optional, e.g., 'clear', 'logout', 'prompt_input_exit', 'other')
 
+  // Active duration tracking (excludes idle time)
+  activityStartedAt?: number; // Unix ms when current activity began (undefined = idle)
+  activeDurationMs: number; // Accumulated active time in milliseconds
+
   // Hierarchical sync state
   sync?: SyncState;
 }
