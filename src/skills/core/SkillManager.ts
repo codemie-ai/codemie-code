@@ -3,7 +3,10 @@ import type {
   Skill,
   SkillDiscoveryOptions,
   SkillValidationResult,
+  SkillWithInventory,
 } from './types.js';
+import { loadSkillWithInventory } from '../utils/content-loader.js';
+import { logger } from '../../utils/logger.js';
 
 /**
  * Skill manager singleton
@@ -75,6 +78,44 @@ export class SkillManager {
    */
   async listSkills(options: SkillDiscoveryOptions = {}): Promise<Skill[]> {
     return this.discovery.discoverSkills(options);
+  }
+
+  /**
+   * Get multiple skills by names with file inventory
+   *
+   * Used for pattern-based invocation when /skill-name patterns are detected.
+   * Loads skill content and builds file inventory for each requested skill.
+   *
+   * @param names - Array of skill names to load
+   * @param options - Discovery options
+   * @returns Array of skills with inventory (only found skills)
+   */
+  async getSkillsByNames(
+    names: string[],
+    options: SkillDiscoveryOptions = {}
+  ): Promise<SkillWithInventory[]> {
+    const results: SkillWithInventory[] = [];
+
+    // Discover all skills (uses cache)
+    const allSkills = await this.discovery.discoverSkills(options);
+
+    // Find and load each requested skill
+    for (const name of names) {
+      const skill = allSkills.find((s) => s.metadata.name === name);
+
+      if (skill) {
+        try {
+          const withInventory = await loadSkillWithInventory(skill);
+          results.push(withInventory);
+        } catch (error) {
+          logger.warn(`Failed to load inventory for skill '${name}':`, error);
+        }
+      } else {
+        logger.debug(`Skill '${name}' not found during pattern invocation`);
+      }
+    }
+
+    return results;
   }
 
   /**

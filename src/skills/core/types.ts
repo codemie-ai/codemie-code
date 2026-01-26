@@ -101,3 +101,41 @@ export interface SkillsConfig {
   /** Auto-reload on file changes (future feature) */
   autoReload?: boolean;
 }
+
+/**
+ * Skill pattern detected in a message
+ */
+export interface SkillPattern {
+  /** Skill name (e.g., 'mr', 'commit') */
+  name: string;
+  /** Position in message where pattern starts */
+  position: number;
+  /** Optional arguments after skill name */
+  args?: string;
+  /** Full matched pattern (e.g., '/mr', '/commit -m "fix"') */
+  raw: string;
+}
+
+/**
+ * Result of pattern matching
+ */
+export interface PatternMatchResult {
+  /** Detected skill patterns */
+  patterns: SkillPattern[];
+  /** Original message */
+  originalMessage: string;
+  /** Whether any patterns were found */
+  hasPatterns: boolean;
+}
+
+/**
+ * Skill with file inventory
+ */
+export interface SkillWithInventory {
+  /** Base skill metadata and content */
+  skill: Skill;
+  /** Relative file paths (excluding SKILL.md) */
+  files: string[];
+  /** Formatted content ready for prompt injection */
+  formattedContent: string;
+}
