@@ -94,8 +94,11 @@ export const OpenCodePluginMetadata: AgentMetadata = {
       }
 
       // Model selection priority: env var > config > default
-      const selectedModel = env.CODEMIE_MODEL || config?.model || 'gpt-4o';
+      const selectedModel = env.CODEMIE_MODEL || config?.model || 'gpt-5-2-2025-12-11';
       const modelConfig = getModelConfig(selectedModel);
+
+      // Extract OpenCode-compatible model config (remove CodeMie-specific fields)
+      const { displayName: _displayName, providerOptions, ...opencodeModelConfig } = modelConfig;
 
       const openCodeConfig = {
         enabled_providers: ['codemie-proxy'],
@@ -104,24 +107,21 @@ export const OpenCodePluginMetadata: AgentMetadata = {
             npm: '@ai-sdk/openai-compatible',
             name: 'CodeMie SSO',
             options: {
-              baseURL: `${proxyUrl}/v1`,
+              baseURL: `${proxyUrl}/`,
               apiKey: 'proxy-handled',
-              timeout: modelConfig.providerOptions?.timeout ||
-                       parseInt(env.CODEMIE_TIMEOUT || '120') * 1000,
-              ...(modelConfig.providerOptions?.headers && {
-                headers: modelConfig.providerOptions.headers
+              timeout: providerOptions?.timeout ||
+                       parseInt(env.CODEMIE_TIMEOUT || '600') * 1000,
+              ...(providerOptions?.headers && {
+                headers: providerOptions.headers
               })
             },
             models: {
-              [modelConfig.modelId]: {
-                name: modelConfig.displayName,
-                ...(modelConfig.capabilities && { capabilities: modelConfig.capabilities })
-              }
+              [modelConfig.id]: opencodeModelConfig
             }
           }
         },
         defaults: {
-          model: `codemie-proxy/${modelConfig.modelId}`
+          model: `codemie-proxy/${modelConfig.id}`
         }
       };
 
