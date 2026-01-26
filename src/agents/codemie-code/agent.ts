@@ -20,11 +20,13 @@ import { logger } from '../../utils/logger.js';
 import { sanitizeCookies, sanitizeAuthToken } from '../../utils/security.js';
 import { HookExecutor } from '../../hooks/executor.js';
 import type { HookExecutionContext } from '../../hooks/types.js';
+import type { Skill } from '../../skills/index.js';
 
 export class CodeMieAgent {
   private agent: any;
   private config: CodeMieConfig;
   private tools: StructuredTool[];
+  private skills: Skill[];
   private conversationHistory: BaseMessage[] = [];
   private toolCallArgs: Map<string, Record<string, any>> = new Map(); // Store tool args by tool call ID
   private currentExecutionSteps: ExecutionStep[] = [];
@@ -47,18 +49,19 @@ export class CodeMieAgent {
     executionSteps: []
   };
 
-  constructor(config: CodeMieConfig, tools: StructuredTool[]) {
+  constructor(config: CodeMieConfig, tools: StructuredTool[], skills: Skill[] = []) {
     this.config = config;
     this.tools = tools;
+    this.skills = skills;
 
     // Create the appropriate LLM based on provider
     const llm = this.createLLM();
 
-    // Create LangGraph ReAct agent with system prompt
+    // Create LangGraph ReAct agent with system prompt (including skills if loaded)
     this.agent = createReactAgent({
       llm,
       tools: this.tools,
-      messageModifier: getSystemPrompt(config.workingDirectory)
+      messageModifier: getSystemPrompt(config.workingDirectory, this.skills)
     });
 
     // Initialize hook executor if hooks are configured
