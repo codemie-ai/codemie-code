@@ -146,7 +146,19 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
       const { MetricsWriter } = await import('../../../../../providers/plugins/sso/session/processors/metrics/MetricsWriter.js');
       const writer = new MetricsWriter(session.sessionId);
 
+      logger.debug(`[opencode-metrics] Writing to: ${writer.getFilePath()}`);
+
       for (const delta of deltas) {
+        // Log delta details for debugging
+        logger.debug(`[opencode-metrics] Delta ${delta.recordId}:`, {
+          tokens: delta.tokens,
+          tools: Object.keys(delta.tools || {}),
+          toolStatus: delta.toolStatus ? Object.keys(delta.toolStatus) : [],
+          fileOps: (delta.fileOperations || []).length,
+          models: delta.models,
+          userPrompts: (delta as any).userPrompts?.length || 0
+        });
+
         await writer.appendDelta(delta);
       }
 
@@ -157,6 +169,7 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
       this.updateSessionMetrics(session, messages);
 
       logger.info(`[opencode-metrics] Wrote ${deltas.length} deltas for session ${session.sessionId}`);
+      logger.info(`[opencode-metrics] Metrics file: ${writer.getFilePath()}`);
 
       return {
         success: true,

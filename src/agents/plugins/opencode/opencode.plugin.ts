@@ -59,6 +59,67 @@ function writeConfigToTempFile(configJson: string): string {
 // OpenCode session storage paths are resolved separately in opencode.paths.ts
 // since they follow XDG conventions and differ from the home directory.
 
+/**
+ * Ensure session metadata file exists for SessionSyncer
+ * Creates or updates the session file in ~/.codemie/sessions/
+ */
+async function ensureSessionFile(sessionId: string, env: NodeJS.ProcessEnv): Promise<void> {
+  try {
+    const { SessionStore } = await import('../../core/session/SessionStore.js');
+    const sessionStore = new SessionStore();
+
+    // Check if session already exists
+    const existing = await sessionStore.loadSession(sessionId);
+    if (existing) {
+      logger.debug('[opencode] Session file already exists');
+      return;
+    }
+
+    // Create new session file
+    const agentName = env.CODEMIE_AGENT || 'opencode';
+    const provider = env.CODEMIE_PROVIDER || 'unknown';
+    const project = env.CODEMIE_PROJECT;
+    const workingDirectory = process.cwd();
+
+    // Detect git branch
+    let gitBranch: string | undefined;
+    try {
+      const { detectGitBranch } = await import('../../../utils/processes.js');
+      gitBranch = await detectGitBranch(workingDirectory);
+    } catch {
+      // Git detection optional
+    }
+
+    // Estimate startTime from grace period (session ended ~2 seconds ago during grace period)
+    // This prevents negative session durations in metrics aggregation
+    const estimatedStartTime = Date.now() - 2000;
+
+    const session = {
+      sessionId,
+      agentName,
+      provider,
+      ...(project && { project }),
+      startTime: estimatedStartTime,
+      workingDirectory,
+      ...(gitBranch && { gitBranch }),
+      status: 'completed' as const,  // Session already ended
+      activeDurationMs: 0,
+      correlation: {
+        status: 'matched' as const,
+        agentSessionId: 'unknown',  // Will be updated after discovery
+        retryCount: 0
+      }
+    };
+
+    await sessionStore.saveSession(session);
+    logger.debug('[opencode] Created session metadata file');
+
+  } catch (error) {
+    logger.warn('[opencode] Failed to create session file:', error);
+    // Don't throw - processing can continue without session file (sync will fail though)
+  }
+}
+
 export const OpenCodePluginMetadata: AgentMetadata = {
   name: 'opencode',
   displayName: 'OpenCode CLI',
@@ -82,6 +143,20 @@ export const OpenCodePluginMetadata: AgentMetadata = {
     // NOTE: beforeRun signature is (env, config) per AgentLifecycle interface
     // Claude plugin only uses (env), but interface supports both
     async beforeRun(env: NodeJS.ProcessEnv, config: AgentConfig) {
+      // Create session metadata file at startup (before config setup)
+      // This ensures SessionSyncer can sync metrics to v1/metrics API (matching Claude/Gemini)
+      const sessionId = env.CODEMIE_SESSION_ID;
+      if (sessionId) {
+        try {
+          logger.debug(`[opencode] Creating session metadata file before startup`);
+          await ensureSessionFile(sessionId, env);
+          logger.debug(`[opencode] Session metadata file ready for SessionSyncer`);
+        } catch (error) {
+          logger.error('[opencode] Failed to create session file in beforeRun', { error });
+          // Don't throw - let OpenCode run even if session file creation fails
+        }
+      }
+
       const proxyUrl = env.CODEMIE_BASE_URL;
 
       if (!proxyUrl) {
@@ -167,6 +242,87 @@ export const OpenCodePluginMetadata: AgentMetadata = {
         return ['run', '-m', taskValue, ...otherArgs];
       }
       return args;
+    },
+
+    /**
+     * Process OpenCode session metrics before SessionSyncer runs
+     *
+     * Called by BaseAgentAdapter when OpenCode session ends, BEFORE SessionSyncer.
+     * This hook ensures metrics are written to JSONL in time for SessionSyncer's
+     * metrics-sync processor to send them to v1/metrics API.
+     *
+     * Lifecycle order:
+     * 1. OpenCode exits
+     * 2. Grace period (wait for file writes)
+     * 3. onSessionEnd ← WE ARE HERE (process metrics to JSONL)
+     * 4. SessionSyncer runs (reads JSONL, sends to v1/metrics)
+     * 5. Proxy stops
+     * 6. afterRun (cleanup)
+     *
+     * This matches Claude/Gemini real-time sync behavior where SessionSyncer
+     * automatically sends metrics during the session lifecycle.
+     */
+    async onSessionEnd(exitCode: number, env: NodeJS.ProcessEnv) {
+      const sessionId = env.CODEMIE_SESSION_ID;
+
+      if (!sessionId) {
+        logger.debug('[opencode] No CODEMIE_SESSION_ID in environment, skipping metrics processing');
+        return;
+      }
+
+      try {
+        logger.info(`[opencode] Processing session metrics before SessionSyncer (code=${exitCode})`);
+
+        // 1. Initialize session adapter
+        const adapter = new OpenCodeSessionAdapter(OpenCodePluginMetadata);
+
+        // 2. Discover recent sessions (last 24 hours)
+        const sessions = await adapter.discoverSessions({ maxAgeDays: 1 });
+
+        if (sessions.length === 0) {
+          logger.warn('[opencode] No recent OpenCode sessions found for processing');
+          return;
+        }
+
+        // 3. Process the most recent session
+        const latestSession = sessions[0];
+        logger.debug(`[opencode] Processing latest session: ${latestSession.sessionId}`);
+        logger.debug(`[opencode] OpenCode session ID: ${latestSession.sessionId}`);
+        logger.debug(`[opencode] CodeMie session ID: ${sessionId}`);
+
+        // 4. Build processing context (same as CLI command)
+        const context = {
+          sessionId,
+          apiBaseUrl: env.CODEMIE_BASE_URL || '',
+          cookies: '', // Will be loaded by processors if needed
+          clientType: 'codemie-opencode',
+          version: env.CODEMIE_CLI_VERSION || '1.0.0',
+          dryRun: false
+        };
+
+        // 5. Process session (extracts metrics + conversations to JSONL)
+        const result = await adapter.processSession(
+          latestSession.filePath,
+          sessionId,
+          context
+        );
+
+        if (result.success) {
+          logger.info(`[opencode] Metrics processing complete: ${result.totalRecords} records processed`);
+          logger.info(`[opencode] Metrics written to JSONL - SessionSyncer will sync to v1/metrics next`);
+        } else {
+          logger.warn(`[opencode] Metrics processing had failures: ${result.failedProcessors.join(', ')}`);
+        }
+
+        // Note: SessionSyncer runs IMMEDIATELY after this hook completes.
+        // It will read the JSONL deltas we just wrote and send them to v1/metrics API.
+        // This matches Claude/Gemini real-time sync behavior during session lifecycle.
+
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        logger.error(`[opencode] Failed to process session metrics automatically: ${errorMessage}`);
+        // Don't throw - metrics failure shouldn't block exit
+      }
     }
   }
 };
