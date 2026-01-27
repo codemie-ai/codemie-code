@@ -135,19 +135,30 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
       // OpenCode uses time.created/time.updated (numbers in ms)
       // CodeMie ParsedSession expects ISO strings
       // UPDATED (GPT-5.11): Use session.directory if available for projectPath
+      // UPDATED (tech-spec ADR-1): Add storagePath and openCodeSessionId for metrics processor
+      const storagePath = dirname(dirname(dirname(filePath)));
+
+      // Build metadata with OpenCode-specific extensions (ADR-1)
+      // Cast to `any` to allow custom fields within OpenCode plugin boundary
+      const metadata: any = {
+        // Prefer session.directory (actual path) over extracted projectId (hash)
+        projectPath: session.directory || this.extractProjectPath(filePath),
+        createdAt: session.time?.created
+          ? new Date(session.time.created).toISOString()
+          : undefined,
+        updatedAt: session.time?.updated
+          ? new Date(session.time.updated).toISOString()
+          : undefined,
+        // Per tech spec ADR-1: Expose storage path and OpenCode session ID for metrics processor
+        storagePath,
+        openCodeSessionId: session.id,
+        openCodeVersion: session.version
+      };
+
       return {
         sessionId,
         agentName: this.metadata.displayName || 'opencode',
-        metadata: {
-          // Prefer session.directory (actual path) over extracted projectId (hash)
-          projectPath: session.directory || this.extractProjectPath(filePath),
-          createdAt: session.time?.created
-            ? new Date(session.time.created).toISOString()
-            : undefined,
-          updatedAt: session.time?.updated
-            ? new Date(session.time.updated).toISOString()
-            : undefined
-        },
+        metadata,
         messages,  // Raw messages for processors
         metrics
       };

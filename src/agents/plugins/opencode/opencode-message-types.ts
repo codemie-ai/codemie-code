@@ -231,3 +231,55 @@ export function isPatchPart(part: OpenCodePart): part is OpenCodePatchPart {
 export function isStepStartPart(part: OpenCodePart): part is OpenCodeStepStartPart {
   return part.type === 'step-start';
 }
+
+/**
+ * OpenCode extends ParsedSession.metadata with these additional fields.
+ * Per tech spec ADR-1.
+ *
+ * Access pattern (within OpenCode plugin boundary only):
+ *   validateOpenCodeMetadata(session.metadata);
+ *   const { storagePath, openCodeSessionId } = session.metadata as OpenCodeMetadata;
+ */
+export interface OpenCodeMetadata {
+  projectPath?: string;
+  createdAt?: string;
+  updatedAt?: string;
+  storagePath: string;
+  openCodeSessionId: string;
+  openCodeVersion?: string;  // Track OpenCode version for compatibility
+}
+
+/**
+ * Runtime validation for OpenCode metadata extension (per tech spec ADR-1, Review 10 M4).
+ * Call before accessing OpenCode-specific fields.
+ *
+ * @throws Error if metadata is missing required fields
+ */
+export function validateOpenCodeMetadata(
+  metadata: unknown
+): asserts metadata is OpenCodeMetadata {
+  if (!metadata || typeof metadata !== 'object') {
+    throw new Error('Metadata must be an object');
+  }
+  const m = metadata as Record<string, unknown>;
+  if (!m.storagePath || typeof m.storagePath !== 'string') {
+    throw new Error('Missing or invalid storagePath in metadata');
+  }
+  if (!m.openCodeSessionId || typeof m.openCodeSessionId !== 'string') {
+    throw new Error('Missing or invalid openCodeSessionId in metadata');
+  }
+}
+
+/**
+ * Check if metadata has OpenCode-specific fields (non-throwing version)
+ */
+export function hasOpenCodeMetadata(metadata: unknown): metadata is OpenCodeMetadata {
+  if (!metadata || typeof metadata !== 'object') return false;
+  const m = metadata as Record<string, unknown>;
+  return (
+    typeof m.storagePath === 'string' &&
+    m.storagePath.length > 0 &&
+    typeof m.openCodeSessionId === 'string' &&
+    m.openCodeSessionId.length > 0
+  );
+}

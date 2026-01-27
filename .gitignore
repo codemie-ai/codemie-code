@@ -34,7 +34,6 @@ coverage/
 *.tsbuildinfo
 .claude/settings.local.json
 
-_bmad*
 .claude/**/bmad/*
 .codemie/claude-templates/templates
 .codemie/claude.extension.json

@@ -1,8 +1,71 @@
 // src/agents/plugins/opencode/opencode.paths.ts
 // FIXED: Use named imports per repo conventions
 import { homedir } from 'os';
-import { join } from 'path';
+import { join, dirname } from 'path';
 import { existsSync } from 'fs';
+import { readFile } from 'fs/promises';
+
+/**
+ * Storage layout detection result
+ * Per tech spec ADR-2
+ */
+export interface StorageLayoutResult {
+  layout: 'post-migration' | 'legacy' | 'mixed' | 'unknown';
+  migrationVersion: number;
+  postMigrationPath?: string;
+  legacyPaths?: string[];  // Multiple project directories possible
+}
+
+/**
+ * Detect OpenCode storage layout (post-migration vs legacy)
+ *
+ * Per tech spec ADR-2:
+ * - Post-migration: storage/session/, storage/message/, storage/part/
+ * - Legacy: project/{projectDir}/storage/session/info/
+ * - Migration file: plain text numeric version (not JSON)
+ */
+export async function detectStorageLayout(storagePath: string): Promise<StorageLayoutResult> {
+  let migrationVersion = 0;
+
+  // Check migration file (numeric string, not just presence)
+  const migrationFile = join(storagePath, 'migration');
+  if (existsSync(migrationFile)) {
+    try {
+      const content = await readFile(migrationFile, 'utf-8');
+      migrationVersion = parseInt(content.trim(), 10) || 0;
+    } catch {
+      migrationVersion = 0;
+    }
+  }
+
+  // Post-migration structure check
+  const hasPostMigration = (
+    existsSync(join(storagePath, 'session')) &&
+    existsSync(join(storagePath, 'message')) &&
+    existsSync(join(storagePath, 'part'))
+  );
+
+  // Legacy structure check (project directories above storage/)
+  const dataDir = dirname(storagePath);  // Goes up to ~/.local/share/opencode/
+  const projectDir = join(dataDir, 'project');
+  const hasLegacy = existsSync(projectDir);
+
+  // Determine layout
+  if (migrationVersion >= 1 && hasPostMigration) {
+    return { layout: 'post-migration', migrationVersion, postMigrationPath: storagePath };
+  }
+  if (hasPostMigration && hasLegacy) {
+    return { layout: 'mixed', migrationVersion, postMigrationPath: storagePath, legacyPaths: [projectDir] };
+  }
+  if (hasPostMigration) {
+    return { layout: 'post-migration', migrationVersion, postMigrationPath: storagePath };
+  }
+  if (hasLegacy) {
+    return { layout: 'legacy', migrationVersion, legacyPaths: [projectDir] };
+  }
+
+  return { layout: 'unknown', migrationVersion };
+}
 
 /**
  * Get OpenCode storage root path based on platform
