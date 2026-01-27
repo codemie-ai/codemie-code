@@ -119,6 +119,9 @@ async function handleSessionStart(event: SessionStartEvent, _rawInput: string, s
 async function handleSessionEnd(event: SessionEndEvent, sessionId: string): Promise<void> {
   logger.info(`[hook:SessionEnd] ${JSON.stringify(event)}`);
 
+  // 0. Final activity accumulation (handles edge case: session ends without Stop)
+  await accumulateActiveDuration(sessionId);
+
   // 1. TRANSFORMATION: Transform remaining messages → JSONL (pending)
   await performIncrementalSync(event, 'SessionEnd', sessionId);
 
@@ -320,10 +323,60 @@ async function buildProcessingContext(
 }
 
 /**
+ * Helper: Start activity tracking for a session
+ * Called on UserPromptSubmit to mark the start of active time
+ *
+ * @param sessionId - The CodeMie session ID
+ */
+async function startActivityTracking(sessionId: string): Promise<void> {
+  try {
+    const { SessionStore } = await import('../../agents/core/session/SessionStore.js');
+    const sessionStore = new SessionStore();
+    await sessionStore.startActivityTracking(sessionId);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.warn(`[hook] Failed to start activity tracking: ${errorMessage}`);
+    // Don't throw - activity tracking failure should not block user prompts
+  }
+}
+
+/**
+ * Helper: Accumulate active duration for a session
+ * Called on Stop/SessionEnd to mark the end of active time
+ *
+ * @param sessionId - The CodeMie session ID
+ * @returns The duration accumulated in this call (0 if no active period)
+ */
+async function accumulateActiveDuration(sessionId: string): Promise<number> {
+  try {
+    const { SessionStore } = await import('../../agents/core/session/SessionStore.js');
+    const sessionStore = new SessionStore();
+    return await sessionStore.accumulateActiveDuration(sessionId);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.warn(`[hook] Failed to accumulate active duration: ${errorMessage}`);
+    // Don't throw - duration tracking failure should not block session operations
+    return 0;
+  }
+}
+
+/**
+ * Handle UserPromptSubmit event
+ * Starts activity tracking to measure active session time
+ */
+async function handleUserPromptSubmit(event: BaseHookEvent, sessionId: string): Promise<void> {
+  logger.info(`[hook:UserPromptSubmit] ${JSON.stringify(event)}`);
+  await startActivityTracking(sessionId);
+}
+
+/**
  * Handle Stop event
  * Extracts metrics and conversations from agent session file incrementally
  */
 async function handleStop(event: BaseHookEvent, sessionId: string): Promise<void> {
+  // Accumulate active duration FIRST (marks end of active period)
+  await accumulateActiveDuration(sessionId);
+  // Then sync metrics/conversations
   await performIncrementalSync(event, 'Stop', sessionId);
 }
 
@@ -426,6 +479,10 @@ async function routeHookEvent(event: BaseHookEvent, rawInput: string, sessionId:
         logger.info(`[hook:router] Calling handleStop`);
         await handleStop(event, sessionId);
         break;
+      case 'UserPromptSubmit':
+        logger.info(`[hook:router] Calling handleUserPromptSubmit`);
+        await handleUserPromptSubmit(event, sessionId);
+        break;
       case 'SubagentStop':
         logger.info(`[hook:router] Calling handleSubagentStop`);
         await handleSubagentStop(event as SubagentStopEvent, sessionId);
@@ -498,6 +555,7 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string):
       workingDirectory,
       ...(gitBranch && { gitBranch }),
       status: 'active' as const,
+      activeDurationMs: 0, // Initialize active duration tracking
       correlation: {
         status: 'matched' as const,
         agentSessionId: event.session_id,
@@ -793,8 +851,9 @@ async function sendSessionEndMetrics(event: SessionEndEvent, sessionId: string, 
       return;
     }
 
-    // Calculate duration
-    const durationMs = Date.now() - session.startTime;
+    // Calculate durations
+    const wallClockDurationMs = Date.now() - session.startTime;
+    const activeDurationMs = session.activeDurationMs || undefined;
 
     // Build status object with reason from event
     // Status is "completed" for normal session endings, with reason from Claude (e.g., "exit", "logout")
@@ -845,14 +904,16 @@ async function sendSessionEndMetrics(event: SessionEndEvent, sessionId: string, 
       },
       session.workingDirectory,
       status,
-      durationMs
-      // error parameter omitted - undefined for normal termination
+      wallClockDurationMs,
+      undefined, // error parameter - undefined for normal termination
+      activeDurationMs
     );
 
     logger.info('[hook:SessionEnd] Session end metrics sent successfully', {
       status,
       reason: event.reason,
-      durationMs
+      wallClockDurationMs,
+      activeDurationMs
     });
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);

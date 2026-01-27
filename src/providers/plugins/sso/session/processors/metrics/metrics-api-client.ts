@@ -353,15 +353,17 @@ export class MetricsSender {
    * @param session - Session metadata (with optional model)
    * @param workingDirectory - Current working directory (for git branch detection)
    * @param status - Session end status object with status and optional reason
-   * @param durationMs - Session duration in milliseconds
+   * @param durationMs - Wall-clock session duration in milliseconds
    * @param error - Optional error information (for failed sessions)
+   * @param activeDurationMs - Optional active duration excluding idle time
    */
   async sendSessionEnd(
     session: Pick<Session, 'sessionId' | 'agentName' | 'provider' | 'project' | 'startTime' | 'workingDirectory'> & { model?: string },
     workingDirectory: string,
     status: SessionEndStatus,
     durationMs: number,
-    error?: SessionError
+    error?: SessionError,
+    activeDurationMs?: number
   ): Promise<MetricsSyncResponse> {
     // Detect git branch
     const branch = await detectGitBranch(workingDirectory);
@@ -397,6 +399,9 @@ export class MetricsSender {
 
       // Session metadata
       session_duration_ms: durationMs,
+      ...(activeDurationMs !== undefined && { active_duration_ms: activeDurationMs }),
+      start_time: session.startTime,
+      end_time: Date.now(),
       had_errors: status.status === 'failed',
       count: 1,
 
