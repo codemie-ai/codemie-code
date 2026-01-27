@@ -11,6 +11,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { createCLIRunner, createTempWorkspace, type CommandResult } from '../helpers/index.js';
 import { setupTestIsolation, getTestHome } from '../helpers/test-isolation.js';
 import { join } from 'path';
+import { mkdirSync, writeFileSync } from 'fs';
 
 const cli = createCLIRunner();
 
@@ -119,10 +120,13 @@ describe('Skills Integration - Priority Resolution', () => {
   let listResult: CommandResult;
 
   beforeAll(async () => {
-    // Create global skill (low priority)
+    // Create global skill (low priority) - write directly to testHome (not workspace)
+    // Using direct fs calls because globalSkillDir is an absolute path,
+    // and workspace.writeFile() would incorrectly join workspace.path + absolute path on Windows
     const testHome = getTestHome();
-    const globalSkillsDir = join(testHome, 'skills');
-    workspace.writeFile(join(globalSkillsDir, 'global-skill/SKILL.md'), `---
+    const globalSkillDir = join(testHome, 'skills', 'global-skill');
+    mkdirSync(globalSkillDir, { recursive: true });
+    writeFileSync(join(globalSkillDir, 'SKILL.md'), `---
 name: typescript-style
 description: Global TypeScript style guide
 priority: 5
