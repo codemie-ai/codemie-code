@@ -1,731 +1,523 @@
 # Codemie Init - Generate Project Documentation
 
 **Command Name**: `codemie-init`
-**Description**: Initialize Codeie documentation for any project - analyze structure and generate AI-optimized guides
+**Description**: Initialize documentation for any project using CodeMie approach - analyze structure and generate AI-optimized guides
 **Category**: Documentation Generation
-**Complexity**: High
 
 ---
 
+## Additional user's input
+Additional context/input from user: $ARGUMENTS. Might be empty by default.
+
 ## Purpose
 
-This command analyzes any software project and generates AI-optimized documentation for Claude Code, including:
-- Main CLAUDE.md file with project-specific patterns and workflows
-- Detailed guides for relevant architectural patterns and practices
-- Properly structured .codemie/guides/ directory with categorized documentation
+Analyze any software project and generate AI-optimized documentation for Claude Code:
+- Main CLAUDE.md file with project-specific workflows
+- Detailed guides for relevant patterns (only those that exist in codebase)
+- Properly structured .codemie/guides/ directory
 
 ---
 
 ## Prerequisites
 
-Before running this command:
 - [ ] Project is cloned and accessible
-- [ ] You have read access to the codebase
-- [ ] Codemie templates are available at `.codemie/claude-templates/templates/`
-
-**Note**: The templates directory should be located in `.codemie/claude-templates/` within the project.
+- [ ] Read access to the codebase
+- [ ] Templates available at `.codemie/claude-templates/templates/`
 
 ---
 
-## 🚨 CRITICAL SIZE LIMITS
+## 🚨 CRITICAL RULES
 
-**MANDATORY**: Each generated guide must be **200-400 lines maximum**.
+### Size Limits (MANDATORY)
+- **CLAUDE.md**: 200-300 lines maximum
+- **Each guide**: 200-400 lines maximum
 
-### Enforcement Strategy
-
-**During Generation**:
-- ✅ Use brief code examples (5-15 lines max, never > 20)
-- ✅ Focus on contracts: function signatures, return types, status codes
+### Generation Principles
+- ✅ Create guides ONLY for patterns/categories that exist in codebase
+- ✅ Brief code examples (5-15 lines, max 20)
 - ✅ Use tables for patterns instead of long explanations
-- ✅ ONE example per pattern (not multiple variations)
+- ✅ ONE example per pattern
 - ✅ Reference file:line instead of copying entire functions
+- ✅ Multiple .md files per category allowed (e.g., component-specific guides in development/)
+- ❌ NO guides for non-existent features (no API = no API guide)
 - ❌ NO extensive code blocks
 - ❌ NO multiple examples for same pattern
-- ❌ NO verbose explanations
-- ❌ NO tutorial walkthroughs
 
-**Validation**:
-After generating each guide, count lines:
-```bash
-wc -l .codemie/guides/[category]/[guide].md
-```
-If > 400 lines: **STOP and condense before continuing**.
+### Existing Documentation Handling
+- If CLAUDE.md exists → Analyze and UPDATE/ADJUST (don't overwrite blindly)
+- If guides exist in .codemie/guides/ → READ, INCLUDE in CLAUDE.md, and ADJUST if needed
+- Preserve user customizations where possible
 
 ---
 
 ## Execution Steps
 
-### Phase 1: Project Discovery & Analysis
+### Phase 1: Discovery & Analysis
 
-#### Step 1.1: Analyze Project Structure
+#### Step 1.1: Check Existing Documentation
+
+**Task**: Detect existing Codemie documentation
+
+**Actions**:
+1. Check if `CLAUDE.md` exists in project root
+2. Check if `.codemie/guides/` directory exists
+3. If guides exist, read each one and extract:
+    - Category and purpose
+    - Key patterns documented
+    - Quality and completeness
+
+**Decision**:
+- Existing CLAUDE.md found → Load and prepare for adjustment
+- Existing guides found → Include in final CLAUDE.md, adjust if outdated
+- Nothing exists → Fresh generation from templates
+
+---
+
+#### Step 1.2: Analyze Project Structure
 
 **Task**: Discover project organization, tech stack, and patterns
 
-**Actions**:
-```bash
-# Identify project type and structure
-- Check for package.json, requirements.txt, pom.xml, Cargo.toml, etc.
-- Identify language(s) and frameworks
-- Map directory structure
-- Find configuration files
-```
+**Discover**:
+- Package manager files (package.json, requirements.txt, pom.xml, go.mod, Cargo.toml)
+- Programming language(s) and framework(s)
+- Directory structure (src/, lib/, app/, tests/, etc.)
+- Configuration files
+- Build and run scripts
 
-**Output**: Create analysis document with:
-- Programming language(s)
-- Framework(s) and versions
+**Output**: Project analysis summary:
+- Language + version
+- Framework + version
 - Build tools
-- Testing frameworks
-- Key directories (src/, tests/, config/, etc.)
-- Dependency management approach
+- Test framework
+- Key directories
 
-**Confidence Check**: Can you identify the tech stack with 80%+ confidence?
-- ✅ YES → Continue to Step 1.2
+**Confidence Check**: Tech stack identified with 80%+ confidence?
+- ✅ YES → Continue
 - ❌ NO → Ask user for clarification
 
 ---
 
-#### Step 1.2: Identify Architectural Patterns
+#### Step 1.3: Identify What Actually Exists
 
-**Task**: Detect architectural patterns used in the project
+**Task**: Detect ONLY categories/features that exist in codebase
 
-**Actions**:
-```bash
-# Use Glob and Grep to identify patterns
-- Check for layered architecture (controllers/routes, services, repositories)
-- Identify if REST API, GraphQL, or other
-- Look for ORM usage (models directory)
-- Find database configurations
-- Check for agent/AI patterns (if LangChain, LangGraph, etc.)
-- Identify testing structure
-- Check for CI/CD configuration
+**Analyze codebase for each category**:
+
+| Category | What to Look For | Detection Signals |
+|----------|------------------|-------------------|
+| **Architecture** | Project structure, layer separation, design patterns | Directory organization, module boundaries, dependency flow |
+| **API Development** | REST/GraphQL endpoints, routing, request handling | Route decorators, controllers, endpoint definitions, API schemas |
+| **Data & Database** | ORM usage, models, repositories, migrations | Model classes, database configs, migration files, query patterns |
+| **Testing** | Test files, test configuration, mocking | Test directories, test framework config, fixture files |
+| **Development Practices** | Code patterns, error handling, logging, components | Custom exceptions, logger setup, shared utilities, UI components |
+| **Integrations** | External services, third-party APIs, messaging | API clients, SDK usage, queue consumers/producers, webhooks |
+| **Workflows** | Business logic, state machines, process flows | Workflow definitions, state handlers, domain services |
+| **Security** | Authentication, authorization, validation | Auth middleware, permission checks, input validators, security configs |
+
+**Output**: List of confirmed categories with evidence (file paths)
+
+**Example Output**:
 ```
-
-**Questions to Answer**:
-- What's the main architecture pattern? (MVC, layered, clean architecture, etc.)
-- Is there an API layer? What type?
-- Is there a service layer?
-- Is there a data/repository layer?
-- What testing approach is used?
-- What external integrations exist?
-
-**Output**: List of architectural patterns found
+✅ Architecture - Found: src/controllers/, src/services/, src/repositories/
+✅ API Development - Found: REST routes in src/api/, OpenAPI spec
+✅ Data & Database - Found: PostgreSQL config, SQLAlchemy models in src/models/
+✅ Testing - Found: pytest.ini, tests/ directory with 50+ test files
+✅ Development Practices - Found: Custom exceptions, logging config, React components
+❌ Integrations - Not found: No external API clients detected
+❌ Workflows - Not found: No state machines or workflow definitions
+✅ Security - Found: JWT auth middleware, input validation schemas
+```
 
 ---
 
-#### Step 1.3: Read Existing Documentation
+#### Step 1.4: Read Existing Project Documentation
 
-**Task**: Check for existing documentation to understand context
+**Task**: Extract context from existing docs
 
-**Actions**:
-```bash
-# Read existing docs (if they exist)
+**Check and read**:
 - README.md
 - CONTRIBUTING.md
 - docs/ directory
-- Any architectural decision records (ADRs)
-```
+- Any ADRs (Architecture Decision Records)
 
 **Extract**:
 - Project purpose
-- Setup instructions
-- Build/run commands
+- Setup/build/run commands
 - Testing commands
-- Deployment process
-- Known patterns or conventions
+- Known conventions
 
 ---
 
-### Phase 2: Template Selection & Customization
+### Phase 2: Determine Required Guides
 
-#### Step 2.1: Load Reference Templates
+#### Step 2.1: Map Categories to Guides
 
-**Task**: Load the main CLAUDE.md template and understand its structure
+**Task**: Based on Step 1.3, determine which guides to create per category
+
+**Guide Categories Reference**:
+
+| Category | User Intent / Purpose | Guide Folder | Possible Guides                                                         |
+|----------|----------------------|--------------|-------------------------------------------------------------------------|
+| **Architecture** | System structure, design decisions, patterns, planning features | .codemie/guides/architecture/ | architecture.md, patterns.md                                            |
+| **API Development** | REST/GraphQL endpoints, routing, request/response handling | .codemie/guides/api/ | api-patterns.md, [specific-api].md                                      |
+| **Data & Database** | Database operations, queries, migrations, models, repositories | .codemie/guides/data/ | data-patterns.md                                                        |
+| **Testing** | Writing/fixing tests, coverage, mocking, test infrastructure | .codemie/guides/testing/ | testing-patterns.md, [framework]-testing.md                             |
+| **Development Practices** | Code quality, error handling, components, standards | .codemie/guides/development/ | development-practices.md, frontend-patterns.md, [component]-patterns.md |
+| **Integrations** | External services, third-party APIs, cloud services, messaging | .codemie/guides/integrations/ | [service-name].md, external-apis.md                                     |
+| **Workflows** | Business logic, state machines, process flows, domain operations | .codemie/guides/workflows/ | workflow-patterns.md, [workflow-name].md                                |
+| **Security** | Authentication, authorization, input validation, secrets | .codemie/guides/security/ | security-patterns.md                                                    |
+
+**Rules for Guide Creation**:
+- ❌ Category NOT detected → DO NOT create any guides for it
+- ✅ Category detected → Create relevant guides with real examples
+- ✅ Multiple guides per category allowed (e.g., separate component guides in development/)
+- ✅ Existing guide found → Review, include, adjust if needed
+
+**Determine Specific Guides**:
+
+For each detected category, identify specific guides needed:
+
+```
+Example for detected "Development Practices" category:
+- Error handling patterns found → development/error-handling.md
+- Logging configuration found → development/logging.md
+- React components found → development/react-components.md
+- Shared utilities found → development/utilities.md
+```
+
+---
+
+#### Step 2.2: Merge with Existing Guides
+
+**Task**: Combine new guides with any existing ones
+
+**Actions**:
+1. List guides to create (from Step 2.1)
+2. List existing guides (from Step 1.1)
+3. Merge lists:
+    - Existing guide covers same topic → Review and adjust existing
+    - New guide needed, no existing → Create new
+    - Existing guide, no longer relevant → Keep but note as legacy
+
+---
+
+#### Step 2.3: User Confirmation
+
+**Present to user**:
+
+```
+Based on codebase analysis, I'll create/update guides for these categories:
+
+**Categories Detected**:
+
+📁 Architecture
+   - To create: architecture.md (system layers and patterns)
+
+📁 API Development  
+   - To create: api-patterns.md (REST conventions found in src/api/)
+
+📁 Data & Database
+   - To create: database-patterns.md (PostgreSQL + SQLAlchemy patterns)
+
+📁 Testing
+   - To create: testing-patterns.md (pytest patterns)
+   - Existing: integration-testing.md ✓ (will include, no changes needed)
+
+📁 Development Practices
+   - To create: error-handling.md, logging.md
+   - To create: react-components.md (UI component patterns)
+
+📁 Security
+   - To create: security-patterns.md (JWT auth, validation)
+
+**Categories Skipped** (not found in codebase):
+   ⏭️ Integrations - No external API clients detected
+   ⏭️ Workflows - No state machines or workflow definitions
+
+Proceed with this plan? (Yes / Customize)
+```
+
+---
+
+### Phase 3: Generate Guides
+
+#### Step 3.1: Create Directory Structure
 
 **Actions**:
 ```bash
-# Read template
-- .codemie/claude-templates/templates/CLAUDE.md.template
-```
-
-**Understand**:
-- What sections need to be filled
-- What placeholders exist ([PROJECT_NAME], [LANGUAGE], etc.)
-- Which sections are universal vs project-specific
-
----
-
-#### Step 2.2: Identify Required Guides
-
-**Task**: Based on Phase 1 analysis, determine which guide templates are relevant
-
-**Decision Matrix**:
-
-| Found Pattern/Feature | Required Guides | Priority |
-|----------------------|-----------------|----------|
-| REST API endpoints | api/api-patterns.md | P0 (Required) |
-| Layered architecture | architecture/layered-architecture.md | P0 (Required) |
-| Database/ORM usage | data/database-patterns.md | P0 (Required) |
-| Service layer | architecture/service-layer-patterns.md | P1 (Optional) |
-| Testing framework | testing/testing-patterns.md | P0 (Required) |
-| Error handling | development/error-handling.md | P0 (Required) |
-| Logging | development/logging-patterns.md | P0 (Required) |
-| Security features | development/security-patterns.md | P0 (Required) |
-| Setup/installation | development/setup-guide.md | P0 (Required) |
-| Git repository | standards/git-workflow.md | P0 (Required) |
-| Linting/formatting | standards/code-quality.md | P0 (Required) |
-| Agent patterns (LangChain) | agents/agent-patterns.md | P0 (if found) |
-| Workflow orchestration | workflows/workflow-patterns.md | P1 (if found) |
-| External APIs | integration/external-integrations.md | P1 (if found) |
-
-**Output**: List of guide templates to use with priorities
-
-**User Confirmation**: Present the list and ask:
-```
-I've identified the following guides to create for your project:
-
-Required (P0):
-- [List P0 guides]
-
-Optional (P1):
-- [List P1 guides]
-
-Would you like me to:
-1. Generate all required and optional guides
-2. Generate only required guides
-3. Customize this list
-```
-
----
-
-### Phase 3: Guide Generation
-
-#### Step 3.1: Create Base Directory
-
-**Task**: Create base .codemie/guides/ directory
-
-**Actions**:
-```bash
-# Create base directory ONLY
 mkdir -p .codemie/guides
+# Create category subdirectories ONLY for categories with guides being generated
 ```
-
-**IMPORTANT**: Do NOT create category subdirectories yet. Only create them when you actually generate a guide for that category.
 
 ---
 
-#### Step 3.2: Generate Each Guide (Iterative)
+#### Step 3.2: Generate Each Guide
 
-**For Each Selected Guide Template**:
+**For each guide in approved list**:
 
-**Step 3.2.1: Load Template**
+**3.2.1: Load Template**
+- Read from `.codemie/claude-templates/templates/guides/[category]/[guide].md.template`
+- If no specific template exists, use category base template
+
+**3.2.2: Analyze Codebase for This Guide**
+- Find relevant code examples
+- Extract actual patterns used
+- Note file paths with line numbers
+
+**3.2.3: Populate Template**
+
+Replace placeholders with real project data:
+- `[PROJECT_NAME]` → Actual name
+- `[LANGUAGE]` → Detected language
+- `[FRAMEWORK]` → Detected framework
+- `[code_example]` → Real code from codebase (5-15 lines)
+- `[file:lines]` → Actual file paths
+
+**3.2.4: Validate Size**
 ```bash
-# Load guide template
-- Read .codemie/claude-templates/templates/guides/[category]/[guide].md.template
-```
-
-**Step 3.2.2: Analyze Project for Guide-Specific Patterns**
-
-**Actions**: Use Glob, Grep, and Read to find relevant code examples
-
-**For Error Handling Guide**:
-- Search for exception classes
-- Find error handler implementations
-- Identify error response patterns
-- Example: `grep -r "class.*Exception" src/`
-
-**For API Patterns Guide**:
-- Find route/endpoint definitions
-- Identify request/response models
-- Find authentication middleware
-- Example: `grep -r "@app.route\|@router\|@RestController" src/`
-
-**For Database Patterns Guide**:
-- Find model definitions
-- Identify query patterns
-- Find transaction usage
-- Example: `grep -r "class.*Model\|@Entity\|models.Model" src/`
-
-**For Architecture Guide**:
-- Map out layer structure
-- Find examples of layer communication
-- Identify dependency injection patterns
-
-**For Testing Guide**:
-- Find test structure
-- Identify testing frameworks used
-- Find fixture/mock patterns
-- Example: `ls -la tests/`
-
-**For Setup Guide**:
-- Extract setup commands from README
-- Find environment configuration
-- Identify dependency installation process
-
-**Output**: Collection of:
-- File paths with line numbers
-- Code examples
-- Pattern instances
-- Configuration snippets
-
-**Step 3.2.3: Fill Template Placeholders**
-
-**🚨 SIZE LIMIT ENFORCEMENT**:
-**Target: 200-400 lines for the final guide**
-
-**Replace Generic Placeholders**:
-- `[PROJECT_NAME]` → Actual project name
-- `[LANGUAGE]` → Detected language(s)
-- `[FRAMEWORK]` → Detected framework(s)
-- `[DATABASE_NAME]` → Detected database
-- `[TEST_FRAMEWORK]` → Detected test framework
-- `[file.ext:lines]` → Actual file paths from analysis
-- `[code_example]` → **BRIEF** code snippets (5-15 lines, never > 20)
-
-**Add Project-Specific Content** (KEEP CONCISE):
-- Fill "FILL IN" sections with **essential patterns only**
-- Add **ONE brief code example** per pattern (5-15 lines)
-- Document **key commands only** (not every variation)
-- Include **minimal** configuration snippets (< 10 lines)
-- Use **file:line references** instead of copying entire functions
-- Use **tables** for multiple patterns instead of code blocks
-
-**Examples of Brevity**:
-```python
-# GOOD: Brief, focused (8 lines)
-@router.post("/users")
-async def create_user(user: UserCreate):
-    try:
-        return await UserService.create(user)
-    except ValidationError as e:
-        raise HTTPException(400, str(e))
-# Source: api/users.py:23-28
-
-# BAD: Too long (50+ lines showing entire function with error handling, logging, etc.)
-```
-
-**Step 3.2.4: Write Guide File**
-
-**Actions**:
-```bash
-# Create category directory if it doesn't exist
-mkdir -p .codemie/guides/[category]
-
-# Write completed guide
-# Save to .codemie/guides/[category]/[guide].md
-```
-
-**🚨 MANDATORY SIZE VALIDATION**:
-```bash
-# Count lines immediately after writing
 LINE_COUNT=$(wc -l < .codemie/guides/[category]/[guide].md)
-
-# Check if within limit
 if [ $LINE_COUNT -gt 400 ]; then
-    echo "⚠️  WARNING: Guide is $LINE_COUNT lines (limit: 400)"
-    echo "MUST condense before continuing!"
-    # STOP and condense the guide
+    # STOP - condense before continuing
 fi
 ```
 
-**Validation Checklist**:
-- [ ] **Guide is 200-400 lines** (MANDATORY)
-- [ ] All placeholders replaced
-- [ ] Code examples are brief (5-15 lines, max 20)
-- [ ] File paths are accurate
-- [ ] Commands are correct
-- [ ] No "FILL IN" or "[PLACEHOLDER]" remains
-- [ ] Used tables for patterns (not long code blocks)
-- [ ] ONE example per pattern (not multiple)
-
-**If > 400 Lines**:
-1. Remove redundant code examples
-2. Convert multiple examples to ONE representative example
-3. Use tables instead of code blocks where possible
-4. Replace code blocks with file:line references
-5. Remove verbose explanations
-6. Re-validate line count
+**3.2.5: Write Guide**
+- Save to `.codemie/guides/[category]/[guide].md`
+- Verify no placeholders remain
 
 ---
 
 #### Step 3.3: Track Progress
 
-**Use TodoWrite** to track guide creation:
-
+Use TodoWrite to track by category:
 ```
-- [ ] Create development/error-handling.md
-- [ ] Create development/logging-patterns.md
-- [ ] Create development/security-patterns.md
-- [ ] Create development/setup-guide.md
-- [ ] Create api/api-patterns.md
-- [ ] Create architecture/layered-architecture.md
-- [ ] Create data/database-patterns.md
-- [ ] Create testing/testing-patterns.md
-- [ ] Create standards/code-quality.md
-- [ ] Create standards/git-workflow.md
-```
+Architecture:
+- [ ] architecture/architecture.md
 
-Mark each as in_progress when working on it, completed when done.
+API Development:
+- [ ] api/api-patterns.md
 
----
+Data & Database:
+- [ ] data/database-patterns.md
 
-### Phase 4: Generate Main CLAUDE.md
+Testing:
+- [ ] testing/testing-patterns.md
 
-#### Step 4.1: Load and Customize CLAUDE.md Template
+Development Practices:
+- [ ] development/error-handling.md
+- [ ] development/logging.md
+- [ ] development/react-components.md
 
-**Task**: Create the main CLAUDE.md file with project-specific content
-
-**Actions**:
-
-**4.1.1: Replace Basic Placeholders**
-- `[PROJECT_NAME]` → Actual project name
-- `[LANGUAGE]` → Programming language
-- `[FRAMEWORK]` → Main framework
-- `[DATABASE_NAME]` → Database name
-- Environment policy placeholders
-
-**4.1.2: Fill Guide References Section**
-
-Based on generated guides, populate the "Guide References by Category" section:
-
-```markdown
-**API Development**:
-- API patterns: .codemie/guides/api/api-patterns.md
-
-**Architecture**:
-- Layered architecture: .codemie/guides/architecture/layered-architecture.md
-
-**Data & Database**:
-- Database patterns: .codemie/guides/data/database-patterns.md
-
-**Development Practices**:
-- Error handling: .codemie/guides/development/error-handling.md
-- Logging patterns: .codemie/guides/development/logging-patterns.md
-- Security patterns: .codemie/guides/development/security-patterns.md
-- Setup guide: .codemie/guides/development/setup-guide.md
-
-**Standards**:
-- Code quality: .codemie/guides/standards/code-quality.md
-- Git workflow: .codemie/guides/standards/git-workflow.md
-
-**Testing**:
-- Testing patterns: .codemie/guides/testing/testing-patterns.md
-```
-
-**4.1.3: Create Task Classifier Table**
-
-Based on project patterns, create keyword → guide mappings:
-
-```markdown
-| Keywords | Complexity | Load Guide (P0=Required) | Also Load (P1=Optional) |
-|----------|-----------|--------------------------|-------------------------|
-| **api, endpoint, router** | Medium | .codemie/guides/api/api-patterns.md | - |
-| **test, pytest** | Medium | .codemie/guides/testing/testing-patterns.md | - |
-| **database, sql, postgres** | Medium-High | .codemie/guides/data/database-patterns.md | - |
-| **error, exception** | Medium | .codemie/guides/development/error-handling.md | .codemie/guides/development/logging-patterns.md |
-```
-
-**4.1.4: Fill Pattern Quick Reference**
-
-Extract key patterns from generated guides and create quick reference tables:
-
-**Error Handling Quick Ref**:
-```markdown
-| When | Exception | Import From | Related Patterns |
-|------|-----------|-------------|------------------|
-| Validation failed | ValidationError | myproject.exceptions | Logging, API Patterns |
-| Not found | NotFoundException | myproject.exceptions | API Patterns |
-```
-
-**Logging Quick Ref**:
-```markdown
-| ✅ DO | ❌ DON'T | Why | Related |
-|-------|----------|-----|---------|
-| [Project-specific best practice] | [Anti-pattern] | [Reason] | [Guide] |
-```
-
-**4.1.5: Fill Development Commands**
-
-Extract from setup guide and project analysis:
-
-```markdown
-| Task | Command | Notes |
-|------|---------|-------|
-| **Setup** | npm install | First time setup |
-| **Run Server** | npm run dev | Dev server (port 3000) |
-| **Lint** | npm run lint | ESLint check |
-| **Format** | npm run format | Prettier format |
-| **Test** ⚠️ | npm test | ONLY if user requests |
-```
-
-**4.1.6: Fill Troubleshooting Section**
-
-Based on common issues found in README or CONTRIBUTING:
-
-```markdown
-| Symptom | Likely Cause | Fix | Prevention |
-|---------|--------------|-----|------------|
-| [Common error] | [Root cause] | [Solution] | [Prevention] |
-```
-
-**4.1.7: Fill Project Context**
-
-**Technology Stack**:
-```markdown
-| Component | Tool | Version | Purpose |
-|-----------|------|---------|---------|
-| Language | Python | 3.11+ | Core language |
-| Framework | FastAPI | 0.104+ | REST API |
-| Database | PostgreSQL | 15+ | Primary DB |
-```
-
-**Core Components**:
-```markdown
-| Component | Path | Purpose | Guide |
-|-----------|------|---------|-------|
-| API | src/api/ | FastAPI routers | .codemie/guides/api/api-patterns.md |
-| Services | src/services/ | Business logic | .codemie/guides/architecture/layered-architecture.md |
+Security:
+- [ ] security/security-patterns.md
 ```
 
 ---
 
-#### Step 4.2: Write Final CLAUDE.md
+### Phase 4: Generate CLAUDE.md
 
-**Actions**:
-```bash
-# Write completed CLAUDE.md
-- Save to ./CLAUDE.md (project root)
-```
+#### Step 4.1: Load Template
 
-**Validation**:
-- [ ] All placeholders replaced
-- [ ] Guide references are accurate
-- [ ] Commands are tested
-- [ ] Task classifier is populated
-- [ ] Quick references are filled
-- [ ] Project context is complete
-- [ ] No "FILL IN" or "[PLACEHOLDER]" remains
-- [ ] All internal links work
+- Read `.codemie/claude-templates/templates/CLAUDE.md.template`
 
 ---
 
-### Phase 5: Validation & Finalization
+#### Step 4.2: Populate Sections
 
-#### Step 5.1: Verify Documentation
+**4.2.1: Basic Info**
+- Replace `[PROJECT_NAME]`, `[LANGUAGE]`, `[FRAMEWORK]`, etc.
 
-**Actions**:
+**4.2.2: Critical Rules**
+- Set environment rule based on project type (venv, nvm, docker, etc.)
+- Remove rule row if not applicable
 
-**5.1.1: Check File Existence**
-```bash
-# Verify all referenced guides exist
-- Check that each guide in CLAUDE.md actually exists
-- Verify correct paths
-```
+**4.2.3: Guide Imports Table**
 
-**5.1.2: Validate Links**
-```bash
-# Check internal links
-- All guide references in CLAUDE.md point to existing files
-- All cross-references between guides are valid
-```
+List ALL guides grouped by category:
 
-**5.1.3: Test Commands**
-```bash
-# Try running documented commands
-- Setup command
-- Lint command
-- Test command (if documented)
-- Build command
-```
-
-**5.1.4: Review Content Quality**
-- [ ] Code examples are real (not placeholders)
-- [ ] File paths include line numbers
-- [ ] Patterns are project-specific
-- [ ] No generic placeholders remain
-- [ ] Guides follow AI-first writing principles (pattern-first, examples, structured)
-
----
-
-#### Step 5.2: Generate Summary Report
-
-**Task**: Create a summary of what was generated
-
-**Report Structure**:
 ```markdown
-# Documentation Generation Complete
+| Category | Guide Path | Purpose |
+|----------|------------|---------|
+| Architecture | .codemie/guides/architecture/architecture.md | System layers and design patterns |
+| API Development | .codemie/guides/api/api-patterns.md | REST endpoint conventions |
+| Data & Database | .codemie/guides/data/database-patterns.md | PostgreSQL and SQLAlchemy patterns |
+| Testing | .codemie/guides/testing/testing-patterns.md | Pytest patterns and fixtures |
+| Development Practices | .codemie/guides/development/error-handling.md | Exception handling patterns |
+| Development Practices | .codemie/guides/development/logging.md | Logging configuration |
+| Development Practices | .codemie/guides/development/react-components.md | UI component patterns |
+| Security | .codemie/guides/security/security-patterns.md | JWT auth and validation |
+```
 
-## Generated Files
+**4.2.4: Task Classifier**
 
-### Main Documentation
-- ✅ CLAUDE.md (root directory)
+Create intent-based category mapping (ONLY for categories that have guides):
 
-### Guides Generated ([N] guides)
+```markdown
+| Category | User Intent / Purpose | Example Requests | P0 Guide | P1 Guide |
+|----------|----------------------|------------------|----------|----------|
+| **Architecture** | System structure, design decisions, planning features | "How should I structure?", "Where should this go?" | .codemie/guides/architecture/architecture.md | - |
+| **API Development** | Creating/modifying endpoints, routing, validation | "Create endpoint", "Add API for..." | .codemie/guides/api/api-patterns.md | - |
+| **Data & Database** | Database operations, queries, models, migrations | "Query database", "Add new table" | .codemie/guides/data/database-patterns.md | - |
+| **Testing** | Writing tests, fixing tests, coverage, mocking | "Write tests for...", "Fix failing test" | .codemie/guides/testing/testing-patterns.md | - |
+| **Development Practices** | Code quality, error handling, logging, components | "Add error handling", "Create component" | .codemie/guides/development/error-handling.md | .codemie/guides/development/react-components.md |
+| **Security** | Authentication, authorization, input validation | "Secure endpoint", "Add auth" | .codemie/guides/security/security-patterns.md | - |
+```
 
-**Development** ([X] guides):
-- ✅ .codemie/guides/development/error-handling.md
-- ✅ .codemie/guides/development/logging-patterns.md
-- ✅ .codemie/guides/development/security-patterns.md
-- ✅ .codemie/guides/development/setup-guide.md
+**Note**: Exclude categories that don't have guides (e.g., if no Integrations guides, don't include Integrations row)
 
-**API** ([X] guides):
+**4.2.5: Commands**
+- Extract from package.json scripts, Makefile, pyproject.toml, etc.
+- Include setup, run, lint, format, test, build
+
+**4.2.6: Project Context**
+- Technology stack table
+- Project structure diagram
+- Key integrations (if any)
+
+**4.2.7: Troubleshooting**
+- Common issues from README/CONTRIBUTING
+- Environment setup problems
+
+---
+
+#### Step 4.3: Handle Existing CLAUDE.md
+
+**If CLAUDE.md already exists**:
+1. Compare existing vs generated
+2. Preserve user customizations (custom rules, notes)
+3. Update outdated sections (commands, guides list)
+4. Add new guides to imports
+5. Merge, don't overwrite
+
+---
+
+#### Step 4.4: Write CLAUDE.md
+
+- Save to `./CLAUDE.md` (project root)
+- Validate size (200-300 lines)
+- Verify no placeholders remain
+
+---
+
+### Phase 5: Validation
+
+#### Step 5.1: Verify All References
+
+**Check**:
+- [ ] Every guide path in CLAUDE.md exists
+- [ ] All file:line references in guides are valid
+- [ ] Commands are accurate (match package.json/Makefile)
+- [ ] No `[PLACEHOLDER]` or `FILL IN` text remains
+- [ ] Task Classifier only includes categories with actual guides
+
+---
+
+#### Step 5.2: Validate Sizes
+
+```bash
+# CLAUDE.md
+wc -l CLAUDE.md  # Should be 200-300
+
+# Each guide
+for guide in .codemie/guides/**/*.md; do
+    lines=$(wc -l < "$guide")
+    if [ $lines -gt 400 ]; then
+        echo "⚠️ $guide exceeds 400 lines ($lines)"
+    fi
+done
+```
+
+---
+
+#### Step 5.3: Generate Summary Report
+
+```markdown
+# Codemie Init Complete
+
+## Generated/Updated Files
+
+**Main**: CLAUDE.md ✅
+
+## Guides by Category
+
+**Architecture** (1 guide):
+- ✅ .codemie/guides/architecture/architecture.md
+
+**API Development** (1 guide):
 - ✅ .codemie/guides/api/api-patterns.md
 
-**Architecture** ([X] guides):
-- ✅ .codemie/guides/architecture/layered-architecture.md
+**Data & Database** (1 guide):
+- ✅ .codemie/guides/data/data-patterns.md
 
-**Data** ([X] guides):
-- ✅ .codemie/guides/data/database-patterns.md
+**Testing** (2 guides):
+- ✅ .codemie/guides/testing/testing-patterns.md (created)
+- ✅ .codemie/guides/testing/integration-testing.md (existing, kept)
 
-**Testing** ([X] guides):
-- ✅ .codemie/guides/testing/testing-patterns.md
+**Development Practices** (3 guides):
+- ✅ .codemie/guides/development/development-practices.md
+- ✅ .codemie/guides/development/frontend-patterns.md
+- ✅ .codemie/guides/development/react-components.md
 
-**Standards** ([X] guides):
-- ✅ .codemie/guides/standards/code-quality.md
-- ✅ .codemie/guides/standards/git-workflow.md
+**Security** (1 guide):
+- ✅ .codemie/guides/security/security-patterns.md
 
-## Project Analysis Summary
+**Categories Skipped**:
+- ⏭️ Integrations - No external services detected
+- ⏭️ Workflows - No workflow patterns detected
 
-**Technology Stack**:
-- Language: [Language]
-- Framework: [Framework]
-- Database: [Database]
-- Testing: [Test Framework]
-- Build Tool: [Build Tool]
+## Project Summary
 
-**Architecture Patterns Documented**:
-- [Pattern 1]
-- [Pattern 2]
-- [Pattern 3]
-
-**Total Code Examples**: [N] examples from actual codebase
-**Total Line References**: [N] file:line references
+| Component | Value |
+|-----------|-------|
+| Language | [Language] [Version] |
+| Framework | [Framework] [Version] |
+| Database | [Database or "None"] |
+| Testing | [Framework] |
 
 ## Next Steps
 
-1. Review generated documentation for accuracy
-2. Customize any project-specific sections that need refinement
-3. Test CLAUDE.md by asking Claude Code to perform a task
-4. Update guides as project evolves
-
-## How to Use
-
-Claude Code will now:
-1. Check guides first before searching codebase
-2. Use documented patterns consistently
-3. Follow project-specific workflows
-4. Reference actual code examples from your project
-
-Try asking Claude Code to:
-- "Add a new API endpoint following project patterns"
-- "Fix error handling in [file]"
-- "Write tests for [component]"
+1. Review generated documentation
+2. Test by asking Claude Code to perform a task
+3. Customize any sections needing refinement
 ```
 
 ---
 
-## Decision Gates Throughout Process
+## Decision Gates
 
-### Gate 1: After Project Discovery (Step 1.3)
-**Question**: Do I understand the tech stack and architecture?
-- ✅ 80%+ confidence → Continue
-- ❌ < 80% confidence → Ask user for clarification
-
-### Gate 2: After Template Selection (Step 2.2)
-**Question**: Have I identified the right guides to generate?
-- ✅ YES → Present list to user for confirmation
-- ❌ UNCERTAIN → Ask user which patterns/areas are important
-
-### Gate 3: After Each Guide Generation (Step 3.2.4)
-**Question**: Is this guide filled with real project content (not placeholders)?
-- ✅ YES → Mark complete, move to next guide
-- ❌ NO → Continue analyzing and filling content
-
-### Gate 4: After CLAUDE.md Generation (Step 4.2)
-**Question**: Is CLAUDE.md complete and project-specific?
-- ✅ YES → Proceed to validation
-- ❌ NO → Continue filling sections
-
-### Gate 5: After Validation (Step 5.1)
-**Question**: Do all links work and commands run?
-- ✅ YES → Generate summary report and finish
-- ❌ NO → Fix issues and re-validate
+| Gate | After Step | Question | If NO |
+|------|------------|----------|-------|
+| 1 | 1.2 | Tech stack identified (80%+ confidence)? | Ask user |
+| 2 | 1.3 | Categories correctly identified? | Verify with user |
+| 3 | 2.3 | User confirmed guide list? | Adjust list |
+| 4 | 3.2.4 | Guide within size limit? | Condense |
+| 5 | 4.4 | CLAUDE.md complete, no placeholders? | Fix issues |
+| 6 | 5.1 | All references valid? | Fix broken refs |
 
 ---
 
 ## Troubleshooting
 
-### Issue: Can't Identify Architecture Pattern
-
-**Symptoms**: Unclear project structure
-**Action**:
-1. Ask user: "What architecture pattern does your project use?"
-2. If user unsure, provide options based on directory structure
-3. Offer to create generic layered architecture guide
-
-### Issue: No Code Examples Found for Pattern
-
-**Symptoms**: Template sections can't be filled with real code
-**Action**:
-1. Check if pattern actually exists in project
-2. If not, ask user if they want this guide (might be aspirational)
-3. If yes but code not found, create guide with TODO for user to fill
-
-### Issue: Multiple Frameworks/Patterns Detected
-
-**Symptoms**: Mixed patterns (e.g., both REST and GraphQL)
-**Action**:
-1. Ask user which is primary
-2. Document both if both are important
-3. Create separate guides for each pattern
-
-### Issue: Documentation Takes Too Long
-
-**Symptoms**: Many guides, large codebase
-**Action**:
-1. Start with P0 guides only
-2. Generate P1 guides in follow-up
-3. Focus on most-used patterns first
+| Issue | Action |
+|-------|--------|
+| Can't identify architecture | Ask user; offer common patterns as options |
+| No code examples for pattern | Verify pattern exists; skip guide if not |
+| Multiple frameworks detected | Ask user which is primary; document both if needed |
+| Existing guide conflicts with template | Preserve existing customizations; update only outdated parts |
+| Guide exceeds 400 lines | Remove redundant examples; use tables; add file:line refs |
+| Category detected but minimal code | Create minimal guide or ask user if needed |
 
 ---
 
 ## Success Criteria
 
-Documentation generation is complete when:
-- ✅ CLAUDE.md exists in project root
-- ✅ All referenced guides exist
-- ✅ All code examples are from actual project (no placeholders)
-- ✅ All file paths are accurate with line numbers
-- ✅ All commands are tested and work
-- ✅ All internal links are valid
-- ✅ Project-specific patterns are documented
-- ✅ No "FILL IN" or "[PLACEHOLDER]" text remains
-- ✅ User has reviewed and confirmed accuracy
-
----
-
-## Example Invocation
-
-**User**: "Generate project documentation for my FastAPI project"
-
-**Claude Code**:
-1. Analyzes project structure (finds FastAPI, PostgreSQL, pytest)
-2. Identifies patterns (layered architecture, REST API, SQLAlchemy)
-3. Selects templates (API, architecture, database, testing, etc.)
-4. Generates 8 guides with real code examples
-5. Creates CLAUDE.md with project-specific content
-6. Validates all links and commands
-7. Presents summary report
-
-**Result**: Complete, project-specific Claude Code documentation ready to use
-
----
-
-## Notes
-
-- **Time Estimate**: 10-30 minutes depending on project size and complexity
-- **Token Usage**: High - lots of reading and writing
-- **User Interaction**: 2-3 confirmation points for guide selection
-- **Customization**: Output should be 80% ready, 20% may need user refinement
-- **Maintenance**: Documentation should be updated as project evolves
-
----
+- ✅ CLAUDE.md exists (200-300 lines)
+- ✅ Only relevant guides created (categories with actual code patterns)
+- ✅ All guides within 200-400 lines
+- ✅ Existing guides integrated
+- ✅ Task Classifier matches generated guides
+- ✅ All code examples from actual codebase
+- ✅ All file paths accurate
+- ✅ All commands verified
+- ✅ No placeholder text remains
+- ✅ User confirmed accuracy
