@@ -90,32 +90,37 @@ export const SSOSetupSteps: ProviderSetupSteps = {
         authResult.cookies
       );
 
-      // Validate applications array
-      if (!userInfo.applications || userInfo.applications.length === 0) {
+      // Merge applications and applicationsAdmin arrays (deduplicated)
+      const applications = userInfo.applications || [];
+      const applicationsAdmin = userInfo.applicationsAdmin || [];
+      const allProjects = [...new Set([...applications, ...applicationsAdmin])];
+
+      // Validate that user has at least one project
+      if (allProjects.length === 0) {
         throw new Error('No projects found for your account. Please contact your administrator.');
       }
 
-      // Sort applications alphabetically
-      const applications = [...userInfo.applications].sort((a, b) =>
+      // Sort projects alphabetically (case-insensitive)
+      const sortedProjects = allProjects.sort((a, b) =>
         a.localeCompare(b, undefined, { sensitivity: 'base' })
       );
 
       // Auto-select if only one project
-      if (applications.length === 1) {
-        selectedProject = applications[0];
+      if (sortedProjects.length === 1) {
+        selectedProject = sortedProjects[0];
         console.log(chalk.green(`✓ Auto-selected project: ${chalk.bold(selectedProject)}\n`));
       } else {
         // Multiple projects - prompt user to select
-        console.log(chalk.dim(`Found ${applications.length} accessible project(s)\n`));
+        console.log(chalk.dim(`Found ${sortedProjects.length} accessible project(s)\n`));
 
         const projectAnswers = await inquirer.prompt([
           {
             type: 'list',
             name: 'project',
             message: 'Select your project:',
-            choices: applications.map(app => ({
-              name: app,
-              value: app
+            choices: sortedProjects.map(proj => ({
+              name: proj,
+              value: proj
             })),
             pageSize: 15
           }
