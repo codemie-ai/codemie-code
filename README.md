@@ -153,6 +153,30 @@ codemie-gemini "Implement a REST API"
 
 For more detailed information on the available agents, see the [Agents Documentation](docs/AGENTS.md).
 
+### Claude Code Built-in Commands
+
+When using Claude Code (`codemie-claude`), you get access to powerful built-in commands for project documentation:
+
+**Project Documentation:**
+```bash
+# Generate AI-optimized docs (CLAUDE.md + guides). Can be added optional info as well
+/codemie-init
+
+# Generate project-specific subagents. Can be added optional info as well
+/codemie-subagents
+```
+
+**Memory Management:**
+```bash
+# Capture important learnings
+/memory-add
+
+# Audit and update documentation
+/memory-refresh
+```
+
+These commands analyze your actual codebase to create tailored documentation and specialized agents. See [Claude Plugin Documentation](src/agents/plugins/claude/plugin/README.md) for details.
+
 ## Commands
 
 The CodeMie CLI has a rich set of commands for managing agents, configuration, and more.
@@ -182,6 +206,7 @@ Comprehensive guides are available in the `docs/` directory:
 - **[Authentication](docs/AUTHENTICATION.md)** - SSO setup, token management, enterprise authentication
 - **[Examples](docs/EXAMPLES.md)** - Common workflows, multi-provider examples, CI/CD integration
 - **[Configuration Architecture](docs/ARCHITECTURE-CONFIGURATION.md)** - How configuration flows through the system from CLI to proxy plugins
+- **[Claude Code Plugin](src/agents/plugins/claude/plugin/README.md)** - Built-in commands, hooks system, and plugin architecture
 
 ## Contributing
 

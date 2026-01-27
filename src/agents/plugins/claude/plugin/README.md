@@ -84,9 +84,45 @@ Once loaded, the plugin automatically:
 
 ### Available Commands
 
-#### `/codemie-status`
+The plugin provides several built-in commands for project documentation and memory management.
 
-Display current session tracking status:
+#### Documentation Generation
+
+**`/codemie-init`** - Generate AI-optimized project documentation
+```bash
+# Analyze codebase and create CLAUDE.md + guides
+/codemie-init
+
+# With additional context
+/codemie-init "focus on API patterns"
+```
+
+**`/codemie-subagents`** - Generate project-specific subagents
+```bash
+# Create tailored subagent files in .claude/agents/
+/codemie-subagents
+```
+
+#### Memory Management
+
+**`/memory-add`** - Capture important learnings
+```bash
+# Add knowledge to project documentation
+/memory-add
+
+# With specific context
+/memory-add "auth flow requires initialization"
+```
+
+**`/memory-refresh`** - Audit and update documentation
+```bash
+# Verify docs match current implementation
+/memory-refresh
+```
+
+#### Status
+
+**`/codemie-status`** - Display session tracking status:
 
 ```
 CodeMie Session Status
@@ -97,6 +133,8 @@ Metrics:        15,234 tokens | 42 tools | 23 files
 Sync:           ✓ Connected (last: 30s ago)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
+
+**See [commands/README.md](./commands/README.md) for detailed usage and examples.**
 
 ## Hook Events
 
