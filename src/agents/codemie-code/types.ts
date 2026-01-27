@@ -56,6 +56,12 @@ export interface CodeMieConfig {
 
   /** Maximum number of times to retry when Stop hook returns exit code 2 (default: 5) */
   maxHookRetries?: number;
+
+  /** Custom authorization header name (default: 'Authorization') */
+  authHeader?: string;
+
+  /** Authorization value format using {key} placeholder (default: 'Bearer {key}') */
+  authValue?: string;
 }
 
 /**

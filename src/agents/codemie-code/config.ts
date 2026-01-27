@@ -73,7 +73,10 @@ export async function loadCodeMieConfig(
       name: baseConfig.name, // Profile name for display
       codeMieUrl: (baseConfig as any).codeMieUrl, // CodeMie URL for SSO providers
       hooks: (baseConfig as any).hooks, // Pass through hooks configuration
-      maxHookRetries: (baseConfig as any).maxHookRetries || 5 // Default to 5 retries
+      maxHookRetries: (baseConfig as any).maxHookRetries || 5, // Default to 5 retries
+      // Custom authorization header configuration (from env or profile)
+      authHeader: process.env.CODEMIE_AUTH_HEADER || (baseConfig as any).authHeader,
+      authValue: process.env.CODEMIE_AUTH_VALUE || (baseConfig as any).authValue
     };
 
     // Validate agent-specific requirements

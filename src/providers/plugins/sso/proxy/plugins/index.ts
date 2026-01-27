@@ -8,6 +8,7 @@
 import { getPluginRegistry } from './registry.js';
 import { EndpointBlockerPlugin } from './endpoint-blocker.plugin.js';
 import { SSOAuthPlugin } from './sso-auth.plugin.js';
+import { AuthHeaderPlugin } from './auth-header.plugin.js';
 import { HeaderInjectionPlugin } from './header-injection.plugin.js';
 import { LoggingPlugin } from './logging.plugin.js';
 import { SSOSessionSyncPlugin } from './sso.session-sync.plugin.js';
@@ -21,17 +22,18 @@ export function registerCorePlugins(): void {
 
   // Register in any order (priority determines execution order)
   registry.register(new EndpointBlockerPlugin()); // Priority 5 - blocks unwanted endpoints early
-  registry.register(new SSOAuthPlugin());
-  registry.register(new HeaderInjectionPlugin());
-  registry.register(new LoggingPlugin()); // Always enabled - logs to log files at INFO level
-  registry.register(new SSOSessionSyncPlugin()); // Priority 100 - syncs sessions via multiple processors
+  registry.register(new SSOAuthPlugin());         // Priority 10 - SSO cookie auth
+  registry.register(new AuthHeaderPlugin());      // Priority 15 - API key auth (for litellm, etc.)
+  registry.register(new HeaderInjectionPlugin()); // Priority 20 - X-CodeMie-* headers
+  registry.register(new LoggingPlugin());         // Always enabled - logs to log files at INFO level
+  registry.register(new SSOSessionSyncPlugin());  // Priority 100 - syncs sessions via multiple processors
 }
 
 // Auto-register on import
 registerCorePlugins();
 
 // Re-export for convenience
-export { EndpointBlockerPlugin, SSOAuthPlugin, HeaderInjectionPlugin, LoggingPlugin };
+export { EndpointBlockerPlugin, SSOAuthPlugin, AuthHeaderPlugin, HeaderInjectionPlugin, LoggingPlugin };
 export { SSOSessionSyncPlugin } from './sso.session-sync.plugin.js';
 export { getPluginRegistry, resetPluginRegistry } from './registry.js';
 export * from './types.js';

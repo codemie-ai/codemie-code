@@ -23,6 +23,11 @@ export interface ProxyConfig {
   sessionId?: string;
   version?: string;         // CLI version for metrics and headers
   profileConfig?: CodeMieConfigOptions; // Full profile config (read once at CLI level)
+
+  // API key authentication (for non-SSO providers like litellm)
+  apiKey?: string;          // API key for authorization header
+  authHeader?: string;      // Custom header name (default: 'Authorization')
+  authValue?: string;       // Custom value format with {key} placeholder (default: 'Bearer {key}')
 }
 
 /**

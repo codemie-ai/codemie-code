@@ -230,6 +230,10 @@ export class ConfigLoader {
       };
     }
 
+    // Custom authorization header configuration
+    if (process.env.CODEMIE_AUTH_HEADER) env.authHeader = process.env.CODEMIE_AUTH_HEADER;
+    if (process.env.CODEMIE_AUTH_VALUE) env.authValue = process.env.CODEMIE_AUTH_VALUE;
+
     return env;
   }
 
@@ -799,6 +803,10 @@ export class ConfigLoader {
     if (config.model) env.CODEMIE_MODEL = config.model;
     if (config.timeout) env.CODEMIE_TIMEOUT = String(config.timeout);
     if (config.debug) env.CODEMIE_DEBUG = String(config.debug);
+
+    // Custom authorization header configuration
+    if (config.authHeader) env.CODEMIE_AUTH_HEADER = config.authHeader;
+    if (config.authValue) env.CODEMIE_AUTH_VALUE = config.authValue;
 
     // Provider-specific environment variables (pluggable)
     // Each provider defines its own exportEnvVars function

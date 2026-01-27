@@ -25,6 +25,23 @@ export const LiteLLMTemplate = registerProvider<ProviderTemplate>({
   capabilities: ['streaming', 'tools', 'function-calling'],
   supportsModelInstallation: false,
   supportsStreaming: true,
+
+  // Export custom auth header configuration for litellm provider
+  exportEnvVars: (config) => {
+    const env: Record<string, string> = {};
+
+    // Export custom authorization header configuration
+    // These can be used by agents or litellm proxy for custom auth schemes
+    if (config.authHeader) {
+      env.CODEMIE_AUTH_HEADER = config.authHeader;
+    }
+    if (config.authValue) {
+      env.CODEMIE_AUTH_VALUE = config.authValue;
+    }
+
+    return env;
+  },
+
   setupInstructions: `
 # LiteLLM Setup Instructions
 
