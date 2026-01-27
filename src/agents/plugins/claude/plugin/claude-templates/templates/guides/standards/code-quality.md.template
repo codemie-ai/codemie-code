@@ -1,150 +1,186 @@
+---
 # Code Quality Standards
 
-## Quick Summary
+<!--
+GENERATION INSTRUCTIONS:
+1. Parse linter config for active rules
+2. Extract formatter settings
+3. Scan codebase for consistent patterns
+4. Identify type checking strictness level
+5. Find pre-commit/CI quality gates
+6. Extract actual good/bad examples from codebase
+7. Output: 150-250 lines max
+-->
 
-Code quality standards for [PROJECT_NAME]: linting, formatting, type safety, and naming conventions.
-
-**Category**: Standards
-**Complexity**: Simple
-**Prerequisites**: [LANGUAGE], [LINTER], [FORMATTER]
-
----
-
-## 🚨 SIZE LIMIT WARNING
-
-**This generated guide MUST be 200-400 lines maximum.**
-
-**When filling this template**:
-- ✅ Code examples: 5-15 lines (NEVER > 20)
-- ✅ ONE example per pattern
-- ✅ Use file:line references, not full code
-- ✅ Use tables for multiple patterns
-- ❌ NO multiple examples for same pattern
-- ❌ NO verbose explanations
-- ❌ NO copying entire functions
-
-**Validate line count after generation**: `wc -l [this-file]`
-**If > 400 lines**: Condense immediately before continuing!
+**Project**: [Extract from config]
+**Linter**: [Detect tool + config file]
+**Formatter**: [Detect tool + config file]
+**Type Checker**: [Detect tool + config file or N/A]
 
 ---
 
-## Tools
+## Quality Commands
 
-| Tool | Purpose | Config |
-|------|---------|--------|
-| [Linter] | Code quality | `[config_file]` |
-| [Formatter] | Formatting | `[config_file]` |
-| [Type Checker] | Type checking | `[config_file]` |
+<!-- Extract exact commands from package.json, Makefile, pyproject.toml -->
+
+| Action | Command | Description |
+|--------|---------|-------------|
+| Check all | `[combined command if exists]` | Run all quality checks |
+| Lint | `[lint command]` | Check code issues |
+| Lint fix | `[lint fix command]` | Auto-fix issues |
+| Format | `[format command]` | Format code |
+| Type check | `[type check command or N/A]` | Verify types |
+
+**Before committing, run**: `[primary quality command]`
 
 ---
 
-## Commands
+## Enforced Rules
 
-```bash
-# Lint (check)
-[lint_check]
+<!-- Extract key rules from linter/formatter config -->
 
-# Lint (fix)
-[lint_fix]
+### From Linter (`[config file]`)
 
-# Format
-[format]
+| Rule | Setting | Rationale |
+|------|---------|-----------|
+| `[rule-name]` | `[error/warn/value]` | [Brief why] |
+| `[rule-name]` | `[error/warn/value]` | [Brief why] |
+| `[rule-name]` | `[error/warn/value]` | [Brief why] |
+| `[rule-name]` | `[error/warn/value]` | [Brief why] |
 
-# Type check
-[type_check]
+### From Formatter (`[config file]`)
+
+| Setting | Value |
+|---------|-------|
+| Line length | `[value]` |
+| Indentation | `[tabs/spaces, size]` |
+| Quotes | `[single/double]` |
+| Trailing comma | `[yes/no/es5]` |
+| Semicolons | `[yes/no]` |
+
+---
+
+## Naming Standards
+
+<!-- Extract from linter rules + analyze codebase patterns -->
+
+| Element | Rule | ✅ Correct | ❌ Wrong |
+|---------|------|-----------|----------|
+| Variables | `[camelCase/snake_case]` | `userName` | `user_name` / `UserName` |
+| Functions | `[camelCase/snake_case]` | `getUserById` | `GetUserById` |
+| Classes | `[PascalCase]` | `UserService` | `userService` |
+| Constants | `[UPPER_SNAKE]` | `MAX_RETRIES` | `maxRetries` |
+| Files | `[kebab/snake/pascal]` | `[actual example]` | `[counter example]` |
+| Boolean vars | `[is/has/should prefix]` | `isActive` | `active` |
+
+---
+
+## Type Safety
+
+<!-- Detect type checking level and requirements -->
+
+**Strictness**: `[strict / moderate / basic / none]`
+**Config**: `[tsconfig.json / mypy.ini / pyproject.toml section]`
+
+### Required Typing
+
+```[lang]
+// ✅ Correct - Source: [file:lines]
+[Extract well-typed function example]
+
+// ❌ Missing types - would fail type check
+[Show same function without types]
+```
+
+### Type Rules
+
+| Rule | Required |
+|------|----------|
+| Function parameters | ✅ Always |
+| Function returns | ✅ Always |
+| Variables | `[inferred OK / explicit required]` |
+| `any` / `unknown` | `[forbidden / discouraged / allowed]` |
+
+---
+
+## Code Complexity Limits
+
+<!-- Extract from linter config or establish from codebase patterns -->
+
+| Metric | Limit | Enforced By |
+|--------|-------|-------------|
+| Function length | `[max lines]` | `[rule name or convention]` |
+| File length | `[max lines]` | `[rule name or convention]` |
+| Cyclomatic complexity | `[max value]` | `[rule name or N/A]` |
+| Nesting depth | `[max levels]` | `[rule name or convention]` |
+| Parameters per function | `[max count]` | `[rule name or convention]` |
+
+### Reduce Complexity
+
+```[lang]
+// ❌ Too complex
+[Extract or create example of deep nesting/long function]
+
+// ✅ Refactored
+[Show extracted/simplified version]
 ```
 
 ---
 
-## Naming Conventions
+## Import Organization
 
-| Element | Convention | Example |
-|---------|------------|---------|
-| Variables | [convention] | `[example]` |
-| Functions | [convention] | `[example]` |
-| Classes | [convention] | `[Example]` |
-| Constants | [convention] | `[EXAMPLE]` |
-| Files | [convention] | `[example]` |
+<!-- Extract from linter rules (import-order, isort, etc.) -->
 
----
+```[lang]
+// Source: [well-organized file:lines]
 
-## Type Annotations
+// Group 1: [Built-in/Standard library]
+[imports]
 
-```[language]
-# Source: [file:lines]
-[type_example]
+// Group 2: [External/Third-party packages]
+[imports]
+
+// Group 3: [Internal/Local modules]
+[imports]
 ```
 
-**Required**:
-- ✅ All function parameters
-- ✅ All function returns
-- ✅ Public APIs
+**Rules**:
+- ✅ Sorted alphabetically within groups
+- ✅ One import per line (or `[grouped style if used]`)
+- ❌ Wildcard imports (`import *`)
+- ❌ Unused imports
 
 ---
 
-## Imports
+## Documentation Standards
 
-```[language]
-# Order
-[import_example]
+<!-- Extract from docstring linter rules or conventions -->
+
+### Required Documentation
+
+| Element | Required | Format |
+|---------|----------|--------|
+| Public functions | ✅ | `[JSDoc / docstring / etc.]` |
+| Public classes | ✅ | `[format]` |
+| Complex logic | ✅ | Inline comments |
+| Private/internal | Optional | - |
+
+### Format
+
+```[lang]
+// Source: [file:lines]
+[Extract canonical documentation example]
 ```
 
-**Order**: Standard library → Third-party → Local
-**Rules**: One per line, sorted, no wildcards
-
 ---
 
-## Code Structure
+## Common Violations & Fixes
 
-**Guidelines**:
-- Functions < [X] lines
-- Files < [Y] lines
-- One responsibility per function
-- Limit parameters < [Z]
+<!-- Extract from common linter errors in codebase or CI logs -->
 
----
-
-## Comments
-
-```[language]
-# Source: [file:lines]
-[docstring_example]
-```
-
-**When to Comment**:
-- ✅ Public APIs
-- ✅ Complex algorithms
-- ✅ Non-obvious decisions
-- ❌ Self-explanatory code
-
----
-
-## Pre-Commit Hooks
-
-```bash
-# Install
-[install_hooks]
-```
-
-**Checks**: Linting, formatting, type checking
-
----
-
-## Best Practices
-
-| ✅ DO | ❌ DON'T |
-|-------|----------|
-| Descriptive names | Single letters (except i, j, k in loops) |
-| Keep functions small | 100+ line functions |
-| Use type hints | Skip types |
-| Follow conventions | Mix styles |
-| Early returns | Deep nesting |
-
----
-
-## References
-
-- **Config**: `[config_files]`
-- **Linter Docs**: [Link]
-
----
+| Violation | Fix |
+|-----------|-----|
+| `[linter-error-code]`: [description] | [How to fix] |
+| `[linter-error-code]`: [description] | [How to fix] |
+| `[linter-error-code]`: [description] | [How to fix] |
+|

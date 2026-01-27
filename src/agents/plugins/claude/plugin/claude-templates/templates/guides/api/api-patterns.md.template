@@ -1,207 +1,179 @@
-# API Patterns
+---
+# API Patterns Guide
 
-## Quick Summary
+## Overview
 
-API endpoint patterns for [PROJECT_NAME]: CRUD operations, validation, authentication, and error responses.
+<!-- 
+GENERATION INSTRUCTIONS:
+1. Scan codebase for API routes, controllers, middleware
+2. Extract ACTUAL patterns used (don't invent)
+3. Fill each section with REAL file paths and code
+4. Keep examples minimal (5-15 lines, one per pattern)
+5. Final output: 150-300 lines
+-->
 
-**Category**: API
-**Complexity**: Medium
-**Prerequisites**: [FRAMEWORK], HTTP, [AUTH_METHOD]
+**Project**: [Extract from package.json/config]
+**Stack**: [Detect framework, language, auth library]
+**Base URL**: [Find in config/env]
 
 ---
 
-## 🚨 SIZE LIMIT WARNING
+## File Structure
 
-**This generated guide MUST be 200-400 lines maximum.**
+<!-- Find and document where API code lives -->
 
-**When filling this template**:
-- ✅ Code examples: 5-15 lines (NEVER > 20)
-- ✅ ONE example per pattern
-- ✅ Use file:line references, not full code
-- ✅ Use tables for multiple patterns
-- ❌ NO multiple examples for same pattern
-- ❌ NO verbose explanations
-- ❌ NO copying entire functions
-
-**Validate line count after generation**: `wc -l [this-file]`
-**If > 400 lines**: Condense immediately before continuing!
+| Purpose | Path |
+|---------|------|
+| Routes/Endpoints | `[scan for router files]` |
+| Controllers/Handlers | `[scan for controller pattern]` |
+| Middleware | `[scan for middleware folder]` |
+| Validation | `[scan for validators/schemas]` |
+| Models/Types | `[scan for models/entities]` |
 
 ---
 
-## Endpoint Structure
+## Endpoint Pattern
 
-```
-[base_url]/
-├── [resource1]/
-│   ├── GET    /           List all
-│   ├── POST   /           Create
-│   ├── GET    /:id        Get one
-│   ├── PUT    /:id        Update
-│   └── DELETE /:id        Delete
-└── [resource2]/
+<!-- Extract ONE canonical endpoint showing the full pattern -->
+
+```[detected_language]
+// Source: [actual_file:lines]
+[extract representative endpoint - prefer one with auth + validation]
 ```
 
-**Source**: `[path/to/routes]`
+**To add new endpoint, replicate this structure:**
+1. Define route in `[routes_file]`
+2. Add handler in `[controllers_path]`
+3. Add validation in `[validators_path]` (if needed)
 
 ---
 
-## CRUD Patterns
+## Validation Pattern
 
-### Create (POST)
+<!-- Find how this codebase validates requests -->
 
-```[language]
-# Source: [file:lines]
-[create_endpoint]
+**Approach**: [Detect: Zod/Joi/Yup/Pydantic/class-validator/custom]
+
+```[lang]
+// Source: [actual_file:lines]
+[extract one validation schema example]
 ```
 
-**Status**: 201 Created | 400 Bad Request | 401 Unauthorized
+**Usage:**
+```[lang]
+// How validation is applied to routes
+[extract middleware/decorator usage]
+```
 
 ---
 
-### Read (GET)
+## Authentication
 
-```[language]
-# Source: [file:lines]
-[read_endpoint]
+<!-- Find auth middleware/guards -->
+
+**Method**: [Detect: JWT/Session/API Key/OAuth]
+
+```[lang]
+// Source: [actual_file:lines]
+[extract auth middleware]
 ```
 
-**Status**: 200 OK | 404 Not Found
+**Protect route:** `[extract exact syntax used]`
+**Access user:** `[extract how user object is accessed]`
 
 ---
 
-### Update (PUT/PATCH)
+## Response Patterns
 
-```[language]
-# Source: [file:lines]
-[update_endpoint]
-```
+<!-- Find consistent response structures -->
 
-**Status**: 200 OK | 404 Not Found | 400 Bad Request
-
----
-
-### Delete (DELETE)
-
-```[language]
-# Source: [file:lines]
-[delete_endpoint]
-```
-
-**Status**: 204 No Content | 404 Not Found
-
----
-
-## Request Validation
-
-```[language]
-# Source: [file:lines]
-[validation_example]
-```
-
-**Validation Error Response**:
+**Success format:**
 ```json
-{
-  "error": {
-    "code": "VALIDATION_ERROR",
-    "message": "Validation failed",
-    "details": [
-      {"field": "[field]", "message": "[error]"}
-    ]
-  }
-}
+[extract actual success response structure from code]
 ```
+
+**Error format:**
+```json
+[extract actual error response structure from code]
+```
+
+**Helper/Utility** (if exists): `[path to response helpers]`
 
 ---
 
-## Authentication & Authorization
+## Status Codes
 
-```[language]
-# Source: [file:lines]
-[auth_middleware]
+<!-- Extract from actual handlers OR document conventions found -->
+
+| Operation | Success | Common Errors |
+|-----------|---------|---------------|
+| Create | [find in POST handlers] | [find error codes] |
+| Read | [find in GET handlers] | [find error codes] |
+| Update | [find in PUT/PATCH] | [find error codes] |
+| Delete | [find in DELETE] | [find error codes] |
+
+---
+
+## Error Handling
+
+<!-- Find centralized error handling -->
+
+```[lang]
+// Source: [actual_file:lines]
+[extract error handler/middleware or throwing pattern]
 ```
 
-**Status**: 401 Unauthorized | 403 Forbidden
+**Throw errors using:** `[extract exact syntax]`
 
 ---
 
 ## Pagination
 
-```[language]
-# Source: [file:lines]
-[pagination_example]
+<!-- Find if pagination exists, extract pattern -->
+
+```[lang]
+// Source: [actual_file:lines]
+[extract pagination implementation]
 ```
 
-**Query Params**: `page`, `limit`, `sort`, `order`
-
-**Response**:
-```json
-{
-  "data": [],
-  "pagination": {
-    "page": 1,
-    "limit": 20,
-    "total": 100,
-    "pages": 5
-  }
-}
-```
+**Params**: [extract actual query param names used]
+**Defaults**: page=`[find]`, limit=`[find]`
 
 ---
 
-## Error Responses
+## Conventions
 
-| Status | Type | Example |
-|--------|------|---------|
-| 400 | Bad Request | Invalid input |
-| 401 | Unauthorized | Missing/invalid token |
-| 403 | Forbidden | Insufficient permissions |
-| 404 | Not Found | Resource doesn't exist |
-| 422 | Unprocessable | Validation failed |
-| 500 | Server Error | Internal error |
+<!-- Extract by analyzing multiple endpoints -->
 
-**Format**:
-```json
-{
-  "error": {
-    "code": "[ERROR_CODE]",
-    "message": "[human-readable]",
-    "details": "[additional info]"
-  }
-}
-```
+| Aspect | Convention Used |
+|--------|-----------------|
+| Route naming | `[kebab-case/camelCase/snake_case]` |
+| Controller methods | `[naming pattern found]` |
+| Async handling | `[async/await, promises, try/catch wrapper]` |
+| ID parameter | `[id/:id/uuid format]` |
 
 ---
 
-## Rate Limiting
+## Anti-Patterns
 
-```[language]
-# Source: [file:lines]
-[rate_limit_config]
-```
+<!-- Document what NOT to do based on codebase patterns -->
 
-**Headers**:
-- `X-RateLimit-Limit`: Max requests
-- `X-RateLimit-Remaining`: Requests left
-- `X-RateLimit-Reset`: Reset time
+| ❌ Avoid | ✅ Use Instead | Reason |
+|----------|----------------|--------|
+| [detect inconsistencies or deprecated patterns] | [correct pattern from code] | [why] |
 
 ---
 
-## Best Practices
+## Quick Reference
 
-| ✅ DO | ❌ DON'T |
-|-------|----------|
-| Use proper HTTP methods | GET for mutations |
-| Return appropriate status codes | Always 200 |
-| Validate all input | Trust client data |
-| Use consistent naming | Mix conventions |
-| Version your API | Break clients |
+<!-- Condensed lookup table -->
 
----
-
-## References
-
-- **Routes**: `[path/to/routes]`
-- **Models**: `[path/to/models]`
-- **API Docs**: [URL]
+| Task | Syntax | Example |
+|------|--------|---------|
+| Define route | `[extract]` | `[file:line]` |
+| Add validation | `[extract]` | `[file:line]` |
+| Protect route | `[extract]` | `[file:line]` |
+| Return success | `[extract]` | `[file:line]` |
+| Throw error | `[extract]` | `[file:line]` |
 
 ---

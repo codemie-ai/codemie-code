@@ -1,210 +1,298 @@
+---
 # Development Practices
 
-## Quick Summary
+<!--
+GENERATION INSTRUCTIONS:
+1. Scan for linter/formatter configs (.eslintrc, .prettierrc, pyproject.toml, etc.)
+2. Extract naming patterns from existing code
+3. Find error handling patterns in services/controllers
+4. Locate logging usage and configuration
+5. Check for pre-commit hooks, CI config
+6. Output: 150-300 lines max
+-->
 
-Core development practices for [PROJECT_NAME]: error handling, logging, and configuration patterns.
-
-**Category**: Development
-**Complexity**: Medium
-**Prerequisites**: [LANGUAGE] fundamentals, [FRAMEWORK]
+**Project**: [Extract from config]
+**Language**: [Detect] | **Framework**: [Detect]
+**Linter**: [Detect] | **Formatter**: [Detect]
 
 ---
 
-## 🚨 SIZE LIMIT WARNING
+## Code Style
 
-**This generated guide MUST be 200-400 lines maximum.**
+<!-- Extract from linter config + analyze existing code patterns -->
 
-**When filling this template**:
-- ✅ Code examples: 5-15 lines (NEVER > 20)
-- ✅ ONE example per pattern
-- ✅ Use file:line references, not full code
-- ✅ Use tables for multiple patterns
-- ❌ NO multiple examples for same pattern
-- ❌ NO verbose explanations
-- ❌ NO copying entire functions
+### Naming Conventions
 
-**Validate line count after generation**: `wc -l [this-file]`
-**If > 400 lines**: Condense immediately before continuing!
+| Element | Convention | Example |
+|---------|------------|---------|
+| Files | `[kebab-case/snake_case/PascalCase]` | `[actual example from codebase]` |
+| Classes | `[PascalCase]` | `[actual example]` |
+| Functions | `[camelCase/snake_case]` | `[actual example]` |
+| Variables | `[camelCase/snake_case]` | `[actual example]` |
+| Constants | `[UPPER_SNAKE_CASE]` | `[actual example]` |
+| Private | `[_prefix/no prefix/#private]` | `[actual example]` |
+
+### File Organization
+
+```[lang]
+// Source: [representative file path]
+// Standard file structure in this codebase:
+
+[Extract typical file structure showing imports, class/function order]
+```
+
+### Import Order
+
+<!-- Extract from linter config or consistent patterns -->
+
+```[lang]
+// 1. [Standard library / Built-ins]
+// 2. [External packages / Third-party]
+// 3. [Internal modules / Local imports]
+
+[Extract example showing import organization]
+```
+
+---
+
+## Code Quality
+
+<!-- Find linter/formatter configuration -->
+
+### Commands
+
+| Action | Command | Auto-fix |
+|--------|---------|----------|
+| Lint | `[exact command]` | `[fix command]` |
+| Format | `[exact command]` | `[format write command]` |
+| Type check | `[command or N/A]` | - |
+| All checks | `[combined command if exists]` | - |
+
+### Configuration Files
+
+| Tool | Config File |
+|------|-------------|
+| Linter | `[.eslintrc / .pylintrc / etc.]` |
+| Formatter | `[.prettierrc / pyproject.toml / etc.]` |
+| Type checker | `[tsconfig.json / mypy.ini / etc.]` |
+
+### Pre-commit Hooks
+
+<!-- Check for .pre-commit-config.yaml, husky, lint-staged -->
+
+```bash
+# Setup (if not auto-installed)
+[pre-commit install command or N/A]
+```
+
+**Runs on commit**: [List what runs - lint, format, tests]
 
 ---
 
 ## Error Handling
 
-### Exception Hierarchy
+<!-- Extract exception classes and handling patterns -->
 
-| Exception | When to Use | HTTP Status | Source |
-|-----------|-------------|-------------|--------|
-| `[ValidationError]` | Invalid input | 400 | [file:lines] |
-| `[NotFoundError]` | Resource missing | 404 | [file:lines] |
-| `[AuthError]` | Auth failed | 401/403 | [file:lines] |
-| `[ServerError]` | Internal error | 500 | [file:lines] |
+### Exception Types
 
-### Pattern: Raise & Handle
+| Exception | Use When | Source |
+|-----------|----------|--------|
+| `[ValidationError]` | Invalid input data | `[file:line]` |
+| `[NotFoundError]` | Resource doesn't exist | `[file:line]` |
+| `[UnauthorizedError]` | Auth required/failed | `[file:line]` |
+| `[ForbiddenError]` | Permission denied | `[file:line]` |
+| `[ConflictError]` | State conflict | `[file:line]` |
 
-```[language]
-# Raise - Source: [file:lines]
-[raise_example]
+### Pattern
 
-# Handle - Source: [file:lines]
-[handler_example]
+```[lang]
+// Source: [file:lines]
+[Extract canonical error throwing/handling pattern]
 ```
 
-### Error Response Format
-
-```json
-{
-  "error": {
-    "code": "[ERROR_CODE]",
-    "message": "[human-readable]",
-    "details": "[context]"
-  }
-}
-```
-
-**Rules**:
-- ✅ Specific exceptions (not bare `except:`)
-- ✅ Log with context
-- ✅ Return consistent format
-- ❌ Expose internal details
+**Rules:**
+- Throw specific exceptions from `[exceptions path]`
+- Let `[error handler/middleware]` convert to response
+- ❌ Never catch-and-ignore silently
 
 ---
 
 ## Logging
 
-### Configuration
+<!-- Find logging configuration and usage patterns -->
 
-```[language]
-# Source: [file:lines]
-[logging_config]
+### Setup
+
+```[lang]
+// Source: [file:lines]
+[Extract logger initialization/import pattern]
 ```
 
-### Log Levels
+### Usage Pattern
 
-| Level | When | Example |
-|-------|------|---------|
-| DEBUG | Development details | `[example]` |
-| INFO | Normal operations | `[example]` |
-| WARNING | Recoverable issues | `[example]` |
-| ERROR | Failures | `[example]` |
-
-### Pattern: Structured Logging
-
-```[language]
-# Good - Source: [file:lines]
-[good_logging]
-
-# Bad
-[bad_logging]
+```[lang]
+// Source: [file:lines]
+[Extract example showing structured logging with context]
 ```
 
-**Rules**:
-- ✅ Include context (user_id, request_id, etc.)
-- ✅ Use appropriate levels
-- ❌ Log secrets/PII
-- ❌ Log in hot paths
+### Levels
+
+| Level | Use For |
+|-------|---------|
+| `debug` | Development troubleshooting |
+| `info` | Significant operations (startup, requests) |
+| `warn` | Recoverable issues, deprecations |
+| `error` | Failures requiring attention |
+
+### Rules
+
+- ✅ Include context: `{ userId, requestId, [relevant ids] }`
+- ✅ Use `[detected logger]` from `[import path]`
+- ❌ No secrets, passwords, tokens in logs
+- ❌ No excessive logging in loops/hot paths
 
 ---
 
-## Configuration
+## Async Patterns
 
-### Environment Variables
+<!-- Detect if async/await, promises, or sync patterns used -->
 
-**Required**:
-```bash
-[VAR1]=[description]
-[VAR2]=[description]
+**Style**: [async/await | Promises | Callbacks | Sync | Mixed]
+
+```[lang]
+// Source: [file:lines]
+[Extract canonical async pattern]
 ```
 
-**Optional** (with defaults):
-```bash
-[VAR3]=[description] # default: [value]
+### Error Handling in Async
+
+```[lang]
+// Source: [file:lines]
+[Extract async error handling - try/catch wrapper, error middleware, etc.]
 ```
-
-### Pattern: Load Config
-
-```[language]
-# Source: [file:lines]
-[config_loading]
-```
-
-### Multi-Environment
-
-```[language]
-# Source: [file:lines]
-[env_detection]
-```
-
-**Environments**: development | staging | production
-
-**Rules**:
-- ✅ Use env vars for deployment-specific config
-- ✅ Validate at startup
-- ✅ Never commit `.env` files
-- ❌ Hardcode secrets
 
 ---
 
-## Setup Guide
+## Configuration & Environment
 
-### Quick Start
+<!-- Find how config is loaded and validated -->
 
-```bash
-# Install
-[install_command]
+### Loading Pattern
 
-# Configure
-[config_command]
-
-# Run
-[run_command]
+```[lang]
+// Source: [file:lines]
+[Extract config loading/validation pattern]
 ```
 
-### Environment Setup
+### Required Variables
+
+| Variable | Purpose | Example |
+|----------|---------|---------|
+| `[VAR_NAME]` | [Purpose] | `[example value]` |
+| `[VAR_NAME]` | [Purpose] | `[example value]` |
+
+### Accessing Config
+
+```[lang]
+// Use this pattern to access configuration
+[Extract how to import/use config values]
+```
+
+---
+
+## Dependencies
+
+<!-- Find package manager and conventions -->
+
+### Adding Dependencies
 
 ```bash
-# 1. Activate environment
-[activate_command]
+# Production dependency
+[npm install X / pip install X / etc.]
 
-# 2. Install dependencies
-[dependency_command]
-
-# 3. Setup database (if needed)
-[db_setup_command]
-
-# 4. Run
-[dev_server_command]
+# Dev dependency
+[npm install -D X / pip install X --dev / etc.]
 ```
 
-**Verify**: [URL or command to verify setup]
+### Update Process
+
+```bash
+# Check outdated
+[command]
+
+# Update
+[command]
+```
+
+**Lock file**: `[package-lock.json / poetry.lock / etc.]` - ✅ Always commit
 
 ---
 
-## Common Commands
+## Git Workflow
 
-| Task | Command | Notes |
-|------|---------|-------|
-| Run dev | `[command]` | [Notes] |
-| Lint | `[command]` | Auto-fix with `[fix_flag]` |
-| Format | `[command]` | [Notes] |
-| Test | `[command]` | ONLY if user requests |
-| Build | `[command]` | [Notes] |
+<!-- Extract from CONTRIBUTING.md, .github, or infer from history -->
+
+### Branch Naming
+
+```
+[feature/bugfix/hotfix]/[ticket-id]-[short-description]
+```
+
+**Examples**: `feature/ABC-123-add-user-auth`, `bugfix/fix-login-redirect`
+
+### Commit Messages
+
+<!-- Detect conventional commits, or extract pattern -->
+
+```
+[type]([scope]): [description]
+
+[body - optional]
+```
+
+**Types**: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
+
+### PR Checklist
+
+- [ ] Linting passes (`[lint command]`)
+- [ ] Tests pass (`[test command]`)
+- [ ] [Other checks from CI or CONTRIBUTING.md]
 
 ---
 
-## Troubleshooting
+## Common Patterns
 
-| Symptom | Likely Cause | Fix |
-|---------|--------------|-----|
-| [error_pattern] | [cause] | [solution] |
-| [error_pattern] | [cause] | [solution] |
+<!-- Extract recurring patterns specific to this codebase -->
+
+| Pattern | When to Use | Example |
+|---------|-------------|---------|
+| `[Helper/Utility name]` | [Use case] | `[file:line]` |
+| `[Decorator/Middleware]` | [Use case] | `[file:line]` |
+| `[Factory/Builder]` | [Use case] | `[file:line]` |
 
 ---
 
-## References
+## Don't Do
 
-- **Error Handling**: `[path/to/exceptions]`
-- **Logging Config**: `[path/to/logging/config]`
-- **Configuration**: `[path/to/config]`
-- **Setup Docs**: `README.md`
+<!-- Extract anti-patterns from linter rules or code review patterns -->
+
+| ❌ Avoid | ✅ Instead | Why |
+|----------|-----------|-----|
+| `[anti-pattern]` | `[correct pattern]` | [reason] |
+| `[anti-pattern]` | `[correct pattern]` | [reason] |
+| `[anti-pattern]` | `[correct pattern]` | [reason] |
+
+---
+
+## Quick Reference
+
+| Need | Location |
+|------|----------|
+| Linter config | `[path]` |
+| Formatter config | `[path]` |
+| Exception classes | `[path]` |
+| Logger setup | `[path]` |
+| Config loader | `[path]` |
+| Utilities | `[path]` |
 
 ---

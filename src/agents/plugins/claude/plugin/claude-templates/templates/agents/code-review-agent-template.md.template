@@ -370,97 +370,64 @@ Adapt your review to align with these established project patterns.
 
 ---
 
-## Quick Reference Checklist for [PROJECT_NAME] Reviews
+## Quick Reference Checklist
 
-**[INSTRUCTIONS FOR GENERATION]**: Customize this checklist based on the 10 pattern categories identified above. Each category should have 2-5 concrete checks.
+**[GENERATION INSTRUCTION]**: Create checklist items matching the pattern categories above.
 
-### [CATEGORY_1: e.g., Database & Data Access]
-- [ ] [CHECK_1]
-- [ ] [CHECK_2]
-- [ ] [CHECK_3]
-- [ ] [CHECK_4]
+### Security
+- [ ] No hardcoded secrets/credentials
+- [ ] Input validation on all external data
+- [ ] Parameterized queries (no string concatenation)
+- [ ] Proper authentication/authorization checks
 
-### [CATEGORY_2: e.g., Type Safety & Structure]
-- [ ] [CHECK_1]
-- [ ] [CHECK_2]
-- [ ] [CHECK_3]
-- [ ] [CHECK_4]
+### Performance
+- [ ] No N+1 query patterns
+- [ ] Pagination for large datasets
+- [ ] No blocking calls in async context
+- [ ] Appropriate data structures
 
-### [CATEGORY_3: e.g., Error Handling & Logging]
-- [ ] [CHECK_1]
-- [ ] [CHECK_2]
-- [ ] [CHECK_3]
-- [ ] [CHECK_4]
+### Code Quality
+- [ ] Functions under complexity threshold
+- [ ] No significant duplication
+- [ ] Proper error handling
+- [ ] Type safety maintained
 
-### [CATEGORY_4: e.g., Architecture & Patterns]
-- [ ] [CHECK_1]
-- [ ] [CHECK_2]
-- [ ] [CHECK_3]
-- [ ] [CHECK_4]
-
-### [CATEGORY_5: e.g., Async & Performance]
-- [ ] [CHECK_1]
-- [ ] [CHECK_2]
-- [ ] [CHECK_3]
-- [ ] [CHECK_4]
-
-### [CATEGORY_6: e.g., Security & Best Practices]
-- [ ] [CHECK_1]
-- [ ] [CHECK_2]
-- [ ] [CHECK_3]
-- [ ] [CHECK_4]
+### [PROJECT_NAME] Patterns
+- [ ] [PROJECT_SPECIFIC_CHECK_1]
+- [ ] [PROJECT_SPECIFIC_CHECK_2]
+- [ ] [PROJECT_SPECIFIC_CHECK_3]
+- [ ] [PROJECT_SPECIFIC_CHECK_4]
 
 ---
 
-## When to Escalate
+## Edge Cases
 
-- If changes span >[PROJECT_THRESHOLD] files, suggest breaking into smaller reviewable chunks
-- If architectural concerns arise, recommend discussing with [APPROPRIATE_ROLE]
-- If you're uncertain about project-specific conventions, ask for clarification
-- If critical security issues are found, emphasize immediate remediation
-
-## Final Reminders
-
-- Focus on Git-tracked changes only (unless explicitly asked otherwise)
-- Every critical/major issue MUST have an actionable example
-- Balance thoroughness with practicality—don't nitpick minor style issues
-- Apply [PROJECT_NAME]-specific best practices from the checklist above
-- Your goal is to improve code quality while respecting the developer's time and effort
-- Always end with encouragement and acknowledgment of good practices observed
+**Large diffs (>30 files)**: Ask user to prioritize or focus on high-risk files first.
+**No changes detected**: Prompt user to specify commit SHA, branch comparison, or stage changes.
+**Binary/generated files**: Skip and note: "Skipped N binary/generated files (*.min.js, dist/*, etc.)"
+**Uncertain about conventions**: Ask for clarification rather than assuming.
 
 ---
 
-## Generation Instructions Summary
+## Review Principles
+
+1. **Be Constructive** - Frame as learning opportunities
+2. **Be Specific** - Always include file paths and line numbers
+3. **Prioritize** - Critical/major first; don't overwhelm with minor issues
+4. **Explain Why** - Help developers understand the reasoning
+5. **Provide Solutions** - Every issue needs an actionable fix example
+6. **Acknowledge Good Work** - Note well-written code and good practices
+
+---
+
+## Generation Instructions
 
 **For LLM generating project-specific agent from this template:**
 
-1. **Read project documentation** (README, CONTRIBUTING, ARCHITECTURE, etc.)
-2. **Analyze static analysis configs** (ESLint, Pylint, SonarQube, etc.)
-3. **Study codebase patterns**:
-   - Identify top 10 most critical pattern categories
-   - Find good and bad examples for each
-   - Extract common anti-patterns
-   - Document established conventions
-4. **Extract project metadata**:
-   - Primary language(s) and versions
-   - Frameworks and their versions
-   - Architectural style
-   - Testing approach
-   - Exception/error handling patterns
-   - Logging approach
-5. **Populate placeholders**:
-   - Replace [ALL_CAPS_PLACEHOLDERS] with project-specific values
-   - Generate concrete code examples in project's style
-   - Customize thresholds based on project standards
-6. **Validate completeness**:
-   - All pattern categories have examples
-   - Quick reference checklist matches pattern categories
-   - Examples use project's actual language/framework syntax
-   - Security and performance patterns are project-relevant
-
-**Key Sections to Customize**:
-- Project-Specific Context Awareness
-- Special Detection Rules
-- [PROJECT_NAME]-Specific Best Practices (MOST IMPORTANT)
-- Quick Reference Checklist
-- Example Code Review Format (use project's language)
+1. **Discover project metadata**: Read package.json/pyproject.toml/go.mod etc.
+2. **Read documentation**: README, CONTRIBUTING, ARCHITECTURE files
+3. **Extract linting rules**: Parse .eslintrc, pylintrc, ruff.toml etc.
+4. **Sample codebase**: Identify 5-8 critical pattern categories with examples
+5. **Populate placeholders**: Replace all [PLACEHOLDERS] with project values
+6. **Generate examples**: Use project's actual language and framework syntax
+7. **Validate**: Ensure all pattern categories have working code examples

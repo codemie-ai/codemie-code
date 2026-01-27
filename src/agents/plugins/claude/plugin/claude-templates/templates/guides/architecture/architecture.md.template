@@ -1,0 +1,197 @@
+---
+# Architecture Guide
+
+<!--
+GENERATION INSTRUCTIONS:
+1. Identify architectural style (layered/modular/hexagonal/clean/microservices)
+2. Detect design patterns by scanning code structures
+3. Map actual dependencies between components
+4. Extract from: imports, folder structure, class relationships
+5. Output: 300 lines max
+-->
+
+**Project**: [Extract from config]
+**Style**: [Detect: Layered | Modular | Hexagonal | Clean | Microservices | Monolith]
+**Language**: [Detect] | **Framework**: [Detect]
+
+---
+
+## Architecture Overview
+
+<!-- Generate diagram based on detected style -->
+
+```
+[Generate ASCII diagram showing main components and their relationships]
+```
+
+**Key Decision**: [Extract or infer WHY this architecture - scalability/simplicity/team structure]
+
+---
+
+## Component Structure
+
+<!-- Scan and document actual project organization -->
+
+```
+[root]/
+├── [component1]/     [Detected purpose]
+├── [component2]/     [Detected purpose]
+├── [component3]/     [Detected purpose]
+├── [shared/common]/  [Detected purpose]
+└── [entry point]
+```
+
+---
+
+## Design Patterns Detected
+
+<!-- Scan codebase for these patterns, document only those found -->
+
+| Pattern | Usage | Location |
+|---------|-------|----------|
+| [Repository] | [How it's used] | `[file:line]` |
+| [Factory] | [How it's used] | `[file:line]` |
+| [Singleton] | [How it's used] | `[file:line]` |
+| [Dependency Injection] | [How it's used] | `[file:line]` |
+| [Observer/Event] | [How it's used] | `[file:line]` |
+| [Strategy] | [How it's used] | `[file:line]` |
+
+### Primary Pattern: [Most significant pattern]
+
+```[lang]
+// Source: [file:lines]
+[Extract canonical example of main pattern]
+```
+
+**When to use**: [Detect from usage context]
+
+---
+
+## Layer/Module Responsibilities
+
+<!-- Adapt based on detected architecture style -->
+
+| Component | Responsibility | Depends On | Depended By |
+|-----------|----------------|------------|-------------|
+| [Layer/Module 1] | [Detected role] | [List] | [List] |
+| [Layer/Module 2] | [Detected role] | [List] | [List] |
+| [Layer/Module 3] | [Detected role] | [List] | [List] |
+
+---
+
+## Dependency Rules
+
+<!-- Extract from imports analysis -->
+
+```
+[Component A] ──► [Component B] ──► [Component C]
+                       │
+                       ▼
+                  [Shared/Core]
+```
+
+| Rule | Enforced By |
+|------|-------------|
+| [e.g., Controllers never import Repositories directly] | [Convention / Linter / DI Container] |
+| [e.g., Domain has no external dependencies] | [Convention / Module boundary] |
+
+**Violations to avoid:**
+- ❌ [Detected anti-pattern or rule]
+- ❌ [Detected anti-pattern or rule]
+
+---
+
+## Data Flow
+
+<!-- Trace a typical request through the system -->
+
+```
+[Entry] → [Component1] → [Component2] → [Component3] → [Storage/External]
+   │           │              │              │
+   │      [Transform]    [Process]      [Persist]
+   │           │              │              │
+   └───────────┴──────────────┴──────────────┘
+                     Response
+```
+
+**Example flow** (`[common operation]`):
+1. `[entry point]` receives request
+2. `[component]` validates/transforms
+3. `[component]` executes logic
+4. `[component]` persists/fetches data
+5. Response returns through chain
+
+---
+
+## Key Abstractions
+
+<!-- Find interfaces/base classes that define contracts -->
+
+| Abstraction | Purpose | Implementations |
+|-------------|---------|-----------------|
+| `[Interface/Base]` | [Contract purpose] | `[file:line]` |
+| `[Interface/Base]` | [Contract purpose] | `[file:line]` |
+
+```[lang]
+// Source: [file:lines]
+[Extract key interface/abstract class]
+```
+
+---
+
+## Adding New Features
+
+<!-- Document extension points based on existing patterns -->
+
+### To add new [entity/resource/feature]:
+
+1. **[Component1]**: Create `[path/pattern]`
+2. **[Component2]**: Create `[path/pattern]`
+3. **[Component3]**: Create `[path/pattern]`
+4. **Wire up**: [How components connect - DI/imports/registration]
+
+### To add new [integration/external service]:
+
+1. Create adapter in `[path]`
+2. Implement interface `[interface name]`
+3. Register in `[config/di location]`
+
+---
+
+## Configuration & Environment
+
+<!-- Find how config flows through architecture -->
+
+| Config Type | Location | Accessed Via |
+|-------------|----------|--------------|
+| Environment | `[.env / env files]` | `[config module/pattern]` |
+| App Config | `[config files]` | `[how injected/imported]` |
+| Secrets | `[secrets handling]` | `[access pattern]` |
+
+---
+
+## Boundaries Summary
+
+<!-- Concise rules for AI to follow -->
+
+| ✅ DO | ❌ DON'T |
+|-------|----------|
+| [Detected convention] | [Detected anti-pattern] |
+| [Detected convention] | [Detected anti-pattern] |
+| [Detected convention] | [Detected anti-pattern] |
+| Follow existing [pattern] for new code | Introduce new patterns without reason |
+
+---
+
+## Quick Reference
+
+| Need | Location | Pattern |
+|------|----------|---------|
+| Entry point | `[path]` | - |
+| Business logic | `[path]` | [pattern] |
+| Data access | `[path]` | [pattern] |
+| External services | `[path]` | [pattern] |
+| Shared utilities | `[path]` | - |
+| Configuration | `[path]` | [pattern] |
+
+---

@@ -38,7 +38,7 @@ claude-templates/
         ├── api/
         │   └── api-patterns.md.template
         ├── architecture/
-        │   └── layered-architecture.md.template
+        │   └── architecture.md.template
         ├── data/
         │   └── database-patterns.md.template
         ├── development/
@@ -160,7 +160,7 @@ claude-templates/
 - **development/security-patterns.md.template**: Authentication, validation, encryption
 - **development/setup-guide.md.template**: Installation and setup
 - **api/api-patterns.md.template**: REST/GraphQL endpoint patterns
-- **architecture/layered-architecture.md.template**: Layer responsibilities and flow
+- **architecture/architecture.md.template**: Directory structure, layered architecture, and organizational patterns
 - **data/database-patterns.md.template**: ORM, queries, transactions, migrations
 - **testing/testing-patterns.md.template**: Unit/integration tests, fixtures, mocking
 - **standards/code-quality.md.template**: Linting, formatting, type safety
@@ -410,7 +410,7 @@ The process includes 5 decision gates where Claude Code checks:
 
 **Generated guides**:
 - api/api-patterns.md (FastAPI endpoints)
-- architecture/layered-architecture.md (router→service→repository)
+- architecture/architecture.md (router→service→repository layers and project structure)
 - data/database-patterns.md (SQLAlchemy models, queries)
 - development/error-handling.md (FastAPI exception handlers)
 - development/logging-patterns.md (Python logging)
@@ -435,7 +435,7 @@ The process includes 5 decision gates where Claude Code checks:
 
 **Generated guides**:
 - api/api-patterns.md (Express routes)
-- architecture/layered-architecture.md (routes→services→repositories)
+- architecture/architecture.md (routes→services→repositories layers and project structure)
 - data/database-patterns.md (Mongoose schemas, queries)
 - development/error-handling.md (Express error middleware)
 - development/logging-patterns.md (Winston/Morgan)
@@ -460,7 +460,7 @@ The process includes 5 decision gates where Claude Code checks:
 
 **Generated guides**:
 - api/api-patterns.md (REST controllers)
-- architecture/layered-architecture.md (controller→service→repository)
+- architecture/architecture.md (controller→service→repository layers and project structure)
 - data/database-patterns.md (JPA entities, repositories)
 - development/error-handling.md (Exception handlers)
 - development/logging-patterns.md (SLF4J/Logback)

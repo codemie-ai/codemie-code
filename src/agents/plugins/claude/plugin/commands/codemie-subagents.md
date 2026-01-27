@@ -1,616 +1,345 @@
 # Codemie Subagents - Generate Project-Specific Subagent Files
 
 **Command Name**: `codemie-subagents`
-**Description**: Generate project-specific subagent files from templates - analyze codebase and create AI-optimized subagent definitions
-**Category**: Subagent Generation
-**Complexity**: Medium-High
+**Description**: Generate project-specific subagent files from templates by analyzing codebase and existing guides
+**Output**: AI-optimized subagent definitions in `.claude/agents/`
 
 ---
+## Additional user's input
+Additional context/input from user: $ARGUMENTS. Might be empty by default.
 
 ## Purpose
 
-This command analyzes any software project and generates project-specific subagent files from templates, including:
-- Unit Tester Agent - specialized for project's testing patterns
-- Solution Architect Agent - tailored to project's architecture
-- Code Review Agent - customized for project's code standards
-
-Generated agents are placed in `.claude/agents/` directory for immediate use by Claude Code.
+Analyze project and generate tailored subagent files:
+- **Unit Tester Agent** - Project's testing patterns and framework
+- **Solution Architect Agent** - Project's architecture and conventions
+- **Code Review Agent** - Project's code standards and linting rules
+- **Refactor Cleaner Agent** - Project's cleanup tools and critical paths
 
 ---
 
 ## Prerequisites
 
-Before running this command:
-- [ ] Project is cloned and accessible
-- [ ] You have read access to the codebase
-- [ ] Codemie templates are available at `.codemie/claude-templates/templates/agents/`
+- [ ] Project is accessible
+- [ ] Templates exist at `.codemie/claude-templates/templates/subagents/`
+- [ ] (Optional) Backup existing `.claude/agents/` if updating agents
 
-**Note**: The templates directory should be located in `.codemie/claude-templates/` within the project.
-
----
-
-## 🚨 CRITICAL SIZE LIMITS
-
-**MANDATORY**: Each generated subagent must be **300-500 lines maximum**.
-
-### Enforcement Strategy
-
-**During Generation**:
-- ✅ Use brief, focused examples (10-20 lines max)
-- ✅ Focus on contracts: function signatures, patterns, conventions
-- ✅ Use tables for pattern references instead of long explanations
-- ✅ ONE representative example per pattern category
-- ✅ Reference file:line for detailed examples instead of copying entire code
-- ❌ NO extensive code blocks (keep under 20 lines)
-- ❌ NO multiple variations of same pattern
-- ❌ NO verbose tutorials or walkthroughs
-- ❌ NO redundant explanations
-
-**Validation**:
-After generating each subagent, count lines:
-```bash
-wc -l .claude/agents/[agent-name].md
-```
-If > 500 lines: **STOP and condense before continuing**.
+**Safety Note**: If existing agents are found, original content will be preserved during updates. However, creating a backup before running this command is recommended for recovery purposes.
 
 ---
 
-## Execution Steps
+## 🚨 SIZE LIMITS
 
-### Phase 1: Template Discovery & Project Analysis
+**Each generated subagent: 150-300 lines maximum**
 
-#### Step 1.1: Discover Available Templates
+| ✅ Do | ❌ Don't |
+|-------|---------|
+| Brief examples (10-15 lines) | Extensive code blocks |
+| Tables for patterns | Long prose explanations |
+| File:line references | Full code listings |
+| One example per pattern | Multiple variations |
 
-**Task**: Find all subagent templates available for generation
+---
 
-**Actions**:
+## Execution
+
+### Phase 1: Discovery
+
+#### Step 1.1: Find Templates
+
 ```bash
-# List all template files in subagents directory
 ls .codemie/claude-templates/templates/subagents/
 ```
 
-**Expected Templates**:
-- `code-review-agent-template.md.template` - Code review specialized agent
-- `solution-architect-agent.md.template` - Architecture planning agent
-- `unit-tester-agent.md.template` - Testing specialized agent
+Expected: `code-review-agent-template.md`, `solution-architect-agent.md`, `unit-tester-agent.md`, `refactor-cleaner-agent.md`
 
-**Output**: Array of template file names and paths
-
-**Confidence Check**: Can you find at least 1 template file?
-- ✅ YES → Continue to Step 1.2
-- ❌ NO → Report error (templates directory missing)
+If no templates found → Report error and stop.
 
 ---
 
-#### Step 1.2: Analyze Project Structure
+#### Step 1.1b: Check Existing Agents
 
-**Task**: Understand project organization, tech stack, and patterns
-
-**Actions**:
 ```bash
-# Identify project type and structure
-- Check for package.json, requirements.txt, pom.xml, Cargo.toml, go.mod, etc.
-- Identify language(s) and frameworks
-- Map directory structure
-- Find configuration files (tsconfig.json, .eslintrc, pytest.ini, etc.)
-- Locate test directories and files
-- Find architecture patterns (MVC, layered, microservices, etc.)
+ls .claude/agents/ 2>/dev/null
 ```
 
-**Critical Information to Extract**:
-- **Programming Language(s)**: TypeScript, Python, Java, Go, Rust, etc.
-- **Framework(s)**: Express, FastAPI, Spring Boot, Gin, etc.
-- **Build Tools**: npm, pip, maven, cargo, etc.
-- **Testing Framework**: Vitest, Jest, pytest, JUnit, Go test, etc.
-- **Linting Tools**: ESLint, Pylint, Checkstyle, golangci-lint, etc.
-- **Project Structure**: Monorepo/multi-package vs single package
-- **Key Directories**: src/, tests/, lib/, internal/, etc.
+**Purpose**: Identify existing agents to update rather than recreate
 
-**Output**: Project analysis document with all extracted information
+**Agent Name Variations to Match**:
+| Template | Possible Existing Names |
+|----------|------------------------|
+| unit-tester-agent.md | unit-tester.md, tester.md, unit-test-agent.md, test-agent.md |
+| solution-architect-agent.md | solution-architect.md, architect.md, architecture-agent.md |
+| code-review-agent.md | code-review.md, reviewer.md, review-agent.md, code-reviewer.md |
+| refactor-cleaner-agent.md | refactor-cleaner.md, refactor.md, cleaner.md, cleanup-agent.md |
+
+**Match Logic**:
+- Exact match (e.g., `solution-architect-agent.md`)
+- Partial match (e.g., `architect.md` matches solution-architect template)
+- Keyword match (e.g., `tester.md` matches unit-tester template)
+
+**Record Results**:
+- List all existing agents found
+- Map each to corresponding template (if match found)
+- Note unmatched agents (leave unchanged)
 
 ---
 
-#### Step 1.3: Read Existing Documentation
+#### Step 1.2: Read Project Context (PRIORITY ORDER)
 
-**Task**: Check for existing documentation to understand conventions
-
-**Actions**:
+**First**: Check `.codemie/guides/` folder
 ```bash
-# Read existing docs (if they exist)
-- README.md - project overview, setup, conventions
-- CONTRIBUTING.md - contribution guidelines, code standards
-- CLAUDE.md - existing AI instructions (if present)
-- .codemie/guides/ - existing guides
-- docs/ directory - additional documentation
+# If exists, read ALL guides first - this is the primary source
+ls .codemie/guides/ 2>/dev/null && cat .codemie/guides/*.md
 ```
+
+**Second**: Read standard documentation
+```bash
+cat README.md CONTRIBUTING.md ARCHITECTURE.md CLAUDE.md 2>/dev/null
+```
+
+**Third**: Analyze codebase for missing information
+- Package files (package.json, pyproject.toml, pom.xml, go.mod)
+- Config files (tsconfig.json, .eslintrc, pytest.ini)
+- Directory structure
+- Sample source and test files
 
 **Extract**:
-- Code style conventions
-- Testing requirements
-- Review standards
-- Architecture decisions
-- Common patterns and anti-patterns
+| Item | Source Priority |
+|------|-----------------|
+| Architecture pattern | guides/ → ARCHITECTURE.md → directory structure |
+| Code conventions | guides/ → CONTRIBUTING.md → linter configs |
+| Testing patterns | guides/ → test files → package.json |
+| Critical paths | guides/ → core business logic analysis |
 
 ---
 
-### Phase 2: Template Loading & Validation
+### Phase 2: Generate or Update Each Agent
 
-#### Step 2.1: Create Todo List for Templates
+For each template, create a todo item and process:
 
-**Task**: Create todo tasks for each discovered template
+#### Step 2.0: Determine Action (Create vs Update)
 
-**Actions**:
-```typescript
-// For each template file found in Step 1.1:
-// - Create todo item: "Generate [agent-name] from template"
-// Example todos:
-// - [ ] Generate unit-tester agent from template
-// - [ ] Generate solution-architect agent from template
-// - [ ] Generate code-review agent from template
-```
+**For each template**:
+1. Check if matching existing agent was found in Step 1.1b
+2. Decide action:
+   - **UPDATE**: Existing agent found → Review and adjust existing file
+   - **CREATE**: No existing agent → Generate from template
 
-**Output**: Todo list with one task per template
+**Update Priority**:
+- If existing agent is outdated (missing project info, has placeholders) → UPDATE
+- If existing agent is custom/non-template based → ASK USER before updating
+- If uncertain → ASK USER: "Found existing [agent-name]. Update it or create new?"
 
 ---
 
-#### Step 2.2: Load Each Template
+#### Step 2.1: Load Template or Existing Agent
 
-**Task**: Read and parse each template file
-
-**For Each Template**:
-
-**Step 2.2.1: Read Template Content**
+**If CREATE (no existing agent)**:
 ```bash
-# Read template file
 cat .codemie/claude-templates/templates/subagents/[template-file]
 ```
 
-**Step 2.2.2: Identify Placeholders**
+Identify all `[PLACEHOLDERS]` and `[GENERATION INSTRUCTION]` blocks.
 
-Common placeholders to find:
-- `[PROJECT_NAME]` - Project name
-- `[LANGUAGE]` - Programming language
-- `[FRAMEWORK]` - Main framework
-- `[TEST_FRAMEWORK]` - Testing framework
-- `[BUILD_TOOL]` - Build tool (npm, cargo, maven, etc.)
-- `[LINTER]` - Linting tool
-- `[PROJECT_STRUCTURE]` - Directory structure overview
-- `[ARCHITECTURE_PATTERN]` - Main architecture pattern
-- `[code_example]` - Code snippet placeholders
-- `[file.ext:lines]` - File reference placeholders
-- `FILL IN` sections - Areas needing project-specific content
+**If UPDATE (existing agent found)**:
+```bash
+# Read both template and existing agent
+cat .codemie/claude-templates/templates/subagents/[template-file]
+cat .claude/agents/[existing-agent-file]
+```
 
-**Output**: List of placeholders per template and sections to fill
+**Compare and Identify**:
+- Sections in template that are missing in existing agent
+- Outdated information in existing agent
+- Placeholders that need replacement
+- Project-specific updates needed (new patterns, tools, conventions)
 
 ---
 
-### Phase 3: Subagent Generation (Iterative)
+#### Step 2.2: Gather Agent-Specific Information
 
-**For Each Template** (mark as in_progress, then completed):
+**Unit Tester**:
+- Test framework, version, plugins
+- Test directory and file patterns
+- Mocking approach
+- 1-2 representative test examples
 
-#### Step 3.1: Gather Template-Specific Information
+**Solution Architect**:
+- Architecture layers and their names
+- Specs directory location
+- Naming conventions
+- Tech stack summary
 
-**For Unit Tester Agent**:
-- Testing framework and version
-- Test file locations and naming patterns (e.g., `*.test.ts`, `*_test.go`, `test_*.py`)
-- Mock/fixture patterns used in project
-- Coverage requirements (if documented)
-- Test commands (npm test, pytest, go test, etc.)
-- Example test files (2-3 representative examples)
-- Common testing utilities and helpers
+**Code Review**:
+- Linting tools and configs
+- Severity thresholds
+- 5-7 critical pattern categories
+- Git workflow commands
 
-**Actions**:
-```bash
-# Find test files and patterns
-find . -name "*.test.ts" -o -name "*_test.go" -o -name "test_*.py"
-# Find test configuration
-grep -r "test" package.json tsconfig.json pytest.ini go.mod
-# Read example test files
-cat [test-file-path]  # 2-3 representative examples
-```
+**Refactor Cleaner**:
+- Available analysis tools (knip, depcheck, vulture, etc.)
+- Critical paths that must never be removed
+- Deletion log location
+- Build/test verification commands
 
-**For Solution Architect Agent**:
-- Project architecture pattern (layered, hexagonal, microservices, etc.)
-- Key directories and their purposes
-- Layer/module dependencies and communication patterns
-- Technology stack summary
-- Integration points (databases, APIs, external services)
-- Configuration management approach
-
-**Actions**:
-```bash
-# Map directory structure
-tree -L 2 -d
-# Find architectural patterns
-grep -r "interface\|abstract\|Repository\|Service\|Controller" src/
-# Find integration points
-grep -r "database\|api\|http\|grpc" config/ src/
-```
-
-**For Code Review Agent**:
-- Code style configuration (.eslintrc, .pylintrc, etc.)
-- Linting rules and enforcement level
-- Formatter configuration (prettier, black, gofmt, etc.)
-- Code review checklist (if in CONTRIBUTING.md)
-- Common code smells documented in project
-- Type safety requirements (TypeScript strict mode, mypy, etc.)
-
-**Actions**:
-```bash
-# Find linting configuration
-cat .eslintrc* .pylintrc* .golangci.yml
-# Find formatter configuration
-cat .prettierrc* pyproject.toml .rustfmt.toml
-# Read contribution guidelines
-cat CONTRIBUTING.md | grep -A 10 "review\|style\|lint"
-```
-
-**🚨 SIZE LIMIT ENFORCEMENT**:
-**Target: 300-500 lines for final agent**
-
-Gather information selectively:
-- Focus on **essential patterns only**
-- Collect **1-2 representative examples** per category
-- Prefer **file:line references** over full code listings
-- Use **tables** to summarize multiple patterns compactly
+**Source Priority**: Always check `.codemie/guides/` first, then analyze code.
 
 ---
 
-#### Step 3.2: Fill Template Placeholders
+#### Step 2.3: Populate Template or Update Existing
 
-**Step 3.2.1: Replace Generic Placeholders**
+**If CREATE (from template)**:
+1. **Replace all `[PLACEHOLDERS]`** with discovered values
+2. **Fill pattern examples** using actual project code (brief, 10-15 lines)
+3. **Remove all `[GENERATION INSTRUCTION]`** blocks
+4. **Remove "Generation Instructions"** section from template
 
-Replace all standard placeholders with actual values from project analysis:
-- `[PROJECT_NAME]` → Actual project name (from package.json, README, etc.)
-- `[LANGUAGE]` → Detected language(s)
-- `[FRAMEWORK]` → Detected framework(s)
-- `[TEST_FRAMEWORK]` → Detected test framework
-- `[BUILD_TOOL]` → npm, cargo, maven, etc.
-- `[LINTER]` → ESLint, Pylint, etc.
-- `[PROJECT_STRUCTURE]` → Brief directory structure (5-10 lines)
-- `[ARCHITECTURE_PATTERN]` → Identified pattern
+**If UPDATE (existing agent)**:
+1. **Preserve custom content**: Keep user-added sections, custom examples, specific instructions
+2. **Update outdated sections**:
+   - Replace old tool versions with current versions
+   - Update file paths if structure changed
+   - Refresh pattern examples with current codebase code
+   - Add missing sections from template
+3. **Replace remaining placeholders** (if any)
+4. **Enhance with new patterns**: Add newly discovered patterns not in original
+5. **Maintain structure**: Keep existing organization unless template structure changed significantly
 
-**Step 3.2.2: Fill Code Examples (KEEP BRIEF)**
-
-For each `[code_example]` placeholder:
-- Use **actual code from codebase** (never generic examples)
-- Keep examples **10-20 lines maximum**
-- Add source reference: `// Source: file.ts:23-42`
-- Focus on **pattern demonstration**, not complete implementations
-
-**Example**:
-```typescript
-// GOOD: Brief, focused example (15 lines)
-describe('UserService', () => {
-  it('should create user with valid data', async () => {
-    const mockRepo = { save: vi.fn().mockResolvedValue(user) };
-    const service = new UserService(mockRepo);
-
-    const result = await service.createUser(validData);
-
-    expect(result).toEqual(user);
-    expect(mockRepo.save).toHaveBeenCalledWith(validData);
-  });
-});
-// Source: tests/services/user.test.ts:45-56
-```
-
-**Step 3.2.3: Fill "FILL IN" Sections**
-
-For sections marked "FILL IN":
-- Add **project-specific content only**
-- Use **tables** for multiple patterns:
-  ```markdown
-  | Pattern | File Location | Key Characteristics |
-  |---------|--------------|---------------------|
-  | [Pattern1] | file.ts:line | Brief description |
-  ```
-- Keep explanations **concise** (1-2 sentences max per item)
-- Use **bullet lists** for quick reference
-
-**Step 3.2.4: Replace File References**
-
-For each `[file.ext:lines]` placeholder:
-- Find **actual relevant files** from codebase analysis
-- Use **real file paths** with line numbers
-- Example: `src/services/user.ts:23-45` instead of `[service.ts:lines]`
+**Update Strategy**:
+- **Section-by-section merge**: Compare template sections with existing agent sections
+- **Preserve > Replace**: Keep existing content unless clearly outdated or incorrect
+- **Add > Remove**: Add missing information rather than removing custom content
+- **Validate > Assume**: Check if existing examples still exist in codebase
 
 ---
 
-#### Step 3.3: Create Output Directory
+#### Step 2.4: Write and Validate
 
-**Task**: Ensure output directory exists
-
-**Actions**:
 ```bash
-# Create directory if it doesn't exist
 mkdir -p .claude/agents
+# Write agent file (create new or overwrite existing)
 ```
 
-**Note**: Only create this directory once, not per agent.
+**Checklist (CREATE)**:
+- [ ] No `[PLACEHOLDER]` text remains
+- [ ] No `[GENERATION INSTRUCTION]` blocks remain
+- [ ] Examples are from actual codebase
+- [ ] File paths are accurate
+- [ ] Commands are valid for project
+
+**Checklist (UPDATE)**:
+- [ ] Custom content preserved (user additions not lost)
+- [ ] Outdated information refreshed
+- [ ] New sections from template added if relevant
+- [ ] Examples validated against current codebase
+- [ ] File paths updated if project structure changed
+- [ ] Tool versions/commands current
+- [ ] No regression (agent still functional after update)
+
+**Action Logging**:
+Record for summary report:
+- Agent name
+- Action taken (CREATED or UPDATED)
+- Key changes made (if updated)
+
+Mark todo complete, proceed to next template.
 
 ---
 
-#### Step 3.4: Write Generated Subagent File
+### Phase 3: Finalize
 
-**Task**: Write completed subagent to file
+#### Step 3.1: Verify All Agents
 
-**Actions**:
-
-**Step 3.4.1: Determine Output Filename**
-
-Template filename → Output filename:
-- `code-review-agent-template.md.template` → `code-review-agent.md`
-- `solution-architect-agent.md.template` → `solution-architect-agent.md`
-- `unit-tester-agent.md.template` → `unit-tester-agent.md`
-
-**Step 3.4.2: Write File**
 ```bash
-# Write completed agent file
-# Save to .claude/agents/[agent-name].md
+ls -la .claude/agents/
+wc -l .claude/agents/*.md
 ```
 
-**🚨 MANDATORY SIZE VALIDATION**:
-```bash
-# Count lines immediately after writing
-LINE_COUNT=$(wc -l < .claude/agents/[agent-name].md)
-
-# Check if within limit
-if [ $LINE_COUNT -lt 300 ]; then
-    echo "⚠️  WARNING: Agent is only $LINE_COUNT lines (minimum: 300)"
-    echo "Consider adding more detail or examples"
-elif [ $LINE_COUNT -gt 500 ]; then
-    echo "⚠️  ERROR: Agent is $LINE_COUNT lines (maximum: 500)"
-    echo "MUST condense before continuing!"
-    # STOP and condense the agent
-fi
-```
-
-**Validation Checklist**:
-- [ ] **Agent is 300-500 lines** (MANDATORY)
-- [ ] All placeholders replaced with actual values
-- [ ] Code examples are from actual codebase (not generic)
-- [ ] Code examples are brief (10-20 lines max)
-- [ ] File paths are accurate with line numbers
-- [ ] Commands are correct for the project
-- [ ] No "FILL IN" or "[PLACEHOLDER]" remains
-- [ ] Used tables for pattern summaries
-- [ ] ONE representative example per pattern category
-
-**If > 500 Lines** (MUST FIX):
-1. Remove redundant code examples (keep only most representative)
-2. Convert multiple examples to a single comprehensive example
-3. Replace code blocks with file:line references
-4. Use tables instead of long prose descriptions
-5. Remove verbose explanations (keep only essential info)
-6. Consolidate similar patterns into single entries
-7. Re-validate line count
-
-**If < 300 Lines** (CONSIDER):
-1. Add more pattern examples if relevant
-2. Expand key sections with project-specific details
-3. Add troubleshooting section if missing
-4. Ensure all template sections are filled
+Confirm:
+- All agents created
+- All within size limits
+- No placeholder text remains
 
 ---
 
-#### Step 3.5: Mark Todo Complete
+#### Step 3.2: Summary Report
 
-**Actions**:
-- Mark current agent generation todo as "completed"
-- Move to next template
-
----
-
-### Phase 4: Validation & Finalization
-
-#### Step 4.1: Verify Generated Agents
-
-**For Each Generated Agent**:
-
-**4.1.1: Check File Existence**
-```bash
-# Verify all agents were created
-ls -lh .claude/agents/
-```
-
-**4.1.2: Validate Content Quality**
-- [ ] No placeholder text remains (`[...]`, `FILL IN`)
-- [ ] Code examples are real (not pseudo-code)
-- [ ] File references are accurate (actual files exist)
-- [ ] Commands are correct for project environment
-- [ ] Line count is within 300-500 range
-
-**4.1.3: Test Sample Commands (Optional)**
-```bash
-# Try running documented commands to ensure they work
-# Example: npm test (from unit-tester agent)
-# Example: npm run lint (from code-review agent)
-```
-
----
-
-#### Step 4.2: Generate Summary Report
-
-**Task**: Create summary of what was generated
-
-**Report Structure**:
 ```markdown
 # Subagent Generation Complete
 
-## Generated Agents ([N] agents)
+## Agents Processed
+| Agent | Lines | Action | Key Changes |
+|-------|-------|--------|-------------|
+| unit-tester-agent.md | X | CREATED/UPDATED | [If updated: list changes] |
+| solution-architect-agent.md | Y | CREATED/UPDATED | [If updated: list changes] |
+| code-review-agent.md | Z | CREATED/UPDATED | [If updated: list changes] |
+| refactor-cleaner-agent.md | W | CREATED/UPDATED | [If updated: list changes] |
 
-- ✅ .claude/agents/unit-tester-agent.md ([X] lines)
-- ✅ .claude/agents/solution-architect-agent.md ([Y] lines)
-- ✅ .claude/agents/code-review-agent.md ([Z] lines)
+## Actions Taken
+- **Created**: X new agents
+- **Updated**: Y existing agents
+- **Preserved**: Z unmatched agents (left unchanged)
 
-## Project Analysis Summary
+## Project Context Used
+- **Guides**: [list of .codemie/guides/ files read, or "none found"]
+- **Tech Stack**: [Language], [Framework], [Test Framework]
+- **Architecture**: [Pattern]
 
-**Technology Stack**:
-- Language: [Language]
-- Framework: [Framework]
-- Testing: [Test Framework]
-- Build Tool: [Build Tool]
-- Linter: [Linter]
+## Update Details (if applicable)
+- Outdated paths updated: [list]
+- New patterns added: [list]
+- Tool versions refreshed: [list]
+- Custom content preserved: [yes/no, details]
 
-**Architecture Pattern**: [Pattern]
-
-**Key Directories**:
-- [dir1/] - [purpose]
-- [dir2/] - [purpose]
-- [dir3/] - [purpose]
-
-## Subagent Capabilities
-
-**Unit Tester Agent**:
-- Specialized for [Test Framework]
-- Knows project test patterns in [test-dir/]
-- Configured for [specific testing approach]
-
-**Solution Architect Agent**:
-- Understands [Architecture Pattern]
-- Knows layer structure and dependencies
-- Tailored for [Project Type] architecture
-
-**Code Review Agent**:
-- Enforces [Linter] rules
-- Knows project code standards
-- Checks [specific quality requirements]
-
-## Next Steps
-
-1. Review generated agents for accuracy
-2. Customize any project-specific sections if needed
-3. Use agents via Claude Code for specialized tasks:
-   - "Write tests for [component]" → Uses unit-tester agent
-   - "Design architecture for [feature]" → Uses solution-architect agent
-   - "Review code in [file]" → Uses code-review agent
-
-## How to Use
-
-These agents are automatically available to Claude Code in this project.
-Claude Code will select the appropriate agent based on your task.
-
-You can also explicitly request an agent:
-- "Use the unit-tester agent to write tests for authentication"
-- "Use the solution-architect agent to plan the new feature"
-- "Use the code-review agent to check this PR"
+## Usage
+Agents are automatically available to Claude Code.
+Explicit invocation: "Use the [agent-name] agent to [task]"
 ```
 
 ---
 
-## Decision Gates Throughout Process
+## Decision Gates
 
-### Gate 1: After Template Discovery (Step 1.1)
-**Question**: Did I find at least 1 template file?
-- ✅ YES → Continue to project analysis
-- ❌ NO → Report error (check template directory path)
-
-### Gate 2: After Project Analysis (Step 1.3)
-**Question**: Do I have enough information about the project?
-- ✅ 80%+ confidence → Continue to generation
-- ❌ < 80% confidence → Ask user for clarification
-
-### Gate 3: After Each Agent Generation (Step 3.4)
-**Question**: Is the agent within size limits (300-500 lines)?
-- ✅ YES → Mark complete, move to next
-- ❌ NO → Condense (if > 500) or expand (if < 300)
-
-### Gate 4: After All Agents Generated (Step 4.1)
-**Question**: Are all agents complete and valid?
-- ✅ YES → Generate summary report and finish
-- ❌ NO → Fix issues and re-validate
+| Gate | Condition | Pass | Fail |
+|------|-----------|------|------|
+| Templates exist | ≥1 template found | Continue | Stop with error |
+| Existing agents check | Checked .claude/agents/ | Continue | Continue (assume no existing) |
+| Update decision | Clear CREATE or UPDATE action | Continue | Ask user for preference |
+| Custom content | Identified custom sections in existing agent | Preserve during update | Proceed with standard update |
+| Project understood | ≥80% info gathered | Continue | Ask user for clarification |
+| Agent size | 100-300 lines | Continue | Condense/expand as needed |
+| Validation | No placeholders remain | Complete | Fix and revalidate |
+| Update safety | Custom content preserved (if applicable) | Complete | Review and fix |
 
 ---
 
 ## Troubleshooting
 
-### Issue: Template Directory Not Found
-
-**Symptoms**: Cannot find `.codemie/claude-templates/templates/subagents/`
-**Action**:
-1. Check if templates are in alternate location
-2. Ask user for correct template path
-3. Verify project has been set up with codemie-init first
-
-### Issue: Cannot Determine Project Language/Framework
-
-**Symptoms**: Unclear tech stack from project files
-**Action**:
-1. Ask user: "What language and framework does your project use?"
-2. Look for alternate configuration files
-3. Check README.md for explicit mention
-
-### Issue: No Test Files Found
-
-**Symptoms**: Cannot find tests for unit-tester agent
-**Action**:
-1. Check alternate test directory names (test/, __tests__/, spec/)
-2. Check alternate file patterns (*.spec.ts, *.test.js)
-3. Ask user where tests are located
-4. If no tests exist, note in agent that tests should be created
-
-### Issue: Generated Agent Too Large (> 500 Lines)
-
-**Symptoms**: Line count exceeds limit
-**Action**:
-1. Remove redundant code examples (keep most representative)
-2. Replace code blocks with file:line references
-3. Use tables instead of prose for pattern lists
-4. Consolidate similar patterns
-5. Remove verbose explanations
-
-### Issue: Generated Agent Too Small (< 300 Lines)
-
-**Symptoms**: Line count below minimum
-**Action**:
-1. Check if all template sections were filled
-2. Add more representative examples if relevant
-3. Expand troubleshooting or pattern sections
-4. Add project-specific details from analysis
+| Issue | Action |
+|-------|--------|
+| Templates not found | Check path, ask user for correct location |
+| Existing agent name doesn't match | Use partial/keyword matching logic (Step 1.1b) |
+| Uncertain if existing agent is custom | Ask user: "Found [agent]. Update or preserve?" |
+| Existing agent very different from template | Ask user before updating, risk losing custom content |
+| Agent has placeholders after update | Re-gather project info, re-populate |
+| Update causes agent to exceed size limit | Condense: prioritize new info, remove outdated examples |
+| Unclear tech stack | Check `.codemie/guides/` first, then ask user |
+| No test files found | Check alternate patterns, note in agent |
+| Agent too large (>300) | Condense: use references, tables, single examples |
+| Missing critical info | Check guides/, then analyze code, then ask user |
+| Custom sections lost during update | Restore from backup (existing file), merge manually |
 
 ---
 
 ## Success Criteria
 
-Subagent generation is complete when:
-- ✅ All template files processed
-- ✅ All agents generated in `.claude/agents/`
-- ✅ All agents are 300-500 lines
-- ✅ All code examples are from actual codebase
-- ✅ All file references are accurate
-- ✅ All commands are correct
-- ✅ No placeholders or "FILL IN" text remains
-- ✅ Agents are project-specific (not generic)
-- ✅ Summary report generated
-
----
-
-## Example Invocation
-
-**User**: "Generate subagents for my TypeScript project"
-
-**Claude Code**:
-1. Discovers 3 templates (unit-tester, solution-architect, code-review)
-2. Analyzes project (finds TypeScript, Vitest, ESLint, layered architecture)
-3. Creates todo list with 3 agent generation tasks
-4. Generates unit-tester agent (uses actual test examples from tests/)
-5. Generates solution-architect agent (uses actual architecture from src/)
-6. Generates code-review agent (uses actual ESLint config)
-7. Validates all agents (sizes OK, no placeholders)
-8. Presents summary report with capabilities
-
-**Result**: project-specific subagent files ready to use in `.claude/agents/`.
-IMPORTANT: put agents into ".claude/agents" folder.
-
----
-
-## Notes
-
-- **Time Estimate**: 5-15 minutes depending on project size
-- **Token Usage**: Medium - reading templates and codebase samples
-- **User Interaction**: 0-1 confirmation points (only if unclear project structure)
-- **Customization**: Output should be 90% ready, 10% may need refinement
-- **Updates**: Re-run command when project patterns change significantly
-
----
+- ✅ All templates processed
+- ✅ Existing agents checked and mapped to templates
+- ✅ All agents in `.claude/agents/`
+- ✅ All agents 100-300 lines
+- ✅ No placeholders remain
+- ✅ Project-specific content (not generic)
+- ✅ Custom content preserved (if updating existing agents)
+- ✅ Outdated information refreshed (if updating)
+- ✅ Summary report generated with actions taken (CREATE/UPDATE)
