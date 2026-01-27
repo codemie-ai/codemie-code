@@ -50,7 +50,7 @@ The CodeMie Proxy is a **plugin-based HTTP streaming proxy** that sits between A
 ```
 ┌─────────────────────────────────────────────────────────────────┐
 │                         AI Coding Agent                         │
-│                    (claude, codex, gemini, etc.)                │
+│                    (claude, gemini, etc.)                       │
 └────────────────────────────┬────────────────────────────────────┘
                              │ HTTP Request
                              ▼
@@ -399,7 +399,7 @@ Benefits:
 
 **Always Injected:**
 - `X-CodeMie-CLI`: CLI wrapper and version (e.g., `codemie-cli/0.0.16`)
-- `X-CodeMie-Client`: Agent identifier (e.g., `codemie-claude`, `codemie-codex`, `codemie-code`)
+- `X-CodeMie-Client`: Agent identifier (e.g., `codemie-claude`, `codemie-gemini`, `codemie-code`)
 - `X-CodeMie-Request-ID`: Request UUID for traceability
 - `X-CodeMie-Session-ID`: Session UUID for correlation
 
@@ -517,7 +517,7 @@ Proxy Stop
 
 #### 6.4.4 Data Flow
 
-**Local Metrics Storage**: `~/.codemie/metrics/sessions/`
+**Local Metrics Storage**: `~/.codemie/sessions/`
 - `{sessionId}.json`: Session metadata
 - `{sessionId}_metrics.jsonl`: Delta records (one per line)
 

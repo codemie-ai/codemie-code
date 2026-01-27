@@ -5,8 +5,9 @@
  */
 
 import {describe, it, expect, beforeEach} from 'vitest';
-import {aggregateDeltas} from '../../../src/providers/plugins/sso/metrics/sync/sso.metrics-aggregator.js';
-import type {MetricDelta, MetricsSession} from '../../../src/providers/plugins/sso/metrics/types.js';
+import {aggregateDeltas} from '../../../src/providers/plugins/sso/session/processors/metrics/metrics-aggregator.js';
+import type {MetricDelta} from '../../../src/agents/core/metrics/types.js';
+import type {Session as MetricsSession} from '../../../src/agents/core/session/types.js';
 
 describe('Metrics Post-Processing Integration', () => {
   let mockSession: MetricsSession;
@@ -20,11 +21,8 @@ describe('Metrics Post-Processing Integration', () => {
       workingDirectory: '/Users/Nikita/repos/EPMCDME/codemie-ai/codemie-code',
       correlation: {
         status: 'matched',
+        agentSessionId: 'test-session-id',
         retryCount: 0
-      },
-      monitoring: {
-        isActive: false,
-        changeCount: 0
       },
       status: 'active'
     };

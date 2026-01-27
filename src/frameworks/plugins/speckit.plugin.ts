@@ -28,7 +28,7 @@ export const SpeckitMetadata: FrameworkMetadata = {
   packageName: 'specify-cli',
   cliCommand: 'specify',
   isAgentSpecific: true,
-  supportedAgents: ['claude', 'codex', 'gemini'], // Per tech-spec: not supported for codemie-code, deepagents
+  supportedAgents: ['claude', 'gemini'], // Not supported for codemie-code
   initDirectory: '.specify' // SpecKit creates .specify/ directory, not .speckit/
 };
 
@@ -37,7 +37,6 @@ export const SpeckitMetadata: FrameworkMetadata = {
  */
 const AGENT_MAPPING: Record<string, string> = {
   claude: 'claude',
-  codex: 'codex',
   gemini: 'gemini'
 };
 

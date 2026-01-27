@@ -147,7 +147,7 @@ export interface AgentAnalyticsAdapter {
  */
 export interface AgentMetadata {
   // === Identity ===
-  name: string;                    // 'claude', 'codex', 'gemini'
+  name: string;                    // 'claude', 'gemini'
   displayName: string;             // 'Claude Code'
   description: string;
 
@@ -164,7 +164,7 @@ export interface AgentMetadata {
 
   // === Compatibility Rules ===
   supportedProviders: string[];    // ['openai', 'litellm', 'ai-run-sso']
-  blockedModelPatterns?: RegExp[]; // [/^claude/i] for Codex
+  blockedModelPatterns?: RegExp[]; // Optional: Block certain model patterns
   recommendedModels?: string[];    // ['gpt-4.1', 'gpt-4o'] - suggested models for error messages
 
   // === Proxy Configuration ===
@@ -192,11 +192,8 @@ export interface AgentMetadata {
 
   // === Data Paths ===
   dataPaths?: {
-    home: string;           // Main directory: '~/.gemini', '~/.claude', '~/.codex'
-    sessions?: string;      // Session logs path (relative to home or absolute)
-    settings?: string;      // Settings file path (relative to home or absolute)
-    cache?: string;         // Cache directory (relative to home or absolute)
-    user_prompts?: string;  // User prompt history file (relative to home or absolute)
+    home: string;        // Main directory: '~/.gemini', '~/.claude'
+    settings?: string;   // Settings file path (relative to home, agent-specific)
   };
 
   // === Analytics Support ===
@@ -208,6 +205,80 @@ export interface AgentMetadata {
    * Controls which tool errors are excluded from metrics sent to API
    */
   metricsConfig?: AgentMetricsConfig;
+
+  // === MCP Configuration ===
+  /**
+   * MCP (Model Context Protocol) server configuration paths
+   * Agent-specific locations for MCP config files
+   */
+  mcpConfig?: AgentMCPConfig;
+}
+
+/**
+ * MCP configuration source definition
+ * Describes where to find MCP servers in a config file
+ */
+export interface MCPConfigSource {
+  /**
+   * Path to config file
+   * - Absolute: starts with '~/' (resolved to home dir)
+   * - Relative: resolved from cwd
+   */
+  path: string;
+
+  /**
+   * JSON path to mcpServers object
+   * Supports nested paths like 'projects.{cwd}.mcpServers'
+   * {cwd} is replaced with actual working directory
+   */
+  jsonPath: string;
+}
+
+/**
+ * Agent-specific MCP configuration
+ * Defines where this agent stores MCP server configs
+ */
+export interface AgentMCPConfig {
+  /**
+   * Local scope: Project-specific, private to user
+   * Example: Claude uses ~/.claude.json → projects[cwd].mcpServers
+   */
+  local?: MCPConfigSource;
+
+  /**
+   * Project scope: Shared with team (version controlled)
+   * Example: .mcp.json in project root
+   */
+  project?: MCPConfigSource;
+
+  /**
+   * User scope: Available across all projects
+   * Example: Gemini uses ~/.gemini/settings.json → mcpServers
+   */
+  user?: MCPConfigSource;
+}
+
+/**
+ * MCP configuration summary for metrics
+ * Contains counts and server names per scope
+ */
+export interface MCPConfigSummary {
+  /** Total server count across all scopes */
+  totalServers: number;
+  /** Server count in local scope */
+  localServers: number;
+  /** Server count in project scope */
+  projectServers: number;
+  /** Server count in user scope */
+  userServers: number;
+  /** All unique server names */
+  serverNames: string[];
+  /** Server names in local scope */
+  localServerNames: string[];
+  /** Server names in project scope */
+  projectServerNames: string[];
+  /** Server names in user scope */
+  userServerNames: string[];
 }
 
 /**
@@ -231,24 +302,10 @@ export interface MetricsConfig {
   // Provider filter
   enabled: (provider: string) => boolean;
 
-  // Agent-specific init delays
-  initDelay: Record<string, number>;
-
   // Retry configuration
   retry: {
     attempts: number;
     delays: number[]; // Exponential backoff delays
-  };
-
-  // Monitoring configuration
-  monitoring: {
-    pollInterval: number; // Polling fallback interval (ms)
-    debounceDelay: number; // Debounce delay before collection (ms)
-  };
-
-  // Watermark configuration
-  watermark: {
-    ttl: number; // Time-to-live (ms) - 24h
   };
 
   // Post-processing configuration
@@ -264,12 +321,75 @@ export interface MetricsConfig {
  * Agent configuration passed to runtime handlers
  */
 export interface AgentConfig {
+  agent?: string;           // Agent name ('claude', 'gemini', etc.)
+  agentDisplayName?: string; // Display name ('Claude Code', 'Gemini CLI', etc.)
   provider?: string;
   model?: string;
   baseUrl?: string;
   apiKey?: string;
   timeout?: number;
   profileName?: string;
+}
+
+/**
+ * Hook transformer interface for agent-specific payload transformation
+ * Transforms agent-specific hook events to internal BaseHookEvent format
+ *
+ * Agents implement this interface to convert their hook payloads to the
+ * internal format expected by CodeMie CLI hook handlers.
+ *
+ * @example Gemini transformer
+ * ```typescript
+ * class GeminiHookTransformer implements HookTransformer {
+ *   readonly agentName = 'gemini';
+ *
+ *   transform(event: unknown): BaseHookEvent {
+ *     const geminiEvent = event as GeminiHookEvent;
+ *     return {
+ *       ...geminiEvent,
+ *       permission_mode: 'default' // Add default value
+ *     };
+ *   }
+ * }
+ * ```
+ */
+export interface HookTransformer {
+  /**
+   * Transform agent-specific hook event to internal format
+   * @param event - Raw hook event from agent
+   * @returns Transformed event in internal BaseHookEvent format
+   */
+  transform(event: unknown): BaseHookEvent;
+
+  /**
+   * Agent name for this transformer
+   */
+  readonly agentName: string;
+}
+
+/**
+ * Base hook event structure - all hooks include these fields
+ * This is the internal format used by CodeMie CLI hook handlers
+ *
+ * See Claude Code hook documentation: https://code.claude.com/docs/en/hooks#hook-input
+ */
+export interface BaseHookEvent {
+  session_id: string;              // Agent's session ID
+  transcript_path: string;         // Path to conversation file (agent session file)
+  permission_mode: string;         // "default", "plan", "acceptEdits", "dontAsk", or "bypassPermissions"
+  hook_event_name: string;         // Event identifier (SessionStart, SessionEnd, etc.)
+  cwd?: string;                    // Current working directory (not present in all hooks)
+  source?: string;                 // SessionStart only: "startup", "resume", "clear"
+  reason?: string;                 // SessionEnd only: "exit", "logout", "clear", etc.
+  agent_id?: string;               // SubagentStop only: Sub-agent ID
+  agent_transcript_path?: string;  // SubagentStop only: Path to agent's transcript
+  stop_hook_active?: boolean;      // SubagentStop only: Whether stop hook is active
+}
+
+// Forward declaration for extension installer
+export interface BaseExtensionInstaller {
+  getTargetPath(): string;
+  install(): Promise<any>;
 }
 
 /**
@@ -285,4 +405,35 @@ export interface AgentAdapter {
   run(args: string[], env?: Record<string, string>): Promise<void>;
   getVersion(): Promise<string | null>;
   getMetricsConfig(): AgentMetricsConfig | undefined;
+
+  /**
+   * Get hook transformer for this agent (optional)
+   * Returns a transformer to convert agent-specific hook payloads to internal format
+   *
+   * Agents that use different hook payload structures should implement this.
+   * Agents using Claude-compatible payloads can omit this.
+   *
+   * @returns Hook transformer instance or undefined
+   */
+  getHookTransformer?(): HookTransformer | undefined;
+
+  /**
+   * Get extension installer for this agent (optional)
+   * Returns installer to handle plugin/extension installation
+   *
+   * Agents that require extensions/plugins should implement this.
+   * Installer will be called automatically by provider lifecycle hooks.
+   *
+   * @returns BaseExtensionInstaller instance or undefined
+   */
+  getExtensionInstaller?(): BaseExtensionInstaller | undefined;
+
+  /**
+   * Get MCP configuration summary for this agent
+   * Returns counts and server names for session metrics
+   *
+   * @param cwd - Current working directory
+   * @returns MCP configuration summary
+   */
+  getMCPConfigSummary?(cwd: string): Promise<MCPConfigSummary>;
 }

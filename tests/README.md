@@ -40,7 +40,7 @@ Integration tests verify the system works correctly by executing CLI commands di
 it('should list all available agents', () => {
   const output = cli.run('list');
   expect(output).toContain('claude');
-  expect(output).toContain('codex');
+  expect(output).toContain('gemini');
 });
 ```
 
@@ -235,7 +235,7 @@ testTimeout: 30000,  // 30 seconds
 
 ### Tests fail locally but pass in CI
 
-- Check Node.js version (must be >=24.0.0)
+- Check Node.js version (must be >=20.0.0)
 - Ensure clean state (no leftover config files)
 - Run `npm run build` before testing
 

@@ -101,7 +101,7 @@ export interface ProviderTemplate {
   // Agent Lifecycle Hooks (Pluggable)
   /**
    * Provider-specific hooks for agents
-   * Key = agent name ('claude', 'codex', 'gemini')
+   * Key = agent name ('claude', 'gemini')
    * Value = lifecycle hooks for that agent
    *
    * @example

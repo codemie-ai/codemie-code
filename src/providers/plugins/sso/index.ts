@@ -12,7 +12,7 @@ export { SSOHealthCheck } from './sso.health.js';
 export { SSOSetupSteps } from './sso.setup-steps.js';
 
 // SSO Capabilities (metrics transmission)
-export { MetricsSender } from './metrics/sync/sso.metrics-sender.js';
+export { MetricsSender } from './session/processors/metrics/metrics-api-client.js';
 
 // SSO Proxy (HTTP proxy with plugins)
 export { CodeMieProxy } from './proxy/sso.proxy.js';

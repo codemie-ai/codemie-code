@@ -1,0 +1,30 @@
+{
+  "sessionId": "test-session-2",
+  "timestamp": 1704672000000,
+  "display": "first task",
+  "project": ""
+}
+{
+  "sessionId": "test-session-2",
+  "timestamp": 1704672100000,
+  "display": "/clear ",
+  "project": ""
+}
+{
+  "sessionId": "test-session-2",
+  "timestamp": 1704672200000,
+  "display": "second task",
+  "project": ""
+}
+{
+  "sessionId": "test-session-2",
+  "timestamp": 1704672300000,
+  "display": "<command-name>/clear</command-name>",
+  "project": ""
+}
+{
+  "sessionId": "test-session-2",
+  "timestamp": 1704672400000,
+  "display": "third task",
+  "project": ""
+}

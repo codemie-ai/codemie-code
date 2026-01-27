@@ -89,6 +89,8 @@ export interface NpmOptions {
 export interface NpmInstallOptions extends NpmOptions {
   /** Package version (e.g., '1.0.0', 'latest') */
   version?: string;
+  /** Force install (useful for updates where directory conflicts occur) */
+  force?: boolean;
 }
 
 /**
@@ -133,7 +135,13 @@ export async function installGlobal(
       shell: isWindows // npm is a .cmd file on Windows
     };
 
-    const result = await exec('npm', ['install', '-g', packageSpec], execOptions);
+    const args = ['install', '-g'];
+    if (options.force) {
+      args.push('--force');
+    }
+    args.push(packageSpec);
+
+    const result = await exec('npm', args, execOptions);
 
     if (result.code !== 0) {
       throw new Error(

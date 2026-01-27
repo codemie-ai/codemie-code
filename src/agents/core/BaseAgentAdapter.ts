@@ -1,15 +1,13 @@
-import { AgentMetadata, AgentAdapter, AgentConfig } from './types.js';
+import { AgentMetadata, AgentAdapter, AgentConfig, MCPConfigSummary } from './types.js';
 import * as npm from '../../utils/processes.js';
 import { NpmError } from '../../utils/errors.js';
 import { exec } from '../../utils/processes.js';
 import { logger } from '../../utils/logger.js';
 import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
-import { CodeMieProxy } from '../../providers/plugins/sso/proxy/sso.proxy.js';
-import { ProxyConfig } from '../../providers/plugins/sso/proxy/proxy-types.js';
-import { ProviderRegistry } from '../../providers/core/registry.js';
-import { MetricsOrchestrator } from './metrics/MetricsOrchestrator.js';
-import type { AgentMetricsSupport } from './metrics/types.js';
+import { CodeMieProxy } from '../../providers/plugins/sso/index.js';
+import type { ProxyConfig } from '../../providers/plugins/sso/index.js';
+import { ProviderRegistry } from '../../providers/index.js';
 import type { CodeMieConfigOptions } from '../../env/types.js';
 import { getRandomWelcomeMessage, getRandomGoodbyeMessage } from '../../utils/goodbye-messages.js';
 import { renderProfileInfo } from '../../utils/profile.js';
@@ -18,6 +16,7 @@ import { existsSync } from 'fs';
 import { mkdir, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { resolveHomeDir } from '../../utils/paths.js';
+import { getMCPConfigSummary as getMCPConfigSummaryUtil } from '../../utils/mcp-config.js';
 import {
   executeOnSessionStart,
   executeBeforeRun,
@@ -32,17 +31,9 @@ import {
  */
 export abstract class BaseAgentAdapter implements AgentAdapter {
   protected proxy: CodeMieProxy | null = null;
-  protected metricsOrchestrator: MetricsOrchestrator | null = null;
 
   constructor(protected metadata: AgentMetadata) {}
 
-  /**
-   * Get metrics adapter for this agent (optional)
-   * Override in agent plugin if metrics collection is supported
-   */
-  getMetricsAdapter(): AgentMetricsSupport | null {
-    return null;
-  }
 
   /**
    * Get metrics configuration for this agent
@@ -52,6 +43,16 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     return this.metadata.metricsConfig;
   }
 
+  /**
+   * Get MCP configuration summary for this agent
+   * Uses agent's mcpConfig metadata to read config files
+   *
+   * @param cwd - Current working directory
+   * @returns MCP configuration summary with counts and server names
+   */
+  async getMCPConfigSummary(cwd: string): Promise<MCPConfigSummary> {
+    return getMCPConfigSummaryUtil(this.metadata.mcpConfig, cwd);
+  }
 
   get name(): string {
     return this.metadata.name;
@@ -154,28 +155,6 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     const { logger } = await import('../../utils/logger.js');
     logger.setSessionId(sessionId);
 
-    // Setup metrics orchestrator with the session ID
-    // Only create if metrics are enabled for the provider
-    const metricsAdapter = this.getMetricsAdapter();
-    if (metricsAdapter && env.CODEMIE_PROVIDER) {
-      const { METRICS_CONFIG } = await import('./metrics-config.js');
-
-      // Check if metrics are enabled for this provider before creating orchestrator
-      if (METRICS_CONFIG.enabled(env.CODEMIE_PROVIDER)) {
-        this.metricsOrchestrator = new MetricsOrchestrator({
-          agentName: this.metadata.name,
-          provider: env.CODEMIE_PROVIDER,
-          project: env.CODEMIE_PROJECT,
-          workingDirectory: process.cwd(),
-          metricsAdapter,
-          sessionId // Pass the session ID explicitly
-        });
-
-        // Take pre-spawn snapshot
-        await this.metricsOrchestrator.beforeAgentSpawn();
-      }
-    }
-
     // Setup proxy with the session ID (already in env)
     await this.setupProxy(env);
 
@@ -206,26 +185,6 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     console.log(chalk.cyan.bold(getRandomWelcomeMessage()));
     console.log(''); // Empty line for spacing
 
-    // Display metrics initialization errors (non-blocking)
-    if (this.metricsOrchestrator?.hasInitializationError()) {
-      const metricsError = this.metricsOrchestrator.getInitializationError();
-      if (metricsError) {
-        const { displayWarningMessage } = await import('../../utils/profile.js');
-        displayWarningMessage(
-          'Metrics Collection Disabled',
-          metricsError,
-          {
-            sessionId,
-            agent: this.metadata.name,
-            provider,
-            model,
-            profile: profileName
-          },
-          { severity: 'warning' }
-        );
-      }
-    }
-
     // Transform CODEMIE_* → agent-specific env vars (based on envMapping)
     env = this.transformEnvVars(env);
 
@@ -233,9 +192,13 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     // Can override or extend env transformations, setup config files
     env = await executeBeforeRun(this, this.metadata.lifecycle, this.metadata.name, env, this.extractConfig(env));
 
+    // Merge modified env back into process.env
+    // This ensures enrichArgs hook can access variables set by beforeRun
+    Object.assign(process.env, env);
+
     // Lifecycle hook: enrichArgs (provider-aware)
     // Enrich args with agent-specific defaults (e.g., --profile, --model)
-    // Must run AFTER beforeRun so env vars like CODEMIE_CODEX_PROFILE are available
+    // Must run AFTER beforeRun so env vars are available
     let enrichedArgs = await executeEnrichArgs(this.metadata.lifecycle, this.metadata.name, args, this.extractConfig(env));
 
     // Apply argument transformations using declarative flagMappings
@@ -315,25 +278,32 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         const { getCommandPath } = await import('../../utils/processes.js');
         const resolvedPath = await getCommandPath(this.metadata.cliCommand);
         if (resolvedPath) {
-          commandPath = resolvedPath;
+          // Quote path if it contains spaces to handle Windows paths correctly
+          commandPath = resolvedPath.includes(' ') ? `"${resolvedPath}"` : resolvedPath;
           logger.debug(`Resolved command path: ${resolvedPath}`);
         }
       }
 
-      const child = spawn(commandPath, transformedArgs, {
+      // When shell: true is needed (Windows), merge args into command to avoid DEP0190
+      // Node.js deprecation warning: shell mode doesn't escape array arguments, only concatenates them
+      let finalCommand = commandPath;
+      let finalArgs = transformedArgs;
+
+      if (isWindows && transformedArgs.length > 0) {
+        // Quote arguments containing spaces or special characters
+        const quotedArgs = transformedArgs.map(arg =>
+          arg.includes(' ') || arg.includes('"') ? `"${arg.replace(/"/g, '\\"')}"` : arg
+        );
+        finalCommand = `${commandPath} ${quotedArgs.join(' ')}`;
+        finalArgs = [];
+      }
+
+      const child = spawn(finalCommand, finalArgs, {
         stdio: 'inherit',
         env,
         shell: isWindows, // Windows requires shell for .cmd/.bat executables
         windowsHide: isWindows // Hide console window on Windows
       });
-
-      // Take post-spawn snapshot after process starts
-      if (this.metricsOrchestrator) {
-        // Don't await - let it run in background
-        this.metricsOrchestrator.afterAgentSpawn().catch(err => {
-          logger.error('[MetricsOrchestrator] Post-spawn snapshot failed:', err);
-        });
-      }
 
       // Define cleanup function for proxy and metrics
       const cleanup = async () => {
@@ -366,15 +336,10 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
           process.off('SIGINT', sigintHandler);
           process.off('SIGTERM', sigtermHandler);
 
-          // Finalize metrics with error status
-          if (this.metricsOrchestrator) {
-            await this.metricsOrchestrator.onAgentExit(1); // Exit code 1 = spawn error
-          }
-
           // Lifecycle hook: session end (provider-aware)
           await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, 1, env);
 
-          // Clean up proxy
+          // Clean up proxy (triggers final sync)
           await cleanup();
 
           // Lifecycle hook: afterRun (provider-aware)
@@ -393,16 +358,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
           console.log(chalk.yellow('Shutting down...'));
 
           // Grace period: wait for any final API calls from the external agent
-          // Many agents (Claude, Gemini, Codex) send telemetry/session data on shutdown
+          // Many agents (Claude, Gemini) send telemetry/session data on shutdown
           if (this.proxy) {
             const gracePeriodMs = 2000; // 2 seconds
             logger.debug(`[${this.displayName}] Waiting ${gracePeriodMs}ms grace period for final API calls...`);
             await new Promise(resolve => setTimeout(resolve, gracePeriodMs));
-          }
-
-          // Finalize metrics on agent exit
-          if (this.metricsOrchestrator && code !== null) {
-            await this.metricsOrchestrator.onAgentExit(code);
           }
 
           // Lifecycle hook: session end (provider-aware)
@@ -432,15 +392,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         });
       });
     } catch (error) {
-      // Finalize metrics with error status
-      if (this.metricsOrchestrator) {
-        await this.metricsOrchestrator.onAgentExit(1); // Exit code 1 = error
-      }
 
       // Lifecycle hook: session end (provider-aware)
       await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, 1, env);
 
-      // Clean up proxy on error
+      // Clean up proxy on error (triggers final sync)
       if (this.proxy) {
         await this.proxy.stop();
         this.proxy = null;
@@ -537,6 +493,8 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    */
   private extractConfig(env: NodeJS.ProcessEnv): AgentConfig {
     return {
+      agent: this.metadata.name,               // Add: from metadata
+      agentDisplayName: this.metadata.displayName, // Add: from metadata
       provider: env.CODEMIE_PROVIDER,
       model: env.CODEMIE_MODEL,
       baseUrl: env.CODEMIE_BASE_URL,
@@ -662,8 +620,52 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   }
 
   /**
+   * Deep merge two objects
+   * Adds new fields from source to target, preserves existing values in target
+   *
+   * @param target - Existing object
+   * @param source - Default/new fields to merge
+   * @returns Merged object
+   *
+   * Rules:
+   * - If key doesn't exist in target → add it from source
+   * - If key exists and both values are objects → recursively merge
+   * - If key exists and value is not an object → keep target value (preserve user data)
+   */
+  private deepMerge(
+    target: Record<string, unknown>,
+    source: Record<string, unknown>
+  ): Record<string, unknown> {
+    const result = { ...target };
+
+    for (const key in source) {
+      if (!(key in result)) {
+        // Key doesn't exist in target → add it from source
+        result[key] = source[key];
+      } else if (
+        typeof result[key] === 'object' &&
+        result[key] !== null &&
+        !Array.isArray(result[key]) &&
+        typeof source[key] === 'object' &&
+        source[key] !== null &&
+        !Array.isArray(source[key])
+      ) {
+        // Both are objects (not arrays, not null) → recursive merge
+        result[key] = this.deepMerge(
+          result[key] as Record<string, unknown>,
+          source[key] as Record<string, unknown>
+        );
+      }
+      // Else: key exists → keep existing value (preserve user customization)
+    }
+
+    return result;
+  }
+
+  /**
    * Ensure a JSON file exists with default content
    * Creates file with proper formatting (2-space indent) if it doesn't exist
+   * Updates existing file by merging new fields without overwriting existing values
    *
    * @param filePath - Absolute path to file
    * @param defaultContent - Default content as JavaScript object
@@ -674,15 +676,45 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    *   { security: { auth: { selectedType: 'api-key' } } }
    * )
    * // Creates ~/.gemini/settings.json if missing
+   * // Or updates existing file by adding missing fields
    */
   protected async ensureJsonFile(
     filePath: string,
     defaultContent: Record<string, unknown>
   ): Promise<void> {
     if (!existsSync(filePath)) {
+      // File doesn't exist → create new file with default content
       const content = JSON.stringify(defaultContent, null, 2);
       await writeFile(filePath, content, 'utf-8');
       logger.debug(`[${this.displayName}] Created file: ${filePath}`);
+    } else {
+      // File exists → merge new fields with existing content
+      try {
+        const { readFile } = await import('fs/promises');
+        const existingRaw = await readFile(filePath, 'utf-8');
+        const existingContent = JSON.parse(existingRaw) as Record<string, unknown>;
+
+        // Deep merge: add new fields, preserve existing values
+        const merged = this.deepMerge(existingContent, defaultContent);
+
+        // Only write if there are changes
+        const existingJson = JSON.stringify(existingContent);
+        const mergedJson = JSON.stringify(merged);
+
+        if (mergedJson !== existingJson) {
+          const content = JSON.stringify(merged, null, 2);
+          await writeFile(filePath, content, 'utf-8');
+          logger.debug(`[${this.displayName}] Updated file with new fields: ${filePath}`);
+        } else {
+          logger.debug(`[${this.displayName}] File up to date: ${filePath}`);
+        }
+      } catch (error) {
+        // If file is corrupted or can't be read, log warning and overwrite with defaults
+        logger.warn(`[${this.displayName}] Failed to merge ${filePath}, overwriting with defaults:`, error);
+        const content = JSON.stringify(defaultContent, null, 2);
+        await writeFile(filePath, content, 'utf-8');
+        logger.debug(`[${this.displayName}] Overwrote corrupted file: ${filePath}`);
+      }
     }
   }
 }

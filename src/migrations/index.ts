@@ -23,7 +23,8 @@ export type { Migration, MigrationResult, MigrationRecord, MigrationHistory } fr
 
 // Import all migrations (auto-registers them)
 import './001-config-rename.migration.js';
+import './002-consolidate-sessions.migration.js';
 
 // Future migrations will be imported here:
-// import './002-add-analytics.migration.js';
-// import './003-restructure-profiles.migration.js';
+// import './003-add-analytics.migration.js';
+// import './004-restructure-profiles.migration.js';

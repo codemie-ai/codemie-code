@@ -67,7 +67,7 @@ export interface FrameworkAdapter {
 
   /**
    * Initialize framework in current directory
-   * @param agentName - CodeMie agent name (e.g., 'claude', 'codex')
+   * @param agentName - CodeMie agent name (e.g., 'claude', 'gemini')
    * @param options - Additional initialization options
    * @returns Promise resolving when initialization completes
    */

@@ -35,18 +35,35 @@ export class FirstTimeExperience {
   }
 
   /**
+   * Show CodeMie ecosystem introduction
+   */
+  static showEcosystemIntro(): void {
+    console.log(chalk.bold.cyan('\n╔════════════════════════════════════════════════════════════╗'));
+    console.log(chalk.bold.cyan('║                                                            ║'));
+    console.log(chalk.bold.cyan('║          Welcome to CodeMie CLI! 🎉                        ║'));
+    console.log(chalk.bold.cyan('║                                                            ║'));
+    console.log(chalk.bold.cyan('╚════════════════════════════════════════════════════════════╝\n'));
+
+    console.log(chalk.white("Thank you for choosing CodeMie! You're about to experience AI-powered"));
+    console.log(chalk.white("development with a complete ecosystem designed to make you more productive.\n"));
+
+    console.log(chalk.bold('🚀 What Makes CodeMie Special:\n'));
+    console.log(chalk.white('  ✓ ') + chalk.green('Seamless Setup') + chalk.white(' - Get started in minutes with any AI provider'));
+    console.log(chalk.white('  ✓ ') + chalk.green('Multiple Agents') + chalk.white(' - Built-in CodeMie agents plus Claude Code, Gemini CLI, and more'));
+    console.log(chalk.white('  ✓ ') + chalk.green('Complete Ecosystem') + chalk.white(' - CLI, platform, and frameworks working together'));
+    console.log(chalk.white('  ✓ ') + chalk.green('Full Visibility') + chalk.white(' - All your conversations and analytics in one place\n'));
+
+    console.log(chalk.bold('💡 Your CodeMie Ecosystem:\n'));
+    console.log(chalk.white('With CodeMie, you get more than just a CLI tool. Access the CodeMie Platform'));
+    console.log(chalk.white('to review your conversation history, track usage analytics, and gain insights'));
+    console.log(chalk.white('into your development patterns - all synchronized across your devices.\n'));
+  }
+
+  /**
    * Show first-time user welcome message with recommendations
    */
   static async showWelcomeMessage(): Promise<void> {
-    console.log(chalk.bold.cyan('\n╔═══════════════════════════════════════════════════════╗'));
-    console.log(chalk.bold.cyan('║                                                       ║'));
-    console.log(chalk.bold.cyan('║        Welcome to CodeMie Code! 🎉                    ║'));
-    console.log(chalk.bold.cyan('║                                                       ║'));
-    console.log(chalk.bold.cyan('╚═══════════════════════════════════════════════════════╝\n'));
-
-    console.log(chalk.white("It looks like this is your first time using CodeMie Code."));
-    console.log(chalk.white("Let's get you set up!\n"));
-
+    this.showEcosystemIntro();
     this.showRecommendations();
   }
 
@@ -106,16 +123,14 @@ export class FirstTimeExperience {
    * Show quick start guide for users who have configuration
    */
   static async showQuickStart(): Promise<void> {
-    console.log(chalk.bold.cyan('\n╔═══════════════════════════════════════╗'));
-    console.log(chalk.bold.cyan('║         CodeMie CLI Wrapper           ║'));
-    console.log(chalk.bold.cyan('╚═══════════════════════════════════════╝\n'));
+    // Show ecosystem introduction
+    this.showEcosystemIntro();
 
     console.log(chalk.bold('Quick Start:\n'));
 
     console.log(chalk.bold('Setup & Configuration:'));
     console.log(chalk.cyan('  codemie setup') + chalk.white('             # Interactive setup wizard'));
     console.log(chalk.cyan('  codemie profile') + chalk.white('           # Manage profiles (list, switch, delete)'));
-    console.log(chalk.cyan('  codemie profile') + chalk.white('      # Manage SSO authentication\n'));
 
     console.log(chalk.bold('Verify:'));
     console.log(chalk.cyan('  codemie doctor') + chalk.white('            # Check configuration\n'));
@@ -125,8 +140,8 @@ export class FirstTimeExperience {
     console.log(chalk.bold('Analytics:'));
     console.log(chalk.cyan('  codemie analytics') + chalk.white('         # View usage statistics\n'));
 
-    console.log(chalk.bold('CI/CD Workflows:'));
-    console.log(chalk.cyan('  codemie workflow') + chalk.white('          # Manage CI/CD workflows\n'));
+    console.log(chalk.bold('List:'));
+    console.log(chalk.cyan('  codemie list') + chalk.white('              # List all available agents and framework\n'));
 
     console.log(chalk.white('For detailed help, run: ') + chalk.green('codemie --help\n'));
   }

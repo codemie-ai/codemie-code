@@ -192,7 +192,8 @@ async function updateAgent(agent: AgentAdapter, latestVersion: string): Promise<
     throw new Error(`${agent.displayName} cannot be updated (no npm package)`);
   }
 
-  await npm.installGlobal(npmPackage, { version: latestVersion });
+  // Use force: true to avoid ENOTEMPTY errors when updating global packages
+  await npm.installGlobal(npmPackage, { version: latestVersion, force: true });
 }
 
 export function createUpdateCommand(): Command {

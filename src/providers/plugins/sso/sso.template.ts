@@ -8,9 +8,8 @@
  */
 
 import type { ProviderTemplate } from '../../core/types.js';
-import { registerProvider } from '../../core/decorators.js';
-import { createSSOLifecycleHandler } from './metrics/sync/sso.lifecycle-handler.js';
-import { logger } from '../../../utils/logger.js';
+import type { AgentConfig } from '../../../agents/core/types.js';
+import { registerProvider } from '../../core/index.js';
 
 export const SSOTemplate = registerProvider<ProviderTemplate>({
   name: 'ai-run-sso',
@@ -23,7 +22,6 @@ export const SSOTemplate = registerProvider<ProviderTemplate>({
   defaultProfileName: 'codemie-sso',
   recommendedModels: [
     'claude-4-5-sonnet',
-    'gpt-5-1-codex',
   ],
   capabilities: ['streaming', 'tools', 'sso-auth', 'function-calling', 'embeddings'],
   supportsModelInstallation: false,
@@ -52,70 +50,91 @@ export const SSOTemplate = registerProvider<ProviderTemplate>({
 
   // Agent lifecycle hooks for session metrics
   agentHooks: {
+    /**
+     * Wildcard hook for ALL agents - generic extension installation
+     * Checks if agent has getExtensionInstaller() method
+     * Installer handles all logging internally
+     *
+     * Correct signature: (env, config) - matches lifecycle-helpers.ts
+     * Agent name is available in config.agent (not as third parameter)
+     */
     '*': {
-      // Universal hooks for all agents when using SSO provider
-      async onSessionStart(sessionId: string, env: NodeJS.ProcessEnv): Promise<void> {
-        // IMPORTANT:
-        // - Use CODEMIE_URL for credential lookup (original SSO URL)
-        // - Use CODEMIE_BASE_URL for API requests (proxy URL with cookie injection)
-        const ssoUrl = env.CODEMIE_URL;
-        const apiUrl = env.CODEMIE_BASE_URL;
-
-        if (!ssoUrl || !apiUrl) {
-          logger.info('[SSO] URLs not available for session metrics');
-          return;
+      async beforeRun(env: NodeJS.ProcessEnv, config: AgentConfig): Promise<NodeJS.ProcessEnv> {
+        // Get agent name from config (not from third parameter)
+        const agentName = config.agent;
+        if (!agentName) {
+          return env; // No agent name, skip silently
         }
 
-        const handler = await createSSOLifecycleHandler(
-          ssoUrl,
-          apiUrl,
-          env.CODEMIE_CLI_VERSION,
-          'codemie-cli'
-        );
+        // Dynamic import to avoid circular dependency
+        // AgentRegistry imports all plugins, which would cause circular dependency
+        // if imported at module level (SSO template is loaded as side effect)
+        const { AgentRegistry } = await import('../../../agents/registry.js');
 
-        if (!handler) {
-          logger.info('[SSO] Could not create lifecycle handler for session start');
-          return;
+        // Get agent from registry
+        const agent = AgentRegistry.getAgent(agentName);
+        if (!agent) {
+          return env; // Agent not found, skip silently
         }
 
-        // Store handler in env for later use
-        (env as any).__SSO_LIFECYCLE_HANDLER = handler;
-
-        logger.info('[SSO] Sending session start metric...');
-
-        // Send session start metric (fire-and-forget, errors are logged but not thrown)
-        await handler.sendSessionStart(
-          {
-            sessionId,
-            agentName: env.CODEMIE_AGENT || 'unknown',
-            provider: env.CODEMIE_PROVIDER || 'ai-run-sso',
-            project: env.CODEMIE_PROJECT,
-            llm_model: env.CODEMIE_MODEL,
-            startTime: Date.now(),
-            workingDirectory: process.cwd()
-          },
-          'started'
-        );
-
-        logger.info('[SSO] Session start metric processing complete (check logs for status)');
-      },
-
-      async onSessionEnd(exitCode: number, env: NodeJS.ProcessEnv): Promise<void> {
-        const handler = (env as any).__SSO_LIFECYCLE_HANDLER;
-        if (!handler) {
-          logger.info('[SSO] No lifecycle handler available for session end');
-          return;
+        // Check if agent has extension installer
+        const installer = (agent as any).getExtensionInstaller?.();
+        if (!installer) {
+          return env; // No installer, skip silently
         }
 
-        logger.info(`[SSO] Sending session end metric (exitCode=${exitCode})...`);
+        // Run installer with error handling (logging happens INSIDE installer)
+        try {
+          const result = await installer.install();
 
-        // Send session end metric (fire-and-forget, errors are logged but not thrown)
-        await handler.sendSessionEnd(exitCode);
+          // Store target path in env (for enrichArgs if needed)
+          env[`CODEMIE_${agentName.toUpperCase()}_EXTENSION_DIR`] = result.targetPath;
 
-        logger.info('[SSO] Session end metric processing complete (check logs for status)');
+          if (!result.success) {
+            // Installation failed but returned a result
+            const { logger } = await import('../../../utils/logger.js');
+            logger.warn(`[${agentName}] Extension installation returned failure: ${result.error || 'unknown error'}`);
+            logger.warn(`[${agentName}] Continuing without extension - hooks may not be available`);
+          }
+        } catch (error) {
+          // Installation threw an exception
+          const { logger } = await import('../../../utils/logger.js');
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          logger.error(`[${agentName}] Extension installation threw exception: ${errorMsg}`);
+          logger.warn(`[${agentName}] Continuing without extension - hooks may not be available`);
+          // Don't throw - continue agent startup even if extension fails
+        }
 
-        // Cleanup
-        delete (env as any).__SSO_LIFECYCLE_HANDLER;
+        return env;
+      }
+    },
+
+    // Claude-specific: inject --plugin-dir flag
+    'claude': {
+      /**
+       * Inject --plugin-dir flag for Claude Code
+       * Only applies when using ai-run-sso provider
+       *
+       * Note: enrichArgs is synchronous, so we read the plugin path
+       * from process.env that was set by beforeRun hook
+       */
+      enrichArgs(args: string[], _config: AgentConfig): string[] {
+        // Get plugin directory from env (set by beforeRun)
+        const pluginDir = process.env.CODEMIE_CLAUDE_EXTENSION_DIR;
+
+        if (!pluginDir) {
+          return args;
+        }
+
+        // Check if --plugin-dir already specified
+        const hasPluginDir = args.some(arg => arg === '--plugin-dir');
+
+        if (hasPluginDir) {
+          return args;
+        }
+
+        // Prepend --plugin-dir to arguments
+        return ['--plugin-dir', pluginDir, ...args];
       }
     }
   }

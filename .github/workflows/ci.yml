@@ -24,17 +24,69 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: '20'
           cache: 'npm'
 
       - name: Install dependencies
         run: npm ci
 
       - name: Validate commit messages
-        run: npx commitlint --from ${{ github.event.pull_request.base.sha }} --to HEAD --verbose
+        run: |
+          echo "📋 Validating commit messages..."
+          echo ""
+          if ! npx commitlint --from ${{ github.event.pull_request.base.sha }} --to HEAD --verbose; then
+            echo ""
+            echo "❌ COMMIT MESSAGE VALIDATION FAILED"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+            echo "Commit messages must follow Conventional Commits format:"
+            echo ""
+            echo "  <type>(<scope>): <description>"
+            echo ""
+            # Parse valid types and scopes from commitlint config (single node invocation)
+            node -e "const c = require('./commitlint.config.cjs'); console.log('Valid types:', c.rules['type-enum'][2].join(', ')); console.log('Valid scopes (optional):', c.rules['scope-enum'][2].join(', '))"
+            echo ""
+            echo "Examples:"
+            echo "  ✅ fix: resolve null pointer exception"
+            echo "  ✅ feat(cli): add new doctor command"
+            echo "  ✅ chore(deps): update dependencies"
+            echo ""
+            echo "See: https://www.conventionalcommits.org/"
+            exit 1
+          fi
 
       - name: Validate PR title
-        run: echo "${{ github.event.pull_request.title }}" | npx commitlint --verbose
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "📋 Validating PR title..."
+          echo ""
+          echo "PR Title: \"$PR_TITLE\""
+          echo ""
+          if ! echo "$PR_TITLE" | npx commitlint --verbose; then
+            echo ""
+            echo "❌ PR TITLE VALIDATION FAILED"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo ""
+            echo "Your PR title: \"$PR_TITLE\""
+            echo ""
+            echo "PR titles must follow Conventional Commits format:"
+            echo ""
+            echo "  <type>(<scope>): <description>"
+            echo ""
+            # Parse valid types and scopes from commitlint config (single node invocation)
+            node -e "const c = require('./commitlint.config.cjs'); console.log('Valid types:', c.rules['type-enum'][2].join(', ')); console.log('Valid scopes (optional):', c.rules['scope-enum'][2].join(', '))"
+            echo ""
+            echo "Examples based on your title:"
+            echo "  ✅ fix: $PR_TITLE"
+            echo "  ✅ fix(agents): $PR_TITLE"
+            echo "  ✅ feat: $PR_TITLE"
+            echo ""
+            echo "To fix: Edit your PR title in GitHub to include the type prefix."
+            echo "See: https://www.conventionalcommits.org/"
+            exit 1
+          fi
+          echo "✅ PR title is valid!"
 
   secrets-detection:
     name: Secrets Detection
@@ -71,7 +123,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: '20'
           cache: 'npm'
 
       - name: Install dependencies
@@ -107,7 +159,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: '20'
           cache: 'npm'
 
       - name: Install dependencies
@@ -157,7 +209,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: '20'
           cache: 'npm'
 
       - name: Install dependencies

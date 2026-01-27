@@ -1,7 +1,7 @@
 {
   "name": "@codemieai/code",
-  "version": "0.0.28",
-  "description": "Unified AI coding assistant CLI - Manage Claude Code, Codex, Gemini & custom agents. Multi-provider support (OpenAI, Azure, LiteLLM, SSO). Built-in LangGraph agent with file operations & git integration.",
+  "version": "0.0.33",
+  "description": "Unified AI coding assistant CLI - Manage Claude Code, Gemini & custom agents. Multi-provider support (OpenAI, Azure, LiteLLM, SSO). Built-in LangGraph agent with file operations & git integration.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -9,9 +9,7 @@
     "codemie": "./bin/codemie.js",
     "codemie-code": "./bin/agent-executor.js",
     "codemie-claude": "./bin/codemie-claude.js",
-    "codemie-codex": "./bin/codemie-codex.js",
-    "codemie-gemini": "./bin/codemie-gemini.js",
-    "codemie-deepagents": "./bin/codemie-deepagents.js"
+    "codemie-gemini": "./bin/codemie-gemini.js"
   },
   "files": [
     "dist",
@@ -22,7 +20,8 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && npm run copy-plugin",
+    "copy-plugin": "node scripts/copy-plugins.js",
     "dev": "tsc --watch",
     "test": "vitest",
     "test:unit": "vitest run src",
@@ -36,7 +35,7 @@
     "commitlint": "commitlint --edit",
     "commitlint:last": "commitlint --from HEAD~1 --to HEAD --verbose",
     "validate:secrets": "node scripts/validate-secrets.js",
-    "license-check": "npx license-checker --summary --onlyAllow 'MIT;Apache-2.0;ISC;BSD-2-Clause;BSD-3-Clause;0BSD;CC0-1.0;Unlicense;BlueOak-1.0.0;Python-2.0;CC-BY-4.0;Apache*;(MIT OR CC0-1.0)'",
+    "license-check": "node scripts/license-check.js",
     "ci": "npm run license-check && npm run lint && npm run build && npm run test:unit && npm run test:integration",
     "ci:full": "npm run commitlint:last && npm run ci",
     "prepare": "husky",
@@ -62,7 +61,6 @@
     "claude",
     "claude-code",
     "openai",
-    "codex",
     "gemini",
     "anthropic",
     "gpt",
@@ -116,6 +114,8 @@
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^5.1.0",
+    "http-proxy-agent": "^7.0.2",
+    "https-proxy-agent": "^7.0.5",
     "inquirer": "^9.2.12",
     "keytar": "^7.9.0",
     "minimatch": "^10.1.1",
@@ -142,6 +142,6 @@
     "vitest": "^4.0.10"
   },
   "engines": {
-    "node": ">=24.0.0"
+    "node": ">=20.0.0"
   }
 }

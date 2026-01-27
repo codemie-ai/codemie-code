@@ -162,12 +162,19 @@ class Logger {
 
   /**
    * Flush and close the write stream
+   * Returns a Promise that resolves when all data is flushed
    */
-  close(): void {
-    if (this.writeStream) {
-      this.writeStream.end();
-      this.writeStream = null;
-    }
+  close(): Promise<void> {
+    return new Promise((resolve) => {
+      if (this.writeStream) {
+        this.writeStream.end(() => {
+          this.writeStream = null;
+          resolve();
+        });
+      } else {
+        resolve();
+      }
+    });
   }
 
   /**

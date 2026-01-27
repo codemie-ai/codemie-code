@@ -34,7 +34,7 @@ body:
         - Authentication & SSO
         - CI/CD Workflows
         - Built-in Agent (CodeMie Native)
-        - External Agents (Claude, Codex, Gemini)
+        - External Agents (Claude, Gemini)
         - Proxy Server
         - Documentation
         - Other

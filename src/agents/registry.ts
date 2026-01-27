@@ -1,8 +1,6 @@
-import { ClaudePlugin } from './plugins/claude.plugin.js';
-import { CodexPlugin } from './plugins/codex.plugin.js';
+import { ClaudePlugin } from './plugins/claude/claude.plugin.js';
 import { CodeMieCodePlugin } from './plugins/codemie-code.plugin.js';
-import { GeminiPlugin } from './plugins/gemini.plugin.js';
-import { DeepAgentsPlugin } from './plugins/deepagents.plugin.js';
+import { GeminiPlugin } from './plugins/gemini/gemini.plugin.js';
 import { AgentAdapter, AgentAnalyticsAdapter } from './core/types.js';
 
 // Re-export for backwards compatibility
@@ -14,16 +12,23 @@ export { BUILTIN_AGENT_NAME } from './plugins/codemie-code.plugin.js';
  * Uses plugin-based architecture for easy extensibility
  */
 export class AgentRegistry {
-  private static adapters: Map<string, AgentAdapter> = new Map();
-  private static analyticsAdapters: Map<string, AgentAnalyticsAdapter> = new Map();
+  private static readonly adapters: Map<string, AgentAdapter> = new Map();
+  private static readonly analyticsAdapters: Map<string, AgentAnalyticsAdapter> = new Map();
+  private static initialized = false;
 
-  static {
-    // Initialize plugin-based adapters
+  /**
+   * Lazy initialization - registers all plugins on first access
+   */
+  private static initialize(): void {
+    if (AgentRegistry.initialized) {
+      return;
+    }
+
     AgentRegistry.registerPlugin(new CodeMieCodePlugin());
     AgentRegistry.registerPlugin(new ClaudePlugin());
-    AgentRegistry.registerPlugin(new CodexPlugin());
     AgentRegistry.registerPlugin(new GeminiPlugin());
-    AgentRegistry.registerPlugin(new DeepAgentsPlugin());
+
+    AgentRegistry.initialized = true;
   }
 
   /**
@@ -40,18 +45,22 @@ export class AgentRegistry {
   }
 
   static getAgent(name: string): AgentAdapter | undefined {
+    AgentRegistry.initialize();
     return AgentRegistry.adapters.get(name);
   }
 
   static getAllAgents(): AgentAdapter[] {
+    AgentRegistry.initialize();
     return Array.from(AgentRegistry.adapters.values());
   }
 
   static getAgentNames(): string[] {
+    AgentRegistry.initialize();
     return Array.from(AgentRegistry.adapters.keys());
   }
 
   static async getInstalledAgents(): Promise<AgentAdapter[]> {
+    AgentRegistry.initialize();
     const agents: AgentAdapter[] = [];
     for (const adapter of AgentRegistry.adapters.values()) {
       if (await adapter.isInstalled()) {
@@ -65,6 +74,7 @@ export class AgentRegistry {
    * Get analytics adapter for a specific agent
    */
   static getAnalyticsAdapter(agentName: string): AgentAnalyticsAdapter | undefined {
+    AgentRegistry.initialize();
     return AgentRegistry.analyticsAdapters.get(agentName);
   }
 
@@ -72,6 +82,7 @@ export class AgentRegistry {
    * Get all registered analytics adapters
    */
   static getAllAnalyticsAdapters(): AgentAnalyticsAdapter[] {
+    AgentRegistry.initialize();
     return Array.from(AgentRegistry.analyticsAdapters.values());
   }
 }

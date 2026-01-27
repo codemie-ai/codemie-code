@@ -1,0 +1,511 @@
+# CLAUDE.md
+
+**Purpose**: AI-optimized execution guide for Claude Code agents working with the [PROJECT_NAME] codebase
+
+---
+
+## 📚 GUIDE IMPORTS
+
+This document references detailed guides stored in `.codemie/guides/`. Key references:
+
+### 🚨 MANDATORY RULE: Check Guides First
+
+**BEFORE searching files or codebase for information, you MUST:**
+
+1. **Always check** if the guides referenced below contain relevant information for the prompt or task
+2. **Use the Task Classifier** in [Instant Start](#-instant-start-read-first) to identify which guides are relevant
+3. **Load and review** the appropriate P0 (required) guides BEFORE performing direct file searches
+4. **Only proceed** to codebase searches after confirming guides don't contain the needed patterns/information
+
+**This rule is MANDATORY and must be followed without exceptions.**
+
+**Why**: Guides contain curated patterns, best practices, and architectural decisions. Checking them first:
+- Prevents reinventing existing patterns
+- Ensures consistency with established conventions
+- Saves time by providing direct answers to common questions
+- Reduces risk of introducing anti-patterns
+
+**Workflow**: Prompt → Task Classifier → Load Relevant Guides → Check Guide Content → Then Search Codebase (if needed)
+
+---
+
+### 📖 Guide References by Category
+
+<!-- FILL IN: Add references to your project-specific guides -->
+
+**[CATEGORY_1]**:
+- [Pattern name]: .codemie/guides/[category]/[pattern-name].md
+
+**[CATEGORY_2]**:
+- [Pattern name]: .codemie/guides/[category]/[pattern-name].md
+
+<!-- Common categories to consider:
+- Agents & Tools (if using LLM agents)
+- API Development (REST/GraphQL patterns)
+- Architecture (layered architecture, service patterns)
+- Data & Database (database patterns, repositories)
+- Development Practices (error handling, logging, security)
+- Testing (testing patterns, frameworks)
+- Integrations (external services, cloud providers)
+- Standards (code quality, git workflow)
+- Workflows (business workflows, state machines)
+-->
+
+---
+
+## ⚡ INSTANT START (Read First)
+
+### 1. Critical Rules (MANDATORY - Always Check)
+
+| Rule | Trigger | Action Required |
+|------|---------|-----------------|
+| 🚨 **Check Guides First** | ANY new prompt/task | ALWAYS check relevant guides BEFORE searching codebase → [Guide Imports](#-guide-imports) |
+| 🚨 **Testing** | User says "write tests", "run tests" | ONLY then work on tests → [Testing Policy](#testing-policy) |
+| 🚨 **Git Ops** | User says "commit", "push", "create PR" | ONLY then do git operations → [Git Policy](#git-operations-policy) |
+| 🚨 **[ENV_NAME]** | ANY [language/tool] command | ALWAYS [activation step] → [Env Policy](#environment-policy) |
+| 🚨 **Shell** | ANY shell command | ONLY bash/Linux syntax → [Shell Policy](#shell-environment-policy) |
+
+<!-- FILL IN: Add project-specific critical rules -->
+
+**Emergency Recovery**: If commands fail → Check [Troubleshooting](#-troubleshooting-quick-reference)
+
+### 2. Task Classifier (What am I doing?)
+
+**Scan user request for keywords → Load guides → Execute**
+
+<!-- FILL IN: Customize based on your project's technology stack and patterns -->
+
+| Keywords | Complexity | Load Guide (P0=Required) | Also Load (P1=Optional) |
+|----------|-----------|--------------------------|-------------------------|
+| **[keyword1, keyword2]** | Medium-High | .codemie/guides/[category]/[guide].md | .codemie/guides/[category]/[optional-guide].md |
+| **[keyword3, keyword4]** | Medium | .codemie/guides/[category]/[guide].md | - |
+
+<!-- Example entries:
+| **api, endpoint, router** | Medium | .codemie/guides/api/rest-api-patterns.md | .codemie/guides/api/endpoint-conventions.md |
+| **test, pytest** | Medium | .codemie/guides/testing/testing-patterns.md | .codemie/guides/testing/testing-api-patterns.md |
+| **database, sql** | Medium-High | .codemie/guides/data/database-patterns.md | .codemie/guides/data/database-optimization.md |
+-->
+
+**Guide Path**: All guides in `.codemie/guides/<category>/`
+
+**Complexity Guide**:
+- **Simple**: 1 file, < 5 min, obvious pattern → Use direct tools (Grep/Glob/Read)
+- **Medium**: 2-5 files, 5-15 min, standard patterns → Use direct tools + guide reference
+- **High**: 6+ files, 15+ min, architectural decisions → Consider EnterPlanMode or Task tool
+
+### 3. Self-Check Before Starting
+
+Before any action:
+- [ ] Did I check relevant guides FIRST (before searching codebase)?
+- [ ] Which critical rules apply? (guides/testing/git/env/shell)
+- [ ] What keywords did I identify?
+- [ ] What's the complexity level?
+- [ ] Which guides do I need to load (P0 first)?
+- [ ] Am I 80%+ confident about approach?
+
+**Decision Gates**:
+- ❌ **NO to any above** → ASK USER or READ MORE before proceeding
+- ❌ **Confidence < 80%** → Load P0 guides, then re-assess
+- ✅ **YES to all + Confidence 80%+** → Proceed to execution
+
+---
+
+## 🔄 EXECUTION WORKFLOW (Step-by-Step)
+
+Follow this sequence for every task:
+
+```
+START
+  │
+  ├─> STEP 1: Parse Request
+  │   ├─ Identify task keywords (see Task Classifier above)
+  │   ├─ Check which Critical Rules apply
+  │   ├─ Assess complexity level
+  │   └─ Gate: Can I identify 1+ relevant guides? NO → Ask user | YES → Continue
+  │
+  ├─> STEP 2: Confidence Check
+  │   ├─ Am I 80%+ confident about approach?
+  │   ├─ YES → Continue | NO → Load P0 guides
+  │   └─ Gate: After reading, confidence 80%+? NO → Load P1 guides or ask user | YES → Continue
+  │
+  ├─> STEP 3: Load Documentation (Selective, Not Everything)
+  │   ├─ Load P0 guides from Task Classifier (REQUIRED for Medium/High complexity)
+  │   ├─ Scan P1 guides - load only if confidence still < 80% (OPTIONAL)
+  │   └─ Gate: Do I have enough context? NO → Load more or ask user | YES → Continue
+  │
+  ├─> STEP 4: Pattern Match (Use Quick References)
+  │   ├─ Check Pattern Tables below (error handling, logging, architecture)
+  │   ├─ Check Common Pitfalls table
+  │   └─ Gate: Do I know the correct pattern? NO → Read guide detail | YES → Continue
+  │
+  ├─> STEP 5: Execute (Apply Patterns)
+  │   ├─ Apply patterns from loaded guides
+  │   ├─ Follow Critical Rules (test/git/env/shell)
+  │   ├─ Track progress with success indicators
+  │   └─ Cross-check with Quick Validation (below)
+  │
+  └─> STEP 6: Validate (Before Delivery)
+      ├─ Run through Quick Validation checklist
+      ├─ Check Success Indicators
+      ├─ Gate: All checks pass? NO → Fix issues | YES → Deliver
+      └─ END
+```
+
+### Success Indicators (Am I on track?)
+
+| Stage | Good Signs | Warning Signs |
+|-------|-----------|---------------|
+| **Parse Request** | Keywords match Task Classifier | No matching keywords → ask user |
+| **Confidence Check** | 80%+ confident after reading | Still confused after P0 guides → need clarification |
+| **Load Docs** | Patterns clear, examples match task | Multiple conflicting patterns → ask user preference |
+| **Pattern Match** | Found exact pattern in quick ref | No matching pattern → read full guide |
+| **Execute** | Code compiles, follows architecture | Errors, missing imports → check guide again |
+| **Validate** | All checks pass, tests work | Any check fails → fix before delivery |
+
+### Quick Validation (Run Before Delivery)
+
+<!-- FILL IN: Customize based on your project's quality standards -->
+
+| Priority | Check | How to Verify | Fix If Failed |
+|----------|-------|---------------|---------------|
+| 🚨 | **Functionality** | Does it meet user request? | Re-read requirements |
+| 🚨 | **Critical Rules** | Did I follow test/git/env/shell rules? | Review policies below |
+| 🚨 | **Security** | No hardcoded secrets? Input validated? | See [Security Patterns](#security-patterns-mandatory) |
+| 🚨 | **Error Handling** | Using proper exceptions? | See [Error Handling](#error-handling-use-these-patterns) |
+| 🚨 | **Logging** | Following logging patterns? | See [Logging Patterns](#logging-patterns-mandatory) |
+| ⚠️ | **Architecture** | Followed project architecture? | See guides in .codemie/guides/architecture/ |
+| ⚠️ | **Async/Concurrency** | Used appropriate patterns? | See [Common Pitfalls](#common-pitfalls-avoid-these) |
+| ✅ | **Type Safety** | All functions typed? | See code quality guide |
+| ✅ | **Code Quality** | No TODOs, unused imports? | Run linter |
+
+---
+
+## 📊 PATTERN QUICK REFERENCE
+
+<!-- FILL IN: Add quick reference tables for your most common patterns -->
+
+### Error Handling (Use These Patterns)
+
+<!-- Example structure - customize for your project -->
+
+| When | Pattern/Exception | Import From | Related Patterns |
+|------|-------------------|-------------|------------------|
+| Validation failed | `[ValidationError]` | `[module.path]` | [Logging](#logging-patterns-mandatory) |
+| Not found | `[NotFoundException]` | `[module.path]` | [API Patterns](#api-patterns) |
+| Business logic | `[BusinessError]` | `[module.path]` | [Service Layer](#service-layer) |
+
+**Detail**: .codemie/guides/development/error-handling.md
+
+### Logging Patterns (MANDATORY)
+
+<!-- Example structure - customize for your project -->
+
+| ✅ DO | ❌ DON'T | Why | Related |
+|-------|----------|-----|---------|
+| [Best practice 1] | [Anti-pattern 1] | [Reason] | [Related pattern] |
+| [Best practice 2] | [Anti-pattern 2] | [Reason] | [Related pattern] |
+
+**Detail**: .codemie/guides/development/logging-patterns.md
+
+### Architecture Patterns (Core Rules)
+
+<!-- FILL IN: Document your project's architectural layers -->
+
+| Layer | Responsibility | Example Path | Related Guide |
+|-------|----------------|--------------|---------------|
+| **[Layer 1]** | [Responsibility] | `[path/to/layer]` | .codemie/guides/[guide].md |
+| **[Layer 2]** | [Responsibility] | `[path/to/layer]` | .codemie/guides/[guide].md |
+
+**Flow**: `[Layer1] → [Layer2] → [Layer3]` (Never skip layers)
+
+**Detail**: .codemie/guides/architecture/layered-architecture.md
+
+### Security Patterns (MANDATORY)
+
+<!-- FILL IN: Document security requirements -->
+
+| Rule | Implementation | Related Guide |
+|------|----------------|---------------|
+| No hardcoded credentials | [How to handle] | .codemie/guides/development/security-patterns.md |
+| Input validation | [Validation approach] | .codemie/guides/[guide].md |
+| Authentication | [Auth pattern] | .codemie/guides/[guide].md |
+
+**Detail**: .codemie/guides/development/security-patterns.md
+
+### Common Pitfalls (Avoid These)
+
+<!-- FILL IN: Document common mistakes and anti-patterns -->
+
+| Category | 🚨 Never Do This | ✅ Do This Instead | Guide Reference |
+|----------|------------------|---------------------|-----------------|
+| **[Language]** | [Anti-pattern] | [Correct pattern] | .codemie/guides/[guide].md |
+| **[Framework]** | [Anti-pattern] | [Correct pattern] | .codemie/guides/[guide].md |
+| **[Tool]** | [Anti-pattern] | [Correct pattern] | .codemie/guides/[guide].md |
+
+---
+
+## 🛠️ DEVELOPMENT COMMANDS
+
+<!-- FILL IN: Document your project's common commands -->
+
+**🚨 CRITICAL**: [Environment setup instructions, e.g., "Activate virtualenv before ALL Python commands"]
+
+### Common Commands
+
+| Task | Command | Env? | Notes |
+|------|---------|------|-------|
+| **Setup** | `[setup command]` | [Y/N] | First time setup |
+| **Run Server** | `[run command]` | [Y/N] | Dev server |
+| **Lint** | `[lint command]` | [Y/N] | Check code quality |
+| **Format** | `[format command]` | [Y/N] | Format code |
+| **Test** ⚠️ | `[test command]` | [Y/N] | ONLY if user requests |
+| **Build** | `[build command]` | [Y/N] | Build project |
+
+<!-- Example entries:
+| **Setup** | `npm install` | N/A | First time setup |
+| **Run Server** | `npm run dev` | N/A | Dev server (port 3000) |
+| **Lint** | `npm run lint` | N/A | ESLint check |
+| **Format** | `npm run format` | N/A | Prettier format |
+| **Test** ⚠️ | `npm test` | N/A | ONLY if user requests |
+| **Build** | `npm run build` | N/A | Production build |
+-->
+
+**[Additional Info]**: [URLs, ports, documentation links]
+
+---
+
+## 🔧 TROUBLESHOOTING QUICK REFERENCE
+
+### Common Issues & Fixes
+
+<!-- FILL IN: Document common issues and solutions -->
+
+| Symptom | Likely Cause | Fix | Prevention |
+|---------|--------------|-----|------------|
+| [Error message/symptom] | [Root cause] | [Solution steps] | [How to prevent] |
+| [Error message/symptom] | [Root cause] | [Solution steps] | [How to prevent] |
+
+### Diagnostic Commands
+
+| Need to Check | Command | What to Look For |
+|---------------|---------|------------------|
+| [System status] | `[diagnostic command]` | [Expected output] |
+| [Dependency status] | `[diagnostic command]` | [Expected output] |
+
+### Emergency Recovery
+
+| Situation | Action |
+|-----------|--------|
+| **Commands failing** | 1. [First recovery step]<br>2. [Second recovery step]<br>3. [Escalation step] |
+| **Build errors** | 1. [First recovery step]<br>2. [Second recovery step] |
+| **Pattern unclear** | 1. Search .codemie/guides/ for pattern<br>2. Check related patterns<br>3. Ask user if ambiguous |
+
+---
+
+## 🏗️ PROJECT CONTEXT
+
+### Technology Stack
+
+<!-- FILL IN: Document your technology stack -->
+
+| Component | Tool | Version | Purpose |
+|-----------|------|---------|---------|
+| Language | [Language] | [Version] | Core language |
+| Framework | [Framework] | [Version] | [Purpose] |
+| Database | [Database] | [Version] | [Purpose] |
+| Testing | [Test framework] | [Version] | Test framework |
+| Linting | [Linter] | [Version] | Code quality |
+| [Other] | [Tool] | [Version] | [Purpose] |
+
+### Core Components
+
+<!-- FILL IN: Document your project's main components -->
+
+| Component | Path | Purpose | Guide |
+|-----------|------|---------|-------|
+| [Component 1] | `[path/]` | [Description] | .codemie/guides/[guide].md |
+| [Component 2] | `[path/]` | [Description] | .codemie/guides/[guide].md |
+
+### Key Integrations
+
+<!-- FILL IN: Document external integrations -->
+
+| Integration | Purpose | Guide |
+|-------------|---------|-------|
+| [Service 1] | [Purpose] | .codemie/guides/integration/[guide].md |
+| [Service 2] | [Purpose] | .codemie/guides/integration/[guide].md |
+
+### Architecture Overview
+
+<!-- FILL IN: Brief architecture description -->
+
+**[Architecture Pattern Name]**:
+- [Key characteristic 1]
+- [Key characteristic 2]
+- [Key characteristic 3]
+- **Detail**: .codemie/guides/architecture/[guide].md
+
+---
+
+## 📝 CODING STANDARDS
+
+### [Language] Features (Use These)
+
+<!-- FILL IN: Document language-specific features to use -->
+
+| Feature | Use For | Guide Reference |
+|---------|---------|-----------------|
+| [Feature 1] | [Use case] | .codemie/guides/standards/code-quality.md |
+| [Feature 2] | [Use case] | .codemie/guides/standards/code-quality.md |
+
+**Detail**: .codemie/guides/standards/code-quality.md
+
+### Type Safety (REQUIRED/OPTIONAL)
+
+<!-- FILL IN: Document type safety requirements -->
+
+[Type safety requirements and patterns]
+
+### Async/Concurrency Patterns (CRITICAL)
+
+<!-- FILL IN: Document async patterns if applicable -->
+
+| ✅ DO | ❌ DON'T | Guide |
+|-------|----------|-------|
+| [Best practice] | [Anti-pattern] | .codemie/guides/[guide].md |
+
+---
+
+## 📚 DETAILED POLICIES
+
+### Testing Policy
+
+**MANDATORY RULE**: Tests ONLY when user EXPLICITLY requests
+
+**Triggers** (work on tests ONLY if user says):
+- ✅ "write tests"
+- ✅ "run the tests"
+- ✅ "create unit tests"
+- ✅ "add test coverage"
+- ✅ `[test command]`
+
+**Never Do**:
+- ❌ Proactively write tests
+- ❌ Suggest running tests
+- ❌ Run tests unless asked
+
+**Framework**: [Test framework and tools]
+
+**Rationale**: Testing requires time and context. Only implement when explicitly needed.
+
+**If Unsure**: Ask user for clarification
+
+**Testing Details**: .codemie/guides/testing/testing-patterns.md
+
+### Git Operations Policy
+
+**MANDATORY RULE**: Git operations ONLY when user EXPLICITLY requests
+
+**Triggers** (do git ops ONLY if user says):
+- ✅ "commit these changes"
+- ✅ "create a commit"
+- ✅ "push to remote"
+- ✅ "create a branch"
+- ✅ "create a pull request"
+
+**Never Do**:
+- ❌ Proactively commit/push/branch
+- ❌ Suggest git operations
+
+**Branch Pattern**: [Branch naming convention]
+
+**Rationale**: Git affects version control history. Only perform when explicitly requested.
+
+**If Unsure**: Ask user for clarification
+
+**Git Details**: .codemie/guides/standards/git-workflow.md
+
+### Environment Policy
+
+<!-- FILL IN: Document environment setup requirements -->
+
+**MANDATORY RULE**: [Environment requirement, e.g., "ALWAYS activate virtualenv BEFORE Python commands"]
+
+**Why**: [Reason]
+
+**How to Activate**: `[activation command]`
+
+**Alternative**: [Alternative approach if applicable]
+
+**Rule of Thumb**: [When to know environment is not set up correctly]
+
+**Recovery**: See [Troubleshooting](#-troubleshooting-quick-reference)
+
+**Detail**: .codemie/guides/development/setup-guide.md
+
+### Shell Environment Policy
+
+**MANDATORY RULE**: Use bash/Linux commands ONLY
+
+**Requirements**:
+- ✅ Bash/shell syntax for all commands
+- ✅ Linux-compatible commands
+- ❌ No Windows commands (PowerShell, cmd.exe)
+
+**Rationale**: Ensures consistency across development environments
+
+---
+
+## 🎯 REMEMBER
+
+### Critical Workflow
+1. ⚡ Read [Instant Start](#-instant-start-read-first)
+2. ✅ Run [Self-Check](#3-self-check-before-starting) (check confidence level)
+3. 🔄 Follow [Execution Workflow](#-execution-workflow-step-by-step) (step-by-step with gates)
+4. 📊 Use [Pattern Quick Reference](#-pattern-quick-reference) (fast lookups)
+5. 🔍 Track [Success Indicators](#success-indicators-am-i-on-track) (am I on track?)
+6. ✅ [Validate before delivery](#quick-validation-run-before-delivery) (all checks must pass)
+
+### Critical Rules (Check EVERY Time)
+- 🚨 **Check Guides First**: ALWAYS check relevant guides BEFORE searching codebase
+- 🚨 **Testing**: Only when explicitly requested
+- 🚨 **Git**: Only when explicitly requested
+- 🚨 **Environment**: [Environment requirement]
+- 🚨 **Shell**: Bash/Linux only
+
+### Decision Making Framework
+1. **Parse**: Use Task Classifier to identify keywords → guides → complexity
+2. **Confidence**: Am I 80%+ confident? NO → Load P0 guides
+3. **Load**: P0 (required) first, then P1 (optional) only if needed
+4. **Execute**: Apply patterns, follow critical rules, track success indicators
+5. **Validate**: All checks must pass before delivery
+6. **Stuck?**: Check [Troubleshooting](#-troubleshooting-quick-reference), load more guides, or ask user
+
+### Quality Standards (Non-Negotiable)
+
+<!-- FILL IN: Document quality requirements -->
+
+- No hardcoded secrets (use environment variables)
+- No placeholders/TODOs in delivered code
+- [Security requirement]
+- [Architecture requirement]
+- [Performance requirement]
+- Type safety on all functions (if applicable)
+- Specific exception handling (no bare catches)
+
+### When to Ask User
+- **Ambiguous requirements**: Multiple valid approaches possible
+- **Low confidence**: < 80% after reading P0+P1 guides
+- **Missing information**: Need clarification on scope/approach
+- **High complexity**: Task involves architectural decisions
+- **Policy unclear**: Unsure if testing/git/other policy applies
+
+### Confidence Calibration
+- **90%+ confident**: Proceed with execution, minimal guide lookup
+- **80-89% confident**: Review quick reference tables, proceed
+- **70-79% confident**: Load P0 guides, then re-assess
+- **< 70% confident**: Load P0+P1 guides, ask user if still unclear
+
+**Production Ready**: Deliver complete, tested, secure solutions without shortcuts.
+
+**Questions?** Always better to ask than assume - ask for clarification when unsure.

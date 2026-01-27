@@ -7,11 +7,9 @@ import { ConfigLoader, CodeMieConfigOptions } from '../../utils/config.js';
 import { logger } from '../../utils/logger.js';
 import { getDirname } from '../../utils/paths.js';
 import { BUILTIN_AGENT_NAME } from '../registry.js';
-import { ClaudePluginMetadata } from '../plugins/claude.plugin.js';
-import { CodexPluginMetadata } from '../plugins/codex.plugin.js';
+import { ClaudePluginMetadata } from '../plugins/claude/claude.plugin.js';
 import { CodeMieCodePluginMetadata } from '../plugins/codemie-code.plugin.js';
-import { GeminiPluginMetadata } from '../plugins/gemini.plugin.js';
-import { DeepAgentsPluginMetadata } from '../plugins/deepagents.plugin.js';
+import { GeminiPluginMetadata } from '../plugins/gemini/gemini.plugin.js';
 
 /**
  * Universal CLI builder for any agent
@@ -78,8 +76,8 @@ export class AgentCLI {
         await this.handleHealthCheck();
       });
 
-    // Add init command for frameworks (skip for built-in agent and deepagents)
-    if (this.adapter.name !== BUILTIN_AGENT_NAME && this.adapter.name !== 'deepagents') {
+    // Add init command for frameworks (skip for built-in agent)
+    if (this.adapter.name !== BUILTIN_AGENT_NAME) {
       this.program
         .command('init')
         .description('Initialize development framework')
@@ -332,10 +330,8 @@ export class AgentCLI {
   private getAgentMetadata() {
     const metadataMap: Record<string, typeof ClaudePluginMetadata> = {
       'claude': ClaudePluginMetadata,
-      'codex': CodexPluginMetadata,
       [BUILTIN_AGENT_NAME]: CodeMieCodePluginMetadata,
       'gemini': GeminiPluginMetadata,
-      'deepagents': DeepAgentsPluginMetadata
     };
     return metadataMap[this.adapter.name];
   }

@@ -66,29 +66,22 @@ All external agents share the same command pattern:
 ```bash
 # Basic usage
 codemie-claude "message"         # Claude Code agent
-codemie-codex "message"          # Codex agent
 codemie-gemini "message"         # Gemini CLI agent
-codemie-deepagents "message"     # Deep Agents CLI agent
 
 # Health checks
 codemie-claude health
-codemie-codex health
 codemie-gemini health
-codemie-deepagents health
 
 # With configuration overrides
 codemie-claude --model claude-4-5-sonnet --api-key sk-... "review code"
-codemie-codex --model gpt-4.1 --base-url https://api.openai.com/v1 "generate tests"
 codemie-gemini -m gemini-2.5-flash --api-key key "optimize performance"
 
 # With profile selection
 codemie-claude --profile personal-openai "review PR"
-codemie-codex --profile work-litellm "document code"
 codemie-gemini --profile google-direct "analyze code"
 
 # Agent-specific options (pass-through to underlying CLI)
 codemie-claude --context large -p "review code"      # -p = print mode (non-interactive)
-codemie-codex --temperature 0.1 "generate tests"
 codemie-gemini -p "your prompt"                      # -p for gemini's non-interactive mode
 ```
 
@@ -255,9 +248,7 @@ codemie install <agent>
 
 **Supported Agents:**
 - `claude` - Claude Code (npm-based)
-- `codex` - OpenAI Codex (npm-based)
 - `gemini` - Gemini CLI (npm-based)
-- `deepagents` - Deep Agents (Python/pip-based)
 
 ### `codemie uninstall [agent]`
 
@@ -281,7 +272,7 @@ codemie doctor [options]
 - `-v, --verbose` - Enable verbose debug output with detailed API logs
 
 **Checks:**
-- Node.js version (requires >=24.0.0)
+- Node.js version (requires >=20.0.0)
 - Python version (if using Python-based agents)
 - Git installation and configuration
 - AWS CLI (if using Bedrock)
@@ -357,7 +348,7 @@ codemie analytics [options]
 **Filter Options:**
 - `--session <id>` - Filter by session ID
 - `--project <pattern>` - Filter by project path (basename, partial, or full path)
-- `--agent <name>` - Filter by agent name (claude, gemini, codex, etc.)
+- `--agent <name>` - Filter by agent name (claude, gemini, etc.)
 - `--branch <name>` - Filter by git branch
 - `--from <date>` - Filter sessions from date (YYYY-MM-DD)
 - `--to <date>` - Filter sessions to date (YYYY-MM-DD)

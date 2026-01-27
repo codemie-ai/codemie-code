@@ -1,0 +1,15 @@
+{
+  "enabled": true,
+  "strategy": "hybrid",
+  "includes": [
+    "claude-templates/**"
+  ],
+  "excludes": [
+    "**/*.test.js",
+    "**/.DS_Store",
+    "**/node_modules/**"
+  ],
+  "targetDir": ".codemie",
+  "preserveStructure": true,
+  "overwritePolicy": "newer"
+}

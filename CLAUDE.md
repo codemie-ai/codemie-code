@@ -1,398 +1,627 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-
-This project is **AI/Run CodeMie CLI** - a professional, unified CLI tool for managing multiple AI coding agents.
+**Purpose**: AI-optimized execution guide for Claude Code agents working with the CodeMie Code codebase
 
 ---
 
-## Navigation: Hierarchical Documentation
+## 📚 GUIDE IMPORTS
 
-**This project uses hierarchical CLAUDE.md files** for token-efficient, context-aware documentation:
+This document references detailed guides stored in `.codemie/guides/`. Key references:
 
-- **Root CLAUDE.md** (this file): Always loaded - provides project overview, core principles, and navigation
-- **Subdirectory CLAUDE.md files**: Auto-loaded when working in specific areas
+### 🚨 MANDATORY RULE: Check Guides First
 
-### Where to Find Detailed Context
+**BEFORE searching files or codebase for information, you MUST:**
 
-| Working in... | Auto-loads... | Contains... |
-|--------------|---------------|-------------|
-| `src/agents/**` | `src/agents/CLAUDE.md` | Agent plugin development, lifecycle hooks, integration patterns |
-| `src/providers/**` | `src/providers/CLAUDE.md` | Provider plugin development, agent hooks, setup wizard patterns |
-| `src/cli/**` | `src/cli/CLAUDE.md` | CLI command patterns, factory pattern, testing |
-| `src/analytics/**` | `src/analytics/CLAUDE.md` | Analytics system, aggregation, metrics, CLI usage |
-| `src/workflows/**` | `src/workflows/CLAUDE.md` | Workflow management, template development, VCS integration |
-| `src/utils/**` | `src/utils/CLAUDE.md` | Shared utilities organization, testing patterns for exec-dependent modules |
-| `tests/integration/**` | `tests/integration/CLAUDE.md` | Integration testing patterns, performance optimization, fixture management |
-| `tests/integration/metrics/**` | `tests/integration/metrics/CLAUDE.md` | Agent metrics testing with full verification suite, golden dataset validation |
+1. **Always check** if the guides referenced below contain relevant information for the prompt or task
+2. **Use the Task Classifier** in [Instant Start](#-instant-start-read-first) to identify which guides are relevant
+3. **Load and review** the appropriate P0 (required) guides BEFORE performing direct file searches
+4. **Only proceed** to codebase searches after confirming guides don't contain the needed patterns/information
 
-**Token Savings**: This structure reduces context by 30-70% depending on work location, enabling faster responses and more focused guidance.
+**This rule is MANDATORY and must be followed without exceptions.**
 
-### Memory Maintenance Commands
+**Why**: Guides contain curated patterns, best practices, and architectural decisions. Checking them first:
+- Prevents reinventing existing patterns
+- Ensures consistency with established conventions
+- Saves time by providing direct answers to common questions
+- Reduces risk of introducing anti-patterns
 
-Keep CLAUDE.md files accurate and efficient with these commands:
-
-- `/memory-add` - Capture session learnings at end of work
-- `/memory-init [dir]` - Document directory architecture when starting new work
-- `/memory-refresh` - Monthly audit of all CLAUDE.md files for accuracy
-
-See `.claude/commands/README.md` for complete usage guide.
+**Workflow**: Prompt → Task Classifier → Load Relevant Guides → Check Guide Content → Then Search Codebase (if needed)
 
 ---
 
-## Critical First Step: ALWAYS Read Documentation
+### 📖 Guide References by Category
 
-**MANDATORY**: Before writing ANY code, you MUST:
-1. Read the `README.md` file - this is your PRIMARY source of truth
-2. Review this CLAUDE.md for architectural patterns and conventions
-3. Check if a subdirectory CLAUDE.md exists for your working area
-4. Study reference implementations mentioned in this guide
+**Architecture**:
+- [Project Structure]: .codemie/guides/architecture/project-structure.md
+- [Layered Architecture]: .codemie/guides/architecture/layered-architecture.md
+
+**Development Practices**:
+- [Development Practices]: .codemie/guides/development/development-practices.md
+- [Code Quality]: .codemie/guides/standards/code-quality.md
+
+**Testing**:
+- [Testing Patterns]: .codemie/guides/testing/testing-patterns.md
+
+**Standards & Workflows**:
+- [Git Workflow]: .codemie/guides/standards/git-workflow.md
+
+**API & Integration**:
+- [API Patterns]: .codemie/guides/api/api-patterns.md
+- [External Integrations]: .codemie/guides/integration/external-integrations.md
+
+**Security & Data**:
+- [Security Practices]: .codemie/guides/security/security-practices.md
+- [Database Patterns]: .codemie/guides/data/database-patterns.md
 
 ---
 
-## Common Commands
+## ⚡ INSTANT START (Read First)
 
-```bash
-# Installation & Setup
-npm install                 # Install all dependencies
-npm link                    # Link globally for local development
+### 1. Critical Rules (MANDATORY - Always Check)
 
-# Building
-npm run build              # Compile TypeScript
-npm run dev                # Watch mode for development
+| Rule | Trigger | Action Required |
+|------|---------|-----------------|
+| 🚨 **Check Guides First** | ANY new prompt/task | ALWAYS check relevant guides BEFORE searching codebase → [Guide Imports](#-guide-imports) |
+| 🚨 **Testing** | User says "write tests", "run tests" | ONLY then work on tests → [Testing Policy](#testing-policy) |
+| 🚨 **Git Ops** | User says "commit", "push", "create PR" | ONLY then do git operations → [Git Policy](#git-operations-policy) |
+| 🚨 **Node Environment** | ANY TypeScript/npm command | No activation needed (Node.js >=20.0.0) → [Env Policy](#environment-policy) |
+| 🚨 **Shell** | ANY shell command | ONLY bash/Linux syntax → [Shell Policy](#shell-environment-policy) |
 
-# Testing
-npm run test               # Run tests with Vitest
-npm run test:ui            # Run tests with interactive UI
+**Emergency Recovery**: If commands fail → Check [Troubleshooting](#-troubleshooting-quick-reference)
 
-# Code Quality
-npm run lint               # Check code style (max 0 warnings)
-npm run lint:fix           # Fix linting issues
-npm run ci                 # Run full CI pipeline
+### 2. Task Classifier (What am I doing?)
 
-# Development Workflow
-npm run build && npm link  # Build and link for testing
-codemie doctor             # Verify installation
-codemie-code health        # Test built-in agent
+**Scan user request for keywords → Load guides → Execute**
 
-# Agent Shortcuts
-codemie-claude "message"   # Claude Code
-codemie-codex "message"    # Codex
-codemie-gemini "message"   # Gemini CLI
-codemie-deepagents "message" # Deep Agents
+| Keywords | Complexity | Load Guide (P0=Required) | Also Load (P1=Optional) |
+|----------|-----------|--------------------------|-------------------------|
+| **plugin, registry, agent, adapter** | Medium-High | .codemie/guides/api/api-patterns.md | .codemie/guides/architecture/layered-architecture.md |
+| **architecture, layer, structure** | Medium | .codemie/guides/architecture/layered-architecture.md | .codemie/guides/architecture/project-structure.md |
+| **test, vitest, mock, coverage** | Medium | .codemie/guides/testing/testing-patterns.md | .codemie/guides/development/development-practices.md |
+| **error, exception, validation** | Medium | .codemie/guides/development/development-practices.md | .codemie/guides/security/security-practices.md |
+| **security, sanitize, credential** | High | .codemie/guides/security/security-practices.md | .codemie/guides/development/development-practices.md |
+| **provider, sso, bedrock, litellm** | Medium-High | .codemie/guides/api/api-patterns.md | .codemie/guides/integration/external-integrations.md |
+| **cli, command, commander** | Medium | .codemie/guides/architecture/layered-architecture.md | .codemie/guides/architecture/project-structure.md |
+| **workflow, template, ci/cd** | Medium | .codemie/guides/integration/external-integrations.md | .codemie/guides/standards/git-workflow.md |
+| **database, jsonl, metrics, analytics** | Medium | .codemie/guides/data/database-patterns.md | .codemie/guides/development/development-practices.md |
+| **commit, branch, pr, git** | Medium | .codemie/guides/standards/git-workflow.md | - |
 
-# Profile Management
-codemie setup              # Configure provider
-codemie profile            # List profiles
-codemie-code --profile work "task"  # Use specific profile
+**Guide Path**: All guides in `.codemie/guides/<category>/`
 
-# Analytics
-codemie analytics          # View usage metrics
-codemie analytics --agent claude --last 7d  # Filtered view
+**Complexity Guide**:
+- **Simple**: 1 file, < 5 min, obvious pattern → Use direct tools (Grep/Glob/Read)
+- **Medium**: 2-5 files, 5-15 min, standard patterns → Use direct tools + guide reference
+- **High**: 6+ files, 15+ min, architectural decisions → Consider EnterPlanMode or Task tool
 
-# Workflows
-codemie workflow list      # List CI/CD workflows
-codemie workflow install pr-review  # Install workflow
+### 3. Self-Check Before Starting
+
+Before any action:
+- [ ] Did I check relevant guides FIRST (before searching codebase)?
+- [ ] Which critical rules apply? (guides/testing/git/env/shell)
+- [ ] What keywords did I identify?
+- [ ] What's the complexity level?
+- [ ] Which guides do I need to load (P0 first)?
+- [ ] Am I 80%+ confident about approach?
+
+**Decision Gates**:
+- ❌ **NO to any above** → ASK USER or READ MORE before proceeding
+- ❌ **Confidence < 80%** → Load P0 guides, then re-assess
+- ✅ **YES to all + Confidence 80%+** → Proceed to execution
+
+---
+
+## 🔄 EXECUTION WORKFLOW (Step-by-Step)
+
+Follow this sequence for every task:
+
+```
+START
+  │
+  ├─> STEP 1: Parse Request
+  │   ├─ Identify task keywords (see Task Classifier above)
+  │   ├─ Check which Critical Rules apply
+  │   ├─ Assess complexity level
+  │   └─ Gate: Can I identify 1+ relevant guides? NO → Ask user | YES → Continue
+  │
+  ├─> STEP 2: Confidence Check
+  │   ├─ Am I 80%+ confident about approach?
+  │   ├─ YES → Continue | NO → Load P0 guides
+  │   └─ Gate: After reading, confidence 80%+? NO → Load P1 guides or ask user | YES → Continue
+  │
+  ├─> STEP 3: Load Documentation (Selective, Not Everything)
+  │   ├─ Load P0 guides from Task Classifier (REQUIRED for Medium/High complexity)
+  │   ├─ Scan P1 guides - load only if confidence still < 80% (OPTIONAL)
+  │   └─ Gate: Do I have enough context? NO → Load more or ask user | YES → Continue
+  │
+  ├─> STEP 4: Pattern Match (Use Quick References)
+  │   ├─ Check Pattern Tables below (error handling, logging, architecture)
+  │   ├─ Check Common Pitfalls table
+  │   └─ Gate: Do I know the correct pattern? NO → Read guide detail | YES → Continue
+  │
+  ├─> STEP 5: Execute (Apply Patterns)
+  │   ├─ Apply patterns from loaded guides
+  │   ├─ Follow Critical Rules (test/git/env/shell)
+  │   ├─ Track progress with success indicators
+  │   └─ Cross-check with Quick Validation (below)
+  │
+  └─> STEP 6: Validate (Before Delivery)
+      ├─ Run through Quick Validation checklist
+      ├─ Check Success Indicators
+      ├─ Gate: All checks pass? NO → Fix issues | YES → Deliver
+      └─ END
 ```
 
----
+### Success Indicators (Am I on track?)
 
-## Core Principles
+| Stage | Good Signs | Warning Signs |
+|-------|-----------|---------------|
+| **Parse Request** | Keywords match Task Classifier | No matching keywords → ask user |
+| **Confidence Check** | 80%+ confident after reading | Still confused after P0 guides → need clarification |
+| **Load Docs** | Patterns clear, examples match task | Multiple conflicting patterns → ask user preference |
+| **Pattern Match** | Found exact pattern in quick ref | No matching pattern → read full guide |
+| **Execute** | Code compiles, follows architecture | Errors, missing imports → check guide again |
+| **Validate** | All checks pass, tests work | Any check fails → fix before delivery |
 
-**ALWAYS follow these fundamental principles:**
+### Quick Validation (Run Before Delivery)
 
-### KISS (Keep It Simple, Stupid)
-- Write simple, straightforward code that's easy to understand
-- Avoid over-engineering and unnecessary complexity
-- Remove redundant code, scripts, and configuration
-- Question every piece of complexity - is it truly needed?
-- **Example**: Use plugin pattern instead of individual adapter files for each agent
-
-### DRY (Don't Repeat Yourself)
-- Never duplicate code, logic, or configuration
-- Extract common patterns into reusable functions/utilities
-- Reuse existing utilities from `src/utils/` before creating new ones
-- One source of truth for each piece of knowledge
-- **Example**: `agent-executor.js` handles all agent shortcuts instead of separate bin files
-
-### Extensibility
-- Design for easy addition of new features without modifying existing code
-- Use plugin/adapter patterns for agent integration
-- Define clear interfaces that new implementations can follow
-- **Example**: Add new agents by creating a plugin, not modifying registry
-
-### Reusability
-- Write modular, composable functions with single responsibilities
-- Avoid tight coupling between components
-- Use dependency injection for testability
-- **Example**: `ConfigLoader` works for all providers, not provider-specific loaders
-
-### Maintainability
-- Clear naming conventions that reflect purpose
-- Comprehensive type definitions with TypeScript
-- Consistent error handling patterns
-- **Example**: `src/agents/plugins/` contains all agent implementations
-
-### Clean Variable Management
-- **Avoid unused variables entirely** - remove variables that are not used
-- **Never prefix with underscore** (`_variable`) unless absolutely necessary
-- **Only use underscore when**: Required by external API or framework
-- **Prefer refactoring**: Remove unused parameters, use only needed properties
-
-**Remember:** Simple, clean code is better than clever, complex code.
-
-### Testing Philosophy
-
-**Favor integration tests over unit tests** - Test real behavior, not implementation details.
-
-- **Integration Tests First**: Test actual user experience end-to-end
-- **Minimal Unit Tests**: Only for complex algorithms or utilities
-- **Quality Over Quantity**: 1 good integration test > 10 fragile unit tests
+| Priority | Check | How to Verify | Fix If Failed |
+|----------|-------|---------------|---------------|
+| 🚨 | **Functionality** | Does it meet user request? | Re-read requirements |
+| 🚨 | **Critical Rules** | Did I follow test/git/env/shell rules? | Review policies below |
+| 🚨 | **Security** | No hardcoded secrets? Input validated? | See [Security Patterns](#security-patterns-mandatory) |
+| 🚨 | **Error Handling** | Using proper exceptions? | See [Error Handling](#error-handling-use-these-patterns) |
+| 🚨 | **Logging** | Following logging patterns? | See [Logging Patterns](#logging-patterns-mandatory) |
+| ⚠️ | **Architecture** | Followed layered architecture? | See guides in .codemie/guides/architecture/ |
+| ⚠️ | **Async/Concurrency** | Used appropriate patterns? | See [Common Pitfalls](#common-pitfalls-avoid-these) |
+| ✅ | **Type Safety** | All functions typed? | See code quality guide |
+| ✅ | **Code Quality** | No TODOs, unused imports? | Run linter |
 
 ---
 
-## Project Overview
+## 📊 PATTERN QUICK REFERENCE
 
-**AI/Run CodeMie CLI** is a professional, unified CLI wrapper for managing multiple AI coding agents:
+### Error Handling (Use These Patterns)
 
-1. **External Agent Management**: Install and run external agents (Claude Code, Codex, Gemini, Deep Agents)
-2. **Built-in Agent**: CodeMie Native - a LangGraph-based coding assistant
-3. **Configuration Management**: Unified config supporting multiple AI providers
-4. **Multiple Interfaces**: CLI commands, direct executables, and programmatic APIs
-5. **Cross-Platform**: Full support for Windows, Linux, and macOS
-6. **Analytics**: Track usage, tokens, costs, and tool usage across all agents
+| When | Pattern/Exception | Import From | Related Patterns |
+|------|-------------------|-------------|------------------|
+| Configuration failed | `ConfigurationError` | `src/utils/errors.ts` | [Logging](#logging-patterns-mandatory) |
+| Agent not found | `AgentNotFoundError` | `src/utils/errors.ts` | [API Patterns](#api-patterns) |
+| Agent install failed | `AgentInstallationError` | `src/utils/errors.ts` | [Process Execution](#process-patterns) |
+| Tool execution failed | `ToolExecutionError` | `src/utils/errors.ts` | [Security](#security-patterns-mandatory) |
+| Path security issue | `PathSecurityError` | `src/utils/errors.ts` | [Security](#security-patterns-mandatory) |
+| npm operation failed | `NpmError` | `src/utils/errors.ts` | [Process Execution](#process-patterns) |
+| Generic CodeMie error | `CodeMieError` | `src/utils/errors.ts` | Base class for all errors |
+
+**Error Context**:
+```typescript
+// Always provide context for errors
+import { createErrorContext, formatErrorForUser } from 'src/utils/errors.js';
+
+try {
+  await riskyOperation();
+} catch (error) {
+  const context = createErrorContext(error, { sessionId, agent: 'claude' });
+  logger.error('Operation failed', context);
+  console.error(formatErrorForUser(context));
+}
+```
+
+**Detail**: .codemie/guides/development/development-practices.md
+
+### Logging Patterns (MANDATORY)
+
+| ✅ DO | ❌ DON'T | Why | Related |
+|-------|----------|-----|---------|
+| Use logger.debug() for internal details | Use console.log() directly | Debug logs go to file, controlled by CODEMIE_DEBUG | [Error Handling](#error-handling-use-these-patterns) |
+| Use logger.info() for non-console logs | Log sensitive data (tokens, keys) | Auto-sanitization prevents leaks | [Security](#security-patterns-mandatory) |
+| Use logger.success() for user feedback | Skip session/agent context | Context required for debugging | [Session Management](#session-patterns) |
+| Sanitize before logging | Log raw API responses | Prevents credential exposure | [Security](#security-patterns-mandatory) |
+
+**Session Context**:
+```typescript
+// Set session context at agent startup
+logger.setSessionId(sessionId);
+logger.setAgentName('claude');
+logger.setProfileName('work');
+
+// All subsequent logs include context automatically
+logger.debug('Processing request'); // [DEBUG] [claude] [session-id] [work] Processing request
+```
+
+**Detail**: .codemie/guides/development/development-practices.md
+
+### Architecture Patterns (Core Rules)
+
+| Layer | Responsibility | Example Path | Related Guide |
+|-------|----------------|--------------|---------------|
+| **CLI** | User interface, Commander.js commands | `src/cli/commands/` | .codemie/guides/architecture/layered-architecture.md |
+| **Registry** | Plugin discovery, routing | `src/agents/registry.ts` | .codemie/guides/api/api-patterns.md |
+| **Plugin** | Concrete implementations (agents, providers) | `src/agents/plugins/claude/` | .codemie/guides/api/api-patterns.md |
+| **Core** | Base classes, interfaces, contracts | `src/agents/core/` | .codemie/guides/architecture/layered-architecture.md |
+| **Utils** | Shared utilities (errors, logging, security) | `src/utils/` | .codemie/guides/development/development-practices.md |
+
+**Flow**: `CLI → Registry → Plugin → Core → Utils` (Never skip layers)
+
+**Detail**: .codemie/guides/architecture/layered-architecture.md
+
+### Security Patterns (MANDATORY)
+
+| Rule | Implementation | Related Guide |
+|------|----------------|---------------|
+| No hardcoded credentials | Use environment variables + CredentialStore | .codemie/guides/security/security-practices.md |
+| Input validation | Validate all file paths with security utilities | .codemie/guides/security/security-practices.md |
+| Data sanitization | Use sanitizeValue(), sanitizeLogArgs() before logging | .codemie/guides/security/security-practices.md |
+| Credential storage | CredentialStore with keychain + encrypted fallback | .codemie/guides/security/security-practices.md |
+
+**Security Utilities**:
+```typescript
+import { sanitizeValue, sanitizeLogArgs, CredentialStore } from 'src/utils/security.js';
+
+// Sanitize before logging
+logger.debug('Request data', ...sanitizeLogArgs(requestData));
+
+// Store/retrieve credentials securely
+const store = CredentialStore.getInstance();
+await store.storeSSOCredentials(credentials, baseUrl);
+const retrieved = await store.retrieveSSOCredentials(baseUrl);
+```
+
+**Detail**: .codemie/guides/security/security-practices.md
+
+### Process Patterns (npm, git, exec)
+
+| Operation | Function | Import From | Notes |
+|-----------|----------|-------------|-------|
+| Execute command | `exec(command, args, options)` | `src/utils/processes.ts` | Base execution, returns ExecResult |
+| Check command exists | `commandExists(command)` | `src/utils/processes.ts` | Returns boolean |
+| Get command path | `getCommandPath(command)` | `src/utils/processes.ts` | Returns absolute path or null |
+| Install npm package | `installGlobal(packageName)` | `src/utils/processes.ts` | Handles npm install -g |
+| Uninstall npm package | `uninstallGlobal(packageName)` | `src/utils/processes.ts` | Handles npm uninstall -g |
+| Check npm package | `listGlobal(packageName)` | `src/utils/processes.ts` | Returns boolean |
+| Get npm version | `getVersion()` | `src/utils/processes.ts` | Returns npm version |
+| Run with npx | `npxRun(command, args)` | `src/utils/processes.ts` | Handles npx execution |
+| Detect git branch | `detectGitBranch(cwd)` | `src/utils/processes.ts` | Returns current branch |
+
+**Error Handling**:
+```typescript
+import { installGlobal, parseNpmError } from 'src/utils/processes.ts';
+
+try {
+  await installGlobal('package-name');
+} catch (error) {
+  const npmError = parseNpmError(error, 'Failed to install package');
+  // npmError includes code (NETWORK_ERROR, PERMISSION_ERROR, etc.) and hints
+}
+```
+
+**Detail**: .codemie/guides/development/development-practices.md
+
+### Common Pitfalls (Avoid These)
+
+| Category | 🚨 Never Do This | ✅ Do This Instead | Guide Reference |
+|----------|------------------|---------------------|-----------------|
+| **TypeScript** | Use `require()` or `__dirname` | Use ES modules: `import` and `getDirname(import.meta.url)` | .codemie/guides/development/development-practices.md |
+| **Imports** | Import without `.js` extension | Always use `.js` extension: `import x from './file.js'` | .codemie/guides/standards/code-quality.md |
+| **Testing** | Write tests unless requested | Only write tests when user explicitly asks | .codemie/guides/testing/testing-patterns.md |
+| **Process Execution** | Use `child_process.exec` directly | Use `exec()` from `src/utils/processes.ts` | .codemie/guides/development/development-practices.md |
+| **Logging** | Use `console.log()` for debug info | Use `logger.debug()` (file-only, controlled) | .codemie/guides/development/development-practices.md |
+| **Security** | Log sensitive data (tokens, keys) | Use `sanitizeLogArgs()` before logging | .codemie/guides/security/security-practices.md |
+| **Error Handling** | Throw generic Error | Throw specific error classes (ConfigurationError, etc.) | .codemie/guides/development/development-practices.md |
+| **Paths** | Hardcode ~/.codemie/ paths | Use `getCodemiePath()` from `src/utils/paths.ts` | .codemie/guides/development/development-practices.md |
+| **Architecture** | CLI directly calls plugin code | CLI → Registry → Plugin (never skip layers) | .codemie/guides/architecture/layered-architecture.md |
+| **Async** | Use callbacks or Promise chaining | Use async/await consistently | .codemie/guides/standards/code-quality.md |
 
 ---
 
-## High-Level Architecture
+## 🛠️ DEVELOPMENT COMMANDS
+
+**🚨 CRITICAL**: No virtual environment needed - Node.js >=20.0.0 required
+
+### Common Commands
+
+| Task | Command | Env? | Notes |
+|------|---------|------|-------|
+| **Setup** | `npm install` | N/A | First time setup, installs all dependencies |
+| **Build** | `npm run build` | N/A | Compile TypeScript to dist/ |
+| **Dev Watch** | `npm run dev` | N/A | Watch mode (tsc --watch) |
+| **Lint** | `npm run lint` | N/A | ESLint check (zero warnings required) |
+| **Lint Fix** | `npm run lint:fix` | N/A | Auto-fix ESLint issues |
+| **Test** ⚠️ | `npm test` | N/A | Run all tests - ONLY if user requests |
+| **Test Unit** ⚠️ | `npm run test:unit` | N/A | Unit tests only - ONLY if user requests |
+| **Test Integration** ⚠️ | `npm run test:integration` | N/A | Integration tests only - ONLY if user requests |
+| **CI Full** | `npm run ci` | N/A | Full CI pipeline (lint + build + tests) |
+| **Doctor** | `codemie doctor` | N/A | System health check (after npm link) |
+| **Link Global** | `npm link` | N/A | Link for local testing (after build) |
+
+**Build + Link Workflow**:
+```bash
+npm run build && npm link
+codemie doctor  # Verify installation
+codemie-code health  # Test built-in agent
+```
+
+**Additional Info**:
+- Package manager: npm (no yarn/pnpm)
+- Test framework: Vitest
+- Build output: `dist/` (gitignored)
+- Entry points: `bin/codemie.js`, `bin/agent-executor.js`
+
+---
+
+## 🔧 TROUBLESHOOTING QUICK REFERENCE
+
+### Common Issues & Fixes
+
+| Symptom | Likely Cause | Fix | Prevention |
+|---------|--------------|-----|------------|
+| `command not found: codemie` | Not installed globally or not linked | Run `npm install -g @codemieai/code` or `npm link` | Use global install for CLI tools |
+| `Cannot find module './file'` | Missing .js extension in import | Add `.js` extension to all imports | ESLint rule enforces this |
+| `Module not found: @codemieai/code` | Dependencies not installed | Run `npm install` | Always run after clone/pull |
+| Tests failing with dynamic imports | Static imports before spy setup | Use dynamic imports after beforeEach | See testing patterns guide |
+| `CODEMIE_DEBUG=true` not working | Environment variable not set | Export in shell: `export CODEMIE_DEBUG=true` | Use .env file for persistent settings |
+| ESLint warnings > 0 | Code quality issues | Run `npm run lint:fix` to auto-fix | Run lint before commit |
+| TypeScript compilation errors | Type issues or missing declarations | Check `tsconfig.json` settings | Use strict mode, avoid `any` |
+| `Permission denied` on global install | Insufficient permissions | Use `sudo npm install -g` (Unix) or run as admin (Windows) | Use nvm for user-local Node.js |
+| Agent not found after install | Registry not updated or cache issue | Check `~/.codemie/agents/` directory | Verify installation with `codemie doctor` |
+
+### Diagnostic Commands
+
+| Need to Check | Command | What to Look For |
+|---------------|---------|------------------|
+| Node.js version | `node --version` | >=20.0.0 required |
+| npm version | `npm --version` | Should be bundled with Node.js |
+| Global packages | `npm list -g --depth=0` | Should show @codemieai/code if installed |
+| CodeMie health | `codemie doctor` | All checks should pass |
+| Build output | `ls -la dist/` | Should contain compiled .js files |
+| TypeScript config | `cat tsconfig.json` | Verify ES2022 target, NodeNext module |
+
+### Emergency Recovery
+
+| Situation | Action |
+|-----------|--------|
+| **Commands failing** | 1. Verify Node.js >=20.0.0 (`node --version`)<br>2. Reinstall dependencies (`rm -rf node_modules && npm install`)<br>3. Rebuild project (`npm run build`)<br>4. Re-link global (`npm link`) |
+| **Build errors** | 1. Clean dist directory (`rm -rf dist/`)<br>2. Check TypeScript errors (`npx tsc --noEmit`)<br>3. Fix import paths (.js extensions required)<br>4. Rebuild (`npm run build`) |
+| **Pattern unclear** | 1. Search .codemie/guides/ for pattern<br>2. Check related patterns in Quick Reference<br>3. Ask user if ambiguous |
+| **Tests failing** | 1. Check if using dynamic imports for mocking<br>2. Verify test isolation (no shared state)<br>3. Check if environment variables are set<br>4. Run single test file to isolate issue |
+
+---
+
+## 🏗️ PROJECT CONTEXT
+
+### Technology Stack
+
+| Component | Tool | Version | Purpose |
+|-----------|------|---------|---------|
+| Language | TypeScript | 5.3+ | Type-safe development |
+| Runtime | Node.js | 20.0.0+ | JavaScript execution environment |
+| Framework | LangGraph | 1.0.2+ | Agent orchestration and state management |
+| Framework | LangChain | 1.0.4+ | LLM integration and tool calling |
+| Testing | Vitest | 4.0.10+ | Fast unit testing framework |
+| Linting | ESLint | 9.38.0+ | Code quality enforcement (flat config) |
+| CLI | Commander.js | 11.1.0+ | Command-line argument parsing |
+| UI | Inquirer | 9.2.12+ | Interactive CLI prompts |
+| Package Manager | npm | - | Dependency management |
 
 ### Core Components
 
-```
-codemie-code/
-├── bin/                       # Executable entry points
-│   ├── codemie.js            # Main CLI
-│   ├── agent-executor.js     # CodeMie Native (built-in) agent
-│   ├── codemie-claude.js     # Claude Code agent entry
-│   ├── codemie-codex.js      # Codex agent entry
-│   ├── codemie-gemini.js     # Gemini agent entry
-│   └── codemie-deepagents.js # Deep Agents entry
-├── src/
-│   ├── cli/                  # CLI commands → See src/cli/CLAUDE.md
-│   ├── agents/               # Agent system → See src/agents/CLAUDE.md
-│   ├── providers/            # Provider system → See src/providers/CLAUDE.md
-│   ├── analytics/            # Analytics system → See src/analytics/CLAUDE.md
-│   ├── workflows/            # Workflow management → See src/workflows/CLAUDE.md
-│   ├── frameworks/           # Framework integrations (BMAD, SpecKit)
-│   ├── env/                  # Configuration system
-│   ├── migrations/           # Config migration framework
-│   └── utils/                # Shared utilities
-```
+| Component | Path | Purpose | Guide |
+|-----------|------|---------|-------|
+| **CLI Commands** | `src/cli/commands/` | User interface (setup, doctor, install, etc.) | .codemie/guides/architecture/layered-architecture.md |
+| **Agent System** | `src/agents/` | Plugin-based agent management (registry, core, plugins) | .codemie/guides/api/api-patterns.md |
+| **Provider System** | `src/providers/` | LLM provider integrations (OpenAI, Bedrock, SSO, LiteLLM) | .codemie/guides/integration/external-integrations.md |
+| **Analytics** | `src/analytics/` | Usage tracking and metrics (JSONL-based) | .codemie/guides/data/database-patterns.md |
+| **Workflows** | `src/workflows/` | CI/CD workflow templates (GitHub, GitLab) | .codemie/guides/integration/external-integrations.md |
+| **Utilities** | `src/utils/` | Shared utilities (errors, logging, security, processes) | .codemie/guides/development/development-practices.md |
+| **Configuration** | `src/env/` | Environment and profile management | .codemie/guides/development/development-practices.md |
 
-### Key Patterns
+### Key Integrations
 
-#### 1. Plugin Pattern (Agents & Providers)
-- Agents and providers are plugins, not hardcoded
-- Auto-registration via decorators
-- Open/Closed Principle: open for extension, closed for modification
+| Integration | Purpose | Guide |
+|-------------|---------|-------|
+| LangGraph | Agent orchestration, state machines, tool calling | .codemie/guides/integration/external-integrations.md |
+| LangChain | LLM abstractions, provider integrations | .codemie/guides/integration/external-integrations.md |
+| AWS Bedrock | Enterprise LLM access (Claude via AWS) | .codemie/guides/integration/external-integrations.md |
+| Azure OpenAI | Enterprise OpenAI access | .codemie/guides/integration/external-integrations.md |
+| LiteLLM | Unified LLM proxy (100+ providers) | .codemie/guides/integration/external-integrations.md |
+| Ollama | Local LLM execution | .codemie/guides/integration/external-integrations.md |
+| Enterprise SSO | Corporate authentication (SAML, OAuth) | .codemie/guides/security/security-practices.md |
 
-#### 2. Lifecycle Hooks (Loose Coupling)
-- Agents are provider-agnostic
-- Providers customize agents via hooks at runtime
-- Automatic hook chaining (wildcard → agent-specific)
-- Zero compile-time dependencies
+### Architecture Overview
 
-#### 3. Configuration Hierarchy
-1. CLI arguments (highest priority)
-2. Environment variables
-3. Project config (`.codemie/`)
-4. Global config (`~/.codemie/`)
-5. Default values (lowest priority)
+**Plugin-Based 5-Layer Architecture**:
+- **CLI Layer**: User interface and command handling (Commander.js)
+- **Registry Layer**: Plugin discovery, routing, and orchestration
+- **Plugin Layer**: Concrete implementations (agents, providers, frameworks)
+- **Core Layer**: Base classes, interfaces, contracts (abstract base classes)
+- **Utils Layer**: Shared utilities and foundation code
 
-#### 4. Multi-Provider Profiles
-- Version 2 config supports multiple named profiles
-- One active profile used by default
-- Use `--profile <name>` to override
-- Automatic migration from legacy v1 configs
+**Key Characteristics**:
+- Separation of concerns (each layer has distinct responsibility)
+- Dependency inversion (plugins depend on core, not vice versa)
+- Open/Closed principle (extend via plugins, no core modification)
+- Testability (each layer tested independently)
+
+**Detail**: .codemie/guides/architecture/layered-architecture.md
 
 ---
 
-## Technology Stack
+## 📝 CODING STANDARDS
 
-- **Node.js**: Requires >=24.0.0 for ES2024 features
-- **TypeScript**: Full type safety with ES2024 + NodeNext modules
-- **Commander.js**: CLI framework with subcommands
-- **LangChain/LangGraph**: Agent orchestration (built-in agent)
-- **Clack**: Modern terminal UI
-- **Vitest**: Modern testing framework
-- **ESLint**: Code quality (max 0 warnings allowed)
+### TypeScript Features (Use These)
 
----
+| Feature | Use For | Guide Reference |
+|---------|---------|-----------------|
+| ES Modules | All imports/exports (no CommonJS) | .codemie/guides/standards/code-quality.md |
+| async/await | All asynchronous operations | .codemie/guides/standards/code-quality.md |
+| interface/type | Type definitions (prefer interface for objects) | .codemie/guides/standards/code-quality.md |
+| Generics | Reusable type-safe functions/classes | .codemie/guides/standards/code-quality.md |
+| Optional chaining | Safe property access (`obj?.prop`) | .codemie/guides/standards/code-quality.md |
+| Nullish coalescing | Default values (`val ?? default`) | .codemie/guides/standards/code-quality.md |
+| Destructuring | Clean parameter/return handling | .codemie/guides/standards/code-quality.md |
 
-## Cross-Platform Support
+**Detail**: .codemie/guides/standards/code-quality.md
 
-CodeMie CLI is fully tested on Windows, Linux, and macOS:
+### Type Safety (REQUIRED)
 
-- **Windows Fix (v0.0.15+)**: Dedicated entry points per agent
-- **Path Handling**: All tools use Node.js `path` module
-- **Process Execution**: Platform-agnostic spawning
-- **Line Endings**: Automatic CRLF/LF handling
+- All exported functions must have explicit return types
+- Prefer interfaces over types for object shapes
+- Avoid `any` (use `unknown` if type truly unknown)
+- Use strict TypeScript settings (see tsconfig.json)
+- `@typescript-eslint/no-explicit-any` disabled project-wide (use `any` when needed, but document why)
+- Unused variables should be prefixed with `_` if intentional
 
-**Testing**:
-```bash
-npm run build && npm link
-codemie doctor
-codemie-{agent} health  # Test all agents
-```
+### Async/Concurrency Patterns (CRITICAL)
 
----
-
-## Development Guidelines
-
-### Working with Multi-Provider Configuration
-
-1. **Profile Management**:
-   - Use `ConfigLoader.saveProfile(name, profile)` to add/update
-   - Use `ConfigLoader.switchProfile(name)` to change active
-   - Never directly overwrite config files - use ConfigLoader methods
-
-2. **Configuration Loading**:
-   ```typescript
-   const config = await ConfigLoader.load(process.cwd(), {
-     name: profileName,  // Optional profile selection
-     model: cliModel,    // Optional CLI overrides
-     provider: cliProvider
-   });
-   ```
-
-3. **Migration**: Use `loadMultiProviderConfig()` which auto-migrates legacy configs
-
-### Working with Agent Shortcuts
-
-All shortcuts support CLI overrides:
-- `--profile`: Select provider profile
-- `--provider`: Override provider
-- `--model`: Override model
-- `--api-key`: Override API key
-- `--base-url`: Override base URL
-
-**Pass-through**: Use `allowUnknownOption()` and filter known config options before forwarding to agent.
-
-### Git Commits and Pull Requests
-
-**CRITICAL: Keep commits and PRs simple and focused**
-
-1. **Commit Messages**:
-   - **1-2 sentences maximum** - Brief summary of what changed
-   - Follow conventional commit format: `type(scope): description`
-   - Examples:
-     - ✅ `feat(agents): add codex metrics support`
-     - ✅ `fix(cli): resolve path handling on Windows`
-     - ❌ Multi-paragraph explanations with implementation details
-
-2. **Pull Request Descriptions**:
-   - **Strictly follow the PR template** (`.github/PULL_REQUEST_TEMPLATE.md`)
-   - Summary: 1-2 sentences describing the change
-   - Complete the checklist items
-   - Do NOT add extensive implementation details or feature lists
-   - Let code and tests speak for themselves
-
-3. **PR Template Structure**:
-   ```markdown
-   ## Summary
-   <!-- 1-2 sentences only -->
-
-   ## Checklist
-   - [ ] Self-reviewed
-   - [ ] Manual testing performed
-   - [ ] Documentation updated (if needed)
-   ```
-
-**Remember**: Simple, concise descriptions are better than verbose explanations.
-
-### Cross-Module Development
-
-When working across multiple modules:
-
-1. **Read subdirectory CLAUDE.md** for context-specific guidance
-2. **Follow plugin patterns** described in module documentation
-3. **Use existing utilities** from `src/utils/` before creating new ones
-4. **Maintain loose coupling** via hooks and interfaces
+| ✅ DO | ❌ DON'T | Guide |
+|-------|----------|-------|
+| Use async/await for all async operations | Use callbacks or .then() chains | .codemie/guides/standards/code-quality.md |
+| Handle errors with try/catch in async functions | Let errors bubble without context | .codemie/guides/development/development-practices.md |
+| Use Promise.all() for parallel operations | Await in loops (sequential bottleneck) | .codemie/guides/standards/code-quality.md |
+| Avoid blocking operations in CLI | Use synchronous fs operations in async contexts | .codemie/guides/development/development-practices.md |
 
 ---
 
-## Quick Reference: Best Practices Checklist
+## 📚 DETAILED POLICIES
 
-When writing code for this project, ask yourself:
+### Testing Policy
 
-✅ **KISS**: Is this the simplest solution? Can I remove any complexity?
-✅ **DRY**: Am I duplicating code? Can I extract common patterns?
-✅ **Extensibility**: Can new features be added without modifying existing code?
-✅ **Reusability**: Are components modular and composable?
-✅ **Maintainability**: Will others understand this in 6 months?
-✅ **Plugin Pattern**: Should this be a plugin instead of core modification?
-✅ **Loose Coupling**: Are agents provider-agnostic? Do providers use hooks?
-✅ **Type Safety**: Are types defined and validated?
-✅ **Error Handling**: Are error messages actionable?
-✅ **Testing**: Integration test > unit test?
-✅ **Documentation**: Will this require doc updates?
-✅ **Commits & PRs**: Are commit messages 1-2 sentences? Does PR follow template?
+**MANDATORY RULE**: Tests ONLY when user EXPLICITLY requests
+
+**Triggers** (work on tests ONLY if user says):
+- ✅ "write tests"
+- ✅ "run the tests"
+- ✅ "create unit tests"
+- ✅ "add test coverage"
+- ✅ "execute test suite"
+
+**Never Do**:
+- ❌ Proactively write tests
+- ❌ Suggest running tests
+- ❌ Run tests unless asked
+
+**Framework**: Vitest with dynamic imports for mocking
+
+**Test Commands**:
+- `npm test` - All tests
+- `npm run test:unit` - Unit tests only (src/)
+- `npm run test:integration` - Integration tests only (tests/)
+- `npm run test:watch` - Watch mode
+- `npm run test:coverage` - Coverage report
+
+**Rationale**: Testing requires time and context. Only implement when explicitly needed.
+
+**If Unsure**: Ask user for clarification
+
+**Testing Details**: .codemie/guides/testing/testing-patterns.md
+
+### Git Operations Policy
+
+**MANDATORY RULE**: Git operations ONLY when user EXPLICITLY requests
+
+**Triggers** (do git ops ONLY if user says):
+- ✅ "commit these changes"
+- ✅ "create a commit"
+- ✅ "push to remote"
+- ✅ "create a branch"
+- ✅ "create a pull request"
+
+**Never Do**:
+- ❌ Proactively commit/push/branch
+- ❌ Suggest git operations
+
+**Branch Pattern**: `<type>/<description>` (e.g., `feat/add-gemini-support`, `fix/npm-install-error`)
+
+**Commit Message Format**: Conventional Commits (feat:, fix:, refactor:, test:, docs:, chore:)
+
+**Rationale**: Git affects version control history. Only perform when explicitly requested.
+
+**If Unsure**: Ask user for clarification
+
+**Git Details**: .codemie/guides/standards/git-workflow.md
+
+### Environment Policy
+
+**MANDATORY RULE**: No activation needed (Node.js environment)
+
+**Why**: CodeMie Code is a Node.js CLI tool that runs in the system Node.js environment
+
+**Requirements**:
+- Node.js >=20.0.0 installed
+- npm bundled with Node.js
+- No virtual environment or activation step
+
+**How to Verify**: `node --version` should show >=20.0.0
+
+**Alternative**: Use nvm (Node Version Manager) for managing Node.js versions
+
+**Rule of Thumb**: If commands fail with "command not found", check Node.js installation and PATH
+
+**Recovery**: See [Troubleshooting](#-troubleshooting-quick-reference)
+
+**Detail**: .codemie/guides/development/development-practices.md
+
+### Shell Environment Policy
+
+**MANDATORY RULE**: Use bash/Linux commands ONLY
+
+**Requirements**:
+- ✅ Bash/shell syntax for all commands
+- ✅ Linux-compatible commands
+- ❌ No Windows commands (PowerShell, cmd.exe)
+
+**Rationale**: Ensures consistency across development environments (macOS, Linux, Windows WSL)
 
 ---
 
-## Additional Documentation
+## 🎯 REMEMBER
 
-### User-Facing Documentation (`docs/`)
+### Critical Workflow
+1. ⚡ Read [Instant Start](#-instant-start-read-first)
+2. ✅ Run [Self-Check](#3-self-check-before-starting) (check confidence level)
+3. 🔄 Follow [Execution Workflow](#-execution-workflow-step-by-step) (step-by-step with gates)
+4. 📊 Use [Pattern Quick Reference](#-pattern-quick-reference) (fast lookups)
+5. 🔍 Track [Success Indicators](#success-indicators-am-i-on-track) (am I on track?)
+6. ✅ [Validate before delivery](#quick-validation-run-before-delivery) (all checks must pass)
 
-- **[CONFIGURATION.md](docs/CONFIGURATION.md)** - Setup wizard, environment variables, profiles
-- **[COMMANDS.md](docs/COMMANDS.md)** - Complete command reference
-- **[AGENTS.md](docs/AGENTS.md)** - Detailed agent documentation
-- **[AUTHENTICATION.md](docs/AUTHENTICATION.md)** - SSO setup, token management
-- **[EXAMPLES.md](docs/EXAMPLES.md)** - Common workflows and examples
+### Critical Rules (Check EVERY Time)
+- 🚨 **Check Guides First**: ALWAYS check relevant guides BEFORE searching codebase
+- 🚨 **Testing**: Only when explicitly requested
+- 🚨 **Git**: Only when explicitly requested
+- 🚨 **Environment**: No activation needed (Node.js >=20.0.0)
+- 🚨 **Shell**: Bash/Linux only
 
-### Architecture Documentation (`docs/`)
+### Decision Making Framework
+1. **Parse**: Use Task Classifier to identify keywords → guides → complexity
+2. **Confidence**: Am I 80%+ confident? NO → Load P0 guides
+3. **Load**: P0 (required) first, then P1 (optional) only if needed
+4. **Execute**: Apply patterns, follow critical rules, track success indicators
+5. **Validate**: All checks must pass before delivery
+6. **Stuck?**: Check [Troubleshooting](#-troubleshooting-quick-reference), load more guides, or ask user
 
-- **[ARCHITECTURE-CONFIGURATION.md](docs/ARCHITECTURE-CONFIGURATION.md)** - Configuration flow architecture
-- **[ARCHITECTURE-PROXY.md](docs/ARCHITECTURE-PROXY.md)** - SSO proxy system architecture
+### Quality Standards (Non-Negotiable)
 
-### Developer Guides (Subdirectories)
+- No hardcoded secrets (use environment variables or CredentialStore)
+- No placeholders/TODOs in delivered code
+- All imports must use .js extensions
+- Security: sanitize logs, validate paths, encrypt credentials
+- Architecture: follow 5-layer pattern (CLI → Registry → Plugin → Core → Utils)
+- Error handling: use specific error classes with context
+- Type safety on all exported functions (explicit return types)
+- Specific exception handling (use try/catch with error context)
 
-- **[src/agents/CLAUDE.md](src/agents/CLAUDE.md)** - Agent plugin development (auto-loads)
-- **[src/providers/CLAUDE.md](src/providers/CLAUDE.md)** - Provider plugin development (auto-loads)
-- **[src/cli/CLAUDE.md](src/cli/CLAUDE.md)** - CLI command development (auto-loads)
-- **[src/analytics/CLAUDE.md](src/analytics/CLAUDE.md)** - Analytics system (auto-loads)
-- **[src/workflows/CLAUDE.md](src/workflows/CLAUDE.md)** - Workflow management (auto-loads)
+### When to Ask User
+- **Ambiguous requirements**: Multiple valid approaches possible
+- **Low confidence**: < 80% after reading P0+P1 guides
+- **Missing information**: Need clarification on scope/approach
+- **High complexity**: Task involves architectural decisions
+- **Policy unclear**: Unsure if testing/git/other policy applies
 
----
+### Confidence Calibration
+- **90%+ confident**: Proceed with execution, minimal guide lookup
+- **80-89% confident**: Review quick reference tables, proceed
+- **70-79% confident**: Load P0 guides, then re-assess
+- **< 70% confident**: Load P0+P1 guides, ask user if still unclear
 
-## Summary: Hooks-Based Architecture
+**Production Ready**: Deliver complete, tested, secure solutions without shortcuts.
 
-The CodeMie CLI architecture is built on a **hooks-based plugin system** that achieves complete separation of concerns:
-
-**Core Principles:**
-1. **Agents are provider-agnostic** - No hardcoded provider logic in agent code
-2. **Providers customize agents via hooks** - Registered in `ProviderTemplate.agentHooks`
-3. **Runtime resolution** - `lifecycle-helpers.ts` resolves hooks based on active provider
-4. **Automatic chaining** - Wildcard hooks run first, agent-specific hooks run second
-5. **Zero dependencies** - Agents and providers never import each other
-
-**Benefits:**
-- ✅ Testability: Components test independently
-- ✅ Maintainability: Provider changes don't affect agent code
-- ✅ Extensibility: Add providers/agents without modifying existing code
-- ✅ Flexibility: Different providers can customize same agent differently
-- ✅ Clarity: Clear separation of responsibilities
-
-**Example**: Bedrock provider uses wildcard hook to transform AWS credentials for ALL agents, then Claude-specific hook enables Bedrock mode. Claude agent has zero knowledge of Bedrock.
-
----
-
-## Local Development Notes
-
-For personal notes, create `CLAUDE.local.md` (gitignored):
-- Sandbox URLs and credentials
-- Local configurations
-- WIP features and experiments
-- Personal reminders
-
-This file is automatically ignored and won't be committed to the repository.
+**Questions?** Always better to ask than assume - ask for clarification when unsure.

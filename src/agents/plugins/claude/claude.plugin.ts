@@ -1,0 +1,119 @@
+import { AgentMetadata } from '../../core/types.js';
+import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
+import { ClaudeSessionAdapter } from './claude.session.js';
+import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
+import { ClaudePluginInstaller } from './claude.plugin-installer.js';
+import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
+
+/**
+ * Claude Code Plugin Metadata
+ */
+export const ClaudePluginMetadata: AgentMetadata = {
+  name: 'claude',
+  displayName: 'Claude Code',
+  description: 'Claude Code - official Anthropic CLI tool',
+
+  npmPackage: '@anthropic-ai/claude-code',
+  cliCommand: 'claude',
+
+  // Data paths (used by lifecycle hooks and analytics)
+  dataPaths: {
+    home: '.claude'
+  },
+
+  envMapping: {
+    baseUrl: ['ANTHROPIC_BASE_URL'],
+    apiKey: ['ANTHROPIC_AUTH_TOKEN'],
+    model: ['ANTHROPIC_MODEL']
+  },
+
+  supportedProviders: ['litellm', 'ai-run-sso', 'bedrock'],
+  blockedModelPatterns: [],
+  recommendedModels: ['claude-4-5-sonnet', 'claude-4-opus', 'gpt-4.1'],
+
+  ssoConfig: {
+    enabled: true,
+    clientType: 'codemie-claude'
+  },
+
+  flagMappings: {
+    '--task': {
+      type: 'flag',
+      target: '-p'
+    }
+  },
+
+  // Metrics configuration: exclude Bash tool errors from API metrics
+  metricsConfig: {
+    excludeErrorsFromTools: ['Bash']
+  },
+
+  // MCP configuration paths for Claude Code
+  // - Local: ~/.claude.json → projects[cwd].mcpServers (project-specific, private)
+  // - Project: .mcp.json → mcpServers (shared with team)
+  // - User: ~/.claude.json → mcpServers (top-level, available across all projects)
+  mcpConfig: {
+    local: {
+      path: '~/.claude.json',
+      jsonPath: 'projects.{cwd}.mcpServers'
+    },
+    project: {
+      path: '.mcp.json',
+      jsonPath: 'mcpServers'
+    },
+    user: {
+      path: '~/.claude.json',
+      jsonPath: 'mcpServers'
+    }
+  },
+
+  lifecycle: {
+    // Default hooks for ALL providers (provider-agnostic)
+    async beforeRun(env) {
+      // Disable experimental betas if not already set
+      if (!env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS) {
+        env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = '1';
+      }
+
+      // Disable Claude Code telemetry to prevent 404s on /api/event_logging/batch
+      // when using proxy (telemetry endpoint doesn't exist on CodeMie backend)
+      // https://code.claude.com/docs/en/settings
+      if (!env.CLAUDE_CODE_ENABLE_TELEMETRY) {
+        env.CLAUDE_CODE_ENABLE_TELEMETRY = '0';
+      }
+
+      return env;
+    }
+  }
+};
+
+/**
+ * Claude Code Adapter
+ */
+export class ClaudePlugin extends BaseAgentAdapter {
+  private sessionAdapter: SessionAdapter;
+  private extensionInstaller: BaseExtensionInstaller;
+
+  constructor() {
+    super(ClaudePluginMetadata);
+    // Initialize session adapter with metadata for unified session sync
+    this.sessionAdapter = new ClaudeSessionAdapter(ClaudePluginMetadata);
+    // Initialize extension installer with metadata (agent name from metadata)
+    this.extensionInstaller = new ClaudePluginInstaller(ClaudePluginMetadata);
+  }
+
+  /**
+   * Get session adapter for this agent (used by unified session sync)
+   */
+  getSessionAdapter(): SessionAdapter {
+    return this.sessionAdapter;
+  }
+
+  /**
+   * Get extension installer for this agent
+   * Returns installer to handle plugin installation
+   */
+  getExtensionInstaller(): BaseExtensionInstaller {
+    return this.extensionInstaller;
+  }
+}

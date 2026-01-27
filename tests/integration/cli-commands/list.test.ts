@@ -24,12 +24,11 @@ describe('List Command', () => {
     // Execute once, validate many times
     listResult = cli.runSilent('list');
     listOutput = listResult.output;
-  }, 30000); // 30s timeout for Windows
+  }, 60000); // 60s timeout for Windows (loads all agent plugins)
 
   it('should list all available agents', () => {
-    // Should show all registered agents
+    // Should show all registered agents (claude, gemini, codemie-code)
     expect(listOutput).toContain('claude');
-    expect(listOutput).toContain('codex');
     expect(listOutput).toContain('gemini');
     expect(listOutput).toContain('codemie-code');
   });

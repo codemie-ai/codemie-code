@@ -4,7 +4,7 @@
  * CodeMie Native (Built-in) Agent Entry Point
  * Entry point for codemie-code command (built-in agent)
  *
- * NOTE: Other agents (claude, codex, gemini, deepagents) have their own entry points
+ * NOTE: Other agents (claude, gemini) have their own entry points
  * to avoid Windows npm wrapper detection issues.
  */
 

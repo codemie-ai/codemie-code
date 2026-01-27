@@ -22,7 +22,7 @@ describe('Doctor Command', () => {
   beforeAll(() => {
     // Execute once, validate many times
     doctorResult = cli.runSilent('doctor');
-  }, 30000); // 30s timeout for Windows
+  }, 60000); // 60s timeout for Windows (doctor checks multiple tools)
 
   it('should run system diagnostics', () => {
     // Should include system check header (even if some checks fail)

@@ -10,7 +10,7 @@ codemie-code "Review this PR for security issues and performance"
 codemie-claude "Fix the authentication bug in src/auth.ts"
 
 # Test generation
-codemie-codex "Generate comprehensive tests for the API endpoints"
+codemie-gemini "Generate comprehensive tests for the API endpoints"
 
 # Documentation
 codemie-code "Document the functions in utils/helpers.js"
@@ -67,7 +67,7 @@ codemie-code "help with my open source project"
 
 # Or use specific profile without switching
 codemie-claude --profile work "analyze security"
-codemie-codex --profile personal "generate tests"
+codemie-gemini --profile personal "generate tests"
 
 # Update work profile when credentials rotate
 codemie setup
@@ -80,19 +80,18 @@ codemie setup
 
 ```bash
 # Pass custom arguments to agents (unknown options pass through)
-codemie-codex --temperature 0.1 --max-tokens 2000 "Generate clean code"
+codemie-gemini --temperature 0.1 --max-tokens 2000 "Generate clean code"
 codemie-claude --context large "Review this code"
 
 # Non-interactive mode with -p (useful for CI/CD)
 codemie-claude -p "$(cat prompt.txt)" --max-turns 50
-codemie-codex -p "Generate tests for src/utils" --output json
+codemie-gemini -p "Generate tests for src/utils" --output json
 
 # Health checks
 codemie doctor                   # Full system check
 codemie-code health             # Built-in agent check
 codemie-claude health           # Claude agent check
 codemie-gemini health           # Gemini agent check
-codemie-deepagents health       # Deep Agents CLI check
 ```
 
 ## Analytics Usage Examples

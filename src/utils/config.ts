@@ -515,6 +515,115 @@ export class ConfigLoader {
         'CODEMIE_MODEL is required. Run: codemie setup'
       );
     }
+
+    // Validate hooks configuration if present
+    if (config.hooks) {
+      this.validateHooksConfiguration(config.hooks);
+    }
+  }
+
+  /**
+   * Validate hooks configuration structure
+   * Ensures hooks follow the correct schema and don't contain invalid patterns
+   */
+  private static validateHooksConfiguration(hooks: any): void {
+    if (!hooks || typeof hooks !== 'object') {
+      throw new Error('Invalid hooks configuration: must be an object');
+    }
+
+    const validEventNames = [
+      'PreToolUse',
+      'PostToolUse',
+      'UserPromptSubmit',
+      'Stop',
+      'SubagentStop',
+      'SessionStart',
+      'SessionEnd',
+    ];
+
+    for (const [eventName, matchers] of Object.entries(hooks)) {
+      // Validate event name
+      if (!validEventNames.includes(eventName)) {
+        throw new Error(
+          `Invalid hook event: "${eventName}". Valid events: ${validEventNames.join(', ')}`
+        );
+      }
+
+      // Validate matchers array
+      if (!Array.isArray(matchers)) {
+        throw new Error(
+          `Invalid hooks configuration: ${eventName} must be an array of matchers`
+        );
+      }
+
+      // Validate each matcher
+      for (const matcher of matchers as any[]) {
+        if (!matcher || typeof matcher !== 'object') {
+          throw new Error(
+            `Invalid hook matcher in ${eventName}: must be an object`
+          );
+        }
+
+        // Validate matcher pattern (optional for some events)
+        if (matcher.matcher !== undefined && typeof matcher.matcher !== 'string') {
+          throw new Error(
+            `Invalid hook matcher pattern in ${eventName}: must be a string`
+          );
+        }
+
+        // Validate hooks array
+        if (!Array.isArray(matcher.hooks)) {
+          throw new Error(
+            `Invalid hook matcher in ${eventName}: hooks must be an array`
+          );
+        }
+
+        // Validate each hook
+        for (const hook of matcher.hooks as any[]) {
+          if (!hook || typeof hook !== 'object') {
+            throw new Error(
+              `Invalid hook in ${eventName}: must be an object`
+            );
+          }
+
+          // Validate hook type
+          if (!hook.type) {
+            throw new Error(
+              `Invalid hook in ${eventName}: missing required field "type"`
+            );
+          }
+
+          if (hook.type !== 'command' && hook.type !== 'prompt') {
+            throw new Error(
+              `Invalid hook type in ${eventName}: "${hook.type}". Must be "command" or "prompt"`
+            );
+          }
+
+          // Validate command hooks
+          if (hook.type === 'command' && !hook.command) {
+            throw new Error(
+              `Invalid command hook in ${eventName}: missing required field "command"`
+            );
+          }
+
+          // Validate prompt hooks
+          if (hook.type === 'prompt' && !hook.prompt) {
+            throw new Error(
+              `Invalid prompt hook in ${eventName}: missing required field "prompt"`
+            );
+          }
+
+          // Validate timeout if present
+          if (hook.timeout !== undefined) {
+            if (typeof hook.timeout !== 'number' || hook.timeout <= 0) {
+              throw new Error(
+                `Invalid hook timeout in ${eventName}: must be a positive number`
+              );
+            }
+          }
+        }
+      }
+    }
   }
 
   /**

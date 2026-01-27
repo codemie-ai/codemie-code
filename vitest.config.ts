@@ -10,6 +10,10 @@ export default defineConfig({
     environment: 'node',
     include: ['src/**/*.test.ts', 'src/**/*.spec.ts', 'tests/**/*.test.ts'],
     exclude: ['node_modules', 'dist'],
+    // Force color output for consistent test behavior (chalk output length varies with/without colors)
+    env: {
+      FORCE_COLOR: '1',
+    },
 
     // Enable parallel execution with isolated environments
     pool: 'threads',
