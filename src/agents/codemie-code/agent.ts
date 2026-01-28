@@ -26,6 +26,7 @@ import type { SkillPattern, SkillWithInventory } from '../../skills/core/types.j
 import { SkillManager } from '../../skills/core/SkillManager.js';
 import { parseAtMentionCommand } from './ui/mentions.js';
 import { loadRegisteredAssistants } from '@/utils/config.js';
+import { randomUUID } from 'crypto';
 
 export class CodeMieAgent {
   private agent: any;
@@ -58,6 +59,9 @@ export class CodeMieAgent {
     this.config = config;
     this.tools = tools;
     this.skills = skills;
+
+    const sessionId = randomUUID();
+    logger.setSessionId(sessionId);
 
     // Create the appropriate LLM based on provider
     const llm = this.createLLM();
