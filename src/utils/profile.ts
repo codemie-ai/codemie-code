@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import { formatErrorWithExplanation, type ErrorContext } from './errors.js';
 import { logger } from './logger.js';
+import type { RegisteredAssistant } from '../env/types.js';
 
 /**
  * Authentication status for display
@@ -19,6 +20,7 @@ export function renderProfileInfo(config: {
   provider?: string;
   model?: string;
   codeMieUrl?: string;
+  codeMieAssistants?: RegisteredAssistant[];
   authStatus?: AuthStatusDisplay;
   agent?: string;
   cliVersion?: string;
@@ -55,6 +57,11 @@ export function renderProfileInfo(config: {
   }
   if (config.codeMieUrl) {
     outputLines.push(formatRow('CodeMie URL', config.codeMieUrl));
+  }
+  if (config.codeMieAssistants && config.codeMieAssistants.length > 0) {
+    const count = config.codeMieAssistants.length;
+    const assistantsText = `${count} assistant${count === 1 ? '' : 's'} registered`;
+    outputLines.push(formatRow('Assistants', assistantsText, chalk.cyan));
   }
 
   // Auth status inline

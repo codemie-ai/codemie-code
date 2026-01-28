@@ -36,10 +36,30 @@ export async function getCodemieClient(): Promise<CodeMieClient> {
   // 2. Get stored SSO credentials
   spinner.text = 'Retrieving authentication credentials...';
   const ssoAuth = new CodeMieSSO();
-  const credentials = await ssoAuth.getStoredCredentials(config.baseUrl);
+
+  // Use codeMieUrl for credential lookup, not baseUrl (which may be proxied)
+  const credentialLookupUrl = config.codeMieUrl || config.baseUrl;
+
+  logger.debug('Attempting to retrieve SSO credentials', {
+    baseUrl: config.baseUrl,
+    credentialLookupUrl,
+    hasBaseUrl: !!config.baseUrl
+  });
+
+  const credentials = await ssoAuth.getStoredCredentials(credentialLookupUrl);
+
+  logger.debug('SSO credentials retrieval result', {
+    hasCredentials: !!credentials,
+    hasCookies: !!credentials?.cookies,
+    hasApiUrl: !!credentials?.apiUrl
+  });
 
   if (!credentials?.cookies || !credentials.apiUrl) {
     spinner.fail(chalk.red('No valid SSO credentials found'));
+    logger.error('SSO credentials not found or incomplete', {
+      credentials: credentials ? 'exists but incomplete' : 'not found',
+      baseUrl: config.baseUrl
+    });
     throw new ConfigurationError(
       'SSO authentication required. Please run "codemie setup" with SSO provider first.'
     );
