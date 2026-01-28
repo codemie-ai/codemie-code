@@ -16,25 +16,33 @@ import { logger } from './logger.js';
 /**
  * Get authenticated CodeMieClient instance
  *
+ * @param quiet - Suppress spinner and status messages
  * @returns Initialized CodeMieClient instance
  * @throws ConfigurationError if setup is incomplete or credentials are invalid
  */
-export async function getCodemieClient(): Promise<CodeMieClient> {
-  const spinner = ora('Loading configuration...').start();
+export async function getCodemieClient(quiet = false): Promise<CodeMieClient> {
+  let spinner;
+  if (!quiet) {
+    spinner = ora('Loading configuration...').start();
+  }
 
   // 1. Load configuration
   let config: CodeMieConfigOptions;
   try {
     config = await ConfigLoader.load();
   } catch {
-    spinner.fail(chalk.red('Failed to load configuration'));
+    if (spinner) {
+      spinner.fail(chalk.red('Failed to load configuration'));
+    }
     throw new ConfigurationError(
       'No configuration found. Please run "codemie setup" first.'
     );
   }
 
   // 2. Get stored SSO credentials
-  spinner.text = 'Retrieving authentication credentials...';
+  if (spinner) {
+    spinner.text = 'Retrieving authentication credentials...';
+  }
   const ssoAuth = new CodeMieSSO();
 
   // Use codeMieUrl for credential lookup, not baseUrl (which may be proxied)
@@ -55,7 +63,9 @@ export async function getCodemieClient(): Promise<CodeMieClient> {
   });
 
   if (!credentials?.cookies || !credentials.apiUrl) {
-    spinner.fail(chalk.red('No valid SSO credentials found'));
+    if (spinner) {
+      spinner.fail(chalk.red('No valid SSO credentials found'));
+    }
     logger.error('SSO credentials not found or incomplete', {
       credentials: credentials ? 'exists but incomplete' : 'not found',
       baseUrl: config.baseUrl
@@ -71,7 +81,9 @@ export async function getCodemieClient(): Promise<CodeMieClient> {
   });
 
   // 3. Initialize CodeMie SDK client with cookies
-  spinner.text = 'Initializing SDK...';
+  if (spinner) {
+    spinner.text = 'Initializing SDK...';
+  }
 
   try {
     const client = new CodeMieClient({
@@ -81,11 +93,15 @@ export async function getCodemieClient(): Promise<CodeMieClient> {
     });
 
     logger.debug('CodeMieClient created with cookies', { apiUrl: credentials.apiUrl });
-    spinner.succeed(chalk.green('Connected to CodeMie'));
+    if (spinner) {
+      spinner.succeed(chalk.green('Connected to CodeMie'));
+    }
 
     return client;
   } catch (error) {
-    spinner.fail(chalk.red('Failed to initialize SDK'));
+    if (spinner) {
+      spinner.fail(chalk.red('Failed to initialize SDK'));
+    }
     logger.error('SDK initialization failed', { error });
     throw new ConfigurationError(
       'Failed to initialize CodeMie SDK. Please verify your setup.'
