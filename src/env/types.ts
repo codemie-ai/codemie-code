@@ -13,6 +13,18 @@ export interface CodeMieIntegrationInfo {
 }
 
 /**
+ * CodeMie assistant information
+ */
+export interface CodemieAssistant {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string;
+  project?: string;
+  registeredAt: string;
+}
+
+/**
  * Provider profile configuration
  */
 export interface ProviderProfile {
@@ -30,6 +42,7 @@ export interface ProviderProfile {
   authMethod?: 'manual' | 'sso';
   codeMieUrl?: string;
   codeMieProject?: string;  // Selected project/application name
+  codemieAssistants?: CodemieAssistant[];
   codeMieIntegration?: CodeMieIntegrationInfo;
   ssoConfig?: {
     apiUrl?: string;
@@ -75,6 +88,7 @@ export interface LegacyConfig {
   authMethod?: 'manual' | 'sso';
   codeMieUrl?: string;
   codeMieProject?: string;  // Selected project/application name
+  codemieAssistants?: CodemieAssistant[];
   codeMieIntegration?: CodeMieIntegrationInfo;
   ssoConfig?: {
     apiUrl?: string;
@@ -109,7 +123,7 @@ export type CodeMieConfigOptions = ProviderProfile;
  */
 export function isMultiProviderConfig(config: any): config is MultiProviderConfig {
   return Boolean(
-    config && config.version === 2 && config.profiles && config.activeProfile
+    config?.version === 2 && config.profiles && config.activeProfile
   );
 }
 

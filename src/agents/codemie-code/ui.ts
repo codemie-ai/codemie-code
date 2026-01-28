@@ -4,22 +4,29 @@ import { CodeMieAgent } from './agent.js';
 import { ExecutionStep, TodoUpdateEvent } from './types.js';
 import { formatToolMetadata } from './toolMetadata.js';
 import { formatCost, formatTokens, formatTokenUsageSummary } from './tokenUtils.js';
-import { hasClipboardImage, getClipboardImage, type ClipboardImage } from '../../utils/clipboard.js';
+import type { ClipboardImage } from '@/utils/clipboard.js';
 import { TodoPanel } from './ui/todoPanel.js';
 import { ProgressTracker, getProgressTracker } from './ui/progressTracker.js';
 import { TodoStateManager } from './tools/planning.js';
-import { logger } from '../../utils/logger.js';
+import { logger } from '@/utils/logger.js';
+import { loadRegisteredAssistants } from '@/utils/config.js';
+import { highlightMentionsInText } from './ui/mentions.js';
+import type { AssistantSuggestion } from './ui/autocomplete.js';
+import { startsWithEscape } from './ui/terminalCodes.js';
+import { processKeyInput, type InputState } from './ui/keyHandlers.js';
+import { ReadFileTool, ListDirectoryTool, ExecuteCommandTool } from './tools/index.js';
 
 /**
  * Terminal UI interface for CodeMie Agent using Clack
  */
 export class CodeMieTerminalUI {
-  private agent: CodeMieAgent;
+  private readonly agent: CodeMieAgent;
   private currentSpinner?: any;
-  private todoPanel: TodoPanel;
-  private progressTracker: ProgressTracker;
+  private readonly todoPanel: TodoPanel;
+  private readonly progressTracker: ProgressTracker;
   private planMode = false;
   private activePlanningPhase: string | null = null;
+  private assistantSuggestions: AssistantSuggestion[] = [];
 
   constructor(agent: CodeMieAgent) {
     this.agent = agent;
@@ -33,7 +40,7 @@ export class CodeMieTerminalUI {
       compact: true
     });
 
-    // Register for todo update events
+    // Register for to_do update events
     TodoStateManager.addEventCallback(this.handleTodoUpdate.bind(this));
   }
 
@@ -86,10 +93,17 @@ export class CodeMieTerminalUI {
     }
   }
 
+
   /**
    * Get input from user with Shift+Enter multiline support and image pasting
    */
   private async getMultilineInput(): Promise<{ text: string; images: ClipboardImage[] } | null> {
+    // Load assistants for autocomplete
+    if (this.assistantSuggestions.length === 0) {
+      const assistants = await loadRegisteredAssistants();
+      this.assistantSuggestions = assistants.map(a => ({ slug: a.slug, name: a.name }));
+    }
+
     return new Promise((resolve) => {
       if (!process.stdin.setRawMode) {
         // Fallback for environments without raw mode
@@ -135,7 +149,12 @@ export class CodeMieTerminalUI {
         let isFirstLine = true;
         let escapeSequence = '';
         let images: ClipboardImage[] = [];
-        let imageCounter = 0;
+
+        // Autocomplete state
+        let autocompleteActive = false;
+        let autocompleteList: AssistantSuggestion[] = [];
+        let autocompleteIndex = 0;
+        let autocompleteStartPos = -1; // Position where @ was typed
 
         const writePrompt = () => {
           try {
@@ -146,166 +165,78 @@ export class CodeMieTerminalUI {
           }
         };
 
+
         writePrompt();
 
-        process.stdin.on('data', (key: Buffer) => {
+        process.stdin.on('data', async (key: Buffer) => {
           if (cleanupDone) return; // Prevent processing after cleanup
 
           try {
             const data = key.toString('utf8');
 
-        // Handle escape sequences
-        if (data.startsWith('\x1b')) {
-          escapeSequence += data;
-          // Wait for complete escape sequence (timeout after short delay)
-          setTimeout(() => {
-            escapeSequence = '';
-          }, 10);
-          return;
-        }
-
-        // Check for Shift+Enter patterns on macOS
-        // Shift+Enter in macOS Terminal typically sends: \r\n or \n\r
-        if (data === '\r\n' || data === '\n\r' || (escapeSequence && data === '\r')) {
-          // This is Shift+Enter - add line and continue
-          lines.push(currentLine);
-          currentLine = '';
-          isFirstLine = false;
-          process.stdout.write('\n');
-          writePrompt();
-          escapeSequence = '';
-          return;
-        }
-
-        // Regular Enter - send message
-        if (data === '\r' || data === '\n') {
-          if (currentLine.trim() === '' && lines.length === 0) {
-            // Empty input, continue asking
-            writePrompt();
-            return;
-          }
-
-            // Send the message
-            if (currentLine.trim() !== '') {
-              lines.push(currentLine);
-            }
-
-            process.stdout.write('\n');
-            performCleanup();
-            resolve({
-              text: lines.join('\n'),
-              images: images
-            });
-            return;
-        }
-
-            // Ctrl+C
-            if (data === '\u0003') {
-              performCleanup();
-              resolve(null);
-              return;
-            }
-
-        // Backspace - MUST be checked FIRST before Ctrl+H to avoid conflicts
-        // Some terminals (Windows/macOS/Linux) send \b (\u0008) for Backspace, which conflicts with Ctrl+H
-        if (data === '\u007F' || data === '\b') {
-          if (currentLine.length > 0) {
-            currentLine = currentLine.slice(0, -1);
-            process.stdout.write('\b \b');
-          }
-          return;
-        }
-
-        // Hotkeys for mode switching
-        // Ctrl+P - Toggle plan mode
-        if (data === '\u0010') {
-          this.handleHotkey('toggle-plan-mode');
-          // Mode change notification is handled in showModeChangeNotification()
-          writePrompt();
-          process.stdout.write(currentLine);
-          return;
-        }
-
-        // Ctrl+H - Show hotkey help
-        if (data === '\u0008') {
-          this.showHotkeyHelp();
-          writePrompt();
-          process.stdout.write(currentLine);
-          return;
-        }
-
-        // Ctrl+T - Show current todos
-        if (data === '\u0014') {
-          this.handleHotkey('show-todos');
-          writePrompt();
-          process.stdout.write(currentLine);
-          return;
-        }
-
-        // Ctrl+S - Show current mode status (changed from Ctrl+M to avoid Enter conflict)
-        if (data === '\u0013') {
-          this.showModeStatus();
-          writePrompt();
-          process.stdout.write(currentLine);
-          return;
-        }
-
-        // Alt+M - Show mode status (Alt key sequences start with \x1b)
-        if (data === 'm' && escapeSequence.includes('\x1b')) {
-          this.showModeStatus();
-          writePrompt();
-          process.stdout.write(currentLine);
-          escapeSequence = '';
-          return;
-        }
-
-        // Ctrl+I - Insert image from clipboard (Tab key)
-        if (data === '\u0009') {
-          // Check if there's an image in clipboard
-          hasClipboardImage().then(hasImage => {
-            if (hasImage) {
-              getClipboardImage().then(clipboardImage => {
-                if (clipboardImage) {
-                  imageCounter++;
-                  images.push(clipboardImage);
-
-                  // Insert visual indicator in current line
-                  const imageIndicator = chalk.blueBright(`[Image #${imageCounter}]`);
-                  currentLine += imageIndicator;
-                  process.stdout.write(imageIndicator);
-
-                  console.log(chalk.green(`\n📸 Image #${imageCounter} added from clipboard (${clipboardImage.mimeType})`));
-                  writePrompt();
-                  process.stdout.write(currentLine);
-                }
+            const config = this.agent.getConfig();
+            if (config?.debug && autocompleteActive) {
+              logger.debug('Key pressed during autocomplete', {
+                data: data.split('').map(c => c.codePointAt(0) ?? 0).join(','),
+                escapeSeq: escapeSequence.split('').map(c => c.codePointAt(0) ?? 0).join(','),
+                listLength: autocompleteList.length
               });
-            } else {
-              console.log(chalk.yellow('\n⚠️  No image found in clipboard'));
-              writePrompt();
-              process.stdout.write(currentLine);
             }
-          }).catch(() => {
-            console.log(chalk.rgb(255, 120, 120)('\n❌ Error accessing clipboard'));
-            writePrompt();
-            process.stdout.write(currentLine);
-          });
-          return;
-        }
 
-        // Handle clipboard paste (Cmd+V on macOS, Ctrl+V on Windows/Linux)
-        // Pasted content can be multiple characters, so handle any printable text
-        if (data.length > 1 || (data.length === 1 && (data.charCodeAt(0) >= 32 || data === '\t'))) {
-          // Filter out non-printable characters except tabs
-          const printableData = data.split('').filter(char =>
-            char.charCodeAt(0) >= 32 || char === '\t'
-          ).join('');
+            // Accumulate escape sequences
+            if (startsWithEscape(data) || escapeSequence.length > 0) {
+              if (!startsWithEscape(data) && escapeSequence.length > 0) {
+                escapeSequence += data;
+              } else if (startsWithEscape(data)) {
+                escapeSequence = data;
+              }
+            }
 
-          if (printableData.length > 0) {
-            currentLine += printableData;
-            process.stdout.write(printableData);
-          }
-        }
+            // Build state object for key handler
+            const state: InputState = {
+              currentLine,
+              lines,
+              isFirstLine,
+              autocompleteActive,
+              autocompleteList,
+              autocompleteIndex,
+              autocompleteStartPos,
+              escapeSequence,
+              images,
+              ui: this,
+            };
 
+            // Process key through handler registry
+            const result = await processKeyInput(data, state);
+
+            // Update local variables from state
+            currentLine = state.currentLine;
+            lines = state.lines;
+            isFirstLine = state.isFirstLine;
+            autocompleteActive = state.autocompleteActive;
+            autocompleteList = state.autocompleteList;
+            autocompleteIndex = state.autocompleteIndex;
+            autocompleteStartPos = state.autocompleteStartPos;
+            escapeSequence = state.escapeSequence;
+            // images array is modified by reference
+
+            // Handle result
+            if (result.handled) {
+              if (result.shouldRewritePrompt) {
+                writePrompt();
+                process.stdout.write(currentLine);
+              }
+
+              if (result.shouldReturn) {
+                performCleanup();
+                resolve(result.value ?? null);
+                return;
+              }
+
+              return; // Handler processed the key
+            }
+
+            // Clear escape sequence if no handler matched (shouldn't happen)
             escapeSequence = '';
           } catch (error) {
             // Handle data processing errors gracefully
@@ -444,7 +375,7 @@ export class CodeMieTerminalUI {
             this.currentSpinner.start(chalk.white('Thinking...'));
             break;
 
-          case 'content_chunk':
+          case 'content_chunk': {
             if (!hasStarted) {
               // Stop any existing spinner and start response
               if (this.currentSpinner) {
@@ -455,15 +386,18 @@ export class CodeMieTerminalUI {
               hasStarted = true;
             }
 
-            process.stdout.write(event.content || '');
+            // Highlight [Assistant @slug] prefix in responses
+            const highlightedContent = highlightMentionsInText(event.content || '');
+            process.stdout.write(highlightedContent);
             break;
+          }
 
           case 'tool_call_start':
             toolCallCount++;
             if (!this.currentSpinner) {
               this.currentSpinner = spinner();
             }
-            this.currentSpinner.start(chalk.yellow(`Using ${event.toolName}...`));
+            this.currentSpinner.start(chalk.yellow(`Using ${event.toolName}`));
             break;
 
           case 'tool_call_progress':
@@ -487,14 +421,15 @@ export class CodeMieTerminalUI {
                 ? formatToolMetadata(event.toolName || 'tool', event.toolMetadata)
                 : `✓ ${event.toolName} completed`;
 
-              this.currentSpinner.stop(chalk.green(message));
+              this.currentSpinner.stop();
+              this.currentSpinner = undefined;
+
+              console.log(chalk.green(`◇  ${message}`));
 
               // Show additional details if available and not an error (but avoid duplication)
               if (event.toolMetadata && event.toolMetadata.success && this.shouldShowDetails(event.toolName || '')) {
                 this.showToolDetails(event.toolName || '', event.toolMetadata);
               }
-
-              this.currentSpinner = undefined;
             }
             break;
 
@@ -503,6 +438,7 @@ export class CodeMieTerminalUI {
               this.currentSpinner.stop();
               this.currentSpinner = undefined;
             }
+
             if (hasStarted) {
               console.log('\n'); // Add spacing after response
             }
@@ -856,25 +792,25 @@ export class CodeMieTerminalUI {
    */
   private shouldShowDetails(toolName: string): boolean {
     // Show details for these tools when they have interesting information
-    return ['read_file', 'list_directory', 'execute_command'].includes(toolName);
+    return [ReadFileTool.name, ListDirectoryTool.name, ExecuteCommandTool.name].includes(toolName);
   }
 
   /**
    * Show additional tool details
    */
   private showToolDetails(toolName: string, metadata: any): void {
-    if (!metadata || !metadata.success) return;
+    if (!metadata?.success) return;
 
     let details = '';
 
     switch (toolName) {
-      case 'read_file':
+      case ReadFileTool.name:
         if (metadata.contentPreview) {
           details = chalk.white(`Preview:\n${metadata.contentPreview}`);
         }
         break;
 
-      case 'list_directory':
+      case ListDirectoryTool.name:
         if (metadata.contentPreview && metadata.contentPreview !== 'Empty directory') {
           // Parse the content preview and format each item on a new line
           const preview = metadata.contentPreview;
@@ -894,7 +830,7 @@ export class CodeMieTerminalUI {
         }
         break;
 
-      case 'execute_command':
+      case ExecuteCommandTool.name:
         if (metadata.outputPreview && metadata.outputPreview !== 'No output') {
           details = chalk.white(`Output:\n${metadata.outputPreview}`);
         }
@@ -1038,15 +974,18 @@ export class CodeMieTerminalUI {
   showTaskWelcome(task: string): void {
     intro(chalk.cyan('🤖 CodeMie Native Agent'));
 
+    // Highlight @ mentions in the task
+    const highlightedTask = highlightMentionsInText(task);
+
     if (this.planMode) {
       console.log(chalk.cyan('◇  Task Execution'));
-      console.log(`   Task: ${chalk.yellow(task)}`);
+      console.log(`   Task: ${highlightedTask}`);
       console.log(`   Mode: ${chalk.cyan('Plan Mode')} - Structured planning enabled`);
       console.log('');
       this.showPlanningWelcome();
     } else {
       console.log(chalk.cyan('◇  Task Execution'));
-      console.log(`   Task: ${chalk.yellow(task)}`);
+      console.log(`   Task: ${highlightedTask}`);
       console.log('');
     }
   }
@@ -1245,9 +1184,9 @@ export class CodeMieTerminalUI {
     if (!toolInfo) return;
 
     const toolNames = {
-      'list_directory': 'Exploring',
-      'read_file': 'Reading',
-      'execute_command': 'Executing',
+      [ListDirectoryTool.name]: 'Exploring',
+      [ReadFileTool.name]: 'Reading',
+      [ExecuteCommandTool.name]: 'Executing',
       'llm_analysis': 'Analyzing',
       'llm_plan_generation': 'Generating Plan',
       'plan_validation': 'Validating',
@@ -1394,7 +1333,7 @@ export class CodeMieTerminalUI {
   /**
    * Handle hotkey actions
    */
-  private handleHotkey(action: string): void {
+  public handleHotkey(action: string): void {
     switch (action) {
       case 'toggle-plan-mode':
         this.togglePlanMode();
@@ -1467,7 +1406,7 @@ export class CodeMieTerminalUI {
   /**
    * Show hotkey help
    */
-  private showHotkeyHelp(): void {
+  public showHotkeyHelp(): void {
     const helpText = `
 ${chalk.bold.cyan('🔥 Interactive Mode Hotkeys')}
 
@@ -1500,7 +1439,7 @@ Chat Commands:
   /**
    * Show current mode status
    */
-  private showModeStatus(): void {
+  public showModeStatus(): void {
     const _todos = this.todoPanel.getTodos();
     const progressInfo = this.todoPanel.getProgressInfo();
 

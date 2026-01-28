@@ -31,6 +31,7 @@ module.exports = {
         'cli', // CLI commands
         'agents', // Agent system
         'providers', // Provider plugins
+        'assistants', // Assistants management
         'config', // Configuration management
         'proxy', // Proxy system
         'workflows', // Workflow management
