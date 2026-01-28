@@ -8,9 +8,10 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
 import type { Assistant, AssistantBase } from 'codemie-sdk';
-import { logger } from '../../../utils/logger.js';
-import { getConfigAndClient } from '../../../utils/sdk-client.js';
-import { ConfigurationError, createErrorContext, formatErrorForUser } from '../../../utils/errors.js';
+import { logger } from '@/utils/logger.js';
+import { getCodemieClient } from '@/utils/sdk-client.js';
+import { ConfigLoader } from '@/utils/config.js';
+import { ConfigurationError, createErrorContext, formatErrorForUser } from '@/utils/errors.js';
 
 /**
  * Truncate text to specified length with ellipsis
@@ -19,6 +20,135 @@ function truncateText(text: string | undefined, maxLength: number): string {
   if (!text) return '';
   if (text.length <= maxLength) return text;
   return text.substring(0, maxLength - 3) + '...';
+}
+
+/**
+ * Determine project filter based on options and config
+ */
+async function determineProjectFilter(options: {
+  project?: string;
+  allProjects?: boolean;
+}): Promise<string | undefined> {
+  if (options.allProjects) {
+    logger.debug('Showing assistants from all projects (--all-projects flag)');
+    return undefined;
+  }
+
+  if (options.project) {
+    logger.debug('Filtering by explicit project', { project: options.project });
+    return options.project;
+  }
+
+  // Load config to get project
+  try {
+    const config = await ConfigLoader.load();
+    if (config.codeMieProject) {
+      logger.debug('Filtering by config project', { project: config.codeMieProject });
+      return config.codeMieProject;
+    }
+  } catch (error) {
+    logger.debug('No config found, showing all projects', { error });
+  }
+
+  return undefined;
+}
+
+/**
+ * Fetch assistants from backend with project filter
+ */
+async function fetchAssistants(
+  client: ReturnType<typeof getCodemieClient> extends Promise<infer T> ? T : never,
+  projectFilter: string | undefined
+): Promise<(Assistant | AssistantBase)[]> {
+  const spinner = ora('Fetching assistants...').start();
+
+  try {
+    const filters: Record<string, unknown> = {
+      my_assistants: true
+    };
+
+    if (projectFilter) {
+      filters.project = projectFilter;
+    }
+
+    const assistants = await client.assistants.list({ filters });
+    spinner.succeed(chalk.green(`Found ${assistants.length} assistant${assistants.length === 1 ? '' : 's'}`));
+    return assistants;
+  } catch (error) {
+    spinner.fail(chalk.red('Failed to fetch assistants'));
+    logger.error('Assistant list API call failed', { error });
+
+    if (error instanceof Error && (error.message.includes('401') || error.message.includes('403'))) {
+      throw new ConfigurationError(
+        'Authentication expired. Please run "codemie setup" again.'
+      );
+    }
+
+    throw error;
+  }
+}
+
+/**
+ * Display assistant details
+ */
+function displayAssistant(assistant: Assistant | AssistantBase, index: number): void {
+  const a = assistant as Assistant;
+  const number = index + 1;
+  const createdDate = a.created_date ? new Date(a.created_date).toLocaleDateString() : '';
+  const contextTypes = a.context?.map(c => c.context_type).join(', ') || '';
+  const toolkitNames = a.toolkits?.map(t => t.toolkit).join(', ') || '';
+  const visibility = a.shared ? chalk.green('Shared') : chalk.white('Private');
+  const scope = a.is_global ? chalk.green('Global') : chalk.white('Project');
+
+  console.log(chalk.white(number + '.') + ' ' + chalk.bold(a.name || ''));
+  console.log('   ' + chalk.dim('ID:') + ' ' + chalk.white(a.id || ''));
+  console.log('   ' + chalk.dim('Project:') + ' ' + chalk.cyan(a.project || ''));
+  console.log('   ' + chalk.dim('Creator:') + ' ' + chalk.white(a.creator || ''));
+  console.log('   ' + chalk.dim('Model:') + ' ' + chalk.yellow(a.llm_model_type || ''));
+  console.log('   ' + chalk.dim('Created:') + ' ' + chalk.white(createdDate));
+  console.log('   ' + chalk.dim('Description:') + ' ' + chalk.white(truncateText(a.description, 100)));
+  console.log('   ' + chalk.dim('System Prompt:') + ' ' + chalk.white(truncateText(a.system_prompt, 100)));
+  console.log('   ' + chalk.dim('Context:') + ' ' + chalk.white(contextTypes));
+  console.log('   ' + chalk.dim('Toolkits:') + ' ' + chalk.white(toolkitNames));
+  console.log('   ' + chalk.dim('Visibility:') + ' ' + visibility);
+  console.log('   ' + chalk.dim('Scope:') + ' ' + scope);
+  console.log('');
+}
+
+/**
+ * Display empty results message
+ */
+function displayEmptyResults(projectFilter: string | undefined): void {
+  console.log(chalk.yellow('\nNo assistants found.'));
+  if (projectFilter) {
+    console.log(chalk.dim(`Filtered by project: ${chalk.cyan(projectFilter)}`));
+  }
+}
+
+/**
+ * Display filter information header
+ */
+function displayFilterInfo(
+  projectFilter: string | undefined,
+  options: { project?: string; allProjects?: boolean }
+): void {
+  if (!projectFilter) return;
+
+  console.log(chalk.dim(`\nFiltered by project: ${chalk.cyan(projectFilter)}`));
+  if (!options.project && !options.allProjects) {
+    console.log(chalk.dim(`(from your config - use ${chalk.cyan('--all-projects')} to see all)\n`));
+  }
+}
+
+/**
+ * Display summary and next steps
+ */
+function displaySummary(): void {
+  console.log(chalk.dim('─'.repeat(60)));
+  console.log(chalk.bold('\n💡 Next Steps:\n'));
+  console.log(chalk.white('  • Use an assistant ID with your CodeMie agent'));
+  console.log(chalk.white('  • Run') + chalk.cyan(' codemie setup') + chalk.white(' to configure profiles'));
+  console.log('');
 }
 
 /**
@@ -62,144 +192,17 @@ async function listAssistants(options: {
   project?: string;
   allProjects?: boolean;
 }): Promise<void> {
-  // 1. Initialize config and client
-  const { config, client } = await getConfigAndClient(process.cwd());
+  const client = await getCodemieClient();
+  const projectFilter = await determineProjectFilter(options);
+  const assistants = await fetchAssistants(client, projectFilter);
 
-  // 2. Determine project filter
-  let projectFilter: string | undefined;
-
-  if (options.allProjects) {
-    // Explicit --all-projects flag: no filter
-    projectFilter = undefined;
-    logger.debug('Showing assistants from all projects (--all-projects flag)');
-  } else if (options.project) {
-    // Explicit --project flag: use that project
-    projectFilter = options.project;
-    logger.debug('Filtering by explicit project', { project: projectFilter });
-  } else if (config.codeMieProject) {
-    // No explicit flags: use project from config
-    projectFilter = config.codeMieProject;
-    logger.debug('Filtering by config project', { project: projectFilter });
-  }
-
-  // 3. Fetch assistants from backend
-  const spinner = ora('Fetching assistants...').start();
-
-  let assistants: (Assistant | AssistantBase)[];
-  try {
-    // Build list parameters - only fetch user's own assistants
-    const filters: Record<string, unknown> = {
-      my_assistants: true // Only show user's own assistants
-    };
-
-    // Add project filter if determined
-    if (projectFilter) {
-      filters.project = projectFilter;
-    }
-
-    const listParams = { filters };
-
-    // Access the assistants service through the client
-    assistants = await client.assistants.list(listParams);
-
-    spinner.succeed(chalk.green(`Found ${assistants.length} assistant${assistants.length !== 1 ? 's' : ''}`));
-  } catch (error) {
-    spinner.fail(chalk.red('Failed to fetch assistants'));
-    logger.error('Assistant list API call failed', { error });
-
-    if (error instanceof Error && (error.message.includes('401') || error.message.includes('403'))) {
-      throw new ConfigurationError(
-        'Authentication expired. Please run "codemie setup" again.'
-      );
-    }
-
-    throw error;
-  }
-
-  // 4. Display results
   if (assistants.length === 0) {
-    console.log(chalk.yellow('\nNo assistants found.'));
-    if (projectFilter) {
-      console.log(chalk.dim(`Filtered by project: ${chalk.cyan(projectFilter)}`));
-      console.log(chalk.dim(`Try ${chalk.cyan('codemie setup assistants --all-projects')} to see all assistants.\n`));
-    }
+    displayEmptyResults(projectFilter);
     return;
   }
 
-  // Show active filter information if applicable
-  if (projectFilter) {
-    console.log(chalk.dim(`\nFiltered by project: ${chalk.cyan(projectFilter)}`));
-    if (!options.project && !options.allProjects) {
-      console.log(chalk.dim(`(from your config - use ${chalk.cyan('--all-projects')} to see all)\n`));
-    }
-  }
-
+  displayFilterInfo(projectFilter, options);
   console.log(chalk.bold.cyan(`\n📋 Available Assistants:\n`));
-
-  assistants.forEach((assistant, index) => {
-    const fullAssistant = assistant as Assistant;
-    console.log(`${chalk.white(`${index + 1}.`)} ${chalk.bold(fullAssistant.name)}`);
-    console.log(`   ${chalk.dim('ID:')} ${chalk.white(fullAssistant.id)}`);
-
-    if (fullAssistant.project) {
-      console.log(`   ${chalk.dim('Project:')} ${chalk.cyan(fullAssistant.project)}`);
-    }
-
-    if (fullAssistant.creator) {
-      console.log(`   ${chalk.dim('Creator:')} ${chalk.white(fullAssistant.creator)}`);
-    }
-
-    if (fullAssistant.llm_model_type) {
-      console.log(`   ${chalk.dim('Model:')} ${chalk.yellow(fullAssistant.llm_model_type)}`);
-    }
-
-    if (fullAssistant.created_date) {
-      const date = new Date(fullAssistant.created_date);
-      console.log(`   ${chalk.dim('Created:')} ${chalk.white(date.toLocaleDateString())}`);
-    }
-
-    // Show description if available (truncated to 100 chars)
-    if (fullAssistant.description) {
-      const truncatedDesc = truncateText(fullAssistant.description, 100);
-      console.log(`   ${chalk.dim('Description:')} ${chalk.white(truncatedDesc)}`);
-    }
-
-    // Show system prompt if available (truncated to 100 chars)
-    if (fullAssistant.system_prompt) {
-      const truncatedPrompt = truncateText(fullAssistant.system_prompt, 100);
-      console.log(`   ${chalk.dim('System Prompt:')} ${chalk.white(truncatedPrompt)}`);
-    }
-
-    // Show context types if available
-    if (fullAssistant.context && fullAssistant.context.length > 0) {
-      const contextTypes = fullAssistant.context.map(c => c.context_type).join(', ');
-      console.log(`   ${chalk.dim('Context:')} ${chalk.white(contextTypes)}`);
-    }
-
-    // Show toolkits if available
-    if (fullAssistant.toolkits && fullAssistant.toolkits.length > 0) {
-      const toolkitNames = fullAssistant.toolkits.map(t => t.toolkit).join(', ');
-      console.log(`   ${chalk.dim('Toolkits:')} ${chalk.white(toolkitNames)}`);
-    }
-
-    // Mark shared/global assistants
-    if (fullAssistant.shared) {
-      console.log(`   ${chalk.dim('Visibility:')} ${chalk.green('Shared')}`);
-    }
-    if (fullAssistant.is_global) {
-      console.log(`   ${chalk.dim('Scope:')} ${chalk.green('Global')}`);
-    }
-
-    console.log(''); // Empty line between assistants
-  });
-
-  // Display summary and next steps
-  console.log(chalk.dim('─'.repeat(60)));
-  console.log(chalk.bold('\n💡 Next Steps:\n'));
-  console.log(chalk.white('  • Use an assistant ID with your CodeMie agent'));
-  console.log(chalk.white('  • Run') + chalk.cyan(' codemie setup') + chalk.white(' to configure profiles'));
-  if (projectFilter) {
-    console.log(chalk.white('  • Show all projects:') + chalk.cyan(' codemie setup assistants --all-projects'));
-  }
-  console.log('');
+  assistants.forEach((assistant, index) => displayAssistant(assistant, index));
+  displaySummary();
 }

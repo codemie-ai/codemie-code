@@ -21,7 +21,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc && npm run copy-plugin",
+    "build": "tsc && tsc-alias && npm run copy-plugin",
     "copy-plugin": "node scripts/copy-plugins.js",
     "dev": "tsc --watch",
     "test": "vitest",
@@ -142,6 +142,7 @@
     "eslint": "^9.38.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.2.7",
+    "tsc-alias": "^1.8.16",
     "typescript": "^5.3.3",
     "vitest": "^4.0.10"
   },
