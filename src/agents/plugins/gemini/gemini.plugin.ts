@@ -124,9 +124,6 @@ export const GeminiPluginMetadata: AgentMetadata = {
           },
           tools: {
             enableHooks: true
-          },
-          hooks: {
-            enabled: true
           }
         }
       );
