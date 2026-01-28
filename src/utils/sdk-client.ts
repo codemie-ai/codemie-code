@@ -14,21 +14,18 @@ import { ConfigurationError } from './errors.js';
 import { logger } from './logger.js';
 
 /**
- * Initialize CodeMieClient with SSO authentication
+ * Get authenticated CodeMieClient instance
  *
- * @param workingDir - Working directory for config loading
  * @returns Initialized CodeMieClient instance
  * @throws ConfigurationError if setup is incomplete or credentials are invalid
  */
-export async function initializeCodeMieClient(
-  workingDir: string = process.cwd()
-): Promise<CodeMieClient> {
+export async function getCodemieClient(): Promise<CodeMieClient> {
   const spinner = ora('Loading configuration...').start();
 
   // 1. Load configuration
   let config: CodeMieConfigOptions;
   try {
-    config = await ConfigLoader.load(workingDir);
+    config = await ConfigLoader.load();
   } catch {
     spinner.fail(chalk.red('Failed to load configuration'));
     throw new ConfigurationError(
@@ -56,9 +53,8 @@ export async function initializeCodeMieClient(
   // 3. Initialize CodeMie SDK client with cookies
   spinner.text = 'Initializing SDK...';
 
-  let client: CodeMieClient;
   try {
-    client = new CodeMieClient({
+    const client = new CodeMieClient({
       codemie_api_domain: credentials.apiUrl,
       cookies: credentials.cookies,
       verify_ssl: false
@@ -66,6 +62,8 @@ export async function initializeCodeMieClient(
 
     logger.debug('CodeMieClient created with cookies', { apiUrl: credentials.apiUrl });
     spinner.succeed(chalk.green('Connected to CodeMie'));
+
+    return client;
   } catch (error) {
     spinner.fail(chalk.red('Failed to initialize SDK'));
     logger.error('SDK initialization failed', { error });
@@ -73,36 +71,5 @@ export async function initializeCodeMieClient(
       'Failed to initialize CodeMie SDK. Please verify your setup.'
     );
   }
-
-  return client;
 }
 
-/**
- * Get config and client together
- * Convenience function that returns both config and initialized client
- *
- * @param workingDir - Working directory for config loading
- * @returns Object containing config and client
- */
-export async function getConfigAndClient(
-  workingDir: string = process.cwd()
-): Promise<{ config: CodeMieConfigOptions; client: CodeMieClient }> {
-  const spinner = ora('Loading configuration...').start();
-
-  // 1. Load configuration
-  let config: CodeMieConfigOptions;
-  try {
-    config = await ConfigLoader.load(workingDir);
-    spinner.succeed();
-  } catch {
-    spinner.fail(chalk.red('Failed to load configuration'));
-    throw new ConfigurationError(
-      'No configuration found. Please run "codemie setup" first.'
-    );
-  }
-
-  // 2. Initialize client (with its own spinner management)
-  const client = await initializeCodeMieClient(workingDir);
-
-  return { config, client };
-}
