@@ -5,6 +5,18 @@
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./api": {
+      "import": "./dist/api/index.js",
+      "require": "./dist/api/index.js",
+      "types": "./dist/api/index.d.ts"
+    }
+  },
   "bin": {
     "codemie": "./bin/codemie.js",
     "codemie-code": "./bin/agent-executor.js",
