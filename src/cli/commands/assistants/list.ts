@@ -12,7 +12,7 @@ import type { Assistant, AssistantBase, CodeMieClient } from 'codemie-sdk';
 import { logger } from '@/utils/logger.js';
 import { ConfigLoader } from '@/utils/config.js';
 import { createErrorContext, formatErrorForUser } from '@/utils/errors.js';
-import { generateAssistantSkill, removeAssistantSkill } from './utils/skill-generator.js';
+import { registerClaudeSubagent, unregisterClaudeSubagent } from './generators/claude-agent-generator.js';
 import type { CodemieAssistant, ProviderProfile } from '@/env/types.js';
 import { MESSAGES, COMMAND_NAMES, ACTIONS, type ActionType } from './constants.js';
 import { getAuthenticatedClient, promptReauthentication } from '@/utils/auth.js';
@@ -325,10 +325,13 @@ async function executeWithSpinner<T>(
 async function unregisterAssistant(assistant: CodemieAssistant): Promise<void> {
   await executeWithSpinner(
     MESSAGES.LIST.SPINNER_UNREGISTERING(chalk.bold(assistant.name)),
-    () => removeAssistantSkill(assistant.slug),
+    async () => {
+      // Remove Claude subagent from ~/.claude/agents/
+      await unregisterClaudeSubagent(assistant.slug);
+    },
     MESSAGES.LIST.SUCCESS_UNREGISTERED(chalk.bold(assistant.name), chalk.cyan(assistant.slug)),
     MESSAGES.LIST.ERROR_UNREGISTER_FAILED(assistant.name),
-    (error) => logger.error('Skill removal failed', { error, assistantId: assistant.id })
+    (error) => logger.error('Assistant removal failed', { error, assistantId: assistant.id })
   );
 }
 
@@ -336,23 +339,28 @@ async function unregisterAssistant(assistant: CodemieAssistant): Promise<void> {
  * Register an assistant
  */
 async function registerAssistant(assistant: Assistant): Promise<CodemieAssistant | null> {
-  const slug = await executeWithSpinner(
+  const result = await executeWithSpinner(
     MESSAGES.LIST.SPINNER_REGISTERING(chalk.bold(assistant.name)),
-    () => generateAssistantSkill(assistant),
-    MESSAGES.LIST.SUCCESS_REGISTERED(chalk.bold(assistant.name), chalk.cyan('slug')),
+    async () => {
+      // Register Claude subagent in ~/.claude/agents/
+      // Claude Code will auto-discover it and make it available via @mentions
+      await registerClaudeSubagent(assistant);
+
+      return assistant.slug!;
+    },
+    MESSAGES.LIST.SUCCESS_REGISTERED(chalk.bold(assistant.name), chalk.cyan(`@${assistant.slug!}`)),
     MESSAGES.LIST.ERROR_REGISTER_FAILED(assistant.name),
-    (error) => logger.error('Skill generation failed', { error, assistantId: assistant.id })
+    (error) => logger.error('Assistant generation failed', { error, assistantId: assistant.id })
   );
 
-  if (!slug) {
+  if (!result) {
     return null;
   }
 
-  // Update success message with actual slug
   return {
     id: assistant.id,
     name: assistant.name,
-    slug,
+    slug: assistant.slug!,
     description: assistant.description,
     project: assistant.project,
     registeredAt: new Date().toISOString()
