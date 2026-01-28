@@ -21,6 +21,7 @@ import { sanitizeCookies, sanitizeAuthToken } from '@/utils/security.js';
 import { HookExecutor } from '../../hooks/executor.js';
 import type { HookExecutionContext } from '../../hooks/types.js';
 import { parseAtMentionCommand } from './ui/mentions.js';
+import { loadRegisteredAssistants } from '@/utils/config.js';
 
 export class CodeMieAgent {
   private agent: any;
@@ -97,19 +98,25 @@ export class CodeMieAgent {
   /**
    * Update tools after initialization (needed for tools that require conversation history)
    */
-  updateTools(tools: StructuredTool[]): void {
+  async updateTools(tools: StructuredTool[]): Promise<void> {
     this.tools = tools;
 
-    // Recreate agent with new tools
+    // Load registered assistants for system prompt
+    const assistants = await loadRegisteredAssistants();
+
+    // Recreate agent with new tools and assistant-aware prompt
     const llm = this.createLLM();
     this.agent = createReactAgent({
       llm,
       tools: this.tools,
-      messageModifier: getSystemPrompt(this.config.workingDirectory)
+      messageModifier: getSystemPrompt(this.config.workingDirectory, assistants)
     });
 
     if (this.config.debug) {
       logger.debug(`CodeMie Agent tools updated: ${tools.length} tools`);
+      if (assistants.length > 0) {
+        logger.debug(`Loaded ${assistants.length} assistants for system prompt:`, assistants.map(a => a.slug));
+      }
     }
   }
 

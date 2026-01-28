@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { StructuredTool } from '@langchain/core/tools';
 import type { CodeMieClient } from 'codemie-sdk';
 import type { BaseMessage } from '@langchain/core/messages';
-import { ConfigLoader } from '@/utils/config.js';
+import { ConfigLoader, loadRegisteredAssistants } from '@/utils/config.js';
 import { getAuthenticatedClient } from '@/utils/auth.js';
 import { logger } from '@/utils/logger.js';
 import type { CodemieAssistant } from '@/env/types.js';
@@ -17,19 +17,6 @@ import type { CodemieAssistant } from '@/env/types.js';
 interface HistoryMessage {
   role: 'User' | 'Assistant';
   message?: string;
-}
-
-/**
- * Load registered assistants from configuration
- */
-async function loadRegisteredAssistants(): Promise<CodemieAssistant[]> {
-  try {
-    const config = await ConfigLoader.load();
-    return config.codemieAssistants || [];
-  } catch (error) {
-    logger.error('Failed to load registered assistants', { error });
-    return [];
-  }
 }
 
 /**
@@ -175,7 +162,6 @@ export class InvokeAssistantTool extends StructuredTool {
  * Export helper functions for testing and direct use
  */
 export {
-  loadRegisteredAssistants,
   findAssistantBySlug,
   convertConversationHistory,
   invokeAssistantViaSdk

@@ -7,6 +7,7 @@
 import { ToolMetadata } from './types.js';
 import { formatTokens, formatCost } from './tokenUtils.js';
 import path from 'path';
+import { ReadFileTool, WriteFileTool, ListDirectoryTool, ExecuteCommandTool } from './tools/index.js';
 
 /**
  * Extract metadata from tool results based on tool name and result
@@ -18,16 +19,16 @@ export function extractToolMetadata(
 ): ToolMetadata | undefined {
   try {
     switch (toolName) {
-      case 'read_file':
+      case ReadFileTool.name:
         return extractReadFileMetadata(result, toolArgs);
 
-      case 'write_file':
+      case WriteFileTool.name:
         return extractWriteFileMetadata(result, toolArgs);
 
-      case 'list_directory':
+      case ListDirectoryTool.name:
         return extractListDirectoryMetadata(result, toolArgs);
 
-      case 'execute_command':
+      case ExecuteCommandTool.name:
         return extractExecuteCommandMetadata(result, toolArgs);
 
       default:
@@ -284,28 +285,28 @@ export function formatToolMetadata(toolName: string, metadata: ToolMetadata): st
   let baseMessage = '';
 
   switch (toolName) {
-    case 'read_file': {
+    case ReadFileTool.name: {
       const fileName = metadata.filePath ? path.basename(metadata.filePath) : 'file';
       const sizeInfo = metadata.fileSize ? ` (${formatBytes(metadata.fileSize)})` : '';
       baseMessage = `✓ Read ${fileName}${sizeInfo}`;
       break;
     }
 
-    case 'write_file': {
+    case WriteFileTool.name: {
       const writeFileName = metadata.filePath ? path.basename(metadata.filePath) : 'file';
       const bytesInfo = metadata.bytesWritten ? ` (${formatBytes(metadata.bytesWritten)})` : '';
       baseMessage = `✓ Wrote ${writeFileName}${bytesInfo}`;
       break;
     }
 
-    case 'list_directory': {
+    case ListDirectoryTool.name: {
       const dirName = metadata.directoryPath === '.' ? 'current directory' : path.basename(metadata.directoryPath || '');
       const counts = `${metadata.fileCount || 0} files, ${metadata.directoryCount || 0} dirs`;
       baseMessage = `✓ Listed ${dirName} (${counts})`;
       break;
     }
 
-    case 'execute_command': {
+    case ExecuteCommandTool.name: {
       const cmd = metadata.command ? metadata.command.split(' ')[0] : 'command';
       baseMessage = `✓ Executed ${cmd}`;
       break;

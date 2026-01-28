@@ -56,8 +56,8 @@ export class CodeMieCode {
         logger.debug(`Created ${tools.length} system tools`);
       }
 
-      // Update agent with tools
-      this.agent.updateTools(tools);
+      // Update agent with tools (now async to load assistants)
+      await this.agent.updateTools(tools);
 
       this.initializationResult = {
         success: true,
