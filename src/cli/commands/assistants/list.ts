@@ -190,7 +190,10 @@ async function fetchAssistants(
       logger.debug('Filtering assistants by project', { project: projectFilter });
     }
 
-    const assistants = await client.assistants.list({ filters });
+    const assistants = await client.assistants.list({
+      filters,
+      minimal_response: false  // Request full assistant data including project field
+    });
     spinner.succeed(chalk.green(MESSAGES.LIST.SUCCESS_FOUND(assistants.length)));
     return assistants;
   } catch (error) {
@@ -208,17 +211,13 @@ async function fetchAssistants(
 /**
  * Build display info for assistant choice
  */
-function buildAssistantDisplayInfo(
-  assistant: Assistant,
-  registeredMap: Map<string, CodemieAssistant>
-): string {
-  const projectInfo = assistant.project ? chalk.dim(` (${assistant.project})`) : '';
-  const modelInfo = assistant.llm_model_type ? chalk.dim(` [${assistant.llm_model_type}]`) : '';
+function buildAssistantDisplayInfo(assistant: Assistant): string {
+  const projectInfo = assistant.project ? chalk.dim(` [${assistant.project}]`) : '';
+  const firstLine = assistant.name + projectInfo;
 
-  const reg = registeredMap.get(assistant.id);
-  const slugInfo = reg?.slug ? chalk.dim(` - /${reg.slug}`) : '';
+  const descriptionInfo = assistant.description ? chalk.dim(`\n   ${assistant.description}`) : '';
 
-  return assistant.name + projectInfo + modelInfo + slugInfo;
+  return firstLine + descriptionInfo;
 }
 
 /**

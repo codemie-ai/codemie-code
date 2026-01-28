@@ -12,57 +12,38 @@ import type { Assistant } from 'codemie-sdk';
 export function createSkillMarkdown(assistant: Assistant): string {
   const skillSlug = assistant.slug!;
   const description = assistant.description || `Interact with ${assistant.name} assistant`;
-  const modelInfo = assistant.llm_model_type || '';
-
-  // Build system prompt section if exists
-  const systemPromptSection = assistant.system_prompt ? `
-
-## Who I Am
-
-${assistant.system_prompt}
-` : '';
 
   return `---
 name: ${skillSlug}
-description: Chat with ${assistant.name}${modelInfo ? ` (${modelInfo})` : ''}
-disable-model-invocation: true
-allowed-tools: Bash(codemie:*)
-argument-hint: "[your message]"
+description: ${description}
 ---
 
-# ${assistant.name} Assistant
-
-**Description:** ${description}${modelInfo ? `\n**Model:** ${modelInfo}` : ''}
-${systemPromptSection}
-
-## How to Use Me
-
-You can ask me anything by typing:
-
-\`\`\`
-/${skillSlug} "your question or request here"
-\`\`\`
-
-I'll process your message and provide a helpful response based on my capabilities and context.
+# ${assistant.name}
 
 ## What I Do
 
 ${description}
 
-I'm here to assist you with your questions and tasks. Feel free to interact with me naturally!
+## Instructions
 
----
+When the user invokes this skill:
 
-**Technical Implementation**
+1. **Send the message to the assistant**: Use the following bash command to send the user's message to the CodeMie assistant:
+   \`\`\`bash
+   codemie assistants chat "${assistant.id}" "$USER_MESSAGE"
+   \`\`\`
 
-This assistant is powered by the CodeMie platform. When you send me a message, it's processed by the backend API and I respond with relevant information.
+2. **Return the response**: The command will return the assistant's response. Present this response to the user exactly as received, without any modifications or additional formatting.
 
-IMPORTANT!: Return the assistant's response exactly as received without any modifications, explanations, or additional formatting.
+## Example Usage
 
-Message: $ARGUMENTS
+User invokes: \`/${skillSlug} "your question here"\`
 
-\\\`\\\`\\\`bash
-codemie assistants chat "${assistant.id}" "$ARGUMENTS"
-\\\`\\\`\\\`
+You should:
+\`\`\`bash
+codemie assistants chat "${assistant.id}" "your question here"
+\`\`\`
+
+Then return the assistant's response directly to the user.
 `;
 }
