@@ -14,6 +14,75 @@ import { exec, type ExecOptions, type ExecResult } from './exec.js';
 const execAsync = promisify(childProcessExec);
 
 // ============================================================================
+// Windows Node Manager Detection
+// ============================================================================
+
+/**
+ * Information about how to execute npm on the current system
+ */
+interface NpmExecutionInfo {
+  /** Whether shell: true is needed (npm.cmd vs npm.exe) */
+  needsShell: boolean;
+  /** Environment variables to preserve for version managers */
+  envOverrides?: Record<string, string>;
+}
+
+/**
+ * Detect if nodist (Windows Node.js version manager) is installed
+ *
+ * Nodist uses Go-compiled binary shims (npm.exe) instead of batch files (npm.cmd),
+ * so shell: true is not required when nodist manages Node.js/npm.
+ *
+ * @returns True if nodist is managing Node.js on this system
+ */
+function isNodistInstalled(): boolean {
+  return os.platform() === 'win32' && !!process.env.NODIST_PREFIX;
+}
+
+/**
+ * Get npm execution configuration for the current system
+ *
+ * Handles differences between:
+ * - Standard Windows: npm.cmd requires shell: true
+ * - Nodist: npm.exe (Go binary) can be spawned directly
+ * - Unix: npm is a shell script, no shell needed with proper shebang
+ *
+ * @returns Execution info including shell requirement and env overrides
+ */
+function getNpmExecutionInfo(): NpmExecutionInfo {
+  const isWindows = os.platform() === 'win32';
+
+  if (!isWindows) {
+    return { needsShell: false };
+  }
+
+  // Nodist uses npm.exe (Go binary shim), no shell needed
+  // Also preserve nodist environment variables for version resolution
+  if (isNodistInstalled()) {
+    const envOverrides: Record<string, string> = {};
+
+    // Preserve nodist configuration
+    if (process.env.NODIST_PREFIX) {
+      envOverrides.NODIST_PREFIX = process.env.NODIST_PREFIX;
+    }
+    if (process.env.NODIST_NODE_VERSION) {
+      envOverrides.NODIST_NODE_VERSION = process.env.NODIST_NODE_VERSION;
+    }
+    if (process.env.NODIST_NPM_VERSION) {
+      envOverrides.NODIST_NPM_VERSION = process.env.NODIST_NPM_VERSION;
+    }
+
+    return {
+      needsShell: false,
+      envOverrides: Object.keys(envOverrides).length > 0 ? envOverrides : undefined
+    };
+  }
+
+  // Standard Windows: npm.cmd requires shell
+  return { needsShell: true };
+}
+
+// ============================================================================
 // Command Detection
 // ============================================================================
 
@@ -127,12 +196,12 @@ export async function installGlobal(
   logger.info(`Installing ${packageSpec} globally...`);
 
   try {
-    const isWindows = os.platform() === 'win32';
+    const npmInfo = getNpmExecutionInfo();
     const execOptions: ExecOptions = {
       cwd: options.cwd,
-      env: options.env,
+      env: { ...npmInfo.envOverrides, ...options.env },
       timeout,
-      shell: isWindows // npm is a .cmd file on Windows
+      shell: npmInfo.needsShell
     };
 
     const args = ['install', '-g'];
@@ -177,12 +246,12 @@ export async function uninstallGlobal(
   logger.info(`Uninstalling ${packageName} globally...`);
 
   try {
-    const isWindows = os.platform() === 'win32';
+    const npmInfo = getNpmExecutionInfo();
     const execOptions: ExecOptions = {
       cwd: options.cwd,
-      env: options.env,
+      env: { ...npmInfo.envOverrides, ...options.env },
       timeout,
-      shell: isWindows // npm is a .cmd file on Windows
+      shell: npmInfo.needsShell
     };
 
     const result = await exec('npm', ['uninstall', '-g', packageName], execOptions);
@@ -222,12 +291,12 @@ export async function listGlobal(
   const timeout = options.timeout ?? 5000; // 5 seconds default
 
   try {
-    const isWindows = os.platform() === 'win32';
+    const npmInfo = getNpmExecutionInfo();
     const execOptions: ExecOptions = {
       cwd: options.cwd,
-      env: options.env,
+      env: { ...npmInfo.envOverrides, ...options.env },
       timeout,
-      shell: isWindows // npm is a .cmd file on Windows
+      shell: npmInfo.needsShell
     };
 
     const result = await exec('npm', ['list', '-g', packageName], execOptions);
@@ -261,12 +330,12 @@ export async function getVersion(
   const timeout = options.timeout ?? 5000; // 5 seconds default
 
   try {
-    const isWindows = os.platform() === 'win32';
+    const npmInfo = getNpmExecutionInfo();
     const execOptions: ExecOptions = {
       cwd: options.cwd,
-      env: options.env,
+      env: { ...npmInfo.envOverrides, ...options.env },
       timeout,
-      shell: isWindows // npm is a .cmd file on Windows
+      shell: npmInfo.needsShell
     };
 
     const result = await exec('npm', ['--version'], execOptions);
@@ -297,12 +366,12 @@ export async function getLatestVersion(
   const timeout = options.timeout ?? 10000; // 10 seconds default
 
   try {
-    const isWindows = os.platform() === 'win32';
+    const npmInfo = getNpmExecutionInfo();
     const execOptions: ExecOptions = {
       cwd: options.cwd,
-      env: options.env,
+      env: { ...npmInfo.envOverrides, ...options.env },
       timeout,
-      shell: isWindows // npm is a .cmd file on Windows
+      shell: npmInfo.needsShell
     };
 
     const result = await exec('npm', ['view', packageName, 'version'], execOptions);
@@ -344,13 +413,13 @@ export async function npxRun(
   logger.info(`Running npx ${command} ${args.join(' ')}...`);
 
   try {
-    const isWindows = os.platform() === 'win32';
+    const npmInfo = getNpmExecutionInfo();
     const execOptions: ExecOptions = {
       cwd: options.cwd,
-      env: options.env,
+      env: { ...npmInfo.envOverrides, ...options.env },
       timeout,
       interactive: options.interactive,
-      shell: isWindows // npx is a .cmd file on Windows
+      shell: npmInfo.needsShell
     };
 
     await exec('npx', [command, ...args], execOptions);
