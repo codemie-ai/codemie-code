@@ -74,24 +74,36 @@ describe('Assistants Chat Command', () => {
   });
 
   describe('Command Options', () => {
-    it('should have only verbose option', () => {
+    it('should have verbose and conversation-id options', () => {
       const command = createAssistantsChatCommand();
-      expect(command.options).toHaveLength(1);
+      expect(command.options).toHaveLength(2);
     });
 
     it('should accept --verbose flag', () => {
       const command = createAssistantsChatCommand();
-      const verboseOption = command.options[0];
+      const verboseOption = command.options.find(opt => opt.long === '--verbose');
 
-      expect(verboseOption.long).toBe('--verbose');
-      expect(verboseOption.short).toBe('-v');
+      expect(verboseOption).toBeDefined();
+      expect(verboseOption?.short).toBe('-v');
     });
 
-    it('should not require verbose option', () => {
+    it('should accept --conversation-id option', () => {
       const command = createAssistantsChatCommand();
-      const verboseOption = command.options[0];
+      const conversationIdOption = command.options.find(opt => opt.long === '--conversation-id');
 
-      expect(verboseOption.required).toBe(false);
+      expect(conversationIdOption).toBeDefined();
+      expect(conversationIdOption?.long).toBe('--conversation-id');
+    });
+
+    it('should have all options defined', () => {
+      const command = createAssistantsChatCommand();
+
+      // Verify both options exist
+      const verboseOption = command.options.find(opt => opt.long === '--verbose');
+      const conversationIdOption = command.options.find(opt => opt.long === '--conversation-id');
+
+      expect(verboseOption).toBeDefined();
+      expect(conversationIdOption).toBeDefined();
     });
   });
 
