@@ -24,7 +24,7 @@ import { createAnalyticsCommand } from './commands/analytics/index.js';
 import { createHookCommand } from './commands/hook.js';
 import { createSkillCommand } from './commands/skill.js';
 import { createOpencodeMetricsCommand } from './commands/opencode-metrics.js';
-import { createAssistantsCommand } from './commands/assistants/list.js';
+import { createAssistantsCommand } from './commands/assistants/index.js';
 import { FirstTimeExperience } from './first-time.js';
 import { getDirname } from '../utils/paths.js';
 

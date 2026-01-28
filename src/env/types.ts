@@ -13,6 +13,19 @@ export interface CodeMieIntegrationInfo {
 }
 
 /**
+ * Registered assistant information
+ */
+export interface RegisteredAssistant {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string;
+  project?: string;
+  llmModelType?: string;
+  registeredAt: string;
+}
+
+/**
  * Provider profile configuration
  */
 export interface ProviderProfile {
@@ -30,6 +43,7 @@ export interface ProviderProfile {
   authMethod?: 'manual' | 'sso';
   codeMieUrl?: string;
   codeMieProject?: string;  // Selected project/application name
+  codeMieAssistants?: RegisteredAssistant[];  // Registered CodeMie assistants
   codeMieIntegration?: CodeMieIntegrationInfo;
   ssoConfig?: {
     apiUrl?: string;
@@ -75,6 +89,7 @@ export interface LegacyConfig {
   authMethod?: 'manual' | 'sso';
   codeMieUrl?: string;
   codeMieProject?: string;  // Selected project/application name
+  codeMieAssistants?: RegisteredAssistant[];  // Registered CodeMie assistants
   codeMieIntegration?: CodeMieIntegrationInfo;
   ssoConfig?: {
     apiUrl?: string;
