@@ -21,7 +21,8 @@ vi.mock('@/utils/auth.js', () => ({
 vi.mock('@/utils/logger.js', () => ({
   logger: {
     debug: vi.fn(),
-    error: vi.fn()
+    error: vi.fn(),
+    getSessionId: vi.fn(() => 'test-session-123')
   }
 }));
 
@@ -191,6 +192,7 @@ describe('Assistant Invocation Tool', () => {
 
       expect(result).toBe('Assistant response');
       expect(mockClient.assistants.chat).toHaveBeenCalledWith('assistant-1', {
+        conversation_id: 'test-session-123',
         text: 'Test message',
         stream: false,
         history: []
@@ -215,10 +217,29 @@ describe('Assistant Invocation Tool', () => {
 
       expect(result).toBe('Response with context');
       expect(mockClient.assistants.chat).toHaveBeenCalledWith('assistant-1', {
+        conversation_id: 'test-session-123',
         text: 'Follow-up message',
         history: history,
         stream: false
       });
+    });
+
+    it('should pass session ID as conversation_id', async () => {
+      (mockClient.assistants.chat as any).mockResolvedValueOnce({
+        generated: 'Response'
+      });
+
+      await invokeAssistantViaSdk(
+        mockClient,
+        'assistant-1',
+        'Test message'
+      );
+
+      expect(mockClient.assistants.chat).toHaveBeenCalledWith('assistant-1',
+        expect.objectContaining({
+          conversation_id: 'test-session-123'
+        })
+      );
     });
 
     it('should handle object response by stringifying', async () => {

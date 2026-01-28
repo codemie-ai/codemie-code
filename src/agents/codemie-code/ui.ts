@@ -397,7 +397,7 @@ export class CodeMieTerminalUI {
             if (!this.currentSpinner) {
               this.currentSpinner = spinner();
             }
-            this.currentSpinner.start(chalk.yellow(`Using ${event.toolName}...`));
+            this.currentSpinner.start(chalk.yellow(`Using ${event.toolName}`));
             break;
 
           case 'tool_call_progress':
@@ -421,14 +421,15 @@ export class CodeMieTerminalUI {
                 ? formatToolMetadata(event.toolName || 'tool', event.toolMetadata)
                 : `✓ ${event.toolName} completed`;
 
-              this.currentSpinner.stop(chalk.green(message));
+              this.currentSpinner.stop();
+              this.currentSpinner = undefined;
+
+              console.log(chalk.green(`◇  ${message}`));
 
               // Show additional details if available and not an error (but avoid duplication)
               if (event.toolMetadata && event.toolMetadata.success && this.shouldShowDetails(event.toolName || '')) {
                 this.showToolDetails(event.toolName || '', event.toolMetadata);
               }
-
-              this.currentSpinner = undefined;
             }
             break;
 
@@ -437,6 +438,7 @@ export class CodeMieTerminalUI {
               this.currentSpinner.stop();
               this.currentSpinner = undefined;
             }
+
             if (hasStarted) {
               console.log('\n'); // Add spacing after response
             }

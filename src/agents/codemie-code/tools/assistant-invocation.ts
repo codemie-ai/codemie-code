@@ -54,8 +54,11 @@ async function invokeAssistantViaSdk(
   history?: HistoryMessage[]
 ): Promise<string> {
   try {
-    // Build params - history is REQUIRED by SDK (must be array or string, not optional)
+    // Use session ID to maintain conversation context across multiple assistant calls
+    const sessionId = logger.getSessionId();
+
     const params: any = {
+      conversation_id: sessionId, // Pass session ID to maintain conversation context
       text: message,
       history: history && history.length > 0 ? history : [], // Always provide array, empty if no history
       stream: false
@@ -63,6 +66,7 @@ async function invokeAssistantViaSdk(
 
     logger.debug('Calling assistants.chat', {
       assistantId,
+      conversationId: sessionId,
       historyLength: Array.isArray(params.history) ? params.history.length : 'string'
     });
 

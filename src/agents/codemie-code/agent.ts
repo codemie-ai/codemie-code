@@ -22,6 +22,7 @@ import { HookExecutor } from '../../hooks/executor.js';
 import type { HookExecutionContext } from '../../hooks/types.js';
 import { parseAtMentionCommand } from './ui/mentions.js';
 import { loadRegisteredAssistants } from '@/utils/config.js';
+import { randomUUID } from 'crypto';
 
 export class CodeMieAgent {
   private agent: any;
@@ -52,6 +53,9 @@ export class CodeMieAgent {
   constructor(config: CodeMieConfig, tools: StructuredTool[]) {
     this.config = config;
     this.tools = tools;
+
+    const sessionId = randomUUID();
+    logger.setSessionId(sessionId);
 
     // Create the appropriate LLM based on provider
     const llm = this.createLLM();
