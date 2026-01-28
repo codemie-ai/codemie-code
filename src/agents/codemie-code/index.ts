@@ -59,7 +59,6 @@ export class CodeMieCode {
         logger.debug(`Created ${tools.length} system tools`);
       }
 
-<<<<<<< HEAD
       // Load skills if enabled
       if (this.config.skills?.enabled) {
         try {
@@ -86,10 +85,7 @@ export class CodeMieCode {
 
       // Initialize the agent with skills
       this.agent = new CodeMieAgent(this.config, tools, this.skills);
-=======
-      // Update agent with tools
-      this.agent.updateTools(tools);
->>>>>>> fad4c94 (feat(assistants): add @mention codemie assistant for codemie-code)
+      await this.agent.updateTools(tools);
 
       this.initializationResult = {
         success: true,

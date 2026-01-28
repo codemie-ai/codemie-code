@@ -23,8 +23,9 @@ const execAsync = promisify(exec);
 /**
  * Basic file read tool - reads file contents
  */
-class ReadFileTool extends StructuredTool {
-  name = 'read_file';
+export class ReadFileTool extends StructuredTool {
+  static readonly name = 'read_file';
+  name = ReadFileTool.name;
   description = 'Read the contents of a file from the filesystem';
 
   schema = z.object({
@@ -131,8 +132,9 @@ class ReadFileTool extends StructuredTool {
 /**
  * Basic file write tool - writes content to a file
  */
-class WriteFileTool extends StructuredTool {
-  name = 'write_file';
+export class WriteFileTool extends StructuredTool {
+  static readonly name = 'write_file';
+  name = WriteFileTool.name;
   description = 'Write content to a file in the filesystem';
 
   schema = z.object({
@@ -172,8 +174,9 @@ class WriteFileTool extends StructuredTool {
 /**
  * Basic command execution tool - runs shell commands
  */
-class ExecuteCommandTool extends StructuredTool {
-  name = 'execute_command';
+export class ExecuteCommandTool extends StructuredTool {
+  static readonly name = 'execute_command';
+  name = ExecuteCommandTool.name;
   description = 'Execute a shell command in the working directory';
 
   schema = z.object({
@@ -286,8 +289,9 @@ class ExecuteCommandTool extends StructuredTool {
 /**
  * Directory listing tool - lists files and directories with intelligent filtering
  */
-class ListDirectoryTool extends StructuredTool {
-  name = 'list_directory';
+export class ListDirectoryTool extends StructuredTool {
+  static readonly name = 'list_directory';
+  name = ListDirectoryTool.name;
   description = 'List files and directories in a given path, automatically filtering out common ignore patterns (node_modules, .git, build artifacts, etc.)';
 
   schema = z.object({
@@ -494,17 +498,17 @@ export async function createSystemTools(
 /**
  * Get available tool names and descriptions
  */
-export function getToolSummary(): Array<{ name: string; description: string }> {
+export async function getToolSummary(): Promise<Array<{ name: string; description: string }>> {
+  const { InvokeAssistantTool } = await import('./assistant-invocation.js');
+  const { WriteSimpleTodosTool, ShowSimpleTodosTool } = await import('./planning.js');
+
   return [
-    { name: 'read_file', description: 'Read the contents of a file from the filesystem' },
-    { name: 'write_file', description: 'Write content to a file in the filesystem' },
-    { name: 'list_directory', description: 'List files and directories in a given path, automatically filtering out common ignore patterns (node_modules, .git, build artifacts, etc.)' },
-    { name: 'execute_command', description: 'Execute a shell command in the working directory' },
-    { name: 'invoke_assistant', description: 'Invoke a registered CodeMie assistant for specialized help on specific topics' },
-    { name: 'write_todos', description: 'Create or update a structured todo list for planning and progress tracking' },
-    { name: 'update_todo_status', description: 'Update the status of a specific todo by index' },
-    { name: 'append_todo', description: 'Add a new todo item to the existing list' },
-    { name: 'clear_todos', description: 'Clear all todos from the list' },
-    { name: 'show_todos', description: 'Display the current todo list with progress information' }
+    { name: ReadFileTool.name, description: 'Read the contents of a file from the filesystem' },
+    { name: WriteFileTool.name, description: 'Write content to a file in the filesystem' },
+    { name: ListDirectoryTool.name, description: 'List files and directories in a given path, automatically filtering out common ignore patterns (node_modules, .git, build artifacts, etc.)' },
+    { name: ExecuteCommandTool.name, description: 'Execute a shell command in the working directory' },
+    { name: InvokeAssistantTool.name, description: 'Invoke a registered CodeMie assistant for specialized help on specific topics' },
+    { name: WriteSimpleTodosTool.name, description: 'Create or update a structured todo list for planning and progress tracking' },
+    { name: ShowSimpleTodosTool.name, description: 'Display the current todo list with progress information' }
   ];
 }

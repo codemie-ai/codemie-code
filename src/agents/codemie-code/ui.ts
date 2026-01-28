@@ -4,23 +4,17 @@ import { CodeMieAgent } from './agent.js';
 import { ExecutionStep, TodoUpdateEvent } from './types.js';
 import { formatToolMetadata } from './toolMetadata.js';
 import { formatCost, formatTokens, formatTokenUsageSummary } from './tokenUtils.js';
-import { hasClipboardImage, getClipboardImage, type ClipboardImage } from '@/utils/clipboard.js';
+import type { ClipboardImage } from '@/utils/clipboard.js';
 import { TodoPanel } from './ui/todoPanel.js';
 import { ProgressTracker, getProgressTracker } from './ui/progressTracker.js';
 import { TodoStateManager } from './tools/planning.js';
 import { logger } from '@/utils/logger.js';
-import { loadRegisteredAssistants } from './tools/assistant-invocation.js';
+import { loadRegisteredAssistants } from '@/utils/config.js';
 import { highlightMentionsInText } from './ui/mentions.js';
-import {
-  filterAssistants,
-  renderAutocompleteUI,
-  clearAutocompleteUI,
-  selectSuggestion,
-  navigateUp,
-  navigateDown,
-  type AssistantSuggestion,
-} from './ui/autocomplete.js';
-import { ESC, CONTROL, NEWLINE, startsWithEscape, isKey } from './ui/terminalCodes.js';
+import type { AssistantSuggestion } from './ui/autocomplete.js';
+import { startsWithEscape } from './ui/terminalCodes.js';
+import { processKeyInput, type InputState } from './ui/keyHandlers.js';
+import { ReadFileTool, ListDirectoryTool, ExecuteCommandTool } from './tools/index.js';
 
 /**
  * Terminal UI interface for CodeMie Agent using Clack
@@ -32,6 +26,7 @@ export class CodeMieTerminalUI {
   private readonly progressTracker: ProgressTracker;
   private planMode = false;
   private activePlanningPhase: string | null = null;
+  private assistantSuggestions: AssistantSuggestion[] = [];
 
   constructor(agent: CodeMieAgent) {
     this.agent = agent;
@@ -98,29 +93,17 @@ export class CodeMieTerminalUI {
     }
   }
 
-  private renderAutocomplete(
-    assistants: AssistantSuggestion[],
-    selectedIndex: number,
-    currentLine: string
-  ): void {
-    const output = renderAutocompleteUI(assistants, selectedIndex, currentLine);
-    process.stdout.write(output);
-  }
-
-  /**
-   * Clear autocomplete display
-   */
-  private clearAutocomplete(lineCount: number, currentLine: string): void {
-    const output = clearAutocompleteUI(lineCount, currentLine);
-    if (output) {
-      process.stdout.write(output);
-    }
-  }
 
   /**
    * Get input from user with Shift+Enter multiline support and image pasting
    */
   private async getMultilineInput(): Promise<{ text: string; images: ClipboardImage[] } | null> {
+    // Load assistants for autocomplete
+    if (this.assistantSuggestions.length === 0) {
+      const assistants = await loadRegisteredAssistants();
+      this.assistantSuggestions = assistants.map(a => ({ slug: a.slug, name: a.name }));
+    }
+
     return new Promise((resolve) => {
       if (!process.stdin.setRawMode) {
         // Fallback for environments without raw mode
@@ -166,14 +149,12 @@ export class CodeMieTerminalUI {
         let isFirstLine = true;
         let escapeSequence = '';
         let images: ClipboardImage[] = [];
-        let imageCounter = 0;
 
         // Autocomplete state
         let autocompleteActive = false;
         let autocompleteList: AssistantSuggestion[] = [];
         let autocompleteIndex = 0;
         let autocompleteStartPos = -1; // Position where @ was typed
-        let allAssistants: AssistantSuggestion[] = [];
 
         const writePrompt = () => {
           try {
@@ -184,107 +165,10 @@ export class CodeMieTerminalUI {
           }
         };
 
-        // Autocomplete helper functions
-        const updateAutocomplete = () => {
-          if (!autocompleteActive || autocompleteStartPos === -1) return;
-
-          // Get the query after @
-          const query = currentLine.slice(autocompleteStartPos + 1);
-
-          // Filter assistants based on query
-          const filtered = filterAssistants(query, allAssistants);
-
-          const prevLength = autocompleteList.length;
-
-          // Clear previous autocomplete display
-          if (prevLength > 0) {
-            this.clearAutocomplete(prevLength, currentLine);
-          }
-
-          autocompleteList = filtered;
-          autocompleteIndex = 0;
-
-          // Render new autocomplete
-          if (autocompleteList.length > 0) {
-            this.renderAutocomplete(autocompleteList, autocompleteIndex, currentLine);
-          } else {
-            // No matches, deactivate
-            deactivateAutocomplete();
-          }
-        };
-
-        const rerenderAutocomplete = () => {
-          if (!autocompleteActive || autocompleteList.length === 0) return;
-
-          // Just re-render with new selection - don't clear first
-          // Clear and render in one atomic operation
-          this.clearAutocomplete(autocompleteList.length, currentLine);
-          this.renderAutocomplete(autocompleteList, autocompleteIndex, currentLine);
-        };
-
-        const activateAutocomplete = async () => {
-          if (allAssistants.length === 0) {
-            // Load assistants on first @ trigger
-            const assistants = await loadRegisteredAssistants();
-            allAssistants = assistants.map(a => ({ slug: a.slug!, name: a.name }));
-          }
-
-          if (allAssistants.length === 0) return; // No assistants available
-
-          autocompleteActive = true;
-          autocompleteStartPos = currentLine.length - 1; // Position of @
-          updateAutocomplete();
-        };
-
-        const deactivateAutocomplete = () => {
-          if (!autocompleteActive) return;
-
-          // Clear autocomplete display
-          if (autocompleteList.length > 0) {
-            this.clearAutocomplete(autocompleteList.length, currentLine);
-          }
-
-          autocompleteActive = false;
-          autocompleteList = [];
-          autocompleteIndex = 0;
-          autocompleteStartPos = -1;
-        };
-
-        const selectAutocomplete = () => {
-          if (!autocompleteActive || autocompleteList.length === 0) return false;
-
-          const selected = autocompleteList[autocompleteIndex];
-
-          // Clear autocomplete display
-          this.clearAutocomplete(autocompleteList.length, currentLine);
-
-          // Use selectSuggestion helper to calculate text replacement
-          const { newLine, backspaceCount, insertText } = selectSuggestion(
-            selected.slug,
-            currentLine,
-            autocompleteStartPos
-          );
-
-          // Remove the partial text after @
-          if (backspaceCount > 0) {
-            process.stdout.write('\b \b'.repeat(backspaceCount));
-          }
-
-          // Insert the selected assistant slug
-          process.stdout.write(insertText);
-          currentLine = newLine;
-
-          // Deactivate autocomplete
-          autocompleteActive = false;
-          autocompleteList = [];
-          autocompleteStartPos = -1;
-
-          return true;
-        };
 
         writePrompt();
 
-        process.stdin.on('data', (key: Buffer) => {
+        process.stdin.on('data', async (key: Buffer) => {
           if (cleanupDone) return; // Prevent processing after cleanup
 
           try {
@@ -293,262 +177,66 @@ export class CodeMieTerminalUI {
             const config = this.agent.getConfig();
             if (config?.debug && autocompleteActive) {
               logger.debug('Key pressed during autocomplete', {
-                data: data.split('').map(c => c.charCodeAt(0)).join(','),
-                escapeSeq: escapeSequence.split('').map(c => c.charCodeAt(0)).join(','),
+                data: data.split('').map(c => c.codePointAt(0) ?? 0).join(','),
+                escapeSeq: escapeSequence.split('').map(c => c.codePointAt(0) ?? 0).join(','),
                 listLength: autocompleteList.length
               });
             }
 
-        // Handle escape sequences (arrow keys, etc.)
-        if (startsWithEscape(data) || escapeSequence.length > 0) {
-          // Accumulate escape sequence if it doesn't start with \x1b but we have a partial sequence
-          if (!startsWithEscape(data) && escapeSequence.length > 0) {
-            escapeSequence += data;
-          } else if (startsWithEscape(data)) {
-            escapeSequence = data;
-          }
-
-          // Check for complete arrow key sequences
-          if (isKey(escapeSequence, 'ARROW_UP')) {
-            // Up arrow
-            escapeSequence = ''; // Clear FIRST
-            if (autocompleteActive && autocompleteList.length > 0) {
-              autocompleteIndex = navigateUp(autocompleteIndex, autocompleteList.length);
-              rerenderAutocomplete();
-            }
-            return;
-          }
-
-          if (isKey(escapeSequence, 'ARROW_DOWN')) {
-            // Down arrow
-            escapeSequence = ''; // Clear FIRST to prevent re-triggering
-            if (autocompleteActive && autocompleteList.length > 0) {
-              const config = this.agent.getConfig();
-              if (config?.debug) {
-                logger.debug('Down arrow pressed', {
-                  currentIndex: autocompleteIndex,
-                  listLength: autocompleteList.length,
-                  escapeSeq: escapeSequence
-                });
-              }
-              autocompleteIndex = navigateDown(autocompleteIndex, autocompleteList.length);
-              rerenderAutocomplete();
-            }
-            return;
-          }
-
-          // Escape key (single \x1b) - wait to see if it's followed by more data
-          if (escapeSequence === ESC) {
-            setTimeout(() => {
-              if (escapeSequence === ESC) {
-                // It's a plain Escape key (no sequence followed)
-                deactivateAutocomplete();
-                escapeSequence = '';
-              }
-            }, 50);
-            return;
-          }
-
-          // Wait for complete escape sequence or timeout
-          if (escapeSequence.length > 0 && escapeSequence.length < 5) {
-            setTimeout(() => {
-              // If escape sequence is incomplete after timeout, clear it
-              if (escapeSequence.length > 0 && escapeSequence.length < 5) {
-                escapeSequence = '';
-              }
-            }, 50);
-            return;
-          }
-
-          // If sequence is too long or unrecognized, clear it
-          escapeSequence = '';
-          return;
-        }
-
-        // Check for Shift+Enter patterns on macOS
-        // Shift+Enter in macOS Terminal typically sends: \r\n or \n\r
-        if (data === NEWLINE.CRLF || data === NEWLINE.LFCR || (escapeSequence && data === NEWLINE.CR)) {
-          // This is Shift+Enter - add line and continue
-          lines.push(currentLine);
-          currentLine = '';
-          isFirstLine = false;
-          process.stdout.write('\n');
-          writePrompt();
-          escapeSequence = '';
-          return;
-        }
-
-        // Regular Enter - send message or select autocomplete
-        if (data === NEWLINE.CR || data === NEWLINE.LF) {
-          // If autocomplete is active, select the item
-          if (autocompleteActive && autocompleteList.length > 0) {
-            selectAutocomplete();
-            return;
-          }
-
-          if (currentLine.trim() === '' && lines.length === 0) {
-            // Empty input, continue asking
-            writePrompt();
-            return;
-          }
-
-            // Send the message
-            if (currentLine.trim() !== '') {
-              lines.push(currentLine);
-            }
-
-            process.stdout.write('\n');
-            performCleanup();
-            resolve({
-              text: lines.join('\n'),
-              images: images
-            });
-            return;
-        }
-
-            // Ctrl+C
-            if (data === CONTROL.CTRL_C) {
-              performCleanup();
-              resolve(null);
-              return;
-            }
-
-        // Backspace - MUST be checked FIRST before Ctrl+H to avoid conflicts
-        // Some terminals (Windows/macOS/Linux) send \b (\u0008) for Backspace, which conflicts with Ctrl+H
-        if (data === CONTROL.DELETE || data === CONTROL.BACKSPACE) {
-          if (currentLine.length > 0) {
-            currentLine = currentLine.slice(0, -1);
-            process.stdout.write('\b \b');
-
-            // Update or deactivate autocomplete
-            if (autocompleteActive) {
-              if (currentLine.length <= autocompleteStartPos) {
-                // Backspaced before the @, deactivate
-                deactivateAutocomplete();
-              } else {
-                // Update filtering
-                updateAutocomplete();
+            // Accumulate escape sequences
+            if (startsWithEscape(data) || escapeSequence.length > 0) {
+              if (!startsWithEscape(data) && escapeSequence.length > 0) {
+                escapeSequence += data;
+              } else if (startsWithEscape(data)) {
+                escapeSequence = data;
               }
             }
-          }
-          return;
-        }
 
-        // Hotkeys for mode switching
-        // Ctrl+P - Toggle plan mode
-        if (data === CONTROL.CTRL_P) {
-          this.handleHotkey('toggle-plan-mode');
-          // Mode change notification is handled in showModeChangeNotification()
-          writePrompt();
-          process.stdout.write(currentLine);
-          return;
-        }
+            // Build state object for key handler
+            const state: InputState = {
+              currentLine,
+              lines,
+              isFirstLine,
+              autocompleteActive,
+              autocompleteList,
+              autocompleteIndex,
+              autocompleteStartPos,
+              escapeSequence,
+              images,
+              ui: this,
+            };
 
-        // Ctrl+H - Show hotkey help
-        if (data === CONTROL.CTRL_H) {
-          this.showHotkeyHelp();
-          writePrompt();
-          process.stdout.write(currentLine);
-          return;
-        }
+            // Process key through handler registry
+            const result = await processKeyInput(data, state);
 
-        // Ctrl+T - Show current todos
-        if (data === CONTROL.CTRL_T) {
-          this.handleHotkey('show-todos');
-          writePrompt();
-          process.stdout.write(currentLine);
-          return;
-        }
+            // Update local variables from state
+            currentLine = state.currentLine;
+            lines = state.lines;
+            isFirstLine = state.isFirstLine;
+            autocompleteActive = state.autocompleteActive;
+            autocompleteList = state.autocompleteList;
+            autocompleteIndex = state.autocompleteIndex;
+            autocompleteStartPos = state.autocompleteStartPos;
+            escapeSequence = state.escapeSequence;
+            // images array is modified by reference
 
-        // Ctrl+S - Show current mode status (changed from Ctrl+M to avoid Enter conflict)
-        if (data === CONTROL.CTRL_S) {
-          this.showModeStatus();
-          writePrompt();
-          process.stdout.write(currentLine);
-          return;
-        }
-
-        // Alt+M - Show mode status (Alt key sequences start with \x1b)
-        if (data === 'm' && escapeSequence.includes(ESC)) {
-          this.showModeStatus();
-          writePrompt();
-          process.stdout.write(currentLine);
-          escapeSequence = '';
-          return;
-        }
-
-        // Ctrl+I - Insert image from clipboard (Tab key) OR autocomplete selection
-        if (data === CONTROL.CTRL_I) {
-          // If autocomplete is active, select the item
-          if (autocompleteActive && autocompleteList.length > 0) {
-            selectAutocomplete();
-            return;
-          }
-
-          // Check if there's an image in clipboard
-          hasClipboardImage().then(hasImage => {
-            if (hasImage) {
-              getClipboardImage().then(clipboardImage => {
-                if (clipboardImage) {
-                  imageCounter++;
-                  images.push(clipboardImage);
-
-                  // Insert visual indicator in current line
-                  const imageIndicator = chalk.blueBright(`[Image #${imageCounter}]`);
-                  currentLine += imageIndicator;
-                  process.stdout.write(imageIndicator);
-
-                  console.log(chalk.green(`\n📸 Image #${imageCounter} added from clipboard (${clipboardImage.mimeType})`));
-                  writePrompt();
-                  process.stdout.write(currentLine);
-                }
-              });
-            } else {
-              console.log(chalk.yellow('\n⚠️  No image found in clipboard'));
-              writePrompt();
-              process.stdout.write(currentLine);
-            }
-          }).catch(() => {
-            console.log(chalk.rgb(255, 120, 120)('\n❌ Error accessing clipboard'));
-            writePrompt();
-            process.stdout.write(currentLine);
-          });
-          return;
-        }
-
-        // Handle clipboard paste (Cmd+V on macOS, Ctrl+V on Windows/Linux)
-        // Pasted content can be multiple characters, so handle any printable text
-        // BUT: skip if we're in the middle of an escape sequence
-        if (!startsWithEscape(data) && escapeSequence.length === 0 &&
-            (data.length > 1 || (data.length === 1 && (data.charCodeAt(0) >= 32 || data === CONTROL.TAB)))) {
-          // Filter out non-printable characters except tabs
-          const printableData = data.split('').filter(char =>
-            char.charCodeAt(0) >= 32 || char === CONTROL.TAB
-          ).join('');
-
-          if (printableData.length > 0) {
-            currentLine += printableData;
-            process.stdout.write(printableData);
-
-            // Check if @ was typed (trigger autocomplete)
-            if (printableData === '@' && !autocompleteActive) {
-              // Check if @ is at start or after a space (word boundary)
-              const beforeAt = currentLine.slice(0, -1);
-              if (beforeAt === '' || beforeAt.endsWith(' ')) {
-                activateAutocomplete();
+            // Handle result
+            if (result.handled) {
+              if (result.shouldRewritePrompt) {
+                writePrompt();
+                process.stdout.write(currentLine);
               }
-            } else if (autocompleteActive) {
-              // Update autocomplete filtering as user types
-              updateAutocomplete();
+
+              if (result.shouldReturn) {
+                performCleanup();
+                resolve(result.value ?? null);
+                return;
+              }
+
+              return; // Handler processed the key
             }
 
-            // Deactivate autocomplete if space is typed
-            if (printableData === ' ' && autocompleteActive) {
-              deactivateAutocomplete();
-            }
-          }
-        }
-
+            // Clear escape sequence if no handler matched (shouldn't happen)
             escapeSequence = '';
           } catch (error) {
             // Handle data processing errors gracefully
@@ -1102,25 +790,25 @@ export class CodeMieTerminalUI {
    */
   private shouldShowDetails(toolName: string): boolean {
     // Show details for these tools when they have interesting information
-    return ['read_file', 'list_directory', 'execute_command'].includes(toolName);
+    return [ReadFileTool.name, ListDirectoryTool.name, ExecuteCommandTool.name].includes(toolName);
   }
 
   /**
    * Show additional tool details
    */
   private showToolDetails(toolName: string, metadata: any): void {
-    if (!metadata || !metadata.success) return;
+    if (!metadata?.success) return;
 
     let details = '';
 
     switch (toolName) {
-      case 'read_file':
+      case ReadFileTool.name:
         if (metadata.contentPreview) {
           details = chalk.white(`Preview:\n${metadata.contentPreview}`);
         }
         break;
 
-      case 'list_directory':
+      case ListDirectoryTool.name:
         if (metadata.contentPreview && metadata.contentPreview !== 'Empty directory') {
           // Parse the content preview and format each item on a new line
           const preview = metadata.contentPreview;
@@ -1140,7 +828,7 @@ export class CodeMieTerminalUI {
         }
         break;
 
-      case 'execute_command':
+      case ExecuteCommandTool.name:
         if (metadata.outputPreview && metadata.outputPreview !== 'No output') {
           details = chalk.white(`Output:\n${metadata.outputPreview}`);
         }
@@ -1494,9 +1182,9 @@ export class CodeMieTerminalUI {
     if (!toolInfo) return;
 
     const toolNames = {
-      'list_directory': 'Exploring',
-      'read_file': 'Reading',
-      'execute_command': 'Executing',
+      [ListDirectoryTool.name]: 'Exploring',
+      [ReadFileTool.name]: 'Reading',
+      [ExecuteCommandTool.name]: 'Executing',
       'llm_analysis': 'Analyzing',
       'llm_plan_generation': 'Generating Plan',
       'plan_validation': 'Validating',
@@ -1643,7 +1331,7 @@ export class CodeMieTerminalUI {
   /**
    * Handle hotkey actions
    */
-  private handleHotkey(action: string): void {
+  public handleHotkey(action: string): void {
     switch (action) {
       case 'toggle-plan-mode':
         this.togglePlanMode();
@@ -1716,7 +1404,7 @@ export class CodeMieTerminalUI {
   /**
    * Show hotkey help
    */
-  private showHotkeyHelp(): void {
+  public showHotkeyHelp(): void {
     const helpText = `
 ${chalk.bold.cyan('🔥 Interactive Mode Hotkeys')}
 
@@ -1749,7 +1437,7 @@ Chat Commands:
   /**
    * Show current mode status
    */
-  private showModeStatus(): void {
+  public showModeStatus(): void {
     const _todos = this.todoPanel.getTodos();
     const progressInfo = this.todoPanel.getProgressInfo();
 

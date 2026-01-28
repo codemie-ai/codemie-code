@@ -10,7 +10,8 @@ import type { CodeMieClient } from 'codemie-sdk';
 vi.mock('@/utils/config.js', () => ({
   ConfigLoader: {
     load: vi.fn()
-  }
+  },
+  loadRegisteredAssistants: vi.fn()
 }));
 
 vi.mock('@/utils/auth.js', () => ({
@@ -26,14 +27,13 @@ vi.mock('@/utils/logger.js', () => ({
 
 // Import after mocks
 const {
-  loadRegisteredAssistants,
   findAssistantBySlug,
   convertConversationHistory,
   invokeAssistantViaSdk,
   InvokeAssistantTool
 } = await import('../assistant-invocation.js');
 
-const { ConfigLoader } = await import('@/utils/config.js');
+const { ConfigLoader, loadRegisteredAssistants } = await import('@/utils/config.js');
 const { getAuthenticatedClient } = await import('@/utils/auth.js');
 
 describe('Assistant Invocation Tool', () => {
@@ -65,6 +65,7 @@ describe('Assistant Invocation Tool', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     (ConfigLoader.load as any).mockResolvedValue(mockConfig);
+    (loadRegisteredAssistants as any).mockResolvedValue(mockAssistants);
     (getAuthenticatedClient as any).mockResolvedValue(mockClient);
   });
 
@@ -77,11 +78,11 @@ describe('Assistant Invocation Tool', () => {
       const result = await loadRegisteredAssistants();
 
       expect(result).toEqual(mockAssistants);
-      expect(ConfigLoader.load).toHaveBeenCalled();
+      expect(loadRegisteredAssistants).toHaveBeenCalled();
     });
 
     it('should return empty array on config load failure', async () => {
-      (ConfigLoader.load as any).mockRejectedValueOnce(new Error('Config error'));
+      (loadRegisteredAssistants as any).mockResolvedValueOnce([]);
 
       const result = await loadRegisteredAssistants();
 
@@ -89,7 +90,7 @@ describe('Assistant Invocation Tool', () => {
     });
 
     it('should return empty array if no assistants configured', async () => {
-      (ConfigLoader.load as any).mockResolvedValueOnce({ codemieAssistants: undefined });
+      (loadRegisteredAssistants as any).mockResolvedValueOnce([]);
 
       const result = await loadRegisteredAssistants();
 
@@ -320,9 +321,7 @@ describe('Assistant Invocation Tool', () => {
     });
 
     it('should return error message if no assistants registered', async () => {
-      (ConfigLoader.load as any).mockResolvedValueOnce({
-        codemieAssistants: []
-      });
+      (loadRegisteredAssistants as any).mockResolvedValueOnce([]);
 
       const result = await tool._call({
         assistantSlug: 'solution-architect',

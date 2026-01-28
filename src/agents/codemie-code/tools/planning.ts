@@ -57,8 +57,9 @@ export function initializeTodoStorage(workingDirectory: string, debug = false): 
 /**
  * Simple Write Todos Tool
  */
-class WriteSimpleTodosTool extends StructuredTool {
-  name = 'write_todos';
+export class WriteSimpleTodosTool extends StructuredTool {
+  static readonly name = 'write_todos';
+  name = WriteSimpleTodosTool.name;
   description = 'Create or update a structured todo list for planning and progress tracking';
 
   schema = z.object({
@@ -149,8 +150,9 @@ class WriteSimpleTodosTool extends StructuredTool {
 /**
  * Show Todos Tool with Storage Information
  */
-class ShowSimpleTodosTool extends StructuredTool {
-  name = 'show_todos';
+export class ShowSimpleTodosTool extends StructuredTool {
+  static readonly name = 'show_todos';
+  name = ShowSimpleTodosTool.name;
   description = 'Display the current todo list with progress information and storage details';
 
   schema = z.object({});
