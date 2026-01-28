@@ -27,8 +27,10 @@ export function createAssistantsChatCommand(): Command {
     .argument('[assistant-id]', MESSAGES.CHAT.ARGUMENT_ASSISTANT_ID)
     .argument('[message]', MESSAGES.CHAT.ARGUMENT_MESSAGE)
     .option('-v, --verbose', MESSAGES.SHARED.OPTION_VERBOSE)
+    .option('--conversation-id <id>', 'Conversation ID for maintaining context across calls')
     .action(async (assistantId: string | undefined, message: string | undefined, options: {
       verbose?: boolean;
+      conversationId?: string;
     }) => {
       if (options.verbose) {
         process.env.CODEMIE_DEBUG = 'true';
@@ -39,7 +41,7 @@ export function createAssistantsChatCommand(): Command {
       }
 
       try {
-        await chatWithAssistant(assistantId, message);
+        await chatWithAssistant(assistantId, message, options.conversationId);
       } catch (error: unknown) {
         const context = createErrorContext(error);
         logger.error('Failed to chat with assistant', context);
@@ -56,19 +58,23 @@ export function createAssistantsChatCommand(): Command {
  */
 async function chatWithAssistant(
   assistantId: string | undefined,
-  message: string | undefined
+  message: string | undefined,
+  conversationId?: string
 ): Promise<void> {
   const config = await ConfigLoader.load();
   const registeredAssistants = config.codemieAssistants || [];
 
   const client = await getAuthenticatedClient(config);
 
+  // Resolve conversation ID: CLI option > environment variable > undefined
+  const resolvedConversationId = conversationId || process.env.CODEMIE_SESSION_ID;
+
   if (assistantId && message) { // Single-message mode (example: for Claude Code skill)
     const assistant = findAssistant(registeredAssistants, assistantId);
-    await sendSingleMessage(client, assistant, message, { quiet: true }, config);
+    await sendSingleMessage(client, assistant, message, { quiet: true }, config, resolvedConversationId);
   } else { // Interactive mode
     const assistant = await promptAssistantSelection(registeredAssistants);
-    await interactiveChat(client, assistant, config);
+    await interactiveChat(client, assistant, config, resolvedConversationId);
   }
 }
 
@@ -127,7 +133,8 @@ async function promptAssistantSelection(assistants: CodemieAssistant[]): Promise
 async function interactiveChat(
   client: CodeMieClient,
   assistant: CodemieAssistant,
-  config: ProviderProfile
+  config: ProviderProfile,
+  conversationId?: string
 ): Promise<void> {
   const history: HistoryMessage[] = [];
 
@@ -152,7 +159,7 @@ async function interactiveChat(
     const spinner = ora(MESSAGES.CHAT.SPINNER_THINKING).start();
 
     try {
-      const response = await sendMessageWithHistory(client, assistant, message, history);
+      const response = await sendMessageWithHistory(client, assistant, message, history, conversationId);
       spinner.stop();
 
       console.log(chalk.bold.cyan(`${assistant.name}:`), response || MESSAGES.CHAT.FALLBACK_NO_RESPONSE);
@@ -179,10 +186,11 @@ async function sendSingleMessage(
   assistant: CodemieAssistant,
   message: string,
   options: { quiet?: boolean },
-  config: ProviderProfile
+  config: ProviderProfile,
+  conversationId?: string
 ): Promise<void> {
   try {
-    const response = await sendMessageWithHistory(client, assistant, message, []);
+    const response = await sendMessageWithHistory(client, assistant, message, [], conversationId);
 
     if (options.quiet) {
       console.log(response || MESSAGES.CHAT.FALLBACK_NO_RESPONSE);
@@ -204,16 +212,19 @@ async function sendMessageWithHistory(
   client: CodeMieClient,
   assistant: CodemieAssistant,
   message: string,
-  history: HistoryMessage[]
+  history: HistoryMessage[],
+  conversationId?: string
 ): Promise<string> {
   logger.debug('Sending message to assistant', {
     assistantId: assistant.id,
     assistantName: assistant.name,
     messageLength: message.length,
-    historyLength: history.length
+    historyLength: history.length,
+    conversationId: conversationId
   });
 
   const response = await client.assistants.chat(assistant.id, {
+    conversation_id: conversationId,
     text: message,
     history: history,
     stream: false
