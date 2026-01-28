@@ -33,7 +33,7 @@ export const MESSAGES = {
     ERROR_NO_ASSISTANTS: '\n✗ No registered assistants',
     ERROR_ASSISTANT_NOT_FOUND: (id: string) => `\n✗ Assistant ${id} is not registered`,
     ERROR_NOT_FOUND: (id: string) => `Assistant ${id} not found`,
-    ERROR_AUTH_EXPIRED: 'Authentication expired. Please run "codemie setup" again.',
+    ERROR_AUTH_EXPIRED: 'Authentication expired. Please re-authenticate.',
     HINT_REGISTER: '  Run: ',
     COMMAND_LIST: 'codemie assistants list',
     HINT_REGISTER_SUFFIX: ' to register assistants\n',
