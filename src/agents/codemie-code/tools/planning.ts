@@ -1,7 +1,7 @@
 /**
  * Planning Tools for CodeMie Agent
  *
- * Implementation of todo management tools with persistent file storage
+ * Implementation of to_do management tools with persistent file storage
  */
 
 import { StructuredTool } from '@langchain/core/tools';
@@ -9,13 +9,13 @@ import { z } from 'zod';
 import type { Todo, TodoUpdateEvent } from '../types.js';
 import { TodoFileStorage } from '../storage/todoStorage.js';
 
-// Global todo state and storage for integration with plan mode
+// Global to_do state and storage for integration with plan mode
 let globalTodos: Todo[] = [];
 let eventCallbacks: Array<(event: TodoUpdateEvent) => void> = [];
 let todoStorage: TodoFileStorage | null = null;
 
 /**
- * Initialize todo storage for the current working directory
+ * Initialize to_do storage for the current working directory
  */
 export function initializeTodoStorage(workingDirectory: string, debug = false): void {
   todoStorage = new TodoFileStorage({
@@ -110,11 +110,11 @@ class WriteSimpleTodosTool extends StructuredTool {
           await todoStorage.saveTodos(todos);
         } catch (error) {
           console.warn('[write_todos] Failed to save to file:', error);
-          // Continue execution - file save failure shouldn't break todo creation
+          // Continue execution - file save failure shouldn't break to_do creation
         }
       }
 
-      // Emit todo_update event for plan mode integration
+      // Emit to_do_update event for plan mode integration
       const todoEvent: TodoUpdateEvent = {
         type: 'todo_update',
         todos: todos,
@@ -209,7 +209,7 @@ export const planningTools = [
 export const writeTodos = new WriteSimpleTodosTool();
 export const showTodos = new ShowSimpleTodosTool();
 
-// Todo state manager for plan mode integration
+// To_do state manager for plan mode integration
 export class TodoStateManager {
   static addEventCallback(callback: (event: TodoUpdateEvent) => void): void {
     eventCallbacks.push(callback);
