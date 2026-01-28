@@ -13,42 +13,50 @@ import { logger } from '@/utils/logger.js';
 import { getCodemieClient } from '@/utils/sdk-client.js';
 import { ConfigLoader } from '@/utils/config.js';
 import { ConfigurationError, createErrorContext, formatErrorForUser } from '@/utils/errors.js';
-import { generateAssistantSkill, removeAssistantSkill } from '@/utils/skill-generator.js';
-import type { RegisteredAssistant } from '@/env/types.js';
+import { generateAssistantSkill, removeAssistantSkill } from './utils/skill-generator.js';
+import type { CodemieAssistant, ProviderProfile } from '@/env/types.js';
+import { MESSAGES, COMMAND_NAMES, ACTIONS, type ActionType } from './constants.js';
+
+interface ListCommandOptions {
+  profile?: string;
+  project?: string;
+  allProjects?: boolean;
+  verbose?: boolean;
+}
+
+interface AssistantChoice {
+  name: string;
+  value: string;
+  short: string;
+  checked: boolean;
+}
+
+interface RegistrationChanges {
+  toRegister: Assistant[];
+  toUnregister: CodemieAssistant[];
+}
 
 /**
  * Create assistants list command
  */
 export function createAssistantsListCommand(): Command {
-  const command = new Command('list');
+  const command = new Command(COMMAND_NAMES.LIST);
 
   command
-    .description('Manage CodeMie assistants (view, register, unregister)')
-    .option('--profile <name>', 'Select profile to configure')
-    .option('--project <project>', 'Filter assistants by project name')
-    .option('--all-projects', 'Show assistants from all projects')
-    .option('-v, --verbose', 'Enable verbose debug output')
-    .action(async (options: {
-      profile?: string;
-      project?: string;
-      allProjects?: boolean;
-      verbose?: boolean;
-    }) => {
+    .description(MESSAGES.LIST.COMMAND_DESCRIPTION)
+    .option('--profile <name>', MESSAGES.LIST.OPTION_PROFILE)
+    .option('--project <project>', MESSAGES.LIST.OPTION_PROJECT)
+    .option('--all-projects', MESSAGES.LIST.OPTION_ALL_PROJECTS)
+    .option('-v, --verbose', MESSAGES.SHARED.OPTION_VERBOSE)
+    .action(async (options: ListCommandOptions) => {
       if (options.verbose) {
-        process.env.CODEMIE_DEBUG = 'true';
-        const logFilePath = logger.getLogFilePath();
-        if (logFilePath) {
-          console.log(chalk.dim(`Debug logs: ${logFilePath}\n`));
-        }
+        enableVerboseLogging();
       }
 
       try {
         await manageAssistants(options);
       } catch (error: unknown) {
-        const context = createErrorContext(error);
-        logger.error('Failed to manage assistants', context);
-        console.error(formatErrorForUser(context));
-        process.exit(1);
+        handleError(error);
       }
     });
 
@@ -56,13 +64,37 @@ export function createAssistantsListCommand(): Command {
 }
 
 /**
+ * Enable verbose debug logging
+ */
+function enableVerboseLogging(): void {
+  process.env.CODEMIE_DEBUG = 'true';
+  const logFilePath = logger.getLogFilePath();
+  if (logFilePath) {
+    console.log(chalk.dim(`Debug logs: ${logFilePath}\n`));
+  }
+}
+
+/**
+ * Handle command errors
+ */
+function handleError(error: unknown): never {
+  const context = createErrorContext(error);
+  logger.error('Failed to manage assistants', context);
+  console.error(formatErrorForUser(context));
+  process.exit(1);
+}
+
+/**
+ * Check if error is authentication error
+ */
+function isAuthenticationError(error: unknown): boolean {
+  return error instanceof Error && (error.message.includes('401') || error.message.includes('403'));
+}
+
+/**
  * Manage assistants - unified list/register/unregister
  */
-async function manageAssistants(options: {
-  profile?: string;
-  project?: string;
-  allProjects?: boolean;
-}): Promise<void> {
+async function manageAssistants(options: ListCommandOptions): Promise<void> {
   // 1. Load current profile
   const config = await ConfigLoader.load();
   const profileName = options.profile || await ConfigLoader.getActiveProfileName() || 'default';
@@ -74,33 +106,26 @@ async function manageAssistants(options: {
   const backendAssistants = await fetchAssistants(client, options, config);
 
   // 3. Get currently registered assistants
-  const registeredAssistants = config.codeMieAssistants || [];
-  const registeredIds = new Set(registeredAssistants.map(a => a.id));
+  const registeredAssistants = config.codemieAssistants || [];
 
-  // 4. Separate and sort: registered first, then unregistered
-  const registered = backendAssistants.filter(a => registeredIds.has(a.id));
-  const unregistered = backendAssistants.filter(a => !registeredIds.has(a.id));
-  const sortedAssistants = [...registered, ...unregistered];
+  // 4. Sort assistants: registered first, then unregistered
+  const sortedAssistants = sortAssistantsByRegistration(backendAssistants, registeredAssistants);
 
   if (sortedAssistants.length === 0) {
-    console.log(chalk.yellow('\nNo assistants found.'));
-    if (options.project || config.codeMieProject) {
-      const filterProject = options.project || config.codeMieProject;
-      console.log(chalk.dim(`Filtered by project: ${chalk.cyan(filterProject)}`));
-      console.log(chalk.dim(`Try ${chalk.cyan('--all-projects')} to see all assistants.\n`));
-    }
+    displayNoAssistantsMessage(options, config);
     return;
   }
 
   // 5. Prompt user selection with Update/Cancel
+  const registeredIds = new Set(registeredAssistants.map(a => a.id));
   const { selectedIds, action } = await promptAssistantSelection(
     sortedAssistants,
     registeredIds,
     registeredAssistants
   );
 
-  if (action === 'cancel') {
-    console.log(chalk.dim('\nNo changes made.\n'));
+  if (action === ACTIONS.CANCEL) {
+    console.log(chalk.dim(MESSAGES.LIST.NO_CHANGES_MADE));
     return;
   }
 
@@ -109,43 +134,115 @@ async function manageAssistants(options: {
 }
 
 /**
+ * Sort assistants with registered ones first
+ */
+function sortAssistantsByRegistration(
+  assistants: (Assistant | AssistantBase)[],
+  registeredAssistants: CodemieAssistant[]
+): (Assistant | AssistantBase)[] {
+  const registeredIds = new Set(registeredAssistants.map(a => a.id));
+  const registered = assistants.filter(a => registeredIds.has(a.id));
+  const unregistered = assistants.filter(a => !registeredIds.has(a.id));
+  return [...registered, ...unregistered];
+}
+
+/**
+ * Display message when no assistants are found
+ */
+function displayNoAssistantsMessage(options: ListCommandOptions, config: ProviderProfile): void {
+  console.log(chalk.yellow(MESSAGES.LIST.NO_ASSISTANTS));
+
+  const filterProject = options.project || config.codeMieProject;
+  if (filterProject) {
+    console.log(chalk.dim(MESSAGES.LIST.FILTERED_BY_PROJECT(chalk.cyan(filterProject))));
+    console.log(chalk.dim(`Try ${chalk.cyan(MESSAGES.LIST.TRY_ALL_PROJECTS)}${MESSAGES.LIST.HINT_TRY_ALL}`));
+  }
+}
+
+/**
+ * Get project filter from options or config
+ */
+function getProjectFilter(options: ListCommandOptions, config: ProviderProfile): string | undefined {
+  if (options.allProjects) {
+    return undefined;
+  }
+  return options.project || config.codeMieProject;
+}
+
+/**
  * Fetch assistants from backend
  */
 async function fetchAssistants(
   client: Awaited<ReturnType<typeof getCodemieClient>>,
-  options: { project?: string; allProjects?: boolean },
-  config: any
+  options: ListCommandOptions,
+  config: ProviderProfile
 ): Promise<(Assistant | AssistantBase)[]> {
-  const spinner = ora('Fetching assistants...').start();
+  const spinner = ora(MESSAGES.LIST.SPINNER_FETCHING).start();
 
   try {
     const filters: Record<string, unknown> = {
       my_assistants: true
     };
 
-    if (!options.allProjects) {
-      const projectFilter = options.project || config.codeMieProject;
-      if (projectFilter) {
-        filters.project = projectFilter;
-        logger.debug('Filtering assistants by project', { project: projectFilter });
-      }
+    const projectFilter = getProjectFilter(options, config);
+    if (projectFilter) {
+      filters.project = projectFilter;
+      logger.debug('Filtering assistants by project', { project: projectFilter });
     }
 
     const assistants = await client.assistants.list({ filters });
-    spinner.succeed(chalk.green(`Found ${assistants.length} assistant${assistants.length === 1 ? '' : 's'}`));
+    spinner.succeed(chalk.green(MESSAGES.LIST.SUCCESS_FOUND(assistants.length)));
     return assistants;
   } catch (error) {
-    spinner.fail(chalk.red('Failed to fetch assistants'));
+    spinner.fail(chalk.red(MESSAGES.LIST.ERROR_FETCH_FAILED));
     logger.error('Assistant list API call failed', { error });
 
-    if (error instanceof Error && (error.message.includes('401') || error.message.includes('403'))) {
-      throw new ConfigurationError(
-        'Authentication expired. Please run "codemie setup" again.'
-      );
+    if (isAuthenticationError(error)) {
+      throw new ConfigurationError(MESSAGES.SHARED.ERROR_AUTH_EXPIRED);
     }
 
     throw error;
   }
+}
+
+/**
+ * Build display info for assistant choice
+ */
+function buildAssistantDisplayInfo(
+  assistant: Assistant,
+  registeredMap: Map<string, CodemieAssistant>
+): string {
+  const projectInfo = assistant.project ? chalk.dim(` (${assistant.project})`) : '';
+  const modelInfo = assistant.llm_model_type ? chalk.dim(` [${assistant.llm_model_type}]`) : '';
+
+  const reg = registeredMap.get(assistant.id);
+  const slugInfo = reg?.slug ? chalk.dim(` - /${reg.slug}`) : '';
+
+  return assistant.name + projectInfo + modelInfo + slugInfo;
+}
+
+/**
+ * Create assistant choices for selection prompt
+ */
+function createAssistantChoices(
+  assistants: (Assistant | AssistantBase)[],
+  registeredIds: Set<string>,
+  registeredAssistants: CodemieAssistant[]
+): AssistantChoice[] {
+  const registeredMap = new Map(registeredAssistants.map(a => [a.id, a]));
+
+  return assistants.map(assistant => {
+    const a = assistant as Assistant;
+    const isRegistered = registeredIds.has(a.id);
+    const displayName = buildAssistantDisplayInfo(a, registeredMap);
+
+    return {
+      name: displayName,
+      value: a.id,
+      short: a.name,
+      checked: isRegistered
+    };
+  });
 }
 
 /**
@@ -154,46 +251,28 @@ async function fetchAssistants(
 async function promptAssistantSelection(
   assistants: (Assistant | AssistantBase)[],
   registeredIds: Set<string>,
-  registeredAssistants: RegisteredAssistant[]
-): Promise<{ selectedIds: string[]; action: 'update' | 'cancel' }> {
-  const registeredMap = new Map(registeredAssistants.map(a => [a.id, a]));
-
-  const choices = assistants.map(assistant => {
-    const a = assistant as Assistant;
-    const isRegistered = registeredIds.has(a.id);
-    const reg = registeredMap.get(a.id);
-
-    const projectInfo = a.project ? chalk.dim(` (${a.project})`) : '';
-    const modelInfo = a.llm_model_type ? chalk.dim(` [${a.llm_model_type}]`) : '';
-    const slugInfo = reg?.slug ? chalk.dim(` - /${reg.slug}`) : '';
-
-    return {
-      name: a.name + projectInfo + modelInfo + slugInfo,
-      value: a.id,
-      short: a.name,
-      checked: isRegistered
-    };
-  });
+  registeredAssistants: CodemieAssistant[]
+): Promise<{ selectedIds: string[]; action: ActionType }> {
+  const choices = createAssistantChoices(assistants, registeredIds, registeredAssistants);
 
   const { selectedIds } = await inquirer.prompt([
     {
       type: 'checkbox',
       name: 'selectedIds',
-      message: 'Select assistants to register (space to toggle, enter when done):',
+      message: MESSAGES.LIST.PROMPT_SELECT,
       choices,
       pageSize: 15
     }
   ]);
 
-  // Ask for action
   const { action } = await inquirer.prompt([
     {
       type: 'list',
       name: 'action',
-      message: 'What would you like to do?',
+      message: MESSAGES.LIST.PROMPT_ACTION,
       choices: [
-        { name: 'Update - Apply changes', value: 'update' },
-        { name: 'Cancel - Discard changes', value: 'cancel' }
+        { name: MESSAGES.LIST.ACTION_UPDATE, value: ACTIONS.UPDATE },
+        { name: MESSAGES.LIST.ACTION_CANCEL, value: ACTIONS.CANCEL }
       ]
     }
   ]);
@@ -202,24 +281,144 @@ async function promptAssistantSelection(
 }
 
 /**
+ * Determine which assistants to register and unregister
+ */
+function determineChanges(
+  selectedIds: string[],
+  allAssistants: (Assistant | AssistantBase)[],
+  registeredAssistants: CodemieAssistant[]
+): RegistrationChanges {
+  const selectedSet = new Set(selectedIds);
+  const registeredIds = new Set(registeredAssistants.map(a => a.id));
+
+  const toRegister = allAssistants.filter(
+    a => selectedSet.has(a.id) && !registeredIds.has(a.id)
+  ) as Assistant[];
+
+  const toUnregister = registeredAssistants.filter(a => !selectedSet.has(a.id));
+
+  return { toRegister, toUnregister };
+}
+
+/**
+ * Execute assistant operation with spinner
+ */
+async function executeWithSpinner<T>(
+  spinnerMessage: string,
+  operation: () => Promise<T>,
+  successMessage: string,
+  errorMessage: string,
+  onError?: (error: unknown) => void
+): Promise<T | null> {
+  const spinner = ora(spinnerMessage).start();
+
+  try {
+    const result = await operation();
+    spinner.succeed(chalk.green(successMessage));
+    return result;
+  } catch (error) {
+    spinner.fail(chalk.red(errorMessage));
+    if (onError) {
+      onError(error);
+    }
+    return null;
+  }
+}
+
+/**
+ * Unregister an assistant
+ */
+async function unregisterAssistant(assistant: CodemieAssistant): Promise<void> {
+  await executeWithSpinner(
+    MESSAGES.LIST.SPINNER_UNREGISTERING(chalk.bold(assistant.name)),
+    () => removeAssistantSkill(assistant.slug),
+    MESSAGES.LIST.SUCCESS_UNREGISTERED(chalk.bold(assistant.name), chalk.cyan(assistant.slug)),
+    MESSAGES.LIST.ERROR_UNREGISTER_FAILED(assistant.name),
+    (error) => logger.error('Skill removal failed', { error, assistantId: assistant.id })
+  );
+}
+
+/**
+ * Register an assistant
+ */
+async function registerAssistant(assistant: Assistant): Promise<CodemieAssistant | null> {
+  const slug = await executeWithSpinner(
+    MESSAGES.LIST.SPINNER_REGISTERING(chalk.bold(assistant.name)),
+    () => generateAssistantSkill(assistant),
+    MESSAGES.LIST.SUCCESS_REGISTERED(chalk.bold(assistant.name), chalk.cyan('slug')),
+    MESSAGES.LIST.ERROR_REGISTER_FAILED(assistant.name),
+    (error) => logger.error('Skill generation failed', { error, assistantId: assistant.id })
+  );
+
+  if (!slug) {
+    return null;
+  }
+
+  // Update success message with actual slug
+  return {
+    id: assistant.id,
+    name: assistant.name,
+    slug,
+    description: assistant.description,
+    project: assistant.project,
+    registeredAt: new Date().toISOString()
+  };
+}
+
+/**
+ * Display summary of changes
+ */
+function displaySummary(
+  toRegister: Assistant[],
+  toUnregister: CodemieAssistant[],
+  profileName: string,
+  config: ProviderProfile
+): void {
+  const totalChanges = toRegister.length + toUnregister.length;
+  console.log(chalk.green(MESSAGES.LIST.SUMMARY_UPDATED(totalChanges)));
+
+  if (toRegister.length > 0) {
+    console.log(chalk.dim(MESSAGES.LIST.SUMMARY_REGISTERED(toRegister.length)));
+  }
+  if (toUnregister.length > 0) {
+    console.log(chalk.dim(MESSAGES.LIST.SUMMARY_UNREGISTERED(toUnregister.length)));
+  }
+
+  console.log(chalk.dim(MESSAGES.LIST.SUMMARY_PROFILE(profileName)));
+
+  displayCurrentlyRegistered(config);
+}
+
+/**
+ * Display currently registered assistants
+ */
+function displayCurrentlyRegistered(config: ProviderProfile): void {
+  if (!config.codemieAssistants || config.codemieAssistants.length === 0) {
+    return;
+  }
+
+  console.log(chalk.bold(MESSAGES.LIST.CURRENTLY_REGISTERED));
+  config.codemieAssistants.forEach((assistant: CodemieAssistant) => {
+    const slugText = chalk.cyan(`/${assistant.slug}`);
+    console.log(chalk.white(`  • ${slugText} - ${assistant.name}`));
+  });
+  console.log('');
+}
+
+/**
  * Apply registration changes
  */
 async function applyChanges(
   selectedIds: string[],
   allAssistants: (Assistant | AssistantBase)[],
-  registeredAssistants: RegisteredAssistant[],
-  config: any,
+  registeredAssistants: CodemieAssistant[],
+  config: ProviderProfile,
   profileName: string
 ): Promise<void> {
-  const selectedSet = new Set(selectedIds);
-  const registeredIds = new Set(registeredAssistants.map(a => a.id));
-
-  // Determine what to register and unregister
-  const toRegister = allAssistants.filter(a => selectedSet.has(a.id) && !registeredIds.has(a.id)) as Assistant[];
-  const toUnregister = registeredAssistants.filter(a => !selectedSet.has(a.id));
+  const { toRegister, toUnregister } = determineChanges(selectedIds, allAssistants, registeredAssistants);
 
   if (toRegister.length === 0 && toUnregister.length === 0) {
-    console.log(chalk.yellow('\nNo changes to apply\n'));
+    console.log(chalk.yellow(MESSAGES.LIST.NO_CHANGES_TO_APPLY));
     return;
   }
 
@@ -227,61 +426,24 @@ async function applyChanges(
 
   // Unregister first
   for (const assistant of toUnregister) {
-    const spinner = ora(`Unregistering ${chalk.bold(assistant.name)}...`).start();
-    try {
-      await removeAssistantSkill(assistant.name);
-      spinner.succeed(chalk.green(`Unregistered ${chalk.bold(assistant.name)} (${chalk.cyan(`/${assistant.slug}`)})`));
-    } catch (error) {
-      spinner.fail(chalk.red(`Failed to unregister ${assistant.name}`));
-      logger.error('Skill removal failed', { error, assistantId: assistant.id });
-    }
+    await unregisterAssistant(assistant);
   }
 
   // Register new ones
-  const newRegistrations: RegisteredAssistant[] = [];
+  const newRegistrations: CodemieAssistant[] = [];
   for (const assistant of toRegister) {
-    const spinner = ora(`Registering ${chalk.bold(assistant.name)}...`).start();
-    try {
-      const slug = await generateAssistantSkill(assistant);
-
-      newRegistrations.push({
-        id: assistant.id,
-        name: assistant.name,
-        slug,
-        description: assistant.description,
-        project: assistant.project,
-        llmModelType: assistant.llm_model_type,
-        registeredAt: new Date().toISOString()
-      });
-
-      spinner.succeed(chalk.green(`Registered ${chalk.bold(assistant.name)} as ${chalk.cyan(`/${slug}`)}`));
-    } catch (error) {
-      spinner.fail(chalk.red(`Failed to register ${assistant.name}`));
-      logger.error('Skill generation failed', { error, assistantId: assistant.id });
+    const registered = await registerAssistant(assistant);
+    if (registered) {
+      newRegistrations.push(registered);
     }
   }
 
   // Update config
+  const selectedSet = new Set(selectedIds);
   const remainingRegistered = registeredAssistants.filter(a => selectedSet.has(a.id));
-  config.codeMieAssistants = [...remainingRegistered, ...newRegistrations];
+  config.codemieAssistants = [...remainingRegistered, ...newRegistrations];
   await ConfigLoader.saveProfile(profileName, config);
 
-  // Summary
-  const totalChanges = toRegister.length + toUnregister.length;
-  console.log(chalk.green(`\n✓ Updated ${totalChanges} assistant${totalChanges === 1 ? '' : 's'}`));
-  if (toRegister.length > 0) {
-    console.log(chalk.dim(`  Registered: ${toRegister.length}`));
-  }
-  if (toUnregister.length > 0) {
-    console.log(chalk.dim(`  Unregistered: ${toUnregister.length}`));
-  }
-  console.log(chalk.dim(`  Profile: ${profileName}\n`));
-
-  if (config.codeMieAssistants.length > 0) {
-    console.log(chalk.bold('Currently registered assistants:'));
-    config.codeMieAssistants.forEach((a: RegisteredAssistant) => {
-      console.log(chalk.white(`  • ${chalk.cyan(`/${a.slug}`)} - ${a.name}`));
-    });
-    console.log('');
-  }
+  // Display summary
+  displaySummary(toRegister, toUnregister, profileName, config);
 }

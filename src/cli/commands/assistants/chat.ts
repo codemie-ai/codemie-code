@@ -1,7 +1,7 @@
 /**
  * Assistants Chat Command
  *
- * Send messages to configured CodeMie assistant
+ * Send messages to registered CodeMie assistants
  */
 
 import { Command } from 'commander';
@@ -12,6 +12,9 @@ import { logger } from '@/utils/logger.js';
 import { getCodemieClient } from '@/utils/sdk-client.js';
 import { ConfigLoader } from '@/utils/config.js';
 import { ConfigurationError, createErrorContext, formatErrorForUser } from '@/utils/errors.js';
+import type { CodemieAssistant } from '@/env/types.js';
+import type { CodeMieClient } from 'codemie-sdk';
+import { EXIT_PROMPTS, ROLES, MESSAGES, type HistoryMessage } from './constants.js';
 
 /**
  * Create assistants chat command
@@ -20,12 +23,11 @@ export function createAssistantsChatCommand(): Command {
   const command = new Command('chat');
 
   command
-    .description('Send a message to your configured CodeMie assistant')
-    .argument('[message]', 'Message to send to the assistant')
-    .option('--assistant-id <id>', 'Override configured assistant with specific ID')
-    .option('-v, --verbose', 'Enable verbose debug output')
-    .action(async (message: string | undefined, options: {
-      assistantId?: string;
+    .description(MESSAGES.CHAT.COMMAND_DESCRIPTION)
+    .argument('[assistant-id]', MESSAGES.CHAT.ARGUMENT_ASSISTANT_ID)
+    .argument('[message]', MESSAGES.CHAT.ARGUMENT_MESSAGE)
+    .option('-v, --verbose', MESSAGES.SHARED.OPTION_VERBOSE)
+    .action(async (assistantId: string | undefined, message: string | undefined, options: {
       verbose?: boolean;
     }) => {
       if (options.verbose) {
@@ -37,7 +39,7 @@ export function createAssistantsChatCommand(): Command {
       }
 
       try {
-        await chatWithAssistant(message, options);
+        await chatWithAssistant(assistantId, message);
       } catch (error: unknown) {
         const context = createErrorContext(error);
         logger.error('Failed to chat with assistant', context);
@@ -53,85 +55,187 @@ export function createAssistantsChatCommand(): Command {
  * Chat with CodeMie assistant
  */
 async function chatWithAssistant(
-  message: string | undefined,
-  options: { assistantId?: string }
+  assistantId: string | undefined,
+  message: string | undefined
 ): Promise<void> {
-  // 1. Load configuration
   const config = await ConfigLoader.load();
+  const registeredAssistants = config.codemieAssistants || [];
 
-  // 2. Determine which assistant to use
-  const assistantId = options.assistantId;
-  let assistantName = 'Assistant';
+  const client = await getCodemieClient();
 
-  if (!assistantId) {
-    console.error(chalk.red('\n✗ No assistant ID provided'));
-    console.log(chalk.dim('  Use: ') + chalk.cyan('codemie assistants chat --assistant-id <id> "message"\n'));
-    console.log(chalk.dim('  Or use registered assistant skills in Claude Code\n'));
+  if (assistantId && message) { // Single-message mode (example: for Claude Code skill)
+    const assistant = findAssistant(registeredAssistants, assistantId);
+    await sendSingleMessage(client, assistant, message, { quiet: true });
+  } else { // Interactive mode
+    const assistant = await promptAssistantSelection(registeredAssistants);
+    await interactiveChat(client, assistant);
+  }
+}
+
+/**
+ * Find assistant by ID or exit with error
+ */
+function findAssistant(assistants: CodemieAssistant[], assistantId: string): CodemieAssistant {
+  if (assistants.length === 0) {
+    console.error(chalk.red(MESSAGES.SHARED.ERROR_NO_ASSISTANTS));
+    console.log(chalk.dim(MESSAGES.SHARED.HINT_REGISTER) + chalk.cyan(MESSAGES.SHARED.COMMAND_LIST) + chalk.dim(MESSAGES.SHARED.HINT_REGISTER_SUFFIX));
     process.exit(1);
   }
 
-  // Try to find assistant name from registered assistants
-  if (config.codeMieAssistants) {
-    const registered = config.codeMieAssistants.find(a => a.id === assistantId);
-    if (registered) {
-      assistantName = registered.name;
-    }
+  const assistant = assistants.find(a => a.id === assistantId);
+  if (!assistant) {
+    console.error(chalk.red(MESSAGES.SHARED.ERROR_ASSISTANT_NOT_FOUND(assistantId)));
+    console.log(chalk.dim(MESSAGES.SHARED.HINT_REGISTER) + chalk.cyan(MESSAGES.SHARED.COMMAND_LIST) + chalk.dim(MESSAGES.SHARED.HINT_SEE_ASSISTANTS));
+    process.exit(1);
+  }
+  return assistant;
+}
+
+/**
+ * Prompt user to select an assistant
+ */
+async function promptAssistantSelection(assistants: CodemieAssistant[]): Promise<CodemieAssistant> {
+  if (assistants.length === 0) {
+    console.error(chalk.red(MESSAGES.SHARED.ERROR_NO_ASSISTANTS));
+    console.log(chalk.dim(MESSAGES.SHARED.HINT_REGISTER) + chalk.cyan(MESSAGES.SHARED.COMMAND_LIST) + chalk.dim(MESSAGES.SHARED.HINT_REGISTER_SUFFIX));
+    process.exit(1);
   }
 
-  // 3. Get message (from arg or prompt)
-  let userMessage = message;
-  if (!userMessage) {
-    const response = await inquirer.prompt([
+  const choices = assistants.map(assistant => {
+    const slugText = chalk.dim(`(/${assistant.slug})`);
+    return {
+      name: `${assistant.name} ${slugText}`,
+      value: assistant.id
+    };
+  });
+
+  const { selectedId } = await inquirer.prompt<{ selectedId: string }>([
+    {
+      type: 'list',
+      name: 'selectedId',
+      message: MESSAGES.SHARED.PROMPT_SELECT_ASSISTANT,
+      choices
+    }
+  ]);
+
+  return findAssistant(assistants, selectedId);
+}
+
+/**
+ * Interactive chat session with conversation history
+ */
+async function interactiveChat(
+  client: CodeMieClient,
+  assistant: CodemieAssistant
+): Promise<void> {
+  const history: HistoryMessage[] = [];
+
+  console.log(chalk.bold.cyan(MESSAGES.CHAT.HEADER(assistant.name)));
+  console.log(chalk.dim(MESSAGES.CHAT.INSTRUCTIONS));
+
+  while (true) {
+    const { message } = await inquirer.prompt<{ message: string }>([
       {
         type: 'input',
         name: 'message',
-        message: 'Message:',
-        validate: (input: string) => input.trim().length > 0 || 'Message cannot be empty'
+        message: chalk.green(MESSAGES.CHAT.PROMPT_YOUR_MESSAGE),
+        validate: (input: string) => input.trim().length > 0 || MESSAGES.CHAT.VALIDATION_MESSAGE_EMPTY
       }
     ]);
-    userMessage = response.message;
-  }
 
-  // 4. Send message to assistant
-  if (!userMessage) {
-    console.error(chalk.red('\n✗ No message provided\n'));
-    process.exit(1);
-  }
-
-  const spinner = ora('Sending message...').start();
-
-  try {
-    const client = await getCodemieClient();
-
-    logger.debug('Sending message to assistant', {
-      assistantId,
-      assistantName,
-      messageLength: userMessage.length
-    });
-
-    const response = await client.assistants.chat(assistantId, {
-      text: userMessage,
-      history: [],
-      stream: false
-    });
-
-    spinner.succeed(chalk.green('Response received'));
-
-    // 5. Display response
-    console.log('\n' + chalk.bold.cyan(`${assistantName || 'Assistant'}:`));
-    console.log(response.generated || 'No response');
-    console.log('');
-
-  } catch (error) {
-    spinner.fail(chalk.red('Failed to send message'));
-    logger.error('Assistant chat API call failed', { error });
-
-    if (error instanceof Error && (error.message.includes('401') || error.message.includes('403'))) {
-      throw new ConfigurationError(
-        'Authentication expired. Please run "codemie setup" again.'
-      );
+    if (isExitCommand(message)) {
+      console.log(chalk.dim(MESSAGES.CHAT.GOODBYE));
+      break;
     }
 
+    const spinner = ora(MESSAGES.CHAT.SPINNER_THINKING).start();
+
+    try {
+      const response = await sendMessageWithHistory(client, assistant, message, history);
+      spinner.stop();
+
+      console.log(chalk.bold.cyan(`${assistant.name}:`), response || MESSAGES.CHAT.FALLBACK_NO_RESPONSE);
+      console.log('');
+
+      history.push(
+        { role: ROLES.USER, message },
+        { role: ROLES.ASSISTANT, message: response }
+      );
+    } catch (error) {
+      spinner.fail(chalk.red(MESSAGES.CHAT.ERROR_SEND_FAILED));
+      handleChatError(error);
+
+      console.log(chalk.yellow(MESSAGES.CHAT.RETRY_PROMPT));
+    }
+  }
+}
+
+/**
+ * Send a single message (for Claude Code skills in quiet mode)
+ */
+async function sendSingleMessage(
+  client: CodeMieClient,
+  assistant: CodemieAssistant,
+  message: string,
+  options: { quiet?: boolean }
+): Promise<void> {
+  try {
+    const response = await sendMessageWithHistory(client, assistant, message, []);
+
+    if (options.quiet) {
+      console.log(response || MESSAGES.CHAT.FALLBACK_NO_RESPONSE);
+    } else {
+      console.log('\n' + chalk.bold.cyan(`${assistant.name}:`));
+      console.log(response || MESSAGES.CHAT.FALLBACK_NO_RESPONSE);
+      console.log('');
+    }
+  } catch (error) {
+    handleChatError(error);
     throw error;
+  }
+}
+
+/**
+ * Send message to assistant with conversation history
+ */
+async function sendMessageWithHistory(
+  client: CodeMieClient,
+  assistant: CodemieAssistant,
+  message: string,
+  history: HistoryMessage[]
+): Promise<string> {
+  logger.debug('Sending message to assistant', {
+    assistantId: assistant.id,
+    assistantName: assistant.name,
+    messageLength: message.length,
+    historyLength: history.length
+  });
+
+  const response = await client.assistants.chat(assistant.id, {
+    text: message,
+    history: history,
+    stream: false
+  });
+
+  return (response.generated as string) ?? ''
+}
+
+/**
+ * Check if message is an exit prompt
+ */
+function isExitCommand(message: string): boolean {
+  const normalized = message.toLowerCase().trim();
+  return EXIT_PROMPTS.includes(normalized as any);
+}
+
+/**
+ * Handle chat errors with proper context
+ */
+function handleChatError(error: unknown): void {
+  const context = createErrorContext(error);
+  logger.error('Assistant chat API call failed', context);
+
+  if (error instanceof Error && (error.message.includes('401') || error.message.includes('403'))) {
+    throw new ConfigurationError(MESSAGES.SHARED.ERROR_AUTH_EXPIRED);
   }
 }

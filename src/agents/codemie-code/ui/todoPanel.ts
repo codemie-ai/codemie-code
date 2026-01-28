@@ -65,17 +65,18 @@ export class TodoPanel {
     }
 
     // Compact mode: show single-line progress instead of full panel
+    // Use compact single-line format if compact mode is enabled
     if (this.options.compact) {
       return this.renderCompactProgress();
     }
 
     const sections: string[] = [];
 
-    // Add header
-    sections.push(this.renderHeader());
-
-    // Add todo items
-    sections.push(this.renderTodoItems());
+    // Add header and todo items
+    sections.push(
+      this.renderHeader(),
+      this.renderTodoItems()
+    );
 
     // Add progress section
     if (this.options.showProgress && this.lastProgressInfo) {
