@@ -8,25 +8,26 @@ import { createReactAgent } from '@langchain/langgraph/prebuilt';
 import { ChatOpenAI } from '@langchain/openai';
 import type { StructuredTool } from '@langchain/core/tools';
 import type { BaseMessage } from '@langchain/core/messages';
-import { HumanMessage, SystemMessage } from '@langchain/core/messages';
+import { HumanMessage, SystemMessage, AIMessage } from '@langchain/core/messages';
 import type { CodeMieConfig, EventCallback, AgentStats, ExecutionStep, TokenUsage } from './types.js';
-import type { ClipboardImage } from '../../utils/clipboard.js';
+import { EVENT_TYPES, CodeMieAgentError } from './types.js';
+import type { ClipboardImage } from '@/utils/clipboard.js';
 import { getSystemPrompt } from './prompts.js';
-import { CodeMieAgentError } from './types.js';
 import { extractToolMetadata } from './toolMetadata.js';
 import { extractTokenUsageFromStreamChunk, extractTokenUsageFromFinalState } from './tokenUtils.js';
 import { setGlobalToolEventCallback } from './tools/index.js';
-import { logger } from '../../utils/logger.js';
-import { sanitizeCookies, sanitizeAuthToken } from '../../utils/security.js';
+import { logger } from '@/utils/logger.js';
+import { sanitizeCookies, sanitizeAuthToken } from '@/utils/security.js';
 import { HookExecutor } from '../../hooks/executor.js';
 import type { HookExecutionContext } from '../../hooks/types.js';
+import { parseAtMentionCommand } from './ui/mentions.js';
 
 export class CodeMieAgent {
   private agent: any;
-  private config: CodeMieConfig;
+  private readonly config: CodeMieConfig;
   private tools: StructuredTool[];
   private conversationHistory: BaseMessage[] = [];
-  private toolCallArgs: Map<string, Record<string, any>> = new Map(); // Store tool args by tool call ID
+  private readonly toolCallArgs: Map<string, Record<string, any>> = new Map(); // Store tool args by tool call ID
   private currentExecutionSteps: ExecutionStep[] = [];
   private currentStepNumber = 0;
   private currentLLMTokenUsage: TokenUsage | null = null; // Store token usage for associating with next tool call
@@ -90,6 +91,25 @@ export class CodeMieAgent {
 
     if (config.debug) {
       logger.debug(`CodeMie Agent initialized with ${tools.length} tools`);
+    }
+  }
+
+  /**
+   * Update tools after initialization (needed for tools that require conversation history)
+   */
+  updateTools(tools: StructuredTool[]): void {
+    this.tools = tools;
+
+    // Recreate agent with new tools
+    const llm = this.createLLM();
+    this.agent = createReactAgent({
+      llm,
+      tools: this.tools,
+      messageModifier: getSystemPrompt(this.config.workingDirectory)
+    });
+
+    if (this.config.debug) {
+      logger.debug(`CodeMie Agent tools updated: ${tools.length} tools`);
     }
   }
 
@@ -172,7 +192,7 @@ export class CodeMieAgent {
           model: this.config.model,
           apiKey: this.config.authToken,
           configuration: {
-            baseURL: this.config.baseUrl !== 'bedrock' ? this.config.baseUrl : undefined,
+            baseURL: this.config.baseUrl === 'bedrock' ? undefined: this.config.baseUrl,
             // Add client tracking header to all Bedrock requests
             fetch: async (input: string | URL | Request, init?: RequestInit) => {
               const updatedInit = {
@@ -203,7 +223,7 @@ export class CodeMieAgent {
         };
 
         // Check if we have SSO cookies to inject (following codemie-ide-plugin pattern)
-        const ssoCookies = (global as any).codemieSSOCookies;
+        const ssoCookies = (globalThis as any).codemieSSOCookies;
         if (this.config.debug) {
           logger.debug(`SSO Cookies available:`, sanitizeCookies(ssoCookies));
           logger.debug(`Auth token:`, sanitizeAuthToken(this.config.authToken));
@@ -238,7 +258,7 @@ export class CodeMieAgent {
             }
 
             if (this.config.debug) {
-              logger.debug(`SSO request to ${input}`);
+              logger.debug(`SSO request to ${input as string}`);
               logger.debug(`Cookie string length: ${cookieString.length} characters`);
             }
 
@@ -331,6 +351,90 @@ export class CodeMieAgent {
   }
 
   /**
+   * Handle @ mention invocation result by updating history and emitting events
+   * @param message - Original user message
+   * @param images - Optional images from user
+   * @param atMentionResult - Result from preprocessAtMention
+   * @param onEvent - Event callback
+   */
+  private handleAtMentionResult(
+    message: string,
+    images: ClipboardImage[] | undefined,
+    atMentionResult: { handled: boolean; response?: string; assistantSlug?: string },
+    onEvent: EventCallback
+  ): void {
+    const userMessage = this.createHumanMessage(message, images);
+    this.conversationHistory.push(userMessage);
+
+    const assistantMessage = new AIMessage({
+      content: atMentionResult.response || 'No response from assistant'
+    });
+    this.conversationHistory.push(assistantMessage);
+
+    onEvent({ type: EVENT_TYPES.THINKING_END });
+    onEvent({ type: EVENT_TYPES.CONTENT_CHUNK, content: atMentionResult.response });
+    onEvent({ type: EVENT_TYPES.COMPLETE });
+  }
+
+  /**
+   * Preprocess message to detect @ mentions and invoke assistants directly
+   * Returns { handled: true, response: string, assistantSlug: string } if @ mention was processed,
+   * or { handled: false } if no @ mention found
+   */
+  private async preprocessAtMention(
+    message: string,
+    onEvent: EventCallback
+  ): Promise<{ handled: boolean; response?: string; assistantSlug?: string }> {
+    // Use shared mention pattern from mentions module
+    const parsed = parseAtMentionCommand(message);
+
+    if (!parsed) {
+      return { handled: false };
+    }
+
+    const { assistantSlug, message: assistantMessage } = parsed;
+
+    try {
+      // Find the invoke_assistant tool
+      const invokeTool = this.tools.find(tool => tool.name === 'invoke_assistant');
+
+      if (!invokeTool) {
+        if (this.config.debug) {
+          logger.debug('@ mention detected but invoke_assistant tool not available');
+        }
+        return { handled: false };
+      }
+
+      if (this.config.debug) {
+        logger.debug(`Preprocessing @ mention: @${assistantSlug} "${assistantMessage.substring(0, 50)}..."`);
+      }
+
+      // Emit thinking_start with assistant info
+      onEvent({ type: EVENT_TYPES.THINKING_START });
+
+      // Invoke the assistant tool directly
+      const response = await invokeTool.invoke({
+        assistantSlug,
+        message: assistantMessage,
+        includeHistory: false // Default to no history for @ mentions (can be made configurable)
+      });
+
+      return { handled: true, response: String(response), assistantSlug };
+
+    } catch (error) {
+      if (this.config.debug) {
+        logger.debug('@ mention preprocessing failed:', error);
+      }
+      // Return error as response but mark as handled
+      return {
+        handled: true,
+        response: `Failed to invoke assistant @${assistantSlug}: ${error instanceof Error ? error.message : String(error)}`,
+        assistantSlug
+      };
+    }
+  }
+
+  /**
    * Stream a chat interaction with the agent
    */
   async chatStream(message: string, onEvent: EventCallback, images: ClipboardImage[] = []): Promise<void> {
@@ -352,7 +456,7 @@ export class CodeMieAgent {
     // Set up global tool event callback for progress reporting
     setGlobalToolEventCallback((event) => {
       onEvent({
-        type: 'tool_call_progress',
+        type: EVENT_TYPES.TOOL_CALL_PROGRESS,
         toolName: event.toolName,
         toolProgress: event.progress
       });
@@ -369,7 +473,7 @@ export class CodeMieAgent {
       }
       streamAborted = true;
       abortController.abort();
-      onEvent({ type: 'error', error: 'Stream interrupted by user (Ctrl+C)' });
+      onEvent({ type: EVENT_TYPES.ERROR, error: 'Stream interrupted by user (Ctrl+C)' });
     };
 
     process.once('SIGINT', sigintHandler);
@@ -468,12 +572,20 @@ export class CodeMieAgent {
         }
       }
 
+      // Preprocess @ mentions before normal agent processing
+      const atMentionResult = await this.preprocessAtMention(message, onEvent);
+
+      if (atMentionResult.handled) {
+        this.handleAtMentionResult(message, images, atMentionResult, onEvent);
+        return;
+      }
+
       // Add user message to conversation history (with optional images)
       const userMessage = this.createHumanMessage(message, images);
       this.conversationHistory.push(userMessage);
 
       // Notify start of thinking
-      onEvent({ type: 'thinking_start' });
+      onEvent({ type: EVENT_TYPES.THINKING_START });
 
       // Start the first LLM call step
       currentStep = this.startLLMStep();
@@ -506,7 +618,7 @@ export class CodeMieAgent {
           this.config.provider
         );
 
-        if (tokenUsage && currentStep && currentStep.type === 'llm_call') {
+        if (tokenUsage && currentStep?.type === 'llm_call') {
           // Update current step with token usage
           currentStep.tokenUsage = tokenUsage;
           this.updateStatsWithTokenUsage(tokenUsage);
@@ -522,7 +634,7 @@ export class CodeMieAgent {
         await this.processStreamChunk(chunk, onEvent, (toolStarted) => {
           if (toolStarted) {
             // Complete current LLM step if it exists
-            if (currentStep && currentStep.type === 'llm_call') {
+            if (currentStep?.type === 'llm_call') {
               this.completeStep(currentStep);
               currentStep = null;
             }
@@ -670,8 +782,8 @@ export class CodeMieAgent {
       }
 
       // Notify thinking end and completion
-      onEvent({ type: 'thinking_end' });
-      onEvent({ type: 'complete' });
+      onEvent({ type: EVENT_TYPES.THINKING_END });
+      onEvent({ type: EVENT_TYPES.COMPLETE });
 
       if (this.config.debug) {
         logger.debug(`Agent completed in ${this.stats.executionTime}ms`);
@@ -695,7 +807,7 @@ export class CodeMieAgent {
         }
 
         onEvent({
-          type: 'error',
+          type: EVENT_TYPES.ERROR,
           error: 'Operation interrupted by user'
         });
 
@@ -711,7 +823,7 @@ export class CodeMieAgent {
       }
 
       onEvent({
-        type: 'error',
+        type: EVENT_TYPES.ERROR,
         error: errorMessage
       });
 
@@ -730,7 +842,7 @@ export class CodeMieAgent {
       // Restore original handlers if they existed
       if (originalSigintHandler.length > 0) {
         originalSigintHandler.forEach(handler => {
-          process.on('SIGINT', handler as NodeJS.SignalsListener);
+          process.on('SIGINT', handler);
         });
       }
     }
@@ -753,7 +865,7 @@ export class CodeMieAgent {
         // Stream content chunks
         if (lastMessage?.content && typeof lastMessage.content === 'string') {
           onEvent({
-            type: 'content_chunk',
+            type: EVENT_TYPES.CONTENT_CHUNK,
             content: lastMessage.content
           });
         }
@@ -803,7 +915,7 @@ export class CodeMieAgent {
             this.toolCallArgs.set(toolCall.name, toolCall.args);
 
             onEvent({
-              type: 'tool_call_start',
+              type: EVENT_TYPES.TOOL_CALL_START,
               toolName: toolCall.name,
               toolArgs: toolCall.args
             });
@@ -880,7 +992,7 @@ export class CodeMieAgent {
           }
 
           onEvent({
-            type: 'tool_call_result',
+            type: EVENT_TYPES.TOOL_CALL_RESULT,
             toolName,
             result,
             toolMetadata
@@ -899,7 +1011,7 @@ export class CodeMieAgent {
 
       // Don't throw here, just log - let the main stream continue
       onEvent({
-        type: 'error',
+        type: EVENT_TYPES.ERROR,
         error: `Stream processing error: ${error instanceof Error ? error.message : String(error)}`
       });
     }
@@ -1047,7 +1159,7 @@ export class CodeMieAgent {
       this.isFirstLLMCall = false;
     } else {
       // Check if the previous step was a tool execution
-      const prevStep = this.currentExecutionSteps[this.currentExecutionSteps.length - 1];
+      const prevStep = this.currentExecutionSteps.at(-1);
       llmContext = (prevStep?.type === 'tool_execution') ? 'processing_tool_result' : 'final_response';
     }
 

@@ -4,16 +4,19 @@
  * Creates and manages system tools available to the LangGraph ReAct agent
  */
 
+import { promises as fs } from 'node:fs';
+import { exec } from 'node:child_process';
+import { promisify } from 'node:util';
+import path from 'node:path';
 import { StructuredTool } from '@langchain/core/tools';
 import { z } from 'zod';
+
 import type { CodeMieConfig } from '../types.js';
-import { promises as fs } from 'fs';
-import { exec } from 'child_process';
-import { promisify } from 'util';
-import path from 'path';
+import { EVENT_TYPES } from '../types.js';
 import { filterDirectoryEntries, createFilterConfig, DEFAULT_FILTER_CONFIG, generateFilterStats } from '../filters.js';
-import { logger } from '../../../utils/logger.js';
-import { isPathWithinDirectory } from '../../../utils/paths.js';
+import { logger } from '@/utils/logger.js';
+import { isPathWithinDirectory } from '@/utils/paths.js';
+import type { BaseMessage } from '@langchain/core/messages';
 
 const execAsync = promisify(exec);
 
@@ -28,7 +31,7 @@ class ReadFileTool extends StructuredTool {
     filePath: z.string().describe('Path to the file to read'),
   });
 
-  private workingDirectory: string;
+  private readonly workingDirectory: string;
 
   constructor(workingDirectory: string) {
     super();
@@ -137,7 +140,7 @@ class WriteFileTool extends StructuredTool {
     content: z.string().describe('Content to write to the file'),
   });
 
-  private workingDirectory: string;
+  private readonly workingDirectory: string;
 
   constructor(workingDirectory: string) {
     super();
@@ -177,8 +180,8 @@ class ExecuteCommandTool extends StructuredTool {
     command: z.string().describe('Shell command to execute'),
   });
 
-  private workingDirectory: string;
-  private timeout: number;
+  private readonly workingDirectory: string;
+  private readonly timeout: number;
 
   constructor(workingDirectory: string, timeout: number = 300) {
     super();
@@ -293,8 +296,8 @@ class ListDirectoryTool extends StructuredTool {
     includeHidden: z.boolean().optional().describe('Include hidden files and directories (default: false)'),
   });
 
-  private workingDirectory: string;
-  private filterConfig: any;
+  private readonly workingDirectory: string;
+  private readonly filterConfig: any;
 
   constructor(workingDirectory: string, filterConfig?: any) {
     super();
@@ -390,7 +393,7 @@ class ListDirectoryTool extends StructuredTool {
  * Tool event callback type for progress reporting
  */
 export type ToolEventCallback = (event: {
-  type: 'tool_call_progress';
+  type: typeof EVENT_TYPES.TOOL_CALL_PROGRESS;
   toolName: string;
   progress: {
     percentage: number;
@@ -423,27 +426,45 @@ export function emitToolProgress(toolName: string, progress: {
 }): void {
   if (globalToolEventCallback) {
     globalToolEventCallback({
-      type: 'tool_call_progress',
+      type: EVENT_TYPES.TOOL_CALL_PROGRESS,
       toolName,
       progress
     });
   }
 }
 
+/** Helper to conditionally log debug messages based on config */
+function debug(config: CodeMieConfig, ...args: Parameters<typeof logger.debug>): void {
+  if (config.debug) {
+    logger.debug(...args);
+  }
+}
+
 /**
  * Create system tools available to the CodeMie agent
  */
-export async function createSystemTools(config: CodeMieConfig): Promise<StructuredTool[]> {
-  const tools: StructuredTool[] = [];
-
+export async function createSystemTools(
+  config: CodeMieConfig,
+  getConversationHistory?: () => BaseMessage[]
+): Promise<StructuredTool[]> {
   try {
-    // Basic file system tools
-    tools.push(new ReadFileTool(config.workingDirectory));
-    tools.push(new WriteFileTool(config.workingDirectory));
-    tools.push(new ListDirectoryTool(config.workingDirectory, config.directoryFilters));
+    const tools: StructuredTool[] = [
+      new ReadFileTool(config.workingDirectory),
+      new WriteFileTool(config.workingDirectory),
+      new ListDirectoryTool(config.workingDirectory, config.directoryFilters),
+      new ExecuteCommandTool(config.workingDirectory, config.timeout)
+    ]
 
-    // Command execution tool
-    tools.push(new ExecuteCommandTool(config.workingDirectory, config.timeout));
+    // Assistant invocation tool (if conversation history getter provided)
+    if (getConversationHistory) {
+      try {
+        const { InvokeAssistantTool } = await import('./assistant-invocation.js');
+        tools.push(new InvokeAssistantTool(getConversationHistory));
+        debug(config, 'Added assistant invocation tool');
+      } catch (error) {
+        debug(config, 'Assistant invocation tool not available:', error);
+      }
+    }
 
     // Planning and todo tools
     try {
@@ -453,26 +474,17 @@ export async function createSystemTools(config: CodeMieConfig): Promise<Structur
       initializeTodoStorage(config.workingDirectory, config.debug);
 
       tools.push(...planningTools);
-
-      if (config.debug) {
-        logger.debug(`Added ${planningTools.length} planning tools`);
-        logger.debug(`Initialized todo storage for: ${config.workingDirectory}`);
-      }
+      debug(config, `Added ${planningTools.length} planning tools`);
+      debug(config, `Initialized todo storage for: ${config.workingDirectory}`);
     } catch (error) {
-      if (config.debug) {
-        logger.debug('Planning tools not available:', error);
-      }
+      debug(config, 'Planning tools not available:', error);
     }
 
-    if (config.debug) {
-      logger.debug(`Created ${tools.length} total system tools`);
-    }
+    debug(config, `Created ${tools.length} total system tools`);
 
     return tools;
   } catch (error) {
-    if (config.debug) {
-      logger.debug('Error creating system tools:', error);
-    }
+    debug(config, 'Error creating system tools:', error);
 
     // Return empty array on error to allow agent to function
     return [];
@@ -488,6 +500,7 @@ export function getToolSummary(): Array<{ name: string; description: string }> {
     { name: 'write_file', description: 'Write content to a file in the filesystem' },
     { name: 'list_directory', description: 'List files and directories in a given path, automatically filtering out common ignore patterns (node_modules, .git, build artifacts, etc.)' },
     { name: 'execute_command', description: 'Execute a shell command in the working directory' },
+    { name: 'invoke_assistant', description: 'Invoke a registered CodeMie assistant for specialized help on specific topics' },
     { name: 'write_todos', description: 'Create or update a structured todo list for planning and progress tracking' },
     { name: 'update_todo_status', description: 'Update the status of a specific todo by index' },
     { name: 'append_todo', description: 'Add a new todo item to the existing list' },
