@@ -15,9 +15,11 @@ codemie setup
 **The wizard will:**
 1. Detect if you have access to AI/Run CodeMie SSO
 2. Guide you through the authentication flow
-3. Test the connection with health checks
-4. Fetch and display available models
+3. Fetch and display available projects (includes admin-only projects)
+4. Test the connection with health checks
 5. Save secure credentials to `~/.codemie/codemie-cli.config.json`
+
+**Note**: If you have access to multiple projects, you'll be prompted to select one. Projects from both regular and admin access are included automatically.
 
 ### Manual SSO Authentication
 

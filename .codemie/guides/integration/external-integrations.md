@@ -198,6 +198,11 @@ const store = CredentialStore.getInstance();
 const creds = await store.retrieveSSOCredentials(baseUrl);
 ```
 
+**SSO Project Selection:**
+- Merges `applications` and `applicationsAdmin` arrays (deduplicated)
+- Sorts alphabetically, auto-selects if single project
+- Source: `src/providers/plugins/sso/sso.setup-steps.ts:93-106`
+
 ---
 
 ## Tool Calling Integration
@@ -342,6 +347,7 @@ LITELLM_BASE_URL=http://localhost:4000
 # Enterprise SSO
 SSO_BASE_URL=https://api.company.com
 SSO_WORKSPACE=team-workspace
+SSO_PROJECT=selected-project  # Auto-populated during setup
 ```
 
 ---
