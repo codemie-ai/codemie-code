@@ -10,6 +10,7 @@ import { BUILTIN_AGENT_NAME } from '../registry.js';
 import { ClaudePluginMetadata } from '../plugins/claude/claude.plugin.js';
 import { CodeMieCodePluginMetadata } from '../plugins/codemie-code.plugin.js';
 import { GeminiPluginMetadata } from '../plugins/gemini/gemini.plugin.js';
+import { OpenCodePluginMetadata } from '../plugins/opencode/opencode.plugin.js';
 
 /**
  * Universal CLI builder for any agent
@@ -302,7 +303,7 @@ export class AgentCLI {
   ): string[] {
     const agentArgs = [...args];
     // Config-only options (not passed to agent, handled by CodeMie CLI)
-    const configOnlyOptions = ['profile', 'provider', 'apiKey', 'baseUrl', 'timeout'];
+    const configOnlyOptions = ['profile', 'provider', 'apiKey', 'baseUrl', 'timeout', 'model'];
 
     for (const [key, value] of Object.entries(options)) {
       // Skip config-only options (handled by CodeMie CLI layer)
@@ -332,6 +333,7 @@ export class AgentCLI {
       'claude': ClaudePluginMetadata,
       [BUILTIN_AGENT_NAME]: CodeMieCodePluginMetadata,
       'gemini': GeminiPluginMetadata,
+      'opencode': OpenCodePluginMetadata,
     };
     return metadataMap[this.adapter.name];
   }

@@ -34,7 +34,6 @@ coverage/
 *.tsbuildinfo
 .claude/settings.local.json
 
-_bmad*
 .claude/**/bmad/*
 .codemie/claude-templates/templates
 .codemie/claude.extension.json
@@ -44,3 +43,13 @@ CLAUDE.local.md
 **/CLAUDE.local.md
 # Test comparison outputs
 tests/integration/comparison-output/
+local/*
+.gemini/*
+/_bmad*
+/.agent/
+/.codex/
+/.github/
+/.crush/
+/.cursor/
+/.opencode/
+/.hypothesis/

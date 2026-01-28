@@ -12,8 +12,8 @@ describe('AgentRegistry', () => {
     it('should register all default agents', () => {
       const agentNames = AgentRegistry.getAgentNames();
 
-      // Should have all 3 default agents (codemie-code, claude, gemini)
-      expect(agentNames).toHaveLength(3);
+      // Should have all 4 default agents (codemie-code, claude, gemini, opencode)
+      expect(agentNames).toHaveLength(4);
     });
 
     it('should register built-in agent', () => {
@@ -36,6 +36,13 @@ describe('AgentRegistry', () => {
       expect(agent).toBeDefined();
       expect(agent?.name).toBe('gemini');
     });
+
+    it('should register OpenCode plugin', () => {
+      const agent = AgentRegistry.getAgent('opencode');
+
+      expect(agent).toBeDefined();
+      expect(agent?.name).toBe('opencode');
+    });
   });
 
   describe('Agent Retrieval', () => {
@@ -48,7 +55,7 @@ describe('AgentRegistry', () => {
     it('should return all registered agents', () => {
       const agents = AgentRegistry.getAllAgents();
 
-      expect(agents).toHaveLength(3);
+      expect(agents).toHaveLength(4);
       expect(agents.every((agent) => agent.name)).toBe(true);
     });
 
@@ -58,6 +65,7 @@ describe('AgentRegistry', () => {
       expect(names).toContain(BUILTIN_AGENT_NAME);
       expect(names).toContain('claude');
       expect(names).toContain('gemini');
+      expect(names).toContain('opencode');
     });
   });
 
