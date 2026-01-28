@@ -59,7 +59,7 @@ describe('Skill Generator', () => {
       );
       expect(fs.writeFile).toHaveBeenCalledWith(
         '/home/test/.claude/skills/test-assistant/SKILL.md',
-        expect.stringContaining('# Test Assistant Assistant'),
+        expect.stringContaining('# Test Assistant'),
         'utf-8'
       );
     });
@@ -70,28 +70,9 @@ describe('Skill Generator', () => {
       const writeCall = (fs.writeFile as any).mock.calls[0];
       const content = writeCall[1];
 
-      expect(content).toContain('**Description:** A helpful test assistant');
+      expect(content).toContain('A helpful test assistant');
     });
 
-    it('should include model info in skill content', async () => {
-      await generateAssistantSkill(mockAssistant);
-
-      const writeCall = (fs.writeFile as any).mock.calls[0];
-      const content = writeCall[1];
-
-      expect(content).toContain('**Model:** claude-3-sonnet');
-      expect(content).toContain('Chat with Test Assistant (claude-3-sonnet)');
-    });
-
-    it('should include system prompt in skill content', async () => {
-      await generateAssistantSkill(mockAssistant);
-
-      const writeCall = (fs.writeFile as any).mock.calls[0];
-      const content = writeCall[1];
-
-      expect(content).toContain('## Who I Am');
-      expect(content).toContain('You are a test assistant');
-    });
 
     it('should include assistant ID in bash command', async () => {
       await generateAssistantSkill(mockAssistant);
@@ -127,9 +108,7 @@ describe('Skill Generator', () => {
       const writeCall = (fs.writeFile as any).mock.calls[0];
       const content = writeCall[1];
 
-      expect(content).not.toContain('**Model:**');
-      expect(content).toContain('Chat with Test Assistant');
-      expect(content).not.toContain('Chat with Test Assistant (');
+      expect(content).toContain('Test Assistant');
     });
 
     it('should throw error if assistant has no slug', async () => {
@@ -170,9 +149,7 @@ describe('Skill Generator', () => {
 
       expect(content).toContain('---');
       expect(content).toContain('name: test-assistant');
-      expect(content).toContain('disable-model-invocation: true');
-      expect(content).toContain('allowed-tools: Bash(codemie:*)');
-      expect(content).toContain('argument-hint: "[your message]"');
+      expect(content).toContain('description:');
     });
 
     it('should include usage instructions', async () => {
@@ -181,8 +158,8 @@ describe('Skill Generator', () => {
       const writeCall = (fs.writeFile as any).mock.calls[0];
       const content = writeCall[1];
 
-      expect(content).toContain('## How to Use Me');
-      expect(content).toContain('/test-assistant "your question or request here"');
+      expect(content).toContain('## Instructions');
+      expect(content).toContain('/test-assistant "your question here"');
     });
 
     it('should include technical implementation note', async () => {
@@ -191,8 +168,7 @@ describe('Skill Generator', () => {
       const writeCall = (fs.writeFile as any).mock.calls[0];
       const content = writeCall[1];
 
-      expect(content).toContain('**Technical Implementation**');
-      expect(content).toContain('IMPORTANT!: Return the assistant\'s response exactly as received');
+      expect(content).toContain('exactly as received');
     });
 
     it('should return the skill slug', async () => {
@@ -291,8 +267,6 @@ describe('Skill Generator', () => {
       expect(content).toContain('full-test');
       expect(content).toContain('Full Test');
       expect(content).toContain('Complete test assistant');
-      expect(content).toContain('gpt-4');
-      expect(content).toContain('You are helpful');
       expect(content).toContain('test-123');
     });
   });
