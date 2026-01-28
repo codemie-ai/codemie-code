@@ -8,14 +8,14 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
 import ora from 'ora';
-import type { Assistant, AssistantBase } from 'codemie-sdk';
+import type { Assistant, AssistantBase, CodeMieClient } from 'codemie-sdk';
 import { logger } from '@/utils/logger.js';
-import { getCodemieClient } from '@/utils/sdk-client.js';
 import { ConfigLoader } from '@/utils/config.js';
-import { ConfigurationError, createErrorContext, formatErrorForUser } from '@/utils/errors.js';
+import { createErrorContext, formatErrorForUser } from '@/utils/errors.js';
 import { generateAssistantSkill, removeAssistantSkill } from './utils/skill-generator.js';
 import type { CodemieAssistant, ProviderProfile } from '@/env/types.js';
 import { MESSAGES, COMMAND_NAMES, ACTIONS, type ActionType } from './constants.js';
+import { getAuthenticatedClient, promptReauthentication } from '@/utils/auth.js';
 
 interface ListCommandOptions {
   profile?: string;
@@ -102,7 +102,7 @@ async function manageAssistants(options: ListCommandOptions): Promise<void> {
   logger.debug('Managing assistants', { profileName, options });
 
   // 2. Get authenticated client and fetch assistants from backend
-  const client = await getCodemieClient();
+  const client = await getAuthenticatedClient(config);
   const backendAssistants = await fetchAssistants(client, options, config);
 
   // 3. Get currently registered assistants
@@ -120,8 +120,7 @@ async function manageAssistants(options: ListCommandOptions): Promise<void> {
   const registeredIds = new Set(registeredAssistants.map(a => a.id));
   const { selectedIds, action } = await promptAssistantSelection(
     sortedAssistants,
-    registeredIds,
-    registeredAssistants
+    registeredIds
   );
 
   if (action === ACTIONS.CANCEL) {
@@ -173,7 +172,7 @@ function getProjectFilter(options: ListCommandOptions, config: ProviderProfile):
  * Fetch assistants from backend
  */
 async function fetchAssistants(
-  client: Awaited<ReturnType<typeof getCodemieClient>>,
+  client: CodeMieClient,
   options: ListCommandOptions,
   config: ProviderProfile
 ): Promise<(Assistant | AssistantBase)[]> {
@@ -192,7 +191,7 @@ async function fetchAssistants(
 
     const assistants = await client.assistants.list({
       filters,
-      minimal_response: false  // Request full assistant data including project field
+      minimal_response: false
     });
     spinner.succeed(chalk.green(MESSAGES.LIST.SUCCESS_FOUND(assistants.length)));
     return assistants;
@@ -201,7 +200,7 @@ async function fetchAssistants(
     logger.error('Assistant list API call failed', { error });
 
     if (isAuthenticationError(error)) {
-      throw new ConfigurationError(MESSAGES.SHARED.ERROR_AUTH_EXPIRED);
+      await promptReauthentication(config);
     }
 
     throw error;
@@ -225,15 +224,12 @@ function buildAssistantDisplayInfo(assistant: Assistant): string {
  */
 function createAssistantChoices(
   assistants: (Assistant | AssistantBase)[],
-  registeredIds: Set<string>,
-  registeredAssistants: CodemieAssistant[]
+  registeredIds: Set<string>
 ): AssistantChoice[] {
-  const registeredMap = new Map(registeredAssistants.map(a => [a.id, a]));
-
   return assistants.map(assistant => {
     const a = assistant as Assistant;
     const isRegistered = registeredIds.has(a.id);
-    const displayName = buildAssistantDisplayInfo(a, registeredMap);
+    const displayName = buildAssistantDisplayInfo(a);
 
     return {
       name: displayName,
@@ -250,9 +246,8 @@ function createAssistantChoices(
 async function promptAssistantSelection(
   assistants: (Assistant | AssistantBase)[],
   registeredIds: Set<string>,
-  registeredAssistants: CodemieAssistant[]
 ): Promise<{ selectedIds: string[]; action: ActionType }> {
-  const choices = createAssistantChoices(assistants, registeredIds, registeredAssistants);
+  const choices = createAssistantChoices(assistants, registeredIds);
 
   const { selectedIds } = await inquirer.prompt([
     {

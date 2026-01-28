@@ -9,12 +9,12 @@ import chalk from 'chalk';
 import ora from 'ora';
 import inquirer from 'inquirer';
 import { logger } from '@/utils/logger.js';
-import { getCodemieClient } from '@/utils/sdk-client.js';
 import { ConfigLoader } from '@/utils/config.js';
-import { ConfigurationError, createErrorContext, formatErrorForUser } from '@/utils/errors.js';
-import type { CodemieAssistant } from '@/env/types.js';
+import { createErrorContext, formatErrorForUser } from '@/utils/errors.js';
+import type { CodemieAssistant, ProviderProfile } from '@/env/types.js';
 import type { CodeMieClient } from 'codemie-sdk';
 import { EXIT_PROMPTS, ROLES, MESSAGES, type HistoryMessage } from './constants.js';
+import { getAuthenticatedClient, promptReauthentication } from '@/utils/auth.js';
 
 /**
  * Create assistants chat command
@@ -61,14 +61,14 @@ async function chatWithAssistant(
   const config = await ConfigLoader.load();
   const registeredAssistants = config.codemieAssistants || [];
 
-  const client = await getCodemieClient();
+  const client = await getAuthenticatedClient(config);
 
   if (assistantId && message) { // Single-message mode (example: for Claude Code skill)
     const assistant = findAssistant(registeredAssistants, assistantId);
-    await sendSingleMessage(client, assistant, message, { quiet: true });
+    await sendSingleMessage(client, assistant, message, { quiet: true }, config);
   } else { // Interactive mode
     const assistant = await promptAssistantSelection(registeredAssistants);
-    await interactiveChat(client, assistant);
+    await interactiveChat(client, assistant, config);
   }
 }
 
@@ -126,7 +126,8 @@ async function promptAssistantSelection(assistants: CodemieAssistant[]): Promise
  */
 async function interactiveChat(
   client: CodeMieClient,
-  assistant: CodemieAssistant
+  assistant: CodemieAssistant,
+  config: ProviderProfile
 ): Promise<void> {
   const history: HistoryMessage[] = [];
 
@@ -163,7 +164,7 @@ async function interactiveChat(
       );
     } catch (error) {
       spinner.fail(chalk.red(MESSAGES.CHAT.ERROR_SEND_FAILED));
-      handleChatError(error);
+      await handleChatError(error, config);
 
       console.log(chalk.yellow(MESSAGES.CHAT.RETRY_PROMPT));
     }
@@ -177,7 +178,8 @@ async function sendSingleMessage(
   client: CodeMieClient,
   assistant: CodemieAssistant,
   message: string,
-  options: { quiet?: boolean }
+  options: { quiet?: boolean },
+  config: ProviderProfile
 ): Promise<void> {
   try {
     const response = await sendMessageWithHistory(client, assistant, message, []);
@@ -190,7 +192,7 @@ async function sendSingleMessage(
       console.log('');
     }
   } catch (error) {
-    handleChatError(error);
+    await handleChatError(error, config);
     throw error;
   }
 }
@@ -231,11 +233,11 @@ function isExitCommand(message: string): boolean {
 /**
  * Handle chat errors with proper context
  */
-function handleChatError(error: unknown): void {
+async function handleChatError(error: unknown, config: ProviderProfile): Promise<void> {
   const context = createErrorContext(error);
   logger.error('Assistant chat API call failed', context);
 
   if (error instanceof Error && (error.message.includes('401') || error.message.includes('403'))) {
-    throw new ConfigurationError(MESSAGES.SHARED.ERROR_AUTH_EXPIRED);
+    await promptReauthentication(config);
   }
 }
