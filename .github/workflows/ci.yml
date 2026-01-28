@@ -172,11 +172,45 @@ jobs:
           name: dist
           path: dist/
 
+      # Link CLI globally for agent installation
+      - name: Link CLI globally
+        run: npm link
+
+      # Install required agents for integration tests
+      - name: Install Claude Code agent
+        run: codemie install claude
+        continue-on-error: false
+
+      - name: Install Gemini CLI agent
+        run: codemie install gemini
+        continue-on-error: false
+
       - name: Run unit tests
         run: npm run test:unit
 
+      - name: Verify secrets are available
+        run: |
+          echo "Checking secret availability (not printing values)..."
+          if [ -z "$LITELLM_BASE_URL" ]; then echo "❌ LITELLM_BASE_URL is NOT set"; else echo "✅ LITELLM_BASE_URL is set"; fi
+          if [ -z "$LITELLM_API_KEY" ]; then echo "❌ LITELLM_API_KEY is NOT set"; else echo "✅ LITELLM_API_KEY is set"; fi
+          if [ -z "$AWS_ACCESS_KEY_ID" ]; then echo "❌ AWS_ACCESS_KEY_ID is NOT set"; else echo "✅ AWS_ACCESS_KEY_ID is set"; fi
+          if [ -z "$AWS_SECRET_ACCESS_KEY" ]; then echo "❌ AWS_SECRET_ACCESS_KEY is NOT set"; else echo "✅ AWS_SECRET_ACCESS_KEY is set"; fi
+          if [ -z "$AWS_DEFAULT_REGION" ]; then echo "❌ AWS_DEFAULT_REGION is NOT set"; else echo "✅ AWS_DEFAULT_REGION is set"; fi
+        env:
+          LITELLM_BASE_URL: ${{ secrets.LITELLM_BASE_URL }}
+          LITELLM_API_KEY: ${{ secrets.LITELLM_API_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+
       - name: Run integration tests
         run: npm run test:integration
+        env:
+          LITELLM_BASE_URL: ${{ secrets.LITELLM_BASE_URL }}
+          LITELLM_API_KEY: ${{ secrets.LITELLM_API_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
 
   test-windows:
     name: Test (Windows)
@@ -206,5 +240,28 @@ jobs:
       - name: Run unit tests
         run: npm run test:unit
 
+      - name: Verify secrets are available
+        run: |
+          echo "Checking secret availability (not printing values)..."
+          if [ -z "$LITELLM_BASE_URL" ]; then echo "❌ LITELLM_BASE_URL is NOT set"; else echo "✅ LITELLM_BASE_URL is set"; fi
+          if [ -z "$LITELLM_API_KEY" ]; then echo "❌ LITELLM_API_KEY is NOT set"; else echo "✅ LITELLM_API_KEY is set"; fi
+          if [ -z "$AWS_ACCESS_KEY_ID" ]; then echo "❌ AWS_ACCESS_KEY_ID is NOT set"; else echo "✅ AWS_ACCESS_KEY_ID is set"; fi
+          if [ -z "$AWS_SECRET_ACCESS_KEY" ]; then echo "❌ AWS_SECRET_ACCESS_KEY is NOT set"; else echo "✅ AWS_SECRET_ACCESS_KEY is set"; fi
+          if [ -z "$AWS_DEFAULT_REGION" ]; then echo "❌ AWS_DEFAULT_REGION is NOT set"; else echo "✅ AWS_DEFAULT_REGION is set"; fi
+        shell: bash
+        env:
+          LITELLM_BASE_URL: ${{ secrets.LITELLM_BASE_URL }}
+          LITELLM_API_KEY: ${{ secrets.LITELLM_API_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+
       - name: Run integration tests
         run: npm run test:integration
+        env:
+          TEST_AGENT_FILTER: codemie-code
+          LITELLM_BASE_URL: ${{ secrets.LITELLM_BASE_URL }}
+          LITELLM_API_KEY: ${{ secrets.LITELLM_API_KEY }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}

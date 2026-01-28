@@ -86,12 +86,19 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
 
       try {
         if (options.task) {
-          await codeMie.executeTaskWithUI(options.task as string, {
+          const result = await codeMie.executeTaskWithUI(options.task as string, {
             planMode: (options.plan || options.planOnly) as boolean | undefined,
             planOnly: options.planOnly as boolean | undefined
           });
+          // Print the AI response to stdout
+          if (result) {
+            console.log('\n' + result);
+          }
         } else if (args.length > 0) {
-          await codeMie.executeTaskWithUI(args.join(' '));
+          const result = await codeMie.executeTaskWithUI(args.join(' '));
+          if (result) {
+            console.log('\n' + result);
+          }
           if (!options.planOnly) {
             await codeMie.startInteractive();
           }

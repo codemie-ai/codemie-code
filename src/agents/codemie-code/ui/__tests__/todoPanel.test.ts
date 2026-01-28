@@ -4,12 +4,25 @@
  * Verifies todo visualization, rendering, and display functionality
  */
 
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, beforeAll, afterAll } from 'vitest';
 import { TodoPanel, renderTodoList } from '../todoPanel.js';
 import type { Todo } from '../../types.js';
+import chalk from 'chalk';
 
 describe('TodoPanel', () => {
   let panel: TodoPanel;
+  let originalChalkLevel: number;
+
+  beforeAll(() => {
+    // Force consistent chalk behavior for deterministic output length
+    originalChalkLevel = chalk.level;
+    chalk.level = 0; // Disable all colors for consistent length testing
+  });
+
+  afterAll(() => {
+    // Restore original chalk level
+    chalk.level = originalChalkLevel;
+  });
 
   beforeEach(() => {
     panel = new TodoPanel({
