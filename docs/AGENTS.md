@@ -59,6 +59,73 @@ codemie-claude -p "message"      # Non-interactive/print mode
 codemie-claude health            # Health check
 ```
 
+## Claude Code ACP
+
+Claude Code adapter for IDE integration via ACP (Agent Communication Protocol).
+
+**Installation:** `codemie install claude-acp`
+
+**What is ACP?**
+ACP (Agent Communication Protocol) is a stdio-based JSON-RPC protocol that enables AI agents to communicate with editors and IDEs. It provides a standardized way for editors like Zed, JetBrains, and Emacs to integrate with AI coding assistants.
+
+**Requirements:**
+- Node.js 20.0.0 or higher
+- Supported providers: LiteLLM, AI/Run SSO, or direct Anthropic API access
+- IDE with ACP support (Zed, JetBrains, Emacs, etc.)
+
+**Features:**
+- Stdio-based JSON-RPC communication
+- Silent mode (no console output interfering with protocol)
+- Full CodeMie proxy integration for enterprise SSO
+- Profile-based configuration support
+- All Claude Code capabilities via ACP protocol
+
+**IDE Configuration:**
+
+After installation, configure your IDE to use `codemie-claude-acp`:
+
+**Zed** (`~/.config/zed/settings.json`):
+```json
+{
+  "agent_servers": {
+    "claude": {
+      "command": "codemie-claude-acp",
+      "args": ["--profile", "work"]
+    }
+  }
+}
+```
+
+**JetBrains** (`~/.jetbrains/acp.json`):
+```json
+{
+  "agent_servers": {
+    "Claude Code via CodeMie": {
+      "command": "codemie-claude-acp",
+      "args": ["--profile", "work"]
+    }
+  }
+}
+```
+
+**Emacs** (with acp.el):
+```elisp
+(setq acp-claude-command "codemie-claude-acp")
+(setq acp-claude-args '("--profile" "work"))
+```
+
+**Usage:**
+```bash
+# Install the ACP adapter
+codemie install claude-acp
+
+# The command is typically invoked by your IDE, not directly
+# But you can test it manually:
+codemie-claude-acp --profile work
+```
+
+**Note:** Unlike `codemie-claude`, the ACP adapter is designed to be invoked by editors, not used interactively in a terminal. All output goes through the JSON-RPC protocol.
+
 ## Gemini CLI
 
 Google's Gemini AI coding assistant with advanced code understanding.

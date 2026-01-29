@@ -161,12 +161,24 @@ export function createInstallCommand(): Command {
 
             // Show how to run the newly installed agent
             console.log();
-            console.log(chalk.cyan('💡 Next steps:'));
-            // Handle special case where agent name already includes 'codemie-' prefix
-            const command = agent.name.startsWith('codemie-') ? agent.name : `codemie-${agent.name}`;
-            console.log(chalk.white(`   Interactive mode:`), chalk.blueBright(command));
-            console.log(chalk.white(`   Single task:`), chalk.blueBright(`${command} --task "your task"`));
-            console.log();
+
+            // Check for custom post-install hints (for ACP adapters, IDE integrations, etc.)
+            const metadata = (agent as any).metadata;
+            if (metadata?.postInstallHints && metadata.postInstallHints.length > 0) {
+              console.log(chalk.cyan('💡 Next steps:'));
+              for (const line of metadata.postInstallHints) {
+                console.log(chalk.white(`   ${line}`));
+              }
+              console.log();
+            } else {
+              // Default hints for regular agents
+              console.log(chalk.cyan('💡 Next steps:'));
+              // Handle special case where agent name already includes 'codemie-' prefix
+              const command = agent.name.startsWith('codemie-') ? agent.name : `codemie-${agent.name}`;
+              console.log(chalk.white(`   Interactive mode:`), chalk.blueBright(command));
+              console.log(chalk.white(`   Single task:`), chalk.blueBright(`${command} --task "your task"`));
+              console.log();
+            }
           } catch (error: unknown) {
             spinner.fail(`Failed to install ${agent.displayName}`);
             throw error;

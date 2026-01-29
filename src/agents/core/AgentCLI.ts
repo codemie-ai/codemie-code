@@ -11,6 +11,7 @@ import { ClaudePluginMetadata } from '../plugins/claude/claude.plugin.js';
 import { CodeMieCodePluginMetadata } from '../plugins/codemie-code.plugin.js';
 import { GeminiPluginMetadata } from '../plugins/gemini/gemini.plugin.js';
 import { OpenCodePluginMetadata } from '../plugins/opencode/opencode.plugin.js';
+import {ClaudeAcpPluginMetadata} from "../plugins/claude/claude-acp.plugin.js";
 
 /**
  * Universal CLI builder for any agent
@@ -334,6 +335,7 @@ export class AgentCLI {
       [BUILTIN_AGENT_NAME]: CodeMieCodePluginMetadata,
       'gemini': GeminiPluginMetadata,
       'opencode': OpenCodePluginMetadata,
+      'claude-acp': ClaudeAcpPluginMetadata,
     };
     return metadataMap[this.adapter.name];
   }

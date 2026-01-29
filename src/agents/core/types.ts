@@ -3,6 +3,12 @@
  */
 
 /**
+ * Post-install hint - simple text lines shown after installation
+ * Used to show custom setup instructions (e.g., IDE configuration)
+ */
+export type PostInstallHint = string;
+
+/**
  * Mapping types for flag transformation
  */
 export type FlagMappingType = 'flag' | 'subcommand' | 'positional';
@@ -212,6 +218,19 @@ export interface AgentMetadata {
   // === Runtime Behavior ===
   /** Declarative mapping for multiple CLI flags */
   flagMappings?: FlagMappings;
+
+  /**
+   * Silent mode - skip welcome/goodbye messages in console
+   * Used by ACP adapters where stdout is JSON-RPC protocol
+   */
+  silentMode?: boolean;
+
+  /**
+   * Custom post-install hints for IDE configuration
+   * Used instead of default "Interactive mode" / "Single task" hints
+   * For ACP adapters, shows IDE configuration examples
+   */
+  postInstallHints?: PostInstallHint[];
 
   lifecycle?: AgentLifecycle;
 

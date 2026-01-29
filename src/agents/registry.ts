@@ -1,4 +1,5 @@
 import { ClaudePlugin } from './plugins/claude/claude.plugin.js';
+import { ClaudeAcpPlugin } from './plugins/claude/claude-acp.plugin.js';
 import { CodeMieCodePlugin } from './plugins/codemie-code.plugin.js';
 import { GeminiPlugin } from './plugins/gemini/gemini.plugin.js';
 import { OpenCodePlugin } from './plugins/opencode/index.js';
@@ -27,6 +28,7 @@ export class AgentRegistry {
 
     AgentRegistry.registerPlugin(new CodeMieCodePlugin());
     AgentRegistry.registerPlugin(new ClaudePlugin());
+    AgentRegistry.registerPlugin(new ClaudeAcpPlugin());
     AgentRegistry.registerPlugin(new GeminiPlugin());
     AgentRegistry.registerPlugin(new OpenCodePlugin());
 

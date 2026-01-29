@@ -144,7 +144,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     if ('checkVersionCompatibility' in this && typeof (this as any).checkVersionCompatibility === 'function') {
       const compat = await (this as any).checkVersionCompatibility();
 
-      if (compat.isNewer) {
+      if (compat.isNewer && !this.metadata.silentMode) {
         // User is running a newer (untested) version
         console.log();
         console.log(chalk.yellow(`⚠️  WARNING: You are running ${this.displayName} v${compat.installedVersion}`));
@@ -199,29 +199,31 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     // Lifecycle hook: session start (provider-aware)
     await executeOnSessionStart(this, this.metadata.lifecycle, this.metadata.name, sessionId, env);
 
-    // Show welcome message with session info
-    const profileName = env.CODEMIE_PROFILE_NAME || 'default';
-    const provider = env.CODEMIE_PROVIDER || 'unknown';
-    const cliVersion = env.CODEMIE_CLI_VERSION || 'unknown';
-    const model = env.CODEMIE_MODEL || 'unknown';
-    const codeMieUrl = env.CODEMIE_URL;
+    // Show welcome message with session info (skip in silent mode)
+    if (!this.metadata.silentMode) {
+      const profileName = env.CODEMIE_PROFILE_NAME || 'default';
+      const provider = env.CODEMIE_PROVIDER || 'unknown';
+      const cliVersion = env.CODEMIE_CLI_VERSION || 'unknown';
+      const model = env.CODEMIE_MODEL || 'unknown';
+      const codeMieUrl = env.CODEMIE_URL;
 
-    // Display ASCII logo with configuration
-    console.log(
-      renderProfileInfo({
-        profile: profileName,
-        provider,
-        model,
-        codeMieUrl,
-        agent: this.metadata.name,
-        cliVersion,
-        sessionId
-      })
-    );
+      // Display ASCII logo with configuration
+      console.log(
+        renderProfileInfo({
+          profile: profileName,
+          provider,
+          model,
+          codeMieUrl,
+          agent: this.metadata.name,
+          cliVersion,
+          sessionId
+        })
+      );
 
-    // Show random welcome message
-    console.log(chalk.cyan.bold(getRandomWelcomeMessage()));
-    console.log(''); // Empty line for spacing
+      // Show random welcome message
+      console.log(chalk.cyan.bold(getRandomWelcomeMessage()));
+      console.log(''); // Empty line for spacing
+    }
 
     // Transform CODEMIE_* → agent-specific env vars (based on envMapping)
     env = this.transformEnvVars(env);
@@ -391,9 +393,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
           process.off('SIGINT', sigintHandler);
           process.off('SIGTERM', sigtermHandler);
 
-          // Show shutting down message
-          console.log(''); // Empty line for spacing
-          console.log(chalk.yellow('Shutting down...'));
+          // Show shutting down message (skip in silent mode)
+          if (!this.metadata.silentMode) {
+            console.log(''); // Empty line for spacing
+            console.log(chalk.yellow('Shutting down...'));
+          }
 
           // Grace period: wait for any final API calls from the external agent
           // Many agents (Claude, Gemini) send telemetry/session data on shutdown
@@ -416,11 +420,13 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
             await executeAfterRun(this, this.metadata.lifecycle, this.metadata.name, code, env);
           }
 
-          // Show goodbye message with random easter egg
-          console.log(chalk.cyan.bold(getRandomGoodbyeMessage()));
-          console.log(''); // Spacing before powered by
-          console.log(chalk.cyan('Powered by AI/Run CodeMie CLI'));
-          console.log(''); // Empty line for spacing
+          // Show goodbye message with random easter egg (skip in silent mode for ACP)
+          if (!this.metadata.silentMode) {
+            console.log(chalk.cyan.bold(getRandomGoodbyeMessage()));
+            console.log(''); // Spacing before powered by
+            console.log(chalk.cyan('Powered by AI/Run CodeMie CLI'));
+            console.log(''); // Empty line for spacing
+          }
 
           if (code === 0) {
             resolve();

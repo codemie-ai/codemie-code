@@ -137,6 +137,7 @@ You can also install and use external agents like Claude Code and Gemini.
 
 **Available Agents:**
 - **Claude Code** (`codemie-claude`) - Anthropic's official CLI with advanced code understanding
+- **Claude Code ACP** (`codemie-claude-acp`) - Claude Code for IDE integration via ACP protocol (Zed, JetBrains, Emacs)
 - **Gemini CLI** (`codemie-gemini`) - Google's Gemini for coding tasks
 - **OpenCode** (`codemie-opencode`) - Open-source AI coding assistant with session analytics
 
@@ -154,6 +155,10 @@ codemie-gemini "Implement a REST API"
 # Install OpenCode
 codemie install opencode
 codemie-opencode "Generate unit tests for my service"
+
+# Install Claude Code ACP (for IDE integration)
+codemie install claude-acp
+# Configure in your IDE (see docs/AGENTS.md for details)
 ```
 
 **Version Management:**

@@ -68,6 +68,7 @@ All external agents share the same command pattern:
 ```bash
 # Basic usage
 codemie-claude "message"         # Claude Code agent
+codemie-claude-acp               # Claude Code ACP (invoked by IDEs)
 codemie-gemini "message"         # Gemini CLI agent
 codemie-opencode "message"       # OpenCode agent
 
@@ -75,6 +76,9 @@ codemie-opencode "message"       # OpenCode agent
 codemie-claude health
 codemie-gemini health
 codemie-opencode health
+
+# Note: codemie-claude-acp doesn't have interactive mode or health check
+# It's designed to be invoked by IDEs via ACP protocol
 
 # With configuration overrides
 codemie-claude --model claude-4-5-sonnet --api-key sk-... "review code"
@@ -306,7 +310,9 @@ codemie install <agent>
 
 **Supported Agents:**
 - `claude` - Claude Code (npm-based)
+- `claude-acp` - Claude Code ACP adapter for IDE integration (npm-based)
 - `gemini` - Gemini CLI (npm-based)
+- `opencode` - OpenCode AI assistant (npm-based)
 
 ### `codemie uninstall [agent]`
 
