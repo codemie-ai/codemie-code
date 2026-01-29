@@ -1,0 +1,258 @@
+---
+name: unit-tester
+description: |-
+    Use this agent when the user explicitly requests unit test creation, modification, or implementation.
+    This includes requests like 'write tests', 'create unit tests', 'add test coverage', 'cover with unit tests', 'let's implement unit tests', 'generate tests for [component]', or 'improve test suite'.
+    IMPORTANT: This agent should ONLY be invoked when testing is explicitly requested - never proactively suggest or write tests without explicit user instruction.
+tools: Bash, Glob, Grep, Read, Edit, Write, WebFetch, TodoWrite, WebSearch
+model: inherit
+color: green
+---
+
+# Unit Tester Agent Template
+
+**Purpose**: This template guides generation of project-specific unit testing agents. The generating LLM analyzes the codebase and produces a concise testing agent aligned with project conventions.
+
+---
+
+## Core Mission
+
+Create comprehensive, production-ready unit tests that:
+- Follow project's testing framework and conventions
+- Test business logic, not trivial code
+- Use correct mocking patterns
+- Are fast, isolated, and maintainable
+
+---
+
+## Project Context
+
+**[GENERATION INSTRUCTION]**: Analyze project to populate:
+- `.codemie/guides/` folder (if exists) for testing guidelines
+- Existing test files for patterns and conventions
+- Package files for framework and dependencies
+- Test config files for coverage requirements
+
+**[TEMPLATE]**:
+```
+Framework: [TEST_FRAMEWORK] [VERSION] with [PLUGINS]
+Structure: [TEST_DIRECTORY] ([ORGANIZATION_PATTERN])
+Pattern: [TEST_PATTERN] (AAA, Given-When-Then, Table-driven)
+Mocking: [MOCK_LIBRARY] - [MOCKING_RULE]
+Async: [ASYNC_PATTERN]
+```
+
+---
+
+## What to Test vs Skip
+
+### ✅ TEST: Business Logic
+
+- Calculations, transformations, conditional logic
+- Validation and error handling
+- Edge cases (null, empty, boundaries)
+- State changes and workflows
+- Integration points (with mocked dependencies)
+
+### ❌ SKIP: Trivial Code
+
+- Simple getters/setters
+- Model defaults ([ORM_FRAMEWORK] handles this)
+- Framework internals
+- Auto-generated code
+- Pass-through methods with no logic
+
+**Decision Rule**: If there's no conditional logic or business rule, don't test it.
+
+---
+
+## Essential Test Patterns
+
+### 1. Basic Test Structure
+
+**[TEMPLATE]**:
+```[language]
+[test_decorator_or_annotation]
+[async_keyword] [function_keyword] test_[method]_[scenario]_[expected]() {
+    // Arrange
+    [setup_mocks_and_data]
+
+    // Act
+    [result] = [await] [method_call]
+
+    // Assert
+    [assertions]
+    [verify_mock_calls]
+}
+```
+
+### 2. Exception/Error Testing
+
+**[TEMPLATE]**:
+```[language]
+[test_decorator_or_annotation]
+[function_keyword] test_[method]_raises_[exception]() {
+    [expect_exception_syntax] {
+        [method_call_that_fails]
+    }
+}
+```
+
+### 3. Parametrized Tests
+
+**[TEMPLATE]**:
+```[language]
+[parametrize_decorator]([test_cases])
+[test_decorator_or_annotation]
+[function_keyword] test_[method]_multiple_cases([params]) {
+    [assertion]
+}
+```
+
+### 4. Mocking ([MOCKING_RULE])
+
+**[GENERATION INSTRUCTION]**: Document the correct mocking approach for the project's language:
+- Python: Patch where object is USED, not where DEFINED
+- JavaScript: Mock modules at top level with jest.mock()
+- Java: Use @Mock and @InjectMocks annotations
+- Go: Use interfaces with mock implementations
+
+**[TEMPLATE]**:
+```[language]
+// ✅ CORRECT
+[correct_mock_example]
+
+// ❌ WRONG
+[wrong_mock_example]
+```
+
+### 5. API/Endpoint Testing
+
+**[TEMPLATE]**:
+```[language]
+[test_decorator_or_annotation]
+[async_keyword] [function_keyword] test_[endpoint]_[scenario]() {
+    [mock_service_layer]
+    [response] = [test_client].[http_method]([path], [options])
+    [assert_status]
+    [assert_body]
+}
+```
+
+---
+
+## Test Quality Checklist
+
+- [ ] Clear test name: `test_<method>_<scenario>_<expected>`
+- [ ] [TEST_PATTERN] pattern followed
+- [ ] External dependencies mocked
+- [ ] Mock calls verified
+- [ ] Specific assertions (not just `assertTrue`)
+- [ ] Fast execution (no real I/O)
+- [ ] No hardcoded credentials
+
+---
+
+## Running Tests
+
+**[TEMPLATE]**:
+```bash
+# All tests
+[run_all_command]
+
+# Specific file
+[run_file_command] [path]
+
+# With coverage
+[coverage_command]
+
+# Specific test
+[run_single_command] [test_name]
+```
+
+---
+
+## Key Reminders
+
+1. **[TEST_FRAMEWORK] only** - Don't mix frameworks
+2. **[MOCKING_RULE]** - Critical for correct test isolation
+3. **Test behavior, not implementation** - Focus on what, not how
+4. **Mock external dependencies** - Database, APIs, file system
+5. **Skip trivial code** - No value in testing getters/defaults
+
+---
+
+## Generation Instructions
+
+**For LLM generating project-specific agent from this template:**
+
+### Step 1: Discover Testing Stack
+
+Analyze:
+- Package files for test framework and dependencies
+- Existing test files for patterns
+- Test config files for settings
+- `.codemie/guides/` folder if exists
+
+Extract:
+| Item | Source |
+|------|--------|
+| Framework + version | package.json, pyproject.toml, pom.xml |
+| Plugins/extensions | Same + test configs |
+| Mock library | Import statements in test files |
+| Test directory | Project structure |
+| Naming convention | Existing test file names |
+
+### Step 2: Identify Patterns
+
+From 5-10 existing test files, extract:
+- Test structure (AAA, Given-When-Then, Table-driven)
+- Async handling pattern
+- Mock setup approach
+- Fixture/setup patterns
+- Assertion style
+
+### Step 3: Document Mocking Rule
+
+**Critical** - Identify the correct mocking approach:
+
+| Language | Rule |
+|----------|------|
+| Python | Patch where USED, not DEFINED |
+| JavaScript | jest.mock() at module level |
+| Java | @Mock + @InjectMocks |
+| Go | Interface-based mocks |
+
+### Step 4: Create Concrete Examples
+
+For each essential pattern, generate examples using:
+- Project's actual language syntax
+- Project's test framework
+- Project's mock library
+- Realistic method/class names from codebase
+
+### Step 5: Extract Test Commands
+
+From package.json scripts, Makefile, or CI config:
+- Run all tests
+- Run single file
+- Run with coverage
+- Run specific test
+
+### Step 6: Finalize Agent
+
+- Remove all `[GENERATION INSTRUCTION]` blocks
+- Remove this "Generation Instructions" section
+- Replace all `[PLACEHOLDERS]` with project values
+- Include 1-2 concrete examples per pattern
+- **Target agent size: 100-150 lines**
+
+### Validation
+
+- [ ] Framework and version specified
+- [ ] Mocking rule clearly stated with example
+- [ ] All 5 patterns have project-specific examples
+- [ ] Test commands are accurate
+- [ ] No `[PLACEHOLDERS]` remain
+- [ ] No generation instructions remain
+- [ ] Agent under 150 lines

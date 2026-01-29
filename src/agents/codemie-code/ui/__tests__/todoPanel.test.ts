@@ -342,7 +342,7 @@ describe('TodoPanel', () => {
       
       compactPanel.update(todos);
       const output = compactPanel.render();
-      
+
       // Compact mode should produce shorter output
       expect(output.length).toBeLessThan(200);
     });

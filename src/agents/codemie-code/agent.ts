@@ -20,11 +20,16 @@ import { logger } from '../../utils/logger.js';
 import { sanitizeCookies, sanitizeAuthToken } from '../../utils/security.js';
 import { HookExecutor } from '../../hooks/executor.js';
 import type { HookExecutionContext } from '../../hooks/types.js';
+import type { Skill } from '../../skills/index.js';
+import { extractSkillPatterns } from '../../skills/utils/pattern-matcher.js';
+import type { SkillPattern, SkillWithInventory } from '../../skills/core/types.js';
+import { SkillManager } from '../../skills/core/SkillManager.js';
 
 export class CodeMieAgent {
   private agent: any;
   private config: CodeMieConfig;
   private tools: StructuredTool[];
+  private skills: Skill[];
   private conversationHistory: BaseMessage[] = [];
   private toolCallArgs: Map<string, Record<string, any>> = new Map(); // Store tool args by tool call ID
   private currentExecutionSteps: ExecutionStep[] = [];
@@ -47,18 +52,19 @@ export class CodeMieAgent {
     executionSteps: []
   };
 
-  constructor(config: CodeMieConfig, tools: StructuredTool[]) {
+  constructor(config: CodeMieConfig, tools: StructuredTool[], skills: Skill[] = []) {
     this.config = config;
     this.tools = tools;
+    this.skills = skills;
 
     // Create the appropriate LLM based on provider
     const llm = this.createLLM();
 
-    // Create LangGraph ReAct agent with system prompt
+    // Create LangGraph ReAct agent with system prompt (including skills if loaded)
     this.agent = createReactAgent({
       llm,
       tools: this.tools,
-      messageModifier: getSystemPrompt(config.workingDirectory)
+      messageModifier: getSystemPrompt(config.workingDirectory, this.skills)
     });
 
     // Initialize hook executor if hooks are configured
@@ -465,6 +471,37 @@ export class CodeMieAgent {
         } catch (error) {
           logger.error(`UserPromptSubmit hook failed: ${error}`);
           // Continue execution
+        }
+      }
+
+      // Detect skill patterns in message
+      const patternResult = extractSkillPatterns(message);
+
+      if (patternResult.hasPatterns) {
+        try {
+          // Load skills with inventory
+          const skillsWithInventory = await this.loadDetectedSkills(
+            patternResult.patterns
+          );
+
+          if (skillsWithInventory.length > 0) {
+            // Format and inject as system message
+            const skillContent = this.formatSkillsForInjection(skillsWithInventory);
+
+            const skillSystemMessage = new SystemMessage(
+              `[Skill Invocation Detected]\n\n${skillContent}`
+            );
+            this.conversationHistory.push(skillSystemMessage);
+
+            if (this.config.debug) {
+              logger.debug(
+                `Injected ${skillsWithInventory.length} skills: ${skillsWithInventory.map((s) => s.skill.metadata.name).join(', ')}`
+              );
+            }
+          }
+        } catch (error) {
+          // Non-blocking: Log error but continue
+          logger.warn('Failed to load skills for pattern injection:', error);
         }
       }
 
@@ -1123,5 +1160,52 @@ export class CodeMieAgent {
     if (tokenUsage.estimatedCost) {
       this.stats.estimatedTotalCost += tokenUsage.estimatedCost;
     }
+  }
+
+  /**
+   * Load detected skills with file inventory
+   *
+   * @param patterns - Detected skill patterns
+   * @returns Skills with inventory and formatted content
+   */
+  private async loadDetectedSkills(
+    patterns: SkillPattern[]
+  ): Promise<SkillWithInventory[]> {
+    // Extract unique skill names (preserve order)
+    const skillNames = Array.from(new Set(patterns.map((p) => p.name)));
+
+    // Get skills from manager
+    const manager = SkillManager.getInstance();
+    const skillsWithInventory = await manager.getSkillsByNames(skillNames, {
+      cwd: this.config.workingDirectory,
+      agentName: 'codemie-code',
+    });
+
+    return skillsWithInventory;
+  }
+
+  /**
+   * Format skills for prompt injection
+   *
+   * @param skills - Skills with inventory
+   * @returns Formatted content for system message
+   */
+  private formatSkillsForInjection(skills: SkillWithInventory[]): string {
+    const parts: string[] = [
+      'The user has invoked the following skills. Follow their guidance for this request.',
+      '',
+    ];
+
+    for (const { formattedContent } of skills) {
+      parts.push('---', '', formattedContent, '');
+    }
+
+    parts.push(
+      '---',
+      '',
+      'IMPORTANT: These skills provide specialized knowledge for this task. Prioritize their guidance over general instructions.'
+    );
+
+    return parts.join('\n');
   }
 }

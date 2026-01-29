@@ -7,6 +7,7 @@
 
 import type { FilterConfig } from './filters.js';
 import type { HooksConfiguration } from '../../hooks/types.js';
+import type { SkillsConfig } from '../../skills/index.js';
 
 /**
  * Configuration interface for the CodeMie agent
@@ -56,6 +57,9 @@ export interface CodeMieConfig {
 
   /** Maximum number of times to retry when Stop hook returns exit code 2 (default: 5) */
   maxHookRetries?: number;
+
+  /** Skills configuration */
+  skills?: SkillsConfig;
 }
 
 /**

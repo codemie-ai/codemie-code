@@ -13,11 +13,14 @@ import { CodeMieAgentError } from './types.js';
 import { hasClipboardImage, getClipboardImage } from '../../utils/clipboard.js';
 import { logger } from '../../utils/logger.js';
 import { sanitizeCookies } from '../../utils/security.js';
+import { SkillManager } from '../../skills/index.js';
+import type { Skill } from '../../skills/index.js';
 
 export class CodeMieCode {
   private agent: CodeMieAgent | null = null;
   private config: CodeMieConfig;
   private initializationResult: InitializationResult | null = null;
+  private skills: Skill[] = [];
 
   constructor(workingDir?: string) {
     // Load configuration first - this may throw if config is invalid
@@ -50,8 +53,32 @@ export class CodeMieCode {
         logger.debug(`Created ${tools.length} system tools`);
       }
 
-      // Initialize the agent
-      this.agent = new CodeMieAgent(this.config, tools);
+      // Load skills if enabled
+      if (this.config.skills?.enabled) {
+        try {
+          const manager = SkillManager.getInstance();
+          this.skills = await manager.getSkillsForAgent('codemie-code', {
+            cwd: this.workingDirectory,
+            mode: this.config.skills.mode,
+          });
+
+          if (this.config.debug) {
+            logger.debug(`Loaded ${this.skills.length} skills:`);
+            for (const skill of this.skills) {
+              logger.debug(`  - ${skill.metadata.name} (${skill.source}, priority: ${skill.computedPriority})`);
+            }
+          }
+        } catch (error) {
+          // Non-blocking: Log error but continue without skills
+          logger.warn('Failed to load skills:', error instanceof Error ? error.message : String(error));
+          this.skills = [];
+        }
+      } else if (this.config.debug) {
+        logger.debug('Skills disabled in configuration');
+      }
+
+      // Initialize the agent with skills
+      this.agent = new CodeMieAgent(this.config, tools, this.skills);
 
       this.initializationResult = {
         success: true,

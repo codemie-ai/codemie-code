@@ -1,143 +1,315 @@
+---
 # Testing Patterns
 
-## Quick Summary
+<!--
+GENERATION INSTRUCTIONS:
+1. Identify test framework from dependencies/config
+2. Scan test directory structure and naming patterns
+3. Extract fixture/factory patterns from setup files
+4. Find mocking patterns in existing tests
+5. Locate test database configuration
+6. Extract commands from package.json/Makefile/scripts
+7. Output: 150-300 lines max
+-->
 
-Testing patterns for [PROJECT_NAME] using [TEST_FRAMEWORK]: unit tests, integration tests, fixtures, and mocking.
-
-**Category**: Testing
-**Complexity**: Medium
-**Prerequisites**: [TEST_FRAMEWORK], testing fundamentals
-
----
-
-## 🚨 SIZE LIMIT WARNING
-
-**This generated guide MUST be 200-400 lines maximum.**
-
-**When filling this template**:
-- ✅ Code examples: 5-15 lines (NEVER > 20)
-- ✅ ONE example per pattern
-- ✅ Use file:line references, not full code
-- ✅ Use tables for multiple patterns
-- ❌ NO multiple examples for same pattern
-- ❌ NO verbose explanations
-- ❌ NO copying entire functions
-
-**Validate line count after generation**: `wc -l [this-file]`
-**If > 400 lines**: Condense immediately before continuing!
+**Project**: [Extract from config]
+**Framework**: [Detect: Jest | Pytest | Mocha | Vitest | RSpec | etc.]
+**Coverage Tool**: [Detect: coverage.py | nyc | c8 | etc.]
+**Test Location**: `[Detect tests/ or __tests__/ or spec/]`
 
 ---
 
-## Test Structure
+## Test Organization
+
+<!-- Scan actual test directory structure -->
 
 ```
-tests/
-├── unit/                   Mirror source structure
-│   └── [module]/
-│       └── test_[file].[ext]
-├── integration/
-│   └── test_[feature].[ext]
-└── fixtures/
-    └── [fixture_files]
+[test_root]/
+├── [unit/]                 [Detected structure]
+│   └── [pattern]/
+├── [integration/]          [If exists]
+│   └── [pattern]/
+├── [e2e/]                  [If exists]
+├── [fixtures/factories/]   [Test data location]
+└── [setup files]           [conftest.py, setup.ts, etc.]
 ```
 
-**Naming**: `test_[scenario]_[expected_outcome]`
+### Naming Conventions
+
+| Element | Pattern | Example |
+|---------|---------|---------|
+| Test files | `[detected pattern]` | `[actual example]` |
+| Test functions | `[detected pattern]` | `[actual example]` |
+| Fixture files | `[detected pattern]` | `[actual example]` |
+
+---
+
+## Running Tests
+
+<!-- Extract exact commands from scripts -->
+
+| Action | Command |
+|--------|---------|
+| All tests | `[exact command]` |
+| Unit only | `[command or N/A]` |
+| Integration only | `[command or N/A]` |
+| Single file | `[command pattern]` |
+| Single test | `[command pattern]` |
+| Watch mode | `[command or N/A]` |
+| With coverage | `[command]` |
+| Verbose/debug | `[command with flags]` |
 
 ---
 
 ## Unit Test Pattern
 
-```[language]
-# Source: [test_file:lines]
-[unit_test_example]
+<!-- Extract canonical unit test example -->
+
+```[lang]
+// Source: [file:lines]
+[Extract representative unit test showing framework syntax]
 ```
 
-**Structure**: Arrange → Act → Assert
+### Structure
+
+```[lang]
+// Standard test structure in this codebase:
+[describe/test block] {
+    // Arrange - setup test data
+    // Act - call function under test
+    // Assert - verify result
+}
+```
 
 ---
 
-## Fixtures
+## Fixtures / Test Data
 
-```[language]
-# Source: [conftest_or_setup:lines]
-[fixture_example]
+<!-- Find fixture or factory patterns -->
+
+### Setup Pattern
+
+```[lang]
+// Source: [file:lines]
+[Extract fixture/factory definition]
 ```
 
-**Scopes**: function | class | module | session
+### Using Fixtures
+
+```[lang]
+// Source: [file:lines]
+[Extract fixture usage in test]
+```
+
+### Common Fixtures
+
+| Fixture | Purpose | Location |
+|---------|---------|----------|
+| `[fixture name]` | [What it provides] | `[file:line]` |
+| `[fixture name]` | [What it provides] | `[file:line]` |
+| `[fixture name]` | [What it provides] | `[file:line]` |
 
 ---
 
 ## Mocking
 
-```[language]
-# Source: [test_file:lines]
-[mock_example]
+<!-- Extract mocking patterns used -->
+
+### Mock Syntax
+
+```[lang]
+// Source: [file:lines]
+[Extract mocking example - service, module, or function mock]
 ```
 
-**Mock**: External APIs, database (for unit tests), file system, time
+### What to Mock
+
+| Layer | Mock In Unit Tests | Mock In Integration |
+|-------|-------------------|---------------------|
+| External APIs | ✅ Always | ✅ Usually |
+| Database | ✅ Usually | ❌ Use test DB |
+| Other services | ✅ Yes | Depends |
+| File system | ✅ Yes | Depends |
+| Time/Date | ✅ When needed | When needed |
+
+### Mock Patterns in This Codebase
+
+| What | How | Source |
+|------|-----|--------|
+| `[Service/Module]` | `[mock syntax]` | `[file:line]` |
+| `[External API]` | `[mock syntax]` | `[file:line]` |
+| `[Database/Repository]` | `[mock syntax]` | `[file:line]` |
+
+---
+
+## Database Testing
+
+<!-- Find test database configuration -->
+
+### Setup
+
+**Test DB**: `[separate DB / transactions / in-memory / mocked]`
+
+```[lang]
+// Source: [file:lines]
+[Extract test DB setup/connection]
+```
+
+### Isolation Pattern
+
+```[lang]
+// Source: [file:lines]
+[Extract transaction rollback or cleanup pattern]
+```
+
+### Seeding Test Data
+
+```[lang]
+// Source: [file:lines]
+[Extract test data seeding pattern]
+```
+
+---
+
+## API / Endpoint Testing
+
+<!-- If web app, find HTTP testing patterns -->
+
+### Test Client Setup
+
+```[lang]
+// Source: [file:lines]
+[Extract test client/supertest/httpx setup]
+```
+
+### Request Pattern
+
+```[lang]
+// Source: [file:lines]
+[Extract API test example]
+```
+
+---
+
+## Async Testing
+
+<!-- If async code exists, find testing pattern -->
+
+```[lang]
+// Source: [file:lines]
+[Extract async test example]
+```
+
+**Pattern**: `[async/await | done callback | returns promise]`
 
 ---
 
 ## Parameterized Tests
 
-```[language]
-# Source: [test_file:lines]
-[parameterized_example]
-```
+<!-- Find data-driven test patterns -->
 
----
-
-## Integration Tests
-
-```[language]
-# Source: [test_file:lines]
-[integration_test_example]
-```
-
-**Characteristics**: Multiple components, real dependencies (test DB)
-
----
-
-## Test Commands
-
-```bash
-# Run all tests
-[run_all]
-
-# Run specific file
-[run_file]
-
-# Run with coverage
-[coverage]
+```[lang]
+// Source: [file:lines]
+[Extract parameterized/table-driven test]
 ```
 
 ---
 
 ## Coverage
 
-**Targets**:
-- Overall: [X]%
-- Critical paths: [Y]%
+<!-- Extract coverage configuration -->
 
-**Focus on**: Business logic, error handling, edge cases
+### Configuration
+
+**Config file**: `[jest.config / .coveragerc / nyc config]`
+
+| Setting | Value |
+|---------|-------|
+| Threshold | `[percentage or N/A]` |
+| Include | `[paths/patterns]` |
+| Exclude | `[paths/patterns]` |
+
+### Generate Report
+
+```bash
+# Generate coverage report
+[coverage command]
+
+# View HTML report (if available)
+[open coverage/index.html or equivalent]
+```
 
 ---
 
-## Best Practices
+## Test Environment
 
-| ✅ DO | ❌ DON'T |
+<!-- Find environment setup for tests -->
+
+### Environment Variables
+
+```[lang]
+// Source: [file:lines] or [.env.test]
+[Extract test environment config]
+```
+
+### Setup/Teardown
+
+```[lang]
+// Source: [file:lines]
+[Extract global setup/teardown if exists]
+```
+
+---
+
+## Writing New Tests
+
+### Checklist
+
+1. Create test file: `[path pattern]`
+2. Import test utilities: `[common imports]`
+3. Setup fixtures needed
+4. Follow naming: `[test naming pattern]`
+5. Run to verify: `[run single test command]`
+
+### Template
+
+```[lang]
+// Starter template for new test file
+[Extract or construct minimal test file template]
+```
+
+---
+
+## Common Patterns
+
+| Pattern | When to Use | Example |
+|---------|-------------|---------|
+| `[beforeEach/setUp]` | Reset state per test | `[file:line]` |
+| `[afterAll/teardown]` | Cleanup resources | `[file:line]` |
+| `[test.skip/xtest]` | Temporarily disable | - |
+| `[test.only/fit]` | Run single test (debug) | - |
+
+---
+
+## Troubleshooting
+
+| Issue | Solution |
 |-------|----------|
-| One assertion per test | Multiple scenarios in one test |
-| Descriptive test names | `test1`, `test2` |
-| Arrange-Act-Assert | Mixed concerns |
-| Mock external dependencies | Real APIs in unit tests |
-| Keep tests fast | Long-running tests |
+| Tests interfering | Check isolation, add cleanup |
+| Async timeout | Increase timeout or check await |
+| Mock not working | Verify mock path matches import |
+| DB state issues | Check transaction rollback |
 
 ---
 
-## References
+## Quick Reference
 
-- **Tests**: `[test_directory]/`
-- **Fixtures**: `[fixture_location]`
+| Need | Location |
+|------|----------|
+| Test config | `[config file path]` |
+| Fixtures | `[fixtures path]` |
+| Factories | `[factories path]` |
+| Test utilities | `[helpers/utils path]` |
+| Coverage config | `[config path]` |
 
 ---

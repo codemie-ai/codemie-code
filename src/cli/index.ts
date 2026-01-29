@@ -18,6 +18,7 @@ import { createWorkflowCommand } from './commands/workflow.js';
 import { createProfileCommand } from './commands/profile/index.js';
 import { createAnalyticsCommand } from './commands/analytics/index.js';
 import { createHookCommand } from './commands/hook.js';
+import { createSkillCommand } from './commands/skill.js';
 import { FirstTimeExperience } from './first-time.js';
 import chalk from 'chalk';
 import { readFileSync } from 'fs';
@@ -55,6 +56,7 @@ program.addCommand(createVersionCommand());
 program.addCommand(createWorkflowCommand());
 program.addCommand(createAnalyticsCommand());
 program.addCommand(createHookCommand());
+program.addCommand(createSkillCommand());
 
 // Check for --task option before parsing commands
 const taskIndex = process.argv.indexOf('--task');

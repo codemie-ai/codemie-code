@@ -144,8 +144,8 @@ export async function fetchCodeMieUserInfo(
   const userInfo = JSON.parse(response.data) as CodeMieUserInfo;
 
   // Validate response structure
-  if (!userInfo || !Array.isArray(userInfo.applications)) {
-    throw new Error('Invalid user info response: missing applications array');
+  if (!userInfo || !Array.isArray(userInfo.applications) || !Array.isArray(userInfo.applicationsAdmin)) {
+    throw new Error('Invalid user info response: missing applications arrays');
   }
 
   return userInfo;

@@ -44,14 +44,11 @@ This document references detailed guides stored in `.codemie/guides/`. Key refer
 
 **Standards & Workflows**:
 - [Git Workflow]: .codemie/guides/standards/git-workflow.md
+- [Code Quality]: .codemie/guides/standards/code-quality.md
 
-**API & Integration**:
-- [API Patterns]: .codemie/guides/api/api-patterns.md
+**Integration & Security**:
 - [External Integrations]: .codemie/guides/integration/external-integrations.md
-
-**Security & Data**:
 - [Security Practices]: .codemie/guides/security/security-practices.md
-- [Database Patterns]: .codemie/guides/data/database-patterns.md
 
 ---
 
@@ -75,16 +72,16 @@ This document references detailed guides stored in `.codemie/guides/`. Key refer
 
 | Keywords | Complexity | Load Guide (P0=Required) | Also Load (P1=Optional) |
 |----------|-----------|--------------------------|-------------------------|
-| **plugin, registry, agent, adapter** | Medium-High | .codemie/guides/api/api-patterns.md | .codemie/guides/architecture/layered-architecture.md |
-| **architecture, layer, structure** | Medium | .codemie/guides/architecture/layered-architecture.md | .codemie/guides/architecture/project-structure.md |
+| **plugin, registry, agent, adapter** | Medium-High | .codemie/guides/architecture/architecture.md | .codemie/guides/integration/external-integrations.md |
+| **architecture, layer, structure, pattern** | Medium | .codemie/guides/architecture/architecture.md | .codemie/guides/development/development-practices.md |
 | **test, vitest, mock, coverage** | Medium | .codemie/guides/testing/testing-patterns.md | .codemie/guides/development/development-practices.md |
 | **error, exception, validation** | Medium | .codemie/guides/development/development-practices.md | .codemie/guides/security/security-practices.md |
 | **security, sanitize, credential** | High | .codemie/guides/security/security-practices.md | .codemie/guides/development/development-practices.md |
-| **provider, sso, bedrock, litellm** | Medium-High | .codemie/guides/api/api-patterns.md | .codemie/guides/integration/external-integrations.md |
-| **cli, command, commander** | Medium | .codemie/guides/architecture/layered-architecture.md | .codemie/guides/architecture/project-structure.md |
-| **workflow, template, ci/cd** | Medium | .codemie/guides/integration/external-integrations.md | .codemie/guides/standards/git-workflow.md |
-| **database, jsonl, metrics, analytics** | Medium | .codemie/guides/data/database-patterns.md | .codemie/guides/development/development-practices.md |
-| **commit, branch, pr, git** | Medium | .codemie/guides/standards/git-workflow.md | - |
+| **provider, sso, bedrock, litellm, langgraph** | Medium-High | .codemie/guides/integration/external-integrations.md | .codemie/guides/architecture/architecture.md |
+| **cli, command, commander** | Medium | .codemie/guides/architecture/architecture.md | .codemie/guides/development/development-practices.md |
+| **workflow, ci/cd, github, gitlab** | Medium | .codemie/guides/standards/git-workflow.md | - |
+| **lint, eslint, format, code quality** | Simple | .codemie/guides/standards/code-quality.md | - |
+| **commit, branch, pr, git** | Simple | .codemie/guides/standards/git-workflow.md | - |
 
 **Guide Path**: All guides in `.codemie/guides/<category>/`
 
@@ -234,15 +231,15 @@ logger.debug('Processing request'); // [DEBUG] [claude] [session-id] [work] Proc
 
 | Layer | Responsibility | Example Path | Related Guide |
 |-------|----------------|--------------|---------------|
-| **CLI** | User interface, Commander.js commands | `src/cli/commands/` | .codemie/guides/architecture/layered-architecture.md |
-| **Registry** | Plugin discovery, routing | `src/agents/registry.ts` | .codemie/guides/api/api-patterns.md |
-| **Plugin** | Concrete implementations (agents, providers) | `src/agents/plugins/claude/` | .codemie/guides/api/api-patterns.md |
-| **Core** | Base classes, interfaces, contracts | `src/agents/core/` | .codemie/guides/architecture/layered-architecture.md |
+| **CLI** | User interface, Commander.js commands | `src/cli/commands/` | .codemie/guides/architecture/architecture.md |
+| **Registry** | Plugin discovery, routing | `src/agents/registry.ts` | .codemie/guides/architecture/architecture.md |
+| **Plugin** | Concrete implementations (agents, providers) | `src/agents/plugins/claude/` | .codemie/guides/architecture/architecture.md |
+| **Core** | Base classes, interfaces, contracts | `src/agents/core/` | .codemie/guides/architecture/architecture.md |
 | **Utils** | Shared utilities (errors, logging, security) | `src/utils/` | .codemie/guides/development/development-practices.md |
 
 **Flow**: `CLI → Registry → Plugin → Core → Utils` (Never skip layers)
 
-**Detail**: .codemie/guides/architecture/layered-architecture.md
+**Detail**: .codemie/guides/architecture/architecture.md
 
 ### Security Patterns (MANDATORY)
 
@@ -270,29 +267,13 @@ const retrieved = await store.retrieveSSOCredentials(baseUrl);
 
 ### Process Patterns (npm, git, exec)
 
-| Operation | Function | Import From | Notes |
-|-----------|----------|-------------|-------|
-| Execute command | `exec(command, args, options)` | `src/utils/processes.ts` | Base execution, returns ExecResult |
-| Check command exists | `commandExists(command)` | `src/utils/processes.ts` | Returns boolean |
-| Get command path | `getCommandPath(command)` | `src/utils/processes.ts` | Returns absolute path or null |
-| Install npm package | `installGlobal(packageName)` | `src/utils/processes.ts` | Handles npm install -g |
-| Uninstall npm package | `uninstallGlobal(packageName)` | `src/utils/processes.ts` | Handles npm uninstall -g |
-| Check npm package | `listGlobal(packageName)` | `src/utils/processes.ts` | Returns boolean |
-| Get npm version | `getVersion()` | `src/utils/processes.ts` | Returns npm version |
-| Run with npx | `npxRun(command, args)` | `src/utils/processes.ts` | Handles npx execution |
-| Detect git branch | `detectGitBranch(cwd)` | `src/utils/processes.ts` | Returns current branch |
-
-**Error Handling**:
-```typescript
-import { installGlobal, parseNpmError } from 'src/utils/processes.ts';
-
-try {
-  await installGlobal('package-name');
-} catch (error) {
-  const npmError = parseNpmError(error, 'Failed to install package');
-  // npmError includes code (NETWORK_ERROR, PERMISSION_ERROR, etc.) and hints
-}
-```
+| Operation | Function | Import From |
+|-----------|----------|-------------|
+| Execute command | `exec(command, args, options)` | `src/utils/processes.ts` |
+| Check command exists | `commandExists(command)` | `src/utils/processes.ts` |
+| Install npm package | `installGlobal(packageName)` | `src/utils/processes.ts` |
+| Run with npx | `npxRun(command, args)` | `src/utils/processes.ts` |
+| Detect git branch | `detectGitBranch(cwd)` | `src/utils/processes.ts` |
 
 **Detail**: .codemie/guides/development/development-practices.md
 
@@ -406,10 +387,10 @@ codemie-code health  # Test built-in agent
 
 | Component | Path | Purpose | Guide |
 |-----------|------|---------|-------|
-| **CLI Commands** | `src/cli/commands/` | User interface (setup, doctor, install, etc.) | .codemie/guides/architecture/layered-architecture.md |
-| **Agent System** | `src/agents/` | Plugin-based agent management (registry, core, plugins) | .codemie/guides/api/api-patterns.md |
+| **CLI Commands** | `src/cli/commands/` | User interface (setup, doctor, install, etc.) | .codemie/guides/architecture/architecture.md |
+| **Agent System** | `src/agents/` | Plugin-based agent management (registry, core, plugins) | .codemie/guides/architecture/architecture.md |
 | **Provider System** | `src/providers/` | LLM provider integrations (OpenAI, Bedrock, SSO, LiteLLM) | .codemie/guides/integration/external-integrations.md |
-| **Analytics** | `src/analytics/` | Usage tracking and metrics (JSONL-based) | .codemie/guides/data/database-patterns.md |
+| **Analytics** | `src/analytics/` | Usage tracking and metrics (JSONL-based) | .codemie/guides/development/development-practices.md |
 | **Workflows** | `src/workflows/` | CI/CD workflow templates (GitHub, GitLab) | .codemie/guides/integration/external-integrations.md |
 | **Utilities** | `src/utils/` | Shared utilities (errors, logging, security, processes) | .codemie/guides/development/development-practices.md |
 | **Configuration** | `src/env/` | Environment and profile management | .codemie/guides/development/development-practices.md |
@@ -441,7 +422,7 @@ codemie-code health  # Test built-in agent
 - Open/Closed principle (extend via plugins, no core modification)
 - Testability (each layer tested independently)
 
-**Detail**: .codemie/guides/architecture/layered-architecture.md
+**Detail**: .codemie/guides/architecture/architecture.md
 
 ---
 

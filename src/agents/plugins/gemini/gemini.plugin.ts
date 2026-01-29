@@ -72,7 +72,7 @@ const metadata = {
      * - Notification → PermissionRequest (Gemini's notification system)
      *
      * Unsupported events (silently ignored by router):
-     * - BeforeAgent, BeforeModel, AfterModel, BeforeToolSelection, BeforeTool, AfterTool
+     * - BeforeModel, AfterModel, BeforeToolSelection, BeforeTool, AfterTool
      */
     eventNameMapping: {
       // Direct mappings (same name)
@@ -82,6 +82,7 @@ const metadata = {
       // Renamed mappings
       'PreCompress': 'PreCompact',      // Gemini's PreCompress = Claude's PreCompact
       'AfterAgent': 'Stop',             // Gemini's AfterAgent = Claude's Stop
+      'BeforeAgent': 'UserPromptSubmit', // Gemini's BeforeAgent = Claude's UserPromptSubmit
       'Notification': 'PermissionRequest'  // Gemini's Notification = Claude's PermissionRequest
     }
   }
@@ -123,9 +124,6 @@ export const GeminiPluginMetadata: AgentMetadata = {
           },
           tools: {
             enableHooks: true
-          },
-          hooks: {
-            enabled: true
           }
         }
       );

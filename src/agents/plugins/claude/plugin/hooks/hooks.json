@@ -56,6 +56,17 @@
         ]
       }
     ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "codemie hook",
+            "timeout": 2
+          }
+        ]
+      }
+    ],
     "PreCompact": [
       {
         "hooks": [

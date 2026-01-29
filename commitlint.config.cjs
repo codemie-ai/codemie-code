@@ -39,6 +39,7 @@ module.exports = {
         'utils', // Utility functions
         'deps', // Dependencies
         'tests', // Test infrastructure
+        'skills', // Skills system
       ],
     ],
     // Scope is completely optional (no warning)

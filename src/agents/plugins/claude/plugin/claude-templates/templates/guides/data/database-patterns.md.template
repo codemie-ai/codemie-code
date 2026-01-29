@@ -1,168 +1,248 @@
+---
 # Database Patterns
 
-## Quick Summary
+<!--
+GENERATION INSTRUCTIONS:
+1. Detect ORM/query builder/raw SQL approach
+2. Scan models/entities for relationships
+3. Extract actual query patterns from repositories/services
+4. Find transaction usage examples
+5. Locate migration files and commands
+6. Output: 150-300 lines max
+-->
 
-Database patterns for [PROJECT_NAME]: models, queries, transactions, and migrations using [ORM] with [DATABASE].
-
-**Category**: Data
-**Complexity**: Medium-High
-**Prerequisites**: SQL, [ORM], [DATABASE]
-
----
-
-## 🚨 SIZE LIMIT WARNING
-
-**This generated guide MUST be 200-400 lines maximum.**
-
-**When filling this template**:
-- ✅ Code examples: 5-15 lines (NEVER > 20)
-- ✅ ONE example per pattern
-- ✅ Use file:line references, not full code
-- ✅ Use tables for multiple patterns
-- ❌ NO multiple examples for same pattern
-- ❌ NO verbose explanations
-- ❌ NO copying entire functions
-
-**Validate line count after generation**: `wc -l [this-file]`
-**If > 400 lines**: Condense immediately before continuing!
+**Project**: [Extract from config]
+**Database**: [Detect: PostgreSQL | MySQL | MongoDB | SQLite | etc.]
+**Data Access**: [Detect: ORM (name) | Query Builder | Raw SQL | Mixed]
+**Models Location**: `[Detect path]`
 
 ---
 
-## Connection Configuration
+## Connection Setup
 
-```[language]
-# Source: [file:lines]
-[connection_config]
+<!-- Extract actual connection configuration -->
+
+```[lang]
+// Source: [file:lines]
+[Extract connection/pool configuration]
 ```
 
-**Connection String**: `[database]://[user]:[pass]@[host]:[port]/[db]`
+**Environment Variables**:
+| Variable | Purpose |
+|----------|---------|
+| `[DB_HOST/DATABASE_URL]` | [Connection string or host] |
+| `[DB_NAME]` | [Database name] |
+| `[DB_POOL_SIZE]` | [Pool size if configured] |
 
 ---
 
-## Model Definition
+## Data Access Pattern
 
-```[language]
-# Source: [file:lines]
-[model_example]
+<!-- Identify how this codebase accesses data -->
+
+**Pattern**: [Detect: Repository | Active Record | DAO | Direct ORM | Service Layer]
+
+```[lang]
+// Source: [file:lines]
+[Extract canonical data access example - the PRIMARY pattern used]
 ```
 
-**Relationships**: [Describe key relationships]
+**To add new data access:**
+1. Create in `[detected path]`
+2. Follow pattern: `[detected naming convention]`
+3. Inject/import via `[detected DI or import pattern]`
 
 ---
 
-## CRUD Operations
+## Entity/Model Definition
 
-### Create
+<!-- Extract representative model showing conventions -->
 
-```[language]
-# Source: [file:lines]
-[create_example]
+```[lang]
+// Source: [file:lines]
+[Extract one model with relationships, validations, typical fields]
 ```
 
-### Read
+**Conventions:**
+| Aspect | Convention |
+|--------|------------|
+| Table naming | `[singular/plural, snake_case/PascalCase]` |
+| Primary key | `[id/uuid/_id pattern]` |
+| Timestamps | `[created_at/createdAt, updated_at/updatedAt]` |
+| Soft delete | `[deleted_at field or N/A]` |
 
-```[language]
-# Source: [file:lines]
-[read_example]
+---
+
+## Relationships
+
+<!-- Scan models and document relationship patterns -->
+
+```
+[EntityA] ──1:N──► [EntityB] ──N:M──► [EntityC]
+                       │
+                   1:1─┴─► [EntityD]
 ```
 
-### Update
+| Relationship | Implementation | Source |
+|--------------|----------------|--------|
+| One-to-Many | `[syntax used]` | `[file:line]` |
+| Many-to-Many | `[syntax used]` | `[file:line]` |
+| One-to-One | `[syntax used]` | `[file:line]` |
 
-```[language]
-# Source: [file:lines]
-[update_example]
+---
+
+## Query Patterns
+
+<!-- Extract actual query patterns used in codebase -->
+
+### Basic Operations
+
+| Operation | Pattern | Source |
+|-----------|---------|--------|
+| Find by ID | `[extract syntax]` | `[file:line]` |
+| Find many | `[extract syntax]` | `[file:line]` |
+| Create | `[extract syntax]` | `[file:line]` |
+| Update | `[extract syntax]` | `[file:line]` |
+| Delete | `[extract syntax]` | `[file:line]` |
+
+### Filtering & Search
+
+```[lang]
+// Source: [file:lines]
+[Extract example with WHERE conditions, filtering]
 ```
 
-### Delete
+### Pagination
 
-```[language]
-# Source: [file:lines]
-[delete_example]
+```[lang]
+// Source: [file:lines]
+[Extract pagination implementation]
+```
+
+**Type**: [Offset-based | Cursor-based | Keyset]
+**Params**: `[page/limit or cursor/take]`
+
+### Complex Query Example
+
+```[lang]
+// Source: [file:lines]
+[Extract query with joins, aggregations, or subqueries if exists]
 ```
 
 ---
 
 ## Transactions
 
-```[language]
-# Source: [file:lines]
-[transaction_example]
+<!-- Find transaction usage in codebase -->
+
+```[lang]
+// Source: [file:lines]
+[Extract transaction pattern]
 ```
 
-**When to Use**:
-- Multiple related writes
-- Data consistency requirements
+**Transaction boundaries managed at**: `[Service layer | Repository | Controller]`
 
-**Rules**:
-- Keep short
-- Avoid external API calls in transactions
-- Handle rollback
+**Rules in this codebase:**
+- [Extract or infer transaction conventions]
+- [When transactions are used]
 
 ---
 
-## Pagination
+## Eager Loading / N+1 Prevention
 
-```[language]
-# Source: [file:lines]
-[pagination_example]
+<!-- Find include/join/populate patterns -->
+
+```[lang]
+// Source: [file:lines]
+[Extract eager loading example]
 ```
 
-**Pattern**: Offset-based | Cursor-based
-
----
-
-## N+1 Prevention
-
-```[language]
-# Problem: N+1
-[n_plus_1_problem]
-
-# Solution: Eager loading
-[n_plus_1_solution]
-```
+**Syntax**: `[include/populate/joinedLoad/with - whatever ORM uses]`
 
 ---
 
 ## Migrations
 
-```bash
-# Create migration
-[create_migration]
+<!-- Extract exact commands from package.json, Makefile, or docs -->
 
-# Run migrations
-[run_migrations]
+| Action | Command |
+|--------|---------|
+| Create migration | `[exact command]` |
+| Run pending | `[exact command]` |
+| Rollback last | `[exact command]` |
+| Check status | `[exact command]` |
 
-# Rollback
-[rollback_migration]
+**Migrations location**: `[path]`
+
+**Naming convention**: `[timestamp_description | sequential | etc.]`
+
+```[lang]
+// Source: [file:lines]
+[Extract example migration structure]
 ```
 
-**Rules**:
-- Always include rollback
-- Test on copy of prod data
-- Never modify existing migrations
+---
+
+## Seeding / Fixtures
+
+<!-- Find seed data patterns if they exist -->
+
+| Action | Command |
+|--------|---------|
+| Run seeds | `[command or N/A]` |
+| Reset + seed | `[command or N/A]` |
+
+**Seeds location**: `[path or N/A]`
 
 ---
 
 ## Raw Queries
 
-```[language]
-# ALWAYS parameterized - Source: [file:lines]
-[parameterized_query]
+<!-- Find if/how raw SQL is used -->
 
-# NEVER string interpolation (SQL injection!)
-[bad_query_example]
+**Used for**: [Complex reports | Bulk operations | Not used | etc.]
+
+```[lang]
+// Source: [file:lines] - ALWAYS parameterized
+[Extract parameterized raw query example]
 ```
+
+⚠️ **Never**: String interpolation → SQL injection risk
 
 ---
 
-## Best Practices
+## Error Handling
+
+<!-- Find database error handling patterns -->
+
+| Error Type | Handling | Source |
+|------------|----------|--------|
+| Not found | `[throw/return pattern]` | `[file:line]` |
+| Duplicate key | `[catch/handle pattern]` | `[file:line]` |
+| Connection error | `[retry/fail pattern]` | `[file:line]` |
+
+---
+
+## Conventions Summary
 
 | ✅ DO | ❌ DON'T |
 |-------|----------|
-| Use parameterized queries | String interpolation in SQL |
-| Close connections | Leave connections open |
-| Use transactions for multi-step writes | Individual commits |
-| Add indexes to queried columns | Index everything |
-| Eager load when needed | Lazy load always (N+1) |
+| Use `[detected data access pattern]` | Direct DB calls in `[wrong layer]` |
+| `[eager load syntax]` for relations | Lazy load in loops (N+1) |
+| Parameterized queries | String interpolation |
+| Transactions for multi-writes | Individual saves for related data |
+| `[soft delete if used]` | Hard delete `[if soft delete is convention]` |
+
+---
+
+## Quick Reference
+
+| Need | Location | Pattern |
+|------|----------|---------|
+| Models/Entities | `[path]` | `[naming]` |
+| Repositories/DAOs | `[path]` | `[naming]` |
+| Migrations | `[path]` | `[naming]` |
+| Seeds | `[path]` | `[naming]` |
+| DB Config | `[path]` | - |
 
 ---

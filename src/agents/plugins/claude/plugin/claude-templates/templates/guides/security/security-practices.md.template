@@ -1,170 +1,295 @@
+---
 # Security Practices
 
-## Quick Summary
+<!--
+GENERATION INSTRUCTIONS:
+1. Find auth middleware/guards and extract flow
+2. Scan for role/permission checks and document model
+3. Locate validation schemas at API boundaries
+4. Check for security middleware (helmet, cors, rate-limit)
+5. Find secrets loading pattern (env, vault, etc.)
+6. Identify security-sensitive operations and their protections
+7. Output: 150-300 lines max
+-->
 
-Security patterns for [PROJECT_NAME]: authentication, authorization, input validation, and secrets management.
-
-**Category**: Security
-**Complexity**: High
-**Prerequisites**: OWASP Top 10, [AUTH_METHOD]
-
----
-
-## 🚨 SIZE LIMIT WARNING
-
-**This generated guide MUST be 200-400 lines maximum.**
-
-**When filling this template**:
-- ✅ Code examples: 5-15 lines (NEVER > 20)
-- ✅ ONE example per pattern
-- ✅ Use file:line references, not full code
-- ✅ Use tables for multiple patterns
-- ❌ NO multiple examples for same pattern
-- ❌ NO verbose explanations
-- ❌ NO copying entire functions
-
-**Validate line count after generation**: `wc -l [this-file]`
-**If > 400 lines**: Condense immediately before continuing!
+**Project**: [Extract from config]
+**Auth Method**: [Detect: JWT | Session | OAuth2 | API Key | None]
+**Auth Library**: [Detect: passport, jose, next-auth, etc.]
 
 ---
 
-## Authentication
+## Authentication Flow
 
-### Pattern
+<!-- Extract actual auth implementation -->
 
-```[language]
-# Source: [file:lines]
-[auth_pattern]
+### How Auth Works
+
+```
+[Request] → [Auth Middleware] → [Token/Session Validation] → [User Context]
+                  │
+                  ▼ (on failure)
+             401 Unauthorized
 ```
 
-**Method**: [JWT / OAuth2 / API Key / Session]
-**Token Storage**: [Where tokens are stored]
-**Expiration**: [Token lifetime]
+### Implementation
+
+```[lang]
+// Source: [file:lines]
+[Extract auth middleware/guard usage]
+```
+
+### Token/Session Details
+
+| Aspect | Value |
+|--------|-------|
+| Type | `[JWT / Session / API Key]` |
+| Storage | `[Header: Bearer / Cookie / Query]` |
+| Expiration | `[duration or config location]` |
+| Refresh | `[mechanism if exists]` |
+
+### Protect a Route
+
+```[lang]
+// Apply auth to new endpoints like this:
+[Extract exact syntax for protecting routes]
+```
 
 ---
 
 ## Authorization
 
-### Pattern
+<!-- Find permission/role checking patterns -->
 
-```[language]
-# Source: [file:lines]
-[authz_pattern]
+### Permission Model
+
+**Type**: [RBAC | ABAC | Simple roles | Custom]
+
+| Role/Permission | Access Level | Defined In |
+|-----------------|--------------|------------|
+| `[role/permission]` | [What it allows] | `[file:line]` |
+| `[role/permission]` | [What it allows] | `[file:line]` |
+
+### Enforce Permissions
+
+```[lang]
+// Source: [file:lines]
+[Extract authorization check pattern]
 ```
 
-**Roles**: [List roles and permissions]
+### Check User Permissions
+
+```[lang]
+// How to check permissions in code:
+[Extract permission checking syntax]
+```
 
 ---
 
 ## Input Validation
 
-### Pattern
+<!-- Find validation at API boundaries -->
 
-```[language]
-# Source: [file:lines]
-[validation_pattern]
+### Validation Layer
+
+**Library**: `[Zod / Joi / class-validator / Pydantic / etc.]`
+**Applied At**: `[Middleware / Decorator / Controller]`
+
+```[lang]
+// Source: [file:lines]
+[Extract validation schema example]
 ```
 
-**Rules**:
-- ✅ Validate all input at boundaries
-- ✅ Use validation library/framework
-- ✅ Whitelist (not blacklist)
-- ❌ Trust user input
+### Sanitization
+
+```[lang]
+// Source: [file:lines] - if explicit sanitization exists
+[Extract sanitization pattern or note "handled by validation library"]
+```
+
+### Rules
+
+- ✅ Validate at `[detected boundary - controller/middleware]`
+- ✅ Use schemas from `[validation path]`
+- ❌ Never trust: query params, body, headers, path params
 
 ---
 
 ## Secrets Management
 
-### Environment Variables
+<!-- Find how secrets are loaded and used -->
 
-```bash
-# NEVER commit these
-[SECRET_KEY]=[use env var]
-[API_KEY]=[use secrets manager in prod]
-[DB_PASSWORD]=[use secrets manager in prod]
+### Loading Pattern
+
+```[lang]
+// Source: [file:lines]
+[Extract secrets/config loading]
 ```
 
-**Rules**:
-- ✅ Environment variables for dev
-- ✅ Secrets manager for production
-- ✅ Rotate regularly
-- ❌ Hardcode in code
-- ❌ Commit to git
-- ❌ Log secrets
+### Secret Variables
+
+| Variable | Purpose | Required |
+|----------|---------|----------|
+| `[SECRET_KEY/JWT_SECRET]` | [Token signing] | Yes |
+| `[DATABASE_URL]` | [DB connection] | Yes |
+| `[API_KEY_*]` | [External services] | Varies |
+
+### Access Secrets
+
+```[lang]
+// Always access secrets via:
+[Extract config/env access pattern - never hardcode]
+```
+
+### Rules
+
+- ✅ Load from `[env / secrets manager / vault]`
+- ✅ Access via `[config module pattern]`
+- ❌ Hardcode in source code
+- ❌ Commit `.env` files
+- ❌ Log secret values
+
+---
+
+## Security Middleware
+
+<!-- Find security-related middleware/headers -->
+
+### Configured Protections
+
+| Protection | Implementation | Source |
+|------------|----------------|--------|
+| Security Headers | `[helmet / manual / framework]` | `[file:line]` |
+| CORS | `[cors config location]` | `[file:line]` |
+| Rate Limiting | `[rate-limit implementation]` | `[file:line]` |
+| CSRF | `[csrf protection or N/A]` | `[file:line]` |
+
+### Headers Set
+
+```[lang]
+// Source: [file:lines]
+[Extract security headers configuration]
+```
+
+### CORS Configuration
+
+```[lang]
+// Source: [file:lines]
+[Extract CORS config - allowed origins, methods]
+```
+
+### Rate Limiting
+
+```[lang]
+// Source: [file:lines]
+[Extract rate limit configuration]
+```
+
+**Limits**: `[X requests per Y time window]`
 
 ---
 
 ## SQL Injection Prevention
 
-```[language]
-# Good: Parameterized
-[good_sql_example]
+<!-- Verify ORM/query builder or parameterized queries -->
 
-# Bad: String interpolation
-[bad_sql_example]
+**Protection**: `[ORM: name | Query Builder: name | Parameterized queries]`
+
+```[lang]
+// ✅ Safe - Source: [file:lines]
+[Extract parameterized query example]
+
+// ❌ NEVER - vulnerable to injection
+[Show anti-pattern if found, or generic example]
 ```
-
-**Rule**: ALWAYS use parameterized queries
 
 ---
 
 ## XSS Prevention
 
-```[language]
-# Source: [file:lines]
-[xss_prevention]
+<!-- Find output encoding/escaping -->
+
+**Protection**: `[Framework auto-escaping | Manual escaping | CSP]`
+
+```[lang]
+// Source: [file:lines]
+[Extract output escaping or template rendering pattern]
 ```
 
-**Rules**:
-- ✅ Escape output
-- ✅ Use framework defaults
-- ✅ Content Security Policy headers
-- ❌ Trust user content
+**Content Security Policy**: `[Configured / Not configured]`
 
 ---
 
-## Security Headers
+## File Upload Security
 
-```[language]
-# Source: [file:lines]
-[security_headers]
+<!-- If file uploads exist, document protections -->
+
+```[lang]
+// Source: [file:lines]
+[Extract file upload validation - type, size, name sanitization]
 ```
 
-**Required Headers**:
-- `[Header1]`: `[Value]`
-- `[Header2]`: `[Value]`
+| Protection | Implementation |
+|------------|----------------|
+| File type validation | `[how enforced]` |
+| Size limit | `[max size]` |
+| Storage location | `[path - outside webroot?]` |
+| Filename sanitization | `[yes/no, how]` |
 
 ---
 
-## HTTPS/TLS
+## Audit Logging
 
-**Rules**:
-- ✅ HTTPS everywhere in production
-- ✅ Valid TLS certificates
-- ✅ Minimum TLS 1.2+
-- ❌ Plain HTTP for sensitive data
+<!-- Find security event logging -->
 
----
+**Logged Events**:
 
-## Security Checklist
+| Event | Log Level | Source |
+|-------|-----------|--------|
+| Login success/failure | `[level]` | `[file:line]` |
+| Permission denied | `[level]` | `[file:line]` |
+| Password change | `[level]` | `[file:line]` |
+| Sensitive data access | `[level]` | `[file:line]` |
 
-- [ ] Authentication on protected endpoints
-- [ ] Authorization checks enforced
-- [ ] All input validated
-- [ ] SQL queries parameterized
-- [ ] Secrets in env vars (not code)
-- [ ] HTTPS in production
-- [ ] Security headers configured
-- [ ] Sensitive data encrypted
-- [ ] Error messages don't leak info
-- [ ] Logging excludes secrets/PII
+```[lang]
+// Source: [file:lines]
+[Extract audit log example]
+```
 
 ---
 
-## References
+## Dependency Security
 
-- **Auth Implementation**: `[path/to/auth]`
-- **Validation**: `[path/to/validation]`
-- **OWASP Top 10**: https://owasp.org/www-project-top-ten/
+<!-- Find vulnerability scanning setup -->
+
+| Tool | Command | Frequency |
+|------|---------|-----------|
+| `[npm audit / safety / snyk / dependabot]` | `[command]` | `[CI / manual]` |
+
+---
+
+## Security Anti-Patterns
+
+<!-- Extract from code review or detected issues -->
+
+| ❌ NEVER | ✅ INSTEAD | Risk |
+|----------|-----------|------|
+| `[detected or common anti-pattern]` | `[correct pattern]` | [Risk type] |
+| `[detected or common anti-pattern]` | `[correct pattern]` | [Risk type] |
+| `[detected or common anti-pattern]` | `[correct pattern]` | [Risk type] |
+| Log user passwords/tokens | Log user ID only | Data exposure |
+| Return stack traces to client | Generic error messages | Info leakage |
+
+---
+
+## Quick Reference
+
+| Security Need | Location | Pattern |
+|---------------|----------|---------|
+| Auth middleware | `[path]` | `[usage syntax]` |
+| Permission check | `[path]` | `[usage syntax]` |
+| Input validation | `[path]` | `[usage syntax]` |
+| Secrets config | `[path]` | `[access pattern]` |
+| Security headers | `[path]` | - |
+| Audit logging | `[path]` | `[log function]` |
 
 ---

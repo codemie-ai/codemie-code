@@ -4,6 +4,8 @@
  * Contains the system prompt and instructions for the LangGraph ReAct agent
  */
 
+import type { Skill } from '../../skills/index.js';
+
 export const SYSTEM_PROMPT = `You are CodeMie, an advanced AI coding assistant designed to help developers with various programming tasks.
 
 CAPABILITIES:
@@ -118,17 +120,40 @@ Planning guidelines:
 - Structure findings in a clear, actionable format`;
 
 /**
- * Get the system prompt with working directory substitution
+ * Get the system prompt with working directory substitution and optional skills
+ *
+ * @param workingDirectory - Current working directory
+ * @param skills - Optional array of skills to inject into the prompt
+ * @returns System prompt with working directory and skills (if provided)
  */
-export function getSystemPrompt(workingDirectory: string): string {
-  return SYSTEM_PROMPT.replace('{workingDirectory}', workingDirectory);
+export function getSystemPrompt(workingDirectory: string, skills?: Skill[]): string {
+  let prompt = SYSTEM_PROMPT.replace('{workingDirectory}', workingDirectory);
+
+  // Inject skills if provided
+  if (skills && skills.length > 0) {
+    prompt += `\n\n# Available Skills\n\n`;
+    prompt += `The following skills provide additional knowledge and guidelines for this session:\n\n`;
+
+    for (const skill of skills) {
+      prompt += `## ${skill.metadata.name}\n\n`;
+      prompt += `${skill.metadata.description}\n\n`;
+      prompt += `${skill.content}\n\n`;
+      prompt += `---\n\n`;
+    }
+  }
+
+  return prompt;
 }
 
 /**
  * Get system prompt with planning mode enabled
+ *
+ * @param workingDirectory - Current working directory
+ * @param skills - Optional array of skills to inject into the prompt
+ * @returns System prompt with planning suffix and skills (if provided)
  */
-export function getSystemPromptWithPlanning(workingDirectory: string): string {
-  return getSystemPrompt(workingDirectory) + PLANNING_SUFFIX;
+export function getSystemPromptWithPlanning(workingDirectory: string, skills?: Skill[]): string {
+  return getSystemPrompt(workingDirectory, skills) + PLANNING_SUFFIX;
 }
 
 /**
