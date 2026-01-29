@@ -24,6 +24,7 @@ import {
   executeOnSessionEnd,
   executeAfterRun
 } from './lifecycle-helpers.js';
+import inquirer from 'inquirer';
 
 /**
  * Base class for all agent adapters
@@ -139,6 +140,43 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    * Run the agent
    */
   async run(args: string[], envOverrides?: Record<string, string>): Promise<void> {
+    // Check version compatibility before running (for version-managed agents)
+    if ('checkVersionCompatibility' in this && typeof (this as any).checkVersionCompatibility === 'function') {
+      const compat = await (this as any).checkVersionCompatibility();
+
+      if (compat.isNewer) {
+        // User is running a newer (untested) version
+        console.log();
+        console.log(chalk.yellow(`⚠️  WARNING: You are running ${this.displayName} v${compat.installedVersion}`));
+        console.log(chalk.yellow(`   CodeMie has only tested and verified ${this.displayName} v${compat.supportedVersion}`));
+        console.log();
+        console.log(chalk.white('   Running a newer version may cause compatibility issues with the CodeMie backend proxy.'));
+        console.log();
+        console.log(chalk.white('   To install the supported version, run:'));
+        console.log(chalk.blueBright(`     codemie install ${this.name} --supported`));
+        console.log();
+        console.log(chalk.white('   Or install a specific version:'));
+        console.log(chalk.blueBright(`     codemie install ${this.name} ${compat.supportedVersion}`));
+        console.log();
+
+        const { continueAnyway } = await inquirer.prompt([
+          {
+            type: 'confirm',
+            name: 'continueAnyway',
+            message: 'Continue anyway?',
+            default: false,
+          },
+        ]);
+
+        if (!continueAnyway) {
+          console.log(chalk.gray('\nExecution cancelled\n'));
+          process.exit(1);
+        }
+
+        console.log(); // Add spacing before agent starts
+      }
+    }
+
     // Generate session ID at the very start - this is the source of truth
     // All components (logger, metrics, proxy) will use this same session ID
     const sessionId = randomUUID();

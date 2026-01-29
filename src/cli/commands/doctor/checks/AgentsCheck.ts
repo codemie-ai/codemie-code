@@ -3,10 +3,31 @@
  */
 
 import { AgentRegistry } from '../../../../agents/registry.js';
+import { AgentAdapter } from '../../../../agents/core/types.js';
 import { ItemWiseHealthCheck, HealthCheckResult, HealthCheckDetail } from '../types.js';
 
 export class AgentsCheck implements ItemWiseHealthCheck {
   name = 'Installed Agents';
+
+  /**
+   * Check if agent was installed via deprecated npm method
+   * Returns warning detail if npm install detected, null otherwise
+   */
+  private async checkDeprecatedInstallation(
+    agent: AgentAdapter,
+    versionStr: string
+  ): Promise<HealthCheckDetail | null> {
+    if (agent.getInstallationMethod) {
+      const method = await agent.getInstallationMethod();
+      if (method === 'npm') {
+        return {
+          status: 'warn',
+          message: `${agent.displayName}${versionStr} - installed via npm (deprecated, use: codemie install claude --supported)`
+        };
+      }
+    }
+    return null;
+  }
 
   async run(): Promise<HealthCheckResult> {
     const details: HealthCheckDetail[] = [];
@@ -18,6 +39,14 @@ export class AgentsCheck implements ItemWiseHealthCheck {
       for (const agent of installedAgents) {
         const version = await agent.getVersion();
         const versionStr = version ? ` (${version})` : '';
+
+        // Check for deprecated npm installation
+        const deprecationWarning = await this.checkDeprecatedInstallation(agent, versionStr);
+        if (deprecationWarning) {
+          details.push(deprecationWarning);
+          continue;
+        }
+
         details.push({
           status: 'ok',
           message: `${agent.displayName}${versionStr}`
@@ -47,6 +76,15 @@ export class AgentsCheck implements ItemWiseHealthCheck {
         onStartItem(`Checking ${agent.displayName}...`);
         const version = await agent.getVersion();
         const versionStr = version ? ` (${version})` : '';
+
+        // Check for deprecated npm installation
+        const deprecationWarning = await this.checkDeprecatedInstallation(agent, versionStr);
+        if (deprecationWarning) {
+          details.push(deprecationWarning);
+          onDisplayItem(deprecationWarning);
+          continue;
+        }
+
         const detail: HealthCheckDetail = {
           status: 'ok',
           message: `${agent.displayName}${versionStr}`
