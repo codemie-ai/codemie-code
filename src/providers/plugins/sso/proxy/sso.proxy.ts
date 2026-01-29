@@ -241,16 +241,28 @@ export class CodeMieProxy {
    * Build proxy context from incoming request
    */
   private async buildContext(req: IncomingMessage): Promise<ProxyContext> {
-    const requestBody = await this.readBody(req);
+    let requestBody = await this.readBody(req);
+    const originalBodySize = requestBody?.length || 0;
+
+    // Filter unsupported fields from request body if it's JSON
+    if (requestBody) {
+      requestBody = this.filterRequestBody(requestBody, req.headers);
+    }
 
     // Prepare headers for forwarding
     const forwardHeaders: Record<string, string> = {};
     if (req.headers) {
       Object.entries(req.headers).forEach(([key, value]) => {
-        if (key.toLowerCase() !== 'host' && key.toLowerCase() !== 'connection') {
+        const lowerKey = key.toLowerCase();
+        if (lowerKey !== 'host' && lowerKey !== 'connection' && lowerKey !== 'anthropic-beta') {
           forwardHeaders[key] = Array.isArray(value) ? value[0] : value || '';
         }
       });
+    }
+
+    // Update Content-Length header if body was modified
+    if (requestBody && requestBody.length !== originalBodySize) {
+      forwardHeaders['content-length'] = requestBody.length.toString();
     }
 
     return {
@@ -264,6 +276,34 @@ export class CodeMieProxy {
       requestStartTime: Date.now(),
       metadata: {}
     };
+  }
+
+  /**
+   * Filter unsupported fields from request body
+   * Removes fields that upstream API doesn't support (e.g., context_management, thinking)
+   */
+  private filterRequestBody(body: Buffer, headers: IncomingMessage['headers']): Buffer {
+    const contentType = headers['content-type'] || headers['Content-Type'];
+    const isJson = contentType && typeof contentType === 'string' && contentType.includes('application/json');
+
+    if (!isJson) {
+      return body;
+    }
+
+    try {
+      const json = JSON.parse(body.toString('utf-8'));
+      
+      // Remove unsupported fields
+      const filteredJson: any = { ...json };
+      delete filteredJson.context_management;
+      delete filteredJson.thinking;
+
+      return Buffer.from(JSON.stringify(filteredJson), 'utf-8');
+    } catch (error) {
+      // If parsing fails, return original body
+      logger.debug('[proxy] Failed to parse request body as JSON, forwarding as-is');
+      return body;
+    }
   }
 
   /**
