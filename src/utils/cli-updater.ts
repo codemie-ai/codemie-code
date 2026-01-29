@@ -160,7 +160,7 @@ export async function checkForCliUpdate(): Promise<CliUpdateCheckResult | null> 
 
     // Validate current version format
     if (!isValidSemanticVersion(currentVersion)) {
-      logger.debug(`Invalid current version format: ${currentVersion}`);
+      logger.error('Invalid current CLI version format', { version: currentVersion });
       return null;
     }
 
@@ -173,7 +173,10 @@ export async function checkForCliUpdate(): Promise<CliUpdateCheckResult | null> 
 
     // SECURITY: Validate version string from npm registry before using
     if (!isValidSemanticVersion(latestVersion)) {
-      logger.debug(`Invalid version format received from npm: ${latestVersion}`);
+      logger.error('Invalid version format received from npm registry (potential security issue)', {
+        version: latestVersion,
+        source: 'npm'
+      });
       return null;
     }
 
@@ -265,6 +268,13 @@ export async function updateCli(latestVersion: string, silent = false): Promise<
       console.log();
     }
   } catch (error) {
+    // Log error for debugging
+    logger.error('CLI update failed', {
+      targetVersion: latestVersion,
+      error: error instanceof Error ? error.message : String(error),
+      silent
+    });
+
     // On error, show message even in silent mode
     console.log();
     console.error(chalk.red('✗ Failed to update CodeMie CLI'));
@@ -364,7 +374,14 @@ export async function checkAndPromptForUpdate(): Promise<void> {
     // Clean up lock on error
     await releaseUpdateLock();
 
+    // Log error with context for troubleshooting
+    logger.error('CLI update check/installation failed', {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      autoUpdate: isAutoUpdateEnabled()
+    });
+
     // Don't block CLI startup if update check/install fails
-    logger.debug('CLI update check failed:', error);
+    logger.debug('CLI update check failed (non-blocking):', error);
   }
 }
