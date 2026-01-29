@@ -67,18 +67,22 @@ All external agents share the same command pattern:
 # Basic usage
 codemie-claude "message"         # Claude Code agent
 codemie-gemini "message"         # Gemini CLI agent
+codemie-opencode "message"       # OpenCode agent
 
 # Health checks
 codemie-claude health
 codemie-gemini health
+codemie-opencode health
 
 # With configuration overrides
 codemie-claude --model claude-4-5-sonnet --api-key sk-... "review code"
 codemie-gemini -m gemini-2.5-flash --api-key key "optimize performance"
+codemie-opencode --model gpt-5-2-2025-12-11 "generate unit tests"
 
 # With profile selection
 codemie-claude --profile personal-openai "review PR"
 codemie-gemini --profile google-direct "analyze code"
+codemie-opencode --profile work "refactor code"
 
 # Agent-specific options (pass-through to underlying CLI)
 codemie-claude --context large -p "review code"      # -p = print mode (non-interactive)
@@ -172,6 +176,58 @@ codemie analytics --from 2025-12-01 --to 2025-12-07 --export csv -o weekly-costs
 codemie analytics --agent claude
 codemie analytics --agent gemini
 ```
+
+## OpenCode Metrics Commands
+
+Process OpenCode session data to extract metrics and sync to analytics system.
+
+```bash
+# Process specific session
+codemie opencode-metrics --session <session-id>
+
+# Discover and process all recent sessions
+codemie opencode-metrics --discover
+
+# Verbose output with detailed processing info
+codemie opencode-metrics --discover --verbose
+```
+
+**Options:**
+- `-s, --session <id>` - Process specific OpenCode session by ID
+- `-d, --discover` - Discover and process all unprocessed sessions (last 30 days)
+- `-v, --verbose` - Show detailed processing output
+
+**Features:**
+- Automatic session discovery from OpenCode storage
+- Token usage extraction (input, output, total)
+- Cost calculation based on model pricing
+- Session duration tracking
+- Conversation extraction
+- JSONL delta generation for sync
+- Deduplication (skips recently processed sessions)
+
+**Session Storage Locations:**
+- Linux: `~/.local/share/opencode/storage/`
+- macOS: `~/Library/Application Support/opencode/storage/`
+- Windows: `%LOCALAPPDATA%\opencode\storage\`
+
+**Example Workflows:**
+
+```bash
+# Process all recent OpenCode sessions
+codemie opencode-metrics --discover --verbose
+
+# Check specific session metrics
+codemie opencode-metrics --session ses_abc123def456
+
+# View results in analytics
+codemie analytics --agent opencode
+```
+
+**Note:** Metrics are automatically extracted when OpenCode sessions end (via `onSessionEnd` lifecycle hook). Manual processing is useful for:
+- Retroactive processing of old sessions
+- Troubleshooting sync issues
+- Verifying metrics extraction
 
 ## Workflow Commands
 

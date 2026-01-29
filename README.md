@@ -10,7 +10,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.3%2B-blue.svg)](https://www.typescriptlang.org/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-> **Unified AI Coding Assistant CLI** - Manage Claude Code, Google Gemini, and custom AI agents from one powerful command-line interface. Multi-provider support (OpenAI, Azure OpenAI, AWS Bedrock, LiteLLM, Ollama, Enterprise SSO). Built-in LangGraph agent with file operations, command execution, and planning tools. Cross-platform support for Windows, Linux, and macOS.
+> **Unified AI Coding Assistant CLI** - Manage Claude Code, Google Gemini, OpenCode, and custom AI agents from one powerful command-line interface. Multi-provider support (OpenAI, Azure OpenAI, AWS Bedrock, LiteLLM, Ollama, Enterprise SSO). Built-in LangGraph agent with file operations, command execution, and planning tools. Cross-platform support for Windows, Linux, and macOS.
 
 ---
 
@@ -22,7 +22,7 @@
 
 CodeMie CLI is the all-in-one AI coding assistant for developers.
 
-- ✨ **One CLI, Multiple AI Agents** - Switch between Claude Code, Gemini, and built-in agent.
+- ✨ **One CLI, Multiple AI Agents** - Switch between Claude Code, Gemini, OpenCode, and built-in agent.
 - 🔄 **Multi-Provider Support** - OpenAI, Azure OpenAI, AWS Bedrock, LiteLLM, Ollama, and Enterprise SSO.
 - 🚀 **Built-in Agent** - A powerful LangGraph-based assistant with file operations, command execution, and planning tools.
 - 🖥️ **Cross-Platform** - Full support for Windows, Linux, and macOS with platform-specific optimizations.
@@ -138,6 +138,7 @@ You can also install and use external agents like Claude Code and Gemini.
 **Available Agents:**
 - **Claude Code** (`codemie-claude`) - Anthropic's official CLI with advanced code understanding
 - **Gemini CLI** (`codemie-gemini`) - Google's Gemini for coding tasks
+- **OpenCode** (`codemie-opencode`) - Open-source AI coding assistant with session analytics
 
 ```bash
 # Install an agent
@@ -149,6 +150,10 @@ codemie-claude "Review my API code"
 # Install Gemini
 codemie install gemini
 codemie-gemini "Implement a REST API"
+
+# Install OpenCode
+codemie install opencode
+codemie-opencode "Generate unit tests for my service"
 ```
 
 For more detailed information on the available agents, see the [Agents Documentation](docs/AGENTS.md).
@@ -176,6 +181,24 @@ When using Claude Code (`codemie-claude`), you get access to powerful built-in c
 ```
 
 These commands analyze your actual codebase to create tailored documentation and specialized agents. See [Claude Plugin Documentation](src/agents/plugins/claude/plugin/README.md) for details.
+
+### OpenCode Session Metrics
+
+When using OpenCode (`codemie-opencode`), CodeMie automatically extracts and tracks session metrics:
+
+**Manual Metrics Processing:**
+```bash
+# Process a specific OpenCode session
+codemie opencode-metrics --session <session-id>
+
+# Discover and process all recent sessions
+codemie opencode-metrics --discover
+
+# Verbose output with details
+codemie opencode-metrics --discover --verbose
+```
+
+Metrics are automatically extracted at session end and synced to the analytics system. Use `codemie analytics` to view comprehensive usage statistics across all agents.
 
 ## Commands
 

@@ -125,6 +125,7 @@ export class AgentRegistry {
     AgentRegistry.registerPlugin(new CodeMieCodePlugin());
     AgentRegistry.registerPlugin(new ClaudePlugin());
     AgentRegistry.registerPlugin(new GeminiPlugin());
+    AgentRegistry.registerPlugin(new OpenCodePlugin());
   }
 
   static getAgent(name: string): AgentAdapter | undefined {
@@ -161,9 +162,27 @@ export class ClaudePlugin implements AgentAdapter {
     await exec('claude', args);
   }
 }
+
+// Source: src/agents/plugins/opencode/opencode.plugin.ts:335-386
+export class OpenCodePlugin extends BaseAgentAdapter {
+  private sessionAdapter: SessionAdapter;
+
+  constructor() {
+    super(OpenCodePluginMetadata);
+    this.sessionAdapter = new OpenCodeSessionAdapter(OpenCodePluginMetadata);
+  }
+
+  async isInstalled(): Promise<boolean> {
+    return await commandExists(this.metadata.cliCommand || 'opencode');
+  }
+
+  getSessionAdapter(): SessionAdapter {
+    return this.sessionAdapter;
+  }
+}
 ```
 
-**Does**: Specific agent logic, external tool integration
+**Does**: Specific agent logic, external tool integration, session analytics
 **Doesn't**: Generic patterns, cross-cutting concerns
 
 ---
@@ -317,9 +336,10 @@ src/
 | Need | Location |
 |------|----------|
 | CLI commands | `src/cli/commands/` |
-| Agent plugins | `src/agents/plugins/` |
+| Agent plugins | `src/agents/plugins/` (claude, gemini, opencode, codemie-code) |
 | Provider plugins | `src/providers/plugins/` |
 | Core interfaces | `src/*/core/types.ts` |
+| Session adapters | `src/agents/core/session/` |
 | Error classes | `src/utils/errors.ts` |
 | Logging | `src/utils/logger.ts` |
 | Security | `src/utils/security.ts` |

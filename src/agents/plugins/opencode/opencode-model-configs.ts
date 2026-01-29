@@ -19,6 +19,8 @@ export interface OpenCodeModelConfig {
   attachment: boolean;
   /** Temperature control availability */
   temperature: boolean;
+  /** Structured output support (OpenCode format: structured_output) */
+  structured_output?: boolean;
   /** Modality support */
   modalities: {
     input: string[];
@@ -76,6 +78,116 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
     limit: {
       context: 400000,
       output: 128000
+    }
+  },
+  'gpt-5.1-codex': {
+    id: 'gpt-5.1-codex',
+    name: 'GPT-5.1 Codex',
+    displayName: 'GPT-5.1 Codex',
+    family: 'gpt-5-codex',
+    tool_call: true,
+    reasoning: true,
+    attachment: false,
+    temperature: false,
+    modalities: {
+      input: ['text', 'image', 'audio'],
+      output: ['text', 'image', 'audio']
+    },
+    knowledge: '2024-09-30',
+    release_date: '2025-11-14',
+    last_updated: '2025-11-14',
+    open_weights: false,
+    cost: {
+      input: 1.25,
+      output: 10,
+      cache_read: 0.125
+    },
+    limit: {
+      context: 400000,
+      output: 128000
+    }
+  },
+  'gpt-5.1-codex-mini': {
+    id: 'gpt-5.1-codex-mini',
+    name: 'GPT-5.1 Codex Mini',
+    displayName: 'GPT-5.1 Codex Mini',
+    family: 'gpt-5-codex-mini',
+    tool_call: true,
+    reasoning: true,
+    attachment: false,
+    temperature: false,
+    modalities: {
+      input: ['text', 'image'],
+      output: ['text']
+    },
+    knowledge: '2024-09-30',
+    release_date: '2025-11-14',
+    last_updated: '2025-11-14',
+    open_weights: false,
+    cost: {
+      input: 0.25,
+      output: 2,
+      cache_read: 0.025
+    },
+    limit: {
+      context: 400000,
+      output: 128000
+    }
+  },
+  'gpt-5.1-codex-max': {
+    id: 'gpt-5.1-codex-max',
+    name: 'GPT-5.1 Codex Max',
+    displayName: 'GPT-5.1 Codex Max',
+    family: 'gpt-5-codex-max',
+    tool_call: true,
+    reasoning: true,
+    attachment: true,
+    structured_output: true,
+    temperature: false,
+    modalities: {
+      input: ['text', 'image'],
+      output: ['text']
+    },
+    knowledge: '2024-09-30',
+    release_date: '2025-11-13',
+    last_updated: '2025-11-13',
+    open_weights: false,
+    cost: {
+      input: 1.25,
+      output: 10,
+      cache_read: 0.125
+    },
+    limit: {
+      context: 400000,
+      output: 128000
+    }
+  },
+  'gpt-5.2-chat': {
+    id: 'gpt-5.2-chat',
+    name: 'GPT-5.2 Chat',
+    displayName: 'GPT-5.2 Chat',
+    family: 'gpt-5-chat',
+    tool_call: true,
+    reasoning: true,
+    attachment: true,
+    structured_output: true,
+    temperature: false,
+    modalities: {
+      input: ['text', 'image'],
+      output: ['text']
+    },
+    knowledge: '2025-08-31',
+    release_date: '2025-12-11',
+    last_updated: '2025-12-11',
+    open_weights: false,
+    cost: {
+      input: 1.75,
+      output: 14,
+      cache_read: 0.175
+    },
+    limit: {
+      context: 128000,
+      output: 16384
     }
   }
 };
