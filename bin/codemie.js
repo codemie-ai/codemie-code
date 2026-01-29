@@ -6,6 +6,7 @@
  */
 
 import { MigrationRunner } from '../dist/migrations/index.js';
+import { checkAndPromptForUpdate } from '../dist/utils/cli-updater.js';
 
 // Auto-run pending migrations (happens at startup)
 // Migrations are tracked in ~/.codemie/migrations.json and only run once
@@ -18,6 +19,14 @@ try {
 } catch (error) {
   // Don't block CLI if migration fails
   console.error('Warning: Migration failed:', error.message);
+}
+
+// Check for CLI updates (silent by default, configurable via CODEMIE_AUTO_UPDATE)
+// Non-blocking: failures don't prevent CLI from running
+try {
+  await checkAndPromptForUpdate();
+} catch (error) {
+  // Silently fail - don't block CLI startup
 }
 
 // Continue with normal CLI initialization
