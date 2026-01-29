@@ -169,6 +169,19 @@ Environment variables override config file values and are useful for CI/CD, Dock
 | `CODEMIE_ANALYTICS_PATH` | Custom local storage path | `~/.codemie/analytics` | `/custom/path` |
 | `CODEMIE_ANALYTICS_ENDPOINT` | Remote analytics endpoint URL | - | `https://analytics.example.com` |
 
+#### CLI Behavior
+
+| Variable | Description | Default | Example |
+|----------|-------------|---------|---------|
+| `CODEMIE_AUTO_UPDATE` | Automatic CLI self-update behavior | `true` | `false` to prompt before updating |
+
+**Auto-Update Behavior:**
+- `true` (default) - Silently auto-update CLI in background on startup
+- `false` - Show update notification and prompt for confirmation
+- Non-blocking: Update checks won't prevent CLI from starting if they fail
+- Fast: 5-second timeout for version check
+- See `codemie self-update --help` for manual update options
+
 #### Security & File Access
 
 | Variable | Description | Example |

@@ -14,6 +14,8 @@ codemie workflow <command>       # Manage CI/CD workflows
 codemie list [options]           # List all available agents
 codemie install [agent]          # Install an agent
 codemie uninstall [agent]        # Uninstall an agent
+codemie update [agent]           # Update installed agents
+codemie self-update              # Update CodeMie CLI itself
 codemie doctor [options]         # Health check and diagnostics
 codemie version                  # Show version information
 ```
@@ -314,6 +316,106 @@ Uninstall an external AI coding agent.
 ```bash
 codemie uninstall <agent>
 ```
+
+### `codemie update [agent]`
+
+Update installed AI coding agents to their latest versions.
+
+**Usage:**
+```bash
+# Update specific agent
+codemie update <agent>
+
+# Check for updates without installing
+codemie update <agent> --check
+
+# Interactive update (checks all agents)
+codemie update
+
+# Check all agents for updates
+codemie update --check
+```
+
+**Options:**
+- `-c, --check` - Check for updates without installing
+
+**Features:**
+- Checks npm registry for latest versions
+- Supports interactive multi-agent selection
+- Shows current vs. latest version comparison
+- Special handling for Claude Code (uses verified versions)
+- Uses `--force` flag to handle directory conflicts during updates
+
+**Examples:**
+```bash
+# Update Claude Code to latest verified version
+codemie update claude
+
+# Check if Gemini has updates
+codemie update gemini --check
+
+# Interactive: select which agents to update
+codemie update
+```
+
+**Note:** This command updates external agents (Claude Code, Gemini, etc.). To update the CodeMie CLI itself, use `codemie self-update`.
+
+### `codemie self-update`
+
+Update CodeMie CLI to the latest version from npm.
+
+**Usage:**
+```bash
+# Update CodeMie CLI
+codemie self-update
+
+# Check for updates without installing
+codemie self-update --check
+```
+
+**Options:**
+- `-c, --check` - Check for updates without installing
+
+**Features:**
+- Fast version check with 5-second timeout
+- Automatic update on startup (configurable via `CODEMIE_AUTO_UPDATE`)
+- Uses `--force` flag to handle directory conflicts
+- Shows current vs. latest version comparison
+
+**Auto-Update Behavior:**
+
+By default, CodeMie CLI automatically checks for updates on every startup:
+
+```bash
+# Default: Silent auto-update (no user interaction)
+codemie --version
+
+# Prompt before updating
+export CODEMIE_AUTO_UPDATE=false
+codemie --version
+
+# Explicit silent auto-update
+export CODEMIE_AUTO_UPDATE=true
+codemie --version
+```
+
+**Environment Variables:**
+- `CODEMIE_AUTO_UPDATE=true` (default) - Silently auto-update in background
+- `CODEMIE_AUTO_UPDATE=false` - Show update prompt and ask for confirmation
+
+**Examples:**
+```bash
+# Check for CLI updates
+codemie self-update --check
+
+# Update CLI immediately
+codemie self-update
+
+# Disable auto-update (add to ~/.bashrc or ~/.zshrc)
+export CODEMIE_AUTO_UPDATE=false
+```
+
+**Note:** Auto-update checks are non-blocking and won't prevent CLI from starting if they fail. The update takes effect on the next command execution.
 
 ### `codemie doctor`
 
