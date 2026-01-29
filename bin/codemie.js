@@ -22,11 +22,15 @@ try {
 }
 
 // Check for CLI updates (silent by default, configurable via CODEMIE_AUTO_UPDATE)
+// Skip in test environments to avoid timeouts and network calls during testing
 // Non-blocking: failures don't prevent CLI from running
-try {
-  await checkAndPromptForUpdate();
-} catch (error) {
-  // Silently fail - don't block CLI startup
+const isTestEnvironment = process.env.NODE_ENV === 'test' || process.env.VITEST === 'true';
+if (!isTestEnvironment) {
+  try {
+    await checkAndPromptForUpdate();
+  } catch (error) {
+    // Silently fail - don't block CLI startup
+  }
 }
 
 // Continue with normal CLI initialization
