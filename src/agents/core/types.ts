@@ -143,6 +143,17 @@ export interface AgentAnalyticsAdapter {
 }
 
 /**
+ * Result of version compatibility check
+ * Used to compare installed version against supported version
+ */
+export interface VersionCompatibilityResult {
+  compatible: boolean;             // true if installed version is compatible
+  installedVersion: string | null; // null if not installed
+  supportedVersion: string;        // version from metadata
+  isNewer: boolean;                // true if installed > supported (requires warning)
+}
+
+/**
  * Agent metadata schema - declarative configuration for agents
  */
 export interface AgentMetadata {
@@ -154,6 +165,25 @@ export interface AgentMetadata {
   // === Installation ===
   npmPackage: string | null;       // '@anthropic-ai/claude-code' or null for built-in
   cliCommand: string | null;       // 'claude' or null for built-in
+
+  /**
+   * Latest supported version tested with CodeMie backend
+   * Used for version compatibility checks
+   *
+   * Format: Semantic version string (e.g., '2.0.30')
+   * Special values: 'latest', 'stable' (channels)
+   */
+  supportedVersion?: string;
+
+  /**
+   * Native installer URLs for platform-specific installation
+   * Optional: Only needed for agents using native installers (not npm)
+   */
+  installerUrls?: {
+    macOS: string;
+    windows: string;
+    linux: string;
+  };
 
   // === Environment Variable Mapping ===
   envMapping: {
@@ -436,4 +466,16 @@ export interface AgentAdapter {
    * @returns MCP configuration summary
    */
   getMCPConfigSummary?(cwd: string): Promise<MCPConfigSummary>;
+
+  /**
+   * Install specific version of agent (optional, for version-managed agents)
+   * @param version - Version string or channel ('latest', 'stable', 'supported')
+   */
+  installVersion?(version: string): Promise<void>;
+
+  /**
+   * Check version compatibility (optional, for version-managed agents)
+   * @returns Version compatibility result
+   */
+  checkVersionCompatibility?(): Promise<VersionCompatibilityResult>;
 }

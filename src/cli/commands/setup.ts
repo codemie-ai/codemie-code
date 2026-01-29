@@ -13,6 +13,7 @@ import {
   displaySetupInstructions
 } from '../../providers/integration/setup-ui.js';
 import { FirstTimeExperience } from '../first-time.js';
+import { AgentRegistry } from '../../agents/registry.js';
 
 
 export function createSetupCommand(): Command {
@@ -218,6 +219,11 @@ async function handlePluginSetup(
       // Display success
       displaySetupSuccess(finalProfileName!, providerName, selectedModel);
 
+      // Check and install Claude if needed (only during first-time setup, not updates)
+      if (!isUpdate) {
+        await checkAndInstallClaude();
+      }
+
     } catch (error) {
       saveSpinner.fail(chalk.red('Failed to save profile'));
       throw error;
@@ -326,6 +332,99 @@ async function promptForModelSelection(
   }
 
   return selectedModel;
+}
+
+/**
+ * Check and install Claude Code if needed
+ * Called during first-time setup to ensure Claude is installed with supported version
+ */
+async function checkAndInstallClaude(): Promise<void> {
+  try {
+    const claude = AgentRegistry.getAgent('claude');
+    if (!claude) {
+      // Claude agent not found in registry, skip installation
+      return;
+    }
+
+    const isInstalled = await claude.isInstalled();
+
+    if (!isInstalled) {
+      // Claude not installed - prompt to install
+      console.log();
+      console.log(chalk.yellow('○ Claude Code is not installed'));
+      console.log();
+
+      const { installClaude } = await inquirer.prompt([
+        {
+          type: 'confirm',
+          name: 'installClaude',
+          message: 'Would you like to install Claude Code now?',
+          default: true,
+        },
+      ]);
+
+      if (installClaude) {
+        const spinner = ora('Installing Claude Code (supported version)...').start();
+
+        try {
+          // Install supported version
+          if (claude.installVersion) {
+            await claude.installVersion('supported');
+          } else {
+            await claude.install();
+          }
+
+          const installedVersion = await claude.getVersion();
+          const versionStr = installedVersion ? ` v${installedVersion}` : '';
+
+          spinner.succeed(chalk.green(`Claude Code${versionStr} installed successfully`));
+
+          // Show next steps
+          console.log();
+          console.log(chalk.cyan('💡 Next steps:'));
+          console.log(chalk.white('   Interactive mode:'), chalk.blueBright('codemie-claude'));
+          console.log(chalk.white('   Single task:'), chalk.blueBright('codemie-claude --task "your task"'));
+          console.log();
+        } catch (error: unknown) {
+          spinner.fail(chalk.red('Failed to install Claude Code'));
+          logger.error('Claude installation failed during setup', { error });
+          console.log();
+          console.log(chalk.yellow('You can install it manually later using:'));
+          console.log(chalk.blueBright('  codemie install claude --supported'));
+          console.log();
+        }
+      } else {
+        console.log();
+        console.log(chalk.gray('Skipped Claude Code installation'));
+        console.log(chalk.yellow('You can install it later using:'), chalk.blueBright('codemie install claude --supported'));
+        console.log();
+      }
+    } else {
+      // Claude installed - check version compatibility
+      if (claude.checkVersionCompatibility) {
+        const compat = await claude.checkVersionCompatibility();
+
+        if (compat.isNewer) {
+          // Installed version is newer than supported
+          console.log();
+          console.log(chalk.yellow(`⚠️  Claude Code v${compat.installedVersion} is installed`));
+          console.log(chalk.yellow(`   CodeMie has only tested and verified v${compat.supportedVersion}`));
+          console.log();
+          console.log(chalk.white('   To install the supported version:'));
+          console.log(chalk.blueBright('   codemie install claude --supported'));
+          console.log();
+        } else if (compat.compatible) {
+          // Version is compatible (same or older than supported)
+          console.log();
+          console.log(chalk.green(`✓ Claude Code v${compat.installedVersion} is installed`));
+          console.log();
+        }
+      }
+    }
+  } catch (error) {
+    // Don't fail setup if Claude check/install fails
+    logger.error('Error checking/installing Claude:', error);
+  }
 }
 
 /*

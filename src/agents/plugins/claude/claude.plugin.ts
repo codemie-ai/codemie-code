@@ -1,9 +1,13 @@
-import { AgentMetadata } from '../../core/types.js';
+import { AgentMetadata, VersionCompatibilityResult } from '../../core/types.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import { ClaudeSessionAdapter } from './claude.session.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import { ClaudePluginInstaller } from './claude.plugin-installer.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
+import { installNativeAgent } from '../../../utils/native-installer.js';
+import { compareVersions, isValidSemanticVersion } from '../../../utils/version-utils.js';
+import { AgentInstallationError, createErrorContext } from '../../../utils/errors.js';
+import { logger } from '../../../utils/logger.js';
 
 /**
  * Claude Code Plugin Metadata
@@ -15,6 +19,16 @@ export const ClaudePluginMetadata: AgentMetadata = {
 
   npmPackage: '@anthropic-ai/claude-code',
   cliCommand: 'claude',
+
+  // Version management configuration
+  supportedVersion: '2.1.22', // Latest version tested with CodeMie backend
+
+  // Native installer URLs (used by installNativeAgent utility)
+  installerUrls: {
+    macOS: 'https://claude.ai/install.sh',
+    windows: 'https://claude.ai/install.ps1',
+    linux: 'https://claude.ai/install.sh'
+  },
 
   // Data paths (used by lifecycle hooks and analytics)
   dataPaths: {
@@ -82,6 +96,14 @@ export const ClaudePluginMetadata: AgentMetadata = {
         env.CLAUDE_CODE_ENABLE_TELEMETRY = '0';
       }
 
+      // CRITICAL: Disable Claude Code auto-updater to maintain version control
+      // CodeMie manages Claude versions explicitly via installVersion() for compatibility
+      // Auto-updates could break version compatibility with CodeMie backend
+      // https://code.claude.com/docs/en/settings
+      if (!env.DISABLE_AUTOUPDATER) {
+        env.DISABLE_AUTOUPDATER = '1';
+      }
+
       return env;
     }
   }
@@ -115,5 +137,212 @@ export class ClaudePlugin extends BaseAgentAdapter {
    */
   getExtensionInstaller(): BaseExtensionInstaller {
     return this.extensionInstaller;
+  }
+
+  /**
+   * Get Claude version (override from BaseAgentAdapter)
+   * Parses version from 'claude --version' output
+   * Claude outputs: "2.1.23 (Claude Code)" - we need just "2.1.23"
+   *
+   * @returns Version string or null if not installed
+   */
+  async getVersion(): Promise<string | null> {
+    if (!this.metadata.cliCommand) {
+      return null;
+    }
+
+    try {
+      const { exec } = await import('../../../utils/processes.js');
+      const result = await exec(this.metadata.cliCommand, ['--version']);
+
+      // Parse version from output like "2.1.23 (Claude Code)"
+      // Extract just the version number
+      const versionMatch = result.stdout.trim().match(/^(\d+\.\d+\.\d+)/);
+      if (versionMatch) {
+        return versionMatch[1];
+      }
+
+      return result.stdout.trim();
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Install Claude Code using native installer (override from BaseAgentAdapter)
+   * Installs latest available version from native installer
+   * For version-specific installs, use installVersion() method
+   *
+   * @throws {AgentInstallationError} If installation fails
+   */
+  async install(): Promise<void> {
+    // Install latest available version (no version specified)
+    await this.installVersion(undefined);
+  }
+
+  /**
+   * Install specific version of Claude Code
+   * Uses native installer with version parameter
+   * Special handling for version parameter:
+   * - undefined/'latest': Install latest available version
+   * - 'supported': Install version from metadata.supportedVersion
+   * - Semantic version string (e.g., '2.0.30'): Install specific version
+   *
+   * @param version - Version string (e.g., '2.0.30', 'latest', 'supported')
+   * @throws {AgentInstallationError} If installation fails
+   */
+  async installVersion(version?: string): Promise<void> {
+    const metadata = this.metadata;
+
+    // Resolve 'supported' to actual version from metadata
+    let resolvedVersion: string | undefined = version;
+    if (version === 'supported') {
+      if (!metadata.supportedVersion) {
+        throw new AgentInstallationError(
+          metadata.name,
+          'No supported version defined in metadata'
+        );
+      }
+      resolvedVersion = metadata.supportedVersion;
+      logger.debug('Resolved version', {
+        from: 'supported',
+        to: resolvedVersion,
+      });
+    }
+
+    // SECURITY: Validate version format to prevent command injection
+    // Only allow semantic versions (e.g., "2.0.30") or special channels
+    if (resolvedVersion) {
+      const allowedChannels = ['latest', 'stable'];
+      const isValidChannel = allowedChannels.includes(resolvedVersion.toLowerCase());
+      const isValidVersion = isValidSemanticVersion(resolvedVersion);
+
+      if (!isValidChannel && !isValidVersion) {
+        throw new AgentInstallationError(
+          metadata.name,
+          `Invalid version format: "${resolvedVersion}". Expected semantic version (e.g., "2.0.30"), "latest", or "stable".`
+        );
+      }
+
+      logger.debug('Version validation passed', {
+        version: resolvedVersion,
+        isValidChannel,
+        isValidVersion,
+      });
+    }
+
+    // Validate installer URLs are configured
+    if (!metadata.installerUrls) {
+      throw new AgentInstallationError(
+        metadata.name,
+        'No installer URLs configured for native installation'
+      );
+    }
+
+    logger.info(
+      `Installing ${metadata.displayName} ${resolvedVersion || 'latest'}...`
+    );
+
+    // Execute native installer
+    const result = await installNativeAgent(
+      metadata.name,
+      metadata.installerUrls,
+      resolvedVersion,
+      {
+        timeout: 120000, // 2 minute timeout
+        verifyCommand: metadata.cliCommand || undefined,
+        installFlags: ['--force'], // Force installation to overwrite existing version
+      }
+    );
+
+    if (!result.success) {
+      throw new AgentInstallationError(
+        metadata.name,
+        `Installation failed. Output: ${result.output}`
+      );
+    }
+
+    logger.success(
+      `${metadata.displayName} ${result.installedVersion || resolvedVersion || 'latest'} installed successfully`
+    );
+  }
+
+  /**
+   * Check if installed version is compatible with CodeMie
+   * Compares against metadata.supportedVersion
+   *
+   * @returns Version compatibility result with status and version info
+   */
+  async checkVersionCompatibility(): Promise<VersionCompatibilityResult> {
+    const metadata = this.metadata;
+    const supportedVersion = metadata.supportedVersion || 'latest';
+
+    // Get installed version
+    const installedVersion = await this.getVersion();
+
+    logger.debug('Checking version compatibility', {
+      installedVersion,
+      supportedVersion,
+    });
+
+    // If not installed, return incompatible
+    if (!installedVersion) {
+      return {
+        compatible: false,
+        installedVersion: null,
+        supportedVersion,
+        isNewer: false,
+      };
+    }
+
+    // If no supported version configured, consider compatible
+    if (!metadata.supportedVersion) {
+      return {
+        compatible: true,
+        installedVersion,
+        supportedVersion: 'latest',
+        isNewer: false,
+      };
+    }
+
+    // Compare versions
+    try {
+      const comparison = compareVersions(installedVersion, supportedVersion);
+
+      logger.debug('Version comparison result', {
+        comparison,
+        installedVersion,
+        supportedVersion,
+        compatible: comparison <= 0,
+        isNewer: comparison > 0,
+      });
+
+      return {
+        compatible: comparison <= 0, // Compatible if installed <= supported
+        installedVersion,
+        supportedVersion,
+        isNewer: comparison > 0, // Newer if installed > supported (warning case)
+      };
+    } catch (error) {
+      // If version comparison fails, provide proper error context for debugging
+      const errorContext = createErrorContext(error, {
+        agent: metadata.name,
+      });
+
+      logger.warn('Failed to compare versions', {
+        ...errorContext,
+        operation: 'version_comparison',
+        installedVersion,
+        supportedVersion,
+      });
+
+      // Return incompatible (safer default) - users should be aware of version issues
+      return {
+        compatible: false,
+        installedVersion,
+        supportedVersion,
+        isNewer: false,
+      };
+    }
   }
 }

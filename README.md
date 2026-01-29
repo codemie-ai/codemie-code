@@ -46,8 +46,8 @@ codemie setup
 # 2. Check system health
 codemie doctor
 
-# 3. Install an external agent (e.g., Claude Code)
-codemie install claude
+# 3. Install an external agent (e.g., Claude Code - latest supported version)
+codemie install claude --supported
 
 # 4. Use the installed agent
 codemie-claude "Review my API code"
@@ -64,7 +64,7 @@ codemie --task "Generate unit tests"
 ```bash
 npx @codemieai/code setup
 npx @codemieai/code doctor
-npx @codemieai/code install claude
+npx @codemieai/code install claude --supported
 # Note: Agent shortcuts require global installation
 ```
 
@@ -140,8 +140,8 @@ You can also install and use external agents like Claude Code and Gemini.
 - **Gemini CLI** (`codemie-gemini`) - Google's Gemini for coding tasks
 
 ```bash
-# Install an agent
-codemie install claude
+# Install an agent (latest supported version)
+codemie install claude --supported
 
 # Use the agent
 codemie-claude "Review my API code"
@@ -150,6 +150,23 @@ codemie-claude "Review my API code"
 codemie install gemini
 codemie-gemini "Implement a REST API"
 ```
+
+**Version Management:**
+
+CodeMie manages agent versions to ensure compatibility. For Claude Code:
+
+```bash
+# Install latest supported version (recommended)
+codemie install claude --supported
+
+# Install specific version
+codemie install claude 2.1.22
+
+# Install latest available version
+codemie install claude
+```
+
+Auto-updates are automatically disabled to maintain version control. CodeMie notifies you when running a different version than supported.
 
 For more detailed information on the available agents, see the [Agents Documentation](docs/AGENTS.md).
 
