@@ -27,7 +27,7 @@ export const ClaudePluginMetadata: AgentMetadata = {
   // Native installer URLs (used by installNativeAgent utility)
   installerUrls: {
     macOS: 'https://claude.ai/install.sh',
-    windows: 'https://claude.ai/install.ps1',
+    windows: 'https://claude.ai/install.cmd',
     linux: 'https://claude.ai/install.sh'
   },
 

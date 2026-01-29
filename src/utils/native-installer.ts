@@ -111,15 +111,11 @@ function buildInstallerCommand(
 
 	// Build platform-specific command
 	if (platform === 'windows') {
-		// Windows PowerShell command with proper escaping
-		// PowerShell escaping: wrap in single quotes and escape any single quotes inside
-		const escapedVersion = version ? ` '${version.replace(/'/g, "''")}'` : '';
-		const escapedFlags = installFlags && installFlags.length > 0
-			? ` ${installFlags.map(f => `'${f.replace(/'/g, "''")}'`).join(' ')}`
-			: '';
-		// Use -NoProfile and -ExecutionPolicy Bypass for security and consistency
-		// Wrap URL in single quotes for safety (already validated as HTTPS)
-		return `powershell -NoProfile -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((Invoke-RestMethod -Uri '${url}')))${escapedVersion}${escapedFlags}"`;
+		// Windows CMD command (simpler and more universal than PowerShell)
+		// Download install.cmd, execute with args, then delete
+		const versionArg = version ? ` ${version}` : '';
+		const flagsArg = installFlags && installFlags.length > 0 ? ` ${installFlags.join(' ')}` : '';
+		return `curl -fsSL ${url} -o install.cmd && install.cmd${versionArg}${flagsArg} && del install.cmd`;
 	} else {
 		// macOS/Linux shell script command
 		const versionArg = version ? ` -s -- ${version}` : '';
