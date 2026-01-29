@@ -174,12 +174,17 @@ Environment variables override config file values and are useful for CI/CD, Dock
 | Variable | Description | Default | Example |
 |----------|-------------|---------|---------|
 | `CODEMIE_AUTO_UPDATE` | Automatic CLI self-update behavior | `true` | `false` to prompt before updating |
+| `CODEMIE_UPDATE_CHECK_INTERVAL` | Time between update checks (milliseconds) | `86400000` (24h) | `3600000` for 1 hour |
 
 **Auto-Update Behavior:**
 - `true` (default) - Silently auto-update CLI in background on startup
 - `false` - Show update notification and prompt for confirmation
-- Non-blocking: Update checks won't prevent CLI from starting if they fail
-- Fast: 5-second timeout for version check
+- **Rate Limited**: Only checks once per interval (default: 24 hours)
+  - First invocation: Checks npm registry (5s max timeout)
+  - Subsequent invocations within interval: Instant (no network call)
+- **Concurrent Safe**: File-based locking prevents multiple simultaneous updates
+- Non-blocking: Update check failures won't prevent CLI from starting
+- Cache location: `~/.codemie/.last-update-check`
 - See `codemie self-update --help` for manual update options
 
 #### Security & File Access

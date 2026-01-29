@@ -7,6 +7,7 @@
  * Environment Variables:
  * - CODEMIE_AUTO_UPDATE=true (default): Silently update without prompting
  * - CODEMIE_AUTO_UPDATE=false: Prompt user before updating
+ * - CODEMIE_UPDATE_CHECK_INTERVAL: Time between update checks in ms (default: 86400000 = 24h)
  */
 
 import fs from 'fs/promises';
@@ -16,8 +17,18 @@ import inquirer from 'inquirer';
 import { fileURLToPath } from 'url';
 import { logger } from './logger.js';
 import { getLatestVersion, installGlobal } from './processes.js';
+import { compareVersions, isValidSemanticVersion } from './version-utils.js';
+import { getCodemiePath } from './paths.js';
 
 const CLI_PACKAGE_NAME = '@codemieai/code';
+
+// Rate limiting: Check for updates at most once per interval (default: 24 hours)
+const UPDATE_CHECK_INTERVAL = parseInt(
+  process.env.CODEMIE_UPDATE_CHECK_INTERVAL || '86400000',
+  10
+);
+const LAST_CHECK_FILE = path.join(getCodemiePath(), '.last-update-check');
+const UPDATE_LOCK_FILE = path.join(getCodemiePath(), '.update-lock');
 
 /**
  * Get the current CLI version from package.json
@@ -39,24 +50,67 @@ export async function getCurrentCliVersion(): Promise<string | null> {
 }
 
 /**
- * Compare two semver versions
- * @returns -1 if v1 < v2, 0 if equal, 1 if v1 > v2
+ * Check if we should perform an update check (rate limiting)
+ * Only checks once per UPDATE_CHECK_INTERVAL (default: 24 hours)
  */
-function compareVersions(v1: string, v2: string): number {
-  const parts1 = v1.split('.').map(Number);
-  const parts2 = v2.split('.').map(Number);
+async function shouldCheckForUpdate(): Promise<boolean> {
+  try {
+    const lastCheckStr = await fs.readFile(LAST_CHECK_FILE, 'utf-8');
+    const lastCheck = parseInt(lastCheckStr, 10);
+    const now = Date.now();
 
-  const maxLen = Math.max(parts1.length, parts2.length);
-
-  for (let i = 0; i < maxLen; i++) {
-    const p1 = parts1[i] || 0;
-    const p2 = parts2[i] || 0;
-
-    if (p1 < p2) return -1;
-    if (p1 > p2) return 1;
+    const shouldCheck = (now - lastCheck) > UPDATE_CHECK_INTERVAL;
+    if (!shouldCheck) {
+      logger.debug(`Skipping update check (last checked ${Math.floor((now - lastCheck) / 1000 / 60)} minutes ago)`);
+    }
+    return shouldCheck;
+  } catch {
+    // File doesn't exist or invalid - should check
+    return true;
   }
+}
 
-  return 0;
+/**
+ * Record the time of the last update check
+ */
+async function recordUpdateCheck(): Promise<void> {
+  try {
+    await fs.writeFile(LAST_CHECK_FILE, Date.now().toString(), 'utf-8');
+    logger.debug('Recorded update check timestamp');
+  } catch (error) {
+    logger.debug('Failed to record update check time:', error);
+  }
+}
+
+/**
+ * Acquire lock file to prevent concurrent updates
+ * @returns true if lock acquired, false if another process is updating
+ */
+async function acquireUpdateLock(): Promise<boolean> {
+  try {
+    // Try to create lock file with exclusive flag (fails if exists)
+    const fd = await fs.open(UPDATE_LOCK_FILE, 'wx');
+    await fd.close();
+    logger.debug('Acquired update lock');
+    return true;
+  } catch {
+    // Lock file exists - another process is updating
+    logger.debug('Update lock already held by another process');
+    return false;
+  }
+}
+
+/**
+ * Release update lock file
+ */
+async function releaseUpdateLock(): Promise<void> {
+  try {
+    await fs.unlink(UPDATE_LOCK_FILE);
+    logger.debug('Released update lock');
+  } catch {
+    // Lock file already deleted or never created
+    logger.debug('Lock file not found (already released)');
+  }
 }
 
 /**
@@ -104,10 +158,22 @@ export async function checkForCliUpdate(): Promise<CliUpdateCheckResult | null> 
       return null;
     }
 
+    // Validate current version format
+    if (!isValidSemanticVersion(currentVersion)) {
+      logger.debug(`Invalid current version format: ${currentVersion}`);
+      return null;
+    }
+
     // Fast check with 5-second timeout
     const latestVersion = await getLatestVersion(CLI_PACKAGE_NAME, { timeout: 5000 });
     if (!latestVersion) {
       logger.debug('Could not fetch latest CLI version from npm');
+      return null;
+    }
+
+    // SECURITY: Validate version string from npm registry before using
+    if (!isValidSemanticVersion(latestVersion)) {
+      logger.debug(`Invalid version format received from npm: ${latestVersion}`);
       return null;
     }
 
@@ -220,11 +286,23 @@ export async function updateCli(latestVersion: string, silent = false): Promise<
  * - CODEMIE_AUTO_UPDATE=true (default): Silent update
  * - CODEMIE_AUTO_UPDATE=false: Prompt user
  *
+ * Performance optimizations:
+ * - Rate limited: Only checks once per UPDATE_CHECK_INTERVAL (default: 24h)
+ * - File-based locking: Prevents concurrent updates from multiple CLI processes
+ *
  * Non-blocking: Failures are logged but don't block CLI startup
  */
 export async function checkAndPromptForUpdate(): Promise<void> {
   try {
+    // PERFORMANCE FIX: Rate limiting - only check once per interval (default: 24h)
+    if (!(await shouldCheckForUpdate())) {
+      return;
+    }
+
     const result = await checkForCliUpdate();
+
+    // Record check timestamp even if no update (prevents repeated checks)
+    await recordUpdateCheck();
 
     // No update available or check failed
     if (!result || !result.hasUpdate) {
@@ -234,10 +312,21 @@ export async function checkAndPromptForUpdate(): Promise<void> {
     const autoUpdate = isAutoUpdateEnabled();
 
     if (autoUpdate) {
-      // Silent auto-update (default behavior)
-      logger.debug(`Auto-updating CLI: ${result.currentVersion} → ${result.latestVersion}`);
-      await updateCli(result.latestVersion, true);
-      // Don't exit - let CLI continue with updated version on next run
+      // CONCURRENCY FIX: Try to acquire lock before updating
+      const hasLock = await acquireUpdateLock();
+      if (!hasLock) {
+        logger.debug('Another process is updating CLI, skipping');
+        return;
+      }
+
+      try {
+        // Silent auto-update (default behavior)
+        logger.debug(`Auto-updating CLI: ${result.currentVersion} → ${result.latestVersion}`);
+        await updateCli(result.latestVersion, true);
+        // Don't exit - let CLI continue with updated version on next run
+      } finally {
+        await releaseUpdateLock();
+      }
       return;
     }
 
@@ -253,12 +342,28 @@ export async function checkAndPromptForUpdate(): Promise<void> {
       return;
     }
 
-    // Perform update (verbose)
-    await updateCli(result.latestVersion, false);
+    // CONCURRENCY FIX: Try to acquire lock before updating
+    const hasLock = await acquireUpdateLock();
+    if (!hasLock) {
+      console.log();
+      console.log(chalk.yellow('⚠ Another process is updating CLI. Please wait and try again.'));
+      console.log();
+      return;
+    }
 
-    // Exit after update so user can run the new version
-    process.exit(0);
+    try {
+      // Perform update (verbose)
+      await updateCli(result.latestVersion, false);
+
+      // Exit after update so user can run the new version
+      process.exit(0);
+    } finally {
+      await releaseUpdateLock();
+    }
   } catch (error) {
+    // Clean up lock on error
+    await releaseUpdateLock();
+
     // Don't block CLI startup if update check/install fails
     logger.debug('CLI update check failed:', error);
   }

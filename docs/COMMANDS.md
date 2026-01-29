@@ -384,11 +384,13 @@ codemie self-update --check
 
 **Auto-Update Behavior:**
 
-By default, CodeMie CLI automatically checks for updates on every startup:
+By default, CodeMie CLI automatically checks for updates on startup with smart rate limiting:
 
 ```bash
 # Default: Silent auto-update (no user interaction)
 codemie --version
+# First run: Checks for updates (5s max)
+# Subsequent runs within 24h: Instant (skips check)
 
 # Prompt before updating
 export CODEMIE_AUTO_UPDATE=false
@@ -399,9 +401,17 @@ export CODEMIE_AUTO_UPDATE=true
 codemie --version
 ```
 
+**Performance & Rate Limiting:**
+- Update checks are rate-limited to once per 24 hours by default
+- First invocation may take up to 5 seconds (network check)
+- Subsequent invocations within the interval are instant (no network call)
+- Prevents blocking on every CLI startup
+- Cache stored in `~/.codemie/.last-update-check`
+
 **Environment Variables:**
 - `CODEMIE_AUTO_UPDATE=true` (default) - Silently auto-update in background
 - `CODEMIE_AUTO_UPDATE=false` - Show update prompt and ask for confirmation
+- `CODEMIE_UPDATE_CHECK_INTERVAL` - Time between checks in ms (default: 86400000 = 24h)
 
 **Examples:**
 ```bash
