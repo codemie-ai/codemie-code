@@ -78,12 +78,6 @@ function compareVersions(v1: string, v2: string): number {
  * Check a single agent for available updates
  */
 async function checkAgentForUpdate(agent: AgentAdapter): Promise<UpdateCheckResult | null> {
-  // Skip built-in agents (no npmPackage)
-  const npmPackage = getNpmPackage(agent);
-  if (!npmPackage) {
-    return null;
-  }
-
   // Check if installed
   const installed = await agent.isInstalled();
   if (!installed) {
@@ -93,6 +87,31 @@ async function checkAgentForUpdate(agent: AgentAdapter): Promise<UpdateCheckResu
   // Get current version
   const currentVersion = await agent.getVersion();
   if (!currentVersion) {
+    return null;
+  }
+
+  // Special handling for Claude (uses native installer, not npm)
+  if (agent.name === 'claude' && 'checkVersionCompatibility' in agent) {
+    const compat = await (agent as any).checkVersionCompatibility();
+    const supportedVersion = compat.supportedVersion;
+    const cleanCurrentVersion = extractVersion(currentVersion) || currentVersion;
+
+    // Check if update available (current < supported)
+    const hasUpdate = compareVersions(currentVersion, supportedVersion) < 0;
+
+    return {
+      name: agent.name,
+      displayName: agent.displayName,
+      currentVersion: cleanCurrentVersion,
+      latestVersion: supportedVersion,
+      hasUpdate,
+      npmPackage: '@anthropic-ai/claude-code' // Keep for compatibility, won't be used
+    };
+  }
+
+  // Standard npm-based agents
+  const npmPackage = getNpmPackage(agent);
+  if (!npmPackage) {
     return null;
   }
 
@@ -187,6 +206,13 @@ async function promptAgentSelection(outdated: UpdateCheckResult[]): Promise<stri
  * Update a single agent
  */
 async function updateAgent(agent: AgentAdapter, latestVersion: string): Promise<void> {
+  // Special handling for Claude (uses native installer)
+  if (agent.name === 'claude' && 'installVersion' in agent) {
+    await (agent as any).installVersion('supported');
+    return;
+  }
+
+  // Standard npm-based agents
   const npmPackage = getNpmPackage(agent);
   if (!npmPackage) {
     throw new Error(`${agent.displayName} cannot be updated (no npm package)`);
@@ -240,7 +266,12 @@ export function createUpdateCommand(): Command {
           }
 
           if (!result.hasUpdate) {
-            spinner.succeed(`${agent.displayName} is already up to date (${result.currentVersion})`);
+            // For Claude, clarify it's the latest supported version (not absolute latest)
+            if (agent.name === 'claude') {
+              spinner.succeed(`${agent.displayName} is already up to date with latest verified version by CodeMie (${result.currentVersion})`);
+            } else {
+              spinner.succeed(`${agent.displayName} is already up to date (${result.currentVersion})`);
+            }
             return;
           }
 

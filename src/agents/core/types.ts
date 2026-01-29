@@ -478,4 +478,13 @@ export interface AgentAdapter {
    * @returns Version compatibility result
    */
   checkVersionCompatibility?(): Promise<VersionCompatibilityResult>;
+
+  /**
+   * Detect installation method (optional, for installation-aware agents)
+   * Returns how the agent was installed (npm vs native installer)
+   * Used to warn users about deprecated installation methods
+   *
+   * @returns Installation method: 'npm', 'native', or 'unknown'
+   */
+  getInstallationMethod?(): Promise<'npm' | 'native' | 'unknown'>;
 }

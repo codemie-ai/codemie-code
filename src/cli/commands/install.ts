@@ -71,7 +71,7 @@ export function createInstallCommand(): Command {
           let versionToInstall: string | undefined;
           let actualVersionToInstall: string | undefined; // Resolved version for display
 
-          // Priority: --supported flag > version argument > undefined (latest)
+          // Priority: --supported flag > version argument > 'supported' (default for Claude) > undefined (latest)
           if (options?.supported) {
             versionToInstall = 'supported';
             // Resolve 'supported' to actual version for display and comparison
@@ -82,6 +82,11 @@ export function createInstallCommand(): Command {
           } else if (version) {
             versionToInstall = version;
             actualVersionToInstall = version;
+          } else if (agent.name === 'claude' && agent.checkVersionCompatibility) {
+            // Default to supported version for Claude (native installer)
+            versionToInstall = 'supported';
+            const compat = await agent.checkVersionCompatibility();
+            actualVersionToInstall = compat.supportedVersion;
           }
 
           // Check if already installed with matching version
@@ -120,7 +125,8 @@ export function createInstallCommand(): Command {
           }
 
           // Build installation message
-          const versionMessage = options?.supported && actualVersionToInstall
+          const isUsingSupported = versionToInstall === 'supported';
+          const versionMessage = isUsingSupported && actualVersionToInstall
             ? ` v${actualVersionToInstall} (supported version)`
             : actualVersionToInstall
             ? ` v${actualVersionToInstall}`

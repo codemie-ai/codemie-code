@@ -8,6 +8,7 @@ import { installNativeAgent } from '../../../utils/native-installer.js';
 import { compareVersions, isValidSemanticVersion } from '../../../utils/version-utils.js';
 import { AgentInstallationError, createErrorContext } from '../../../utils/errors.js';
 import { logger } from '../../../utils/logger.js';
+import { detectInstallationMethod, type InstallationMethod } from '../../../utils/installation-detector.js';
 
 /**
  * Claude Code Plugin Metadata
@@ -169,6 +170,20 @@ export class ClaudePlugin extends BaseAgentAdapter {
   }
 
   /**
+   * Detect how Claude was installed (npm vs native)
+   * Returns installation method for informational purposes
+   *
+   * @returns Installation method: 'npm', 'native', or 'unknown'
+   */
+  async getInstallationMethod(): Promise<InstallationMethod> {
+    if (!this.metadata.cliCommand) {
+      return 'unknown';
+    }
+
+    return await detectInstallationMethod(this.metadata.cliCommand);
+  }
+
+  /**
    * Install Claude Code using native installer (override from BaseAgentAdapter)
    * Installs latest available version from native installer
    * For version-specific installs, use installVersion() method
@@ -324,19 +339,38 @@ export class ClaudePlugin extends BaseAgentAdapter {
         isNewer: comparison > 0, // Newer if installed > supported (warning case)
       };
     } catch (error) {
-      // If version comparison fails, provide proper error context for debugging
+      // If version comparison fails, provide comprehensive error context for debugging
       const errorContext = createErrorContext(error, {
         agent: metadata.name,
       });
 
-      logger.warn('Failed to compare versions', {
-        ...errorContext,
-        operation: 'version_comparison',
-        installedVersion,
-        supportedVersion,
-      });
+      // Differentiate between parse errors (non-standard format) and unexpected errors
+      const isParseError = error instanceof Error && error.message.includes('Invalid semantic version');
+
+      if (isParseError) {
+        // Parse error: version format not recognized (e.g., "2.1.22 (Claude Code)" or custom format)
+        logger.warn('Non-standard version format detected, treating as incompatible', {
+          ...errorContext,
+          operation: 'checkVersionCompatibility',
+          phase: 'version_comparison',
+          installedVersion,
+          supportedVersion,
+          reason: 'parse_error',
+        });
+      } else {
+        // Unexpected error: something went wrong during comparison
+        logger.error('Version compatibility check failed unexpectedly', {
+          ...errorContext,
+          operation: 'checkVersionCompatibility',
+          phase: 'version_comparison',
+          installedVersion,
+          supportedVersion,
+          reason: 'unexpected_error',
+        });
+      }
 
       // Return incompatible (safer default) - users should be aware of version issues
+      // Don't throw - this would break user experience during setup/execution
       return {
         compatible: false,
         installedVersion,

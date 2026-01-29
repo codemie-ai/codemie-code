@@ -14,6 +14,7 @@ import {
 } from '../../providers/integration/setup-ui.js';
 import { FirstTimeExperience } from '../first-time.js';
 import { AgentRegistry } from '../../agents/registry.js';
+import type { VersionCompatibilityResult } from '../../agents/core/types.js';
 
 
 export function createSetupCommand(): Command {
@@ -400,25 +401,44 @@ async function checkAndInstallClaude(): Promise<void> {
         console.log();
       }
     } else {
-      // Claude installed - check version compatibility
+      // Claude installed - check version compatibility with timeout protection
       if (claude.checkVersionCompatibility) {
-        const compat = await claude.checkVersionCompatibility();
+        try {
+          // Add timeout protection to avoid blocking setup if version check hangs
+          const compat = await Promise.race([
+            claude.checkVersionCompatibility(),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('Version check timeout')), 3000)
+            )
+          ]) as VersionCompatibilityResult;
 
-        if (compat.isNewer) {
-          // Installed version is newer than supported
+          if (compat.isNewer) {
+            // Installed version is newer than supported
+            console.log();
+            console.log(chalk.yellow(`⚠️  Claude Code v${compat.installedVersion} is installed`));
+            console.log(chalk.yellow(`   CodeMie has only tested and verified v${compat.supportedVersion}`));
+            console.log();
+            console.log(chalk.white('   To install the supported version:'));
+            console.log(chalk.blueBright('   codemie install claude --supported'));
+            console.log();
+          } else if (compat.compatible) {
+            // Version is compatible (same or older than supported)
+            console.log();
+            console.log(chalk.green(`✓ Claude Code v${compat.installedVersion} is installed`));
+            console.log();
+          }
+        } catch (error) {
+          // Silently skip version check if it fails - don't block setup
+          logger.debug('Claude version check skipped during setup', { error });
           console.log();
-          console.log(chalk.yellow(`⚠️  Claude Code v${compat.installedVersion} is installed`));
-          console.log(chalk.yellow(`   CodeMie has only tested and verified v${compat.supportedVersion}`));
-          console.log();
-          console.log(chalk.white('   To install the supported version:'));
-          console.log(chalk.blueBright('   codemie install claude --supported'));
-          console.log();
-        } else if (compat.compatible) {
-          // Version is compatible (same or older than supported)
-          console.log();
-          console.log(chalk.green(`✓ Claude Code v${compat.installedVersion} is installed`));
+          console.log(chalk.green(`✓ Claude Code is installed`));
           console.log();
         }
+      } else {
+        // No version check available, just show installed message
+        console.log();
+        console.log(chalk.green(`✓ Claude Code is installed`));
+        console.log();
       }
     }
   } catch (error) {
