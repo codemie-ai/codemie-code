@@ -132,6 +132,7 @@ Adapt your review to align with these established project patterns.
 | **Imports** | Missing .js extension in imports | MAJOR | Add .js extension (ES modules requirement) |
 | **Imports** | Using require() or __dirname | MAJOR | Use ES modules and getDirname(import.meta.url) |
 | **Architecture** | CLI directly calling plugin code | MAJOR | Follow 5-layer architecture (CLI → Registry → Plugin) |
+| **Code Style** | Using double quotes ("") for strings | MAJOR | Use single quotes ('') - project convention |
 | **Type Safety** | any without comment explaining why | RECOMMENDATIONS | Document why any is necessary |
 
 ---
@@ -144,14 +145,15 @@ Adapt your review to align with these established project patterns.
 - No require() statements
 - No __dirname or __filename
 - Always use .js extension in imports (even for .ts files)
+- Always use single quotes ('') for strings, not double quotes ("")
 
 **Example:**
 ```typescript
-// ❌ BAD - CommonJS pattern
-const { exec } = require('./processes');
-const configPath = path.join(__dirname, 'config.json');
+// ❌ BAD - CommonJS pattern and double quotes
+const { exec } = require("./processes");
+const configPath = path.join(__dirname, "config.json");
 
-// ✅ GOOD - ES modules
+// ✅ GOOD - ES modules and single quotes
 import { exec } from './processes.js';
 import { getDirname } from './paths.js';
 const configPath = path.join(getDirname(import.meta.url), 'config.json');
@@ -322,6 +324,7 @@ const { installAgent } = await import('./installer.js');
 - [ ] All imports use .js extension (even for .ts files)
 - [ ] No require() or CommonJS patterns
 - [ ] No __dirname or __filename (use getDirname(import.meta.url))
+- [ ] Single quotes ('') used for strings, not double quotes ("")
 - [ ] Exported functions have explicit return types
 
 ### Error Handling & Logging
