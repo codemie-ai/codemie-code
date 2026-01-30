@@ -1,42 +1,46 @@
-import { AgentMetadata, VersionCompatibilityResult } from "../../core/types.js";
-import { BaseAgentAdapter } from "../../core/BaseAgentAdapter.js";
-import { ClaudeSessionAdapter } from "./claude.session.js";
-import type { SessionAdapter } from "../../core/session/BaseSessionAdapter.js";
-import { ClaudePluginInstaller } from "./claude.plugin-installer.js";
-import type { BaseExtensionInstaller } from "../../core/extension/BaseExtensionInstaller.js";
-import { installNativeAgent } from "../../../utils/native-installer.js";
-import {
-  compareVersions,
-  isValidSemanticVersion,
-} from "../../../utils/version-utils.js";
-import {
-  AgentInstallationError,
-  createErrorContext,
-} from "../../../utils/errors.js";
-import { logger } from "../../../utils/logger.js";
-import {
-  detectInstallationMethod,
-  type InstallationMethod,
-} from "../../../utils/installation-detector.js";
-import {
-  CLAUDE_SUPPORTED_VERSION,
-  CLAUDE_INSTALLER_URLS,
-} from "./claude.constants.js";
+import { AgentMetadata, VersionCompatibilityResult } from '../../core/types.js';
+import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
+import { ClaudeSessionAdapter } from './claude.session.js';
+import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
+import { ClaudePluginInstaller } from './claude.plugin-installer.js';
+import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
+import { installNativeAgent } from '../../../utils/native-installer.js';
+import { compareVersions, isValidSemanticVersion } from '../../../utils/version-utils.js';
+import { AgentInstallationError, createErrorContext } from '../../../utils/errors.js';
+import { logger } from '../../../utils/logger.js';
+import { detectInstallationMethod, type InstallationMethod } from '../../../utils/installation-detector.js';
+
+/**
+ * Supported Claude Code version
+ * Latest version tested and verified with CodeMie backend
+ *
+ * **UPDATE THIS WHEN BUMPING CLAUDE VERSION**
+ */
+const CLAUDE_SUPPORTED_VERSION = '2.1.25';
+
+/**
+ * Claude Code installer URLs
+ * Official Anthropic installer scripts for native installation
+ */
+const CLAUDE_INSTALLER_URLS = {
+  macOS: 'https://claude.ai/install.sh',
+  windows: 'https://claude.ai/install.cmd',
+  linux: 'https://claude.ai/install.sh',
+};
 
 /**
  * Claude Code Plugin Metadata
  */
 export const ClaudePluginMetadata: AgentMetadata = {
-  name: "claude",
-  displayName: "Claude Code",
-  description: "Claude Code - official Anthropic CLI tool",
+  name: 'claude',
+  displayName: 'Claude Code',
+  description: 'Claude Code - official Anthropic CLI tool',
 
-  npmPackage: "@anthropic-ai/claude-code",
-  cliCommand: "claude",
+  npmPackage: '@anthropic-ai/claude-code',
+  cliCommand: 'claude',
 
   // Version management configuration
-  // NOTE: Update CLAUDE_SUPPORTED_VERSION in claude.constants.ts to change supported version
-  supportedVersion: CLAUDE_SUPPORTED_VERSION,
+  supportedVersion: CLAUDE_SUPPORTED_VERSION, // Latest version tested with CodeMie backend
 
   // Native installer URLs (used by installNativeAgent utility)
   installerUrls: CLAUDE_INSTALLER_URLS,
