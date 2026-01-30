@@ -16,6 +16,9 @@ import type { CodeMieClient } from 'codemie-sdk';
 import { EXIT_PROMPTS, ROLES, MESSAGES, type HistoryMessage } from './constants.js';
 import { getAuthenticatedClient, promptReauthentication } from '@/utils/auth.js';
 
+/** Assistant label color */
+const ASSISTANT_LABEL_COLOR = [177, 185, 249] as const;
+
 /**
  * Create assistants chat command
  */
@@ -146,7 +149,8 @@ async function interactiveChat(
       {
         type: 'input',
         name: 'message',
-        message: chalk.green(MESSAGES.CHAT.PROMPT_YOUR_MESSAGE),
+        message: MESSAGES.CHAT.PROMPT_YOUR_MESSAGE,
+        prefix: '',
         validate: (input: string) => input.trim().length > 0 || MESSAGES.CHAT.VALIDATION_MESSAGE_EMPTY
       }
     ]);
@@ -162,7 +166,7 @@ async function interactiveChat(
       const response = await sendMessageWithHistory(client, assistant, message, history, conversationId);
       spinner.stop();
 
-      console.log(chalk.bold.cyan(`${assistant.name}:`), response || MESSAGES.CHAT.FALLBACK_NO_RESPONSE);
+      console.log(chalk.rgb(...ASSISTANT_LABEL_COLOR)(`[Assistant @${assistant.slug}]`), response || MESSAGES.CHAT.FALLBACK_NO_RESPONSE);
       console.log('');
 
       history.push(

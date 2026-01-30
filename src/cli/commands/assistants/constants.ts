@@ -7,7 +7,7 @@ export const COMMAND_NAMES = {
   CHAT: 'chat'
 } as const;
 
-export const EXIT_PROMPTS = ['exit', 'quit'] as const;
+export const EXIT_PROMPTS = ['exit', 'quit', '/exit', '/quit'] as const;
 
 export const ROLES = {
   USER: 'User',
@@ -45,14 +45,14 @@ export const MESSAGES = {
     ARGUMENT_ASSISTANT_ID: 'Assistant ID (if provided, runs in single-message mode)',
     ARGUMENT_MESSAGE: 'Message to send (required when assistant-id is provided)',
     HEADER: (name: string) => `\n💬 Chat with ${name}`,
-    INSTRUCTIONS: 'Type your message and press Enter. Type "exit" or "quit" to end the conversation.\n',
+    INSTRUCTIONS: 'Type your message and press Enter. Type "/exit" or "/quit" to end the conversation.\n',
     GOODBYE: '\nGoodbye!\n',
-    PROMPT_YOUR_MESSAGE: 'You:',
+    PROMPT_YOUR_MESSAGE: '>',
     VALIDATION_MESSAGE_EMPTY: 'Message cannot be empty',
     SPINNER_THINKING: 'Thinking...',
     FALLBACK_NO_RESPONSE: 'No response',
     ERROR_SEND_FAILED: 'Failed to send message',
-    RETRY_PROMPT: 'Failed to get response. Try again or type "exit" to quit.\n'
+    RETRY_PROMPT: 'Failed to get response. Try again or type "/exit" to quit.\n'
   },
   LIST: {
     COMMAND_DESCRIPTION: 'Manage CodeMie assistants (view, register, unregister)',
