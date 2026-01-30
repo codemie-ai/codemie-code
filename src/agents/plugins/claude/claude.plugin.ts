@@ -5,10 +5,37 @@ import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import { ClaudePluginInstaller } from './claude.plugin-installer.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
 import { installNativeAgent } from '../../../utils/native-installer.js';
-import { compareVersions, isValidSemanticVersion } from '../../../utils/version-utils.js';
-import { AgentInstallationError, createErrorContext } from '../../../utils/errors.js';
+import {
+  compareVersions,
+  isValidSemanticVersion,
+} from '../../../utils/version-utils.js';
+import {
+  AgentInstallationError,
+  createErrorContext,
+} from '../../../utils/errors.js';
 import { logger } from '../../../utils/logger.js';
-import { detectInstallationMethod, type InstallationMethod } from '../../../utils/installation-detector.js';
+import {
+  detectInstallationMethod,
+  type InstallationMethod,
+} from '../../../utils/installation-detector.js';
+
+/**
+ * Supported Claude Code version
+ * Latest version tested and verified with CodeMie backend
+ *
+ * **UPDATE THIS WHEN BUMPING CLAUDE VERSION**
+ */
+const CLAUDE_SUPPORTED_VERSION = '2.1.25';
+
+/**
+ * Claude Code installer URLs
+ * Official Anthropic installer scripts for native installation
+ */
+const CLAUDE_INSTALLER_URLS = {
+  macOS: 'https://claude.ai/install.sh',
+  windows: 'https://claude.ai/install.cmd',
+  linux: 'https://claude.ai/install.sh',
+};
 
 /**
  * Claude Code Plugin Metadata
@@ -22,24 +49,20 @@ export const ClaudePluginMetadata: AgentMetadata = {
   cliCommand: 'claude',
 
   // Version management configuration
-  supportedVersion: '2.1.22', // Latest version tested with CodeMie backend
+  supportedVersion: CLAUDE_SUPPORTED_VERSION, // Latest version tested with CodeMie backend
 
   // Native installer URLs (used by installNativeAgent utility)
-  installerUrls: {
-    macOS: 'https://claude.ai/install.sh',
-    windows: 'https://claude.ai/install.cmd',
-    linux: 'https://claude.ai/install.sh'
-  },
+  installerUrls: CLAUDE_INSTALLER_URLS,
 
   // Data paths (used by lifecycle hooks and analytics)
   dataPaths: {
-    home: '.claude'
+    home: '.claude',
   },
 
   envMapping: {
     baseUrl: ['ANTHROPIC_BASE_URL'],
     apiKey: ['ANTHROPIC_AUTH_TOKEN'],
-    model: ['ANTHROPIC_MODEL']
+    model: ['ANTHROPIC_MODEL'],
   },
 
   supportedProviders: ['litellm', 'ai-run-sso', 'bedrock'],
@@ -48,19 +71,19 @@ export const ClaudePluginMetadata: AgentMetadata = {
 
   ssoConfig: {
     enabled: true,
-    clientType: 'codemie-claude'
+    clientType: 'codemie-claude',
   },
 
   flagMappings: {
     '--task': {
       type: 'flag',
-      target: '-p'
-    }
+      target: '-p',
+    },
   },
 
   // Metrics configuration: exclude Bash tool errors from API metrics
   metricsConfig: {
-    excludeErrorsFromTools: ['Bash']
+    excludeErrorsFromTools: ['Bash'],
   },
 
   // MCP configuration paths for Claude Code
@@ -70,16 +93,16 @@ export const ClaudePluginMetadata: AgentMetadata = {
   mcpConfig: {
     local: {
       path: '~/.claude.json',
-      jsonPath: 'projects.{cwd}.mcpServers'
+      jsonPath: 'projects.{cwd}.mcpServers',
     },
     project: {
       path: '.mcp.json',
-      jsonPath: 'mcpServers'
+      jsonPath: 'mcpServers',
     },
     user: {
       path: '~/.claude.json',
-      jsonPath: 'mcpServers'
-    }
+      jsonPath: 'mcpServers',
+    },
   },
 
   lifecycle: {
@@ -106,8 +129,8 @@ export const ClaudePluginMetadata: AgentMetadata = {
       }
 
       return env;
-    }
-  }
+    },
+  },
 };
 
 /**
@@ -143,7 +166,7 @@ export class ClaudePlugin extends BaseAgentAdapter {
   /**
    * Get Claude version (override from BaseAgentAdapter)
    * Parses version from 'claude --version' output
-   * Claude outputs: "2.1.23 (Claude Code)" - we need just "2.1.23"
+   * Claude outputs: '2.1.23 (Claude Code)' - we need just '2.1.23'
    *
    * @returns Version string or null if not installed
    */
@@ -156,7 +179,7 @@ export class ClaudePlugin extends BaseAgentAdapter {
       const { exec } = await import('../../../utils/processes.js');
       const result = await exec(this.metadata.cliCommand, ['--version']);
 
-      // Parse version from output like "2.1.23 (Claude Code)"
+      // Parse version from output like '2.1.23 (Claude Code)'
       // Extract just the version number
       const versionMatch = result.stdout.trim().match(/^(\d+\.\d+\.\d+)/);
       if (versionMatch) {
@@ -215,7 +238,7 @@ export class ClaudePlugin extends BaseAgentAdapter {
       if (!metadata.supportedVersion) {
         throw new AgentInstallationError(
           metadata.name,
-          'No supported version defined in metadata'
+          'No supported version defined in metadata',
         );
       }
       resolvedVersion = metadata.supportedVersion;
@@ -226,16 +249,18 @@ export class ClaudePlugin extends BaseAgentAdapter {
     }
 
     // SECURITY: Validate version format to prevent command injection
-    // Only allow semantic versions (e.g., "2.0.30") or special channels
+    // Only allow semantic versions (e.g., '2.0.30') or special channels
     if (resolvedVersion) {
       const allowedChannels = ['latest', 'stable'];
-      const isValidChannel = allowedChannels.includes(resolvedVersion.toLowerCase());
+      const isValidChannel = allowedChannels.includes(
+        resolvedVersion.toLowerCase(),
+      );
       const isValidVersion = isValidSemanticVersion(resolvedVersion);
 
       if (!isValidChannel && !isValidVersion) {
         throw new AgentInstallationError(
           metadata.name,
-          `Invalid version format: "${resolvedVersion}". Expected semantic version (e.g., "2.0.30"), "latest", or "stable".`
+          `Invalid version format: '${resolvedVersion}'. Expected semantic version (e.g., '2.0.30'), 'latest', or 'stable'.`,
         );
       }
 
@@ -250,12 +275,12 @@ export class ClaudePlugin extends BaseAgentAdapter {
     if (!metadata.installerUrls) {
       throw new AgentInstallationError(
         metadata.name,
-        'No installer URLs configured for native installation'
+        'No installer URLs configured for native installation',
       );
     }
 
     logger.info(
-      `Installing ${metadata.displayName} ${resolvedVersion || 'latest'}...`
+      `Installing ${metadata.displayName} ${resolvedVersion || 'latest'}...`,
     );
 
     // Execute native installer
@@ -267,18 +292,18 @@ export class ClaudePlugin extends BaseAgentAdapter {
         timeout: 120000, // 2 minute timeout
         verifyCommand: metadata.cliCommand || undefined,
         installFlags: ['--force'], // Force installation to overwrite existing version
-      }
+      },
     );
 
     if (!result.success) {
       throw new AgentInstallationError(
         metadata.name,
-        `Installation failed. Output: ${result.output}`
+        `Installation failed. Output: ${result.output}`,
       );
     }
 
     logger.success(
-      `${metadata.displayName} ${result.installedVersion || resolvedVersion || 'latest'} installed successfully`
+      `${metadata.displayName} ${result.installedVersion || resolvedVersion || 'latest'} installed successfully`,
     );
   }
 
@@ -307,6 +332,7 @@ export class ClaudePlugin extends BaseAgentAdapter {
         installedVersion: null,
         supportedVersion,
         isNewer: false,
+        hasUpdate: false,
       };
     }
 
@@ -317,6 +343,7 @@ export class ClaudePlugin extends BaseAgentAdapter {
         installedVersion,
         supportedVersion: 'latest',
         isNewer: false,
+        hasUpdate: false,
       };
     }
 
@@ -324,12 +351,16 @@ export class ClaudePlugin extends BaseAgentAdapter {
     try {
       const comparison = compareVersions(installedVersion, supportedVersion);
 
+      // Determine if update is available: installed < supported
+      const hasUpdate = comparison < 0;
+
       logger.debug('Version comparison result', {
         comparison,
         installedVersion,
         supportedVersion,
         compatible: comparison <= 0,
         isNewer: comparison > 0,
+        hasUpdate,
       });
 
       return {
@@ -337,6 +368,7 @@ export class ClaudePlugin extends BaseAgentAdapter {
         installedVersion,
         supportedVersion,
         isNewer: comparison > 0, // Newer if installed > supported (warning case)
+        hasUpdate, // Update available if installed < supported
       };
     } catch (error) {
       // If version comparison fails, provide comprehensive error context for debugging
@@ -345,18 +377,23 @@ export class ClaudePlugin extends BaseAgentAdapter {
       });
 
       // Differentiate between parse errors (non-standard format) and unexpected errors
-      const isParseError = error instanceof Error && error.message.includes('Invalid semantic version');
+      const isParseError =
+        error instanceof Error &&
+        error.message.includes('Invalid semantic version');
 
       if (isParseError) {
-        // Parse error: version format not recognized (e.g., "2.1.22 (Claude Code)" or custom format)
-        logger.warn('Non-standard version format detected, treating as incompatible', {
-          ...errorContext,
-          operation: 'checkVersionCompatibility',
-          phase: 'version_comparison',
-          installedVersion,
-          supportedVersion,
-          reason: 'parse_error',
-        });
+        // Parse error: version format not recognized (e.g., '2.1.22 (Claude Code)' or custom format)
+        logger.warn(
+          'Non-standard version format detected, treating as incompatible',
+          {
+            ...errorContext,
+            operation: 'checkVersionCompatibility',
+            phase: 'version_comparison',
+            installedVersion,
+            supportedVersion,
+            reason: 'parse_error',
+          },
+        );
       } else {
         // Unexpected error: something went wrong during comparison
         logger.error('Version compatibility check failed unexpectedly', {
@@ -376,6 +413,7 @@ export class ClaudePlugin extends BaseAgentAdapter {
         installedVersion,
         supportedVersion,
         isNewer: false,
+        hasUpdate: false,
       };
     }
   }

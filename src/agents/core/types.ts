@@ -157,6 +157,7 @@ export interface VersionCompatibilityResult {
   installedVersion: string | null; // null if not installed
   supportedVersion: string;        // version from metadata
   isNewer: boolean;                // true if installed > supported (requires warning)
+  hasUpdate: boolean;              // true if newer supported version available (for info prompt)
 }
 
 /**

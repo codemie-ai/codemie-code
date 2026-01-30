@@ -267,4 +267,3 @@ This project is licensed under the Apache-2.0 License.
 - [GitHub Repository](https://github.com/codemie-ai/codemie-code)
 - [Issue Tracker](https://github.com/codemie-ai/codemie-code/issues)
 - [NPM Package](https://www.npmjs.com/package/@codemieai/code)
-

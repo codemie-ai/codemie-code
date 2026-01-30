@@ -175,6 +175,33 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
         console.log(); // Add spacing before agent starts
       }
+      // Scenario 2: Update available (newer supported version exists, non-blocking info)
+      else if (compat.hasUpdate && compat.compatible && !this.metadata.silentMode) {
+        console.log();
+        console.log(chalk.blue('ℹ️  A new supported version of ' + this.displayName + ' is available!'));
+        console.log(chalk.white(`   Current version: v${compat.installedVersion}`));
+        console.log(chalk.white(`   Latest version:  v${compat.supportedVersion} `) + chalk.green('(recommended)'));
+        console.log();
+        console.log(chalk.white('   To update, run:'));
+        console.log(chalk.blueBright(`     codemie update ${this.name}`));
+        console.log();
+
+        const { continueWithCurrent } = await inquirer.prompt([
+          {
+            type: 'confirm',
+            name: 'continueWithCurrent',
+            message: 'Continue with current version?',
+            default: true,
+          },
+        ]);
+
+        if (!continueWithCurrent) {
+          console.log(chalk.gray('\nExecution cancelled. Please run the update command above.\n'));
+          process.exit(1);
+        }
+
+        console.log(); // Add spacing before agent starts
+      }
     }
 
     // Generate session ID at the very start - this is the source of truth

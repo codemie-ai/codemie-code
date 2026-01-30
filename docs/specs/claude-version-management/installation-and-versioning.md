@@ -103,9 +103,10 @@ Claude Code has deprecated npm installation and now requires native installation
    - Display installation progress and success/error messages
    - Error handling: Installation failures with retry option
 
-3. **Version Warning on Agent Execution**:
+3. **Version Checking on Agent Execution**:
    - Before `claude.run()`: Check installed version vs supported version
-   - If user version > supported version:
+   
+   **Scenario 1: Newer Untested Version** (user version > supported version):
      ```
      ⚠️  WARNING: You are running Claude Code v2.0.45
      CodeMie has only tested and verified Claude Code v2.0.30
@@ -122,6 +123,20 @@ Claude Code has deprecated npm installation and now requires native installation
      ```
    - Exit code 1 if user declines (non-zero exit)
    - Proceed if user confirms
+   
+   **Scenario 2: Update Available** (newer supported version exists, current version compatible):
+     ```
+     ℹ️  A new supported version of Claude Code is available!
+        Current version: v2.1.20
+        Latest version:  v2.1.22 (recommended)
+
+        To update, run:
+          codemie update claude
+
+     Continue with current version? [Y/n]:
+     ```
+   - Exit code 1 if user declines (non-zero exit)
+   - Proceed if user confirms (default: yes)
 
 **User-Facing Output**:
 - Success: "Claude Code v2.0.30 installed successfully ✓"
@@ -186,7 +201,7 @@ export const ClaudePluginMetadata: AgentMetadata = {
   cliCommand: 'claude',
 
   // NEW: Supported version configuration
-  supportedVersion: '2.1.22', // Latest tested version
+  supportedVersion: '2.1.25', // Latest tested version
 
   // KEEP: npmPackage for backward compatibility (will be ignored by new install logic)
   npmPackage: '@anthropic-ai/claude-code',
@@ -262,6 +277,7 @@ interface VersionCompatibilityResult {
   installedVersion: string | null; // null if not installed
   supportedVersion: string;        // from metadata
   isNewer: boolean;                // true if installed > supported (warning case)
+  hasUpdate: boolean;              // true if newer supported version available (info prompt)
 }
 ```
 
@@ -270,13 +286,23 @@ interface VersionCompatibilityResult {
 Claude Code includes a built-in auto-updater that can automatically update to newer versions. This **MUST be disabled** for CodeMie to maintain version control and compatibility:
 
 - **Environment Variable**: `DISABLE_AUTOUPDATER=1` (set in `lifecycle.beforeRun` hook)
+- **Platform Support**: Works on all platforms (macOS, Linux, Windows) - environment variables are cross-platform
 - **Rationale**:
   - CodeMie manages Claude versions explicitly via `installVersion()` for compatibility
   - Auto-updates could break version compatibility with CodeMie backend
   - Version warnings would be bypassed, causing unexpected behavior
-  - Users should control when to update via `codemie install claude --supported`
+  - Users should control when to update via `codemie update claude`
 - **Documentation**: https://code.claude.com/docs/en/settings
 - **Implementation**: Set in `ClaudePluginMetadata.lifecycle.beforeRun()` hook (runs before every Claude execution)
+
+**Version Update Notifications**:
+
+When a newer supported version is available (installed < supported), users receive an informational prompt:
+- **Message Type**: ℹ️ Info (cyan, non-threatening)
+- **Default Action**: Continue with current version (Y is default)
+- **Command**: `codemie update claude`
+- **Behavior**: Non-blocking - allows user to proceed with current version or cancel to update
+- **Purpose**: Keep users informed of newer tested versions without forcing immediate updates
 
 **Installation Logic**:
 
@@ -346,6 +372,7 @@ export interface VersionCompatibilityResult {
   installedVersion: string | null; // null if not installed
   supportedVersion: string;    // version from metadata
   isNewer: boolean;            // true if installed > supported (requires warning)
+  hasUpdate: boolean;          // true if newer supported version available (info prompt)
 }
 ```
 
@@ -754,7 +781,7 @@ export const ClaudePluginMetadata: AgentMetadata = {
   cliCommand: 'claude',
 
   // Version management configuration
-  supportedVersion: '2.1.22', // SINGLE SOURCE OF TRUTH
+  supportedVersion: '2.1.25', // SINGLE SOURCE OF TRUTH
 
   // Native installer URLs (used by installNativeAgent utility)
   installerUrls: {

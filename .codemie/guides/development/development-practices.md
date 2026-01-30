@@ -172,8 +172,10 @@ async function getAgent(name: string) { } // Missing return type
 - ✅ Use interfaces for object shapes (prefer over types)
 - ✅ Use async/await consistently (no Promise chains)
 - ✅ Use optional chaining (?.) and nullish coalescing (??)
+- ✅ Use single quotes ('') for strings (project convention, consistent style)
 - ⚠️ 'any' allowed when needed - @typescript-eslint/no-explicit-any disabled
 - ❌ Use require() or __dirname (use ES modules and getDirname())
+- ❌ Use double quotes ("") for strings (use single quotes instead)
 
 ---
 
