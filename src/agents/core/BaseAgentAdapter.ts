@@ -137,6 +137,253 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   }
 
   /**
+   * Cleanup proxy and stop it
+   */
+  private async cleanupProxy(): Promise<void> {
+    if (this.proxy) {
+      await this.proxy.stop();
+      this.proxy = null;
+    }
+  }
+
+  /**
+   * Execute cleanup sequence for session exit
+   * This includes metrics preparation, lifecycle hooks, proxy cleanup, and session completion
+   */
+  private async executeCleanupSequence(
+    exitCode: number,
+    env: NodeJS.ProcessEnv
+  ): Promise<void> {
+    // Prepare metrics for exit
+    if (this.sessionOrchestrator) {
+      await this.sessionOrchestrator.prepareForExit();
+    }
+
+    // Lifecycle hook: session end
+    await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, exitCode, env);
+
+    // Clean up proxy (triggers final sync)
+    await this.cleanupProxy();
+
+    // Mark session as completed
+    if (this.sessionOrchestrator) {
+      await this.sessionOrchestrator.markSessionComplete(exitCode);
+    }
+
+    // Lifecycle hook: after run
+    await executeAfterRun(this, this.metadata.lifecycle, this.metadata.name, exitCode, env);
+  }
+
+  /**
+   * Run the agent with output capture (for programmatic use)
+   * 
+   * @param args - Arguments to pass to the agent
+   * @param envOverrides - Environment variable overrides
+   * @param options - Execution options
+   * @param options.captureOutput - If true, capture stdout/stderr instead of inheriting
+   * @returns Promise that resolves with output when captureOutput is true
+   */
+  async runWithOutput(
+    args: string[],
+    envOverrides?: Record<string, string>,
+    options?: { captureOutput?: boolean }
+  ): Promise<{ stdout: string; stderr: string; exitCode: number | null }> {
+    return new Promise(async (resolve, reject) => {
+      let hasResolved = false;
+      let timeoutId: NodeJS.Timeout | null = null;
+      let env: NodeJS.ProcessEnv = { ...process.env, ...envOverrides };
+
+      // Set maximum timeout (10 minutes)
+      timeoutId = setTimeout(() => {
+        if (!hasResolved) {
+          hasResolved = true;
+          reject(new Error(`Execution timeout: ${this.displayName} did not complete within 10 minutes`));
+        }
+      }, 10 * 60 * 1000);
+
+      const cleanupTimeout = () => {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+      };
+
+      try {
+        // Generate session ID at the very start - this is the source of truth
+        const sessionId = randomUUID();
+
+        // Merge environment variables
+        env = {
+          ...process.env,
+          ...envOverrides,
+          CODEMIE_SESSION_ID: sessionId,
+          CODEMIE_AGENT: this.metadata.name
+        };
+
+        // Initialize logger with session ID
+        logger.setSessionId(sessionId);
+
+        // Setup metrics orchestrator with the session ID
+        const metricsAdapter = this.getMetricsAdapter();
+        if (metricsAdapter && env.CODEMIE_PROVIDER) {
+          const { METRICS_CONFIG } = await import('./metrics-config.js');
+
+          if (METRICS_CONFIG.enabled(env.CODEMIE_PROVIDER)) {
+            const lifecycleAdapter = typeof (this as any).getLifecycleAdapter === 'function'
+              ? (this as any).getLifecycleAdapter()
+              : undefined;
+
+            this.sessionOrchestrator = await this.createSessionOrchestratorWithTransitionHandler(
+              sessionId,
+              env.CODEMIE_PROVIDER,
+              env.CODEMIE_PROJECT,
+              metricsAdapter,
+              lifecycleAdapter
+            );
+
+            await this.sessionOrchestrator.beforeAgentSpawn();
+          }
+        }
+
+        // Setup proxy with the session ID
+        await this.setupProxy(env);
+
+        // Lifecycle hook: session start
+        await executeOnSessionStart(this, this.metadata.lifecycle, this.metadata.name, sessionId, env);
+
+        // Transform CODEMIE_* → agent-specific env vars
+        env = this.transformEnvVars(env);
+
+        // Lifecycle hook: beforeRun
+        env = await executeBeforeRun(this, this.metadata.lifecycle, this.metadata.name, env, this.extractConfig(env));
+
+        // Lifecycle hook: enrichArgs
+        let enrichedArgs = await executeEnrichArgs(this.metadata.lifecycle, this.metadata.name, args, this.extractConfig(env));
+
+        // Apply argument transformations
+        let transformedArgs: string[];
+        if (this.metadata.flagMappings) {
+          const { transformFlags } = await import('./flag-transform.js');
+          transformedArgs = transformFlags(enrichedArgs, this.metadata.flagMappings, this.extractConfig(env));
+        } else {
+          transformedArgs = enrichedArgs;
+        }
+
+        if (!this.metadata.cliCommand) {
+          cleanupTimeout();
+          reject(new Error(`${this.displayName} has no CLI command configured`));
+          return;
+        }
+
+        const isWindows = process.platform === 'win32';
+        let commandPath = this.metadata.cliCommand;
+
+        // Resolve full path on Windows
+        if (isWindows) {
+          const { getCommandPath } = await import('../../utils/processes.js');
+          const resolvedPath = await getCommandPath(this.metadata.cliCommand);
+          if (resolvedPath) {
+            commandPath = resolvedPath;
+          }
+        }
+
+        // Use pipe stdio to capture output
+        // IMPORTANT: Use 'ignore' for stdin to prevent process from waiting for input
+        const child = spawn(commandPath, transformedArgs, {
+          stdio: ['ignore', 'pipe', 'pipe'], // ignore stdin, pipe stdout/stderr
+          env,
+          shell: isWindows,
+          windowsHide: isWindows
+        });
+
+        let stdout = ''; // Start with empty string (no welcome message for programmatic use)
+        let stderr = '';
+        let stdoutEnded = false;
+        let stderrEnded = false;
+        let processExited = false;
+        let exitCode: number | null = null;
+
+        child.stdout.on('data', (data) => {
+          stdout += data.toString();
+        });
+
+        child.stdout.on('end', () => {
+          stdoutEnded = true;
+          checkComplete();
+        });
+
+        child.stderr.on('data', (data) => {
+          stderr += data.toString();
+        });
+
+        child.stderr.on('end', () => {
+          stderrEnded = true;
+          checkComplete();
+        });
+
+        // Take post-spawn snapshot
+        if (this.sessionOrchestrator) {
+          this.sessionOrchestrator.afterAgentSpawn().catch(() => {
+            // Ignore errors in background snapshot
+          });
+        }
+
+        // Helper to check if we can resolve
+        const checkComplete = async () => {
+          if (hasResolved) return;
+          
+          // Wait for process to exit AND streams to end
+          if (processExited && stdoutEnded && stderrEnded) {
+            hasResolved = true;
+            cleanupTimeout();
+
+            await this.executeCleanupSequence(exitCode || 0, env);
+            resolve({ stdout, stderr, exitCode });
+          }
+        };
+
+        child.on('close', async (code) => {
+          exitCode = code;
+          processExited = true;
+
+          // Wait for streams to end (they should end shortly after process closes)
+          let waitCount = 0;
+          const maxWait = 20; // Wait up to 4 seconds
+          while ((!stdoutEnded || !stderrEnded) && waitCount < maxWait) {
+            await new Promise(resolve => setTimeout(resolve, 200));
+            waitCount++;
+          }
+
+          if (!stdoutEnded || !stderrEnded) {
+            stdoutEnded = true;
+            stderrEnded = true;
+          }
+
+          await checkComplete();
+        });
+
+        child.on('error', async (error) => {
+          cleanupTimeout();
+
+          if (hasResolved) return;
+          hasResolved = true;
+
+          await this.executeCleanupSequence(1, env);
+          reject(new Error(`Failed to start ${this.displayName}: ${error.message}`));
+        });
+      } catch (error) {
+        cleanupTimeout();
+        
+        if (hasResolved) return;
+        hasResolved = true;
+
+        await this.executeCleanupSequence(1, env);
+        reject(error);
+      }
+    });
+  }
+
+  /**
    * Run the agent
    */
   async run(args: string[], envOverrides?: Record<string, string>): Promise<void> {
