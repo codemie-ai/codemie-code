@@ -6,6 +6,11 @@
  * their session file format into a unified ParsedSession format.
  */
 
+import type { SessionDiscoveryOptions, SessionDescriptor } from './discovery-types.js';
+
+// Re-export for convenience
+export type { SessionDiscoveryOptions, SessionDescriptor };
+
 /**
  * Agent-agnostic session representation.
  * Both metrics and conversations processors work with this unified format.
@@ -82,6 +87,30 @@ export interface AggregatedResult {
 export interface SessionAdapter {
   /** Agent name (e.g., 'claude', 'gemini') */
   readonly agentName: string;
+
+  /**
+   * Discover sessions in agent's storage (optional).
+   *
+   * Scans agent-specific session storage and returns descriptors
+   * for sessions matching the filter criteria.
+   *
+   * Default behavior:
+   * - Returns sessions from last 30 days
+   * - Sorted by createdAt descending (newest first)
+   * - No cwd filter (all projects)
+   *
+   * @param options - Discovery options with filtering
+   * @returns Session descriptors sorted by createdAt (newest first)
+   *
+   * @example
+   * // Get sessions for current project from last 7 days
+   * const sessions = await adapter.discoverSessions({
+   *   cwd: process.cwd(),
+   *   maxAgeDays: 7,
+   *   limit: 10
+   * });
+   */
+  discoverSessions?(options?: SessionDiscoveryOptions): Promise<SessionDescriptor[]>;
 
   /**
    * Parse session file to unified format.

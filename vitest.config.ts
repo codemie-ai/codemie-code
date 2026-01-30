@@ -9,6 +9,7 @@ export default defineConfig({
     // Force color output for consistent test behavior (chalk output length varies with/without colors)
     env: {
       FORCE_COLOR: '1',
+      NODE_ENV: 'test', // Skip auto-update checks during testing
     },
 
     // Enable parallel execution with isolated environments

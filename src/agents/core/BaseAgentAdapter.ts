@@ -24,6 +24,7 @@ import {
   executeOnSessionEnd,
   executeAfterRun
 } from './lifecycle-helpers.js';
+import inquirer from 'inquirer';
 
 /**
  * Base class for all agent adapters
@@ -139,6 +140,70 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    * Run the agent
    */
   async run(args: string[], envOverrides?: Record<string, string>): Promise<void> {
+    // Check version compatibility before running (for version-managed agents)
+    if ('checkVersionCompatibility' in this && typeof (this as any).checkVersionCompatibility === 'function') {
+      const compat = await (this as any).checkVersionCompatibility();
+
+      if (compat.isNewer && !this.metadata.silentMode) {
+        // User is running a newer (untested) version
+        console.log();
+        console.log(chalk.yellow(`⚠️  WARNING: You are running ${this.displayName} v${compat.installedVersion}`));
+        console.log(chalk.yellow(`   CodeMie has only tested and verified ${this.displayName} v${compat.supportedVersion}`));
+        console.log();
+        console.log(chalk.white('   Running a newer version may cause compatibility issues with the CodeMie backend proxy.'));
+        console.log();
+        console.log(chalk.white('   To install the supported version, run:'));
+        console.log(chalk.blueBright(`     codemie install ${this.name} --supported`));
+        console.log();
+        console.log(chalk.white('   Or install a specific version:'));
+        console.log(chalk.blueBright(`     codemie install ${this.name} ${compat.supportedVersion}`));
+        console.log();
+
+        const { continueAnyway } = await inquirer.prompt([
+          {
+            type: 'confirm',
+            name: 'continueAnyway',
+            message: 'Continue anyway?',
+            default: false,
+          },
+        ]);
+
+        if (!continueAnyway) {
+          console.log(chalk.gray('\nExecution cancelled\n'));
+          process.exit(1);
+        }
+
+        console.log(); // Add spacing before agent starts
+      }
+      // Scenario 2: Update available (newer supported version exists, non-blocking info)
+      else if (compat.hasUpdate && compat.compatible && !this.metadata.silentMode) {
+        console.log();
+        console.log(chalk.blue('ℹ️  A new supported version of ' + this.displayName + ' is available!'));
+        console.log(chalk.white(`   Current version: v${compat.installedVersion}`));
+        console.log(chalk.white(`   Latest version:  v${compat.supportedVersion} `) + chalk.green('(recommended)'));
+        console.log();
+        console.log(chalk.white('   To update, run:'));
+        console.log(chalk.blueBright(`     codemie update ${this.name}`));
+        console.log();
+
+        const { continueWithCurrent } = await inquirer.prompt([
+          {
+            type: 'confirm',
+            name: 'continueWithCurrent',
+            message: 'Continue with current version?',
+            default: true,
+          },
+        ]);
+
+        if (!continueWithCurrent) {
+          console.log(chalk.gray('\nExecution cancelled. Please run the update command above.\n'));
+          process.exit(1);
+        }
+
+        console.log(); // Add spacing before agent starts
+      }
+    }
+
     // Generate session ID at the very start - this is the source of truth
     // All components (logger, metrics, proxy) will use this same session ID
     const sessionId = randomUUID();
@@ -161,29 +226,31 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     // Lifecycle hook: session start (provider-aware)
     await executeOnSessionStart(this, this.metadata.lifecycle, this.metadata.name, sessionId, env);
 
-    // Show welcome message with session info
-    const profileName = env.CODEMIE_PROFILE_NAME || 'default';
-    const provider = env.CODEMIE_PROVIDER || 'unknown';
-    const cliVersion = env.CODEMIE_CLI_VERSION || 'unknown';
-    const model = env.CODEMIE_MODEL || 'unknown';
-    const codeMieUrl = env.CODEMIE_URL;
+    // Show welcome message with session info (skip in silent mode)
+    if (!this.metadata.silentMode) {
+      const profileName = env.CODEMIE_PROFILE_NAME || 'default';
+      const provider = env.CODEMIE_PROVIDER || 'unknown';
+      const cliVersion = env.CODEMIE_CLI_VERSION || 'unknown';
+      const model = env.CODEMIE_MODEL || 'unknown';
+      const codeMieUrl = env.CODEMIE_URL;
 
-    // Display ASCII logo with configuration
-    console.log(
-      renderProfileInfo({
-        profile: profileName,
-        provider,
-        model,
-        codeMieUrl,
-        agent: this.metadata.name,
-        cliVersion,
-        sessionId
-      })
-    );
+      // Display ASCII logo with configuration
+      console.log(
+        renderProfileInfo({
+          profile: profileName,
+          provider,
+          model,
+          codeMieUrl,
+          agent: this.metadata.name,
+          cliVersion,
+          sessionId
+        })
+      );
 
-    // Show random welcome message
-    console.log(chalk.cyan.bold(getRandomWelcomeMessage()));
-    console.log(''); // Empty line for spacing
+      // Show random welcome message
+      console.log(chalk.cyan.bold(getRandomWelcomeMessage()));
+      console.log(''); // Empty line for spacing
+    }
 
     // Transform CODEMIE_* → agent-specific env vars (based on envMapping)
     env = this.transformEnvVars(env);
@@ -353,9 +420,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
           process.off('SIGINT', sigintHandler);
           process.off('SIGTERM', sigtermHandler);
 
-          // Show shutting down message
-          console.log(''); // Empty line for spacing
-          console.log(chalk.yellow('Shutting down...'));
+          // Show shutting down message (skip in silent mode)
+          if (!this.metadata.silentMode) {
+            console.log(''); // Empty line for spacing
+            console.log(chalk.yellow('Shutting down...'));
+          }
 
           // Grace period: wait for any final API calls from the external agent
           // Many agents (Claude, Gemini) send telemetry/session data on shutdown
@@ -378,11 +447,13 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
             await executeAfterRun(this, this.metadata.lifecycle, this.metadata.name, code, env);
           }
 
-          // Show goodbye message with random easter egg
-          console.log(chalk.cyan.bold(getRandomGoodbyeMessage()));
-          console.log(''); // Spacing before powered by
-          console.log(chalk.cyan('Powered by AI/Run CodeMie CLI'));
-          console.log(''); // Empty line for spacing
+          // Show goodbye message with random easter egg (skip in silent mode for ACP)
+          if (!this.metadata.silentMode) {
+            console.log(chalk.cyan.bold(getRandomGoodbyeMessage()));
+            console.log(''); // Spacing before powered by
+            console.log(chalk.cyan('Powered by AI/Run CodeMie CLI'));
+            console.log(''); // Empty line for spacing
+          }
 
           if (code === 0) {
             resolve();

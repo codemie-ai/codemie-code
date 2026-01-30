@@ -14,6 +14,8 @@ codemie workflow <command>       # Manage CI/CD workflows
 codemie list [options]           # List all available agents
 codemie install [agent]          # Install an agent
 codemie uninstall [agent]        # Uninstall an agent
+codemie update [agent]           # Update installed agents
+codemie self-update              # Update CodeMie CLI itself
 codemie doctor [options]         # Health check and diagnostics
 codemie version                  # Show version information
 ```
@@ -66,19 +68,27 @@ All external agents share the same command pattern:
 ```bash
 # Basic usage
 codemie-claude "message"         # Claude Code agent
+codemie-claude-acp               # Claude Code ACP (invoked by IDEs)
 codemie-gemini "message"         # Gemini CLI agent
+codemie-opencode "message"       # OpenCode agent
 
 # Health checks
 codemie-claude health
 codemie-gemini health
+codemie-opencode health
+
+# Note: codemie-claude-acp doesn't have interactive mode or health check
+# It's designed to be invoked by IDEs via ACP protocol
 
 # With configuration overrides
 codemie-claude --model claude-4-5-sonnet --api-key sk-... "review code"
 codemie-gemini -m gemini-2.5-flash --api-key key "optimize performance"
+codemie-opencode --model gpt-5-2-2025-12-11 "generate unit tests"
 
 # With profile selection
 codemie-claude --profile personal-openai "review PR"
 codemie-gemini --profile google-direct "analyze code"
+codemie-opencode --profile work "refactor code"
 
 # Agent-specific options (pass-through to underlying CLI)
 codemie-claude --context large -p "review code"      # -p = print mode (non-interactive)
@@ -173,6 +183,58 @@ codemie analytics --agent claude
 codemie analytics --agent gemini
 ```
 
+## OpenCode Metrics Commands
+
+Process OpenCode session data to extract metrics and sync to analytics system.
+
+```bash
+# Process specific session
+codemie opencode-metrics --session <session-id>
+
+# Discover and process all recent sessions
+codemie opencode-metrics --discover
+
+# Verbose output with detailed processing info
+codemie opencode-metrics --discover --verbose
+```
+
+**Options:**
+- `-s, --session <id>` - Process specific OpenCode session by ID
+- `-d, --discover` - Discover and process all unprocessed sessions (last 30 days)
+- `-v, --verbose` - Show detailed processing output
+
+**Features:**
+- Automatic session discovery from OpenCode storage
+- Token usage extraction (input, output, total)
+- Cost calculation based on model pricing
+- Session duration tracking
+- Conversation extraction
+- JSONL delta generation for sync
+- Deduplication (skips recently processed sessions)
+
+**Session Storage Locations:**
+- Linux: `~/.local/share/opencode/storage/`
+- macOS: `~/Library/Application Support/opencode/storage/`
+- Windows: `%LOCALAPPDATA%\opencode\storage\`
+
+**Example Workflows:**
+
+```bash
+# Process all recent OpenCode sessions
+codemie opencode-metrics --discover --verbose
+
+# Check specific session metrics
+codemie opencode-metrics --session ses_abc123def456
+
+# View results in analytics
+codemie analytics --agent opencode
+```
+
+**Note:** Metrics are automatically extracted when OpenCode sessions end (via `onSessionEnd` lifecycle hook). Manual processing is useful for:
+- Retroactive processing of old sessions
+- Troubleshooting sync issues
+- Verifying metrics extraction
+
 ## Workflow Commands
 
 Install CI/CD workflows for automated code review and generation.
@@ -248,7 +310,9 @@ codemie install <agent>
 
 **Supported Agents:**
 - `claude` - Claude Code (npm-based)
+- `claude-acp` - Claude Code ACP adapter for IDE integration (npm-based)
 - `gemini` - Gemini CLI (npm-based)
+- `opencode` - OpenCode AI assistant (npm-based)
 
 ### `codemie uninstall [agent]`
 
@@ -258,6 +322,116 @@ Uninstall an external AI coding agent.
 ```bash
 codemie uninstall <agent>
 ```
+
+### `codemie update [agent]`
+
+Update installed AI coding agents to their latest versions.
+
+**Usage:**
+```bash
+# Update specific agent
+codemie update <agent>
+
+# Check for updates without installing
+codemie update <agent> --check
+
+# Interactive update (checks all agents)
+codemie update
+
+# Check all agents for updates
+codemie update --check
+```
+
+**Options:**
+- `-c, --check` - Check for updates without installing
+
+**Features:**
+- Checks npm registry for latest versions
+- Supports interactive multi-agent selection
+- Shows current vs. latest version comparison
+- Special handling for Claude Code (uses verified versions)
+- Uses `--force` flag to handle directory conflicts during updates
+
+**Examples:**
+```bash
+# Update Claude Code to latest verified version
+codemie update claude
+
+# Check if Gemini has updates
+codemie update gemini --check
+
+# Interactive: select which agents to update
+codemie update
+```
+
+**Note:** This command updates external agents (Claude Code, Gemini, etc.). To update the CodeMie CLI itself, use `codemie self-update`.
+
+### `codemie self-update`
+
+Update CodeMie CLI to the latest version from npm.
+
+**Usage:**
+```bash
+# Update CodeMie CLI
+codemie self-update
+
+# Check for updates without installing
+codemie self-update --check
+```
+
+**Options:**
+- `-c, --check` - Check for updates without installing
+
+**Features:**
+- Fast version check with 5-second timeout
+- Automatic update on startup (configurable via `CODEMIE_AUTO_UPDATE`)
+- Uses `--force` flag to handle directory conflicts
+- Shows current vs. latest version comparison
+
+**Auto-Update Behavior:**
+
+By default, CodeMie CLI automatically checks for updates on startup with smart rate limiting:
+
+```bash
+# Default: Silent auto-update (no user interaction)
+codemie --version
+# First run: Checks for updates (5s max)
+# Subsequent runs within 24h: Instant (skips check)
+
+# Prompt before updating
+export CODEMIE_AUTO_UPDATE=false
+codemie --version
+
+# Explicit silent auto-update
+export CODEMIE_AUTO_UPDATE=true
+codemie --version
+```
+
+**Performance & Rate Limiting:**
+- Update checks are rate-limited to once per 24 hours by default
+- First invocation may take up to 5 seconds (network check)
+- Subsequent invocations within the interval are instant (no network call)
+- Prevents blocking on every CLI startup
+- Cache stored in `~/.codemie/.last-update-check`
+
+**Environment Variables:**
+- `CODEMIE_AUTO_UPDATE=true` (default) - Silently auto-update in background
+- `CODEMIE_AUTO_UPDATE=false` - Show update prompt and ask for confirmation
+- `CODEMIE_UPDATE_CHECK_INTERVAL` - Time between checks in ms (default: 86400000 = 24h)
+
+**Examples:**
+```bash
+# Check for CLI updates
+codemie self-update --check
+
+# Update CLI immediately
+codemie self-update
+
+# Disable auto-update (add to ~/.bashrc or ~/.zshrc)
+export CODEMIE_AUTO_UPDATE=false
+```
+
+**Note:** Auto-update checks are non-blocking and won't prevent CLI from starting if they fail. The update takes effect on the next command execution.
 
 ### `codemie doctor`
 

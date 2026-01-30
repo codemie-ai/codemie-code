@@ -3,6 +3,12 @@
  */
 
 /**
+ * Post-install hint - simple text lines shown after installation
+ * Used to show custom setup instructions (e.g., IDE configuration)
+ */
+export type PostInstallHint = string;
+
+/**
  * Mapping types for flag transformation
  */
 export type FlagMappingType = 'flag' | 'subcommand' | 'positional';
@@ -143,6 +149,18 @@ export interface AgentAnalyticsAdapter {
 }
 
 /**
+ * Result of version compatibility check
+ * Used to compare installed version against supported version
+ */
+export interface VersionCompatibilityResult {
+  compatible: boolean;             // true if installed version is compatible
+  installedVersion: string | null; // null if not installed
+  supportedVersion: string;        // version from metadata
+  isNewer: boolean;                // true if installed > supported (requires warning)
+  hasUpdate: boolean;              // true if newer supported version available (for info prompt)
+}
+
+/**
  * Agent metadata schema - declarative configuration for agents
  */
 export interface AgentMetadata {
@@ -154,6 +172,25 @@ export interface AgentMetadata {
   // === Installation ===
   npmPackage: string | null;       // '@anthropic-ai/claude-code' or null for built-in
   cliCommand: string | null;       // 'claude' or null for built-in
+
+  /**
+   * Latest supported version tested with CodeMie backend
+   * Used for version compatibility checks
+   *
+   * Format: Semantic version string (e.g., '2.0.30')
+   * Special values: 'latest', 'stable' (channels)
+   */
+  supportedVersion?: string;
+
+  /**
+   * Native installer URLs for platform-specific installation
+   * Optional: Only needed for agents using native installers (not npm)
+   */
+  installerUrls?: {
+    macOS: string;
+    windows: string;
+    linux: string;
+  };
 
   // === Environment Variable Mapping ===
   envMapping: {
@@ -182,6 +219,19 @@ export interface AgentMetadata {
   // === Runtime Behavior ===
   /** Declarative mapping for multiple CLI flags */
   flagMappings?: FlagMappings;
+
+  /**
+   * Silent mode - skip welcome/goodbye messages in console
+   * Used by ACP adapters where stdout is JSON-RPC protocol
+   */
+  silentMode?: boolean;
+
+  /**
+   * Custom post-install hints for IDE configuration
+   * Used instead of default "Interactive mode" / "Single task" hints
+   * For ACP adapters, shows IDE configuration examples
+   */
+  postInstallHints?: PostInstallHint[];
 
   lifecycle?: AgentLifecycle;
 
@@ -436,4 +486,25 @@ export interface AgentAdapter {
    * @returns MCP configuration summary
    */
   getMCPConfigSummary?(cwd: string): Promise<MCPConfigSummary>;
+
+  /**
+   * Install specific version of agent (optional, for version-managed agents)
+   * @param version - Version string or channel ('latest', 'stable', 'supported')
+   */
+  installVersion?(version: string): Promise<void>;
+
+  /**
+   * Check version compatibility (optional, for version-managed agents)
+   * @returns Version compatibility result
+   */
+  checkVersionCompatibility?(): Promise<VersionCompatibilityResult>;
+
+  /**
+   * Detect installation method (optional, for installation-aware agents)
+   * Returns how the agent was installed (npm vs native installer)
+   * Used to warn users about deprecated installation methods
+   *
+   * @returns Installation method: 'npm', 'native', or 'unknown'
+   */
+  getInstallationMethod?(): Promise<'npm' | 'native' | 'unknown'>;
 }
