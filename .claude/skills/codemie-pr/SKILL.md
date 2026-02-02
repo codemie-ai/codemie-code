@@ -1,6 +1,6 @@
 ---
 name: codemie-pr
-description: Push changes and create PR using GitHub template. Use ONLY when user explicitly says "create PR", "make a PR", "push and create pull request", or similar explicit request. NEVER run proactively.
+description: Push changes and create PR using GitHub template. Use ONLY when user explicitly says "commit changes", "create PR", "make a PR", "push and create pull request", or similar explicit request. NEVER run proactively.
 ---
 
 # CodeMie Pull Request Creator
