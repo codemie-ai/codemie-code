@@ -4,33 +4,11 @@
 
 ## Changes
 
-<!-- Detailed list of changes with checkmarks. Group by category if applicable. -->
-<!-- Example categories: 🔧 Bug Fixes, ✨ Features, 📝 Documentation, 🧪 Testing, ♻️ Refactoring -->
-
-### 🔧 [Category Name]
-- ✅ [Specific change 1]
-- ✅ [Specific change 2]
-
-## Testing
-
-<!-- How was this tested? -->
-- [ ] Tests pass
-- [ ] Linter passes
-- [ ] Manual testing performed
+<!-- List of major changes which must be higlighed. Do not lsit all, just important to focus, Do not include code snippets. -->
 
 ## Impact
 
 <!-- Optional: Show before/after examples for user-facing changes -->
-
-### Before
-```
-[Code or behavior before the change]
-```
-
-### After
-```
-[Code or behavior after the change]
-```
 
 ### Benefits
 - 🎯 [Benefit 1]

@@ -478,6 +478,11 @@ export abstract class BaseExtensionInstaller {
   /**
    * Check if local extension should be updated
    *
+   * Performs integrity checks before trusting version file:
+   * 1. Verifies target directory exists
+   * 2. Verifies directory contains actual files (not just version file)
+   * 3. Compares versions only if directory is valid
+   *
    * @param targetPath - Target directory path
    * @param sourceVersion - Source extension version
    * @returns true if update is needed
@@ -489,18 +494,36 @@ export abstract class BaseExtensionInstaller {
     const versionFile = join(targetPath, `${this.agentName}.extension.json`);
 
     try {
+      // 1. Check if target directory exists
+      const dirExists = existsSync(targetPath);
+      if (!dirExists) {
+        logger.debug(`[${this.agentName}] Target directory doesn't exist, will install`);
+        return true;
+      }
+
+      // 2. Verify directory has actual content (not just version file)
+      const entries = await readdir(targetPath);
+      const actualFiles = entries.filter(entry => entry !== `${this.agentName}.extension.json`);
+
+      if (actualFiles.length === 0) {
+        logger.debug(`[${this.agentName}] Target directory is empty (no files besides version), will install`);
+        return true;
+      }
+
+      // 3. Now check version file (directory exists and has files)
       const content = await readFile(versionFile, 'utf-8');
       const versionInfo = JSON.parse(content);
 
       if (versionInfo.version === sourceVersion) {
-        logger.debug(`[${this.agentName}] Local extension already at v${sourceVersion}`);
+        logger.debug(`[${this.agentName}] Local extension already at v${sourceVersion} with ${actualFiles.length} files`);
         return false;
       }
 
       logger.info(`[${this.agentName}] Updating local: v${versionInfo.version} → v${sourceVersion}`);
       return true;
-    } catch {
-      // No version file or invalid = first install
+    } catch (error) {
+      // No version file, invalid JSON, or read error = first install or corrupted state
+      logger.debug(`[${this.agentName}] Version check failed (${error}), will install`);
       return true;
     }
   }
