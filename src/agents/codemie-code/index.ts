@@ -30,7 +30,7 @@ export class CodeMieCode {
     this.workingDirectory = workingDir || process.cwd();
   }
 
-  private workingDirectory: string;
+  private readonly workingDirectory: string;
 
   /**
    * Initialize the CodeMie agent asynchronously
@@ -42,12 +42,18 @@ export class CodeMieCode {
 
       if (this.config.debug) {
         logger.debug('Configuration loaded:', getConfigSummary(this.config));
-        const ssoCookies = (global as any).codemieSSOCookies;
+        const ssoCookies = (globalThis as any).codemieSSOCookies;
         logger.debug('Global SSO cookies:', sanitizeCookies(ssoCookies));
       }
 
-      // Create system tools
-      const tools = await createSystemTools(this.config);
+      // Initialize the agent first (without tools that need history)
+      this.agent = new CodeMieAgent(this.config, []);
+
+      // Create system tools with conversation history getter
+      const tools = await createSystemTools(
+        this.config,
+        () => this.agent!.getHistory()
+      );
 
       if (this.config.debug) {
         logger.debug(`Created ${tools.length} system tools`);
@@ -79,6 +85,7 @@ export class CodeMieCode {
 
       // Initialize the agent with skills
       this.agent = new CodeMieAgent(this.config, tools, this.skills);
+      await this.agent.updateTools(tools);
 
       this.initializationResult = {
         success: true,
@@ -90,7 +97,7 @@ export class CodeMieCode {
         logger.debug('Agent initialized successfully');
       }
 
-      return this.initializationResult!;
+      return this.initializationResult;
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -265,12 +272,12 @@ export class CodeMieCode {
 
       // Full planning + execution
       return await planMode.executePlannedTask(task, (event) => {
-        // Handle todo updates and planning events
+        // Handle to_do updates and planning events
         // Note: planning_start and other UI events are handled by the UI system
         if (event.type === 'planning_complete') {
           console.log(`📋 Plan created with ${event.planningInfo?.totalSteps || 0} steps`);
         } else if (event.type === 'todo_update') {
-          // Todo updates are handled by the UI system
+          // To_do updates are handled by the UI system
         }
       });
 

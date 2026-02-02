@@ -22,7 +22,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc && npm run copy-plugin",
+    "build": "tsc && tsc-alias && npm run copy-plugin",
     "copy-plugin": "node scripts/copy-plugins.js",
     "dev": "tsc --watch",
     "test": "vitest",
@@ -112,8 +112,10 @@
     "@langchain/openai": "^1.1.0",
     "chalk": "^5.3.0",
     "cli-table3": "^0.6.5",
+    "codemie-sdk": "^0.1.318",
     "commander": "^11.1.0",
     "cors": "^2.8.5",
+    "dedent": "^1.7.1",
     "dotenv": "^16.3.1",
     "express": "^5.1.0",
     "fast-glob": "^3.3.2",
@@ -133,6 +135,7 @@
     "@commitlint/config-conventional": "^20.2.0",
     "@eslint/js": "^9.38.0",
     "@types/cors": "^2.8.19",
+    "@types/dedent": "^0.7.2",
     "@types/express": "^5.0.5",
     "@types/inquirer": "^9.0.7",
     "@types/node": "^20.10.5",
@@ -142,6 +145,7 @@
     "eslint": "^9.38.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.2.7",
+    "tsc-alias": "^1.8.16",
     "typescript": "^5.3.3",
     "vitest": "^4.0.10"
   },

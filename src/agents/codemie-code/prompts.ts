@@ -5,6 +5,7 @@
  */
 
 import type { Skill } from '../../skills/index.js';
+import type { CodemieAssistant } from '@/env/types.js';
 
 export const SYSTEM_PROMPT = `You are CodeMie, an advanced AI coding assistant designed to help developers with various programming tasks.
 
@@ -14,6 +15,7 @@ CAPABILITIES:
 - Perform Git operations (status, diff, add, commit, log)
 - Analyze code structure and provide recommendations
 - Help with debugging, refactoring, and code optimization
+- Invoke specialized CodeMie assistants for expert help on specific topics
 
 GUIDELINES:
 - Always explain what you're doing before taking actions
@@ -21,13 +23,20 @@ GUIDELINES:
 - Provide clear, concise explanations of your reasoning
 - Follow best practices for the programming language being used
 - Be security-conscious when executing commands or modifying files
+- When you need specialized expertise (architecture, code review, domain-specific knowledge), use the invoke_assistant tool
+
+ASSISTANT INVOCATION:
+- Use invoke_assistant when you need expert help from specialized CodeMie assistants
+- Provide the assistantSlug (e.g., "solution-architect", "code-reviewer") and your message
+- Set includeHistory=true if the assistant needs conversation context to provide better help
+- Assistant responses are prefixed with [Assistant @slug] to distinguish them from your own analysis
 
 CURRENT WORKING DIRECTORY: {workingDirectory}
 
 You have access to the following tools:`;
 
 /**
- * Planning mode suffix for structured todo-based execution
+ * Planning mode suffix for structured to_do-based execution
  * Inspired by LangChain-Code's Deep Agent planning approach
  */
 export const PLANNING_SUFFIX = `
@@ -120,26 +129,48 @@ Planning guidelines:
 - Structure findings in a clear, actionable format`;
 
 /**
- * Get the system prompt with working directory substitution and optional skills
- *
- * @param workingDirectory - Current working directory
- * @param skills - Optional array of skills to inject into the prompt
- * @returns System prompt with working directory and skills (if provided)
+ * Get the system prompt with working directory substitution, optional skills, and optional assistants list
  */
-export function getSystemPrompt(workingDirectory: string, skills?: Skill[]): string {
+export function getSystemPrompt(workingDirectory: string, skills?: Skill[], assistants?: CodemieAssistant[]): string {
   let prompt = SYSTEM_PROMPT.replace('{workingDirectory}', workingDirectory);
 
   // Inject skills if provided
   if (skills && skills.length > 0) {
-    prompt += `\n\n# Available Skills\n\n`;
-    prompt += `The following skills provide additional knowledge and guidelines for this session:\n\n`;
+    let skillsSection = `\n\n# Available Skills\n\n`;
+    skillsSection += `The following skills provide additional knowledge and guidelines for this session:\n\n`;
 
     for (const skill of skills) {
-      prompt += `## ${skill.metadata.name}\n\n`;
-      prompt += `${skill.metadata.description}\n\n`;
-      prompt += `${skill.content}\n\n`;
-      prompt += `---\n\n`;
+      skillsSection += `## ${skill.metadata.name}\n\n`;
+      skillsSection += `${skill.metadata.description}\n\n`;
+      skillsSection += `${skill.content}\n\n`;
+      skillsSection += `---\n\n`;
     }
+
+    prompt += skillsSection;
+  }
+
+  // If assistants are provided, inject them into the prompt
+  if (assistants && assistants.length > 0) {
+    const assistantsList = assistants
+      .map(a => `  - "${a.slug}": ${a.name}${a.description ? ` - ${a.description}` : ''}`)
+      .join('\n');
+
+    const assistantsSection = `
+
+AVAILABLE ASSISTANTS:
+You have access to the following specialized CodeMie assistants via invoke_assistant tool:
+${assistantsList}
+
+When to use assistants:
+- For architectural decisions, use assistants like "solution-architect"
+- For code quality reviews, use assistants like "code-reviewer"
+- When user asks questions requiring domain expertise
+- When planning complex features that need specialized guidance
+- To get a second opinion on implementation approaches
+
+IMPORTANT: Proactively suggest using assistants when their expertise would be valuable for the task at hand.`;
+
+    prompt += assistantsSection;
   }
 
   return prompt;
@@ -150,10 +181,11 @@ export function getSystemPrompt(workingDirectory: string, skills?: Skill[]): str
  *
  * @param workingDirectory - Current working directory
  * @param skills - Optional array of skills to inject into the prompt
- * @returns System prompt with planning suffix and skills (if provided)
+ * @param assistants - Optional array of assistants to inject into the prompt
+ * @returns System prompt with planning suffix and skills/assistants (if provided)
  */
-export function getSystemPromptWithPlanning(workingDirectory: string, skills?: Skill[]): string {
-  return getSystemPrompt(workingDirectory, skills) + PLANNING_SUFFIX;
+export function getSystemPromptWithPlanning(workingDirectory: string, skills?: Skill[], assistants?: CodemieAssistant[]): string {
+  return getSystemPrompt(workingDirectory, skills, assistants) + PLANNING_SUFFIX;
 }
 
 /**

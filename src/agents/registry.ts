@@ -19,7 +19,7 @@ export class AgentRegistry {
   private static initialized = false;
 
   /**
-   * Lazy initialization - registers all plugins on first access
+   * Lazy initialization - registers all built-in plugins on first access
    */
   private static initialize(): void {
     if (AgentRegistry.initialized) {

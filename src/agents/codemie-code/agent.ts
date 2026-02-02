@@ -4,39 +4,42 @@
  * Core LangGraph ReAct agent using LangChain v1.0+ with streaming support
  */
 
+import { randomUUID } from 'node:crypto';
 import { createReactAgent } from '@langchain/langgraph/prebuilt';
 import { ChatOpenAI } from '@langchain/openai';
 import type { StructuredTool } from '@langchain/core/tools';
 import type { BaseMessage } from '@langchain/core/messages';
-import { HumanMessage, SystemMessage } from '@langchain/core/messages';
+import { HumanMessage, SystemMessage, AIMessage } from '@langchain/core/messages';
 import type { CodeMieConfig, EventCallback, AgentStats, ExecutionStep, TokenUsage } from './types.js';
-import type { ClipboardImage } from '../../utils/clipboard.js';
+import { EVENT_TYPES, CodeMieAgentError } from './types.js';
+import type { ClipboardImage } from '@/utils/clipboard.js';
 import { getSystemPrompt } from './prompts.js';
-import { CodeMieAgentError } from './types.js';
 import { extractToolMetadata } from './toolMetadata.js';
 import { extractTokenUsageFromStreamChunk, extractTokenUsageFromFinalState } from './tokenUtils.js';
 import { setGlobalToolEventCallback } from './tools/index.js';
-import { logger } from '../../utils/logger.js';
-import { sanitizeCookies, sanitizeAuthToken } from '../../utils/security.js';
+import { logger } from '@/utils/logger.js';
+import { sanitizeCookies, sanitizeAuthToken } from '@/utils/security.js';
 import { HookExecutor } from '../../hooks/executor.js';
 import type { HookExecutionContext } from '../../hooks/types.js';
 import type { Skill } from '../../skills/index.js';
 import { extractSkillPatterns } from '../../skills/utils/pattern-matcher.js';
 import type { SkillPattern, SkillWithInventory } from '../../skills/core/types.js';
 import { SkillManager } from '../../skills/core/SkillManager.js';
+import { parseAtMentionCommand } from './ui/mentions.js';
+import { loadRegisteredAssistants } from '@/utils/config.js';
 
 export class CodeMieAgent {
   private agent: any;
-  private config: CodeMieConfig;
+  private readonly config: CodeMieConfig;
   private tools: StructuredTool[];
-  private skills: Skill[];
+  private readonly skills: Skill[];
   private conversationHistory: BaseMessage[] = [];
-  private toolCallArgs: Map<string, Record<string, any>> = new Map(); // Store tool args by tool call ID
+  private readonly toolCallArgs: Map<string, Record<string, any>> = new Map(); // Store tool args by tool call ID
   private currentExecutionSteps: ExecutionStep[] = [];
   private currentStepNumber = 0;
   private currentLLMTokenUsage: TokenUsage | null = null; // Store token usage for associating with next tool call
   private isFirstLLMCall = true; // Track if this is the initial user input processing
-  private hookExecutor: HookExecutor | null = null; // Hook executor for lifecycle hooks
+  private readonly hookExecutor: HookExecutor | null = null; // Hook executor for lifecycle hooks
   private hookLoopCounter = 0; // Track Stop hook retry attempts
   private stats: AgentStats = {
     inputTokens: 0,
@@ -56,6 +59,9 @@ export class CodeMieAgent {
     this.config = config;
     this.tools = tools;
     this.skills = skills;
+
+    const sessionId = randomUUID();
+    logger.setSessionId(sessionId);
 
     // Create the appropriate LLM based on provider
     const llm = this.createLLM();
@@ -96,6 +102,31 @@ export class CodeMieAgent {
 
     if (config.debug) {
       logger.debug(`CodeMie Agent initialized with ${tools.length} tools`);
+    }
+  }
+
+  /**
+   * Update tools after initialization (needed for tools that require conversation history)
+   */
+  async updateTools(tools: StructuredTool[]): Promise<void> {
+    this.tools = tools;
+
+    // Load registered assistants for system prompt
+    const assistants = await loadRegisteredAssistants();
+
+    // Recreate agent with new tools and assistant-aware prompt
+    const llm = this.createLLM();
+    this.agent = createReactAgent({
+      llm,
+      tools: this.tools,
+      messageModifier: getSystemPrompt(this.config.workingDirectory, [], assistants)
+    });
+
+    if (this.config.debug) {
+      logger.debug(`CodeMie Agent tools updated: ${tools.length} tools`);
+      if (assistants.length > 0) {
+        logger.debug(`Loaded ${assistants.length} assistants for system prompt:`, assistants.map(a => a.slug));
+      }
     }
   }
 
@@ -178,7 +209,7 @@ export class CodeMieAgent {
           model: this.config.model,
           apiKey: this.config.authToken,
           configuration: {
-            baseURL: this.config.baseUrl !== 'bedrock' ? this.config.baseUrl : undefined,
+            baseURL: this.config.baseUrl === 'bedrock' ? undefined : this.config.baseUrl,
             // Add client tracking header to all Bedrock requests
             fetch: async (input: string | URL | Request, init?: RequestInit) => {
               const updatedInit = {
@@ -209,7 +240,7 @@ export class CodeMieAgent {
         };
 
         // Check if we have SSO cookies to inject (following codemie-ide-plugin pattern)
-        const ssoCookies = (global as any).codemieSSOCookies;
+        const ssoCookies = (globalThis as any).codemieSSOCookies;
         if (this.config.debug) {
           logger.debug(`SSO Cookies available:`, sanitizeCookies(ssoCookies));
           logger.debug(`Auth token:`, sanitizeAuthToken(this.config.authToken));
@@ -244,7 +275,7 @@ export class CodeMieAgent {
             }
 
             if (this.config.debug) {
-              logger.debug(`SSO request to ${input}`);
+              logger.debug(`SSO request to ${input as string}`);
               logger.debug(`Cookie string length: ${cookieString.length} characters`);
             }
 
@@ -337,6 +368,90 @@ export class CodeMieAgent {
   }
 
   /**
+   * Handle @ mention invocation result by updating history and emitting events
+   * @param message - Original user message
+   * @param images - Optional images from user
+   * @param atMentionResult - Result from preprocessAtMention
+   * @param onEvent - Event callback
+   */
+  private handleAtMentionResult(
+    message: string,
+    images: ClipboardImage[] | undefined,
+    atMentionResult: { handled: boolean; response?: string; assistantSlug?: string },
+    onEvent: EventCallback
+  ): void {
+    const userMessage = this.createHumanMessage(message, images);
+    this.conversationHistory.push(userMessage);
+
+    const assistantMessage = new AIMessage({
+      content: atMentionResult.response || 'No response from assistant'
+    });
+    this.conversationHistory.push(assistantMessage);
+
+    onEvent({ type: EVENT_TYPES.THINKING_END });
+    onEvent({ type: EVENT_TYPES.CONTENT_CHUNK, content: atMentionResult.response });
+    onEvent({ type: EVENT_TYPES.COMPLETE });
+  }
+
+  /**
+   * Preprocess message to detect @ mentions and invoke assistants directly
+   * Returns { handled: true, response: string, assistantSlug: string } if @ mention was processed,
+   * or { handled: false } if no @ mention found
+   */
+  private async preprocessAtMention(
+    message: string,
+    onEvent: EventCallback
+  ): Promise<{ handled: boolean; response?: string; assistantSlug?: string }> {
+    // Use shared mention pattern from mentions module
+    const parsed = parseAtMentionCommand(message);
+
+    if (!parsed) {
+      return { handled: false };
+    }
+
+    const { assistantSlug, message: assistantMessage } = parsed;
+
+    try {
+      // Find the invoke_assistant tool
+      const invokeTool = this.tools.find(tool => tool.name === 'invoke_assistant');
+
+      if (!invokeTool) {
+        if (this.config.debug) {
+          logger.debug('@ mention detected but invoke_assistant tool not available');
+        }
+        return { handled: false };
+      }
+
+      if (this.config.debug) {
+        logger.debug(`Preprocessing @ mention: @${assistantSlug} "${assistantMessage.substring(0, 50)}..."`);
+      }
+
+      // Emit thinking_start with assistant info
+      onEvent({ type: EVENT_TYPES.THINKING_START });
+
+      // Invoke the assistant tool directly
+      const response = await invokeTool.invoke({
+        assistantSlug,
+        message: assistantMessage,
+        includeHistory: false // Default to no history for @ mentions (can be made configurable)
+      });
+
+      return { handled: true, response: String(response), assistantSlug };
+
+    } catch (error) {
+      if (this.config.debug) {
+        logger.debug('@ mention preprocessing failed:', error);
+      }
+      // Return error as response but mark as handled
+      return {
+        handled: true,
+        response: `Failed to invoke assistant @${assistantSlug}: ${error instanceof Error ? error.message : String(error)}`,
+        assistantSlug
+      };
+    }
+  }
+
+  /**
    * Stream a chat interaction with the agent
    */
   async chatStream(message: string, onEvent: EventCallback, images: ClipboardImage[] = []): Promise<void> {
@@ -358,7 +473,7 @@ export class CodeMieAgent {
     // Set up global tool event callback for progress reporting
     setGlobalToolEventCallback((event) => {
       onEvent({
-        type: 'tool_call_progress',
+        type: EVENT_TYPES.TOOL_CALL_PROGRESS,
         toolName: event.toolName,
         toolProgress: event.progress
       });
@@ -375,264 +490,272 @@ export class CodeMieAgent {
       }
       streamAborted = true;
       abortController.abort();
-      onEvent({ type: 'error', error: 'Stream interrupted by user (Ctrl+C)' });
+      onEvent({ type: EVENT_TYPES.ERROR, error: 'Stream interrupted by user (Ctrl+C)' });
     };
 
     process.once('SIGINT', sigintHandler);
 
-    try {
-      if (this.config.debug) {
-        logger.debug(`Processing message: ${message.substring(0, 100)}...`);
-      }
+    if (this.config.debug) {
+      logger.debug(`Processing message: ${message.substring(0, 100)}...`);
+    }
 
-      // Execute SessionStart hooks (only on first message)
-      if (this.hookExecutor && this.conversationHistory.length === 0) {
-        try {
-          const sessionStartResult = await this.hookExecutor.executeSessionStart();
+    // Execute SessionStart hooks (only on first message)
+    if (this.hookExecutor && this.conversationHistory.length === 0) {
+      try {
+        const sessionStartResult = await this.hookExecutor.executeSessionStart();
 
-          // Handle blocking decision
-          if (sessionStartResult.decision === 'block') {
-            const reason = sessionStartResult.reason || 'Session blocked by SessionStart hook';
-            const context = sessionStartResult.additionalContext;
+        // Handle blocking decision
+        if (sessionStartResult.decision === 'block') {
+          const reason = sessionStartResult.reason || 'Session blocked by SessionStart hook';
+          const context = sessionStartResult.additionalContext;
 
-            // Check if we should retry (exit code 2 behavior)
-            if (context && this.hookLoopCounter < (this.getMaxHookRetries())) {
-              this.hookLoopCounter++;
-              logger.warn(`SessionStart hook blocked (attempt ${this.hookLoopCounter}/${this.getMaxHookRetries()})`);
+          // Check if we should retry (exit code 2 behavior)
+          if (context && this.hookLoopCounter < (this.getMaxHookRetries())) {
+            this.hookLoopCounter++;
+            logger.warn(`SessionStart hook blocked (attempt ${this.hookLoopCounter}/${this.getMaxHookRetries()})`);
 
-              // Build feedback message
-              const hookFeedback = [reason, context].filter(Boolean).join('\n\n');
+            // Build feedback message
+            const hookFeedback = [reason, context].filter(Boolean).join('\n\n');
 
-              // Clear hook cache for retry
-              this.hookExecutor.clearCache();
+            // Clear hook cache for retry
+            this.hookExecutor.clearCache();
 
-              // Retry with feedback
-              return this.chatStream(`[Hook feedback]: ${hookFeedback}`, onEvent, images);
+            // Retry with feedback
+            return this.chatStream(`[Hook feedback]: ${hookFeedback}`, onEvent, images);
+          } else {
+            // Max retries reached or no feedback - block session
+            if (this.hookLoopCounter >= this.getMaxHookRetries()) {
+              logger.error(`SessionStart hook blocked after ${this.hookLoopCounter} attempts - aborting session`);
+              onEvent({
+                type: 'error',
+                error: `Session blocked after ${this.hookLoopCounter} attempts: ${reason}`
+              });
             } else {
-              // Max retries reached or no feedback - block session
-              if (this.hookLoopCounter >= this.getMaxHookRetries()) {
-                logger.error(`SessionStart hook blocked after ${this.hookLoopCounter} attempts - aborting session`);
-                onEvent({
-                  type: 'error',
-                  error: `Session blocked after ${this.hookLoopCounter} attempts: ${reason}`
-                });
-              } else {
-                logger.warn('SessionStart hook blocked session start');
-                onEvent({
-                  type: 'error',
-                  error: reason
-                });
-              }
-              return; // Exit without starting session
+              logger.warn('SessionStart hook blocked session start');
+              onEvent({
+                type: 'error',
+                error: reason
+              });
             }
+            return; // Exit without starting session
           }
-
-          // Inject hook output as system context
-          if (sessionStartResult.additionalContext) {
-            if (this.config.debug) {
-              logger.debug('SessionStart hook provided context, injecting into conversation');
-            }
-
-            // Add SessionStart output as system message before user message
-            const systemMessage = new SystemMessage(
-              `[SessionStart Hook Output]:\n${sessionStartResult.additionalContext}`
-            );
-            this.conversationHistory.push(systemMessage);
-          }
-        } catch (error) {
-          logger.error(`SessionStart hook failed: ${error}`);
-          // Continue session start (fail open)
         }
-      }
 
-      // Execute UserPromptSubmit hooks
-      if (this.hookExecutor && message.trim()) {
-        try {
-          const hookResult = await this.hookExecutor.executeUserPromptSubmit(message);
-
-          // Handle blocking decision
-          if (hookResult.decision === 'block') {
-            logger.warn('UserPromptSubmit hook blocked prompt');
-            onEvent({
-              type: 'error',
-              error: hookResult.reason || 'Prompt blocked by hook'
-            });
-            return; // Exit without processing
+        // Inject hook output as system context
+        if (sessionStartResult.additionalContext) {
+          if (this.config.debug) {
+            logger.debug('SessionStart hook provided context, injecting into conversation');
           }
 
-          // Add context to conversation
-          if (hookResult.additionalContext) {
-            if (this.config.debug) {
-              logger.debug('UserPromptSubmit hook provided context');
-            }
-            // Prepend context to the message
-            message = `${hookResult.additionalContext}\n\n${message}`;
-          }
-        } catch (error) {
-          logger.error(`UserPromptSubmit hook failed: ${error}`);
-          // Continue execution
-        }
-      }
-
-      // Detect skill patterns in message
-      const patternResult = extractSkillPatterns(message);
-
-      if (patternResult.hasPatterns) {
-        try {
-          // Load skills with inventory
-          const skillsWithInventory = await this.loadDetectedSkills(
-            patternResult.patterns
+          // Add SessionStart output as system message before user message
+          const systemMessage = new SystemMessage(
+            `[SessionStart Hook Output]:\n${sessionStartResult.additionalContext}`
           );
-
-          if (skillsWithInventory.length > 0) {
-            // Format and inject as system message
-            const skillContent = this.formatSkillsForInjection(skillsWithInventory);
-
-            const skillSystemMessage = new SystemMessage(
-              `[Skill Invocation Detected]\n\n${skillContent}`
-            );
-            this.conversationHistory.push(skillSystemMessage);
-
-            if (this.config.debug) {
-              logger.debug(
-                `Injected ${skillsWithInventory.length} skills: ${skillsWithInventory.map((s) => s.skill.metadata.name).join(', ')}`
-              );
-            }
-          }
-        } catch (error) {
-          // Non-blocking: Log error but continue
-          logger.warn('Failed to load skills for pattern injection:', error);
+          this.conversationHistory.push(systemMessage);
         }
+      } catch (error) {
+        logger.error(`SessionStart hook failed: ${error}`);
+        // Continue session start (fail open)
       }
+    }
 
-      // Add user message to conversation history (with optional images)
-      const userMessage = this.createHumanMessage(message, images);
-      this.conversationHistory.push(userMessage);
+    // Execute UserPromptSubmit hooks
+    if (this.hookExecutor && message.trim()) {
+      try {
+        const hookResult = await this.hookExecutor.executeUserPromptSubmit(message);
 
-      // Notify start of thinking
-      onEvent({ type: 'thinking_start' });
-
-      // Start the first LLM call step
-      currentStep = this.startLLMStep();
-
-      // Create the stream with conversation history
-      const stream = await this.agent.stream(
-        { messages: this.conversationHistory },
-        {
-          streamMode: 'updates',
-          recursionLimit: 50,
-          signal: abortController.signal // Add abort signal for stream cancellation
+        // Handle blocking decision
+        if (hookResult.decision === 'block') {
+          logger.warn('UserPromptSubmit hook blocked prompt');
+          onEvent({
+            type: 'error',
+            error: hookResult.reason || 'Prompt blocked by hook'
+          });
+          return; // Exit without processing
         }
+
+        // Add context to conversation
+        if (hookResult.additionalContext) {
+          if (this.config.debug) {
+            logger.debug('UserPromptSubmit hook provided context');
+          }
+          // Prepend context to the message
+          message = `${hookResult.additionalContext}\n\n${message}`;
+        }
+      } catch (error) {
+        logger.error(`UserPromptSubmit hook failed: ${error}`);
+        // Continue execution
+      }
+    }
+
+    // Detect skill patterns in message
+    const patternResult = extractSkillPatterns(message);
+
+    if (patternResult.hasPatterns) {
+      try {
+        // Load skills with inventory
+        const skillsWithInventory = await this.loadDetectedSkills(
+          patternResult.patterns
+        );
+
+        if (skillsWithInventory.length > 0) {
+          // Format and inject as system message
+          const skillContent = this.formatSkillsForInjection(skillsWithInventory);
+
+          const skillSystemMessage = new SystemMessage(
+            `[Skill Invocation Detected]\n\n${skillContent}`
+          );
+          this.conversationHistory.push(skillSystemMessage);
+
+          if (this.config.debug) {
+            logger.debug(
+              `Injected ${skillsWithInventory.length} skills: ${skillsWithInventory.map((s) => s.skill.metadata.name).join(', ')}`
+            );
+          }
+        }
+      } catch (error) {
+        // Non-blocking: Log error but continue
+        logger.warn('Failed to load skills for pattern injection:', error);
+      }
+    }
+
+    // Preprocess @ mentions before normal agent processing
+    const atMentionResult = await this.preprocessAtMention(message, onEvent);
+
+    if (atMentionResult.handled) {
+      this.handleAtMentionResult(message, images, atMentionResult, onEvent);
+      return;
+    }
+
+    // Add user message to conversation history (with optional images)
+    const userMessage = this.createHumanMessage(message, images);
+    this.conversationHistory.push(userMessage);
+
+    // Notify start of thinking
+    onEvent({ type: EVENT_TYPES.THINKING_START });
+
+    // Start the first LLM call step
+    currentStep = this.startLLMStep();
+
+    // Create the stream with conversation history
+    const stream = await this.agent.stream(
+      { messages: this.conversationHistory },
+      {
+        streamMode: 'updates',
+        recursionLimit: 50,
+        signal: abortController.signal // Add abort signal for stream cancellation
+      }
+    );
+
+    let hasContent = false;
+
+    // Process stream chunks with interruption handling
+    for await (const chunk of stream) {
+      // Check if stream was aborted
+      if (streamAborted || abortController.signal.aborted) {
+        if (this.config.debug) {
+          logger.debug('Stream processing aborted');
+        }
+        break;
+      }
+      // Try to extract token usage from stream chunk
+      const tokenUsage = extractTokenUsageFromStreamChunk(
+        chunk,
+        this.config.model,
+        this.config.provider
       );
 
-      let hasContent = false;
+      if (tokenUsage && currentStep?.type === 'llm_call') {
+        // Update current step with token usage
+        currentStep.tokenUsage = tokenUsage;
+        this.updateStatsWithTokenUsage(tokenUsage);
 
-      // Process stream chunks with interruption handling
-      for await (const chunk of stream) {
-        // Check if stream was aborted
-        if (streamAborted || abortController.signal.aborted) {
-          if (this.config.debug) {
-            logger.debug('Stream processing aborted');
-          }
-          break;
+        // Store token usage to associate with next tool call
+        this.currentLLMTokenUsage = tokenUsage;
+
+        if (this.config.debug) {
+          logger.debug(`Token usage: ${tokenUsage.inputTokens} in, ${tokenUsage.outputTokens} out`);
         }
-        // Try to extract token usage from stream chunk
-        const tokenUsage = extractTokenUsageFromStreamChunk(
-          chunk,
+      }
+
+      await this.processStreamChunk(chunk, onEvent, (toolStarted) => {
+        if (toolStarted) {
+          // Complete current LLM step if it exists
+          if (currentStep?.type === 'llm_call') {
+            this.completeStep(currentStep);
+            currentStep = null;
+          }
+
+          // Start tool execution step
+          currentStep = this.startToolStep(toolStarted);
+          currentToolCall = toolStarted;
+          this.stats.toolCalls++;
+        } else if (currentToolCall && currentStep) {
+          // Complete tool step
+          currentStep.toolSuccess = true;
+          this.completeStep(currentStep);
+          currentStep = null;
+
+          this.stats.successfulTools++;
+          currentToolCall = null;
+
+          // Start new LLM step for next reasoning cycle (processing tool result)
+          currentStep = this.startLLMStep();
+        }
+      });
+
+      // Check if we have content
+      if (chunk.agent?.messages) {
+        const lastMessage = chunk.agent.messages.at(-1);
+        if (lastMessage?.content && !hasContent) {
+          hasContent = true;
+        }
+      }
+    }
+
+    // Complete any remaining step
+    if (currentStep) {
+      this.completeStep(currentStep);
+    }
+
+    // Update conversation history with final messages and try to extract any missed token usage
+    try {
+      const finalState = await this.agent.getState();
+      if (finalState?.messages) {
+        this.conversationHistory = finalState.messages;
+
+        // Try to extract token usage from final state if we missed it during streaming
+        const finalTokenUsage = extractTokenUsageFromFinalState(
+          finalState,
           this.config.model,
           this.config.provider
         );
 
-        if (tokenUsage && currentStep && currentStep.type === 'llm_call') {
-          // Update current step with token usage
-          currentStep.tokenUsage = tokenUsage;
-          this.updateStatsWithTokenUsage(tokenUsage);
-
-          // Store token usage to associate with next tool call
-          this.currentLLMTokenUsage = tokenUsage;
-
-          if (this.config.debug) {
-            logger.debug(`Token usage: ${tokenUsage.inputTokens} in, ${tokenUsage.outputTokens} out`);
-          }
-        }
-
-        await this.processStreamChunk(chunk, onEvent, (toolStarted) => {
-          if (toolStarted) {
-            // Complete current LLM step if it exists
-            if (currentStep && currentStep.type === 'llm_call') {
-              this.completeStep(currentStep);
-              currentStep = null;
-            }
-
-            // Start tool execution step
-            currentStep = this.startToolStep(toolStarted);
-            currentToolCall = toolStarted;
-            this.stats.toolCalls++;
-          } else if (currentToolCall && currentStep) {
-            // Complete tool step
-            currentStep.toolSuccess = true;
-            this.completeStep(currentStep);
-            currentStep = null;
-
-            this.stats.successfulTools++;
-            currentToolCall = null;
-
-            // Start new LLM step for next reasoning cycle (processing tool result)
-            currentStep = this.startLLMStep();
-          }
-        });
-
-        // Check if we have content
-        if (chunk.agent?.messages) {
-          const lastMessage = chunk.agent.messages.at(-1);
-          if (lastMessage?.content && !hasContent) {
-            hasContent = true;
-          }
-        }
-      }
-
-      // Complete any remaining step
-      if (currentStep) {
-        this.completeStep(currentStep);
-      }
-
-      // Update conversation history with final messages and try to extract any missed token usage
-      try {
-        const finalState = await this.agent.getState();
-        if (finalState?.messages) {
-          this.conversationHistory = finalState.messages;
-
-          // Try to extract token usage from final state if we missed it during streaming
-          const finalTokenUsage = extractTokenUsageFromFinalState(
-            finalState,
-            this.config.model,
-            this.config.provider
-          );
-
-          if (finalTokenUsage && this.currentExecutionSteps.length > 0) {
-            // Find the last LLM step that doesn't have token usage
-            for (let i = this.currentExecutionSteps.length - 1; i >= 0; i--) {
-              const step = this.currentExecutionSteps[i];
-              if (step.type === 'llm_call' && !step.tokenUsage) {
-                step.tokenUsage = finalTokenUsage;
-                this.updateStatsWithTokenUsage(finalTokenUsage);
-                break;
-              }
+        if (finalTokenUsage && this.currentExecutionSteps.length > 0) {
+          // Find the last LLM step that doesn't have token usage
+          for (let i = this.currentExecutionSteps.length - 1; i >= 0; i--) {
+            const step = this.currentExecutionSteps[i];
+            if (step.type === 'llm_call' && !step.tokenUsage) {
+              step.tokenUsage = finalTokenUsage;
+              this.updateStatsWithTokenUsage(finalTokenUsage);
+              break;
             }
           }
         }
-      } catch {
-        // If getState fails, continue without updating history
-        if (this.config.debug) {
-          logger.debug('Could not get final state, continuing...');
-        }
       }
+    } catch {
+      // If getState fails, continue without updating history
+      if (this.config.debug) {
+        logger.debug('Could not get final state, continuing...');
+      }
+    }
 
-      // Finalize execution statistics
-      this.stats.executionTime = Date.now() - startTime;
-      this.stats.executionSteps = [...this.currentExecutionSteps];
+    // Finalize execution statistics
+    this.stats.executionTime = Date.now() - startTime;
+    this.stats.executionSteps = [...this.currentExecutionSteps];
 
-      // Execute Stop hooks
+    // Execute Stop hooks
+    try {
       if (this.hookExecutor) {
         try {
           const stopHookResult = await this.hookExecutor.executeStop(
@@ -707,72 +830,70 @@ export class CodeMieAgent {
       }
 
       // Notify thinking end and completion
-      onEvent({ type: 'thinking_end' });
-      onEvent({ type: 'complete' });
+      onEvent({ type: EVENT_TYPES.THINKING_END });
+      onEvent({ type: EVENT_TYPES.COMPLETE });
 
       if (this.config.debug) {
         logger.debug(`Agent completed in ${this.stats.executionTime}ms`);
         logger.debug(`Total tokens: ${this.stats.totalTokens} (${this.stats.inputTokens} in, ${this.stats.outputTokens} out)`);
         logger.debug(`Estimated cost: $${this.stats.estimatedTotalCost.toFixed(4)}`);
       }
-
     } catch (error) {
-      this.stats.executionTime = Date.now() - startTime;
+    this.stats.executionTime = Date.now() - startTime;
 
-      if (currentToolCall) {
-        this.stats.failedTools++;
-      }
+    if (currentToolCall) {
+      this.stats.failedTools++;
+    }
 
-      const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorMessage = error instanceof Error ? error.message : String(error);
 
-      // Handle AbortError from user interruption gracefully
-      if (error instanceof Error && (error.name === 'AbortError' || streamAborted)) {
-        if (this.config.debug) {
-          logger.debug('Stream aborted by user');
-        }
-
-        onEvent({
-          type: 'error',
-          error: 'Operation interrupted by user'
-        });
-
-        return; // Don't throw error for user interruptions
-      }
-
+    // Handle AbortError from user interruption gracefully
+    if (error instanceof Error && (error.name === 'AbortError' || streamAborted)) {
       if (this.config.debug) {
-        logger.debug(`Agent error:`, error);
-        // Log configuration details for debugging
-        logger.debug(`Provider: ${this.config.provider}`);
-        logger.debug(`Base URL: ${this.config.baseUrl}`);
-        logger.debug(`Model: ${this.config.model}`);
+        logger.debug('Stream aborted by user');
       }
 
       onEvent({
-        type: 'error',
-        error: errorMessage
+        type: EVENT_TYPES.ERROR,
+        error: 'Operation interrupted by user'
       });
 
-      throw new CodeMieAgentError(
-        `Agent execution failed: ${errorMessage}`,
-        'EXECUTION_ERROR',
-        { originalError: error, stats: this.stats }
-      );
-    } finally {
-      // Clean up global tool event callback
-      setGlobalToolEventCallback(null);
+      return; // Don't throw error for user interruptions
+    }
 
-      // Always clean up signal handler
-      process.removeListener('SIGINT', sigintHandler);
+    if (this.config.debug) {
+      logger.debug(`Agent error:`, error);
+      // Log configuration details for debugging
+      logger.debug(`Provider: ${this.config.provider}`);
+      logger.debug(`Base URL: ${this.config.baseUrl}`);
+      logger.debug(`Model: ${this.config.model}`);
+    }
 
-      // Restore original handlers if they existed
-      if (originalSigintHandler.length > 0) {
-        originalSigintHandler.forEach(handler => {
-          process.on('SIGINT', handler as NodeJS.SignalsListener);
-        });
-      }
+    onEvent({
+      type: EVENT_TYPES.ERROR,
+      error: errorMessage
+    });
+
+    throw new CodeMieAgentError(
+      `Agent execution failed: ${errorMessage}`,
+      'EXECUTION_ERROR',
+      { originalError: error, stats: this.stats }
+    );
+  } finally {
+    // Clean up global tool event callback
+    setGlobalToolEventCallback(null);
+
+    // Always clean up signal handler
+    process.removeListener('SIGINT', sigintHandler);
+
+    // Restore original handlers if they existed
+    if (originalSigintHandler.length > 0) {
+      originalSigintHandler.forEach(handler => {
+        process.on('SIGINT', handler);
+      });
     }
   }
-
+  }
   /**
    * Process individual stream chunks from LangGraph
    */
@@ -790,7 +911,7 @@ export class CodeMieAgent {
         // Stream content chunks
         if (lastMessage?.content && typeof lastMessage.content === 'string') {
           onEvent({
-            type: 'content_chunk',
+            type: EVENT_TYPES.CONTENT_CHUNK,
             content: lastMessage.content
           });
         }
@@ -840,7 +961,7 @@ export class CodeMieAgent {
             this.toolCallArgs.set(toolCall.name, toolCall.args);
 
             onEvent({
-              type: 'tool_call_start',
+              type: EVENT_TYPES.TOOL_CALL_START,
               toolName: toolCall.name,
               toolArgs: toolCall.args
             });
@@ -917,7 +1038,7 @@ export class CodeMieAgent {
           }
 
           onEvent({
-            type: 'tool_call_result',
+            type: EVENT_TYPES.TOOL_CALL_RESULT,
             toolName,
             result,
             toolMetadata
@@ -936,7 +1057,7 @@ export class CodeMieAgent {
 
       // Don't throw here, just log - let the main stream continue
       onEvent({
-        type: 'error',
+        type: EVENT_TYPES.ERROR,
         error: `Stream processing error: ${error instanceof Error ? error.message : String(error)}`
       });
     }
@@ -1084,7 +1205,7 @@ export class CodeMieAgent {
       this.isFirstLLMCall = false;
     } else {
       // Check if the previous step was a tool execution
-      const prevStep = this.currentExecutionSteps[this.currentExecutionSteps.length - 1];
+      const prevStep = this.currentExecutionSteps.at(-1);
       llmContext = (prevStep?.type === 'tool_execution') ? 'processing_tool_result' : 'final_response';
     }
 

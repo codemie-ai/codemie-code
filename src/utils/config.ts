@@ -8,6 +8,7 @@ import {
   MultiProviderConfig,
   CodeMieIntegrationInfo,
   ConfigWithSource,
+  CodemieAssistant,
   isMultiProviderConfig,
   isLegacyConfig
 } from '../env/types.js';
@@ -839,5 +840,18 @@ export async function getInstallationId(): Promise<string> {
     await writeFile(INSTALLATION_ID_PATH, id, 'utf-8');
 
     return id;
+  }
+}
+
+/**
+ * Load registered CodeMie assistants from configuration
+ * @returns Array of registered assistants, or empty array if none configured
+ */
+export async function loadRegisteredAssistants(): Promise<CodemieAssistant[]> {
+  try {
+    const config = await ConfigLoader.load();
+    return config.codemieAssistants || [];
+  } catch {
+    return [];
   }
 }

@@ -120,14 +120,42 @@ export interface ToolMetadata {
 }
 
 /**
+ * Agent event type constants
+ */
+export const EVENT_TYPES = {
+  // Core agent events
+  THINKING_START: 'thinking_start',
+  THINKING_END: 'thinking_end',
+  CONTENT_CHUNK: 'content_chunk',
+  COMPLETE: 'complete',
+  ERROR: 'error',
+
+  // Tool execution events
+  TOOL_CALL_START: 'tool_call_start',
+  TOOL_CALL_PROGRESS: 'tool_call_progress',
+  TOOL_CALL_RESULT: 'tool_call_result',
+
+  // To_do management events
+  TODO_UPDATE: 'todo_update',
+
+  // Planning events
+  PLANNING_START: 'planning_start',
+  PLANNING_COMPLETE: 'planning_complete',
+  PLANNING_PROGRESS: 'planning_progress',
+  PLANNING_TOOL_CALL: 'planning_tool_call',
+  PLANNING_DISCOVERY: 'planning_discovery',
+  PLANNING_PHASE_CHANGE: 'planning_phase_change',
+} as const;
+
+/** Agent event type union derived from constants */
+export type AgentEventType = typeof EVENT_TYPES[keyof typeof EVENT_TYPES];
+
+/**
  * Agent event types for streaming responses
  */
 export interface AgentEvent {
   /** Event type */
-  type: 'thinking_start' | 'thinking_end' | 'content_chunk' |
-        'tool_call_start' | 'tool_call_progress' | 'tool_call_result' | 'complete' | 'error' |
-        'todo_update' | 'planning_start' | 'planning_complete' |
-        'planning_progress' | 'planning_tool_call' | 'planning_discovery' | 'planning_phase_change';
+  type: AgentEventType;
 
   /** Content chunk for streaming text */
   content?: string;
@@ -159,7 +187,7 @@ export interface AgentEvent {
   /** Error message if event type is 'error' */
   error?: string;
 
-  /** Todo update information (when type is 'todo_update') */
+  /** To_do update information (when type is 'todo_update') */ // nosonar
   todoUpdate?: {
     todos: Todo[];
     changedIndex?: number;
