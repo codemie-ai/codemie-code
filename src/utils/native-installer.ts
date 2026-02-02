@@ -126,35 +126,66 @@ function buildInstallerCommand(
 
 /**
  * Verify installation by running the verify command
+ * On Windows, retries with backoff to allow PATH updates to propagate
  *
  * @param verifyCommand - Command to verify (e.g., 'claude')
+ * @param retries - Number of retry attempts (default: 3 on Windows, 1 on Unix)
  * @returns Installed version string or null if verification failed
  */
 async function verifyInstallation(
-	verifyCommand: string
+	verifyCommand: string,
+	retries?: number
 ): Promise<string | null> {
-	try {
-		// Run version check command (e.g., 'claude --version')
-		const result = await exec(verifyCommand, ['--version'], {
-			timeout: 5000, // 5 second timeout for version check
-		});
+	// Windows requires more retries due to PATH refresh delays
+	// Unix also benefits from 2 retries (network-mounted home dirs, slow filesystems)
+	const isWindows: boolean = process.platform === 'win32';
+	const maxRetries = retries ?? (isWindows ? 3 : 2);
 
-		if (result.code === 0 && result.stdout) {
-			// Parse version from output (usually first line, may have 'v' prefix)
-			const versionMatch = result.stdout.trim().match(/v?(\d+\.\d+\.\d+)/);
-			if (versionMatch) {
-				return versionMatch[1];
+	for (let attempt = 1; attempt <= maxRetries; attempt++) {
+		try {
+			logger.debug(
+				`Verifying installation (attempt ${attempt}/${maxRetries})`,
+				{ command: verifyCommand }
+			);
+
+			// Run version check command (e.g., 'claude --version')
+			const result = await exec(verifyCommand, ['--version'], {
+				timeout: 5000, // 5 second timeout for version check
+			});
+
+			if (result.code === 0 && result.stdout) {
+				// Parse version from output (usually first line, may have 'v' prefix)
+				const versionMatch = result.stdout.trim().match(/v?(\d+\.\d+\.\d+)/);
+				if (versionMatch) {
+					logger.debug('Installation verified successfully', {
+						version: versionMatch[1],
+						attempt,
+					});
+					return versionMatch[1];
+				}
 			}
+		} catch (error) {
+			logger.debug(
+				`Installation verification attempt ${attempt} failed`,
+				...sanitizeLogArgs({ error, attempt, maxRetries })
+			);
 		}
 
-		return null;
-	} catch (error) {
-		logger.debug(
-			'Installation verification failed',
-			...sanitizeLogArgs({ error })
-		);
-		return null;
+		// Wait before retry (exponential backoff with cap: 1s, 2s, 4s max)
+		// Gives Windows time to update PATH without excessive wait
+		if (attempt < maxRetries) {
+			const delayMs = Math.min(Math.pow(2, attempt - 1) * 1000, 4000);
+			logger.debug(`Waiting ${delayMs}ms before retry (exponential backoff)...`);
+			await new Promise((resolve) => setTimeout(resolve, delayMs));
+		}
 	}
+
+	// All retries failed
+	logger.debug('Installation verification failed after all retries', {
+		command: verifyCommand,
+		attempts: maxRetries,
+	});
+	return null;
 }
 
 /**
@@ -234,9 +265,17 @@ export async function installNativeAgent(
 			installedVersion = await verifyInstallation(options.verifyCommand);
 
 			if (!installedVersion) {
+				// Add platform-specific context for troubleshooting
+				const isWindows = platform === 'windows';
+				const troubleshootingHint = isWindows
+					? 'On Windows, you may need to restart your terminal/PowerShell/CMD to refresh PATH.'
+					: 'Verify that the command is in your PATH.';
+
 				logger.warn('Installation verification failed', {
 					agentName,
 					verifyCommand: options.verifyCommand,
+					platform,
+					hint: troubleshootingHint,
 				});
 			} else {
 				logger.debug('Installation verified', {

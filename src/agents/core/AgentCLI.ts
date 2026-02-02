@@ -94,6 +94,18 @@ export class AgentCLI {
   }
 
   /**
+   * Display Windows-specific guidance for PATH refresh issues
+   * Shows helpful message when agent is not detected after installation
+   */
+  private displayWindowsPathGuidance(): void {
+    if (process.platform === 'win32') {
+      console.log(chalk.yellow(`⚠️  Windows users: If you just installed ${this.adapter.displayName},`));
+      console.log(chalk.yellow('   you may need to restart your terminal/PowerShell/CMD'));
+      console.log(chalk.yellow('   for PATH changes to take effect.\n'));
+    }
+  }
+
+  /**
    * Handle main run action
    */
   private async handleRun(args: string[], options: Record<string, unknown>): Promise<void> {
@@ -103,6 +115,10 @@ export class AgentCLI {
         console.log(chalk.red(`\n✗ ${this.adapter.displayName} is not installed\n`));
         console.log(chalk.white('Install it with:\n'));
         console.log(chalk.cyan(`  codemie install ${this.adapter.name}\n`));
+
+        // Windows-specific guidance for PATH refresh issue
+        this.displayWindowsPathGuidance();
+
         process.exit(1);
       }
 
@@ -208,9 +224,19 @@ export class AgentCLI {
           console.log(`Version: ${version}`);
         }
       } else {
+        const isWindows = process.platform === 'win32';
+
         console.log(chalk.red(`\n✗ ${this.adapter.displayName} is not installed\n`));
         console.log(chalk.white('Install it with:\n'));
         console.log(chalk.cyan(`  codemie install ${this.adapter.name}\n`));
+
+        // Windows-specific guidance for PATH refresh issue
+        if (isWindows) {
+          console.log(chalk.yellow(`⚠️  Windows users: If you just installed ${this.adapter.displayName},`));
+          console.log(chalk.yellow('   you may need to restart your terminal/PowerShell/CMD'));
+          console.log(chalk.yellow('   for PATH changes to take effect.\n'));
+        }
+
         process.exit(1);
       }
     } catch (error) {
