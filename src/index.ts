@@ -32,3 +32,29 @@ export type {
   PluginContext,
   ResponseMetadata
 } from './providers/plugins/sso/proxy/plugins/types.js';
+
+// Hook Event Processing (for programmatic usage)
+export { HookEventProcessor } from './hooks/api.js';
+export type {
+  HookProcessingConfig,
+  SessionStartEvent,
+  SessionEndEvent,
+  SubagentStopEvent
+} from './hooks/api.js';
+
+// Hook Event Types
+export type {
+  BaseHookEvent,
+  HookTransformer
+} from './agents/core/types.js';
+
+// Session Processing
+export type { ProcessingContext } from './agents/core/session/BaseProcessor.js';
+export type { SessionAdapter } from './agents/core/session/BaseSessionAdapter.js';
+
+// Session Syncer (for manual sync)
+export { SessionSyncer } from './providers/plugins/sso/session/SessionSyncer.js';
+export type { SessionSyncResult } from './providers/plugins/sso/session/SessionSyncer.js';
+
+// Agent Registry (for getting session adapters)
+export { AgentRegistry } from './agents/registry.js';
