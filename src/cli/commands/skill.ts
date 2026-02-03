@@ -1,9 +1,9 @@
 import { Command } from 'commander';
 import Table from 'cli-table3';
 import chalk from 'chalk';
-import { SkillManager } from '../../skills/index.js';
+import { SkillManager } from '../../agents/codemie-code/skills/index.js';
 import { logger } from '../../utils/logger.js';
-import type { Skill } from '../../skills/index.js';
+import type { Skill } from '../../agents/codemie-code/skills/index.js';
 
 /**
  * Format skill source with color

@@ -7,7 +7,7 @@
 
 import type { FilterConfig } from './filters.js';
 import type { HooksConfiguration } from '../../hooks/types.js';
-import type { SkillsConfig } from '../../skills/index.js';
+import type { SkillsConfig } from './skills/index.js';
 
 /**
  * Configuration interface for the CodeMie agent

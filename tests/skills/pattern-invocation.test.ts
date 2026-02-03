@@ -7,9 +7,9 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
-import { SkillManager } from '../../src/skills/core/SkillManager.js';
-import { extractSkillPatterns } from '../../src/skills/utils/pattern-matcher.js';
-import { loadSkillWithInventory } from '../../src/skills/utils/content-loader.js';
+import { SkillManager } from '../../src/agents/codemie-code/skills/core/SkillManager.js';
+import { extractSkillPatterns } from '../../src/agents/codemie-code/skills/utils/pattern-matcher.js';
+import { loadSkillWithInventory } from '../../src/agents/codemie-code/skills/utils/content-loader.js';
 
 describe('Pattern-based skill invocation (Integration)', () => {
   let tempSkillsDir: string;

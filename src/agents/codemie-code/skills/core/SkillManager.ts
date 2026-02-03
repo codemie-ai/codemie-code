@@ -6,7 +6,7 @@ import type {
   SkillWithInventory,
 } from './types.js';
 import { loadSkillWithInventory } from '../utils/content-loader.js';
-import { logger } from '../../utils/logger.js';
+import { logger } from '../../../../utils/logger.js';
 
 /**
  * Skill manager singleton

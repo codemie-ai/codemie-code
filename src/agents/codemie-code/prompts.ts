@@ -4,7 +4,7 @@
  * Contains the system prompt and instructions for the LangGraph ReAct agent
  */
 
-import type { Skill } from '../../skills/index.js';
+import type { Skill } from './skills/index.js';
 import type { CodemieAssistant } from '@/env/types.js';
 
 export const SYSTEM_PROMPT = `You are CodeMie, an advanced AI coding assistant designed to help developers with various programming tasks.

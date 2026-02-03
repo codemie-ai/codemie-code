@@ -13,8 +13,8 @@ import { CodeMieAgentError } from './types.js';
 import { hasClipboardImage, getClipboardImage } from '../../utils/clipboard.js';
 import { logger } from '../../utils/logger.js';
 import { sanitizeCookies } from '../../utils/security.js';
-import { SkillManager } from '../../skills/index.js';
-import type { Skill } from '../../skills/index.js';
+import { SkillManager } from './skills/index.js';
+import type { Skill } from './skills/index.js';
 
 export class CodeMieCode {
   private agent: CodeMieAgent | null = null;
