@@ -1,5 +1,5 @@
 /**
- * List Assistants Command
+ * Setup Assistants Command
  *
  * Unified command to view, register, and unregister CodeMie assistants
  */
@@ -17,7 +17,7 @@ import type { CodemieAssistant, ProviderProfile } from '@/env/types.js';
 import { MESSAGES, COMMAND_NAMES, ACTIONS, type ActionType } from './constants.js';
 import { getAuthenticatedClient, promptReauthentication } from '@/utils/auth.js';
 
-interface ListCommandOptions {
+interface SetupCommandOptions {
   profile?: string;
   project?: string;
   allProjects?: boolean;
@@ -37,18 +37,18 @@ interface RegistrationChanges {
 }
 
 /**
- * Create assistants list command
+ * Create assistants setup command
  */
-export function createAssistantsListCommand(): Command {
-  const command = new Command(COMMAND_NAMES.LIST);
+export function createAssistantsSetupCommand(): Command {
+  const command = new Command(COMMAND_NAMES.SETUP);
 
   command
-    .description(MESSAGES.LIST.COMMAND_DESCRIPTION)
-    .option('--profile <name>', MESSAGES.LIST.OPTION_PROFILE)
-    .option('--project <project>', MESSAGES.LIST.OPTION_PROJECT)
-    .option('--all-projects', MESSAGES.LIST.OPTION_ALL_PROJECTS)
+    .description(MESSAGES.SETUP.COMMAND_DESCRIPTION)
+    .option('--profile <name>', MESSAGES.SETUP.OPTION_PROFILE)
+    .option('--project <project>', MESSAGES.SETUP.OPTION_PROJECT)
+    .option('--all-projects', MESSAGES.SETUP.OPTION_ALL_PROJECTS)
     .option('-v, --verbose', MESSAGES.SHARED.OPTION_VERBOSE)
-    .action(async (options: ListCommandOptions) => {
+    .action(async (options: SetupCommandOptions) => {
       if (options.verbose) {
         enableVerboseLogging();
       }
@@ -94,7 +94,7 @@ function isAuthenticationError(error: unknown): boolean {
 /**
  * Manage assistants - unified list/register/unregister
  */
-async function manageAssistants(options: ListCommandOptions): Promise<void> {
+async function manageAssistants(options: SetupCommandOptions): Promise<void> {
   // 1. Load current profile
   const config = await ConfigLoader.load();
   const profileName = options.profile || await ConfigLoader.getActiveProfileName() || 'default';
@@ -124,7 +124,7 @@ async function manageAssistants(options: ListCommandOptions): Promise<void> {
   );
 
   if (action === ACTIONS.CANCEL) {
-    console.log(chalk.dim(MESSAGES.LIST.NO_CHANGES_MADE));
+    console.log(chalk.dim(MESSAGES.SETUP.NO_CHANGES_MADE));
     return;
   }
 
@@ -148,20 +148,20 @@ function sortAssistantsByRegistration(
 /**
  * Display message when no assistants are found
  */
-function displayNoAssistantsMessage(options: ListCommandOptions, config: ProviderProfile): void {
-  console.log(chalk.yellow(MESSAGES.LIST.NO_ASSISTANTS));
+function displayNoAssistantsMessage(options: SetupCommandOptions, config: ProviderProfile): void {
+  console.log(chalk.yellow(MESSAGES.SETUP.NO_ASSISTANTS));
 
   const filterProject = options.project || config.codeMieProject;
   if (filterProject) {
-    console.log(chalk.dim(MESSAGES.LIST.FILTERED_BY_PROJECT(chalk.cyan(filterProject))));
-    console.log(chalk.dim(`Try ${chalk.cyan(MESSAGES.LIST.TRY_ALL_PROJECTS)}${MESSAGES.LIST.HINT_TRY_ALL}`));
+    console.log(chalk.dim(MESSAGES.SETUP.FILTERED_BY_PROJECT(chalk.cyan(filterProject))));
+    console.log(chalk.dim(`Try ${chalk.cyan(MESSAGES.SETUP.TRY_ALL_PROJECTS)}${MESSAGES.SETUP.HINT_TRY_ALL}`));
   }
 }
 
 /**
  * Get project filter from options or config
  */
-function getProjectFilter(options: ListCommandOptions, config: ProviderProfile): string | undefined {
+function getProjectFilter(options: SetupCommandOptions, config: ProviderProfile): string | undefined {
   if (options.allProjects) {
     return undefined;
   }
@@ -173,10 +173,10 @@ function getProjectFilter(options: ListCommandOptions, config: ProviderProfile):
  */
 async function fetchAssistants(
   client: CodeMieClient,
-  options: ListCommandOptions,
+  options: SetupCommandOptions,
   config: ProviderProfile
 ): Promise<(Assistant | AssistantBase)[]> {
-  const spinner = ora(MESSAGES.LIST.SPINNER_FETCHING).start();
+  const spinner = ora(MESSAGES.SETUP.SPINNER_FETCHING).start();
 
   try {
     const filters: Record<string, unknown> = {
@@ -193,10 +193,10 @@ async function fetchAssistants(
       filters,
       minimal_response: false
     });
-    spinner.succeed(chalk.green(MESSAGES.LIST.SUCCESS_FOUND(assistants.length)));
+    spinner.succeed(chalk.green(MESSAGES.SETUP.SUCCESS_FOUND(assistants.length)));
     return assistants;
   } catch (error) {
-    spinner.fail(chalk.red(MESSAGES.LIST.ERROR_FETCH_FAILED));
+    spinner.fail(chalk.red(MESSAGES.SETUP.ERROR_FETCH_FAILED));
     logger.error('Assistant list API call failed', { error });
 
     if (isAuthenticationError(error)) {
@@ -253,7 +253,7 @@ async function promptAssistantSelection(
     {
       type: 'checkbox',
       name: 'selectedIds',
-      message: MESSAGES.LIST.PROMPT_SELECT,
+      message: MESSAGES.SETUP.PROMPT_SELECT,
       choices,
       pageSize: 15
     }
@@ -263,10 +263,10 @@ async function promptAssistantSelection(
     {
       type: 'list',
       name: 'action',
-      message: MESSAGES.LIST.PROMPT_ACTION,
+      message: MESSAGES.SETUP.PROMPT_ACTION,
       choices: [
-        { name: MESSAGES.LIST.ACTION_UPDATE, value: ACTIONS.UPDATE },
-        { name: MESSAGES.LIST.ACTION_CANCEL, value: ACTIONS.CANCEL }
+        { name: MESSAGES.SETUP.ACTION_UPDATE, value: ACTIONS.UPDATE },
+        { name: MESSAGES.SETUP.ACTION_CANCEL, value: ACTIONS.CANCEL }
       ]
     }
   ]);
@@ -324,13 +324,13 @@ async function executeWithSpinner<T>(
  */
 async function unregisterAssistant(assistant: CodemieAssistant): Promise<void> {
   await executeWithSpinner(
-    MESSAGES.LIST.SPINNER_UNREGISTERING(chalk.bold(assistant.name)),
+    MESSAGES.SETUP.SPINNER_UNREGISTERING(chalk.bold(assistant.name)),
     async () => {
       // Remove Claude subagent from ~/.claude/agents/
       await unregisterClaudeSubagent(assistant.slug);
     },
-    MESSAGES.LIST.SUCCESS_UNREGISTERED(chalk.bold(assistant.name), chalk.cyan(assistant.slug)),
-    MESSAGES.LIST.ERROR_UNREGISTER_FAILED(assistant.name),
+    MESSAGES.SETUP.SUCCESS_UNREGISTERED(chalk.bold(assistant.name), chalk.cyan(assistant.slug)),
+    MESSAGES.SETUP.ERROR_UNREGISTER_FAILED(assistant.name),
     (error) => logger.error('Assistant removal failed', { error, assistantId: assistant.id })
   );
 }
@@ -340,7 +340,7 @@ async function unregisterAssistant(assistant: CodemieAssistant): Promise<void> {
  */
 async function registerAssistant(assistant: Assistant): Promise<CodemieAssistant | null> {
   const result = await executeWithSpinner(
-    MESSAGES.LIST.SPINNER_REGISTERING(chalk.bold(assistant.name)),
+    MESSAGES.SETUP.SPINNER_REGISTERING(chalk.bold(assistant.name)),
     async () => {
       // Register Claude subagent in ~/.claude/agents/
       // Claude Code will auto-discover it and make it available via @mentions
@@ -348,8 +348,8 @@ async function registerAssistant(assistant: Assistant): Promise<CodemieAssistant
 
       return assistant.slug!;
     },
-    MESSAGES.LIST.SUCCESS_REGISTERED(chalk.bold(assistant.name), chalk.cyan(`@${assistant.slug!}`)),
-    MESSAGES.LIST.ERROR_REGISTER_FAILED(assistant.name),
+    MESSAGES.SETUP.SUCCESS_REGISTERED(chalk.bold(assistant.name), chalk.cyan(`@${assistant.slug!}`)),
+    MESSAGES.SETUP.ERROR_REGISTER_FAILED(assistant.name),
     (error) => logger.error('Assistant generation failed', { error, assistantId: assistant.id })
   );
 
@@ -377,16 +377,16 @@ function displaySummary(
   config: ProviderProfile
 ): void {
   const totalChanges = toRegister.length + toUnregister.length;
-  console.log(chalk.green(MESSAGES.LIST.SUMMARY_UPDATED(totalChanges)));
+  console.log(chalk.green(MESSAGES.SETUP.SUMMARY_UPDATED(totalChanges)));
 
   if (toRegister.length > 0) {
-    console.log(chalk.dim(MESSAGES.LIST.SUMMARY_REGISTERED(toRegister.length)));
+    console.log(chalk.dim(MESSAGES.SETUP.SUMMARY_REGISTERED(toRegister.length)));
   }
   if (toUnregister.length > 0) {
-    console.log(chalk.dim(MESSAGES.LIST.SUMMARY_UNREGISTERED(toUnregister.length)));
+    console.log(chalk.dim(MESSAGES.SETUP.SUMMARY_UNREGISTERED(toUnregister.length)));
   }
 
-  console.log(chalk.dim(MESSAGES.LIST.SUMMARY_PROFILE(profileName)));
+  console.log(chalk.dim(MESSAGES.SETUP.SUMMARY_PROFILE(profileName)));
 
   displayCurrentlyRegistered(config);
 }
@@ -399,7 +399,7 @@ function displayCurrentlyRegistered(config: ProviderProfile): void {
     return;
   }
 
-  console.log(chalk.bold(MESSAGES.LIST.CURRENTLY_REGISTERED));
+  console.log(chalk.bold(MESSAGES.SETUP.CURRENTLY_REGISTERED));
   config.codemieAssistants.forEach((assistant: CodemieAssistant) => {
     const slugText = chalk.cyan(`/${assistant.slug}`);
     console.log(chalk.white(`  • ${slugText} - ${assistant.name}`));
@@ -420,7 +420,7 @@ async function applyChanges(
   const { toRegister, toUnregister } = determineChanges(selectedIds, allAssistants, registeredAssistants);
 
   if (toRegister.length === 0 && toUnregister.length === 0) {
-    console.log(chalk.yellow(MESSAGES.LIST.NO_CHANGES_TO_APPLY));
+    console.log(chalk.yellow(MESSAGES.SETUP.NO_CHANGES_TO_APPLY));
     return;
   }
 

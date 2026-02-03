@@ -5,7 +5,7 @@
  */
 
 import { Command } from 'commander';
-import { createAssistantsListCommand } from './list.js';
+import { createAssistantsSetupCommand } from './setup.js';
 import { createAssistantsChatCommand } from './chat.js';
 import { COMMAND_NAMES } from './constants.js';
 
@@ -17,14 +17,14 @@ export function createAssistantsCommand(): Command {
 
   command
     .description('Manage CodeMie assistants')
-    .addCommand(createAssistantsListCommand())
+    .addCommand(createAssistantsSetupCommand())
     .addCommand(createAssistantsChatCommand());
 
-  // Default action: run list command (backward compatibility)
+  // Default action: run setup command (backward compatibility)
   command.action(async () => {
-    const listCommand = command.commands.find(c => c.name() === COMMAND_NAMES.LIST);
-    if (listCommand) {
-      await listCommand.parseAsync([], { from: 'user' });
+    const setupCommand = command.commands.find(c => c.name() === COMMAND_NAMES.SETUP);
+    if (setupCommand) {
+      await setupCommand.parseAsync([], { from: 'user' });
     }
   });
 
