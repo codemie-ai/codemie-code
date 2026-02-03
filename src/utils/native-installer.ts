@@ -175,7 +175,8 @@ async function verifyInstallation(
 		// Gives Windows time to update PATH without excessive wait
 		if (attempt < maxRetries) {
 			const delayMs = Math.min(Math.pow(2, attempt - 1) * 1000, 4000);
-			logger.debug(`Waiting ${delayMs}ms before retry (exponential backoff)...`);
+			// USER FEEDBACK: Show progress during wait
+			logger.info(`Waiting for PATH update to propagate (${delayMs / 1000}s)...`);
 			await new Promise((resolve) => setTimeout(resolve, delayMs));
 		}
 	}
@@ -265,18 +266,72 @@ export async function installNativeAgent(
 			installedVersion = await verifyInstallation(options.verifyCommand);
 
 			if (!installedVersion) {
-				// Add platform-specific context for troubleshooting
-				const isWindows = platform === 'windows';
-				const troubleshootingHint = isWindows
-					? 'On Windows, you may need to restart your terminal/PowerShell/CMD to refresh PATH.'
-					: 'Verify that the command is in your PATH.';
+				// Verification failed - try to fix PATH on Windows
+				if (platform === 'windows') {
+					logger.info('Command not accessible yet, attempting to fix PATH...');
 
-				logger.warn('Installation verification failed', {
-					agentName,
-					verifyCommand: options.verifyCommand,
-					platform,
-					hint: troubleshootingHint,
-				});
+					const { ensureCommandInPath } = await import('./windows-path.js');
+					const pathResult = await ensureCommandInPath(options.verifyCommand);
+
+					if (pathResult.success && pathResult.pathAdded && !pathResult.alreadyInPath) {
+						// Successfully added to PATH
+						logger.success('Added to PATH', { path: pathResult.pathAdded });
+						logger.info('');
+						logger.info('✅ Installation completed successfully!');
+						logger.info('');
+						logger.info('⚠️  IMPORTANT: PATH was updated in Windows registry');
+						logger.info('');
+						logger.info('To use the command, you must:');
+						logger.info('  1. Close ALL terminal windows completely');
+						logger.info('  2. Close the parent application (Windows Terminal, VS Code, etc.)');
+						logger.info('  3. Open a fresh terminal window');
+						logger.info('');
+						logger.info('Alternatively, restart your computer or log out and back in.');
+						logger.info('');
+						logger.info(`After restart, verify with: ${options.verifyCommand} --version`);
+						logger.info('');
+					} else if (pathResult.success && pathResult.alreadyInPath) {
+						// Already in PATH but still not accessible (expected)
+						logger.info('PATH already configured, terminal restart required');
+						logger.info('');
+						logger.info('To use the command:');
+						logger.info('  1. Close ALL terminal windows completely');
+						logger.info('  2. Close the parent application (Windows Terminal, VS Code, etc.)');
+						logger.info('  3. Open a fresh terminal window');
+						logger.info('');
+						logger.info(`Then verify with: ${options.verifyCommand} --version`);
+						logger.info('');
+					} else {
+						// Failed to fix PATH
+						logger.warn('Could not automatically add to PATH', {
+							error: pathResult.error
+						});
+						logger.info('');
+						logger.info('⚠️  Manual action required:');
+						logger.info('');
+						logger.info('1. Find where the command was installed (usually in:');
+						logger.info('   %LOCALAPPDATA%\\Programs\\<Command> or');
+						logger.info('   %USERPROFILE%\\AppData\\Local\\Programs\\<Command>)');
+						logger.info('');
+						logger.info('2. Add to PATH manually:');
+						logger.info('   a. Press Win+R, type "sysdm.cpl", press Enter');
+						logger.info('   b. Advanced tab > Environment Variables');
+						logger.info('   c. Under User variables, edit "Path"');
+						logger.info('   d. Click "New" and add the installation directory');
+						logger.info('   e. Click OK, then restart ALL terminal windows');
+						logger.info('');
+						logger.info(`3. Verify with: ${options.verifyCommand} --version`);
+						logger.info('');
+					}
+				} else {
+					// Non-Windows platform
+					logger.warn('Installation verification failed', {
+						agentName,
+						verifyCommand: options.verifyCommand,
+						platform,
+						hint: 'Verify that the command is in your PATH.',
+					});
+				}
 			} else {
 				logger.debug('Installation verified', {
 					agentName,
