@@ -8,6 +8,7 @@ import { AgentInstallationError } from './errors.js';
 import { logger } from './logger.js';
 import { sanitizeLogArgs, sanitizeValue } from './security.js';
 import { isValidSemanticVersion } from './version-utils.js';
+import { ensureCommandInPath } from './windows-path.js';
 
 /**
  * Platform-specific installer URLs
@@ -175,7 +176,8 @@ async function verifyInstallation(
 		// Gives Windows time to update PATH without excessive wait
 		if (attempt < maxRetries) {
 			const delayMs = Math.min(Math.pow(2, attempt - 1) * 1000, 4000);
-			logger.debug(`Waiting ${delayMs}ms before retry (exponential backoff)...`);
+			// USER FEEDBACK: Show progress during wait
+			logger.info(`Waiting for PATH update to propagate (${delayMs / 1000}s)...`);
 			await new Promise((resolve) => setTimeout(resolve, delayMs));
 		}
 	}
@@ -254,6 +256,47 @@ export async function installNativeAgent(
 			platform,
 		});
 
+		// WINDOWS-SPECIFIC: Auto-fix PATH before verification
+		// Use ensureCommandInPath to automatically add command to PATH if missing
+		if (platform === 'windows' && options?.verifyCommand) {
+			logger.debug('Ensuring command is in Windows PATH', {
+				command: options.verifyCommand,
+			});
+
+			try {
+				const pathResult = await ensureCommandInPath(options.verifyCommand);
+
+				if (pathResult.success) {
+					if (pathResult.alreadyInPath) {
+						logger.debug('Command directory already in PATH', {
+							directory: pathResult.pathAdded,
+						});
+					} else if (pathResult.pathAdded) {
+						logger.success(
+							`Automatically added ${options.verifyCommand} to PATH: ${pathResult.pathAdded}`,
+						);
+						logger.info(
+							'PATH updated. Please restart your terminal for changes to take effect.',
+						);
+					}
+				} else if (pathResult.error) {
+					// PATH fix failed, but installation succeeded
+					// Log warning but don't fail installation
+					logger.warn('Could not automatically update PATH', {
+						error: pathResult.error,
+					});
+					logger.info(
+						`You may need to manually add ${options.verifyCommand} to your PATH.`,
+					);
+				}
+			} catch (error) {
+				// PATH utilities failed, but don't fail installation
+				logger.debug('ensureCommandInPath failed', {
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}
+		}
+
 		// Verify installation if verify command provided
 		let installedVersion: string | null = null;
 		if (options?.verifyCommand) {
@@ -268,7 +311,7 @@ export async function installNativeAgent(
 				// Add platform-specific context for troubleshooting
 				const isWindows = platform === 'windows';
 				const troubleshootingHint = isWindows
-					? 'On Windows, you may need to restart your terminal/PowerShell/CMD to refresh PATH.'
+					? 'Restart your terminal to refresh PATH. The installation directory was automatically added to your PATH.'
 					: 'Verify that the command is in your PATH.';
 
 				logger.warn('Installation verification failed', {
