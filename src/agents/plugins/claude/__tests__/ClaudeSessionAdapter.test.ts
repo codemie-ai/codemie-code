@@ -85,6 +85,7 @@ describe('ClaudeSessionAdapter', () => {
           sessionId: 'session-metrics',
           timestamp: '2024-01-01T00:00:01Z',
           message: {
+            id: 'msg_api_1',
             role: 'assistant',
             content: 'response',
             usage: {
@@ -101,6 +102,7 @@ describe('ClaudeSessionAdapter', () => {
           sessionId: 'session-metrics',
           timestamp: '2024-01-01T00:00:02Z',
           message: {
+            id: 'msg_api_2',
             role: 'assistant',
             content: 'another response',
             usage: {

@@ -186,6 +186,11 @@ export class ClaudeSessionAdapter implements SessionAdapter {
     // Build tool results map (tool_use_id → isError) for status tracking
     const toolResultsMap = new Map<string, boolean>();
 
+    // Track processed message IDs to avoid duplicate token counting
+    // Claude streaming creates multiple JSONL entries (thinking, text, tool_use)
+    // for the same API response, each with identical usage data
+    const processedMessageIds = new Set<string>();
+
     // First pass: collect tool results
     for (const msg of messages) {
       if (msg.message?.content && Array.isArray(msg.message.content)) {
@@ -199,27 +204,12 @@ export class ClaudeSessionAdapter implements SessionAdapter {
       }
     }
 
-    // Track processed message IDs to avoid duplicate token counting
-    // Claude streaming creates multiple JSONL entries (thinking, text, tool_use)
-    // for the same API response, each with identical usage data
-    const processedMessageIds = new Set<string>();
-
     // Second pass: aggregate metrics
     for (const msg of messages) {
-      // Extract token usage
-      if (msg.message?.usage) {
-        // Deduplicate token counting by message.id (streaming chunks share same id)
-        // If no message.id, count each message independently (valid format from certain Claude versions)
-        let shouldCountTokens = true;
-        if (msg.message.id) {
-          if (processedMessageIds.has(msg.message.id)) {
-            shouldCountTokens = false; // Skip tokens only, NOT the entire iteration
-          } else {
-            processedMessageIds.add(msg.message.id);
-          }
-        }
-
-        if (shouldCountTokens) {
+      // Extract token usage (deduplicate by message.id - streaming chunks share same id)
+      if (msg.message?.usage && msg.message?.id) {
+        if (!processedMessageIds.has(msg.message.id)) {
+          processedMessageIds.add(msg.message.id);
           const usage = msg.message.usage;
           inputTokens += usage.input_tokens || 0;
           outputTokens += usage.output_tokens || 0;

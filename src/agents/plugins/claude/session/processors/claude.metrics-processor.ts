@@ -180,21 +180,14 @@ export class MetricsProcessor implements SessionProcessor {
     // Claude streaming creates multiple JSONL entries (thinking, text, tool_use)
     // for the same API response, each with the same message.id and usage
     const messageGroups = new Map<string, any[]>();
-    const standaloneMessages: any[] = [];
 
     for (const msg of messages) {
-      if (msg.message?.role === 'assistant') {
-        if (msg.message?.id) {
-          // Has message.id: group for deduplication
-          const messageId = msg.message.id;
-          if (!messageGroups.has(messageId)) {
-            messageGroups.set(messageId, []);
-          }
-          messageGroups.get(messageId)!.push(msg);
-        } else if (msg.message?.usage) {
-          // No message.id but has usage: process independently (valid format from certain Claude versions)
-          standaloneMessages.push(msg);
+      if (msg.message?.role === 'assistant' && msg.message?.id) {
+        const messageId = msg.message.id;
+        if (!messageGroups.has(messageId)) {
+          messageGroups.set(messageId, []);
         }
+        messageGroups.get(messageId)!.push(msg);
       }
     }
 
@@ -309,11 +302,6 @@ export class MetricsProcessor implements SessionProcessor {
     // Process grouped messages (streaming chunks with same message.id)
     for (const [messageId, groupedMessages] of messageGroups.entries()) {
       processDelta(groupedMessages, messageId);
-    }
-
-    // Process standalone messages (no message.id - valid format from certain Claude versions)
-    for (const msg of standaloneMessages) {
-      processDelta([msg], msg.uuid);
     }
 
     return deltas;
