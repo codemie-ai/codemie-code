@@ -4,6 +4,7 @@
  */
 
 import { win32 as pathWin32 } from 'path';
+import { existsSync } from 'fs';
 import { exec } from './exec.js';
 import { logger } from './logger.js';
 import { sanitizeLogArgs } from './security.js';
@@ -65,8 +66,53 @@ function validateDirectoryPath(directory: string): string | null {
 }
 
 /**
+ * Check common installation directories for a command
+ * Checks standard Windows installation locations without relying on PATH
+ *
+ * @param command - Command name (e.g., 'claude')
+ * @returns Full path to the executable directory or null if not found
+ */
+function checkCommonInstallLocations(command: string): string | null {
+	const userProfile = process.env.USERPROFILE || '';
+	const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
+	const programFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+	const localAppData = process.env.LOCALAPPDATA || `${userProfile}\\AppData\\Local`;
+
+	// Common installation locations for CLI tools on Windows
+	const commonLocations = [
+		// XDG-style user installation (Claude's preferred location)
+		`${userProfile}\\.local\\bin`,
+		// AppData Local
+		`${localAppData}\\Programs\\${command}`,
+		`${localAppData}\\${command}`,
+		`${localAppData}\\bin`,
+		// Program Files
+		`${programFiles}\\${command}`,
+		`${programFilesX86}\\${command}`,
+		// User-specific npm global
+		`${process.env.APPDATA || userProfile}\\npm`,
+	];
+
+	const exeName = `${command}.exe`;
+
+	for (const dir of commonLocations) {
+		try {
+			const exePath = `${dir}\\${exeName}`;
+			if (existsSync(exePath)) {
+				logger.debug('Found command in common location', { command, directory: dir });
+				return dir;
+			}
+		} catch {
+			// Continue checking other locations
+		}
+	}
+
+	return null;
+}
+
+/**
  * Find the installation directory of a command on Windows
- * Uses `where` command to locate the executable
+ * First tries `where` command, then falls back to checking common locations
  *
  * @param command - Command name (e.g., 'claude')
  * @returns Full path to the executable directory or null if not found
@@ -90,14 +136,19 @@ export async function findCommandDirectory(command: string): Promise<string | nu
 			// -> C:\Users\Username\AppData\Local\Programs\Claude
 			const lastSlashIndex = executablePath.lastIndexOf('\\');
 			if (lastSlashIndex !== -1) {
-				return executablePath.substring(0, lastSlashIndex);
+				const directory = executablePath.substring(0, lastSlashIndex);
+				logger.debug('Found command via where.exe', { command, directory });
+				return directory;
 			}
 		}
 	} catch (error) {
-		logger.debug('Failed to find command directory', ...sanitizeLogArgs({ command, error }));
+		logger.debug('where.exe failed, trying common locations', ...sanitizeLogArgs({ command, error }));
 	}
 
-	return null;
+	// Fallback: Check common installation directories
+	// This is crucial for newly installed commands that aren't in PATH yet
+	logger.debug('Checking common installation locations', { command });
+	return checkCommonInstallLocations(command);
 }
 
 /**
