@@ -21,7 +21,7 @@ Analyze project and generate tailored subagent files:
 ## Prerequisites
 
 - [ ] Project is accessible
-- [ ] Templates exist at `.codemie/claude-templates/templates/subagents/`
+- [ ] Templates exist at `.codemie/claude-templates/templates/agents/`
 - [ ] (Optional) Backup existing `.claude/agents/` if updating agents
 
 **Safety Note**: If existing agents are found, original content will be preserved during updates. However, creating a backup before running this command is recommended for recovery purposes.
@@ -48,7 +48,7 @@ Analyze project and generate tailored subagent files:
 #### Step 1.1: Find Templates
 
 ```bash
-ls .codemie/claude-templates/templates/subagents/
+ls .codemie/claude-templates/templates/agents/
 ```
 
 Expected: `code-review-agent-template.md`, `solution-architect-agent.md`, `unit-tester-agent.md`, `refactor-cleaner-agent.md`
@@ -137,7 +137,7 @@ For each template, create a todo item and process:
 
 **If CREATE (no existing agent)**:
 ```bash
-cat .codemie/claude-templates/templates/subagents/[template-file]
+cat .codemie/claude-templates/templates/agents/[template-file]
 ```
 
 Identify all `[PLACEHOLDERS]` and `[GENERATION INSTRUCTION]` blocks.
@@ -145,7 +145,7 @@ Identify all `[PLACEHOLDERS]` and `[GENERATION INSTRUCTION]` blocks.
 **If UPDATE (existing agent found)**:
 ```bash
 # Read both template and existing agent
-cat .codemie/claude-templates/templates/subagents/[template-file]
+cat .codemie/claude-templates/templates/agents/[template-file]
 cat .claude/agents/[existing-agent-file]
 ```
 
