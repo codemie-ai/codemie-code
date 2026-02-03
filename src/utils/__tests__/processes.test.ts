@@ -35,7 +35,7 @@ describe('npm utility', () => {
       expect(execSpy).toHaveBeenCalledWith(
         'npm',
         ['install', '-g', 'test-package'],
-        expect.objectContaining({ timeout: 120000 })
+        expect.objectContaining({ timeout: 300000 })
       );
       expect(logger.info).toHaveBeenCalledWith(
         'Installing test-package globally...'
@@ -54,7 +54,7 @@ describe('npm utility', () => {
       expect(execSpy).toHaveBeenCalledWith(
         'npm',
         ['install', '-g', 'test-package@1.0.0'],
-        expect.objectContaining({ timeout: 120000 })
+        expect.objectContaining({ timeout: 300000 })
       );
       expect(logger.success).toHaveBeenCalledWith(
         'test-package@1.0.0 installed successfully'
@@ -62,7 +62,7 @@ describe('npm utility', () => {
     });
 
     it('should throw NpmError with TIMEOUT code on timeout', async () => {
-      execSpy.mockRejectedValue(new Error('Command timed out after 120000ms'));
+      execSpy.mockRejectedValue(new Error('Command timed out after 300000ms'));
 
       const { installGlobal } = await import('../processes.js');
       await expect(installGlobal('test-package')).rejects.toThrow(NpmError);
