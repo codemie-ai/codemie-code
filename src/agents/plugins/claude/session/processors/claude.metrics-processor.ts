@@ -39,6 +39,10 @@ export class MetricsProcessor implements SessionProcessor {
 
   /**
    * Transform ParsedSession.messages to deltas and write to JSONL
+   *
+   * IMPORTANT: This method is called by multiple hooks (Stop, SubagentStop, SessionEnd)
+   * during a session lifecycle. To prevent duplicate records, we read existing recordIds
+   * from the metrics file before writing and skip any deltas that already exist.
    */
   private async processMessages(
     session: ParsedSession,
@@ -57,16 +61,42 @@ export class MetricsProcessor implements SessionProcessor {
       const { MetricsWriter } = await import('../../../../../providers/plugins/sso/session/processors/metrics/MetricsWriter.js');
       const writer = new MetricsWriter(session.sessionId);
 
-      for (const delta of deltas) {
+      // Read existing recordIds to prevent duplicate writes across hook invocations
+      // This is necessary because multiple hooks (Stop, SessionEnd) can process
+      // the same messages, and each invocation has a fresh processedIds Set
+      const existingRecordIds = new Set<string>();
+      if (writer.exists()) {
+        const existingDeltas = await writer.readAll();
+        for (const d of existingDeltas) {
+          existingRecordIds.add(d.recordId);
+        }
+        logger.debug(`[${this.name}] Found ${existingRecordIds.size} existing recordIds in metrics file`);
+      }
+
+      // Filter out deltas that already exist in the file
+      const newDeltas = deltas.filter(d => !existingRecordIds.has(d.recordId));
+      const skippedCount = deltas.length - newDeltas.length;
+
+      if (skippedCount > 0) {
+        logger.debug(`[${this.name}] Skipping ${skippedCount} already-written deltas`);
+      }
+
+      if (newDeltas.length === 0) {
+        logger.debug(`[${this.name}] All ${deltas.length} deltas already exist, nothing to write`);
+        return { success: true, message: 'No new deltas to write', metadata: { recordsProcessed: 0 } };
+      }
+
+      // Write only new deltas
+      for (const delta of newDeltas) {
         await writer.appendDelta(delta);
       }
 
-      logger.info(`[${this.name}] Generated and wrote ${deltas.length} deltas`);
+      logger.info(`[${this.name}] Generated ${deltas.length} deltas, wrote ${newDeltas.length} new (skipped ${skippedCount} existing)`);
 
       return {
         success: true,
-        message: `Generated ${deltas.length} deltas`,
-        metadata: { recordsProcessed: deltas.length }
+        message: `Generated ${deltas.length} deltas, wrote ${newDeltas.length} new`,
+        metadata: { recordsProcessed: newDeltas.length }
       };
 
     } catch (error) {
