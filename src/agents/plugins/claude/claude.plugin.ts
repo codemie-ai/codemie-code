@@ -302,9 +302,37 @@ export class ClaudePlugin extends BaseAgentAdapter {
       );
     }
 
-    logger.success(
-      `${metadata.displayName} ${result.installedVersion || resolvedVersion || 'latest'} installed successfully`,
-    );
+    // Log success with version verification status
+    if (result.installedVersion) {
+      logger.success(
+        `${metadata.displayName} ${result.installedVersion} installed successfully`,
+      );
+    } else {
+      // Installation succeeded but verification failed (common on Windows due to PATH refresh)
+      const isWindows = process.platform === 'win32';
+      logger.success(
+        `${metadata.displayName} ${resolvedVersion || 'latest'} installation completed`,
+      );
+
+      if (isWindows) {
+        logger.info(
+          'Note: Command verification requires restarting your terminal on Windows.',
+        );
+        logger.info(
+          `After restart, verify with: ${metadata.cliCommand} --version`,
+        );
+      } else {
+        logger.warn(
+          'Installation completed but command verification failed.',
+        );
+        logger.info(
+          'Possible causes: PATH not updated, slow filesystem, or permission issues.',
+        );
+        logger.info(
+          `Try: 1) Restart your shell/terminal, or 2) Run: ${metadata.cliCommand} --version`,
+        );
+      }
+    }
   }
 
   /**

@@ -25,6 +25,7 @@ import { mkdir, cp, access, readFile, writeFile, readdir, stat } from 'fs/promis
 import { join, dirname, relative } from 'path';
 import { constants, existsSync } from 'fs';
 import { logger } from '../../../utils/logger.js';
+import { normalizePathSeparators } from '../../../utils/paths.js';
 
 /**
  * Configuration for selective local file copying
@@ -313,10 +314,23 @@ export abstract class BaseExtensionInstaller {
       await this.writeVersionFile(result.targetPath, sourceVersion);
 
       result.success = result.errors.length === 0;
-      logger.info(
-        `[${this.agentName}] Local copy: ${result.copiedFiles.length} copied, ` +
-        `${result.skippedFiles.length} skipped, ${result.errors.length} errors`
-      );
+
+      // Enhanced logging with Windows-specific guidance
+      if (result.copiedFiles.length === 0 && result.errors.length === 0) {
+        logger.warn(
+          `[${this.agentName}] Local copy: 0 files copied from templates. ` +
+          `This may indicate a path separator issue on Windows or incorrect pattern matching.`
+        );
+        logger.debug(
+          `[${this.agentName}] Pattern config: strategy=${config.strategy}, ` +
+          `includes=${JSON.stringify(config.includes)}, excludes=${JSON.stringify(config.excludes)}`
+        );
+      } else {
+        logger.info(
+          `[${this.agentName}] Local copy: ${result.copiedFiles.length} copied, ` +
+          `${result.skippedFiles.length} skipped, ${result.errors.length} errors`
+        );
+      }
 
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
@@ -367,16 +381,21 @@ export abstract class BaseExtensionInstaller {
 
   /**
    * Check if file should be included based on pattern matching strategy
+   * Normalizes path separators to forward slashes for cross-platform compatibility
    *
-   * @param relativePath - File path relative to base
+   * @param relativePath - File path relative to base (may use platform-specific separators)
    * @param config - Local copy configuration
    * @returns true if file should be included
    */
   protected shouldIncludeFile(relativePath: string, config: LocalCopyConfig): boolean {
-    // Import glob matcher (placeholder - will be implemented)
-    // TODO: Import actual pattern matcher from filters module
+    // CRITICAL: Normalize path separators for Windows compatibility
+    // Windows paths use backslashes, but glob patterns use forward slashes
+    // Without normalization, all files are excluded on Windows
+    const normalizedPath = normalizePathSeparators(relativePath);
+
+    // Simple glob matching - handles * and ? wildcards
+    // Note: Patterns and paths now both use forward slashes
     const matchesPattern = (path: string, pattern: string): boolean => {
-      // Simple glob matching - replace with actual implementation
       const regexPattern = pattern
         .replace(/\*/g, '.*')
         .replace(/\?/g, '.');
@@ -384,18 +403,18 @@ export abstract class BaseExtensionInstaller {
     };
 
     if (config.strategy === 'whitelist') {
-      return config.includes.some(pattern => matchesPattern(relativePath, pattern));
+      return config.includes.some(pattern => matchesPattern(normalizedPath, pattern));
     }
 
     if (config.strategy === 'blacklist') {
-      return !config.excludes.some(pattern => matchesPattern(relativePath, pattern));
+      return !config.excludes.some(pattern => matchesPattern(normalizedPath, pattern));
     }
 
     // Hybrid: match includes, then apply excludes
-    const included = config.includes.some(pattern => matchesPattern(relativePath, pattern));
+    const included = config.includes.some(pattern => matchesPattern(normalizedPath, pattern));
     if (!included) return false;
 
-    const excluded = config.excludes.some(pattern => matchesPattern(relativePath, pattern));
+    const excluded = config.excludes.some(pattern => matchesPattern(normalizedPath, pattern));
     return !excluded;
   }
 
@@ -459,6 +478,11 @@ export abstract class BaseExtensionInstaller {
   /**
    * Check if local extension should be updated
    *
+   * Performs integrity checks before trusting version file:
+   * 1. Verifies target directory exists
+   * 2. Verifies directory contains actual files (not just version file)
+   * 3. Compares versions only if directory is valid
+   *
    * @param targetPath - Target directory path
    * @param sourceVersion - Source extension version
    * @returns true if update is needed
@@ -470,18 +494,36 @@ export abstract class BaseExtensionInstaller {
     const versionFile = join(targetPath, `${this.agentName}.extension.json`);
 
     try {
+      // 1. Check if target directory exists
+      const dirExists = existsSync(targetPath);
+      if (!dirExists) {
+        logger.debug(`[${this.agentName}] Target directory doesn't exist, will install`);
+        return true;
+      }
+
+      // 2. Verify directory has actual content (not just version file)
+      const entries = await readdir(targetPath);
+      const actualFiles = entries.filter(entry => entry !== `${this.agentName}.extension.json`);
+
+      if (actualFiles.length === 0) {
+        logger.debug(`[${this.agentName}] Target directory is empty (no files besides version), will install`);
+        return true;
+      }
+
+      // 3. Now check version file (directory exists and has files)
       const content = await readFile(versionFile, 'utf-8');
       const versionInfo = JSON.parse(content);
 
       if (versionInfo.version === sourceVersion) {
-        logger.debug(`[${this.agentName}] Local extension already at v${sourceVersion}`);
+        logger.debug(`[${this.agentName}] Local extension already at v${sourceVersion} with ${actualFiles.length} files`);
         return false;
       }
 
       logger.info(`[${this.agentName}] Updating local: v${versionInfo.version} → v${sourceVersion}`);
       return true;
-    } catch {
-      // No version file or invalid = first install
+    } catch (error) {
+      // No version file, invalid JSON, or read error = first install or corrupted state
+      logger.debug(`[${this.agentName}] Version check failed (${error}), will install`);
       return true;
     }
   }
@@ -676,8 +718,19 @@ export abstract class BaseExtensionInstaller {
           logger.info(
             `[${this.agentName}] Local copy: ${localResult.copiedFiles.length} files copied to ${localResult.targetPath}`
           );
-        } else if (localResult.success) {
-          logger.debug(`[${this.agentName}] Local copy: already up-to-date`);
+        } else if (localResult.success && localResult.copiedFiles.length === 0) {
+          // Check if it's "already up-to-date" or actually no files matched
+          const hasSkippedFiles = localResult.skippedFiles.length > 0 &&
+            localResult.skippedFiles[0] === 'All files (already up-to-date)';
+
+          if (hasSkippedFiles) {
+            logger.debug(`[${this.agentName}] Local copy: already up-to-date`);
+          } else {
+            logger.warn(
+              `[${this.agentName}] Local copy: 0 files copied (no files matched patterns). ` +
+              `Check pattern configuration in local-install.json`
+            );
+          }
         } else {
           logger.warn(`[${this.agentName}] Local copy failed with ${localResult.errors.length} errors`);
         }
