@@ -21,7 +21,7 @@
  * @module agents/core/extension/BaseExtensionInstaller
  */
 
-import { mkdir, cp, access, readFile, writeFile, readdir, stat } from 'fs/promises';
+import { mkdir, cp, access, readFile, writeFile, readdir, stat, rm } from 'fs/promises';
 import { join, dirname, relative } from 'path';
 import { constants, existsSync } from 'fs';
 import { logger } from '../../../utils/logger.js';
@@ -650,16 +650,25 @@ export abstract class BaseExtensionInstaller {
       // 4. Copy files from source to target (if needed)
       if (action !== 'already_exists') {
         logger.info(`[${this.agentName}] Step 4: Copying extension files...`);
+
+        // Clean install: remove old directory to prevent stale files
+        // This ensures version updates don't leave orphaned files from previous versions
+        if (existsSync(targetPath)) {
+          logger.info(`[${this.agentName}] Removing old installation at ${targetPath}`);
+          await rm(targetPath, { recursive: true, force: true });
+          logger.info(`[${this.agentName}] Old installation removed`);
+        }
+
         // Ensure parent directory exists
         await mkdir(dirname(targetPath), { recursive: true });
 
-        // Copy entire extension directory (recursive, force overwrite)
+        // Copy entire extension directory (clean copy to empty location)
         await cp(sourcePath, targetPath, {
           recursive: true,
-          force: true,
+          force: false, // No need for force since we deleted old directory
           errorOnExist: false
         });
-        logger.info(`[${this.agentName}] Files copied successfully`);
+        logger.info(`[${this.agentName}] Files copied successfully (clean install)`);
 
         // 5. Verify installation integrity
         logger.info(`[${this.agentName}] Step 5: Verifying installation...`);
