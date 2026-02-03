@@ -186,11 +186,11 @@ When using Claude Code (`codemie-claude`), you get access to powerful built-in c
 
 **Project Documentation:**
 ```bash
-# Generate AI-optimized docs (CLAUDE.md + guides). Can be added optional info as well
-/codemie-init
+# Generate AI-optimized docs (CLAUDE.md + guides). Can be added optional details after command as well
+/codemie:codemie-init
 
-# Generate project-specific subagents. Can be added optional info as well
-/codemie-subagents
+# Generate project-specific subagents. Can be added optional details after command as well
+/codemie:codemie-subagents
 ```
 
 **Memory Management:**

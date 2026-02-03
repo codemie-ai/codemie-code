@@ -213,7 +213,7 @@ export async function installNativeAgent(
 	options?: NativeInstallOptions
 ): Promise<NativeInstallResult> {
 	const platform = detectPlatform();
-	const timeout = options?.timeout || 120000; // 2 minute default timeout
+	const timeout = options?.timeout || 300000; // 5 minute default timeout
 
 	logger.debug('Starting native agent installation', {
 		agentName,
