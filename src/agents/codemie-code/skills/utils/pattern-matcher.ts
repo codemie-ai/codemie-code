@@ -2,6 +2,7 @@
  * Pattern matcher for skill invocation detection
  *
  * Detects /skill-name patterns in user messages and extracts skill names.
+ * Supports namespaced skills: /plugin-name:skill-name
  * Excludes URLs and built-in CLI commands.
  */
 
@@ -17,6 +18,10 @@ export interface SkillPattern {
   args?: string;
   /** Full matched pattern (e.g., '/mr', '/commit -m "fix"') */
   raw: string;
+  /** Plugin namespace (e.g., 'gitlab-tools' in '/gitlab-tools:mr') */
+  namespace?: string;
+  /** Full namespaced name (e.g., 'gitlab-tools:mr' or just 'mr' if no namespace) */
+  fullName: string;
 }
 
 /**
@@ -48,11 +53,23 @@ const BUILT_IN_COMMANDS = new Set([
 /**
  * Regex pattern for skill invocation
  *
- * Matches: /skill-name with optional arguments
+ * Matches:
+ * - /skill-name with optional arguments
+ * - /plugin-name:skill-name with optional arguments (namespaced)
+ *
  * Excludes: URLs (negative lookbehind for : or alphanumeric before /)
- * Format: /[a-z][a-z0-9-]{0,49} (lowercase, alphanumeric + hyphens, 1-50 chars)
+ *
+ * Format:
+ * - Simple: /[a-z][a-z0-9-]{0,49}
+ * - Namespaced: /[a-z][a-z0-9-]{0,49}:[a-z][a-z0-9-]{0,49}
+ *
+ * Groups:
+ * 1. First part (plugin name or skill name)
+ * 2. Second part after colon (skill name if namespaced)
+ * 3. Arguments
  */
-const SKILL_PATTERN = /(?<![:\w])\/([a-z][a-z0-9-]{0,49})(?:\s+([^\n/]+))?/g;
+const SKILL_PATTERN =
+  /(?<![:\w])\/([a-z][a-z0-9-]{0,49})(?::([a-z][a-z0-9-]{0,49}))?(?:\s+([^\n/]+))?/g;
 
 /**
  * Extract skill patterns from a user message
@@ -62,23 +79,35 @@ const SKILL_PATTERN = /(?<![:\w])\/([a-z][a-z0-9-]{0,49})(?:\s+([^\n/]+))?/g;
  *
  * @example
  * ```typescript
+ * // Simple skill invocation
  * const result = extractSkillPatterns('/mr');
- * // result.patterns = [{ name: 'mr', position: 0, raw: '/mr' }]
+ * // result.patterns = [{ name: 'mr', fullName: 'mr', position: 0, raw: '/mr' }]
  *
+ * // With arguments
  * const result2 = extractSkillPatterns('ensure you can /commit this');
- * // result2.patterns = [{ name: 'commit', position: 15, args: 'this', raw: '/commit this' }]
+ * // result2.patterns = [{ name: 'commit', fullName: 'commit', position: 15, args: 'this', raw: '/commit this' }]
+ *
+ * // Namespaced skill (plugin)
+ * const result3 = extractSkillPatterns('/gitlab-tools:mr');
+ * // result3.patterns = [{
+ * //   name: 'mr',
+ * //   namespace: 'gitlab-tools',
+ * //   fullName: 'gitlab-tools:mr',
+ * //   position: 0,
+ * //   raw: '/gitlab-tools:mr'
+ * // }]
  * ```
  */
 export function extractSkillPatterns(message: string): PatternMatchResult {
   const patterns: SkillPattern[] = [];
-  const seenNames = new Set<string>();
+  const seenFullNames = new Set<string>();
 
   // Reset regex state
   SKILL_PATTERN.lastIndex = 0;
 
   let match: RegExpExecArray | null;
   while ((match = SKILL_PATTERN.exec(message)) !== null) {
-    const [fullMatch, skillName, args] = match;
+    const [fullMatch, firstPart, secondPart, args] = match;
     const position = match.index;
 
     // Skip if this is part of a URL
@@ -91,19 +120,27 @@ export function extractSkillPatterns(message: string): PatternMatchResult {
       continue;
     }
 
-    // Skip built-in commands
-    if (BUILT_IN_COMMANDS.has(skillName)) {
+    // Determine if namespaced or simple
+    const isNamespaced = secondPart !== undefined;
+    const namespace = isNamespaced ? firstPart : undefined;
+    const name = isNamespaced ? secondPart : firstPart;
+    const fullName = isNamespaced ? `${firstPart}:${secondPart}` : firstPart;
+
+    // Skip built-in commands (only if not namespaced)
+    if (!isNamespaced && BUILT_IN_COMMANDS.has(name)) {
       continue;
     }
 
-    // Deduplicate by skill name (keep first occurrence)
-    if (seenNames.has(skillName)) {
+    // Deduplicate by full name (keep first occurrence)
+    if (seenFullNames.has(fullName)) {
       continue;
     }
-    seenNames.add(skillName);
+    seenFullNames.add(fullName);
 
     patterns.push({
-      name: skillName,
+      name,
+      namespace,
+      fullName,
       position,
       args: args?.trim(),
       raw: fullMatch,
@@ -131,4 +168,42 @@ export function extractSkillPatterns(message: string): PatternMatchResult {
  */
 export function isValidSkillName(name: string): boolean {
   return /^[a-z][a-z0-9-]{0,49}$/.test(name);
+}
+
+/**
+ * Validate a namespaced skill name (plugin:skill)
+ *
+ * @param fullName - Full skill name (can be 'skill' or 'plugin:skill')
+ * @returns True if valid, false otherwise
+ */
+export function isValidNamespacedSkillName(fullName: string): boolean {
+  // Check for namespaced format
+  if (fullName.includes(':')) {
+    const parts = fullName.split(':');
+    if (parts.length !== 2) {
+      return false;
+    }
+    return isValidSkillName(parts[0]) && isValidSkillName(parts[1]);
+  }
+
+  // Simple skill name
+  return isValidSkillName(fullName);
+}
+
+/**
+ * Parse a namespaced skill name
+ *
+ * @param fullName - Full skill name (can be 'skill' or 'plugin:skill')
+ * @returns Parsed namespace and skill name
+ */
+export function parseNamespacedSkillName(fullName: string): {
+  namespace?: string;
+  name: string;
+} {
+  if (fullName.includes(':')) {
+    const [namespace, name] = fullName.split(':');
+    return { namespace, name };
+  }
+
+  return { name: fullName };
 }

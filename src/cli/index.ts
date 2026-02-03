@@ -26,6 +26,7 @@ import { createHookCommand } from './commands/hook.js';
 import { createSkillCommand } from './commands/skill.js';
 import { createOpencodeMetricsCommand } from './commands/opencode-metrics.js';
 import { createAssistantsCommand } from './commands/assistants/index.js';
+import { createPluginCommand } from './commands/plugin.js';
 import { FirstTimeExperience } from './first-time.js';
 import { getDirname } from '../utils/paths.js';
 
@@ -63,6 +64,7 @@ program.addCommand(createWorkflowCommand());
 program.addCommand(createAnalyticsCommand());
 program.addCommand(createHookCommand());
 program.addCommand(createSkillCommand());
+program.addCommand(createPluginCommand());
 program.addCommand(createOpencodeMetricsCommand());
 
 // Check for --task option before parsing commands
