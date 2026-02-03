@@ -5,9 +5,9 @@
  */
 
 import { Command } from 'commander';
-import { createAssistantsSetupCommand } from './setup.js';
-import { createAssistantsChatCommand } from './chat.js';
-import { COMMAND_NAMES } from './constants.js';
+import { createAssistantsSetupCommand } from '@/cli/commands/assistants/setup/index.js';
+import { createAssistantsChatCommand } from '@/cli/commands/assistants/chat.js';
+import { COMMAND_NAMES } from '@/cli/commands/assistants/constants.js';
 
 /**
  * Create assistants command with subcommands

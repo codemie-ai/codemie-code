@@ -3,8 +3,8 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { createAssistantsSetupCommand } from '../setup.js';
-import { COMMAND_NAMES, MESSAGES } from '../constants.js';
+import { createAssistantsSetupCommand } from '@/cli/commands/assistants/setup/index.js';
+import { COMMAND_NAMES, MESSAGES } from '@/cli/commands/assistants/constants.js';
 
 describe('Assistants Setup Command', () => {
   describe('createAssistantsSetupCommand', () => {
