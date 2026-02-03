@@ -199,39 +199,33 @@ export class ClaudeSessionAdapter implements SessionAdapter {
       }
     }
 
-    // Second pass: aggregate metrics
-    // Deduplicate by both uuid (file-level) and message.id (API-level)
-    // This ensures consistent metrics between session-level aggregation and delta creation
+    // Track processed message IDs to avoid duplicate token counting
+    // Claude streaming creates multiple JSONL entries (thinking, text, tool_use)
+    // for the same API response, each with identical usage data
     const processedMessageIds = new Set<string>();
-    const processedApiMessageIds = new Set<string>();
 
+    // Second pass: aggregate metrics
     for (const msg of messages) {
-      // Extract token usage - deduplicate by both identifiers
+      // Extract token usage
       if (msg.message?.usage) {
-        const messageId = msg.uuid;
-
-        // Skip if we already processed this message (file-level dedup)
-        if (processedMessageIds.has(messageId)) {
-          continue;
-        }
-        processedMessageIds.add(messageId);
-
-        // Skip duplicate streaming chunks (API-level dedup)
-        // Claude creates multiple JSONL lines with different UUIDs but same message.id
-        const apiMessageId = msg.message.id;
-        if (apiMessageId && processedApiMessageIds.has(apiMessageId)) {
-          continue;
+        // Deduplicate token counting by message.id (streaming chunks share same id)
+        // If no message.id, count each message independently (legacy/test format)
+        let shouldCountTokens = true;
+        if (msg.message.id) {
+          if (processedMessageIds.has(msg.message.id)) {
+            shouldCountTokens = false; // Skip tokens only, NOT the entire iteration
+          } else {
+            processedMessageIds.add(msg.message.id);
+          }
         }
 
-        if (apiMessageId) {
-          processedApiMessageIds.add(apiMessageId);
+        if (shouldCountTokens) {
+          const usage = msg.message.usage;
+          inputTokens += usage.input_tokens || 0;
+          outputTokens += usage.output_tokens || 0;
+          cacheReadTokens += usage.cache_read_input_tokens || 0;
+          cacheWriteTokens += usage.cache_creation_input_tokens || 0;
         }
-
-        const usage = msg.message.usage;
-        inputTokens += usage.input_tokens || 0;
-        outputTokens += usage.output_tokens || 0;
-        cacheReadTokens += usage.cache_read_input_tokens || 0;
-        cacheWriteTokens += usage.cache_creation_input_tokens || 0;
       }
 
       // Extract tool usage and status
