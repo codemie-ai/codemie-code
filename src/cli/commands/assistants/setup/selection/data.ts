@@ -8,6 +8,7 @@ import type { Assistant, AssistantBase, AssistantListParams, CodeMieClient } fro
 import type { ProviderProfile } from '@/env/types.js';
 import type { SetupCommandOptions } from '../index.js';
 import { PANEL_ID, API_SCOPE, type PanelId } from './constants.js';
+import { logger } from '@/utils/logger.js';
 
 export interface DataFetcherDependencies {
   config: ProviderProfile;
@@ -29,7 +30,13 @@ export function createDataFetcher(deps: DataFetcherDependencies): DataFetcher {
   async function fetchAssistants(params: FetchAssistantsParams): Promise<(Assistant | AssistantBase)[]> {
     const { scope, searchQuery = '', page = 0 } = params;
 
-    if (scope === PANEL_ID.REGISTERED) return fetchRegisteredFromConfig(searchQuery);
+    logger.debug('[AssistantSelection] Fetching assistants', { scope, searchQuery, page });
+
+    if (scope === PANEL_ID.REGISTERED) {
+      const results = fetchRegisteredFromConfig(searchQuery);
+      logger.debug('[AssistantSelection] Fetched registered assistants', { count: results.length });
+      return results;
+    }
 
     try {
       const projectFilter = deps.options.project || deps.config.codeMieProject;
@@ -55,7 +62,11 @@ export function createDataFetcher(deps: DataFetcherDependencies): DataFetcher {
         ...(Object.keys(filters).length > 0 && { filters })
       };
 
+      logger.debug('[AssistantSelection] API call params', { apiParams });
+
       const assistants = await deps.client.assistants.list(apiParams);
+
+      logger.debug('[AssistantSelection] API response received', { count: assistants.length, scope });
 
       return assistants;
     } catch (error) {

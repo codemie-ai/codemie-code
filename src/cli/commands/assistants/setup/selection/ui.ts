@@ -6,7 +6,7 @@
 
 import chalk from 'chalk';
 import type { PanelState, SelectionState } from './types.js';
-import { ANSI, BOX, SYMBOL, TEXT, CONFIG, COLOR, type PanelId } from './constants.js';
+import { ANSI, BOX, SYMBOL, TEXT, CONFIG, COLOR, PAGINATION_CONTROL, type PanelId, type PaginationControl } from './constants.js';
 
 /**
  * Render the complete UI
@@ -21,8 +21,9 @@ export function renderUI(state: SelectionState, cursorIndex: number): string {
   output += buildPanelHeader(state.panels, state.activePanelId);
   output += buildCount(activePanel);
   output += buildSearchInput(state.searchQuery, state.isSearchFocused);
-  output += buildAssistantsList(activePanel, state.selectedIds, state.isSearchFocused, cursorIndex);
-  output += buildInstructions();
+  output += buildAssistantsList(activePanel, state.selectedIds, state.isSearchFocused, cursorIndex, state.isPaginationFocused);
+  output += buildPaginationControls(activePanel, state.isPaginationFocused, state.isSearchFocused);
+  output += buildInstructions(activePanel);
 
   return output;
 }
@@ -58,10 +59,15 @@ function buildPanelHeader(panels: PanelState[], activeId: PanelId): string {
  * Build count above search box
  */
 function buildCount(activePanel: PanelState): string {
-  const showing = Math.min(CONFIG.MAX_DISPLAY_ITEMS, activePanel.filteredData.length);
-  const total = activePanel.data?.length || 0;
+  if (activePanel.filteredData.length === 0) {
+    return chalk.dim('0 assistants total, Page 1 of 1') + '\n';
+  }
 
-  return chalk.dim(`Showing ${showing} of ${total}`) + '\n';
+  const currentPage = activePanel.currentPage + 1; // Display as 1-indexed
+  const totalPages = Math.ceil(activePanel.totalItems / CONFIG.ITEMS_PER_PAGE);
+  const totalAssistants = activePanel.totalItems;
+
+  return chalk.dim(`${totalAssistants} assistants total, Page ${currentPage} of ${totalPages}`) + '\n';
 }
 
 /**
@@ -97,14 +103,12 @@ function buildSearchInput(query: string, isFocused: boolean): string {
   return output;
 }
 
-/**
- * Build assistants list with cursor and selections
- */
 function buildAssistantsList(
   activePanel: PanelState,
   selectedIds: Set<string>,
   isSearchFocused: boolean,
-  cursorIndex: number
+  cursorIndex: number,
+  isPaginationFocused: PaginationControl | null
 ): string {
   if (activePanel.isFetching) {
     return chalk.cyan('Loading assistants...\n');
@@ -118,13 +122,15 @@ function buildAssistantsList(
     return chalk.yellow(TEXT.NO_ASSISTANTS + '\n');
   }
 
-  const displayAssistants = activePanel.filteredData.slice(0, CONFIG.MAX_DISPLAY_ITEMS);
+  const startIndex = activePanel.currentPage * CONFIG.ITEMS_PER_PAGE;
+  const endIndex = startIndex + CONFIG.ITEMS_PER_PAGE;
+  const displayAssistants = activePanel.filteredData.slice(startIndex, endIndex);
 
   let output = '';
 
   displayAssistants.forEach((assistant, index) => {
     const isSelected = selectedIds.has(assistant.id);
-    const isCursor = index === cursorIndex && !isSearchFocused;
+    const isCursor = index === cursorIndex && !isSearchFocused && isPaginationFocused === null;
 
     const circle = isSelected
       ? chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b)(SYMBOL.CIRCLE_FILLED)
@@ -158,9 +164,55 @@ function buildAssistantsList(
   return output;
 }
 
+function buildPaginationControls(
+  activePanel: PanelState,
+  isPaginationFocused: PaginationControl | null,
+  isSearchFocused: boolean
+): string {
+  const totalPages = Math.ceil(activePanel.totalItems / CONFIG.ITEMS_PER_PAGE);
+
+  if (totalPages <= 1) {
+    return '';
+  }
+
+  const currentPage = activePanel.currentPage;
+  const hasPrev = currentPage > 0;
+  const hasNext = currentPage < totalPages - 1;
+
+  const prevLabel = hasPrev ? '[< Prev]' : '[< Prev]';
+  const prevCursor = isPaginationFocused === PAGINATION_CONTROL.PREV && !isSearchFocused
+    ? chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b)(SYMBOL.CURSOR_INDICATOR)
+    : '  ';
+  const prevText = isPaginationFocused === PAGINATION_CONTROL.PREV && !isSearchFocused
+    ? chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b).bold(prevLabel)
+    : hasPrev
+      ? chalk.white(prevLabel)
+      : chalk.dim(prevLabel);
+
+  const nextLabel = hasNext ? '[Next >]' : '[Next >]';
+  const nextCursor = isPaginationFocused === PAGINATION_CONTROL.NEXT && !isSearchFocused
+    ? chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b)(SYMBOL.CURSOR_INDICATOR)
+    : '  ';
+  const nextText = isPaginationFocused === PAGINATION_CONTROL.NEXT && !isSearchFocused
+    ? chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b).bold(nextLabel)
+    : hasNext
+      ? chalk.white(nextLabel)
+      : chalk.dim(nextLabel);
+
+  const label = chalk.dim('Switch page:');
+  return `${label} ${prevCursor}${prevText}    ${nextCursor}${nextText}\n\n`;
+}
+
 /**
  * Build keyboard instructions
  */
-function buildInstructions(): string {
-  return chalk.dim(TEXT.INSTRUCTIONS + '\n');
+function buildInstructions(activePanel: PanelState): string {
+  const totalPages = Math.ceil(activePanel.totalItems / CONFIG.ITEMS_PER_PAGE);
+  const hasMultiplePages = totalPages > 1;
+
+  const instructionsText = hasMultiplePages
+    ? TEXT.INSTRUCTIONS_WITH_PAGINATION
+    : TEXT.INSTRUCTIONS;
+
+  return chalk.dim(instructionsText + '\n');
 }

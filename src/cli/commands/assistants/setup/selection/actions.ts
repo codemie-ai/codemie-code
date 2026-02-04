@@ -7,7 +7,7 @@
 import type { SelectionState } from './types.js';
 import type { DataFetcher } from './data.js';
 import type { InteractivePrompt } from './interactive-prompt.js';
-import { PANEL_IDS, CONFIG, type PanelId } from './constants.js';
+import { PANEL_IDS, CONFIG, PAGINATION_CONTROL, type PanelId } from './constants.js';
 
 export interface ActionHandlers {
   handlePanelSwitch: (direction: 'next' | 'prev') => void;
@@ -18,6 +18,8 @@ export interface ActionHandlers {
   handleToggleSelection: () => void;
   handleConfirm: () => void;
   handleCancel: () => void;
+  handlePageNext: () => void;
+  handlePagePrev: () => void;
 }
 
 export interface ActionHandlerDependencies {
@@ -62,7 +64,7 @@ export function createActionHandlers(deps: ActionHandlerDependencies): ActionHan
       const fetchPromise = deps.fetcher.fetchAssistants({
         scope: deps.state.activePanelId,
         searchQuery: deps.state.searchQuery,
-        page: 0
+        page: activePanel.currentPage
       });
 
       const timeoutPromise = new Promise<never>((_, reject) => {
@@ -73,10 +75,12 @@ export function createActionHandlers(deps: ActionHandlerDependencies): ActionHan
 
       activePanel.data = data;
       activePanel.filteredData = data;
+      activePanel.totalItems = data.length;
     } catch (error) {
       activePanel.error = error instanceof Error ? error.message : 'Unknown error';
       activePanel.data = [];
       activePanel.filteredData = [];
+      activePanel.totalItems = 0;
     } finally {
       activePanel.isFetching = false;
     }
@@ -109,6 +113,10 @@ export function createActionHandlers(deps: ActionHandlerDependencies): ActionHan
     const newPanelId = rotatePanelIndex(direction);
     setActivePanel(newPanelId);
 
+    const activePanel = deps.state.panels.find(p => p.id === deps.state.activePanelId)!;
+    activePanel.currentPage = 0;
+    deps.state.isPaginationFocused = null;
+
     setTimeout(() => fetchActivePanelDataBackground(), 0);
   }
 
@@ -117,6 +125,11 @@ export function createActionHandlers(deps: ActionHandlerDependencies): ActionHan
    */
   function handleSearchUpdate(query: string): void {
     deps.state.searchQuery = query;
+
+    const activePanel = deps.state.panels.find(p => p.id === deps.state.activePanelId)!;
+    activePanel.currentPage = 0;
+    deps.state.isPaginationFocused = null;
+
     setTimeout(() => fetchActivePanelDataBackground(), 0);
   }
 
@@ -142,28 +155,54 @@ export function createActionHandlers(deps: ActionHandlerDependencies): ActionHan
     if (!prompt) return;
 
     const activePanel = deps.state.panels.find(p => p.id === deps.state.activePanelId)!;
-    const maxIndex = Math.min(CONFIG.MAX_DISPLAY_ITEMS, activePanel.filteredData.length) - 1;
+    const totalPages = Math.ceil(activePanel.totalItems / CONFIG.ITEMS_PER_PAGE);
+    const hasPaginationControls = totalPages > 1;
+
+    const startIndex = activePanel.currentPage * CONFIG.ITEMS_PER_PAGE;
+    const endIndex = startIndex + CONFIG.ITEMS_PER_PAGE;
+    const itemsOnCurrentPage = activePanel.filteredData.slice(startIndex, endIndex).length;
+    const maxIndex = itemsOnCurrentPage - 1;
+
     const currentIndex = prompt.getCursorIndex();
 
     if (direction === 'up') {
-      const newIndex = Math.max(0, currentIndex - 1);
-      prompt.setCursorIndex(newIndex);
+      if (deps.state.isPaginationFocused !== null) {
+        deps.state.isPaginationFocused = null;
+        prompt.setCursorIndex(maxIndex);
+      } else {
+        const newIndex = Math.max(0, currentIndex - 1);
+        prompt.setCursorIndex(newIndex);
+      }
     } else {
-      const newIndex = Math.min(maxIndex, currentIndex + 1);
-      prompt.setCursorIndex(newIndex);
+      if (currentIndex === maxIndex && hasPaginationControls && deps.state.isPaginationFocused === null) {
+        deps.state.isPaginationFocused = PAGINATION_CONTROL.PREV;
+      } else if (deps.state.isPaginationFocused === PAGINATION_CONTROL.PREV) {
+        deps.state.isPaginationFocused = PAGINATION_CONTROL.NEXT;
+      } else if (deps.state.isPaginationFocused === null) {
+        const newIndex = Math.min(maxIndex, currentIndex + 1);
+        prompt.setCursorIndex(newIndex);
+      }
     }
   }
 
-  /**
-   * Handle selection toggle (Space key)
-   */
   function handleToggleSelection(): void {
     const prompt = deps.prompt();
     if (!prompt) return;
 
+    if (deps.state.isPaginationFocused === PAGINATION_CONTROL.PREV) {
+      handlePagePrev();
+      return;
+    } else if (deps.state.isPaginationFocused === PAGINATION_CONTROL.NEXT) {
+      handlePageNext();
+      return;
+    }
+
     const activePanel = deps.state.panels.find(p => p.id === deps.state.activePanelId)!;
     const cursorIndex = prompt.getCursorIndex();
-    const displayAssistants = activePanel.filteredData.slice(0, CONFIG.MAX_DISPLAY_ITEMS);
+
+    const startIndex = activePanel.currentPage * CONFIG.ITEMS_PER_PAGE;
+    const endIndex = startIndex + CONFIG.ITEMS_PER_PAGE;
+    const displayAssistants = activePanel.filteredData.slice(startIndex, endIndex);
 
     if (cursorIndex >= 0 && cursorIndex < displayAssistants.length) {
       const assistant = displayAssistants[cursorIndex];
@@ -198,6 +237,43 @@ export function createActionHandlers(deps: ActionHandlerDependencies): ActionHan
     }
   }
 
+  /**
+   * Handle page next (PgDn or Next button)
+   */
+  function handlePageNext(): void {
+    const activePanel = deps.state.panels.find(p => p.id === deps.state.activePanelId)!;
+    const totalPages = Math.ceil(activePanel.totalItems / CONFIG.ITEMS_PER_PAGE);
+
+    if (activePanel.currentPage < totalPages - 1) {
+      activePanel.currentPage++;
+      deps.state.isPaginationFocused = null;
+
+      const prompt = deps.prompt();
+      if (prompt) {
+        prompt.setCursorIndex(0);
+        prompt.render();
+      }
+    }
+  }
+
+  /**
+   * Handle page previous (PgUp or Prev button)
+   */
+  function handlePagePrev(): void {
+    const activePanel = deps.state.panels.find(p => p.id === deps.state.activePanelId)!;
+
+    if (activePanel.currentPage > 0) {
+      activePanel.currentPage--;
+      deps.state.isPaginationFocused = null;
+
+      const prompt = deps.prompt();
+      if (prompt) {
+        prompt.setCursorIndex(0);
+        prompt.render();
+      }
+    }
+  }
+
   return {
     handlePanelSwitch,
     handleSearchUpdate,
@@ -206,6 +282,8 @@ export function createActionHandlers(deps: ActionHandlerDependencies): ActionHan
     handleCursorMove,
     handleToggleSelection,
     handleConfirm,
-    handleCancel
+    handleCancel,
+    handlePageNext,
+    handlePagePrev
   };
 }

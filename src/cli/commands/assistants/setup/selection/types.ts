@@ -1,5 +1,5 @@
 import type { Assistant, AssistantBase } from 'codemie-sdk';
-import type { PanelId } from './constants.js';
+import type { PanelId, PaginationControl } from './constants.js';
 
 export interface SelectionState {
   panels: PanelState[];
@@ -8,6 +8,7 @@ export interface SelectionState {
   selectedIds: Set<string>;
   registeredIds: Set<string>;
   isSearchFocused: boolean;
+  isPaginationFocused: PaginationControl | null;
 }
 
 export interface PanelState {
@@ -18,4 +19,6 @@ export interface PanelState {
   filteredData: (Assistant | AssistantBase)[];
   isFetching: boolean;
   error: string | null;
+  currentPage: number;
+  totalItems: number;
 }

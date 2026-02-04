@@ -25,6 +25,8 @@ export const KEY = {
   SPACE: ' ',
   BACKSPACE: '\u007f',
   BACKSPACE_ALT: '\b',
+  PAGE_UP: '\u001b[5~',
+  PAGE_DOWN: '\u001b[6~',
 } as const;
 
 // Box Drawing Characters
@@ -47,19 +49,28 @@ export const SYMBOL = {
   TRUNCATION: '...',
 } as const;
 
+// Pagination Controls
+export const PAGINATION_CONTROL = {
+  PREV: 'prev',
+  NEXT: 'next',
+} as const;
+
+export type PaginationControl = typeof PAGINATION_CONTROL[keyof typeof PAGINATION_CONTROL];
+
 // UI Text
 export const TEXT = {
   LABEL: 'Assistants',
   TAB_HINT: '(←/→, tab/shift+tab to cycle)',
   SEARCH_PLACEHOLDER: 'Search…',
   INSTRUCTIONS: '↑↓: Navigate • Space: Select • Enter: Done • Esc: Cancel',
+  INSTRUCTIONS_WITH_PAGINATION: '↑↓: Navigate • PgUp/PgDn: Page • Space: Select • Enter: Done • Esc: Cancel',
   NO_ASSISTANTS: 'No assistants found.',
   ERROR_PREFIX: 'Error: ',
 } as const;
 
 // Config Values
 export const CONFIG = {
-  MAX_DISPLAY_ITEMS: 5,
+  ITEMS_PER_PAGE: 10,
   FETCH_TIMEOUT_MS: 10000,
   DESCRIPTION_MAX_LENGTH: 80,
   KEEP_ALIVE_INTERVAL_MS: 1000,

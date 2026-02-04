@@ -6,7 +6,7 @@
 
 import type { SelectionState } from './types.js';
 import type { ActionHandlers } from './actions.js';
-import { KEY, CONFIG } from './constants.js';
+import { KEY, CONFIG, PAGINATION_CONTROL } from './constants.js';
 import { renderUI } from './ui.js';
 
 export interface InteractivePromptOptions {
@@ -36,8 +36,7 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
   async function start(): Promise<void> {
     isActive = true;
 
-    // CRITICAL: Keep event loop alive during async operations
-    keepAliveTimer = setInterval(() => {}, CONFIG.KEEP_ALIVE_INTERVAL_MS);
+    keepAliveTimer = setInterval(() => {}, CONFIG.KEEP_ALIVE_INTERVAL_MS); // keep event loop running
 
     process.stdin.resume();
 
@@ -129,27 +128,68 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
   }
 
   /**
-   * Handle next panel (Tab or Right arrow)
+   * Handle next panel (Tab only, not Right arrow when on pagination controls)
    */
   function handleNextPanel(): void {
+    const state = options.state;
+
     cursorIndex = 0;
+    state.isPaginationFocused = null;
     options.actions.handlePanelSwitch('next');
     render();
   }
 
   /**
-   * Handle previous panel (Shift+Tab or Left arrow)
+   * Handle previous panel (Shift+Tab only, not Left arrow when on pagination controls)
    */
   function handlePrevPanel(): void {
+    const state = options.state;
+
     cursorIndex = 0;
+    state.isPaginationFocused = null;
     options.actions.handlePanelSwitch('prev');
     render();
   }
 
-  /**
-   * Handle confirm (Enter)
-   */
+  function handleArrowRight(): void {
+    const state = options.state;
+
+    if (state.isPaginationFocused === PAGINATION_CONTROL.PREV) {
+      state.isPaginationFocused = PAGINATION_CONTROL.NEXT;
+      render();
+      return;
+    }
+
+    if (state.isPaginationFocused === null) {
+      handleNextPanel();
+    }
+  }
+
+  function handleArrowLeft(): void {
+    const state = options.state;
+
+    if (state.isPaginationFocused === PAGINATION_CONTROL.NEXT) {
+      state.isPaginationFocused = PAGINATION_CONTROL.PREV;
+      render();
+      return;
+    }
+
+    if (state.isPaginationFocused === null) {
+      handlePrevPanel();
+    }
+  }
+
   function handleConfirm(): void {
+    const state = options.state;
+
+    if (state.isPaginationFocused === PAGINATION_CONTROL.PREV) {
+      options.actions.handlePagePrev();
+      return;
+    } else if (state.isPaginationFocused === PAGINATION_CONTROL.NEXT) {
+      options.actions.handlePageNext();
+      return;
+    }
+
     options.actions.handleConfirm();
   }
 
@@ -162,7 +202,7 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
       return;
     }
 
-    if (cursorIndex === 0) {
+    if (cursorIndex === 0 && state.isPaginationFocused === null) {
       options.actions.handleFocusSearch();
       render();
       return;
@@ -228,6 +268,28 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
   }
 
   /**
+   * Handle page down (PgDn)
+   */
+  function handlePageDown(): void {
+    const state = options.state;
+    if (state.isSearchFocused) {
+      return; // Ignore pagination when search is focused
+    }
+    options.actions.handlePageNext();
+  }
+
+  /**
+   * Handle page up (PgUp)
+   */
+  function handlePageUp(): void {
+    const state = options.state;
+    if (state.isSearchFocused) {
+      return; // Ignore pagination when search is focused
+    }
+    options.actions.handlePagePrev();
+  }
+
+  /**
    * Handle regular character input (for search)
    */
   function handleRegularInput(key: string): void {
@@ -249,8 +311,8 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
       [KEY.ESC]: handleExit,
       [KEY.TAB]: handleNextPanel,
       [KEY.SHIFT_TAB]: handlePrevPanel,
-      [KEY.ARROW_RIGHT]: handleNextPanel,
-      [KEY.ARROW_LEFT]: handlePrevPanel,
+      [KEY.ARROW_RIGHT]: handleArrowRight,
+      [KEY.ARROW_LEFT]: handleArrowLeft,
       [KEY.ENTER]: handleConfirm,
       [KEY.NEWLINE]: handleConfirm,
       [KEY.ARROW_UP]: handleArrowUp,
@@ -258,6 +320,8 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
       [KEY.SPACE]: handleToggleSelection,
       [KEY.BACKSPACE]: handleBackspace,
       [KEY.BACKSPACE_ALT]: handleBackspace,
+      [KEY.PAGE_UP]: handlePageUp,
+      [KEY.PAGE_DOWN]: handlePageDown,
     };
 
     dataHandler = (data: Buffer) => {

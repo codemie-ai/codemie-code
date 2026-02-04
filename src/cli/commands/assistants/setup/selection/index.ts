@@ -36,7 +36,9 @@ function initializeState(registeredIds: Set<string>): SelectionState {
         data: null,
         filteredData: [],
         isFetching: false,
-        error: null
+        error: null,
+        currentPage: 0,
+        totalItems: 0
       },
       {
         id: PANEL_ID.PROJECT,
@@ -45,7 +47,9 @@ function initializeState(registeredIds: Set<string>): SelectionState {
         data: null,
         filteredData: [],
         isFetching: false,
-        error: null
+        error: null,
+        currentPage: 0,
+        totalItems: 0
       },
       {
         id: PANEL_ID.MARKETPLACE,
@@ -54,14 +58,17 @@ function initializeState(registeredIds: Set<string>): SelectionState {
         data: null,
         filteredData: [],
         isFetching: false,
-        error: null
+        error: null,
+        currentPage: 0,
+        totalItems: 0
       }
     ],
     activePanelId: PANEL_ID.REGISTERED,
     searchQuery: '',
     selectedIds: new Set(registeredIds),
     registeredIds: registeredIds,
-    isSearchFocused: false
+    isSearchFocused: false,
+    isPaginationFocused: null
   };
 }
 
@@ -103,10 +110,12 @@ export async function promptAssistantSelection(
       page: 0
     });
     registeredPanel.filteredData = registeredPanel.data;
+    registeredPanel.totalItems = registeredPanel.data.length;
     spinner.succeed('Assistants loaded');
   } catch (error) {
     spinner.fail('Failed to load assistants');
     registeredPanel.error = error instanceof Error ? error.message : 'Unknown error';
+    registeredPanel.totalItems = 0;
   }
 
   // Clear spinner output before starting interactive mode
