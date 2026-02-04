@@ -161,6 +161,39 @@ codemie install claude-acp
 # Configure in your IDE (see docs/AGENTS.md for details)
 ```
 
+#### ACP Agent usage in IDEs and Editors
+
+**Zed** (`~/.config/zed/settings.json`):
+```json
+{
+  "agent_servers": {
+    "claude": {
+      "command": "codemie-claude-acp",
+      "args": ["--profile", "work"]
+    }
+  }
+}
+```
+
+**IntelliJ IDEA** (`~/.jetbrains/acp.json`):
+```json
+{
+  "default_mcp_settings": {},
+  "agent_servers": {
+    "Claude Code via CodeMie": {
+      "command": "codemie-claude-acp"
+    }
+  }
+}
+```
+
+**Emacs** (with acp.el):
+```elisp
+(setq acp-claude-command "codemie-claude-acp")
+(setq acp-claude-args '("--profile" "work"))
+```
+
+
 **Version Management:**
 
 CodeMie manages agent versions to ensure compatibility. For Claude Code:
