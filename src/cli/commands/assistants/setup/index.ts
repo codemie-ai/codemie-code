@@ -106,7 +106,6 @@ async function manageAssistants(options: SetupCommandOptions): Promise<void> {
   // 5. Prompt user selection with Update/Cancel
   const registeredIds = new Set(registeredAssistants.map(a => a.id));
   const { selectedIds, action } = await promptAssistantSelection(
-    sortedAssistants,
     registeredIds,
     config,
     options,
