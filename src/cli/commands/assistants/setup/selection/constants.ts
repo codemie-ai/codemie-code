@@ -7,6 +7,7 @@
 // ANSI Escape Codes
 export const ANSI = {
   CURSOR_HOME_CLEAR: '\x1b[H\x1b[J',
+  CLEAR_LINE_ABOVE: '\x1b[1A\x1b[2K',
 } as const;
 
 // Key Codes
@@ -52,7 +53,6 @@ export const TEXT = {
   TAB_HINT: '(←/→, tab/shift+tab to cycle)',
   SEARCH_PLACEHOLDER: 'Search…',
   INSTRUCTIONS: '↑↓: Navigate • Space: Select • Enter: Done • Esc: Cancel',
-  LOADING: 'Loading...',
   NO_ASSISTANTS: 'No assistants found.',
   ERROR_PREFIX: 'Error: ',
 } as const;
@@ -61,7 +61,7 @@ export const TEXT = {
 export const CONFIG = {
   MAX_DISPLAY_ITEMS: 5,
   FETCH_TIMEOUT_MS: 10000,
-  DESCRIPTION_MAX_LENGTH: 40,
+  DESCRIPTION_MAX_LENGTH: 80,
   KEEP_ALIVE_INTERVAL_MS: 1000,
   PRINTABLE_CHAR_MIN: 32,
   PRINTABLE_CHAR_MAX: 126,

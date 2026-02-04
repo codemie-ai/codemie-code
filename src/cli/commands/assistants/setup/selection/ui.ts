@@ -107,7 +107,7 @@ function buildAssistantsList(
   cursorIndex: number
 ): string {
   if (activePanel.isFetching) {
-    return chalk.yellow(TEXT.LOADING + '\n');
+    return chalk.cyan('Loading assistants...\n');
   }
 
   if (activePanel.error) {
@@ -145,9 +145,10 @@ function buildAssistantsList(
     output += `${cursor}${circle} ${name}${project}\n`;
 
     if (assistant.description) {
-      const desc = assistant.description.length > CONFIG.DESCRIPTION_MAX_LENGTH
-        ? assistant.description.substring(0, CONFIG.DESCRIPTION_MAX_LENGTH) + SYMBOL.TRUNCATION
-        : assistant.description;
+      const singleLine = assistant.description.replace(/\n+/g, ' ');
+      const desc = singleLine.length > CONFIG.DESCRIPTION_MAX_LENGTH
+        ? singleLine.substring(0, CONFIG.DESCRIPTION_MAX_LENGTH) + SYMBOL.TRUNCATION
+        : singleLine;
       output += chalk.dim(`    ${desc}`) + '\n';
     }
 

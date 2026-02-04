@@ -62,7 +62,7 @@ export function createActionHandlers(deps: ActionHandlerDependencies): ActionHan
       const fetchPromise = deps.fetcher.fetchAssistants({
         scope: deps.state.activePanelId,
         searchQuery: deps.state.searchQuery,
-        page: 1
+        page: 0
       });
 
       const timeoutPromise = new Promise<never>((_, reject) => {

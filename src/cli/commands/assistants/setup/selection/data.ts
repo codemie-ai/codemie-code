@@ -27,22 +27,21 @@ export interface DataFetcher {
 
 export function createDataFetcher(deps: DataFetcherDependencies): DataFetcher {
   async function fetchAssistants(params: FetchAssistantsParams): Promise<(Assistant | AssistantBase)[]> {
-    const { scope, searchQuery = '', page = 1 } = params;
+    const { scope, searchQuery = '', page = 0 } = params;
 
     if (scope === PANEL_ID.REGISTERED) return fetchRegisteredFromConfig(searchQuery);
 
     try {
       const projectFilter = deps.options.project || deps.config.codeMieProject;
-      const apiScope = scope === PANEL_ID.MARKETPLACE ? API_SCOPE.MARKETPLACE : API_SCOPE.VISIBLE_TO_USER;
 
-      if (apiScope === API_SCOPE.VISIBLE_TO_USER && !projectFilter) {
+      if (scope === PANEL_ID.PROJECT && !projectFilter) {
         throw new Error('No project configured. Ensure codemie is configured properly');
       }
 
       const filters: Record<string, unknown> = {};
 
-      if (apiScope === API_SCOPE.VISIBLE_TO_USER && projectFilter) {
-        filters.project = projectFilter;
+      if (scope === PANEL_ID.PROJECT && projectFilter) {
+        filters.project = [projectFilter];
       }
 
       if (searchQuery.trim()) {
@@ -50,13 +49,14 @@ export function createDataFetcher(deps: DataFetcherDependencies): DataFetcher {
       }
 
       const apiParams: AssistantListParams = {
-        scope: apiScope,
         page,
         minimal_response: false,
+        ...(scope === PANEL_ID.MARKETPLACE && { scope: API_SCOPE.MARKETPLACE }),
         ...(Object.keys(filters).length > 0 && { filters })
       };
 
       const assistants = await deps.client.assistants.list(apiParams);
+
       return assistants;
     } catch (error) {
       throw error instanceof Error ? error : new Error(`Failed to fetch ${scope} assistants: ${error}`);

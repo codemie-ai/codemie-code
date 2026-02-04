@@ -10,10 +10,11 @@ import { ACTIONS } from '@/cli/commands/assistants/constants.js';
 import type { ProviderProfile } from '@/env/types.js';
 import type { SetupCommandOptions } from '../index.js';
 import type { SelectionState } from './types.js';
-import { PANEL_ID } from './constants.js';
+import { PANEL_ID, ANSI } from './constants.js';
 import { createDataFetcher } from './data.js';
 import { createInteractivePrompt, type InteractivePrompt } from './interactive-prompt.js';
 import { createActionHandlers } from './actions.js';
+import ora from 'ora';
 
 export interface SelectionOptions {
   registeredIds: Set<string>;
@@ -92,14 +93,24 @@ export async function promptAssistantSelection(
     setCancelled: (cancelled) => { isCancelled = cancelled; }
   });
 
-  // Fetch initial data for registered panel
+  // Fetch initial data for registered panel with spinner
+  const spinner = ora('Loading assistants...').start();
   const registeredPanel = state.panels.find(p => p.id === PANEL_ID.REGISTERED)!;
-  registeredPanel.data = await fetcher.fetchAssistants({
-    scope: PANEL_ID.REGISTERED,
-    searchQuery: state.searchQuery,
-    page: 1
-  });
-  registeredPanel.filteredData = registeredPanel.data;
+  try {
+    registeredPanel.data = await fetcher.fetchAssistants({
+      scope: PANEL_ID.REGISTERED,
+      searchQuery: state.searchQuery,
+      page: 0
+    });
+    registeredPanel.filteredData = registeredPanel.data;
+    spinner.succeed('Assistants loaded');
+  } catch (error) {
+    spinner.fail('Failed to load assistants');
+    registeredPanel.error = error instanceof Error ? error.message : 'Unknown error';
+  }
+
+  // Clear spinner output before starting interactive mode
+  process.stdout.write(ANSI.CLEAR_LINE_ABOVE);
 
   // Create interactive prompt
   prompt = createInteractivePrompt({
