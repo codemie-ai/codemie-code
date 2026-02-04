@@ -11,6 +11,9 @@ import type { CodemieAssistant } from '@/env/types.js';
 import { logger } from '@/utils/logger.js';
 import { MESSAGES } from '@/cli/commands/assistants/constants.js';
 import { registerClaudeSubagent, unregisterClaudeSubagent } from '@/cli/commands/assistants/setup/generators/claude-agent-generator.js';
+import { registerClaudeSkill, unregisterClaudeSkill } from '@/cli/commands/assistants/setup/generators/claude-skill-generator.js';
+import type { RegistrationMode } from '@/cli/commands/assistants/setup/applying/types.js';
+import { REGISTRATION_MODE } from '@/cli/commands/assistants/setup/applying/constants.js';
 
 export interface RegistrationChanges {
   toRegister: Assistant[];
@@ -47,14 +50,25 @@ async function executeWithSpinner<T>(
   errorMessage: string,
   onError?: (error: unknown) => void
 ): Promise<T | null> {
+  const isVerbose = process.env.CODEMIE_DEBUG === 'true';
   const spinner = ora(spinnerMessage).start();
 
   try {
     const result = await operation();
-    spinner.succeed(chalk.green(successMessage));
+    if (isVerbose) {
+      spinner.succeed(chalk.green(successMessage));
+    } else {
+      spinner.clear();
+      spinner.stop();
+    }
     return result;
   } catch (error) {
-    spinner.fail(chalk.red(errorMessage));
+    if (isVerbose) {
+      spinner.fail(chalk.red(errorMessage));
+    } else {
+      spinner.clear();
+      spinner.stop();
+    }
     if (onError) {
       onError(error);
     }
@@ -64,13 +78,14 @@ async function executeWithSpinner<T>(
 
 /**
  * Unregister an assistant
+ * Removes both Claude agent and skill files
  */
 export async function unregisterAssistant(assistant: CodemieAssistant): Promise<void> {
   await executeWithSpinner(
     MESSAGES.SETUP.SPINNER_UNREGISTERING(chalk.bold(assistant.name)),
     async () => {
-      // Remove Claude subagent from ~/.claude/agents/
       await unregisterClaudeSubagent(assistant.slug);
+      await unregisterClaudeSkill(assistant.slug);
     },
     MESSAGES.SETUP.SUCCESS_UNREGISTERED(chalk.bold(assistant.name), chalk.cyan(assistant.slug)),
     MESSAGES.SETUP.ERROR_UNREGISTER_FAILED(assistant.name),
@@ -79,21 +94,35 @@ export async function unregisterAssistant(assistant: CodemieAssistant): Promise<
 }
 
 /**
- * Register an assistant
+ * Register an assistant with specified registration mode
+ * @param mode - 'agent' (Claude agent only), 'skill' (Claude skill only), or 'both'
  */
-export async function registerAssistant(assistant: Assistant): Promise<CodemieAssistant | null> {
+export async function registerAssistant(assistant: Assistant, mode: RegistrationMode = REGISTRATION_MODE.AGENT): Promise<CodemieAssistant | null> {
+  const modeLabel = mode === REGISTRATION_MODE.BOTH ? 'agent & skill' : mode === REGISTRATION_MODE.SKILL ? 'skill' : 'agent';
+
   const result = await executeWithSpinner(
     MESSAGES.SETUP.SPINNER_REGISTERING(chalk.bold(assistant.name)),
     async () => {
-      // Register Claude subagent in ~/.claude/agents/
-      // Claude Code will auto-discover it and make it available via @mentions
-      await registerClaudeSubagent(assistant);
+      switch (mode) {
+        case REGISTRATION_MODE.AGENT:
+          await registerClaudeSubagent(assistant);
+          break;
+
+        case REGISTRATION_MODE.SKILL:
+          await registerClaudeSkill(assistant);
+          break;
+
+        case REGISTRATION_MODE.BOTH:
+          await registerClaudeSubagent(assistant);
+          await registerClaudeSkill(assistant);
+          break;
+      }
 
       return assistant.slug!;
     },
-    MESSAGES.SETUP.SUCCESS_REGISTERED(chalk.bold(assistant.name), chalk.cyan(`@${assistant.slug!}`)),
+    MESSAGES.SETUP.SUCCESS_REGISTERED(chalk.bold(assistant.name), chalk.cyan(`@${assistant.slug!}`) + chalk.dim(` as ${modeLabel}`)),
     MESSAGES.SETUP.ERROR_REGISTER_FAILED(assistant.name),
-    (error) => logger.error('Assistant generation failed', { error, assistantId: assistant.id })
+    (error) => logger.error('Assistant generation failed', { error, assistantId: assistant.id, mode })
   );
 
   if (!result) {
@@ -106,6 +135,7 @@ export async function registerAssistant(assistant: Assistant): Promise<CodemieAs
     slug: assistant.slug!,
     description: assistant.description,
     project: assistant.project,
-    registeredAt: new Date().toISOString()
+    registeredAt: new Date().toISOString(),
+    registrationMode: mode
   };
 }
