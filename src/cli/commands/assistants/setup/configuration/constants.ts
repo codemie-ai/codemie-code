@@ -69,10 +69,3 @@ export const UI_TEXT = {
  * Keep-alive timer interval (ms)
  */
 export const KEEP_ALIVE_INTERVAL = 60000;
-
-/**
- * Color palette (matches selection UI)
- */
-export const COLOR = {
-	PURPLE: { r: 177, g: 185, b: 249 } as const,
-} as const;

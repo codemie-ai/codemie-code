@@ -1,4 +1,5 @@
 import type { Assistant } from 'codemie-sdk';
+import type { ACTION_TYPE } from '../constants.js';
 
 /**
  * Registration mode for an assistant
@@ -9,9 +10,9 @@ import type { Assistant } from 'codemie-sdk';
 export type RegistrationMode = 'agent' | 'skill' | 'both';
 
 /**
- * Action taken by the user in the applying UI
+ * Action taken by the user in the configuration UI
  */
-export type ApplyingAction = 'apply' | 'cancel';
+export type ConfigurationAction = typeof ACTION_TYPE.APPLY | typeof ACTION_TYPE.CANCEL;
 
 /**
  * Represents a single assistant with its registration mode
@@ -23,19 +24,19 @@ export interface AssistantRegistration {
 }
 
 /**
- * State for the applying UI
+ * State for the configuration UI
  */
-export interface ApplyingState {
+export interface ConfigurationState {
 	registrations: AssistantRegistration[];
 	cursorIndex: number;
 	isButtonsFocused: boolean; // false = list, true = buttons
-	focusedButton: 'apply' | 'cancel';
+	focusedButton: typeof ACTION_TYPE.APPLY | typeof ACTION_TYPE.CANCEL;
 }
 
 /**
- * Result returned from the applying UI
+ * Result returned from the configuration UI
  */
-export interface ApplyingResult {
+export interface ConfigurationResult {
 	registrationModes: Map<string, RegistrationMode>;
-	action: ApplyingAction;
+	action: ConfigurationAction;
 }

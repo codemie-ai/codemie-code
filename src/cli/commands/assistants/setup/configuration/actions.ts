@@ -1,5 +1,6 @@
-import type { ApplyingState, RegistrationMode, ApplyingAction } from './types.js';
+import type { ConfigurationState, RegistrationMode, ConfigurationAction } from './types.js';
 import { MODE_CYCLE_ORDER } from './constants.js';
+import { ACTION_TYPE } from '../constants.js';
 
 /**
  * Cycle registration mode forward or backward
@@ -21,9 +22,9 @@ function cycleMode(currentMode: RegistrationMode, direction: 'forward' | 'backwa
  * Create action handlers with closure over dependencies
  */
 export function createActionHandlers(
-	state: ApplyingState,
+	state: ConfigurationState,
 	render: () => void,
-	resolve: (action: ApplyingAction) => void
+	resolve: (action: ConfigurationAction) => void
 ) {
 	return {
 		/**
@@ -50,7 +51,7 @@ export function createActionHandlers(
 				} else {
 					// Move to buttons
 					state.isButtonsFocused = true;
-					state.focusedButton = 'apply';
+					state.focusedButton = ACTION_TYPE.APPLY;
 				}
 			}
 			render();
@@ -62,7 +63,7 @@ export function createActionHandlers(
 		handleArrowLeft() {
 			if (state.isButtonsFocused) {
 				// Toggle between buttons
-				state.focusedButton = state.focusedButton === 'apply' ? 'cancel' : 'apply';
+				state.focusedButton = state.focusedButton === ACTION_TYPE.APPLY ? ACTION_TYPE.CANCEL : ACTION_TYPE.APPLY;
 			} else {
 				// Cycle mode backward
 				const registration = state.registrations[state.cursorIndex];
@@ -77,7 +78,7 @@ export function createActionHandlers(
 		handleArrowRight() {
 			if (state.isButtonsFocused) {
 				// Toggle between buttons
-				state.focusedButton = state.focusedButton === 'apply' ? 'cancel' : 'apply';
+				state.focusedButton = state.focusedButton === ACTION_TYPE.APPLY ? ACTION_TYPE.CANCEL : ACTION_TYPE.APPLY;
 			} else {
 				// Cycle mode forward
 				const registration = state.registrations[state.cursorIndex];
@@ -104,7 +105,7 @@ export function createActionHandlers(
 		handleTab() {
 			state.isButtonsFocused = !state.isButtonsFocused;
 			if (state.isButtonsFocused) {
-				state.focusedButton = 'apply';
+				state.focusedButton = ACTION_TYPE.APPLY;
 			}
 			render();
 		},
@@ -115,7 +116,7 @@ export function createActionHandlers(
 		handleShiftTab() {
 			state.isButtonsFocused = !state.isButtonsFocused;
 			if (state.isButtonsFocused) {
-				state.focusedButton = 'cancel';
+				state.focusedButton = ACTION_TYPE.CANCEL;
 			}
 			render();
 		},
@@ -126,10 +127,10 @@ export function createActionHandlers(
 		handleEnter() {
 			if (state.isButtonsFocused) {
 				// Execute focused button
-				resolve(state.focusedButton === 'apply' ? 'apply' : 'cancel');
+				resolve(state.focusedButton === ACTION_TYPE.APPLY ? ACTION_TYPE.APPLY : ACTION_TYPE.CANCEL);
 			} else {
 				// From list: move to apply button and execute
-				resolve('apply');
+				resolve(ACTION_TYPE.APPLY);
 			}
 		},
 
@@ -137,7 +138,7 @@ export function createActionHandlers(
 		 * Handle cancel (Esc or Ctrl+C)
 		 */
 		handleCancel() {
-			resolve('cancel');
+			resolve(ACTION_TYPE.CANCEL);
 		},
 	};
 }

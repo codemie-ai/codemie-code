@@ -79,11 +79,6 @@ export const CONFIG = {
   PRINTABLE_CHAR_MAX: 126,
 } as const;
 
-// Colors
-export const COLOR = {
-  PURPLE: { r: 177, g: 185, b: 249 } as const,
-} as const;
-
 // Panel IDs
 export const PANEL_ID = {
   REGISTERED: 'registered',

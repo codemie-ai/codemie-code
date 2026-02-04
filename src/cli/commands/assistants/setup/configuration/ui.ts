@@ -1,6 +1,7 @@
 import chalk from 'chalk';
-import type { ApplyingState, RegistrationMode } from './types.js';
-import { MODE_LABELS, MODE_CYCLE_ORDER, UI_TEXT, COLOR } from './constants.js';
+import type { ConfigurationState, RegistrationMode } from './types.js';
+import { MODE_LABELS, MODE_CYCLE_ORDER, UI_TEXT } from './constants.js';
+import { COLOR, ACTION_TYPE } from '../constants.js';
 
 /**
  * Build top line (purple separator)
@@ -64,7 +65,7 @@ function buildAssistantLine(
 /**
  * Build assistants list
  */
-function buildAssistantsList(state: ApplyingState): string {
+function buildAssistantsList(state: ConfigurationState): string {
 	const lines = state.registrations.map((registration, index) => {
 		const isCursor = !state.isButtonsFocused && state.cursorIndex === index;
 		return buildAssistantLine(registration, isCursor);
@@ -76,16 +77,16 @@ function buildAssistantsList(state: ApplyingState): string {
 /**
  * Build buttons (Apply / Cancel)
  */
-function buildButtons(state: ApplyingState): string {
+function buildButtons(state: ConfigurationState): string {
 	const { isButtonsFocused, focusedButton } = state;
 
 	const applyButton =
-		isButtonsFocused && focusedButton === 'apply'
+		isButtonsFocused && focusedButton === ACTION_TYPE.APPLY
 			? chalk.bgRgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b).black(` ${UI_TEXT.APPLY_BUTTON} `)
 			: chalk.dim(`[${UI_TEXT.APPLY_BUTTON}]`);
 
 	const cancelButton =
-		isButtonsFocused && focusedButton === 'cancel'
+		isButtonsFocused && focusedButton === ACTION_TYPE.CANCEL
 			? chalk.bgRgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b).black(` ${UI_TEXT.CANCEL_BUTTON} `)
 			: chalk.dim(`[${UI_TEXT.CANCEL_BUTTON}]`);
 
@@ -102,7 +103,7 @@ function buildInstructions(): string {
 /**
  * Render full UI
  */
-export function renderUI(state: ApplyingState): string {
+export function renderUI(state: ConfigurationState): string {
 	const parts = [
 		buildTopLine(),
 		buildTitle(),

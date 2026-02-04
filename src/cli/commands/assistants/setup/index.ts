@@ -10,17 +10,17 @@ import type { Assistant, AssistantBase } from 'codemie-sdk';
 import { logger } from '@/utils/logger.js';
 import { ConfigLoader } from '@/utils/config.js';
 import { createErrorContext, formatErrorForUser } from '@/utils/errors.js';
-import type { CodemieAssistant, ProviderProfile } from '@/env/types.js';
+import type { CodemieAssistant } from '@/env/types.js';
 import { MESSAGES, COMMAND_NAMES, ACTIONS } from '@/cli/commands/assistants/constants.js';
 import { getAuthenticatedClient } from '@/utils/auth.js';
-import { fetchAssistants } from '@/cli/commands/assistants/setup/api.js';
 import { promptAssistantSelection } from '@/cli/commands/assistants/setup/selection/index.js';
-import { sortAssistantsByRegistration, displayNoAssistantsMessage } from '@/cli/commands/assistants/setup/selection/utils.js';
-import { determineChanges, registerAssistant, unregisterAssistant } from '@/cli/commands/assistants/setup/operations.js';
+import { determineChanges, registerAssistant, unregisterAssistant } from '@/cli/commands/assistants/setup/helpers.js';
 import { createDataFetcher } from '@/cli/commands/assistants/setup/data.js';
-import { promptApplyingOptions } from '@/cli/commands/assistants/setup/applying/index.js';
-import type { RegistrationMode } from '@/cli/commands/assistants/setup/applying/types.js';
-import { REGISTRATION_MODE } from '@/cli/commands/assistants/setup/applying/constants.js';
+import { promptConfigurationOptions } from '@/cli/commands/assistants/setup/configuration/index.js';
+import type { RegistrationMode } from '@/cli/commands/assistants/setup/configuration/types.js';
+import { REGISTRATION_MODE } from '@/cli/commands/assistants/setup/configuration/constants.js';
+import { displaySummary } from '@/cli/commands/assistants/setup/summary/index.js';
+import { ACTION_TYPE } from '@/cli/commands/assistants/setup/constants.js';
 
 export interface SetupCommandOptions {
   profile?: string;
@@ -29,9 +29,10 @@ export interface SetupCommandOptions {
   verbose?: boolean;
 }
 
-export interface RegistrationChanges {
-  toRegister: Assistant[];
-  toUnregister: CodemieAssistant[];
+interface ApplyChangesResult {
+  newRegistrations: CodemieAssistant[];
+  registered: Assistant[];
+  unregistered: CodemieAssistant[];
 }
 
 /**
@@ -52,7 +53,7 @@ export function createAssistantsSetupCommand(): Command {
       }
 
       try {
-        await manageAssistants(options);
+        await setupAssistants(options);
       } catch (error: unknown) {
         handleError(error);
       }
@@ -77,192 +78,140 @@ function enableVerboseLogging(): void {
  */
 function handleError(error: unknown): never {
   const context = createErrorContext(error);
-  logger.error('Failed to manage assistants', context);
+  logger.error('Failed to setup assistants', context);
   console.error(formatErrorForUser(context));
   process.exit(1);
 }
 
 /**
- * Manage assistants - unified list/register/unregister
+ * Setup assistants - unified list/register/unregister
  */
-async function manageAssistants(options: SetupCommandOptions): Promise<void> {
-  // 1. Load current profile
+async function setupAssistants(options: SetupCommandOptions): Promise<void> {
+  // Load config and profile
   const config = await ConfigLoader.load();
   const profileName = options.profile || await ConfigLoader.getActiveProfileName() || 'default';
+  logger.debug('Setting up assistants', { profileName, options });
 
-  logger.debug('Managing assistants', { profileName, options });
-
-  // 2. Get authenticated client and fetch assistants from backend
+  // Get authenticated client and current registrations
   const client = await getAuthenticatedClient(config);
-  const backendAssistants = await fetchAssistants(client, options, config);
-
-  // 3. Get currently registered assistants
   const registeredAssistants = config.codemieAssistants || [];
-
-  // 4. Sort assistants: registered first, then unregistered
-  const sortedAssistants = sortAssistantsByRegistration(backendAssistants, registeredAssistants);
-
-  if (sortedAssistants.length === 0) {
-    displayNoAssistantsMessage(options, config);
-    return;
-  }
-
-  // 5. Prompt user selection with Update/Cancel
   const registeredIds = new Set(registeredAssistants.map(a => a.id));
-  const { selectedIds, action } = await promptAssistantSelection(
-    registeredIds,
-    config,
-    options,
-    client
-  );
 
+  // Prompt user to select assistants
+  const { selectedIds, action } = await promptAssistantSelection(registeredIds, config, options, client);
   if (action === ACTIONS.CANCEL) {
     console.log(chalk.dim(MESSAGES.SETUP.NO_CHANGES_MADE));
     return;
   }
 
-  // 6. Fetch full details for selected assistants (in case some are from other pages/tabs)
+  // Fetch full details for selected assistants
   const fetcher = createDataFetcher({ config, client, options });
-  const selectedAssistants = await fetcher.fetchAssistantsByIds(selectedIds, sortedAssistants);
+  const selectedAssistants = await fetcher.fetchAssistantsByIds(selectedIds, []);
 
-  // 7. Always show applying step if any assistants are selected (even if all already registered)
-  let registrationModes: Map<string, RegistrationMode> | undefined;
-  if (selectedAssistants.length > 0) {
-    // Show all selected assistants (both new and already registered) in applying UI
-    const { registrationModes: modes, action: applyAction } = await promptApplyingOptions(
-      selectedAssistants as Assistant[],
-      registeredIds,
-      registeredAssistants
-    );
-
-    if (applyAction === 'cancel') {
-      console.log(chalk.dim(MESSAGES.SETUP.NO_CHANGES_MADE));
-      return;
-    }
-
-    registrationModes = modes;
-  }
-
-  // 8. Apply changes
-  await applyChanges(selectedIds, selectedAssistants, registeredAssistants, config, profileName, registrationModes);
-}
-
-/**
- * Apply registration changes
- */
-export async function applyChanges(
-  selectedIds: string[],
-  allAssistants: (Assistant | AssistantBase)[],
-  registeredAssistants: CodemieAssistant[],
-  config: ProviderProfile,
-  profileName: string,
-  registrationModes?: Map<string, RegistrationMode>
-): Promise<void> {
-  const { toRegister, toUnregister } = determineChanges(selectedIds, allAssistants, registeredAssistants);
-
-  // Also need to re-register already-registered assistants if user wants to change their mode
-  const selectedSet = new Set(selectedIds);
-  const alreadyRegisteredButSelected = registeredAssistants.filter(a => selectedSet.has(a.id));
-
-  if (toRegister.length === 0 && toUnregister.length === 0 && alreadyRegisteredButSelected.length === 0) {
+  if (selectedAssistants.length === 0) {
     console.log(chalk.yellow(MESSAGES.SETUP.NO_CHANGES_TO_APPLY));
     return;
   }
 
-  console.log('');
+  // Configure registration modes
+  const { registrationModes, action: configAction } = await promptConfigurationOptions(
+    selectedAssistants as Assistant[],
+    registeredIds,
+    registeredAssistants
+  );
 
-  // Unregister assistants that are no longer selected
-  for (const assistant of toUnregister) {
-    await unregisterAssistant(assistant);
+  if (configAction === ACTION_TYPE.CANCEL) {
+    console.log(chalk.dim(MESSAGES.SETUP.NO_CHANGES_MADE));
+    return;
   }
 
-  // For already-registered assistants that are still selected, unregister first to clean up old files
-  // then re-register with the new mode
-  for (const assistant of alreadyRegisteredButSelected) {
-    await unregisterAssistant(assistant);
-  }
-
-  // Register all selected assistants (both new and re-registering)
-  const newRegistrations: CodemieAssistant[] = [];
-
-  // Register new ones
-  for (const assistant of toRegister) {
-    const mode = registrationModes?.get(assistant.id) || 'agent';
-    const registered = await registerAssistant(assistant, mode);
-    if (registered) {
-      newRegistrations.push(registered);
-    }
-  }
-
-  // Re-register already-registered ones with new mode
-  for (const assistant of alreadyRegisteredButSelected) {
-    const fullAssistant = allAssistants.find(a => a.id === assistant.id) as Assistant;
-    if (fullAssistant) {
-      const mode = registrationModes?.get(assistant.id) || 'agent';
-      const registered = await registerAssistant(fullAssistant, mode);
-      if (registered) {
-        newRegistrations.push(registered);
-      }
-    }
-  }
+  // Apply changes and get summary data
+  const { newRegistrations, registered, unregistered } = await applyChanges(
+    selectedIds,
+    selectedAssistants,
+    registeredAssistants,
+    registrationModes
+  );
 
   // Update config
   config.codemieAssistants = newRegistrations;
   await ConfigLoader.saveProfile(profileName, config);
 
   // Display summary
-  displaySummary([...toRegister, ...alreadyRegisteredButSelected.map(a => allAssistants.find(aa => aa.id === a.id) as Assistant).filter(Boolean)], toUnregister, profileName, config);
+  displaySummary(registered, unregistered, profileName, config);
 }
 
 /**
- * Display summary of changes
+ * Apply registration changes
+ * Returns new registrations and lists of what changed
  */
-export function displaySummary(
-  toRegister: Assistant[],
-  toUnregister: CodemieAssistant[],
-  profileName: string,
-  config: ProviderProfile
-): void {
-  const totalChanges = toRegister.length + toUnregister.length;
-  console.log(chalk.green(MESSAGES.SETUP.SUMMARY_UPDATED(totalChanges)));
-  console.log(chalk.dim(MESSAGES.SETUP.SUMMARY_PROFILE(profileName)));
+async function applyChanges(
+  selectedIds: string[],
+  allAssistants: (Assistant | AssistantBase)[],
+  registeredAssistants: CodemieAssistant[],
+  registrationModes: Map<string, RegistrationMode>
+): Promise<ApplyChangesResult> {
+  // Determine what needs to change
+  const { toRegister, toUnregister } = determineChanges(selectedIds, allAssistants, registeredAssistants);
+  const selectedSet = new Set(selectedIds);
+  const toReregister = registeredAssistants.filter(a => selectedSet.has(a.id));
 
-  displayCurrentlyRegistered(config);
-}
-
-/**
- * Display currently registered assistants
- */
-export function displayCurrentlyRegistered(config: ProviderProfile): void {
-  if (!config.codemieAssistants || config.codemieAssistants.length === 0) {
-    return;
+  if (toRegister.length === 0 && toUnregister.length === 0 && toReregister.length === 0) {
+    console.log(chalk.yellow(MESSAGES.SETUP.NO_CHANGES_TO_APPLY));
+    return { newRegistrations: registeredAssistants, registered: [], unregistered: [] };
   }
 
-  const purpleColor = chalk.rgb(177, 185, 249);
-  const purpleLine = purpleColor('─'.repeat(60));
+  // Unregister: both removed assistants and those needing re-registration
+  const toUnregisterAll = [...toUnregister, ...toReregister];
+  for (const assistant of toUnregisterAll) {
+    await unregisterAssistant(assistant);
+  }
 
-  console.log('');
-  console.log(purpleLine);
-  console.log(chalk.bold('Registered assistants:'));
-  console.log('');
+  // Register all selected assistants with their configured modes
+  const newRegistrations: CodemieAssistant[] = [];
+  const allToRegister = [...toRegister, ...toReregister];
 
-  config.codemieAssistants.forEach((assistant: CodemieAssistant) => {
-    const mode = assistant.registrationMode || REGISTRATION_MODE.AGENT;
+  for (const assistant of allToRegister) {
+    const fullAssistant = getFullAssistant(assistant, allAssistants);
+    if (!fullAssistant) continue;
 
-    // Build location info based on registration mode
-    let locationInfo = '';
-    if (mode === REGISTRATION_MODE.AGENT) {
-      locationInfo = chalk.dim(` (@${assistant.slug} in code or claude)`);
-    } else if (mode === REGISTRATION_MODE.SKILL) {
-      locationInfo = chalk.dim(` (/${assistant.slug} in claude or @${assistant.slug} in code)`);
-    } else if (mode === REGISTRATION_MODE.BOTH) {
-      locationInfo = chalk.dim(` (@${assistant.slug} in code or claude, /${assistant.slug} in claude)`);
+    const mode = registrationModes.get(fullAssistant.id) || REGISTRATION_MODE.AGENT;
+    const registered = await registerAssistant(fullAssistant, mode);
+    if (registered) {
+      newRegistrations.push(registered);
     }
+  }
 
-    console.log(`  • ${purpleColor(assistant.slug)} - ${assistant.name}${locationInfo}`);
-  });
+  // Return results for summary
+  return {
+    newRegistrations,
+    registered: [...toRegister, ...getFullAssistants(toReregister, allAssistants)],
+    unregistered: toUnregister
+  };
+}
 
-  console.log('');
-  console.log(purpleLine);
-  console.log('');
+/**
+ * Get full assistant details from the list
+ */
+function getFullAssistant(
+  assistant: Assistant | CodemieAssistant,
+  allAssistants: (Assistant | AssistantBase)[]
+): Assistant | null {
+  // Check if it's already a full Assistant (has registeredAt = it's a CodemieAssistant)
+  if ('registeredAt' in assistant) {
+    return allAssistants.find(a => a.id === assistant.id) as Assistant || null;
+  }
+  return assistant as Assistant;
+}
+
+/**
+ * Get full assistant details for multiple assistants
+ */
+function getFullAssistants(
+  assistants: CodemieAssistant[],
+  allAssistants: (Assistant | AssistantBase)[]
+): Assistant[] {
+  return assistants
+    .map(a => getFullAssistant(a, allAssistants))
+    .filter((a): a is Assistant => a !== null);
 }

@@ -12,8 +12,8 @@ import { logger } from '@/utils/logger.js';
 import { MESSAGES } from '@/cli/commands/assistants/constants.js';
 import { registerClaudeSubagent, unregisterClaudeSubagent } from '@/cli/commands/assistants/setup/generators/claude-agent-generator.js';
 import { registerClaudeSkill, unregisterClaudeSkill } from '@/cli/commands/assistants/setup/generators/claude-skill-generator.js';
-import type { RegistrationMode } from '@/cli/commands/assistants/setup/applying/types.js';
-import { REGISTRATION_MODE } from '@/cli/commands/assistants/setup/applying/constants.js';
+import type { RegistrationMode } from '@/cli/commands/assistants/setup/configuration/types.js';
+import { REGISTRATION_MODE } from '@/cli/commands/assistants/setup/configuration/constants.js';
 
 export interface RegistrationChanges {
   toRegister: Assistant[];
@@ -97,7 +97,10 @@ export async function unregisterAssistant(assistant: CodemieAssistant): Promise<
  * Register an assistant with specified registration mode
  * @param mode - 'agent' (Claude agent only), 'skill' (Claude skill only), or 'both'
  */
-export async function registerAssistant(assistant: Assistant, mode: RegistrationMode = REGISTRATION_MODE.AGENT): Promise<CodemieAssistant | null> {
+export async function registerAssistant(
+  assistant: Assistant, 
+  mode: RegistrationMode = REGISTRATION_MODE.AGENT
+): Promise<CodemieAssistant | null> {
   const modeLabel = mode === REGISTRATION_MODE.BOTH ? 'agent & skill' : mode === REGISTRATION_MODE.SKILL ? 'skill' : 'agent';
 
   const result = await executeWithSpinner(

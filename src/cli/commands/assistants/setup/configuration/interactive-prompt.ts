@@ -1,4 +1,4 @@
-import type { ApplyingState, ApplyingAction } from './types.js';
+import type { ConfigurationState, ConfigurationAction } from './types.js';
 import { ANSI, KEY, KEEP_ALIVE_INTERVAL } from './constants.js';
 import { renderUI } from './ui.js';
 import { createActionHandlers } from './actions.js';
@@ -6,7 +6,7 @@ import { createActionHandlers } from './actions.js';
 /**
  * Interactive prompt for configuring assistant registration modes
  */
-export function createInteractivePrompt(state: ApplyingState): Promise<ApplyingAction> {
+export function createInteractivePrompt(state: ConfigurationState): Promise<ConfigurationAction> {
 	return new Promise((resolve) => {
 		let keepAliveTimer: NodeJS.Timeout | null = null;
 
@@ -37,7 +37,7 @@ export function createInteractivePrompt(state: ApplyingState): Promise<ApplyingA
 		/**
 		 * Resolve promise and cleanup
 		 */
-		function stop(action: ApplyingAction) {
+		function stop(action: ConfigurationAction) {
 			cleanup();
 			resolve(action);
 		}

@@ -6,7 +6,7 @@
 
 import chalk from 'chalk';
 import type { Assistant, AssistantBase } from 'codemie-sdk';
-import type { CodemieAssistant, ProviderProfile } from '@/env/types.js';
+import type { ProviderProfile } from '@/env/types.js';
 import { MESSAGES } from '@/cli/commands/assistants/constants.js';
 
 export interface AssistantChoice {
@@ -14,19 +14,6 @@ export interface AssistantChoice {
   value: string;
   short: string;
   checked: boolean;
-}
-
-/**
- * Sort assistants with registered ones first
- */
-export function sortAssistantsByRegistration(
-  assistants: (Assistant | AssistantBase)[],
-  registeredAssistants: CodemieAssistant[]
-): (Assistant | AssistantBase)[] {
-  const registeredIds = new Set(registeredAssistants.map(a => a.id));
-  const registered = assistants.filter(a => registeredIds.has(a.id));
-  const unregistered = assistants.filter(a => !registeredIds.has(a.id));
-  return [...registered, ...unregistered];
 }
 
 /**

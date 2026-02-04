@@ -6,7 +6,8 @@
 
 import chalk from 'chalk';
 import type { PanelState, SelectionState } from './types.js';
-import { ANSI, BOX, SYMBOL, TEXT, CONFIG, COLOR, PAGINATION_CONTROL, type PanelId, type PaginationControl } from './constants.js';
+import { ANSI, BOX, SYMBOL, TEXT, CONFIG, PAGINATION_CONTROL, type PanelId, type PaginationControl } from './constants.js';
+import { COLOR } from '../constants.js';
 
 /**
  * Render the complete UI

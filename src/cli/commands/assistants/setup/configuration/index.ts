@@ -1,8 +1,9 @@
 import type { Assistant } from 'codemie-sdk';
 import type { CodemieAssistant } from '@/env/types.js';
-import type { ApplyingState, ApplyingResult, RegistrationMode } from './types.js';
+import type { ConfigurationState, ConfigurationResult, RegistrationMode } from './types.js';
 import { createInteractivePrompt } from './interactive-prompt.js';
 import { REGISTRATION_MODE } from './constants.js';
+import { ACTION_TYPE } from '../constants.js';
 
 /**
  * Initialize state with saved registration modes or default to 'agent'
@@ -11,7 +12,7 @@ function initializeState(
 	assistants: Assistant[],
 	registeredIds: Set<string>,
 	savedModes: Map<string, RegistrationMode>
-): ApplyingState {
+): ConfigurationState {
 	return {
 		registrations: assistants.map((assistant) => ({
 			assistant,
@@ -20,7 +21,7 @@ function initializeState(
 		})),
 		cursorIndex: 0,
 		isButtonsFocused: true,
-		focusedButton: 'apply',
+		focusedButton: ACTION_TYPE.APPLY,
 	};
 }
 
@@ -31,11 +32,11 @@ function initializeState(
  * @param registeredIds - Set of IDs of already registered assistants
  * @param registeredAssistants - Array of registered assistants with saved modes
  */
-export async function promptApplyingOptions(
+export async function promptConfigurationOptions(
 	assistants: Assistant[],
 	registeredIds: Set<string>,
 	registeredAssistants: CodemieAssistant[]
-): Promise<ApplyingResult> {
+): Promise<ConfigurationResult> {
 	const savedModes = new Map<string, RegistrationMode>();
 	for (const registered of registeredAssistants) {
 		if (registered.registrationMode) {
