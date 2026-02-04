@@ -28,6 +28,7 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
   let resolvePromise: (() => void) | null = null;
   let dataHandler: ((data: Buffer) => void) | null = null;
   let keepAliveTimer: NodeJS.Timeout | null = null;
+  let searchDebounceTimer: NodeJS.Timeout | null = null;
 
   /**
    * Start the interactive prompt
@@ -63,6 +64,11 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
     if (keepAliveTimer) {
       clearInterval(keepAliveTimer);
       keepAliveTimer = null;
+    }
+
+    if (searchDebounceTimer) {
+      clearTimeout(searchDebounceTimer);
+      searchDebounceTimer = null;
     }
 
     if (dataHandler) {
@@ -192,6 +198,23 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
   }
 
   /**
+   * Update search query with debounce
+   */
+  function updateSearchQuery(newQuery: string): void {
+    options.state.searchQuery = newQuery;
+    cursorIndex = 0;
+    render();
+
+    if (searchDebounceTimer) {
+      clearTimeout(searchDebounceTimer);
+    }
+
+    searchDebounceTimer = setTimeout(() => {
+      options.actions.handleSearchUpdate(newQuery);
+    }, CONFIG.SEARCH_DEBOUNCE_MS);
+  }
+
+  /**
    * Handle backspace
    */
   function handleBackspace(): void {
@@ -200,9 +223,7 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
       if (!options.state.isSearchFocused) {
         options.actions.handleFocusSearch();
       }
-      options.actions.handleSearchUpdate(currentSearch.slice(0, -1));
-      cursorIndex = 0;
-      render();
+      updateSearchQuery(currentSearch.slice(0, -1));
     }
   }
 
@@ -214,9 +235,7 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
       options.actions.handleFocusSearch();
     }
     const currentSearch = options.state.searchQuery;
-    options.actions.handleSearchUpdate(currentSearch + key);
-    cursorIndex = 0;
-    render();
+    updateSearchQuery(currentSearch + key);
   }
 
   /**
