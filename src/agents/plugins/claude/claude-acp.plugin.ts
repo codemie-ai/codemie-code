@@ -44,10 +44,10 @@ export const ClaudeAcpPluginMetadata: AgentMetadata = {
     'Configure in your IDE:',
     '',
     'Zed (~/.config/zed/settings.json):',
-    '  "agent_servers": { "claude": { "command": "codemie-claude-acp", "args": ["--profile", "work"] } }',
+    '  "agent_servers": { "claude": { "command": "codemie-claude-acp" } }',
     '',
     'JetBrains (~/.jetbrains/acp.json):',
-    '  "agent_servers": { "Claude Code via CodeMie": { "command": "codemie-claude-acp", "args": ["--profile", "work"] } }',
+    '  "agent_servers": { "Claude Code via CodeMie": { "command": "codemie-claude-acp" } }',
   ],
 };
 
@@ -62,6 +62,17 @@ export class ClaudeAcpPlugin extends ClaudePlugin {
     super();
     // Override metadata with ACP-specific values
     (this as any).metadata = ClaudeAcpPluginMetadata;
+  }
+
+  /**
+   * Install via npm (no native installers for ACP)
+   * Overrides ClaudePlugin's installVersion() to use npm-only installation
+   */
+  async install(): Promise<void> {
+    // Call BaseAgentAdapter's npm-based install method
+    // This uses npm.installGlobal(this.metadata.npmPackage)
+    const { BaseAgentAdapter } = await import('../../core/BaseAgentAdapter.js');
+    await BaseAgentAdapter.prototype.install.call(this);
   }
 
   /**
