@@ -8,15 +8,19 @@ export interface DataFetcherDependencies {
   options: SetupCommandOptions;
 }
 
-export class DataFetcher {
-  constructor(private deps: DataFetcherDependencies) {}
+export interface DataFetcher {
+  fetchRegistered: (_registeredIds: Set<string>) => Promise<(Assistant | AssistantBase)[]>;
+  fetchProjectAssistants: () => Promise<(Assistant | AssistantBase)[]>;
+  fetchMarketplace: () => Promise<(Assistant | AssistantBase)[]>;
+}
 
+export function createDataFetcher(deps: DataFetcherDependencies): DataFetcher {
   /**
    * Registered Tab: Filter from config (instant, no API call)
    */
-  async fetchRegistered(_registeredIds: Set<string>): Promise<(Assistant | AssistantBase)[]> {
+  async function fetchRegistered(_registeredIds: Set<string>): Promise<(Assistant | AssistantBase)[]> {
     // No API call - use config data
-    const registered = this.deps.config.codemieAssistants || [];
+    const registered = deps.config.codemieAssistants || [];
 
     // Convert CodemieAssistant to AssistantBase format
     return registered.map(asst => ({
@@ -32,8 +36,8 @@ export class DataFetcher {
    * Project Tab: API call with project filter
    * SILENT - no spinner to avoid conflict with raw mode
    */
-  async fetchProjectAssistants(): Promise<(Assistant | AssistantBase)[]> {
-    const projectFilter = this.deps.options.project || this.deps.config.codeMieProject;
+  async function fetchProjectAssistants(): Promise<(Assistant | AssistantBase)[]> {
+    const projectFilter = deps.options.project || deps.config.codeMieProject;
 
     if (!projectFilter) {
       return []; // Show empty state with helpful message
@@ -46,7 +50,7 @@ export class DataFetcher {
         project: projectFilter
       };
 
-      const assistants = await this.deps.client.assistants.list({
+      const assistants = await deps.client.assistants.list({
         filters,
         minimal_response: false
       });
@@ -61,11 +65,17 @@ export class DataFetcher {
   /**
    * Marketplace Tab: API call with different params (placeholder)
    */
-  async fetchMarketplace(): Promise<(Assistant | AssistantBase)[]> {
+  async function fetchMarketplace(): Promise<(Assistant | AssistantBase)[]> {
     // PLACEHOLDER: Will use same API, different params
     // Example: client.assistants.list({ filters: { is_global: true } })
     // or: client.assistants.list({ scope: 'marketplace' })
     // No special metadata handling - same Assistant[] type
     return [];
   }
+
+  return {
+    fetchRegistered,
+    fetchProjectAssistants,
+    fetchMarketplace
+  };
 }

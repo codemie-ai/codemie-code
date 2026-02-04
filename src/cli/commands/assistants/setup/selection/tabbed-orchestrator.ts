@@ -6,32 +6,25 @@ import type {
   SelectionState,
   TabId
 } from './tab-types.js';
-import { DataFetcher } from './data-fetcher.js';
-import { SearchFilter } from './search-filter.js';
-import { InteractivePrompt } from './interactive-prompt.js';
+import { createDataFetcher } from './data-fetcher.js';
+import { filterAssistants } from './search-filter.js';
+import { createInteractivePrompt, type InteractivePrompt } from './interactive-prompt.js';
 
-export class TabbedSelectionOrchestrator {
-  private state: SelectionState;
-  private fetcher: DataFetcher;
-  private filter: SearchFilter;
-  private prompt: InteractivePrompt | null = null;
-  private shouldExit = false;
-  private isCancelled = false;
-
-  constructor(private options: OrchestratorOptions) {
-    this.state = this.initializeState();
-    this.fetcher = new DataFetcher({
-      config: options.config,
-      client: options.client,
-      options: options.options
-    });
-    this.filter = new SearchFilter();
-  }
+export function createTabbedSelectionOrchestrator(options: OrchestratorOptions) {
+  // Private state (closure variables)
+  const state = initializeState();
+  const fetcher = createDataFetcher({
+    config: options.config,
+    client: options.client,
+    options: options.options
+  });
+  let prompt: InteractivePrompt | null = null;
+  let isCancelled = false;
 
   /**
    * Initialize state with 3 tabs (Registered, Project, Marketplace)
    */
-  private initializeState(): SelectionState {
+  function initializeState(): SelectionState {
     return {
       tabs: [
         {
@@ -64,48 +57,41 @@ export class TabbedSelectionOrchestrator {
       ],
       activeTabId: 'registered',
       searchQuery: '',
-      selectedIds: new Set(),
-      registeredIds: this.options.registeredIds
+      selectedIds: new Set(options.registeredIds), // Pre-select registered assistants
+      registeredIds: options.registeredIds
     };
   }
 
   /**
    * Main interaction loop with interactive prompt
    */
-  async run(): Promise<{ selectedIds: string[]; action: ActionType }> {
-    // Create interactive prompt FIRST (don't wait for fetch)
-    this.prompt = new InteractivePrompt({
-      state: this.state,
-      onTabSwitch: () => this.handleTabSwitchSync(),
-      onSearchUpdate: (query: string) => this.handleSearchUpdate(query),
-      onCursorMove: (direction: 'up' | 'down') => this.handleCursorMove(direction),
-      onToggleSelection: () => this.handleToggleSelection(),
-      onConfirm: () => this.handleConfirm(),
-      onCancel: () => this.handleCancel()
+  async function run(): Promise<{ selectedIds: string[]; action: ActionType }> {
+    // Fetch registered tab data immediately (instant - no API call)
+    // This ensures registered assistants show up on first render
+    const registeredTab = state.tabs.find(t => t.id === 'registered')!;
+    registeredTab.data = await fetcher.fetchRegistered(state.registeredIds);
+    registeredTab.filteredData = registeredTab.data;
+    applySearchFilter();
+
+    // Create interactive prompt
+    prompt = createInteractivePrompt({
+      state,
+      onTabSwitch: () => handleTabSwitchSync(),
+      onSearchUpdate: (query: string) => handleSearchUpdate(query),
+      onCursorMove: (direction: 'up' | 'down') => handleCursorMove(direction),
+      onToggleSelection: () => handleToggleSelection(),
+      onConfirm: () => handleConfirm(),
+      onCancel: () => handleCancel()
     });
 
-    // Start interactive prompt immediately
-    const promptPromise = this.prompt.start();
-
-    // Fetch initial tab data in background
-    setTimeout(() => {
-      this.fetchActiveTabData()
-        .then(() => {
-          this.applySearchFilter();
-          if (this.prompt) {
-            this.prompt.render();
-          }
-        })
-        .catch((error) => {
-          console.error('Error fetching initial data:', error);
-        });
-    }, 0);
+    // Start interactive prompt
+    const promptPromise = prompt.start();
 
     // Wait for prompt to finish
     await promptPromise;
 
     // Return result
-    if (this.isCancelled) {
+    if (isCancelled) {
       return {
         selectedIds: [],
         action: ACTIONS.CANCEL
@@ -113,7 +99,7 @@ export class TabbedSelectionOrchestrator {
     }
 
     return {
-      selectedIds: Array.from(this.state.selectedIds),
+      selectedIds: Array.from(state.selectedIds),
       action: ACTIONS.UPDATE
     };
   }
@@ -122,48 +108,48 @@ export class TabbedSelectionOrchestrator {
    * Handle tab switch (Tab key)
    * SYNCHRONOUS - no blocking, no await
    */
-  private handleTabSwitchSync(): void {
+  function handleTabSwitchSync(): void {
     const tabIds: TabId[] = ['registered', 'project', 'marketplace'];
-    const currentIndex = tabIds.indexOf(this.state.activeTabId);
+    const currentIndex = tabIds.indexOf(state.activeTabId);
     const nextIndex = (currentIndex + 1) % tabIds.length;
 
     // Update state immediately (synchronous)
-    this.state.activeTabId = tabIds[nextIndex];
-    this.state.tabs.forEach(tab => {
-      tab.isActive = tab.id === this.state.activeTabId;
+    state.activeTabId = tabIds[nextIndex];
+    state.tabs.forEach(tab => {
+      tab.isActive = tab.id === state.activeTabId;
     });
 
-    const activeTab = this.state.tabs.find(t => t.id === this.state.activeTabId)!;
+    const activeTab = state.tabs.find(t => t.id === state.activeTabId)!;
 
     // If already cached, apply filter immediately
     if (activeTab.data !== null) {
-      this.applySearchFilter();
+      applySearchFilter();
       return;
     }
 
     // Kick off fetch in background using setTimeout (deferred to next tick)
     setTimeout(() => {
-      this.fetchActiveTabDataBackground();
+      fetchActiveTabDataBackground();
     }, 0);
   }
 
   /**
    * Fetch data in background without blocking
    */
-  private fetchActiveTabDataBackground(): void {
-    this.fetchActiveTabData()
+  function fetchActiveTabDataBackground(): void {
+    fetchActiveTabData()
       .then(() => {
-        this.applySearchFilter();
+        applySearchFilter();
         // Re-render after data loads
-        if (this.prompt) {
-          this.prompt.render();
+        if (prompt) {
+          prompt.render();
         }
       })
       .catch((error) => {
         console.error('Error fetching tab data:', error);
         // Re-render to show error
-        if (this.prompt) {
-          this.prompt.render();
+        if (prompt) {
+          prompt.render();
         }
       });
   }
@@ -171,47 +157,47 @@ export class TabbedSelectionOrchestrator {
   /**
    * Handle search update (live typing)
    */
-  private handleSearchUpdate(query: string): void {
-    this.state.searchQuery = query;
-    this.applySearchFilter();
+  function handleSearchUpdate(query: string): void {
+    state.searchQuery = query;
+    applySearchFilter();
   }
 
   /**
    * Handle cursor movement (Up/Down arrows)
    */
-  private handleCursorMove(direction: 'up' | 'down'): void {
-    if (!this.prompt) return;
+  function handleCursorMove(direction: 'up' | 'down'): void {
+    if (!prompt) return;
 
-    const activeTab = this.state.tabs.find(t => t.id === this.state.activeTabId)!;
+    const activeTab = state.tabs.find(t => t.id === state.activeTabId)!;
     const maxIndex = Math.min(5, activeTab.filteredData.length) - 1;
-    const currentIndex = this.prompt.getCursorIndex();
+    const currentIndex = prompt.getCursorIndex();
 
     if (direction === 'up') {
       const newIndex = Math.max(0, currentIndex - 1);
-      this.prompt.setCursorIndex(newIndex);
+      prompt.setCursorIndex(newIndex);
     } else {
       const newIndex = Math.min(maxIndex, currentIndex + 1);
-      this.prompt.setCursorIndex(newIndex);
+      prompt.setCursorIndex(newIndex);
     }
   }
 
   /**
    * Handle selection toggle (Space key)
    */
-  private handleToggleSelection(): void {
-    if (!this.prompt) return;
+  function handleToggleSelection(): void {
+    if (!prompt) return;
 
-    const activeTab = this.state.tabs.find(t => t.id === this.state.activeTabId)!;
-    const cursorIndex = this.prompt.getCursorIndex();
+    const activeTab = state.tabs.find(t => t.id === state.activeTabId)!;
+    const cursorIndex = prompt.getCursorIndex();
     const displayAssistants = activeTab.filteredData.slice(0, 5);
 
     if (cursorIndex >= 0 && cursorIndex < displayAssistants.length) {
       const assistant = displayAssistants[cursorIndex];
 
-      if (this.state.selectedIds.has(assistant.id)) {
-        this.state.selectedIds.delete(assistant.id);
+      if (state.selectedIds.has(assistant.id)) {
+        state.selectedIds.delete(assistant.id);
       } else {
-        this.state.selectedIds.add(assistant.id);
+        state.selectedIds.add(assistant.id);
       }
     }
   }
@@ -219,22 +205,20 @@ export class TabbedSelectionOrchestrator {
   /**
    * Handle confirm (Enter key)
    */
-  private handleConfirm(): void {
-    this.shouldExit = true;
-    this.isCancelled = false;
-    if (this.prompt) {
-      this.prompt.stop();
+  function handleConfirm(): void {
+    isCancelled = false;
+    if (prompt) {
+      prompt.stop();
     }
   }
 
   /**
    * Handle cancel (Esc key)
    */
-  private handleCancel(): void {
-    this.shouldExit = true;
-    this.isCancelled = true;
-    if (this.prompt) {
-      this.prompt.stop();
+  function handleCancel(): void {
+    isCancelled = true;
+    if (prompt) {
+      prompt.stop();
     }
   }
 
@@ -242,8 +226,8 @@ export class TabbedSelectionOrchestrator {
    * Fetch data for active tab if not already fetched
    * Uses lazy loading - only fetches on first visit
    */
-  private async fetchActiveTabData(): Promise<void> {
-    const activeTab = this.state.tabs.find(t => t.id === this.state.activeTabId)!;
+  async function fetchActiveTabData(): Promise<void> {
+    const activeTab = state.tabs.find(t => t.id === state.activeTabId)!;
 
     // Skip if already fetched
     if (activeTab.data !== null) {
@@ -258,13 +242,13 @@ export class TabbedSelectionOrchestrator {
 
       // Add timeout to prevent hanging
       const fetchPromise = (async () => {
-        switch (this.state.activeTabId) {
+        switch (state.activeTabId) {
           case 'registered':
-            return await this.fetcher.fetchRegistered(this.state.registeredIds);
+            return await fetcher.fetchRegistered(state.registeredIds);
           case 'project':
-            return await this.fetcher.fetchProjectAssistants();
+            return await fetcher.fetchProjectAssistants();
           case 'marketplace':
-            return await this.fetcher.fetchMarketplace();
+            return await fetcher.fetchMarketplace();
         }
       })();
 
@@ -288,17 +272,22 @@ export class TabbedSelectionOrchestrator {
   /**
    * Apply search filter to active tab data
    */
-  private applySearchFilter(): void {
-    const activeTab = this.state.tabs.find(t => t.id === this.state.activeTabId)!;
+  function applySearchFilter(): void {
+    const activeTab = state.tabs.find(t => t.id === state.activeTabId)!;
 
     if (!activeTab.data) {
       activeTab.filteredData = [];
       return;
     }
 
-    activeTab.filteredData = this.filter.filter(
+    activeTab.filteredData = filterAssistants(
       activeTab.data,
-      this.state.searchQuery
+      state.searchQuery
     );
   }
+
+  // Return public interface
+  return {
+    run
+  };
 }
