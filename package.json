@@ -112,7 +112,7 @@
     "@langchain/openai": "^1.1.0",
     "chalk": "^5.3.0",
     "cli-table3": "^0.6.5",
-    "codemie-sdk": "^0.1.318",
+    "codemie-sdk": "file:../codemie-sdk/sdk/codemie-nodejs",
     "commander": "^11.1.0",
     "cors": "^2.8.5",
     "dedent": "^1.7.1",

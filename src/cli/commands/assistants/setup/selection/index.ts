@@ -11,9 +11,10 @@ import type { ProviderProfile } from '@/env/types.js';
 import type { SetupCommandOptions } from '../index.js';
 import type { SelectionState } from './types.js';
 import { PANEL_ID, ANSI } from './constants.js';
-import { createDataFetcher } from './data.js';
+import { createDataFetcher } from '../data.js';
 import { createInteractivePrompt, type InteractivePrompt } from './interactive-prompt.js';
 import { createActionHandlers } from './actions.js';
+import { logger } from '@/utils/logger.js';
 import ora from 'ora';
 
 export interface SelectionOptions {
@@ -23,6 +24,16 @@ export interface SelectionOptions {
   client: CodeMieClient;
 }
 
+const DEFAULT_PANEL_PARAMS = {
+  isActive: false,
+  data: null,
+  filteredData: [],
+  isFetching: false,
+  error: null,
+  currentPage: 0,
+  totalItems: 0,
+  totalPages: 0,
+}
 /**
  * Initialize state with 3 panels (Registered, Project, Marketplace)
  */
@@ -32,35 +43,18 @@ function initializeState(registeredIds: Set<string>): SelectionState {
       {
         id: PANEL_ID.REGISTERED,
         label: 'Registered',
+        ...DEFAULT_PANEL_PARAMS,
         isActive: true,
-        data: null,
-        filteredData: [],
-        isFetching: false,
-        error: null,
-        currentPage: 0,
-        totalItems: 0
       },
       {
         id: PANEL_ID.PROJECT,
-        label: 'Project Assistants',
-        isActive: false,
-        data: null,
-        filteredData: [],
-        isFetching: false,
-        error: null,
-        currentPage: 0,
-        totalItems: 0
+        label: 'Project',
+        ...DEFAULT_PANEL_PARAMS
       },
       {
         id: PANEL_ID.MARKETPLACE,
         label: 'Marketplace',
-        isActive: false,
-        data: null,
-        filteredData: [],
-        isFetching: false,
-        error: null,
-        currentPage: 0,
-        totalItems: 0
+        ...DEFAULT_PANEL_PARAMS
       }
     ],
     activePanelId: PANEL_ID.REGISTERED,
@@ -91,7 +85,6 @@ export async function promptAssistantSelection(
   let prompt: InteractivePrompt | null = null;
   let isCancelled = false;
 
-  // Create action handlers
   const actionHandlers = createActionHandlers({
     state,
     fetcher,
@@ -100,46 +93,54 @@ export async function promptAssistantSelection(
     setCancelled: (cancelled) => { isCancelled = cancelled; }
   });
 
-  // Fetch initial data for registered panel with spinner
   const spinner = ora('Loading assistants...').start();
   const registeredPanel = state.panels.find(p => p.id === PANEL_ID.REGISTERED)!;
   try {
-    registeredPanel.data = await fetcher.fetchAssistants({
+    const result = await fetcher.fetchAssistants({
       scope: PANEL_ID.REGISTERED,
       searchQuery: state.searchQuery,
       page: 0
     });
-    registeredPanel.filteredData = registeredPanel.data;
-    registeredPanel.totalItems = registeredPanel.data.length;
+    registeredPanel.data = result.data;
+    registeredPanel.filteredData = result.data;
+    registeredPanel.totalItems = result.total;
+    registeredPanel.totalPages = result.pages;
     spinner.succeed('Assistants loaded');
   } catch (error) {
     spinner.fail('Failed to load assistants');
     registeredPanel.error = error instanceof Error ? error.message : 'Unknown error';
     registeredPanel.totalItems = 0;
+    registeredPanel.totalPages = 0;
   }
 
   // Clear spinner output before starting interactive mode
   process.stdout.write(ANSI.CLEAR_LINE_ABOVE);
 
-  // Create interactive prompt
   prompt = createInteractivePrompt({
     state,
     actions: actionHandlers
   });
 
-  // Start interactive prompt and wait for completion
   await prompt.start();
 
-  // Return result
   if (isCancelled) {
+    logger.debug('[AssistantSelection] Selection cancelled');
     return {
       selectedIds: [],
       action: ACTIONS.CANCEL
     };
   }
 
+  const selectedIdsArray = Array.from(state.selectedIds);
+  logger.debug('[AssistantSelection] Returning selection', {
+    totalSelected: selectedIdsArray.length,
+    selectedIds: selectedIdsArray,
+    registeredCount: state.registeredIds.size,
+    registeredIds: Array.from(state.registeredIds)
+  });
+
   return {
-    selectedIds: Array.from(state.selectedIds),
+    selectedIds: selectedIdsArray,
     action: ACTIONS.UPDATE
   };
 }

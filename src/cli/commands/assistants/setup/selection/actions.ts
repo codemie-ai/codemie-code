@@ -5,9 +5,10 @@
  */
 
 import type { SelectionState } from './types.js';
-import type { DataFetcher } from './data.js';
+import type { DataFetcher } from '../data.js';
 import type { InteractivePrompt } from './interactive-prompt.js';
 import { PANEL_IDS, CONFIG, PAGINATION_CONTROL, type PanelId } from './constants.js';
+import { logger } from '@/utils/logger.js';
 
 export interface ActionHandlers {
   handlePanelSwitch: (direction: 'next' | 'prev') => void;
@@ -60,6 +61,8 @@ export function createActionHandlers(deps: ActionHandlerDependencies): ActionHan
     activePanel.isFetching = true;
     activePanel.error = null;
 
+    let timeoutId: NodeJS.Timeout | null = null;
+
     try {
       const fetchPromise = deps.fetcher.fetchAssistants({
         scope: deps.state.activePanelId,
@@ -68,19 +71,31 @@ export function createActionHandlers(deps: ActionHandlerDependencies): ActionHan
       });
 
       const timeoutPromise = new Promise<never>((_, reject) => {
-        setTimeout(() => reject(new Error(`Fetch timeout after ${CONFIG.FETCH_TIMEOUT_MS / 1000} seconds`)), CONFIG.FETCH_TIMEOUT_MS);
+        timeoutId = setTimeout(() => reject(new Error(`Fetch timeout after ${CONFIG.FETCH_TIMEOUT_MS / 1000} seconds`)), CONFIG.FETCH_TIMEOUT_MS);
       });
 
-      const data = await Promise.race([fetchPromise, timeoutPromise]);
+      const result = await Promise.race([fetchPromise, timeoutPromise]);
 
-      activePanel.data = data;
-      activePanel.filteredData = data;
-      activePanel.totalItems = data.length;
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+
+      activePanel.data = result.data;
+      activePanel.filteredData = result.data;
+      activePanel.totalItems = result.total;
+      activePanel.totalPages = result.pages;
     } catch (error) {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+
       activePanel.error = error instanceof Error ? error.message : 'Unknown error';
       activePanel.data = [];
       activePanel.filteredData = [];
       activePanel.totalItems = 0;
+      activePanel.totalPages = 0;
     } finally {
       activePanel.isFetching = false;
     }
@@ -155,14 +170,10 @@ export function createActionHandlers(deps: ActionHandlerDependencies): ActionHan
     if (!prompt) return;
 
     const activePanel = deps.state.panels.find(p => p.id === deps.state.activePanelId)!;
-    const totalPages = Math.ceil(activePanel.totalItems / CONFIG.ITEMS_PER_PAGE);
+    const totalPages = activePanel.totalPages;
     const hasPaginationControls = totalPages > 1;
 
-    const startIndex = activePanel.currentPage * CONFIG.ITEMS_PER_PAGE;
-    const endIndex = startIndex + CONFIG.ITEMS_PER_PAGE;
-    const itemsOnCurrentPage = activePanel.filteredData.slice(startIndex, endIndex).length;
-    const maxIndex = itemsOnCurrentPage - 1;
-
+    const maxIndex = activePanel.filteredData.length - 1;
     const currentIndex = prompt.getCursorIndex();
 
     if (direction === 'up') {
@@ -200,17 +211,25 @@ export function createActionHandlers(deps: ActionHandlerDependencies): ActionHan
     const activePanel = deps.state.panels.find(p => p.id === deps.state.activePanelId)!;
     const cursorIndex = prompt.getCursorIndex();
 
-    const startIndex = activePanel.currentPage * CONFIG.ITEMS_PER_PAGE;
-    const endIndex = startIndex + CONFIG.ITEMS_PER_PAGE;
-    const displayAssistants = activePanel.filteredData.slice(startIndex, endIndex);
-
-    if (cursorIndex >= 0 && cursorIndex < displayAssistants.length) {
-      const assistant = displayAssistants[cursorIndex];
+    if (cursorIndex >= 0 && cursorIndex < activePanel.filteredData.length) {
+      const assistant = activePanel.filteredData[cursorIndex];
 
       if (deps.state.selectedIds.has(assistant.id)) {
         deps.state.selectedIds.delete(assistant.id);
+        logger.debug('[AssistantSelection] Deselected assistant', {
+          id: assistant.id,
+          name: assistant.name,
+          panel: deps.state.activePanelId,
+          totalSelected: deps.state.selectedIds.size
+        });
       } else {
         deps.state.selectedIds.add(assistant.id);
+        logger.debug('[AssistantSelection] Selected assistant', {
+          id: assistant.id,
+          name: assistant.name,
+          panel: deps.state.activePanelId,
+          totalSelected: deps.state.selectedIds.size
+        });
       }
     }
   }
@@ -219,6 +238,10 @@ export function createActionHandlers(deps: ActionHandlerDependencies): ActionHan
    * Handle confirm (Enter key)
    */
   function handleConfirm(): void {
+    logger.debug('[AssistantSelection] Confirming selection', {
+      totalSelected: deps.state.selectedIds.size,
+      selectedIds: Array.from(deps.state.selectedIds)
+    });
     deps.setCancelled(false);
     const prompt = deps.prompt();
     if (prompt) {
@@ -242,7 +265,7 @@ export function createActionHandlers(deps: ActionHandlerDependencies): ActionHan
    */
   function handlePageNext(): void {
     const activePanel = deps.state.panels.find(p => p.id === deps.state.activePanelId)!;
-    const totalPages = Math.ceil(activePanel.totalItems / CONFIG.ITEMS_PER_PAGE);
+    const totalPages = activePanel.totalPages;
 
     if (activePanel.currentPage < totalPages - 1) {
       activePanel.currentPage++;
@@ -251,8 +274,9 @@ export function createActionHandlers(deps: ActionHandlerDependencies): ActionHan
       const prompt = deps.prompt();
       if (prompt) {
         prompt.setCursorIndex(0);
-        prompt.render();
       }
+
+      setTimeout(() => fetchActivePanelDataBackground(), 0);
     }
   }
 
@@ -269,8 +293,9 @@ export function createActionHandlers(deps: ActionHandlerDependencies): ActionHan
       const prompt = deps.prompt();
       if (prompt) {
         prompt.setCursorIndex(0);
-        prompt.render();
       }
+
+      setTimeout(() => fetchActivePanelDataBackground(), 0);
     }
   }
 

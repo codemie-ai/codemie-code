@@ -17,6 +17,7 @@ import { fetchAssistants } from '@/cli/commands/assistants/setup/api.js';
 import { promptAssistantSelection } from '@/cli/commands/assistants/setup/selection/index.js';
 import { sortAssistantsByRegistration, displayNoAssistantsMessage } from '@/cli/commands/assistants/setup/selection/utils.js';
 import { determineChanges, registerAssistant, unregisterAssistant } from '@/cli/commands/assistants/setup/operations.js';
+import { createDataFetcher } from '@/cli/commands/assistants/setup/data.js';
 
 export interface SetupCommandOptions {
   profile?: string;
@@ -117,8 +118,12 @@ async function manageAssistants(options: SetupCommandOptions): Promise<void> {
     return;
   }
 
-  // 6. Apply changes
-  await applyChanges(selectedIds, sortedAssistants, registeredAssistants, config, profileName);
+  // 6. Fetch full details for selected assistants (in case some are from other pages/tabs)
+  const fetcher = createDataFetcher({ config, client, options });
+  const selectedAssistants = await fetcher.fetchAssistantsByIds(selectedIds, sortedAssistants);
+
+  // 7. Apply changes
+  await applyChanges(selectedIds, selectedAssistants, registeredAssistants, config, profileName);
 }
 
 /**

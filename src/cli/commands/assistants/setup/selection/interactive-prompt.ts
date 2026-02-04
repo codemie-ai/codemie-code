@@ -80,6 +80,7 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
     }
 
     process.stdin.pause();
+    process.stdin.unref();
 
     if (resolvePromise) {
       resolvePromise();

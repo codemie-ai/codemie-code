@@ -64,7 +64,7 @@ function buildCount(activePanel: PanelState): string {
   }
 
   const currentPage = activePanel.currentPage + 1; // Display as 1-indexed
-  const totalPages = Math.ceil(activePanel.totalItems / CONFIG.ITEMS_PER_PAGE);
+  const totalPages = activePanel.totalPages;
   const totalAssistants = activePanel.totalItems;
 
   return chalk.dim(`${totalAssistants} assistants total, Page ${currentPage} of ${totalPages}`) + '\n';
@@ -110,6 +110,7 @@ function buildAssistantsList(
   cursorIndex: number,
   isPaginationFocused: PaginationControl | null
 ): string {
+  const isMarketplace = activePanel.id === 'marketplace';
   if (activePanel.isFetching) {
     return chalk.cyan('Loading assistants...\n');
   }
@@ -122,9 +123,7 @@ function buildAssistantsList(
     return chalk.yellow(TEXT.NO_ASSISTANTS + '\n');
   }
 
-  const startIndex = activePanel.currentPage * CONFIG.ITEMS_PER_PAGE;
-  const endIndex = startIndex + CONFIG.ITEMS_PER_PAGE;
-  const displayAssistants = activePanel.filteredData.slice(startIndex, endIndex);
+  const displayAssistants = activePanel.filteredData;
 
   let output = '';
 
@@ -148,7 +147,11 @@ function buildAssistantsList(
       ? chalk.dim(` · ${assistant.project}`)
       : '';
 
-    output += `${cursor}${circle} ${name}${project}\n`;
+    const uniqueUsers = isMarketplace && 'unique_users_count' in assistant && assistant.unique_users_count !== undefined
+      ? chalk.dim(` · ⚭ ${assistant.unique_users_count} uses`)
+      : '';
+
+    output += `${cursor}${circle} ${name}${project}${uniqueUsers}\n`;
 
     if (assistant.description) {
       const singleLine = assistant.description.replace(/\n+/g, ' ');
@@ -169,7 +172,7 @@ function buildPaginationControls(
   isPaginationFocused: PaginationControl | null,
   isSearchFocused: boolean
 ): string {
-  const totalPages = Math.ceil(activePanel.totalItems / CONFIG.ITEMS_PER_PAGE);
+  const totalPages = activePanel.totalPages;
 
   if (totalPages <= 1) {
     return '';
@@ -207,7 +210,7 @@ function buildPaginationControls(
  * Build keyboard instructions
  */
 function buildInstructions(activePanel: PanelState): string {
-  const totalPages = Math.ceil(activePanel.totalItems / CONFIG.ITEMS_PER_PAGE);
+  const totalPages = activePanel.totalPages;
   const hasMultiplePages = totalPages > 1;
 
   const instructionsText = hasMultiplePages

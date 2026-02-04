@@ -21,4 +21,5 @@ export interface PanelState {
   error: string | null;
   currentPage: number;
   totalItems: number;
+  totalPages: number;
 }
