@@ -1,5 +1,7 @@
 import type {AgentMetadata} from '../../core/types.js';
 import {ClaudePlugin, ClaudePluginMetadata} from './claude.plugin.js';
+import * as npm from '../../../utils/processes.js';
+import {NpmError} from '../../../utils/errors.js';
 
 /**
  * Claude Code ACP Plugin Metadata
@@ -69,5 +71,27 @@ export class ClaudeAcpPlugin extends ClaudePlugin {
    */
   async getVersion(): Promise<string | null> {
     return null;
+  }
+
+  /**
+   * Install via npm (override native installation from ClaudePlugin)
+   *
+   * ClaudeAcpPlugin uses @zed-industries/claude-code-acp which is npm-only.
+   * There's no native installer for this package.
+   */
+  async install(): Promise<void> {
+    const npmPackage = this.metadata.npmPackage;
+    if (!npmPackage) {
+      throw new Error(`${this.displayName} has no npm package configured`);
+    }
+
+    try {
+      await npm.installGlobal(npmPackage);
+    } catch (error: unknown) {
+      if (error instanceof NpmError) {
+        throw new Error(`Failed to install ${this.displayName}: ${error.message}`);
+      }
+      throw error;
+    }
   }
 }
