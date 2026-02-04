@@ -58,7 +58,8 @@ export function createTabbedSelectionOrchestrator(options: OrchestratorOptions) 
       activeTabId: 'registered',
       searchQuery: '',
       selectedIds: new Set(options.registeredIds), // Pre-select registered assistants
-      registeredIds: options.registeredIds
+      registeredIds: options.registeredIds,
+      isSearchFocused: false // Start with list focused
     };
   }
 
@@ -77,11 +78,14 @@ export function createTabbedSelectionOrchestrator(options: OrchestratorOptions) 
     prompt = createInteractivePrompt({
       state,
       onTabSwitch: () => handleTabSwitchSync(),
+      onTabSwitchPrev: () => handleTabSwitchPrev(),
       onSearchUpdate: (query: string) => handleSearchUpdate(query),
       onCursorMove: (direction: 'up' | 'down') => handleCursorMove(direction),
       onToggleSelection: () => handleToggleSelection(),
       onConfirm: () => handleConfirm(),
-      onCancel: () => handleCancel()
+      onCancel: () => handleCancel(),
+      onFocusSearch: () => handleFocusSearch(),
+      onFocusList: () => handleFocusList()
     });
 
     // Start interactive prompt
@@ -105,7 +109,7 @@ export function createTabbedSelectionOrchestrator(options: OrchestratorOptions) 
   }
 
   /**
-   * Handle tab switch (Tab key)
+   * Handle tab switch to next tab (Tab key or Right arrow)
    * SYNCHRONOUS - no blocking, no await
    */
   function handleTabSwitchSync(): void {
@@ -115,6 +119,35 @@ export function createTabbedSelectionOrchestrator(options: OrchestratorOptions) 
 
     // Update state immediately (synchronous)
     state.activeTabId = tabIds[nextIndex];
+    state.tabs.forEach(tab => {
+      tab.isActive = tab.id === state.activeTabId;
+    });
+
+    const activeTab = state.tabs.find(t => t.id === state.activeTabId)!;
+
+    // If already cached, apply filter immediately
+    if (activeTab.data !== null) {
+      applySearchFilter();
+      return;
+    }
+
+    // Kick off fetch in background using setTimeout (deferred to next tick)
+    setTimeout(() => {
+      fetchActiveTabDataBackground();
+    }, 0);
+  }
+
+  /**
+   * Handle tab switch to previous tab (Left arrow)
+   * SYNCHRONOUS - no blocking, no await
+   */
+  function handleTabSwitchPrev(): void {
+    const tabIds: TabId[] = ['registered', 'project', 'marketplace'];
+    const currentIndex = tabIds.indexOf(state.activeTabId);
+    const prevIndex = (currentIndex - 1 + tabIds.length) % tabIds.length;
+
+    // Update state immediately (synchronous)
+    state.activeTabId = tabIds[prevIndex];
     state.tabs.forEach(tab => {
       tab.isActive = tab.id === state.activeTabId;
     });
@@ -160,6 +193,20 @@ export function createTabbedSelectionOrchestrator(options: OrchestratorOptions) 
   function handleSearchUpdate(query: string): void {
     state.searchQuery = query;
     applySearchFilter();
+  }
+
+  /**
+   * Handle focus moving to search box
+   */
+  function handleFocusSearch(): void {
+    state.isSearchFocused = true;
+  }
+
+  /**
+   * Handle focus moving to list
+   */
+  function handleFocusList(): void {
+    state.isSearchFocused = false;
   }
 
   /**

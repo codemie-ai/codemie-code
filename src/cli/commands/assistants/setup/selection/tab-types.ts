@@ -20,6 +20,7 @@ export interface SelectionState {
   searchQuery: string;
   selectedIds: Set<string>; // Persists across tabs
   registeredIds: Set<string>; // Original registered state (read-only)
+  isSearchFocused: boolean; // Whether search box has focus
 }
 
 export interface OrchestratorOptions {
