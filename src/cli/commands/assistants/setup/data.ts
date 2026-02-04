@@ -135,17 +135,16 @@ export function createDataFetcher(deps: DataFetcherDependencies): DataFetcher {
     existingAssistants: (Assistant | AssistantBase)[]
   ): Promise<(Assistant | AssistantBase)[]> {
     const existingMap = new Map(existingAssistants.map(a => [a.id, a]));
-    const result: (Assistant | AssistantBase)[] = [];
     const idsToFetch: string[] = [];
 
+    // Identify which IDs need to be fetched
     for (const id of selectedIds) {
-      if (existingMap.has(id)) {
-        result.push(existingMap.get(id)!);
-      } else {
+      if (!existingMap.has(id)) {
         idsToFetch.push(id);
       }
     }
 
+    // Fetch missing assistants
     if (idsToFetch.length > 0) {
       logger.debug('[AssistantSetup] Fetching missing assistant details', {
         count: idsToFetch.length,
@@ -155,11 +154,20 @@ export function createDataFetcher(deps: DataFetcherDependencies): DataFetcher {
       for (const id of idsToFetch) {
         try {
           const assistant = await deps.client.assistants.get(id);
-          result.push(assistant);
+          existingMap.set(id, assistant);
           logger.debug('[AssistantSetup] Fetched assistant', { id, name: assistant.name });
         } catch (error) {
           logger.error('[AssistantSetup] Failed to fetch assistant', { id, error });
         }
+      }
+    }
+
+    // Build result in requested order
+    const result: (Assistant | AssistantBase)[] = [];
+    for (const id of selectedIds) {
+      const assistant = existingMap.get(id);
+      if (assistant) {
+        result.push(assistant);
       }
     }
 

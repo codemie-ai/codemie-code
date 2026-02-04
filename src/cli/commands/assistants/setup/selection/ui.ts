@@ -144,8 +144,12 @@ function buildAssistantsList(
       ? chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b).bold(assistant.name)
       : assistant.name;
 
-    const project = 'project' in assistant && assistant.project
-      ? chalk.dim(` · ${assistant.project}`)
+    const projectValue = 'project' in assistant ? assistant.project : null;
+    const projectName = projectValue
+      ? (typeof projectValue === 'object' ? (projectValue as { name: string }).name : projectValue as string)
+      : null;
+    const project = projectName
+      ? chalk.dim(` · ${projectName}`)
       : '';
 
     const uniqueUsers = isMarketplace && 'unique_users_count' in assistant && assistant.unique_users_count !== undefined

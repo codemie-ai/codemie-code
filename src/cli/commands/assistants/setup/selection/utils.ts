@@ -20,7 +20,9 @@ export interface AssistantChoice {
  * Build display info for assistant choice
  */
 export function buildAssistantDisplayInfo(assistant: Assistant): string {
-  const projectInfo = assistant.project ? chalk.dim(` [${assistant.project}]`) : '';
+  const project = assistant.project;
+  const projectName = project && typeof project === 'object' ? (project as { name: string }).name : project as string | undefined;
+  const projectInfo = projectName ? chalk.dim(` [${projectName}]`) : '';
   const firstLine = assistant.name + projectInfo;
 
   const descriptionInfo = assistant.description ? chalk.dim(`\n   ${assistant.description}`) : '';
@@ -59,7 +61,7 @@ export function displayNoAssistantsMessage(
   console.log(chalk.yellow(MESSAGES.SETUP.NO_ASSISTANTS));
 
   const filterProject = options.project || config.codeMieProject;
-  if (filterProject) {
+  if (filterProject && !options.allProjects) {
     console.log(chalk.dim(MESSAGES.SETUP.FILTERED_BY_PROJECT(chalk.cyan(filterProject))));
     console.log(chalk.dim(`Try ${chalk.cyan(MESSAGES.SETUP.TRY_ALL_PROJECTS)}${MESSAGES.SETUP.HINT_TRY_ALL}`));
   }
