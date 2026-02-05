@@ -287,22 +287,69 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       await Promise.resolve();
     });
 
-    it('should handle ESC', async () => {
+    it('should handle ESC - clear search when focused with text', async () => {
+      mockState.isSearchFocused = true;
+      mockState.searchQuery = 'test';
+
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
       });
 
-      const _startPromise = prompt.start();
+      const startPromise = prompt.start();
       await vi.advanceTimersByTimeAsync(0);
 
       const dataHandler = dataListeners[0];
       dataHandler(Buffer.from(KEY.ESC));
 
-      expect(mockActions.handleCancel).toHaveBeenCalled();
+      expect(mockState.searchQuery).toBe('');
+      expect(mockActions.handleCancel).not.toHaveBeenCalled();
 
-      // Wait a bit before checking promise
-      await Promise.resolve();
+      prompt.stop();
+      await startPromise;
+    });
+
+    it('should handle ESC - blur search when focused but empty', async () => {
+      mockState.isSearchFocused = true;
+      mockState.searchQuery = '';
+
+      const prompt = createInteractivePrompt({
+        state: mockState,
+        actions: mockActions,
+      });
+
+      const startPromise = prompt.start();
+      await vi.advanceTimersByTimeAsync(0);
+
+      const dataHandler = dataListeners[0];
+      dataHandler(Buffer.from(KEY.ESC));
+
+      expect(mockActions.handleFocusList).toHaveBeenCalled();
+      expect(mockActions.handleCancel).not.toHaveBeenCalled();
+
+      prompt.stop();
+      await startPromise;
+    });
+
+    it('should handle ESC - do nothing when search not focused', async () => {
+      mockState.isSearchFocused = false;
+
+      const prompt = createInteractivePrompt({
+        state: mockState,
+        actions: mockActions,
+      });
+
+      const startPromise = prompt.start();
+      await vi.advanceTimersByTimeAsync(0);
+
+      const dataHandler = dataListeners[0];
+      dataHandler(Buffer.from(KEY.ESC));
+
+      expect(mockActions.handleCancel).not.toHaveBeenCalled();
+      expect(mockActions.handleFocusList).not.toHaveBeenCalled();
+
+      prompt.stop();
+      await startPromise;
     });
 
     it('should handle TAB', async () => {

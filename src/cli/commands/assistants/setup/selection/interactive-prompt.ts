@@ -128,6 +128,21 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
     options.actions.handleCancel();
   }
 
+  function handleEsc(): void {
+    const state = options.state;
+
+    if (state.isSearchFocused && state.searchQuery.length > 0) {
+      updateSearchQuery('');
+      return;
+    }
+
+    if (state.isSearchFocused) {
+      options.actions.handleFocusList();
+      render();
+      return;
+    }
+  }
+
   /**
    * Handle next panel (Tab only, not Right arrow when on pagination controls)
    */
@@ -355,7 +370,7 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
 
     const keyHandlers: Record<string, KeyHandler> = {
       [KEY.CTRL_C]: handleExit,
-      [KEY.ESC]: handleExit,
+      [KEY.ESC]: handleEsc,
       [KEY.TAB]: handleNextPanel,
       [KEY.SHIFT_TAB]: handlePrevPanel,
       [KEY.ARROW_RIGHT]: handleArrowRight,
