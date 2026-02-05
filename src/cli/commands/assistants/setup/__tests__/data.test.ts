@@ -363,57 +363,12 @@ describe('Data Fetcher', () => {
         expect.objectContaining({
           page: 0,
           minimal_response: false,
-          filters: expect.objectContaining({
-            project: ['test-project']
+          scope: 'visible_to_user',
+          filters: expect.not.objectContaining({
+            project: expect.anything()
           })
         })
       );
-    });
-
-    it('should use project from options if provided', async () => {
-      // Arrange
-      const mockResponse = {
-        data: [],
-        pagination: { total: 0, pages: 0, page: 0 }
-      };
-
-      vi.mocked(mockClient.assistants.listPaginated).mockResolvedValue(mockResponse);
-
-      const optionsWithProject = { ...mockOptions, project: 'custom-project' };
-      const fetcher = createDataFetcher({
-        config: mockConfig,
-        client: mockClient,
-        options: optionsWithProject
-      });
-
-      // Act
-      await fetcher.fetchAssistants({
-        scope: PANEL_ID.PROJECT
-      });
-
-      // Assert
-      expect(mockClient.assistants.listPaginated).toHaveBeenCalledWith(
-        expect.objectContaining({
-          filters: expect.objectContaining({
-            project: ['custom-project']
-          })
-        })
-      );
-    });
-
-    it('should throw error when no project configured', async () => {
-      // Arrange
-      const noProjectConfig = { ...mockConfig, codeMieProject: undefined } as ProviderProfile;
-      const fetcher = createDataFetcher({
-        config: noProjectConfig,
-        client: mockClient,
-        options: mockOptions
-      });
-
-      // Act & Assert
-      await expect(
-        fetcher.fetchAssistants({ scope: PANEL_ID.PROJECT })
-      ).rejects.toThrow('No project configured');
     });
 
     it('should include search query in API params', async () => {
@@ -561,8 +516,8 @@ describe('Data Fetcher', () => {
       // Assert
       expect(mockClient.assistants.listPaginated).toHaveBeenCalledWith(
         expect.objectContaining({
-          filters: expect.objectContaining({
-            project: null
+          filters: expect.not.objectContaining({
+            project: expect.anything()
           })
         })
       );

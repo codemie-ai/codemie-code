@@ -56,15 +56,8 @@ export function createDataFetcher(deps: DataFetcherDependencies): DataFetcher {
     }
 
     try {
-      const projectFilter = deps.options.project || deps.config.codeMieProject;
-
-      if (scope === PANEL_ID.PROJECT && !projectFilter) {
-        throw new Error('No project configured. Ensure codemie is configured properly');
-      }
-
       const filters: Record<string, unknown> = {
         search: searchQuery.trim(),
-        project: scope === PANEL_ID.PROJECT && projectFilter ? [projectFilter] : null,
       };
 
       if (scope === PANEL_ID.MARKETPLACE) {
@@ -75,6 +68,7 @@ export function createDataFetcher(deps: DataFetcherDependencies): DataFetcher {
         page,
         per_page: CONFIG.ITEMS_PER_PAGE,
         minimal_response: false,
+        ...(scope === PANEL_ID.PROJECT && { scope: API_SCOPE.VISIBLE_TO_USER }),
         ...(scope === PANEL_ID.MARKETPLACE && { scope: API_SCOPE.MARKETPLACE }),
         filters
       };
