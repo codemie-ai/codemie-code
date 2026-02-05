@@ -17,6 +17,7 @@ export interface ClaudeMessage {
   timestamp: string;
   cwd?: string;
   message?: {
+    id?: string;  // API-level message ID (shared by streaming chunks)
     role: 'user' | 'assistant';
     model?: string;
     content: string | ContentItem[];

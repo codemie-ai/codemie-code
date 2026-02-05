@@ -122,7 +122,7 @@ export async function installGlobal(
   options: NpmInstallOptions = {}
 ): Promise<void> {
   const packageSpec = options.version ? `${packageName}@${options.version}` : packageName;
-  const timeout = options.timeout ?? 120000; // 2 minutes default
+  const timeout = options.timeout ?? 300000; // 5 minutes default
 
   logger.info(`Installing ${packageSpec} globally...`);
 

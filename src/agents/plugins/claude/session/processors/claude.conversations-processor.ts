@@ -495,14 +495,40 @@ export class ConversationsProcessor implements SessionProcessor {
       let totalCacheCreationTokens = 0;
       let totalCacheReadTokens = 0;
 
+      // Deduplicate token counting by message.id (streaming chunks share same id)
+      // Use LAST occurrence since output_tokens increases progressively during streaming
+      // (input_tokens is same across chunks, output_tokens has final value in last chunk)
+      const messageUsageMap = new Map<string, {
+        input: number;
+        output: number;
+        cacheCreation: number;
+        cacheRead: number;
+      }>();
+
       for (const assistantMsg of assistantMessages) {
         const usage = assistantMsg.message?.usage;
         if (usage) {
-          totalInputTokens += usage.input_tokens || 0;
-          totalOutputTokens += usage.output_tokens || 0;
-          totalCacheCreationTokens += usage.cache_creation_input_tokens || 0;
-          totalCacheReadTokens += usage.cache_read_input_tokens || 0;
+          const messageId = assistantMsg.message?.id;
+          const usageData = {
+            input: usage.input_tokens || 0,
+            output: usage.output_tokens || 0,
+            cacheCreation: usage.cache_creation_input_tokens || 0,
+            cacheRead: usage.cache_read_input_tokens || 0
+          };
+
+          if (messageId) {
+            // Overwrite to keep last occurrence (has final output_tokens)
+            messageUsageMap.set(messageId, usageData);
+          }
         }
+      }
+
+      // Sum deduplicated values
+      for (const usage of messageUsageMap.values()) {
+        totalInputTokens += usage.input;
+        totalOutputTokens += usage.output;
+        totalCacheCreationTokens += usage.cacheCreation;
+        totalCacheReadTokens += usage.cacheRead;
       }
 
       for (const thought of allThoughts) {
@@ -887,6 +913,15 @@ export class ConversationsProcessor implements SessionProcessor {
         cacheRead: 0
       };
 
+      // Deduplicate token counting by message.id (streaming chunks share same id)
+      // Use LAST occurrence since output_tokens increases progressively during streaming
+      const messageUsageMap = new Map<string, {
+        input: number;
+        output: number;
+        cacheCreation: number;
+        cacheRead: number;
+      }>();
+
       for (const record of records) {
         if (record.sessionId !== sessionId) {
           logger.warn(
@@ -933,11 +968,27 @@ export class ConversationsProcessor implements SessionProcessor {
 
         const usage = record.message.usage;
         if (usage) {
-          tokenUsage.input += usage.input_tokens || 0;
-          tokenUsage.output += usage.output_tokens || 0;
-          tokenUsage.cacheCreation += usage.cache_creation_input_tokens || 0;
-          tokenUsage.cacheRead += usage.cache_read_input_tokens || 0;
+          const messageId = record.message.id;
+          const usageData = {
+            input: usage.input_tokens || 0,
+            output: usage.output_tokens || 0,
+            cacheCreation: usage.cache_creation_input_tokens || 0,
+            cacheRead: usage.cache_read_input_tokens || 0
+          };
+
+          if (messageId) {
+            // Overwrite to keep last occurrence (has final output_tokens)
+            messageUsageMap.set(messageId, usageData);
+          }
         }
+      }
+
+      // Sum deduplicated values
+      for (const usage of messageUsageMap.values()) {
+        tokenUsage.input += usage.input;
+        tokenUsage.output += usage.output;
+        tokenUsage.cacheCreation += usage.cacheCreation;
+        tokenUsage.cacheRead += usage.cacheRead;
       }
 
       for (const record of records) {

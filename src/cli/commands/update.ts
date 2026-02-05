@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { AgentRegistry } from '../../agents/registry.js';
 import { AgentAdapter } from '../../agents/core/types.js';
 import { AgentNotFoundError, getErrorMessage } from '../../utils/errors.js';
+import { logger } from '../../utils/logger.js';
 import * as npm from '../../utils/processes.js';
 import ora from 'ora';
 import chalk from 'chalk';
@@ -229,8 +230,16 @@ export function createUpdateCommand(): Command {
     .description('Update installed AI coding agents')
     .argument('[name]', 'Agent name to update (run without argument for interactive selection)')
     .option('-c, --check', 'Check for available updates without installing')
-    .action(async (name?: string, options?: { check?: boolean }) => {
+    .option('--verbose', 'Show detailed update logs for troubleshooting')
+    .action(async (name?: string, options?: { check?: boolean; verbose?: boolean }) => {
       try {
+        // Enable debug mode if --verbose flag is set
+        if (options?.verbose) {
+          process.env.CODEMIE_DEBUG = 'true';
+          logger.debug('Verbose mode enabled');
+          console.log(chalk.gray('🔍 Verbose mode enabled - showing detailed logs\n'));
+        }
+
         const checkOnly = options?.check ?? false;
 
         // Case 1: Update specific agent

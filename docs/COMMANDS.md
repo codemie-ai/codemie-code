@@ -10,6 +10,7 @@ codemie --task "task"            # Execute single task with built-in agent and e
 codemie setup                    # Interactive configuration wizard
 codemie profile <command>        # Manage provider profiles
 codemie analytics [options]      # View usage analytics
+codemie log [options]            # View and manage debug logs and sessions
 codemie workflow <command>       # Manage CI/CD workflows
 codemie list [options]           # List all available agents
 codemie install [agent]          # Install an agent
@@ -181,6 +182,95 @@ codemie analytics --from 2025-12-01 --to 2025-12-07 --export csv -o weekly-costs
 # Agent comparison
 codemie analytics --agent claude
 codemie analytics --agent gemini
+```
+
+## Log Management Commands
+
+View, filter, and manage debug logs and agent sessions.
+
+```bash
+# View recent logs
+codemie log                             # Show last 50 lines
+codemie log -n 100                      # Show last 100 lines
+codemie log -v                          # Verbose mode with session IDs
+
+# Filter logs
+codemie log --session abc-123           # Filter by session ID
+codemie log --agent claude              # Filter by agent
+codemie log --level error               # Show only errors
+codemie log --profile work              # Filter by profile
+
+# Date filtering
+codemie log --from 2026-02-01           # From specific date
+codemie log --to 2026-02-04             # Until specific date
+codemie log --last 7d                   # Last 7 days
+codemie log --last 24h                  # Last 24 hours
+codemie log --last 30m                  # Last 30 minutes
+
+# Pattern search
+codemie log --grep "error"              # Search for pattern
+codemie log --grep "sync" --last 1d     # Search in recent logs
+
+# Session management
+codemie log session <id>                # View specific session details
+codemie log session <id> -v             # Include conversation history
+codemie log list-sessions               # List all sessions
+codemie log list-sessions --agent claude --last 7d
+
+# Real-time monitoring
+codemie log follow                      # Follow logs in real-time (tail -f)
+codemie log follow --level error        # Follow only errors
+codemie log follow --agent claude       # Follow specific agent
+
+# Cleanup
+codemie log clean --dry-run             # Preview cleanup
+codemie log clean --days 10             # Keep last 10 days
+codemie log clean --days 30 --sessions  # Also clean sessions
+codemie log clean --yes                 # Skip confirmation
+
+# Export logs
+codemie log --format json -o logs.json          # Export to JSON
+codemie log --format jsonl -o logs.jsonl        # Export to JSONL
+codemie log --last 7d --format json -o week.json
+```
+
+**Log Features:**
+- Real-time log viewing with colorized output
+- Multiple filtering options (session, agent, level, date, pattern)
+- Session inspection with conversation history
+- Live log following (tail -f style)
+- Cleanup old logs and sessions
+- Export to JSON/JSONL for analysis
+- Graceful handling of missing/corrupted files
+- Local storage at `~/.codemie/logs/` and `~/.codemie/sessions/`
+
+**Log Levels:**
+- `debug` - Detailed debugging information
+- `info` - General informational messages
+- `warn` - Warning messages
+- `error` - Error messages
+
+**Example Workflows:**
+
+```bash
+# Troubleshoot recent errors
+codemie log --level error --last 1h
+
+# Investigate specific session
+codemie log --session abc-123-def -v
+
+# Monitor agent activity
+codemie log follow --agent claude --level info
+
+# Weekly log analysis
+codemie log --last 7d --format json -o weekly-logs.json
+
+# Clean old logs (keep last 10 days)
+codemie log clean --days 10 --dry-run
+codemie log clean --days 10 --yes
+
+# Search for specific issues
+codemie log --grep "timeout" --last 24h
 ```
 
 ## OpenCode Metrics Commands
@@ -543,6 +633,173 @@ codemie analytics [options]
 - Language/format statistics
 
 For detailed usage examples and filtering options, see the [Analytics Commands](#analytics-commands) section above.
+
+### `codemie log`
+
+View, filter, and manage debug logs and agent sessions.
+
+**Usage:**
+```bash
+codemie log [options]              # View recent debug logs
+codemie log <subcommand> [options] # Execute subcommand
+```
+
+**Main Command Options:**
+- `--session <id>` - Filter by session ID
+- `--agent <name>` - Filter by agent (claude, gemini, etc.)
+- `--profile <name>` - Filter by profile name
+- `--level <level>` - Filter by log level (debug, info, warn, error)
+- `--from <date>` - Filter from date (YYYY-MM-DD)
+- `--to <date>` - Filter to date (YYYY-MM-DD)
+- `--last <duration>` - Filter last duration (e.g., 7d, 24h, 30m)
+- `--grep <pattern>` - Search pattern (supports regex)
+- `-n, --lines <number>` - Number of lines to show (default: 50)
+- `-v, --verbose` - Show full details including session IDs and profiles
+- `--format <format>` - Output format (text, json, jsonl)
+- `--no-color` - Disable color output
+- `-o, --output <path>` - Write to file instead of stdout
+
+**Subcommands:**
+
+**1. `codemie log debug [options]`**
+
+View debug logs (alias for default behavior).
+
+```bash
+codemie log debug                  # Same as 'codemie log'
+codemie log debug --level error    # Show only errors
+codemie log debug --agent claude   # Claude logs only
+```
+
+**2. `codemie log session <id> [options]`**
+
+View specific session details.
+
+```bash
+codemie log session abc-123-def-456        # Basic session info
+codemie log session abc-123-def-456 -v     # Include conversation
+codemie log session abc-123 --format json  # JSON output
+```
+
+Options:
+- `-v, --verbose` - Show conversation details
+- `--format <format>` - Output format (text, json)
+- `--no-color` - Disable color output
+
+**3. `codemie log list-sessions [options]`**
+
+List all sessions with filtering and sorting.
+
+```bash
+codemie log list-sessions                  # All sessions
+codemie log list-sessions --agent claude   # Claude sessions only
+codemie log list-sessions --last 7d        # Last week
+codemie log list-sessions --sort duration  # Sort by duration
+```
+
+Options:
+- `--agent <name>` - Filter by agent
+- `--from <date>` - Filter from date
+- `--to <date>` - Filter to date
+- `--last <duration>` - Filter last duration
+- `--sort <field>` - Sort by field (time, duration, agent)
+- `--reverse` - Reverse sort order
+- `--format <format>` - Output format (text, json)
+- `--no-color` - Disable color output
+
+**4. `codemie log follow [options]`**
+
+Follow logs in real-time (tail -f style).
+
+```bash
+codemie log follow                    # Follow all logs
+codemie log follow --level error      # Follow errors only
+codemie log follow --agent claude     # Follow Claude agent
+codemie log follow --grep "timeout"   # Follow matching pattern
+```
+
+Options:
+- `--agent <name>` - Filter by agent
+- `--level <level>` - Filter by log level
+- `--grep <pattern>` - Search pattern
+- `-v, --verbose` - Show full details
+- `--no-color` - Disable color output
+
+Press Ctrl+C to stop following.
+
+**5. `codemie log clean [options]`**
+
+Clean up old logs and sessions.
+
+```bash
+codemie log clean --dry-run              # Preview what would be deleted
+codemie log clean --days 10              # Keep last 10 days
+codemie log clean --days 30 --sessions   # Also delete sessions
+codemie log clean --yes                  # Skip confirmation
+```
+
+Options:
+- `--days <number>` - Retention period in days (default: 5)
+- `--sessions` - Also delete old sessions (not just debug logs)
+- `--dry-run` - Preview without deleting
+- `--yes` - Skip confirmation prompt
+
+**Log Storage:**
+- Debug logs: `~/.codemie/logs/debug-YYYY-MM-DD.log`
+- Session data: `~/.codemie/sessions/`
+- Automatic daily rotation
+- Default retention: 5 days for logs, unlimited for sessions
+
+**Log Format:**
+
+Each log entry contains:
+- Timestamp (ISO 8601)
+- Level (DEBUG, INFO, WARN, ERROR)
+- Agent name
+- Session ID
+- Profile (optional)
+- Message
+
+Example:
+```
+[2026-02-04T10:30:45.123Z] [INFO] [claude] [abc-123] [work] Session started
+```
+
+**Examples:**
+
+```bash
+# Quick troubleshooting
+codemie log --level error --last 1h
+
+# Detailed session investigation
+codemie log session abc-123-def-456 -v
+
+# Monitor specific agent
+codemie log follow --agent claude --level info
+
+# Export recent logs for analysis
+codemie log --last 7d --format json -o weekly.json
+
+# Clean old data (preview first)
+codemie log clean --days 10 --dry-run
+codemie log clean --days 10 --yes
+
+# Search for specific issues
+codemie log --grep "connection refused" --last 24h
+
+# Verbose output with all context
+codemie log -v -n 100 --last 1d
+
+# List recent sessions sorted by duration
+codemie log list-sessions --last 7d --sort duration --reverse
+```
+
+**Tips:**
+- Use `--dry-run` before cleaning to preview deletions
+- Combine filters for precise searches (`--agent --level --last`)
+- Export to JSON for programmatic analysis or bug reports
+- Use `follow` mode for real-time monitoring during development
+- Session data is never auto-deleted (only via explicit `clean --sessions`)
 
 ### `codemie version`
 

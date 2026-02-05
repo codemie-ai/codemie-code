@@ -25,7 +25,7 @@ import {
  *
  * **UPDATE THIS WHEN BUMPING CLAUDE VERSION**
  */
-const CLAUDE_SUPPORTED_VERSION = '2.1.25';
+const CLAUDE_SUPPORTED_VERSION = '2.1.29';
 
 /**
  * Claude Code installer URLs
@@ -289,7 +289,7 @@ export class ClaudePlugin extends BaseAgentAdapter {
       metadata.installerUrls,
       resolvedVersion,
       {
-        timeout: 120000, // 2 minute timeout
+        timeout: 300000, // 5 minute timeout
         verifyCommand: metadata.cliCommand || undefined,
         installFlags: ['--force'], // Force installation to overwrite existing version
       },

@@ -10,10 +10,6 @@
 
 <!-- Optional: Show before/after examples for user-facing changes -->
 
-### Benefits
-- 🎯 [Benefit 1]
-- 🔒 [Benefit 2]
-
 ## Checklist
 
 - [ ] Self-reviewed

@@ -1,7 +1,7 @@
 import { readFile } from 'fs/promises';
 import { join } from 'path';
 import fg from 'fast-glob';
-import { getCodemiePath } from '../../utils/paths.js';
+import { getCodemiePath } from '../../../../utils/paths.js';
 import { parseFrontmatter, FrontmatterParseError } from '../utils/frontmatter.js';
 import { SkillMetadataSchema } from './types.js';
 import type {

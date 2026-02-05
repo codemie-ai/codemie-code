@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { AgentRegistry } from '../../agents/registry.js';
 import { AgentInstallationError, getErrorMessage } from '../../utils/errors.js';
+import { logger } from '../../utils/logger.js';
 import ora from 'ora';
 import chalk from 'chalk';
 
@@ -12,7 +13,14 @@ export function createInstallCommand(): Command {
     .argument('[name]', 'Agent or framework name to install (run without argument to see available)')
     .argument('[version]', 'Optional: specific version to install (e.g., 2.0.30)')
     .option('--supported', 'Install the latest supported version tested with CodeMie')
-    .action(async (name?: string, version?: string, options?: { supported?: boolean }) => {
+    .option('--verbose', 'Show detailed installation logs for troubleshooting')
+    .action(async (name?: string, version?: string, options?: { supported?: boolean; verbose?: boolean }) => {
+      // Enable debug mode if --verbose flag is set
+      if (options?.verbose) {
+        process.env.CODEMIE_DEBUG = 'true';
+        logger.debug('Verbose mode enabled');
+        console.log(chalk.gray('🔍 Verbose mode enabled - showing detailed logs\n'));
+      }
       try {
         // If no name provided, show available agents and frameworks
         if (!name) {

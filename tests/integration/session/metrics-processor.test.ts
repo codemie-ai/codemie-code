@@ -146,7 +146,7 @@ describe('MetricsProcessor - Full Pipeline Integration Test', () => {
   describe('Initial State Validation', () => {
     it('should have written deltas from adapter', () => {
       expect(initialDeltas.length).toBeGreaterThan(0);
-      expect(initialDeltas.length).toBe(12); // Golden dataset: 10 main + 2 agent files
+      expect(initialDeltas.length).toBe(9); // Golden dataset: 7 main (with streaming chunk deduplication) + 2 agent files
     });
 
     it('should have all deltas as pending initially', () => {
@@ -167,7 +167,7 @@ describe('MetricsProcessor - Full Pipeline Integration Test', () => {
     });
 
     it('should report correct number of deltas processed', () => {
-      expect(processingResult.metadata.deltasProcessed).toBe(12);
+      expect(processingResult.metadata.deltasProcessed).toBe(9);
     });
 
     it('should aggregate into branch-specific metrics', () => {

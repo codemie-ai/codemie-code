@@ -7,7 +7,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { Skill } from '../core/types.js';
-import { logger } from '../../utils/logger.js';
+import { logger } from '../../../../utils/logger.js';
 
 /**
  * Skill with file inventory

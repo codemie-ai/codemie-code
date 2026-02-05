@@ -176,31 +176,54 @@ export class MetricsProcessor implements SessionProcessor {
       }
     }
 
-    // Extract deltas from assistant messages
+    // Group messages by message.id to handle streaming chunks
+    // Claude streaming creates multiple JSONL entries (thinking, text, tool_use)
+    // for the same API response, each with the same message.id and usage
+    const messageGroups = new Map<string, any[]>();
+
     for (const msg of messages) {
-      if (!msg.uuid || processedIds.has(msg.uuid)) {
-        continue;
+      if (msg.message?.role === 'assistant' && msg.message?.id) {
+        const messageId = msg.message.id;
+        if (!messageGroups.has(messageId)) {
+          messageGroups.set(messageId, []);
+        }
+        messageGroups.get(messageId)!.push(msg);
+      }
+    }
+
+    // Helper function to process a message or group of messages into a delta
+    const processDelta = (messages: any[], trackingId: string) => {
+      // Skip if already processed
+      if (processedIds.has(trackingId)) {
+        return;
       }
 
-      if (msg.message?.role !== 'assistant' || !msg.message?.usage) {
-        continue;
+      // Find message with usage
+      const msgWithUsage = messages.find(m => m.message?.usage);
+      if (!msgWithUsage) {
+        return;
       }
 
+      // Check for unresolved tools across all messages
       let hasUnresolvedTools = false;
-      if (Array.isArray(msg.message.content)) {
-        for (const block of msg.message.content) {
-          if (block.type === 'tool_use' && !toolResultsMap.has(block.id)) {
-            hasUnresolvedTools = true;
-            break;
+      for (const msg of messages) {
+        if (Array.isArray(msg.message?.content)) {
+          for (const block of msg.message.content) {
+            if (block.type === 'tool_use' && !toolResultsMap.has(block.id)) {
+              hasUnresolvedTools = true;
+              break;
+            }
           }
         }
+        if (hasUnresolvedTools) break;
       }
 
       if (hasUnresolvedTools) {
-        continue;
+        return;
       }
 
-      const usage = msg.message.usage;
+      // Extract tokens
+      const usage = msgWithUsage.message.usage;
       const tokens = {
         input: usage.input_tokens || 0,
         output: usage.output_tokens || 0,
@@ -208,71 +231,77 @@ export class MetricsProcessor implements SessionProcessor {
         cacheRead: usage.cache_read_input_tokens || undefined
       };
 
+      // Aggregate tools and file operations
       const tools: Record<string, number> = {};
       const toolStatus: Record<string, { success: number; failure: number }> = {};
       const fileOperations: Array<{ type: string; path?: string; linesAdded?: number; linesRemoved?: number }> = [];
 
-      if (Array.isArray(msg.message.content)) {
-        for (const block of msg.message.content) {
-          if (block.type === 'tool_use' && toolResultsMap.has(block.id)) {
-            const toolName = block.name;
-            tools[toolName] = (tools[toolName] || 0) + 1;
+      for (const msg of messages) {
+        if (Array.isArray(msg.message?.content)) {
+          for (const block of msg.message.content) {
+            if (block.type === 'tool_use' && toolResultsMap.has(block.id)) {
+              const toolName = block.name;
+              tools[toolName] = (tools[toolName] || 0) + 1;
 
-            if (!toolStatus[toolName]) {
-              toolStatus[toolName] = { success: 0, failure: 0 };
-            }
+              if (!toolStatus[toolName]) {
+                toolStatus[toolName] = { success: 0, failure: 0 };
+              }
 
-            const toolResult = toolResultsMap.get(block.id)!;
-            if (toolResult.isError) {
-              toolStatus[toolName].failure++;
-            } else {
-              toolStatus[toolName].success++;
+              const toolResult = toolResultsMap.get(block.id)!;
+              if (toolResult.isError) {
+                toolStatus[toolName].failure++;
+              } else {
+                toolStatus[toolName].success++;
 
-              // Extract file operations for successful tool calls
-              const toolUseResult = toolUseResultMap.get(block.id);
-              const fileOp = this.extractFileOperation(toolName, block.input, toolUseResult);
-              if (fileOp) {
-                fileOperations.push(fileOp);
+                // Extract file operations
+                const toolUseResult = toolUseResultMap.get(block.id);
+                const fileOp = this.extractFileOperation(toolName, block.input, toolUseResult);
+                if (fileOp) {
+                  fileOperations.push(fileOp);
+                }
               }
             }
           }
         }
       }
 
+      const recordId = messages[0].uuid;
+
       const delta: Omit<MetricDelta, 'syncStatus' | 'syncAttempts'> = {
-        recordId: msg.uuid,
+        recordId,
         sessionId,
-        agentSessionId: msg.sessionId || '',
-        timestamp: msg.timestamp || new Date().toISOString(),
-        gitBranch: msg.gitBranch,
+        agentSessionId: msgWithUsage.sessionId || '',
+        timestamp: msgWithUsage.timestamp || new Date().toISOString(),
+        gitBranch: msgWithUsage.gitBranch,
         tokens,
         ...(Object.keys(tools).length > 0 && { tools }),
         ...(Object.keys(toolStatus).length > 0 && { toolStatus }),
-        ...(msg.message?.model && { models: [msg.message.model] })
+        ...(msgWithUsage.message?.model && { models: [msgWithUsage.message.model] })
       };
 
-      // Attach file operations if any for THIS delta
       if (fileOperations.length > 0) {
         (delta as any).fileOperations = fileOperations;
       }
 
-      // Attach user prompts to FIRST delta GLOBALLY (across all calls)
-      // Check if we haven't attached any userPrompts yet
+      // Attach user prompts to first delta
       if (deltas.length === 0 && attachedUserPrompts.size === 0 && userPromptsMap.size > 0) {
         const prompts: Array<{ count: number; text: string }> = [];
-
         for (const [uuid, text] of userPromptsMap.entries()) {
           prompts.push({ count: 1, text });
           attachedUserPrompts.add(uuid);
         }
-
         if (prompts.length > 0) {
           (delta as any).userPrompts = prompts;
         }
       }
 
       deltas.push(delta);
-      processedIds.add(msg.uuid);
+      processedIds.add(trackingId);
+    };
+
+    // Process grouped messages (streaming chunks with same message.id)
+    for (const [messageId, groupedMessages] of messageGroups.entries()) {
+      processDelta(groupedMessages, messageId);
     }
 
     return deltas;

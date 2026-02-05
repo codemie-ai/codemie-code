@@ -1,137 +1,140 @@
 ---
 name: codemie-pr
-description: Push changes and create PR using GitHub template. Use ONLY when user explicitly says "commit changes", "create PR", "make a PR", "push and create pull request", or similar explicit request. NEVER run proactively.
+description: >-
+  Manages git commits, pushes, and GitHub PR creation following conventional commits.
+  Use when user says "commit changes", "push changes", "create PR", "make a pull request",
+  or similar git workflow requests. Understands current branch state and avoids duplicate PRs.
 ---
 
-# CodeMie Pull Request Creator
+# CodeMie Pull Request Workflow
 
-**🚨 CRITICAL CONSTRAINT**: ONLY execute when user explicitly requests PR creation or commit. NEVER run proactively.
+## Instructions
 
-## Reference Documentation
+### 1. Check Current State
 
-Complete git workflow details: `.codemie/guides/standards/git-workflow.md`
+Always start by checking git status:
 
-## User Request Scenarios
+```bash
+# Current branch
+git branch --show-current
 
-### Scenario 1: Commit Only
-User says: "commit the changes", "commit these files", "make a commit"
+# Uncommitted changes
+git status --short
 
-**Action**: Create commit, do NOT push or create PR
+# Existing PR for current branch
+gh pr list --head $(git branch --show-current) 2>/dev/null || echo "No PR"
+```
+
+### 2. Handle Based on User Request
+
+**"commit changes"** → Commit only:
 ```bash
 git add .
 git commit -m "<type>(<scope>): <description>"
 ```
 
-### Scenario 2: Push Changes
-User says: "push changes", "push to remote"
-
-**Action**: Push to origin, do NOT create PR
+**"push changes"** → Push only:
 ```bash
 git push origin $(git branch --show-current)
 ```
 
-### Scenario 3: Create PR
-User says: "create PR", "make a pull request"
+**"create PR"** → Full workflow below.
 
-**Action**: Check for existing PR, then push and create PR if needed
+### 3. Create PR Workflow
 
-## Pre-flight Checks
+#### If on `main` branch:
+1. Create feature branch first: `git checkout -b <type>/<description>`
+2. Then proceed with commit/push/PR
 
+#### If PR already exists:
 ```bash
-# 1. Current branch (must NOT be main)
-git branch --show-current
-
-# 2. Check for existing PR
-gh pr list --head $(git branch --show-current) 2>/dev/null || echo "No PR found"
-
-# 3. Uncommitted changes
-git status --short
-
-# 4. Unpushed commits
-git log origin/main..HEAD --oneline
-
-# 5. Check gh CLI availability
-command -v gh >/dev/null 2>&1 && echo "available" || echo "not available"
+git push origin $(git branch --show-current)
+# Inform: "Changes pushed to existing PR: <url>"
 ```
 
-## Branch & Commit Format
-
-**Branch**: `<type>/<description>` (e.g., `feat/add-feature`, `fix/bug-name`)
-
-**Commit**: `<type>(<scope>): <subject>` (e.g., `feat(agents): add new feature`)
-
-**Types**: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
-
-See `.codemie/guides/standards/git-workflow.md` for complete details.
-
-## PR Creation Flow
-
-### If PR Already Exists:
+#### If no PR exists:
 ```bash
-# Just push changes
+# Push changes
 git push origin $(git branch --show-current)
 
-# Inform user
-echo "PR already exists: <PR_URL>"
-echo "Changes pushed to existing PR."
-```
-
-### If No PR Exists:
-
-#### Option A: With `gh` CLI
-```bash
-# 1. Push changes
-git push origin $(git branch --show-current)
-
-# 2. Create PR
+# Create PR - read .github/PULL_REQUEST_TEMPLATE.md for structure
 gh pr create \
   --title "<type>(<scope>): brief description" \
   --body "$(cat <<'EOF'
-## Summary
-[1-2 sentence summary based on commits]
-
-## Changes
-### 🔧 [Category]
-- ✅ [Change from commits]
-
-## Testing
-- [ ] Tests pass
-- [ ] Linter passes
-- [ ] Manual testing performed
-
-## Checklist
-- [x] Self-reviewed
-- [ ] Manual testing performed
-- [ ] Documentation updated (if needed)
-- [ ] No breaking changes (or clearly documented)
+[Fill template from .github/PULL_REQUEST_TEMPLATE.md]
 EOF
 )"
 ```
 
-#### Option B: Without `gh` CLI
-```bash
-# 1. Push changes
-git push origin $(git branch --show-current)
+**Template location**: `.github/PULL_REQUEST_TEMPLATE.md`
 
-# 2. Display manual PR URL
-echo "Create PR at:"
-echo "https://github.com/codemie-ai/codemie-code/compare/main...$(git branch --show-current)?expand=1"
+Read the template file and fill all sections based on commits and changes.
+
+## Commit Format
+
+**Pattern**: `<type>(<scope>): <subject>`
+
+**Types**:
+- `feat`: New feature
+- `fix`: Bug fix
+- `docs`: Documentation
+- `refactor`: Code refactoring
+- `test`: Tests
+- `chore`: Maintenance
+
+**Scopes** (optional): `cli`, `agents`, `providers`, `config`, `workflows`, `utils`, `deps`
+
+**Examples**:
+```bash
+git commit -m "feat(agents): add Gemini plugin support"
+git commit -m "fix: resolve npm timeout issues"
+git commit -m "docs(readme): update installation steps"
 ```
 
-Then provide formatted title and body following `.github/PULL_REQUEST_TEMPLATE.md`.
+## Branch Format
 
-## Category Emojis
+**Pattern**: `<type>/<description>`
 
-- 🔧 Bug Fixes
-- ✨ Features
-- 📝 Documentation
-- 🧪 Testing
-- ♻️ Refactoring
+**Examples**:
+- `feat/add-gemini-support`
+- `fix/npm-install-error`
+- `docs/update-readme`
 
-## Important Notes
+## Troubleshooting
 
-- **Check for existing PR** before creating new one
-- **Match user intent**: commit-only vs push vs create PR
-- **Single message execution**: All tool calls in one message
-- **Reference template**: Use `.github/PULL_REQUEST_TEMPLATE.md` structure
-- **Reference workflow**: See `.codemie/guides/standards/git-workflow.md`
+### Error: "gh: command not found"
+**Solution**: Create PR manually at:
+```
+https://github.com/codemie-ai/codemie-code/compare/main...<branch>?expand=1
+```
+Use structure from `.github/PULL_REQUEST_TEMPLATE.md` for PR body.
+
+### Error: Already on main branch
+**Solution**: Create feature branch first:
+```bash
+git checkout -b <type>/<short-description>
+```
+
+### Error: No changes to commit
+**Solution**: Check `git status` - nothing to commit or changes already staged.
+
+### PR already exists
+**Action**: Just push updates to existing PR, don't create new one.
+
+## Examples
+
+**User**: "commit the auth changes"
+```bash
+git add .
+git commit -m "feat(auth): add OAuth2 support"
+```
+
+**User**: "push and create PR"
+1. Check for existing PR
+2. If none: Read `.github/PULL_REQUEST_TEMPLATE.md`, fill sections, create PR
+3. If exists: Push to existing PR
+
+**User**: "create PR for the bug fix"
+1. Verify not on main
+2. Push changes
+3. Read template, create PR with `fix(...)` title
