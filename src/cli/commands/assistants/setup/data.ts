@@ -43,9 +43,14 @@ export function createDataFetcher(deps: DataFetcherDependencies): DataFetcher {
     logger.debug('[AssistantSelection] Fetching assistants', { scope, searchQuery, page });
 
     if (scope === PANEL_ID.REGISTERED) {
-      const data = fetchRegisteredFromConfig(searchQuery);
-      const total = data.length;
+      const allData = fetchRegisteredFromConfig(searchQuery);
+      const total = allData.length;
       const pages = Math.ceil(total / CONFIG.ITEMS_PER_PAGE);
+
+      const startIndex = page * CONFIG.ITEMS_PER_PAGE;
+      const endIndex = startIndex + CONFIG.ITEMS_PER_PAGE;
+      const data = allData.slice(startIndex, endIndex);
+
       logger.debug('[AssistantSelection] Fetched registered assistants', { count: data.length, total, pages });
       return { data, total, pages };
     }
@@ -68,6 +73,7 @@ export function createDataFetcher(deps: DataFetcherDependencies): DataFetcher {
 
       const apiParams: AssistantListParams = {
         page,
+        per_page: CONFIG.ITEMS_PER_PAGE,
         minimal_response: false,
         ...(scope === PANEL_ID.MARKETPLACE && { scope: API_SCOPE.MARKETPLACE }),
         filters

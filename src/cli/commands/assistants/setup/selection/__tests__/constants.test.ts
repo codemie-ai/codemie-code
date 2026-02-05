@@ -123,11 +123,16 @@ describe('Selection Constants - constants.ts', () => {
     });
 
     it('should define instruction text', () => {
-      expect(TEXT.INSTRUCTIONS).toBe('↑↓: Navigate • Space: Select • Enter: Done • Esc: Cancel');
+      expect(TEXT.INSTRUCTIONS).toBe('↑↓: Navigate • Space: Select • Tab: Buttons • Enter: Confirm');
     });
 
     it('should define pagination instruction text', () => {
-      expect(TEXT.INSTRUCTIONS_WITH_PAGINATION).toBe('↑↓: Navigate • PgUp/PgDn: Page • Space: Select • Enter: Done • Esc: Cancel');
+      expect(TEXT.INSTRUCTIONS_WITH_PAGINATION).toBe('↑↓: Navigate • PgUp/PgDn: Page • Space: Select • Tab: Buttons • Enter: Confirm');
+    });
+
+    it('should define button text', () => {
+      expect(TEXT.CONTINUE_BUTTON).toBe('Continue');
+      expect(TEXT.CANCEL_BUTTON).toBe('Cancel');
     });
 
     it('should define no assistants message', () => {
@@ -141,7 +146,7 @@ describe('Selection Constants - constants.ts', () => {
 
   describe('CONFIG', () => {
     it('should define items per page', () => {
-      expect(CONFIG.ITEMS_PER_PAGE).toBe(10);
+      expect(CONFIG.ITEMS_PER_PAGE).toBe(5);
     });
 
     it('should define fetch timeout', () => {

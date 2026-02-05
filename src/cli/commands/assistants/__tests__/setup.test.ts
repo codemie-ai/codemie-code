@@ -4,7 +4,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createAssistantsSetupCommand } from '@/cli/commands/assistants/setup/index.js';
-import { COMMAND_NAMES, MESSAGES } from '@/cli/commands/assistants/constants.js';
+import { MESSAGES } from '@/cli/commands/assistants/constants.js';
 
 describe('Assistants Setup Command', () => {
   describe('createAssistantsSetupCommand', () => {
@@ -15,7 +15,7 @@ describe('Assistants Setup Command', () => {
     });
 
     it('should create a command with correct name', () => {
-      expect(command.name()).toBe(COMMAND_NAMES.SETUP);
+      expect(command.name()).toBe('setup');
     });
 
     it('should have correct description', () => {
@@ -164,11 +164,10 @@ describe('Assistants Setup Command', () => {
     });
   });
 
-  describe('Command Name Constant', () => {
-    it('should use COMMAND_NAMES.SETUP constant', () => {
+  describe('Command Name', () => {
+    it('should have name "setup"', () => {
       const command = createAssistantsSetupCommand();
-      expect(command.name()).toBe(COMMAND_NAMES.SETUP);
-      expect(COMMAND_NAMES.SETUP).toBe('setup');
+      expect(command.name()).toBe('setup');
     });
   });
 });

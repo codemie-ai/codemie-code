@@ -5,7 +5,7 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createAssistantsSetupCommand } from '../index.js';
-import { COMMAND_NAMES, MESSAGES } from '@/cli/commands/assistants/constants.js';
+import { MESSAGES } from '@/cli/commands/assistants/constants.js';
 
 describe('Assistants Setup Command - index.ts', () => {
 	describe('createAssistantsSetupCommand', () => {
@@ -16,7 +16,7 @@ describe('Assistants Setup Command - index.ts', () => {
 		});
 
 		it('should create a command with correct name', () => {
-			expect(command.name()).toBe(COMMAND_NAMES.SETUP);
+			expect(command.name()).toBe('setup');
 		});
 
 		it('should have correct description', () => {
@@ -135,10 +135,9 @@ describe('Assistants Setup Command - index.ts', () => {
 	});
 
 	describe('Command Structure', () => {
-		it('should use COMMAND_NAMES.SETUP constant', () => {
+		it('should have name "setup"', () => {
 			const command = createAssistantsSetupCommand();
-			expect(command.name()).toBe(COMMAND_NAMES.SETUP);
-			expect(COMMAND_NAMES.SETUP).toBe('setup');
+			expect(command.name()).toBe('setup');
 		});
 
 		it('should have consistent option descriptions from MESSAGES', () => {
@@ -216,7 +215,7 @@ describe('Assistants Setup Command - index.ts', () => {
 	describe('Integration with Constants', () => {
 		it('should use command name from constants', () => {
 			const command = createAssistantsSetupCommand();
-			expect(command.name()).toBe(COMMAND_NAMES.SETUP);
+			expect(command.name()).toBe('setup');
 		});
 
 		it('should use description from messages', () => {

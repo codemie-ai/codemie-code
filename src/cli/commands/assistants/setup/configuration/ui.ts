@@ -55,7 +55,7 @@ function buildAssistantLine(
 	isCursor: boolean
 ): string {
 	const cursor = isCursor ? chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b)('› ') : '  ';
-	const name = isCursor ? chalk.bold(registration.assistant.name) : chalk.dim(registration.assistant.name);
+	const name = isCursor ? chalk.bold(registration.assistant.name) : chalk.white(registration.assistant.name);
 	const badge = registration.isAlreadyRegistered ? chalk.dim(' (Already registered)') : '';
 	const modeSwitch = buildModeSwitch(registration.mode, isCursor);
 

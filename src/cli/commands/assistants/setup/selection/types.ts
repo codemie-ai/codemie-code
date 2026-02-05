@@ -1,6 +1,8 @@
 import type { Assistant, AssistantBase } from 'codemie-sdk';
 import type { PanelId, PaginationControl } from './constants.js';
 
+export type ButtonType = 'continue' | 'cancel';
+
 export interface SelectionState {
   panels: PanelState[];
   activePanelId: PanelId;
@@ -9,6 +11,8 @@ export interface SelectionState {
   registeredIds: Set<string>;
   isSearchFocused: boolean;
   isPaginationFocused: PaginationControl | null;
+  isButtonsFocused: boolean;
+  focusedButton: ButtonType;
 }
 
 export interface PanelState {

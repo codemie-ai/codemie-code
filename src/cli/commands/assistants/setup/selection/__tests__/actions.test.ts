@@ -78,6 +78,8 @@ describe('Selection Actions - actions.ts', () => {
       registeredIds: new Set<string>(),
       isSearchFocused: false,
       isPaginationFocused: null,
+      isButtonsFocused: false,
+      focusedButton: 'continue',
     };
 
     // Setup mock fetcher
@@ -276,13 +278,14 @@ describe('Selection Actions - actions.ts', () => {
       expect(mockPrompt!.setCursorIndex).toHaveBeenCalledWith(0);
     });
 
-    it('should not go beyond max index when moving down', () => {
+    it('should move to buttons when at max index and moving down', () => {
       const maxIndex = mockState.panels[0].filteredData.length - 1;
       mockPrompt!.getCursorIndex = vi.fn().mockReturnValue(maxIndex);
 
       handlers.handleCursorMove('down');
 
-      expect(mockPrompt!.setCursorIndex).toHaveBeenCalledWith(maxIndex);
+      expect(mockState.isButtonsFocused).toBe(true);
+      expect(mockState.focusedButton).toBe('continue');
     });
 
     it('should move to pagination controls when at bottom', () => {

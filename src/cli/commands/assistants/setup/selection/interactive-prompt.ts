@@ -134,6 +134,13 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
   function handleNextPanel(): void {
     const state = options.state;
 
+    // If on buttons, cycle back to list
+    if (state.isButtonsFocused) {
+      options.actions.handleButtonToggle();
+      render();
+      return;
+    }
+
     cursorIndex = 0;
     state.isPaginationFocused = null;
     options.actions.handlePanelSwitch('next');
@@ -146,6 +153,13 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
   function handlePrevPanel(): void {
     const state = options.state;
 
+    // If on buttons, cycle back to list
+    if (state.isButtonsFocused) {
+      options.actions.handleButtonToggle();
+      render();
+      return;
+    }
+
     cursorIndex = 0;
     state.isPaginationFocused = null;
     options.actions.handlePanelSwitch('prev');
@@ -154,6 +168,13 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
 
   function handleArrowRight(): void {
     const state = options.state;
+
+    // If buttons are focused, switch between them
+    if (state.isButtonsFocused) {
+      options.actions.handleButtonSwitch('right');
+      render();
+      return;
+    }
 
     if (state.isPaginationFocused === PAGINATION_CONTROL.PREV) {
       state.isPaginationFocused = PAGINATION_CONTROL.NEXT;
@@ -168,6 +189,13 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
 
   function handleArrowLeft(): void {
     const state = options.state;
+
+    // If buttons are focused, switch between them
+    if (state.isButtonsFocused) {
+      options.actions.handleButtonSwitch('left');
+      render();
+      return;
+    }
 
     if (state.isPaginationFocused === PAGINATION_CONTROL.NEXT) {
       state.isPaginationFocused = PAGINATION_CONTROL.PREV;

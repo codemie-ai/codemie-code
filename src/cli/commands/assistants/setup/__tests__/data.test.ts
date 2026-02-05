@@ -260,13 +260,69 @@ describe('Data Fetcher', () => {
 
       // Act
       const result = await fetcher.fetchAssistants({
-        scope: PANEL_ID.REGISTERED
+        scope: PANEL_ID.REGISTERED,
+        page: 0
       });
 
-      // Assert
-      expect(result.data).toHaveLength(25);
+      // Assert - page 0 should return first 5 items (ITEMS_PER_PAGE = 5)
+      expect(result.data).toHaveLength(5);
       expect(result.total).toBe(25);
-      expect(result.pages).toBe(3); // Math.ceil(25 / 10)
+      expect(result.pages).toBe(5); // Math.ceil(25 / 5)
+    });
+
+    it('should paginate registered assistants correctly across pages', async () => {
+      // Arrange - Create 12 assistants (should result in 3 pages with 5 per page)
+      const assistants = Array.from({ length: 12 }, (_, i) => ({
+        id: `asst-${i}`,
+        name: `Assistant ${i}`,
+        description: `Description ${i}`,
+        slug: `assistant-${i}`,
+        project: 'test-project'
+      }));
+
+      const configWithAssistants = {
+        ...mockConfig,
+        codemieAssistants: assistants
+      } as ProviderProfile;
+
+      const fetcher = createDataFetcher({
+        config: configWithAssistants,
+        client: mockClient,
+        options: mockOptions
+      });
+
+      // Act & Assert - Page 0 (first 5 items)
+      const page0 = await fetcher.fetchAssistants({
+        scope: PANEL_ID.REGISTERED,
+        page: 0
+      });
+      expect(page0.data).toHaveLength(5);
+      expect(page0.data[0].id).toBe('asst-0');
+      expect(page0.data[4].id).toBe('asst-4');
+      expect(page0.total).toBe(12);
+      expect(page0.pages).toBe(3); // Math.ceil(12 / 5)
+
+      // Act & Assert - Page 1 (items 5-9)
+      const page1 = await fetcher.fetchAssistants({
+        scope: PANEL_ID.REGISTERED,
+        page: 1
+      });
+      expect(page1.data).toHaveLength(5);
+      expect(page1.data[0].id).toBe('asst-5');
+      expect(page1.data[4].id).toBe('asst-9');
+      expect(page1.total).toBe(12);
+      expect(page1.pages).toBe(3);
+
+      // Act & Assert - Page 2 (last 2 items)
+      const page2 = await fetcher.fetchAssistants({
+        scope: PANEL_ID.REGISTERED,
+        page: 2
+      });
+      expect(page2.data).toHaveLength(2);
+      expect(page2.data[0].id).toBe('asst-10');
+      expect(page2.data[1].id).toBe('asst-11');
+      expect(page2.total).toBe(12);
+      expect(page2.pages).toBe(3);
     });
   });
 

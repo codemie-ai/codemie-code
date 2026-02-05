@@ -5,8 +5,9 @@
  */
 
 import type { CodeMieClient } from 'codemie-sdk';
-import type { ActionType } from '@/cli/commands/assistants/constants.js';
 import { ACTIONS } from '@/cli/commands/assistants/constants.js';
+
+type ActionType = typeof ACTIONS.UPDATE | typeof ACTIONS.CANCEL;
 import type { ProviderProfile } from '@/env/types.js';
 import type { SetupCommandOptions } from '../index.js';
 import type { SelectionState } from './types.js';
@@ -62,7 +63,9 @@ function initializeState(registeredIds: Set<string>): SelectionState {
     selectedIds: new Set(registeredIds),
     registeredIds: registeredIds,
     isSearchFocused: false,
-    isPaginationFocused: null
+    isPaginationFocused: null,
+    isButtonsFocused: false,
+    focusedButton: 'continue'
   };
 }
 

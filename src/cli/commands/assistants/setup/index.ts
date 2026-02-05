@@ -11,7 +11,7 @@ import { logger } from '@/utils/logger.js';
 import { ConfigLoader } from '@/utils/config.js';
 import { createErrorContext, formatErrorForUser } from '@/utils/errors.js';
 import type { CodemieAssistant } from '@/env/types.js';
-import { MESSAGES, COMMAND_NAMES, ACTIONS } from '@/cli/commands/assistants/constants.js';
+import { MESSAGES, ACTIONS } from '@/cli/commands/assistants/constants.js';
 import { getAuthenticatedClient } from '@/utils/auth.js';
 import { promptAssistantSelection } from '@/cli/commands/assistants/setup/selection/index.js';
 import { determineChanges, registerAssistant, unregisterAssistant } from '@/cli/commands/assistants/setup/helpers.js';
@@ -39,7 +39,7 @@ interface ApplyChangesResult {
  * Create assistants setup command
  */
 export function createAssistantsSetupCommand(): Command {
-  const command = new Command(COMMAND_NAMES.SETUP);
+  const command = new Command('setup');
 
   command
     .description(MESSAGES.SETUP.COMMAND_DESCRIPTION)
@@ -108,21 +108,22 @@ async function setupAssistants(options: SetupCommandOptions): Promise<void> {
   const fetcher = createDataFetcher({ config, client, options });
   const selectedAssistants = await fetcher.fetchAssistantsByIds(selectedIds, []);
 
-  if (selectedAssistants.length === 0) {
-    console.log(chalk.yellow(MESSAGES.SETUP.NO_CHANGES_TO_APPLY));
-    return;
-  }
+  // Configure registration modes (skip if no assistants selected)
+  let registrationModes = new Map<string, RegistrationMode>();
 
-  // Configure registration modes
-  const { registrationModes, action: configAction } = await promptConfigurationOptions(
-    selectedAssistants as Assistant[],
-    registeredIds,
-    registeredAssistants
-  );
+  if (selectedAssistants.length > 0) {
+    const { registrationModes: modes, action: configAction } = await promptConfigurationOptions(
+      selectedAssistants as Assistant[],
+      registeredIds,
+      registeredAssistants
+    );
 
-  if (configAction === ACTION_TYPE.CANCEL) {
-    console.log(chalk.dim(MESSAGES.SETUP.NO_CHANGES_MADE));
-    return;
+    if (configAction === ACTION_TYPE.CANCEL) {
+      console.log(chalk.dim(MESSAGES.SETUP.NO_CHANGES_MADE));
+      return;
+    }
+
+    registrationModes = modes;
   }
 
   // Apply changes and get summary data

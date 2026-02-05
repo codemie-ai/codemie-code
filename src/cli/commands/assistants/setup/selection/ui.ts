@@ -24,6 +24,7 @@ export function renderUI(state: SelectionState, cursorIndex: number): string {
   output += buildSearchInput(state.searchQuery, state.isSearchFocused);
   output += buildAssistantsList(activePanel, state.selectedIds, state.isSearchFocused, cursorIndex, state.isPaginationFocused);
   output += buildPaginationControls(activePanel, state.isPaginationFocused, state.isSearchFocused);
+  output += buildButtons(state);
   output += buildInstructions(activePanel);
 
   return output;
@@ -209,6 +210,24 @@ function buildPaginationControls(
 
   const label = chalk.dim('Switch page:');
   return `${label} ${prevCursor}${prevText}    ${nextCursor}${nextText}\n\n`;
+}
+
+/**
+ * Build buttons (Continue / Cancel)
+ */
+function buildButtons(state: SelectionState): string {
+  const { isButtonsFocused, focusedButton, isSearchFocused, isPaginationFocused } = state;
+  const buttonsActive = isButtonsFocused && !isSearchFocused && isPaginationFocused === null;
+
+  const continueButton = buttonsActive && focusedButton === 'continue'
+    ? chalk.bgRgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b).black(` ${TEXT.CONTINUE_BUTTON} `)
+    : chalk.dim(`[${TEXT.CONTINUE_BUTTON}]`);
+
+  const cancelButton = buttonsActive && focusedButton === 'cancel'
+    ? chalk.bgRgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b).black(` ${TEXT.CANCEL_BUTTON} `)
+    : chalk.dim(`[${TEXT.CANCEL_BUTTON}]`);
+
+  return `  ${continueButton}  ${cancelButton}\n\n`;
 }
 
 /**

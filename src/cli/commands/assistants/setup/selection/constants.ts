@@ -62,15 +62,17 @@ export const TEXT = {
   LABEL: 'Assistants',
   TAB_HINT: '(←/→, tab/shift+tab to cycle)',
   SEARCH_PLACEHOLDER: 'Search…',
-  INSTRUCTIONS: '↑↓: Navigate • Space: Select • Enter: Done • Esc: Cancel',
-  INSTRUCTIONS_WITH_PAGINATION: '↑↓: Navigate • PgUp/PgDn: Page • Space: Select • Enter: Done • Esc: Cancel',
+  INSTRUCTIONS: '↑↓: Navigate • Space: Select • Tab: Buttons • Enter: Confirm',
+  INSTRUCTIONS_WITH_PAGINATION: '↑↓: Navigate • PgUp/PgDn: Page • Space: Select • Tab: Buttons • Enter: Confirm',
   NO_ASSISTANTS: 'No assistants found.',
   ERROR_PREFIX: 'Error: ',
+  CONTINUE_BUTTON: 'Continue',
+  CANCEL_BUTTON: 'Cancel',
 } as const;
 
 // Config Values
 export const CONFIG = {
-  ITEMS_PER_PAGE: 10,
+  ITEMS_PER_PAGE: 5,
   FETCH_TIMEOUT_MS: 10000,
   DESCRIPTION_MAX_LENGTH: 80,
   KEEP_ALIVE_INTERVAL_MS: 1000,
