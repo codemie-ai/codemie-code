@@ -45,9 +45,30 @@ export class MetricsProcessor implements SessionProcessor {
     _context: ProcessingContext
   ): Promise<ProcessingResult> {
     try {
+      // Load session state to get previously processed record IDs
+      const { SessionStore } = await import('../../../../core/session/SessionStore.js');
+      const sessionStore = new SessionStore();
+      const sessionMetadata = await sessionStore.loadSession(session.sessionId);
+
+      if (!sessionMetadata) {
+        logger.warn(`[${this.name}] Session metadata not found: ${session.sessionId}`);
+        return {
+          success: false,
+          message: 'Session metadata not found - session must be created before processing'
+        };
+      }
+
+      // Load existing processed record IDs
+      const existingProcessedIds = new Set<string>(
+        sessionMetadata.sync?.metrics?.processedRecordIds || []
+      );
+
+      logger.debug(`[${this.name}] Loaded ${existingProcessedIds.size} previously processed record IDs`);
+
       logger.info(`[${this.name}] Transforming ${session.messages.length} messages to deltas`);
 
-      const deltas = this.transformMessagesToDeltas(session);
+      // Pass existing processed IDs instead of creating empty Set
+      const deltas = this.transformMessagesToDeltas(session, existingProcessedIds);
 
       if (deltas.length === 0) {
         logger.debug(`[${this.name}] No deltas generated from messages`);
@@ -62,6 +83,27 @@ export class MetricsProcessor implements SessionProcessor {
       }
 
       logger.info(`[${this.name}] Generated and wrote ${deltas.length} deltas`);
+
+      // Update session state with newly processed record IDs
+      if (deltas.length > 0) {
+        sessionMetadata.sync ??= {};
+        sessionMetadata.sync.metrics ??= {
+          lastProcessedTimestamp: Date.now(),
+          processedRecordIds: [],
+          totalDeltas: 0,
+          totalSynced: 0,
+          totalFailed: 0
+        };
+
+        // Add newly processed IDs to the persisted list
+        const updatedProcessedIds = Array.from(existingProcessedIds);
+        sessionMetadata.sync.metrics.processedRecordIds = updatedProcessedIds;
+        sessionMetadata.sync.metrics.lastProcessedTimestamp = Date.now();
+
+        await sessionStore.saveSession(sessionMetadata);
+
+        logger.debug(`[${this.name}] Saved ${updatedProcessedIds.length} processed record IDs to session state`);
+      }
 
       return {
         success: true,
@@ -81,9 +123,12 @@ export class MetricsProcessor implements SessionProcessor {
   /**
    * Transform messages to deltas
    */
-  private transformMessagesToDeltas(session: ParsedSession): Array<Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>> {
+  private transformMessagesToDeltas(
+    session: ParsedSession,
+    existingProcessedIds: Set<string>
+  ): Array<Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>> {
     const deltas: Array<Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>> = [];
-    const processedIds = new Set<string>();
+    const processedIds = existingProcessedIds;
     const attachedUserPrompts = new Set<string>();
 
     const mainDeltas = this.extractDeltasFromMessages(
