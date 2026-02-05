@@ -14,6 +14,7 @@ import {
   createErrorContext,
 } from '../../../utils/errors.js';
 import { logger } from '../../../utils/logger.js';
+import { resolveHomeDir } from '../../../utils/paths.js';
 import {
   detectInstallationMethod,
   type InstallationMethod,
@@ -291,6 +292,9 @@ export class ClaudePlugin extends BaseAgentAdapter {
       {
         timeout: 300000, // 5 minute timeout
         verifyCommand: metadata.cliCommand || undefined,
+        // Use full path for verification to avoid PATH refresh issues
+        // Claude installer places binary at ~/.local/bin/claude on macOS/Linux
+        verifyPath: process.platform === 'win32' ? undefined : resolveHomeDir('.local/bin/claude'),
         installFlags: ['--force'], // Force installation to overwrite existing version
       },
     );
