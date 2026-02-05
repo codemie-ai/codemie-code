@@ -69,13 +69,17 @@ async function chatWithAssistant(
 
   const client = await getAuthenticatedClient(config);
 
-  // Resolve conversation ID: CLI option > environment variable > undefined
   const resolvedConversationId = conversationId || process.env.CODEMIE_SESSION_ID;
 
-  if (assistantId && message) { // Single-message mode (example: for Claude Code skill)
+  if (assistantId && message !== undefined) {
+    if (message.trim().length === 0) {
+      console.error(chalk.red('Error: Message cannot be empty'));
+      process.exit(1);
+    }
+
     const assistant = findAssistant(registeredAssistants, assistantId);
     await sendSingleMessage(client, assistant, message, { quiet: true }, config, resolvedConversationId);
-  } else { // Interactive mode
+  } else {
     const assistant = await promptAssistantSelection(registeredAssistants);
     await interactiveChat(client, assistant, config, resolvedConversationId);
   }

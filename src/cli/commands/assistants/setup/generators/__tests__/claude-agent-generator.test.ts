@@ -75,7 +75,7 @@ describe('Claude Agent Generator', () => {
       // Assert
       expect(metadata).toContain('---');
       expect(metadata).toContain('name: test-assistant');
-      expect(metadata).toContain('description: A test assistant for unit testing');
+      expect(metadata).toContain('description: "A test assistant for unit testing"');
       expect(metadata).toContain('tools: Read, Bash');
       expect(metadata).toContain('model: inherit');
     });
@@ -88,7 +88,7 @@ describe('Claude Agent Generator', () => {
       const metadata = createClaudeSubagentMetadata(assistantNoDesc);
 
       // Assert
-      expect(metadata).toContain('description: Interact with Test Assistant');
+      expect(metadata).toContain('description: "Interact with Test Assistant"');
     });
 
     it('should handle special characters in description', () => {
@@ -102,7 +102,7 @@ describe('Claude Agent Generator', () => {
       const metadata = createClaudeSubagentMetadata(assistantSpecialChars);
 
       // Assert
-      expect(metadata).toContain('description: Test: with "quotes" and [brackets]');
+      expect(metadata).toContain('description: "Test: with \\"quotes\\" and [brackets]"');
     });
 
     it('should handle unicode characters in description', () => {
@@ -116,7 +116,7 @@ describe('Claude Agent Generator', () => {
       const metadata = createClaudeSubagentMetadata(assistantUnicode);
 
       // Assert
-      expect(metadata).toContain('description: 助理測試 - Assistant test');
+      expect(metadata).toContain('description: "助理測試 - Assistant test"');
     });
 
     it('should handle very long descriptions', () => {
@@ -131,7 +131,7 @@ describe('Claude Agent Generator', () => {
       const metadata = createClaudeSubagentMetadata(assistantLongDesc);
 
       // Assert
-      expect(metadata).toContain(`description: ${longDescription}`);
+      expect(metadata).toContain(`description: "${longDescription}"`);
     });
 
     it('should handle empty description', () => {
@@ -145,7 +145,25 @@ describe('Claude Agent Generator', () => {
       const metadata = createClaudeSubagentMetadata(assistantEmptyDesc);
 
       // Assert
-      expect(metadata).toContain('description: Interact with Test Assistant');
+      expect(metadata).toContain('description: "Interact with Test Assistant"');
+    });
+
+    it('should handle multiline descriptions by converting to single line', () => {
+      // Arrange
+      const assistantMultiline = {
+        ...mockAssistant,
+        description: 'Line 1\nLine 2\nLine 3'
+      } as Assistant;
+
+      // Act
+      const metadata = createClaudeSubagentMetadata(assistantMultiline);
+
+      // Assert
+      expect(metadata).toContain('description: "Line 1 Line 2 Line 3"');
+      // Verify proper YAML structure (newlines only between fields, not within description value)
+      expect(metadata).toMatch(/---\nname:.*\ndescription:.*\ntools:.*\nmodel:.*\n---/);
+      // Ensure the description value itself is on a single line
+      expect(metadata).not.toMatch(/description:.*\n.*\n.*tools:/);
     });
   });
 
