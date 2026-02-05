@@ -15,6 +15,7 @@ import {
 import { FirstTimeExperience } from '../first-time.js';
 import { AgentRegistry } from '../../agents/registry.js';
 import type { VersionCompatibilityResult } from '../../agents/core/types.js';
+import { createAssistantsSetupCommand } from './assistants/setup/index.js';
 
 
 export function createSetupCommand(): Command {
@@ -24,6 +25,7 @@ export function createSetupCommand(): Command {
     .description('Interactive setup wizard for CodeMie Code')
     .option('--force', 'Force re-setup even if config exists')
     .option('-v, --verbose', 'Enable verbose debug output with detailed API logs')
+    .addCommand(createAssistantsSetupCommand().name('assistants'))
     .action(async (options: { force?: boolean; verbose?: boolean }) => {
       // Enable debug mode if verbose flag is set
       if (options.verbose) {
