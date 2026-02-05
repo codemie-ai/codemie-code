@@ -45,7 +45,28 @@ export interface ProcessingResult {
   /** Optional status message */
   message?: string;
   /** Optional metadata for tracking */
-  metadata?: Record<string, unknown>;
+  metadata?: {
+    recordsProcessed?: number;
+    /** Session state updates to be applied by the adapter */
+    syncUpdates?: {
+      metrics?: {
+        processedRecordIds?: string[];
+        lastProcessedTimestamp?: number;
+        totalDeltas?: number;
+        totalSynced?: number;
+        totalFailed?: number;
+      };
+      conversations?: {
+        lastSyncedMessageUuid?: string;
+        lastSyncedHistoryIndex?: number;
+        totalMessagesSynced?: number;
+        totalSyncAttempts?: number;
+        conversationId?: string;
+        lastSyncAt?: number;
+      };
+    };
+    [key: string]: unknown;
+  };
 }
 
 /**

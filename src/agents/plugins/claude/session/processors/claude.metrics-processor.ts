@@ -84,31 +84,20 @@ export class MetricsProcessor implements SessionProcessor {
 
       logger.info(`[${this.name}] Generated and wrote ${deltas.length} deltas`);
 
-      // Update session state with newly processed record IDs
-      if (deltas.length > 0) {
-        sessionMetadata.sync ??= {};
-        sessionMetadata.sync.metrics ??= {
-          lastProcessedTimestamp: Date.now(),
-          processedRecordIds: [],
-          totalDeltas: 0,
-          totalSynced: 0,
-          totalFailed: 0
-        };
-
-        // Add newly processed IDs to the persisted list
-        const updatedProcessedIds = Array.from(existingProcessedIds);
-        sessionMetadata.sync.metrics.processedRecordIds = updatedProcessedIds;
-        sessionMetadata.sync.metrics.lastProcessedTimestamp = Date.now();
-
-        await sessionStore.saveSession(sessionMetadata);
-
-        logger.debug(`[${this.name}] Saved ${updatedProcessedIds.length} processed record IDs to session state`);
-      }
-
+      // Return sync updates for the adapter to persist
       return {
         success: true,
         message: `Generated ${deltas.length} deltas`,
-        metadata: { recordsProcessed: deltas.length }
+        metadata: {
+          recordsProcessed: deltas.length,
+          syncUpdates: deltas.length > 0 ? {
+            metrics: {
+              processedRecordIds: Array.from(existingProcessedIds),
+              lastProcessedTimestamp: Date.now(),
+              totalDeltas: deltas.length
+            }
+          } : undefined
+        }
       };
 
     } catch (error) {
