@@ -56,11 +56,12 @@ export async function promptModeSelection(): Promise<ModeSelectionResult> {
 		/**
 		 * Resolve promise and cleanup
 		 */
-		function stop(cancelled: boolean) {
+		function stop(cancelled: boolean, back: boolean = false) {
 			cleanup();
 			resolve({
 				choice: state.selectedChoice,
 				cancelled,
+				back,
 			});
 		}
 
@@ -86,6 +87,8 @@ export async function promptModeSelection(): Promise<ModeSelectionResult> {
 						actions.handleEnter();
 						break;
 					case KEY.ESC:
+						actions.handleBack();
+						break;
 					case KEY.CTRL_C:
 						actions.handleCancel();
 						break;

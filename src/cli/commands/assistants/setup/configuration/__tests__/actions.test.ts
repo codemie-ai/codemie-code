@@ -91,28 +91,36 @@ describe('Configuration Actions', () => {
 	});
 
 	describe('handleEnter', () => {
-		it('should resolve with not cancelled', () => {
+		it('should resolve with not cancelled and not back', () => {
 			actions.handleEnter();
 
-			expect(resolve).toHaveBeenCalledWith(false);
+			expect(resolve).toHaveBeenCalledWith(false, false);
 		});
 
 		it('should resolve regardless of selected choice', () => {
 			state.selectedChoice = CONFIGURATION_CHOICE.SUBAGENTS;
 			actions.handleEnter();
-			expect(resolve).toHaveBeenCalledWith(false);
+			expect(resolve).toHaveBeenCalledWith(false, false);
 
 			resolve.mockClear();
 
 			state.selectedChoice = CONFIGURATION_CHOICE.SKILLS;
 			actions.handleEnter();
-			expect(resolve).toHaveBeenCalledWith(false);
+			expect(resolve).toHaveBeenCalledWith(false, false);
 
 			resolve.mockClear();
 
 			state.selectedChoice = CONFIGURATION_CHOICE.MANUAL;
 			actions.handleEnter();
-			expect(resolve).toHaveBeenCalledWith(false);
+			expect(resolve).toHaveBeenCalledWith(false, false);
+		});
+	});
+
+	describe('handleBack', () => {
+		it('should resolve with back flag set', () => {
+			actions.handleBack();
+
+			expect(resolve).toHaveBeenCalledWith(false, true);
 		});
 	});
 
@@ -120,25 +128,25 @@ describe('Configuration Actions', () => {
 		it('should resolve with cancelled', () => {
 			actions.handleCancel();
 
-			expect(resolve).toHaveBeenCalledWith(true);
+			expect(resolve).toHaveBeenCalledWith(true, false);
 		});
 
 		it('should resolve with cancelled regardless of state', () => {
 			state.selectedChoice = CONFIGURATION_CHOICE.SUBAGENTS;
 			actions.handleCancel();
-			expect(resolve).toHaveBeenCalledWith(true);
+			expect(resolve).toHaveBeenCalledWith(true, false);
 
 			resolve.mockClear();
 
 			state.selectedChoice = CONFIGURATION_CHOICE.SKILLS;
 			actions.handleCancel();
-			expect(resolve).toHaveBeenCalledWith(true);
+			expect(resolve).toHaveBeenCalledWith(true, false);
 
 			resolve.mockClear();
 
 			state.selectedChoice = CONFIGURATION_CHOICE.MANUAL;
 			actions.handleCancel();
-			expect(resolve).toHaveBeenCalledWith(true);
+			expect(resolve).toHaveBeenCalledWith(true, false);
 		});
 	});
 

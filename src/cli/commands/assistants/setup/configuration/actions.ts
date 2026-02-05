@@ -32,7 +32,7 @@ function cycleChoice(currentChoice: ConfigurationChoice, direction: 'up' | 'down
 export function createModeSelectionActions(
 	state: ModeSelectionState,
 	render: () => void,
-	resolve: (cancelled: boolean) => void
+	resolve: (cancelled: boolean, back?: boolean) => void
 ) {
 	return {
 		/**
@@ -55,14 +55,21 @@ export function createModeSelectionActions(
 		 * Handle enter key - confirm selection
 		 */
 		handleEnter() {
-			resolve(false);
+			resolve(false, false);
 		},
 
 		/**
-		 * Handle cancel (Esc or Ctrl+C)
+		 * Handle back (Esc) - go back to selection
+		 */
+		handleBack() {
+			resolve(false, true);
+		},
+
+		/**
+		 * Handle cancel (Ctrl+C)
 		 */
 		handleCancel() {
-			resolve(true);
+			resolve(true, false);
 		},
 	};
 }

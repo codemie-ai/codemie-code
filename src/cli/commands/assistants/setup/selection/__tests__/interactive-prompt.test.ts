@@ -331,7 +331,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       await startPromise;
     });
 
-    it('should handle ESC - do nothing when search not focused', async () => {
+    it('should handle ESC - exit when search not focused', async () => {
       mockState.isSearchFocused = false;
 
       const prompt = createInteractivePrompt({
@@ -345,7 +345,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const dataHandler = dataListeners[0];
       dataHandler(Buffer.from(KEY.ESC));
 
-      expect(mockActions.handleCancel).not.toHaveBeenCalled();
+      expect(mockActions.handleCancel).toHaveBeenCalled();
       expect(mockActions.handleFocusList).not.toHaveBeenCalled();
 
       prompt.stop();

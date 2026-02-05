@@ -113,36 +113,54 @@ async function setupAssistants(options: SetupCommandOptions): Promise<void> {
   let registrationModes = new Map<string, RegistrationMode>();
 
   if (selectedAssistants.length > 0) {
-    // Step 1: Show mode selection screen (Subagents, Skills, Manual)
-    const { choice, cancelled } = await promptModeSelection();
+    // Loop to allow going back
+    let configurationComplete = false;
 
-    if (cancelled) {
-      console.log(chalk.dim(MESSAGES.SETUP.NO_CHANGES_MADE));
-      return;
-    }
+    while (!configurationComplete) {
+      // Step 1: Show mode selection screen (Subagents, Skills, Manual)
+      const { choice, cancelled, back } = await promptModeSelection();
 
-    // Step 2: Handle choice
-    if (choice === CONFIGURATION_CHOICE.SUBAGENTS) { // Bulk register all as agents
-      for (const assistant of selectedAssistants) {
-        registrationModes.set(assistant.id, REGISTRATION_MODE.AGENT);
-      }
-    } else if (choice === CONFIGURATION_CHOICE.SKILLS) { // Bulk register all as skills
-      for (const assistant of selectedAssistants) {
-        registrationModes.set(assistant.id, REGISTRATION_MODE.SKILL);
-      }
-    } else { // Manual configuration - show individual configuration screen
-      const { registrationModes: modes, action: configAction } = await promptManualConfiguration(
-        selectedAssistants as Assistant[],
-        registeredIds,
-        registeredAssistants
-      );
-
-      if (configAction === ACTION_TYPE.CANCEL) {
+      if (cancelled) {
         console.log(chalk.dim(MESSAGES.SETUP.NO_CHANGES_MADE));
         return;
       }
 
-      registrationModes = modes;
+      if (back) {
+        // Go back to selection screen
+        return setupAssistants(options);
+      }
+
+      // Step 2: Handle choice
+      if (choice === CONFIGURATION_CHOICE.SUBAGENTS) { // Bulk register all as agents
+        for (const assistant of selectedAssistants) {
+          registrationModes.set(assistant.id, REGISTRATION_MODE.AGENT);
+        }
+        configurationComplete = true;
+      } else if (choice === CONFIGURATION_CHOICE.SKILLS) { // Bulk register all as skills
+        for (const assistant of selectedAssistants) {
+          registrationModes.set(assistant.id, REGISTRATION_MODE.SKILL);
+        }
+        configurationComplete = true;
+      } else { // Manual configuration - show individual configuration screen
+        const { registrationModes: modes, action: configAction } = await promptManualConfiguration(
+          selectedAssistants as Assistant[],
+          registeredIds,
+          registeredAssistants
+        );
+
+        if (configAction === ACTION_TYPE.CANCEL) {
+          console.log(chalk.dim(MESSAGES.SETUP.NO_CHANGES_MADE));
+          return;
+        }
+
+        if (configAction === ACTION_TYPE.BACK) {
+          // Go back to configuration mode selection
+          continue;
+        }
+
+        registrationModes = modes;
+        configurationComplete = true;
+      }
     }
   }
 

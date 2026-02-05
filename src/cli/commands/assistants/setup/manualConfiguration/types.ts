@@ -11,7 +11,7 @@ export type RegistrationMode = 'agent' | 'skill';
 /**
  * Action taken by the user in the configuration UI
  */
-export type ConfigurationAction = typeof ACTION_TYPE.APPLY | typeof ACTION_TYPE.CANCEL;
+export type ConfigurationAction = typeof ACTION_TYPE.APPLY | typeof ACTION_TYPE.CANCEL | typeof ACTION_TYPE.BACK;
 
 /**
  * Represents a single assistant with its registration mode

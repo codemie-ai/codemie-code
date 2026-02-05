@@ -135,7 +135,14 @@ export function createActionHandlers(
 		},
 
 		/**
-		 * Handle cancel (Esc or Ctrl+C)
+		 * Handle back (Esc) - go back to configuration mode selection
+		 */
+		handleBack() {
+			resolve(ACTION_TYPE.BACK);
+		},
+
+		/**
+		 * Handle cancel (Ctrl+C)
 		 */
 		handleCancel() {
 			resolve(ACTION_TYPE.CANCEL);

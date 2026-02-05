@@ -43,18 +43,24 @@ describe('Setup Constants - constants.ts', () => {
 			expect(ACTION_TYPE.UPDATE).toBe('update');
 		});
 
-		it('should have exactly 3 action types', () => {
+		it('should define BACK action', () => {
+			expect(ACTION_TYPE.BACK).toBe('back');
+		});
+
+		it('should have exactly 4 action types', () => {
 			const actionKeys = Object.keys(ACTION_TYPE);
-			expect(actionKeys).toHaveLength(3);
+			expect(actionKeys).toHaveLength(4);
 			expect(actionKeys).toContain('CANCEL');
 			expect(actionKeys).toContain('APPLY');
 			expect(actionKeys).toContain('UPDATE');
+			expect(actionKeys).toContain('BACK');
 		});
 
 		it('should have string action values', () => {
 			expect(typeof ACTION_TYPE.CANCEL).toBe('string');
 			expect(typeof ACTION_TYPE.APPLY).toBe('string');
 			expect(typeof ACTION_TYPE.UPDATE).toBe('string');
+			expect(typeof ACTION_TYPE.BACK).toBe('string');
 		});
 
 		it('should have unique action values', () => {
@@ -181,20 +187,21 @@ describe('Setup Constants - constants.ts', () => {
 			expect(colorKeys).toContain('PURPLE');
 
 			const actionKeys = Object.keys(ACTION_TYPE);
-			expect(actionKeys).toEqual(['CANCEL', 'APPLY', 'UPDATE']);
+			expect(actionKeys).toEqual(['CANCEL', 'APPLY', 'UPDATE', 'BACK']);
 		});
 
 		it('should handle Object.values() correctly', () => {
 			const actionValues = Object.values(ACTION_TYPE);
-			expect(actionValues).toEqual(['cancel', 'apply', 'update']);
+			expect(actionValues).toEqual(['cancel', 'apply', 'update', 'back']);
 		});
 
 		it('should handle Object.entries() correctly', () => {
 			const actionEntries = Object.entries(ACTION_TYPE);
-			expect(actionEntries).toHaveLength(3);
+			expect(actionEntries).toHaveLength(4);
 			expect(actionEntries).toContainEqual(['CANCEL', 'cancel']);
 			expect(actionEntries).toContainEqual(['APPLY', 'apply']);
 			expect(actionEntries).toContainEqual(['UPDATE', 'update']);
+			expect(actionEntries).toContainEqual(['BACK', 'back']);
 		});
 
 		it('should handle in operator correctly', () => {
@@ -210,6 +217,7 @@ describe('Setup Constants - constants.ts', () => {
 			expect(ACTION_TYPE.CANCEL).toMatch(/^[a-z]+$/);
 			expect(ACTION_TYPE.APPLY).toMatch(/^[a-z]+$/);
 			expect(ACTION_TYPE.UPDATE).toMatch(/^[a-z]+$/);
+			expect(ACTION_TYPE.BACK).toMatch(/^[a-z]+$/);
 		});
 
 		it('should have meaningful color name', () => {

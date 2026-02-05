@@ -19,4 +19,5 @@ export interface ModeSelectionState {
 export interface ModeSelectionResult {
 	choice: ConfigurationChoice;
 	cancelled: boolean;
+	back: boolean;
 }

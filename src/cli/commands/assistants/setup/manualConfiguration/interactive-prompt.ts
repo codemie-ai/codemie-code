@@ -79,6 +79,8 @@ export function createInteractivePrompt(state: ConfigurationState): Promise<Conf
 						actions.handleEnter();
 						break;
 					case KEY.ESC:
+						actions.handleBack();
+						break;
 					case KEY.CTRL_C:
 						actions.handleCancel();
 						break;

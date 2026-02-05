@@ -141,6 +141,8 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
       render();
       return;
     }
+
+    options.actions.handleCancel();
   }
 
   /**
