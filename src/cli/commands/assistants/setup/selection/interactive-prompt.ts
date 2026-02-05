@@ -330,25 +330,15 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
   }
 
   /**
-   * Handle page down (PgDn)
+   * Handle Ctrl+] (next page)
    */
-  function handlePageDown(): void {
+  function handleCtrlBracketRight(): void {
     const state = options.state;
     if (state.isSearchFocused) {
       return; // Ignore pagination when search is focused
     }
     options.actions.handlePageNext();
-  }
-
-  /**
-   * Handle page up (PgUp)
-   */
-  function handlePageUp(): void {
-    const state = options.state;
-    if (state.isSearchFocused) {
-      return; // Ignore pagination when search is focused
-    }
-    options.actions.handlePagePrev();
+    render();
   }
 
   /**
@@ -382,8 +372,7 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
       [KEY.SPACE]: handleToggleSelection,
       [KEY.BACKSPACE]: handleBackspace,
       [KEY.BACKSPACE_ALT]: handleBackspace,
-      [KEY.PAGE_UP]: handlePageUp,
-      [KEY.PAGE_DOWN]: handlePageDown,
+      [KEY.CTRL_BRACKET_RIGHT]: handleCtrlBracketRight,
     };
 
     dataHandler = (data: Buffer) => {

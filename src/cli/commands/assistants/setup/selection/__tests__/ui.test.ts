@@ -235,7 +235,7 @@ describe('Selection UI - ui.ts', () => {
       registeredPanel.totalPages = 2;
       const result = renderUI(mockState, 0);
 
-      expect(result).toContain('PgUp/PgDn to change page');
+      expect(result).toContain('Ctrl+[/] to change page');
     });
 
     it('should show assistant project when available', () => {

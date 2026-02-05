@@ -22,11 +22,11 @@ export const KEY = {
   ARROW_DOWN: '\u001b[B',
   ARROW_LEFT: '\u001b[D',
   ARROW_RIGHT: '\u001b[C',
+  CTRL_BRACKET_LEFT: '\u001b',
+  CTRL_BRACKET_RIGHT: '\u001d',
   SPACE: ' ',
   BACKSPACE: '\u007f',
   BACKSPACE_ALT: '\b',
-  PAGE_UP: '\u001b[5~',
-  PAGE_DOWN: '\u001b[6~',
 } as const;
 
 // Box Drawing Characters
@@ -63,7 +63,7 @@ export const TEXT = {
   TAB_HINT: '(←/→, tab/shift+tab to cycle)',
   SEARCH_PLACEHOLDER: 'Search…',
   INSTRUCTIONS: '↑↓ to Navigate • Space to select item • Enter to Confirm',
-  INSTRUCTIONS_WITH_PAGINATION: '↑↓ to Navigate • PgUp/PgDn to change page • Space to select item • Enter to Confirm',
+  INSTRUCTIONS_WITH_PAGINATION: '↑↓ to Navigate • Ctrl+[/] to change page • Space to select item • Enter to Confirm',
   NO_ASSISTANTS: 'No assistants found.',
   ERROR_PREFIX: 'Error: ',
   CONTINUE_BUTTON: 'Continue',

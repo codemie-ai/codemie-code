@@ -308,12 +308,6 @@ export function createActionHandlers(deps: ActionHandlerDependencies): ActionHan
 
     if (activePanel.currentPage < totalPages - 1) {
       activePanel.currentPage++;
-      deps.state.isPaginationFocused = null;
-
-      const prompt = deps.prompt();
-      if (prompt) {
-        prompt.setCursorIndex(0);
-      }
 
       setTimeout(() => fetchActivePanelDataBackground(), 0);
     }
@@ -327,12 +321,6 @@ export function createActionHandlers(deps: ActionHandlerDependencies): ActionHan
 
     if (activePanel.currentPage > 0) {
       activePanel.currentPage--;
-      deps.state.isPaginationFocused = null;
-
-      const prompt = deps.prompt();
-      if (prompt) {
-        prompt.setCursorIndex(0);
-      }
 
       setTimeout(() => fetchActivePanelDataBackground(), 0);
     }

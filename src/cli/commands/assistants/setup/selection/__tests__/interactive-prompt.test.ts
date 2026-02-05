@@ -622,7 +622,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       await startPromise;
     });
 
-    it('should handle PAGE_UP', async () => {
+    it('should handle CTRL_BRACKET_RIGHT for next page', async () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
@@ -632,25 +632,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       await vi.advanceTimersByTimeAsync(0);
 
       const dataHandler = dataListeners[0];
-      dataHandler(Buffer.from(KEY.PAGE_UP));
-
-      expect(mockActions.handlePagePrev).toHaveBeenCalled();
-
-      prompt.stop();
-      await startPromise;
-    });
-
-    it('should handle PAGE_DOWN', async () => {
-      const prompt = createInteractivePrompt({
-        state: mockState,
-        actions: mockActions,
-      });
-
-      const startPromise = prompt.start();
-      await vi.advanceTimersByTimeAsync(0);
-
-      const dataHandler = dataListeners[0];
-      dataHandler(Buffer.from(KEY.PAGE_DOWN));
+      dataHandler(Buffer.from(KEY.CTRL_BRACKET_RIGHT));
 
       expect(mockActions.handlePageNext).toHaveBeenCalled();
 

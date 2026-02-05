@@ -444,24 +444,6 @@ describe('Selection Actions - actions.ts', () => {
       expect(mockState.panels[0].currentPage).toBe(2);
     });
 
-    it('should reset cursor to 0', () => {
-      mockState.panels[0].totalPages = 2;
-      mockState.panels[0].currentPage = 0;
-
-      handlers.handlePageNext();
-
-      expect(mockPrompt!.setCursorIndex).toHaveBeenCalledWith(0);
-    });
-
-    it('should clear pagination focus', () => {
-      mockState.panels[0].totalPages = 2;
-      mockState.panels[0].currentPage = 0;
-      mockState.isPaginationFocused = 'next';
-
-      handlers.handlePageNext();
-
-      expect(mockState.isPaginationFocused).toBeNull();
-    });
 
     it('should trigger data fetch', async () => {
       mockState.panels[0].totalPages = 2;
@@ -498,24 +480,6 @@ describe('Selection Actions - actions.ts', () => {
       expect(mockState.panels[0].currentPage).toBe(0);
     });
 
-    it('should reset cursor to 0', () => {
-      mockState.panels[0].totalPages = 2;
-      mockState.panels[0].currentPage = 1;
-
-      handlers.handlePagePrev();
-
-      expect(mockPrompt!.setCursorIndex).toHaveBeenCalledWith(0);
-    });
-
-    it('should clear pagination focus', () => {
-      mockState.panels[0].totalPages = 2;
-      mockState.panels[0].currentPage = 1;
-      mockState.isPaginationFocused = 'prev';
-
-      handlers.handlePagePrev();
-
-      expect(mockState.isPaginationFocused).toBeNull();
-    });
 
     it('should trigger data fetch', async () => {
       mockState.panels[0].totalPages = 2;

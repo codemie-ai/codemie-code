@@ -68,8 +68,8 @@ describe('Selection Constants - constants.ts', () => {
     });
 
     it('should define pagination key codes', () => {
-      expect(KEY.PAGE_UP).toBe('\u001b[5~');
-      expect(KEY.PAGE_DOWN).toBe('\u001b[6~');
+      expect(KEY.CTRL_BRACKET_LEFT).toBe('\u001b'); // ESC
+      expect(KEY.CTRL_BRACKET_RIGHT).toBe('\u001d');
     });
   });
 
@@ -127,7 +127,7 @@ describe('Selection Constants - constants.ts', () => {
     });
 
     it('should define pagination instruction text', () => {
-      expect(TEXT.INSTRUCTIONS_WITH_PAGINATION).toBe('↑↓ to Navigate • PgUp/PgDn to change page • Space to select item • Enter to Confirm');
+      expect(TEXT.INSTRUCTIONS_WITH_PAGINATION).toBe('↑↓ to Navigate • Ctrl+[/] to change page • Space to select item • Enter to Confirm');
     });
 
     it('should define button text', () => {
