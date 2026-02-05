@@ -453,7 +453,62 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       await startPromise;
     });
 
-    it('should handle ENTER', async () => {
+    it('should trigger immediate search on ENTER when search is focused', async () => {
+      const prompt = createInteractivePrompt({
+        state: mockState,
+        actions: mockActions,
+      });
+
+      const startPromise = prompt.start();
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Focus search and type
+      mockState.isSearchFocused = true;
+      mockState.searchQuery = 'test';
+
+      const dataHandler = dataListeners[0];
+      dataHandler(Buffer.from(KEY.ENTER));
+
+      // Should trigger search immediately without waiting for debounce
+      expect(mockActions.handleSearchUpdate).toHaveBeenCalledWith('test');
+      expect(mockActions.handleFocusList).toHaveBeenCalled();
+
+      prompt.stop();
+      await startPromise;
+    });
+
+    it('should clear debounce timer on ENTER in search box', async () => {
+      const prompt = createInteractivePrompt({
+        state: mockState,
+        actions: mockActions,
+      });
+
+      const startPromise = prompt.start();
+      await vi.advanceTimersByTimeAsync(0);
+
+      const dataHandler = dataListeners[0];
+
+      // Type to trigger debounce
+      dataHandler(Buffer.from('t'));
+      mockState.isSearchFocused = true;
+
+      // Press Enter immediately
+      dataHandler(Buffer.from(KEY.ENTER));
+
+      // Should have called search immediately
+      expect(mockActions.handleSearchUpdate).toHaveBeenCalledWith('t');
+
+      // Advance timers to ensure debounce was cleared
+      await vi.advanceTimersByTimeAsync(500);
+
+      // Should not have called search again (debounce was cleared)
+      expect(mockActions.handleSearchUpdate).toHaveBeenCalledTimes(1);
+
+      prompt.stop();
+      await startPromise;
+    });
+
+    it('should not trigger search on ENTER when search is not focused', async () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
@@ -462,13 +517,40 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const _startPromise = prompt.start();
       await vi.advanceTimersByTimeAsync(0);
 
+      mockState.isSearchFocused = false;
+
       const dataHandler = dataListeners[0];
       dataHandler(Buffer.from(KEY.ENTER));
 
-      expect(mockActions.handleConfirm).toHaveBeenCalled();
+      expect(mockActions.handleSearchUpdate).not.toHaveBeenCalled();
 
-      // Wait a bit before checking promise
       await Promise.resolve();
+    });
+
+    it('should handle multiple rapid ENTER presses in search box', async () => {
+      const prompt = createInteractivePrompt({
+        state: mockState,
+        actions: mockActions,
+      });
+
+      const startPromise = prompt.start();
+      await vi.advanceTimersByTimeAsync(0);
+
+      mockState.isSearchFocused = true;
+      mockState.searchQuery = 'query';
+
+      const dataHandler = dataListeners[0];
+
+      // Rapid Enter presses
+      dataHandler(Buffer.from(KEY.ENTER));
+      dataHandler(Buffer.from(KEY.ENTER));
+      dataHandler(Buffer.from(KEY.ENTER));
+
+      // Should have moved focus after first Enter
+      expect(mockActions.handleFocusList).toHaveBeenCalled();
+
+      prompt.stop();
+      await startPromise;
     });
 
     it('should handle BACKSPACE', async () => {

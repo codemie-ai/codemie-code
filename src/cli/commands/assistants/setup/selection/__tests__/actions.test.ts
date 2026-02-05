@@ -78,7 +78,7 @@ describe('Selection Actions - actions.ts', () => {
       registeredIds: new Set<string>(),
       isSearchFocused: false,
       isPaginationFocused: null,
-      isButtonsFocused: false,
+      areNavigationButtonsFocused: false,
       focusedButton: 'continue',
     };
 
@@ -284,7 +284,7 @@ describe('Selection Actions - actions.ts', () => {
 
       handlers.handleCursorMove('down');
 
-      expect(mockState.isButtonsFocused).toBe(true);
+      expect(mockState.areNavigationButtonsFocused).toBe(true);
       expect(mockState.focusedButton).toBe('continue');
     });
 

@@ -11,7 +11,7 @@ export interface SelectionState {
   registeredIds: Set<string>;
   isSearchFocused: boolean;
   isPaginationFocused: PaginationControl | null;
-  isButtonsFocused: boolean;
+  areNavigationButtonsFocused: boolean;
   focusedButton: ButtonType;
 }
 

@@ -37,20 +37,27 @@ const DEFAULT_PANEL_PARAMS = {
 }
 /**
  * Initialize state with 3 panels (Registered, Project, Marketplace)
+ * Smart default: Project tab if no registered assistants exist
  */
 function initializeState(registeredIds: Set<string>): SelectionState {
+  const hasRegisteredAssistants = registeredIds.size > 0;
+  const defaultPanelId = hasRegisteredAssistants
+    ? PANEL_ID.REGISTERED
+    : PANEL_ID.PROJECT;
+
   return {
     panels: [
       {
         id: PANEL_ID.REGISTERED,
         label: 'Registered',
         ...DEFAULT_PANEL_PARAMS,
-        isActive: true,
+        isActive: defaultPanelId === PANEL_ID.REGISTERED,
       },
       {
         id: PANEL_ID.PROJECT,
         label: 'Project',
-        ...DEFAULT_PANEL_PARAMS
+        ...DEFAULT_PANEL_PARAMS,
+        isActive: defaultPanelId === PANEL_ID.PROJECT,
       },
       {
         id: PANEL_ID.MARKETPLACE,
@@ -58,13 +65,13 @@ function initializeState(registeredIds: Set<string>): SelectionState {
         ...DEFAULT_PANEL_PARAMS
       }
     ],
-    activePanelId: PANEL_ID.REGISTERED,
+    activePanelId: defaultPanelId,
     searchQuery: '',
     selectedIds: new Set(registeredIds),
     registeredIds: registeredIds,
     isSearchFocused: false,
     isPaginationFocused: null,
-    isButtonsFocused: false,
+    areNavigationButtonsFocused: false,
     focusedButton: 'continue'
   };
 }
@@ -97,23 +104,23 @@ export async function promptAssistantSelection(
   });
 
   const spinner = ora('Loading assistants...').start();
-  const registeredPanel = state.panels.find(p => p.id === PANEL_ID.REGISTERED)!;
+  const activePanel = state.panels.find(p => p.id === state.activePanelId)!;
   try {
     const result = await fetcher.fetchAssistants({
-      scope: PANEL_ID.REGISTERED,
+      scope: state.activePanelId,
       searchQuery: state.searchQuery,
       page: 0
     });
-    registeredPanel.data = result.data;
-    registeredPanel.filteredData = result.data;
-    registeredPanel.totalItems = result.total;
-    registeredPanel.totalPages = result.pages;
+    activePanel.data = result.data;
+    activePanel.filteredData = result.data;
+    activePanel.totalItems = result.total;
+    activePanel.totalPages = result.pages;
     spinner.succeed('Assistants loaded');
   } catch (error) {
     spinner.fail('Failed to load assistants');
-    registeredPanel.error = error instanceof Error ? error.message : 'Unknown error';
-    registeredPanel.totalItems = 0;
-    registeredPanel.totalPages = 0;
+    activePanel.error = error instanceof Error ? error.message : 'Unknown error';
+    activePanel.totalItems = 0;
+    activePanel.totalPages = 0;
   }
 
   // Clear spinner output before starting interactive mode

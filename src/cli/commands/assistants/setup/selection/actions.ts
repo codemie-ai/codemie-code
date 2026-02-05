@@ -179,9 +179,9 @@ export function createActionHandlers(deps: ActionHandlerDependencies): ActionHan
     const currentIndex = prompt.getCursorIndex();
 
     if (direction === 'up') {
-      if (deps.state.isButtonsFocused) {
+      if (deps.state.areNavigationButtonsFocused) {
         // Move from buttons to pagination (if exists) or last list item
-        deps.state.isButtonsFocused = false;
+        deps.state.areNavigationButtonsFocused = false;
         if (hasPaginationControls) {
           deps.state.isPaginationFocused = PAGINATION_CONTROL.NEXT;
         } else {
@@ -198,17 +198,17 @@ export function createActionHandlers(deps: ActionHandlerDependencies): ActionHan
       if (deps.state.isPaginationFocused === PAGINATION_CONTROL.NEXT) {
         // Move from pagination to buttons
         deps.state.isPaginationFocused = null;
-        deps.state.isButtonsFocused = true;
+        deps.state.areNavigationButtonsFocused = true;
         deps.state.focusedButton = 'continue';
       } else if (currentIndex === maxIndex && hasPaginationControls && deps.state.isPaginationFocused === null) {
         deps.state.isPaginationFocused = PAGINATION_CONTROL.PREV;
       } else if (deps.state.isPaginationFocused === PAGINATION_CONTROL.PREV) {
         deps.state.isPaginationFocused = PAGINATION_CONTROL.NEXT;
-      } else if (currentIndex === maxIndex && !hasPaginationControls && !deps.state.isButtonsFocused) {
+      } else if (currentIndex === maxIndex && !hasPaginationControls && !deps.state.areNavigationButtonsFocused) {
         // Move from last list item to buttons (no pagination)
-        deps.state.isButtonsFocused = true;
+        deps.state.areNavigationButtonsFocused = true;
         deps.state.focusedButton = 'continue';
-      } else if (deps.state.isPaginationFocused === null && !deps.state.isButtonsFocused) {
+      } else if (deps.state.isPaginationFocused === null && !deps.state.areNavigationButtonsFocused) {
         const newIndex = Math.min(maxIndex, currentIndex + 1);
         prompt.setCursorIndex(newIndex);
       }
@@ -258,7 +258,7 @@ export function createActionHandlers(deps: ActionHandlerDependencies): ActionHan
    */
   function handleConfirm(): void {
     // Check if buttons are focused
-    if (deps.state.isButtonsFocused) {
+    if (deps.state.areNavigationButtonsFocused) {
       if (deps.state.focusedButton === 'continue') {
         logger.debug('[AssistantSelection] Confirming selection via Continue button', {
           totalSelected: deps.state.selectedIds.size,
@@ -342,16 +342,16 @@ export function createActionHandlers(deps: ActionHandlerDependencies): ActionHan
    * Handle toggling button focus (Tab)
    */
   function handleButtonToggle(): void {
-    if (deps.state.isButtonsFocused) {
+    if (deps.state.areNavigationButtonsFocused) {
       // Move back to list
-      deps.state.isButtonsFocused = false;
+      deps.state.areNavigationButtonsFocused = false;
       const prompt = deps.prompt();
       if (prompt) {
         prompt.setCursorIndex(0);
       }
     } else {
       // Move to buttons
-      deps.state.isButtonsFocused = true;
+      deps.state.areNavigationButtonsFocused = true;
       deps.state.isPaginationFocused = null;
       deps.state.focusedButton = 'continue';
     }
@@ -361,7 +361,7 @@ export function createActionHandlers(deps: ActionHandlerDependencies): ActionHan
    * Handle switching between buttons (left/right arrows when buttons focused)
    */
   function handleButtonSwitch(_direction: 'left' | 'right'): void {
-    if (deps.state.isButtonsFocused) {
+    if (deps.state.areNavigationButtonsFocused) {
       // Toggle between Continue and Cancel buttons
       deps.state.focusedButton = deps.state.focusedButton === 'continue' ? 'cancel' : 'continue';
     }

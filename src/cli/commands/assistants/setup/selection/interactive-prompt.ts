@@ -135,7 +135,7 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
     const state = options.state;
 
     // If on buttons, cycle back to list
-    if (state.isButtonsFocused) {
+    if (state.areNavigationButtonsFocused) {
       options.actions.handleButtonToggle();
       render();
       return;
@@ -154,7 +154,7 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
     const state = options.state;
 
     // If on buttons, cycle back to list
-    if (state.isButtonsFocused) {
+    if (state.areNavigationButtonsFocused) {
       options.actions.handleButtonToggle();
       render();
       return;
@@ -170,7 +170,7 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
     const state = options.state;
 
     // If buttons are focused, switch between them
-    if (state.isButtonsFocused) {
+    if (state.areNavigationButtonsFocused) {
       options.actions.handleButtonSwitch('right');
       render();
       return;
@@ -190,8 +190,7 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
   function handleArrowLeft(): void {
     const state = options.state;
 
-    // If buttons are focused, switch between them
-    if (state.isButtonsFocused) {
+    if (state.areNavigationButtonsFocused) {
       options.actions.handleButtonSwitch('left');
       render();
       return;
@@ -211,15 +210,34 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
   function handleConfirm(): void {
     const state = options.state;
 
-    if (state.isPaginationFocused === PAGINATION_CONTROL.PREV) {
-      options.actions.handlePagePrev();
-      return;
-    } else if (state.isPaginationFocused === PAGINATION_CONTROL.NEXT) {
-      options.actions.handlePageNext();
+    // Handle button confirmation first
+    if (state.areNavigationButtonsFocused) {
+      options.actions.handleConfirm();
       return;
     }
 
-    options.actions.handleConfirm();
+    if (state.isSearchFocused) {
+      if (searchDebounceTimer) {
+        clearTimeout(searchDebounceTimer);
+        searchDebounceTimer = null;
+      }
+
+      options.actions.handleSearchUpdate(state.searchQuery);
+      options.actions.handleFocusList();
+
+      render();
+      return;
+    }
+
+    if (state.isPaginationFocused === PAGINATION_CONTROL.PREV) {
+      options.actions.handlePagePrev();
+      return;
+    }
+
+    if (state.isPaginationFocused === PAGINATION_CONTROL.NEXT) {
+      options.actions.handlePageNext();
+      return;
+    }
   }
 
   /**

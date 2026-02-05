@@ -8,7 +8,7 @@ import chalk from 'chalk';
 import type { Assistant } from 'codemie-sdk';
 import type { CodemieAssistant, ProviderProfile } from '@/env/types.js';
 import { MESSAGES } from '@/cli/commands/assistants/constants.js';
-import { REGISTRATION_MODE } from '@/cli/commands/assistants/setup/configuration/constants.js';
+import { REGISTRATION_MODE } from '@/cli/commands/assistants/setup/manualConfiguration/constants.js';
 import { COLOR } from '../constants.js';
 
 /**
@@ -52,8 +52,6 @@ export function displayCurrentlyRegistered(config: ProviderProfile): void {
       locationInfo = chalk.dim(` (@${assistant.slug} in code or claude)`);
     } else if (mode === REGISTRATION_MODE.SKILL) {
       locationInfo = chalk.dim(` (/${assistant.slug} in claude or @${assistant.slug} in code)`);
-    } else if (mode === REGISTRATION_MODE.BOTH) {
-      locationInfo = chalk.dim(` (@${assistant.slug} in code or claude, /${assistant.slug} in claude)`);
     }
 
     console.log(`  • ${purpleColor(assistant.slug)} - ${assistant.name}${locationInfo}`);

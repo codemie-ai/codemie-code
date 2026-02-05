@@ -16,9 +16,10 @@ import { getAuthenticatedClient } from '@/utils/auth.js';
 import { promptAssistantSelection } from '@/cli/commands/assistants/setup/selection/index.js';
 import { determineChanges, registerAssistant, unregisterAssistant } from '@/cli/commands/assistants/setup/helpers.js';
 import { createDataFetcher } from '@/cli/commands/assistants/setup/data.js';
-import { promptConfigurationOptions } from '@/cli/commands/assistants/setup/configuration/index.js';
-import type { RegistrationMode } from '@/cli/commands/assistants/setup/configuration/types.js';
-import { REGISTRATION_MODE } from '@/cli/commands/assistants/setup/configuration/constants.js';
+import { promptModeSelection, CONFIGURATION_CHOICE } from '@/cli/commands/assistants/setup/configuration/index.js';
+import { promptManualConfiguration } from '@/cli/commands/assistants/setup/manualConfiguration/index.js';
+import type { RegistrationMode } from '@/cli/commands/assistants/setup/manualConfiguration/types.js';
+import { REGISTRATION_MODE } from '@/cli/commands/assistants/setup/manualConfiguration/constants.js';
 import { displaySummary } from '@/cli/commands/assistants/setup/summary/index.js';
 import { ACTION_TYPE } from '@/cli/commands/assistants/setup/constants.js';
 
@@ -112,18 +113,37 @@ async function setupAssistants(options: SetupCommandOptions): Promise<void> {
   let registrationModes = new Map<string, RegistrationMode>();
 
   if (selectedAssistants.length > 0) {
-    const { registrationModes: modes, action: configAction } = await promptConfigurationOptions(
-      selectedAssistants as Assistant[],
-      registeredIds,
-      registeredAssistants
-    );
+    // Step 1: Show mode selection screen (Subagents, Skills, Manual)
+    const { choice, cancelled } = await promptModeSelection();
 
-    if (configAction === ACTION_TYPE.CANCEL) {
+    if (cancelled) {
       console.log(chalk.dim(MESSAGES.SETUP.NO_CHANGES_MADE));
       return;
     }
 
-    registrationModes = modes;
+    // Step 2: Handle choice
+    if (choice === CONFIGURATION_CHOICE.SUBAGENTS) { // Bulk register all as agents
+      for (const assistant of selectedAssistants) {
+        registrationModes.set(assistant.id, REGISTRATION_MODE.AGENT);
+      }
+    } else if (choice === CONFIGURATION_CHOICE.SKILLS) { // Bulk register all as skills
+      for (const assistant of selectedAssistants) {
+        registrationModes.set(assistant.id, REGISTRATION_MODE.SKILL);
+      }
+    } else { // Manual configuration - show individual configuration screen
+      const { registrationModes: modes, action: configAction } = await promptManualConfiguration(
+        selectedAssistants as Assistant[],
+        registeredIds,
+        registeredAssistants
+      );
+
+      if (configAction === ACTION_TYPE.CANCEL) {
+        console.log(chalk.dim(MESSAGES.SETUP.NO_CHANGES_MADE));
+        return;
+      }
+
+      registrationModes = modes;
+    }
   }
 
   // Apply changes and get summary data

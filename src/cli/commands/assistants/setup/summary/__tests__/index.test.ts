@@ -19,7 +19,7 @@ vi.mock('chalk', () => ({
 
 import { displaySummary, displayCurrentlyRegistered } from '../index.js';
 import { MESSAGES } from '@/cli/commands/assistants/constants.js';
-import { REGISTRATION_MODE } from '../../configuration/constants.js';
+import { REGISTRATION_MODE } from '../../manualConfiguration/constants.js';
 
 describe('Summary Display - summary/index.ts', () => {
 	let consoleLogSpy: any;
@@ -243,31 +243,6 @@ describe('Summary Display - summary/index.ts', () => {
 			);
 			expect(consoleLogSpy).toHaveBeenCalledWith(
 				expect.stringContaining('@skill-assistant in code')
-			);
-		});
-
-		it('should display assistant with both mode', () => {
-			const config: ProviderProfile = {
-				provider: 'anthropic',
-				apiKey: 'test-key',
-				codemieAssistants: [
-					{
-						id: '1',
-						name: 'Both Assistant',
-						slug: 'both-assistant',
-						registeredAt: '2024-01-01T00:00:00.000Z',
-						registrationMode: REGISTRATION_MODE.BOTH,
-					},
-				],
-			};
-
-			displayCurrentlyRegistered(config);
-
-			expect(consoleLogSpy).toHaveBeenCalledWith(
-				expect.stringContaining('@both-assistant in code or claude')
-			);
-			expect(consoleLogSpy).toHaveBeenCalledWith(
-				expect.stringContaining('/both-assistant in claude')
 			);
 		});
 

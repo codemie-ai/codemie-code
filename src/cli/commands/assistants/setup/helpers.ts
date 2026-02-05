@@ -12,8 +12,8 @@ import { logger } from '@/utils/logger.js';
 import { MESSAGES } from '@/cli/commands/assistants/constants.js';
 import { registerClaudeSubagent, unregisterClaudeSubagent } from '@/cli/commands/assistants/setup/generators/claude-agent-generator.js';
 import { registerClaudeSkill, unregisterClaudeSkill } from '@/cli/commands/assistants/setup/generators/claude-skill-generator.js';
-import type { RegistrationMode } from '@/cli/commands/assistants/setup/configuration/types.js';
-import { REGISTRATION_MODE } from '@/cli/commands/assistants/setup/configuration/constants.js';
+import type { RegistrationMode } from '@/cli/commands/assistants/setup/manualConfiguration/types.js';
+import { REGISTRATION_MODE } from '@/cli/commands/assistants/setup/manualConfiguration/constants.js';
 
 export interface RegistrationChanges {
   toRegister: Assistant[];
@@ -95,13 +95,13 @@ export async function unregisterAssistant(assistant: CodemieAssistant): Promise<
 
 /**
  * Register an assistant with specified registration mode
- * @param mode - 'agent' (Claude agent only), 'skill' (Claude skill only), or 'both'
+ * @param mode - 'agent' (Claude agent only) or 'skill' (Claude skill only)
  */
 export async function registerAssistant(
-  assistant: Assistant, 
+  assistant: Assistant,
   mode: RegistrationMode = REGISTRATION_MODE.AGENT
 ): Promise<CodemieAssistant | null> {
-  const modeLabel = mode === REGISTRATION_MODE.BOTH ? 'agent & skill' : mode === REGISTRATION_MODE.SKILL ? 'skill' : 'agent';
+  const modeLabel = mode === REGISTRATION_MODE.SKILL ? 'skill' : 'agent';
 
   const result = await executeWithSpinner(
     MESSAGES.SETUP.SPINNER_REGISTERING(chalk.bold(assistant.name)),
@@ -112,11 +112,6 @@ export async function registerAssistant(
           break;
 
         case REGISTRATION_MODE.SKILL:
-          await registerClaudeSkill(assistant);
-          break;
-
-        case REGISTRATION_MODE.BOTH:
-          await registerClaudeSubagent(assistant);
           await registerClaudeSkill(assistant);
           break;
       }

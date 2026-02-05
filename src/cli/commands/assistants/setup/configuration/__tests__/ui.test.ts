@@ -3,226 +3,139 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { renderUI } from '../ui.js';
-import { REGISTRATION_MODE } from '../constants.js';
-import { ACTION_TYPE } from '../../constants.js';
-import type { ConfigurationState, RegistrationAssistant } from '../types.js';
+import { renderModeSelectionUI } from '../ui.js';
+import type { ModeSelectionState } from '../types.js';
+import { CONFIGURATION_CHOICE } from '../constants.js';
 
 describe('Configuration UI', () => {
-	const createMockAssistant = (name: string, isAlreadyRegistered = false): RegistrationAssistant => ({
-		assistant: {
-			id: `test-${name}`,
-			name,
-			description: `Test assistant ${name}`,
-			slug: `test-${name}`,
-			visibility: 'private' as const,
-			status: 'active' as const,
-			created_at: new Date().toISOString(),
-			updated_at: new Date().toISOString(),
-		},
-		mode: REGISTRATION_MODE.AGENT,
-		isAlreadyRegistered,
-	});
-
-	const createMockState = (overrides?: Partial<ConfigurationState>): ConfigurationState => ({
-		registrations: [
-			createMockAssistant('Assistant 1'),
-			createMockAssistant('Assistant 2'),
-		],
-		cursorIndex: 0,
-		isButtonsFocused: false,
-		focusedButton: ACTION_TYPE.APPLY,
-		...overrides,
-	});
-
-	describe('renderUI', () => {
+	describe('renderModeSelectionUI', () => {
 		it('should render complete UI with all sections', () => {
-			const state = createMockState();
-			const output = renderUI(state);
+			const state: ModeSelectionState = {
+				selectedChoice: CONFIGURATION_CHOICE.SUBAGENTS,
+			};
+			const output = renderModeSelectionUI(state);
 
 			// Should contain title
 			expect(output).toContain('Configure Registration');
 
 			// Should contain subtitle
-			expect(output).toContain('Select registration mode for each assistant:');
+			expect(output).toContain('How would you like to register assistants?');
 
-			// Should contain assistant names
-			expect(output).toContain('Assistant 1');
-			expect(output).toContain('Assistant 2');
-
-			// Should contain buttons
-			expect(output).toContain('Apply');
-			expect(output).toContain('Cancel');
+			// Should contain all choice labels
+			expect(output).toContain('Claude Subagents');
+			expect(output).toContain('Claude Skills');
+			expect(output).toContain('Manual Configuration');
 
 			// Should contain instructions
 			expect(output).toContain('↑↓: Navigate');
-			expect(output).toContain('Enter: Confirm');
+			expect(output).toContain('Enter: Continue');
+			expect(output).toContain('Esc: Cancel');
 		});
 
-		it('should highlight first assistant when cursor is at index 0', () => {
-			const state = createMockState({ cursorIndex: 0 });
-			const output = renderUI(state);
+		it('should render with subagents selected', () => {
+			const state: ModeSelectionState = {
+				selectedChoice: CONFIGURATION_CHOICE.SUBAGENTS,
+			};
+			const output = renderModeSelectionUI(state);
 
 			expect(output).toBeTruthy();
-			expect(output).toContain('Assistant 1');
+			expect(output).toContain('Claude Subagents');
 		});
 
-		it('should highlight second assistant when cursor is at index 1', () => {
-			const state = createMockState({ cursorIndex: 1 });
-			const output = renderUI(state);
+		it('should render with skills selected', () => {
+			const state: ModeSelectionState = {
+				selectedChoice: CONFIGURATION_CHOICE.SKILLS,
+			};
+			const output = renderModeSelectionUI(state);
 
 			expect(output).toBeTruthy();
-			expect(output).toContain('Assistant 2');
+			expect(output).toContain('Claude Skills');
 		});
 
-		it('should show mode switches for each assistant', () => {
-			const state = createMockState();
-			const output = renderUI(state);
+		it('should render with manual selected', () => {
+			const state: ModeSelectionState = {
+				selectedChoice: CONFIGURATION_CHOICE.MANUAL,
+			};
+			const output = renderModeSelectionUI(state);
 
-			// Should contain mode labels
-			expect(output).toContain('Claude Agent');
-			expect(output).toContain('Claude Skill');
-			expect(output).toContain('Both');
+			expect(output).toBeTruthy();
+			expect(output).toContain('Manual Configuration');
 		});
 
-		it('should render when buttons are focused', () => {
-			const state = createMockState({
-				isButtonsFocused: true,
-				focusedButton: ACTION_TYPE.APPLY,
-			});
-			const output = renderUI(state);
+		it('should show descriptions for all choices', () => {
+			const state: ModeSelectionState = {
+				selectedChoice: CONFIGURATION_CHOICE.SUBAGENTS,
+			};
+			const output = renderModeSelectionUI(state);
 
-			expect(output).toContain('Apply');
-			expect(output).toContain('Cancel');
-		});
-
-		it('should render Cancel button when focused', () => {
-			const state = createMockState({
-				isButtonsFocused: true,
-				focusedButton: ACTION_TYPE.CANCEL,
-			});
-			const output = renderUI(state);
-
-			expect(output).toContain('Cancel');
-		});
-
-		it('should show "Already registered" badge for registered assistants', () => {
-			const state = createMockState({
-				registrations: [
-					createMockAssistant('Registered Assistant', true),
-				],
-			});
-			const output = renderUI(state);
-
-			expect(output).toContain('Registered Assistant');
-			expect(output).toContain('Already registered');
-		});
-
-		it('should render multiple assistants', () => {
-			const state = createMockState({
-				registrations: [
-					createMockAssistant('Assistant A'),
-					createMockAssistant('Assistant B'),
-					createMockAssistant('Assistant C'),
-				],
-			});
-			const output = renderUI(state);
-
-			expect(output).toContain('Assistant A');
-			expect(output).toContain('Assistant B');
-			expect(output).toContain('Assistant C');
-		});
-
-		it('should render with different registration modes', () => {
-			const assistant1 = createMockAssistant('Agent Assistant');
-			assistant1.mode = REGISTRATION_MODE.AGENT;
-
-			const assistant2 = createMockAssistant('Skill Assistant');
-			assistant2.mode = REGISTRATION_MODE.SKILL;
-
-			const assistant3 = createMockAssistant('Both Assistant');
-			assistant3.mode = REGISTRATION_MODE.BOTH;
-
-			const state = createMockState({
-				registrations: [assistant1, assistant2, assistant3],
-			});
-			const output = renderUI(state);
-
-			expect(output).toContain('Agent Assistant');
-			expect(output).toContain('Skill Assistant');
-			expect(output).toContain('Both Assistant');
-		});
-
-		it('should render with cursor at last item', () => {
-			const state = createMockState({
-				registrations: [
-					createMockAssistant('Assistant 1'),
-					createMockAssistant('Assistant 2'),
-					createMockAssistant('Assistant 3'),
-				],
-				cursorIndex: 2,
-			});
-			const output = renderUI(state);
-
-			expect(output).toContain('Assistant 3');
+			expect(output).toContain('Register all as Claude agents (@slug)');
+			expect(output).toContain('Register all as Claude skills (/slug)');
+			expect(output).toContain('Choose individually for each assistant');
 		});
 
 		it('should render separator lines', () => {
-			const state = createMockState();
-			const output = renderUI(state);
+			const state: ModeSelectionState = {
+				selectedChoice: CONFIGURATION_CHOICE.SUBAGENTS,
+			};
+			const output = renderModeSelectionUI(state);
 
 			// Should contain separator characters
 			expect(output).toContain('─');
 		});
 
-		it('should handle empty registrations array gracefully', () => {
-			const state = createMockState({
-				registrations: [],
-			});
-
-			expect(() => renderUI(state)).not.toThrow();
-		});
-
-		it('should render instructions with all key hints', () => {
-			const state = createMockState();
-			const output = renderUI(state);
-
-			expect(output).toContain('↑↓');
-			expect(output).toContain('←→');
-			expect(output).toContain('Enter');
-			expect(output).toContain('Esc');
-		});
-
 		it('should maintain consistent structure', () => {
-			const state = createMockState();
-			const output = renderUI(state);
+			const state: ModeSelectionState = {
+				selectedChoice: CONFIGURATION_CHOICE.SUBAGENTS,
+			};
+			const output = renderModeSelectionUI(state);
 
 			// Check that output has multiple lines
 			const lines = output.split('\n');
 			expect(lines.length).toBeGreaterThan(10);
 		});
 
-		it('should render with all button states', () => {
-			const applyFocusedState = createMockState({
-				isButtonsFocused: true,
-				focusedButton: ACTION_TYPE.APPLY,
-			});
-			const applyOutput = renderUI(applyFocusedState);
+		it('should render different states consistently', () => {
+			const states: ModeSelectionState[] = [
+				{ selectedChoice: CONFIGURATION_CHOICE.SUBAGENTS },
+				{ selectedChoice: CONFIGURATION_CHOICE.SKILLS },
+				{ selectedChoice: CONFIGURATION_CHOICE.MANUAL },
+			];
 
-			const cancelFocusedState = createMockState({
-				isButtonsFocused: true,
-				focusedButton: ACTION_TYPE.CANCEL,
-			});
-			const cancelOutput = renderUI(cancelFocusedState);
+			const outputs = states.map((state) => renderModeSelectionUI(state));
 
-			const noButtonsState = createMockState({
-				isButtonsFocused: false,
+			// All outputs should have similar structure
+			outputs.forEach((output) => {
+				expect(output).toContain('Configure Registration');
+				expect(output).toContain('Claude Subagents');
+				expect(output).toContain('Claude Skills');
+				expect(output).toContain('Manual Configuration');
 			});
-			const noButtonsOutput = renderUI(noButtonsState);
 
-			expect(applyOutput).toBeTruthy();
-			expect(cancelOutput).toBeTruthy();
-			expect(noButtonsOutput).toBeTruthy();
+			// All outputs should have similar length (within 100 chars)
+			const lengths = outputs.map((o) => o.length);
+			const maxLength = Math.max(...lengths);
+			const minLength = Math.min(...lengths);
+			expect(maxLength - minLength).toBeLessThan(100);
+		});
+
+		it('should include radio button indicators', () => {
+			const state: ModeSelectionState = {
+				selectedChoice: CONFIGURATION_CHOICE.SUBAGENTS,
+			};
+			const output = renderModeSelectionUI(state);
+
+			// Should contain radio button characters
+			expect(output).toMatch(/[●○]/);
+		});
+
+		it('should include cursor indicator', () => {
+			const state: ModeSelectionState = {
+				selectedChoice: CONFIGURATION_CHOICE.SUBAGENTS,
+			};
+			const output = renderModeSelectionUI(state);
+
+			// Should contain cursor indicator
+			expect(output).toContain('›');
 		});
 	});
 });

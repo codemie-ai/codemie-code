@@ -123,11 +123,11 @@ describe('Selection Constants - constants.ts', () => {
     });
 
     it('should define instruction text', () => {
-      expect(TEXT.INSTRUCTIONS).toBe('↑↓: Navigate • Space: Select • Tab: Buttons • Enter: Confirm');
+      expect(TEXT.INSTRUCTIONS).toBe('↑↓ to Navigate • Space to select item • Enter to Confirm');
     });
 
     it('should define pagination instruction text', () => {
-      expect(TEXT.INSTRUCTIONS_WITH_PAGINATION).toBe('↑↓: Navigate • PgUp/PgDn: Page • Space: Select • Tab: Buttons • Enter: Confirm');
+      expect(TEXT.INSTRUCTIONS_WITH_PAGINATION).toBe('↑↓ to Navigate • PgUp/PgDn to change page • Space to select item • Enter to Confirm');
     });
 
     it('should define button text', () => {

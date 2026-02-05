@@ -4,169 +4,109 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-	REGISTRATION_MODE,
+	CONFIGURATION_CHOICE,
+	CONFIGURATION_CHOICE_LABELS,
+	CONFIGURATION_CHOICE_DESCRIPTIONS,
 	ANSI,
 	KEY,
-	MODE_LABELS,
-	MODE_CYCLE_ORDER,
 	UI_TEXT,
 	KEEP_ALIVE_INTERVAL,
 } from '../constants.js';
 
 describe('Configuration Constants', () => {
-	describe('REGISTRATION_MODE', () => {
-		it('should have correct mode values', () => {
-			expect(REGISTRATION_MODE.AGENT).toBe('agent');
-			expect(REGISTRATION_MODE.SKILL).toBe('skill');
-			expect(REGISTRATION_MODE.BOTH).toBe('both');
+	describe('CONFIGURATION_CHOICE', () => {
+		it('should have all choice values', () => {
+			expect(CONFIGURATION_CHOICE.SUBAGENTS).toBe('subagents');
+			expect(CONFIGURATION_CHOICE.SKILLS).toBe('skills');
+			expect(CONFIGURATION_CHOICE.MANUAL).toBe('manual');
 		});
 
-		it('should have exactly 3 modes', () => {
-			const modes = Object.keys(REGISTRATION_MODE);
-			expect(modes).toHaveLength(3);
-		});
-
-		it('should have all modes as const', () => {
-			const agentMode = REGISTRATION_MODE.AGENT;
-			const skillMode = REGISTRATION_MODE.SKILL;
-			const bothMode = REGISTRATION_MODE.BOTH;
-
-			expect(typeof agentMode).toBe('string');
-			expect(typeof skillMode).toBe('string');
-			expect(typeof bothMode).toBe('string');
+		it('should have exactly 3 choices', () => {
+			expect(Object.keys(CONFIGURATION_CHOICE)).toHaveLength(3);
 		});
 	});
 
-	describe('ANSI', () => {
-		it('should have correct escape codes', () => {
+	describe('CONFIGURATION_CHOICE_LABELS', () => {
+		it('should have labels for all choices', () => {
+			expect(CONFIGURATION_CHOICE_LABELS.subagents).toBe('Claude Subagents');
+			expect(CONFIGURATION_CHOICE_LABELS.skills).toBe('Claude Skills');
+			expect(CONFIGURATION_CHOICE_LABELS.manual).toBe('Manual Configuration');
+		});
+
+		it('should have exactly 3 labels', () => {
+			expect(Object.keys(CONFIGURATION_CHOICE_LABELS)).toHaveLength(3);
+		});
+
+		it('should have non-empty labels', () => {
+			Object.values(CONFIGURATION_CHOICE_LABELS).forEach((label) => {
+				expect(label).toBeTruthy();
+				expect(label.length).toBeGreaterThan(0);
+			});
+		});
+	});
+
+	describe('CONFIGURATION_CHOICE_DESCRIPTIONS', () => {
+		it('should have descriptions for all choices', () => {
+			expect(CONFIGURATION_CHOICE_DESCRIPTIONS.subagents).toBe('Register all as Claude agents (@slug)');
+			expect(CONFIGURATION_CHOICE_DESCRIPTIONS.skills).toBe('Register all as Claude skills (/slug)');
+			expect(CONFIGURATION_CHOICE_DESCRIPTIONS.manual).toBe('Choose individually for each assistant');
+		});
+
+		it('should have exactly 3 descriptions', () => {
+			expect(Object.keys(CONFIGURATION_CHOICE_DESCRIPTIONS)).toHaveLength(3);
+		});
+
+		it('should have non-empty descriptions', () => {
+			Object.values(CONFIGURATION_CHOICE_DESCRIPTIONS).forEach((description) => {
+				expect(description).toBeTruthy();
+				expect(description.length).toBeGreaterThan(0);
+			});
+		});
+	});
+
+	describe('ANSI codes', () => {
+		it('should have all required ANSI codes', () => {
 			expect(ANSI.CLEAR_SCREEN).toBe('\x1B[2J\x1B[H');
 			expect(ANSI.HIDE_CURSOR).toBe('\x1B[?25l');
 			expect(ANSI.SHOW_CURSOR).toBe('\x1B[?25h');
 			expect(ANSI.CLEAR_LINE).toBe('\x1B[2K');
 		});
 
-		it('should have all required ANSI codes', () => {
-			const codes = Object.keys(ANSI);
-			expect(codes).toContain('CLEAR_SCREEN');
-			expect(codes).toContain('HIDE_CURSOR');
-			expect(codes).toContain('SHOW_CURSOR');
-			expect(codes).toContain('CLEAR_LINE');
-		});
-
-		it('should have valid escape sequences', () => {
-			expect(ANSI.CLEAR_SCREEN).toContain('\x1B');
-			expect(ANSI.HIDE_CURSOR).toContain('\x1B');
-			expect(ANSI.SHOW_CURSOR).toContain('\x1B');
-			expect(ANSI.CLEAR_LINE).toContain('\x1B');
+		it('should have exactly 4 ANSI codes', () => {
+			expect(Object.keys(ANSI)).toHaveLength(4);
 		});
 	});
 
-	describe('KEY', () => {
-		it('should have correct key codes', () => {
+	describe('KEY codes', () => {
+		it('should have all required key codes', () => {
 			expect(KEY.UP).toBe('\x1B[A');
 			expect(KEY.DOWN).toBe('\x1B[B');
-			expect(KEY.LEFT).toBe('\x1B[D');
-			expect(KEY.RIGHT).toBe('\x1B[C');
 			expect(KEY.ENTER).toBe('\r');
-			expect(KEY.SPACE).toBe(' ');
-			expect(KEY.TAB).toBe('\t');
-			expect(KEY.SHIFT_TAB).toBe('\x1B[Z');
 			expect(KEY.ESC).toBe('\x1B');
 			expect(KEY.CTRL_C).toBe('\x03');
 		});
 
-		it('should have all required keys', () => {
-			const keys = Object.keys(KEY);
-			expect(keys).toContain('UP');
-			expect(keys).toContain('DOWN');
-			expect(keys).toContain('LEFT');
-			expect(keys).toContain('RIGHT');
-			expect(keys).toContain('ENTER');
-			expect(keys).toContain('SPACE');
-			expect(keys).toContain('TAB');
-			expect(keys).toContain('SHIFT_TAB');
-			expect(keys).toContain('ESC');
-			expect(keys).toContain('CTRL_C');
-		});
-
-		it('should have unique key codes', () => {
-			const values = Object.values(KEY);
-			const uniqueValues = new Set(values);
-			expect(values.length).toBe(uniqueValues.size);
-		});
-	});
-
-	describe('MODE_LABELS', () => {
-		it('should have labels for all registration modes', () => {
-			expect(MODE_LABELS[REGISTRATION_MODE.AGENT]).toBe('Claude Agent');
-			expect(MODE_LABELS[REGISTRATION_MODE.SKILL]).toBe('Claude Skill');
-			expect(MODE_LABELS[REGISTRATION_MODE.BOTH]).toBe('Both');
-		});
-
-		it('should have exactly 3 labels', () => {
-			const labels = Object.keys(MODE_LABELS);
-			expect(labels).toHaveLength(3);
-		});
-
-		it('should have human-readable labels', () => {
-			const labels = Object.values(MODE_LABELS);
-			labels.forEach(label => {
-				expect(label).toMatch(/^[A-Z]/); // Starts with uppercase
-				expect(label.length).toBeGreaterThan(0);
-			});
-		});
-	});
-
-	describe('MODE_CYCLE_ORDER', () => {
-		it('should have correct order', () => {
-			expect(MODE_CYCLE_ORDER).toEqual([
-				REGISTRATION_MODE.AGENT,
-				REGISTRATION_MODE.SKILL,
-				REGISTRATION_MODE.BOTH,
-			]);
-		});
-
-		it('should contain all registration modes', () => {
-			expect(MODE_CYCLE_ORDER).toContain(REGISTRATION_MODE.AGENT);
-			expect(MODE_CYCLE_ORDER).toContain(REGISTRATION_MODE.SKILL);
-			expect(MODE_CYCLE_ORDER).toContain(REGISTRATION_MODE.BOTH);
-		});
-
-		it('should have exactly 3 modes', () => {
-			expect(MODE_CYCLE_ORDER).toHaveLength(3);
-		});
-
-		it('should be an array', () => {
-			expect(Array.isArray(MODE_CYCLE_ORDER)).toBe(true);
+		it('should have exactly 5 key codes', () => {
+			expect(Object.keys(KEY)).toHaveLength(5);
 		});
 	});
 
 	describe('UI_TEXT', () => {
-		it('should have all required text strings', () => {
+		it('should have all required UI text', () => {
 			expect(UI_TEXT.TITLE).toBe('Configure Registration');
-			expect(UI_TEXT.SUBTITLE).toBe('Select registration mode for each assistant:');
-			expect(UI_TEXT.INSTRUCTIONS).toBe('↑↓: Navigate • ←→: Toggle Mode • Enter: Confirm • Esc: Cancel');
-			expect(UI_TEXT.APPLY_BUTTON).toBe('Apply');
-			expect(UI_TEXT.CANCEL_BUTTON).toBe('Cancel');
-			expect(UI_TEXT.NO_CHANGES).toBe('No changes made');
+			expect(UI_TEXT.SUBTITLE).toBe('How would you like to register assistants?');
+			expect(UI_TEXT.INSTRUCTIONS).toBe('↑↓: Navigate • Enter: Continue • Esc: Cancel');
 		});
 
-		it('should have exactly 6 text fields', () => {
-			const fields = Object.keys(UI_TEXT);
-			expect(fields).toHaveLength(6);
+		it('should have exactly 3 UI text strings', () => {
+			expect(Object.keys(UI_TEXT)).toHaveLength(3);
 		});
 
-		it('should have non-empty strings', () => {
-			Object.values(UI_TEXT).forEach(text => {
+		it('should have non-empty UI text strings', () => {
+			Object.values(UI_TEXT).forEach((text) => {
+				expect(text).toBeTruthy();
 				expect(text.length).toBeGreaterThan(0);
 			});
-		});
-
-		it('should have properly formatted instructions', () => {
-			expect(UI_TEXT.INSTRUCTIONS).toContain('↑↓');
-			expect(UI_TEXT.INSTRUCTIONS).toContain('←→');
-			expect(UI_TEXT.INSTRUCTIONS).toContain('Enter');
-			expect(UI_TEXT.INSTRUCTIONS).toContain('Esc');
 		});
 	});
 
@@ -177,29 +117,6 @@ describe('Configuration Constants', () => {
 
 		it('should be a positive number', () => {
 			expect(KEEP_ALIVE_INTERVAL).toBeGreaterThan(0);
-		});
-
-		it('should be in milliseconds', () => {
-			const oneMinuteInMs = 60 * 1000;
-			expect(KEEP_ALIVE_INTERVAL).toBe(oneMinuteInMs);
-		});
-	});
-
-	describe('Type Integrity', () => {
-		it('should have MODE_LABELS as object', () => {
-			expect(typeof MODE_LABELS).toBe('object');
-			expect(MODE_LABELS).not.toBeNull();
-		});
-
-		it('should have MODE_CYCLE_ORDER as array', () => {
-			expect(Array.isArray(MODE_CYCLE_ORDER)).toBe(true);
-		});
-
-		it('should have all constants as non-null objects', () => {
-			expect(REGISTRATION_MODE).toBeTruthy();
-			expect(ANSI).toBeTruthy();
-			expect(KEY).toBeTruthy();
-			expect(UI_TEXT).toBeTruthy();
 		});
 	});
 });

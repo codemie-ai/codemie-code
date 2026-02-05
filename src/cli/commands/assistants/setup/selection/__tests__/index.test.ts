@@ -185,18 +185,36 @@ describe('Selection Index - index.ts', () => {
       // State should have 3 panels
     });
 
-    it('should set registered panel as active initially', async () => {
-      const registeredIds = new Set<string>();
+    it('should set registered panel as active when registered IDs exist', async () => {
+      const registeredIds = new Set(['1', '2']);
 
-      const result = await promptAssistantSelection(
+      await promptAssistantSelection(
         registeredIds,
         mockConfig,
         mockOptions,
         mockClient
       );
 
-      expect(result).toBeDefined();
-      // Active panel should be registered
+      const { createInteractivePrompt } = await import('../interactive-prompt.js');
+      const callArgs = vi.mocked(createInteractivePrompt).mock.calls[0][0];
+
+      expect(callArgs.state.activePanelId).toBe(PANEL_ID.REGISTERED);
+    });
+
+    it('should set project panel as active when no registered IDs exist', async () => {
+      const registeredIds = new Set<string>();
+
+      await promptAssistantSelection(
+        registeredIds,
+        mockConfig,
+        mockOptions,
+        mockClient
+      );
+
+      const { createInteractivePrompt } = await import('../interactive-prompt.js');
+      const callArgs = vi.mocked(createInteractivePrompt).mock.calls[0][0];
+
+      expect(callArgs.state.activePanelId).toBe(PANEL_ID.PROJECT);
     });
 
     it('should initialize selected IDs with registered IDs', async () => {
@@ -263,7 +281,7 @@ describe('Selection Index - index.ts', () => {
         expect.objectContaining({
           state: expect.objectContaining({
             panels: expect.any(Array),
-            activePanelId: PANEL_ID.REGISTERED,
+            activePanelId: expect.any(String), // Can be REGISTERED or PROJECT based on registeredIds
             searchQuery: '',
             selectedIds: expect.any(Set),
             registeredIds: expect.any(Set),
@@ -390,30 +408,111 @@ describe('Selection Index - index.ts', () => {
       expect(result).toBeDefined();
     });
 
-    it('should set project panel as inactive initially', async () => {
+    it('should set project panel as active when no registered IDs', async () => {
       const registeredIds = new Set<string>();
 
-      const result = await promptAssistantSelection(
+      await promptAssistantSelection(
         registeredIds,
         mockConfig,
         mockOptions,
         mockClient
       );
 
-      expect(result).toBeDefined();
+      const { createInteractivePrompt } = await import('../interactive-prompt.js');
+      const callArgs = vi.mocked(createInteractivePrompt).mock.calls[0][0];
+      const projectPanel = callArgs.state.panels.find((p: any) => p.id === PANEL_ID.PROJECT);
+
+      expect(projectPanel?.isActive).toBe(true);
+    });
+
+    it('should set registered panel as inactive when no registered IDs', async () => {
+      const registeredIds = new Set<string>();
+
+      await promptAssistantSelection(
+        registeredIds,
+        mockConfig,
+        mockOptions,
+        mockClient
+      );
+
+      const { createInteractivePrompt } = await import('../interactive-prompt.js');
+      const callArgs = vi.mocked(createInteractivePrompt).mock.calls[0][0];
+      const registeredPanel = callArgs.state.panels.find((p: any) => p.id === PANEL_ID.REGISTERED);
+
+      expect(registeredPanel?.isActive).toBe(false);
     });
 
     it('should set marketplace panel as inactive initially', async () => {
       const registeredIds = new Set<string>();
 
-      const result = await promptAssistantSelection(
+      await promptAssistantSelection(
         registeredIds,
         mockConfig,
         mockOptions,
         mockClient
       );
 
-      expect(result).toBeDefined();
+      const { createInteractivePrompt } = await import('../interactive-prompt.js');
+      const callArgs = vi.mocked(createInteractivePrompt).mock.calls[0][0];
+      const marketplacePanel = callArgs.state.panels.find((p: any) => p.id === PANEL_ID.MARKETPLACE);
+
+      expect(marketplacePanel?.isActive).toBe(false);
+    });
+
+    it('should fetch data for project panel when no registered IDs', async () => {
+      const { createDataFetcher } = await import('../../data.js');
+      const mockFetch = vi.fn().mockResolvedValue({
+        data: [],
+        total: 0,
+        pages: 0,
+      });
+
+      vi.mocked(createDataFetcher).mockReturnValueOnce({
+        fetchAssistants: mockFetch,
+      } as any);
+
+      const registeredIds = new Set<string>();
+
+      await promptAssistantSelection(
+        registeredIds,
+        mockConfig,
+        mockOptions,
+        mockClient
+      );
+
+      expect(mockFetch).toHaveBeenCalledWith({
+        scope: PANEL_ID.PROJECT,
+        searchQuery: '',
+        page: 0,
+      });
+    });
+
+    it('should fetch data for registered panel when registered IDs exist', async () => {
+      const { createDataFetcher } = await import('../../data.js');
+      const mockFetch = vi.fn().mockResolvedValue({
+        data: [],
+        total: 0,
+        pages: 0,
+      });
+
+      vi.mocked(createDataFetcher).mockReturnValueOnce({
+        fetchAssistants: mockFetch,
+      } as any);
+
+      const registeredIds = new Set(['1', '2']);
+
+      await promptAssistantSelection(
+        registeredIds,
+        mockConfig,
+        mockOptions,
+        mockClient
+      );
+
+      expect(mockFetch).toHaveBeenCalledWith({
+        scope: PANEL_ID.REGISTERED,
+        searchQuery: '',
+        page: 0,
+      });
     });
   });
 

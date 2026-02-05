@@ -216,8 +216,8 @@ function buildPaginationControls(
  * Build buttons (Continue / Cancel)
  */
 function buildButtons(state: SelectionState): string {
-  const { isButtonsFocused, focusedButton, isSearchFocused, isPaginationFocused } = state;
-  const buttonsActive = isButtonsFocused && !isSearchFocused && isPaginationFocused === null;
+  const { areNavigationButtonsFocused, focusedButton, isSearchFocused, isPaginationFocused } = state;
+  const buttonsActive = areNavigationButtonsFocused && !isSearchFocused && isPaginationFocused === null;
 
   const continueButton = buttonsActive && focusedButton === 'continue'
     ? chalk.bgRgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b).black(` ${TEXT.CONTINUE_BUTTON} `)

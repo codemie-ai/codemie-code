@@ -1,13 +1,17 @@
+/**
+ * UI Rendering for Mode Selection
+ */
+
 import chalk from 'chalk';
-import type { ConfigurationState, RegistrationMode } from './types.js';
-import { MODE_LABELS, MODE_CYCLE_ORDER, UI_TEXT } from './constants.js';
-import { COLOR, ACTION_TYPE } from '../constants.js';
+import type { ModeSelectionState, ConfigurationChoice } from './types.js';
+import { CONFIGURATION_CHOICE, CONFIGURATION_CHOICE_LABELS, CONFIGURATION_CHOICE_DESCRIPTIONS, UI_TEXT } from './constants.js';
+import { COLOR } from '../constants.js';
 
 /**
  * Build top line (purple separator)
  */
 function buildTopLine(): string {
-	const width = 60;
+	const width = 70;
 	return chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b)('─'.repeat(width));
 }
 
@@ -26,71 +30,51 @@ function buildSubtitle(): string {
 }
 
 /**
- * Build mode switch display
- * Shows: [Claude Agent] [Claude Skill] [Both]
- * Active mode is highlighted in purple
+ * Build single choice option
  */
-function buildModeSwitch(currentMode: RegistrationMode, isCursor: boolean): string {
-	const switches = MODE_CYCLE_ORDER.map((mode) => {
-		const label = MODE_LABELS[mode];
-		const isActive = mode === currentMode;
-
-		if (isActive && isCursor) {
-			return chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b).bold(`[${label}]`);
-		} else if (isActive) {
-			return chalk.bold(`[${label}]`);
-		} else {
-			return chalk.dim(`[${label}]`);
-		}
-	});
-
-	return switches.join(' ');
-}
-
-/**
- * Build single assistant line
- */
-function buildAssistantLine(
-	registration: { assistant: { name: string }; mode: RegistrationMode; isAlreadyRegistered: boolean },
+function buildChoiceOption(
+	choice: ConfigurationChoice,
+	isSelected: boolean,
 	isCursor: boolean
 ): string {
-	const cursor = isCursor ? chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b)('› ') : '  ';
-	const name = isCursor ? chalk.bold(registration.assistant.name) : chalk.white(registration.assistant.name);
-	const badge = registration.isAlreadyRegistered ? chalk.dim(' (Already registered)') : '';
-	const modeSwitch = buildModeSwitch(registration.mode, isCursor);
+	const label = CONFIGURATION_CHOICE_LABELS[choice];
+	const description = CONFIGURATION_CHOICE_DESCRIPTIONS[choice];
 
-	return `${cursor}${name}${badge}\n  Mode: ${modeSwitch}`;
+	// Radio button indicator
+	const radio = isSelected
+		? chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b)('●')
+		: '○';
+
+	// Cursor indicator
+	const cursor = isCursor
+		? chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b)('› ')
+		: '  ';
+
+	// Label formatting
+	const formattedLabel = isCursor
+		? chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b).bold(label)
+		: chalk.white(label);
+
+	return `${cursor}${radio} ${formattedLabel}\n  ${chalk.dim(description)}`;
 }
 
 /**
- * Build assistants list
+ * Build choices list
  */
-function buildAssistantsList(state: ConfigurationState): string {
-	const lines = state.registrations.map((registration, index) => {
-		const isCursor = !state.isButtonsFocused && state.cursorIndex === index;
-		return buildAssistantLine(registration, isCursor);
+function buildChoicesList(state: ModeSelectionState): string {
+	const choices: ConfigurationChoice[] = [
+		CONFIGURATION_CHOICE.SUBAGENTS,
+		CONFIGURATION_CHOICE.SKILLS,
+		CONFIGURATION_CHOICE.MANUAL,
+	];
+
+	const lines = choices.map((choice) => {
+		const isCursor = state.selectedChoice === choice;
+		const isSelected = state.selectedChoice === choice;
+		return buildChoiceOption(choice, isSelected, isCursor);
 	});
 
 	return lines.join('\n\n');
-}
-
-/**
- * Build buttons (Apply / Cancel)
- */
-function buildButtons(state: ConfigurationState): string {
-	const { isButtonsFocused, focusedButton } = state;
-
-	const applyButton =
-		isButtonsFocused && focusedButton === ACTION_TYPE.APPLY
-			? chalk.bgRgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b).black(` ${UI_TEXT.APPLY_BUTTON} `)
-			: chalk.dim(`[${UI_TEXT.APPLY_BUTTON}]`);
-
-	const cancelButton =
-		isButtonsFocused && focusedButton === ACTION_TYPE.CANCEL
-			? chalk.bgRgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b).black(` ${UI_TEXT.CANCEL_BUTTON} `)
-			: chalk.dim(`[${UI_TEXT.CANCEL_BUTTON}]`);
-
-	return `  ${applyButton}  ${cancelButton}`;
 }
 
 /**
@@ -103,18 +87,16 @@ function buildInstructions(): string {
 /**
  * Render full UI
  */
-export function renderUI(state: ConfigurationState): string {
+export function renderModeSelectionUI(state: ModeSelectionState): string {
 	const parts = [
 		buildTopLine(),
 		buildTitle(),
 		'',
 		buildSubtitle(),
 		'',
-		buildAssistantsList(state),
+		buildChoicesList(state),
 		'',
 		buildTopLine(),
-		'',
-		buildButtons(state),
 		'',
 		buildInstructions(),
 	];

@@ -22,7 +22,7 @@ export interface CodemieAssistant {
   description?: string;
   project?: string;
   registeredAt: string;
-  registrationMode?: 'agent' | 'skill' | 'both';
+  registrationMode?: 'agent' | 'skill';
 }
 
 /**

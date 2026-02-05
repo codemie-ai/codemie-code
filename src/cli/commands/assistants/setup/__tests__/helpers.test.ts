@@ -40,7 +40,7 @@ import { determineChanges, registerAssistant, unregisterAssistant } from '../hel
 import { logger } from '@/utils/logger.js';
 import { registerClaudeSubagent, unregisterClaudeSubagent } from '@/cli/commands/assistants/setup/generators/claude-agent-generator.js';
 import { registerClaudeSkill, unregisterClaudeSkill } from '@/cli/commands/assistants/setup/generators/claude-skill-generator.js';
-import { REGISTRATION_MODE } from '../configuration/constants.js';
+import { REGISTRATION_MODE } from '../manualConfiguration/constants.js';
 
 describe('Assistants Setup Helpers - helpers.ts', () => {
 	let consoleLogSpy: any;
@@ -315,13 +315,6 @@ describe('Assistants Setup Helpers - helpers.ts', () => {
 			expect(result?.registrationMode).toBe('skill');
 		});
 
-		it('should register as both when mode is BOTH', async () => {
-			const result = await registerAssistant(mockAssistant, REGISTRATION_MODE.BOTH);
-
-			expect(registerClaudeSubagent).toHaveBeenCalledWith(mockAssistant);
-			expect(registerClaudeSkill).toHaveBeenCalledWith(mockAssistant);
-			expect(result?.registrationMode).toBe('both');
-		});
 
 		it('should return CodemieAssistant with registeredAt timestamp', async () => {
 			const result = await registerAssistant(mockAssistant, REGISTRATION_MODE.AGENT);
@@ -366,19 +359,6 @@ describe('Assistants Setup Helpers - helpers.ts', () => {
 			);
 		});
 
-		it('should handle both registration error', async () => {
-			vi.mocked(registerClaudeSubagent).mockRejectedValue(new Error('Agent registration failed'));
-
-			const result = await registerAssistant(mockAssistant, REGISTRATION_MODE.BOTH);
-
-			expect(result).toBeNull();
-			expect(logger.error).toHaveBeenCalledWith(
-				'Assistant generation failed',
-				expect.objectContaining({
-					mode: 'both',
-				})
-			);
-		});
 
 		it('should show verbose output when CODEMIE_DEBUG is true', async () => {
 			process.env.CODEMIE_DEBUG = 'true';
@@ -400,12 +380,6 @@ describe('Assistants Setup Helpers - helpers.ts', () => {
 			await registerAssistant(mockAssistant, REGISTRATION_MODE.SKILL);
 			expect(registerClaudeSkill).toHaveBeenCalled();
 
-			vi.clearAllMocks();
-
-			// Test both mode label
-			await registerAssistant(mockAssistant, REGISTRATION_MODE.BOTH);
-			expect(registerClaudeSubagent).toHaveBeenCalled();
-			expect(registerClaudeSkill).toHaveBeenCalled();
 		});
 
 		it('should preserve all assistant properties in result', async () => {
@@ -477,10 +451,6 @@ describe('Assistants Setup Helpers - helpers.ts', () => {
 			// Register as skill
 			const result2 = await registerAssistant(mockAssistant, REGISTRATION_MODE.SKILL);
 			expect(result2?.registrationMode).toBe('skill');
-
-			// Register as both
-			const result3 = await registerAssistant(mockAssistant, REGISTRATION_MODE.BOTH);
-			expect(result3?.registrationMode).toBe('both');
 		});
 
 		it('should not interfere between registrations', async () => {

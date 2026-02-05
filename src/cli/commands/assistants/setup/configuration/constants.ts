@@ -1,12 +1,30 @@
-import type { RegistrationMode } from './types.js';
+import type { ConfigurationChoice } from './types.js';
 
 /**
- * Registration mode values
+ * Configuration choice values
  */
-export const REGISTRATION_MODE = {
-	AGENT: 'agent' as const,
-	SKILL: 'skill' as const,
-	BOTH: 'both' as const,
+export const CONFIGURATION_CHOICE = {
+	SUBAGENTS: 'subagents' as const,
+	SKILLS: 'skills' as const,
+	MANUAL: 'manual' as const,
+} as const;
+
+/**
+ * Labels for configuration choices
+ */
+export const CONFIGURATION_CHOICE_LABELS: Record<ConfigurationChoice, string> = {
+	[CONFIGURATION_CHOICE.SUBAGENTS]: 'Claude Subagents',
+	[CONFIGURATION_CHOICE.SKILLS]: 'Claude Skills',
+	[CONFIGURATION_CHOICE.MANUAL]: 'Manual Configuration',
+} as const;
+
+/**
+ * Descriptions for configuration choices
+ */
+export const CONFIGURATION_CHOICE_DESCRIPTIONS: Record<ConfigurationChoice, string> = {
+	[CONFIGURATION_CHOICE.SUBAGENTS]: 'Register all as Claude agents (@slug)',
+	[CONFIGURATION_CHOICE.SKILLS]: 'Register all as Claude skills (/slug)',
+	[CONFIGURATION_CHOICE.MANUAL]: 'Choose individually for each assistant',
 } as const;
 
 /**
@@ -25,44 +43,18 @@ export const ANSI = {
 export const KEY = {
 	UP: '\x1B[A',
 	DOWN: '\x1B[B',
-	LEFT: '\x1B[D',
-	RIGHT: '\x1B[C',
 	ENTER: '\r',
-	SPACE: ' ',
-	TAB: '\t',
-	SHIFT_TAB: '\x1B[Z',
 	ESC: '\x1B',
 	CTRL_C: '\x03',
 } as const;
-
-/**
- * Labels for registration modes
- */
-export const MODE_LABELS: Record<RegistrationMode, string> = {
-	[REGISTRATION_MODE.AGENT]: 'Claude Agent',
-	[REGISTRATION_MODE.SKILL]: 'Claude Skill',
-	[REGISTRATION_MODE.BOTH]: 'Both',
-} as const;
-
-/**
- * Order for cycling through modes
- */
-export const MODE_CYCLE_ORDER: RegistrationMode[] = [
-	REGISTRATION_MODE.AGENT,
-	REGISTRATION_MODE.SKILL,
-	REGISTRATION_MODE.BOTH,
-];
 
 /**
  * UI text strings
  */
 export const UI_TEXT = {
 	TITLE: 'Configure Registration',
-	SUBTITLE: 'Select registration mode for each assistant:',
-	INSTRUCTIONS: '↑↓: Navigate • ←→: Toggle Mode • Enter: Confirm • Esc: Cancel',
-	APPLY_BUTTON: 'Apply',
-	CANCEL_BUTTON: 'Cancel',
-	NO_CHANGES: 'No changes made',
+	SUBTITLE: 'How would you like to register assistants?',
+	INSTRUCTIONS: '↑↓: Navigate • Enter: Continue • Esc: Cancel',
 } as const;
 
 /**
