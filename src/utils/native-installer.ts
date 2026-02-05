@@ -332,8 +332,14 @@ export async function installNativeAgent(
 		// Prevents exposure of sensitive data in logs or UI
 		const sanitizedOutput = sanitizeValue(result.stdout || result.stderr || '');
 
+		// If verification was enabled and failed, mark installation as unsuccessful
+		// This ensures that failed verifications are properly reported to the user
+		const verificationEnabled = !!options?.verifyCommand;
+		const verificationPassed = !!installedVersion;
+		const installSuccess = verificationEnabled ? verificationPassed : true;
+
 		return {
-			success: true,
+			success: installSuccess,
 			installedVersion,
 			output: sanitizedOutput as string,
 		};
