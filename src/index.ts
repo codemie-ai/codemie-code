@@ -35,12 +35,12 @@ export type {
 
 // Hook Event Processing (for programmatic usage)
 export { HookEventProcessor } from './hooks/api.js';
+export type { HookProcessingConfig } from './hooks/api.js';
 export type {
-  HookProcessingConfig,
   SessionStartEvent,
   SessionEndEvent,
   SubagentStopEvent
-} from './hooks/api.js';
+} from './cli/commands/hook.js';
 
 // Hook Event Types
 export type {

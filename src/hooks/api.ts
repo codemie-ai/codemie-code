@@ -14,37 +14,23 @@
 
 import { logger } from '../utils/logger.js';
 import { AgentRegistry } from '../agents/registry.js';
-import { getSessionPath, getSessionMetricsPath, getSessionConversationPath } from '../agents/core/session/session-config.js';
 import type { BaseHookEvent, HookTransformer, MCPConfigSummary } from '../agents/core/types.js';
 import type { ProcessingContext } from '../agents/core/session/BaseProcessor.js';
-
-/**
- * SessionStart event
- */
-export interface SessionStartEvent extends BaseHookEvent {
-  hook_event_name: 'SessionStart';
-  source: string;                  // e.g., "startup"
-}
-
-/**
- * SessionEnd event
- */
-export interface SessionEndEvent extends BaseHookEvent {
-  hook_event_name: 'SessionEnd';
-  reason: string;                  // e.g., "exit", "logout"
-  cwd: string;                     // Always present for SessionEnd
-}
-
-/**
- * SubagentStop event
- */
-export interface SubagentStopEvent extends BaseHookEvent {
-  hook_event_name: 'SubagentStop';
-  agent_id: string;                // Sub-agent ID
-  agent_transcript_path: string;   // Path to agent's transcript file
-  stop_hook_active: boolean;       // Whether stop hook is active
-  cwd: string;                     // Current working directory
-}
+import type {
+  SessionStartEvent,
+  SessionEndEvent,
+  SubagentStopEvent
+} from '../cli/commands/hook.js';
+import {
+  normalizeEventName as normalizeEventNameImpl,
+  addCompletedPrefix,
+  handlePreCompact,
+  handlePermissionRequest,
+  startActivityTracking,
+  accumulateActiveDuration,
+  updateSessionStatus,
+  renameSessionFiles
+} from '../cli/commands/hook.js';
 
 /**
  * Configuration for HookEventProcessor
@@ -205,14 +191,14 @@ export class HookEventProcessor {
    * Handle PreCompact event
    */
   async handlePreCompact(event: BaseHookEvent): Promise<void> {
-    logger.debug(`[hook:PreCompact] ${JSON.stringify(event)}`);
+    return handlePreCompact(event);
   }
 
   /**
    * Handle PermissionRequest event
    */
   async handlePermissionRequest(event: BaseHookEvent): Promise<void> {
-    logger.debug(`[hook:PermissionRequest] ${JSON.stringify(event)}`);
+    return handlePermissionRequest(event);
   }
 
   /**
@@ -220,43 +206,14 @@ export class HookEventProcessor {
    */
   async handleUserPromptSubmit(event: BaseHookEvent): Promise<void> {
     logger.info(`[hook:UserPromptSubmit] ${JSON.stringify(event)}`);
-    await this.startActivityTracking();
+    await startActivityTracking(this.config.sessionId);
   }
 
   /**
    * Normalize event name using agent-specific mapping
    */
   private normalizeEventName(eventName: string): string {
-    try {
-      logger.info(`[hook:normalize] Input: eventName="${eventName}", agentName="${this.config.agentName}"`);
-
-      const agent = AgentRegistry.getAgent(this.config.agentName);
-      if (!agent) {
-        logger.warn(`[hook:router] Agent not found for event normalization: ${this.config.agentName}`);
-        return eventName;
-      }
-
-      const eventMapping = (agent as any).metadata?.hookConfig?.eventNameMapping;
-      if (!eventMapping) {
-        logger.info(`[hook:normalize] No mapping defined for agent ${this.config.agentName}, using event name as-is`);
-        return eventName;
-      }
-
-      logger.info(`[hook:normalize] Available mappings for ${this.config.agentName}: ${JSON.stringify(Object.keys(eventMapping))}`);
-
-      const normalizedName = eventMapping[eventName];
-      if (normalizedName) {
-        logger.info(`[hook:normalize] Mapped: ${eventName} → ${normalizedName} (agent=${this.config.agentName})`);
-        return normalizedName;
-      }
-
-      logger.info(`[hook:normalize] No mapping found for "${eventName}", using original name`);
-      return eventName;
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      logger.warn(`[hook:router] Failed to normalize event name: ${message}`);
-      return eventName;
-    }
+    return normalizeEventNameImpl(eventName, this.config.agentName);
   }
 
   /**
@@ -578,22 +535,7 @@ export class HookEventProcessor {
    * Update session status on session end
    */
   private async updateSessionStatus(event: SessionEndEvent): Promise<void> {
-    const { SessionStore } = await import('../agents/core/session/SessionStore.js');
-    const sessionStore = new SessionStore();
-
-    const session = await sessionStore.loadSession(this.config.sessionId);
-
-    if (!session) {
-      logger.warn(`[hook:SessionEnd] Session not found: ${this.config.sessionId}`);
-      return;
-    }
-
-    const status = 'completed';
-    await sessionStore.updateSessionStatus(this.config.sessionId, status, event.reason);
-
-    logger.info(
-      `[hook:SessionEnd] Session status updated: id=${this.config.sessionId} status=${status} reason=${event.reason}`
-    );
+    return updateSessionStatus(event, this.config.sessionId);
   }
 
   /**
@@ -697,104 +639,27 @@ export class HookEventProcessor {
    * Rename session files with 'completed_' prefix
    */
   private async renameSessionFiles(): Promise<void> {
-    const { rename } = await import('fs/promises');
-    const { existsSync } = await import('fs');
-
-    const renamedFiles: string[] = [];
-    const errors: string[] = [];
-
-    // 1. Rename session file
-    try {
-      const sessionFile = getSessionPath(this.config.sessionId);
-      const newSessionFile = await this.addCompletedPrefix(sessionFile);
-
-      if (existsSync(sessionFile)) {
-        await rename(sessionFile, newSessionFile);
-        renamedFiles.push('session');
-        logger.debug(`[hook:SessionEnd] Renamed session file: ${this.config.sessionId}.json → completed_${this.config.sessionId}.json`);
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      errors.push(`session: ${errorMessage}`);
-      logger.warn(`[hook:SessionEnd] Failed to rename session file: ${errorMessage}`);
-    }
-
-    // 2. Rename metrics file
-    try {
-      const metricsFile = getSessionMetricsPath(this.config.sessionId);
-      const newMetricsFile = await this.addCompletedPrefix(metricsFile);
-
-      if (existsSync(metricsFile)) {
-        await rename(metricsFile, newMetricsFile);
-        renamedFiles.push('metrics');
-        logger.debug(`[hook:SessionEnd] Renamed metrics file: ${this.config.sessionId}_metrics.jsonl → completed_${this.config.sessionId}_metrics.jsonl`);
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      errors.push(`metrics: ${errorMessage}`);
-      logger.warn(`[hook:SessionEnd] Failed to rename metrics file: ${errorMessage}`);
-    }
-
-    // 3. Rename conversations file
-    try {
-      const conversationsFile = getSessionConversationPath(this.config.sessionId);
-      const newConversationsFile = await this.addCompletedPrefix(conversationsFile);
-
-      if (existsSync(conversationsFile)) {
-        await rename(conversationsFile, newConversationsFile);
-        renamedFiles.push('conversations');
-        logger.debug(`[hook:SessionEnd] Renamed conversations file: ${this.config.sessionId}_conversation.jsonl → completed_${this.config.sessionId}_conversation.jsonl`);
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      errors.push(`conversations: ${errorMessage}`);
-      logger.warn(`[hook:SessionEnd] Failed to rename conversations file: ${errorMessage}`);
-    }
-
-    if (renamedFiles.length > 0) {
-      logger.info(`[hook:SessionEnd] Renamed files: ${renamedFiles.join(', ')}`);
-    }
-
-    if (errors.length > 0) {
-      logger.warn(`[hook:SessionEnd] File rename errors: ${errors.join('; ')}`);
-    }
+    return renameSessionFiles(this.config.sessionId);
   }
 
   /**
    * Add 'completed_' prefix to a file path basename
    */
   private async addCompletedPrefix(filePath: string): Promise<string> {
-    const { dirname, basename, join } = await import('path');
-    return join(dirname(filePath), `completed_${basename(filePath)}`);
+    return addCompletedPrefix(filePath);
   }
 
   /**
    * Start activity tracking for a session
    */
   private async startActivityTracking(): Promise<void> {
-    try {
-      const { SessionStore } = await import('../agents/core/session/SessionStore.js');
-      const sessionStore = new SessionStore();
-      await sessionStore.startActivityTracking(this.config.sessionId);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.warn(`[hook] Failed to start activity tracking: ${errorMessage}`);
-      // Don't throw - activity tracking failure should not block user prompts
-    }
+    return startActivityTracking(this.config.sessionId);
   }
 
   /**
    * Accumulate active duration for a session
    */
   private async accumulateActiveDuration(): Promise<number> {
-    try {
-      const { SessionStore } = await import('../agents/core/session/SessionStore.js');
-      const sessionStore = new SessionStore();
-      return await sessionStore.accumulateActiveDuration(this.config.sessionId);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logger.warn(`[hook] Failed to accumulate active duration: ${errorMessage}`);
-      return 0;
-    }
+    return accumulateActiveDuration(this.config.sessionId);
   }
 }
