@@ -45,9 +45,30 @@ export class MetricsProcessor implements SessionProcessor {
     _context: ProcessingContext
   ): Promise<ProcessingResult> {
     try {
+      // Load session state to get previously processed record IDs
+      const { SessionStore } = await import('../../../../core/session/SessionStore.js');
+      const sessionStore = new SessionStore();
+      const sessionMetadata = await sessionStore.loadSession(session.sessionId);
+
+      if (!sessionMetadata) {
+        logger.warn(`[${this.name}] Session metadata not found: ${session.sessionId}`);
+        return {
+          success: false,
+          message: 'Session metadata not found - session must be created before processing'
+        };
+      }
+
+      // Load existing processed record IDs
+      const existingProcessedIds = new Set<string>(
+        sessionMetadata.sync?.metrics?.processedRecordIds || []
+      );
+
+      logger.debug(`[${this.name}] Loaded ${existingProcessedIds.size} previously processed record IDs`);
+
       logger.info(`[${this.name}] Transforming ${session.messages.length} messages to deltas`);
 
-      const deltas = this.transformMessagesToDeltas(session);
+      // Pass existing processed IDs instead of creating empty Set
+      const deltas = this.transformMessagesToDeltas(session, existingProcessedIds);
 
       if (deltas.length === 0) {
         logger.debug(`[${this.name}] No deltas generated from messages`);
@@ -63,10 +84,20 @@ export class MetricsProcessor implements SessionProcessor {
 
       logger.info(`[${this.name}] Generated and wrote ${deltas.length} deltas`);
 
+      // Return sync updates for the adapter to persist
       return {
         success: true,
         message: `Generated ${deltas.length} deltas`,
-        metadata: { recordsProcessed: deltas.length }
+        metadata: {
+          recordsProcessed: deltas.length,
+          syncUpdates: deltas.length > 0 ? {
+            metrics: {
+              processedRecordIds: Array.from(existingProcessedIds),
+              lastProcessedTimestamp: Date.now(),
+              totalDeltas: deltas.length
+            }
+          } : undefined
+        }
       };
 
     } catch (error) {
@@ -81,9 +112,12 @@ export class MetricsProcessor implements SessionProcessor {
   /**
    * Transform messages to deltas
    */
-  private transformMessagesToDeltas(session: ParsedSession): Array<Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>> {
+  private transformMessagesToDeltas(
+    session: ParsedSession,
+    existingProcessedIds: Set<string>
+  ): Array<Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>> {
     const deltas: Array<Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>> = [];
-    const processedIds = new Set<string>();
+    const processedIds = existingProcessedIds;
     const attachedUserPrompts = new Set<string>();
 
     const mainDeltas = this.extractDeltasFromMessages(

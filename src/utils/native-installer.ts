@@ -26,6 +26,7 @@ export interface NativeInstallOptions {
 	timeout?: number; // Installation timeout (ms)
 	env?: Record<string, string>; // Environment variables
 	verifyCommand?: string; // Command to verify installation (e.g., 'claude')
+	verifyPath?: string; // Full path to verify (e.g., '~/.local/bin/claude') - used instead of PATH-based verification
 	installFlags?: string[]; // Additional flags to pass to installer (e.g., ['--force'])
 }
 
@@ -129,7 +130,7 @@ function buildInstallerCommand(
  * Verify installation by running the verify command
  * On Windows, retries with backoff to allow PATH updates to propagate
  *
- * @param verifyCommand - Command to verify (e.g., 'claude')
+ * @param verifyCommand - Command to verify (e.g., 'claude' or '/path/to/claude')
  * @param retries - Number of retry attempts (default: 3 on Windows, 1 on Unix)
  * @returns Installed version string or null if verification failed
  */
@@ -150,8 +151,11 @@ async function verifyInstallation(
 			);
 
 			// Run version check command (e.g., 'claude --version')
+			// If verifyCommand is a path, use shell to resolve ~ and execute
+			const useShell = verifyCommand.includes('/') || verifyCommand.includes('\\');
 			const result = await exec(verifyCommand, ['--version'], {
 				timeout: 5000, // 5 second timeout for version check
+				shell: useShell, // Use shell for path-based commands to resolve ~
 			});
 
 			if (result.code === 0 && result.stdout) {
@@ -299,24 +303,31 @@ export async function installNativeAgent(
 
 		// Verify installation if verify command provided
 		let installedVersion: string | null = null;
-		if (options?.verifyCommand) {
+		if (options?.verifyCommand || options?.verifyPath) {
+			// Prefer verifyPath (full path) over verifyCommand (PATH-based)
+			// This avoids PATH refresh issues on macOS/Linux
+			const commandToVerify = options?.verifyPath || options.verifyCommand!;
+
 			logger.debug('Verifying installation', {
 				agentName,
-				verifyCommand: options.verifyCommand,
+				verifyCommand: commandToVerify,
+				usingFullPath: !!options?.verifyPath,
 			});
 
-			installedVersion = await verifyInstallation(options.verifyCommand);
+			installedVersion = await verifyInstallation(commandToVerify);
 
 			if (!installedVersion) {
 				// Add platform-specific context for troubleshooting
 				const isWindows = platform === 'windows';
 				const troubleshootingHint = isWindows
 					? 'Restart your terminal to refresh PATH. The installation directory was automatically added to your PATH.'
-					: 'Verify that the command is in your PATH.';
+					: options?.verifyPath
+						? `Binary exists at ${options.verifyPath} but failed to execute. Check permissions: chmod +x ${options.verifyPath}`
+						: 'Verify that the command is in your PATH.';
 
 				logger.warn('Installation verification failed', {
 					agentName,
-					verifyCommand: options.verifyCommand,
+					verifyCommand: commandToVerify,
 					platform,
 					hint: troubleshootingHint,
 				});
@@ -332,8 +343,14 @@ export async function installNativeAgent(
 		// Prevents exposure of sensitive data in logs or UI
 		const sanitizedOutput = sanitizeValue(result.stdout || result.stderr || '');
 
+		// If verification was enabled and failed, mark installation as unsuccessful
+		// This ensures that failed verifications are properly reported to the user
+		const verificationEnabled = !!options?.verifyCommand;
+		const verificationPassed = !!installedVersion;
+		const installSuccess = verificationEnabled ? verificationPassed : true;
+
 		return {
-			success: true,
+			success: installSuccess,
 			installedVersion,
 			output: sanitizedOutput as string,
 		};

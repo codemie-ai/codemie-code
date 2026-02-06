@@ -40,6 +40,115 @@ export class SessionSyncer {
   }
 
   /**
+   * Apply processor sync updates to session metadata.
+   * Merges updates from all processors into session state.
+   */
+  private async applySyncUpdates(
+    sessionId: string,
+    results: ProcessingResult[]
+  ): Promise<void> {
+    try {
+      const session = await this.sessionStore.loadSession(sessionId);
+
+      if (!session) {
+        logger.warn(`[SessionSyncer] Session not found for sync updates: ${sessionId}`);
+        return;
+      }
+
+      for (const result of results) {
+        if (!result.metadata?.syncUpdates) continue;
+
+        const { syncUpdates } = result.metadata;
+
+        // Apply metrics updates
+        if (syncUpdates.metrics) {
+          session.sync ??= {};
+          session.sync.metrics ??= {
+            lastProcessedTimestamp: Date.now(),
+            processedRecordIds: [],
+            totalDeltas: 0,
+            totalSynced: 0,
+            totalFailed: 0
+          };
+
+          // Merge processedRecordIds (deduplicate)
+          if (syncUpdates.metrics.processedRecordIds) {
+            const existing = new Set(session.sync.metrics.processedRecordIds || []);
+            for (const id of syncUpdates.metrics.processedRecordIds) {
+              existing.add(id);
+            }
+            session.sync.metrics.processedRecordIds = Array.from(existing);
+          }
+
+          // Update counters (increment, don't overwrite)
+          if (syncUpdates.metrics.totalDeltas !== undefined) {
+            session.sync.metrics.totalDeltas = syncUpdates.metrics.totalDeltas;
+          }
+          if (syncUpdates.metrics.totalSynced !== undefined) {
+            session.sync.metrics.totalSynced = (session.sync.metrics.totalSynced || 0) + syncUpdates.metrics.totalSynced;
+          }
+          if (syncUpdates.metrics.totalFailed !== undefined) {
+            session.sync.metrics.totalFailed = (session.sync.metrics.totalFailed || 0) + syncUpdates.metrics.totalFailed;
+          }
+          if (syncUpdates.metrics.lastProcessedTimestamp !== undefined) {
+            session.sync.metrics.lastProcessedTimestamp = syncUpdates.metrics.lastProcessedTimestamp;
+          }
+        }
+
+        // Apply conversations updates
+        if (syncUpdates.conversations) {
+          session.sync ??= {};
+          session.sync.conversations ??= {
+            lastSyncedMessageUuid: undefined,
+            lastSyncedHistoryIndex: -1,
+            totalMessagesSynced: 0,
+            totalSyncAttempts: 0
+          };
+
+          // Update conversation tracking (latest wins)
+          if (syncUpdates.conversations.lastSyncedMessageUuid !== undefined) {
+            session.sync.conversations.lastSyncedMessageUuid =
+              syncUpdates.conversations.lastSyncedMessageUuid;
+          }
+          if (syncUpdates.conversations.lastSyncedHistoryIndex !== undefined) {
+            session.sync.conversations.lastSyncedHistoryIndex =
+              Math.max(
+                session.sync.conversations.lastSyncedHistoryIndex ?? -1,
+                syncUpdates.conversations.lastSyncedHistoryIndex
+              );
+          }
+          if (syncUpdates.conversations.conversationId !== undefined) {
+            session.sync.conversations.conversationId = syncUpdates.conversations.conversationId;
+          }
+          if (syncUpdates.conversations.lastSyncAt !== undefined) {
+            session.sync.conversations.lastSyncAt = syncUpdates.conversations.lastSyncAt;
+          }
+
+          // Update counters (increment, don't overwrite)
+          if (syncUpdates.conversations.totalMessagesSynced !== undefined) {
+            session.sync.conversations.totalMessagesSynced =
+              (session.sync.conversations.totalMessagesSynced || 0) +
+              syncUpdates.conversations.totalMessagesSynced;
+          }
+          if (syncUpdates.conversations.totalSyncAttempts !== undefined) {
+            session.sync.conversations.totalSyncAttempts =
+              (session.sync.conversations.totalSyncAttempts || 0) +
+              syncUpdates.conversations.totalSyncAttempts;
+          }
+        }
+      }
+
+      // Persist session ONCE after all updates applied
+      await this.sessionStore.saveSession(session);
+
+      logger.debug(`[SessionSyncer] Session persisted after all processors completed`);
+    } catch (error) {
+      logger.error(`[SessionSyncer] Failed to apply sync updates:`, error);
+      throw error;
+    }
+  }
+
+  /**
    * Sync pending data to API
    * Iterates through processors (same logic as plugin)
    *
@@ -89,9 +198,10 @@ export class SessionSyncer {
 
       logger.debug(`[SessionSyncer] Processing session ${sessionId} with ${this.processors.length} processor${this.processors.length !== 1 ? 's' : ''}`);
 
-      // 3. Iterate through processors (same as plugin logic)
+      // 3. Iterate through processors and collect results
       const processorResults: Record<string, ProcessingResult> = {};
       const failedProcessors: string[] = [];
+      const allResults: ProcessingResult[] = [];
 
       for (const processor of this.processors) {
         try {
@@ -106,6 +216,7 @@ export class SessionSyncer {
           // Process session
           const result = await processor.process(emptySession, context);
           processorResults[processor.name] = result;
+          allResults.push(result);
 
           if (result.success) {
             logger.debug(`[SessionSyncer] Processor ${processor.name} succeeded: ${result.message || 'OK'}`);
@@ -117,15 +228,20 @@ export class SessionSyncer {
         } catch (error: unknown) {
           const errorMessage = error instanceof Error ? error.message : 'Unknown error';
           logger.error(`[SessionSyncer] Processor ${processor.name} threw error:`, error);
-          processorResults[processor.name] = {
+          const failedResult: ProcessingResult = {
             success: false,
             message: errorMessage
           };
+          processorResults[processor.name] = failedResult;
+          allResults.push(failedResult);
           failedProcessors.push(processor.name);
         }
       }
 
-      // 4. Build result message
+      // 4. Apply all sync updates and persist session ONCE
+      await this.applySyncUpdates(sessionId, allResults);
+
+      // 5. Build result message
       // Extract detailed stats
       const parts: string[] = [];
       const metricsResult = processorResults['metrics-sync'];
