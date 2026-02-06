@@ -17,9 +17,10 @@ import type {
  * Higher priority = loaded first, can override lower priority
  */
 const SOURCE_PRIORITY: Record<SkillSource, number> = {
-  project: 1000, // Highest priority
+  project: 1000, // Highest priority - project-specific skills
+  plugin: 750, // High priority - plugins can override global but not project
   'mode-specific': 500, // Medium priority
-  global: 100, // Lowest priority
+  global: 100, // Lowest priority - user's global skills
 };
 
 /**
@@ -47,14 +48,15 @@ export class SkillDiscovery {
     }
 
     // Discover from all locations
-    const [projectSkills, modeSkills, globalSkills] = await Promise.all([
+    const [projectSkills, pluginSkills, modeSkills, globalSkills] = await Promise.all([
       this.discoverProjectSkills(cwd),
+      this.discoverPluginSkills(),
       this.discoverModeSkills(options.mode),
       this.discoverGlobalSkills(),
     ]);
 
     // Combine and deduplicate by name (higher priority wins)
-    const allSkills = [...projectSkills, ...modeSkills, ...globalSkills];
+    const allSkills = [...projectSkills, ...pluginSkills, ...modeSkills, ...globalSkills];
     const deduplicatedSkills = this.deduplicateSkills(allSkills);
 
     // Filter by agent if specified
@@ -101,6 +103,44 @@ export class SkillDiscovery {
   private async discoverGlobalSkills(): Promise<Skill[]> {
     const globalSkillsDir = getCodemiePath('skills');
     return this.discoverFromDirectory(globalSkillsDir, 'global');
+  }
+
+  /**
+   * Discover skills from installed plugins
+   * Path: ~/.codemie/plugins/{name}/skills/
+   */
+  private async discoverPluginSkills(): Promise<Skill[]> {
+    const skills: Skill[] = [];
+
+    try {
+      // Lazy import to avoid circular dependency
+      const { PluginRegistry } = await import('../../../../plugins/index.js');
+      const registry = PluginRegistry.getInstance();
+
+      // Get all loaded plugins
+      const plugins = await registry.getAllPlugins();
+
+      for (const plugin of plugins) {
+        // Discover skills from each plugin's skills directory
+        const pluginSkillsDir = join(plugin.path, 'skills');
+        const pluginSkills = await this.discoverFromDirectory(pluginSkillsDir, 'plugin');
+
+        // Add plugin info to each skill
+        for (const skill of pluginSkills) {
+          skill.pluginInfo = {
+            pluginName: plugin.name,
+            fullSkillName: `${plugin.name}:${skill.metadata.name}`,
+            pluginVersion: plugin.manifest.version,
+          };
+        }
+
+        skills.push(...pluginSkills);
+      }
+    } catch {
+      // Plugin system not available or error - return empty array
+    }
+
+    return skills;
   }
 
   /**
