@@ -15,7 +15,7 @@ import type { BaseHookEvent, HookTransformer, MCPConfigSummary } from '../../age
 /**
  * SessionStart event
  */
-interface SessionStartEvent extends BaseHookEvent {
+export interface SessionStartEvent extends BaseHookEvent {
   hook_event_name: 'SessionStart';
   source: string;                  // e.g., "startup"
 }
@@ -23,7 +23,7 @@ interface SessionStartEvent extends BaseHookEvent {
 /**
  * SessionEnd event
  */
-interface SessionEndEvent extends BaseHookEvent {
+export interface SessionEndEvent extends BaseHookEvent {
   hook_event_name: 'SessionEnd';
   reason: string;                  // e.g., "exit", "logout"
   cwd: string;                     // Always present for SessionEnd
@@ -32,7 +32,7 @@ interface SessionEndEvent extends BaseHookEvent {
 /**
  * SubagentStop event
  */
-interface SubagentStopEvent extends BaseHookEvent {
+export interface SubagentStopEvent extends BaseHookEvent {
   hook_event_name: 'SubagentStop';
   agent_id: string;                // Sub-agent ID
   agent_transcript_path: string;   // Path to agent's transcript file
@@ -184,7 +184,7 @@ async function syncPendingDataToAPI(sessionId: string, agentSessionId: string): 
 /**
  * Handle PermissionRequest event
  */
-async function handlePermissionRequest(event: BaseHookEvent, _rawInput: string): Promise<void> {
+export async function handlePermissionRequest(event: BaseHookEvent, _rawInput?: string): Promise<void> {
   logger.debug(`[hook:PermissionRequest] ${JSON.stringify(event)}`);
 }
 
@@ -328,7 +328,7 @@ async function buildProcessingContext(
  *
  * @param sessionId - The CodeMie session ID
  */
-async function startActivityTracking(sessionId: string): Promise<void> {
+export async function startActivityTracking(sessionId: string): Promise<void> {
   try {
     const { SessionStore } = await import('../../agents/core/session/SessionStore.js');
     const sessionStore = new SessionStore();
@@ -347,7 +347,7 @@ async function startActivityTracking(sessionId: string): Promise<void> {
  * @param sessionId - The CodeMie session ID
  * @returns The duration accumulated in this call (0 if no active period)
  */
-async function accumulateActiveDuration(sessionId: string): Promise<number> {
+export async function accumulateActiveDuration(sessionId: string): Promise<number> {
   try {
     const { SessionStore } = await import('../../agents/core/session/SessionStore.js');
     const sessionStore = new SessionStore();
@@ -392,7 +392,7 @@ async function handleSubagentStop(event: SubagentStopEvent, sessionId: string): 
 /**
  * Handle PreCompact event
  */
-async function handlePreCompact(event: BaseHookEvent): Promise<void> {
+export async function handlePreCompact(event: BaseHookEvent): Promise<void> {
   logger.debug(`[hook:PreCompact] ${JSON.stringify(event)}`);
 }
 
@@ -404,7 +404,7 @@ async function handlePreCompact(event: BaseHookEvent): Promise<void> {
  * @param agentName - Agent name (claude, gemini)
  * @returns Normalized internal event name
  */
-function normalizeEventName(eventName: string, agentName: string): string {
+export function normalizeEventName(eventName: string, agentName: string): string {
   try {
     logger.info(`[hook:normalize] Input: eventName="${eventName}", agentName="${agentName}"`);
 
@@ -689,7 +689,7 @@ async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: stri
  * @param event - SessionEnd event data
  * @param sessionId - The CodeMie session ID
  */
-async function updateSessionStatus(event: SessionEndEvent, sessionId: string): Promise<void> {
+export async function updateSessionStatus(event: SessionEndEvent, sessionId: string): Promise<void> {
   try {
     // Import session store
     const { SessionStore } = await import('../../agents/core/session/SessionStore.js');
@@ -730,7 +730,7 @@ async function updateSessionStatus(event: SessionEndEvent, sessionId: string): P
  * Add 'completed_' prefix to a file path basename
  * Example: /path/to/session.json → /path/to/completed_session.json
  */
-async function addCompletedPrefix(filePath: string): Promise<string> {
+export async function addCompletedPrefix(filePath: string): Promise<string> {
   const { dirname, basename, join } = await import('path');
   return join(dirname(filePath), `completed_${basename(filePath)}`);
 }
@@ -746,7 +746,7 @@ async function addCompletedPrefix(filePath: string): Promise<string> {
  *
  * @param sessionId - The CodeMie session ID
  */
-async function renameSessionFiles(sessionId: string): Promise<void> {
+export async function renameSessionFiles(sessionId: string): Promise<void> {
   const { rename } = await import('fs/promises');
   const { existsSync } = await import('fs');
 
