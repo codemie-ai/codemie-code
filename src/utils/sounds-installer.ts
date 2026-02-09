@@ -69,6 +69,10 @@ async function installSoundScript(): Promise<void> {
   const devScriptPath = join(
     getDirname(import.meta.url),
     '..',
+    'agents',
+    'plugins',
+    'claude',
+    'plugin',
     'addons',
     'scripts',
     'play-random-sound.sh'
