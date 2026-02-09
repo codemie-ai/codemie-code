@@ -258,6 +258,7 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
       expect(existsSync(join(pluginTargetDir, 'commands', 'memory-add.md'))).toBe(true);
       expect(existsSync(join(pluginTargetDir, 'commands', 'memory-init.md'))).toBe(true);
       expect(existsSync(join(pluginTargetDir, 'commands', 'memory-refresh.md'))).toBe(true);
+      expect(existsSync(join(pluginTargetDir, 'commands', 'sound-hooks-add.md'))).toBe(true);
     });
   });
 
