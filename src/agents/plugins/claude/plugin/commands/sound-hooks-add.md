@@ -6,7 +6,6 @@ allowed-tools: Bash(mkdir:*), Bash(cp:*), Bash(chmod:*), Bash(find:*), Bash(grep
 # Fun Sounds Installer
 
 **Command Name**: `sound-hooks-add`
-**Namespace**: `codemie:sound-hooks-add`
 **Category**: Productivity & Customization
 
 ---
