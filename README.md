@@ -235,6 +235,12 @@ When using Claude Code (`codemie-claude`), you get access to powerful built-in c
 /memory-refresh
 ```
 
+**Productivity & Customization**
+```bash
+# Install Audio Feedback System
+/sound-hooks-add
+```
+
 These commands analyze your actual codebase to create tailored documentation and specialized agents. See [Claude Plugin Documentation](src/agents/plugins/claude/plugin/README.md) for details.
 
 ### OpenCode Session Metrics

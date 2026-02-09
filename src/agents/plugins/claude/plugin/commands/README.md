@@ -117,6 +117,33 @@ Sync:           ✓ Connected (last: 30s ago)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
+## Productivity & Customization
+
+### `/sound-hooks-add` - Install Audio Feedback System
+
+Installs the sounds system for Claude Code hooks - plays sounds on key events.
+
+**Usage:**
+```
+/sound-hooks-add
+```
+
+**What it does:**
+1. Checks for audio player availability (afplay, aplay, paplay, mpg123)
+2. Creates hook directories in `~/.claude/hooks/`
+3. Installs `play-random-sound.sh` script
+4. Updates `~/.claude/settings.json` with hook configuration
+5. Guides user on adding custom sound files
+6. !IMPORTANT!: Sounds are not included in the plugin package, download them separately
+
+**Events:**
+- **SessionStart** - when starting a conversation
+- **UserPromptSubmit** - when sending a message
+- **PermissionRequest** - when Claude asks permission or clarification
+- **Stop** - when Claude finishes a task
+
+**Supported formats**: WAV, MP3
+
 ## Command Principles
 
 **Project-Aware:** All commands analyze your actual codebase, not generic templates
