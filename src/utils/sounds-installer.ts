@@ -7,12 +7,14 @@
 
 import chalk from 'chalk';
 import ora from 'ora';
+import { homedir } from 'os';
 import { exec } from './processes.js';
 import {getClaudeGlobalPath, getDirname} from './paths.js';
 import { existsSync } from 'fs';
 import { mkdir, copyFile, chmod, access } from 'fs/promises';
 import { join } from 'path';
 import { logger } from './logger.js';
+import { createErrorContext } from './errors.js';
 import type { HooksConfiguration } from '../hooks/types.js';
 
 /**
@@ -41,10 +43,10 @@ async function createHookDirectories(): Promise<void> {
   const hooksDir = getClaudeGlobalPath('hooks');
   const directories = ['SessionStart', 'UserPromptSubmit', 'PermissionRequest', 'Stop'];
 
-  for (const dir of directories) {
-    const dirPath = join(hooksDir, dir);
-    await mkdir(dirPath, { recursive: true });
-  }
+  // Create directories in parallel for better performance
+  await Promise.all(
+    directories.map(dir => mkdir(join(hooksDir, dir), { recursive: true }))
+  );
 }
 
 /**
@@ -54,9 +56,9 @@ async function installSoundScript(): Promise<void> {
   const hooksDir = getClaudeGlobalPath('hooks');
   const targetScript = join(hooksDir, 'play-random-sound.sh');
 
-  // Try plugin installation path first
+  // Try plugin installation path first (cross-platform home directory)
   const pluginScriptPath = join(
-    process.env.HOME || '',
+    homedir(),
     '.codemie',
     'claude-plugin',
     'scripts',
@@ -77,7 +79,12 @@ async function installSoundScript(): Promise<void> {
   // Check if plugin path exists, otherwise use dev path
   try {
     await access(pluginScriptPath);
-  } catch {
+  } catch (error) {
+    logger.debug('Plugin script not found, using development path', {
+      pluginPath: pluginScriptPath,
+      fallbackPath: devScriptPath,
+      error: error instanceof Error ? error.message : String(error)
+    });
     sourceScript = devScriptPath;
   }
 
@@ -142,6 +149,15 @@ export function buildSoundHooksConfig(): HooksConfiguration {
 
 /**
  * Display post-installation instructions
+ *
+ * NOTE: This function violates typical utils layer pattern by handling UI directly.
+ * This is an intentional exception because:
+ * 1. The instructions are tightly coupled to the installation implementation details
+ * 2. The installation function is only called from CLI contexts (setup command)
+ * 3. Extracting to CLI layer would require passing extensive path information
+ *
+ * Future refactor: Consider returning an InstallationResult data structure
+ * and moving display logic to CLI layer if this utility needs reuse in non-CLI contexts.
  */
 function displayPostInstallInstructions(): void {
   const hooksDir = getClaudeGlobalPath('hooks');
@@ -178,6 +194,14 @@ function displayPostInstallInstructions(): void {
 }
 
 /**
+ * Claude settings structure
+ */
+interface ClaudeSettings {
+  hooks?: HooksConfiguration;
+  [key: string]: unknown;
+}
+
+/**
  * Save hooks configuration to Claude settings.json
  * Merges with existing configuration to preserve other settings
  */
@@ -185,15 +209,28 @@ async function saveHooksToClaudeSettings(hooksConfig: HooksConfiguration): Promi
   const { readFile, writeFile } = await import('fs/promises');
   const settingsPath = getClaudeGlobalPath('settings.json');
 
-  let existingSettings: any = {};
+  let existingSettings: ClaudeSettings = {};
 
   // Try to read existing settings
   try {
     const settingsContent = await readFile(settingsPath, 'utf-8');
-    existingSettings = JSON.parse(settingsContent);
-  } catch {
+    const parsed = JSON.parse(settingsContent);
+
+    // Validate structure - must be a non-null object (not an array)
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      existingSettings = parsed as ClaudeSettings;
+    } else {
+      logger.warn('Invalid settings.json structure, creating new file', {
+        type: typeof parsed,
+        isArray: Array.isArray(parsed)
+      });
+      existingSettings = {};
+    }
+  } catch (error) {
     // File doesn't exist or is invalid JSON - start with empty object
-    logger.debug('No existing Claude settings found, creating new file');
+    logger.debug('No existing Claude settings found, creating new file', {
+      error: error instanceof Error ? error.message : String(error)
+    });
   }
 
   // Merge hooks configuration
@@ -222,7 +259,8 @@ export async function installSounds(): Promise<HooksConfiguration | null> {
       console.log(chalk.white('  macOS:'), chalk.dim('afplay (built-in)'));
       console.log(chalk.white('  Linux:'), chalk.dim('sudo apt install alsa-utils (aplay)'));
       console.log(chalk.white('         '), chalk.dim('or sudo apt install pulseaudio-utils (paplay)'));
-      console.log(chalk.white('  Cross-platform:'), chalk.dim('sudo apt install mpg123'));
+      console.log(chalk.white('  Windows:'), chalk.dim('Install mpg123 via Chocolatey: choco install mpg123'));
+      console.log(chalk.white('  Alternative:'), chalk.dim('brew install mpg123 (macOS), sudo apt install mpg123 (Linux)'));
       console.log();
       return null;
     }
@@ -241,7 +279,11 @@ export async function installSounds(): Promise<HooksConfiguration | null> {
       scriptSpinner.succeed(chalk.green('Sound script installed'));
     } catch (error) {
       scriptSpinner.fail(chalk.red('Failed to install sound script'));
-      logger.error('Sound script installation failed', { error });
+      const errorContext = createErrorContext(error);
+      logger.error('Sound script installation failed', {
+        ...errorContext,
+        operation: 'installSoundScript'
+      });
       throw error;
     }
 
@@ -255,7 +297,12 @@ export async function installSounds(): Promise<HooksConfiguration | null> {
       saveSpinner.succeed(chalk.green('Hooks configuration saved to ~/.claude/settings.json'));
     } catch (error) {
       saveSpinner.fail(chalk.red('Failed to save hooks configuration'));
-      logger.error('Failed to save hooks to settings.json', { error });
+      const errorContext = createErrorContext(error);
+      logger.error('Failed to save hooks to settings.json', {
+        ...errorContext,
+        operation: 'saveHooksToClaudeSettings',
+        settingsPath: getClaudeGlobalPath('settings.json')
+      });
       throw error;
     }
 
@@ -265,10 +312,14 @@ export async function installSounds(): Promise<HooksConfiguration | null> {
     return hooksConfig;
 
   } catch (error) {
-    logger.error('Sounds installation failed', { error });
+    const errorContext = createErrorContext(error);
+    logger.error('Sounds installation failed', {
+      ...errorContext,
+      operation: 'installSounds'
+    });
     console.log();
     console.log(chalk.red('❌ Sounds installation failed'));
-    console.log(chalk.yellow('You can try again later with the sound-hooks-add skill'));
+    console.log(chalk.yellow('You can try again later by running: codemie setup --sounds'));
     console.log();
     return null;
   }
