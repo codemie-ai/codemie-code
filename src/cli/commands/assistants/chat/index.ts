@@ -11,10 +11,13 @@ import inquirer from 'inquirer';
 import { logger } from '@/utils/logger.js';
 import { ConfigLoader } from '@/utils/config.js';
 import { createErrorContext, formatErrorForUser } from '@/utils/errors.js';
+import { getAuthenticatedClient, promptReauthentication } from '@/utils/auth.js';
 import type { CodemieAssistant, ProviderProfile } from '@/env/types.js';
 import type { CodeMieClient } from 'codemie-sdk';
-import { EXIT_PROMPTS, ROLES, MESSAGES, type HistoryMessage } from './constants.js';
-import { getAuthenticatedClient, promptReauthentication } from '@/utils/auth.js';
+import { ROLES, MESSAGES, type HistoryMessage } from '../constants.js';
+import { loadConversationHistory } from './historyLoader.js';
+import { isExitCommand, enableVerboseMode } from './utils.js';
+import type { ChatCommandOptions, SingleMessageOptions } from './types.js';
 
 /** Assistant label color */
 const ASSISTANT_LABEL_COLOR = [177, 185, 249] as const;
@@ -31,20 +34,18 @@ export function createAssistantsChatCommand(): Command {
     .argument('[message]', MESSAGES.CHAT.ARGUMENT_MESSAGE)
     .option('-v, --verbose', MESSAGES.SHARED.OPTION_VERBOSE)
     .option('--conversation-id <id>', 'Conversation ID for maintaining context across calls')
-    .action(async (assistantId: string | undefined, message: string | undefined, options: {
-      verbose?: boolean;
-      conversationId?: string;
-    }) => {
+    .option('--load-history', 'Load conversation history from previous sessions (default: true)', true)
+    .action(async (
+      assistantId: string | undefined,
+      message: string | undefined,
+      options: ChatCommandOptions
+    ) => {
       if (options.verbose) {
-        process.env.CODEMIE_DEBUG = 'true';
-        const logFilePath = logger.getLogFilePath();
-        if (logFilePath) {
-          console.log(chalk.dim(`Debug logs: ${logFilePath}\n`));
-        }
+        enableVerboseMode();
       }
 
       try {
-        await chatWithAssistant(assistantId, message, options.conversationId);
+        await chatWithAssistant(assistantId, message, options);
       } catch (error: unknown) {
         const context = createErrorContext(error);
         logger.error('Failed to chat with assistant', context);
@@ -62,26 +63,28 @@ export function createAssistantsChatCommand(): Command {
 async function chatWithAssistant(
   assistantId: string | undefined,
   message: string | undefined,
-  conversationId?: string
+  options: ChatCommandOptions
 ): Promise<void> {
   const config = await ConfigLoader.load();
   const registeredAssistants = config.codemieAssistants || [];
-
   const client = await getAuthenticatedClient(config);
 
-  const resolvedConversationId = conversationId || process.env.CODEMIE_SESSION_ID;
+  const conversationId = options.conversationId || process.env.CODEMIE_SESSION_ID;
 
-  if (assistantId && message !== undefined) {
-    if (message.trim().length === 0) {
-      console.error(chalk.red('Error: Message cannot be empty'));
-      process.exit(1);
-    }
-
+  if (assistantId && message) { // Single-message mode (for Claude Code)
     const assistant = findAssistant(registeredAssistants, assistantId);
-    await sendSingleMessage(client, assistant, message, { quiet: true }, config, resolvedConversationId);
+    await sendSingleMessage(
+      client,
+      assistant,
+      message,
+      { quiet: true },
+      config,
+      conversationId,
+      options.loadHistory
+    );
   } else {
     const assistant = await promptAssistantSelection(registeredAssistants);
-    await interactiveChat(client, assistant, config, resolvedConversationId);
+    await interactiveChat(client, assistant, config, conversationId, options.loadHistory);
   }
 }
 
@@ -90,15 +93,22 @@ async function chatWithAssistant(
  */
 function findAssistant(assistants: CodemieAssistant[], assistantId: string): CodemieAssistant {
   if (assistants.length === 0) {
-    console.error(chalk.red(MESSAGES.SHARED.ERROR_NO_ASSISTANTS));
-    console.log(chalk.dim(MESSAGES.SHARED.HINT_REGISTER) + chalk.cyan(MESSAGES.SHARED.SETUP_ASSISTANTS_COMMAND) + chalk.dim(MESSAGES.SHARED.HINT_REGISTER_SUFFIX));
+    console.log(
+      chalk.dim(MESSAGES.SHARED.HINT_REGISTER) +
+      chalk.cyan(MESSAGES.SHARED.SETUP_ASSISTANTS_COMMAND) +
+      chalk.dim(MESSAGES.SHARED.HINT_REGISTER_SUFFIX)
+    );
     process.exit(1);
   }
 
   const assistant = assistants.find(a => a.id === assistantId);
   if (!assistant) {
     console.error(chalk.red(MESSAGES.SHARED.ERROR_ASSISTANT_NOT_FOUND(assistantId)));
-    console.log(chalk.dim(MESSAGES.SHARED.HINT_REGISTER) + chalk.cyan(MESSAGES.SHARED.SETUP_ASSISTANTS_COMMAND) + chalk.dim(MESSAGES.SHARED.HINT_SEE_ASSISTANTS));
+    console.log(
+      chalk.dim(MESSAGES.SHARED.HINT_REGISTER) +
+      chalk.cyan(MESSAGES.SHARED.SETUP_ASSISTANTS_COMMAND) +
+      chalk.dim(MESSAGES.SHARED.HINT_SEE_ASSISTANTS)
+    );
     process.exit(1);
   }
   return assistant;
@@ -110,17 +120,18 @@ function findAssistant(assistants: CodemieAssistant[], assistantId: string): Cod
 async function promptAssistantSelection(assistants: CodemieAssistant[]): Promise<CodemieAssistant> {
   if (assistants.length === 0) {
     console.error(chalk.red(MESSAGES.SHARED.ERROR_NO_ASSISTANTS));
-    console.log(chalk.dim(MESSAGES.SHARED.HINT_REGISTER) + chalk.cyan(MESSAGES.SHARED.SETUP_ASSISTANTS_COMMAND) + chalk.dim(MESSAGES.SHARED.HINT_REGISTER_SUFFIX));
+    console.log(
+      chalk.dim(MESSAGES.SHARED.HINT_REGISTER) +
+      chalk.cyan(MESSAGES.SHARED.SETUP_ASSISTANTS_COMMAND) +
+      chalk.dim(MESSAGES.SHARED.HINT_REGISTER_SUFFIX)
+    );
     process.exit(1);
   }
 
-  const choices = assistants.map(assistant => {
-    const slugText = chalk.dim(`(/${assistant.slug})`);
-    return {
-      name: `${assistant.name} ${slugText}`,
-      value: assistant.id
-    };
-  });
+  const choices = assistants.map(assistant => ({
+    name: `${assistant.name} ${chalk.dim(`(/${assistant.slug})`)}`,
+    value: assistant.id
+  }));
 
   const { selectedId } = await inquirer.prompt<{ selectedId: string }>([
     {
@@ -141,13 +152,26 @@ async function interactiveChat(
   client: CodeMieClient,
   assistant: CodemieAssistant,
   config: ProviderProfile,
-  conversationId?: string
+  conversationId?: string,
+  loadHistory: boolean = true
 ): Promise<void> {
-  const history: HistoryMessage[] = [];
+  // Load existing conversation history if enabled
+  const history: HistoryMessage[] = loadHistory
+    ? await loadConversationHistory(conversationId)
+    : [];
+
+  if (history.length > 0) {
+    logger.debug('Loaded conversation history', {
+      conversationId,
+      messageCount: history.length
+    });
+    console.log(chalk.dim(`Loaded ${history.length} previous message(s)\n`));
+  }
 
   console.log(chalk.bold.cyan(MESSAGES.CHAT.HEADER(assistant.name)));
   console.log(chalk.dim(MESSAGES.CHAT.INSTRUCTIONS));
 
+  // Chat loop
   while (true) {
     const { message } = await inquirer.prompt<{ message: string }>([
       {
@@ -170,7 +194,10 @@ async function interactiveChat(
       const response = await sendMessageWithHistory(client, assistant, message, history, conversationId);
       spinner.stop();
 
-      console.log(chalk.rgb(...ASSISTANT_LABEL_COLOR)(`[Assistant @${assistant.slug}]`), response || MESSAGES.CHAT.FALLBACK_NO_RESPONSE);
+      console.log(
+        chalk.rgb(...ASSISTANT_LABEL_COLOR)(`[Assistant @${assistant.slug}]`),
+        response || MESSAGES.CHAT.FALLBACK_NO_RESPONSE
+      );
       console.log('');
 
       history.push(
@@ -180,7 +207,6 @@ async function interactiveChat(
     } catch (error) {
       spinner.fail(chalk.red(MESSAGES.CHAT.ERROR_SEND_FAILED));
       await handleChatError(error, config);
-
       console.log(chalk.yellow(MESSAGES.CHAT.RETRY_PROMPT));
     }
   }
@@ -193,12 +219,22 @@ async function sendSingleMessage(
   client: CodeMieClient,
   assistant: CodemieAssistant,
   message: string,
-  options: { quiet?: boolean },
+  options: SingleMessageOptions,
   config: ProviderProfile,
-  conversationId?: string
+  conversationId?: string,
+  loadHistory: boolean = true
 ): Promise<void> {
   try {
-    const response = await sendMessageWithHistory(client, assistant, message, [], conversationId);
+    const history = loadHistory ? await loadConversationHistory(conversationId) : [];
+
+    if (history.length > 0) {
+      logger.debug('Loaded conversation history for single message', {
+        conversationId,
+        messageCount: history.length
+      });
+    }
+
+    const response = await sendMessageWithHistory(client, assistant, message, history, conversationId);
 
     if (options.quiet) {
       console.log(response || MESSAGES.CHAT.FALLBACK_NO_RESPONSE);
@@ -228,25 +264,17 @@ async function sendMessageWithHistory(
     assistantName: assistant.name,
     messageLength: message.length,
     historyLength: history.length,
-    conversationId: conversationId
+    conversationId
   });
 
   const response = await client.assistants.chat(assistant.id, {
     conversation_id: conversationId,
     text: message,
-    history: history,
+    history,
     stream: false
   });
 
-  return (response.generated as string) ?? ''
-}
-
-/**
- * Check if message is an exit prompt
- */
-function isExitCommand(message: string): boolean {
-  const normalized = message.toLowerCase().trim();
-  return EXIT_PROMPTS.includes(normalized as any);
+  return (response.generated as string) ?? '';
 }
 
 /**

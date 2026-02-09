@@ -5,7 +5,7 @@
  */
 
 import { Command } from 'commander';
-import { createAssistantsChatCommand } from '@/cli/commands/assistants/chat.js';
+import { createAssistantsChatCommand } from '@/cli/commands/assistants/chat/index.js';
 
 /**
  * Create assistants command with subcommands
@@ -14,7 +14,7 @@ export function createAssistantsCommand(): Command {
   const command = new Command('assistants');
 
   command
-    .description('Manage CodeMie assistants')
+    .description('Chat with CodeMie assistant')
     .addCommand(createAssistantsChatCommand());
 
   return command;
