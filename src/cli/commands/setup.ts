@@ -181,8 +181,24 @@ async function handlePluginSetup(
       await setupSteps.installModel(credentials, selectedModel, models);
     }
 
+    // Step 3.6: Configure model tiers for Claude (optional)
+    let modelTiers: { haikuModel?: string; sonnetModel?: string; opusModel?: string } = {};
+    const claudeAgent = AgentRegistry.getAgent('claude');
+    if (claudeAgent) {
+      const claudeMetadata = (claudeAgent as any).metadata;
+      const supportsClaude = claudeMetadata?.supportedProviders?.includes(providerName);
+      if (supportsClaude) {
+        modelTiers = await promptForModelTiers(models, providerTemplate);
+      }
+    }
+
     // Step 4: Build configuration
     const config = setupSteps.buildConfig(credentials, selectedModel);
+
+    // Merge model tiers into config
+    if (modelTiers.haikuModel) config.haikuModel = modelTiers.haikuModel;
+    if (modelTiers.sonnetModel) config.sonnetModel = modelTiers.sonnetModel;
+    if (modelTiers.opusModel) config.opusModel = modelTiers.opusModel;
 
     // Step 5: Ask for profile name (if creating new)
     let finalProfileName = profileName;
@@ -335,6 +351,46 @@ async function promptForModelSelection(
   }
 
   return selectedModel;
+}
+
+/**
+ * Prompt for model tier configuration (haiku/sonnet/opus)
+ *
+ * Only shown for Claude-compatible providers.
+ * Allows users to configure which models Claude uses for different task tiers.
+ */
+async function promptForModelTiers(
+  models: string[],
+  providerTemplate?: any
+): Promise<{ haikuModel?: string; sonnetModel?: string; opusModel?: string }> {
+  const { configure } = await inquirer.prompt([
+    {
+      type: 'confirm',
+      name: 'configure',
+      message: 'Configure model tiers for Claude? (haiku/sonnet/opus)',
+      default: false
+    }
+  ]);
+
+  if (!configure) {
+    return {};
+  }
+
+  console.log(chalk.dim('\n  Model tiers control which model Claude uses for different tasks:'));
+  console.log(chalk.dim('  • Haiku: background tasks, fast operations'));
+  console.log(chalk.dim('  • Sonnet: default tier, subagent tasks'));
+  console.log(chalk.dim('  • Opus: complex tasks, Plan Mode\n'));
+
+  console.log(chalk.cyan('Select Haiku model (for background/fast tasks):'));
+  const haikuModel = await promptForModelSelection(models, providerTemplate);
+
+  console.log(chalk.cyan('\nSelect Sonnet model (default tier + subagents):'));
+  const sonnetModel = await promptForModelSelection(models, providerTemplate);
+
+  console.log(chalk.cyan('\nSelect Opus model (complex tasks + Plan Mode):'));
+  const opusModel = await promptForModelSelection(models, providerTemplate);
+
+  return { haikuModel, sonnetModel, opusModel };
 }
 
 /**
