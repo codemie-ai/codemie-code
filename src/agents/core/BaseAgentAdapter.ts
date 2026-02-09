@@ -336,18 +336,30 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       logger.debug(`Executing: ${this.metadata.cliCommand} ${transformedArgs.join(' ')}`);
 
       // Spawn the CLI command with inherited stdio
-      // On Windows, resolve full path to avoid shell: true deprecation (DEP0190)
+      // Resolve full path to handle:
+      // - Windows: avoid shell: true deprecation (DEP0190)
+      // - Unix: find binaries in ~/.local/bin even when not in PATH
       const isWindows = process.platform === 'win32';
       let commandPath = this.metadata.cliCommand;
 
-      // Resolve full path on Windows to avoid using shell: true
-      if (isWindows) {
-        const { getCommandPath } = await import('../../utils/processes.js');
-        const resolvedPath = await getCommandPath(this.metadata.cliCommand);
-        if (resolvedPath) {
-          // Quote path if it contains spaces to handle Windows paths correctly
-          commandPath = resolvedPath.includes(' ') ? `"${resolvedPath}"` : resolvedPath;
-          logger.debug(`Resolved command path: ${resolvedPath}`);
+      // Try to resolve full path via PATH first
+      const { getCommandPath } = await import('../../utils/processes.js');
+      const resolvedPath = await getCommandPath(this.metadata.cliCommand);
+      if (resolvedPath) {
+        commandPath = isWindows && resolvedPath.includes(' ') ? `"${resolvedPath}"` : resolvedPath;
+        logger.debug(`Resolved command path: ${resolvedPath}`);
+      } else if (!isWindows) {
+        // On Unix, check common installation paths if command not found in PATH
+        // Native installers (e.g., Claude, Gemini) place binaries in ~/.local/bin/
+        const { resolveHomeDir } = await import('../../utils/paths.js');
+        const localBinPath = resolveHomeDir(`.local/bin/${this.metadata.cliCommand}`);
+        try {
+          const fs = await import('fs');
+          await fs.promises.access(localBinPath, fs.constants.X_OK);
+          commandPath = localBinPath;
+          logger.debug(`Found command at local bin path: ${localBinPath}`);
+        } catch {
+          // Not found in ~/.local/bin either, use original command
         }
       }
 
