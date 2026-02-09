@@ -17,11 +17,15 @@ import { logger } from '@/utils/logger.js';
  */
 export function createClaudeSubagentMetadata(assistant: Assistant): string {
   const description = assistant.description || `Interact with ${assistant.name}`;
+  const sanitizedDescription = description
+    .replace(/\n/g, ' ') 
+    .replace(/"/g, '\\"')
+    .trim();
 
   return dedent(`
     ---
     name: ${assistant.slug}
-    description: ${description}
+    description: "${sanitizedDescription}"
     tools: Read, Bash
     model: inherit
     ---

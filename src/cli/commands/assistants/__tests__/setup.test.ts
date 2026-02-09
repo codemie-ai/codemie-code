@@ -1,43 +1,43 @@
 /**
- * Unit tests for assistants list command
+ * Unit tests for assistants setup command
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { createAssistantsListCommand } from '../list.js';
-import { COMMAND_NAMES, MESSAGES } from '../constants.js';
+import { createAssistantsSetupCommand } from '@/cli/commands/assistants/setup/index.js';
+import { MESSAGES } from '@/cli/commands/assistants/constants.js';
 
-describe('Assistants List Command', () => {
-  describe('createAssistantsListCommand', () => {
-    let command: ReturnType<typeof createAssistantsListCommand>;
+describe('Assistants Setup Command', () => {
+  describe('createAssistantsSetupCommand', () => {
+    let command: ReturnType<typeof createAssistantsSetupCommand>;
 
     beforeEach(() => {
-      command = createAssistantsListCommand();
+      command = createAssistantsSetupCommand();
     });
 
     it('should create a command with correct name', () => {
-      expect(command.name()).toBe(COMMAND_NAMES.LIST);
+      expect(command.name()).toBe('setup');
     });
 
     it('should have correct description', () => {
-      expect(command.description()).toBe(MESSAGES.LIST.COMMAND_DESCRIPTION);
+      expect(command.description()).toBe(MESSAGES.SETUP.COMMAND_DESCRIPTION);
     });
 
     it('should have profile option', () => {
       const profileOption = command.options.find(opt => opt.long === '--profile');
       expect(profileOption).toBeDefined();
-      expect(profileOption?.description).toBe(MESSAGES.LIST.OPTION_PROFILE);
+      expect(profileOption?.description).toBe(MESSAGES.SETUP.OPTION_PROFILE);
     });
 
     it('should have project option', () => {
       const projectOption = command.options.find(opt => opt.long === '--project');
       expect(projectOption).toBeDefined();
-      expect(projectOption?.description).toBe(MESSAGES.LIST.OPTION_PROJECT);
+      expect(projectOption?.description).toBe(MESSAGES.SETUP.OPTION_PROJECT);
     });
 
     it('should have all-projects option', () => {
       const allProjectsOption = command.options.find(opt => opt.long === '--all-projects');
       expect(allProjectsOption).toBeDefined();
-      expect(allProjectsOption?.description).toBe(MESSAGES.LIST.OPTION_ALL_PROJECTS);
+      expect(allProjectsOption?.description).toBe(MESSAGES.SETUP.OPTION_ALL_PROJECTS);
     });
 
     it('should have verbose option', () => {
@@ -53,10 +53,10 @@ describe('Assistants List Command', () => {
   });
 
   describe('Command Options', () => {
-    let command: ReturnType<typeof createAssistantsListCommand>;
+    let command: ReturnType<typeof createAssistantsSetupCommand>;
 
     beforeEach(() => {
-      command = createAssistantsListCommand();
+      command = createAssistantsSetupCommand();
     });
 
     it('should have exactly 4 options', () => {
@@ -106,29 +106,29 @@ describe('Assistants List Command', () => {
 
   describe('Command Arguments', () => {
     it('should not have any positional arguments', () => {
-      const command = createAssistantsListCommand();
+      const command = createAssistantsSetupCommand();
       expect(command.registeredArguments).toHaveLength(0);
     });
   });
 
   describe('Command Structure', () => {
     it('should not have subcommands', () => {
-      const command = createAssistantsListCommand();
+      const command = createAssistantsSetupCommand();
       expect(command.commands).toHaveLength(0);
     });
 
     it('should have an action handler', () => {
-      const command = createAssistantsListCommand();
+      const command = createAssistantsSetupCommand();
       // The action is set internally by Commander
       expect(command).toBeDefined();
     });
   });
 
   describe('Option Combinations', () => {
-    let command: ReturnType<typeof createAssistantsListCommand>;
+    let command: ReturnType<typeof createAssistantsSetupCommand>;
 
     beforeEach(() => {
-      command = createAssistantsListCommand();
+      command = createAssistantsSetupCommand();
     });
 
     it('should allow profile option alone', () => {
@@ -164,11 +164,10 @@ describe('Assistants List Command', () => {
     });
   });
 
-  describe('Command Name Constant', () => {
-    it('should use COMMAND_NAMES.LIST constant', () => {
-      const command = createAssistantsListCommand();
-      expect(command.name()).toBe(COMMAND_NAMES.LIST);
-      expect(COMMAND_NAMES.LIST).toBe('list');
+  describe('Command Name', () => {
+    it('should have name "setup"', () => {
+      const command = createAssistantsSetupCommand();
+      expect(command.name()).toBe('setup');
     });
   });
 });

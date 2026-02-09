@@ -42,25 +42,14 @@ describe('Assistants Command (Parent)', () => {
       command = createAssistantsCommand();
     });
 
-    it('should have exactly 2 subcommands', () => {
-      expect(command.commands).toHaveLength(2);
-    });
-
-    it('should have list subcommand', () => {
-      const listCommand = command.commands.find(c => c.name() === COMMAND_NAMES.LIST);
-      expect(listCommand).toBeDefined();
-      expect(listCommand?.name()).toBe('list');
+    it('should have exactly 1 subcommand', () => {
+      expect(command.commands).toHaveLength(1);
     });
 
     it('should have chat subcommand', () => {
       const chatCommand = command.commands.find(c => c.name() === COMMAND_NAMES.CHAT);
       expect(chatCommand).toBeDefined();
       expect(chatCommand?.name()).toBe('chat');
-    });
-
-    it('should have list command with correct description', () => {
-      const listCommand = command.commands.find(c => c.name() === COMMAND_NAMES.LIST);
-      expect(listCommand?.description()).toContain('assistants');
     });
 
     it('should have chat command with correct description', () => {
@@ -77,31 +66,30 @@ describe('Assistants Command (Parent)', () => {
     });
 
     it('should use COMMAND_NAMES constant for finding subcommands', () => {
-      const listCommand = command.commands.find(c => c.name() === COMMAND_NAMES.LIST);
-      expect(listCommand).toBeDefined();
-      expect(COMMAND_NAMES.LIST).toBe('list');
+      const chatCommand = command.commands.find(c => c.name() === COMMAND_NAMES.CHAT);
+      expect(chatCommand).toBeDefined();
+      expect(COMMAND_NAMES.CHAT).toBe('chat');
     });
 
-    it('should have both subcommands as child commands', () => {
+    it('should have chat subcommand as child command', () => {
       const commandNames = command.commands.map(c => c.name());
-      expect(commandNames).toContain('list');
       expect(commandNames).toContain('chat');
     });
 
-    it('should have an action handler for default behavior', () => {
-      // The parent command should have an action to run list by default
+    it('should not have default action handler', () => {
+      // The parent command no longer has a default action since setup moved to `codemie setup assistants`
       expect(command).toBeDefined();
     });
   });
 
-  describe('Default Action', () => {
-    it('should find list command for default action', () => {
+  describe('Command Purpose', () => {
+    it('should be a parent command for assistant-related operations', () => {
       const command = createAssistantsCommand();
-      const listCommand = command.commands.find(c => c.name() === COMMAND_NAMES.LIST);
 
-      // List command should exist and be findable by COMMAND_NAMES.LIST
-      expect(listCommand).toBeDefined();
-      expect(listCommand?.name()).toBe(COMMAND_NAMES.LIST);
+      // Assistants command is now focused on chat operations
+      // Setup has been moved to `codemie setup assistants`
+      expect(command.name()).toBe('assistants');
+      expect(command.description()).toContain('assistants');
     });
   });
 
@@ -112,24 +100,19 @@ describe('Assistants Command (Parent)', () => {
       command = createAssistantsCommand();
     });
 
-    it('should allow accessing list command', () => {
-      const listCommand = command.commands.find(c => c.name() === 'list');
-      expect(listCommand).toBeDefined();
-    });
-
     it('should allow accessing chat command', () => {
       const chatCommand = command.commands.find(c => c.name() === 'chat');
       expect(chatCommand).toBeDefined();
     });
 
-    it('should have list command with options', () => {
-      const listCommand = command.commands.find(c => c.name() === 'list');
-      expect(listCommand?.options.length).toBeGreaterThan(0);
-    });
-
     it('should have chat command with arguments', () => {
       const chatCommand = command.commands.find(c => c.name() === 'chat');
       expect(chatCommand?.registeredArguments.length).toBeGreaterThan(0);
+    });
+
+    it('should not have setup command (moved to codemie setup assistants)', () => {
+      const setupCommand = command.commands.find(c => c.name() === 'setup');
+      expect(setupCommand).toBeUndefined();
     });
   });
 
@@ -145,11 +128,11 @@ describe('Assistants Command (Parent)', () => {
       expect(command.commands.length).toBeGreaterThan(0);
     });
 
-    it('should properly organize list and chat as subcommands', () => {
+    it('should organize chat as the only subcommand', () => {
       const command = createAssistantsCommand();
       const subcommandNames = command.commands.map(c => c.name());
 
-      expect(subcommandNames).toEqual(['list', 'chat']);
+      expect(subcommandNames).toEqual(['chat']);
     });
   });
 });

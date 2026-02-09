@@ -91,7 +91,7 @@ async function invokeAssistantViaSdk(
  */
 export class InvokeAssistantTool extends StructuredTool {
   name = 'invoke_assistant';
-  description = 'Invoke a registered CodeMie assistant for specialized help. Use this when you need expert assistance on specific topics like architecture, code review, or domain-specific questions. Available assistants are registered via "codemie assistants list" command.';
+  description = 'Invoke a registered CodeMie assistant for specialized help. Use this when you need expert assistance on specific topics like architecture, code review, or domain-specific questions. Available assistants are registered via "codemie assistants setup" command.';
 
   schema = z.object({
     assistantSlug: z.string().describe('The slug identifier of the assistant to invoke (e.g., "solution-architect", "code-reviewer")'),
@@ -114,7 +114,7 @@ export class InvokeAssistantTool extends StructuredTool {
       const assistants = await loadRegisteredAssistants();
 
       if (assistants.length === 0) {
-        return 'No assistants are currently registered. Register assistants using "codemie assistants list" command.';
+        return 'No assistants are currently registered. Register assistants using "codemie assistants setup" command.';
       }
 
       // Find assistant by slug
