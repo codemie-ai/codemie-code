@@ -32,8 +32,7 @@ This document references detailed guides stored in `.codemie/guides/`. Key refer
 ### 📖 Guide References by Category
 
 **Architecture**:
-- [Project Structure]: .codemie/guides/architecture/project-structure.md
-- [Layered Architecture]: .codemie/guides/architecture/layered-architecture.md
+- [Architecture]: .codemie/guides/architecture/architecture.md
 
 **Development Practices**:
 - [Development Practices]: .codemie/guides/development/development-practices.md
@@ -289,7 +288,7 @@ const retrieved = await store.retrieveSSOCredentials(baseUrl);
 | **Security** | Log sensitive data (tokens, keys) | Use `sanitizeLogArgs()` before logging | .codemie/guides/security/security-practices.md |
 | **Error Handling** | Throw generic Error | Throw specific error classes (ConfigurationError, etc.) | .codemie/guides/development/development-practices.md |
 | **Paths** | Hardcode ~/.codemie/ paths | Use `getCodemiePath()` from `src/utils/paths.ts` | .codemie/guides/development/development-practices.md |
-| **Architecture** | CLI directly calls plugin code | CLI → Registry → Plugin (never skip layers) | .codemie/guides/architecture/layered-architecture.md |
+| **Architecture** | CLI directly calls plugin code | CLI → Registry → Plugin (never skip layers) | .codemie/guides/architecture/architecture.md |
 | **Async** | Use callbacks or Promise chaining | Use async/await consistently | .codemie/guides/standards/code-quality.md |
 
 ---

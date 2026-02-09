@@ -255,8 +255,10 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
 
       // Verify command files
       expect(existsSync(join(pluginTargetDir, 'commands', 'README.md'))).toBe(true);
-      expect(existsSync(join(pluginTargetDir, 'commands', 'memory-add.md'))).toBe(true);
-      expect(existsSync(join(pluginTargetDir, 'commands', 'memory-init.md'))).toBe(true);
+      expect(existsSync(join(pluginTargetDir, 'commands', 'codemie-catchup.md'))).toBe(true);
+      expect(existsSync(join(pluginTargetDir, 'commands', 'codemie-commit.md'))).toBe(true);
+      expect(existsSync(join(pluginTargetDir, 'commands', 'codemie-init.md'))).toBe(true);
+      expect(existsSync(join(pluginTargetDir, 'commands', 'codemie-subagents.md'))).toBe(true);
       expect(existsSync(join(pluginTargetDir, 'commands', 'memory-refresh.md'))).toBe(true);
     });
   });
@@ -268,7 +270,7 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
       expect(result.success).toBe(true);
       expect(result.action).toBe('copied');
       expect(result.sourceVersion).toBeDefined();
-      expect(result.sourceVersion).toBe('1.0.6');
+      expect(result.sourceVersion).toBe('1.0.7');
       expect(result.installedVersion).toBeUndefined(); // First install
     });
 
@@ -281,8 +283,8 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
       const result2 = await installer.install();
       expect(result2.success).toBe(true);
       expect(result2.action).toBe('already_exists');
-      expect(result2.sourceVersion).toBe('1.0.6');
-      expect(result2.installedVersion).toBe('1.0.6');
+      expect(result2.sourceVersion).toBe('1.0.7');
+      expect(result2.installedVersion).toBe('1.0.7');
     });
 
     it('should detect version in installed plugin', async () => {
@@ -296,7 +298,7 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
       const json = JSON.parse(content);
 
       expect(json.version).toBeDefined();
-      expect(json.version).toBe('1.0.6');
+      expect(json.version).toBe('1.0.7');
     });
   });
 });

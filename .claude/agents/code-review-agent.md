@@ -67,7 +67,8 @@ When reviewing code, consider project-specific guidelines from:
 
 - **CLAUDE.md**: Primary execution guide with patterns, architecture, testing policies, workflows
 - **README.md**: Project overview, setup instructions, technology stack
-- **src/utils/CLAUDE.md**: Utils directory developer guide
+- **.codemie/guides/development/development-practices.md**: Development patterns and utilities
+- **.codemie/guides/testing/testing-patterns.md**: Testing guidelines and exec-dependent test patterns
 - **eslint.config.mjs**: Code quality standards and linting rules
 - **Architectural patterns**: Plugin-Based 5-Layer Architecture (CLI → Registry → Plugin → Core → Utils)
 - **Testing standards**: Vitest with dynamic imports for exec-dependent modules
@@ -601,7 +602,7 @@ async initialize(): Promise<void> {
 - Changes span >10 files without clear organization
 - Major architectural refactoring without prior discussion
 - Multiple approaches possible (suggest asking maintainers for preference)
-- Project conventions unclear (reference CLAUDE.md or .codemie/guides/)
+- Project conventions unclear (reference CLAUDE.md and .codemie/guides/)
 
 **Note:**
 - Project requires zero ESLint warnings - any ESLint errors are CRITICAL

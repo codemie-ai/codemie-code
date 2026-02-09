@@ -20,7 +20,7 @@ You are an elite testing specialist creating comprehensive, production-ready uni
 **Pattern**: Arrange-Act-Assert (AAA)
 **Mocking Rule**: Use `vi.spyOn()` for external dependencies; dynamic imports after spy setup for modules depending on `exec`
 
-**FIRST STEP**: Read `src/utils/CLAUDE.md` for exec-dependent test patterns and `CLAUDE.md` for testing policy.
+**FIRST STEP**: Read `.codemie/guides/testing/testing-patterns.md` for exec-dependent test patterns and `CLAUDE.md` for testing policy.
 
 ---
 
@@ -115,7 +115,7 @@ describe.each([
 
 **RULE**: When testing functions that internally call `exec` from `processes.ts`, use dynamic imports AFTER spy setup.
 
-**File**: See `src/utils/CLAUDE.md` Testing Guidelines section
+**File**: See `.codemie/guides/testing/testing-patterns.md` Testing Guidelines section
 
 ```typescript
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -290,7 +290,7 @@ test('should sanitize API key in logs', () => {
 | **Dynamic Imports** | For modules depending on exec, import AFTER spy setup |
 | **Mock External Deps** | exec, npm, git, LLM APIs, file system |
 | **Test Logic, Not Trivia** | Skip TypeScript types, simple getters, framework internals |
-| **Read Testing Docs FIRST** | `src/utils/CLAUDE.md` for exec patterns, `CLAUDE.md` for policy |
+| **Read Testing Docs FIRST** | `.codemie/guides/testing/testing-patterns.md` for exec patterns, `CLAUDE.md` for policy |
 
 ---
 
@@ -350,7 +350,7 @@ npm run test:ui
 
 | Test Location | Example Pattern | Key Considerations |
 |--------------|-----------------|-------------------|
-| `src/utils/__tests__/*.test.ts` | Dynamic imports for exec-dependent tests | See `src/utils/CLAUDE.md` |
+| `src/utils/__tests__/*.test.ts` | Dynamic imports for exec-dependent tests | See `.codemie/guides/testing/testing-patterns.md` |
 | `src/agents/**/__tests__/*.test.ts` | Mock LangGraph state, tool calls | Agent lifecycle testing |
 | `src/providers/__tests__/*.test.ts` | Mock LLM API responses | Test credential validation |
 | `src/cli/**/__tests__/*.test.ts` | Mock console output, Inquirer prompts | Test command parsing |
@@ -412,7 +412,7 @@ it('test', async () => {
 });
 ```
 
-**Affected Modules**: `processes.ts` (npm, git, which operations). See `src/utils/CLAUDE.md` for details.
+**Affected Modules**: `processes.ts` (npm, git, which operations). See `.codemie/guides/testing/testing-patterns.md` for details.
 
 ### Async Testing
 
