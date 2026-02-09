@@ -89,6 +89,11 @@ export class LogReader {
   /**
    * Get list of log files that fall within date range
    * Returns files sorted by date (oldest first)
+   *
+   * Note: Expands date range by ±1 day to catch overnight sessions.
+   * Long-running sessions that span midnight may write entries from day N+1
+   * into the log file for day N. Entry-level timestamp filtering (in matchesFilter)
+   * ensures exact results despite this wider file search.
    */
   private getLogFilesInRange(fromDate?: Date, toDate?: Date): string[] {
     try {
@@ -96,6 +101,20 @@ export class LogReader {
 
       // Filter debug log files
       const logFiles = files.filter(f => f.match(/^debug-\d{4}-\d{2}-\d{2}\.log$/));
+
+      // If no date filter, return all files
+      if (!fromDate && !toDate) {
+        return logFiles.sort();
+      }
+
+      // Expand date range by ±1 day to catch overnight sessions
+      // Entry-level timestamp filtering ensures exact results
+      const expandedFromDate = fromDate
+        ? new Date(fromDate.getTime() - 24 * 60 * 60 * 1000)
+        : undefined;
+      const expandedToDate = toDate
+        ? new Date(toDate.getTime() + 24 * 60 * 60 * 1000)
+        : undefined;
 
       // Filter by date range
       const filtered = logFiles.filter(file => {
@@ -105,11 +124,12 @@ export class LogReader {
         const fileDate = new Date(dateMatch[1]);
         if (isNaN(fileDate.getTime())) return false;
 
-        if (fromDate && fileDate < new Date(fromDate.toISOString().split('T')[0])) {
+        // Use expanded range for file filtering
+        if (expandedFromDate && fileDate < new Date(expandedFromDate.toISOString().split('T')[0])) {
           return false;
         }
 
-        if (toDate && fileDate > new Date(toDate.toISOString().split('T')[0])) {
+        if (expandedToDate && fileDate > new Date(expandedToDate.toISOString().split('T')[0])) {
           return false;
         }
 

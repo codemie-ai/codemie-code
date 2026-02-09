@@ -44,6 +44,10 @@ export class LogCleaner {
 
   /**
    * Clean debug log files
+   *
+   * Note: We use file modification time (mtimeMs) rather than filename dates
+   * because it's more reliable for cleanup (handles manual edits, moved files, etc.)
+   * The reader uses filename dates for filtering, which is appropriate for its use case.
    */
   private cleanDebugLogs(cutoffTime: number, dryRun: boolean, stats: CleanupStats): void {
     try {
