@@ -19,7 +19,6 @@ import {
   detectInstallationMethod,
   type InstallationMethod,
 } from '../../../utils/installation-detector.js';
-import { resolveHomeDir } from '../../../utils/paths.js';
 
 /**
  * Supported Claude Code version
