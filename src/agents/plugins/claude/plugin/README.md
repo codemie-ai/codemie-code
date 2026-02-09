@@ -134,13 +134,6 @@ Sync:           ✓ Connected (last: 30s ago)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ```
 
-#### Productivity & Customization
-
-**`/sound-hooks-add`** - Installs the sounds system for Claude Code hooks - plays sounds on key events.
-```bash
-/sound-hooks-add
-```
-
 **See [commands/README.md](./commands/README.md) for detailed usage and examples.**
 
 ## Hook Events

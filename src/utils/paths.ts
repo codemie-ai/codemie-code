@@ -375,6 +375,20 @@ export function getCodemiePath(...paths: string[]): string {
   return path.join(getCodemieHome(), ...paths);
 }
 
+/**
+ * Get path within global Claude home directory
+ *
+ * @param paths Path segments to join with home directory
+ * @returns Absolute path within CodeMie home
+ *
+ * @example
+ * getCodemiePath('logs') // => '/Users/john/.claude/logs'
+ * getCodemiePath('metrics', 'sessions') // => '/Users/john/.claude/sessions'
+ */
+export function getClaudeGlobalPath(...paths: string[]): string {
+  return path.join(path.join(homedir(), '.claude'), ...paths);
+}
+
 // ============================================================================
 // ESM Module Path Utilities
 // ============================================================================
