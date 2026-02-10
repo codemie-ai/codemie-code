@@ -376,6 +376,8 @@ function parseFilterOptions(options: LogOptions): LogFilter {
     if (!toDate) {
       console.warn(chalk.yellow(`Warning: Invalid --to date "${options.to}", ignoring filter`));
     } else {
+      // Set to end of day (23:59:59.999) to include all entries from that day
+      toDate.setHours(23, 59, 59, 999);
       filter.toDate = toDate;
     }
   }
