@@ -5,10 +5,12 @@
  * by using file-based locks to serialize access to metrics extraction.
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { existsSync } from 'fs';
 import { unlink, writeFile, mkdir } from 'fs/promises';
 import { getCodemiePath } from '../../../utils/paths.js';
+import { processEvent, type HookProcessingConfig } from '../hook.js';
+import type { BaseHookEvent } from '../../../agents/core/types.js';
 
 describe('Hook File-Based Locking', () => {
   const testSessionId = 'test-session-12345678';
@@ -175,6 +177,279 @@ describe('Hook File-Based Locking', () => {
 
       expect(content).toBe(otherPid);
       expect(content).not.toBe(String(process.pid));
+    });
+  });
+});
+
+describe('processEvent', () => {
+  const originalEnv = process.env;
+  const originalExitCode = process.exitCode;
+
+  beforeEach(() => {
+    // Reset process.exitCode
+    process.exitCode = 0;
+    // Clear environment variables
+    delete process.env.CODEMIE_AGENT;
+    delete process.env.CODEMIE_SESSION_ID;
+    delete process.env.CODEMIE_PROVIDER;
+  });
+
+  afterEach(() => {
+    // Restore original environment
+    process.env = originalEnv;
+    process.exitCode = originalExitCode;
+  });
+
+  describe('Validation', () => {
+    it('should throw error when session_id is missing and config is provided', async () => {
+      const event = {
+        hook_event_name: 'SessionStart',
+        transcript_path: '/path/to/transcript.json',
+        permission_mode: 'default'
+      } as BaseHookEvent;
+
+      const config: HookProcessingConfig = {
+        agentName: 'claude',
+        sessionId: 'test-session-id'
+      };
+
+      await expect(processEvent(event, config)).rejects.toThrow('Missing required field: session_id');
+    });
+
+    it('should throw error when hook_event_name is missing and config is provided', async () => {
+      const event = {
+        session_id: 'agent-session-id',
+        transcript_path: '/path/to/transcript.json',
+        permission_mode: 'default'
+      } as BaseHookEvent;
+
+      const config: HookProcessingConfig = {
+        agentName: 'claude',
+        sessionId: 'test-session-id'
+      };
+
+      await expect(processEvent(event, config)).rejects.toThrow('Missing required field: hook_event_name');
+    });
+
+    it('should throw error when transcript_path is missing and config is provided', async () => {
+      const event = {
+        session_id: 'agent-session-id',
+        hook_event_name: 'SessionStart',
+        permission_mode: 'default'
+      } as BaseHookEvent;
+
+      const config: HookProcessingConfig = {
+        agentName: 'claude',
+        sessionId: 'test-session-id'
+      };
+
+      await expect(processEvent(event, config)).rejects.toThrow('Missing required field: transcript_path');
+    });
+
+    it('should set exitCode when session_id is missing and config is not provided', async () => {
+      const event = {
+        hook_event_name: 'SessionStart',
+        transcript_path: '/path/to/transcript.json',
+        permission_mode: 'default'
+      } as BaseHookEvent;
+
+      process.exitCode = 0;
+      await processEvent(event);
+      expect(process.exitCode).toBe(2);
+    });
+
+    it('should set exitCode when hook_event_name is missing and config is not provided', async () => {
+      const event = {
+        session_id: 'agent-session-id',
+        transcript_path: '/path/to/transcript.json',
+        permission_mode: 'default'
+      } as BaseHookEvent;
+
+      process.exitCode = 0;
+      await processEvent(event);
+      expect(process.exitCode).toBe(2);
+    });
+
+    it('should set exitCode when transcript_path is missing and config is not provided', async () => {
+      const event = {
+        session_id: 'agent-session-id',
+        hook_event_name: 'SessionStart',
+        permission_mode: 'default'
+      } as BaseHookEvent;
+
+      process.exitCode = 0;
+      await processEvent(event);
+      expect(process.exitCode).toBe(2);
+    });
+  });
+
+  describe('Processing with config', () => {
+    it('should process valid event with config object', async () => {
+      const event: BaseHookEvent = {
+        session_id: 'agent-session-id',
+        hook_event_name: 'PreCompact',
+        transcript_path: '/path/to/transcript.json',
+        permission_mode: 'default'
+      };
+
+      const config: HookProcessingConfig = {
+        agentName: 'claude',
+        sessionId: 'test-session-id'
+      };
+
+      // Should not throw
+      await expect(processEvent(event, config)).resolves.not.toThrow();
+    });
+
+    it('should initialize logger context from config', async () => {
+      const event: BaseHookEvent = {
+        session_id: 'agent-session-id',
+        hook_event_name: 'PreCompact',
+        transcript_path: '/path/to/transcript.json',
+        permission_mode: 'default'
+      };
+
+      const config: HookProcessingConfig = {
+        agentName: 'test-agent',
+        sessionId: 'test-session-123',
+        profileName: 'test-profile'
+      };
+
+      const { logger } = await import('../../../utils/logger.js');
+      const setAgentNameSpy = vi.spyOn(logger, 'setAgentName');
+      const setSessionIdSpy = vi.spyOn(logger, 'setSessionId');
+      const setProfileNameSpy = vi.spyOn(logger, 'setProfileName');
+
+      await processEvent(event, config);
+
+      expect(setAgentNameSpy).toHaveBeenCalledWith('test-agent');
+      expect(setSessionIdSpy).toHaveBeenCalledWith('test-session-123');
+      expect(setProfileNameSpy).toHaveBeenCalledWith('test-profile');
+    });
+  });
+
+  describe('Processing without config (env vars)', () => {
+    it('should process valid event using environment variables', async () => {
+      process.env.CODEMIE_AGENT = 'claude';
+      process.env.CODEMIE_SESSION_ID = 'env-session-id';
+
+      const event: BaseHookEvent = {
+        session_id: 'agent-session-id',
+        hook_event_name: 'PreCompact',
+        transcript_path: '/path/to/transcript.json',
+        permission_mode: 'default'
+      };
+
+      // Should not throw
+      await expect(processEvent(event)).resolves.not.toThrow();
+    });
+
+    it('should throw error when required env vars are missing', async () => {
+      delete process.env.CODEMIE_AGENT;
+      delete process.env.CODEMIE_SESSION_ID;
+
+      const event: BaseHookEvent = {
+        session_id: 'agent-session-id',
+        hook_event_name: 'PreCompact',
+        transcript_path: '/path/to/transcript.json',
+        permission_mode: 'default'
+      };
+
+      // Should throw because initializeLoggerContext requires CODEMIE_AGENT and CODEMIE_SESSION_ID
+      await expect(processEvent(event)).rejects.toThrow();
+    });
+  });
+
+  describe('Event transformation', () => {
+    it('should apply hook transformation when agent provides transformer', async () => {
+      const event: BaseHookEvent = {
+        session_id: 'agent-session-id',
+        hook_event_name: 'PreCompact',
+        transcript_path: '/path/to/transcript.json',
+        permission_mode: 'default'
+      };
+
+      const config: HookProcessingConfig = {
+        agentName: 'claude',
+        sessionId: 'test-session-id'
+      };
+
+      const { AgentRegistry } = await import('../../../agents/registry.js');
+      const mockAgent = {
+        getHookTransformer: vi.fn(() => ({
+          transform: vi.fn((e: BaseHookEvent) => ({
+            ...e,
+            hook_event_name: 'TransformedEvent'
+          }))
+        }))
+      };
+
+      vi.spyOn(AgentRegistry, 'getAgent').mockReturnValue(mockAgent as any);
+
+      await processEvent(event, config);
+
+      expect(AgentRegistry.getAgent).toHaveBeenCalledWith('claude');
+      expect(mockAgent.getHookTransformer).toHaveBeenCalled();
+    });
+
+    it('should continue with original event if transformation fails', async () => {
+      const event: BaseHookEvent = {
+        session_id: 'agent-session-id',
+        hook_event_name: 'PreCompact',
+        transcript_path: '/path/to/transcript.json',
+        permission_mode: 'default'
+      };
+
+      const config: HookProcessingConfig = {
+        agentName: 'claude',
+        sessionId: 'test-session-id'
+      };
+
+      const { AgentRegistry } = await import('../../../agents/registry.js');
+      const mockAgent = {
+        getHookTransformer: vi.fn(() => {
+          throw new Error('Transformer error');
+        })
+      };
+
+      vi.spyOn(AgentRegistry, 'getAgent').mockReturnValue(mockAgent as any);
+
+      // Should not throw, should continue with original event
+      await expect(processEvent(event, config)).resolves.not.toThrow();
+    });
+  });
+
+  describe('Event routing', () => {
+    it('should route PreCompact event correctly', async () => {
+      const event: BaseHookEvent = {
+        session_id: 'agent-session-id',
+        hook_event_name: 'PreCompact',
+        transcript_path: '/path/to/transcript.json',
+        permission_mode: 'default'
+      };
+
+      const config: HookProcessingConfig = {
+        agentName: 'claude',
+        sessionId: 'test-session-id'
+      };
+
+      await expect(processEvent(event, config)).resolves.not.toThrow();
+    });
+
+    it('should route PermissionRequest event correctly', async () => {
+      const event: BaseHookEvent = {
+        session_id: 'agent-session-id',
+        hook_event_name: 'PermissionRequest',
+        transcript_path: '/path/to/transcript.json',
+        permission_mode: 'default'
+      };
+
+      const config: HookProcessingConfig = {
+        agentName: 'claude',
+        sessionId: 'test-session-id'
+      };
+
+      await expect(processEvent(event, config)).resolves.not.toThrow();
     });
   });
 });
