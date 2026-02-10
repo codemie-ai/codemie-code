@@ -129,15 +129,15 @@ describe('loadConversationHistory', () => {
       it('should return transformed history', async () => {
         const result = await loadConversationHistory('test-id');
         expect(result).toEqual([
-          { role: 'User', message: 'Hello' },
-          { role: 'Assistant', message: 'Hi there' }
+          { role: 'User', message: 'Hello', message_raw: 'Hello' },
+          { role: 'Assistant', message: 'Hi there', message_raw: 'Hi there' }
         ]);
       });
 
-      it('should only include role and message fields', async () => {
+      it('should only include role, message, and message_raw fields', async () => {
         const result = await loadConversationHistory('test-id');
         result.forEach(msg => {
-          expect(Object.keys(msg).sort()).toEqual(['message', 'role']);
+          expect(Object.keys(msg).sort()).toEqual(['message', 'message_raw', 'role']);
         });
       });
     });
