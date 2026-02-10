@@ -164,11 +164,11 @@ Some models require explicit access request:
 codemie setup
 # Select "AWS Bedrock" as provider
 
-# Use with built-in agent
-codemie-code --profile bedrock "your task"
-
 # Use with Claude Code agent
 codemie-claude --profile bedrock "your task"
+
+# Use with Gemini agent
+codemie-gemini --profile bedrock "your task"
 \`\`\`
 
 ## Documentation

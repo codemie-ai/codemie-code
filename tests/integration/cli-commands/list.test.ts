@@ -27,10 +27,11 @@ describe('List Command', () => {
   }, 60000); // 60s timeout for Windows (loads all agent plugins)
 
   it('should list all available agents', () => {
-    // Should show all registered agents (claude, gemini, codemie-code)
+    // Should show all registered agents (claude, gemini, opencode, claude-acp)
     expect(listOutput).toContain('claude');
     expect(listOutput).toContain('gemini');
-    expect(listOutput).toContain('codemie-code');
+    expect(listOutput).toContain('opencode');
+    expect(listOutput).toContain('claude-acp');
   });
 
   it('should complete successfully', () => {

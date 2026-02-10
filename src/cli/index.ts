@@ -24,7 +24,6 @@ import { createProfileCommand } from './commands/profile/index.js';
 import { createAnalyticsCommand } from './commands/analytics/index.js';
 import { createLogCommand } from './commands/log/index.js';
 import { createHookCommand } from './commands/hook.js';
-import { createSkillCommand } from './commands/skill.js';
 import { createOpencodeMetricsCommand } from './commands/opencode-metrics.js';
 import { createAssistantsCommand } from './commands/assistants/index.js';
 import { FirstTimeExperience } from './first-time.js';
@@ -46,8 +45,7 @@ try {
 program
   .name('codemie')
   .description('AI/Run CodeMie CLI - Professional CLI wrapper for managing multiple AI coding agents')
-  .version(version)
-  .option('--task <task>', 'Execute a single task using the built-in agent and exit');
+  .version(version);
 
 // Add commands
 program.addCommand(createSetupCommand());
@@ -64,39 +62,9 @@ program.addCommand(createWorkflowCommand());
 program.addCommand(createAnalyticsCommand());
 program.addCommand(createLogCommand());
 program.addCommand(createHookCommand());
-program.addCommand(createSkillCommand());
 program.addCommand(createOpencodeMetricsCommand());
 
-// Check for --task option before parsing commands
-const taskIndex = process.argv.indexOf('--task');
-if (taskIndex !== -1 && taskIndex < process.argv.length - 1) {
-  // Extract task and run the built-in agent
-  const task = process.argv[taskIndex + 1];
-
-  (async () => {
-    try {
-      const { CodeMieCode } = await import('../agents/codemie-code/index.js');
-      const { logger } = await import('../utils/logger.js');
-
-      const workingDir = process.cwd();
-      const codeMie = new CodeMieCode(workingDir);
-
-      try {
-        await codeMie.initialize();
-      } catch {
-        logger.error('CodeMie configuration required. Please run: codemie setup');
-        process.exit(1);
-      }
-
-      // Execute task with UI
-      await codeMie.executeTaskWithUI(task);
-      process.exit(0);
-    } catch (error) {
-      console.error('Failed to run task:', error);
-      process.exit(1);
-    }
-  })();
-} else if (process.argv.length === 2) {
+if (process.argv.length === 2) {
   // Show prettified help if no command provided (just "codemie")
   FirstTimeExperience.isFirstTime().then(async isFirstTime => {
     if (isFirstTime) {

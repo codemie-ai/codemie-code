@@ -22,9 +22,8 @@
 
 CodeMie CLI is the all-in-one AI coding assistant for developers.
 
-- ✨ **One CLI, Multiple AI Agents** - Switch between Claude Code, Gemini, OpenCode, and built-in agent.
+- ✨ **One CLI, Multiple AI Agents** - Switch between Claude Code, Gemini, OpenCode, and custom agents.
 - 🔄 **Multi-Provider Support** - OpenAI, Azure OpenAI, AWS Bedrock, LiteLLM, Ollama, and Enterprise SSO.
-- 🚀 **Built-in Agent** - A powerful LangGraph-based assistant with file operations, command execution, and planning tools.
 - 🖥️ **Cross-Platform** - Full support for Windows, Linux, and macOS with platform-specific optimizations.
 - 🔐 **Enterprise Ready** - SSO authentication, audit logging, and role-based access.
 - ⚡ **Productivity Boost** - Code review, refactoring, test generation, and bug fixing.
@@ -52,11 +51,11 @@ codemie install claude --supported
 # 4. Use the installed agent
 codemie-claude "Review my API code"
 
-# 5. Use the built-in agent
-codemie-code "Analyze this codebase"
+# 5. Or use Gemini
+codemie-gemini "Explain this function"
 
-# 6. Execute a single task and exit
-codemie --task "Generate unit tests"
+# 6. Or use OpenCode
+codemie-opencode "Generate unit tests"
 ```
 
 **Prefer not to install globally?** Use npx with the full package name:
@@ -90,7 +89,7 @@ npm install @codemieai/code
 npx @codemieai/code --help
 ```
 
-**Note:** Agent shortcuts (`codemie-claude`, `codemie-code`, etc.) require global installation.
+**Note:** Agent shortcuts (`codemie-claude`, `codemie-gemini`, etc.) require global installation.
 
 ### From Source
 
@@ -119,30 +118,9 @@ codemie doctor
 
 ## Usage
 
-The CodeMie CLI provides two ways to interact with AI agents:
+### AI Agents
 
-### Built-in Agent (CodeMie Native)
-
-The built-in agent is ready to use immediately and is great for a wide range of coding tasks.
-
-**Available Tools:**
-- `read_file` - Read file contents
-- `write_file` - Write content to files
-- `list_directory` - List files with intelligent filtering (auto-filters node_modules, .git, etc.)
-- `execute_command` - Execute shell commands with progress tracking
-- `write_todos` / `update_todo_status` / `append_todo` / `clear_todos` / `show_todos` - Planning and progress tracking tools
-
-```bash
-# Start an interactive conversation
-codemie-code
-
-# Start with an initial message
-codemie-code "Help me refactor this component"
-```
-
-### External Agents
-
-You can also install and use external agents like Claude Code and Gemini.
+CodeMie CLI allows you to install and use multiple AI coding agents:
 
 **Available Agents:**
 - **Claude Code** (`codemie-claude`) - Anthropic's official CLI with advanced code understanding
@@ -290,7 +268,7 @@ Comprehensive guides are available in the `docs/` directory:
 
 - **[Configuration](docs/CONFIGURATION.md)** - Setup wizard, environment variables, multi-provider profiles, manual configuration
 - **[Commands](docs/COMMANDS.md)** - Complete command reference including analytics and workflow commands
-- **[Agents](docs/AGENTS.md)** - Detailed information about each agent (Claude Code, Gemini, built-in)
+- **[Agents](docs/AGENTS.md)** - Detailed information about each agent (Claude Code, Gemini, OpenCode)
 - **[Authentication](docs/AUTHENTICATION.md)** - SSO setup, token management, enterprise authentication
 - **[Examples](docs/EXAMPLES.md)** - Common workflows, multi-provider examples, CI/CD integration
 - **[Configuration Architecture](docs/ARCHITECTURE-CONFIGURATION.md)** - How configuration flows through the system from CLI to proxy plugins

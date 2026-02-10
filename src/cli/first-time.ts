@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 import { ConfigLoader } from '../utils/config.js';
-import { AgentRegistry, BUILTIN_AGENT_NAME } from '../agents/registry.js';
+import { AgentRegistry } from '../agents/registry.js';
 import type { AgentAdapter } from '../agents/core/types.js';
 
 /**
@@ -14,8 +14,8 @@ export class FirstTimeExperience {
   private static getAgents(): { builtIn: AgentAdapter | undefined; external: AgentAdapter[] } {
     const allAgents = AgentRegistry.getAllAgents();
     return {
-      builtIn: allAgents.find(agent => agent.name === BUILTIN_AGENT_NAME),
-      external: allAgents.filter(agent => agent.name !== BUILTIN_AGENT_NAME)
+      builtIn: undefined,
+      external: allAgents
     };
   }
   /**
@@ -212,20 +212,13 @@ export class FirstTimeExperience {
     console.log(chalk.bold.green('\n✅ You\'re all set!\n'));
     console.log(chalk.bold('Next Steps:\n'));
 
-    const { builtIn, external } = this.getAgents();
+    const { external } = this.getAgents();
 
-    if (builtIn) {
-      console.log(chalk.cyan('1. Try the built-in agent:'));
-      console.log(chalk.white('   $ ') + chalk.green('codemie-code --task "explore current repository"'));
-      console.log(chalk.white('   Or start interactive mode:'));
-      console.log(chalk.white('   $ ') + chalk.green('codemie-code') + chalk.white('               # Interactive session\n'));
-    }
-
-    console.log(chalk.cyan('2. Verify your configuration:'));
+    console.log(chalk.cyan('1. Verify your configuration:'));
     console.log(chalk.white('   $ ') + chalk.green('codemie doctor') + chalk.white('              # Check system health\n'));
 
     if (external.length > 0) {
-      console.log(chalk.cyan('3. Install additional agents:'));
+      console.log(chalk.cyan('2. Install additional agents:'));
 
       external.forEach(agent => {
         const installCmd = `codemie install ${agent.name}`.padEnd(35);

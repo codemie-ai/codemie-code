@@ -5,7 +5,6 @@
 ```bash
 codemie --help                   # Show all commands and options
 codemie --version                # Show version information
-codemie --task "task"            # Execute single task with built-in agent and exit
 
 codemie setup                    # Interactive configuration wizard
 codemie profile <command>        # Manage provider profiles
@@ -24,7 +23,6 @@ codemie version                  # Show version information
 ### Global Options
 
 ```bash
---task <task>            # Execute a single task using the built-in agent and exit
 --help                   # Display help for command
 --version                # Output the version number
 ```
@@ -48,23 +46,9 @@ All agent shortcuts support these options:
 --timeout <seconds>      # Override timeout (in seconds)
 ```
 
-### Built-in Agent (codemie-code)
+### Agents
 
-```bash
-codemie-code                     # Interactive mode
-codemie-code "message"           # Start with initial message
-codemie-code health              # Health check
-codemie-code --help              # Show help with all options
-
-# With configuration overrides
-codemie-code --profile work-litellm "analyze codebase"
-codemie-code --model claude-4-5-sonnet "review code"
-codemie-code --provider ollama --model codellama "generate tests"
-```
-
-### External Agents
-
-All external agents share the same command pattern:
+All agents share the same command pattern:
 
 ```bash
 # Basic usage

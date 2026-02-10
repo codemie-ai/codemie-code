@@ -6,9 +6,7 @@ import { AgentAdapter } from './types.js';
 import { ConfigLoader, CodeMieConfigOptions } from '../../utils/config.js';
 import { logger } from '../../utils/logger.js';
 import { getDirname } from '../../utils/paths.js';
-import { BUILTIN_AGENT_NAME } from '../registry.js';
 import { ClaudePluginMetadata } from '../plugins/claude/claude.plugin.js';
-import { CodeMieCodePluginMetadata } from '../plugins/codemie-code.plugin.js';
 import { GeminiPluginMetadata } from '../plugins/gemini/gemini.plugin.js';
 import { OpenCodePluginMetadata } from '../plugins/opencode/opencode.plugin.js';
 import {ClaudeAcpPluginMetadata} from "../plugins/claude/claude-acp.plugin.js";
@@ -78,19 +76,17 @@ export class AgentCLI {
         await this.handleHealthCheck();
       });
 
-    // Add init command for frameworks (skip for built-in agent)
-    if (this.adapter.name !== BUILTIN_AGENT_NAME) {
-      this.program
-        .command('init')
-        .description('Initialize development framework')
-        .argument('[framework]', 'Framework to initialize (speckit, bmad)')
-        .option('-l, --list', 'List available frameworks')
-        .option('--force', 'Force re-initialization')
-        .option('--project-name <name>', 'Project name for framework initialization')
-        .action(async (framework, options) => {
-          await this.handleInit(framework, options);
-        });
-    }
+    // Add init command for frameworks
+    this.program
+      .command('init')
+      .description('Initialize development framework')
+      .argument('[framework]', 'Framework to initialize (speckit, bmad)')
+      .option('-l, --list', 'List available frameworks')
+      .option('--force', 'Force re-initialization')
+      .option('--project-name <name>', 'Project name for framework initialization')
+      .action(async (framework, options) => {
+        await this.handleInit(framework, options);
+      });
   }
 
   /**
@@ -358,7 +354,6 @@ export class AgentCLI {
   private getAgentMetadata() {
     const metadataMap: Record<string, typeof ClaudePluginMetadata> = {
       'claude': ClaudePluginMetadata,
-      [BUILTIN_AGENT_NAME]: CodeMieCodePluginMetadata,
       'gemini': GeminiPluginMetadata,
       'opencode': OpenCodePluginMetadata,
       'claude-acp': ClaudeAcpPluginMetadata,

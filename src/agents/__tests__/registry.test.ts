@@ -5,22 +5,15 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { AgentRegistry, BUILTIN_AGENT_NAME } from '../registry.js';
+import { AgentRegistry } from '../registry.js';
 
 describe('AgentRegistry', () => {
   describe('Agent Registration', () => {
     it('should register all default agents', () => {
       const agentNames = AgentRegistry.getAgentNames();
 
-      // Should have all 5 default agents (codemie-code, claude, claude-acp, gemini, opencode)
-      expect(agentNames).toHaveLength(5);
-    });
-
-    it('should register built-in agent', () => {
-      const agent = AgentRegistry.getAgent(BUILTIN_AGENT_NAME);
-
-      expect(agent).toBeDefined();
-      expect(agent?.name).toBe(BUILTIN_AGENT_NAME);
+      // Should have all 4 default agents (claude, claude-acp, gemini, opencode)
+      expect(agentNames).toHaveLength(4);
     });
 
     it('should register Claude plugin', () => {
@@ -62,14 +55,13 @@ describe('AgentRegistry', () => {
     it('should return all registered agents', () => {
       const agents = AgentRegistry.getAllAgents();
 
-      expect(agents).toHaveLength(5);
+      expect(agents).toHaveLength(4);
       expect(agents.every((agent) => agent.name)).toBe(true);
     });
 
     it('should return all agent names', () => {
       const names = AgentRegistry.getAgentNames();
 
-      expect(names).toContain(BUILTIN_AGENT_NAME);
       expect(names).toContain('claude');
       expect(names).toContain('claude-acp');
       expect(names).toContain('gemini');
@@ -112,17 +104,6 @@ describe('AgentRegistry', () => {
         const isInstalled = await agent.isInstalled();
         expect(isInstalled).toBe(true);
       }
-    });
-
-    it('should include built-in agent in installed agents', async () => {
-      const installedAgents = await AgentRegistry.getInstalledAgents();
-
-      // Built-in agent should always be "installed"
-      const builtInAgent = installedAgents.find(
-        (agent) => agent.name === BUILTIN_AGENT_NAME
-      );
-
-      expect(builtInAgent).toBeDefined();
     });
   });
 
