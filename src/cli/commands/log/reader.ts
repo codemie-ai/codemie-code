@@ -35,18 +35,38 @@ export class LogReader {
       // Get list of log files to read
       const logFiles = this.getLogFilesInRange(filter?.fromDate, filter?.toDate);
 
-      for (const logFile of logFiles) {
-        const filePath = join(this.logsDir, logFile);
-        const fileEntries = await this.readLogFile(filePath, filter);
-        entries.push(...fileEntries);
+      // When limiting lines, we need to read from newest files first to ensure we get
+      // the most recent entries. We'll read extra files to account for entries being
+      // filtered out or spread across files, then sort and take the last N.
+      if (maxLines) {
+        // Read from newest files first, collecting 3x maxLines to ensure we have enough
+        // after filtering and to account for entries spread across multiple files
+        const targetEntries = maxLines * 3;
+        const reversedFiles = [...logFiles].reverse();
 
-        // Stop if we have enough lines
-        if (maxLines && entries.length >= maxLines) {
-          break;
+        for (const logFile of reversedFiles) {
+          const filePath = join(this.logsDir, logFile);
+          const fileEntries = await this.readLogFile(filePath, filter);
+          entries.push(...fileEntries);
+
+          // Stop if we have enough entries
+          if (entries.length >= targetEntries) {
+            break;
+          }
+        }
+      } else {
+        // No limit, read all files in order
+        for (const logFile of logFiles) {
+          const filePath = join(this.logsDir, logFile);
+          const fileEntries = await this.readLogFile(filePath, filter);
+          entries.push(...fileEntries);
         }
       }
 
-      // Apply maxLines limit (take last N entries)
+      // Sort all entries by timestamp to maintain chronological order
+      entries.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+
+      // Apply maxLines limit (take last N entries after sorting)
       if (maxLines && entries.length > maxLines) {
         return entries.slice(-maxLines);
       }
@@ -89,6 +109,11 @@ export class LogReader {
   /**
    * Get list of log files that fall within date range
    * Returns files sorted by date (oldest first)
+   *
+   * Note: Expands date range by ±1 day to catch overnight sessions.
+   * Long-running sessions that span midnight may write entries from day N+1
+   * into the log file for day N. Entry-level timestamp filtering (in matchesFilter)
+   * ensures exact results despite this wider file search.
    */
   private getLogFilesInRange(fromDate?: Date, toDate?: Date): string[] {
     try {
@@ -96,6 +121,20 @@ export class LogReader {
 
       // Filter debug log files
       const logFiles = files.filter(f => f.match(/^debug-\d{4}-\d{2}-\d{2}\.log$/));
+
+      // If no date filter, return all files
+      if (!fromDate && !toDate) {
+        return logFiles.sort();
+      }
+
+      // Expand date range by ±1 day to catch overnight sessions
+      // Entry-level timestamp filtering ensures exact results
+      const expandedFromDate = fromDate
+        ? new Date(fromDate.getTime() - 24 * 60 * 60 * 1000)
+        : undefined;
+      const expandedToDate = toDate
+        ? new Date(toDate.getTime() + 24 * 60 * 60 * 1000)
+        : undefined;
 
       // Filter by date range
       const filtered = logFiles.filter(file => {
@@ -105,11 +144,12 @@ export class LogReader {
         const fileDate = new Date(dateMatch[1]);
         if (isNaN(fileDate.getTime())) return false;
 
-        if (fromDate && fileDate < new Date(fromDate.toISOString().split('T')[0])) {
+        // Use expanded range for file filtering
+        if (expandedFromDate && fileDate < new Date(expandedFromDate.toISOString().split('T')[0])) {
           return false;
         }
 
-        if (toDate && fileDate > new Date(toDate.toISOString().split('T')[0])) {
+        if (expandedToDate && fileDate > new Date(expandedToDate.toISOString().split('T')[0])) {
           return false;
         }
 
