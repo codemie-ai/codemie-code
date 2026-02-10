@@ -10,7 +10,7 @@ import { existsSync } from 'fs';
  * Maximum number of history messages to load from previous sessions
  * This prevents sending excessively large context to the API
  */
-const MAX_HISTORY_MESSAGES = 10;
+const MAX_HISTORY_MESSAGES = 20;
 import { logger } from '@/utils/logger.js';
 import { getSessionConversationPath } from '@/agents/core/session/session-config.js';
 import { readJSONL } from '@/providers/plugins/sso/session/utils/jsonl-reader.js';
@@ -60,37 +60,29 @@ export async function loadConversationHistory(
       return [];
     }
 
-    // Take the most recent success record (last in array)
-    const latestRecord = successRecords[successRecords.length - 1];
+    const allMessages = successRecords
+      .flatMap(record => record.payload?.history ?? [])
+      .reduce((map, msg) => {
+        const key = `${msg.role}:${msg.message}:${msg.history_index ?? 0}`;
+        if (!map.has(key)) {
+          map.set(key, {
+            role: msg.role,
+            message: msg.message,
+            message_raw: msg.message
+          });
+        }
+        return map;
+      }, new Map<string, HistoryMessage>());
 
-    // Extract and transform history from the record
-    if (!latestRecord.payload?.history || latestRecord.payload.history.length === 0) {
-      logger.debug('Latest conversation record has no history', {
+    if (allMessages.size === 0) {
+      logger.debug('No history messages found in conversation records', {
         conversationId
       });
       return [];
     }
 
-    // Transform to HistoryMessage format (role + message + message_raw)
-    const allHistory: HistoryMessage[] = latestRecord.payload.history.map(msg => ({
-      role: msg.role,
-      message: msg.message,
-      message_raw: msg.message
-    }));
-
-    // Limit to the last MAX_HISTORY_MESSAGES to prevent excessive context size
-    const history = allHistory.slice(-MAX_HISTORY_MESSAGES);
-
-    logger.debug('Successfully loaded conversation history', {
-      conversationId,
-      messageCount: history.length,
-      totalMessages: allHistory.length,
-      truncated: allHistory.length > MAX_HISTORY_MESSAGES,
-      recordTimestamp: latestRecord.timestamp
-    });
-
-    return history;
-
+    const allHistory: HistoryMessage[] = Array.from(allMessages.values());
+    return allHistory.slice(-MAX_HISTORY_MESSAGES);
   } catch (error) {
     logger.error('Failed to load conversation history', {
       conversationId,
