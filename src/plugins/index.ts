@@ -24,7 +24,7 @@ export type {
   PluginValidationResult,
   PluginOperationResult,
 } from './core/types.js';
-export { PluginManifestSchema, InstalledPluginMetaSchema } from './core/types.js';
+export { PluginManifestSchema, InstalledPluginMetaSchema, validatePluginName } from './core/types.js';
 
 // Marketplace exports
 export { MarketplaceClient } from './marketplace/MarketplaceClient.js';

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PathSecurityError } from '../../utils/errors.js';
 
 /**
  * Plugin source type
@@ -215,4 +216,24 @@ export interface PluginOperationResult {
   pluginName: string;
   message: string;
   error?: Error;
+}
+
+/**
+ * Valid plugin name pattern: lowercase letters, digits, hyphens; 1-50 chars; starts with letter
+ */
+const VALID_PLUGIN_NAME = /^[a-z][a-z0-9-]{0,49}$/;
+
+/**
+ * Validate a plugin name to prevent path traversal attacks.
+ *
+ * @param name - Plugin name to validate
+ * @throws PathSecurityError if the name contains invalid characters
+ */
+export function validatePluginName(name: string): void {
+  if (!VALID_PLUGIN_NAME.test(name)) {
+    throw new PathSecurityError(
+      name,
+      `Invalid plugin name. Names must match ${VALID_PLUGIN_NAME} (lowercase, digits, hyphens; starts with a letter; max 50 chars).`
+    );
+  }
 }

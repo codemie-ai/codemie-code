@@ -1,5 +1,6 @@
 import { join } from 'path';
 import fg from 'fast-glob';
+import { logger } from '../../utils/logger.js';
 import type { DiscoveredPlugin, LoadedPlugin } from './types.js';
 
 /**
@@ -73,7 +74,8 @@ export class PluginLoader {
         deep: 3,
       });
       return files.length > 0;
-    } catch {
+    } catch (error) {
+      logger.debug(`Failed to check skills directory for plugin at ${pluginPath}: ${error instanceof Error ? error.message : String(error)}`);
       return false;
     }
   }
@@ -112,7 +114,8 @@ export class PluginLoader {
 
       // Deduplicate and filter
       return [...new Set(skillNames)].filter(Boolean);
-    } catch {
+    } catch (error) {
+      logger.debug(`Failed to discover skill names at ${pluginPath}: ${error instanceof Error ? error.message : String(error)}`);
       return [];
     }
   }

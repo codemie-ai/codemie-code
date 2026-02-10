@@ -2,6 +2,7 @@ import { readFile, writeFile, mkdir } from 'fs/promises';
 import { dirname } from 'path';
 import { existsSync } from 'fs';
 import { getCodemiePath } from '../../utils/paths.js';
+import { logger } from '../../utils/logger.js';
 import { MarketplaceConfigSchema } from './types.js';
 import type { MarketplaceSource, MarketplaceConfig } from './types.js';
 
@@ -71,8 +72,8 @@ export class MarketplaceRegistry {
           }
         }
       }
-    } catch {
-      // Use default only
+    } catch (error) {
+      logger.debug(`Failed to load marketplace config, using defaults: ${error instanceof Error ? error.message : String(error)}`);
     }
 
     this.loaded = true;
@@ -220,7 +221,8 @@ export class MarketplaceRegistry {
       }
 
       return result.data;
-    } catch {
+    } catch (error) {
+      logger.debug(`Failed to parse marketplace config file: ${error instanceof Error ? error.message : String(error)}`);
       return null;
     }
   }

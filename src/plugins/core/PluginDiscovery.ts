@@ -1,9 +1,11 @@
 import { readdir, readFile } from 'fs/promises';
 import { join } from 'path';
 import { existsSync } from 'fs';
-import { getCodemiePath } from '../../utils/paths.js';
+import { getCodemiePath, isPathWithinDirectory } from '../../utils/paths.js';
+import { logger } from '../../utils/logger.js';
+import { PathSecurityError } from '../../utils/errors.js';
 import { PluginManifestParser } from './PluginManifestParser.js';
-import { InstalledPluginMetaSchema } from './types.js';
+import { InstalledPluginMetaSchema, validatePluginName } from './types.js';
 import type {
   DiscoveredPlugin,
   PluginDiscoveryOptions,
@@ -79,14 +81,10 @@ export class PluginDiscovery {
    * Discover plugins from development directories
    */
   private async discoverDevPlugins(pluginDirs: string[]): Promise<DiscoveredPlugin[]> {
-    const plugins: DiscoveredPlugin[] = [];
-
-    for (const dir of pluginDirs) {
-      const discovered = await this.discoverFromDirectory(dir, true);
-      plugins.push(...discovered);
-    }
-
-    return plugins;
+    const results = await Promise.all(
+      pluginDirs.map((dir) => this.discoverFromDirectory(dir, true))
+    );
+    return results.flat();
   }
 
   /**
@@ -138,8 +136,8 @@ export class PluginDiscovery {
           plugins.push(plugin);
         }
       }
-    } catch {
-      // Directory doesn't exist or access error - return empty array
+    } catch (error) {
+      logger.debug(`Failed to discover plugins from ${directory}: ${error instanceof Error ? error.message : String(error)}`);
     }
 
     return plugins;
@@ -203,7 +201,8 @@ export class PluginDiscovery {
       }
 
       return result.data;
-    } catch {
+    } catch (error) {
+      logger.debug(`Failed to load installed metadata from ${pluginDir}: ${error instanceof Error ? error.message : String(error)}`);
       return undefined;
     }
   }
@@ -263,7 +262,7 @@ export class PluginDiscovery {
    * @returns true if installed
    */
   async isPluginInstalled(pluginName: string): Promise<boolean> {
-    const pluginDir = join(PluginDiscovery.getPluginsDir(), pluginName);
+    const pluginDir = PluginDiscovery.getPluginDir(pluginName);
     return existsSync(pluginDir) && PluginManifestParser.hasManifest(pluginDir);
   }
 
@@ -274,6 +273,15 @@ export class PluginDiscovery {
    * @returns Absolute path to plugin directory
    */
   static getPluginDir(pluginName: string): string {
-    return join(PluginDiscovery.getPluginsDir(), pluginName);
+    validatePluginName(pluginName);
+    const pluginsDir = PluginDiscovery.getPluginsDir();
+    const resolved = join(pluginsDir, pluginName);
+    if (!isPathWithinDirectory(pluginsDir, resolved)) {
+      throw new PathSecurityError(
+        resolved,
+        `Plugin path escapes the plugins directory '${pluginsDir}'`
+      );
+    }
+    return resolved;
   }
 }

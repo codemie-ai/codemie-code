@@ -4,8 +4,11 @@ import { existsSync, createWriteStream } from 'fs';
 import { pipeline } from 'stream/promises';
 import { Readable } from 'stream';
 import { getCodemiePath } from '../../utils/paths.js';
+import { logger } from '../../utils/logger.js';
+import { exec } from '../../utils/processes.js';
 import { PluginDiscovery } from '../core/PluginDiscovery.js';
 import { PluginManifestParser } from '../core/PluginManifestParser.js';
+import { validatePluginName } from '../core/types.js';
 import { MarketplaceClient } from './MarketplaceClient.js';
 import { MarketplaceRegistry } from './MarketplaceRegistry.js';
 import type {
@@ -55,6 +58,8 @@ export class PluginInstaller {
     const { force = false, sourceId } = options;
 
     try {
+      validatePluginName(pluginName);
+
       // Get marketplace source
       const source = sourceId
         ? await this.registry.getSource(sourceId)
@@ -167,6 +172,7 @@ export class PluginInstaller {
       }
 
       const pluginName = parseResult.manifest.name;
+      validatePluginName(pluginName);
       const pluginDir = PluginDiscovery.getPluginDir(pluginName);
 
       // Copy to plugins directory
@@ -213,6 +219,18 @@ export class PluginInstaller {
    * @returns Success status
    */
   async uninstall(pluginName: string): Promise<PluginInstallResult> {
+    try {
+      validatePluginName(pluginName);
+    } catch (error) {
+      return {
+        success: false,
+        pluginName,
+        version: '',
+        installedPath: '',
+        message: error instanceof Error ? error.message : String(error),
+      };
+    }
+
     const pluginDir = PluginDiscovery.getPluginDir(pluginName);
 
     if (!existsSync(pluginDir)) {
@@ -301,11 +319,12 @@ export class PluginInstaller {
             pluginName: plugin.name,
             currentVersion: plugin.manifest.version,
             latestVersion: marketplacePlugin.version,
+            // Simple string comparison — sufficient for detecting changes without adding a semver dependency
             hasUpdate: marketplacePlugin.version !== plugin.manifest.version,
           });
         }
-      } catch {
-        // Skip plugins that fail to check
+      } catch (error) {
+        logger.debug(`Failed to check updates for ${plugin.name}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
 
@@ -334,8 +353,11 @@ export class PluginInstaller {
 
       // Save to temp file
       const fileStream = createWriteStream(tempFile);
+      if (!response.body) {
+        throw new Error('Download response has no body');
+      }
       // Convert Web ReadableStream to Node.js Readable
-      const nodeReadable = Readable.fromWeb(response.body as any);
+      const nodeReadable = Readable.fromWeb(response.body as import('stream/web').ReadableStream);
       await pipeline(nodeReadable, fileStream);
 
       // Extract the archive
@@ -344,8 +366,8 @@ export class PluginInstaller {
       // Cleanup temp file
       try {
         await rm(tempFile, { force: true });
-      } catch {
-        // Ignore cleanup errors
+      } catch (error) {
+        logger.debug(`Failed to clean up temp file ${tempFile}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   }
@@ -366,9 +388,6 @@ export class PluginInstaller {
     try {
       // Create temp extract directory
       await mkdir(tempExtractDir, { recursive: true });
-
-      // Use Node.js built-in or fallback to system unzip
-      const { exec } = await import('../../utils/exec.js');
 
       // Extract using unzip command (available on most systems)
       await exec('unzip', ['-q', '-o', zipPath, '-d', tempExtractDir]);
@@ -405,8 +424,8 @@ export class PluginInstaller {
       // Cleanup temp extract directory
       try {
         await rm(tempExtractDir, { recursive: true, force: true });
-      } catch {
-        // Ignore cleanup errors
+      } catch (error) {
+        logger.debug(`Failed to clean up temp extract dir ${tempExtractDir}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
   }

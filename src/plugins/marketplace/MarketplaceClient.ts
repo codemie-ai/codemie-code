@@ -2,6 +2,7 @@ import { readFile, writeFile, mkdir } from 'fs/promises';
 import { dirname } from 'path';
 import { existsSync } from 'fs';
 import { getCodemiePath } from '../../utils/paths.js';
+import { logger } from '../../utils/logger.js';
 import { PluginManifestParser } from '../core/PluginManifestParser.js';
 import { MarketplaceIndexSchema, MarketplacePluginEntrySchema } from './types.js';
 import type {
@@ -103,9 +104,8 @@ export class MarketplaceClient {
       plugins.push(...externalPlugins);
     } catch (error) {
       // If we can't fetch, return empty index
-      console.error(
-        `Failed to fetch marketplace index from ${source.repository}:`,
-        error instanceof Error ? error.message : String(error)
+      logger.error(
+        `Failed to fetch marketplace index from ${source.repository}: ${error instanceof Error ? error.message : String(error)}`
       );
     }
 
@@ -186,15 +186,14 @@ export class MarketplaceClient {
               isExternal: false,
             });
           }
-        } catch {
-          // Skip plugins that fail to load
+        } catch (error) {
+          logger.debug(`Skipping plugin ${entry.name}: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
     } catch (error) {
       // Log but don't throw - allow partial results
-      console.error(
-        `Failed to fetch plugins from ${directory}:`,
-        error instanceof Error ? error.message : String(error)
+      logger.error(
+        `Failed to fetch plugins from ${directory}: ${error instanceof Error ? error.message : String(error)}`
       );
     }
 
@@ -257,12 +256,12 @@ export class MarketplaceClient {
           if (result.success) {
             plugins.push(result.data);
           }
-        } catch {
-          // Skip invalid external plugins
+        } catch (error) {
+          logger.debug(`Skipping external plugin ${entry.name}: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
-    } catch {
-      // Directory doesn't exist or other error
+    } catch (error) {
+      logger.debug(`Failed to fetch external plugins from ${repository}: ${error instanceof Error ? error.message : String(error)}`);
     }
 
     return plugins;
@@ -288,7 +287,8 @@ export class MarketplaceClient {
       }
 
       return result.data;
-    } catch {
+    } catch (error) {
+      logger.debug(`Failed to load cached index for ${sourceId}: ${error instanceof Error ? error.message : String(error)}`);
       return null;
     }
   }
@@ -302,8 +302,8 @@ export class MarketplaceClient {
     try {
       await mkdir(dirname(cachePath), { recursive: true });
       await writeFile(cachePath, JSON.stringify(index, null, 2), 'utf-8');
-    } catch {
-      // Ignore cache write errors
+    } catch (error) {
+      logger.debug(`Failed to save cached index for ${sourceId}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
@@ -342,8 +342,8 @@ export class MarketplaceClient {
             });
           }
         }
-      } catch {
-        // Skip sources that fail
+      } catch (error) {
+        logger.debug(`Search failed for source ${source.id}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
 

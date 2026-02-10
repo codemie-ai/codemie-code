@@ -2,6 +2,7 @@ import { readFile } from 'fs/promises';
 import { join } from 'path';
 import fg from 'fast-glob';
 import { getCodemiePath } from '../../../../utils/paths.js';
+import { logger } from '../../../../utils/logger.js';
 import { parseFrontmatter, FrontmatterParseError } from '../utils/frontmatter.js';
 import { SkillMetadataSchema } from './types.js';
 import type {
@@ -136,8 +137,8 @@ export class SkillDiscovery {
 
         skills.push(...pluginSkills);
       }
-    } catch {
-      // Plugin system not available or error - return empty array
+    } catch (error) {
+      logger.debug(`Failed to discover plugin skills: ${error instanceof Error ? error.message : String(error)}`);
     }
 
     return skills;
@@ -177,8 +178,8 @@ export class SkillDiscovery {
         .map((result) => result.skill);
 
       return skills;
-    } catch {
-      // Directory doesn't exist or other error - return empty array
+    } catch (error) {
+      logger.debug(`Failed to discover skills from ${directory}: ${error instanceof Error ? error.message : String(error)}`);
       return [];
     }
   }
