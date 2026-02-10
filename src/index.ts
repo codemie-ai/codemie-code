@@ -22,7 +22,7 @@ export { CodeMieProxy } from './providers/plugins/sso/proxy/sso.proxy.js';
 export { getPluginRegistry } from './providers/plugins/sso/proxy/plugins/index.js';
 
 // Hook Event Processing (for programmatic usage)
-export { HookEventProcessor } from './hooks/api.js';
+export { processEvent, HookProcessingConfig } from './cli/commands/hook.js';
 
 // Configuration
 export { ConfigLoader } from './utils/config.js';

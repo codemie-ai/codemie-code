@@ -17,7 +17,7 @@ Public API classes and methods exposed by CodeMie Code for external integration:
 | `CodeMieSSO` | Browser-based SSO authentication | `src/providers/plugins/sso/sso.auth.ts` | `src/index.ts` |
 | `CodeMieProxy` | Plugin-based HTTP proxy with streaming | `src/providers/plugins/sso/proxy/sso.proxy.ts` | `src/index.ts` |
 | `getPluginRegistry` | Plugin registry singleton accessor | `src/providers/plugins/sso/proxy/plugins/registry.ts` | `src/index.ts` |
-| `HookEventProcessor` | Programmatic hook event processing | `src/hooks/api.ts` | `src/index.ts` |
+| `processEvent` | Programmatic hook event processing | `src/cli/commands/hook.ts` | `src/index.ts` |
 | `ConfigLoader` | Unified configuration loader | `src/utils/config.ts` | `src/index.ts` |
 
 ---
@@ -383,60 +383,28 @@ interface ProxyInterceptor {
 
 ---
 
-## HookEventProcessor
+## processEvent
 
 ### Overview
 
-Programmatic API for processing hook events from external services (e.g., VSCode plugin). Provides the same functionality as the CLI hook command but accepts event objects directly without stdin/stdout communication.
+Programmatic API for processing hook events from external services (e.g., VSCode plugin). Provides the same functionality as the CLI hook command but accepts event objects directly without stdin/stdout communication. This is a stateless function that processes events based on the provided configuration.
 
-### Class Definition
+### Function Definition
 
 ```typescript
-// Source: src/hooks/api.ts:71-665
-export class HookEventProcessor {
-  constructor(config: HookProcessingConfig);
-
-  /**
-   * Process a hook event
-   * Main entry point that routes to appropriate handler
-   */
-  async processEvent(event: BaseHookEvent): Promise<void>;
-
-  /**
-   * Handle SessionStart event
-   */
-  async handleSessionStart(event: SessionStartEvent): Promise<void>;
-
-  /**
-   * Handle SessionEnd event
-   */
-  async handleSessionEnd(event: SessionEndEvent): Promise<void>;
-
-  /**
-   * Handle Stop event
-   */
-  async handleStop(event: BaseHookEvent): Promise<void>;
-
-  /**
-   * Handle SubagentStop event
-   */
-  async handleSubagentStop(event: SubagentStopEvent): Promise<void>;
-
-  /**
-   * Handle PreCompact event
-   */
-  async handlePreCompact(event: BaseHookEvent): Promise<void>;
-
-  /**
-   * Handle PermissionRequest event
-   */
-  async handlePermissionRequest(event: BaseHookEvent): Promise<void>;
-
-  /**
-   * Handle UserPromptSubmit event
-   */
-  async handleUserPromptSubmit(event: BaseHookEvent): Promise<void>;
-}
+// Source: src/cli/commands/hook.ts:1152-1172
+/**
+ * Process a hook event programmatically
+ * Main entry point that routes to appropriate handler based on event type
+ * 
+ * @param event - The hook event to process
+ * @param config - Optional configuration object (if not provided, uses environment variables)
+ * @throws Error if event processing fails and config is provided
+ */
+export async function processEvent(
+  event: BaseHookEvent,
+  config?: HookProcessingConfig
+): Promise<void>;
 ```
 
 ### Configuration
@@ -461,11 +429,11 @@ interface HookProcessingConfig {
 ### Usage Pattern
 
 ```typescript
-import { HookEventProcessor } from 'codemieai-code';
+import { processEvent, HookProcessingConfig } from 'codemieai-code';
 import type { BaseHookEvent, SessionStartEvent } from 'codemieai-code';
 
-// Initialize processor
-const processor = new HookEventProcessor({
+// Define configuration (can be reused across multiple events)
+const config: HookProcessingConfig = {
   agentName: 'claude',
   sessionId: 'session-123',
   provider: 'ai-run-sso',
@@ -473,30 +441,38 @@ const processor = new HookEventProcessor({
   ssoUrl: 'https://codemie.lab.epam.com',
   clientType: 'vscode-codemie',
   version: '1.0.0'
-});
+};
 
 // Process SessionStart event
 const startEvent: SessionStartEvent = {
   session_id: 'agent-session-456',
   hook_event_name: 'SessionStart',
   transcript_path: '/path/to/transcript.json',
+  permission_mode: 'default',
   cwd: '/workspace/project',
   source: 'user-initiated'
 };
 
-await processor.processEvent(startEvent);
-// Or use specific handler:
-await processor.handleSessionStart(startEvent);
+await processEvent(startEvent, config);
 
 // Process SessionEnd event
 const endEvent: SessionEndEvent = {
   session_id: 'agent-session-456',
   hook_event_name: 'SessionEnd',
   transcript_path: '/path/to/transcript.json',
+  permission_mode: 'default',
   reason: 'user-completed'
 };
 
-await processor.handleSessionEnd(endEvent);
+await processEvent(endEvent, config);
+
+// Process other event types
+await processEvent({
+  session_id: 'agent-session-456',
+  hook_event_name: 'UserPromptSubmit',
+  transcript_path: '/path/to/transcript.json',
+  permission_mode: 'default'
+}, config);
 ```
 
 ### Event Processing Flow
@@ -525,10 +501,16 @@ await processor.handleSessionEnd(endEvent);
 
 ```typescript
 interface BaseHookEvent {
-  session_id: string;
-  hook_event_name: string;
-  transcript_path: string;
-  [key: string]: any;
+  session_id: string;              // Agent's session ID
+  transcript_path: string;         // Path to conversation file (agent session file)
+  permission_mode: string;         // "default", "plan", "acceptEdits", "dontAsk", or "bypassPermissions"
+  hook_event_name: string;         // Event identifier (SessionStart, SessionEnd, etc.)
+  cwd?: string;                    // Current working directory (not present in all hooks)
+  source?: string;                 // SessionStart only: "startup", "resume", "clear"
+  reason?: string;                 // SessionEnd only: "exit", "logout", "clear", etc.
+  agent_id?: string;               // SubagentStop only: Sub-agent ID
+  agent_transcript_path?: string;  // SubagentStop only: Path to agent's transcript
+  stop_hook_active?: boolean;      // SubagentStop only: Whether stop hook is active
 }
 
 interface SessionStartEvent extends BaseHookEvent {
@@ -544,18 +526,34 @@ interface SessionEndEvent extends BaseHookEvent {
 
 interface SubagentStopEvent extends BaseHookEvent {
   hook_event_name: 'SubagentStop';
+  agent_id?: string;
+  agent_transcript_path?: string;
+  stop_hook_active?: boolean;
 }
 ```
 
 ### Key Differences from CLI
 
-| Feature | CLI Command | HookEventProcessor |
-|---------|-------------|-------------------|
+| Feature | CLI Command | processEvent |
+|---------|-------------|--------------|
 | Input | stdin (JSON) | Event objects |
-| Config | Environment variables | Config object |
-| Errors | process.exit() | Throws exceptions |
-| Logger | Environment-based | Config-based |
+| Config | Environment variables | Config object (optional, falls back to env vars) |
+| Errors | process.exit() | Throws exceptions (when config provided) |
+| Logger | Environment-based | Config-based (when config provided) |
 | Output | stdout | No output (throws on error) |
+| State | Stateless | Stateless function |
+
+### Configuration Behavior
+
+When `config` is provided:
+- Uses config values directly
+- Throws exceptions on validation/processing errors
+- Sets logger context from config
+
+When `config` is not provided (undefined):
+- Falls back to environment variables
+- Sets `process.exitCode` instead of throwing (CLI-compatible behavior)
+- Uses environment-based logger initialization
 
 ---
 
@@ -743,7 +741,8 @@ import {
   CodeMieSSO,
   CodeMieProxy,
   getPluginRegistry,
-  HookEventProcessor,
+  processEvent,
+  HookProcessingConfig,
   ConfigLoader
 } from 'codemieai-code';
 
@@ -778,8 +777,8 @@ const proxy = new CodeMieProxy({
 
 const { url } = await proxy.start();
 
-// 4. Initialize hook processor
-const hookProcessor = new HookEventProcessor({
+// 4. Define hook processing configuration
+const hookConfig: HookProcessingConfig = {
   agentName: 'claude',
   sessionId: sessionId,
   provider: config.provider,
@@ -787,15 +786,16 @@ const hookProcessor = new HookEventProcessor({
   ssoUrl: config.codeMieUrl,
   clientType: 'vscode-codemie',
   version: extensionVersion
-});
+};
 
 // 5. Process hook events
 vscode.workspace.onDidSaveTextDocument(async (doc) => {
-  await hookProcessor.handleUserPromptSubmit({
+  await processEvent({
     session_id: agentSessionId,
     hook_event_name: 'UserPromptSubmit',
-    transcript_path: transcriptPath
-  });
+    transcript_path: transcriptPath,
+    permission_mode: 'default'
+  }, hookConfig);
 });
 
 // 6. Register custom plugin
@@ -887,13 +887,13 @@ try {
 }
 ```
 
-### HookEventProcessor Errors
+### processEvent Errors
 
-Throws exceptions for validation and processing errors:
+Throws exceptions for validation and processing errors when `config` is provided:
 
 ```typescript
 try {
-  await processor.processEvent(event);
+  await processEvent(event, config);
 } catch (error) {
   if (error.message.includes('Missing required field')) {
     // Validation error
@@ -902,6 +902,8 @@ try {
   }
 }
 ```
+
+**Note**: When `config` is not provided (undefined), `processEvent` behaves like the CLI command and sets `process.exitCode` instead of throwing exceptions.
 
 ### ConfigLoader Errors
 
@@ -926,7 +928,7 @@ try {
 | Use `loadAndValidate()` for required config | Use `load()` when validation is needed |
 | Store SSO credentials per URL | Use global credentials for all URLs |
 | Register plugins before proxy start | Register plugins after proxy initialization |
-| Handle errors from HookEventProcessor | Ignore exceptions from event processing |
+| Handle errors from processEvent | Ignore exceptions from event processing |
 | Use profile names for multi-provider config | Hardcode provider configuration |
 | Clear credentials on logout | Leave credentials in storage |
 | Use ConfigLoader for all config access | Read config files directly |
@@ -951,6 +953,6 @@ try {
 - **SSO Authentication**: `src/providers/plugins/sso/sso.auth.ts`
 - **Proxy Implementation**: `src/providers/plugins/sso/proxy/sso.proxy.ts`
 - **Plugin Registry**: `src/providers/plugins/sso/proxy/plugins/registry.ts`
-- **Hook Processor**: `src/hooks/api.ts`
+- **Hook Event Processing**: `src/cli/commands/hook.ts`
 - **Config Loader**: `src/utils/config.ts`
 - **Main Exports**: `src/index.ts`
