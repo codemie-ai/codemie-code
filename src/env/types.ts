@@ -107,11 +107,20 @@ export interface MultiProviderConfig {
 }
 
 /**
- * Configuration with source tracking
+ * Configuration with source tracking (single field)
  */
 export interface ConfigWithSource {
   value: any;
   source: 'default' | 'global' | 'project' | 'env' | 'cli';
+}
+
+/**
+ * Configuration with source tracking (full config)
+ */
+export interface ConfigWithSources {
+  config: CodeMieConfigOptions;    // Merged configuration
+  hasLocalConfig: boolean;         // Whether local .codemie/ exists
+  sources: Record<string, ConfigWithSource>;  // Track source of each field
 }
 
 /**

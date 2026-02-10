@@ -16,6 +16,7 @@ export interface ProfileInfo {
   name: string;
   active: boolean;
   profile: CodeMieConfigOptions;
+  source?: 'local' | 'global';
 }
 
 
@@ -30,15 +31,25 @@ export class ProfileDisplay {
    * @returns Formatted string
    */
   static format(info: ProfileInfo): string {
-    const { name, active, profile } = info;
+    const { name, active, profile, source } = info;
 
-    return renderProfileInfo({
+    const baseInfo = renderProfileInfo({
       profile: name,
       provider: profile.provider || 'N/A',
       model: profile.model || 'N/A',
       codeMieUrl: profile.codeMieUrl,
       isActive: active
     });
+
+    // Add source indicator if available
+    if (source) {
+      const sourceIndicator = source === 'local'
+        ? chalk.yellow('  [Local]')
+        : chalk.cyan('  [Global]');
+      return baseInfo + sourceIndicator;
+    }
+
+    return baseInfo;
   }
 
   /**

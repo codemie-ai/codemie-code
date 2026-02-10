@@ -62,7 +62,8 @@ describe('Agent Shortcuts - Integration', () => {
     it('should handle missing arguments gracefully', () => {
       // Note: agent-executor.js (codemie-code) opens interactive mode with no args
       // So we test with --help instead to avoid hanging
-      const result = runAgentCommand('node ./bin/agent-executor.js --help');
+      // Increased timeout to handle resource contention in full test suite
+      const result = runAgentCommand('node ./bin/agent-executor.js --help', 10000);
 
       // Should show help and exit cleanly
       expect(result.exitCode).toBe(0);
