@@ -94,12 +94,21 @@ npx @codemieai/code --help
 
 ### From Source
 
+For development, this project uses [Bun](https://bun.sh) as the package manager for faster installation and builds:
+
 ```bash
 git clone https://github.com/codemie-ai/codemie-code.git
 cd codemie-code
-npm install
-npm run build && npm link
+
+# Install Bun if not already installed
+curl -fsSL https://bun.sh/install | bash
+
+# Install dependencies and build
+bun install
+bun run build && npm link
 ```
+
+**Note:** While Bun is used for development, the package is published to npm and can be installed with any package manager (npm, yarn, pnpm, or bun).
 
 ### Verify Installation
 

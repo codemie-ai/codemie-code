@@ -169,7 +169,7 @@ echo
 echo ""
 echo "🚀 Executing release..."
 
-# Update version in package.json and package-lock.json
+# Update version in package.json and regenerate bun.lock
 echo "📝 Updating package versions..."
 CURRENT_PKG_VERSION=$(grep '"version"' package.json | sed 's/.*"version": "\(.*\)".*/\1/')
 if [[ "$CURRENT_PKG_VERSION" == "$VERSION" ]]; then
@@ -177,6 +177,10 @@ if [[ "$CURRENT_PKG_VERSION" == "$VERSION" ]]; then
 else
     npm version "$VERSION" --no-git-tag-version || {
         echo "⚠️  Failed to update package version, but continuing..."
+    }
+    echo "🔄 Regenerating bun.lock..."
+    bun install --frozen-lockfile || {
+        echo "⚠️  Failed to regenerate bun.lock, but continuing..."
     }
 fi
 
@@ -186,7 +190,7 @@ COMMIT_MSG="chore: bump version to $VERSION"
 if git log -1 --pretty=%B | grep -q "$COMMIT_MSG"; then
     echo "⏭️  Version bump already committed, skipping commit..."
 else
-    git add package.json package-lock.json
+    git add package.json bun.lock
     git commit -m "$COMMIT_MSG
 
 🤖 Generated with release script" || {

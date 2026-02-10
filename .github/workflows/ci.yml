@@ -21,14 +21,13 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
         with:
-          node-version: '20'
-          cache: 'npm'
+          bun-version: '1.3.9'
 
       - name: Install dependencies
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       - name: Validate commit messages
         run: |
@@ -120,23 +119,22 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
         with:
-          node-version: '20'
-          cache: 'npm'
+          bun-version: '1.3.9'
 
       - name: Install dependencies
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       - name: Check licenses
-        run: npm run license-check
+        run: bun run license-check
 
       - name: Lint code
-        run: npm run lint
+        run: bun run lint
 
       - name: Build project
-        run: npm run build
+        run: bun run build
 
       # Upload build artifacts to share with test jobs
       - name: Upload build artifacts
@@ -156,14 +154,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
         with:
-          node-version: '20'
-          cache: 'npm'
+          bun-version: '1.3.9'
 
       - name: Install dependencies
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       # Download pre-built dist (skip build step, saves ~15-20s)
       - name: Download build artifacts
@@ -173,10 +170,10 @@ jobs:
           path: dist/
 
       - name: Run unit tests
-        run: npm run test:unit
+        run: bun run test:unit
 
       - name: Run integration tests
-        run: npm run test:integration
+        run: bun run test:integration
 
   test-windows:
     name: Test (Windows)
@@ -187,14 +184,13 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
         with:
-          node-version: '20'
-          cache: 'npm'
+          bun-version: '1.3.9'
 
       - name: Install dependencies
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       # Download pre-built dist (skip build step, saves ~25-30s on Windows)
       - name: Download build artifacts
@@ -204,7 +200,7 @@ jobs:
           path: dist/
 
       - name: Run unit tests
-        run: npm run test:unit
+        run: bun run test:unit
 
       - name: Run integration tests
-        run: npm run test:integration
+        run: bun run test:integration

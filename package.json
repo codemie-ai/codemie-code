@@ -1,6 +1,7 @@
 {
   "name": "@codemieai/code",
-  "version": "0.0.37",
+  "version": "0.0.38",
+  "packageManager": "bun@1.3.9",
   "description": "Unified AI coding assistant CLI - Manage Claude Code, Gemini & custom agents. Multi-provider support (OpenAI, Azure, LiteLLM, SSO). Built-in LangGraph agent with file operations & git integration.",
   "type": "module",
   "main": "dist/index.js",
@@ -22,9 +23,9 @@
     "LICENSE"
   ],
   "scripts": {
-    "build": "tsc && tsc-alias && npm run copy-plugin",
-    "copy-plugin": "node scripts/copy-plugins.js",
-    "dev": "tsc --watch",
+    "build": "bun run tsc && bun run tsc-alias && bun run copy-plugin",
+    "copy-plugin": "bun scripts/copy-plugins.js",
+    "dev": "bun --watch run tsc",
     "test": "vitest",
     "test:unit": "vitest run src",
     "test:integration": "vitest run tests/integration",
@@ -36,13 +37,13 @@
     "lint:fix": "eslint '{src,tests}/**/*.ts' --fix",
     "commitlint": "commitlint --edit",
     "commitlint:last": "commitlint --from HEAD~1 --to HEAD --verbose",
-    "validate:secrets": "node scripts/validate-secrets.js",
-    "license-check": "node scripts/license-check.js",
-    "ci": "npm run license-check && npm run lint && npm run build && npm run test:unit && npm run test:integration",
-    "ci:full": "npm run commitlint:last && npm run ci",
+    "validate:secrets": "bun scripts/validate-secrets.js",
+    "license-check": "bun scripts/license-check.js",
+    "ci": "bun run license-check && bun run lint && bun run build && bun run test:unit && bun run test:integration",
+    "ci:full": "bun run commitlint:last && bun run ci",
     "prepare": "husky",
-    "prepublishOnly": "npm run build",
-    "prepack": "npm run build"
+    "prepublishOnly": "bun run build",
+    "prepack": "bun run build"
   },
   "lint-staged": {
     "*.ts": [
@@ -50,7 +51,7 @@
       "vitest related --run"
     ],
     "package.json": [
-      "npm run license-check"
+      "bun run license-check"
     ]
   },
   "keywords": [

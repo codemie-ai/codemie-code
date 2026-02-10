@@ -1,6 +1,9 @@
 # Dependencies
 node_modules/
 
+# Bun
+.bun/
+
 # Build output
 dist/
 

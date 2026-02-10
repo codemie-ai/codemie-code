@@ -31,17 +31,20 @@ The script follows the release process defined in the release-manager documentat
 
 1. **Pre-flight checks**: Validates git status and existing tags
 2. **Version determination**: Auto-increments patch version or uses provided version
-3. **Version update**: Updates `package.json` and `package-lock.json`
+3. **Version update**: Updates `package.json` and `bun.lock`
 4. **Git operations**: Commits changes, creates annotated tag, pushes to origin
 5. **GitHub release**: Creates GitHub release with auto-generated notes (if `gh` CLI available)
 
 ## Requirements
 
 - `git` - Version control operations
-- `npm` - Package version management
+- `bun` - Package manager (for lockfile updates)
+- `npm` - Used for `npm version` command (semantic versioning helper)
 - `gh` (optional) - GitHub release creation
 
 If `gh` CLI is not available, the script will provide a manual link to create the GitHub release.
+
+**Note:** While the project uses Bun for development, the release script uses `npm version` as a helper to update package.json, then regenerates bun.lock.
 
 ## Release Process
 

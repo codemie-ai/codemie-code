@@ -175,34 +175,40 @@ feature(analytics): add support  # Use "feat" not "feature"
 
 ## Setting up the Development Environment
 
-To get the project running locally, follow these steps:
+This project uses [Bun](https://bun.sh) as the package manager for faster development cycles. To get the project running locally, follow these steps:
 
 1.  **Clone the repository:**
     ```bash
     git clone https://github.com/codemie-ai/codemie-code.git
     cd codemie-code
     ```
-2.  **Install dependencies:**
+2.  **Install Bun** (if not already installed):
     ```bash
-    npm install
+    curl -fsSL https://bun.sh/install | bash
     ```
-3.  **Build the project:**
+3.  **Install dependencies:**
     ```bash
-    npm run build
+    bun install
     ```
-4.  **Link the package** to use the `codemie` command globally:
+4.  **Build the project:**
+    ```bash
+    bun run build
+    ```
+5.  **Link the package** to use the `codemie` command globally:
     ```bash
     npm link
     ```
+
+**Note:** While we use Bun for development, the package is published to npm and works with all package managers.
 
 ## Running Tests and Validation
 
 ### Run All Tests
 ```bash
-npm test                # Run tests in watch mode
-npm run test:run        # Run tests once
-npm run test:unit       # Run unit tests only
-npm run test:integration # Run integration tests only
+bun test                # Run tests in watch mode
+bun run test:run        # Run tests once
+bun run test:unit       # Run unit tests only
+bun run test:integration # Run integration tests only
 ```
 
 ### Run Validation Checks
@@ -211,34 +217,34 @@ npm run test:integration # Run integration tests only
 
 ```bash
 # Run full CI checks (commit validation + license + lint + build + tests)
-npm run ci
+bun run ci
 
 # Run CI with secrets detection (requires Docker)
-npm run ci:full
+bun run ci:full
 ```
 
-**Note:** `npm run ci` includes commit validation and will **fail** if your last commit doesn't follow the Conventional Commits format. This ensures you catch format issues before pushing.
+**Note:** `bun run ci` includes commit validation and will **fail** if your last commit doesn't follow the Conventional Commits format. This ensures you catch format issues before pushing.
 
 **Individual validation commands:**
 
 ```bash
 # Validate your last commit message
-npm run commitlint:last
+bun run commitlint:last
 
 # Check for exposed secrets (requires Docker)
-npm run validate:secrets
+bun run validate:secrets
 
 # Check dependency licenses
-npm run license-check
+bun run license-check
 
 # Run linting
-npm run lint
+bun run lint
 
 # Fix linting issues automatically
-npm run lint:fix
+bun run lint:fix
 
 # Build TypeScript
-npm run build
+bun run build
 ```
 
 ### Pre-Commit Checklist
@@ -246,10 +252,10 @@ npm run build
 Before committing, ensure:
 
 1. ✅ Commit message follows Conventional Commits format
-2. ✅ Code passes ESLint with zero warnings: `npm run lint`
-3. ✅ TypeScript compiles: `npm run build`
-4. ✅ All tests pass: `npm run test:run`
-5. ✅ No secrets exposed: `npm run validate:secrets` (optional, requires Docker)
-6. ✅ Dependencies have approved licenses: `npm run license-check`
+2. ✅ Code passes ESLint with zero warnings: `bun run lint`
+3. ✅ TypeScript compiles: `bun run build`
+4. ✅ All tests pass: `bun run test:run`
+5. ✅ No secrets exposed: `bun run validate:secrets` (optional, requires Docker)
+6. ✅ Dependencies have approved licenses: `bun run license-check`
 
-**Quick check:** Run `npm run ci` to verify everything passes before pushing.
+**Quick check:** Run `bun run ci` to verify everything passes before pushing.
