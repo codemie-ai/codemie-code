@@ -53,12 +53,15 @@ async function runSetupWizard(force?: boolean): Promise<void> {
   // Show ecosystem introduction
   FirstTimeExperience.showEcosystemIntro();
 
-  // Check if config already exists
-  const hasConfig = await ConfigLoader.hasGlobalConfig();
+  // Check if config already exists (both global and local)
+  const hasGlobalConfig = await ConfigLoader.hasGlobalConfig();
+  const hasLocalConfig = await ConfigLoader.hasLocalConfig();
   let profileName: string | null = null;
   let isUpdate = false;
+  let storageLocation: 'global' | 'local' = 'global';
 
-  if (!force && hasConfig) {
+  // Determine setup mode
+  if (!force && (hasGlobalConfig || hasLocalConfig)) {
     const profiles = await ConfigLoader.listProfiles();
 
     if (profiles.length > 0) {
@@ -68,6 +71,11 @@ async function runSetupWizard(force?: boolean): Promise<void> {
         console.log(`${activeMarker}${chalk.white(name)} (${profile.provider})`);
       });
       console.log('');
+
+      // If local config exists in current directory, show indicator
+      if (hasLocalConfig) {
+        console.log(chalk.yellow(`Local configuration detected in current directory\n`));
+      }
 
       const { action } = await inquirer.prompt([
         {
@@ -99,17 +107,91 @@ async function runSetupWizard(force?: boolean): Promise<void> {
         profileName = selectedProfile;
         isUpdate = true;
         console.log(chalk.white(`\nUpdating profile: ${chalk.cyan(profileName)}\n`));
+
+        // For updates, use existing storage location (detect from current state)
+        storageLocation = hasLocalConfig ? 'local' : 'global';
       } else {
-        // Adding new profile - will ask for name at the end
+        // Adding new profile - ask where to store it
         console.log(chalk.white('\nConfiguring new profile...\n'));
+
+        const { storage } = await inquirer.prompt([
+          {
+            type: 'list',
+            name: 'storage',
+            message: 'Where would you like to store this configuration?',
+            choices: [
+              {
+                name: `${chalk.cyan('Global')} ${chalk.dim('(~/.codemie/) - Available across all repositories')}`,
+                value: 'global'
+              },
+              {
+                name: `${chalk.yellow('Local')} ${chalk.dim('(.codemie/) - Only for this repository')}`,
+                value: 'local'
+              }
+            ],
+            default: 'global'
+          }
+        ]);
+        storageLocation = storage;
+
+        if (storageLocation === 'local') {
+          console.log(chalk.dim('\nNote: This will create a project-specific configuration.'));
+          console.log(chalk.dim('Missing fields will fallback to your global config.\n'));
+        }
       }
     } else {
       // Config file exists but no profiles - treat as fresh setup
       console.log(chalk.white("Let's configure your AI assistant.\n"));
+
+      // Ask for storage location for fresh setup too
+      const { storage } = await inquirer.prompt([
+        {
+          type: 'list',
+          name: 'storage',
+          message: 'Where would you like to store this configuration?',
+          choices: [
+            {
+              name: `${chalk.cyan('Global')} ${chalk.dim('(~/.codemie/) - Available across all repositories')}`,
+              value: 'global'
+            },
+            {
+              name: `${chalk.yellow('Local')} ${chalk.dim('(.codemie/) - Only for this repository')}`,
+              value: 'local'
+            }
+          ],
+          default: 'global'
+        }
+      ]);
+      storageLocation = storage;
     }
   } else {
-    // First time setup - will create default profile or ask for name at the end
+    // First time setup - ask for storage location
     console.log(chalk.white("Let's configure your AI assistant.\n"));
+
+    const { storage } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'storage',
+        message: 'Where would you like to store this configuration?',
+        choices: [
+          {
+            name: `${chalk.cyan('Global')} ${chalk.dim('(~/.codemie/) - Available across all repositories')}`,
+            value: 'global'
+          },
+          {
+            name: `${chalk.yellow('Local')} ${chalk.dim('(.codemie/) - Only for this repository')}`,
+            value: 'local'
+          }
+        ],
+        default: 'global'
+      }
+    ]);
+    storageLocation = storage;
+
+    if (storageLocation === 'local') {
+      console.log(chalk.dim('\nNote: This will create a project-specific configuration.'));
+      console.log(chalk.dim('Missing fields will fallback to your global config.\n'));
+    }
   }
 
   // Step 1: Get all registered providers from ProviderRegistry
@@ -136,7 +218,7 @@ async function runSetupWizard(force?: boolean): Promise<void> {
   }
 
   // Use plugin-based setup flow
-  await handlePluginSetup(provider, setupSteps, profileName, isUpdate);
+  await handlePluginSetup(provider, setupSteps, profileName, isUpdate, storageLocation);
 }
 
 /**
@@ -148,7 +230,8 @@ async function handlePluginSetup(
   providerName: string,
   setupSteps: any,
   profileName: string | null,
-  isUpdate: boolean
+  isUpdate: boolean,
+  storageLocation: 'global' | 'local' = 'global'
 ): Promise<void> {
   try {
     const providerTemplate = ProviderRegistry.getProvider(providerName);
@@ -195,26 +278,63 @@ async function handlePluginSetup(
 
     try {
       config.name = finalProfileName!;
-      await ConfigLoader.saveProfile(finalProfileName!, config as any);
+      const workingDir = process.cwd();
 
-      saveSpinner.succeed(chalk.green(`Profile "${finalProfileName}" saved`));
+      if (storageLocation === 'local') {
+        // Save to local .codemie/ directory
+        await ConfigLoader.initProjectConfig(workingDir, {
+          profileName: finalProfileName!,
+          ...config
+        });
 
-      // Switch to new profile if needed
-      if (!isUpdate) {
-        const activeProfile = await ConfigLoader.getActiveProfileName();
-        if (activeProfile !== finalProfileName) {
-          const { switchToNew } = await inquirer.prompt([
-            {
-              type: 'confirm',
-              name: 'switchToNew',
-              message: `Switch to profile "${finalProfileName}" as active?`,
-              default: true
+        const configPath = `${workingDir}/.codemie/codemie-cli.config.json`;
+        saveSpinner.succeed(chalk.green(`Profile "${finalProfileName}" saved to local config`));
+        console.log(chalk.dim(`  Location: ${configPath}`));
+
+        // For local configs, the profile is automatically active if it's the only one or if it's being created
+        // Check if we should prompt to activate it
+        if (!isUpdate) {
+          const profiles = await ConfigLoader.listProfiles(workingDir);
+          const activeProfile = await ConfigLoader.getActiveProfileName(workingDir);
+
+          if (profiles.length > 1 && activeProfile !== finalProfileName) {
+            const { switchToNew } = await inquirer.prompt([
+              {
+                type: 'confirm',
+                name: 'switchToNew',
+                message: `Switch to profile "${finalProfileName}" as active in local config?`,
+                default: true
+              }
+            ]);
+
+            if (switchToNew) {
+              await ConfigLoader.switchProfile(finalProfileName!, workingDir);
+              console.log(chalk.green(`✓ Switched to profile "${finalProfileName}" in local config`));
             }
-          ]);
+          }
+        }
+      } else {
+        // Save to global ~/.codemie/ directory
+        await ConfigLoader.saveProfile(finalProfileName!, config as any);
+        saveSpinner.succeed(chalk.green(`Profile "${finalProfileName}" saved to global config`));
 
-          if (switchToNew) {
-            await ConfigLoader.switchProfile(finalProfileName!);
-            console.log(chalk.green(`✓ Switched to profile "${finalProfileName}"`));
+        // Switch to new profile if needed (for global configs)
+        if (!isUpdate) {
+          const activeProfile = await ConfigLoader.getActiveProfileName(workingDir);
+          if (activeProfile !== finalProfileName) {
+            const { switchToNew } = await inquirer.prompt([
+              {
+                type: 'confirm',
+                name: 'switchToNew',
+                message: `Switch to profile "${finalProfileName}" as active?`,
+                default: true
+              }
+            ]);
+
+            if (switchToNew) {
+              await ConfigLoader.switchProfile(finalProfileName!, workingDir);
+              console.log(chalk.green(`✓ Switched to profile "${finalProfileName}"`));
+            }
           }
         }
       }
@@ -222,8 +342,17 @@ async function handlePluginSetup(
       // Display success
       displaySetupSuccess(finalProfileName!, providerName, selectedModel);
 
+      // Show next steps based on storage location
+      if (storageLocation === 'local') {
+        console.log(chalk.cyan('\n💡 Next steps:'));
+        console.log(chalk.white('   This repository will now use project-specific settings'));
+        console.log(chalk.white('   View config: '), chalk.blueBright('codemie profile status --show-sources'));
+        console.log(chalk.white('   Edit config: '), chalk.blueBright('cat .codemie/codemie-cli.config.json'));
+        console.log();
+      }
+
       // Check and install Claude if needed (only during first-time setup, not updates)
-      if (!isUpdate) {
+      if (!isUpdate && storageLocation === 'global') {
         await checkAndInstallClaude();
       }
 
