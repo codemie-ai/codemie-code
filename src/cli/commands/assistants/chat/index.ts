@@ -270,6 +270,7 @@ async function sendMessageWithHistory(
   const response = await client.assistants.chat(assistant.id, {
     conversation_id: conversationId,
     text: message,
+    content_raw: message,
     history,
     stream: false
   });

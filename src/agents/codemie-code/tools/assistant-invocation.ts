@@ -17,6 +17,7 @@ import type { CodemieAssistant } from '@/env/types.js';
 interface HistoryMessage {
   role: 'User' | 'Assistant';
   message?: string;
+  message_raw?: string;
 }
 
 /**

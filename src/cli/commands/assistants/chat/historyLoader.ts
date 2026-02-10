@@ -71,10 +71,11 @@ export async function loadConversationHistory(
       return [];
     }
 
-    // Transform to HistoryMessage format (role + message only)
+    // Transform to HistoryMessage format (role + message + message_raw)
     const allHistory: HistoryMessage[] = latestRecord.payload.history.map(msg => ({
       role: msg.role,
-      message: msg.message
+      message: msg.message,
+      message_raw: msg.message
     }));
 
     // Limit to the last MAX_HISTORY_MESSAGES to prevent excessive context size
