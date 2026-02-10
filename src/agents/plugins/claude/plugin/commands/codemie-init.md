@@ -521,3 +521,57 @@ done
 - ✅ All commands verified
 - ✅ No placeholder text remains
 - ✅ User confirmed accuracy
+- ✅ Template files cleaned up (see Phase 6)
+
+---
+
+### Phase 6: Cleanup
+
+#### Step 6.1: Delete Template Files
+
+**Task**: Remove template source files after successful generation
+
+**CRITICAL**: This cleanup must happen AFTER all guides are successfully generated.
+
+**What to delete**:
+- `.codemie/claude-templates/` directory (template source files)
+
+**What to preserve**:
+- `.codemie/guides/` directory (generated documentation)
+- `CLAUDE.md` file (main documentation)
+- `.codemie/claude.extension.json` (version tracking - needed for updates)
+- Other `.codemie/` contents (skills, configs, etc.)
+
+**Implementation**:
+
+**For Unix/Linux/macOS**:
+```bash
+rm -rf .codemie/claude-templates
+```
+
+**For Windows (PowerShell)**:
+```powershell
+Remove-Item -Recurse -Force .codemie\claude-templates -ErrorAction SilentlyContinue
+```
+
+**For Windows (Command Prompt)**:
+```cmd
+rmdir /s /q .codemie\claude-templates 2>nul
+```
+
+**Verification**:
+- [ ] `.codemie/claude-templates/` directory deleted
+- [ ] `.codemie/claude.extension.json` file still exists
+- [ ] `.codemie/guides/` directory still exists
+- [ ] `CLAUDE.md` file still exists
+
+**Logging**:
+```
+✅ Template cleanup complete
+   - Deleted: .codemie/claude-templates/ (template sources)
+   - Preserved: .codemie/claude.extension.json (version tracking)
+   - Preserved: .codemie/guides/ (generated documentation)
+   - Preserved: CLAUDE.md (main documentation)
+```
+
+---
