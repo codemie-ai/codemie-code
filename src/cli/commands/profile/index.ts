@@ -34,7 +34,15 @@ export function createProfileCommand(): Command {
  */
 async function listProfiles(): Promise<void> {
   try {
-    const profiles = await ConfigLoader.listProfiles();
+    const workingDir = process.cwd();
+    const profiles = await ConfigLoader.listProfiles(workingDir);
+    const hasLocal = await ConfigLoader.hasLocalConfig(workingDir);
+
+    // Show context indicator
+    if (hasLocal) {
+      console.log(chalk.dim('\n  📁 Showing profiles from both local (.codemie/) and global (~/.codemie/) configs\n'));
+    }
+
     ProfileDisplay.formatList(profiles);
   } catch (error: unknown) {
     logger.error('Failed to list profiles:', error);
@@ -51,9 +59,14 @@ function createStatusCommand(): Command {
 
   command
     .description('Show active profile and authentication status')
-    .action(async () => {
+    .option('--show-sources', 'Show configuration with source attribution')
+    .action(async (options: { showSources?: boolean }) => {
       try {
-        await handleStatus();
+        if (options.showSources) {
+          await handleStatusWithSources();
+        } else {
+          await handleStatus();
+        }
       } catch (error: unknown) {
         logger.error('Failed to get profile status:', error);
         process.exit(1);
@@ -68,9 +81,11 @@ function createStatusCommand(): Command {
  * Display profile info + auth status, prompt for re-auth if invalid
  */
 async function handleStatus(): Promise<void> {
-  const config = await ConfigLoader.load();
-  const profiles = await ConfigLoader.listProfiles();
-  const activeProfileName = await ConfigLoader.getActiveProfileName();
+  const workingDir = process.cwd();
+  const config = await ConfigLoader.load(workingDir);
+  const profiles = await ConfigLoader.listProfiles(workingDir);
+  const activeProfileName = await ConfigLoader.getActiveProfileName(workingDir);
+  const hasLocalConfig = await ConfigLoader.hasLocalConfig(workingDir);
 
   // Find active profile
   const activeProfileInfo = profiles.find(p => p.name === activeProfileName);
@@ -112,34 +127,52 @@ async function handleStatus(): Promise<void> {
     }
   }
 
+  // Show source indicator
+  const sourceIndicator = hasLocalConfig
+    ? chalk.yellow('(source: local .codemie/)')
+    : chalk.cyan('(source: global ~/.codemie/)');
+
   // Display profile + auth status
   ProfileDisplay.formatStatus(activeProfileInfo, authStatus);
+  console.log(chalk.dim(`\n  Configuration ${sourceIndicator}`));
+  console.log(chalk.dim(`  Use --show-sources to see detailed source attribution\n`));
+}
+
+/**
+ * Handle status command with source attribution
+ * Shows where each configuration value comes from
+ */
+async function handleStatusWithSources(): Promise<void> {
+  await ConfigLoader.showWithSources();
 }
 
 /**
  * Prompt user to select a profile interactively
  * Reusable method for switch, delete, and other commands
  */
-async function promptProfileSelection(message: string): Promise<string> {
-  const profiles = await ConfigLoader.listProfiles();
+async function promptProfileSelection(message: string, workingDir: string = process.cwd()): Promise<string> {
+  const profiles = await ConfigLoader.listProfiles(workingDir);
 
   if (profiles.length === 0) {
     throw new Error('No profiles found. Run "codemie setup" to create one.');
   }
 
-  const currentActive = await ConfigLoader.getActiveProfileName();
+  const currentActive = await ConfigLoader.getActiveProfileName(workingDir);
 
   // Create choices with visual indicators
-  const choices = profiles.map(({ name, profile }) => {
+  const choices = profiles.map(({ name, profile, source }) => {
     const isActive = name === currentActive;
     const activeMarker = isActive ? chalk.green('● ') : chalk.white('○ ');
     const providerInfo = chalk.dim(`(${profile.provider})`);
+    const sourceIndicator = source === 'local'
+      ? chalk.yellow(' [Local]')
+      : chalk.cyan(' [Global]');
     const displayName = isActive
       ? chalk.green.bold(name)
       : chalk.white(name);
 
     return {
-      name: `${activeMarker}${displayName} ${providerInfo}`,
+      name: `${activeMarker}${displayName} ${providerInfo}${sourceIndicator}`,
       value: name,
       short: name
     };
@@ -166,17 +199,20 @@ function createSwitchCommand(): Command {
     .argument('[profile]', 'Profile name to switch to (optional - will prompt if not provided)')
     .action(async (profileName?: string) => {
       try {
+        const workingDir = process.cwd();
+        const hasLocal = await ConfigLoader.hasLocalConfig(workingDir);
+
         // If no profile name provided, prompt interactively
         if (!profileName) {
-          const profiles = await ConfigLoader.listProfiles();
+          const profiles = await ConfigLoader.listProfiles(workingDir);
 
           if (profiles.length === 0) {
             console.log(chalk.yellow('\nNo profiles found. Run "codemie setup" to create one.\n'));
             return;
           }
 
-          const currentActive = await ConfigLoader.getActiveProfileName();
-          profileName = await promptProfileSelection('Select profile to switch to:');
+          const currentActive = await ConfigLoader.getActiveProfileName(workingDir);
+          profileName = await promptProfileSelection('Select profile to switch to:', workingDir);
 
           // If already active, no need to switch
           if (profileName === currentActive) {
@@ -190,8 +226,10 @@ function createSwitchCommand(): Command {
           throw new Error('Profile name is required');
         }
 
-        await ConfigLoader.switchProfile(profileName);
-        console.log(chalk.green(`\n✓ Switched to profile "${profileName}"\n`));
+        await ConfigLoader.switchProfile(profileName, workingDir);
+
+        const location = hasLocal ? 'local config' : 'global config';
+        console.log(chalk.green(`\n✓ Switched to profile "${profileName}" in ${location}\n`));
       } catch (error: unknown) {
         logger.error('Failed to switch profile:', error);
         process.exit(1);
@@ -210,16 +248,19 @@ function createDeleteCommand(): Command {
     .option('-y, --yes', 'Skip confirmation')
     .action(async (profileName?: string, options: { yes?: boolean } = {}) => {
       try {
+        const workingDir = process.cwd();
+        const hasLocal = await ConfigLoader.hasLocalConfig(workingDir);
+
         // If no profile name provided, prompt interactively
         if (!profileName) {
-          const profiles = await ConfigLoader.listProfiles();
+          const profiles = await ConfigLoader.listProfiles(workingDir);
 
           if (profiles.length === 0) {
             console.log(chalk.yellow('\nNo profiles found. Run "codemie setup" to create one.\n'));
             return;
           }
 
-          profileName = await promptProfileSelection('Select profile to delete:');
+          profileName = await promptProfileSelection('Select profile to delete:', workingDir);
         }
 
         // TypeScript guard
@@ -229,11 +270,12 @@ function createDeleteCommand(): Command {
 
         // Confirmation
         if (!options.yes) {
+          const location = hasLocal ? 'local config' : 'global config';
           const { confirm } = await inquirer.prompt([
             {
               type: 'confirm',
               name: 'confirm',
-              message: `Are you sure you want to delete profile "${profileName}"?`,
+              message: `Are you sure you want to delete profile "${profileName}" from ${location}?`,
               default: false
             }
           ]);
@@ -244,11 +286,11 @@ function createDeleteCommand(): Command {
           }
         }
 
-        await ConfigLoader.deleteProfile(profileName);
+        await ConfigLoader.deleteProfile(profileName, workingDir);
         console.log(chalk.green(`\n✓ Profile "${profileName}" deleted\n`));
 
         // Check if any profiles remain
-        const remainingProfiles = await ConfigLoader.listProfiles();
+        const remainingProfiles = await ConfigLoader.listProfiles(workingDir);
 
         if (remainingProfiles.length === 0) {
           // No profiles left - show setup message
@@ -256,7 +298,7 @@ function createDeleteCommand(): Command {
           console.log(chalk.white('Run ') + chalk.cyan('codemie setup') + chalk.white(' to create a new profile.\n'));
         } else {
           // Show new active profile if switched
-          const activeProfile = await ConfigLoader.getActiveProfileName();
+          const activeProfile = await ConfigLoader.getActiveProfileName(workingDir);
           if (activeProfile) {
             console.log(chalk.white(`Active profile is now: ${activeProfile}\n`));
           }
