@@ -35,18 +35,38 @@ export class LogReader {
       // Get list of log files to read
       const logFiles = this.getLogFilesInRange(filter?.fromDate, filter?.toDate);
 
-      for (const logFile of logFiles) {
-        const filePath = join(this.logsDir, logFile);
-        const fileEntries = await this.readLogFile(filePath, filter);
-        entries.push(...fileEntries);
+      // When limiting lines, we need to read from newest files first to ensure we get
+      // the most recent entries. We'll read extra files to account for entries being
+      // filtered out or spread across files, then sort and take the last N.
+      if (maxLines) {
+        // Read from newest files first, collecting 3x maxLines to ensure we have enough
+        // after filtering and to account for entries spread across multiple files
+        const targetEntries = maxLines * 3;
+        const reversedFiles = [...logFiles].reverse();
 
-        // Stop if we have enough lines
-        if (maxLines && entries.length >= maxLines) {
-          break;
+        for (const logFile of reversedFiles) {
+          const filePath = join(this.logsDir, logFile);
+          const fileEntries = await this.readLogFile(filePath, filter);
+          entries.push(...fileEntries);
+
+          // Stop if we have enough entries
+          if (entries.length >= targetEntries) {
+            break;
+          }
+        }
+      } else {
+        // No limit, read all files in order
+        for (const logFile of logFiles) {
+          const filePath = join(this.logsDir, logFile);
+          const fileEntries = await this.readLogFile(filePath, filter);
+          entries.push(...fileEntries);
         }
       }
 
-      // Apply maxLines limit (take last N entries)
+      // Sort all entries by timestamp to maintain chronological order
+      entries.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime());
+
+      // Apply maxLines limit (take last N entries after sorting)
       if (maxLines && entries.length > maxLines) {
         return entries.slice(-maxLines);
       }
