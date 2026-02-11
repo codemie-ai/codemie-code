@@ -50,17 +50,20 @@ export async function loadConversationHistory(
     }
 
     const records = await readJSONL<ConversationPayloadRecord>(filePath);
-    const successRecords = records.filter(record => record.status === CONVERSATION_SYNC_STATUS.SUCCESS);
+    const validRecords = records.filter(
+      record => record.status === CONVERSATION_SYNC_STATUS.SUCCESS ||
+                record.status === CONVERSATION_SYNC_STATUS.PENDING
+    );
 
-    if (successRecords.length === 0) {
-      logger.debug('No successful conversation records found', {
+    if (validRecords.length === 0) {
+      logger.debug('No valid conversation records found', {
         conversationId,
         totalRecords: records.length
       });
       return [];
     }
 
-    const allMessages = successRecords
+    const allMessages = validRecords
       .flatMap(record => record.payload?.history ?? [])
       .reduce((map, msg) => {
         const key = `${msg.role}:${msg.message}:${msg.history_index ?? 0}`;
