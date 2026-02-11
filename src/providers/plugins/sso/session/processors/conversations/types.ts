@@ -13,7 +13,10 @@ export const CONVERSATION_SYNC_STATUS = {
   FAILED: 'failed'
 } as const;
 
-export type ConversationSyncStatus = typeof CONVERSATION_SYNC_STATUS[keyof typeof CONVERSATION_SYNC_STATUS];
+/**
+ * Conversation sync status type
+ */
+export type ConversationSyncStatus = 'pending' | 'success' | 'failed';
 
 /**
  * Conversation payload record stored in JSONL
