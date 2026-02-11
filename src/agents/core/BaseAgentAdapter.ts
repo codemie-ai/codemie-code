@@ -32,9 +32,22 @@ import inquirer from 'inquirer';
  */
 export abstract class BaseAgentAdapter implements AgentAdapter {
   protected proxy: CodeMieProxy | null = null;
+  protected metadata: AgentMetadata;
 
-  constructor(protected metadata: AgentMetadata) {}
+  constructor(metadata: AgentMetadata) {
+    // Clone metadata to allow runtime overrides (e.g., CLI flags)
+    this.metadata = { ...metadata };
+  }
 
+  /**
+   * Override silent mode at runtime
+   * Used by CLI to apply --silent flag
+   *
+   * @param enabled - Whether to enable silent mode
+   */
+  setSilentMode(enabled: boolean): void {
+    this.metadata.silentMode = enabled;
+  }
 
   /**
    * Get metrics configuration for this agent
