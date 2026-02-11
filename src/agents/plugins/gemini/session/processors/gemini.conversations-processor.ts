@@ -16,7 +16,8 @@
 
 import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../../../../core/session/BaseProcessor.js';
 import type { ParsedSession } from '../../../../core/session/BaseSessionAdapter.js';
-import type { ConversationPayloadRecord } from '../../../../../providers/plugins/sso/session/processors/conversations/conversation-types.js';
+import type { ConversationPayloadRecord } from '../../../../../providers/plugins/sso/session/processors/conversations/types.js';
+import { CONVERSATION_SYNC_STATUS } from '../../../../../providers/plugins/sso/session/processors/conversations/types.js';
 import { logger } from '../../../../../utils/logger.js';
 import { getSessionConversationPath } from '../../../../core/session/session-config.js';
 import { SessionStore } from '../../../../core/session/SessionStore.js';
@@ -175,7 +176,7 @@ export class GeminiConversationsProcessor implements SessionProcessor {
           conversationId: context.agentSessionId!, // From processing context
           history: [userRecord, assistantRecord]
         },
-        status: 'pending'
+        status: CONVERSATION_SYNC_STATUS.PENDING
       };
 
       payloads.push(payload);

@@ -18,7 +18,7 @@ import type { ParsedSession } from '../../../../agents/core/session/BaseSessionA
 import { logger } from '../../../../utils/logger.js';
 import { SessionStore } from '../../../../agents/core/session/SessionStore.js';
 import { MetricsSyncProcessor } from './processors/metrics/metrics-sync-processor.js';
-import { ConversationSyncProcessor } from './processors/conversations/conversation-sync-processor.js';
+import { createSyncProcessor as createConversationSyncProcessor } from './processors/conversations/syncProcessor.js';
 
 export interface SessionSyncResult {
   success: boolean;
@@ -35,7 +35,7 @@ export class SessionSyncer {
     // Initialize processors (sorted by priority)
     this.processors = [
       new MetricsSyncProcessor(),
-      new ConversationSyncProcessor()
+      createConversationSyncProcessor()
     ].sort((a, b) => a.priority - b.priority);
   }
 

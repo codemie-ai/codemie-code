@@ -17,7 +17,7 @@ import { readJSONL } from '@/providers/plugins/sso/session/utils/jsonl-reader.js
 import {
   type ConversationPayloadRecord,
   CONVERSATION_SYNC_STATUS
-} from '@/providers/plugins/sso/session/processors/conversations/conversation-types.js';
+} from '@/providers/plugins/sso/session/processors/conversations/types.js';
 import type { HistoryMessage } from '../constants.js';
 
 /**
@@ -85,6 +85,7 @@ export async function loadConversationHistory(
     }
 
     const allHistory: HistoryMessage[] = Array.from(allMessages.values());
+
     return allHistory.slice(-MAX_HISTORY_MESSAGES);
   } catch (error) {
     logger.error('Failed to load conversation history', {
