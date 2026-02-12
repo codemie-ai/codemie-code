@@ -108,6 +108,19 @@ export const BedrockTemplate = registerProvider<ProviderTemplate>({
           env.ANTHROPIC_MODEL = env.CODEMIE_MODEL;
         }
 
+        // Model tier configuration for Bedrock
+        // Maps CodeMie tier models to Claude Code environment variables
+        if (env.CODEMIE_HAIKU_MODEL) {
+          env.ANTHROPIC_DEFAULT_HAIKU_MODEL = env.CODEMIE_HAIKU_MODEL;
+        }
+        if (env.CODEMIE_SONNET_MODEL) {
+          env.ANTHROPIC_DEFAULT_SONNET_MODEL = env.CODEMIE_SONNET_MODEL;
+          env.CLAUDE_CODE_SUBAGENT_MODEL = env.CODEMIE_SONNET_MODEL;
+        }
+        if (env.CODEMIE_OPUS_MODEL) {
+          env.ANTHROPIC_DEFAULT_OPUS_MODEL = env.CODEMIE_OPUS_MODEL;
+        }
+
         // Token settings for Bedrock burndown throttling
         // https://code.claude.com/docs/en/amazon-bedrock#output-token-configuration
         // Use user-configured values if available, otherwise use recommended defaults

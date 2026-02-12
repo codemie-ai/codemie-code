@@ -64,6 +64,9 @@ export const ClaudePluginMetadata: AgentMetadata = {
     baseUrl: ['ANTHROPIC_BASE_URL'],
     apiKey: ['ANTHROPIC_AUTH_TOKEN'],
     model: ['ANTHROPIC_MODEL'],
+    haikuModel: ['ANTHROPIC_DEFAULT_HAIKU_MODEL'],
+    sonnetModel: ['ANTHROPIC_DEFAULT_SONNET_MODEL', 'CLAUDE_CODE_SUBAGENT_MODEL'],
+    opusModel: ['ANTHROPIC_DEFAULT_OPUS_MODEL'],
   },
 
   supportedProviders: ['litellm', 'ai-run-sso', 'bedrock'],

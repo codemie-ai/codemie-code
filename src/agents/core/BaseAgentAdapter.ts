@@ -317,7 +317,10 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       const agentVars = [
         ...(this.metadata.envMapping.baseUrl || []),
         ...(this.metadata.envMapping.apiKey || []),
-        ...(this.metadata.envMapping.model || [])
+        ...(this.metadata.envMapping.model || []),
+        ...(this.metadata.envMapping.haikuModel || []),
+        ...(this.metadata.envMapping.sonnetModel || []),
+        ...(this.metadata.envMapping.opusModel || []),
       ].sort();
 
       if (agentVars.length > 0) {
@@ -634,6 +637,21 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         delete env[envVar];
       }
     }
+    if (envMapping.haikuModel) {
+      for (const envVar of envMapping.haikuModel) {
+        delete env[envVar];
+      }
+    }
+    if (envMapping.sonnetModel) {
+      for (const envVar of envMapping.sonnetModel) {
+        delete env[envVar];
+      }
+    }
+    if (envMapping.opusModel) {
+      for (const envVar of envMapping.opusModel) {
+        delete env[envVar];
+      }
+    }
 
     // Step 2: Set new values from CODEMIE_* vars
     // Transform base URL
@@ -655,6 +673,23 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     if (env.CODEMIE_MODEL && envMapping.model) {
       for (const envVar of envMapping.model) {
         env[envVar] = env.CODEMIE_MODEL;
+      }
+    }
+
+    // Transform model tiers (haiku/sonnet/opus)
+    if (env.CODEMIE_HAIKU_MODEL && envMapping.haikuModel) {
+      for (const envVar of envMapping.haikuModel) {
+        env[envVar] = env.CODEMIE_HAIKU_MODEL;
+      }
+    }
+    if (env.CODEMIE_SONNET_MODEL && envMapping.sonnetModel) {
+      for (const envVar of envMapping.sonnetModel) {
+        env[envVar] = env.CODEMIE_SONNET_MODEL;
+      }
+    }
+    if (env.CODEMIE_OPUS_MODEL && envMapping.opusModel) {
+      for (const envVar of envMapping.opusModel) {
+        env[envVar] = env.CODEMIE_OPUS_MODEL;
       }
     }
 

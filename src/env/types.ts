@@ -34,6 +34,12 @@ export interface ProviderProfile {
   baseUrl?: string;
   apiKey?: string;
   model?: string;
+
+  // Claude model tier configuration (maps to ANTHROPIC_DEFAULT_*_MODEL)
+  haikuModel?: string;
+  sonnetModel?: string;
+  opusModel?: string;
+
   timeout?: number;
   debug?: boolean;
   allowedDirs?: string[];
