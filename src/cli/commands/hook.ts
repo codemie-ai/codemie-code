@@ -3,6 +3,7 @@ import { logger } from '../../utils/logger.js';
 import { AgentRegistry } from '../../agents/registry.js';
 import { getSessionPath, getSessionMetricsPath, getSessionConversationPath } from '../../agents/core/session/session-config.js';
 import type { BaseHookEvent, HookTransformer, MCPConfigSummary } from '../../agents/core/types.js';
+import type { ProcessingContext } from '../../agents/core/session/BaseProcessor.js';
 
 /**
  * Hook event handlers for agent lifecycle events
@@ -15,7 +16,7 @@ import type { BaseHookEvent, HookTransformer, MCPConfigSummary } from '../../age
 /**
  * SessionStart event
  */
-interface SessionStartEvent extends BaseHookEvent {
+export interface SessionStartEvent extends BaseHookEvent {
   hook_event_name: 'SessionStart';
   source: string;                  // e.g., "startup"
 }
@@ -23,7 +24,7 @@ interface SessionStartEvent extends BaseHookEvent {
 /**
  * SessionEnd event
  */
-interface SessionEndEvent extends BaseHookEvent {
+export interface SessionEndEvent extends BaseHookEvent {
   hook_event_name: 'SessionEnd';
   reason: string;                  // e.g., "exit", "logout"
   cwd: string;                     // Always present for SessionEnd
@@ -32,12 +33,43 @@ interface SessionEndEvent extends BaseHookEvent {
 /**
  * SubagentStop event
  */
-interface SubagentStopEvent extends BaseHookEvent {
+export interface SubagentStopEvent extends BaseHookEvent {
   hook_event_name: 'SubagentStop';
   agent_id: string;                // Sub-agent ID
   agent_transcript_path: string;   // Path to agent's transcript file
   stop_hook_active: boolean;       // Whether stop hook is active
   cwd: string;                     // Current working directory
+}
+
+/**
+ * Configuration for hook event processing
+ * Used for programmatic API usage (when not using environment variables)
+ */
+export interface HookProcessingConfig {
+  /** Agent name (e.g., 'claude', 'gemini') */
+  agentName: string;
+  /** CodeMie session ID */
+  sessionId: string;
+  /** Provider name (e.g., 'ai-run-sso') */
+  provider?: string;
+  /** API base URL */
+  apiBaseUrl?: string;
+  /** SSO cookies for authentication */
+  cookies?: string;
+  /** API key for localhost development */
+  apiKey?: string;
+  /** Client type identifier (e.g., 'vscode-codemie', 'codemie-cli') */
+  clientType?: string;
+  /** Client version */
+  version?: string;
+  /** Profile name for logging */
+  profileName?: string;
+  /** Project name */
+  project?: string;
+  /** Model name */
+  model?: string;
+  /** SSO URL for credential loading */
+  ssoUrl?: string;
 }
 
 /**
@@ -51,6 +83,35 @@ async function readStdin(): Promise<string> {
     process.stdin.on('end', () => resolve(data));
     process.stdin.on('error', reject);
   });
+}
+
+/**
+ * Helper function to get configuration value from config object or environment variable
+ * @param envKey - Environment variable key (e.g., 'CODEMIE_AGENT')
+ * @param config - Optional config object
+ * @returns Configuration value or undefined
+ */
+function getConfigValue(envKey: string, config?: HookProcessingConfig): string | undefined {
+  if (config) {
+    // Map environment variable keys to config properties
+    const configMap: Record<string, keyof HookProcessingConfig> = {
+      'CODEMIE_AGENT': 'agentName',
+      'CODEMIE_PROVIDER': 'provider',
+      'CODEMIE_BASE_URL': 'apiBaseUrl',
+      'CODEMIE_API_KEY': 'apiKey',
+      'CODEMIE_CLIENT_TYPE': 'clientType',
+      'CODEMIE_CLI_VERSION': 'version',
+      'CODEMIE_PROFILE_NAME': 'profileName',
+      'CODEMIE_PROJECT': 'project',
+      'CODEMIE_MODEL': 'model',
+      'CODEMIE_URL': 'ssoUrl',
+    };
+    const configKey = configMap[envKey];
+    if (configKey) {
+      return config[configKey] as string | undefined;
+    }
+  }
+  return process.env[envKey];
 }
 
 /**
@@ -103,11 +164,11 @@ function initializeLoggerContext(): string {
  * Handle SessionStart event
  * Creates session correlation document using hook data
  */
-async function handleSessionStart(event: SessionStartEvent, _rawInput: string, sessionId: string): Promise<void> {
+async function handleSessionStart(event: SessionStartEvent, _rawInput: string, sessionId: string, config?: HookProcessingConfig): Promise<void> {
   // Create session record with correlation information
-  await createSessionRecord(event, sessionId);
+  await createSessionRecord(event, sessionId, config);
   // Send session start metrics (SSO provider only)
-  await sendSessionStartMetrics(event, sessionId, event.session_id);
+  await sendSessionStartMetrics(event, sessionId, event.session_id, config);
 }
 
 
@@ -116,20 +177,20 @@ async function handleSessionStart(event: SessionStartEvent, _rawInput: string, s
  * Final sync and status update
  * Note: Session ID cleanup happens automatically on next SessionStart via file detection
  */
-async function handleSessionEnd(event: SessionEndEvent, sessionId: string): Promise<void> {
+async function handleSessionEnd(event: SessionEndEvent, sessionId: string, config?: HookProcessingConfig): Promise<void> {
   logger.info(`[hook:SessionEnd] ${JSON.stringify(event)}`);
 
   // 0. Final activity accumulation (handles edge case: session ends without Stop)
   await accumulateActiveDuration(sessionId);
 
   // 1. TRANSFORMATION: Transform remaining messages → JSONL (pending)
-  await performIncrementalSync(event, 'SessionEnd', sessionId);
+  await performIncrementalSync(event, 'SessionEnd', sessionId, config);
 
   // 2. API SYNC: Sync pending data to API using SessionSyncer
-  await syncPendingDataToAPI(sessionId, event.session_id);
+  await syncPendingDataToAPI(sessionId, event.session_id, config);
 
   // 3. Send session end metrics (needs to read session file)
-  await sendSessionEndMetrics(event, sessionId, event.session_id);
+  await sendSessionEndMetrics(event, sessionId, event.session_id, config);
 
   // 4. Update session status
   await updateSessionStatus(event, sessionId);
@@ -144,11 +205,12 @@ async function handleSessionEnd(event: SessionEndEvent, sessionId: string): Prom
  *
  * @param sessionId - CodeMie session ID
  * @param agentSessionId - Agent session ID for context
+ * @param config - Optional configuration object (if not provided, reads from environment variables)
  */
-async function syncPendingDataToAPI(sessionId: string, agentSessionId: string): Promise<void> {
+async function syncPendingDataToAPI(sessionId: string, agentSessionId: string, config?: HookProcessingConfig): Promise<void> {
   try {
     // Only sync for SSO provider
-    const provider = process.env.CODEMIE_PROVIDER;
+    const provider = getConfigValue('CODEMIE_PROVIDER', config);
     if (provider !== 'ai-run-sso') {
       logger.debug('[hook:SessionEnd] Skipping API sync (not SSO provider)');
       return;
@@ -157,7 +219,7 @@ async function syncPendingDataToAPI(sessionId: string, agentSessionId: string): 
     logger.info(`[hook:SessionEnd] Syncing pending data to API`);
 
     // Build processing context
-    const context = await buildProcessingContext(sessionId, agentSessionId, '');
+    const context = await buildProcessingContext(sessionId, agentSessionId, '', config);
 
     // Use SessionSyncer service (same as plugin)
     const { SessionSyncer } = await import(
@@ -184,7 +246,7 @@ async function syncPendingDataToAPI(sessionId: string, agentSessionId: string): 
 /**
  * Handle PermissionRequest event
  */
-async function handlePermissionRequest(event: BaseHookEvent, _rawInput: string): Promise<void> {
+async function handlePermissionRequest(event: BaseHookEvent, _rawInput?: string): Promise<void> {
   logger.debug(`[hook:PermissionRequest] ${JSON.stringify(event)}`);
 }
 
@@ -194,16 +256,20 @@ async function handlePermissionRequest(event: BaseHookEvent, _rawInput: string):
  * @param event - Hook event with transcript_path and session_id
  * @param hookName - Name of the hook for logging (e.g., "Stop", "UserPromptSubmit")
  * @param sessionId - The CodeMie session ID to use for this extraction
+ * @param config - Optional configuration object (if not provided, reads from environment variables)
  */
-async function performIncrementalSync(event: BaseHookEvent, hookName: string, sessionId: string): Promise<void> {
+async function performIncrementalSync(event: BaseHookEvent, hookName: string, sessionId: string, config?: HookProcessingConfig): Promise<void> {
   logger.debug(`[hook:${hookName}] Event received: ${JSON.stringify(event)}`);
   logger.info(`[hook:${hookName}] Starting session processing (agent_session=${event.session_id})`);
 
   try {
-    // Get agent name from environment
-    const agentName = process.env.CODEMIE_AGENT;
+    // Get agent name from config or environment
+    const agentName = getConfigValue('CODEMIE_AGENT', config);
 
     if (!agentName) {
+      if (config) {
+        throw new Error(`Missing required config: agentName`);
+      }
       logger.warn(`[hook:${hookName}] Missing CODEMIE_AGENT, skipping extraction`);
       return;
     }
@@ -211,6 +277,9 @@ async function performIncrementalSync(event: BaseHookEvent, hookName: string, se
     // Use transcript_path directly from event
     const agentSessionFile = event.transcript_path;
     if (!agentSessionFile) {
+      if (config) {
+        throw new Error(`Missing required field: transcript_path`);
+      }
       logger.warn(`[hook:${hookName}] No transcript_path in event`);
       return;
     }
@@ -220,6 +289,9 @@ async function performIncrementalSync(event: BaseHookEvent, hookName: string, se
     // Get agent from registry
     const agent = AgentRegistry.getAgent(agentName);
     if (!agent) {
+      if (config) {
+        throw new Error(`Agent not found in registry: ${agentName}`);
+      }
       logger.error(`[hook:${hookName}] Agent not found in registry: ${agentName}`);
       return;
     }
@@ -227,12 +299,15 @@ async function performIncrementalSync(event: BaseHookEvent, hookName: string, se
     // Get session adapter (unified approach)
     const sessionAdapter = (agent as any).getSessionAdapter?.();
     if (!sessionAdapter) {
+      if (config) {
+        throw new Error(`No session adapter available for agent ${agentName}`);
+      }
       logger.warn(`[hook:${hookName}] No session adapter available for agent ${agentName}`);
       return;
     }
 
     // Build processing context
-    const context = await buildProcessingContext(sessionId, event.session_id, agentSessionFile);
+    const context = await buildProcessingContext(sessionId, event.session_id, agentSessionFile, config);
 
     // Process session with all processors (metrics + conversations)
     logger.debug(`[hook:${hookName}] Calling SessionAdapter.processSession()`);
@@ -270,25 +345,28 @@ async function performIncrementalSync(event: BaseHookEvent, hookName: string, se
  * @param sessionId - CodeMie session ID
  * @param agentSessionId - Agent session ID
  * @param agentSessionFile - Path to agent session file
+ * @param config - Optional configuration object (if not provided, reads from environment variables)
  * @returns Processing context for SessionAdapter
  */
 async function buildProcessingContext(
   sessionId: string,
   agentSessionId: string,
-  agentSessionFile: string
-): Promise<any> {
-  // Get environment variables
-  const provider = process.env.CODEMIE_PROVIDER;
-  const ssoUrl = process.env.CODEMIE_URL;
-  const apiUrl = process.env.CODEMIE_BASE_URL || '';
-  const cliVersion = process.env.CODEMIE_CLI_VERSION || '0.0.0';
-  const clientType = process.env.CODEMIE_CLIENT_TYPE || 'codemie-cli';
+  agentSessionFile: string,
+  config?: HookProcessingConfig
+): Promise<ProcessingContext> {
+  // Get configuration values from config object or environment variables
+  const provider = getConfigValue('CODEMIE_PROVIDER', config);
+  const ssoUrl = getConfigValue('CODEMIE_URL', config);
+  const apiUrl = getConfigValue('CODEMIE_BASE_URL', config) || '';
+  const cliVersion = getConfigValue('CODEMIE_CLI_VERSION', config) || '0.0.0';
+  const clientType = getConfigValue('CODEMIE_CLIENT_TYPE', config) || 'codemie-cli';
 
   // Build context with SSO credentials if available
-  let cookies = '';
-  let apiKey: string | undefined;
+  let cookies = config?.cookies || '';
+  let apiKey: string | undefined = config?.apiKey;
 
-  if (provider === 'ai-run-sso' && ssoUrl && apiUrl) {
+  // If SSO provider and credentials not provided in config, try to load them
+  if (provider === 'ai-run-sso' && ssoUrl && apiUrl && !cookies) {
     try {
       const { CodeMieSSO } = await import('../../providers/plugins/sso/sso.auth.js');
       const sso = new CodeMieSSO();
@@ -304,9 +382,9 @@ async function buildProcessingContext(
     }
   }
 
-  // Check for API key (for local development)
-  if (process.env.CODEMIE_API_KEY) {
-    apiKey = process.env.CODEMIE_API_KEY;
+  // Check for API key (for local development) if not in config
+  if (!apiKey) {
+    apiKey = getConfigValue('CODEMIE_API_KEY', config);
   }
 
   return {
@@ -364,7 +442,7 @@ async function accumulateActiveDuration(sessionId: string): Promise<number> {
  * Handle UserPromptSubmit event
  * Starts activity tracking to measure active session time
  */
-async function handleUserPromptSubmit(event: BaseHookEvent, sessionId: string): Promise<void> {
+async function handleUserPromptSubmit(event: BaseHookEvent, sessionId: string, _config?: HookProcessingConfig): Promise<void> {
   logger.info(`[hook:UserPromptSubmit] ${JSON.stringify(event)}`);
   await startActivityTracking(sessionId);
 }
@@ -373,11 +451,11 @@ async function handleUserPromptSubmit(event: BaseHookEvent, sessionId: string): 
  * Handle Stop event
  * Extracts metrics and conversations from agent session file incrementally
  */
-async function handleStop(event: BaseHookEvent, sessionId: string): Promise<void> {
+async function handleStop(event: BaseHookEvent, sessionId: string, config?: HookProcessingConfig): Promise<void> {
   // Accumulate active duration FIRST (marks end of active period)
   await accumulateActiveDuration(sessionId);
   // Then sync metrics/conversations
-  await performIncrementalSync(event, 'Stop', sessionId);
+  await performIncrementalSync(event, 'Stop', sessionId, config);
 }
 
 
@@ -385,8 +463,8 @@ async function handleStop(event: BaseHookEvent, sessionId: string): Promise<void
  * Handle SubagentStop event
  * Appends agent thought to _conversations.jsonl for later sync
  */
-async function handleSubagentStop(event: SubagentStopEvent, sessionId: string): Promise<void> {
-  await performIncrementalSync(event, 'SubagentStop', sessionId);
+async function handleSubagentStop(event: SubagentStopEvent, sessionId: string, config?: HookProcessingConfig): Promise<void> {
+  await performIncrementalSync(event, 'SubagentStop', sessionId, config);
 }
 
 /**
@@ -450,8 +528,9 @@ function normalizeEventName(eventName: string, agentName: string): string {
  * @param rawInput - Raw JSON input string
  * @param sessionId - The CodeMie session ID to use for all operations
  * @param agentName - The agent name for event normalization
+ * @param config - Optional configuration object (if not provided, reads from environment variables)
  */
-async function routeHookEvent(event: BaseHookEvent, rawInput: string, sessionId: string, agentName: string): Promise<void> {
+async function routeHookEvent(event: BaseHookEvent, rawInput: string, sessionId: string, agentName: string, config?: HookProcessingConfig): Promise<void> {
   const startTime = Date.now();
 
   try {
@@ -465,11 +544,11 @@ async function routeHookEvent(event: BaseHookEvent, rawInput: string, sessionId:
     switch (normalizedEventName) {
       case 'SessionStart':
         logger.info(`[hook:router] Calling handleSessionStart`);
-        await handleSessionStart(event as SessionStartEvent, rawInput, sessionId);
+        await handleSessionStart(event as SessionStartEvent, rawInput, sessionId, config);
         break;
       case 'SessionEnd':
         logger.info(`[hook:router] Calling handleSessionEnd`);
-        await handleSessionEnd(event as SessionEndEvent, sessionId);
+        await handleSessionEnd(event as SessionEndEvent, sessionId, config);
         break;
       case 'PermissionRequest':
         logger.info(`[hook:router] Calling handlePermissionRequest`);
@@ -477,15 +556,15 @@ async function routeHookEvent(event: BaseHookEvent, rawInput: string, sessionId:
         break;
       case 'Stop':
         logger.info(`[hook:router] Calling handleStop`);
-        await handleStop(event, sessionId);
+        await handleStop(event, sessionId, config);
         break;
       case 'UserPromptSubmit':
         logger.info(`[hook:router] Calling handleUserPromptSubmit`);
-        await handleUserPromptSubmit(event, sessionId);
+        await handleUserPromptSubmit(event, sessionId, config);
         break;
       case 'SubagentStop':
         logger.info(`[hook:router] Calling handleSubagentStop`);
-        await handleSubagentStop(event as SubagentStopEvent, sessionId);
+        await handleSubagentStop(event as SubagentStopEvent, sessionId, config);
         break;
       case 'PreCompact':
         logger.info(`[hook:router] Calling handlePreCompact`);
@@ -516,15 +595,19 @@ async function routeHookEvent(event: BaseHookEvent, rawInput: string, sessionId:
  *
  * @param event - SessionStart event data
  * @param sessionId - The CodeMie session ID from logger context
+ * @param config - Optional configuration object (if not provided, reads from environment variables)
  */
-async function createSessionRecord(event: SessionStartEvent, sessionId: string): Promise<void> {
+async function createSessionRecord(event: SessionStartEvent, sessionId: string, config?: HookProcessingConfig): Promise<void> {
   try {
-    // Get metadata from environment
-    const agentName = process.env.CODEMIE_AGENT;
-    const provider = process.env.CODEMIE_PROVIDER;
-    const project = process.env.CODEMIE_PROJECT;
+    // Get metadata from config or environment
+    const agentName = getConfigValue('CODEMIE_AGENT', config);
+    const provider = getConfigValue('CODEMIE_PROVIDER', config);
+    const project = getConfigValue('CODEMIE_PROJECT', config);
 
     if (!agentName || !provider) {
+      if (config) {
+        throw new Error('Missing required config: agentName and provider are required for session creation');
+      }
       logger.warn('[hook:SessionStart] Missing required env vars for session creation');
       return;
     }
@@ -585,26 +668,27 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string):
  * @param event - SessionStart event data
  * @param sessionId - The CodeMie session ID (for file operations)
  * @param agentSessionId - The agent's session ID (for API)
+ * @param config - Optional configuration object (if not provided, reads from environment variables)
  */
-async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: string, agentSessionId: string): Promise<void> {
+async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: string, agentSessionId: string, config?: HookProcessingConfig): Promise<void> {
   try {
     // Only send metrics for SSO provider
-    const provider = process.env.CODEMIE_PROVIDER;
+    const provider = getConfigValue('CODEMIE_PROVIDER', config);
     if (provider !== 'ai-run-sso') {
       logger.debug('[hook:SessionStart] Skipping metrics (not SSO provider)');
       return;
     }
 
-    // Get required environment variables
-    const agentName = process.env.CODEMIE_AGENT;
-    const ssoUrl = process.env.CODEMIE_URL;
-    const apiUrl = process.env.CODEMIE_BASE_URL;
-    const cliVersion = process.env.CODEMIE_CLI_VERSION;
-    const model = process.env.CODEMIE_MODEL;
-    const project = process.env.CODEMIE_PROJECT;
+    // Get required configuration values
+    const agentName = getConfigValue('CODEMIE_AGENT', config);
+    const ssoUrl = getConfigValue('CODEMIE_URL', config);
+    const apiUrl = getConfigValue('CODEMIE_BASE_URL', config);
+    const cliVersion = getConfigValue('CODEMIE_CLI_VERSION', config);
+    const model = getConfigValue('CODEMIE_MODEL', config);
+    const project = getConfigValue('CODEMIE_PROJECT', config);
 
     if (!sessionId || !agentName || !ssoUrl || !apiUrl) {
-      logger.debug('[hook:SessionStart] Missing required env vars for metrics');
+      logger.debug('[hook:SessionStart] Missing required config for metrics');
       return;
     }
 
@@ -623,25 +707,35 @@ async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: stri
       logger.debug('[hook:SessionStart] MCP detection failed, continuing without MCP data', error);
     }
 
-    // Load SSO credentials
-    const { CodeMieSSO } = await import('../../providers/plugins/sso/sso.auth.js');
-    const sso = new CodeMieSSO();
-    const credentials = await sso.getStoredCredentials(ssoUrl);
+    // Load SSO credentials if not provided in config
+    let cookieHeader = config?.cookies || '';
+    if (!cookieHeader && ssoUrl) {
+      try {
+        const { CodeMieSSO } = await import('../../providers/plugins/sso/sso.auth.js');
+        const sso = new CodeMieSSO();
+        const credentials = await sso.getStoredCredentials(ssoUrl);
 
-    if (!credentials || !credentials.cookies) {
-      logger.info(`[hook:SessionStart] No SSO credentials found for ${ssoUrl}`);
-      return;
+        if (credentials?.cookies) {
+          cookieHeader = Object.entries(credentials.cookies)
+            .map(([key, value]) => `${key}=${value}`)
+            .join('; ');
+        }
+      } catch (error) {
+        logger.debug('[hook:SessionStart] Failed to load SSO credentials:', error);
+      }
     }
 
-    // Build cookie header
-    const cookieHeader = Object.entries(credentials.cookies)
-      .map(([key, value]) => `${key}=${value}`)
-      .join('; ');
+    if (!cookieHeader) {
+      logger.info(`[hook:SessionStart] No SSO credentials available for ${ssoUrl}`);
+      return;
+    }
 
     // Use MetricsSender to send session start metric
     const { MetricsSender } = await import(
       '../../providers/plugins/sso/index.js'
     );
+
+    const clientType = getConfigValue('CODEMIE_CLIENT_TYPE', config) || 'codemie-cli';
 
     const sender = new MetricsSender({
       baseUrl: apiUrl,
@@ -649,7 +743,7 @@ async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: stri
       timeout: 10000,
       retryAttempts: 2,
       version: cliVersion,
-      clientType: 'codemie-cli'
+      clientType
     });
 
     // Build status object with reason from event
@@ -818,26 +912,27 @@ async function renameSessionFiles(sessionId: string): Promise<void> {
  * @param event - SessionEnd event data
  * @param sessionId - The CodeMie session ID (for file operations)
  * @param agentSessionId - The agent's session ID (for API)
+ * @param config - Optional configuration object (if not provided, reads from environment variables)
  */
-async function sendSessionEndMetrics(event: SessionEndEvent, sessionId: string, agentSessionId: string): Promise<void> {
+async function sendSessionEndMetrics(event: SessionEndEvent, sessionId: string, agentSessionId: string, config?: HookProcessingConfig): Promise<void> {
   try {
     // Only send metrics for SSO provider
-    const provider = process.env.CODEMIE_PROVIDER;
+    const provider = getConfigValue('CODEMIE_PROVIDER', config);
     if (provider !== 'ai-run-sso') {
       logger.debug('[hook:SessionEnd] Skipping metrics (not SSO provider)');
       return;
     }
 
-    // Get required environment variables
-    const agentName = process.env.CODEMIE_AGENT;
-    const ssoUrl = process.env.CODEMIE_URL;
-    const apiUrl = process.env.CODEMIE_BASE_URL;
-    const cliVersion = process.env.CODEMIE_CLI_VERSION;
-    const model = process.env.CODEMIE_MODEL;
-    const project = process.env.CODEMIE_PROJECT;
+    // Get required configuration values
+    const agentName = getConfigValue('CODEMIE_AGENT', config);
+    const ssoUrl = getConfigValue('CODEMIE_URL', config);
+    const apiUrl = getConfigValue('CODEMIE_BASE_URL', config);
+    const cliVersion = getConfigValue('CODEMIE_CLI_VERSION', config);
+    const model = getConfigValue('CODEMIE_MODEL', config);
+    const project = getConfigValue('CODEMIE_PROJECT', config);
 
     if (!agentName || !ssoUrl || !apiUrl) {
-      logger.debug('[hook:SessionEnd] Missing required env vars for metrics');
+      logger.debug('[hook:SessionEnd] Missing required config for metrics');
       return;
     }
 
@@ -862,25 +957,35 @@ async function sendSessionEndMetrics(event: SessionEndEvent, sessionId: string, 
       reason: event.reason
     };
 
-    // Load SSO credentials
-    const { CodeMieSSO } = await import('../../providers/plugins/sso/sso.auth.js');
-    const sso = new CodeMieSSO();
-    const credentials = await sso.getStoredCredentials(ssoUrl);
+    // Load SSO credentials if not provided in config
+    let cookieHeader = config?.cookies || '';
+    if (!cookieHeader && ssoUrl) {
+      try {
+        const { CodeMieSSO } = await import('../../providers/plugins/sso/sso.auth.js');
+        const sso = new CodeMieSSO();
+        const credentials = await sso.getStoredCredentials(ssoUrl);
 
-    if (!credentials?.cookies) {
+        if (credentials?.cookies) {
+          cookieHeader = Object.entries(credentials.cookies)
+            .map(([key, value]) => `${key}=${value}`)
+            .join('; ');
+        }
+      } catch (error) {
+        logger.debug('[hook:SessionEnd] Failed to load SSO credentials:', error);
+      }
+    }
+
+    if (!cookieHeader) {
       logger.info(`[hook:SessionEnd] No SSO credentials found for ${ssoUrl}`);
       return;
     }
-
-    // Build cookie header
-    const cookieHeader = Object.entries(credentials.cookies)
-      .map(([key, value]) => `${key}=${value}`)
-      .join('; ');
 
     // Use MetricsSender to send session end metric
     const { MetricsSender } = await import(
       '../../providers/plugins/sso/index.js'
     );
+
+    const clientType = getConfigValue('CODEMIE_CLIENT_TYPE', config) || 'codemie-cli';
 
     const sender = new MetricsSender({
       baseUrl: apiUrl,
@@ -888,7 +993,7 @@ async function sendSessionEndMetrics(event: SessionEndEvent, sessionId: string, 
       timeout: 10000,
       retryAttempts: 2,
       version: cliVersion,
-      clientType: 'codemie-cli'
+      clientType
     });
 
     // Send session end metric (use agent session ID for API)
@@ -920,6 +1025,150 @@ async function sendSessionEndMetrics(event: SessionEndEvent, sessionId: string, 
     logger.warn(`[hook:SessionEnd] Failed to send metrics: ${errorMessage}`);
     // Don't throw - metrics failures should not block agent execution
   }
+}
+
+/**
+ * Validate hook event required fields
+ * @param event - Hook event to validate
+ * @param config - Optional configuration object (if provided, throws errors; otherwise sets exitCode)
+ * @throws Error if validation fails and config is provided
+ */
+function validateHookEvent(event: BaseHookEvent, config?: HookProcessingConfig): void {
+  if (!event.session_id) {
+    const error = new Error('Missing required field: session_id');
+    if (config) {
+      throw error;
+    }
+    logger.error('[hook] Missing required field: session_id');
+    logger.debug(`[hook] Received event: ${JSON.stringify(event)}`);
+    process.exitCode = 2;
+    return;
+  }
+
+  if (!event.hook_event_name) {
+    const error = new Error('Missing required field: hook_event_name');
+    if (config) {
+      throw error;
+    }
+    logger.error('[hook] Missing required field: hook_event_name');
+    logger.debug(`[hook] Received event: ${JSON.stringify(event)}`);
+    process.exitCode = 2;
+    return;
+  }
+
+  if (!event.transcript_path) {
+    const error = new Error('Missing required field: transcript_path');
+    if (config) {
+      throw error;
+    }
+    logger.error('[hook] Missing required field: transcript_path');
+    logger.debug(`[hook] Received event: ${JSON.stringify(event)}`);
+    process.exitCode = 2;
+    return;
+  }
+}
+
+/**
+ * Initialize hook context (logger and session/agent info)
+ * @param config - Optional configuration object (if not provided, reads from environment variables)
+ * @returns Object with sessionId and agentName
+ */
+function initializeHookContext(config?: HookProcessingConfig): { sessionId: string; agentName: string } {
+  let sessionId: string;
+  let agentName: string;
+
+  if (config) {
+    // Use config object
+    sessionId = config.sessionId;
+    agentName = config.agentName;
+
+    // Initialize logger context from config
+    logger.setAgentName(config.agentName);
+    logger.setSessionId(config.sessionId);
+    if (config.profileName) {
+      logger.setProfileName(config.profileName);
+    }
+  } else {
+    // Use environment variables (CLI mode)
+    sessionId = initializeLoggerContext();
+    agentName = process.env.CODEMIE_AGENT || 'unknown';
+  }
+
+  return { sessionId, agentName };
+}
+
+/**
+ * Apply hook transformation if agent provides a transformer
+ * @param event - Hook event to transform
+ * @param agentName - Agent name to get transformer from
+ * @returns Transformed event or original event if no transformer available
+ */
+function applyHookTransformation(event: BaseHookEvent, agentName: string): BaseHookEvent {
+  let transformedEvent: BaseHookEvent = event;
+  try {
+    const agent = AgentRegistry.getAgent(agentName);
+    if (agent) {
+      const transformer = (agent as any).getHookTransformer?.() as HookTransformer | undefined;
+      if (transformer) {
+        logger.debug(`[hook] Applying ${agentName} hook transformer`);
+        transformedEvent = transformer.transform(event);
+        logger.debug(`[hook] Transformation complete: ${event.hook_event_name} → ${transformedEvent.hook_event_name}`);
+      } else {
+        logger.debug(`[hook] No transformer available for ${agentName}, using event as-is`);
+      }
+    }
+  } catch (transformError) {
+    const transformMsg = transformError instanceof Error ? transformError.message : String(transformError);
+    logger.error(`[hook] Transformation failed: ${transformMsg}, using original event`);
+    // Continue with original event on transformation failure
+    transformedEvent = event;
+  }
+  return transformedEvent;
+}
+
+/**
+ * Normalize event name and log processing info
+ * @param event - Hook event (may be transformed)
+ * @param sessionId - CodeMie session ID
+ * @param agentName - Agent name
+ * @returns Normalized event name
+ */
+function normalizeAndLogEvent(event: BaseHookEvent, sessionId: string, agentName: string): string {
+  const normalizedEventName = normalizeEventName(event.hook_event_name, agentName);
+  logger.info(
+    `[hook] Processing ${normalizedEventName} event (codemie_session=${sessionId.slice(0, 8)}..., agent_session=${event.session_id.slice(0, 8)}...)`
+  );
+  return normalizedEventName;
+}
+
+/**
+ * Process a hook event programmatically
+ * Main entry point for programmatic API usage (e.g., VSCode plugin)
+ *
+ * @param event - Hook event to process
+ * @param config - Optional configuration object (if not provided, reads from environment variables)
+ * @throws Error if event processing fails and config is provided
+ */
+export async function processEvent(event: BaseHookEvent, config?: HookProcessingConfig): Promise<void> {
+  // Validate required fields
+  validateHookEvent(event, config);
+  if (process.exitCode === 2) {
+    return; // Validation failed in CLI mode
+  }
+
+  // Initialize logger context
+  const { sessionId, agentName } = initializeHookContext(config);
+
+  // Apply hook transformation if agent provides a transformer
+  const transformedEvent = applyHookTransformation(event, agentName);
+
+  // Normalize event name and log processing info
+  normalizeAndLogEvent(transformedEvent, sessionId, agentName);
+
+  // Route to appropriate handler
+  // Note: routeHookEvent expects rawInput for PermissionRequest, but we don't have it in programmatic mode
+  // Pass empty string as rawInput when config is provided
+  await routeHookEvent(transformedEvent, config ? '' : '', sessionId, agentName, config);
 }
 
 /**
@@ -971,36 +1220,13 @@ export function createHookCommand(): Command {
 
         // Initialize logger context using CODEMIE_SESSION_ID from environment
         // This ensures consistent session ID across all hooks
-        const sessionId = initializeLoggerContext();
-
-        // Get agent name from environment
-        const agentName = process.env.CODEMIE_AGENT || 'unknown';
+        const { sessionId, agentName } = initializeHookContext();
 
         // Apply hook transformation if agent provides a transformer
-        let transformedEvent: BaseHookEvent = event;
-        try {
-          const agent = AgentRegistry.getAgent(agentName);
-          if (agent) {
-            const transformer = (agent as any).getHookTransformer?.() as HookTransformer | undefined;
-            if (transformer) {
-              logger.debug(`[hook] Applying ${agentName} hook transformer`);
-              transformedEvent = transformer.transform(event);
-              logger.debug(`[hook] Transformation complete: ${event.hook_event_name} → ${transformedEvent.hook_event_name}`);
-            } else {
-              logger.debug(`[hook] No transformer available for ${agentName}, using event as-is`);
-            }
-          }
-        } catch (transformError) {
-          const transformMsg = transformError instanceof Error ? transformError.message : String(transformError);
-          logger.error(`[hook] Transformation failed: ${transformMsg}, using original event`);
-          // Continue with original event on transformation failure
-          transformedEvent = event;
-        }
+        const transformedEvent = applyHookTransformation(event, agentName);
 
-        // Log hook invocation
-        logger.info(
-          `[hook] Processing ${transformedEvent.hook_event_name} event (codemie_session=${sessionId.slice(0, 8)}..., agent_session=${transformedEvent.session_id.slice(0, 8)}...)`
-        );
+        // Normalize event name and log processing info
+        normalizeAndLogEvent(transformedEvent, sessionId, agentName);
 
         // Route to appropriate handler with transformed event and session ID
         await routeHookEvent(transformedEvent, input, sessionId, agentName);

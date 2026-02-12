@@ -197,6 +197,9 @@ export interface AgentMetadata {
     baseUrl?: string[];            // ['ANTHROPIC_BASE_URL']
     apiKey?: string[];             // ['ANTHROPIC_AUTH_TOKEN']
     model?: string[];              // ['ANTHROPIC_MODEL']
+    haikuModel?: string[];         // ['ANTHROPIC_DEFAULT_HAIKU_MODEL']
+    sonnetModel?: string[];        // ['ANTHROPIC_DEFAULT_SONNET_MODEL', 'CLAUDE_CODE_SUBAGENT_MODEL']
+    opusModel?: string[];          // ['ANTHROPIC_DEFAULT_OPUS_MODEL']
   };
 
   // === Compatibility Rules ===
