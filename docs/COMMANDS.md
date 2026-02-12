@@ -25,6 +25,7 @@ codemie version                  # Show version information
 
 ```bash
 --task <task>            # Execute a single task using the built-in agent and exit
+-s, --silent             # Enable silent mode
 --help                   # Display help for command
 --version                # Output the version number
 ```
@@ -46,6 +47,7 @@ All agent shortcuts support these options:
 --api-key <key>          # Override API key
 --base-url <url>         # Override base URL
 --timeout <seconds>      # Override timeout (in seconds)
+-s, --silent             # Enable silent mode
 ```
 
 ### Built-in Agent (codemie-code)
@@ -94,6 +96,9 @@ codemie-opencode --profile work "refactor code"
 # Agent-specific options (pass-through to underlying CLI)
 codemie-claude --context large -p "review code"      # -p = print mode (non-interactive)
 codemie-gemini -p "your prompt"                      # -p for gemini's non-interactive mode
+
+# Implement planned task without asking any questions (silent mode)
+codemie-claude --task "Implement task 1" --silent --dangerously-skip-permissions --output-format stream-json --verbose
 ```
 
 **Note**: Configuration options (`--profile`, `--model`, etc.) are handled by CodeMie CLI wrapper. All other options are passed directly to the underlying agent binary.
