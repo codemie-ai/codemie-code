@@ -10,16 +10,15 @@ set -e
 if [ $# -eq 0 ]; then
     echo "Usage: $0 <directory>" >&2
     echo "Example: $0 ~/.codemie/claude-plugin/sounds/acolyte" >&2
-    exit 1
+    exit 0
 fi
 
 # Expand tilde in the directory path
 SOUND_DIR="${1/#\~/$HOME}"
 
-# Check if directory exists
+# Check if directory exists - exit silently if not found
 if [ ! -d "$SOUND_DIR" ]; then
-    echo "Error: Directory not found: $SOUND_DIR" >&2
-    exit 1
+    exit 0
 fi
 
 # Find all audio files and store in array (compatible way)
@@ -31,7 +30,7 @@ done < <(find "$SOUND_DIR" -maxdepth 1 -type f \( -iname "*.wav" -o -iname "*.mp
 # Check if any audio files were found
 if [ ${#WAV_FILES[@]} -eq 0 ]; then
     echo "Error: No WAV or MP3 files found in $SOUND_DIR" >&2
-    exit 1
+    exit 0
 fi
 
 # Select a random file
@@ -53,7 +52,7 @@ elif command -v mpg123 &> /dev/null; then
     mpg123 -q "$SELECTED_FILE" &
 else
     echo "Error: No audio player found. Install afplay (macOS), aplay, paplay, or mpg123" >&2
-    exit 1
+    exit 0
 fi
 
 exit 0

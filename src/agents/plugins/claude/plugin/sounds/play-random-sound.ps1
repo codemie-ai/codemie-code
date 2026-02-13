@@ -13,10 +13,9 @@ $ErrorActionPreference = "Stop"
 # Expand environment variables in the path (e.g., %USERPROFILE%)
 $SoundDir = [System.Environment]::ExpandEnvironmentVariables($Directory)
 
-# Check if directory exists
+# Check if directory exists - exit silently if not found
 if (-not (Test-Path -Path $SoundDir -PathType Container)) {
-    Write-Error "Error: Directory not found: $SoundDir"
-    exit 1
+    exit 0
 }
 
 # Find all audio files (WAV and MP3)
@@ -24,8 +23,7 @@ $AudioFiles = Get-ChildItem -Path $SoundDir -File -Include *.wav,*.mp3 -ErrorAct
 
 # Check if any audio files were found
 if ($AudioFiles.Count -eq 0) {
-    Write-Error "Error: No WAV or MP3 files found in $SoundDir"
-    exit 1
+    exit 0
 }
 
 # Select a random file
@@ -108,8 +106,7 @@ elseif (Play-WithSoundPlayer -FilePath $SelectedFile.FullName) {
 }
 
 if (-not $played) {
-    Write-Error "Error: No audio player found. Install mpg123 via Chocolatey: choco install mpg123"
-    exit 1
+    exit 0
 }
 
 exit 0
