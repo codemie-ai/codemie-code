@@ -38,21 +38,12 @@ export class LogFormatter {
 
   /**
    * Format a single log entry
+   * Returns the raw log line exactly as written to the file
    */
   private formatLogEntry(entry: LogEntry): string {
-    const timestamp = this.formatTimestamp(entry.timestamp);
-    const level = this.formatLevel(entry.level);
-    const agent = this.colorize(chalk.cyan(`[${entry.agent}]`));
-
-    if (this.format.verbose) {
-      // Verbose format includes session ID and profile
-      const sessionId = entry.sessionId.substring(0, 8);
-      const profile = entry.profile ? this.colorize(chalk.magenta(`[${entry.profile}]`)) : '';
-      return `${timestamp} ${level} ${agent} ${this.colorize(chalk.dim(`[${sessionId}]`))} ${profile} ${entry.message}`.trim();
-    } else {
-      // Compact format
-      return `${timestamp} ${level} ${agent} ${entry.message}`;
-    }
+    // Return raw line without transformation to preserve all metadata
+    // (timestamp, level, agent, session ID, profile, context like [hook], etc.)
+    return entry.rawLine;
   }
 
   /**
