@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { AgentRegistry } from '../../agents/registry.js';
 import { AgentInstallationError, getErrorMessage } from '../../utils/errors.js';
 import { logger } from '../../utils/logger.js';
+import type { AgentInstallationOptions } from '../../agents/core/types.js';
 import ora from 'ora';
 import chalk from 'chalk';
 
@@ -14,7 +15,8 @@ export function createInstallCommand(): Command {
     .argument('[version]', 'Optional: specific version to install (e.g., 2.0.30)')
     .option('--supported', 'Install the latest supported version tested with CodeMie')
     .option('--verbose', 'Show detailed installation logs for troubleshooting')
-    .action(async (name?: string, version?: string, options?: { supported?: boolean; verbose?: boolean }) => {
+    .option('--sounds', 'Enable sounds (plays audio on hook events)')
+    .action(async (name?: string, version?: string, options?: AgentInstallationOptions & { supported?: boolean }) => {
       // Enable debug mode if --verbose flag is set
       if (options?.verbose) {
         process.env.CODEMIE_DEBUG = 'true';
@@ -105,6 +107,12 @@ export function createInstallCommand(): Command {
             if (actualVersionToInstall && installedVersion) {
               if (installedVersion === actualVersionToInstall) {
                 console.log(chalk.blueBright(`${agent.displayName} v${installedVersion} is already installed`));
+
+                // Run additional installation steps (e.g., sounds)
+                if (agent.additionalInstallation) {
+                  await agent.additionalInstallation(options);
+                }
+
                 return;
               } else {
                 // Different version installed, ask to reinstall
@@ -128,6 +136,12 @@ export function createInstallCommand(): Command {
             } else if (!actualVersionToInstall) {
               // No specific version requested, already installed
               console.log(chalk.blueBright(`${agent.displayName} is already installed`));
+
+              // Run additional installation steps (e.g., sounds)
+              if (agent.additionalInstallation) {
+                await agent.additionalInstallation(options);
+              }
+
               return;
             }
           }
@@ -155,6 +169,11 @@ export function createInstallCommand(): Command {
             const installedVersionStr = installedVersion ? ` v${installedVersion}` : '';
 
             spinner.succeed(`${agent.displayName}${installedVersionStr} installed successfully`);
+
+            // Run additional installation steps (e.g., sounds)
+            if (agent.additionalInstallation) {
+              await agent.additionalInstallation(options);
+            }
 
             // Show warning if installed version is newer than supported
             if (installedVersion && agent.checkVersionCompatibility) {

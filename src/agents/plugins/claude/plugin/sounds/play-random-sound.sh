@@ -9,7 +9,7 @@ set -e
 # Check if directory argument is provided
 if [ $# -eq 0 ]; then
     echo "Usage: $0 <directory>" >&2
-    echo "Example: $0 ~/.claude/hooks/acolyte" >&2
+    echo "Example: $0 ~/.codemie/claude-plugin/sounds/acolyte" >&2
     exit 1
 fi
 

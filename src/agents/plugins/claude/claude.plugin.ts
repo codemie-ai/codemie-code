@@ -12,8 +12,10 @@ import {
 import {
   AgentInstallationError,
   createErrorContext,
+  getErrorMessage,
 } from '../../../utils/errors.js';
 import { logger } from '../../../utils/logger.js';
+import chalk from 'chalk';
 import { resolveHomeDir } from '../../../utils/paths.js';
 import {
   detectInstallationMethod,
@@ -396,6 +398,51 @@ export class ClaudePlugin extends BaseAgentAdapter {
         logger.info(
           `Try: 1) Restart your shell/terminal, or 2) Run: ${metadata.cliCommand} --version`,
         );
+      }
+    }
+  }
+
+  /**
+   * Additional installation steps for Claude Code
+   * Handles optional features like sounds installation
+   *
+   * @param options - Typed installation options
+   */
+  async additionalInstallation(options?: import('../../core/types.js').AgentInstallationOptions): Promise<void> {
+    // Install sounds if requested
+    if (options?.sounds) {
+      try {
+        logger.info('Installing sounds...', { agent: 'claude' });
+        const { installSounds, isSoundsInstalled } = await import('./sounds-installer.js');
+
+        // Check if already installed
+        if (!isSoundsInstalled()) {
+          const result = await installSounds();
+          if (result === null) {
+            // Installation failed (no audio player or other error)
+            logger.warn('Sounds installation skipped or failed (no audio player)', {
+              agent: 'claude'
+            });
+            console.error(chalk.yellow('\n⚠️  Sounds installation failed (optional feature)'));
+            console.error(chalk.dim('You can try installing sounds later with: codemie install claude --sounds\n'));
+          } else {
+            logger.info('Sounds installed successfully', { agent: 'claude' });
+          }
+        } else {
+          logger.info('Sounds already installed, skipping', { agent: 'claude' });
+          console.log(chalk.blue('\nℹ️  Sounds already installed, skipping\n'));
+        }
+      } catch (error) {
+        const errorContext = createErrorContext(error, {
+          agent: 'claude'
+        });
+
+        logger.error('Sounds installation failed', errorContext);
+
+        // Don't throw - sounds are optional, allow installation to continue
+        console.error(chalk.yellow('\n⚠️  Sounds installation failed (optional feature)'));
+        console.error(chalk.dim(`Error: ${getErrorMessage(error)}`));
+        console.error(chalk.dim('You can try installing sounds later with: codemie install claude --sounds\n'));
       }
     }
   }

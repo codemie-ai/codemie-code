@@ -446,6 +446,27 @@ export interface BaseExtensionInstaller {
 }
 
 /**
+ * Base installation options available to all agents
+ */
+export interface BaseInstallationOptions {
+  /** Enable verbose debug output with detailed logs */
+  verbose?: boolean;
+  /** Force reinstallation even if already installed */
+  force?: boolean;
+}
+
+/**
+ * Agent installation options with extension support
+ * Agent plugins can extend this interface for custom options
+ */
+export interface AgentInstallationOptions extends BaseInstallationOptions {
+  /** Enable sounds (plays audio on hook events) - Claude specific */
+  sounds?: boolean;
+  /** Additional agent-specific options */
+  [key: string]: unknown;
+}
+
+/**
  * Agent adapter interface - implemented by BaseAgentAdapter
  */
 export interface AgentAdapter {
@@ -458,6 +479,19 @@ export interface AgentAdapter {
   run(args: string[], env?: Record<string, string>): Promise<void>;
   getVersion(): Promise<string | null>;
   getMetricsConfig(): AgentMetricsConfig | undefined;
+
+  /**
+   * Additional installation steps that run regardless of agent installation status
+   * Called after checking if agent is installed, before or after actual installation
+   *
+   * Use this for optional features, extensions, or configurations that:
+   * - Should be available even if agent was already installed
+   * - Don't require reinstalling the agent itself
+   * - Are independent of the agent version
+   *
+   * @param options - Typed installation options (base or agent-specific)
+   */
+  additionalInstallation?(options?: AgentInstallationOptions): Promise<void>;
 
   /**
    * Get hook transformer for this agent (optional)

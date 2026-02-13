@@ -117,6 +117,17 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   }
 
   /**
+   * Additional installation steps (default: no-op)
+   * Override in agent plugins to add custom installation logic
+   *
+   * @param _options - Typed installation options (unused in base implementation)
+   */
+  async additionalInstallation(_options?: import('./types.js').AgentInstallationOptions): Promise<void> {
+    // Default implementation: do nothing
+    // Override in agent plugins to add custom installation logic
+  }
+
+  /**
    * Check if agent is installed (cross-platform)
    */
   async isInstalled(): Promise<boolean> {

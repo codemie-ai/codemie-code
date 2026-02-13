@@ -25,9 +25,8 @@ export function createSetupCommand(): Command {
         .description('Interactive setup wizard for CodeMie Code')
         .option('--force', 'Force re-setup even if config exists')
         .option('-v, --verbose', 'Enable verbose debug output with detailed API logs')
-        .option('--sounds', 'Enable sounds (plays audio on hook events)')
         .addCommand(createAssistantsSetupCommand().name('assistants'))
-        .action(async (options: { force?: boolean; verbose?: boolean; sounds?: boolean }) => {
+        .action(async (options: { force?: boolean; verbose?: boolean }) => {
             // Enable debug mode if verbose flag is set
             if (options.verbose) {
                 process.env.CODEMIE_DEBUG = 'true';
@@ -40,7 +39,7 @@ export function createSetupCommand(): Command {
             }
 
             try {
-                await runSetupWizard(options.force, options.sounds);
+                await runSetupWizard(options.force);
             } catch (error: unknown) {
                 logger.error('Setup failed:', error);
                 process.exit(1);
@@ -50,7 +49,7 @@ export function createSetupCommand(): Command {
     return command;
 }
 
-async function runSetupWizard(force?: boolean, enableSounds?: boolean): Promise<void> {
+async function runSetupWizard(force?: boolean): Promise<void> {
     // Show ecosystem introduction
     FirstTimeExperience.showEcosystemIntro();
 
@@ -219,7 +218,7 @@ async function runSetupWizard(force?: boolean, enableSounds?: boolean): Promise<
     }
 
     // Use plugin-based setup flow
-    await handlePluginSetup(provider, setupSteps, profileName, isUpdate, storageLocation, enableSounds);
+    await handlePluginSetup(provider, setupSteps, profileName, isUpdate, storageLocation);
 }
 
 /**
@@ -232,8 +231,7 @@ async function handlePluginSetup(
     setupSteps: any,
     profileName: string | null,
     isUpdate: boolean,
-    storageLocation: 'global' | 'local' = 'global',
-    enableFunSounds?: boolean
+    storageLocation: 'global' | 'local' = 'global'
 ): Promise<void> {
     try {
         const providerTemplate = ProviderRegistry.getProvider(providerName);
@@ -295,22 +293,6 @@ async function handlePluginSetup(
         const saveSpinner = ora('Saving profile...').start();
 
         try {
-            // Step 6.5: Install sounds hooks if enabled
-            if (enableFunSounds) {
-                saveSpinner.text = 'Saving profile and installing sounds...';
-                const {installSounds, isSoundsInstalled} = await import('../../utils/sounds-installer.js');
-
-                // Check if already installed
-                if (!isSoundsInstalled()) {
-                    // Install fun sounds (saves hooks to ~/.claude/settings.json)
-                    await installSounds();
-                } else {
-                    console.log();
-                    console.log(chalk.yellow('ℹ️  Sounds already installed, skipping'));
-                    console.log();
-                }
-            }
-
             config.name = finalProfileName!;
             const workingDir = process.cwd();
 
