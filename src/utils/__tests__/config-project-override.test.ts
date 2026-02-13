@@ -36,6 +36,10 @@ describe('ConfigLoader - Project-Level Configuration', () => {
     delete process.env.CODEMIE_API_KEY;
     delete process.env.CODEMIE_TIMEOUT;
     delete process.env.CODEMIE_DEBUG;
+    delete process.env.CODEMIE_PROFILE_CONFIG;
+    delete process.env.CODEMIE_INTEGRATION_ID;
+    delete process.env.CODEMIE_PROJECT;
+    delete process.env.CODEMIE_URL;
   });
 
   afterEach(async () => {
