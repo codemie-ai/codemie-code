@@ -140,6 +140,9 @@ export interface HooksConfiguration {
 	/** Hooks executed before processing user prompt (can block/add context) */
 	UserPromptSubmit?: HookMatcher[];
 
+	/** Hooks executed when agent need permission from user or ask clarification questions */
+	PermissionRequest?: HookMatcher[];
+
 	/** Hooks executed when agent completes (can continue execution) */
 	Stop?: HookMatcher[];
 

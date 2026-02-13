@@ -74,6 +74,102 @@ cp -r /path/to/codemie-code/src/agents/plugins/claude/plugin ~/.claude/plugins/c
 
 **Note:** Manual installation is only needed for non-SSO providers (litellm, bedrock, etc.)
 
+### Optional: Sound Effects
+
+Add audio feedback to your Claude Code sessions with the `--sounds` flag.
+
+**Prerequisites:**
+
+Before running sounds installation, ensure you have an audio player installed:
+- **macOS**: `afplay` (built-in, no installation needed)
+- **Linux**: `sudo apt install alsa-utils` (aplay) or `sudo apt install pulseaudio-utils` (paplay)
+- **Windows**: `choco install mpg123`
+- **Alternative**: `brew install mpg123` (macOS), `sudo apt install mpg123` (Linux)
+
+⚠️ **Important**: Installation will fail if no audio player is found.
+
+**Installation:**
+
+```bash
+# Enable sounds during Claude installation
+codemie install claude --sounds
+
+# Add sounds to existing Claude installation (safe to re-run)
+codemie install claude --sounds
+```
+
+**What happens during installation:**
+- ✅ Verifies required audio player is installed (fails if none found)
+- ✅ Creates sound directories in `~/.codemie/sounds/`
+- ✅ Configures hooks to play sounds on events
+
+**Note**: The `play-random-sound.sh` script and hook configuration will be **automatically installed** to `~/.codemie/claude-plugin/` when you **first run** `codemie-claude`. This happens seamlessly in the background - you don't need to do anything manually.
+
+**Installation Structure:**
+
+After installation and first run, you'll have:
+```
+~/.codemie/
+├── sounds/                           # Your sound files go here
+│   ├── SessionStart/
+│   ├── UserPromptSubmit/
+│   ├── PermissionRequest/
+│   └── Stop/
+└── claude-plugin/                    # Auto-created on first run
+    ├── sounds/
+    │   └── play-random-sound.sh      # Hook script
+    └── hooks/
+        └── hooks.json                # Hook configuration
+```
+
+**Sound Events:**
+- `SessionStart` - Plays when Claude Code starts
+- `UserPromptSubmit` - Plays when you send a message
+- `PermissionRequest` - Plays when Claude asks for clarification or permission
+- `Stop` - Plays when Claude completes a task
+
+**Adding Your Own Sounds:**
+
+After installation, add WAV or MP3 files to these directories:
+```bash
+~/.codemie/sounds/SessionStart/      # Welcome sounds, greetings
+~/.codemie/sounds/UserPromptSubmit/  # Acknowledgment sounds (e.g., "Roger")
+~/.codemie/sounds/PermissionRequest/ # Question sounds (e.g., "Proceed?")
+~/.codemie/sounds/Stop/              # Completion sounds (e.g., "Done")
+```
+
+**Popular Sound Packs:**
+- Warcraft peon sounds (classic "Work work", "Yes milord")
+- StarCraft unit acknowledgments
+- Portal 2 GLaDOS quotes
+
+**Where to download sounds:**
+- https://x.com/delba_oliveira/status/2020515010985005255
+
+**Troubleshooting:**
+
+If sounds are not playing:
+1. Verify audio player is installed: `which afplay` (macOS) or `which aplay` (Linux)
+2. Check that sound files exist in `~/.codemie/sounds/<EventName>/`
+3. Ensure sound files are in WAV or MP3 format
+4. Check that `~/.codemie/claude-plugin/sounds/play-random-sound.sh` exists (created on first run)
+5. If script is missing, remove `~/.codemie/claude-plugin/` directory and restart `codemie-claude`
+
+**⚠️ WINDOWS USERS:**
+
+After the first run of `codemie-claude`, you need to update the hooks configuration:
+
+1. Edit `~/.codemie/claude-plugin/hooks/hooks.json`
+2. Change all instances of `play-random-sound.sh` to `play-random-sound.ps1`
+
+This is required because Windows uses PowerShell scripts (.ps1) instead of bash scripts (.sh).
+
+To completely remove sounds:
+```bash
+rm -rf ~/.codemie/sounds
+rm -rf ~/.codemie/claude-plugin
+```
+
 ## Usage
 
 Once loaded, the plugin automatically:
