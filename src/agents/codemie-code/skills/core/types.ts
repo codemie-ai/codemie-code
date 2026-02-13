@@ -27,7 +27,21 @@ export type SkillMetadata = z.infer<typeof SkillMetadataSchema>;
 /**
  * Source type for a skill
  */
-export type SkillSource = 'global' | 'project' | 'mode-specific';
+export type SkillSource = 'global' | 'project' | 'mode-specific' | 'plugin';
+
+/**
+ * Plugin info attached to skills from plugins
+ */
+export interface PluginSkillInfo {
+  /** Plugin name */
+  pluginName: string;
+
+  /** Full namespaced skill name (plugin-name:skill-name) */
+  fullSkillName: string;
+
+  /** Plugin version */
+  pluginVersion: string;
+}
 
 /**
  * Complete skill with metadata, content, and location info
@@ -47,6 +61,9 @@ export interface Skill {
 
   /** Computed priority (source-based + metadata priority) */
   computedPriority: number;
+
+  /** Plugin info (only present if source is 'plugin') */
+  pluginInfo?: PluginSkillInfo;
 }
 
 /**

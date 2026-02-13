@@ -17,6 +17,7 @@ export type {
   SkillDiscoveryOptions,
   SkillValidationResult,
   SkillsConfig,
+  PluginSkillInfo,
 } from './core/types.js';
 export { SkillMetadataSchema } from './core/types.js';
 
@@ -29,3 +30,12 @@ export {
   FrontmatterParseError,
 } from './utils/frontmatter.js';
 export type { FrontmatterResult } from './utils/frontmatter.js';
+
+// Pattern matcher exports
+export {
+  extractSkillPatterns,
+  isValidSkillName,
+  isValidNamespacedSkillName,
+  parseNamespacedSkillName,
+} from './utils/pattern-matcher.js';
+export type { SkillPattern, PatternMatchResult } from './utils/pattern-matcher.js';
