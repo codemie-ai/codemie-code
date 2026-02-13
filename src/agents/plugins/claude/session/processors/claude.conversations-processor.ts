@@ -14,6 +14,7 @@
 
 import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../../../../core/session/BaseProcessor.js';
 import type { ParsedSession } from '../../../../core/session/BaseSessionAdapter.js';
+import { CONVERSATION_SYNC_STATUS } from '../../../../../providers/plugins/sso/session/processors/conversations/types.js';
 import { logger } from '../../../../../utils/logger.js';
 import { getSessionConversationPath } from '../../../../core/session/session-config.js';
 
@@ -124,7 +125,7 @@ export class ConversationsProcessor implements SessionProcessor {
           conversationId: context.agentSessionId,
           history: result.history
         },
-        status: 'pending' as const
+        status: CONVERSATION_SYNC_STATUS.PENDING
       };
 
       await appendFile(conversationsPath, JSON.stringify(payloadRecord) + '\n');

@@ -51,7 +51,7 @@ function createSkillContent(assistant: Assistant): string {
 		codemie assistants chat "${assistantId}" "$ARGUMENTS"
 		\`\`\`
 
-		The assistant will process the request and return a response.
+		The assistant will process the request and return a response. The command automatically includes the last 10 messages from the current conversation session as context.
 	`;
 }
 
