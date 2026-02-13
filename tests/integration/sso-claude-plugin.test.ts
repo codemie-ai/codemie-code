@@ -9,39 +9,49 @@
  * @group integration
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { rmSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
-import { homedir } from 'os';
+import { tmpdir } from 'os';
 import { ClaudePluginInstaller } from '../../src/agents/plugins/claude/claude.plugin-installer.js';
 import { ClaudePluginMetadata } from '../../src/agents/plugins/claude/claude.plugin.js';
 import { SSOTemplate } from '../../src/providers/plugins/sso/index.js';
 import type { AgentConfig } from '../../src/agents/core/types.js';
 
 describe('SSO Provider - Claude Plugin Auto-Install', () => {
-  const pluginTargetDir = join(homedir(), '.codemie', 'claude-plugin');
+  // Use temp directory instead of real plugin directory to avoid deleting user's actual plugin
+  const testTempDir = join(tmpdir(), 'codemie-test-claude-plugin');
+  const pluginTargetDir = join(testTempDir, 'claude-plugin');
   let installer: ClaudePluginInstaller;
 
   beforeEach(() => {
-    // Clean up plugin directory before each test
-    if (existsSync(pluginTargetDir)) {
-      rmSync(pluginTargetDir, { recursive: true, force: true });
+    // Clean up temp directory before each test
+    if (existsSync(testTempDir)) {
+      rmSync(testTempDir, { recursive: true, force: true });
     }
+    mkdirSync(testTempDir, { recursive: true });
 
     // Clean env
     delete process.env.CODEMIE_CLAUDE_EXTENSION_DIR;
 
-    // Create installer instance
+    // Mock getTargetPath at the prototype level so ALL instances (including ones created by hooks)
+    // use the temp directory instead of real ~/.codemie/claude-plugin
+    vi.spyOn(ClaudePluginInstaller.prototype, 'getTargetPath').mockReturnValue(pluginTargetDir);
+
+    // Create installer instance (will use mocked getTargetPath)
     installer = new ClaudePluginInstaller(ClaudePluginMetadata);
   });
 
   afterEach(() => {
     // Cleanup after tests
-    if (existsSync(pluginTargetDir)) {
-      rmSync(pluginTargetDir, { recursive: true, force: true });
+    if (existsSync(testTempDir)) {
+      rmSync(testTempDir, { recursive: true, force: true });
     }
 
     delete process.env.CODEMIE_CLAUDE_EXTENSION_DIR;
+
+    // Restore spies
+    vi.restoreAllMocks();
   });
 
   describe('Plugin Installation (beforeRun hook)', () => {
