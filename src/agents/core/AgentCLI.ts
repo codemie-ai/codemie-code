@@ -69,7 +69,16 @@ export class AgentCLI {
       .allowUnknownOption()
       .argument('[args...]', `Arguments to pass to ${this.adapter.displayName}`)
       .action(async (args, options) => {
-        await this.handleRun(args, options);
+        // Commander.js v11 behavior: options is Command instance when args array is empty,
+        // but plain object when args are provided. Handle both cases defensively.
+        const opts = typeof options?.opts === 'function' ? options.opts() : options;
+
+        // Debug logging
+        logger.debug(`[AgentCLI] action called with args: ${JSON.stringify(args)}`);
+        logger.debug(`[AgentCLI] options type: ${typeof options}, has opts(): ${typeof options?.opts === 'function'}`);
+        logger.debug(`[AgentCLI] extracted opts: ${JSON.stringify(opts)}`);
+
+        await this.handleRun(args, opts);
       });
 
     // Add health check command
@@ -80,17 +89,21 @@ export class AgentCLI {
         await this.handleHealthCheck();
       });
 
-    // Add init command for frameworks
-    this.program
-      .command('init')
-      .description('Initialize development framework')
-      .argument('[framework]', 'Framework to initialize (speckit, bmad)')
-      .option('-l, --list', 'List available frameworks')
-      .option('--force', 'Force re-initialization')
-      .option('--project-name <name>', 'Project name for framework initialization')
-      .action(async (framework, options) => {
-        await this.handleInit(framework, options);
-      });
+    // Add init command for frameworks (skip for built-in agent)
+    if (this.adapter.name !== BUILTIN_AGENT_NAME) {
+      this.program
+        .command('init')
+        .description('Initialize development framework')
+        .argument('[framework]', 'Framework to initialize (speckit, bmad)')
+        .option('-l, --list', 'List available frameworks')
+        .option('--force', 'Force re-initialization')
+        .option('--project-name <name>', 'Project name for framework initialization')
+        .action(async (framework, options) => {
+          // Commander.js v11 behavior: options might be Command instance or plain object
+          const opts = typeof options?.opts === 'function' ? options.opts() : options;
+          await this.handleInit(framework, opts);
+        });
+    }
   }
 
   /**
@@ -122,8 +135,13 @@ export class AgentCLI {
         process.exit(1);
       }
 
-      // Apply silent mode from CLI flag (if provided)
-      if (options.silent) {
+      // Auto-enable silent mode in non-interactive mode (--task flag present)
+      // This suppresses welcome/goodbye messages and interactive prompts
+      const isNonInteractiveMode = !!options.task;
+      const shouldBeSilent = options.silent || isNonInteractiveMode;
+
+      // Apply silent mode from CLI flag or auto-detected non-interactive mode
+      if (shouldBeSilent) {
         // Type-safe check: ensure adapter has setSilentMode method
         if ('setSilentMode' in this.adapter && typeof this.adapter.setSilentMode === 'function') {
           this.adapter.setSilentMode(true);
@@ -209,6 +227,9 @@ export class AgentCLI {
 
       // Collect all arguments to pass to the agent
       const agentArgs = this.collectPassThroughArgs(args, options);
+
+      // Debug logging
+      logger.debug(`[AgentCLI] collected agentArgs: ${JSON.stringify(agentArgs)}`);
 
       // Run the agent (welcome message will be shown inside)
       await this.adapter.run(agentArgs, providerEnv);
