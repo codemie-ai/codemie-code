@@ -157,7 +157,7 @@ export const OpenCodePluginMetadata: AgentMetadata = {
     apiKey: [],
     model: []
   },
-  supportedProviders: ['litellm', 'ai-run-sso', 'ollama', 'bedrock'],
+  supportedProviders: ['litellm', 'ai-run-sso', 'ollama', 'bedrock', 'bearer-auth'],
   ssoConfig: { enabled: true, clientType: 'codemie-opencode' },
 
   lifecycle: {
