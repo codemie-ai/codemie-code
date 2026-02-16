@@ -23,6 +23,8 @@ export interface ProxyConfig {
   sessionId?: string;
   version?: string;         // CLI version for metrics and headers
   profileConfig?: CodeMieConfigOptions; // Full profile config (read once at CLI level)
+  authMethod?: 'sso' | 'jwt';  // Authentication method
+  jwtToken?: string;             // JWT token (from CLI arg or env var)
 }
 
 /**

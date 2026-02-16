@@ -56,21 +56,41 @@ export class CodeMieProxy {
    * Start the proxy server
    */
   async start(): Promise<{ port: number; url: string }> {
-    // 1. Check if provider uses SSO authentication
-    const provider = ProviderRegistry.getProvider(this.config.provider || '');
-    const isSSOProvider = provider?.authType === 'sso';
+    // 1. Detect auth method from config
+    const authMethod = this.config.authMethod || 'sso';  // Default: SSO for backward compat
 
-    // 2. Load credentials (if needed for SSO)
+    // 2. Load credentials based on auth method
     let credentials: any = null;
-    if (isSSOProvider) {
-      const { CodeMieSSO } = await import('../sso.auth.js');
-      const sso = new CodeMieSSO();
-      credentials = await sso.getStoredCredentials(this.config.targetApiUrl);
 
-      if (!credentials) {
+    if (authMethod === 'jwt') {
+      // JWT path: token from CLI arg, env var, or credential store
+      const token = this.config.jwtToken
+        || process.env.CODEMIE_JWT_TOKEN
+        || await this.loadJWTFromStore();
+
+      if (!token) {
         throw new AuthenticationError(
-          `SSO credentials not found for ${this.config.targetApiUrl}. Please run: codemie profile login --url ${this.config.targetApiUrl}`
+          'JWT token not found. Provide via --jwt-token, CODEMIE_JWT_TOKEN env var, or run: codemie setup'
         );
+      }
+
+      credentials = { token, apiUrl: this.config.targetApiUrl };
+    } else {
+      // SSO path: existing behavior (unchanged)
+      const provider = ProviderRegistry.getProvider(this.config.provider || '');
+      const isSSOProvider = provider?.authType === 'sso';
+
+      if (isSSOProvider) {
+        const { CodeMieSSO } = await import('../sso.auth.js');
+        const sso = new CodeMieSSO();
+        credentials = await sso.getStoredCredentials(this.config.targetApiUrl);
+
+        if (!credentials) {
+          throw new AuthenticationError(
+            `SSO credentials not found for ${this.config.targetApiUrl}. ` +
+            `Please run: codemie profile login --url ${this.config.targetApiUrl}`
+          );
+        }
       }
     }
 
@@ -538,5 +558,19 @@ export class CodeMieProxy {
         }
       });
     });
+  }
+
+  /**
+   * Load JWT token from credential store
+   */
+  private async loadJWTFromStore(): Promise<string | null> {
+    try {
+      const { CredentialStore } = await import('../../../../utils/security.js');
+      const store = CredentialStore.getInstance();
+      const jwtCreds = await store.retrieveJWTCredentials(this.config.targetApiUrl);
+      return jwtCreds?.token || null;
+    } catch {
+      return null;
+    }
   }
 }
