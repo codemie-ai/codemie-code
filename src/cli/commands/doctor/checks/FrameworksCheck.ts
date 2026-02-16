@@ -23,10 +23,16 @@ export class FrameworksCheck implements ItemWiseHealthCheck {
           message: 'No frameworks registered'
         });
       } else {
-        // Check each framework
-        for (const framework of frameworks) {
-          const installed = await framework.isInstalled();
-          const version = installed ? await framework.getVersion() : null;
+        // Check all frameworks in parallel
+        const frameworkResults = await Promise.all(
+          frameworks.map(async (framework) => {
+            const installed = await framework.isInstalled();
+            const version = installed ? await framework.getVersion() : null;
+            return { framework, installed, version };
+          })
+        );
+
+        for (const { framework, installed, version } of frameworkResults) {
           const versionStr = version ? ` (${version})` : '';
 
           if (installed) {

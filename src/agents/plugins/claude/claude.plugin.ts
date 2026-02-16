@@ -26,9 +26,6 @@ import {
  * Supported Claude Code version
  * Latest version tested and verified with CodeMie backend
  *
- * Latest available versions can be found here:
- * https://github.com/anthropics/claude-code/releases
- *
  * **UPDATE THIS WHEN BUMPING CLAUDE VERSION**
  */
 const CLAUDE_SUPPORTED_VERSION = '2.1.31';
