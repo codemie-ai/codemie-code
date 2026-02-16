@@ -11,7 +11,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import * as os from 'os';
-import { SSOCredentials } from '../providers/core/types.js';
+import { SSOCredentials, JWTCredentials } from '../providers/core/types.js';
 import { getCodemiePath } from './paths.js';
 
 // ============================================================================
@@ -375,6 +375,118 @@ export class CredentialStore {
     const filePath = baseUrl
       ? path.join(CREDENTIALS_DIR, `${this.getUrlStorageKey(baseUrl)}.enc`)
       : FALLBACK_FILE;
+
+    // Clear keychain if available
+    const keytarModule = await getKeytar();
+    if (keytarModule) {
+      try {
+        await keytarModule.deletePassword(SERVICE_NAME, accountName);
+      } catch {
+        // Ignore errors, will try file storage next
+      }
+    }
+
+    // Also clear file storage
+    try {
+      await fs.unlink(filePath);
+    } catch {
+      // Ignore file not found errors
+    }
+  }
+
+  /**
+   * Store JWT credentials securely
+   * @param credentials - JWT credentials to store
+   * @param baseUrl - Optional base URL for per-URL storage
+   */
+  async storeJWTCredentials(credentials: JWTCredentials, baseUrl?: string): Promise<void> {
+    const encrypted = this.encrypt(JSON.stringify(credentials));
+
+    // Determine storage key based on whether baseUrl is provided
+    // Use jwt- prefix to avoid collision with SSO credentials
+    const accountName = baseUrl ? `jwt-${this.getUrlStorageKey(baseUrl)}` : 'jwt-credentials';
+    const filePath = baseUrl
+      ? path.join(CREDENTIALS_DIR, `jwt-${this.getUrlStorageKey(baseUrl)}.enc`)
+      : path.join(CREDENTIALS_DIR, 'jwt-credentials.enc');
+
+    // Store to keychain if available (best effort, don't fail if it errors)
+    const keytarModule = await getKeytar();
+    if (keytarModule) {
+      try {
+        await keytarModule.setPassword(SERVICE_NAME, accountName, encrypted);
+      } catch {
+        // Continue to file storage even if keychain fails
+      }
+    }
+
+    // Always store to file as well for consistency
+    await this.storeToFile(encrypted, filePath);
+  }
+
+  /**
+   * Retrieve JWT credentials from secure storage
+   * @param baseUrl - Optional base URL for per-URL retrieval
+   * @returns JWT credentials or null if not found or expired
+   */
+  async retrieveJWTCredentials(baseUrl?: string): Promise<JWTCredentials | null> {
+    // Determine storage key based on whether baseUrl is provided
+    const accountName = baseUrl ? `jwt-${this.getUrlStorageKey(baseUrl)}` : 'jwt-credentials';
+    const filePath = baseUrl
+      ? path.join(CREDENTIALS_DIR, `jwt-${this.getUrlStorageKey(baseUrl)}.enc`)
+      : path.join(CREDENTIALS_DIR, 'jwt-credentials.enc');
+
+    // Try keychain first if available
+    const keytarModule = await getKeytar();
+    if (keytarModule) {
+      try {
+        const encrypted = await keytarModule.getPassword(SERVICE_NAME, accountName);
+        if (encrypted) {
+          const decrypted = this.decrypt(encrypted);
+          const credentials = JSON.parse(decrypted) as JWTCredentials;
+
+          // Check token expiration
+          if (credentials.expiresAt && Date.now() > credentials.expiresAt) {
+            return null; // Token expired
+          }
+
+          return credentials;
+        }
+      } catch {
+        // Fall through to file storage
+      }
+    }
+
+    // Always try file storage as fallback
+    try {
+      const encrypted = await this.retrieveFromFile(filePath);
+      if (encrypted) {
+        const decrypted = this.decrypt(encrypted);
+        const credentials = JSON.parse(decrypted) as JWTCredentials;
+
+        // Check token expiration
+        if (credentials.expiresAt && Date.now() > credentials.expiresAt) {
+          return null; // Token expired
+        }
+
+        return credentials;
+      }
+    } catch {
+      // Unable to decrypt file storage
+    }
+
+    return null;
+  }
+
+  /**
+   * Clear JWT credentials from secure storage
+   * @param baseUrl - Optional base URL for per-URL deletion
+   */
+  async clearJWTCredentials(baseUrl?: string): Promise<void> {
+    // Determine storage key based on whether baseUrl is provided
+    const accountName = baseUrl ? `jwt-${this.getUrlStorageKey(baseUrl)}` : 'jwt-credentials';
+    const filePath = baseUrl
+      ? path.join(CREDENTIALS_DIR, `jwt-${this.getUrlStorageKey(baseUrl)}.enc`)
+      : path.join(CREDENTIALS_DIR, 'jwt-credentials.enc');
 
     // Clear keychain if available
     const keytarModule = await getKeytar();

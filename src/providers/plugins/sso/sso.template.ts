@@ -40,6 +40,13 @@ export const SSOTemplate = registerProvider<ProviderTemplate>({
     if (config.codeMieProject) env.CODEMIE_PROJECT = config.codeMieProject;
     if (config.authMethod) env.CODEMIE_AUTH_METHOD = config.authMethod;
 
+    // Export JWT token when auth method is JWT
+    if (config.authMethod === 'jwt') {
+      const tokenEnvVar = config.jwtConfig?.tokenEnvVar || 'CODEMIE_JWT_TOKEN';
+      const token = process.env[tokenEnvVar] || config.jwtConfig?.token;
+      if (token) env.CODEMIE_JWT_TOKEN = token;
+    }
+
     // Only export integration ID if integration is configured
     if (config.codeMieIntegration?.id) {
       env.CODEMIE_INTEGRATION_ID = config.codeMieIntegration.id;
