@@ -180,6 +180,14 @@ class Logger {
       });
     }
 
+    // Defensive check: Skip write if rotation is in progress or stream is not writable
+    // This prevents ERR_STREAM_WRITE_AFTER_END race condition when log rotation occurs
+    // Race scenario: rotateLogFileIfNeeded() closes stream while writeToLogFile() tries to write
+    if (this.isRotating || !this.writeStream.writable) {
+      // Skip this write - next log call will use the new rotated stream
+      return;
+    }
+
     try {
       const timestamp = new Date().toISOString();
 
@@ -210,8 +218,17 @@ class Logger {
   /**
    * Flush and close the write stream
    * Returns a Promise that resolves when all data is flushed
+   * Waits for any in-progress rotation to complete before closing
    */
-  close(): Promise<void> {
+  async close(): Promise<void> {
+    // Wait for any in-progress rotation to complete
+    // This prevents race conditions where close() is called during rotation
+    const maxWaitTime = 5000; // 5 seconds max wait
+    const startTime = Date.now();
+    while (this.isRotating && (Date.now() - startTime) < maxWaitTime) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
     return new Promise((resolve) => {
       if (this.writeStream) {
         this.writeStream.end(() => {
