@@ -34,12 +34,34 @@ export class CodeMieSSO {
   private server?: Server;
   private callbackResult?: SSOAuthResult;
   private codeMieUrl!: string;
+  private abortController?: AbortController;
+  private isAuthenticating = false;
 
   /**
    * Authenticate via browser SSO
    */
   async authenticate(config: SSOAuthConfig): Promise<SSOAuthResult> {
     this.codeMieUrl = config.codeMieUrl;
+    this.isAuthenticating = true;
+    this.abortController = new AbortController();
+
+    // Register signal handlers for graceful termination (following agent.ts pattern)
+    const sigintHandler = () => {
+      if (this.isAuthenticating) {
+        console.log(chalk.yellow('\n⚠️  Authentication cancelled by user'));
+        this.abortController?.abort();
+      }
+    };
+
+    const sigtermHandler = () => {
+      if (this.isAuthenticating) {
+        console.log(chalk.yellow('\n⚠️  Authentication terminated'));
+        this.abortController?.abort();
+      }
+    };
+
+    process.once('SIGINT', sigintHandler);
+    process.once('SIGTERM', sigtermHandler);
 
     try {
       // 1. Start local callback server
@@ -53,8 +75,11 @@ export class CodeMieSSO {
       console.log(chalk.white(`Opening browser for authentication...`));
       await open(ssoUrl);
 
-      // 4. Wait for callback with timeout
-      const result = await this.waitForCallback(config.timeout || 120000);
+      // 4. Wait for callback with timeout and abort signal
+      const result = await this.waitForCallback(
+        config.timeout || 120000,
+        this.abortController.signal
+      );
 
       // 5. Store credentials if successful
       if (result.success && result.apiUrl && result.cookies) {
@@ -71,11 +96,25 @@ export class CodeMieSSO {
       return result;
 
     } catch (error) {
+      // Handle abort as user cancellation
+      if (error instanceof Error && error.name === 'AbortError') {
+        return {
+          success: false,
+          error: 'Authentication cancelled by user'
+        };
+      }
+
       return {
         success: false,
         error: error instanceof Error ? error.message : String(error)
       };
     } finally {
+      this.isAuthenticating = false;
+
+      // Remove signal handlers to prevent memory leaks (following agent.ts pattern)
+      process.off('SIGINT', sigintHandler);
+      process.off('SIGTERM', sigtermHandler);
+
       this.cleanup();
     }
   }
@@ -292,24 +331,47 @@ export class CodeMieSSO {
   }
 
   /**
-   * Wait for OAuth callback with timeout
+   * Wait for OAuth callback with timeout and abort support
    */
-  private async waitForCallback(timeout: number): Promise<SSOAuthResult> {
+  private async waitForCallback(
+    timeout: number,
+    abortSignal: AbortSignal
+  ): Promise<SSOAuthResult> {
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      let timer: NodeJS.Timeout | undefined;
+      let pollInterval: NodeJS.Timeout | undefined;
+
+      // Handle abort signal
+      const abortHandler = () => {
+        if (timer) clearTimeout(timer);
+        if (pollInterval) clearInterval(pollInterval);
+        reject(new Error('AbortError'));
+      };
+
+      // Handle timeout
+      timer = setTimeout(() => {
+        if (pollInterval) clearInterval(pollInterval);
+        abortSignal.removeEventListener('abort', abortHandler);
         reject(new Error('Authentication timeout - no response received'));
       }, timeout);
 
-      const checkResult = () => {
+      // Register abort handler
+      if (abortSignal.aborted) {
+        clearTimeout(timer);
+        reject(new Error('AbortError'));
+        return;
+      }
+      abortSignal.addEventListener('abort', abortHandler);
+
+      // Poll for callback result (non-recursive)
+      pollInterval = setInterval(() => {
         if (this.callbackResult) {
           clearTimeout(timer);
+          clearInterval(pollInterval);
+          abortSignal.removeEventListener('abort', abortHandler);
           resolve(this.callbackResult);
-        } else {
-          setTimeout(checkResult, 100);
         }
-      };
-
-      checkResult();
+      }, 100);
     });
   }
 
@@ -318,8 +380,19 @@ export class CodeMieSSO {
    */
   private cleanup(): void {
     if (this.server) {
-      this.server.close();
+      // Force close all connections immediately
+      this.server.closeAllConnections?.();
+
+      // Close the server
+      this.server.close(() => {
+        // Server closed callback (optional)
+      });
+
       delete this.server;
     }
+
+    // Reset state
+    this.callbackResult = undefined;
+    this.abortController = undefined;
   }
 }
