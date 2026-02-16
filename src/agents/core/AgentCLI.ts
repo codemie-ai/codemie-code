@@ -174,7 +174,11 @@ export class AgentCLI {
       const provider = config.provider ? ProviderRegistry.getProvider(config.provider) : null;
       const requiresAuth = provider?.requiresAuth ?? true; // Default to true for safety
 
-      if (requiresAuth && !config.apiKey) {
+      // Skip apiKey validation for SSO and JWT authentication methods
+      const authMethod = config.authMethod;
+      const usesAlternativeAuth = authMethod === 'sso' || authMethod === 'jwt';
+
+      if (requiresAuth && !config.apiKey && !usesAlternativeAuth) {
         missingFields.push('apiKey');
       }
 

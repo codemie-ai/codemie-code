@@ -60,7 +60,6 @@ export interface ProviderProfile {
   jwtConfig?: {
     token?: string;
     tokenEnvVar?: string;
-    apiUrl?: string;
     expiresAt?: number;
   };
 
@@ -108,6 +107,11 @@ export interface LegacyConfig {
   ssoConfig?: {
     apiUrl?: string;
     cookiesEncrypted?: string;
+  };
+  jwtConfig?: {
+    token?: string;
+    tokenEnvVar?: string;
+    expiresAt?: number;
   };
 }
 

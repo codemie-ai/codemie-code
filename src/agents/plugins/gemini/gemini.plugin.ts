@@ -21,7 +21,7 @@ const metadata = {
     model: ['GEMINI_MODEL']
   },
 
-  supportedProviders: ['ai-run-sso', 'litellm'],
+  supportedProviders: ['ai-run-sso', 'litellm', 'bearer-auth'],
   blockedModelPatterns: [/^claude/i, /^gpt/i], // Gemini models only
   recommendedModels: ['gemini-3-pro'],
 

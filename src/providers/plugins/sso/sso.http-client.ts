@@ -60,6 +60,28 @@ function buildAuthHeaders(auth: Record<string, string> | string): Record<string,
 }
 
 /**
+ * Ensure API base URL has correct format with /code-assistant-api suffix
+ *
+ * @param rawUrl - Raw URL from user input (e.g., https://codemie.lab.epam.com)
+ * @returns Normalized URL with /code-assistant-api suffix
+ *
+ * @example
+ * ensureApiBase('https://codemie.lab.epam.com')
+ * // => 'https://codemie.lab.epam.com/code-assistant-api'
+ *
+ * ensureApiBase('https://codemie.lab.epam.com/code-assistant-api')
+ * // => 'https://codemie.lab.epam.com/code-assistant-api'
+ */
+export function ensureApiBase(rawUrl: string): string {
+  let base = rawUrl.replace(/\/$/, ''); // Remove trailing slash
+  // If URL doesn't have /code-assistant-api suffix, append it
+  if (!/\/code-assistant-api(\/|$)/i.test(base)) {
+    base = `${base}/code-assistant-api`;
+  }
+  return base;
+}
+
+/**
  * Fetch models from CodeMie API (supports both cookies and JWT)
  *
  * Overload 1: SSO cookies (backward compatible - existing callers unchanged)

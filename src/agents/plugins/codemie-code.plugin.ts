@@ -27,7 +27,7 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
 
   envMapping: {},
 
-  supportedProviders: ['ollama', 'litellm', 'ai-run-sso'],
+  supportedProviders: ['ollama', 'litellm', 'ai-run-sso', 'bearer-auth'],
   blockedModelPatterns: [],
 
   // Built-in agent doesn't use proxy (handles auth internally)
