@@ -65,6 +65,7 @@ export class AgentCLI {
       .option('--api-key <key>', 'Override API key')
       .option('--base-url <url>', 'Override base URL')
       .option('--timeout <seconds>', 'Override timeout (in seconds)', parseInt)
+      .option('--jwt-token <token>', 'JWT token for authentication (overrides config)')
       .option('--task <prompt>', 'Execute a single task (agent-specific flag mapping)')
       .allowUnknownOption()
       .argument('[args...]', `Arguments to pass to ${this.adapter.displayName}`)
@@ -157,6 +158,12 @@ export class AgentCLI {
         baseUrl: options.baseUrl as string | undefined,
         timeout: options.timeout as number | undefined
       });
+
+      // JWT token from CLI overrides everything
+      if (options.jwtToken) {
+        process.env.CODEMIE_JWT_TOKEN = options.jwtToken as string;
+        process.env.CODEMIE_AUTH_METHOD = 'jwt';
+      }
 
       // Validate essential configuration
       const missingFields: string[] = [];
@@ -364,7 +371,7 @@ export class AgentCLI {
   ): string[] {
     const agentArgs = [...args];
     // Config-only options (not passed to agent, handled by CodeMie CLI)
-    const configOnlyOptions = ['profile', 'provider', 'apiKey', 'baseUrl', 'timeout', 'model', 'silent', 'status'];
+    const configOnlyOptions = ['profile', 'provider', 'apiKey', 'baseUrl', 'timeout', 'model', 'silent', 'status', 'jwtToken'];
 
     for (const [key, value] of Object.entries(options)) {
       // Skip config-only options (handled by CodeMie CLI layer)

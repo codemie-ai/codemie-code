@@ -46,7 +46,7 @@ export interface ProviderProfile {
   ignorePatterns?: string[];
 
   // SSO-specific fields
-  authMethod?: 'manual' | 'sso';
+  authMethod?: 'manual' | 'sso' | 'jwt' | 'api-key';
   codeMieUrl?: string;
   codeMieProject?: string;  // Selected project/application name
   codemieAssistants?: CodemieAssistant[];
@@ -54,6 +54,14 @@ export interface ProviderProfile {
   ssoConfig?: {
     apiUrl?: string;
     cookiesEncrypted?: string;
+  };
+
+  // JWT-specific fields
+  jwtConfig?: {
+    token?: string;
+    tokenEnvVar?: string;
+    apiUrl?: string;
+    expiresAt?: number;
   };
 
   // AWS Bedrock-specific fields
@@ -92,7 +100,7 @@ export interface LegacyConfig {
   debug?: boolean;
   allowedDirs?: string[];
   ignorePatterns?: string[];
-  authMethod?: 'manual' | 'sso';
+  authMethod?: 'manual' | 'sso' | 'jwt' | 'api-key';
   codeMieUrl?: string;
   codeMieProject?: string;  // Selected project/application name
   codemieAssistants?: CodemieAssistant[];

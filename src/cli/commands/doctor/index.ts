@@ -5,7 +5,7 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import os from 'os';
-import { HealthCheckResult } from './types.js';
+import { HealthCheck, ItemWiseHealthCheck, HealthCheckResult } from './types.js';
 import { HealthCheckFormatter } from './formatter.js';
 import {
   NodeVersionCheck,
@@ -14,6 +14,7 @@ import {
   UvCheck,
   AwsCliCheck,
   AIConfigCheck,
+  JWTAuthCheck,
   AgentsCheck,
   WorkflowsCheck,
   FrameworksCheck
@@ -79,110 +80,119 @@ export function createDoctorCommand(): Command {
       // Display header
       formatter.displayHeader();
 
-      // Helper to display a pre-computed check result
-      const displayResult = (result: HealthCheckResult): void => {
-        formatter.displayCheck(result);
-        if (result.details && result.details.length > 0) {
-          result.details.forEach(detail => {
-            logger.debug(`  - ${detail.status}: ${detail.message}`);
-          });
-        }
-        logger.debug('');
-      };
+      // Define standard health checks
+      const checks: HealthCheck[] = [
+        new NodeVersionCheck(),
+        new NpmCheck(),
+        new PythonCheck(),
+        new UvCheck(),
+        new AwsCliCheck(),
+        new AIConfigCheck(),
+        new JWTAuthCheck(),
+        new AgentsCheck(),
+        new WorkflowsCheck(),
+        new FrameworksCheck()
+      ];
 
-      // --- Group 1: Independent tool checks (run in parallel) ---
-      const nodeCheck = new NodeVersionCheck();
-      const npmCheck = new NpmCheck();
-      const pythonCheck = new PythonCheck();
-      const uvCheck = new UvCheck();
-      const awsCheck = new AwsCliCheck();
+      // Run and display standard checks immediately
+      for (const check of checks) {
+        logger.debug(`=== Running Check: ${check.name} ===`);
+        const startTime = Date.now();
 
-      logger.debug('=== Running Tool Checks (parallel) ===');
-      const toolStartTime = Date.now();
-      const [nodeResult, npmResult, pythonResult, uvResult, awsResult] = await Promise.all([
-        nodeCheck.run(),
-        npmCheck.run(),
-        pythonCheck.run(),
-        uvCheck.run(),
-        awsCheck.run()
-      ]);
-      logger.debug(`Tool checks completed in ${Date.now() - toolStartTime}ms`);
+        // Check if this is an ItemWiseHealthCheck
+        const isItemWise = 'runWithItemDisplay' in check;
 
-      // Display tool check results sequentially
-      for (const result of [nodeResult, npmResult, pythonResult, uvResult, awsResult]) {
-        results.push(result);
-        displayResult(result);
-      }
+        if (isItemWise) {
+          // Display section header
+          console.log(formatter['getCheckHeader'](check.name));
 
-      // --- Group 2: AI Config + Provider check (sequential, provider depends on config) ---
-      const aiConfigCheck = new AIConfigCheck();
-      logger.debug('=== Running Check: Active Profile ===');
-      const configStartTime = Date.now();
-      const configResult = await aiConfigCheck.run();
-      logger.debug(`Check completed in ${Date.now() - configStartTime}ms`);
-      results.push(configResult);
-      displayResult(configResult);
-
-      // Run provider-specific checks if config is available
-      const config = aiConfigCheck.getConfig();
-      if (config && config.provider) {
-        logger.debug(`=== Running Provider Check: ${config.provider} ===`);
-        logger.debug(`Base URL: ${config.baseUrl}`);
-        logger.debug(`Model: ${config.model}`);
-
-        const healthCheck = ProviderRegistry.getHealthCheck(config.provider);
-
-        if (healthCheck) {
-          formatter.startCheck('Provider');
-
-          try {
-            const providerStartTime = Date.now();
-            const providerResult = await healthCheck.check(config);
-            logger.debug(`Provider check completed in ${Date.now() - providerStartTime}ms`);
-            logger.debug(`Status: ${providerResult.status}`);
-
-            const doctorResult = adaptProviderResult(providerResult);
-            results.push(doctorResult);
-            formatter.displayCheckWithHeader(doctorResult);
-          } catch (error) {
-            const errorMessage = error instanceof Error ? error.message : String(error);
-            logger.error(`Provider check failed: ${errorMessage}`);
-            if (error instanceof Error && error.stack) {
-              logger.debug(`Stack trace: ${error.stack}`);
+          // Run with item-by-item display
+          const result = await (check as ItemWiseHealthCheck).runWithItemDisplay(
+            (itemName) => {
+              logger.debug(`  Checking item: ${itemName}`);
+              formatter.startItem(itemName);
+            },
+            (detail) => {
+              logger.debug(`  Result: ${detail.status} - ${detail.message}`);
+              formatter.displayItem(detail);
             }
+          );
+          results.push(result);
 
-            results.push({
-              name: 'Provider Check Error',
-              success: false,
-              details: [{
-                status: 'error',
-                message: `Check failed: ${errorMessage}`
-              }]
+          const elapsed = Date.now() - startTime;
+          logger.debug(`Check completed in ${elapsed}ms: ${result.success ? 'SUCCESS' : 'FAILED'}`);
+          logger.debug('');
+
+          // Add blank line after section
+          console.log();
+        } else {
+          // Regular check with section-level progress
+          formatter.startCheck(check.name);
+          const result = await check.run((message) => {
+            logger.debug(`  Progress: ${message}`);
+            formatter.updateProgress(message);
+          });
+          results.push(result);
+          formatter.displayCheck(result);
+
+          const elapsed = Date.now() - startTime;
+          logger.debug(`Check completed in ${elapsed}ms: ${result.success ? 'SUCCESS' : 'FAILED'}`);
+          if (result.details && result.details.length > 0) {
+            result.details.forEach(detail => {
+              logger.debug(`  - ${detail.status}: ${detail.message}`);
             });
           }
-        } else {
-          logger.debug(`No health check available for provider: ${config.provider}`);
+          logger.debug('');
         }
-      }
 
-      // --- Group 3: Discovery checks (run in parallel) ---
-      const agentsCheck = new AgentsCheck();
-      const workflowsCheck = new WorkflowsCheck();
-      const frameworksCheck = new FrameworksCheck();
+        // After AIConfigCheck, immediately run provider-specific checks
+        if (check instanceof AIConfigCheck) {
+          const config = check.getConfig();
 
-      logger.debug('=== Running Discovery Checks (parallel) ===');
-      const discoveryStartTime = Date.now();
-      const [agentsResult, workflowsResult, frameworksResult] = await Promise.all([
-        agentsCheck.run(),
-        workflowsCheck.run(),
-        frameworksCheck.run()
-      ]);
-      logger.debug(`Discovery checks completed in ${Date.now() - discoveryStartTime}ms`);
+          if (config && config.provider) {
+            logger.debug(`=== Running Provider Check: ${config.provider} ===`);
+            logger.debug(`Base URL: ${config.baseUrl}`);
+            logger.debug(`Model: ${config.model}`);
 
-      // Display discovery check results sequentially
-      for (const result of [agentsResult, workflowsResult, frameworksResult]) {
-        results.push(result);
-        displayResult(result);
+            // Get health check from ProviderRegistry
+            const healthCheck = ProviderRegistry.getHealthCheck(config.provider);
+
+            if (healthCheck) {
+              formatter.startCheck('Provider');
+
+              try {
+                const providerStartTime = Date.now();
+                const providerResult = await healthCheck.check(config);
+                const elapsed = Date.now() - providerStartTime;
+
+                logger.debug(`Provider check completed in ${elapsed}ms`);
+                logger.debug(`Status: ${providerResult.status}`);
+
+                const doctorResult = adaptProviderResult(providerResult);
+                results.push(doctorResult);
+                formatter.displayCheckWithHeader(doctorResult);
+              } catch (error) {
+                const errorMessage = error instanceof Error ? error.message : String(error);
+                logger.error(`Provider check failed: ${errorMessage}`);
+                if (error instanceof Error && error.stack) {
+                  logger.debug(`Stack trace: ${error.stack}`);
+                }
+
+                // If check throws, capture error
+                results.push({
+                  name: 'Provider Check Error',
+                  success: false,
+                  details: [{
+                    status: 'error',
+                    message: `Check failed: ${errorMessage}`
+                  }]
+                });
+              }
+            } else {
+              logger.debug(`No health check available for provider: ${config.provider}`);
+            }
+          }
+        }
       }
 
       logger.debug('=== All Checks Completed ===');

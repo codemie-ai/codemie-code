@@ -18,12 +18,21 @@ export class SSOAuthPlugin implements ProxyPlugin {
   priority = 10;
 
   async createInterceptor(context: PluginContext): Promise<ProxyInterceptor> {
-    if (!context.credentials) {
-      throw new Error('SSO credentials required for SSOAuthPlugin');
+    // Guard: skip if credentials are JWT (not SSO)
+    if (!context.credentials || !('cookies' in context.credentials)) {
+      return new NoOpInterceptor('sso-auth');
     }
 
-    return new SSOAuthInterceptor(context.credentials);
+    return new SSOAuthInterceptor(context.credentials as SSOCredentials);
   }
+}
+
+/**
+ * No-op interceptor returned when this plugin is not the active auth method.
+ * Zero runtime cost - no hooks implemented.
+ */
+class NoOpInterceptor implements ProxyInterceptor {
+  constructor(public name: string) {}
 }
 
 class SSOAuthInterceptor implements ProxyInterceptor {
