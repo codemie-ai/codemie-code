@@ -195,6 +195,37 @@ async function verifyInstallation(
 }
 
 /**
+ * Detect if installer output contains HTML instead of expected script output
+ * This occurs when the installer URL returns an HTML page (e.g., region block,
+ * maintenance page) instead of the actual installer script. Bash then fails
+ * trying to execute HTML as shell commands.
+ *
+ * @param output - Combined stdout/stderr from the installer process
+ * @returns true if the output contains HTML markers
+ */
+function isHtmlInstallerResponse(output: string): boolean {
+	return /<!DOCTYPE\s+html/i.test(output) || /<html[\s>]/i.test(output);
+}
+
+/**
+ * Extract a user-friendly error message from HTML installer response
+ * Checks for known error patterns (region block, service unavailability)
+ * and returns an appropriate message.
+ *
+ * @param output - Combined stdout/stderr containing HTML content
+ * @returns User-friendly error message
+ */
+function detectHtmlErrorMessage(output: string): string {
+	// Check for region-specific unavailability
+	if (/unavailable.*region|not.*available.*here|app.unavailable/i.test(output)) {
+		return 'Claude Code is not available in your current region. Visit https://claude.ai for information about supported regions.';
+	}
+
+	// Generic HTML response (maintenance page, unexpected redirect, etc.)
+	return 'Installer URL returned an HTML page instead of an installation script. The service may be temporarily unavailable or not accessible from your location. Visit https://claude.ai for more information.';
+}
+
+/**
  * Install agent using native platform installer
  * Detects platform and executes appropriate installation script
  *
@@ -246,6 +277,18 @@ export async function installNativeAgent(
 
 		// Check if installation succeeded
 		if (result.code !== 0) {
+			const combinedOutput = `${result.stderr || ''} ${result.stdout || ''}`;
+
+			// Detect HTML response instead of installer script
+			// This happens when the service returns an error page (e.g., region block)
+			// instead of the actual installer script, and bash fails trying to parse HTML
+			if (isHtmlInstallerResponse(combinedOutput)) {
+				throw new AgentInstallationError(
+					agentName,
+					detectHtmlErrorMessage(combinedOutput)
+				);
+			}
+
 			// SECURITY: Sanitize output before including in error message
 			// Installer scripts might echo sensitive environment variables
 			const sanitizedOutput = sanitizeValue(result.stderr || result.stdout);

@@ -36,12 +36,17 @@ export class AgentsCheck implements ItemWiseHealthCheck {
     const installedAgents = await AgentRegistry.getInstalledAgents();
 
     if (installedAgents.length > 0) {
-      for (const agent of installedAgents) {
-        const version = await agent.getVersion();
-        const versionStr = version ? ` (${version})` : '';
+      // Parallelize version + installation method checks across all agents
+      const agentResults = await Promise.all(
+        installedAgents.map(async (agent) => {
+          const version = await agent.getVersion();
+          const versionStr = version ? ` (${version})` : '';
+          const deprecationWarning = await this.checkDeprecatedInstallation(agent, versionStr);
+          return { agent, versionStr, deprecationWarning };
+        })
+      );
 
-        // Check for deprecated npm installation
-        const deprecationWarning = await this.checkDeprecatedInstallation(agent, versionStr);
+      for (const { agent, versionStr, deprecationWarning } of agentResults) {
         if (deprecationWarning) {
           details.push(deprecationWarning);
           continue;

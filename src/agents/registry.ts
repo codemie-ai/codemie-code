@@ -65,13 +65,16 @@ export class AgentRegistry {
 
   static async getInstalledAgents(): Promise<AgentAdapter[]> {
     AgentRegistry.initialize();
-    const agents: AgentAdapter[] = [];
-    for (const adapter of AgentRegistry.adapters.values()) {
-      if (await adapter.isInstalled()) {
-        agents.push(adapter);
-      }
-    }
-    return agents;
+    const allAdapters = Array.from(AgentRegistry.adapters.values());
+    const installResults = await Promise.all(
+      allAdapters.map(async (adapter) => ({
+        adapter,
+        installed: await adapter.isInstalled()
+      }))
+    );
+    return installResults
+      .filter(({ installed }) => installed)
+      .map(({ adapter }) => adapter);
   }
 
   /**
