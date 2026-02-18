@@ -5,6 +5,20 @@
  */
 
 /**
+ * Conversation sync status constants
+ */
+export const CONVERSATION_SYNC_STATUS = {
+  PENDING: 'pending',
+  SUCCESS: 'success',
+  FAILED: 'failed'
+} as const;
+
+/**
+ * Conversation sync status type
+ */
+export type ConversationSyncStatus = 'pending' | 'success' | 'failed';
+
+/**
  * Conversation payload record stored in JSONL
  * Used for tracking conversation sync status
  */
@@ -31,7 +45,7 @@ export interface ConversationPayloadRecord {
   };
 
   /** Sync result status */
-  status: 'pending' | 'success' | 'failed';
+  status: ConversationSyncStatus;
 
   /** Error message if failed */
   error?: string;

@@ -23,6 +23,7 @@ export type MessageRole = typeof ROLES.USER | typeof ROLES.ASSISTANT;
 export interface HistoryMessage {
   role: MessageRole;
   message?: string;
+  message_raw?: string;
 }
 
 export const MESSAGES = {

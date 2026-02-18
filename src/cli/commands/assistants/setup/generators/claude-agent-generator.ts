@@ -57,7 +57,7 @@ export function createClaudeSubagentContent(assistant: Assistant): string {
        \`\`\`
     3. **Return the response** directly to the user
 
-    The \`codemie assistants chat\` command communicates with the CodeMie platform to get responses from the ${assistant.name} assistant.
+    The \`codemie assistants chat\` command communicates with the CodeMie platform to get responses from the ${assistant.name} assistant. The command automatically includes the last 10 messages from the current conversation session as context.
 
     ## Example
 

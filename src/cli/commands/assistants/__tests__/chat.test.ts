@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { createAssistantsChatCommand } from '../chat.js';
+import { createAssistantsChatCommand } from '../chat/index.js';
 import { MESSAGES } from '../constants.js';
 
 describe('Assistants Chat Command', () => {
@@ -74,9 +74,9 @@ describe('Assistants Chat Command', () => {
   });
 
   describe('Command Options', () => {
-    it('should have verbose and conversation-id options', () => {
+    it('should have verbose, conversation-id, and load-history options', () => {
       const command = createAssistantsChatCommand();
-      expect(command.options).toHaveLength(2);
+      expect(command.options).toHaveLength(3);
     });
 
     it('should accept --verbose flag', () => {
