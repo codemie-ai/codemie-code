@@ -108,6 +108,31 @@ async function handleSessionStart(event: SessionStartEvent, _rawInput: string, s
   await createSessionRecord(event, sessionId);
   // Send session start metrics (SSO provider only)
   await sendSessionStartMetrics(event, sessionId, event.session_id);
+  // Sync CodeMie skills to Claude Code (.claude/skills/)
+  await syncSkillsToClaude(event.cwd || process.cwd());
+}
+
+/**
+ * Sync CodeMie-managed skills to .claude/skills/ for Claude Code discovery.
+ * Non-blocking: errors are logged but do not affect session startup.
+ */
+async function syncSkillsToClaude(cwd: string): Promise<void> {
+  try {
+    const { SkillSync } = await import(
+      '../../agents/codemie-code/skills/sync/SkillSync.js'
+    );
+    const sync = new SkillSync();
+    const result = await sync.syncToClaude({ cwd });
+    if (result.synced.length > 0) {
+      logger.info(`[hook:SessionStart] Synced ${result.synced.length} skill(s) to .claude/skills/`);
+    }
+    if (result.errors.length > 0) {
+      logger.debug(`[hook:SessionStart] Skill sync errors: ${result.errors.join(', ')}`);
+    }
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    logger.debug(`[hook:SessionStart] Skill sync failed (non-blocking): ${msg}`);
+  }
 }
 
 

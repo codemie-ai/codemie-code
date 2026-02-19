@@ -2,9 +2,9 @@
 import { AgentCLI } from '../dist/agents/core/AgentCLI.js';
 import { AgentRegistry } from '../dist/agents/registry.js';
 
-const agent = AgentRegistry.getAgent('opencode');
+const agent = AgentRegistry.getAgent('codemie-opencode');
 if (!agent) {
-  console.error('OpenCode agent not found. Run: codemie doctor');
+  console.error('CodeMie OpenCode agent not found. Run: codemie doctor');
   process.exit(1);
 }
 const cli = new AgentCLI(agent);

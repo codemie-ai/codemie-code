@@ -8,6 +8,10 @@
 export { SkillManager } from './core/SkillManager.js';
 export { SkillDiscovery } from './core/SkillDiscovery.js';
 
+// Sync exports
+export { SkillSync } from './sync/SkillSync.js';
+export type { SyncOptions, SyncResult } from './sync/SkillSync.js';
+
 // Type exports
 export type {
   Skill,

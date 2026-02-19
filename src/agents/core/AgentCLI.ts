@@ -78,19 +78,17 @@ export class AgentCLI {
         await this.handleHealthCheck();
       });
 
-    // Add init command for frameworks (skip for built-in agent)
-    if (this.adapter.name !== BUILTIN_AGENT_NAME) {
-      this.program
-        .command('init')
-        .description('Initialize development framework')
-        .argument('[framework]', 'Framework to initialize (speckit, bmad)')
-        .option('-l, --list', 'List available frameworks')
-        .option('--force', 'Force re-initialization')
-        .option('--project-name <name>', 'Project name for framework initialization')
-        .action(async (framework, options) => {
-          await this.handleInit(framework, options);
-        });
-    }
+    // Add init command for frameworks
+    this.program
+      .command('init')
+      .description('Initialize development framework')
+      .argument('[framework]', 'Framework to initialize (speckit, bmad)')
+      .option('-l, --list', 'List available frameworks')
+      .option('--force', 'Force re-initialization')
+      .option('--project-name <name>', 'Project name for framework initialization')
+      .action(async (framework, options) => {
+        await this.handleInit(framework, options);
+      });
   }
 
   /**

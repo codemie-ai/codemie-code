@@ -189,13 +189,223 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
       context: 128000,
       output: 16384
     }
+  },
+
+  // ── Claude Models ──────────────────────────────────────────────────
+  'claude-4-5-sonnet': {
+    id: 'claude-4-5-sonnet',
+    name: 'Claude 4.5 Sonnet',
+    displayName: 'Claude 4.5 Sonnet',
+    family: 'claude-4',
+    tool_call: true,
+    reasoning: true,
+    attachment: true,
+    temperature: true,
+    structured_output: true,
+    modalities: {
+      input: ['text', 'image'],
+      output: ['text']
+    },
+    knowledge: '2025-04-01',
+    release_date: '2025-09-29',
+    last_updated: '2025-09-29',
+    open_weights: false,
+    cost: {
+      input: 3,
+      output: 15,
+      cache_read: 0.3
+    },
+    limit: {
+      context: 200000,
+      output: 16384
+    }
+  },
+  'claude-sonnet-4-5-20250929': {
+    id: 'claude-sonnet-4-5-20250929',
+    name: 'Claude Sonnet 4.5 (Sep 2025)',
+    displayName: 'Claude Sonnet 4.5 (Sep 2025)',
+    family: 'claude-4',
+    tool_call: true,
+    reasoning: true,
+    attachment: true,
+    temperature: true,
+    structured_output: true,
+    modalities: {
+      input: ['text', 'image'],
+      output: ['text']
+    },
+    knowledge: '2025-04-01',
+    release_date: '2025-09-29',
+    last_updated: '2025-09-29',
+    open_weights: false,
+    cost: {
+      input: 3,
+      output: 15,
+      cache_read: 0.3
+    },
+    limit: {
+      context: 200000,
+      output: 16384
+    }
+  },
+  'claude-opus-4-6': {
+    id: 'claude-opus-4-6',
+    name: 'Claude Opus 4.6',
+    displayName: 'Claude Opus 4.6',
+    family: 'claude-4',
+    tool_call: true,
+    reasoning: true,
+    attachment: true,
+    temperature: true,
+    structured_output: true,
+    modalities: {
+      input: ['text', 'image'],
+      output: ['text']
+    },
+    knowledge: '2025-05-01',
+    release_date: '2026-01-15',
+    last_updated: '2026-01-15',
+    open_weights: false,
+    cost: {
+      input: 15,
+      output: 75,
+      cache_read: 1.5
+    },
+    limit: {
+      context: 200000,
+      output: 32000
+    }
+  },
+  'claude-haiku-4-5': {
+    id: 'claude-haiku-4-5',
+    name: 'Claude Haiku 4.5',
+    displayName: 'Claude Haiku 4.5',
+    family: 'claude-4',
+    tool_call: true,
+    reasoning: false,
+    attachment: true,
+    temperature: true,
+    modalities: {
+      input: ['text', 'image'],
+      output: ['text']
+    },
+    knowledge: '2025-04-01',
+    release_date: '2025-10-01',
+    last_updated: '2025-10-01',
+    open_weights: false,
+    cost: {
+      input: 0.8,
+      output: 4,
+      cache_read: 0.08
+    },
+    limit: {
+      context: 200000,
+      output: 8192
+    }
+  },
+
+  // ── Gemini Models ──────────────────────────────────────────────────
+  'gemini-2.5-pro': {
+    id: 'gemini-2.5-pro',
+    name: 'Gemini 2.5 Pro',
+    displayName: 'Gemini 2.5 Pro',
+    family: 'gemini-2',
+    tool_call: true,
+    reasoning: true,
+    attachment: true,
+    temperature: true,
+    structured_output: true,
+    modalities: {
+      input: ['text', 'image', 'audio', 'video'],
+      output: ['text']
+    },
+    knowledge: '2025-03-01',
+    release_date: '2025-06-05',
+    last_updated: '2025-06-05',
+    open_weights: false,
+    cost: {
+      input: 1.25,
+      output: 10,
+      cache_read: 0.31
+    },
+    limit: {
+      context: 1048576,
+      output: 65536
+    }
+  },
+  'gemini-2.5-flash': {
+    id: 'gemini-2.5-flash',
+    name: 'Gemini 2.5 Flash',
+    displayName: 'Gemini 2.5 Flash',
+    family: 'gemini-2',
+    tool_call: true,
+    reasoning: true,
+    attachment: true,
+    temperature: true,
+    structured_output: true,
+    modalities: {
+      input: ['text', 'image', 'audio', 'video'],
+      output: ['text']
+    },
+    knowledge: '2025-03-01',
+    release_date: '2025-04-17',
+    last_updated: '2025-04-17',
+    open_weights: false,
+    cost: {
+      input: 0.15,
+      output: 0.6,
+      cache_read: 0.0375
+    },
+    limit: {
+      context: 1048576,
+      output: 65536
+    }
+  }
+};
+
+/**
+ * Family-specific defaults for unknown model variants.
+ * Used by getModelConfig() when an exact match isn't found but
+ * the model ID prefix matches a known family.
+ */
+const MODEL_FAMILY_DEFAULTS: Record<string, Partial<OpenCodeModelConfig>> = {
+  'claude': {
+    family: 'claude-4',
+    reasoning: true,
+    attachment: true,
+    temperature: true,
+    structured_output: true,
+    modalities: { input: ['text', 'image'], output: ['text'] },
+    limit: { context: 200000, output: 16384 }
+  },
+  'gemini': {
+    family: 'gemini-2',
+    reasoning: true,
+    attachment: true,
+    temperature: true,
+    structured_output: true,
+    modalities: { input: ['text', 'image', 'audio', 'video'], output: ['text'] },
+    limit: { context: 1048576, output: 65536 }
+  },
+  'gpt': {
+    family: 'gpt-5',
+    reasoning: true,
+    attachment: true,
+    temperature: false,
+    modalities: { input: ['text', 'image'], output: ['text'] },
+    limit: { context: 400000, output: 128000 }
   }
 };
 
 /**
  * Get model configuration with fallback for unknown models
  *
- * @param modelId - Model identifier (e.g., 'gpt-5-2-2025-12-11')
+ * Resolution order:
+ * 1. Exact match in OPENCODE_MODEL_CONFIGS
+ * 2. Family-aware fallback using MODEL_FAMILY_DEFAULTS
+ * 3. Generic fallback with conservative defaults
+ *
+ * @param modelId - Model identifier (e.g., 'gpt-5-2-2025-12-11', 'claude-4-5-sonnet')
  * @returns Model configuration in OpenCode format
  *
  * Note: The returned config is used directly in OPENCODE_CONFIG_CONTENT
@@ -207,34 +417,35 @@ export function getModelConfig(modelId: string): OpenCodeModelConfig {
     return config;
   }
 
-  // Fallback for unknown models - create minimal OpenCode-compatible config
-  // Extract family from model ID (e.g., "gpt-4o" -> "gpt-4")
-  const family = modelId.split('-').slice(0, 2).join('-') || modelId;
+  // Detect model family from prefix for smarter defaults
+  const familyPrefix = Object.keys(MODEL_FAMILY_DEFAULTS).find(
+    prefix => modelId.startsWith(prefix)
+  );
+  const familyDefaults = familyPrefix ? MODEL_FAMILY_DEFAULTS[familyPrefix] : {};
+
+  // Extract family from model ID (e.g., "gpt-4o" -> "gpt-4", "claude-4-5-sonnet" -> "claude-4")
+  const family = familyDefaults.family
+    || modelId.split('-').slice(0, 2).join('-')
+    || modelId;
+
+  const today = new Date().toISOString().split('T')[0];
 
   return {
     id: modelId,
     name: modelId,
     displayName: modelId,
     family,
-    tool_call: true,  // Assume tool support
-    reasoning: false, // Conservative default
-    attachment: false,
-    temperature: true,
-    modalities: {
-      input: ['text'],
-      output: ['text']
-    },
-    knowledge: new Date().toISOString().split('T')[0], // Use current date
-    release_date: new Date().toISOString().split('T')[0],
-    last_updated: new Date().toISOString().split('T')[0],
+    tool_call: true,
+    reasoning: familyDefaults.reasoning ?? false,
+    attachment: familyDefaults.attachment ?? false,
+    temperature: familyDefaults.temperature ?? true,
+    structured_output: familyDefaults.structured_output,
+    modalities: familyDefaults.modalities ?? { input: ['text'], output: ['text'] },
+    knowledge: today,
+    release_date: today,
+    last_updated: today,
     open_weights: false,
-    cost: {
-      input: 0,
-      output: 0
-    },
-    limit: {
-      context: 128000,
-      output: 4096
-    }
+    cost: { input: 0, output: 0 },
+    limit: familyDefaults.limit ?? { context: 128000, output: 4096 }
   };
 }

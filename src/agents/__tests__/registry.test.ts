@@ -12,8 +12,8 @@ describe('AgentRegistry', () => {
     it('should register all default agents', () => {
       const agentNames = AgentRegistry.getAgentNames();
 
-      // Should have all 5 default agents (codemie-code, claude, claude-acp, gemini, opencode)
-      expect(agentNames).toHaveLength(5);
+      // Should have all 6 default agents (codemie-code, claude, claude-acp, gemini, opencode, codemie-opencode)
+      expect(agentNames).toHaveLength(6);
     });
 
     it('should register built-in agent', () => {
@@ -62,7 +62,7 @@ describe('AgentRegistry', () => {
     it('should return all registered agents', () => {
       const agents = AgentRegistry.getAllAgents();
 
-      expect(agents).toHaveLength(5);
+      expect(agents).toHaveLength(6);
       expect(agents.every((agent) => agent.name)).toBe(true);
     });
 
@@ -74,6 +74,7 @@ describe('AgentRegistry', () => {
       expect(names).toContain('claude-acp');
       expect(names).toContain('gemini');
       expect(names).toContain('opencode');
+      expect(names).toContain('codemie-opencode');
     });
   });
 
@@ -114,11 +115,11 @@ describe('AgentRegistry', () => {
       }
     });
 
-    it('should include built-in agent in installed agents', async () => {
-      const installedAgents = await AgentRegistry.getInstalledAgents();
+    it('should include built-in agent in all agents', () => {
+      const allAgents = AgentRegistry.getAllAgents();
 
-      // Built-in agent should always be "installed"
-      const builtInAgent = installedAgents.find(
+      // Built-in agent should always be registered
+      const builtInAgent = allAgents.find(
         (agent) => agent.name === BUILTIN_AGENT_NAME
       );
 
