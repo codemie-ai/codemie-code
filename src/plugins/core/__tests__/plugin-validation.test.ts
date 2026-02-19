@@ -6,14 +6,16 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+// Cross-platform mock for isPathWithinDirectory (Windows path.join uses backslashes)
+const mockIsPathWithin = (base: string, resolved: string): boolean => {
+  const norm = (p: string) => p.replace(/\\/g, '/');
+  return norm(resolved).startsWith(norm(base)) && !resolved.includes('..');
+};
+
 // Mock dependencies for getPluginDir
 vi.mock('../../../utils/paths.js', () => ({
   getCodemiePath: vi.fn(() => '/home/user/.codemie/plugins'),
-  isPathWithinDirectory: vi.fn((base: string, resolved: string) => {
-    // Normalize separators for cross-platform compatibility (Windows uses backslashes)
-    const norm = (p: string) => p.replace(/\\/g, '/');
-    return norm(resolved).startsWith(norm(base)) && !resolved.includes('..');
-  }),
+  isPathWithinDirectory: vi.fn(mockIsPathWithin),
 }));
 
 const { getCodemiePath, isPathWithinDirectory } = await import('../../../utils/paths.js');
@@ -135,12 +137,7 @@ describe('PluginDiscovery.getPluginDir', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(getCodemiePath).mockReturnValue('/home/user/.codemie/plugins');
-    vi.mocked(isPathWithinDirectory).mockImplementation(
-      (base: string, resolved: string) => {
-        const norm = (p: string) => p.replace(/\\/g, '/');
-        return norm(resolved).startsWith(norm(base)) && !resolved.includes('..');
-      }
-    );
+    vi.mocked(isPathWithinDirectory).mockImplementation(mockIsPathWithin);
   });
 
   it('returns resolved path for valid name', () => {
