@@ -3,7 +3,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { extractSkillPatterns, isValidSkillName } from './pattern-matcher.js';
+import {
+  extractSkillPatterns,
+  isValidSkillName,
+  isValidNamespacedSkillName,
+  parseNamespacedSkillName,
+} from './pattern-matcher.js';
 
 describe('extractSkillPatterns', () => {
   it('should detect single pattern at start', () => {
@@ -13,6 +18,8 @@ describe('extractSkillPatterns', () => {
     expect(result.patterns).toHaveLength(1);
     expect(result.patterns[0]).toEqual({
       name: 'mr',
+      fullName: 'mr',
+      namespace: undefined,
       position: 0,
       args: undefined,
       raw: '/mr',
@@ -26,6 +33,8 @@ describe('extractSkillPatterns', () => {
     expect(result.patterns).toHaveLength(1);
     expect(result.patterns[0]).toEqual({
       name: 'commit',
+      fullName: 'commit',
+      namespace: undefined,
       position: 15,
       args: 'this',
       raw: '/commit this',
@@ -38,7 +47,9 @@ describe('extractSkillPatterns', () => {
     expect(result.hasPatterns).toBe(true);
     expect(result.patterns).toHaveLength(2);
     expect(result.patterns[0].name).toBe('commit');
+    expect(result.patterns[0].fullName).toBe('commit');
     expect(result.patterns[1].name).toBe('mr');
+    expect(result.patterns[1].fullName).toBe('mr');
   });
 
   it('should detect pattern with arguments', () => {
@@ -135,6 +146,7 @@ describe('extractSkillPatterns', () => {
 
     expect(result.hasPatterns).toBe(true);
     expect(result.patterns[0].name).toBe('my-skill-name');
+    expect(result.patterns[0].fullName).toBe('my-skill-name');
   });
 
   it('should detect skills with numbers', () => {
@@ -168,6 +180,60 @@ describe('extractSkillPatterns', () => {
     const result = extractSkillPatterns(originalMessage);
 
     expect(result.originalMessage).toBe(originalMessage);
+  });
+
+  // Namespaced skill tests
+  describe('namespaced skills', () => {
+    it('should detect namespaced skill pattern', () => {
+      const result = extractSkillPatterns('/gitlab-tools:mr');
+
+      expect(result.hasPatterns).toBe(true);
+      expect(result.patterns).toHaveLength(1);
+      expect(result.patterns[0]).toEqual({
+        name: 'mr',
+        fullName: 'gitlab-tools:mr',
+        namespace: 'gitlab-tools',
+        position: 0,
+        args: undefined,
+        raw: '/gitlab-tools:mr',
+      });
+    });
+
+    it('should detect namespaced skill with arguments', () => {
+      const result = extractSkillPatterns('/plugin-name:skill-name arg1 arg2');
+
+      expect(result.hasPatterns).toBe(true);
+      expect(result.patterns[0].name).toBe('skill-name');
+      expect(result.patterns[0].namespace).toBe('plugin-name');
+      expect(result.patterns[0].fullName).toBe('plugin-name:skill-name');
+      expect(result.patterns[0].args).toBe('arg1 arg2');
+    });
+
+    it('should detect both simple and namespaced patterns', () => {
+      const result = extractSkillPatterns('/commit and /gitlab:mr');
+
+      expect(result.hasPatterns).toBe(true);
+      expect(result.patterns).toHaveLength(2);
+      expect(result.patterns[0].fullName).toBe('commit');
+      expect(result.patterns[0].namespace).toBeUndefined();
+      expect(result.patterns[1].fullName).toBe('gitlab:mr');
+      expect(result.patterns[1].namespace).toBe('gitlab');
+    });
+
+    it('should deduplicate by full name', () => {
+      const result = extractSkillPatterns('/gitlab:mr and /gitlab:mr again');
+
+      expect(result.patterns).toHaveLength(1);
+      expect(result.patterns[0].fullName).toBe('gitlab:mr');
+    });
+
+    it('should NOT exclude built-in commands when namespaced', () => {
+      const result = extractSkillPatterns('/my-plugin:help');
+
+      expect(result.hasPatterns).toBe(true);
+      expect(result.patterns[0].name).toBe('help');
+      expect(result.patterns[0].namespace).toBe('my-plugin');
+    });
   });
 });
 
@@ -218,5 +284,62 @@ describe('isValidSkillName', () => {
 
   it('should reject name starting with hyphen', () => {
     expect(isValidSkillName('-skill')).toBe(false);
+  });
+});
+
+describe('isValidNamespacedSkillName', () => {
+  it('should accept simple skill name', () => {
+    expect(isValidNamespacedSkillName('commit')).toBe(true);
+  });
+
+  it('should accept namespaced skill name', () => {
+    expect(isValidNamespacedSkillName('gitlab:mr')).toBe(true);
+  });
+
+  it('should accept complex namespaced name', () => {
+    expect(isValidNamespacedSkillName('my-plugin-123:skill-name-456')).toBe(true);
+  });
+
+  it('should reject invalid namespace', () => {
+    expect(isValidNamespacedSkillName('Invalid:skill')).toBe(false);
+  });
+
+  it('should reject invalid skill in namespace', () => {
+    expect(isValidNamespacedSkillName('plugin:Invalid')).toBe(false);
+  });
+
+  it('should reject multiple colons', () => {
+    expect(isValidNamespacedSkillName('a:b:c')).toBe(false);
+  });
+
+  it('should reject empty parts', () => {
+    expect(isValidNamespacedSkillName(':skill')).toBe(false);
+    expect(isValidNamespacedSkillName('plugin:')).toBe(false);
+  });
+});
+
+describe('parseNamespacedSkillName', () => {
+  it('should parse simple name', () => {
+    const result = parseNamespacedSkillName('commit');
+    expect(result).toEqual({
+      name: 'commit',
+      namespace: undefined,
+    });
+  });
+
+  it('should parse namespaced name', () => {
+    const result = parseNamespacedSkillName('gitlab:mr');
+    expect(result).toEqual({
+      name: 'mr',
+      namespace: 'gitlab',
+    });
+  });
+
+  it('should parse complex namespaced name', () => {
+    const result = parseNamespacedSkillName('my-plugin:my-skill');
+    expect(result).toEqual({
+      name: 'my-skill',
+      namespace: 'my-plugin',
+    });
   });
 });
