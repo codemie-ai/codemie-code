@@ -10,8 +10,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('../../../utils/paths.js', () => ({
   getCodemiePath: vi.fn(() => '/home/user/.codemie/plugins'),
   isPathWithinDirectory: vi.fn((base: string, resolved: string) => {
-    // Simulate real behavior: path is within if it starts with base
-    return resolved.startsWith(base) && !resolved.includes('..');
+    // Normalize separators for cross-platform compatibility (Windows uses backslashes)
+    const norm = (p: string) => p.replace(/\\/g, '/');
+    return norm(resolved).startsWith(norm(base)) && !resolved.includes('..');
   }),
 }));
 
@@ -135,14 +136,17 @@ describe('PluginDiscovery.getPluginDir', () => {
     vi.clearAllMocks();
     vi.mocked(getCodemiePath).mockReturnValue('/home/user/.codemie/plugins');
     vi.mocked(isPathWithinDirectory).mockImplementation(
-      (base: string, resolved: string) => resolved.startsWith(base) && !resolved.includes('..')
+      (base: string, resolved: string) => {
+        const norm = (p: string) => p.replace(/\\/g, '/');
+        return norm(resolved).startsWith(norm(base)) && !resolved.includes('..');
+      }
     );
   });
 
   it('returns resolved path for valid name', () => {
     const result = PluginDiscovery.getPluginDir('myplugin');
     expect(result).toContain('myplugin');
-    expect(result).toContain('.codemie/plugins');
+    expect(result).toMatch(/\.codemie[/\\]plugins/);
   });
 
   it('throws for invalid name', () => {
