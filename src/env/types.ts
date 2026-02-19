@@ -22,6 +22,7 @@ export interface CodemieAssistant {
   description?: string;
   project?: string;
   registeredAt: string;
+  registrationMode?: 'agent' | 'skill';
 }
 
 /**
@@ -33,6 +34,12 @@ export interface ProviderProfile {
   baseUrl?: string;
   apiKey?: string;
   model?: string;
+
+  // Claude model tier configuration (maps to ANTHROPIC_DEFAULT_*_MODEL)
+  haikuModel?: string;
+  sonnetModel?: string;
+  opusModel?: string;
+
   timeout?: number;
   debug?: boolean;
   allowedDirs?: string[];
@@ -106,11 +113,20 @@ export interface MultiProviderConfig {
 }
 
 /**
- * Configuration with source tracking
+ * Configuration with source tracking (single field)
  */
 export interface ConfigWithSource {
   value: any;
   source: 'default' | 'global' | 'project' | 'env' | 'cli';
+}
+
+/**
+ * Configuration with source tracking (full config)
+ */
+export interface ConfigWithSources {
+  config: CodeMieConfigOptions;    // Merged configuration
+  hasLocalConfig: boolean;         // Whether local .codemie/ exists
+  sources: Record<string, ConfigWithSource>;  // Track source of each field
 }
 
 /**

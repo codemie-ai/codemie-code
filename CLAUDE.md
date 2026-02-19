@@ -32,8 +32,7 @@ This document references detailed guides stored in `.codemie/guides/`. Key refer
 ### 📖 Guide References by Category
 
 **Architecture**:
-- [Project Structure]: .codemie/guides/architecture/project-structure.md
-- [Layered Architecture]: .codemie/guides/architecture/layered-architecture.md
+- [Architecture]: .codemie/guides/architecture/architecture.md
 
 **Development Practices**:
 - [Development Practices]: .codemie/guides/development/development-practices.md
@@ -265,6 +264,44 @@ const retrieved = await store.retrieveSSOCredentials(baseUrl);
 
 **Detail**: .codemie/guides/security/security-practices.md
 
+### Project-Level Configuration (Use These Patterns)
+
+| Pattern | When to Use | Implementation | Related Guide |
+|---------|-------------|----------------|---------------|
+| **Global Config** | Settings across all repositories | `codemie setup` → Select "Global" | .codemie/guides/usage/project-config.md |
+| **Local Config** | Repository-specific overrides | `codemie setup` → Select "Local" | .codemie/guides/usage/project-config.md |
+| **Field Override** | Override specific fields only | Use `initProjectConfig()` with overrides | .codemie/guides/usage/project-config.md |
+| **Source Tracking** | Debug config sources | `codemie profile status --show-sources` | .codemie/guides/usage/project-config.md |
+| **2-Level Lookup** | Access both local and global profiles | `codemie profile` shows all profiles | .codemie/guides/usage/project-config.md |
+
+**Priority System**: `CLI args > Env vars > Project config > Global config > Defaults`
+
+**2-Level Profile Lookup**: Local configs don't isolate from global - you get access to BOTH:
+- `codemie profile` lists profiles from both local and global configs (marked with `[Local]` or `[Global]`)
+- You can switch to any profile (local or global) even when local config exists
+- Profile loading merges: global profile (base) + local overrides (if any)
+
+**Common Use Cases**:
+```typescript
+// Initialize local config with project overrides
+await ConfigLoader.initProjectConfig(workingDir, {
+  codeMieProject: 'frontend-app',
+  codeMieIntegration: { id: 'frontend-123', alias: 'frontend-team' }
+});
+
+// Check if local config exists
+const hasLocal = await ConfigLoader.hasLocalConfig(workingDir);
+
+// Load with source tracking
+const { config, hasLocalConfig, sources } = await ConfigLoader.loadWithSources(workingDir);
+```
+
+**File Locations**:
+- Global: `~/.codemie/codemie-cli.config.json`
+- Local: `.codemie/codemie-cli.config.json` (in repository root)
+
+**Detail**: .codemie/guides/usage/project-config.md
+
 ### Process Patterns (npm, git, exec)
 
 | Operation | Function | Import From |
@@ -289,7 +326,7 @@ const retrieved = await store.retrieveSSOCredentials(baseUrl);
 | **Security** | Log sensitive data (tokens, keys) | Use `sanitizeLogArgs()` before logging | .codemie/guides/security/security-practices.md |
 | **Error Handling** | Throw generic Error | Throw specific error classes (ConfigurationError, etc.) | .codemie/guides/development/development-practices.md |
 | **Paths** | Hardcode ~/.codemie/ paths | Use `getCodemiePath()` from `src/utils/paths.ts` | .codemie/guides/development/development-practices.md |
-| **Architecture** | CLI directly calls plugin code | CLI → Registry → Plugin (never skip layers) | .codemie/guides/architecture/layered-architecture.md |
+| **Architecture** | CLI directly calls plugin code | CLI → Registry → Plugin (never skip layers) | .codemie/guides/architecture/architecture.md |
 | **Async** | Use callbacks or Promise chaining | Use async/await consistently | .codemie/guides/standards/code-quality.md |
 
 ---

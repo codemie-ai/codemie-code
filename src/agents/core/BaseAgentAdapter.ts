@@ -32,9 +32,22 @@ import inquirer from 'inquirer';
  */
 export abstract class BaseAgentAdapter implements AgentAdapter {
   protected proxy: CodeMieProxy | null = null;
+  protected metadata: AgentMetadata;
 
-  constructor(protected metadata: AgentMetadata) {}
+  constructor(metadata: AgentMetadata) {
+    // Clone metadata to allow runtime overrides (e.g., CLI flags)
+    this.metadata = { ...metadata };
+  }
 
+  /**
+   * Override silent mode at runtime
+   * Used by CLI to apply --silent flag
+   *
+   * @param enabled - Whether to enable silent mode
+   */
+  setSilentMode(enabled: boolean): void {
+    this.metadata.silentMode = enabled;
+  }
 
   /**
    * Get metrics configuration for this agent
@@ -101,6 +114,17 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       }
       throw error;
     }
+  }
+
+  /**
+   * Additional installation steps (default: no-op)
+   * Override in agent plugins to add custom installation logic
+   *
+   * @param _options - Typed installation options (unused in base implementation)
+   */
+  async additionalInstallation(_options?: import('./types.js').AgentInstallationOptions): Promise<void> {
+    // Default implementation: do nothing
+    // Override in agent plugins to add custom installation logic
   }
 
   /**
@@ -304,7 +328,10 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       const agentVars = [
         ...(this.metadata.envMapping.baseUrl || []),
         ...(this.metadata.envMapping.apiKey || []),
-        ...(this.metadata.envMapping.model || [])
+        ...(this.metadata.envMapping.model || []),
+        ...(this.metadata.envMapping.haikuModel || []),
+        ...(this.metadata.envMapping.sonnetModel || []),
+        ...(this.metadata.envMapping.opusModel || []),
       ].sort();
 
       if (agentVars.length > 0) {
@@ -336,18 +363,30 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       logger.debug(`Executing: ${this.metadata.cliCommand} ${transformedArgs.join(' ')}`);
 
       // Spawn the CLI command with inherited stdio
-      // On Windows, resolve full path to avoid shell: true deprecation (DEP0190)
+      // Resolve full path to handle:
+      // - Windows: avoid shell: true deprecation (DEP0190)
+      // - Unix: find binaries in ~/.local/bin even when not in PATH
       const isWindows = process.platform === 'win32';
       let commandPath = this.metadata.cliCommand;
 
-      // Resolve full path on Windows to avoid using shell: true
-      if (isWindows) {
-        const { getCommandPath } = await import('../../utils/processes.js');
-        const resolvedPath = await getCommandPath(this.metadata.cliCommand);
-        if (resolvedPath) {
-          // Quote path if it contains spaces to handle Windows paths correctly
-          commandPath = resolvedPath.includes(' ') ? `"${resolvedPath}"` : resolvedPath;
-          logger.debug(`Resolved command path: ${resolvedPath}`);
+      // Try to resolve full path via PATH first
+      const { getCommandPath } = await import('../../utils/processes.js');
+      const resolvedPath = await getCommandPath(this.metadata.cliCommand);
+      if (resolvedPath) {
+        commandPath = isWindows && resolvedPath.includes(' ') ? `"${resolvedPath}"` : resolvedPath;
+        logger.debug(`Resolved command path: ${resolvedPath}`);
+      } else if (!isWindows) {
+        // On Unix, check common installation paths if command not found in PATH
+        // Native installers (e.g., Claude, Gemini) place binaries in ~/.local/bin/
+        const { resolveHomeDir } = await import('../../utils/paths.js');
+        const localBinPath = resolveHomeDir(`.local/bin/${this.metadata.cliCommand}`);
+        try {
+          const fs = await import('fs');
+          await fs.promises.access(localBinPath, fs.constants.X_OK);
+          commandPath = localBinPath;
+          logger.debug(`Found command at local bin path: ${localBinPath}`);
+        } catch {
+          // Not found in ~/.local/bin either, use original command
         }
       }
 
@@ -609,6 +648,21 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         delete env[envVar];
       }
     }
+    if (envMapping.haikuModel) {
+      for (const envVar of envMapping.haikuModel) {
+        delete env[envVar];
+      }
+    }
+    if (envMapping.sonnetModel) {
+      for (const envVar of envMapping.sonnetModel) {
+        delete env[envVar];
+      }
+    }
+    if (envMapping.opusModel) {
+      for (const envVar of envMapping.opusModel) {
+        delete env[envVar];
+      }
+    }
 
     // Step 2: Set new values from CODEMIE_* vars
     // Transform base URL
@@ -630,6 +684,23 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     if (env.CODEMIE_MODEL && envMapping.model) {
       for (const envVar of envMapping.model) {
         env[envVar] = env.CODEMIE_MODEL;
+      }
+    }
+
+    // Transform model tiers (haiku/sonnet/opus)
+    if (env.CODEMIE_HAIKU_MODEL && envMapping.haikuModel) {
+      for (const envVar of envMapping.haikuModel) {
+        env[envVar] = env.CODEMIE_HAIKU_MODEL;
+      }
+    }
+    if (env.CODEMIE_SONNET_MODEL && envMapping.sonnetModel) {
+      for (const envVar of envMapping.sonnetModel) {
+        env[envVar] = env.CODEMIE_SONNET_MODEL;
+      }
+    }
+    if (env.CODEMIE_OPUS_MODEL && envMapping.opusModel) {
+      for (const envVar of envMapping.opusModel) {
+        env[envVar] = env.CODEMIE_OPUS_MODEL;
       }
     }
 

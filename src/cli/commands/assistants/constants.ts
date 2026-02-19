@@ -3,7 +3,6 @@
  */
 
 export const COMMAND_NAMES = {
-  LIST: 'list',
   CHAT: 'chat'
 } as const;
 
@@ -20,7 +19,6 @@ export const ACTIONS = {
 } as const;
 
 export type MessageRole = typeof ROLES.USER | typeof ROLES.ASSISTANT;
-export type ActionType = typeof ACTIONS.UPDATE | typeof ACTIONS.CANCEL;
 
 export interface HistoryMessage {
   role: MessageRole;
@@ -32,10 +30,8 @@ export const MESSAGES = {
     OPTION_VERBOSE: 'Enable verbose debug output',
     ERROR_NO_ASSISTANTS: '\n✗ No registered assistants',
     ERROR_ASSISTANT_NOT_FOUND: (id: string) => `\n✗ Assistant ${id} is not registered`,
-    ERROR_NOT_FOUND: (id: string) => `Assistant ${id} not found`,
-    ERROR_AUTH_EXPIRED: 'Authentication expired. Please re-authenticate.',
     HINT_REGISTER: '  Run: ',
-    COMMAND_LIST: 'codemie assistants list',
+    SETUP_ASSISTANTS_COMMAND: 'codemie setup assistants',
     HINT_REGISTER_SUFFIX: ' to register assistants\n',
     HINT_SEE_ASSISTANTS: ' to see registered assistants\n',
     PROMPT_SELECT_ASSISTANT: 'Select an assistant:'
@@ -54,7 +50,7 @@ export const MESSAGES = {
     ERROR_SEND_FAILED: 'Failed to send message',
     RETRY_PROMPT: 'Failed to get response. Try again or type "/exit" to quit.\n'
   },
-  LIST: {
+  SETUP: {
     COMMAND_DESCRIPTION: 'Manage CodeMie assistants (view, register, unregister)',
     OPTION_PROFILE: 'Select profile to configure',
     OPTION_PROJECT: 'Filter assistants by project name',

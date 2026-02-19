@@ -26,6 +26,8 @@ class Logger {
   private logFilePath: string | null = null;
   private logFileInitialized = false;
   private writeStream: fs.WriteStream | null = null;
+  private currentLogDate: string | null = null;
+  private isRotating: boolean = false;
 
   constructor() {}
 
@@ -78,6 +80,7 @@ class Logger {
 
       const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
       this.logFilePath = path.join(logsDir, `debug-${today}.log`);
+      this.currentLogDate = today;
 
       // Create write stream with append mode
       this.writeStream = fs.createWriteStream(this.logFilePath, { flags: 'a' });
@@ -121,6 +124,41 @@ class Logger {
   }
 
   /**
+   * Rotate log file if date has changed
+   * Handles long-running sessions that span midnight
+   * Non-blocking, fire-and-forget - failures fall back to continuing with old file
+   */
+  private async rotateLogFileIfNeeded(): Promise<void> {
+    const today = new Date().toISOString().split('T')[0];
+
+    if (this.currentLogDate === today || this.isRotating) {
+      return; // No rotation needed or already rotating
+    }
+
+    this.isRotating = true;
+
+    try {
+      // Close old stream
+      if (this.writeStream) {
+        await new Promise<void>((resolve) => {
+          this.writeStream!.end(() => resolve());
+        });
+      }
+
+      // Reset and reinitialize
+      this.logFileInitialized = false;
+      this.writeStream = null;
+      this.currentLogDate = null;
+
+      this.initializeLogFile();
+    } catch {
+      // Silently fail - continue using old file
+    } finally {
+      this.isRotating = false;
+    }
+  }
+
+  /**
    * Write a log entry to the debug log file (synchronous)
    * Format: [YYYY-MM-DD HH:MM:SS.mmm] [LEVEL] [AGENT] [SESSION_ID] [PROFILE] message
    * Automatically sanitizes sensitive data before writing
@@ -132,6 +170,23 @@ class Logger {
     }
 
     if (!this.writeStream) return;
+
+    // Check if date changed (async rotation, non-blocking)
+    // Fire-and-forget - worst case we write a few entries to old file
+    const today = new Date().toISOString().split('T')[0];
+    if (this.currentLogDate && this.currentLogDate !== today && !this.isRotating) {
+      this.rotateLogFileIfNeeded().catch(() => {
+        // Silently fail - continue using old file
+      });
+    }
+
+    // Defensive check: Skip write if rotation is in progress or stream is not writable
+    // This prevents ERR_STREAM_WRITE_AFTER_END race condition when log rotation occurs
+    // Race scenario: rotateLogFileIfNeeded() closes stream while writeToLogFile() tries to write
+    if (this.isRotating || !this.writeStream.writable) {
+      // Skip this write - next log call will use the new rotated stream
+      return;
+    }
 
     try {
       const timestamp = new Date().toISOString();
@@ -163,8 +218,17 @@ class Logger {
   /**
    * Flush and close the write stream
    * Returns a Promise that resolves when all data is flushed
+   * Waits for any in-progress rotation to complete before closing
    */
-  close(): Promise<void> {
+  async close(): Promise<void> {
+    // Wait for any in-progress rotation to complete
+    // This prevents race conditions where close() is called during rotation
+    const maxWaitTime = 5000; // 5 seconds max wait
+    const startTime = Date.now();
+    while (this.isRotating && (Date.now() - startTime) < maxWaitTime) {
+      await new Promise(resolve => setTimeout(resolve, 100));
+    }
+
     return new Promise((resolve) => {
       if (this.writeStream) {
         this.writeStream.end(() => {

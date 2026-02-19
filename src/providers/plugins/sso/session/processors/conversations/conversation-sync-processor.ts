@@ -19,13 +19,11 @@ import type { ConversationPayloadRecord } from './conversation-types.js';
 import { getSessionConversationPath } from '../../../../../../agents/core/session/session-config.js';
 import { readJSONL } from '../../utils/jsonl-reader.js';
 import { writeJSONLAtomic } from '../../utils/jsonl-writer.js';
-import { SessionStore } from '../../../../../../agents/core/session/SessionStore.js';
 
 export class ConversationSyncProcessor implements SessionProcessor {
   readonly name = 'conversation-sync';
   readonly priority = 2; // Run after metrics (priority 1)
 
-  private sessionStore = new SessionStore();
   private isSyncing = false; // Concurrency guard
 
   shouldProcess(_session: ParsedSession): boolean {
@@ -121,64 +119,29 @@ export class ConversationSyncProcessor implements SessionProcessor {
 
       await writeJSONLAtomic(conversationsFile, updatedPayloads);
 
-      // Update session metadata to reflect conversation sync state
-      try {
-        const currentSession = await this.sessionStore.loadSession(session.sessionId);
-        if (currentSession) {
-          // Ensure sync structure exists
-          currentSession.sync ??= {};
-
-          // Initialize conversations sync state if not present
-          currentSession.sync.conversations ??= {
-            lastSyncedHistoryIndex: -1,
-            totalMessagesSynced: 0,
-            totalSyncAttempts: 0
-          };
-
-          // Update sync state based on synced payloads
-          if (successCount > 0) {
-            // Find the highest history index from successfully synced payloads
-            let maxHistoryIndex = currentSession.sync.conversations.lastSyncedHistoryIndex ?? -1;
-            for (const payload of pendingPayloads) {
-              const historyIndices = payload.historyIndices || [];
-              if (historyIndices.length > 0) {
-                const payloadMaxIndex = Math.max(...historyIndices);
-                maxHistoryIndex = Math.max(maxHistoryIndex, payloadMaxIndex);
-              }
-            }
-            currentSession.sync.conversations.lastSyncedHistoryIndex = maxHistoryIndex;
-
-            // Update conversation ID (from first payload)
-            if (pendingPayloads.length > 0) {
-              currentSession.sync.conversations.conversationId = pendingPayloads[0].payload.conversationId;
-            }
-
-            // Update counters
-            currentSession.sync.conversations.totalMessagesSynced =
-              (currentSession.sync.conversations.totalMessagesSynced || 0) + totalMessages;
-            currentSession.sync.conversations.lastSyncAt = syncedAt;
-          }
-
-          // Update total sync attempts
-          currentSession.sync.conversations.totalSyncAttempts =
-            (currentSession.sync.conversations.totalSyncAttempts || 0) + 1;
-
-          await this.sessionStore.saveSession(currentSession);
-
-          logger.debug(`[${this.name}] Updated session metadata: ` +
-            `lastSyncedHistoryIndex=${currentSession.sync.conversations.lastSyncedHistoryIndex}, ` +
-            `totalMessagesSynced=${currentSession.sync.conversations.totalMessagesSynced}, ` +
-            `totalSyncAttempts=${currentSession.sync.conversations.totalSyncAttempts}`
-          );
-        }
-      } catch (error) {
-        // Non-critical - log but don't fail the sync
-        logger.warn(`[${this.name}] Failed to update session metadata:`, error);
-      }
-
       logger.info(
         `[${this.name}] Successfully synced ${successCount}/${pendingPayloads.length} conversations (${totalMessages} messages)`
       );
+
+      // Calculate sync updates for the adapter to persist
+      let maxHistoryIndex = -1;
+      let conversationId: string | undefined;
+
+      if (successCount > 0) {
+        // Find the highest history index from successfully synced payloads
+        for (const payload of pendingPayloads) {
+          const historyIndices = payload.historyIndices || [];
+          if (historyIndices.length > 0) {
+            const payloadMaxIndex = Math.max(...historyIndices);
+            maxHistoryIndex = Math.max(maxHistoryIndex, payloadMaxIndex);
+          }
+        }
+
+        // Get conversation ID from first payload
+        if (pendingPayloads.length > 0) {
+          conversationId = pendingPayloads[0].payload.conversationId;
+        }
+      }
 
       // Debug: Log which payloads were marked as synced
       logger.debug(`[${this.name}] Marked payloads as synced:`, {
@@ -195,7 +158,16 @@ export class ConversationSyncProcessor implements SessionProcessor {
         metadata: {
           conversationId: session.sessionId,
           messagesProcessed: totalMessages,
-          payloadsSynced: successCount
+          payloadsSynced: successCount,
+          syncUpdates: successCount > 0 ? {
+            conversations: {
+              lastSyncedHistoryIndex: maxHistoryIndex,
+              conversationId,
+              totalMessagesSynced: totalMessages,
+              totalSyncAttempts: 1,
+              lastSyncAt: syncedAt
+            }
+          } : undefined
         }
       };
 
