@@ -8,6 +8,7 @@ import {
   MultiProviderConfig,
   CodeMieIntegrationInfo,
   ConfigWithSource,
+  ConfigWithSources,
   CodemieAssistant,
   isMultiProviderConfig,
   isLegacyConfig
@@ -16,7 +17,7 @@ import { ProviderRegistry } from '../providers/index.js';
 import { getCodemieHome, getCodemiePath } from './paths.js';
 
 // Re-export for backward compatibility
-export type { CodeMieConfigOptions, CodeMieIntegrationInfo, ConfigWithSource };
+export type { CodeMieConfigOptions, CodeMieIntegrationInfo, ConfigWithSource, ConfigWithSources };
 
 /**
  * Unified configuration loader with priority system:
@@ -58,8 +59,7 @@ export class ConfigLoader {
     Object.assign(config, this.removeUndefined(globalConfig));
 
     // 3. Project-local config (.codemie/codemie-cli.config.json)
-    const localConfigPath = path.join(workingDir, this.LOCAL_CONFIG);
-    const localConfig = await this.loadJsonConfig(localConfigPath);
+    const localConfig = await this.loadLocalConfigProfile(workingDir, cliOverrides?.name);
     Object.assign(config, this.removeUndefined(localConfig));
 
     // 2. Environment variables (load .env first if in project)
@@ -174,6 +174,39 @@ export class ConfigLoader {
       return { ...rawConfig, name: 'default' };
     }
 
+    return {};
+  }
+
+  /**
+   * Load local (project) config and extract active profile if multi-provider
+   * Returns ONLY the fields defined in local config (for overlay on top of global)
+   */
+  private static async loadLocalConfigProfile(
+    workingDir: string,
+    profileName?: string
+  ): Promise<Partial<CodeMieConfigOptions>> {
+    const localConfigPath = path.join(workingDir, this.LOCAL_CONFIG);
+    const rawConfig = await this.loadJsonConfig(localConfigPath);
+
+    // Check if multi-provider config
+    if (isMultiProviderConfig(rawConfig)) {
+      const profile = profileName || rawConfig.activeProfile;
+
+      // If profile exists in local config, return it as an override
+      if (profile && rawConfig.profiles[profile]) {
+        return { ...rawConfig.profiles[profile], name: profile };
+      }
+
+      // Otherwise return empty (no local override)
+      return {};
+    }
+
+    // Legacy single-provider config or partial config
+    if (isLegacyConfig(rawConfig)) {
+      return { ...rawConfig, name: 'default' };
+    }
+
+    // Empty or invalid config
     return {};
   }
 
@@ -325,58 +358,187 @@ export class ConfigLoader {
 
   /**
    * Delete a profile
+   * Works with local config if it exists, otherwise global
    */
-  static async deleteProfile(profileName: string): Promise<void> {
-    const config = await this.loadMultiProviderConfig();
+  static async deleteProfile(profileName: string, workingDir: string = process.cwd()): Promise<void> {
+    // Check if local config exists
+    const hasLocal = await this.hasLocalConfig(workingDir);
 
-    if (!config.profiles[profileName]) {
-      throw new Error(`Profile "${profileName}" not found`);
+    if (hasLocal) {
+      // Delete from local config
+      const localConfigPath = path.join(workingDir, this.LOCAL_CONFIG);
+      const config = await this.loadJsonConfig(localConfigPath);
+
+      if (isMultiProviderConfig(config)) {
+        if (!config.profiles[profileName]) {
+          throw new Error(`Profile "${profileName}" not found in local config`);
+        }
+
+        delete config.profiles[profileName];
+
+        // If we deleted the active profile, switch to another one (if any exist)
+        if (config.activeProfile === profileName) {
+          const remainingProfiles = Object.keys(config.profiles);
+          config.activeProfile = remainingProfiles.length > 0 ? remainingProfiles[0] : '';
+        }
+
+        await fs.writeFile(localConfigPath, JSON.stringify(config, null, 2), 'utf-8');
+      } else {
+        throw new Error('Local config is not in multi-provider format');
+      }
+    } else {
+      // Delete from global config
+      const config = await this.loadMultiProviderConfig();
+
+      if (!config.profiles[profileName]) {
+        throw new Error(`Profile "${profileName}" not found`);
+      }
+
+      delete config.profiles[profileName];
+
+      // If we deleted the active profile, switch to another one (if any exist)
+      if (config.activeProfile === profileName) {
+        const remainingProfiles = Object.keys(config.profiles);
+        config.activeProfile = remainingProfiles.length > 0 ? remainingProfiles[0] : '';
+      }
+
+      await this.saveMultiProviderConfig(config);
     }
-
-    delete config.profiles[profileName];
-
-    // If we deleted the active profile, switch to another one (if any exist)
-    if (config.activeProfile === profileName) {
-      const remainingProfiles = Object.keys(config.profiles);
-      config.activeProfile = remainingProfiles.length > 0 ? remainingProfiles[0] : '';
-    }
-
-    await this.saveMultiProviderConfig(config);
   }
 
   /**
    * Switch active profile
+   * Sets the active profile in local config if it exists, otherwise in global config
+   * The profile can be from either local or global - just sets the activeProfile reference
    */
-  static async switchProfile(profileName: string): Promise<void> {
-    const config = await this.loadMultiProviderConfig();
+  static async switchProfile(profileName: string, workingDir: string = process.cwd()): Promise<void> {
+    // Verify the profile exists (check both local and global)
+    const profiles = await this.listProfiles(workingDir);
+    const profileExists = profiles.some(p => p.name === profileName);
 
-    if (!config.profiles[profileName]) {
+    if (!profileExists) {
+      const availableProfiles = profiles.map(p => p.name).join(', ');
       throw new Error(
-        `Profile "${profileName}" not found. Available profiles: ${Object.keys(config.profiles).join(', ')}`
+        `Profile "${profileName}" not found. Available profiles: ${availableProfiles}`
       );
     }
 
-    config.activeProfile = profileName;
-    await this.saveMultiProviderConfig(config);
+    // Check if local config exists
+    const hasLocal = await this.hasLocalConfig(workingDir);
+
+    if (hasLocal) {
+      // Update activeProfile in local config
+      const localConfigPath = path.join(workingDir, this.LOCAL_CONFIG);
+      const config = await this.loadJsonConfig(localConfigPath);
+
+      if (isMultiProviderConfig(config)) {
+        config.activeProfile = profileName;
+        await fs.writeFile(localConfigPath, JSON.stringify(config, null, 2), 'utf-8');
+      } else {
+        // Create proper multi-provider structure if needed
+        const newConfig: MultiProviderConfig = {
+          version: 2,
+          activeProfile: profileName,
+          profiles: {}
+        };
+        await fs.writeFile(localConfigPath, JSON.stringify(newConfig, null, 2), 'utf-8');
+      }
+    } else {
+      // Update activeProfile in global config
+      const config = await this.loadMultiProviderConfig();
+      config.activeProfile = profileName;
+      await this.saveMultiProviderConfig(config);
+    }
   }
 
   /**
    * List all profiles
+   * Returns profiles from both local (if exists) and global configs
    */
-  static async listProfiles(): Promise<{ name: string; active: boolean; profile: ProviderProfile }[]> {
-    const config = await this.loadMultiProviderConfig();
+  static async listProfiles(workingDir: string = process.cwd()): Promise<{ name: string; active: boolean; profile: ProviderProfile; source: 'local' | 'global' }[]> {
+    const profiles: { name: string; active: boolean; profile: ProviderProfile; source: 'local' | 'global' }[] = [];
 
-    return Object.entries(config.profiles).map(([name, profile]) => ({
-      name,
-      active: name === config.activeProfile,
-      profile
-    }));
+    // Load global config first
+    const globalConfig = await this.loadMultiProviderConfig();
+    const globalActiveProfile = globalConfig.activeProfile;
+
+    // Add global profiles
+    Object.entries(globalConfig.profiles).forEach(([name, profile]) => {
+      profiles.push({
+        name,
+        active: false, // Will set active state later
+        profile,
+        source: 'global'
+      });
+    });
+
+    // Check if local config exists
+    const hasLocal = await this.hasLocalConfig(workingDir);
+    let localActiveProfile: string | null = null;
+
+    if (hasLocal) {
+      const localConfigPath = path.join(workingDir, this.LOCAL_CONFIG);
+      const localConfig = await this.loadJsonConfig(localConfigPath);
+
+      if (isMultiProviderConfig(localConfig)) {
+        localActiveProfile = localConfig.activeProfile;
+
+        // Add/override with local profiles
+        Object.entries(localConfig.profiles).forEach(([name, profile]) => {
+          // Check if profile already exists from global
+          const existingIndex = profiles.findIndex(p => p.name === name);
+
+          if (existingIndex >= 0) {
+            // Override global profile with local
+            profiles[existingIndex] = {
+              name,
+              active: false,
+              profile: profile as ProviderProfile,
+              source: 'local'
+            };
+          } else {
+            // Add new local-only profile
+            profiles.push({
+              name,
+              active: false,
+              profile: profile as ProviderProfile,
+              source: 'local'
+            });
+          }
+        });
+      }
+    }
+
+    // Determine active profile
+    // Priority: local activeProfile > global activeProfile
+    const activeProfileName = localActiveProfile || globalActiveProfile;
+
+    // Set active flag
+    profiles.forEach(p => {
+      p.active = p.name === activeProfileName;
+    });
+
+    return profiles;
   }
 
   /**
    * Get a specific profile
+   * Checks local config first, then falls back to global
    */
-  static async getProfile(profileName: string): Promise<ProviderProfile | null> {
+  static async getProfile(profileName: string, workingDir: string = process.cwd()): Promise<ProviderProfile | null> {
+    // Check local config first
+    const hasLocal = await this.hasLocalConfig(workingDir);
+
+    if (hasLocal) {
+      const localConfigPath = path.join(workingDir, this.LOCAL_CONFIG);
+      const localConfig = await this.loadJsonConfig(localConfigPath);
+
+      if (isMultiProviderConfig(localConfig) && localConfig.profiles[profileName]) {
+        return localConfig.profiles[profileName] as ProviderProfile;
+      }
+    }
+
+    // Fall back to global config
     const config = await this.loadMultiProviderConfig();
     return config.profiles[profileName] || null;
   }
@@ -410,8 +572,22 @@ export class ConfigLoader {
 
   /**
    * Get active profile name
+   * Checks local config first, then global
    */
-  static async getActiveProfileName(): Promise<string | null> {
+  static async getActiveProfileName(workingDir: string = process.cwd()): Promise<string | null> {
+    // Check if local config exists
+    const hasLocal = await this.hasLocalConfig(workingDir);
+
+    if (hasLocal) {
+      const localConfigPath = path.join(workingDir, this.LOCAL_CONFIG);
+      const config = await this.loadJsonConfig(localConfigPath);
+
+      if (isMultiProviderConfig(config)) {
+        return config.activeProfile || null;
+      }
+    }
+
+    // Fallback to global config
     const config = await this.loadMultiProviderConfig();
     return config.activeProfile || null;
   }
@@ -427,6 +603,57 @@ export class ConfigLoader {
     await fs.mkdir(configDir, { recursive: true });
     await fs.writeFile(
       path.join(configDir, 'config.json'),
+      JSON.stringify(config, null, 2),
+      'utf-8'
+    );
+  }
+
+  /**
+   * Initialize project config with optional overrides
+   * Creates .codemie/ directory and initial multi-provider config file
+   */
+  static async initProjectConfig(
+    workingDir: string,
+    overrides?: {
+      profileName?: string;
+      codeMieProject?: string;
+      codeMieIntegration?: CodeMieIntegrationInfo;
+      [key: string]: any;
+    }
+  ): Promise<void> {
+    const configDir = path.join(workingDir, '.codemie');
+    await fs.mkdir(configDir, { recursive: true });
+
+    // Create multi-provider config structure
+    const profileName = overrides?.profileName || 'default';
+    const profile: Partial<CodeMieConfigOptions> = {};
+
+    // Add overrides if provided
+    if (overrides?.codeMieProject) {
+      profile.codeMieProject = overrides.codeMieProject;
+    }
+    if (overrides?.codeMieIntegration) {
+      profile.codeMieIntegration = overrides.codeMieIntegration;
+    }
+
+    // Add any other overrides
+    for (const [key, value] of Object.entries(overrides || {})) {
+      if (key !== 'profileName' && key !== 'codeMieProject' && key !== 'codeMieIntegration' && value !== undefined) {
+        (profile as any)[key] = value;
+      }
+    }
+
+    const config: MultiProviderConfig = {
+      version: 2,
+      activeProfile: profileName,
+      profiles: {
+        [profileName]: profile as any
+      }
+    };
+
+    const configPath = path.join(configDir, 'codemie-cli.config.json');
+    await fs.writeFile(
+      configPath,
       JSON.stringify(config, null, 2),
       'utf-8'
     );
@@ -486,6 +713,13 @@ export class ConfigLoader {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Check if local config exists (alias for hasProjectConfig)
+   */
+  static async hasLocalConfig(workingDir: string = process.cwd()): Promise<boolean> {
+    return this.hasProjectConfig(workingDir);
   }
 
   /**
@@ -629,34 +863,52 @@ export class ConfigLoader {
 
   /**
    * Load configuration with source tracking
+   * Returns full config with source information for each field
    */
   static async loadWithSources(
-    workingDir: string = process.cwd()
-  ): Promise<Record<string, ConfigWithSource>> {
+    workingDir: string = process.cwd(),
+    cliOverrides?: Partial<CodeMieConfigOptions>
+  ): Promise<ConfigWithSources> {
     const sources: Record<string, ConfigWithSource> = {};
 
+    // Check if local config exists
+    const hasLocalConfig = await this.hasProjectConfig(workingDir);
+
     // Load all config layers
-    const configs = [
+    type ConfigLayer = {
+      data: any;
+      source: 'default' | 'global' | 'project' | 'env' | 'cli';
+    };
+
+    const configs: ConfigLayer[] = [
       {
         data: {
           timeout: 0, // Unlimited timeout by default for long AI requests
           debug: false
         },
-        source: 'default' as const
+        source: 'default'
       },
       {
-        data: await this.loadJsonConfig(this.GLOBAL_CONFIG),
-        source: 'global' as const
+        data: await this.loadGlobalConfigProfile(cliOverrides?.name),
+        source: 'global'
       },
       {
-        data: await this.loadJsonConfig(path.join(workingDir, this.LOCAL_CONFIG)),
-        source: 'project' as const
+        data: await this.loadLocalConfigProfile(workingDir, cliOverrides?.name),
+        source: 'project'
       },
       {
         data: this.loadFromEnv(),
-        source: 'env' as const
+        source: 'env'
       }
     ];
+
+    // Add CLI overrides if provided
+    if (cliOverrides) {
+      configs.push({
+        data: cliOverrides,
+        source: 'cli'
+      });
+    }
 
     // Track where each value comes from (last one wins)
     for (const { data, source } of configs) {
@@ -667,16 +919,30 @@ export class ConfigLoader {
       }
     }
 
-    return sources;
+    // Build merged config
+    const config = await this.load(workingDir, cliOverrides);
+
+    return {
+      config,
+      hasLocalConfig,
+      sources
+    };
   }
 
   /**
    * Show configuration with source attribution
    */
   static async showWithSources(workingDir: string = process.cwd()): Promise<void> {
-    const sources = await this.loadWithSources(workingDir);
+    const { sources, hasLocalConfig } = await this.loadWithSources(workingDir);
 
     console.log(chalk.bold('\nConfiguration Sources:\n'));
+
+    // Show config location
+    if (hasLocalConfig) {
+      console.log(chalk.yellow(`  Using local config: ${path.join(workingDir, this.LOCAL_CONFIG)}\n`));
+    } else {
+      console.log(chalk.cyan(`  Using global config: ${this.GLOBAL_CONFIG}\n`));
+    }
 
     const sortedKeys = Object.keys(sources).sort();
     for (const key of sortedKeys) {
@@ -798,6 +1064,9 @@ export class ConfigLoader {
     env.CODEMIE_API_KEY = apiKeyValue;
 
     if (config.model) env.CODEMIE_MODEL = config.model;
+    if (config.haikuModel) env.CODEMIE_HAIKU_MODEL = config.haikuModel;
+    if (config.sonnetModel) env.CODEMIE_SONNET_MODEL = config.sonnetModel;
+    if (config.opusModel) env.CODEMIE_OPUS_MODEL = config.opusModel;
     if (config.timeout) env.CODEMIE_TIMEOUT = String(config.timeout);
     if (config.debug) env.CODEMIE_DEBUG = String(config.debug);
 

@@ -15,12 +15,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createTempWorkspace, type TempWorkspace } from '../helpers/index.js';
 import { setupTestIsolation } from '../helpers/test-isolation.js';
-import { SkillManager } from '../../src/skills/core/SkillManager.js';
+import { SkillManager } from '../../src/agents/codemie-code/skills/core/SkillManager.js';
 import {
   extractSkillPatterns,
   isValidSkillName,
-} from '../../src/skills/utils/pattern-matcher.js';
-import { loadSkillWithInventory } from '../../src/skills/utils/content-loader.js';
+} from '../../src/agents/codemie-code/skills/utils/pattern-matcher.js';
+import { loadSkillWithInventory } from '../../src/agents/codemie-code/skills/utils/content-loader.js';
 import { join } from 'path';
 import { existsSync } from 'fs';
 

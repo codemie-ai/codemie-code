@@ -9,39 +9,49 @@
  * @group integration
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { rmSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
-import { homedir } from 'os';
+import { tmpdir } from 'os';
 import { ClaudePluginInstaller } from '../../src/agents/plugins/claude/claude.plugin-installer.js';
 import { ClaudePluginMetadata } from '../../src/agents/plugins/claude/claude.plugin.js';
 import { SSOTemplate } from '../../src/providers/plugins/sso/index.js';
 import type { AgentConfig } from '../../src/agents/core/types.js';
 
 describe('SSO Provider - Claude Plugin Auto-Install', () => {
-  const pluginTargetDir = join(homedir(), '.codemie', 'claude-plugin');
+  // Use temp directory instead of real plugin directory to avoid deleting user's actual plugin
+  const testTempDir = join(tmpdir(), 'codemie-test-claude-plugin');
+  const pluginTargetDir = join(testTempDir, 'claude-plugin');
   let installer: ClaudePluginInstaller;
 
   beforeEach(() => {
-    // Clean up plugin directory before each test
-    if (existsSync(pluginTargetDir)) {
-      rmSync(pluginTargetDir, { recursive: true, force: true });
+    // Clean up temp directory before each test
+    if (existsSync(testTempDir)) {
+      rmSync(testTempDir, { recursive: true, force: true });
     }
+    mkdirSync(testTempDir, { recursive: true });
 
     // Clean env
     delete process.env.CODEMIE_CLAUDE_EXTENSION_DIR;
 
-    // Create installer instance
+    // Mock getTargetPath at the prototype level so ALL instances (including ones created by hooks)
+    // use the temp directory instead of real ~/.codemie/claude-plugin
+    vi.spyOn(ClaudePluginInstaller.prototype, 'getTargetPath').mockReturnValue(pluginTargetDir);
+
+    // Create installer instance (will use mocked getTargetPath)
     installer = new ClaudePluginInstaller(ClaudePluginMetadata);
   });
 
   afterEach(() => {
     // Cleanup after tests
-    if (existsSync(pluginTargetDir)) {
-      rmSync(pluginTargetDir, { recursive: true, force: true });
+    if (existsSync(testTempDir)) {
+      rmSync(testTempDir, { recursive: true, force: true });
     }
 
     delete process.env.CODEMIE_CLAUDE_EXTENSION_DIR;
+
+    // Restore spies
+    vi.restoreAllMocks();
   });
 
   describe('Plugin Installation (beforeRun hook)', () => {
@@ -255,8 +265,10 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
 
       // Verify command files
       expect(existsSync(join(pluginTargetDir, 'commands', 'README.md'))).toBe(true);
-      expect(existsSync(join(pluginTargetDir, 'commands', 'memory-add.md'))).toBe(true);
-      expect(existsSync(join(pluginTargetDir, 'commands', 'memory-init.md'))).toBe(true);
+      expect(existsSync(join(pluginTargetDir, 'commands', 'codemie-catchup.md'))).toBe(true);
+      expect(existsSync(join(pluginTargetDir, 'commands', 'codemie-commit.md'))).toBe(true);
+      expect(existsSync(join(pluginTargetDir, 'commands', 'codemie-init.md'))).toBe(true);
+      expect(existsSync(join(pluginTargetDir, 'commands', 'codemie-subagents.md'))).toBe(true);
       expect(existsSync(join(pluginTargetDir, 'commands', 'memory-refresh.md'))).toBe(true);
     });
   });
@@ -268,7 +280,7 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
       expect(result.success).toBe(true);
       expect(result.action).toBe('copied');
       expect(result.sourceVersion).toBeDefined();
-      expect(result.sourceVersion).toBe('1.0.5');
+      expect(result.sourceVersion).toBe('1.0.8');
       expect(result.installedVersion).toBeUndefined(); // First install
     });
 
@@ -281,8 +293,8 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
       const result2 = await installer.install();
       expect(result2.success).toBe(true);
       expect(result2.action).toBe('already_exists');
-      expect(result2.sourceVersion).toBe('1.0.5');
-      expect(result2.installedVersion).toBe('1.0.5');
+      expect(result2.sourceVersion).toBe('1.0.8');
+      expect(result2.installedVersion).toBe('1.0.8');
     });
 
     it('should detect version in installed plugin', async () => {
@@ -296,7 +308,7 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
       const json = JSON.parse(content);
 
       expect(json.version).toBeDefined();
-      expect(json.version).toBe('1.0.5');
+      expect(json.version).toBe('1.0.8');
     });
   });
 });

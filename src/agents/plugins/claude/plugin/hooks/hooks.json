@@ -8,6 +8,10 @@
             "type": "command",
             "command": "codemie hook",
             "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "~/.codemie/claude-plugin/sounds/play-random-sound.sh ~/.codemie/sounds/SessionStart"
           }
         ]
       }
@@ -30,6 +34,10 @@
             "type": "command",
             "command": "codemie hook",
             "timeout": 2
+          },
+          {
+            "type": "command",
+            "command": "~/.codemie/claude-plugin/sounds/play-random-sound.sh ~/.codemie/sounds/PermissionRequest"
           }
         ]
       }
@@ -52,6 +60,10 @@
             "type": "command",
             "command": "codemie hook",
             "timeout": 2
+          },
+          {
+            "type": "command",
+            "command": "~/.codemie/claude-plugin/sounds/play-random-sound.sh ~/.codemie/sounds/Stop"
           }
         ]
       }
@@ -63,6 +75,10 @@
             "type": "command",
             "command": "codemie hook",
             "timeout": 2
+          },
+          {
+            "type": "command",
+            "command": "~/.codemie/claude-plugin/sounds/play-random-sound.sh ~/.codemie/sounds/UserPromptSubmit"
           }
         ]
       }

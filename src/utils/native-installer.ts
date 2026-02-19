@@ -8,6 +8,7 @@ import { AgentInstallationError } from './errors.js';
 import { logger } from './logger.js';
 import { sanitizeLogArgs, sanitizeValue } from './security.js';
 import { isValidSemanticVersion } from './version-utils.js';
+import { ensureCommandInPath } from './windows-path.js';
 
 /**
  * Platform-specific installer URLs
@@ -25,6 +26,7 @@ export interface NativeInstallOptions {
 	timeout?: number; // Installation timeout (ms)
 	env?: Record<string, string>; // Environment variables
 	verifyCommand?: string; // Command to verify installation (e.g., 'claude')
+	verifyPath?: string; // Full path to verify (e.g., '~/.local/bin/claude') - used instead of PATH-based verification
 	installFlags?: string[]; // Additional flags to pass to installer (e.g., ['--force'])
 }
 
@@ -128,7 +130,7 @@ function buildInstallerCommand(
  * Verify installation by running the verify command
  * On Windows, retries with backoff to allow PATH updates to propagate
  *
- * @param verifyCommand - Command to verify (e.g., 'claude')
+ * @param verifyCommand - Command to verify (e.g., 'claude' or '/path/to/claude')
  * @param retries - Number of retry attempts (default: 3 on Windows, 1 on Unix)
  * @returns Installed version string or null if verification failed
  */
@@ -149,8 +151,11 @@ async function verifyInstallation(
 			);
 
 			// Run version check command (e.g., 'claude --version')
+			// If verifyCommand is a path, use shell to resolve ~ and execute
+			const useShell = verifyCommand.includes('/') || verifyCommand.includes('\\');
 			const result = await exec(verifyCommand, ['--version'], {
 				timeout: 5000, // 5 second timeout for version check
+				shell: useShell, // Use shell for path-based commands to resolve ~
 			});
 
 			if (result.code === 0 && result.stdout) {
@@ -175,7 +180,8 @@ async function verifyInstallation(
 		// Gives Windows time to update PATH without excessive wait
 		if (attempt < maxRetries) {
 			const delayMs = Math.min(Math.pow(2, attempt - 1) * 1000, 4000);
-			logger.debug(`Waiting ${delayMs}ms before retry (exponential backoff)...`);
+			// USER FEEDBACK: Show progress during wait
+			logger.info(`Waiting for PATH update to propagate (${delayMs / 1000}s)...`);
 			await new Promise((resolve) => setTimeout(resolve, delayMs));
 		}
 	}
@@ -186,6 +192,37 @@ async function verifyInstallation(
 		attempts: maxRetries,
 	});
 	return null;
+}
+
+/**
+ * Detect if installer output contains HTML instead of expected script output
+ * This occurs when the installer URL returns an HTML page (e.g., region block,
+ * maintenance page) instead of the actual installer script. Bash then fails
+ * trying to execute HTML as shell commands.
+ *
+ * @param output - Combined stdout/stderr from the installer process
+ * @returns true if the output contains HTML markers
+ */
+function isHtmlInstallerResponse(output: string): boolean {
+	return /<!DOCTYPE\s+html/i.test(output) || /<html[\s>]/i.test(output);
+}
+
+/**
+ * Extract a user-friendly error message from HTML installer response
+ * Checks for known error patterns (region block, service unavailability)
+ * and returns an appropriate message.
+ *
+ * @param output - Combined stdout/stderr containing HTML content
+ * @returns User-friendly error message
+ */
+function detectHtmlErrorMessage(output: string): string {
+	// Check for region-specific unavailability
+	if (/unavailable.*region|not.*available.*here|app.unavailable/i.test(output)) {
+		return 'Claude Code is not available in your current region. Visit https://claude.ai for information about supported regions.';
+	}
+
+	// Generic HTML response (maintenance page, unexpected redirect, etc.)
+	return 'Installer URL returned an HTML page instead of an installation script. The service may be temporarily unavailable or not accessible from your location. Visit https://claude.ai for more information.';
 }
 
 /**
@@ -240,6 +277,18 @@ export async function installNativeAgent(
 
 		// Check if installation succeeded
 		if (result.code !== 0) {
+			const combinedOutput = `${result.stderr || ''} ${result.stdout || ''}`;
+
+			// Detect HTML response instead of installer script
+			// This happens when the service returns an error page (e.g., region block)
+			// instead of the actual installer script, and bash fails trying to parse HTML
+			if (isHtmlInstallerResponse(combinedOutput)) {
+				throw new AgentInstallationError(
+					agentName,
+					detectHtmlErrorMessage(combinedOutput)
+				);
+			}
+
 			// SECURITY: Sanitize output before including in error message
 			// Installer scripts might echo sensitive environment variables
 			const sanitizedOutput = sanitizeValue(result.stderr || result.stdout);
@@ -254,26 +303,74 @@ export async function installNativeAgent(
 			platform,
 		});
 
-		// Verify installation if verify command provided
-		let installedVersion: string | null = null;
-		if (options?.verifyCommand) {
-			logger.debug('Verifying installation', {
-				agentName,
-				verifyCommand: options.verifyCommand,
+		// WINDOWS-SPECIFIC: Auto-fix PATH before verification
+		// Use ensureCommandInPath to automatically add command to PATH if missing
+		if (platform === 'windows' && options?.verifyCommand) {
+			logger.debug('Ensuring command is in Windows PATH', {
+				command: options.verifyCommand,
 			});
 
-			installedVersion = await verifyInstallation(options.verifyCommand);
+			try {
+				const pathResult = await ensureCommandInPath(options.verifyCommand);
+
+				if (pathResult.success) {
+					if (pathResult.alreadyInPath) {
+						logger.debug('Command directory already in PATH', {
+							directory: pathResult.pathAdded,
+						});
+					} else if (pathResult.pathAdded) {
+						logger.success(
+							`Automatically added ${options.verifyCommand} to PATH: ${pathResult.pathAdded}`,
+						);
+						logger.info(
+							'PATH updated. Please restart your terminal for changes to take effect.',
+						);
+					}
+				} else if (pathResult.error) {
+					// PATH fix failed, but installation succeeded
+					// Log warning but don't fail installation
+					logger.warn('Could not automatically update PATH', {
+						error: pathResult.error,
+					});
+					logger.info(
+						`You may need to manually add ${options.verifyCommand} to your PATH.`,
+					);
+				}
+			} catch (error) {
+				// PATH utilities failed, but don't fail installation
+				logger.debug('ensureCommandInPath failed', {
+					error: error instanceof Error ? error.message : String(error),
+				});
+			}
+		}
+
+		// Verify installation if verify command provided
+		let installedVersion: string | null = null;
+		if (options?.verifyCommand || options?.verifyPath) {
+			// Prefer verifyPath (full path) over verifyCommand (PATH-based)
+			// This avoids PATH refresh issues on macOS/Linux
+			const commandToVerify = options?.verifyPath || options.verifyCommand!;
+
+			logger.debug('Verifying installation', {
+				agentName,
+				verifyCommand: commandToVerify,
+				usingFullPath: !!options?.verifyPath,
+			});
+
+			installedVersion = await verifyInstallation(commandToVerify);
 
 			if (!installedVersion) {
 				// Add platform-specific context for troubleshooting
 				const isWindows = platform === 'windows';
 				const troubleshootingHint = isWindows
-					? 'On Windows, you may need to restart your terminal/PowerShell/CMD to refresh PATH.'
-					: 'Verify that the command is in your PATH.';
+					? 'Restart your terminal to refresh PATH. The installation directory was automatically added to your PATH.'
+					: options?.verifyPath
+						? `Binary exists at ${options.verifyPath} but failed to execute. Check permissions: chmod +x ${options.verifyPath}`
+						: 'Verify that the command is in your PATH.';
 
 				logger.warn('Installation verification failed', {
 					agentName,
-					verifyCommand: options.verifyCommand,
+					verifyCommand: commandToVerify,
 					platform,
 					hint: troubleshootingHint,
 				});
@@ -289,8 +386,14 @@ export async function installNativeAgent(
 		// Prevents exposure of sensitive data in logs or UI
 		const sanitizedOutput = sanitizeValue(result.stdout || result.stderr || '');
 
+		// If verification was enabled and failed, mark installation as unsuccessful
+		// This ensures that failed verifications are properly reported to the user
+		const verificationEnabled = !!options?.verifyCommand;
+		const verificationPassed = !!installedVersion;
+		const installSuccess = verificationEnabled ? verificationPassed : true;
+
 		return {
-			success: true,
+			success: installSuccess,
 			installedVersion,
 			output: sanitizedOutput as string,
 		};

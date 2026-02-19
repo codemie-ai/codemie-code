@@ -57,6 +57,7 @@ export class AgentCLI {
       .name(programName)
       .description(`CodeMie ${this.adapter.displayName} - ${this.adapter.description}`)
       .version(this.version)
+      .option('-s, --silent', 'Enable silent mode')
       .option('--profile <name>', 'Use specific provider profile')
       .option('--provider <provider>', 'Override provider (ai-run-sso, litellm, ollama)')
       .option('-m, --model <model>', 'Override model')
@@ -118,6 +119,14 @@ export class AgentCLI {
         this.displayWindowsPathGuidance();
 
         process.exit(1);
+      }
+
+      // Apply silent mode from CLI flag (if provided)
+      if (options.silent) {
+        // Type-safe check: ensure adapter has setSilentMode method
+        if ('setSilentMode' in this.adapter && typeof this.adapter.setSilentMode === 'function') {
+          this.adapter.setSilentMode(true);
+        }
       }
 
       // Load configuration with CLI overrides
@@ -328,7 +337,7 @@ export class AgentCLI {
   ): string[] {
     const agentArgs = [...args];
     // Config-only options (not passed to agent, handled by CodeMie CLI)
-    const configOnlyOptions = ['profile', 'provider', 'apiKey', 'baseUrl', 'timeout', 'model'];
+    const configOnlyOptions = ['profile', 'provider', 'apiKey', 'baseUrl', 'timeout', 'model', 'silent'];
 
     for (const [key, value] of Object.entries(options)) {
       // Skip config-only options (handled by CodeMie CLI layer)

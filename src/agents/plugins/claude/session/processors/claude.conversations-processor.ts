@@ -16,13 +16,10 @@ import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../.
 import type { ParsedSession } from '../../../../core/session/BaseSessionAdapter.js';
 import { logger } from '../../../../../utils/logger.js';
 import { getSessionConversationPath } from '../../../../core/session/session-config.js';
-import { SessionStore } from '../../../../core/session/SessionStore.js';
 
 export class ConversationsProcessor implements SessionProcessor {
   readonly name = 'conversations';
   readonly priority = 2; // Run after metrics (priority 1)
-
-  private sessionStore = new SessionStore();
 
   /**
    * Get display name for agent
@@ -69,7 +66,9 @@ export class ConversationsProcessor implements SessionProcessor {
       logger.info(`[${this.name}] Transforming ${session.messages.length} messages to conversation history`);
 
       // Load sync state for incremental processing
-      const sessionMetadata = await this.sessionStore.loadSession(session.sessionId);
+      const { SessionStore } = await import('../../../../core/session/SessionStore.js');
+      const sessionStore = new SessionStore();
+      const sessionMetadata = await sessionStore.loadSession(session.sessionId);
       if (!sessionMetadata) {
         logger.warn(`[${this.name}] Session metadata not found: ${session.sessionId}`);
         return {
@@ -130,29 +129,21 @@ export class ConversationsProcessor implements SessionProcessor {
 
       await appendFile(conversationsPath, JSON.stringify(payloadRecord) + '\n');
 
-      // Update session sync state
-      try {
-        const currentSession = await this.sessionStore.loadSession(session.sessionId);
-        if (currentSession) {
-          currentSession.sync ??= {};
-          currentSession.sync.conversations ??= {};
-          currentSession.sync.conversations.lastSyncedMessageUuid = result.lastProcessedMessageUuid;
-          currentSession.sync.conversations.lastSyncedHistoryIndex = result.currentHistoryIndex;
-
-          await this.sessionStore.saveSession(currentSession);
-
-          logger.debug(`[${this.name}] Updated sync state: lastSyncedMessageUuid=${result.lastProcessedMessageUuid}, lastSyncedHistoryIndex=${result.currentHistoryIndex}`);
-        }
-      } catch (error) {
-        logger.warn(`[${this.name}] Failed to update sync state:`, error);
-      }
-
       logger.info(`[${this.name}] Generated 1 turn with ${result.history.length} conversation messages`);
 
+      // Return sync updates for the adapter to persist
       return {
         success: true,
         message: 'Generated 1 turn',
-        metadata: { recordsProcessed: result.history.length }
+        metadata: {
+          recordsProcessed: result.history.length,
+          syncUpdates: {
+            conversations: {
+              lastSyncedMessageUuid: result.lastProcessedMessageUuid,
+              lastSyncedHistoryIndex: result.currentHistoryIndex
+            }
+          }
+        }
       };
 
     } catch (error) {

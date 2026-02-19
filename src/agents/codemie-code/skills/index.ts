@@ -34,6 +34,7 @@ export {
 } from './utils/frontmatter.js';
 export type { FrontmatterResult } from './utils/frontmatter.js';
 
+
 // Pattern matcher exports
 export {
   extractSkillPatterns,

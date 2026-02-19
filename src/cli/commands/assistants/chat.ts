@@ -69,13 +69,17 @@ async function chatWithAssistant(
 
   const client = await getAuthenticatedClient(config);
 
-  // Resolve conversation ID: CLI option > environment variable > undefined
   const resolvedConversationId = conversationId || process.env.CODEMIE_SESSION_ID;
 
-  if (assistantId && message) { // Single-message mode (example: for Claude Code skill)
+  if (assistantId && message !== undefined) {
+    if (message.trim().length === 0) {
+      console.error(chalk.red('Error: Message cannot be empty'));
+      process.exit(1);
+    }
+
     const assistant = findAssistant(registeredAssistants, assistantId);
     await sendSingleMessage(client, assistant, message, { quiet: true }, config, resolvedConversationId);
-  } else { // Interactive mode
+  } else {
     const assistant = await promptAssistantSelection(registeredAssistants);
     await interactiveChat(client, assistant, config, resolvedConversationId);
   }
@@ -87,14 +91,14 @@ async function chatWithAssistant(
 function findAssistant(assistants: CodemieAssistant[], assistantId: string): CodemieAssistant {
   if (assistants.length === 0) {
     console.error(chalk.red(MESSAGES.SHARED.ERROR_NO_ASSISTANTS));
-    console.log(chalk.dim(MESSAGES.SHARED.HINT_REGISTER) + chalk.cyan(MESSAGES.SHARED.COMMAND_LIST) + chalk.dim(MESSAGES.SHARED.HINT_REGISTER_SUFFIX));
+    console.log(chalk.dim(MESSAGES.SHARED.HINT_REGISTER) + chalk.cyan(MESSAGES.SHARED.SETUP_ASSISTANTS_COMMAND) + chalk.dim(MESSAGES.SHARED.HINT_REGISTER_SUFFIX));
     process.exit(1);
   }
 
   const assistant = assistants.find(a => a.id === assistantId);
   if (!assistant) {
     console.error(chalk.red(MESSAGES.SHARED.ERROR_ASSISTANT_NOT_FOUND(assistantId)));
-    console.log(chalk.dim(MESSAGES.SHARED.HINT_REGISTER) + chalk.cyan(MESSAGES.SHARED.COMMAND_LIST) + chalk.dim(MESSAGES.SHARED.HINT_SEE_ASSISTANTS));
+    console.log(chalk.dim(MESSAGES.SHARED.HINT_REGISTER) + chalk.cyan(MESSAGES.SHARED.SETUP_ASSISTANTS_COMMAND) + chalk.dim(MESSAGES.SHARED.HINT_SEE_ASSISTANTS));
     process.exit(1);
   }
   return assistant;
@@ -106,7 +110,7 @@ function findAssistant(assistants: CodemieAssistant[], assistantId: string): Cod
 async function promptAssistantSelection(assistants: CodemieAssistant[]): Promise<CodemieAssistant> {
   if (assistants.length === 0) {
     console.error(chalk.red(MESSAGES.SHARED.ERROR_NO_ASSISTANTS));
-    console.log(chalk.dim(MESSAGES.SHARED.HINT_REGISTER) + chalk.cyan(MESSAGES.SHARED.COMMAND_LIST) + chalk.dim(MESSAGES.SHARED.HINT_REGISTER_SUFFIX));
+    console.log(chalk.dim(MESSAGES.SHARED.HINT_REGISTER) + chalk.cyan(MESSAGES.SHARED.SETUP_ASSISTANTS_COMMAND) + chalk.dim(MESSAGES.SHARED.HINT_REGISTER_SUFFIX));
     process.exit(1);
   }
 

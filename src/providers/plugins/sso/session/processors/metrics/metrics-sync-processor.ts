@@ -213,45 +213,6 @@ export class MetricsSyncProcessor implements SessionProcessor {
 
       await writeJSONLAtomic(metricsFile, updatedDeltas);
 
-      // 9. Update session metadata to reflect sync state
-      try {
-        const currentSession = await this.sessionStore.loadSession(session.sessionId);
-        if (currentSession) {
-          // Ensure sync structure exists
-            currentSession.sync ??= {};
-
-          // Initialize metrics sync state if not present
-            currentSession.sync.metrics ??= {
-                lastProcessedTimestamp: 0,
-                processedRecordIds: [],
-                attachedUserPromptTexts: [],
-                totalDeltas: 0,
-                totalSynced: 0,
-                totalFailed: 0
-            };
-
-          // Add newly synced record IDs to processed records
-          const existingRecordIds = new Set(currentSession.sync.metrics.processedRecordIds);
-          for (const recordId of pendingRecordIds) {
-            existingRecordIds.add(recordId);
-          }
-          currentSession.sync.metrics.processedRecordIds = Array.from(existingRecordIds);
-
-          // Update sync counters
-          currentSession.sync.metrics.totalSynced = currentSession.sync.metrics.totalSynced + pendingDeltas.length;
-
-          // Ensure totalDeltas reflects actual file state
-          currentSession.sync.metrics.totalDeltas = updatedDeltas.length;
-
-          await this.sessionStore.saveSession(currentSession);
-
-          logger.debug(`[${this.name}] Updated session metadata: totalSynced=${currentSession.sync.metrics.totalSynced}, totalDeltas=${currentSession.sync.metrics.totalDeltas}`);
-        }
-      } catch (error) {
-        // Non-critical - log but don't fail the sync
-        logger.warn(`[${this.name}] Failed to update session metadata:`, error);
-      }
-
       logger.info(
         `[${this.name}] Successfully synced ${pendingDeltas.length} deltas across ${metrics.length} branches`
       );
@@ -270,7 +231,14 @@ export class MetricsSyncProcessor implements SessionProcessor {
         message: `Synced ${pendingDeltas.length} deltas across ${metrics.length} branches`,
         metadata: {
           deltasProcessed: pendingDeltas.length,
-          branchCount: metrics.length
+          branchCount: metrics.length,
+          syncUpdates: {
+            metrics: {
+              processedRecordIds: Array.from(pendingRecordIds),
+              totalSynced: pendingDeltas.length,
+              totalDeltas: updatedDeltas.length
+            }
+          }
         }
       };
 
