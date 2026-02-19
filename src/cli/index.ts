@@ -68,26 +68,17 @@ program.addCommand(createOpencodeMetricsCommand());
 // Check for --task option before parsing commands
 const taskIndex = process.argv.indexOf('--task');
 if (taskIndex !== -1 && taskIndex < process.argv.length - 1) {
-  // Extract task and run the built-in agent
-  const task = process.argv[taskIndex + 1];
-
   (async () => {
     try {
-      const { CodeMieCode } = await import('../agents/codemie-code/index.js');
-      const { logger } = await import('../utils/logger.js');
-
-      const workingDir = process.cwd();
-      const codeMie = new CodeMieCode(workingDir);
-
-      try {
-        await codeMie.initialize();
-      } catch {
-        logger.error('CodeMie configuration required. Please run: codemie setup');
+      const { AgentRegistry } = await import('../agents/registry.js');
+      const { AgentCLI } = await import('../agents/core/AgentCLI.js');
+      const agent = AgentRegistry.getAgent('codemie-code');
+      if (!agent) {
+        console.error('CodeMie Code agent not found. Run: codemie doctor');
         process.exit(1);
       }
-
-      // Execute task with UI
-      await codeMie.executeTaskWithUI(task);
+      const cli = new AgentCLI(agent);
+      await cli.run(process.argv);
       process.exit(0);
     } catch (error) {
       console.error('Failed to run task:', error);

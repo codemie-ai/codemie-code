@@ -21,10 +21,10 @@ import { logger } from '@/utils/logger.js';
 import { sanitizeCookies, sanitizeAuthToken } from '@/utils/security.js';
 import { HookExecutor } from '../../hooks/executor.js';
 import type { HookExecutionContext } from '../../hooks/types.js';
-import type { Skill } from '../../skills/index.js';
-import { extractSkillPatterns } from '../../skills/utils/pattern-matcher.js';
-import type { SkillPattern, SkillWithInventory } from '../../skills/core/types.js';
-import { SkillManager } from '../../skills/core/SkillManager.js';
+import type { Skill } from './skills/index.js';
+import { extractSkillPatterns } from './skills/utils/pattern-matcher.js';
+import type { SkillPattern, SkillWithInventory } from './skills/core/types.js';
+import { SkillManager } from './skills/core/SkillManager.js';
 import { parseAtMentionCommand } from './ui/mentions.js';
 import { loadRegisteredAssistants } from '@/utils/config.js';
 
