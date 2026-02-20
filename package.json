@@ -128,6 +128,7 @@
     "ora": "^7.0.1",
     "strip-ansi": "^7.1.2",
     "yaml": "^2.3.4",
+    "@codemieai/codemie-opencode": "0.0.41",
     "zod": "^4.1.12"
   },
   "devDependencies": {
