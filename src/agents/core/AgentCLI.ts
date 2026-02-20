@@ -58,6 +58,7 @@ export class AgentCLI {
       .description(`CodeMie ${this.adapter.displayName} - ${this.adapter.description}`)
       .version(this.version)
       .option('-s, --silent', 'Enable silent mode')
+      .option('--status', 'Enable status bar (shows model, context usage, git branch, and cost)')
       .option('--profile <name>', 'Use specific provider profile')
       .option('--provider <provider>', 'Override provider (ai-run-sso, litellm, ollama)')
       .option('-m, --model <model>', 'Override model')
@@ -196,6 +197,11 @@ export class AgentCLI {
       // Pass config info for welcome message display
       providerEnv.CODEMIE_PROFILE_NAME = config.name || 'default';
       providerEnv.CODEMIE_CLI_VERSION = this.version;
+
+      // Pass status flag to lifecycle hooks
+      if (options.status) {
+        providerEnv.CODEMIE_STATUS = '1';
+      }
 
       // Serialize full profile config for proxy plugins (read once at CLI level)
       providerEnv.CODEMIE_PROFILE_CONFIG = JSON.stringify(config);
@@ -339,7 +345,7 @@ export class AgentCLI {
   ): string[] {
     const agentArgs = [...args];
     // Config-only options (not passed to agent, handled by CodeMie CLI)
-    const configOnlyOptions = ['profile', 'provider', 'apiKey', 'baseUrl', 'timeout', 'model', 'silent'];
+    const configOnlyOptions = ['profile', 'provider', 'apiKey', 'baseUrl', 'timeout', 'model', 'silent', 'status'];
 
     for (const [key, value] of Object.entries(options)) {
       // Skip config-only options (handled by CodeMie CLI layer)
