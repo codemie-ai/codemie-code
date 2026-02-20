@@ -52,7 +52,7 @@ describe('Claude Plugin – statusline lifecycle hooks', () => {
   const CLAUDE_HOME = '/home/testuser/claude';
   const SCRIPT_DEST = `${CLAUDE_HOME}/codemie-statusline.mjs`;
   const SETTINGS_PATH = `${CLAUDE_HOME}/settings.json`;
-  const SCRIPT_SRC = '/fake/dist/plugins/claude/codemie-statusline.mjs';
+  const SCRIPT_SRC = '/fake/dist/plugins/claude/plugin/codemie-statusline.mjs';
 
   beforeEach(async () => {
     vi.resetModules(); // Reset module cache → resets statuslineManagedThisSession to false
