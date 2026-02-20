@@ -15,12 +15,17 @@ import {
   getErrorMessage,
 } from '../../../utils/errors.js';
 import { logger } from '../../../utils/logger.js';
+import { sanitizeLogArgs } from '../../../utils/security.js';
 import chalk from 'chalk';
-import { resolveHomeDir } from '../../../utils/paths.js';
+import { resolveHomeDir, getDirname } from '../../../utils/paths.js';
 import {
   detectInstallationMethod,
   type InstallationMethod,
 } from '../../../utils/installation-detector.js';
+
+// Module-level flag to track statusline management within a session.
+// Using module scope (not env var) avoids leaking internal state into subprocess environments.
+let statuslineManagedThisSession = false;
 
 /**
  * Supported Claude Code version
@@ -28,7 +33,7 @@ import {
  *
  * **UPDATE THIS WHEN BUMPING CLAUDE VERSION**
  */
-const CLAUDE_SUPPORTED_VERSION = '2.1.31';
+const CLAUDE_SUPPORTED_VERSION = '2.1.41';
 
 /**
  * Claude Code installer URLs
@@ -134,7 +139,104 @@ export const ClaudePluginMetadata: AgentMetadata = {
         env.DISABLE_AUTOUPDATER = '1';
       }
 
+      // Statusline setup: when --status flag is passed, configure Claude Code
+      // status bar with a multi-line display showing model, context, git, cost
+      // https://code.claude.com/docs/en/statusline
+      if (env.CODEMIE_STATUS === '1') {
+        const { writeFile, readFile, mkdir, chmod } = await import('fs/promises');
+        const { existsSync } = await import('fs');
+        const { join } = await import('path');
+
+        const claudeHome = resolveHomeDir('.claude');
+        const scriptPath = join(claudeHome, 'codemie-statusline.mjs');
+        const settingsPath = join(claudeHome, 'settings.json');
+
+        // Read the statusline script from the compiled output directory
+        const scriptContent = await readFile(
+          join(getDirname(import.meta.url), 'codemie-statusline.mjs'),
+          'utf-8'
+        );
+
+        // Ensure ~/.claude directory exists
+        if (!existsSync(claudeHome)) {
+          await mkdir(claudeHome, { recursive: true });
+        }
+
+        // Write script (always update to latest version)
+        await writeFile(scriptPath, scriptContent, 'utf-8');
+
+        // Make script executable on Unix systems
+        if (process.platform !== 'win32') {
+          await chmod(scriptPath, 0o755);
+        }
+
+        // Inject statusLine into ~/.claude/settings.json if not already configured
+        let settings: Record<string, unknown> = {};
+        if (existsSync(settingsPath)) {
+          try {
+            const raw = await readFile(settingsPath, 'utf-8');
+            settings = JSON.parse(raw) as Record<string, unknown>;
+          } catch (parseError) {
+            // Abort injection to prevent overwriting potentially valid settings
+            // that are temporarily unreadable (e.g., concurrent write, partial flush)
+            logger.warn(
+              '[Claude] Could not parse settings.json, skipping statusline injection to avoid data loss',
+              ...sanitizeLogArgs({
+                settingsPath,
+                error: parseError instanceof Error ? parseError.message : String(parseError),
+              })
+            );
+            return env;
+          }
+        }
+
+        if (!settings.statusLine) {
+          settings.statusLine = {
+            type: 'command',
+            // Quote the path to handle spaces in home directory (e.g. /Users/John Doe/)
+            command: `node "${scriptPath}"`,
+          };
+          await writeFile(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+          // Use module-level flag (not env var) to avoid leaking into subprocess env
+          statuslineManagedThisSession = true;
+          logger.debug('[Claude] Statusline configured', { scriptPath });
+        }
+      }
+
       return env;
+    },
+
+    // Clean up injected statusLine from settings.json after the session ends
+    async afterRun(_exitCode, _env) {
+      if (!statuslineManagedThisSession) return;
+      statuslineManagedThisSession = false;
+
+      const { readFile, writeFile } = await import('fs/promises');
+      const { existsSync } = await import('fs');
+      const { join } = await import('path');
+
+      const settingsPath = join(resolveHomeDir('.claude'), 'settings.json');
+
+      if (existsSync(settingsPath)) {
+        try {
+          const raw = await readFile(settingsPath, 'utf-8');
+          const settings = JSON.parse(raw) as Record<string, unknown>;
+
+          if (settings.statusLine) {
+            delete settings.statusLine;
+            await writeFile(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+            logger.debug('[Claude] Statusline config removed from settings.json');
+          }
+        } catch (error) {
+          logger.warn(
+            '[Claude] Failed to clean up statusLine from settings.json',
+            ...sanitizeLogArgs({
+              settingsPath,
+              error: error instanceof Error ? error.message : String(error),
+            })
+          );
+        }
+      }
     },
   },
 };

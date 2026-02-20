@@ -7,7 +7,7 @@
 
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { rmSync, mkdirSync, cpSync, existsSync } from 'fs';
+import { rmSync, mkdirSync, cpSync, copyFileSync, existsSync } from 'fs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -52,6 +52,28 @@ for (const config of copyConfigs) {
   cpSync(config.src, config.dest, { recursive: true });
 
   console.log(`  ✓ ${config.name} copied successfully\n`);
+}
+
+const copyFiles = [
+  {
+    name: 'Claude statusline script',
+    src: join(rootDir, 'src/agents/plugins/claude/codemie-statusline.mjs'),
+    dest: join(rootDir, 'dist/agents/plugins/claude/codemie-statusline.mjs')
+  }
+];
+
+for (const file of copyFiles) {
+  console.log(`Processing ${file.name}:`);
+
+  if (!existsSync(file.src)) {
+    console.log(`  - Warning: Source ${file.src} does not exist, skipping...`);
+    continue;
+  }
+
+  // Ensure destination directory exists before copying
+  mkdirSync(dirname(file.dest), { recursive: true });
+  copyFileSync(file.src, file.dest);
+  console.log(`  ✓ ${file.name} copied successfully\n`);
 }
 
 console.log('Plugin assets copied successfully!');
