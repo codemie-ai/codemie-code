@@ -5,6 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { join } from 'path';
 import type { AgentConfig } from '../../../core/types.js';
 
 // --- Module mocks (hoisted before imports) ---
@@ -48,11 +49,14 @@ describe('Claude Plugin – statusline lifecycle hooks', () => {
   let loggerMod: { logger: Record<string, ReturnType<typeof vi.fn>> };
 
   const mockConfig: AgentConfig = {};
-  // Predictable paths based on mocked resolveHomeDir('.claude') and join
+  // CLAUDE_HOME is used directly from the resolveHomeDir mock (not passed through path.join),
+  // so it keeps forward slashes on all OSes.
   const CLAUDE_HOME = '/home/testuser/claude';
-  const SCRIPT_DEST = `${CLAUDE_HOME}/codemie-statusline.mjs`;
-  const SETTINGS_PATH = `${CLAUDE_HOME}/settings.json`;
-  const SCRIPT_SRC = '/fake/dist/plugins/claude/plugin/codemie-statusline.mjs';
+  // Derived paths go through path.join in production, so compute them the same way
+  // to get the correct separator on each OS (backslashes on Windows).
+  const SCRIPT_DEST = join(CLAUDE_HOME, 'codemie-statusline.mjs');
+  const SETTINGS_PATH = join(CLAUDE_HOME, 'settings.json');
+  const SCRIPT_SRC = join('/fake/dist/plugins/claude', 'plugin', 'codemie-statusline.mjs');
 
   beforeEach(async () => {
     vi.resetModules(); // Reset module cache → resets statuslineManagedThisSession to false
