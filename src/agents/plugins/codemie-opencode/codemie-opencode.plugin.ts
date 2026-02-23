@@ -13,6 +13,26 @@ import { resolveCodemieOpenCodeBinary } from './codemie-opencode-binary.js';
 
 const OPENCODE_SUBCOMMANDS = ['run', 'chat', 'config', 'init', 'help', 'version'];
 
+/**
+ * Convert a short model ID to Bedrock inference profile format.
+ * Bedrock requires region-prefixed ARN-style model IDs.
+ *
+ * Examples:
+ *   claude-sonnet-4-5-20250929 → us.anthropic.claude-sonnet-4-5-20250929-v1:0
+ *   claude-opus-4-6            → us.anthropic.claude-opus-4-6-v1:0
+ *
+ * If the model ID already contains 'anthropic.', it's returned as-is.
+ */
+function toBedrockModelId(modelId: string, region?: string): string {
+  if (modelId.includes('anthropic.')) return modelId;
+
+  const regionPrefix = region?.startsWith('eu') ? 'eu'
+    : region?.startsWith('ap') ? 'ap'
+    : 'us';
+
+  return `${regionPrefix}.anthropic.${modelId}-v1:0`;
+}
+
 // Environment variable size limit (conservative - varies by platform)
 // Linux: ~128KB per var, Windows: ~32KB total env block
 const MAX_ENV_SIZE = 32 * 1024;
@@ -187,14 +207,18 @@ export const CodemieOpenCodePluginMetadata: AgentMetadata = {
       // Build all models for codemie-proxy (stripped of CodeMie-specific fields)
       const allModels = getAllOpenCodeModelConfigs();
 
-      // Determine URLs
-      const proxyBaseUrl = provider !== 'ollama' ? baseUrl : undefined;
+      // Determine URLs based on provider type
+      const isBedrock = provider === 'bedrock';
+      const proxyBaseUrl = provider !== 'ollama' && !isBedrock ? baseUrl : undefined;
       const ollamaBaseUrl = provider === 'ollama'
         ? (baseUrl.endsWith('/v1') || baseUrl.includes('/v1/') ? baseUrl : `${baseUrl.replace(/\/$/, '')}/v1`)
         : 'http://localhost:11434/v1';
 
       // Determine default model provider
-      const activeProvider = provider === 'ollama' ? 'ollama' : 'codemie-proxy';
+      // - ollama: uses ollama provider directly
+      // - bedrock: uses OpenCode's built-in amazon-bedrock provider (AWS env vars set by provider hook)
+      // - all others: route through codemie-proxy (SSO/proxy)
+      const activeProvider = provider === 'ollama' ? 'ollama' : (isBedrock ? 'amazon-bedrock' : 'codemie-proxy');
       const timeout = providerOptions?.timeout ?? parseInt(env.CODEMIE_TIMEOUT || '600') * 1000;
 
       const openCodeConfig: Record<string, unknown> = {
@@ -224,7 +248,7 @@ export const CodemieOpenCodePluginMetadata: AgentMetadata = {
             }
           }
         },
-        model: `${activeProvider}/${modelConfig.id}`
+        model: `${activeProvider}/${isBedrock ? toBedrockModelId(modelConfig.id, env.AWS_REGION || env.CODEMIE_AWS_REGION) : modelConfig.id}`
       };
 
       env.OPENCODE_DISABLE_SHARE = 'true';
