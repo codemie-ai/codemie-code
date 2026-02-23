@@ -3,7 +3,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { writeFileSync, unlinkSync } from 'fs';
 import { logger } from '../../../utils/logger.js';
-import { getModelConfig } from './opencode-model-configs.js';
+import { getModelConfig, getAllOpenCodeModelConfigs } from './opencode-model-configs.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
@@ -136,7 +136,7 @@ export const OpenCodePluginMetadata: AgentMetadata = {
     apiKey: [],
     model: []
   },
-  supportedProviders: ['litellm', 'ai-run-sso'],
+  supportedProviders: ['litellm', 'ai-run-sso', 'ollama'],
   ssoConfig: { enabled: true, clientType: 'codemie-opencode' },
 
   lifecycle: {
@@ -157,14 +157,15 @@ export const OpenCodePluginMetadata: AgentMetadata = {
         }
       }
 
-      const proxyUrl = env.CODEMIE_BASE_URL;
+      const provider = env.CODEMIE_PROVIDER;
+      const baseUrl = env.CODEMIE_BASE_URL;
 
-      if (!proxyUrl) {
+      if (!baseUrl) {
         return env;
       }
 
-      if (!proxyUrl.startsWith('http://') && !proxyUrl.startsWith('https://')) {
-        logger.warn(`Invalid CODEMIE_BASE_URL format: ${proxyUrl}`, { agent: 'opencode' });
+      if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
+        logger.warn(`Invalid CODEMIE_BASE_URL format: ${baseUrl}`, { agent: 'opencode' });
         return env;
       }
 
@@ -172,34 +173,52 @@ export const OpenCodePluginMetadata: AgentMetadata = {
       const selectedModel = env.CODEMIE_MODEL || config?.model || 'gpt-5-2-2025-12-11';
       const modelConfig = getModelConfig(selectedModel);
 
-      // Extract OpenCode-compatible model config (remove CodeMie-specific fields)
-      const { displayName: _displayName, providerOptions, ...opencodeModelConfig } = modelConfig;
+      const { providerOptions } = modelConfig;
 
-      const openCodeConfig = {
-        enabled_providers: ['codemie-proxy'],
+      // Build all models for codemie-proxy (stripped of CodeMie-specific fields)
+      const allModels = getAllOpenCodeModelConfigs();
+
+      // Determine URLs
+      const proxyBaseUrl = provider !== 'ollama' ? baseUrl : undefined;
+      const ollamaBaseUrl = provider === 'ollama'
+        ? (baseUrl.endsWith('/v1') || baseUrl.includes('/v1/') ? baseUrl : `${baseUrl.replace(/\/$/, '')}/v1`)
+        : 'http://localhost:11434/v1';
+
+      // Determine default model provider
+      const activeProvider = provider === 'ollama' ? 'ollama' : 'codemie-proxy';
+      const timeout = providerOptions?.timeout ?? parseInt(env.CODEMIE_TIMEOUT || '600') * 1000;
+
+      const openCodeConfig: Record<string, unknown> = {
+        enabled_providers: ['codemie-proxy', 'ollama'],
+        share: 'disabled',
         provider: {
-          'codemie-proxy': {
+          ...(proxyBaseUrl && {
+            'codemie-proxy': {
+              npm: '@ai-sdk/openai-compatible',
+              name: 'CodeMie SSO',
+              options: {
+                baseURL: `${proxyBaseUrl}/`,
+                apiKey: 'proxy-handled',
+                timeout,
+                ...(providerOptions?.headers && { headers: providerOptions.headers })
+              },
+              models: allModels
+            }
+          }),
+          ollama: {
             npm: '@ai-sdk/openai-compatible',
-            name: 'CodeMie SSO',
+            name: 'Ollama',
             options: {
-              baseURL: `${proxyUrl}/`,
-              apiKey: 'proxy-handled',
-              timeout: providerOptions?.timeout ||
-                       parseInt(env.CODEMIE_TIMEOUT || '600') * 1000,
-              ...(providerOptions?.headers && {
-                headers: providerOptions.headers
-              })
-            },
-            models: {
-              [modelConfig.id]: opencodeModelConfig
+              baseURL: `${ollamaBaseUrl}/`,
+              apiKey: 'ollama',
+              timeout,
             }
           }
         },
-        defaults: {
-          model: `codemie-proxy/${modelConfig.id}`
-        }
+        model: `${activeProvider}/${modelConfig.id}`
       };
 
+      env.OPENCODE_DISABLE_SHARE = 'true';
       const configJson = JSON.stringify(openCodeConfig);
 
       // Config injection strategy:

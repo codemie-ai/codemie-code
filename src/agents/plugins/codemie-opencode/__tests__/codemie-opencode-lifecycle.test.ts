@@ -39,7 +39,7 @@ vi.mock('../../../../utils/processes.js', () => ({
   detectGitBranch: vi.fn(() => Promise.resolve('main')),
 }));
 
-// Mock getModelConfig
+// Mock getModelConfig and getAllOpenCodeModelConfigs
 vi.mock('../../opencode/opencode-model-configs.js', () => ({
   getModelConfig: vi.fn(() => ({
     id: 'gpt-5-2-2025-12-11',
@@ -57,6 +57,40 @@ vi.mock('../../opencode/opencode-model-configs.js', () => ({
     open_weights: false,
     cost: { input: 2.5, output: 10 },
     limit: { context: 1048576, output: 65536 },
+  })),
+  getAllOpenCodeModelConfigs: vi.fn(() => ({
+    'gpt-5-2-2025-12-11': {
+      id: 'gpt-5-2-2025-12-11',
+      name: 'gpt-5-2-2025-12-11',
+      family: 'gpt-5',
+      tool_call: true,
+      reasoning: true,
+      attachment: true,
+      temperature: true,
+      modalities: { input: ['text'], output: ['text'] },
+      knowledge: '2025-06-01',
+      release_date: '2025-12-11',
+      last_updated: '2025-12-11',
+      open_weights: false,
+      cost: { input: 2.5, output: 10 },
+      limit: { context: 1048576, output: 65536 },
+    },
+    'claude-opus-4-6': {
+      id: 'claude-opus-4-6',
+      name: 'Claude Opus 4.6',
+      family: 'claude-4',
+      tool_call: true,
+      reasoning: true,
+      attachment: true,
+      temperature: true,
+      modalities: { input: ['text', 'image'], output: ['text'] },
+      knowledge: '2025-05-01',
+      release_date: '2026-01-15',
+      last_updated: '2026-01-15',
+      open_weights: false,
+      cost: { input: 15, output: 75, cache_read: 1.5 },
+      limit: { context: 200000, output: 32000 },
+    },
   })),
 }));
 
@@ -206,8 +240,9 @@ describe('CodemieOpenCodePluginMetadata lifecycle', () => {
 
       expect(result.OPENCODE_CONFIG_CONTENT).toBeDefined();
       const parsed = JSON.parse(result.OPENCODE_CONFIG_CONTENT!);
-      expect(parsed.enabled_providers).toEqual(['codemie-proxy']);
+      expect(parsed.enabled_providers).toEqual(['codemie-proxy', 'ollama', 'amazon-bedrock']);
       expect(parsed.provider['codemie-proxy']).toBeDefined();
+      expect(parsed.provider['ollama']).toBeDefined();
     });
 
     it('sets OPENCODE_CONFIG_CONTENT for valid https:// URL', async () => {
@@ -260,8 +295,10 @@ describe('CodemieOpenCodePluginMetadata lifecycle', () => {
 
       expect(parsed).toHaveProperty('enabled_providers');
       expect(parsed).toHaveProperty('provider.codemie-proxy');
-      expect(parsed).toHaveProperty('defaults');
-      expect(parsed.defaults.model).toContain('codemie-proxy/');
+      expect(parsed).toHaveProperty('provider.ollama');
+      expect(parsed).toHaveProperty('model');
+      expect(parsed).not.toHaveProperty('defaults');
+      expect(parsed.model).toContain('codemie-proxy/');
     });
 
     it('writes temp file when config exceeds 32KB', async () => {
@@ -301,16 +338,35 @@ describe('CodemieOpenCodePluginMetadata lifecycle', () => {
       );
     });
 
-    it('strips displayName and providerOptions from model config in output', async () => {
+    it('includes all models in codemie-proxy without CodeMie-specific fields', async () => {
       const env: any = { CODEMIE_BASE_URL: 'http://localhost:8080' };
       const config: AgentConfig = {};
 
       const result = await beforeRun(env, config as any);
       const parsed = JSON.parse(result.OPENCODE_CONFIG_CONTENT!);
-      const modelConfig = Object.values(parsed.provider['codemie-proxy'].models)[0] as any;
+      const models = parsed.provider['codemie-proxy'].models;
 
-      expect(modelConfig.displayName).toBeUndefined();
-      expect(modelConfig.providerOptions).toBeUndefined();
+      // Verify all models from getAllOpenCodeModelConfigs are present
+      expect(Object.keys(models)).toContain('gpt-5-2-2025-12-11');
+      expect(Object.keys(models)).toContain('claude-opus-4-6');
+      expect(Object.keys(models).length).toBe(2); // matches mock
+
+      // Verify CodeMie-specific fields are stripped
+      for (const model of Object.values(models) as any[]) {
+        expect(model.displayName).toBeUndefined();
+        expect(model.providerOptions).toBeUndefined();
+      }
+    });
+
+    it('ollama provider has no models (auto-discovered)', async () => {
+      const env: any = { CODEMIE_BASE_URL: 'http://localhost:8080' };
+      const config: AgentConfig = {};
+
+      const result = await beforeRun(env, config as any);
+      const parsed = JSON.parse(result.OPENCODE_CONFIG_CONTENT!);
+
+      expect(parsed.provider.ollama).toBeDefined();
+      expect(parsed.provider.ollama.models).toBeUndefined();
     });
 
     it('uses CODEMIE_TIMEOUT when no providerOptions.timeout', async () => {

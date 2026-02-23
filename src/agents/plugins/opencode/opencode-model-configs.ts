@@ -364,6 +364,19 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
 };
 
 /**
+ * Get all model configs stripped of CodeMie-specific fields (displayName, providerOptions).
+ * Used to populate all models in the OpenCode config so users can switch models during a session.
+ */
+export function getAllOpenCodeModelConfigs(): Record<string, Omit<OpenCodeModelConfig, 'displayName' | 'providerOptions'>> {
+  const result: Record<string, Omit<OpenCodeModelConfig, 'displayName' | 'providerOptions'>> = {};
+  for (const [id, config] of Object.entries(OPENCODE_MODEL_CONFIGS)) {
+    const { displayName: _displayName, providerOptions: _providerOptions, ...opencodeConfig } = config;
+    result[id] = opencodeConfig;
+  }
+  return result;
+}
+
+/**
  * Family-specific defaults for unknown model variants.
  * Used by getModelConfig() when an exact match isn't found but
  * the model ID prefix matches a known family.
@@ -409,7 +422,7 @@ const MODEL_FAMILY_DEFAULTS: Record<string, Partial<OpenCodeModelConfig>> = {
  * @returns Model configuration in OpenCode format
  *
  * Note: The returned config is used directly in OPENCODE_CONFIG_CONTENT
- * defaults.model = "<provider>/<modelId>" (e.g., "codemie-proxy/gpt-5-2-2025-12-11")
+ * model = "<provider>/<modelId>" (e.g., "codemie-proxy/gpt-5-2-2025-12-11")
  */
 export function getModelConfig(modelId: string): OpenCodeModelConfig {
   const config = OPENCODE_MODEL_CONFIGS[modelId];

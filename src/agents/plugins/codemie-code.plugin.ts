@@ -42,7 +42,7 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
     model: []
   },
 
-  supportedProviders: ['litellm', 'ai-run-sso'],
+  supportedProviders: ['litellm', 'ai-run-sso', 'ollama', 'bedrock'],
 
   ssoConfig: { enabled: true, clientType: 'codemie-code' },
 

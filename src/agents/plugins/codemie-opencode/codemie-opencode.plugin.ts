@@ -3,7 +3,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { writeFileSync, unlinkSync, existsSync } from 'fs';
 import { logger } from '../../../utils/logger.js';
-import { getModelConfig } from '../opencode/opencode-model-configs.js';
+import { getModelConfig, getAllOpenCodeModelConfigs } from '../opencode/opencode-model-configs.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
@@ -128,6 +128,7 @@ const resolvedBinary = resolveCodemieOpenCodeBinary();
  * |--------------------------|----------------------|----------------------|------------------------------------------------|
  * | OPENCODE_CONFIG_CONTENT  | beforeRun hook       | Whitelabel config.ts | Full provider config JSON (proxy URL, models)  |
  * | OPENCODE_CONFIG          | beforeRun (fallback) | Whitelabel config.ts | Temp file path when JSON exceeds env var limit |
+ * | OPENCODE_DISABLE_SHARE   | beforeRun hook       | Whitelabel           | Disables share functionality                   |
  * | CODEMIE_SESSION_ID       | BaseAgentAdapter     | onSessionEnd hook    | Session ID for metrics correlation             |
  * | CODEMIE_AGENT            | BaseAgentAdapter     | Lifecycle helpers    | Agent name ('codemie-opencode')                |
  * | CODEMIE_PROVIDER         | Config loader        | setupProxy()         | Provider name (e.g., 'ai-run-sso')             |
@@ -150,7 +151,7 @@ export const CodemieOpenCodePluginMetadata: AgentMetadata = {
     apiKey: [],
     model: []
   },
-  supportedProviders: ['litellm', 'ai-run-sso'],
+  supportedProviders: ['litellm', 'ai-run-sso', 'ollama', 'bedrock'],
   ssoConfig: { enabled: true, clientType: 'codemie-opencode' },
 
   lifecycle: {
@@ -166,47 +167,67 @@ export const CodemieOpenCodePluginMetadata: AgentMetadata = {
         }
       }
 
-      const proxyUrl = env.CODEMIE_BASE_URL;
+      const provider = env.CODEMIE_PROVIDER;
+      const baseUrl = env.CODEMIE_BASE_URL;
 
-      if (!proxyUrl) {
+      if (!baseUrl) {
         return env;
       }
 
-      if (!proxyUrl.startsWith('http://') && !proxyUrl.startsWith('https://')) {
-        logger.warn(`Invalid CODEMIE_BASE_URL format: ${proxyUrl}`, { agent: 'codemie-opencode' });
+      if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
+        logger.warn(`Invalid CODEMIE_BASE_URL format: ${baseUrl}`, { agent: 'codemie-opencode' });
         return env;
       }
 
       const selectedModel = env.CODEMIE_MODEL || config?.model || 'gpt-5-2-2025-12-11';
       const modelConfig = getModelConfig(selectedModel);
 
-      const { displayName: _displayName, providerOptions, ...opencodeModelConfig } = modelConfig;
+      const { providerOptions } = modelConfig;
 
-      const openCodeConfig = {
-        enabled_providers: ['codemie-proxy'],
+      // Build all models for codemie-proxy (stripped of CodeMie-specific fields)
+      const allModels = getAllOpenCodeModelConfigs();
+
+      // Determine URLs
+      const proxyBaseUrl = provider !== 'ollama' ? baseUrl : undefined;
+      const ollamaBaseUrl = provider === 'ollama'
+        ? (baseUrl.endsWith('/v1') || baseUrl.includes('/v1/') ? baseUrl : `${baseUrl.replace(/\/$/, '')}/v1`)
+        : 'http://localhost:11434/v1';
+
+      // Determine default model provider
+      const activeProvider = provider === 'ollama' ? 'ollama' : 'codemie-proxy';
+      const timeout = providerOptions?.timeout ?? parseInt(env.CODEMIE_TIMEOUT || '600') * 1000;
+
+      const openCodeConfig: Record<string, unknown> = {
+        enabled_providers: ['codemie-proxy', 'ollama', 'amazon-bedrock'],
+        share: 'disabled',
         provider: {
-          'codemie-proxy': {
+          ...(proxyBaseUrl && {
+            'codemie-proxy': {
+              npm: '@ai-sdk/openai-compatible',
+              name: 'CodeMie SSO',
+              options: {
+                baseURL: `${proxyBaseUrl}/`,
+                apiKey: 'proxy-handled',
+                timeout,
+                ...(providerOptions?.headers && { headers: providerOptions.headers })
+              },
+              models: allModels
+            }
+          }),
+          ollama: {
             npm: '@ai-sdk/openai-compatible',
-            name: 'CodeMie SSO',
+            name: 'Ollama',
             options: {
-              baseURL: `${proxyUrl}/`,
-              apiKey: 'proxy-handled',
-              timeout: providerOptions?.timeout ||
-                       parseInt(env.CODEMIE_TIMEOUT || '600') * 1000,
-              ...(providerOptions?.headers && {
-                headers: providerOptions.headers
-              })
-            },
-            models: {
-              [modelConfig.id]: opencodeModelConfig
+              baseURL: `${ollamaBaseUrl}/`,
+              apiKey: 'ollama',
+              timeout,
             }
           }
         },
-        defaults: {
-          model: `codemie-proxy/${modelConfig.id}`
-        }
+        model: `${activeProvider}/${modelConfig.id}`
       };
 
+      env.OPENCODE_DISABLE_SHARE = 'true';
       const configJson = JSON.stringify(openCodeConfig);
 
       if (configJson.length > MAX_ENV_SIZE) {
