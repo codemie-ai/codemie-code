@@ -1,7 +1,8 @@
-import { AgentMetadata, AgentAdapter, AgentConfig, MCPConfigSummary } from './types.js';
+import { AgentMetadata, AgentAdapter, AgentConfig, MCPConfigSummary, VersionCompatibilityResult } from './types.js';
 import * as npm from '../../utils/processes.js';
-import { NpmError } from '../../utils/errors.js';
+import { NpmError, createErrorContext } from '../../utils/errors.js';
 import { exec } from '../../utils/processes.js';
+import { compareVersions } from '../../utils/version-utils.js';
 import { logger } from '../../utils/logger.js';
 import { spawn } from 'child_process';
 import { randomUUID } from 'crypto';
@@ -161,12 +162,149 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   }
 
   /**
+   * Check if installed version is compatible with CodeMie
+   * Compares installed version against metadata.supportedVersion and
+   * metadata.minimumSupportedVersion. Agents override getVersion() only;
+   * the comparison logic is shared for all agents.
+   *
+   * @returns Version compatibility result with status and version info
+   */
+  async checkVersionCompatibility(): Promise<VersionCompatibilityResult> {
+    const supportedVersion = this.metadata.supportedVersion || 'latest';
+    const minimumSupportedVersion = this.metadata.minimumSupportedVersion;
+
+    const installedVersion = await this.getVersion();
+
+    logger.debug('Checking version compatibility', {
+      agent: this.metadata.name,
+      installedVersion,
+      supportedVersion,
+      minimumSupportedVersion,
+    });
+
+    if (!installedVersion) {
+      return {
+        compatible: false,
+        installedVersion: null,
+        supportedVersion,
+        isNewer: false,
+        hasUpdate: false,
+        isBelowMinimum: false,
+        minimumSupportedVersion,
+      };
+    }
+
+    if (!this.metadata.supportedVersion) {
+      return {
+        compatible: true,
+        installedVersion,
+        supportedVersion: 'latest',
+        isNewer: false,
+        hasUpdate: false,
+        isBelowMinimum: false,
+        minimumSupportedVersion,
+      };
+    }
+
+    try {
+      const comparison = compareVersions(installedVersion, supportedVersion);
+      const hasUpdate = comparison < 0;
+
+      let isBelowMinimum = false;
+      if (minimumSupportedVersion) {
+        const minimumComparison = compareVersions(installedVersion, minimumSupportedVersion);
+        isBelowMinimum = minimumComparison < 0;
+      }
+
+      logger.debug('Version comparison result', {
+        agent: this.metadata.name,
+        comparison,
+        installedVersion,
+        supportedVersion,
+        minimumSupportedVersion,
+        compatible: comparison <= 0,
+        isNewer: comparison > 0,
+        hasUpdate,
+        isBelowMinimum,
+      });
+
+      return {
+        compatible: comparison <= 0,
+        installedVersion,
+        supportedVersion,
+        isNewer: comparison > 0,
+        hasUpdate,
+        isBelowMinimum,
+        minimumSupportedVersion,
+      };
+    } catch (error) {
+      const errorContext = createErrorContext(error, { agent: this.metadata.name });
+      const isParseError =
+        error instanceof Error && error.message.includes('Invalid semantic version');
+
+      if (isParseError) {
+        logger.warn('Non-standard version format detected, treating as incompatible', {
+          ...errorContext,
+          operation: 'checkVersionCompatibility',
+          installedVersion,
+          supportedVersion,
+          minimumSupportedVersion,
+        });
+      } else {
+        logger.error('Version compatibility check failed unexpectedly', {
+          ...errorContext,
+          operation: 'checkVersionCompatibility',
+          installedVersion,
+          supportedVersion,
+          minimumSupportedVersion,
+        });
+      }
+
+      return {
+        compatible: false,
+        installedVersion,
+        supportedVersion,
+        isNewer: false,
+        hasUpdate: false,
+        isBelowMinimum: false,
+        minimumSupportedVersion,
+      };
+    }
+  }
+
+  /**
    * Run the agent
    */
   async run(args: string[], envOverrides?: Record<string, string>): Promise<void> {
-    // Check version compatibility before running (for version-managed agents)
-    if ('checkVersionCompatibility' in this && typeof (this as any).checkVersionCompatibility === 'function') {
-      const compat = await (this as any).checkVersionCompatibility();
+    // Check version compatibility before running (only for agents with a supportedVersion configured)
+    if (this.metadata.supportedVersion) {
+      const compat = await this.checkVersionCompatibility();
+
+      // Scenario 0: Version is below minimum supported — hard block, no override
+      if (compat.isBelowMinimum) {
+        const installedDisplay = compat.installedVersion ?? 'unknown';
+        const minimumDisplay = compat.minimumSupportedVersion ?? 'unknown';
+
+        if (this.metadata.silentMode) {
+          // In silent/ACP mode stdout is a JSON-RPC stream — never write prose to it.
+          // Throw so the caller gets a structured error and the logger captures it.
+          throw new Error(
+            `${this.displayName} v${installedDisplay} is below the minimum supported version ` +
+            `v${minimumDisplay}. Run: codemie install ${this.name}`
+          );
+        }
+
+        console.log();
+        console.log(chalk.red(`✗ ${this.displayName} v${installedDisplay} is no longer supported`));
+        console.log(chalk.red(`  Minimum required version: v${minimumDisplay}`));
+        console.log();
+        console.log(chalk.white('  This version is known to be incompatible with CodeMie and must be upgraded.'));
+        console.log();
+        console.log(chalk.white('  To upgrade, run:'));
+        console.log(chalk.blueBright(`    codemie install ${this.name}`));
+        console.log();
+        process.exit(1);
+      }
 
       if (compat.isNewer && !this.metadata.silentMode) {
         // User is running a newer (untested) version
