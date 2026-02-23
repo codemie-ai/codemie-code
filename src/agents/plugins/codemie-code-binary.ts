@@ -1,7 +1,7 @@
 import { existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { logger } from '../../../utils/logger.js';
+import { logger } from '../../utils/logger.js';
 
 /**
  * Platform-specific package name mapping for @codemieai/codemie-opencode.
@@ -65,10 +65,10 @@ export function resolveCodemieOpenCodeBinary(): string | null {
   const envBin = process.env.CODEMIE_OPENCODE_WL_BIN;
   if (envBin) {
     if (existsSync(envBin)) {
-      logger.debug(`[codemie-opencode] Using binary from CODEMIE_OPENCODE_WL_BIN: ${envBin}`);
+      logger.debug(`[codemie-code] Using binary from CODEMIE_OPENCODE_WL_BIN: ${envBin}`);
       return envBin;
     }
-    logger.warn(`[codemie-opencode] CODEMIE_OPENCODE_WL_BIN set but binary not found: ${envBin}`);
+    logger.warn(`[codemie-code] CODEMIE_OPENCODE_WL_BIN set but binary not found: ${envBin}`);
   }
 
   // Start searching from this module's directory
@@ -82,7 +82,7 @@ export function resolveCodemieOpenCodeBinary(): string | null {
     if (platformDir) {
       const platformBin = join(platformDir, 'bin', binName);
       if (existsSync(platformBin)) {
-        logger.debug(`[codemie-opencode] Resolved platform binary: ${platformBin}`);
+        logger.debug(`[codemie-code] Resolved platform binary: ${platformBin}`);
         return platformBin;
       }
     }
@@ -93,12 +93,12 @@ export function resolveCodemieOpenCodeBinary(): string | null {
   if (wrapperDir) {
     const wrapperBin = join(wrapperDir, 'bin', binName);
     if (existsSync(wrapperBin)) {
-      logger.debug(`[codemie-opencode] Resolved wrapper binary: ${wrapperBin}`);
+      logger.debug(`[codemie-code] Resolved wrapper binary: ${wrapperBin}`);
       return wrapperBin;
     }
   }
 
   // 4. Not found
-  logger.debug('[codemie-opencode] Binary not found in node_modules');
+  logger.debug('[codemie-code] Binary not found in node_modules');
   return null;
 }

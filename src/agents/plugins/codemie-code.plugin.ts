@@ -1,28 +1,165 @@
-import type { AgentMetadata } from '../core/types.js';
-import { existsSync } from 'fs';
+import type { AgentMetadata, AgentConfig } from '../core/types.js';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { existsSync, writeFileSync, unlinkSync } from 'fs';
 import { logger } from '../../utils/logger.js';
+import { getModelConfig, getAllOpenCodeModelConfigs } from './opencode/opencode-model-configs.js';
 import { BaseAgentAdapter } from '../core/BaseAgentAdapter.js';
 import type { SessionAdapter } from '../core/session/BaseSessionAdapter.js';
 import type { BaseExtensionInstaller } from '../core/extension/BaseExtensionInstaller.js';
 import { installGlobal } from '../../utils/processes.js';
 import { OpenCodeSessionAdapter } from './opencode/opencode.session.js';
-import { resolveCodemieOpenCodeBinary } from './codemie-opencode/codemie-opencode-binary.js';
-import { CodemieOpenCodePluginMetadata } from './codemie-opencode/codemie-opencode.plugin.js';
+import { resolveCodemieOpenCodeBinary } from './codemie-code-binary.js';
 
 /**
  * Built-in agent name constant - single source of truth
  */
 export const BUILTIN_AGENT_NAME = 'codemie-code';
 
+const OPENCODE_SUBCOMMANDS = ['run', 'chat', 'config', 'init', 'help', 'version'];
+
+/**
+ * Convert a short model ID to Bedrock inference profile format.
+ * Bedrock requires region-prefixed ARN-style model IDs.
+ *
+ * Examples:
+ *   claude-sonnet-4-5-20250929 → us.anthropic.claude-sonnet-4-5-20250929-v1:0
+ *   claude-opus-4-6            → us.anthropic.claude-opus-4-6-v1:0
+ *
+ * If the model ID already contains 'anthropic.', it's returned as-is.
+ */
+function toBedrockModelId(modelId: string, region?: string): string {
+  if (modelId.includes('anthropic.')) return modelId;
+
+  const regionPrefix = region?.startsWith('eu') ? 'eu'
+    : region?.startsWith('ap') ? 'ap'
+    : 'us';
+
+  return `${regionPrefix}.anthropic.${modelId}-v1:0`;
+}
+
+// Environment variable size limit (conservative - varies by platform)
+// Linux: ~128KB per var, Windows: ~32KB total env block
+const MAX_ENV_SIZE = 32 * 1024;
+
+// Track temp config files for cleanup on process exit
+const tempConfigFiles: string[] = [];
+let cleanupRegistered = false;
+
+/**
+ * Register process exit handler for temp file cleanup (best effort)
+ * Only registers once, even if beforeRun is called multiple times
+ */
+function registerCleanupHandler(): void {
+  if (cleanupRegistered) return;
+  cleanupRegistered = true;
+
+  process.on('exit', () => {
+    for (const file of tempConfigFiles) {
+      try {
+        unlinkSync(file);
+        logger.debug(`[codemie-code] Cleaned up temp config: ${file}`);
+      } catch {
+        // Ignore cleanup errors - file may already be deleted
+      }
+    }
+  });
+}
+
+/**
+ * Write config to temp file as fallback when env var size exceeded
+ * Returns the temp file path
+ */
+function writeConfigToTempFile(configJson: string): string {
+  const configPath = join(
+    tmpdir(),
+    `codemie-code-config-${process.pid}-${Date.now()}.json`
+  );
+  writeFileSync(configPath, configJson, 'utf-8');
+  tempConfigFiles.push(configPath);
+  registerCleanupHandler();
+  return configPath;
+}
+
+/**
+ * Ensure session metadata file exists for SessionSyncer
+ * Creates or updates the session file in ~/.codemie/sessions/
+ */
+async function ensureSessionFile(sessionId: string, env: NodeJS.ProcessEnv): Promise<void> {
+  try {
+    const { SessionStore } = await import('../core/session/SessionStore.js');
+    const sessionStore = new SessionStore();
+
+    const existing = await sessionStore.loadSession(sessionId);
+    if (existing) {
+      logger.debug('[codemie-code] Session file already exists');
+      return;
+    }
+
+    const agentName = env.CODEMIE_AGENT || 'codemie-code';
+    const provider = env.CODEMIE_PROVIDER || 'unknown';
+    const project = env.CODEMIE_PROJECT;
+    const workingDirectory = process.cwd();
+
+    let gitBranch: string | undefined;
+    try {
+      const { detectGitBranch } = await import('../../utils/processes.js');
+      gitBranch = await detectGitBranch(workingDirectory);
+    } catch {
+      // Git detection optional
+    }
+
+    const estimatedStartTime = Date.now() - 2000;
+
+    const session = {
+      sessionId,
+      agentName,
+      provider,
+      ...(project && { project }),
+      startTime: estimatedStartTime,
+      workingDirectory,
+      ...(gitBranch && { gitBranch }),
+      status: 'completed' as const,
+      activeDurationMs: 0,
+      correlation: {
+        status: 'matched' as const,
+        agentSessionId: 'unknown',
+        retryCount: 0
+      }
+    };
+
+    await sessionStore.saveSession(session);
+    logger.debug('[codemie-code] Created session metadata file');
+
+  } catch (error) {
+    logger.warn('[codemie-code] Failed to create session file:', error);
+  }
+}
+
 // Resolve binary at load time, fallback to 'codemie'
 const resolvedBinary = resolveCodemieOpenCodeBinary();
 
 /**
- * CodeMie Code Plugin Metadata
+ * Environment variable contract between the umbrella CLI and whitelabel binary.
  *
- * Reuses lifecycle hooks from CodemieOpenCodePluginMetadata (beforeRun, enrichArgs)
- * since both agents wrap the same OpenCode binary.
- * Only onSessionEnd is customized to use clientType: 'codemie-code' for metrics.
+ * The umbrella CLI orchestrates everything (proxy, auth, metrics, session sync)
+ * and spawns the whitelabel binary as a child process. The whitelabel knows
+ * nothing about SSO, cookies, or metrics — it just sees an OpenAI-compatible
+ * endpoint at localhost.
+ *
+ * Flow: BaseAgentAdapter.run() → setupProxy() → beforeRun hook → spawn(binary)
+ *
+ * | Env Var                  | Set By               | Consumed By          | Purpose                                        |
+ * |--------------------------|----------------------|----------------------|------------------------------------------------|
+ * | OPENCODE_CONFIG_CONTENT  | beforeRun hook       | Whitelabel config.ts | Full provider config JSON (proxy URL, models)  |
+ * | OPENCODE_CONFIG          | beforeRun (fallback) | Whitelabel config.ts | Temp file path when JSON exceeds env var limit |
+ * | OPENCODE_DISABLE_SHARE   | beforeRun hook       | Whitelabel           | Disables share functionality                   |
+ * | CODEMIE_SESSION_ID       | BaseAgentAdapter     | onSessionEnd hook    | Session ID for metrics correlation             |
+ * | CODEMIE_AGENT            | BaseAgentAdapter     | Lifecycle helpers    | Agent name ('codemie-code')                    |
+ * | CODEMIE_PROVIDER         | Config loader        | setupProxy()         | Provider name (e.g., 'ai-run-sso')             |
+ * | CODEMIE_BASE_URL         | setupProxy()         | beforeRun hook       | Proxy URL (http://localhost:{port})             |
+ * | CODEMIE_MODEL            | Config/CLI           | beforeRun hook       | Selected model ID                              |
+ * | CODEMIE_PROJECT          | SSO exportEnvVars    | Session metadata     | CodeMie project name                           |
  */
 export const CodeMieCodePluginMetadata: AgentMetadata = {
   name: BUILTIN_AGENT_NAME,
@@ -47,8 +184,119 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
   ssoConfig: { enabled: true, clientType: 'codemie-code' },
 
   lifecycle: {
-    beforeRun: CodemieOpenCodePluginMetadata.lifecycle!.beforeRun,
-    enrichArgs: CodemieOpenCodePluginMetadata.lifecycle!.enrichArgs,
+    async beforeRun(env: NodeJS.ProcessEnv, config: AgentConfig) {
+      const sessionId = env.CODEMIE_SESSION_ID;
+      if (sessionId) {
+        try {
+          logger.debug('[codemie-code] Creating session metadata file before startup');
+          await ensureSessionFile(sessionId, env);
+          logger.debug('[codemie-code] Session metadata file ready for SessionSyncer');
+        } catch (error) {
+          logger.error('[codemie-code] Failed to create session file in beforeRun', { error });
+        }
+      }
+
+      const provider = env.CODEMIE_PROVIDER;
+      const baseUrl = env.CODEMIE_BASE_URL;
+
+      if (!baseUrl) {
+        return env;
+      }
+
+      if (!baseUrl.startsWith('http://') && !baseUrl.startsWith('https://')) {
+        logger.warn(`Invalid CODEMIE_BASE_URL format: ${baseUrl}`, { agent: 'codemie-code' });
+        return env;
+      }
+
+      const selectedModel = env.CODEMIE_MODEL || config?.model || 'gpt-5-2-2025-12-11';
+      const modelConfig = getModelConfig(selectedModel);
+
+      const { providerOptions } = modelConfig;
+
+      // Build all models for codemie-proxy (stripped of CodeMie-specific fields)
+      const allModels = getAllOpenCodeModelConfigs();
+
+      // Determine URLs based on provider type
+      const isBedrock = provider === 'bedrock';
+      const proxyBaseUrl = provider !== 'ollama' && !isBedrock ? baseUrl : undefined;
+      const ollamaBaseUrl = provider === 'ollama'
+        ? (baseUrl.endsWith('/v1') || baseUrl.includes('/v1/') ? baseUrl : `${baseUrl.replace(/\/$/, '')}/v1`)
+        : 'http://localhost:11434/v1';
+
+      // Determine default model provider
+      // - ollama: uses ollama provider directly
+      // - bedrock: uses OpenCode's built-in amazon-bedrock provider (AWS env vars set by provider hook)
+      // - all others: route through codemie-proxy (SSO/proxy)
+      const activeProvider = provider === 'ollama' ? 'ollama' : (isBedrock ? 'amazon-bedrock' : 'codemie-proxy');
+      const timeout = providerOptions?.timeout ?? parseInt(env.CODEMIE_TIMEOUT || '600') * 1000;
+
+      const openCodeConfig: Record<string, unknown> = {
+        enabled_providers: ['codemie-proxy', 'ollama', 'amazon-bedrock'],
+        share: 'disabled',
+        provider: {
+          ...(proxyBaseUrl && {
+            'codemie-proxy': {
+              npm: '@ai-sdk/openai-compatible',
+              name: 'CodeMie SSO',
+              options: {
+                baseURL: `${proxyBaseUrl}/`,
+                apiKey: 'proxy-handled',
+                timeout,
+                ...(providerOptions?.headers && { headers: providerOptions.headers })
+              },
+              models: allModels
+            }
+          }),
+          ollama: {
+            npm: '@ai-sdk/openai-compatible',
+            name: 'Ollama',
+            options: {
+              baseURL: `${ollamaBaseUrl}/`,
+              apiKey: 'ollama',
+              timeout,
+            }
+          }
+        },
+        model: `${activeProvider}/${isBedrock ? toBedrockModelId(modelConfig.id, env.AWS_REGION || env.CODEMIE_AWS_REGION) : modelConfig.id}`
+      };
+
+      env.OPENCODE_DISABLE_SHARE = 'true';
+      const configJson = JSON.stringify(openCodeConfig);
+
+      if (configJson.length > MAX_ENV_SIZE) {
+        logger.warn(`Config size (${configJson.length} bytes) exceeds env var limit (${MAX_ENV_SIZE}), using temp file fallback`, {
+          agent: 'codemie-code'
+        });
+
+        const configPath = writeConfigToTempFile(configJson);
+        logger.debug(`[codemie-code] Wrote config to temp file: ${configPath}`);
+
+        env.OPENCODE_CONFIG = configPath;
+        return env;
+      }
+
+      env.OPENCODE_CONFIG_CONTENT = configJson;
+      return env;
+    },
+
+    enrichArgs: (args: string[], _config: AgentConfig) => {
+      if (args.length > 0 && OPENCODE_SUBCOMMANDS.includes(args[0])) {
+        return args;
+      }
+
+      const taskIndex = args.indexOf('--task');
+      if (taskIndex !== -1 && taskIndex < args.length - 1) {
+        const taskValue = args[taskIndex + 1];
+        const otherArgs = args.filter((arg, i, arr) => {
+          if (i === taskIndex || i === taskIndex + 1) return false;
+          if (arg === '-m' || arg === '--message') return false;
+          if (i > 0 && (arr[i - 1] === '-m' || arr[i - 1] === '--message')) return false;
+          return true;
+        });
+        return ['run', ...otherArgs, taskValue];
+      }
+      return args;
+    },
 
     async onSessionEnd(exitCode: number, env: NodeJS.ProcessEnv) {
       const sessionId = env.CODEMIE_SESSION_ID;

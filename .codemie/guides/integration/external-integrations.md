@@ -593,7 +593,7 @@ LITELLM_BASE_URL=http://localhost:4000
 # OpenCode (via CodeMie proxy)
 CODEMIE_BASE_URL=https://proxy.codemie.ai
 CODEMIE_MODEL=gpt-5-2-2025-12-11
-CODEMIE_OPENCODE_BIN=opencode  # Custom OpenCode binary path (optional)
+CODEMIE_OPENCODE_WL_BIN=opencode  # Custom OpenCode binary path (optional)
 
 # Enterprise SSO
 SSO_BASE_URL=https://api.company.com

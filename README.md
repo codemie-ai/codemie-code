@@ -139,7 +139,7 @@ You can also install and use external agents like Claude Code and Gemini.
 - **Claude Code** (`codemie-claude`) - Anthropic's official CLI with advanced code understanding
 - **Claude Code ACP** (`codemie-claude-acp`) - Claude Code for IDE integration via ACP protocol (Zed, JetBrains, Emacs)
 - **Gemini CLI** (`codemie-gemini`) - Google's Gemini for coding tasks
-- **OpenCode** (`codemie-opencode`) - Open-source AI coding assistant with session analytics
+- **OpenCode** (`codemie-code`) - Open-source AI coding assistant with session analytics
 
 ```bash
 # Install an agent (latest supported version)
@@ -154,7 +154,6 @@ codemie-gemini "Implement a REST API"
 
 # Install OpenCode
 codemie install opencode
-codemie-opencode "Generate unit tests for my service"
 
 # Install Claude Code ACP (for IDE integration)
 codemie install claude-acp
@@ -239,7 +238,7 @@ These commands analyze your actual codebase to create tailored documentation and
 
 ### OpenCode Session Metrics
 
-When using OpenCode (`codemie-opencode`), CodeMie automatically extracts and tracks session metrics:
+When using OpenCode, CodeMie automatically extracts and tracks session metrics:
 
 **Manual Metrics Processing:**
 ```bash

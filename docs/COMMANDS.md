@@ -73,12 +73,10 @@ All external agents share the same command pattern:
 codemie-claude "message"         # Claude Code agent
 codemie-claude-acp               # Claude Code ACP (invoked by IDEs)
 codemie-gemini "message"         # Gemini CLI agent
-codemie-opencode "message"       # OpenCode agent
 
 # Health checks
 codemie-claude health
 codemie-gemini health
-codemie-opencode health
 
 # Note: codemie-claude-acp doesn't have interactive mode or health check
 # It's designed to be invoked by IDEs via ACP protocol
@@ -86,12 +84,9 @@ codemie-opencode health
 # With configuration overrides
 codemie-claude --model claude-4-5-sonnet --api-key sk-... "review code"
 codemie-gemini -m gemini-2.5-flash --api-key key "optimize performance"
-codemie-opencode --model gpt-5-2-2025-12-11 "generate unit tests"
-
 # With profile selection
 codemie-claude --profile personal-openai "review PR"
 codemie-gemini --profile google-direct "analyze code"
-codemie-opencode --profile work "refactor code"
 
 # Agent-specific options (pass-through to underlying CLI)
 codemie-claude --context large -p "review code"      # -p = print mode (non-interactive)

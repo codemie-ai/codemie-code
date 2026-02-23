@@ -17,7 +17,7 @@ vi.mock('../../core/BaseAgentAdapter.js', () => ({
 }));
 
 // Mock binary resolution
-vi.mock('../codemie-opencode/codemie-opencode-binary.js', () => ({
+vi.mock('../codemie-code-binary.js', () => ({
   resolveCodemieOpenCodeBinary: vi.fn(() => '/mock/bin/codemie'),
 }));
 
@@ -53,7 +53,7 @@ vi.mock('../opencode/opencode.session.js', () => ({
   }),
 }));
 
-// Mock getModelConfig
+// Mock getModelConfig and getAllOpenCodeModelConfigs
 vi.mock('../opencode/opencode-model-configs.js', () => ({
   getModelConfig: vi.fn(() => ({
     id: 'gpt-5-2-2025-12-11',
@@ -71,6 +71,7 @@ vi.mock('../opencode/opencode-model-configs.js', () => ({
     cost: { input: 2.5, output: 10 },
     limit: { context: 1048576, output: 65536 },
   })),
+  getAllOpenCodeModelConfigs: vi.fn(() => ({})),
 }));
 
 // Mock fs
@@ -81,12 +82,11 @@ vi.mock('fs', () => ({
 }));
 
 const { existsSync } = await import('fs');
-const { resolveCodemieOpenCodeBinary } = await import('../codemie-opencode/codemie-opencode-binary.js');
+const { resolveCodemieOpenCodeBinary } = await import('../codemie-code-binary.js');
 const { installGlobal } = await import('../../../utils/processes.js');
 const { logger } = await import('../../../utils/logger.js');
 const { OpenCodeSessionAdapter } = await import('../opencode/opencode.session.js');
 const { CodeMieCodePlugin, CodeMieCodePluginMetadata, BUILTIN_AGENT_NAME } = await import('../codemie-code.plugin.js');
-const { CodemieOpenCodePluginMetadata } = await import('../codemie-opencode/codemie-opencode.plugin.js');
 
 const mockExistsSync = vi.mocked(existsSync);
 const mockResolve = vi.mocked(resolveCodemieOpenCodeBinary);
@@ -98,23 +98,19 @@ describe('CodeMieCodePluginMetadata', () => {
     expect(BUILTIN_AGENT_NAME).toBe('codemie-code');
   });
 
-  it('reuses beforeRun from CodemieOpenCodePluginMetadata', () => {
-    expect(CodeMieCodePluginMetadata.lifecycle!.beforeRun).toBe(
-      CodemieOpenCodePluginMetadata.lifecycle!.beforeRun
-    );
+  it('has beforeRun defined', () => {
+    expect(CodeMieCodePluginMetadata.lifecycle!.beforeRun).toBeDefined();
+    expect(typeof CodeMieCodePluginMetadata.lifecycle!.beforeRun).toBe('function');
   });
 
-  it('reuses enrichArgs from CodemieOpenCodePluginMetadata', () => {
-    expect(CodeMieCodePluginMetadata.lifecycle!.enrichArgs).toBe(
-      CodemieOpenCodePluginMetadata.lifecycle!.enrichArgs
-    );
+  it('has enrichArgs defined', () => {
+    expect(CodeMieCodePluginMetadata.lifecycle!.enrichArgs).toBeDefined();
+    expect(typeof CodeMieCodePluginMetadata.lifecycle!.enrichArgs).toBe('function');
   });
 
-  it('has custom onSessionEnd', () => {
+  it('has onSessionEnd defined', () => {
     expect(CodeMieCodePluginMetadata.lifecycle!.onSessionEnd).toBeDefined();
-    expect(CodeMieCodePluginMetadata.lifecycle!.onSessionEnd).not.toBe(
-      CodemieOpenCodePluginMetadata.lifecycle!.onSessionEnd
-    );
+    expect(typeof CodeMieCodePluginMetadata.lifecycle!.onSessionEnd).toBe('function');
   });
 });
 
