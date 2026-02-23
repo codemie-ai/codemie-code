@@ -1,10 +1,31 @@
-import type { AgentMetadata, HookTransformer } from '../../core/types.js';
+import type { AgentMetadata, HookTransformer, VersionCompatibilityResult } from '../../core/types.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import { GeminiHookTransformer } from './gemini.hook-transformer.js';
 import { GeminiSessionAdapter } from './gemini.session-adapter.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import { GeminiExtensionInstaller } from './gemini.extension-installer.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
+import { compareVersions } from '../../../utils/version-utils.js';
+import { createErrorContext } from '../../../utils/errors.js';
+import { logger } from '../../../utils/logger.js';
+
+/**
+ * Supported Gemini CLI version
+ * Latest version tested and verified with CodeMie backend
+ *
+ * **UPDATE THIS WHEN BUMPING GEMINI VERSION**
+ */
+const GEMINI_SUPPORTED_VERSION = '0.29.5';
+
+/**
+ * Minimum supported Gemini CLI version
+ * Versions below this are known to be incompatible and will be blocked from starting
+ * Rule: always 10 patch versions below GEMINI_SUPPORTED_VERSION
+ * e.g. supported = 0.29.5 → minimum = 0.29.0 (patch floored at 0 since 5 - 10 < 0)
+ *
+ * **UPDATE THIS WHEN BUMPING GEMINI VERSION**
+ */
+const GEMINI_MINIMUM_SUPPORTED_VERSION = '0.29.0';
 
 // Define metadata first (used by both lifecycle and analytics)
 const metadata = {
@@ -14,6 +35,10 @@ const metadata = {
 
   npmPackage: '@google/gemini-cli',
   cliCommand: 'gemini',
+
+  // Version management configuration
+  supportedVersion: GEMINI_SUPPORTED_VERSION,            // Latest version tested with CodeMie backend
+  minimumSupportedVersion: GEMINI_MINIMUM_SUPPORTED_VERSION, // Minimum version required to run
 
   envMapping: {
     baseUrl: ['GOOGLE_GEMINI_BASE_URL', 'GEMINI_BASE_URL'],
@@ -172,5 +197,142 @@ export class GeminiPlugin extends BaseAgentAdapter {
    */
   getExtensionInstaller(): BaseExtensionInstaller {
     return this.extensionInstaller;
+  }
+
+  /**
+   * Get Gemini CLI version (override from BaseAgentAdapter)
+   * Parses version from 'gemini --version' output
+   * Extracts just the semver number in case output contains extra text
+   *
+   * @returns Version string or null if not installed
+   */
+  async getVersion(): Promise<string | null> {
+    if (!this.metadata.cliCommand) {
+      return null;
+    }
+
+    try {
+      const { exec } = await import('../../../utils/processes.js');
+      const result = await exec(this.metadata.cliCommand, ['--version']);
+
+      // Parse semver from output (handles both '0.29.5' and '0.29.5 (Gemini CLI)' formats)
+      const versionMatch = result.stdout.trim().match(/^(\d+\.\d+\.\d+)/);
+      if (versionMatch) {
+        return versionMatch[1];
+      }
+
+      return result.stdout.trim();
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Check if installed version is compatible with CodeMie
+   * Compares against metadata.supportedVersion and metadata.minimumSupportedVersion
+   *
+   * @returns Version compatibility result with status and version info
+   */
+  async checkVersionCompatibility(): Promise<VersionCompatibilityResult> {
+    const supportedVersion = this.metadata.supportedVersion || 'latest';
+    const minimumSupportedVersion = this.metadata.minimumSupportedVersion;
+
+    const installedVersion = await this.getVersion();
+
+    logger.debug('Checking version compatibility', {
+      agent: this.metadata.name,
+      installedVersion,
+      supportedVersion,
+      minimumSupportedVersion,
+    });
+
+    if (!installedVersion) {
+      return {
+        compatible: false,
+        installedVersion: null,
+        supportedVersion,
+        isNewer: false,
+        hasUpdate: false,
+        isBelowMinimum: false,
+        minimumSupportedVersion,
+      };
+    }
+
+    if (!this.metadata.supportedVersion) {
+      return {
+        compatible: true,
+        installedVersion,
+        supportedVersion: 'latest',
+        isNewer: false,
+        hasUpdate: false,
+        isBelowMinimum: false,
+        minimumSupportedVersion,
+      };
+    }
+
+    try {
+      const comparison = compareVersions(installedVersion, supportedVersion);
+      const hasUpdate = comparison < 0;
+
+      let isBelowMinimum = false;
+      if (minimumSupportedVersion) {
+        const minimumComparison = compareVersions(installedVersion, minimumSupportedVersion);
+        isBelowMinimum = minimumComparison < 0;
+      }
+
+      logger.debug('Version comparison result', {
+        agent: this.metadata.name,
+        comparison,
+        installedVersion,
+        supportedVersion,
+        minimumSupportedVersion,
+        compatible: comparison <= 0,
+        isNewer: comparison > 0,
+        hasUpdate,
+        isBelowMinimum,
+      });
+
+      return {
+        compatible: comparison <= 0,
+        installedVersion,
+        supportedVersion,
+        isNewer: comparison > 0,
+        hasUpdate,
+        isBelowMinimum,
+        minimumSupportedVersion,
+      };
+    } catch (error) {
+      const errorContext = createErrorContext(error, { agent: this.metadata.name });
+      const isParseError =
+        error instanceof Error && error.message.includes('Invalid semantic version');
+
+      if (isParseError) {
+        logger.warn('Non-standard version format detected, treating as incompatible', {
+          ...errorContext,
+          operation: 'checkVersionCompatibility',
+          installedVersion,
+          supportedVersion,
+          minimumSupportedVersion,
+        });
+      } else {
+        logger.error('Version compatibility check failed unexpectedly', {
+          ...errorContext,
+          operation: 'checkVersionCompatibility',
+          installedVersion,
+          supportedVersion,
+          minimumSupportedVersion,
+        });
+      }
+
+      return {
+        compatible: false,
+        installedVersion,
+        supportedVersion,
+        isNewer: false,
+        hasUpdate: false,
+        isBelowMinimum: false,
+        minimumSupportedVersion,
+      };
+    }
   }
 }
