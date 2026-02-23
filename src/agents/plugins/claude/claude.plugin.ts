@@ -1,14 +1,11 @@
-import { AgentMetadata, VersionCompatibilityResult } from '../../core/types.js';
+import { AgentMetadata } from '../../core/types.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import { ClaudeSessionAdapter } from './claude.session.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import { ClaudePluginInstaller } from './claude.plugin-installer.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
 import { installNativeAgent } from '../../../utils/native-installer.js';
-import {
-  compareVersions,
-  isValidSemanticVersion,
-} from '../../../utils/version-utils.js';
+import { isValidSemanticVersion } from '../../../utils/version-utils.js';
 import {
   AgentInstallationError,
   createErrorContext,
@@ -43,7 +40,7 @@ const CLAUDE_SUPPORTED_VERSION = '2.1.41';
  *
  * **UPDATE THIS WHEN BUMPING CLAUDE VERSION**
  */
-const CLAUDE_MINIMUM_SUPPORTED_VERSION = '2.1.31';
+const CLAUDE_MINIMUM_SUPPORTED_VERSION = '2.1.32';
 
 /**
  * Claude Code installer URLs
@@ -560,135 +557,4 @@ export class ClaudePlugin extends BaseAgentAdapter {
     }
   }
 
-  /**
-   * Check if installed version is compatible with CodeMie
-   * Compares against metadata.supportedVersion
-   *
-   * @returns Version compatibility result with status and version info
-   */
-  async checkVersionCompatibility(): Promise<VersionCompatibilityResult> {
-    const metadata = this.metadata;
-    const supportedVersion = metadata.supportedVersion || 'latest';
-    const minimumSupportedVersion = metadata.minimumSupportedVersion;
-
-    // Get installed version
-    const installedVersion = await this.getVersion();
-
-    logger.debug('Checking version compatibility', {
-      installedVersion,
-      supportedVersion,
-      minimumSupportedVersion,
-    });
-
-    // If not installed, return incompatible
-    if (!installedVersion) {
-      return {
-        compatible: false,
-        installedVersion: null,
-        supportedVersion,
-        isNewer: false,
-        hasUpdate: false,
-        isBelowMinimum: false,
-        minimumSupportedVersion,
-      };
-    }
-
-    // If no supported version configured, consider compatible
-    if (!metadata.supportedVersion) {
-      return {
-        compatible: true,
-        installedVersion,
-        supportedVersion: 'latest',
-        isNewer: false,
-        hasUpdate: false,
-        isBelowMinimum: false,
-        minimumSupportedVersion,
-      };
-    }
-
-    // Compare versions
-    try {
-      const comparison = compareVersions(installedVersion, supportedVersion);
-
-      // Determine if update is available: installed < supported
-      const hasUpdate = comparison < 0;
-
-      // Check minimum version requirement
-      let isBelowMinimum = false;
-      if (minimumSupportedVersion) {
-        const minimumComparison = compareVersions(installedVersion, minimumSupportedVersion);
-        isBelowMinimum = minimumComparison < 0;
-      }
-
-      logger.debug('Version comparison result', {
-        comparison,
-        installedVersion,
-        supportedVersion,
-        minimumSupportedVersion,
-        compatible: comparison <= 0,
-        isNewer: comparison > 0,
-        hasUpdate,
-        isBelowMinimum,
-      });
-
-      return {
-        compatible: comparison <= 0, // Compatible if installed <= supported
-        installedVersion,
-        supportedVersion,
-        isNewer: comparison > 0, // Newer if installed > supported (warning case)
-        hasUpdate, // Update available if installed < supported
-        isBelowMinimum,
-        minimumSupportedVersion,
-      };
-    } catch (error) {
-      // If version comparison fails, provide comprehensive error context for debugging
-      const errorContext = createErrorContext(error, {
-        agent: metadata.name,
-      });
-
-      // Differentiate between parse errors (non-standard format) and unexpected errors
-      const isParseError =
-        error instanceof Error &&
-        error.message.includes('Invalid semantic version');
-
-      if (isParseError) {
-        // Parse error: version format not recognized (e.g., '2.1.22 (Claude Code)' or custom format)
-        logger.warn(
-          'Non-standard version format detected, treating as incompatible',
-          {
-            ...errorContext,
-            operation: 'checkVersionCompatibility',
-            phase: 'version_comparison',
-            installedVersion,
-            supportedVersion,
-            minimumSupportedVersion,
-            reason: 'parse_error',
-          },
-        );
-      } else {
-        // Unexpected error: something went wrong during comparison
-        logger.error('Version compatibility check failed unexpectedly', {
-          ...errorContext,
-          operation: 'checkVersionCompatibility',
-          phase: 'version_comparison',
-          installedVersion,
-          supportedVersion,
-          minimumSupportedVersion,
-          reason: 'unexpected_error',
-        });
-      }
-
-      // Return incompatible (safer default) - users should be aware of version issues
-      // Don't throw - this would break user experience during setup/execution
-      return {
-        compatible: false,
-        installedVersion,
-        supportedVersion,
-        isNewer: false,
-        hasUpdate: false,
-        isBelowMinimum: false,
-        minimumSupportedVersion,
-      };
-    }
-  }
 }
