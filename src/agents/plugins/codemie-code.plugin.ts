@@ -136,6 +136,68 @@ async function ensureSessionFile(sessionId: string, env: NodeJS.ProcessEnv): Pro
   }
 }
 
+/**
+ * Map user-facing provider name to OpenCode's internal provider identifier.
+ */
+function determineActiveProvider(provider: string | undefined): string {
+  if (provider === 'ollama') return 'ollama';
+  if (provider === 'bedrock') return 'amazon-bedrock';
+  return 'codemie-proxy';
+}
+
+/**
+ * Normalize the Ollama base URL to include /v1 suffix.
+ * Non-ollama providers get the default localhost URL.
+ */
+function resolveOllamaBaseUrl(baseUrl: string, provider: string | undefined): string {
+  if (provider !== 'ollama') return 'http://localhost:11434/v1';
+  if (baseUrl.endsWith('/v1') || baseUrl.includes('/v1/')) return baseUrl;
+  return `${baseUrl.replace(/\/$/, '')}/v1`;
+}
+
+/**
+ * Build the OpenCode config object that gets passed to the whitelabel binary.
+ */
+function buildOpenCodeConfig(params: {
+  proxyBaseUrl: string | undefined;
+  ollamaBaseUrl: string;
+  activeProvider: string;
+  modelId: string;
+  timeout: number;
+  providerOptions?: any;
+  allModels: Record<string, unknown>;
+}): Record<string, unknown> {
+  return {
+    enabled_providers: ['codemie-proxy', 'ollama', 'amazon-bedrock'],
+    share: 'disabled',
+    provider: {
+      ...(params.proxyBaseUrl && {
+        'codemie-proxy': {
+          npm: '@ai-sdk/openai-compatible',
+          name: 'CodeMie SSO',
+          options: {
+            baseURL: `${params.proxyBaseUrl}/`,
+            apiKey: 'proxy-handled',
+            timeout: params.timeout,
+            ...(params.providerOptions?.headers && { headers: params.providerOptions.headers })
+          },
+          models: params.allModels
+        }
+      }),
+      ollama: {
+        npm: '@ai-sdk/openai-compatible',
+        name: 'Ollama',
+        options: {
+          baseURL: `${params.ollamaBaseUrl}/`,
+          apiKey: 'ollama',
+          timeout: params.timeout,
+        }
+      }
+    },
+    model: `${params.activeProvider}/${params.modelId}`
+  };
+}
+
 // Resolve binary at load time, fallback to 'codemie'
 const resolvedBinary = resolveCodemieOpenCodeBinary();
 
@@ -187,13 +249,8 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
     async beforeRun(env: NodeJS.ProcessEnv, config: AgentConfig) {
       const sessionId = env.CODEMIE_SESSION_ID;
       if (sessionId) {
-        try {
-          logger.debug('[codemie-code] Creating session metadata file before startup');
-          await ensureSessionFile(sessionId, env);
-          logger.debug('[codemie-code] Session metadata file ready for SessionSyncer');
-        } catch (error) {
-          logger.error('[codemie-code] Failed to create session file in beforeRun', { error });
-        }
+        // ensureSessionFile handles its own errors internally
+        await ensureSessionFile(sessionId, env);
       }
 
       const provider = env.CODEMIE_PROVIDER;
@@ -210,55 +267,21 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
 
       const selectedModel = env.CODEMIE_MODEL || config?.model || 'gpt-5-2-2025-12-11';
       const modelConfig = getModelConfig(selectedModel);
-
       const { providerOptions } = modelConfig;
-
-      // Build all models for codemie-proxy (stripped of CodeMie-specific fields)
       const allModels = getAllOpenCodeModelConfigs();
 
-      // Determine URLs based on provider type
       const isBedrock = provider === 'bedrock';
       const proxyBaseUrl = provider !== 'ollama' && !isBedrock ? baseUrl : undefined;
-      const ollamaBaseUrl = provider === 'ollama'
-        ? (baseUrl.endsWith('/v1') || baseUrl.includes('/v1/') ? baseUrl : `${baseUrl.replace(/\/$/, '')}/v1`)
-        : 'http://localhost:11434/v1';
-
-      // Determine default model provider
-      // - ollama: uses ollama provider directly
-      // - bedrock: uses OpenCode's built-in amazon-bedrock provider (AWS env vars set by provider hook)
-      // - all others: route through codemie-proxy (SSO/proxy)
-      const activeProvider = provider === 'ollama' ? 'ollama' : (isBedrock ? 'amazon-bedrock' : 'codemie-proxy');
+      const ollamaBaseUrl = resolveOllamaBaseUrl(baseUrl, provider);
+      const activeProvider = determineActiveProvider(provider);
       const timeout = providerOptions?.timeout ?? parseInt(env.CODEMIE_TIMEOUT || '600') * 1000;
+      const modelId = isBedrock
+        ? toBedrockModelId(modelConfig.id, env.AWS_REGION || env.CODEMIE_AWS_REGION)
+        : modelConfig.id;
 
-      const openCodeConfig: Record<string, unknown> = {
-        enabled_providers: ['codemie-proxy', 'ollama', 'amazon-bedrock'],
-        share: 'disabled',
-        provider: {
-          ...(proxyBaseUrl && {
-            'codemie-proxy': {
-              npm: '@ai-sdk/openai-compatible',
-              name: 'CodeMie SSO',
-              options: {
-                baseURL: `${proxyBaseUrl}/`,
-                apiKey: 'proxy-handled',
-                timeout,
-                ...(providerOptions?.headers && { headers: providerOptions.headers })
-              },
-              models: allModels
-            }
-          }),
-          ollama: {
-            npm: '@ai-sdk/openai-compatible',
-            name: 'Ollama',
-            options: {
-              baseURL: `${ollamaBaseUrl}/`,
-              apiKey: 'ollama',
-              timeout,
-            }
-          }
-        },
-        model: `${activeProvider}/${isBedrock ? toBedrockModelId(modelConfig.id, env.AWS_REGION || env.CODEMIE_AWS_REGION) : modelConfig.id}`
-      };
+      const openCodeConfig = buildOpenCodeConfig({
+        proxyBaseUrl, ollamaBaseUrl, activeProvider, modelId, timeout, providerOptions, allModels
+      });
 
       env.OPENCODE_DISABLE_SHARE = 'true';
       const configJson = JSON.stringify(openCodeConfig);

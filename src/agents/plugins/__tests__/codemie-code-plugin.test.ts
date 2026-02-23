@@ -126,9 +126,6 @@ describe('CodeMieCodePlugin', () => {
 
   describe('isInstalled', () => {
     it('returns true when binary resolved and exists', async () => {
-      mockResolve.mockReturnValue('/mock/bin/codemie');
-      mockExistsSync.mockReturnValue(true);
-
       const result = await plugin.isInstalled();
       expect(result).toBe(true);
     });
