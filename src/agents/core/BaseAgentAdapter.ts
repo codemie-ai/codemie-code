@@ -168,6 +168,32 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     if ('checkVersionCompatibility' in this && typeof (this as any).checkVersionCompatibility === 'function') {
       const compat = await (this as any).checkVersionCompatibility();
 
+      // Scenario 0: Version is below minimum supported — hard block, no override
+      if (compat.isBelowMinimum) {
+        const installedDisplay = compat.installedVersion ?? 'unknown';
+        const minimumDisplay = compat.minimumSupportedVersion ?? 'unknown';
+
+        if (this.metadata.silentMode) {
+          // In silent/ACP mode stdout is a JSON-RPC stream — never write prose to it.
+          // Throw so the caller gets a structured error and the logger captures it.
+          throw new Error(
+            `${this.displayName} v${installedDisplay} is below the minimum supported version ` +
+            `v${minimumDisplay}. Run: codemie install ${this.name}`
+          );
+        }
+
+        console.log();
+        console.log(chalk.red(`✗ ${this.displayName} v${installedDisplay} is no longer supported`));
+        console.log(chalk.red(`  Minimum required version: v${minimumDisplay}`));
+        console.log();
+        console.log(chalk.white('  This version is known to be incompatible with CodeMie and must be upgraded.'));
+        console.log();
+        console.log(chalk.white('  To upgrade, run:'));
+        console.log(chalk.blueBright(`    codemie install ${this.name}`));
+        console.log();
+        process.exit(1);
+      }
+
       if (compat.isNewer && !this.metadata.silentMode) {
         // User is running a newer (untested) version
         console.log();

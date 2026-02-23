@@ -153,11 +153,13 @@ export interface AgentAnalyticsAdapter {
  * Used to compare installed version against supported version
  */
 export interface VersionCompatibilityResult {
-  compatible: boolean;             // true if installed version is compatible
-  installedVersion: string | null; // null if not installed
-  supportedVersion: string;        // version from metadata
-  isNewer: boolean;                // true if installed > supported (requires warning)
-  hasUpdate: boolean;              // true if newer supported version available (for info prompt)
+  compatible: boolean;              // true if installed version is compatible
+  installedVersion: string | null;  // null if not installed
+  supportedVersion: string;         // version from metadata
+  isNewer: boolean;                 // true if installed > supported (requires warning)
+  hasUpdate: boolean;               // true if newer supported version available (for info prompt)
+  isBelowMinimum: boolean;          // true if installed < minimumSupportedVersion (blocks startup)
+  minimumSupportedVersion?: string; // minimum version required to run (from metadata)
 }
 
 /**
@@ -181,6 +183,15 @@ export interface AgentMetadata {
    * Special values: 'latest', 'stable' (channels)
    */
   supportedVersion?: string;
+
+  /**
+   * Minimum version required to run the agent with CodeMie
+   * Agent startup is blocked if installed version is below this threshold
+   * Configured the same way as supportedVersion (per-agent in metadata)
+   *
+   * Format: Semantic version string (e.g., '2.0.0')
+   */
+  minimumSupportedVersion?: string;
 
   /**
    * Native installer URLs for platform-specific installation

@@ -36,6 +36,14 @@ let statuslineManagedThisSession = false;
 const CLAUDE_SUPPORTED_VERSION = '2.1.41';
 
 /**
+ * Minimum supported Claude Code version
+ * Versions below this are known to be incompatible and will be blocked from starting
+ *
+ * **UPDATE THIS WHEN DROPPING SUPPORT FOR OLDER VERSIONS**
+ */
+const CLAUDE_MINIMUM_SUPPORTED_VERSION = '1.0.0';
+
+/**
  * Claude Code installer URLs
  * Official Anthropic installer scripts for native installation
  */
@@ -57,7 +65,8 @@ export const ClaudePluginMetadata: AgentMetadata = {
   cliCommand: 'claude',
 
   // Version management configuration
-  supportedVersion: CLAUDE_SUPPORTED_VERSION, // Latest version tested with CodeMie backend
+  supportedVersion: CLAUDE_SUPPORTED_VERSION,       // Latest version tested with CodeMie backend
+  minimumSupportedVersion: CLAUDE_MINIMUM_SUPPORTED_VERSION, // Minimum version required to run
 
   // Native installer URLs (used by installNativeAgent utility)
   installerUrls: CLAUDE_INSTALLER_URLS,
@@ -558,6 +567,7 @@ export class ClaudePlugin extends BaseAgentAdapter {
   async checkVersionCompatibility(): Promise<VersionCompatibilityResult> {
     const metadata = this.metadata;
     const supportedVersion = metadata.supportedVersion || 'latest';
+    const minimumSupportedVersion = metadata.minimumSupportedVersion;
 
     // Get installed version
     const installedVersion = await this.getVersion();
@@ -565,6 +575,7 @@ export class ClaudePlugin extends BaseAgentAdapter {
     logger.debug('Checking version compatibility', {
       installedVersion,
       supportedVersion,
+      minimumSupportedVersion,
     });
 
     // If not installed, return incompatible
@@ -575,6 +586,8 @@ export class ClaudePlugin extends BaseAgentAdapter {
         supportedVersion,
         isNewer: false,
         hasUpdate: false,
+        isBelowMinimum: false,
+        minimumSupportedVersion,
       };
     }
 
@@ -586,6 +599,8 @@ export class ClaudePlugin extends BaseAgentAdapter {
         supportedVersion: 'latest',
         isNewer: false,
         hasUpdate: false,
+        isBelowMinimum: false,
+        minimumSupportedVersion,
       };
     }
 
@@ -596,13 +611,22 @@ export class ClaudePlugin extends BaseAgentAdapter {
       // Determine if update is available: installed < supported
       const hasUpdate = comparison < 0;
 
+      // Check minimum version requirement
+      let isBelowMinimum = false;
+      if (minimumSupportedVersion) {
+        const minimumComparison = compareVersions(installedVersion, minimumSupportedVersion);
+        isBelowMinimum = minimumComparison < 0;
+      }
+
       logger.debug('Version comparison result', {
         comparison,
         installedVersion,
         supportedVersion,
+        minimumSupportedVersion,
         compatible: comparison <= 0,
         isNewer: comparison > 0,
         hasUpdate,
+        isBelowMinimum,
       });
 
       return {
@@ -611,6 +635,8 @@ export class ClaudePlugin extends BaseAgentAdapter {
         supportedVersion,
         isNewer: comparison > 0, // Newer if installed > supported (warning case)
         hasUpdate, // Update available if installed < supported
+        isBelowMinimum,
+        minimumSupportedVersion,
       };
     } catch (error) {
       // If version comparison fails, provide comprehensive error context for debugging
@@ -633,6 +659,7 @@ export class ClaudePlugin extends BaseAgentAdapter {
             phase: 'version_comparison',
             installedVersion,
             supportedVersion,
+            minimumSupportedVersion,
             reason: 'parse_error',
           },
         );
@@ -644,6 +671,7 @@ export class ClaudePlugin extends BaseAgentAdapter {
           phase: 'version_comparison',
           installedVersion,
           supportedVersion,
+          minimumSupportedVersion,
           reason: 'unexpected_error',
         });
       }
@@ -656,6 +684,8 @@ export class ClaudePlugin extends BaseAgentAdapter {
         supportedVersion,
         isNewer: false,
         hasUpdate: false,
+        isBelowMinimum: false,
+        minimumSupportedVersion,
       };
     }
   }
