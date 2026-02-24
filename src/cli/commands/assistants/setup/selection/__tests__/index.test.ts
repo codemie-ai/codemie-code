@@ -66,6 +66,7 @@ describe('Selection Index - index.ts', () => {
     mockClient = {} as CodeMieClient;
     mockConfig = {
       codeMieProject: 'test-project',
+      codemieAssistants: [],
     } as ProviderProfile;
     mockOptions = {
       allProjects: false,
@@ -82,10 +83,12 @@ describe('Selection Index - index.ts', () => {
 
   describe('promptAssistantSelection', () => {
     it('should initialize state with registered IDs', async () => {
-      const registeredIds = new Set(['1', '2']);
+      mockConfig.codemieAssistants = [
+        { id: '1', name: 'Assistant 1', slug: 'a1', registeredAt: new Date().toISOString() },
+        { id: '2', name: 'Assistant 2', slug: 'a2', registeredAt: new Date().toISOString() },
+      ];
 
       const result = await promptAssistantSelection(
-        registeredIds,
         mockConfig,
         mockOptions,
         mockClient
@@ -96,10 +99,7 @@ describe('Selection Index - index.ts', () => {
     });
 
     it('should load initial data for registered panel', async () => {
-      const registeredIds = new Set<string>();
-
       const result = await promptAssistantSelection(
-        registeredIds,
         mockConfig,
         mockOptions,
         mockClient
@@ -109,10 +109,11 @@ describe('Selection Index - index.ts', () => {
     });
 
     it('should return selected IDs on confirm', async () => {
-      const registeredIds = new Set(['1']);
+      mockConfig.codemieAssistants = [
+        { id: '1', name: 'Assistant 1', slug: 'a1', registeredAt: new Date().toISOString() },
+      ];
 
       const result = await promptAssistantSelection(
-        registeredIds,
         mockConfig,
         mockOptions,
         mockClient
@@ -139,10 +140,11 @@ describe('Selection Index - index.ts', () => {
         return mockPrompt;
       });
 
-      const registeredIds = new Set(['1']);
+      mockConfig.codemieAssistants = [
+        { id: '1', name: 'Assistant 1', slug: 'a1', registeredAt: new Date().toISOString() },
+      ];
 
       const result = await promptAssistantSelection(
-        registeredIds,
         mockConfig,
         mockOptions,
         mockClient
@@ -159,10 +161,7 @@ describe('Selection Index - index.ts', () => {
         fetchAssistants: vi.fn().mockRejectedValue(new Error('Network error')),
       } as any);
 
-      const registeredIds = new Set<string>();
-
       const result = await promptAssistantSelection(
-        registeredIds,
         mockConfig,
         mockOptions,
         mockClient
@@ -172,10 +171,7 @@ describe('Selection Index - index.ts', () => {
     });
 
     it('should initialize all three panels', async () => {
-      const registeredIds = new Set<string>();
-
       const result = await promptAssistantSelection(
-        registeredIds,
         mockConfig,
         mockOptions,
         mockClient
@@ -186,10 +182,12 @@ describe('Selection Index - index.ts', () => {
     });
 
     it('should set registered panel as active when registered IDs exist', async () => {
-      const registeredIds = new Set(['1', '2']);
+      mockConfig.codemieAssistants = [
+        { id: '1', name: 'Assistant 1', slug: 'a1', registeredAt: new Date().toISOString() },
+        { id: '2', name: 'Assistant 2', slug: 'a2', registeredAt: new Date().toISOString() },
+      ];
 
       await promptAssistantSelection(
-        registeredIds,
         mockConfig,
         mockOptions,
         mockClient
@@ -202,10 +200,7 @@ describe('Selection Index - index.ts', () => {
     });
 
     it('should set project panel as active when no registered IDs exist', async () => {
-      const registeredIds = new Set<string>();
-
       await promptAssistantSelection(
-        registeredIds,
         mockConfig,
         mockOptions,
         mockClient
@@ -218,10 +213,13 @@ describe('Selection Index - index.ts', () => {
     });
 
     it('should initialize selected IDs with registered IDs', async () => {
-      const registeredIds = new Set(['1', '2', '3']);
+      mockConfig.codemieAssistants = [
+        { id: '1', name: 'Assistant 1', slug: 'a1', registeredAt: new Date().toISOString() },
+        { id: '2', name: 'Assistant 2', slug: 'a2', registeredAt: new Date().toISOString() },
+        { id: '3', name: 'Assistant 3', slug: 'a3', registeredAt: new Date().toISOString() },
+      ];
 
       const result = await promptAssistantSelection(
-        registeredIds,
         mockConfig,
         mockOptions,
         mockClient
@@ -233,10 +231,7 @@ describe('Selection Index - index.ts', () => {
     });
 
     it('should handle empty registered IDs', async () => {
-      const registeredIds = new Set<string>();
-
       const result = await promptAssistantSelection(
-        registeredIds,
         mockConfig,
         mockOptions,
         mockClient
@@ -249,10 +244,7 @@ describe('Selection Index - index.ts', () => {
     it('should pass correct config to data fetcher', async () => {
       const { createDataFetcher } = await import('../../data.js');
 
-      const registeredIds = new Set<string>();
-
       await promptAssistantSelection(
-        registeredIds,
         mockConfig,
         mockOptions,
         mockClient
@@ -268,10 +260,7 @@ describe('Selection Index - index.ts', () => {
     it('should create interactive prompt with state and actions', async () => {
       const { createInteractivePrompt } = await import('../interactive-prompt.js');
 
-      const registeredIds = new Set<string>();
-
       await promptAssistantSelection(
-        registeredIds,
         mockConfig,
         mockOptions,
         mockClient
@@ -307,10 +296,7 @@ describe('Selection Index - index.ts', () => {
     it('should show spinner during initial load', async () => {
       const ora = (await import('ora')).default;
 
-      const registeredIds = new Set<string>();
-
       await promptAssistantSelection(
-        registeredIds,
         mockConfig,
         mockOptions,
         mockClient
@@ -320,10 +306,7 @@ describe('Selection Index - index.ts', () => {
     });
 
     it('should clear spinner output before interactive mode', async () => {
-      const registeredIds = new Set<string>();
-
       await promptAssistantSelection(
-        registeredIds,
         mockConfig,
         mockOptions,
         mockClient
@@ -351,10 +334,11 @@ describe('Selection Index - index.ts', () => {
         return mockPrompt;
       });
 
-      const registeredIds = new Set(['1']);
+      mockConfig.codemieAssistants = [
+        { id: '1', name: 'Assistant 1', slug: 'a1', registeredAt: new Date().toISOString() },
+      ];
 
       const result = await promptAssistantSelection(
-        registeredIds,
         mockConfig,
         mockOptions,
         mockClient
@@ -381,10 +365,7 @@ describe('Selection Index - index.ts', () => {
         return mockPrompt;
       });
 
-      const registeredIds = new Set(['1', '2']);
-
       const result = await promptAssistantSelection(
-        registeredIds,
         mockConfig,
         mockOptions,
         mockClient
@@ -396,10 +377,7 @@ describe('Selection Index - index.ts', () => {
 
   describe('initialization', () => {
     it('should initialize with default panel parameters', async () => {
-      const registeredIds = new Set<string>();
-
       const result = await promptAssistantSelection(
-        registeredIds,
         mockConfig,
         mockOptions,
         mockClient
@@ -409,10 +387,7 @@ describe('Selection Index - index.ts', () => {
     });
 
     it('should set project panel as active when no registered IDs', async () => {
-      const registeredIds = new Set<string>();
-
       await promptAssistantSelection(
-        registeredIds,
         mockConfig,
         mockOptions,
         mockClient
@@ -426,10 +401,7 @@ describe('Selection Index - index.ts', () => {
     });
 
     it('should set registered panel as inactive when no registered IDs', async () => {
-      const registeredIds = new Set<string>();
-
       await promptAssistantSelection(
-        registeredIds,
         mockConfig,
         mockOptions,
         mockClient
@@ -443,10 +415,7 @@ describe('Selection Index - index.ts', () => {
     });
 
     it('should set marketplace panel as inactive initially', async () => {
-      const registeredIds = new Set<string>();
-
       await promptAssistantSelection(
-        registeredIds,
         mockConfig,
         mockOptions,
         mockClient
@@ -471,10 +440,7 @@ describe('Selection Index - index.ts', () => {
         fetchAssistants: mockFetch,
       } as any);
 
-      const registeredIds = new Set<string>();
-
       await promptAssistantSelection(
-        registeredIds,
         mockConfig,
         mockOptions,
         mockClient
@@ -499,10 +465,12 @@ describe('Selection Index - index.ts', () => {
         fetchAssistants: mockFetch,
       } as any);
 
-      const registeredIds = new Set(['1', '2']);
+      mockConfig.codemieAssistants = [
+        { id: '1', name: 'Assistant 1', slug: 'a1', registeredAt: new Date().toISOString() },
+        { id: '2', name: 'Assistant 2', slug: 'a2', registeredAt: new Date().toISOString() },
+      ];
 
       await promptAssistantSelection(
-        registeredIds,
         mockConfig,
         mockOptions,
         mockClient
@@ -518,13 +486,14 @@ describe('Selection Index - index.ts', () => {
 
   describe('edge cases', () => {
     it('should handle very large registered ID sets', async () => {
-      const registeredIds = new Set<string>();
-      for (let i = 0; i < 1000; i++) {
-        registeredIds.add(`id-${i}`);
-      }
+      mockConfig.codemieAssistants = Array.from({ length: 1000 }, (_, i) => ({
+        id: `id-${i}`,
+        name: `Assistant ${i}`,
+        slug: `a${i}`,
+        registeredAt: new Date().toISOString(),
+      }));
 
       const result = await promptAssistantSelection(
-        registeredIds,
         mockConfig,
         mockOptions,
         mockClient
@@ -615,19 +584,24 @@ describe('Selection Index - index.ts', () => {
       expect(result).toBeDefined();
     });
 
-    it('should preserve registered IDs set', async () => {
-      const registeredIds = new Set(['original-1', 'original-2']);
+    it('should preserve registered assistants array', async () => {
+      mockConfig.codemieAssistants = [
+        { id: 'original-1', name: 'Original 1', slug: 'o1', registeredAt: new Date().toISOString() },
+        { id: 'original-2', name: 'Original 2', slug: 'o2', registeredAt: new Date().toISOString() },
+      ];
+
+      const originalLength = mockConfig.codemieAssistants.length;
 
       await promptAssistantSelection(
-        registeredIds,
         mockConfig,
         mockOptions,
         mockClient
       );
 
-      // Original set should not be modified
-      expect(registeredIds.has('original-1')).toBe(true);
-      expect(registeredIds.has('original-2')).toBe(true);
+      // Original array should not be modified
+      expect(mockConfig.codemieAssistants.length).toBe(originalLength);
+      expect(mockConfig.codemieAssistants[0].id).toBe('original-1');
+      expect(mockConfig.codemieAssistants[1].id).toBe('original-2');
     });
   });
 

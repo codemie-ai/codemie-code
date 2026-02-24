@@ -95,11 +95,9 @@ async function setupAssistants(options: SetupCommandOptions): Promise<void> {
 
   // Get authenticated client and current registrations
   const client = await getAuthenticatedClient(config);
-  const registeredAssistants = config.codemieAssistants || [];
-  const registeredIds = new Set(registeredAssistants.map(a => a.id));
 
   // Prompt user to select assistants
-  const { selectedIds, action } = await promptAssistantSelection(registeredIds, config, options, client);
+  const { selectedIds, action } = await promptAssistantSelection(config, options, client);
   if (action === ACTIONS.CANCEL) {
     console.log(chalk.dim(MESSAGES.SETUP.NO_CHANGES_MADE));
     return;
@@ -142,6 +140,9 @@ async function setupAssistants(options: SetupCommandOptions): Promise<void> {
         }
         configurationComplete = true;
       } else { // Manual configuration - show individual configuration screen
+        const registeredAssistants = config.codemieAssistants || [];
+        const registeredIds = new Set(registeredAssistants.map(a => a.id));
+
         const { registrationModes: modes, action: configAction } = await promptManualConfiguration(
           selectedAssistants as Assistant[],
           registeredIds,
@@ -168,7 +169,7 @@ async function setupAssistants(options: SetupCommandOptions): Promise<void> {
   const { newRegistrations, registered, unregistered } = await applyChanges(
     selectedIds,
     selectedAssistants,
-    registeredAssistants,
+    config.codemieAssistants || [],
     registrationModes
   );
 

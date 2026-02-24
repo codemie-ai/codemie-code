@@ -266,6 +266,13 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
       return;
     }
 
+    // If navigation buttons are focused, go back to the list
+    if (state.areNavigationButtonsFocused) {
+      options.actions.handleButtonToggle();
+      render();
+      return;
+    }
+
     if (cursorIndex === 0 && state.isPaginationFocused === null) {
       options.actions.handleFocusSearch();
       render();
@@ -295,7 +302,7 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
    */
   function handleToggleSelection(): void {
     const state = options.state;
-    if (!state.isSearchFocused) {
+    if (!state.isSearchFocused && !state.areNavigationButtonsFocused && state.isPaginationFocused === null) {
       options.actions.handleToggleSelection();
       render();
     }

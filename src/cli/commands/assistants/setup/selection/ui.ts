@@ -8,6 +8,7 @@ import chalk from 'chalk';
 import type { PanelState, SelectionState } from './types.js';
 import { ANSI, BOX, SYMBOL, TEXT, CONFIG, PAGINATION_CONTROL, type PanelId, type PaginationControl } from './constants.js';
 import { COLOR } from '../constants.js';
+import { REGISTRATION_MODE } from '../manualConfiguration/constants.js';
 
 /**
  * Render the complete UI
@@ -22,7 +23,7 @@ export function renderUI(state: SelectionState, cursorIndex: number): string {
   output += buildPanelHeader(state.panels, state.activePanelId);
   output += buildCount(activePanel);
   output += buildSearchInput(state.searchQuery, state.isSearchFocused);
-  output += buildAssistantsList(activePanel, state.selectedIds, state.isSearchFocused, cursorIndex, state.isPaginationFocused);
+  output += buildAssistantsList(state, activePanel, cursorIndex);
   output += buildPaginationControls(activePanel, state.isPaginationFocused, state.isSearchFocused);
   output += buildButtons(state);
   output += buildInstructions(activePanel);
@@ -106,12 +107,12 @@ function buildSearchInput(query: string, isFocused: boolean): string {
 }
 
 function buildAssistantsList(
+  state: SelectionState,
   activePanel: PanelState,
-  selectedIds: Set<string>,
-  isSearchFocused: boolean,
-  cursorIndex: number,
-  isPaginationFocused: PaginationControl | null
+  cursorIndex: number
 ): string {
+  const { selectedIds, isSearchFocused, isPaginationFocused, registeredAssistants, areNavigationButtonsFocused } = state;
+
   const isMarketplace = activePanel.id === 'marketplace';
   if (activePanel.isFetching) {
     return chalk.cyan('Loading assistants...\n');
@@ -127,11 +128,16 @@ function buildAssistantsList(
 
   const displayAssistants = activePanel.filteredData;
 
+  // Create a map for quick lookup of registration modes
+  const registeredMap = new Map(
+    registeredAssistants.map(a => [a.id, a.registrationMode || REGISTRATION_MODE.AGENT])
+  );
+
   let output = '';
 
   displayAssistants.forEach((assistant, index) => {
     const isSelected = selectedIds.has(assistant.id);
-    const isCursor = index === cursorIndex && !isSearchFocused && isPaginationFocused === null;
+    const isCursor = index === cursorIndex && !isSearchFocused && isPaginationFocused === null && !areNavigationButtonsFocused;
 
     const circle = isSelected
       ? chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b)(SYMBOL.CIRCLE_FILLED)
@@ -145,6 +151,13 @@ function buildAssistantsList(
       ? chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b).bold(assistant.name)
       : assistant.name;
 
+    const registrationMode = registeredMap.get(assistant.id);
+    const badge = registrationMode
+      ? registrationMode === REGISTRATION_MODE.AGENT
+        ? chalk.dim('[Agent]')
+        : chalk.dim('[Skill]')
+      : '';
+
     const projectValue = 'project' in assistant ? assistant.project : null;
     const projectName = projectValue
       ? (typeof projectValue === 'object' ? (projectValue as { name: string }).name : projectValue as string)
@@ -157,7 +170,8 @@ function buildAssistantsList(
       ? chalk.dim(` · ⚭ ${assistant.unique_users_count} uses`)
       : '';
 
-    output += `${cursor}${circle} ${name}${project}${uniqueUsers}\n`;
+    const badgeText = badge ? ` ${badge}` : '';
+    output += `${cursor}${circle} ${name}${badgeText}${project}${uniqueUsers}\n`;
 
     if (assistant.description) {
       const singleLine = assistant.description.replace(/\n+/g, ' ');

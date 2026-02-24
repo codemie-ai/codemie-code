@@ -8,7 +8,7 @@ import type { CodeMieClient } from 'codemie-sdk';
 import { ACTIONS } from '@/cli/commands/assistants/constants.js';
 
 type ActionType = typeof ACTIONS.UPDATE | typeof ACTIONS.CANCEL;
-import type { ProviderProfile } from '@/env/types.js';
+import type { ProviderProfile, CodemieAssistant } from '@/env/types.js';
 import type { SetupCommandOptions } from '../index.js';
 import type { SelectionState } from './types.js';
 import { PANEL_ID, ANSI } from './constants.js';
@@ -39,7 +39,8 @@ const DEFAULT_PANEL_PARAMS = {
  * Initialize state with 3 panels (Registered, Project, Marketplace)
  * Smart default: Project tab if no registered assistants exist
  */
-function initializeState(registeredIds: Set<string>): SelectionState {
+function initializeState(registeredAssistants: CodemieAssistant[]): SelectionState {
+  const registeredIds = new Set(registeredAssistants.map(a => a.id));
   const hasRegisteredAssistants = registeredIds.size > 0;
   const defaultPanelId = hasRegisteredAssistants
     ? PANEL_ID.REGISTERED
@@ -69,6 +70,7 @@ function initializeState(registeredIds: Set<string>): SelectionState {
     searchQuery: '',
     selectedIds: new Set(registeredIds),
     registeredIds: registeredIds,
+    registeredAssistants: registeredAssistants,
     isSearchFocused: false,
     isPaginationFocused: null,
     areNavigationButtonsFocused: false,
@@ -80,12 +82,11 @@ function initializeState(registeredIds: Set<string>): SelectionState {
  * Prompt user to select assistants with panel interface
  */
 export async function promptAssistantSelection(
-  registeredIds: Set<string>,
   config: ProviderProfile,
   options: SetupCommandOptions,
   client: CodeMieClient
 ): Promise<{ selectedIds: string[]; action: ActionType }> {
-  const state = initializeState(registeredIds);
+  const state = initializeState(config.codemieAssistants || []);
   const fetcher = createDataFetcher({
     config,
     client,
