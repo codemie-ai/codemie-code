@@ -85,6 +85,11 @@ export interface ProviderProfile {
 
   // Hooks configuration
   hooks?: HooksConfiguration;
+
+  // Assistants chat configuration
+  assistants?: {
+    maxHistoryMessages?: number; // Maximum conversation turns to load (default: 10, which loads 20 messages = 10 user + 10 AI)
+  };
 }
 
 /**

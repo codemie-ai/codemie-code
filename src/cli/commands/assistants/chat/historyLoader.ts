@@ -5,12 +5,6 @@
  */
 
 import { existsSync } from 'fs';
-
-/**
- * Maximum number of history messages to load from previous sessions
- * This prevents sending excessively large context to the API
- */
-const MAX_HISTORY_MESSAGES = 20;
 import { logger } from '@/utils/logger.js';
 import { getSessionConversationPath } from '@/agents/core/session/session-config.js';
 import { readJSONL } from '@/providers/plugins/sso/session/utils/jsonl-reader.js';
@@ -19,21 +13,27 @@ import {
   CONVERSATION_SYNC_STATUS
 } from '@/providers/plugins/sso/session/processors/conversations/types.js';
 import type { HistoryMessage } from '../constants.js';
+import type { ProviderProfile } from '@/env/types.js';
+
+/** Default max conversation turns to load (gets doubled: 10 turns = 20 messages = 10 user + 10 AI) */
+const DEFAULT_MAX_HISTORY_MESSAGES = 10;
 
 /**
  * Load conversation history from session files
  *
  * @param conversationId - Optional conversation ID to load history for
+ * @param config - Configuration profile (optional, uses default limit if not provided)
  * @returns Array of history messages, or empty array if none found or on error
  *
  * @example
  * ```ts
- * const history = await loadConversationHistory('abc-123');
+ * const history = await loadConversationHistory('abc-123', config);
  * console.log(`Loaded ${history.length} messages`);
  * ```
  */
 export async function loadConversationHistory(
-  conversationId: string | undefined
+  conversationId: string | undefined,
+  config?: ProviderProfile
 ): Promise<HistoryMessage[]> {
   if (!conversationId) return [];
 
@@ -86,7 +86,8 @@ export async function loadConversationHistory(
 
     const allHistory: HistoryMessage[] = Array.from(allMessages.values());
 
-    return allHistory.slice(-MAX_HISTORY_MESSAGES);
+    const maxMessages = (config?.assistants?.maxHistoryMessages ?? DEFAULT_MAX_HISTORY_MESSAGES) * 2;
+    return allHistory.slice(-maxMessages);
   } catch (error) {
     logger.error('Failed to load conversation history', {
       conversationId,

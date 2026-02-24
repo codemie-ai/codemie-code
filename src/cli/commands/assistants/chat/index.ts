@@ -157,7 +157,7 @@ async function interactiveChat(
 ): Promise<void> {
   // Load existing conversation history if enabled
   const history: HistoryMessage[] = loadHistory
-    ? await loadConversationHistory(conversationId)
+    ? await loadConversationHistory(conversationId, config)
     : [];
 
   if (history.length > 0) {
@@ -225,7 +225,7 @@ async function sendSingleMessage(
   loadHistory: boolean = true
 ): Promise<void> {
   try {
-    const history = loadHistory ? await loadConversationHistory(conversationId) : [];
+    const history = loadHistory ? await loadConversationHistory(conversationId, config) : [];
 
     if (history.length > 0) {
       logger.debug('Loaded conversation history for single message', {
