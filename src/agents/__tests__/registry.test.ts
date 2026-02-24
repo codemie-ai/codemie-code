@@ -114,11 +114,11 @@ describe('AgentRegistry', () => {
       }
     });
 
-    it('should include built-in agent in installed agents', async () => {
-      const installedAgents = await AgentRegistry.getInstalledAgents();
+    it('should include built-in agent in all agents', () => {
+      const allAgents = AgentRegistry.getAllAgents();
 
-      // Built-in agent should always be "installed"
-      const builtInAgent = installedAgents.find(
+      // Built-in agent should always be registered
+      const builtInAgent = allAgents.find(
         (agent) => agent.name === BUILTIN_AGENT_NAME
       );
 

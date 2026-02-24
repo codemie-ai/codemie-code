@@ -209,14 +209,6 @@ codemie opencode-metrics --discover
 codemie opencode-metrics --discover --verbose
 ```
 
-**Usage:**
-```bash
-codemie-opencode                          # Interactive mode
-codemie-opencode "your prompt"            # With initial message
-codemie-opencode --model gpt-5-2-2025-12-11 "generate tests"  # Specify model
-codemie-opencode health                   # Health check
-```
-
 **Session Storage:**
 OpenCode sessions are stored following XDG Base Directory Specification:
 - Linux: `~/.local/share/opencode/storage/`
@@ -236,9 +228,6 @@ codemie install opencode
 
 # Configure provider (if not already done)
 codemie setup
-
-# Use OpenCode
-codemie-opencode "Review this API implementation"
 
 # View metrics
 codemie analytics --agent opencode

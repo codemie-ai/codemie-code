@@ -10,8 +10,7 @@
     "codemie-code": "./bin/agent-executor.js",
     "codemie-claude": "./bin/codemie-claude.js",
     "codemie-claude-acp": "./bin/codemie-claude-acp.js",
-    "codemie-gemini": "./bin/codemie-gemini.js",
-    "codemie-opencode": "./bin/codemie-opencode.js"
+    "codemie-gemini": "./bin/codemie-gemini.js"
   },
   "files": [
     "dist",
@@ -107,6 +106,7 @@
     "@aws-sdk/credential-providers": "^3.948.0",
     "@clack/core": "^0.5.0",
     "@clack/prompts": "^0.11.0",
+    "@codemieai/codemie-opencode": "0.0.46",
     "@langchain/core": "^1.0.4",
     "@langchain/langgraph": "^1.0.2",
     "@langchain/openai": "^1.1.0",

@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import Table from 'cli-table3';
 import chalk from 'chalk';
-import { SkillManager } from '../../agents/codemie-code/skills/index.js';
+import { SkillManager, SkillSync } from '../../agents/codemie-code/skills/index.js';
 import { logger } from '../../utils/logger.js';
 import type { Skill } from '../../agents/codemie-code/skills/index.js';
 
@@ -198,6 +198,94 @@ function createReloadCommand(): Command {
 }
 
 /**
+ * Create skill sync command
+ */
+function createSyncCommand(): Command {
+  return new Command('sync')
+    .description('Sync CodeMie skills to a target agent (e.g., Claude Code)')
+    .option('--target <agent>', 'Target agent to sync skills to', 'claude')
+    .option('--clean', 'Remove synced skills that no longer exist in CodeMie')
+    .option('--dry-run', 'Preview what would be synced without writing')
+    .option('--cwd <path>', 'Working directory for project skills', process.cwd())
+    .action(async (options) => {
+      try {
+        if (options.target !== 'claude') {
+          console.error(chalk.red(`\nUnsupported target: ${options.target}. Only "claude" is currently supported.\n`));
+          process.exit(1);
+        }
+
+        const sync = new SkillSync();
+        const result = await sync.syncToClaude({
+          cwd: options.cwd,
+          clean: options.clean,
+          dryRun: options.dryRun,
+        });
+
+        const prefix = options.dryRun ? chalk.yellow('[dry-run] ') : '';
+
+        console.log('');
+        console.log(chalk.bold(`${prefix}Skill Sync → .claude/skills/`));
+        console.log('');
+
+        // Summary table
+        const table = new Table({
+          head: [chalk.bold('Status'), chalk.bold('Count'), chalk.bold('Skills')],
+          colWidths: [15, 10, 60],
+          wordWrap: true,
+        });
+
+        if (result.synced.length > 0) {
+          table.push([
+            chalk.green('Synced'),
+            result.synced.length.toString(),
+            result.synced.join(', '),
+          ]);
+        }
+
+        if (result.skipped.length > 0) {
+          table.push([
+            chalk.dim('Skipped'),
+            result.skipped.length.toString(),
+            result.skipped.join(', '),
+          ]);
+        }
+
+        if (result.removed.length > 0) {
+          table.push([
+            chalk.red('Removed'),
+            result.removed.length.toString(),
+            result.removed.join(', '),
+          ]);
+        }
+
+        if (result.errors.length > 0) {
+          table.push([
+            chalk.red('Errors'),
+            result.errors.length.toString(),
+            result.errors.join(', '),
+          ]);
+        }
+
+        if (result.synced.length === 0 && result.skipped.length === 0 &&
+            result.removed.length === 0 && result.errors.length === 0) {
+          console.log(chalk.yellow('No skills found to sync'));
+        } else {
+          console.log(table.toString());
+        }
+
+        console.log('');
+
+        if (result.errors.length > 0) {
+          process.exit(1);
+        }
+      } catch (error) {
+        logger.error('Failed to sync skills:', error);
+        process.exit(1);
+      }
+    });
+}
+
+/**
  * Create main skill command with subcommands
  */
 export function createSkillCommand(): Command {
@@ -208,6 +296,7 @@ export function createSkillCommand(): Command {
   skill.addCommand(createListCommand());
   skill.addCommand(createValidateCommand());
   skill.addCommand(createReloadCommand());
+  skill.addCommand(createSyncCommand());
 
   return skill;
 }
