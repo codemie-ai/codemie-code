@@ -319,36 +319,43 @@ const llm = new ChatOpenAI({
 
 ### Overview
 
-OpenCode is an open-source AI coding assistant. CodeMie integrates OpenCode via:
-- **CLI Wrapper**: Wraps `opencode-ai` npm package
+OpenCode is an open-source AI coding assistant. CodeMie integrates OpenCode at two levels:
+
+**Built-in Agent** (`codemie-code`):
+- **Binary Wrapper**: Wraps `@codemieai/codemie-opencode` platform-specific binary packages
+- **Self-Contained**: No separate installation required - bundled with CodeMie
+- **Default Experience**: Primary agent for CodeMie CLI
+
+**Standalone Agent** (`opencode`):
+- **Global Package**: Uses globally-installed `opencode-ai` npm package
+- **Independent CLI**: Separate command if installed globally
+- **Optional**: For users who prefer standalone OpenCode installation
+
+Both integrations share:
 - **SSO/Proxy Support**: Routes through CodeMie SSO proxy
 - **Session Analytics**: Automatic metrics extraction and sync
 - **Model Configuration**: Dynamic config injection using OpenCode's native format
 
-### Installation
-
-```bash
-# Install via CodeMie (recommended)
-codemie install opencode
-
-# Or directly via npm
-npm install -g opencode-ai
-```
-
 ### Usage
 
 ```bash
-# Start OpenCode with CodeMie proxy
-codemie-opencode "Generate unit tests"
+# Built-in agent (recommended) - no installation needed
+codemie-code "Generate unit tests"
 
-# Specify model
-codemie-opencode --model gpt-5-2-2025-12-11 "Refactor this code"
+# With model selection
+codemie-code --model gpt-5-2-2025-12-11 "Refactor this code"
+
+# Standalone agent (if opencode-ai installed globally)
+codemie install opencode
+opencode "Generate unit tests"
 ```
 
 ### Configuration Pattern
 
+Both built-in and standalone OpenCode agents use the same configuration injection pattern:
+
 ```typescript
-// Source: src/agents/plugins/opencode/opencode.plugin.ts:160-225
+// Source: src/agents/plugins/opencode/opencode.plugin.ts:215-260
 // CodeMie injects config via environment variables:
 // - OPENCODE_CONFIG_CONTENT (primary): Inline JSON config
 // - OPENCODE_CONFIG (fallback): Path to temp config file
