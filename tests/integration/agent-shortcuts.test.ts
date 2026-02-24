@@ -88,6 +88,9 @@ describe('Agent Shortcuts - Integration', () => {
     });
   });
 
+  // Windows does not have Unix-style executable permission bits
+  const isWindows = process.platform === 'win32';
+
   describe('Binary Permissions', () => {
     const packageJson = JSON.parse(readFileSync(resolve('package.json'), 'utf-8'));
     const binEntries = Object.entries(packageJson.bin) as [string, string][];
@@ -95,6 +98,12 @@ describe('Agent Shortcuts - Integration', () => {
     it.each(binEntries)(
       '%s (%s) should have executable permissions',
       (name, filePath) => {
+        if (isWindows) {
+          // Windows doesn't track Unix file permission bits; just verify the file exists
+          expect(() => statSync(resolve(filePath))).not.toThrow();
+          return;
+        }
+
         const fullPath = resolve(filePath);
         const stats = statSync(fullPath);
         const mode = stats.mode & 0o777;
