@@ -90,7 +90,7 @@ npm install @codemieai/code
 npx @codemieai/code --help
 ```
 
-**Note:** Agent shortcuts (`codemie-claude`, `codemie-code`, etc.) require global installation.
+**Note:** Agent shortcuts (`codemie-claude`, `codemie-code`, `codemie-opencode`, etc.) require global installation.
 
 ### From Source
 
@@ -139,7 +139,7 @@ You can also install and use external agents like Claude Code and Gemini.
 - **Claude Code** (`codemie-claude`) - Anthropic's official CLI with advanced code understanding
 - **Claude Code ACP** (`codemie-claude-acp`) - Claude Code for IDE integration via ACP protocol (Zed, JetBrains, Emacs)
 - **Gemini CLI** (`codemie-gemini`) - Google's Gemini for coding tasks
-- **OpenCode** (`codemie-code`) - Open-source AI coding assistant with session analytics
+- **OpenCode** (`codemie-opencode`) - Open-source AI coding assistant with session analytics
 
 ```bash
 # Install an agent (latest supported version)
