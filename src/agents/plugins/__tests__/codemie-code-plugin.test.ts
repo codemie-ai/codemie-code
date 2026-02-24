@@ -19,6 +19,7 @@ vi.mock('../../core/BaseAgentAdapter.js', () => ({
 // Mock binary resolution
 vi.mock('../codemie-code-binary.js', () => ({
   resolveCodemieOpenCodeBinary: vi.fn(() => '/mock/bin/codemie'),
+  getPlatformPackage: vi.fn(() => '@codemieai/codemie-opencode-darwin-arm64'),
 }));
 
 // Mock logger
@@ -32,9 +33,10 @@ vi.mock('../../../utils/logger.js', () => ({
   },
 }));
 
-// Mock installGlobal
+// Mock installGlobal / uninstallGlobal
 vi.mock('../../../utils/processes.js', () => ({
   installGlobal: vi.fn(),
+  uninstallGlobal: vi.fn(),
 }));
 
 // Use vi.hoisted for mock functions referenced in vi.mock factories
@@ -82,15 +84,17 @@ vi.mock('fs', () => ({
 }));
 
 const { existsSync } = await import('fs');
-const { resolveCodemieOpenCodeBinary } = await import('../codemie-code-binary.js');
-const { installGlobal } = await import('../../../utils/processes.js');
+const { resolveCodemieOpenCodeBinary, getPlatformPackage } = await import('../codemie-code-binary.js');
+const { installGlobal, uninstallGlobal } = await import('../../../utils/processes.js');
 const { logger } = await import('../../../utils/logger.js');
 const { OpenCodeSessionAdapter } = await import('../opencode/opencode.session.js');
 const { CodeMieCodePlugin, CodeMieCodePluginMetadata, BUILTIN_AGENT_NAME } = await import('../codemie-code.plugin.js');
 
 const mockExistsSync = vi.mocked(existsSync);
 const mockResolve = vi.mocked(resolveCodemieOpenCodeBinary);
+const mockGetPlatformPackage = vi.mocked(getPlatformPackage);
 const mockInstallGlobal = vi.mocked(installGlobal);
+const mockUninstallGlobal = vi.mocked(uninstallGlobal);
 
 describe('CodeMieCodePluginMetadata', () => {
   it('has name codemie-code', () => {
@@ -150,6 +154,58 @@ describe('CodeMieCodePlugin', () => {
     it('calls installGlobal with the correct package name', async () => {
       await plugin.install();
       expect(mockInstallGlobal).toHaveBeenCalledWith('@codemieai/codemie-opencode');
+    });
+  });
+
+  describe('uninstall', () => {
+    it('removes both wrapper and platform-specific packages', async () => {
+      mockResolve.mockReturnValue(null); // binary gone after uninstall
+
+      await plugin.uninstall();
+
+      expect(mockUninstallGlobal).toHaveBeenCalledWith('@codemieai/codemie-opencode');
+      expect(mockUninstallGlobal).toHaveBeenCalledWith('@codemieai/codemie-opencode-darwin-arm64');
+    });
+
+    it('warns when binary persists after uninstall', async () => {
+      mockResolve.mockReturnValue('/still/here/bin/codemie');
+
+      await plugin.uninstall();
+
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('Binary still found after uninstall')
+      );
+    });
+
+    it('does not warn when binary is gone after uninstall', async () => {
+      mockResolve.mockReturnValue(null);
+
+      await plugin.uninstall();
+
+      expect(logger.warn).not.toHaveBeenCalledWith(
+        expect.stringContaining('Binary still found')
+      );
+    });
+
+    it('succeeds even if platform package uninstall fails', async () => {
+      mockUninstallGlobal
+        .mockResolvedValueOnce(undefined) // wrapper succeeds
+        .mockRejectedValueOnce(new Error('not installed')); // platform fails
+      mockResolve.mockReturnValue(null);
+
+      await expect(plugin.uninstall()).resolves.toBeUndefined();
+
+      expect(mockUninstallGlobal).toHaveBeenCalledTimes(2);
+    });
+
+    it('skips platform package when getPlatformPackage returns null', async () => {
+      mockGetPlatformPackage.mockReturnValue(null);
+      mockResolve.mockReturnValue(null);
+
+      await plugin.uninstall();
+
+      expect(mockUninstallGlobal).toHaveBeenCalledTimes(1);
+      expect(mockUninstallGlobal).toHaveBeenCalledWith('@codemieai/codemie-opencode');
     });
   });
 

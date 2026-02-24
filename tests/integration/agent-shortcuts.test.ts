@@ -7,6 +7,8 @@
 
 import { describe, it, expect } from 'vitest';
 import { execSync } from 'child_process';
+import { statSync, readFileSync } from 'fs';
+import { resolve } from 'path';
 import { setupTestIsolation } from '../helpers/test-isolation.js';
 
 describe('Agent Shortcuts - Integration', () => {
@@ -84,5 +86,29 @@ describe('Agent Shortcuts - Integration', () => {
       // Should parse flag without error
       expect(result.output || result.error).toBeDefined();
     });
+  });
+
+  // Windows does not have Unix-style executable permission bits
+  const isWindows = process.platform === 'win32';
+
+  describe('Binary Permissions', () => {
+    const packageJson = JSON.parse(readFileSync(resolve('package.json'), 'utf-8'));
+    const binEntries = Object.entries(packageJson.bin) as [string, string][];
+
+    it.each(binEntries)(
+      '%s (%s) should have executable permissions',
+      (name, filePath) => {
+        if (isWindows) {
+          // Windows doesn't track Unix file permission bits; just verify the file exists
+          expect(() => statSync(resolve(filePath))).not.toThrow();
+          return;
+        }
+
+        const fullPath = resolve(filePath);
+        const stats = statSync(fullPath);
+        const mode = stats.mode & 0o777;
+        expect(mode & 0o111).toBeGreaterThan(0);
+      },
+    );
   });
 });

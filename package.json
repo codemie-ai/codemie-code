@@ -10,7 +10,8 @@
     "codemie-code": "./bin/agent-executor.js",
     "codemie-claude": "./bin/codemie-claude.js",
     "codemie-claude-acp": "./bin/codemie-claude-acp.js",
-    "codemie-gemini": "./bin/codemie-gemini.js"
+    "codemie-gemini": "./bin/codemie-gemini.js",
+    "codemie-opencode": "./bin/codemie-opencode.js"
   },
   "files": [
     "dist",
