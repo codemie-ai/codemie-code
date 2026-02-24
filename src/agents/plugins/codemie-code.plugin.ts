@@ -7,9 +7,9 @@ import { getModelConfig, getAllOpenCodeModelConfigs } from './opencode/opencode-
 import { BaseAgentAdapter } from '../core/BaseAgentAdapter.js';
 import type { SessionAdapter } from '../core/session/BaseSessionAdapter.js';
 import type { BaseExtensionInstaller } from '../core/extension/BaseExtensionInstaller.js';
-import { installGlobal } from '../../utils/processes.js';
+import { installGlobal, uninstallGlobal } from '../../utils/processes.js';
 import { OpenCodeSessionAdapter } from './opencode/opencode.session.js';
-import { resolveCodemieOpenCodeBinary } from './codemie-code-binary.js';
+import { resolveCodemieOpenCodeBinary, getPlatformPackage } from './codemie-code-binary.js';
 
 /**
  * Built-in agent name constant - single source of truth
@@ -416,6 +416,35 @@ export class CodeMieCodePlugin extends BaseAgentAdapter {
    */
   async install(): Promise<void> {
     await installGlobal('@codemieai/codemie-opencode');
+  }
+
+  /**
+   * Uninstall the whitelabel package and its platform-specific binary.
+   *
+   * npm hoists the platform-specific binary package (e.g.
+   * @codemieai/codemie-opencode-darwin-arm64) to the top-level global
+   * node_modules. `npm uninstall -g @codemieai/codemie-opencode` only removes
+   * the wrapper, leaving the binary as an orphan. We explicitly remove both.
+   */
+  async uninstall(): Promise<void> {
+    await uninstallGlobal('@codemieai/codemie-opencode');
+
+    const platformPkg = getPlatformPackage();
+    if (platformPkg) {
+      try {
+        await uninstallGlobal(platformPkg);
+      } catch {
+        // Platform package may not be hoisted separately — ignore
+        logger.debug(`[codemie-code] Platform package ${platformPkg} was not installed separately`);
+      }
+    }
+
+    // Verify the binary is actually gone
+    const remaining = resolveCodemieOpenCodeBinary();
+    if (remaining) {
+      logger.warn(`[codemie-code] Binary still found after uninstall: ${remaining}`);
+      logger.warn('[codemie-code] You may need to manually remove it');
+    }
   }
 
   /**

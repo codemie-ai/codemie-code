@@ -8,7 +8,7 @@ import { logger } from '../../utils/logger.js';
  * The wrapper package lists these as optionalDependencies; npm only downloads
  * the one matching the current platform.
  */
-function getPlatformPackage(): string | null {
+export function getPlatformPackage(): string | null {
   const platform = process.platform;
   const arch = process.arch;
 
