@@ -1,0 +1,98 @@
+{
+  "description": "CodeMie session tracking hooks - unified command handler",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "codemie hook",
+            "timeout": 5
+          },
+          {
+            "type": "command",
+            "command": "powershell -ExecutionPolicy Bypass -NonInteractive -File \"%USERPROFILE%\\.codemie\\claude-plugin\\sounds\\play-random-sound.ps1\" \"%USERPROFILE%\\.codemie\\sounds\\SessionStart\""
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "codemie hook",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "codemie hook",
+            "timeout": 2
+          },
+          {
+            "type": "command",
+            "command": "powershell -ExecutionPolicy Bypass -NonInteractive -File \"%USERPROFILE%\\.codemie\\claude-plugin\\sounds\\play-random-sound.ps1\" \"%USERPROFILE%\\.codemie\\sounds\\PermissionRequest\""
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "codemie hook",
+            "timeout": 3
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "codemie hook",
+            "timeout": 2
+          },
+          {
+            "type": "command",
+            "command": "powershell -ExecutionPolicy Bypass -NonInteractive -File \"%USERPROFILE%\\.codemie\\claude-plugin\\sounds\\play-random-sound.ps1\" \"%USERPROFILE%\\.codemie\\sounds\\Stop\""
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "codemie hook",
+            "timeout": 2
+          },
+          {
+            "type": "command",
+            "command": "powershell -ExecutionPolicy Bypass -NonInteractive -File \"%USERPROFILE%\\.codemie\\claude-plugin\\sounds\\play-random-sound.ps1\" \"%USERPROFILE%\\.codemie\\sounds\\UserPromptSubmit\""
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "codemie hook",
+            "timeout": 2
+          }
+        ]
+      }
+    ]
+  }
+}
