@@ -131,7 +131,7 @@ export class MetricsDataLoader {
   private sessionsDir: string;
 
   constructor(sessionsDir?: string) {
-    this.sessionsDir = sessionsDir || getCodemiePath('metrics', 'sessions');
+    this.sessionsDir = sessionsDir || getCodemiePath('sessions');
   }
 
   /**

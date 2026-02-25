@@ -10,6 +10,7 @@ import type { BaseExtensionInstaller } from '../core/extension/BaseExtensionInst
 import { installGlobal, uninstallGlobal } from '../../utils/processes.js';
 import { OpenCodeSessionAdapter } from './opencode/opencode.session.js';
 import { resolveCodemieOpenCodeBinary, getPlatformPackage } from './codemie-code-binary.js';
+import { getHooksPluginFileUrl, cleanupHooksPlugin } from './codemie-code-hooks/index.js';
 
 /**
  * Built-in agent name constant - single source of truth
@@ -283,6 +284,28 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
         proxyBaseUrl, ollamaBaseUrl, activeProvider, modelId, timeout, providerOptions, allModels
       });
 
+      // --- Hooks injection ---
+      // 1. Forward hooks configuration from profile
+      if (env.CODEMIE_PROFILE_CONFIG) {
+        try {
+          const profileConfig = JSON.parse(env.CODEMIE_PROFILE_CONFIG);
+          if (profileConfig.hooks && Object.keys(profileConfig.hooks).length > 0) {
+            env.OPENCODE_HOOKS = JSON.stringify({ hooks: profileConfig.hooks });
+            logger.debug('[codemie-code] Forwarded hooks config to opencode binary');
+          }
+        } catch {
+          // Non-critical — profile config parse failure doesn't block startup
+        }
+      }
+
+      // 2. Inject shell-hooks plugin if hooks are configured
+      if (env.OPENCODE_HOOKS) {
+        const pluginUrl = getHooksPluginFileUrl();
+        (openCodeConfig as Record<string, any>).plugin = (openCodeConfig as Record<string, any>).plugin || [];
+        ((openCodeConfig as Record<string, any>).plugin as string[]).push(pluginUrl);
+        logger.debug(`[codemie-code] Injected hooks plugin: ${pluginUrl}`);
+      }
+
       env.OPENCODE_DISABLE_SHARE = 'true';
       const configJson = JSON.stringify(openCodeConfig);
 
@@ -371,6 +394,8 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         logger.error(`[codemie-code] Failed to process session metrics automatically: ${errorMessage}`);
+      } finally {
+        cleanupHooksPlugin();
       }
     }
   }
