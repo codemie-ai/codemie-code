@@ -9,12 +9,14 @@ import { homedir } from 'os';
 import { join, isAbsolute } from 'path';
 import type { AgentMetadata } from '../../../core/types.js';
 
-// Mock fs/promises before any imports
+// Mock fs/promises and fs before any imports
 vi.mock('fs/promises');
+vi.mock('fs');
 
 // Now import the module and mocks
 const { ClaudePluginInstaller } = await import('../claude.plugin-installer.js');
 const fsp = await import('fs/promises');
+const fss = await import('fs');
 
 // Mock metadata for testing
 const mockMetadata: AgentMetadata = {
@@ -174,6 +176,114 @@ describe('ClaudePluginInstaller', () => {
       expect(result.action).toBe('copied');
       expect(result.sourceVersion).toBe(mockVersion);
       expect(result.targetPath).toBe(expectedTargetPath);
+    });
+  });
+
+  describe('selectPlatformHooks', () => {
+    const mockVersion = '1.0.0';
+    const hooksDir = join(expectedTargetPath, 'hooks');
+    const mainHooks = join(hooksDir, 'hooks.json');
+    const windowsHooks = join(hooksDir, 'hooks.windows.json');
+    const originalPlatform = process.platform;
+
+    function mockSuccessfulInstall() {
+      vi.spyOn(fsp, 'readFile')
+        .mockResolvedValueOnce(JSON.stringify({ version: mockVersion })) // getVersion(source)
+        .mockResolvedValueOnce(JSON.stringify({ version: mockVersion })) // verify: plugin.json
+        .mockResolvedValueOnce(JSON.stringify({ hooks: {} }));           // verify: hooks.json
+
+      vi.spyOn(fsp, 'access')
+        .mockResolvedValueOnce(undefined)                          // source exists
+        .mockRejectedValueOnce(new Error('Not installed'))         // getInstalledInfo: not installed
+        .mockResolvedValueOnce(undefined)                          // verify: plugin.json
+        .mockResolvedValueOnce(undefined)                          // verify: hooks.json
+        .mockResolvedValueOnce(undefined);                         // verify: README.md
+
+      vi.spyOn(fsp, 'mkdir').mockResolvedValue(undefined);
+      vi.spyOn(fsp, 'cp').mockResolvedValue(undefined);
+    }
+
+    afterEach(() => {
+      Object.defineProperty(process, 'platform', { value: originalPlatform, writable: true });
+    });
+
+    it('should remove hooks.windows.json on macOS/Linux', async () => {
+      Object.defineProperty(process, 'platform', { value: 'darwin', writable: true });
+      mockSuccessfulInstall();
+
+      vi.spyOn(fss, 'existsSync')
+        .mockReturnValueOnce(false)  // targetPath: no old install to clean up
+        .mockReturnValueOnce(true);  // hooks.windows.json exists
+
+      vi.spyOn(fsp, 'rm').mockResolvedValue(undefined);
+      vi.spyOn(fsp, 'rename').mockResolvedValue(undefined);
+
+      const result = await installer.install();
+
+      expect(result.success).toBe(true);
+      expect(result.action).toBe('copied');
+      expect(fsp.rm).toHaveBeenCalledWith(windowsHooks);
+      expect(fsp.rename).not.toHaveBeenCalled();
+    });
+
+    it('should rename hooks.windows.json to hooks.json on Windows', async () => {
+      Object.defineProperty(process, 'platform', { value: 'win32', writable: true });
+      mockSuccessfulInstall();
+
+      vi.spyOn(fss, 'existsSync')
+        .mockReturnValueOnce(false)  // targetPath: no old install to clean up
+        .mockReturnValueOnce(true);  // hooks.windows.json exists
+
+      vi.spyOn(fsp, 'rename').mockResolvedValue(undefined);
+      vi.spyOn(fsp, 'rm').mockResolvedValue(undefined);
+
+      const result = await installer.install();
+
+      expect(result.success).toBe(true);
+      expect(result.action).toBe('copied');
+      expect(fsp.rename).toHaveBeenCalledWith(windowsHooks, mainHooks);
+      expect(fsp.rm).not.toHaveBeenCalled();
+    });
+
+    it('should skip hooks selection if hooks.windows.json is not present', async () => {
+      mockSuccessfulInstall();
+
+      vi.spyOn(fss, 'existsSync')
+        .mockReturnValueOnce(false)  // targetPath: no old install to clean up
+        .mockReturnValueOnce(false); // hooks.windows.json does not exist
+
+      vi.spyOn(fsp, 'rename').mockResolvedValue(undefined);
+      vi.spyOn(fsp, 'rm').mockResolvedValue(undefined);
+
+      const result = await installer.install();
+
+      expect(result.success).toBe(true);
+      expect(fsp.rename).not.toHaveBeenCalled();
+      expect(fsp.rm).not.toHaveBeenCalled();
+    });
+
+    it('should skip hooks selection when plugin is already up-to-date', async () => {
+      vi.spyOn(fsp, 'access')
+        .mockResolvedValueOnce(undefined) // target dir exists
+        .mockResolvedValueOnce(undefined) // manifest exists
+        .mockResolvedValueOnce(undefined) // hooks exist
+        .mockResolvedValueOnce(undefined); // source exists
+
+      vi.spyOn(fsp, 'readFile')
+        .mockResolvedValueOnce(JSON.stringify({ version: mockVersion })) // getVersion(target)
+        .mockResolvedValueOnce(JSON.stringify({ version: mockVersion })); // getVersion(source)
+
+      vi.spyOn(fss, 'existsSync');
+      vi.spyOn(fsp, 'rename').mockResolvedValue(undefined);
+      vi.spyOn(fsp, 'rm').mockResolvedValue(undefined);
+
+      const result = await installer.install();
+
+      expect(result.success).toBe(true);
+      expect(result.action).toBe('already_exists');
+      expect(fss.existsSync).not.toHaveBeenCalled();
+      expect(fsp.rename).not.toHaveBeenCalled();
+      expect(fsp.rm).not.toHaveBeenCalled();
     });
   });
 

@@ -104,10 +104,6 @@ function displayPostInstallInstructions(): void {
     console.log(chalk.dim('   Script would appear after codemie-claude first run'));
     console.log(chalk.white('💡 If script did not appear, remove ~/.codemie/claude-plugin directory and restart codemie-claude'));
     console.log();
-    console.log(chalk.bold.yellow('⚠️  WINDOWS USERS:'));
-    console.log(chalk.yellow('   After codemie-claude first run, edit ~/.codemie/claude-plugin/hooks/hooks.json'));
-    console.log(chalk.yellow('   Change all instances of "play-random-sound.sh" to "play-random-sound.ps1"'));
-    console.log();
 }
 
 /**
