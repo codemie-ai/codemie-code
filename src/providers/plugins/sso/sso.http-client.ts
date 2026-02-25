@@ -27,7 +27,7 @@ export interface CodeMieUserInfo {
  */
 export const CODEMIE_ENDPOINTS = {
   MODELS: '/v1/llm_models?include_all=true',
-  USER_SETTINGS: '/v1/settings/user',
+  USER_SETTINGS_AVAILABLE: '/v1/settings/user/available',
   USER: '/v1/user',
   ADMIN_APPLICATIONS: '/v1/admin/applications',
   METRICS: '/v1/metrics',
@@ -198,65 +198,26 @@ export async function fetchApplicationDetails(
 }
 
 /**
- * Fetch integrations from CodeMie SSO API (paginated)
+ * Fetch integrations from CodeMie SSO API.
+ * Uses /v1/settings/user/available which returns both user-level and project-level
+ * integrations in a single call.
  */
 export async function fetchCodeMieIntegrations(
   apiUrl: string,
-  cookies: Record<string, string>,
-  endpointPath: string = CODEMIE_ENDPOINTS.USER_SETTINGS
+  cookies: Record<string, string>
 ): Promise<CodeMieIntegration[]> {
   const cookieString = Object.entries(cookies)
     .map(([key, value]) => `${key}=${value}`)
     .join(';');
 
-  const allIntegrations: CodeMieIntegration[] = [];
-  let currentPage = 0;
-  const perPage = 50;
-  let hasMorePages = true;
-  let lastError: Error | undefined;
+  const fullUrl = `${apiUrl}${CODEMIE_ENDPOINTS.USER_SETTINGS_AVAILABLE}`;
 
-  while (hasMorePages) {
-    try {
-      // Build URL with query parameters to filter by LiteLLM type
-      const filters = JSON.stringify({ type: ['LiteLLM'] });
-      const queryParams = new URLSearchParams({
-        page: currentPage.toString(),
-        per_page: perPage.toString(),
-        filters: filters
-      });
-
-      const fullUrl = `${apiUrl}${endpointPath}?${queryParams.toString()}`;
-
-      if (process.env.CODEMIE_DEBUG) {
-        console.log(`[DEBUG] Fetching integrations from: ${fullUrl}`);
-      }
-
-      const pageIntegrations = await fetchIntegrationsPage(fullUrl, cookieString);
-
-      if (pageIntegrations.length === 0) {
-        hasMorePages = false;
-      } else {
-        allIntegrations.push(...pageIntegrations);
-
-        // If we got fewer items than requested, we've reached the last page
-        if (pageIntegrations.length < perPage) {
-          hasMorePages = false;
-        } else {
-          currentPage++;
-        }
-      }
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
-      hasMorePages = false;
-    }
+  if (process.env.CODEMIE_DEBUG) {
+    console.log(`[DEBUG] Fetching integrations from: ${fullUrl}`);
   }
 
-  // If we got no integrations and had an error, throw it
-  if (allIntegrations.length === 0 && lastError) {
-    throw lastError;
-  }
-
-  return allIntegrations;
+  const integrations = await fetchIntegrationsPage(fullUrl, cookieString);
+  return integrations.filter(i => i.credential_type === 'LiteLLM');
 }
 
 /**
