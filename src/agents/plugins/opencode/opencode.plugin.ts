@@ -9,6 +9,7 @@ import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
 import { commandExists } from '../../../utils/processes.js';
 import { OpenCodeSessionAdapter } from './opencode.session.js';
+import { getHooksPluginFileUrl, cleanupHooksPlugin } from '../codemie-code-hooks/index.js';
 
 const OPENCODE_SUBCOMMANDS = ['run', 'chat', 'config', 'init', 'help', 'version'];
 
@@ -242,6 +243,28 @@ export const OpenCodePluginMetadata: AgentMetadata = {
         model: `${activeProvider}/${isBedrock ? toBedrockModelId(modelConfig.id, env.AWS_REGION || env.CODEMIE_AWS_REGION) : modelConfig.id}`
       };
 
+      // --- Hooks injection ---
+      // 1. Forward hooks configuration from profile
+      if (env.CODEMIE_PROFILE_CONFIG) {
+        try {
+          const profileConfig = JSON.parse(env.CODEMIE_PROFILE_CONFIG);
+          if (profileConfig.hooks && Object.keys(profileConfig.hooks).length > 0) {
+            env.OPENCODE_HOOKS = JSON.stringify({ hooks: profileConfig.hooks });
+            logger.debug('[opencode] Forwarded hooks config to opencode binary');
+          }
+        } catch {
+          // Non-critical — profile config parse failure doesn't block startup
+        }
+      }
+
+      // 2. Inject shell-hooks plugin if hooks are configured
+      if (env.OPENCODE_HOOKS) {
+        const pluginUrl = getHooksPluginFileUrl();
+        openCodeConfig.plugin = (openCodeConfig.plugin as string[] | undefined) || [];
+        (openCodeConfig.plugin as string[]).push(pluginUrl);
+        logger.debug(`[opencode] Injected hooks plugin: ${pluginUrl}`);
+      }
+
       env.OPENCODE_DISABLE_SHARE = 'true';
       const configJson = JSON.stringify(openCodeConfig);
 
@@ -365,6 +388,8 @@ export const OpenCodePluginMetadata: AgentMetadata = {
         const errorMessage = error instanceof Error ? error.message : String(error);
         logger.error(`[opencode] Failed to process session metrics automatically: ${errorMessage}`);
         // Don't throw - metrics failure shouldn't block exit
+      } finally {
+        cleanupHooksPlugin();
       }
     }
   }

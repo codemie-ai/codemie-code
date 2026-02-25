@@ -1,0 +1,25 @@
+{
+  "version": 2,
+  "activeProfile": "default",
+  "profiles": {
+    "default": {
+      "provider": "openai",
+      "baseUrl": "https://api.openai.com/v1",
+      "apiKey": "your-api-key-here",
+      "model": "gpt-4",
+      "hooks": {
+        "Stop": [
+          {
+            "hooks": [
+              {
+                "type": "command",
+                "command": "/path/to/codemie-code/examples/hooks/stop-thanks.sh",
+                "timeout": 5000
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

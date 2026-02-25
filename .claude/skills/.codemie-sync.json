@@ -1,0 +1,29 @@
+{
+  "lastSync": "2026-02-25T13:01:28.752Z",
+  "skills": {
+    "typescript-best-practices": {
+      "source": "project",
+      "sourcePath": "/Users/maxim_diabin/code/codemie-code/.codemie/skills/examples/typescript-best-practices/SKILL.md",
+      "syncedAt": "2026-02-24T14:34:19.314Z",
+      "mtimeMs": 1770127722186.5054
+    },
+    "dependency-audit": {
+      "source": "project",
+      "sourcePath": "/Users/maxim_diabin/code/codemie-code/.codemie/skills/dependency-audit/SKILL.md",
+      "syncedAt": "2026-02-24T14:34:19.315Z",
+      "mtimeMs": 1769376109385.9175
+    },
+    "echo": {
+      "source": "project",
+      "sourcePath": "/Users/maxim_diabin/code/codemie-code/.codemie/skills/echo/SKILL.md",
+      "syncedAt": "2026-02-24T14:34:19.316Z",
+      "mtimeMs": 1769515630280.425
+    },
+    "mr": {
+      "source": "project",
+      "sourcePath": "/Users/maxim_diabin/code/codemie-code/.codemie/skills/mr/SKILL.md",
+      "syncedAt": "2026-02-24T14:34:19.317Z",
+      "mtimeMs": 1770127722186.682
+    }
+  }
+}

@@ -32,7 +32,7 @@ describe('Analytics E2E Test - Golden Dataset Validation', () => {
 
   beforeAll(() => {
     // Initialize paths with isolated test home
-    testMetricsDir = join(getTestHome(), 'metrics', 'sessions');
+    testMetricsDir = join(getTestHome(), 'sessions');
     testSessionFile = join(testMetricsDir, `${testSessionId}.json`);
     testMetricsFile = join(testMetricsDir, `${testSessionId}_metrics.jsonl`);
 
