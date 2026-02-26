@@ -15,7 +15,7 @@ export interface HTTPClientConfig {
   headers?: Record<string, string>;  // Additional headers
   maxRedirects?: number;             // Maximum redirects to follow (default: 5)
   maxRetries?: number;               // Maximum retries on failure (default: 3)
-  rejectUnauthorized?: boolean;      // Allow self-signed certificates (default: false)
+  rejectUnauthorized?: boolean;      // Allow self-signed certificates (default: true)
 }
 
 export interface HTTPResponse<T = unknown> {
@@ -36,7 +36,7 @@ export class HTTPClient {
       timeout: 5000,
       maxRedirects: 5,
       maxRetries: 3,
-      rejectUnauthorized: false,
+      rejectUnauthorized: true,
       headers: {},
       ...config
     };
@@ -103,7 +103,8 @@ export class HTTPClient {
         path: parsedUrl.pathname + parsedUrl.search,
         method,
         headers: requestHeaders,
-        timeout: this.config.timeout
+        timeout: this.config.timeout,
+        rejectUnauthorized: this.config.rejectUnauthorized
       };
 
       const req = client.request(options, (res) => {

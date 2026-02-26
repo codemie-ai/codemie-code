@@ -23,6 +23,7 @@
  */
 
 import { createServer, Server, IncomingMessage, ServerResponse } from 'http';
+import https from 'https';
 import { randomUUID } from 'crypto';
 import { URL } from 'url';
 import { ProviderRegistry } from '../../../core/registry.js';
@@ -46,9 +47,14 @@ export class CodeMieProxy {
 
   constructor(private config: ProxyConfig) {
     // Initialize HTTP client with streaming support
+    // Respect global SSL settings: honour --no-ssl-verify / CODEMIE_SSL_NO_VERIFY,
+    // and forward any CA certs injected by applyWindowsCertificates().
+    const rejectUnauthorized = process.env.NODE_TLS_REJECT_UNAUTHORIZED !== '0';
+    const ca = (https.globalAgent.options as { ca?: string | Buffer | (string | Buffer)[] }).ca;
     this.httpClient = new ProxyHTTPClient({
       timeout: config.timeout || 300000,
-      rejectUnauthorized: false // Allow self-signed certificates
+      rejectUnauthorized,
+      ca
     });
   }
 

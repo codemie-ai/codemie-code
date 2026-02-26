@@ -5,6 +5,8 @@
  * Direct entry point for codemie-opencode command
  */
 
+import './_bootstrap.js';
+
 import { AgentCLI } from '../dist/agents/core/AgentCLI.js';
 import { AgentRegistry } from '../dist/agents/registry.js';
 

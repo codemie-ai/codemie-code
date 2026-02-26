@@ -8,6 +8,8 @@
  * Uses Zed's claude-code-acp wrapper for stdio JSON-RPC communication.
  */
 
+import './_bootstrap.js';
+
 import { AgentCLI } from '../dist/agents/core/AgentCLI.js';
 import { AgentRegistry } from '../dist/agents/registry.js';
 

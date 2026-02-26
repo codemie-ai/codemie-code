@@ -5,6 +5,8 @@
  * Entry point for the codemie executable
  */
 
+import './_bootstrap.js';
+
 import { MigrationRunner } from '../dist/migrations/index.js';
 import { checkAndPromptForUpdate } from '../dist/utils/cli-updater.js';
 

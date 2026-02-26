@@ -66,6 +66,7 @@ export class AgentCLI {
       .option('--base-url <url>', 'Override base URL')
       .option('--timeout <seconds>', 'Override timeout (in seconds)', parseInt)
       .option('--task <prompt>', 'Execute a single task (agent-specific flag mapping)')
+      .option('--no-ssl-verify', 'Disable SSL certificate verification (for corporate proxies/VDI environments)')
       .allowUnknownOption()
       .argument('[args...]', `Arguments to pass to ${this.adapter.displayName}`)
       .action(async (args, options) => {
@@ -130,6 +131,14 @@ export class AgentCLI {
         }
       }
 
+      // Apply --no-ssl-verify flag: disable SSL for the current process and all child processes.
+      // Must run before any network calls (auth validation, agent subprocess spawn).
+      if (options.sslVerify === false) {
+        process.env.CODEMIE_SSL_NO_VERIFY = '1';
+        const { disableSSLVerification } = await import('../../utils/ssl.js');
+        disableSSLVerification();
+      }
+
       // Load configuration with CLI overrides
       const config = await ConfigLoader.load(process.cwd(), {
         name: options.profile as string | undefined,  // Profile selection
@@ -139,6 +148,13 @@ export class AgentCLI {
         baseUrl: options.baseUrl as string | undefined,
         timeout: options.timeout as number | undefined
       });
+
+      // Apply profile-based sslVerify if CLI flag was not already used
+      if (options.sslVerify !== false && config.sslVerify === false) {
+        process.env.CODEMIE_SSL_NO_VERIFY = '1';
+        const { disableSSLVerification } = await import('../../utils/ssl.js');
+        disableSSLVerification();
+      }
 
       // Validate essential configuration
       const missingFields: string[] = [];
@@ -199,6 +215,11 @@ export class AgentCLI {
       // Pass status flag to lifecycle hooks
       if (options.status) {
         providerEnv.CODEMIE_STATUS = '1';
+      }
+
+      // Propagate SSL disable to spawned agent subprocess via environment
+      if (options.sslVerify === false || config.sslVerify === false) {
+        providerEnv.CODEMIE_SSL_NO_VERIFY = '1';
       }
 
       // Serialize full profile config for proxy plugins (read once at CLI level)
@@ -343,7 +364,7 @@ export class AgentCLI {
   ): string[] {
     const agentArgs = [...args];
     // Config-only options (not passed to agent, handled by CodeMie CLI)
-    const configOnlyOptions = ['profile', 'provider', 'apiKey', 'baseUrl', 'timeout', 'model', 'silent', 'status'];
+    const configOnlyOptions = ['profile', 'provider', 'apiKey', 'baseUrl', 'timeout', 'model', 'silent', 'status', 'sslVerify'];
 
     for (const [key, value] of Object.entries(options)) {
       // Skip config-only options (handled by CodeMie CLI layer)

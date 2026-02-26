@@ -8,6 +8,8 @@
  * to avoid Windows npm wrapper detection issues.
  */
 
+import './_bootstrap.js';
+
 import { AgentCLI } from '../dist/agents/core/AgentCLI.js';
 import { AgentRegistry } from '../dist/agents/registry.js';
 

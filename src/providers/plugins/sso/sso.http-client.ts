@@ -47,10 +47,11 @@ export async function fetchCodeMieModels(
 
   const url = `${apiUrl}${CODEMIE_ENDPOINTS.MODELS}`;
 
+  const rejectUnauthorized = process.env.NODE_TLS_REJECT_UNAUTHORIZED !== '0';
   const client = new HTTPClient({
     timeout: 10000,
     maxRetries: 3,
-    rejectUnauthorized: false
+    rejectUnauthorized
   });
 
   const cliVersion = process.env.CODEMIE_CLI_VERSION || 'unknown';
@@ -116,10 +117,11 @@ export async function fetchCodeMieUserInfo(
 
   const url = `${apiUrl}${CODEMIE_ENDPOINTS.USER}`;
 
+  const rejectUnauthorized = process.env.NODE_TLS_REJECT_UNAUTHORIZED !== '0';
   const client = new HTTPClient({
     timeout: 10000,
     maxRetries: 3,
-    rejectUnauthorized: false
+    rejectUnauthorized
   });
 
   const cliVersion = process.env.CODEMIE_CLI_VERSION || 'unknown';
@@ -169,10 +171,11 @@ export async function fetchApplicationDetails(
 
     const url = `${apiUrl}${CODEMIE_ENDPOINTS.ADMIN_APPLICATIONS}?limit=1000`;
 
+    const rejectUnauthorized = process.env.NODE_TLS_REJECT_UNAUTHORIZED !== '0';
     const client = new HTTPClient({
       timeout: 5000,
       maxRetries: 1,
-      rejectUnauthorized: false
+      rejectUnauthorized
     });
 
     const cliVersion = process.env.CODEMIE_CLI_VERSION || 'unknown';
@@ -224,10 +227,11 @@ export async function fetchCodeMieIntegrations(
  * Fetch single page of integrations
  */
 async function fetchIntegrationsPage(fullUrl: string, cookieString: string): Promise<CodeMieIntegration[]> {
+  const rejectUnauthorized = process.env.NODE_TLS_REJECT_UNAUTHORIZED !== '0';
   const client = new HTTPClient({
     timeout: 10000,
     maxRetries: 3,
-    rejectUnauthorized: false
+    rejectUnauthorized
   });
 
   const cliVersion = process.env.CODEMIE_CLI_VERSION || 'unknown';

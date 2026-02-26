@@ -253,6 +253,10 @@ export class ConfigLoader {
       env.ignorePatterns = process.env.CODEMIE_IGNORE_PATTERNS.split(',').map(s => s.trim());
     }
 
+    if (process.env.CODEMIE_SSL_NO_VERIFY === 'true' || process.env.CODEMIE_SSL_NO_VERIFY === '1') {
+      env.sslVerify = false;
+    }
+
     // SSO-specific environment variables
     if (process.env.CODEMIE_URL) env.codeMieUrl = process.env.CODEMIE_URL;
     if (process.env.CODEMIE_AUTH_METHOD) env.authMethod = process.env.CODEMIE_AUTH_METHOD as 'manual' | 'sso';

@@ -17,6 +17,7 @@ import { logger } from '../../../../utils/logger.js';
 export interface HTTPClientOptions {
   timeout?: number;
   rejectUnauthorized?: boolean;
+  ca?: string | Buffer | (string | Buffer)[];
 }
 
 export interface ForwardRequestOptions {
@@ -56,7 +57,8 @@ export class ProxyHTTPClient {
     // Connection pooling with keep-alive
     // NO timeout on agent - we handle it at request level
     const baseAgentOptions = {
-      rejectUnauthorized: options.rejectUnauthorized ?? false,
+      rejectUnauthorized: options.rejectUnauthorized ?? true,
+      ca: options.ca,
       keepAlive: true,
       maxSockets: 50
     };

@@ -78,6 +78,9 @@ export interface ProviderProfile {
 
   // Hooks configuration
   hooks?: HooksConfiguration;
+
+  /** SSL certificate verification. false disables all SSL checks (for VDI/corporate proxies) */
+  sslVerify?: boolean;
 }
 
 /**
