@@ -280,7 +280,7 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
       expect(result.success).toBe(true);
       expect(result.action).toBe('copied');
       expect(result.sourceVersion).toBeDefined();
-      expect(result.sourceVersion).toBe('1.0.8');
+      expect(result.sourceVersion).toBe('1.0.9');
       expect(result.installedVersion).toBeUndefined(); // First install
     });
 
@@ -293,8 +293,8 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
       const result2 = await installer.install();
       expect(result2.success).toBe(true);
       expect(result2.action).toBe('already_exists');
-      expect(result2.sourceVersion).toBe('1.0.8');
-      expect(result2.installedVersion).toBe('1.0.8');
+      expect(result2.sourceVersion).toBe('1.0.9');
+      expect(result2.installedVersion).toBe('1.0.9');
     });
 
     it('should detect version in installed plugin', async () => {
@@ -308,7 +308,7 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
       const json = JSON.parse(content);
 
       expect(json.version).toBeDefined();
-      expect(json.version).toBe('1.0.8');
+      expect(json.version).toBe('1.0.9');
     });
   });
 });
