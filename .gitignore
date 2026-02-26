@@ -33,6 +33,7 @@ coverage/
 # TypeScript cache
 *.tsbuildinfo
 .claude/settings.local.json
+.claude/skills/
 
 .claude/**/bmad/*
 .codemie/claude-templates/templates

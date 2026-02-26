@@ -113,7 +113,7 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
    */
   async parseSessionFile(filePath: string, sessionId: string): Promise<ParsedSession> {
     // Route to SQLite parsing if filePath points to a .db file
-    if (filePath.endsWith('.db') || filePath.endsWith('opencode.db')) {
+    if (filePath.endsWith('.db')) {
       return this.parseSessionFromDb(filePath, sessionId);
     }
 

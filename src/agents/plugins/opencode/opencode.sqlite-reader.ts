@@ -1,4 +1,3 @@
-// src/agents/plugins/opencode/opencode.sqlite-reader.ts
 /**
  * OpenCode SQLite Reader
  *
@@ -167,6 +166,13 @@ export async function readSessionsFromDb(
 }
 
 /**
+ * Escape a string for safe use in SQL single-quoted literals.
+ */
+function escapeSqlString(value: string): string {
+  return value.replace(/'/g, "''");
+}
+
+/**
  * Read messages for a session from the SQLite database.
  *
  * @param dbPath - Path to opencode.db
@@ -177,11 +183,10 @@ export async function readMessagesFromDb(
   dbPath: string,
   sessionId: string
 ): Promise<OpenCodeMessage[]> {
-  // Quote the sessionId to prevent SQL injection
-  const escapedId = sessionId.replace(/'/g, "''");
+  const escapedId = escapeSqlString(sessionId);
   const rows = await queryDb<MessageRow>(
     dbPath,
-    `SELECT id, session_id, data FROM message WHERE session_id = '${escapedId}' ORDER BY id ASC`
+    `SELECT id, session_id, data FROM message WHERE session_id = '${escapedId}'`
   );
 
   const messages: OpenCodeMessage[] = [];
@@ -194,7 +199,6 @@ export async function readMessagesFromDb(
       const base = {
         id: row.id,
         sessionID: row.session_id,
-        role: role as 'user' | 'assistant',
         time: {
           created: (data.time as any)?.created ?? 0,
         },
@@ -244,7 +248,7 @@ export async function readAllPartsForSessionFromDb(
   dbPath: string,
   sessionId: string
 ): Promise<Record<string, OpenCodePart[]>> {
-  const escapedId = sessionId.replace(/'/g, "''");
+  const escapedId = escapeSqlString(sessionId);
   const rows = await queryDb<PartRow>(
     dbPath,
     `SELECT id, message_id, session_id, data FROM part WHERE session_id = '${escapedId}' ORDER BY id ASC`

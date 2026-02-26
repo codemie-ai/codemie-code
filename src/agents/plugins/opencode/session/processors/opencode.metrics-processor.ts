@@ -22,7 +22,7 @@ import type {
   OpenCodePart,
   OpenCodeToolPart,
   OpenCodeStepFinishPart,
-  OpenCodeMetadata
+  OpenCodeMetadata,
 } from '../../opencode-message-types.js';
 import { isToolPart, isStepFinishPart } from '../../opencode-message-types.js';
 import { readJsonWithRetry, readJsonlTolerant } from '../../opencode.storage-utils.js';
@@ -113,7 +113,9 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
         updatedAt: metadata.updatedAt as string | undefined,
         storagePath,
         openCodeSessionId,
-        openCodeVersion: metadata.openCodeVersion as string | undefined
+        openCodeVersion: metadata.openCodeVersion as string | undefined,
+        partsMap: metadata.partsMap as Record<string, OpenCodePart[]> | undefined,
+        storageType: metadata.storageType as 'sqlite' | 'file' | undefined,
       };
 
       const { deltas, stats } = await this.transformMessagesToDeltas(
@@ -276,8 +278,8 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
       }
     }
 
-    // Extract all user prompts
-    const allUserPrompts = await this.extractUserPrompts(messages, storagePath, openCodeSessionId);
+    // Extract all user prompts (pass partsMap for SQLite-backed sessions)
+    const allUserPrompts = await this.extractUserPrompts(messages, storagePath, openCodeSessionId, sessionMetadata.partsMap);
 
     // Filter to only NEW prompts
     const newPrompts = allUserPrompts.filter(p => !alreadyAttachedPrompts.has(p.text));
@@ -297,8 +299,8 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
         continue;
       }
 
-      // Load parts for this message
-      const parts = await this.loadPartsForMessage(storagePath, assistantMsg.id, openCodeSessionId);
+      // Load parts for this message (use pre-loaded partsMap if available from SQLite)
+      const parts = await this.loadPartsForMessage(storagePath, assistantMsg.id, openCodeSessionId, sessionMetadata.partsMap);
 
       // Resolve token source (ADR-13)
       const tokenSource = await this.resolveTokenSource(assistantMsg, parts);
@@ -422,12 +424,34 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
 
   /**
    * Load parts for a message (ADR-11 - part-message validation)
+   *
+   * When partsMap is provided (SQLite-backed sessions), uses pre-loaded parts
+   * directly instead of reading from the filesystem.
    */
   private async loadPartsForMessage(
     storagePath: string,
     messageId: string,
-    expectedSessionId?: string
+    expectedSessionId?: string,
+    partsMap?: Record<string, OpenCodePart[]>
   ): Promise<OpenCodePart[]> {
+    // Use pre-loaded partsMap if available (from SQLite bulk query)
+    if (partsMap && partsMap[messageId]) {
+      const parts = partsMap[messageId];
+      // Apply same validation as file-based path
+      return parts.filter(part => {
+        if (part.messageID !== messageId) {
+          logger.debug(`[opencode-metrics] Skipping orphaned part ${part.id}: messageID mismatch`);
+          return false;
+        }
+        if (expectedSessionId && part.sessionID !== expectedSessionId) {
+          logger.debug(`[opencode-metrics] Skipping part ${part.id}: sessionID mismatch`);
+          return false;
+        }
+        return true;
+      }).sort((a, b) => a.id.localeCompare(b.id));
+    }
+
+    // File-based loading fallback
     const partsDir = join(storagePath, 'part', messageId);
 
     if (!existsSync(partsDir)) {
@@ -641,14 +665,15 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
   private async extractUserPrompts(
     messages: OpenCodeMessage[],
     storagePath: string,
-    sessionId?: string
+    sessionId?: string,
+    partsMap?: Record<string, OpenCodePart[]>
   ): Promise<Array<{ count: number; text: string }>> {
     const prompts: Array<{ count: number; text: string }> = [];
 
     for (const msg of messages) {
       if (msg.role !== 'user') continue;
 
-      const text = await this.extractUserPromptText(msg, storagePath, sessionId);
+      const text = await this.extractUserPromptText(msg, storagePath, sessionId, partsMap);
       if (text) {
         prompts.push({ count: 1, text });
       }
@@ -663,12 +688,13 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
   private async extractUserPromptText(
     msg: OpenCodeMessage,
     storagePath: string,
-    sessionId?: string
+    sessionId?: string,
+    partsMap?: Record<string, OpenCodePart[]>
   ): Promise<string | undefined> {
-    // Try parts first (ADR-20)
-    const partsDir = join(storagePath, 'part', msg.id);
-    if (existsSync(partsDir)) {
-      const parts = await this.loadPartsForMessage(storagePath, msg.id, sessionId);
+    // Try pre-loaded partsMap first (SQLite path), then file-based
+    const hasParts = partsMap?.[msg.id] || existsSync(join(storagePath, 'part', msg.id));
+    if (hasParts) {
+      const parts = await this.loadPartsForMessage(storagePath, msg.id, sessionId, partsMap);
       // Filter: exclude ignored and synthetic parts (ADR-10)
       const textParts = parts.filter(p =>
         p.type === 'text' &&

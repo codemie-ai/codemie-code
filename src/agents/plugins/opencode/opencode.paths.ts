@@ -4,16 +4,18 @@ import { homedir } from 'os';
 import { join, dirname } from 'path';
 import { existsSync } from 'fs';
 import { readFile } from 'fs/promises';
+import { logger } from '../../../utils/logger.js';
 
 /**
  * Storage layout detection result
  * Per tech spec ADR-2
  */
 export interface StorageLayoutResult {
-  layout: 'post-migration' | 'legacy' | 'mixed' | 'unknown';
+  layout: 'post-migration' | 'legacy' | 'mixed' | 'sqlite' | 'unknown';
   migrationVersion: number;
   postMigrationPath?: string;
   legacyPaths?: string[];  // Multiple project directories possible
+  dbPath?: string;          // Path to opencode.db when layout is 'sqlite'
 }
 
 /**
@@ -45,20 +47,28 @@ export async function detectStorageLayout(storagePath: string): Promise<StorageL
     existsSync(join(storagePath, 'part'))
   );
 
+  // SQLite check: opencode.db lives one level above storage/
+  const dbPath = join(dirname(storagePath), 'opencode.db');
+  const hasSqlite = existsSync(dbPath);
+
   // Legacy structure check (project directories above storage/)
   const dataDir = dirname(storagePath);  // Goes up to ~/.local/share/opencode/
   const projectDir = join(dataDir, 'project');
   const hasLegacy = existsSync(projectDir);
 
   // Determine layout
+  // SQLite takes priority when file-based dirs are absent
   if (migrationVersion >= 1 && hasPostMigration) {
-    return { layout: 'post-migration', migrationVersion, postMigrationPath: storagePath };
+    return { layout: 'post-migration', migrationVersion, postMigrationPath: storagePath, ...(hasSqlite && { dbPath }) };
   }
   if (hasPostMigration && hasLegacy) {
-    return { layout: 'mixed', migrationVersion, postMigrationPath: storagePath, legacyPaths: [projectDir] };
+    return { layout: 'mixed', migrationVersion, postMigrationPath: storagePath, legacyPaths: [projectDir], ...(hasSqlite && { dbPath }) };
   }
   if (hasPostMigration) {
-    return { layout: 'post-migration', migrationVersion, postMigrationPath: storagePath };
+    return { layout: 'post-migration', migrationVersion, postMigrationPath: storagePath, ...(hasSqlite && { dbPath }) };
+  }
+  if (hasSqlite && !hasPostMigration) {
+    return { layout: 'sqlite', migrationVersion, dbPath };
   }
   if (hasLegacy) {
     return { layout: 'legacy', migrationVersion, legacyPaths: [projectDir] };
@@ -75,17 +85,29 @@ export async function detectStorageLayout(storagePath: string): Promise<StorageL
  * - macOS: ~/Library/Application Support/opencode/storage/
  * - Windows: %LOCALAPPDATA%/opencode/storage/
  *
+ * Priority order:
+ * 1. OPENCODE_STORAGE_PATH (explicit override)
+ * 2. XDG_DATA_HOME (standard XDG convention)
+ * 3. Platform-specific defaults
+ *
  * @returns Path to storage root directory or null if not found
  */
 export function getOpenCodeStoragePath(): string | null {
   const home = homedir();
   let storagePath: string;
 
-  // XDG_DATA_HOME always takes precedence (any platform)
+  // Priority 0: Custom storage path override (most explicit)
+  if (process.env.OPENCODE_STORAGE_PATH) {
+    const customPath = process.env.OPENCODE_STORAGE_PATH;
+    logger.debug(`[opencode-paths] Using OPENCODE_STORAGE_PATH: ${customPath}`);
+    return existsSync(customPath) ? customPath : null;
+  }
+
+  // Priority 1: XDG_DATA_HOME (standard XDG convention)
   if (process.env.XDG_DATA_HOME) {
     storagePath = join(process.env.XDG_DATA_HOME, 'opencode', 'storage');
   } else {
-    // Platform-specific defaults
+    // Priority 2: Platform-specific defaults
     switch (process.platform) {
       case 'darwin':  // macOS
         storagePath = join(home, 'Library', 'Application Support', 'opencode', 'storage');
@@ -163,6 +185,26 @@ export function getOpenCodeConfigDir(): string {
     return join(process.env.XDG_CONFIG_HOME, 'opencode');
   }
   return join(homedir(), '.config', 'opencode');
+}
+
+/**
+ * Get path to OpenCode's SQLite database (opencode.db)
+ *
+ * The DB lives one level above the storage/ directory:
+ *   ~/.codemie/opencode-storage/opencode/opencode.db
+ *
+ * @returns Path to opencode.db or null if not found
+ */
+export function getOpenCodeDbPath(): string | null {
+  const storagePath = getOpenCodeStoragePath();
+  if (!storagePath) return null;
+
+  const dbPath = join(dirname(storagePath), 'opencode.db');
+  if (existsSync(dbPath)) {
+    logger.debug(`[opencode-paths] Found SQLite DB: ${dbPath}`);
+    return dbPath;
+  }
+  return null;
 }
 
 // Legacy alias for backward compatibility

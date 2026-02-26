@@ -11,6 +11,8 @@ import { installGlobal, uninstallGlobal } from '../../utils/processes.js';
 import { OpenCodeSessionAdapter } from './opencode/opencode.session.js';
 import { resolveCodemieOpenCodeBinary, getPlatformPackage } from './codemie-code-binary.js';
 import { getHooksPluginFileUrl, cleanupHooksPlugin } from './codemie-code-hooks/index.js';
+import { getCodemieHome } from '../../utils/paths.js';
+import type { HookProcessingConfig } from '../../cli/commands/hook.js';
 
 /**
  * Built-in agent name constant - single source of truth
@@ -147,6 +149,33 @@ function determineActiveProvider(provider: string | undefined): string {
 }
 
 /**
+ * Get the base storage path for OpenCode sessions.
+ * Used by both beforeRun (XDG_DATA_HOME) and onSessionEnd (OPENCODE_STORAGE_PATH).
+ */
+function getOpenCodeStorageBase(): string {
+  return join(getCodemieHome(), 'opencode-storage');
+}
+
+/**
+ * Build a hook config object from environment variables.
+ * Used by both onSessionStart and onSessionEnd lifecycle hooks.
+ */
+function buildHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProcessingConfig {
+  return {
+    agentName: env.CODEMIE_AGENT || BUILTIN_AGENT_NAME,
+    sessionId,
+    provider: env.CODEMIE_PROVIDER,
+    apiBaseUrl: env.CODEMIE_BASE_URL,
+    ssoUrl: env.CODEMIE_URL,
+    version: env.CODEMIE_CLI_VERSION,
+    profileName: env.CODEMIE_PROFILE_NAME,
+    project: env.CODEMIE_PROJECT,
+    model: env.CODEMIE_MODEL,
+    clientType: 'codemie-code',
+  };
+}
+
+/**
  * Normalize the Ollama base URL to include /v1 suffix.
  * Non-ollama providers get the default localhost URL.
  */
@@ -247,6 +276,25 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
   ssoConfig: { enabled: true, clientType: 'codemie-code' },
 
   lifecycle: {
+    async onSessionStart(sessionId: string, env: NodeJS.ProcessEnv) {
+      try {
+        const { processEvent } = await import('../../cli/commands/hook.js');
+        const event = {
+          hook_event_name: 'SessionStart',
+          session_id: sessionId,
+          transcript_path: '',
+          permission_mode: 'default',
+          cwd: process.cwd(),
+          source: 'startup',
+        };
+        await processEvent(event, buildHookConfig(env, sessionId));
+        logger.info(`[codemie-code] SessionStart hook completed for session ${sessionId}`);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.error(`[codemie-code] SessionStart hook failed (non-blocking): ${msg}`);
+      }
+    },
+
     async beforeRun(env: NodeJS.ProcessEnv, config: AgentConfig) {
       const sessionId = env.CODEMIE_SESSION_ID;
       if (sessionId) {
@@ -285,26 +333,42 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
       });
 
       // --- Hooks injection ---
-      // 1. Forward hooks configuration from profile
+      // 1. Build default hooks (always present for session tracking + metrics)
+      const defaultHooks: Record<string, unknown[]> = {
+        SessionStart: [{ hooks: [{ type: 'command', command: 'codemie hook', timeout: 5 }] }],
+        SessionEnd: [{ hooks: [{ type: 'command', command: 'codemie hook', timeout: 10 }] }],
+      };
+
+      // 2. Merge profile hooks on top of defaults
+      let mergedHooks = { ...defaultHooks };
       if (env.CODEMIE_PROFILE_CONFIG) {
         try {
           const profileConfig = JSON.parse(env.CODEMIE_PROFILE_CONFIG);
-          if (profileConfig.hooks && Object.keys(profileConfig.hooks).length > 0) {
-            env.OPENCODE_HOOKS = JSON.stringify({ hooks: profileConfig.hooks });
-            logger.debug('[codemie-code] Forwarded hooks config to opencode binary');
+          if (profileConfig.hooks && typeof profileConfig.hooks === 'object') {
+            mergedHooks = { ...defaultHooks, ...profileConfig.hooks };
+            logger.debug('[codemie-code] Merged profile hooks with defaults');
           }
         } catch {
           // Non-critical — profile config parse failure doesn't block startup
         }
       }
 
-      // 2. Inject shell-hooks plugin if hooks are configured
-      if (env.OPENCODE_HOOKS) {
-        const pluginUrl = getHooksPluginFileUrl();
-        (openCodeConfig as Record<string, any>).plugin = (openCodeConfig as Record<string, any>).plugin || [];
-        ((openCodeConfig as Record<string, any>).plugin as string[]).push(pluginUrl);
-        logger.debug(`[codemie-code] Injected hooks plugin: ${pluginUrl}`);
-      }
+      env.OPENCODE_HOOKS = JSON.stringify({ hooks: mergedHooks });
+
+      // 3. Always inject shell-hooks plugin
+      const pluginUrl = getHooksPluginFileUrl();
+      (openCodeConfig as Record<string, any>).plugin = (openCodeConfig as Record<string, any>).plugin || [];
+      ((openCodeConfig as Record<string, any>).plugin as string[]).push(pluginUrl);
+      logger.debug(`[codemie-code] Injected hooks plugin: ${pluginUrl}`);
+
+      // --- Storage path configuration ---
+      // Configure storage path for OpenCode sessions
+      // This ensures codemie-opencode writes sessions to a location we can discover
+      // OpenCode will use: ${XDG_DATA_HOME}/opencode/storage/
+      // Which becomes: ~/.codemie/opencode-storage/opencode/storage/
+      env.XDG_DATA_HOME = getOpenCodeStorageBase();
+
+      logger.debug(`[codemie-code] Setting XDG_DATA_HOME=${env.XDG_DATA_HOME} for OpenCode sessions`);
 
       env.OPENCODE_DISABLE_SHARE = 'true';
       const configJson = JSON.stringify(openCodeConfig);
@@ -348,53 +412,51 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
       const sessionId = env.CODEMIE_SESSION_ID;
 
       if (!sessionId) {
-        logger.debug('[codemie-code] No CODEMIE_SESSION_ID in environment, skipping metrics processing');
+        logger.debug('[codemie-code] No CODEMIE_SESSION_ID in environment, skipping session end');
         return;
       }
 
       try {
-        logger.info(`[codemie-code] Processing session metrics before SessionSyncer (code=${exitCode})`);
+        // 1. Discover OpenCode session for transcript_path (best effort)
+        //    Set OPENCODE_STORAGE_PATH so getOpenCodeStoragePath() resolves to the
+        //    same location that beforeRun configured via XDG_DATA_HOME on the child process.
+        const expectedStoragePath = join(getOpenCodeStorageBase(), 'opencode', 'storage');
+        process.env.OPENCODE_STORAGE_PATH = expectedStoragePath;
 
-        const adapter = new OpenCodeSessionAdapter(CodeMieCodePluginMetadata);
-
-        const sessions = await adapter.discoverSessions({ maxAgeDays: 1 });
-
-        if (sessions.length === 0) {
-          logger.warn('[codemie-code] No recent OpenCode sessions found for processing');
-          return;
+        let transcriptPath = '';
+        try {
+          const adapter = new OpenCodeSessionAdapter(CodeMieCodePluginMetadata);
+          const sessions = await adapter.discoverSessions({ maxAgeDays: 1 });
+          if (sessions.length > 0) {
+            transcriptPath = sessions[0].filePath;
+            logger.debug(`[codemie-code] Discovered OpenCode session: ${sessions[0].sessionId}`);
+          } else {
+            logger.debug('[codemie-code] No recent OpenCode sessions found');
+          }
+        } catch (discoverError) {
+          const msg = discoverError instanceof Error ? discoverError.message : String(discoverError);
+          logger.debug(`[codemie-code] Session discovery failed (non-blocking): ${msg}`);
         }
 
-        const latestSession = sessions[0];
-        logger.debug(`[codemie-code] Processing latest session: ${latestSession.sessionId}`);
-        logger.debug(`[codemie-code] OpenCode session ID: ${latestSession.sessionId}`);
-        logger.debug(`[codemie-code] CodeMie session ID: ${sessionId}`);
-
-        const context = {
-          sessionId,
-          apiBaseUrl: env.CODEMIE_BASE_URL || '',
-          cookies: '',
-          clientType: 'codemie-code',
-          version: env.CODEMIE_CLI_VERSION || '1.0.0',
-          dryRun: false
+        // 2. Route through processEvent for full SessionEnd pipeline:
+        //    accumulateActiveDuration → incrementalSync → syncToAPI →
+        //    sendSessionEndMetrics → updateStatus → renameFiles
+        const { processEvent } = await import('../../cli/commands/hook.js');
+        const event = {
+          hook_event_name: 'SessionEnd',
+          session_id: sessionId,
+          transcript_path: transcriptPath,
+          permission_mode: 'default',
+          cwd: process.cwd(),
+          reason: exitCode === 0 ? 'exit' : `exit(${exitCode})`,
         };
-
-        const result = await adapter.processSession(
-          latestSession.filePath,
-          sessionId,
-          context
-        );
-
-        if (result.success) {
-          logger.info(`[codemie-code] Metrics processing complete: ${result.totalRecords} records processed`);
-          logger.info('[codemie-code] Metrics written to JSONL - SessionSyncer will sync to v1/metrics next');
-        } else {
-          logger.warn(`[codemie-code] Metrics processing had failures: ${result.failedProcessors.join(', ')}`);
-        }
-
+        await processEvent(event, buildHookConfig(env, sessionId));
+        logger.info(`[codemie-code] SessionEnd hook completed for session ${sessionId}`);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        logger.error(`[codemie-code] Failed to process session metrics automatically: ${errorMessage}`);
+        logger.error(`[codemie-code] SessionEnd hook failed (non-blocking): ${errorMessage}`);
       } finally {
+        delete process.env.OPENCODE_STORAGE_PATH;
         cleanupHooksPlugin();
       }
     }

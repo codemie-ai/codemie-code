@@ -247,6 +247,8 @@ export interface OpenCodeMetadata {
   storagePath: string;
   openCodeSessionId: string;
   openCodeVersion?: string;  // Track OpenCode version for compatibility
+  partsMap?: Record<string, OpenCodePart[]>;  // Pre-loaded parts from SQLite (keyed by messageId)
+  storageType?: 'sqlite' | 'file';            // Storage backend used for this session
 }
 
 /**

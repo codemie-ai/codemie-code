@@ -2,6 +2,8 @@
 
 **Purpose**: AI-optimized execution guide for Claude Code agents working with the CodeMie Code codebase
 
+**Note**: CodeMie Code is an umbrella project with multiple agent plugins (Claude, Gemini, OpenCode, etc.) and provider integrations.
+
 ---
 
 ## 📚 GUIDE IMPORTS

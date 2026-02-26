@@ -302,10 +302,7 @@ async function performIncrementalSync(event: BaseHookEvent, hookName: string, se
     // Use transcript_path directly from event
     const agentSessionFile = event.transcript_path;
     if (!agentSessionFile) {
-      if (config) {
-        throw new Error(`Missing required field: transcript_path`);
-      }
-      logger.warn(`[hook:${hookName}] No transcript_path in event`);
+      logger.warn(`[hook:${hookName}] No transcript_path in event, skipping incremental sync`);
       return;
     }
 
@@ -1081,7 +1078,10 @@ function validateHookEvent(event: BaseHookEvent, config?: HookProcessingConfig):
     return;
   }
 
-  if (!event.transcript_path) {
+  // transcript_path is optional for SessionStart/SessionEnd in programmatic mode
+  // (transcript may not exist yet at start, or may not be discoverable at end)
+  const transcriptOptionalEvents = ['SessionStart', 'SessionEnd'];
+  if (!event.transcript_path && !transcriptOptionalEvents.includes(event.hook_event_name)) {
     const error = new Error('Missing required field: transcript_path');
     if (config) {
       throw error;
