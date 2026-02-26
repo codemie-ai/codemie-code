@@ -58,6 +58,10 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     return this.metadata.metricsConfig;
   }
 
+  get ownedSubcommands(): string[] | undefined {
+    return this.metadata.ownedSubcommands;
+  }
+
   /**
    * Get MCP configuration summary for this agent
    * Uses agent's mcpConfig metadata to read config files
@@ -666,9 +670,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
     const provider = ProviderRegistry.getProvider(providerName);
     const isSSOProvider = provider?.authType === 'sso';
+    const isJWTAuth = env.CODEMIE_AUTH_METHOD === 'jwt';
     const isProxyEnabled = this.metadata.ssoConfig?.enabled ?? false;
 
-    return isSSOProvider && isProxyEnabled;
+    // Proxy needed for SSO cookie injection OR JWT bearer token injection
+    return (isSSOProvider || isJWTAuth) && isProxyEnabled;
   }
 
   /**
@@ -705,7 +711,9 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       integrationId: env.CODEMIE_INTEGRATION_ID,
       sessionId: env.CODEMIE_SESSION_ID,
       version: env.CODEMIE_CLI_VERSION,
-      profileConfig
+      profileConfig,
+      authMethod: (env.CODEMIE_AUTH_METHOD as 'sso' | 'jwt') || undefined,
+      jwtToken: env.CODEMIE_JWT_TOKEN || undefined
     };
   }
 

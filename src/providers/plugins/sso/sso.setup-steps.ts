@@ -141,6 +141,7 @@ export const SSOSetupSteps: ProviderSetupSteps = {
     let integrations;
     let integrationsFetchError: string | undefined;
 
+    const integrationsSpinner = ora('Fetching available integrations...').start();
     try {
       // Use authResult.cookies directly (same as userInfo fetch) instead of retrieving from storage
       // This ensures we use the same authenticated session for all API calls during setup
@@ -148,6 +149,8 @@ export const SSOSetupSteps: ProviderSetupSteps = {
         authResult.apiUrl,
         authResult.cookies
       );
+
+      integrationsSpinner.stop();
 
       // Filter by project if specified
       if (selectedProject) {
@@ -159,6 +162,7 @@ export const SSOSetupSteps: ProviderSetupSteps = {
       }
     } catch (error) {
       // Log error but don't fail setup - integrations are optional
+      integrationsSpinner.stop();
       integrationsFetchError = error instanceof Error ? error.message : String(error);
       console.log(chalk.yellow(`⚠️  Could not fetch integrations: ${integrationsFetchError}\n`));
       integrations = [];

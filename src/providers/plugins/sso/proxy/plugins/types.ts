@@ -8,7 +8,7 @@
 import { IncomingHttpHeaders } from 'http';
 import { ProxyConfig, ProxyContext } from '../proxy-types.js';
 import { logger } from '../../../../../utils/logger.js';
-import { SSOCredentials } from '../../../../core/types.js';
+import { SSOCredentials, JWTCredentials } from '../../../../core/types.js';
 import type { CodeMieConfigOptions } from '../../../../../env/types.js';
 
 /**
@@ -46,7 +46,7 @@ export interface ProxyPlugin {
 export interface PluginContext {
   config: ProxyConfig;
   logger: typeof logger;
-  credentials?: SSOCredentials;
+  credentials?: SSOCredentials | JWTCredentials;
   profileConfig?: CodeMieConfigOptions; // Full profile config (read once at CLI level)
   [key: string]: unknown; // Extensible
 }

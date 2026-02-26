@@ -41,8 +41,11 @@ export function getProviderChoice(template: ProviderTemplate): { name: string; v
  * 2. Alphabetically
  */
 export function getAllProviderChoices(providers: ProviderTemplate[]): Array<{ name: string; value: string }> {
+  // Filter out providers hidden from interactive setup (used for script/auto-configuration only)
+  const visible = providers.filter(p => !p.hidden);
+
   // Sort providers: by priority (lower number = higher priority), then alphabetically
-  const sorted = [...providers].sort((a, b) => {
+  const sorted = [...visible].sort((a, b) => {
     // First, sort by priority (default to 999 if not specified)
     const priorityA = a.priority ?? 999;
     const priorityB = b.priority ?? 999;

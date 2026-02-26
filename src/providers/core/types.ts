@@ -38,7 +38,7 @@ export interface ModelMetadata {
 /**
  * Authentication type for providers
  */
-export type AuthenticationType = 'api-key' | 'sso' | 'oauth' | 'none';
+export type AuthenticationType = 'api-key' | 'sso' | 'oauth' | 'jwt' | 'none';
 
 /**
  * Provider template - declarative metadata
@@ -60,6 +60,7 @@ export interface ProviderTemplate {
   // UI & UX
   priority?: number;                 // Display priority (0=highest, used for sorting)
   defaultProfileName?: string;       // Suggested profile name in setup wizard
+  hidden?: boolean;                  // Hide from interactive setup (for programmatic/script use only)
 
   // Model Configuration
   recommendedModels: string[];       // Default recommended models
@@ -400,6 +401,34 @@ export interface SSOCredentials {
   cookies: Record<string, string>;
   apiUrl: string;
   expiresAt?: number;
+}
+
+/**
+ * JWT credentials for storage
+ */
+export interface JWTCredentials {
+  token: string;
+  apiUrl: string;
+  expiresAt?: number;
+}
+
+/**
+ * Unified authentication credentials
+ */
+export type AuthCredentials = SSOCredentials | JWTCredentials;
+
+/**
+ * Type guard for JWT credentials
+ */
+export function isJWTCredentials(creds: AuthCredentials): creds is JWTCredentials {
+  return 'token' in creds && !('cookies' in creds);
+}
+
+/**
+ * Type guard for SSO credentials
+ */
+export function isSSOCredentials(creds: AuthCredentials): creds is SSOCredentials {
+  return 'cookies' in creds && !('token' in creds);
 }
 
 /**

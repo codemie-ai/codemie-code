@@ -24,6 +24,7 @@ import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
 import { logger } from '../../../../../utils/logger.js';
 import type { ProcessingContext } from '../../session/BaseProcessor.js';
 import { SessionSyncer } from '../../session/SessionSyncer.js';
+import type { SSOCredentials } from '../../../../core/types.js';
 
 export class SSOSessionSyncPlugin implements ProxyPlugin {
   id = '@codemie/sso-session-sync';
@@ -38,8 +39,9 @@ export class SSOSessionSyncPlugin implements ProxyPlugin {
       throw new Error('Session ID not available (session sync disabled)');
     }
 
-    if (!context.credentials) {
-      logger.debug('[SSOSessionSyncPlugin] Skipping: SSO credentials not available');
+    // Guard: skip if credentials are JWT (not SSO)
+    if (!context.credentials || !('cookies' in context.credentials)) {
+      logger.debug('[SSOSessionSyncPlugin] Skipping: Not SSO credentials');
       throw new Error('SSO credentials not available (session sync disabled)');
     }
 
@@ -60,10 +62,13 @@ export class SSOSessionSyncPlugin implements ProxyPlugin {
     // Check if dry-run mode is enabled
     const dryRun = this.isDryRunEnabled(context);
 
+    // Cast credentials to SSOCredentials (already validated above)
+    const ssoCredentials = context.credentials as SSOCredentials;
+
     return new SSOSessionSyncInterceptor(
       context.config.sessionId,
       context.config.targetApiUrl,
-      context.credentials.cookies,
+      ssoCredentials.cookies,
       context.config.clientType,
       context.config.version,
       dryRun
