@@ -11,11 +11,8 @@ import { installGlobal, uninstallGlobal } from '../../utils/processes.js';
 import { OpenCodeSessionAdapter } from './opencode/opencode.session.js';
 import { resolveCodemieOpenCodeBinary, getPlatformPackage } from './codemie-code-binary.js';
 import { getHooksPluginFileUrl, cleanupHooksPlugin } from './codemie-code-hooks/index.js';
-import chalk from 'chalk';
 import { CodeMieCode } from '../codemie-code/index.js';
 import { loadCodeMieConfig } from '../codemie-code/config.js';
-import { renderProfileInfo } from '../../utils/profile.js';
-import { getRandomWelcomeMessage, getRandomGoodbyeMessage } from '../../utils/goodbye-messages.js';
 
 /**
  * Built-in agent name constant - single source of truth
@@ -235,7 +232,7 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
   description: 'CodeMie Code - AI coding assistant',
 
   npmPackage: '@codemieai/codemie-opencode',
-  cliCommand: resolvedBinary || 'codemie',
+  cliCommand: resolvedBinary || null,
 
   dataPaths: {
     home: '.opencode'
@@ -253,68 +250,53 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
   isBuiltIn: true,
 
   // Custom handler for built-in agent
-  customRunHandler: async (args, options) => {
+  customRunHandler: async (args, options, agentConfig) => {
     try {
       // Check if we have a valid configuration first
       const workingDir = process.cwd();
 
-      let config;
+      // Use profile from AgentConfig (set by BaseAgentAdapter from CODEMIE_PROFILE_NAME)
+      // or fall back to environment variable set by AgentCLI
+      const profileName = agentConfig?.profileName || process.env.CODEMIE_PROFILE_NAME;
+
       try {
-        config = await loadCodeMieConfig(workingDir);
+        await loadCodeMieConfig(workingDir, profileName ? { name: profileName } : undefined);
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
         logger.error('Configuration loading failed:', errorMessage);
         throw new Error(`CodeMie configuration required: ${errorMessage}. Please run: codemie setup`);
       }
 
-      // Show welcome message with session info
-      // Read from environment variables (same as BaseAgentAdapter)
-      const profileName = process.env.CODEMIE_PROFILE_NAME || config.name || 'default';
-      const provider = process.env.CODEMIE_PROVIDER || config.displayProvider || config.provider;
-      const model = process.env.CODEMIE_MODEL || config.model;
-      const codeMieUrl = process.env.CODEMIE_URL || config.codeMieUrl;
-      const sessionId = process.env.CODEMIE_SESSION_ID || 'n/a';
-      const cliVersion = process.env.CODEMIE_CLI_VERSION || 'unknown';
-      console.log(
-        renderProfileInfo({
-            profile: profileName,
-            provider,
-            model,
-            codeMieUrl,
-            agent: BUILTIN_AGENT_NAME,
-            cliVersion,
-            sessionId
-        })
-      );
-
-      // Show random welcome message
-      console.log(chalk.cyan.bold(getRandomWelcomeMessage()));
-      console.log(''); // Empty line for spacing
+      // Welcome/goodbye messages are shown by BaseAgentAdapter (which invokes this handler).
+      // Parse agent-specific flags from args (--debug, --task, --plan, --plan-only)
+      const debug = args.includes('--debug') || (options.debug as boolean | undefined);
+      const taskIdx = args.indexOf('--task');
+      const task = taskIdx !== -1 && taskIdx < args.length - 1 ? args[taskIdx + 1] : (options.task as string | undefined);
+      const plan = args.includes('--plan') || (options.plan as boolean | undefined);
+      const planOnly = args.includes('--plan-only') || (options.planOnly as boolean | undefined);
+      // Remaining args (excluding known flags) are treated as a prompt
+      const knownFlags = new Set(['--debug', '--task', '--plan', '--plan-only']);
+      const promptArgs = args.filter((a, i) => {
+        if (knownFlags.has(a)) return false;
+        if (i > 0 && args[i - 1] === '--task') return false;
+        return true;
+      });
 
       const codeMie = new CodeMieCode(workingDir);
-      await codeMie.initialize({ debug: options.debug as boolean | undefined });
+      await codeMie.initialize({ debug: debug as boolean | undefined });
 
-      try {
-        if (options.task) {
-          await codeMie.executeTaskWithUI(options.task as string, {
-            planMode: (options.plan || options.planOnly) as boolean | undefined,
-            planOnly: options.planOnly as boolean | undefined
-          });
-        } else if (args.length > 0) {
-          await codeMie.executeTaskWithUI(args.join(' '));
-          if (!options.planOnly) {
-            await codeMie.startInteractive();
-          }
-        } else {
+      if (task) {
+        await codeMie.executeTaskWithUI(task, {
+          planMode: (plan || planOnly) as boolean | undefined,
+          planOnly: planOnly as boolean | undefined
+        });
+      } else if (promptArgs.length > 0) {
+        await codeMie.executeTaskWithUI(promptArgs.join(' '));
+        if (!planOnly) {
           await codeMie.startInteractive();
         }
-      } finally {
-        // Show goodbye message
-        console.log(''); // Empty line for spacing
-        console.log(chalk.cyan.bold(getRandomGoodbyeMessage()));
-        console.log(''); // Spacing before powered by
-        console.log(chalk.cyan('Powered by AI/Run CodeMie CLI'));
-        console.log(''); // Empty line for spacing
+      } else {
+        await codeMie.startInteractive();
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -500,26 +482,28 @@ export class CodeMieCodePlugin extends BaseAgentAdapter {
   }
 
   /**
-   * Check if the whitelabel binary is available.
-   * Uses existsSync on the resolved binary path instead of PATH lookup.
+   * Check if the agent is available.
+   * Returns true if the whitelabel binary is installed, OR if the built-in
+   * LangGraph handler is available (isBuiltIn: true always has a fallback).
    */
   async isInstalled(): Promise<boolean> {
     const binaryPath = resolveCodemieOpenCodeBinary();
 
     if (!binaryPath) {
-      logger.debug('[codemie-code] Whitelabel binary not found in node_modules');
-      logger.debug('[codemie-code] Install with: npm i -g @codemieai/codemie-opencode');
-      return false;
+      // Binary not found in node_modules — fall back to built-in handler
+      logger.debug('[codemie-code] Whitelabel binary not found, using built-in LangGraph implementation');
+      logger.debug('[codemie-code] Install binary with: npm i -g @codemieai/codemie-opencode');
+      return true; // Built-in handler is always available
     }
 
     const installed = existsSync(binaryPath);
 
     if (!installed) {
-      logger.debug('[codemie-code] Binary path resolved but file not found');
-      logger.debug('[codemie-code] Install with: codemie install codemie-code');
+      logger.debug('[codemie-code] Binary path resolved but file not found, using built-in implementation');
     }
 
-    return installed;
+    // Binary present (use it) or absent (fall back to built-in handler)
+    return true;
   }
 
   /**

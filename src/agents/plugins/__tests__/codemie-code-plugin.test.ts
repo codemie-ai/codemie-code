@@ -134,19 +134,19 @@ describe('CodeMieCodePlugin', () => {
       expect(result).toBe(true);
     });
 
-    it('returns false when resolveCodemieOpenCodeBinary returns null', async () => {
+    it('returns true when resolveCodemieOpenCodeBinary returns null (falls back to built-in)', async () => {
       mockResolve.mockReturnValue(null);
 
       const result = await plugin.isInstalled();
-      expect(result).toBe(false);
+      expect(result).toBe(true);
     });
 
-    it('returns false when path resolved but file missing', async () => {
+    it('returns true when path resolved but file missing (falls back to built-in)', async () => {
       mockResolve.mockReturnValue('/mock/bin/codemie');
       mockExistsSync.mockReturnValue(false);
 
       const result = await plugin.isInstalled();
-      expect(result).toBe(false);
+      expect(result).toBe(true);
     });
   });
 
