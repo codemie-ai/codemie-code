@@ -11,6 +11,11 @@ import { installGlobal, uninstallGlobal } from '../../utils/processes.js';
 import { OpenCodeSessionAdapter } from './opencode/opencode.session.js';
 import { resolveCodemieOpenCodeBinary, getPlatformPackage } from './codemie-code-binary.js';
 import { getHooksPluginFileUrl, cleanupHooksPlugin } from './codemie-code-hooks/index.js';
+import chalk from 'chalk';
+import { CodeMieCode } from '../codemie-code/index.js';
+import { loadCodeMieConfig } from '../codemie-code/config.js';
+import { renderProfileInfo } from '../../utils/profile.js';
+import { getRandomWelcomeMessage, getRandomGoodbyeMessage } from '../../utils/goodbye-messages.js';
 
 /**
  * Built-in agent name constant - single source of truth
