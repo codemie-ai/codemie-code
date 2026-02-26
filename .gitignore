@@ -60,3 +60,6 @@ local/*
 /.cursor/
 /.opencode/
 /.hypothesis/
+
+MCP directories
+/.serena/

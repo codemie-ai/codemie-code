@@ -11,11 +11,7 @@
           },
           {
             "type": "command",
-            "command": "~/.codemie/claude-plugin/sounds/play-random-sound.sh ~/.codemie/sounds/SessionStart"
-          },
-          {
-            "type": "command",
-            "command": "~/.codemie/claude-plugin/scripts/bash/rtk-baseline.sh"
+            "command": "powershell -ExecutionPolicy Bypass -NonInteractive -File \"%USERPROFILE%\\.codemie\\claude-plugin\\sounds\\play-random-sound.ps1\" \"%USERPROFILE%\\.codemie\\sounds\\SessionStart\""
           }
         ]
       }
@@ -41,7 +37,7 @@
           },
           {
             "type": "command",
-            "command": "~/.codemie/claude-plugin/sounds/play-random-sound.sh ~/.codemie/sounds/PermissionRequest"
+            "command": "powershell -ExecutionPolicy Bypass -NonInteractive -File \"%USERPROFILE%\\.codemie\\claude-plugin\\sounds\\play-random-sound.ps1\" \"%USERPROFILE%\\.codemie\\sounds\\PermissionRequest\""
           }
         ]
       }
@@ -67,7 +63,7 @@
           },
           {
             "type": "command",
-            "command": "~/.codemie/claude-plugin/sounds/play-random-sound.sh ~/.codemie/sounds/Stop"
+            "command": "powershell -ExecutionPolicy Bypass -NonInteractive -File \"%USERPROFILE%\\.codemie\\claude-plugin\\sounds\\play-random-sound.ps1\" \"%USERPROFILE%\\.codemie\\sounds\\Stop\""
           }
         ]
       }
@@ -82,7 +78,7 @@
           },
           {
             "type": "command",
-            "command": "~/.codemie/claude-plugin/sounds/play-random-sound.sh ~/.codemie/sounds/UserPromptSubmit"
+            "command": "powershell -ExecutionPolicy Bypass -NonInteractive -File \"%USERPROFILE%\\.codemie\\claude-plugin\\sounds\\play-random-sound.ps1\" \"%USERPROFILE%\\.codemie\\sounds\\UserPromptSubmit\""
           }
         ]
       }
@@ -96,12 +92,6 @@
             "timeout": 2
           }
         ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": ["~/.codemie/claude-plugin/scripts/bash/rtk-auto-wrapper.sh"]
       }
     ]
   }

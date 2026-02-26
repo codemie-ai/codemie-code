@@ -22,6 +22,7 @@ import { fileURLToPath } from 'url';
 import { AgentRegistry } from '../../../src/agents/registry.js';
 import { SessionStore } from '../../../src/agents/core/session/SessionStore.js';
 import { getSessionMetricsPath } from '../../../src/agents/core/session/session-config.js';
+import { getCodemiePath } from '../../../src/utils/paths.js';
 import type { MetricDelta } from '../../../src/agents/core/metrics/types.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -92,8 +93,9 @@ describe('OpenCode Metrics Processor - Basic Validation', () => {
   });
 
   afterAll(() => {
-    // Cleanup test files
-    [metricsFilePath, sessionFilePath, conversationFilePath].forEach(file => {
+    // Cleanup test files and cache
+    const cacheFile = join(getCodemiePath('cache', 'opencode'), `${TEST_SESSION_ID}_last_processed`);
+    [metricsFilePath, sessionFilePath, conversationFilePath, cacheFile].forEach(file => {
       if (existsSync(file)) {
         try {
           unlinkSync(file);

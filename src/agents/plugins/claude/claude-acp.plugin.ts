@@ -76,6 +76,17 @@ export class ClaudeAcpPlugin extends ClaudePlugin {
   }
 
   /**
+   * Check if claude-code-acp binary is installed.
+   * Overrides ClaudePlugin.isInstalled() which hardcodes a check for
+   * ~/.local/bin/claude (Claude Code native binary) - wrong for ACP.
+   * Uses BaseAgentAdapter's implementation that checks claude-code-acp in PATH.
+   */
+  async isInstalled(): Promise<boolean> {
+    const { BaseAgentAdapter } = await import('../../core/BaseAgentAdapter.js');
+    return BaseAgentAdapter.prototype.isInstalled.call(this);
+  }
+
+  /**
    * Skip version check - ACP adapter version not critical
    */
   async getVersion(): Promise<string | null> {

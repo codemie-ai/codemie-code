@@ -30,17 +30,17 @@ let statuslineManagedThisSession = false;
  *
  * **UPDATE THIS WHEN BUMPING CLAUDE VERSION**
  */
-const CLAUDE_SUPPORTED_VERSION = '2.1.41';
+const CLAUDE_SUPPORTED_VERSION = '2.1.56';
 
 /**
  * Minimum supported Claude Code version
  * Versions below this are known to be incompatible and will be blocked from starting
  * Rule: always 10 patch versions below CLAUDE_SUPPORTED_VERSION
- * e.g. supported = 2.1.41 → minimum = 2.1.31
+ * e.g. supported = 2.1.56 → minimum = 2.1.41
  *
  * **UPDATE THIS WHEN BUMPING CLAUDE VERSION**
  */
-const CLAUDE_MINIMUM_SUPPORTED_VERSION = '2.1.32';
+const CLAUDE_MINIMUM_SUPPORTED_VERSION = '2.1.41';
 
 /**
  * Claude Code installer URLs

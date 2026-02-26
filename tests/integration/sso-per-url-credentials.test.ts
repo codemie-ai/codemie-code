@@ -20,7 +20,7 @@ vi.mock('../../src/providers/plugins/sso/sso.http-client.js', () => ({
   }),
   CODEMIE_ENDPOINTS: {
     MODELS: '/v1/llm_models?include_all=true',
-    USER_SETTINGS: '/v1/settings/user',
+    USER_SETTINGS_AVAILABLE: '/v1/settings/user/available',
     USER: '/v1/user',
     ADMIN_APPLICATIONS: '/v1/admin/applications',
     METRICS: '/v1/metrics',
@@ -75,7 +75,7 @@ describe('SSO Per-URL Credential Management', () => {
     });
 
     it('should have correct endpoint paths for all API endpoints', () => {
-      expect(CODEMIE_ENDPOINTS.USER_SETTINGS).toBe('/v1/settings/user');
+      expect(CODEMIE_ENDPOINTS.USER_SETTINGS_AVAILABLE).toBe('/v1/settings/user/available');
       expect(CODEMIE_ENDPOINTS.USER).toBe('/v1/user');
       expect(CODEMIE_ENDPOINTS.ADMIN_APPLICATIONS).toBe('/v1/admin/applications');
       expect(CODEMIE_ENDPOINTS.METRICS).toBe('/v1/metrics');

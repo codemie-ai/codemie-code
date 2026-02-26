@@ -92,7 +92,7 @@ export const SSOSetupSteps: ProviderSetupSteps = {
 
       // Merge applications and applicationsAdmin arrays (deduplicated)
       const applications = userInfo.applications || [];
-      const applicationsAdmin = userInfo.applicationsAdmin || [];
+      const applicationsAdmin = userInfo.applications_admin || [];
       const allProjects = [...new Set([...applications, ...applicationsAdmin])];
 
       // Validate that user has at least one project
