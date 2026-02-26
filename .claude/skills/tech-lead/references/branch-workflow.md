@@ -293,13 +293,6 @@ EOF
 )"
 ```
 
-Alternatively, use codemie-mr skill:
-
-```bash
-# Let skill handle MR creation
-Use Skill tool with skill="codemie-mr"
-```
-
 ## Branch Cleanup
 
 After merge:
@@ -446,7 +439,7 @@ git push --force-with-lease origin EPMCDME-XXXXX
    git push --force-with-lease
 
 6. Create MR
-   gh pr create ... or use codemie-mr skill
+   gh pr create ...
 
 7. After merge, cleanup
    git checkout main && git pull origin main
