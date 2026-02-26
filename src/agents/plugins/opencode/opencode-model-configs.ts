@@ -248,6 +248,34 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
       output: 16384
     }
   },
+  'claude-sonnet-4-6': {
+    id: 'claude-sonnet-4-6',
+    name: 'Claude Sonnet 4.6',
+    displayName: 'Claude Sonnet 4.6',
+    family: 'claude-4',
+    tool_call: true,
+    reasoning: true,
+    attachment: true,
+    temperature: true,
+    structured_output: true,
+    modalities: {
+      input: ['text', 'image'],
+      output: ['text']
+    },
+    knowledge: '2025-05-01',
+    release_date: '2026-02-01',
+    last_updated: '2026-02-01',
+    open_weights: false,
+    cost: {
+      input: 3.30,
+      output: 16.50,
+      cache_read: 0.33
+    },
+    limit: {
+      context: 200000,
+      output: 64000
+    }
+  },
   'claude-opus-4-6': {
     id: 'claude-opus-4-6',
     name: 'Claude Opus 4.6',
