@@ -202,7 +202,8 @@ export const OpenCodePluginMetadata: AgentMetadata = {
 
       // Determine URLs based on provider type
       const isBedrock = provider === 'bedrock';
-      const proxyBaseUrl = provider !== 'ollama' && !isBedrock ? baseUrl : undefined;
+      const isLiteLLM = provider === 'litellm';
+      const proxyBaseUrl = provider !== 'ollama' && !isBedrock && !isLiteLLM ? baseUrl : undefined;
       const ollamaBaseUrl = provider === 'ollama'
         ? (baseUrl.endsWith('/v1') || baseUrl.includes('/v1/') ? baseUrl : `${baseUrl.replace(/\/$/, '')}/v1`)
         : 'http://localhost:11434/v1';
@@ -211,11 +212,14 @@ export const OpenCodePluginMetadata: AgentMetadata = {
       // - ollama: uses ollama provider directly
       // - bedrock: uses OpenCode's built-in amazon-bedrock provider (AWS env vars set by provider hook)
       // - all others: route through codemie-proxy (SSO/proxy)
-      const activeProvider = provider === 'ollama' ? 'ollama' : (isBedrock ? 'amazon-bedrock' : 'codemie-proxy');
+      const activeProvider = provider === 'ollama' ? 'ollama'
+        : isBedrock ? 'amazon-bedrock'
+        : isLiteLLM ? 'litellm'
+        : 'codemie-proxy';
       const timeout = providerOptions?.timeout ?? parseInt(env.CODEMIE_TIMEOUT || '600') * 1000;
 
       const openCodeConfig: Record<string, unknown> = {
-        enabled_providers: ['codemie-proxy', 'ollama', 'amazon-bedrock'],
+        enabled_providers: ['codemie-proxy', 'ollama', 'amazon-bedrock', 'litellm'],
         share: 'disabled',
         provider: {
           ...(proxyBaseUrl && {
@@ -225,6 +229,19 @@ export const OpenCodePluginMetadata: AgentMetadata = {
               options: {
                 baseURL: `${proxyBaseUrl}/`,
                 apiKey: 'proxy-handled',
+                timeout,
+                ...(providerOptions?.headers && { headers: providerOptions.headers })
+              },
+              models: allModels
+            }
+          }),
+          ...(isLiteLLM && {
+            litellm: {
+              npm: '@ai-sdk/openai-compatible',
+              name: 'LiteLLM',
+              options: {
+                baseURL: `${baseUrl.replace(/\/$/, '')}/`,
+                apiKey: env.CODEMIE_API_KEY || 'not-required',
                 timeout,
                 ...(providerOptions?.headers && { headers: providerOptions.headers })
               },
