@@ -58,6 +58,10 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     return this.metadata.metricsConfig;
   }
 
+  get ownedSubcommands(): string[] | undefined {
+    return this.metadata.ownedSubcommands;
+  }
+
   /**
    * Get MCP configuration summary for this agent
    * Uses agent's mcpConfig metadata to read config files

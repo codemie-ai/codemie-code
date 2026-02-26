@@ -90,8 +90,9 @@ export class AgentCLI {
         await this.handleHealthCheck();
       });
 
-    // Add init command for frameworks (skip for built-in agent)
-    if (this.adapter.name !== BUILTIN_AGENT_NAME) {
+    // Add init command for frameworks, but only when the agent binary doesn't
+    // already own an 'init' subcommand (avoids shadowing the binary's native command).
+    if (!this.adapter.ownedSubcommands?.includes('init')) {
       this.program
         .command('init')
         .description('Initialize development framework')

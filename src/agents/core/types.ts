@@ -230,6 +230,14 @@ export interface AgentMetadata {
     description: string;
   }>;
 
+  /**
+   * Subcommands natively owned by the agent binary.
+   * AgentCLI will not register a Commander command for any name listed here,
+   * preventing conflicts between CodeMie's framework commands and the binary's
+   * own subcommands (e.g. opencode's `init`).
+   */
+  ownedSubcommands?: string[];
+
   // === Runtime Behavior ===
   /** Declarative mapping for multiple CLI flags */
   flagMappings?: FlagMappings;
@@ -490,6 +498,7 @@ export interface AgentAdapter {
   run(args: string[], env?: Record<string, string>): Promise<void>;
   getVersion(): Promise<string | null>;
   getMetricsConfig(): AgentMetricsConfig | undefined;
+  readonly ownedSubcommands?: string[];
 
   /**
    * Additional installation steps that run regardless of agent installation status

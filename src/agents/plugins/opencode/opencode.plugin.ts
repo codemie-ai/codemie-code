@@ -152,6 +152,7 @@ export const OpenCodePluginMetadata: AgentMetadata = {
     // NOTE: Session storage is NOT in home - it's in XDG_DATA_HOME/opencode/storage/
     // This is handled by getSessionStoragePath() in opencode.paths.ts
   },
+  ownedSubcommands: OPENCODE_SUBCOMMANDS,
   envMapping: {
     baseUrl: [],
     apiKey: [],

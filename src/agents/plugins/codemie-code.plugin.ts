@@ -241,6 +241,8 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
     home: '.opencode'
   },
 
+  ownedSubcommands: OPENCODE_SUBCOMMANDS,
+
   customOptions: [
     { flags: '--task <task>', description: 'Execute a single task and exit' },
     { flags: '--debug', description: 'Enable debug logging' },
