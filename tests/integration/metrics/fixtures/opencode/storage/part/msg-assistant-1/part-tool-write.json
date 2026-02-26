@@ -1,0 +1,17 @@
+{
+  "id": "part-tool-write",
+  "sessionID": "test-session-1",
+  "messageID": "msg-assistant-1",
+  "type": "tool",
+  "tool": "Write",
+  "state": {
+    "status": "completed",
+    "input": {
+      "filePath": "src/test.ts",
+      "content": "console.log('Hello, world!');\nconsole.log('Testing metrics');\nconsole.log('Line 3');"
+    },
+    "output": {
+      "success": true
+    }
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "id": "msg-assistant-1",
+  "sessionID": "test-session-1",
+  "role": "assistant",
+  "providerID": "anthropic",
+  "modelID": "claude-sonnet-4-6",
+  "time": {
+    "created": 1737979500000
+  },
+  "tokens": {
+    "input": 1000,
+    "output": 500,
+    "cache": {
+      "read": 200,
+      "write": 100
+    }
+  },
+  "parts": [
+    "part-tool-write",
+    "part-tool-read",
+    "part-step-finish"
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "id": "part-text-1",
+  "sessionID": "test-session-1",
+  "messageID": "msg-user-1",
+  "type": "text",
+  "text": "Create a test file with console.log statements"
+}

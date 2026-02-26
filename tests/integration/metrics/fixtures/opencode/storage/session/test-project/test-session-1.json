@@ -1,0 +1,13 @@
+{
+  "id": "test-session-1",
+  "version": "1.0.0",
+  "time": {
+    "created": 1737979200000,
+    "updated": 1737979800000
+  },
+  "directory": "/test/project",
+  "messages": [
+    "msg-user-1",
+    "msg-assistant-1"
+  ]
+}

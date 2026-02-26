@@ -1,0 +1,14 @@
+{
+  "id": "part-step-finish",
+  "sessionID": "test-session-1",
+  "messageID": "msg-assistant-1",
+  "type": "step-finish",
+  "tokens": {
+    "input": 1000,
+    "output": 500,
+    "cache": {
+      "read": 200,
+      "write": 100
+    }
+  }
+}

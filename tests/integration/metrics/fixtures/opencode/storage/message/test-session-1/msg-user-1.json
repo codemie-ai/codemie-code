@@ -1,0 +1,9 @@
+{
+  "id": "msg-user-1",
+  "sessionID": "test-session-1",
+  "role": "user",
+  "time": {
+    "created": 1737979200000
+  },
+  "parts": []
+}

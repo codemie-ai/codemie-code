@@ -1,0 +1,16 @@
+{
+  "id": "part-tool-read",
+  "sessionID": "test-session-1",
+  "messageID": "msg-assistant-1",
+  "type": "tool",
+  "tool": "Read",
+  "state": {
+    "status": "completed",
+    "input": {
+      "filePath": "src/existing.ts"
+    },
+    "output": {
+      "content": "existing content"
+    }
+  }
+}
