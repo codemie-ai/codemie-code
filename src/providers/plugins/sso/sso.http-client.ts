@@ -16,7 +16,7 @@ export interface CodeMieUserInfo {
   username: string;
   isAdmin: boolean;
   applications: string[];
-  applicationsAdmin: string[];
+  applications_admin: string[];
   picture: string;
   knowledgeBases: string[];
   userType?: string;
@@ -144,7 +144,7 @@ export async function fetchCodeMieUserInfo(
   const userInfo = JSON.parse(response.data) as CodeMieUserInfo;
 
   // Validate response structure
-  if (!userInfo || !Array.isArray(userInfo.applications) || !Array.isArray(userInfo.applicationsAdmin)) {
+  if (!userInfo || !Array.isArray(userInfo.applications) || !Array.isArray(userInfo.applications_admin)) {
     throw new Error('Invalid user info response: missing applications arrays');
   }
 
