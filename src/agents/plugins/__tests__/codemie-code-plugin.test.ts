@@ -30,6 +30,9 @@ vi.mock('../../../utils/logger.js', () => ({
     info: vi.fn(),
     error: vi.fn(),
     success: vi.fn(),
+    setAgentName: vi.fn(),
+    setSessionId: vi.fn(),
+    setProfileName: vi.fn(),
   },
 }));
 
@@ -37,6 +40,26 @@ vi.mock('../../../utils/logger.js', () => ({
 vi.mock('../../../utils/processes.js', () => ({
   installGlobal: vi.fn(),
   uninstallGlobal: vi.fn(),
+}));
+
+// Mock processEvent from hook.js
+const { mockProcessEvent } = vi.hoisted(() => ({
+  mockProcessEvent: vi.fn(),
+}));
+vi.mock('../../../cli/commands/hook.js', () => ({
+  processEvent: mockProcessEvent,
+}));
+
+// Mock getCodemieHome from paths.js
+vi.mock('../../../utils/paths.js', () => ({
+  getCodemieHome: vi.fn(() => '/mock/.codemie'),
+  getCodemiePath: vi.fn((...args: string[]) => `/mock/.codemie/${args.join('/')}`),
+}));
+
+// Mock codemie-code-hooks
+vi.mock('../codemie-code-hooks/index.js', () => ({
+  getHooksPluginFileUrl: vi.fn(() => 'file:///mock/hooks-plugin.js'),
+  cleanupHooksPlugin: vi.fn(),
 }));
 
 // Use vi.hoisted for mock functions referenced in vi.mock factories
@@ -234,7 +257,7 @@ describe('CodeMieCodePlugin onSessionEnd', () => {
     mockDiscoverSessionsCC.mockResolvedValue([
       { sessionId: 'test-session', filePath: '/path/to/session' },
     ]);
-    mockProcessSessionCC.mockResolvedValue({ success: true, totalRecords: 5 });
+    mockProcessEvent.mockResolvedValue(undefined);
 
     const env = {
       CODEMIE_SESSION_ID: 'test-123',
@@ -243,9 +266,12 @@ describe('CodeMieCodePlugin onSessionEnd', () => {
 
     await CodeMieCodePluginMetadata.lifecycle!.onSessionEnd!(0, env);
 
-    expect(mockProcessSessionCC).toHaveBeenCalledWith(
-      '/path/to/session',
-      'test-123',
+    expect(mockProcessEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hook_event_name: 'SessionEnd',
+        session_id: 'test-123',
+        transcript_path: '/path/to/session',
+      }),
       expect.objectContaining({ clientType: 'codemie-code' })
     );
   });
@@ -261,7 +287,8 @@ describe('CodeMieCodePlugin onSessionEnd', () => {
   });
 
   it('handles errors gracefully', async () => {
-    mockDiscoverSessionsCC.mockRejectedValue(new Error('adapter error'));
+    mockDiscoverSessionsCC.mockResolvedValue([]);
+    mockProcessEvent.mockRejectedValue(new Error('hook error'));
 
     const env = {
       CODEMIE_SESSION_ID: 'test-123',
@@ -271,7 +298,7 @@ describe('CodeMieCodePlugin onSessionEnd', () => {
     await CodeMieCodePluginMetadata.lifecycle!.onSessionEnd!(0, env);
 
     expect(logger.error).toHaveBeenCalledWith(
-      expect.stringContaining('Failed')
+      expect.stringContaining('failed')
     );
   });
 });

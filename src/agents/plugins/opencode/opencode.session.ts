@@ -8,9 +8,15 @@ import type { AgentMetadata } from '../../core/types.js';
 import type {
   OpenCodeSession,
   OpenCodeMessage,
-  OpenCodeAssistantMessage
+  OpenCodeAssistantMessage,
 } from './opencode-message-types.js';
-import { getOpenCodeSessionsPath } from './opencode.paths.js';
+import { getOpenCodeSessionsPath, getOpenCodeDbPath } from './opencode.paths.js';
+import {
+  isSqliteAvailable,
+  readSessionsFromDb,
+  readMessagesFromDb,
+  readAllPartsForSessionFromDb,
+} from './opencode.sqlite-reader.js';
 import { logger } from '../../../utils/logger.js';
 import { OpenCodeMetricsProcessor } from './session/processors/opencode.metrics-processor.js';
 import { OpenCodeConversationsProcessor } from './session/processors/opencode.conversations-processor.js';
@@ -106,6 +112,11 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
    * not ISO strings. We convert to ISO for CodeMie's canonical format.
    */
   async parseSessionFile(filePath: string, sessionId: string): Promise<ParsedSession> {
+    // Route to SQLite parsing if filePath points to a .db file
+    if (filePath.endsWith('.db') || filePath.endsWith('opencode.db')) {
+      return this.parseSessionFromDb(filePath, sessionId);
+    }
+
     try {
       // Validate path shape before proceeding (GPT-5.8 fix)
       // Expected: .../storage/session/{projectId}/{sessionId}.json
@@ -152,7 +163,8 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
         // Per tech spec ADR-1: Expose storage path and OpenCode session ID for metrics processor
         storagePath,
         openCodeSessionId: session.id,
-        openCodeVersion: session.version
+        openCodeVersion: session.version,
+        storageType: 'file',
       };
 
       return {
@@ -164,6 +176,72 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
       };
     } catch (error) {
       logger.error(`[opencode-adapter] Failed to parse session file ${filePath}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Parse a session from SQLite database.
+   * Reads session, messages, and all parts in bulk from opencode.db.
+   */
+  private async parseSessionFromDb(dbPath: string, sessionId: string): Promise<ParsedSession> {
+    try {
+      logger.debug(`[opencode-adapter] Parsing session ${sessionId} from SQLite: ${dbPath}`);
+
+      // Read session data
+      // Note: sessionId may be a CodeMie UUID (not an OpenCode ses_* ID).
+      // Try exact match first, then fallback to most recent session (sorted by time_created DESC).
+      const sessions = await readSessionsFromDb(dbPath, { maxAgeDays: 1 });
+      const session = sessions.find(s => s.id === sessionId) ?? sessions[0];
+      if (!session) {
+        throw new Error(`Session ${sessionId} not found in SQLite DB: ${dbPath}`);
+      }
+      if (session.id !== sessionId) {
+        logger.debug(`[opencode-adapter] Mapped CodeMie session ${sessionId} → OpenCode session ${session.id}`);
+      }
+
+      // Read messages using OpenCode session ID (not CodeMie UUID)
+      const messages = await readMessagesFromDb(dbPath, session.id);
+
+      // Read all parts for this session in one bulk query
+      const partsMap = await readAllPartsForSessionFromDb(dbPath, session.id);
+
+      // Extract metrics from messages
+      const metrics = this.extractMetrics(messages);
+
+      logger.debug(
+        `[opencode-adapter] Parsed SQLite session ${sessionId}: ${messages.length} messages, ` +
+        `${Object.keys(partsMap).length} messages with parts, ` +
+        `${metrics?.tokens?.input || 0} input tokens, ${metrics?.tokens?.output || 0} output tokens`
+      );
+
+      // Derive storagePath from dbPath: dbPath is .../opencode/opencode.db → storage is .../opencode/storage
+      const storagePath = join(dirname(dbPath), 'storage');
+
+      const metadata: any = {
+        projectPath: session.directory,
+        createdAt: session.time?.created
+          ? new Date(session.time.created).toISOString()
+          : undefined,
+        updatedAt: session.time?.updated
+          ? new Date(session.time.updated).toISOString()
+          : undefined,
+        storagePath,
+        openCodeSessionId: session.id,
+        openCodeVersion: session.version,
+        partsMap,
+        storageType: 'sqlite',
+      };
+
+      return {
+        sessionId,
+        agentName: this.metadata.displayName || 'opencode',
+        metadata,
+        messages,
+        metrics,
+      };
+    } catch (error) {
+      logger.error(`[opencode-adapter] Failed to parse SQLite session ${sessionId}:`, error);
       throw error;
     }
   }
@@ -363,6 +441,45 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
    * Applies 30-day default filter and optional cwd filter.
    */
   async discoverSessions(options?: SessionDiscoveryOptions): Promise<SessionDescriptor[]> {
+    // SQLite-first detection: check if opencode.db exists and sqlite3 CLI is available
+    const dbPath = getOpenCodeDbPath();
+    if (dbPath && await isSqliteAvailable()) {
+      logger.debug(`[opencode-discovery] Using SQLite storage: ${dbPath}`);
+      try {
+        const sessions = await readSessionsFromDb(dbPath, {
+          maxAgeDays: options?.maxAgeDays ?? 30,
+          cwd: options?.cwd,
+        });
+
+        const descriptors: SessionDescriptor[] = sessions.map(session => ({
+          sessionId: session.id,
+          filePath: dbPath,  // Point to DB file for parseSessionFile routing
+          projectPath: session.directory,
+          createdAt: session.time?.created ?? 0,
+          updatedAt: typeof session.time?.updated === 'number' ? session.time.updated : undefined,
+          agentName: 'opencode',
+        }));
+
+        // Sort by createdAt descending (newest first)
+        descriptors.sort((a, b) => b.createdAt - a.createdAt);
+
+        // Apply limit
+        if (options?.limit && options.limit > 0) {
+          const limited = descriptors.slice(0, options.limit);
+          logger.debug(`[opencode-discovery] Found ${descriptors.length} SQLite sessions, returning ${limited.length} (limit: ${options.limit})`);
+          return limited;
+        }
+
+        logger.debug(`[opencode-discovery] Found ${descriptors.length} SQLite sessions`);
+        return descriptors;
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.warn(`[opencode-discovery] SQLite discovery failed, falling back to file-based: ${msg}`);
+        // Fall through to file-based discovery
+      }
+    }
+
+    // File-based discovery (legacy fallback)
     const sessionsPath = getOpenCodeSessionsPath();
 
     if (!sessionsPath) {

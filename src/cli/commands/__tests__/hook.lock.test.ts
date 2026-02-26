@@ -234,7 +234,7 @@ describe('processEvent', () => {
     it('should throw error when transcript_path is missing and config is provided', async () => {
       const event = {
         session_id: 'agent-session-id',
-        hook_event_name: 'SessionStart',
+        hook_event_name: 'PreCompact',
         permission_mode: 'default'
       } as BaseHookEvent;
 
@@ -273,7 +273,7 @@ describe('processEvent', () => {
     it('should set exitCode when transcript_path is missing and config is not provided', async () => {
       const event = {
         session_id: 'agent-session-id',
-        hook_event_name: 'SessionStart',
+        hook_event_name: 'PreCompact',
         permission_mode: 'default'
       } as BaseHookEvent;
 
