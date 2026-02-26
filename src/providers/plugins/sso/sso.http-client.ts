@@ -394,14 +394,13 @@ async function fetchIntegrationsPage(fullUrl: string, auth: Record<string, strin
     }
   }
 
-  // Filter and validate integrations (already filtered by API, but double-check)
+  // Filter and validate integrations: must be LiteLLM type with a non-empty alias
   const validIntegrations = integrations
     .filter(integration => {
       return integration &&
              integration.alias &&
-             integration.credential_type &&
              integration.alias.trim() !== '' &&
-             integration.credential_type.trim() !== '';
+             integration.credential_type === 'LiteLLM';
     })
     .sort((a, b) => a.alias.localeCompare(b.alias));
 

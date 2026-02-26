@@ -19,6 +19,7 @@ export const JWTTemplate = registerProvider<ProviderTemplate>({
   requiresAuth: true,
   authType: 'jwt',
   priority: 1, // Show after CodeMie SSO
+  hidden: true, // Not shown in interactive setup - used only for script/auto-configuration
   defaultProfileName: 'jwt-bearer',
   recommendedModels: [
     'claude-4-5-sonnet',

@@ -60,6 +60,7 @@ export interface ProviderTemplate {
   // UI & UX
   priority?: number;                 // Display priority (0=highest, used for sorting)
   defaultProfileName?: string;       // Suggested profile name in setup wizard
+  hidden?: boolean;                  // Hide from interactive setup (for programmatic/script use only)
 
   // Model Configuration
   recommendedModels: string[];       // Default recommended models
