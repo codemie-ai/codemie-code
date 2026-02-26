@@ -681,10 +681,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, 1, env);
 
       // Clean up proxy on error (triggers final sync)
-      if (this.proxy) {
-        await this.proxy.stop();
-        this.proxy = null;
-      }
+      await cleanup();
 
       // Lifecycle hook: afterRun (provider-aware)
       await executeAfterRun(this, this.metadata.lifecycle, this.metadata.name, 1, env);
