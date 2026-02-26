@@ -15,6 +15,9 @@ if (process.env.CODEMIE_SSL_NO_VERIFY === 'true' || process.env.CODEMIE_SSL_NO_V
 try {
   const { initSSL } = await import('../dist/utils/ssl.js');
   await initSSL();
-} catch {
-  // Don't block startup if SSL init fails (e.g. dist/ not built yet)
+} catch (err) {
+  // Expected during development (dist/ not built yet) — skip silently
+  if (err?.code !== 'ERR_MODULE_NOT_FOUND') {
+    console.error('[SSL] Initialization failed:', err?.message ?? err);
+  }
 }
