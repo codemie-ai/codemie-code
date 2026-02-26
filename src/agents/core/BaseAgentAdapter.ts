@@ -496,6 +496,48 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
     logger.debug('=== End Configuration ===');
 
+    // Shared cleanup: stop proxy and flush analytics
+    const cleanup = async () => {
+      if (this.proxy) {
+        logger.debug(`[${this.displayName}] Stopping proxy and flushing analytics...`);
+        await this.proxy.stop();
+        this.proxy = null;
+        logger.debug(`[${this.displayName}] Proxy cleanup complete`);
+      }
+    };
+
+    // --- Built-in agent path (customRunHandler) ---
+    // Used when no external binary is available but a built-in handler exists.
+    // The handler receives args plus AgentConfig (which carries the profile name).
+    if (this.metadata.isBuiltIn && this.metadata.customRunHandler && !this.metadata.cliCommand) {
+      // Apply env to process.env so the handler can read CODEMIE_* vars
+      Object.assign(process.env, env);
+
+      const agentConfig = this.extractConfig(env);
+      logger.debug(`[${this.displayName}] Using built-in handler (no external binary)`);
+
+      try {
+        await this.metadata.customRunHandler(transformedArgs, {}, agentConfig);
+
+        await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, 0, env);
+        await cleanup();
+        await executeAfterRun(this, this.metadata.lifecycle, this.metadata.name, 0, env);
+
+        if (!this.metadata.silentMode) {
+          console.log(chalk.cyan.bold(getRandomGoodbyeMessage()));
+          console.log(''); // Spacing before powered by
+          console.log(chalk.cyan('Powered by AI/Run CodeMie CLI'));
+          console.log(''); // Empty line for spacing
+        }
+        return;
+      } catch (error) {
+        await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, 1, env);
+        await cleanup();
+        await executeAfterRun(this, this.metadata.lifecycle, this.metadata.name, 1, env);
+        throw error;
+      }
+    }
+
     if (!this.metadata.cliCommand) {
       throw new Error(`${this.displayName} has no CLI command configured`);
     }
@@ -552,16 +594,6 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         shell: isWindows, // Windows requires shell for .cmd/.bat executables
         windowsHide: isWindows // Hide console window on Windows
       });
-
-      // Define cleanup function for proxy and metrics
-      const cleanup = async () => {
-        if (this.proxy) {
-          logger.debug(`[${this.displayName}] Stopping proxy and flushing analytics...`);
-          await this.proxy.stop();
-          this.proxy = null;
-          logger.debug(`[${this.displayName}] Proxy cleanup complete`);
-        }
-      };
 
       // Signal handler for graceful shutdown
       const handleSignal = async (signal: NodeJS.Signals) => {
@@ -649,10 +681,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, 1, env);
 
       // Clean up proxy on error (triggers final sync)
-      if (this.proxy) {
-        await this.proxy.stop();
-        this.proxy = null;
-      }
+      await cleanup();
 
       // Lifecycle hook: afterRun (provider-aware)
       await executeAfterRun(this, this.metadata.lifecycle, this.metadata.name, 1, env);
