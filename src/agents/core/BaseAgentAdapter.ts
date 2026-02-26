@@ -510,14 +510,15 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     // Used when no external binary is available but a built-in handler exists.
     // The handler receives args plus AgentConfig (which carries the profile name).
     if (this.metadata.isBuiltIn && this.metadata.customRunHandler && !this.metadata.cliCommand) {
-      // Apply env to process.env so the handler can read CODEMIE_* vars
-      Object.assign(process.env, env);
-
+      // process.env was already merged at line 430; no second assign needed.
       const agentConfig = this.extractConfig(env);
       logger.debug(`[${this.displayName}] Using built-in handler (no external binary)`);
 
       try {
-        await this.metadata.customRunHandler(transformedArgs, {}, agentConfig);
+        // Pass original args (pre-enrichArgs) so the handler can parse its own flags
+        // (e.g. --task, --debug). enrichArgs transforms args into the external binary
+        // subcommand format and must not corrupt the built-in handler's arg parsing.
+        await this.metadata.customRunHandler(args, {}, agentConfig);
 
         await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, 0, env);
         await cleanup();

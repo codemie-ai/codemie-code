@@ -249,8 +249,11 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
 
   isBuiltIn: true,
 
-  // Custom handler for built-in agent
-  customRunHandler: async (args, options, agentConfig) => {
+  // Custom handler for built-in agent.
+  // Receives the original (pre-enrichArgs) args from BaseAgentAdapter so that
+  // --task, --debug, --plan, --plan-only can be parsed reliably.
+  // The `options` parameter is always {} (reserved); args parsing is authoritative.
+  customRunHandler: async (args, _options, agentConfig) => {
     try {
       // Check if we have a valid configuration first
       const workingDir = process.cwd();
@@ -268,13 +271,13 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
       }
 
       // Welcome/goodbye messages are shown by BaseAgentAdapter (which invokes this handler).
-      // Parse agent-specific flags from args (--debug, --task, --plan, --plan-only)
-      const debug = args.includes('--debug') || (options.debug as boolean | undefined);
+      // Parse agent-specific flags from original args (--debug, --task, --plan, --plan-only).
+      const debug = args.includes('--debug');
       const taskIdx = args.indexOf('--task');
-      const task = taskIdx !== -1 && taskIdx < args.length - 1 ? args[taskIdx + 1] : (options.task as string | undefined);
-      const plan = args.includes('--plan') || (options.plan as boolean | undefined);
-      const planOnly = args.includes('--plan-only') || (options.planOnly as boolean | undefined);
-      // Remaining args (excluding known flags) are treated as a prompt
+      const task = taskIdx !== -1 && taskIdx < args.length - 1 ? args[taskIdx + 1] : undefined;
+      const plan = args.includes('--plan');
+      const planOnly = args.includes('--plan-only');
+      // Remaining args (excluding known flags and --task value) are treated as a prompt
       const knownFlags = new Set(['--debug', '--task', '--plan', '--plan-only']);
       const promptArgs = args.filter((a, i) => {
         if (knownFlags.has(a)) return false;
@@ -483,23 +486,27 @@ export class CodeMieCodePlugin extends BaseAgentAdapter {
 
   /**
    * Check if the agent is available.
-   * Returns true if the whitelabel binary is installed, OR if the built-in
-   * LangGraph handler is available (isBuiltIn: true always has a fallback).
+   * Returns true if the whitelabel binary is present, OR if only the built-in
+   * CodeMieCode handler is available (always the case when isBuiltIn: true).
+   * Warns at log level when the binary is absent so the condition is surfaced
+   * by doctor checks and debug sessions rather than silently swallowed.
    */
   async isInstalled(): Promise<boolean> {
     const binaryPath = resolveCodemieOpenCodeBinary();
 
     if (!binaryPath) {
-      // Binary not found in node_modules — fall back to built-in handler
-      logger.debug('[codemie-code] Whitelabel binary not found, using built-in LangGraph implementation');
-      logger.debug('[codemie-code] Install binary with: npm i -g @codemieai/codemie-opencode');
+      // Binary not found in node_modules — falling back to built-in CodeMieCode handler
+      logger.warn('[codemie-code] Whitelabel binary not found — running built-in CodeMieCode handler as fallback');
+      logger.warn('[codemie-code] Install the binary with: npm i -g @codemieai/codemie-opencode');
       return true; // Built-in handler is always available
     }
 
     const installed = existsSync(binaryPath);
 
     if (!installed) {
-      logger.debug('[codemie-code] Binary path resolved but file not found, using built-in implementation');
+      // Binary path resolved at load time but the file is now missing
+      logger.warn('[codemie-code] Binary path resolved but file not found — running built-in CodeMieCode handler as fallback');
+      logger.warn('[codemie-code] Reinstall with: codemie install codemie-code');
     }
 
     // Binary present (use it) or absent (fall back to built-in handler)

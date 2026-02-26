@@ -306,7 +306,9 @@ export const OpenCodePluginMetadata: AgentMetadata = {
           if (i > 0 && (arr[i - 1] === '-m' || arr[i - 1] === '--message')) return false;
           return true;
         });
-        return ['run', '-m', taskValue, ...otherArgs];
+        // Message is a positional arg: `opencode run <message>`
+        // Note: -m in upstream opencode-ai means --model, NOT --message.
+        return ['run', taskValue, ...otherArgs];
       }
       return args;
     },
