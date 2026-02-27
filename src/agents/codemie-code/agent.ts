@@ -239,34 +239,6 @@ export class CodeMieAgent {
           baseURL
         };
 
-        // Helper to strip reasoning-related params that LiteLLM/Azure proxies may not support.
-        // @langchain/openai detects GPT-5 and o-series as "reasoning models" and can inject
-        // `reasoning` (Responses API) or `reasoningSummary` params that upstream proxies reject
-        // with: "Unknown parameter: 'reasoningSummary'"
-        const stripUnsupportedParams = (init: RequestInit): RequestInit => {
-          if (!init.body || typeof init.body !== 'string') return init;
-          try {
-            const body = JSON.parse(init.body);
-            const unsupported = ['reasoning', 'reasoningSummary', 'reasoning_summary'];
-            const stripped: string[] = [];
-            for (const param of unsupported) {
-              if (param in body) {
-                delete body[param];
-                stripped.push(param);
-              }
-            }
-            if (stripped.length > 0) {
-              if (this.config.debug) {
-                logger.debug(`Stripped unsupported params from LiteLLM request: ${stripped.join(', ')}`);
-              }
-              return { ...init, body: JSON.stringify(body) };
-            }
-          } catch {
-            // Not JSON body, pass through unchanged
-          }
-          return init;
-        };
-
         // Check if we have SSO cookies to inject (following codemie-ide-plugin pattern)
         const ssoCookies = (globalThis as any).codemieSSOCookies;
         if (this.config.debug) {
@@ -308,7 +280,7 @@ export class CodeMieAgent {
             }
 
             try {
-              const response = await fetch(input, stripUnsupportedParams(updatedInit));
+              const response = await fetch(input, updatedInit);
 
               if (this.config.debug && !response.ok) {
                 logger.debug(`SSO request failed: ${response.status} ${response.statusText}`);
@@ -340,7 +312,7 @@ export class CodeMieAgent {
               logger.debug(`Authorization header set with API key`);
             }
 
-            return fetch(input, stripUnsupportedParams(updatedInit));
+            return fetch(input, updatedInit);
           };
 
           if (this.config.debug) {
