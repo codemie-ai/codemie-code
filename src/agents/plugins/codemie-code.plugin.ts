@@ -11,6 +11,7 @@ import { installGlobal, uninstallGlobal } from '../../utils/processes.js';
 import { OpenCodeSessionAdapter } from './opencode/opencode.session.js';
 import { resolveCodemieOpenCodeBinary, getPlatformPackage } from './codemie-code-binary.js';
 import { getHooksPluginFileUrl, cleanupHooksPlugin } from './codemie-code-hooks/index.js';
+import { getReasoningSanitizerPluginUrl, cleanupReasoningSanitizerPlugin } from './reasoning-sanitizer/index.js';
 import { getCodemieHome } from '../../utils/paths.js';
 import type { HookProcessingConfig } from '../../cli/commands/hook.js';
 import { CodeMieCode } from '../codemie-code/index.js';
@@ -147,6 +148,7 @@ async function ensureSessionFile(sessionId: string, env: NodeJS.ProcessEnv): Pro
 function determineActiveProvider(provider: string | undefined): string {
   if (provider === 'ollama') return 'ollama';
   if (provider === 'bedrock') return 'amazon-bedrock';
+  if (provider === 'litellm') return 'litellm';
   return 'codemie-proxy';
 }
 
@@ -192,6 +194,8 @@ function resolveOllamaBaseUrl(baseUrl: string, provider: string | undefined): st
  */
 function buildOpenCodeConfig(params: {
   proxyBaseUrl: string | undefined;
+  litellmBaseUrl: string | undefined;
+  litellmApiKey: string | undefined;
   ollamaBaseUrl: string;
   activeProvider: string;
   modelId: string;
@@ -200,7 +204,7 @@ function buildOpenCodeConfig(params: {
   allModels: Record<string, unknown>;
 }): Record<string, unknown> {
   return {
-    enabled_providers: ['codemie-proxy', 'ollama', 'amazon-bedrock'],
+    enabled_providers: ['codemie-proxy', 'ollama', 'amazon-bedrock', 'litellm'],
     share: 'disabled',
     provider: {
       ...(params.proxyBaseUrl && {
@@ -212,6 +216,18 @@ function buildOpenCodeConfig(params: {
             apiKey: 'proxy-handled',
             timeout: params.timeout,
             ...(params.providerOptions?.headers && { headers: params.providerOptions.headers })
+          },
+          models: params.allModels
+        }
+      }),
+      ...(params.litellmBaseUrl && {
+        litellm: {
+          npm: '@ai-sdk/openai-compatible',
+          name: 'LiteLLM',
+          options: {
+            baseURL: `${params.litellmBaseUrl.replace(/\/$/, '')}/`,
+            apiKey: params.litellmApiKey || 'not-required',
+            timeout: params.timeout,
           },
           models: params.allModels
         }
@@ -391,7 +407,8 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
       const allModels = getAllOpenCodeModelConfigs();
 
       const isBedrock = provider === 'bedrock';
-      const proxyBaseUrl = provider !== 'ollama' && !isBedrock ? baseUrl : undefined;
+      const isLiteLLM = provider === 'litellm';
+      const proxyBaseUrl = provider !== 'ollama' && !isBedrock && !isLiteLLM ? baseUrl : undefined;
       const ollamaBaseUrl = resolveOllamaBaseUrl(baseUrl, provider);
       const activeProvider = determineActiveProvider(provider);
       const timeout = providerOptions?.timeout ?? parseInt(env.CODEMIE_TIMEOUT || '600') * 1000;
@@ -400,7 +417,10 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
         : modelConfig.id;
 
       const openCodeConfig = buildOpenCodeConfig({
-        proxyBaseUrl, ollamaBaseUrl, activeProvider, modelId, timeout, providerOptions, allModels
+        proxyBaseUrl,
+        litellmBaseUrl: isLiteLLM ? baseUrl : undefined,
+        litellmApiKey: isLiteLLM ? env.CODEMIE_API_KEY : undefined,
+        ollamaBaseUrl, activeProvider, modelId, timeout, providerOptions, allModels
       });
 
       // --- Hooks injection ---
@@ -426,11 +446,17 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
 
       env.OPENCODE_HOOKS = JSON.stringify({ hooks: mergedHooks });
 
-      // 3. Always inject shell-hooks plugin
-      const pluginUrl = getHooksPluginFileUrl();
+      // 3. Always inject plugins (hooks + reasoning sanitizer)
       (openCodeConfig as Record<string, any>).plugin = (openCodeConfig as Record<string, any>).plugin || [];
-      ((openCodeConfig as Record<string, any>).plugin as string[]).push(pluginUrl);
-      logger.debug(`[codemie-code] Injected hooks plugin: ${pluginUrl}`);
+      const plugins = (openCodeConfig as Record<string, any>).plugin as string[];
+
+      const hooksPluginUrl = getHooksPluginFileUrl();
+      plugins.push(hooksPluginUrl);
+      logger.debug(`[codemie-code] Injected hooks plugin: ${hooksPluginUrl}`);
+
+      const sanitizerPluginUrl = getReasoningSanitizerPluginUrl();
+      plugins.push(sanitizerPluginUrl);
+      logger.debug(`[codemie-code] Injected reasoning-sanitizer plugin: ${sanitizerPluginUrl}`);
 
       // --- Storage path configuration ---
       // Configure storage path for OpenCode sessions
@@ -529,6 +555,7 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
       } finally {
         delete process.env.OPENCODE_STORAGE_PATH;
         cleanupHooksPlugin();
+        cleanupReasoningSanitizerPlugin();
       }
     }
   }
