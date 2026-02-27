@@ -1,7 +1,6 @@
 import type { AgentMetadata, AgentConfig } from '../core/types.js';
-import { tmpdir } from 'os';
 import { join } from 'path';
-import { existsSync, writeFileSync, unlinkSync } from 'fs';
+import { existsSync } from 'fs';
 import { logger } from '../../utils/logger.js';
 import { getModelConfig, getAllOpenCodeModelConfigs } from './opencode/opencode-model-configs.js';
 import { BaseAgentAdapter } from '../core/BaseAgentAdapter.js';
@@ -16,6 +15,9 @@ import { getCodemieHome } from '../../utils/paths.js';
 import type { HookProcessingConfig } from '../../cli/commands/hook.js';
 import { CodeMieCode } from '../codemie-code/index.js';
 import { loadCodeMieConfig } from '../codemie-code/config.js';
+import { toBedrockModelId } from '../../providers/plugins/bedrock/bedrock.utils.js';
+import { MAX_ENV_SIZE, writeConfigToTempFile } from '../core/temp-config.js';
+import { ensureSessionFile } from '../core/session/ensure-session.js';
 
 /**
  * Built-in agent name constant - single source of truth
@@ -23,124 +25,6 @@ import { loadCodeMieConfig } from '../codemie-code/config.js';
 export const BUILTIN_AGENT_NAME = 'codemie-code';
 
 const OPENCODE_SUBCOMMANDS = ['run', 'chat', 'config', 'init', 'help', 'version'];
-
-/**
- * Convert a short model ID to Bedrock inference profile format.
- * Bedrock requires region-prefixed ARN-style model IDs.
- *
- * Examples:
- *   claude-sonnet-4-5-20250929 → us.anthropic.claude-sonnet-4-5-20250929-v1:0
- *   claude-opus-4-6            → us.anthropic.claude-opus-4-6-v1:0
- *
- * If the model ID already contains 'anthropic.', it's returned as-is.
- */
-function toBedrockModelId(modelId: string, region?: string): string {
-  if (modelId.includes('anthropic.')) return modelId;
-
-  const regionPrefix = region?.startsWith('eu') ? 'eu'
-    : region?.startsWith('ap') ? 'ap'
-    : 'us';
-
-  return `${regionPrefix}.anthropic.${modelId}-v1:0`;
-}
-
-// Environment variable size limit (conservative - varies by platform)
-// Linux: ~128KB per var, Windows: ~32KB total env block
-const MAX_ENV_SIZE = 32 * 1024;
-
-// Track temp config files for cleanup on process exit
-const tempConfigFiles: string[] = [];
-let cleanupRegistered = false;
-
-/**
- * Register process exit handler for temp file cleanup (best effort)
- * Only registers once, even if beforeRun is called multiple times
- */
-function registerCleanupHandler(): void {
-  if (cleanupRegistered) return;
-  cleanupRegistered = true;
-
-  process.on('exit', () => {
-    for (const file of tempConfigFiles) {
-      try {
-        unlinkSync(file);
-        logger.debug(`[codemie-code] Cleaned up temp config: ${file}`);
-      } catch {
-        // Ignore cleanup errors - file may already be deleted
-      }
-    }
-  });
-}
-
-/**
- * Write config to temp file as fallback when env var size exceeded
- * Returns the temp file path
- */
-function writeConfigToTempFile(configJson: string): string {
-  const configPath = join(
-    tmpdir(),
-    `codemie-code-config-${process.pid}-${Date.now()}.json`
-  );
-  writeFileSync(configPath, configJson, 'utf-8');
-  tempConfigFiles.push(configPath);
-  registerCleanupHandler();
-  return configPath;
-}
-
-/**
- * Ensure session metadata file exists for SessionSyncer
- * Creates or updates the session file in ~/.codemie/sessions/
- */
-async function ensureSessionFile(sessionId: string, env: NodeJS.ProcessEnv): Promise<void> {
-  try {
-    const { SessionStore } = await import('../core/session/SessionStore.js');
-    const sessionStore = new SessionStore();
-
-    const existing = await sessionStore.loadSession(sessionId);
-    if (existing) {
-      logger.debug('[codemie-code] Session file already exists');
-      return;
-    }
-
-    const agentName = env.CODEMIE_AGENT || 'codemie-code';
-    const provider = env.CODEMIE_PROVIDER || 'unknown';
-    const project = env.CODEMIE_PROJECT;
-    const workingDirectory = process.cwd();
-
-    let gitBranch: string | undefined;
-    try {
-      const { detectGitBranch } = await import('../../utils/processes.js');
-      gitBranch = await detectGitBranch(workingDirectory);
-    } catch {
-      // Git detection optional
-    }
-
-    const estimatedStartTime = Date.now() - 2000;
-
-    const session = {
-      sessionId,
-      agentName,
-      provider,
-      ...(project && { project }),
-      startTime: estimatedStartTime,
-      workingDirectory,
-      ...(gitBranch && { gitBranch }),
-      status: 'completed' as const,
-      activeDurationMs: 0,
-      correlation: {
-        status: 'matched' as const,
-        agentSessionId: 'unknown',
-        retryCount: 0
-      }
-    };
-
-    await sessionStore.saveSession(session);
-    logger.debug('[codemie-code] Created session metadata file');
-
-  } catch (error) {
-    logger.warn('[codemie-code] Failed to create session file:', error);
-  }
-}
 
 /**
  * Map user-facing provider name to OpenCode's internal provider identifier.
@@ -386,7 +270,7 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
       const sessionId = env.CODEMIE_SESSION_ID;
       if (sessionId) {
         // ensureSessionFile handles its own errors internally
-        await ensureSessionFile(sessionId, env);
+        await ensureSessionFile(sessionId, env, BUILTIN_AGENT_NAME);
       }
 
       const provider = env.CODEMIE_PROVIDER;
@@ -475,7 +359,7 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
           agent: 'codemie-code'
         });
 
-        const configPath = writeConfigToTempFile(configJson);
+        const configPath = writeConfigToTempFile(configJson, 'codemie-code');
         logger.debug(`[codemie-code] Wrote config to temp file: ${configPath}`);
 
         env.OPENCODE_CONFIG = configPath;
