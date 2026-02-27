@@ -62,6 +62,12 @@ vi.mock('../codemie-code-hooks/index.js', () => ({
   cleanupHooksPlugin: vi.fn(),
 }));
 
+// Mock reasoning-sanitizer
+vi.mock('../reasoning-sanitizer/index.js', () => ({
+  getReasoningSanitizerPluginUrl: vi.fn(() => 'file:///mock/reasoning-sanitizer.ts'),
+  cleanupReasoningSanitizerPlugin: vi.fn(),
+}));
+
 // Use vi.hoisted for mock functions referenced in vi.mock factories
 const { mockDiscoverSessionsCC, mockProcessSessionCC } = vi.hoisted(() => ({
   mockDiscoverSessionsCC: vi.fn(),
