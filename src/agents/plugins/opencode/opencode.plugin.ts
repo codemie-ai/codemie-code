@@ -1,7 +1,4 @@
 import type { AgentMetadata, AgentConfig } from '../../core/types.js';
-import { tmpdir } from 'os';
-import { join } from 'path';
-import { writeFileSync, unlinkSync } from 'fs';
 import { logger } from '../../../utils/logger.js';
 import { getModelConfig, getAllOpenCodeModelConfigs } from './opencode-model-configs.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
@@ -10,136 +7,11 @@ import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionI
 import { commandExists } from '../../../utils/processes.js';
 import { OpenCodeSessionAdapter } from './opencode.session.js';
 import { getHooksPluginFileUrl, cleanupHooksPlugin } from '../codemie-code-hooks/index.js';
+import { toBedrockModelId } from '../../../providers/plugins/bedrock/bedrock.utils.js';
+import { MAX_ENV_SIZE, writeConfigToTempFile } from '../../core/temp-config.js';
+import { ensureSessionFile } from '../../core/session/ensure-session.js';
 
 const OPENCODE_SUBCOMMANDS = ['run', 'chat', 'config', 'init', 'help', 'version'];
-
-/**
- * Convert a short model ID to Bedrock inference profile format.
- * Bedrock requires region-prefixed ARN-style model IDs.
- *
- * Examples:
- *   claude-sonnet-4-5-20250929 → us.anthropic.claude-sonnet-4-5-20250929-v1:0
- *   claude-opus-4-6            → us.anthropic.claude-opus-4-6-v1:0
- *
- * If the model ID already contains 'anthropic.', it's returned as-is.
- */
-function toBedrockModelId(modelId: string, region?: string): string {
-  if (modelId.includes('anthropic.')) return modelId;
-
-  const regionPrefix = region?.startsWith('eu') ? 'eu'
-    : region?.startsWith('ap') ? 'ap'
-    : 'us';
-
-  return `${regionPrefix}.anthropic.${modelId}-v1:0`;
-}
-
-// Environment variable size limit (conservative - varies by platform)
-// Linux: ~128KB per var, Windows: ~32KB total env block
-const MAX_ENV_SIZE = 32 * 1024;
-
-// Track temp config files for cleanup on process exit
-const tempConfigFiles: string[] = [];
-let cleanupRegistered = false;
-
-/**
- * Register process exit handler for temp file cleanup (best effort)
- * Only registers once, even if beforeRun is called multiple times
- */
-function registerCleanupHandler(): void {
-  if (cleanupRegistered) return;
-  cleanupRegistered = true;
-
-  process.on('exit', () => {
-    for (const file of tempConfigFiles) {
-      try {
-        unlinkSync(file);
-        logger.debug(`[opencode] Cleaned up temp config: ${file}`);
-      } catch {
-        // Ignore cleanup errors - file may already be deleted
-      }
-    }
-  });
-}
-
-/**
- * Write config to temp file as fallback when env var size exceeded
- * Returns the temp file path
- */
-function writeConfigToTempFile(configJson: string): string {
-  const configPath = join(
-    tmpdir(),
-    `codemie-opencode-config-${process.pid}-${Date.now()}.json`
-  );
-  writeFileSync(configPath, configJson, 'utf-8');
-  tempConfigFiles.push(configPath);
-  registerCleanupHandler();
-  return configPath;
-}
-
-// NOTE: dataPaths in AgentMetadata only supports `home` and optional `settings`.
-// OpenCode session storage paths are resolved separately in opencode.paths.ts
-// since they follow XDG conventions and differ from the home directory.
-
-/**
- * Ensure session metadata file exists for SessionSyncer
- * Creates or updates the session file in ~/.codemie/sessions/
- */
-async function ensureSessionFile(sessionId: string, env: NodeJS.ProcessEnv): Promise<void> {
-  try {
-    const { SessionStore } = await import('../../core/session/SessionStore.js');
-    const sessionStore = new SessionStore();
-
-    // Check if session already exists
-    const existing = await sessionStore.loadSession(sessionId);
-    if (existing) {
-      logger.debug('[opencode] Session file already exists');
-      return;
-    }
-
-    // Create new session file
-    const agentName = env.CODEMIE_AGENT || 'opencode';
-    const provider = env.CODEMIE_PROVIDER || 'unknown';
-    const project = env.CODEMIE_PROJECT;
-    const workingDirectory = process.cwd();
-
-    // Detect git branch
-    let gitBranch: string | undefined;
-    try {
-      const { detectGitBranch } = await import('../../../utils/processes.js');
-      gitBranch = await detectGitBranch(workingDirectory);
-    } catch {
-      // Git detection optional
-    }
-
-    // Estimate startTime from grace period (session ended ~2 seconds ago during grace period)
-    // This prevents negative session durations in metrics aggregation
-    const estimatedStartTime = Date.now() - 2000;
-
-    const session = {
-      sessionId,
-      agentName,
-      provider,
-      ...(project && { project }),
-      startTime: estimatedStartTime,
-      workingDirectory,
-      ...(gitBranch && { gitBranch }),
-      status: 'completed' as const,  // Session already ended
-      activeDurationMs: 0,
-      correlation: {
-        status: 'matched' as const,
-        agentSessionId: 'unknown',  // Will be updated after discovery
-        retryCount: 0
-      }
-    };
-
-    await sessionStore.saveSession(session);
-    logger.debug('[opencode] Created session metadata file');
-
-  } catch (error) {
-    logger.warn('[opencode] Failed to create session file:', error);
-    // Don't throw - processing can continue without session file (sync will fail though)
-  }
-}
 
 export const OpenCodePluginMetadata: AgentMetadata = {
   name: 'opencode',
@@ -171,7 +43,7 @@ export const OpenCodePluginMetadata: AgentMetadata = {
       if (sessionId) {
         try {
           logger.debug(`[opencode] Creating session metadata file before startup`);
-          await ensureSessionFile(sessionId, env);
+          await ensureSessionFile(sessionId, env, 'opencode');
           logger.debug(`[opencode] Session metadata file ready for SessionSyncer`);
         } catch (error) {
           logger.error('[opencode] Failed to create session file in beforeRun', { error });
@@ -278,7 +150,7 @@ export const OpenCodePluginMetadata: AgentMetadata = {
           agent: 'opencode'
         });
 
-        const configPath = writeConfigToTempFile(configJson);
+        const configPath = writeConfigToTempFile(configJson, 'opencode');
         logger.debug(`[opencode] Wrote config to temp file: ${configPath}`);
 
         // OPENCODE_CONFIG is verified in OpenCode source: src/flag/flag.ts
