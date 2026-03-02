@@ -140,17 +140,17 @@ Read .codemie/guides/development/performance-patterns.md
 
 **Incremental commits after each layer:**
 ```bash
-git commit -m "EPMCDME-10750: Add analytics types, constants, and Valtio store
+git commit -m "feat(analytics): add analytics types, constants, and Valtio store
 
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
+Refs: EPMCDME-10750"
 
-git commit -m "EPMCDME-10750: Add MessageVolumeChart, TopAssistantsList, ResponseTimeChart widgets
+git commit -m "feat(analytics): add MessageVolumeChart, TopAssistantsList, ResponseTimeChart widgets
 
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
+Refs: EPMCDME-10750"
 
-git commit -m "EPMCDME-10750: Add AnalyticsDashboardPage, route, and nav link
+git commit -m "feat(analytics): add AnalyticsDashboardPage, route, and nav link
 
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
+Refs: EPMCDME-10750"
 ```
 
 ---
@@ -235,12 +235,12 @@ npm run lint
 
 ```bash
 git add .
-git commit -m "EPMCDME-10750: Fix chart axis colors and code review issues
+git commit -m "fix(analytics): fix chart axis colors and code review issues
 
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
+Refs: EPMCDME-10750"
 git push
 
-gh pr create --title "EPMCDME-10750: Analytics dashboard with widgets" --body "$(cat <<'EOF'
+gh pr create --title "feat(analytics): analytics dashboard with widgets" --body "$(cat <<'EOF'
 ## Summary
 - New /analytics route with AnalyticsDashboardPage
 - 3 widgets: MessageVolumeChart, TopAssistantsList, ResponseTimeChart (Recharts)

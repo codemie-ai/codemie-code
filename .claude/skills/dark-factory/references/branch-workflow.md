@@ -181,28 +181,39 @@ git push --force-with-lease origin EPMCDME-XXXXX
 
 ### Making Commits
 
-Follow commit message conventions:
+Follow conventional commits format:
 
 ```bash
 # Standard commit
 git add path/to/changed/files
-git commit -m "EPMCDME-XXXXX: Brief description of change"
+git commit -m "feat(agents): add logging to user endpoint
+
+Refs: EPMCDME-10500"
 
 # Examples:
-git commit -m "EPMCDME-10500: Add logging to user endpoint"
-git commit -m "EPMCDME-10500: Implement user validation service"
-git commit -m "EPMCDME-10500: Add unit tests for user service"
+git commit -m "feat(agents): add logging to user endpoint
+
+Refs: EPMCDME-10500"
+git commit -m "feat(agents): implement user validation service
+
+Refs: EPMCDME-10500"
+git commit -m "test(agents): add unit tests for user service
+
+Refs: EPMCDME-10500"
 ```
 
 **Commit Message Format:**
 ```
-EPMCDME-XXXXX: <imperative description>
+<type>(<scope>): <imperative description>
 
 [Optional detailed explanation]
 [Optional breaking changes note]
 
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+Refs: EPMCDME-XXXXX
 ```
+
+Where `<type>` is one of: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
+And `<scope>` is one of: `cli`, `agents`, `providers`, `assistants`, `config`, `proxy`, `workflows`, `analytics`, `utils`, `deps`, `tests`, `skills`
 
 ### Keeping Branch Updated
 
@@ -273,7 +284,7 @@ After implementation is complete:
 
 ```bash
 # Create MR using GitLab CLI
-gh pr create --title "EPMCDME-XXXXX: <title>" --body "$(cat <<'EOF'
+gh pr create --title "<type>(<scope>): <title>" --body "$(cat <<'EOF'
 ## Summary
 - <change 1>
 - <change 2>
@@ -335,7 +346,9 @@ git status
 
 # 3. Commit changes
 git add .
-git commit -m "EPMCDME-XXXXX: <description>"
+git commit -m "<type>(<scope>): <description>
+
+Refs: EPMCDME-XXXXX"
 
 # 4. Push new branch
 git push -u origin EPMCDME-XXXXX
@@ -367,7 +380,7 @@ If committed to wrong branch:
 ```bash
 # 1. Note the commit hash
 git log --oneline -1
-# Example output: abc1234 EPMCDME-XXXXX: My change
+# Example output: abc1234 feat(scope): my change
 
 # 2. Switch to correct branch
 git checkout EPMCDME-XXXXX
@@ -437,7 +450,9 @@ git push --force-with-lease origin EPMCDME-XXXXX
    git push -u origin EPMCDME-XXXXX
 
 4. Work and commit
-   git add . && git commit -m "EPMCDME-XXXXX: Change"
+   git add . && git commit -m "feat(scope): change description
+
+Refs: EPMCDME-XXXXX"
    git push
 
 5. Keep updated

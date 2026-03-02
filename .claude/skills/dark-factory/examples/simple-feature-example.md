@@ -99,13 +99,13 @@ export const SkillCard = ({ skill }: SkillCardProps) => {
 **Commit:**
 ```bash
 git add src/pages/skills/components/SkillCard.tsx
-git commit -m "EPMCDME-10500: Add category badge to SkillCard
+git commit -m "feat(skills): add category badge to SkillCard
 
 - Display skill category as Badge in card header
 - Badge conditionally rendered when category is present
 - Follows existing Badge pattern from AssistantCard
 
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
+Refs: EPMCDME-10500"
 ```
 
 ---
@@ -164,7 +164,7 @@ npm run lint
 git add src/pages/skills/components/SkillCard.tsx
 git push
 
-gh pr create --title "EPMCDME-10500: Add category badge to SkillCard" --body "$(cat <<'EOF'
+gh pr create --title "feat(skills): add category badge to SkillCard" --body "$(cat <<'EOF'
 ## Summary
 - Added category Badge to SkillCard component
 - Badge is conditionally rendered (hidden when category is absent)

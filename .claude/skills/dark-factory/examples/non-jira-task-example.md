@@ -129,13 +129,11 @@ const schema = yup.object({
 **Commit:**
 ```bash
 git add src/constants/skills.ts src/pages/skills/hooks/useSkillForm.ts
-git commit -m "fix/skill-form-validation-messages: Improve skill form validation messages
+git commit -m "fix(skills): improve skill form validation messages
 
 - Add SKILL_FORM_VALIDATION constants with user-friendly messages
 - Update Yup schema to use descriptive messages for all fields
-- Extract strings to constants to avoid magic strings
-
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
+- Extract strings to constants to avoid magic strings"
 ```
 
 ---

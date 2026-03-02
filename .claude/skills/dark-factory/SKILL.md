@@ -205,12 +205,15 @@ If branch already exists locally: switch to it and pull latest (`git checkout EP
 - Single quotes for strings
 - Components under 300 lines
 
-Commit incrementally with descriptive messages:
+Commit incrementally with descriptive messages following conventional commits format:
 ```
-EPMCDME-XXXXX: [imperative description]
+<type>(<scope>): <imperative description>
 
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+Refs: EPMCDME-XXXXX
 ```
+
+Where `<type>` is one of: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
+And `<scope>` is one of: `cli`, `agents`, `providers`, `assistants`, `config`, `proxy`, `workflows`, `analytics`, `utils`, `deps`, `tests`, `skills` (omit if none applies)
 
 ---
 
@@ -274,9 +277,12 @@ All checks must pass before creating the MR. Fix any failures.
 Stage and commit all remaining changes:
 ```bash
 git add <specific files>
-git commit -m "EPMCDME-XXXXX: Final cleanup and fixes
+git commit -m "$(cat <<'EOF'
+<type>(<scope>): final cleanup and fixes
 
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
+Refs: EPMCDME-XXXXX
+EOF
+)"
 git push
 ```
 
@@ -289,7 +295,7 @@ Skill(skill="codemie-mr", args="create MR for branch EPMCDME-XXXXX")
 
 Or via gh CLI:
 ```bash
-gh pr create --title "EPMCDME-XXXXX: [summary]" --body "$(cat <<'EOF'
+gh pr create --title "<type>(<scope>): [summary]" --body "$(cat <<'EOF'
 ## Summary
 - [Change 1]
 - [Change 2]
