@@ -101,7 +101,12 @@
     "PreToolUse": [
       {
         "matcher": "Bash",
-        "hooks": ["~/.codemie/claude-plugin/scripts/bash/rtk-auto-wrapper.sh"]
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.codemie/claude-plugin/scripts/bash/rtk-auto-wrapper.sh"
+          }
+        ]
       }
     ]
   }

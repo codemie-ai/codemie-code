@@ -71,6 +71,35 @@ export interface SessionAttributes {
   mcp_project_server_names?: string[];   // Server names in project scope
   mcp_user_server_names?: string[];      // Server names in user scope
 
+  // Extensions - Counts per scope (optional, only at session start)
+  agents_project?: number;               // Agent .md files in project .claude/agents/
+  agents_global?: number;                // Agent .md files in ~/.claude/agents/
+  commands_project?: number;             // Command .md files in project .claude/commands/
+  commands_global?: number;              // Command .md files in ~/.claude/commands/
+  skills_project?: number;               // Skill .md files in project .claude/skills/
+  skills_global?: number;                // Skill .md files in ~/.claude/skills/
+  hooks_project?: number;                // Hook scripts in project .claude/hooks/
+  hooks_global?: number;                 // Hook scripts in ~/.claude/hooks/
+  rules_project?: number;                // Rule .md files in project .claude/rules/
+  rules_global?: number;                 // Rule .md files in ~/.claude/rules/
+
+  // Extensions - Names per scope (optional, only at session start)
+  agent_names?: string[];                // All unique agent names across both scopes
+  agents_project_names?: string[];       // Agent names in project .claude/agents/
+  agents_global_names?: string[];        // Agent names in ~/.claude/agents/
+  command_names?: string[];              // All unique command names across both scopes
+  commands_project_names?: string[];     // Command names in project .claude/commands/
+  commands_global_names?: string[];      // Command names in ~/.claude/commands/
+  skill_names?: string[];                // All unique skill names across both scopes
+  skills_project_names?: string[];       // Skill names in project .claude/skills/
+  skills_global_names?: string[];        // Skill names in ~/.claude/skills/
+  hook_names?: string[];                 // All unique hook filenames across both scopes
+  hooks_project_names?: string[];        // Hook filenames in project .claude/hooks/
+  hooks_global_names?: string[];         // Hook filenames in ~/.claude/hooks/
+  rule_names?: string[];                 // All unique rule names across both scopes
+  rules_project_names?: string[];        // Rule names in project .claude/rules/
+  rules_global_names?: string[];         // Rule names in ~/.claude/rules/
+
   count: number;                         // Always 1 (Prometheus compatibility)
 }
 

@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { logger } from '../../utils/logger.js';
 import { AgentRegistry } from '../../agents/registry.js';
 import { getSessionPath, getSessionMetricsPath, getSessionConversationPath } from '../../agents/core/session/session-config.js';
-import type { BaseHookEvent, HookTransformer, MCPConfigSummary } from '../../agents/core/types.js';
+import type { BaseHookEvent, HookTransformer, MCPConfigSummary, ExtensionsScanSummary } from '../../agents/core/types.js';
 import type { ProcessingContext } from '../../agents/core/session/BaseProcessor.js';
 
 /**
@@ -717,16 +717,31 @@ async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: stri
     // Determine working directory
     const workingDirectory = event.cwd || process.cwd();
 
-    // Detect MCP servers using agent-specific configuration (non-blocking)
+    // Detect MCP servers and extensions in parallel (non-blocking)
     let mcpSummary: MCPConfigSummary | undefined;
+    let extensionsSummary: ExtensionsScanSummary | undefined;
     try {
       const agent = AgentRegistry.getAgent(agentName);
-      if (agent?.getMCPConfigSummary) {
-        mcpSummary = await agent.getMCPConfigSummary(workingDirectory);
+      const [mcp, ext] = await Promise.allSettled([
+        agent?.getMCPConfigSummary ? agent.getMCPConfigSummary(workingDirectory) : Promise.resolve(undefined),
+        agent?.getExtensionsSummary ? agent.getExtensionsSummary(workingDirectory) : Promise.resolve(undefined),
+      ]);
+
+      if (mcp.status === 'fulfilled' && mcp.value) {
+        mcpSummary = mcp.value;
         logger.debug('[hook:SessionStart] MCP detection', { total: mcpSummary.totalServers });
+      } else if (mcp.status === 'rejected') {
+        logger.debug('[hook:SessionStart] MCP detection failed', mcp.reason);
+      }
+
+      if (ext.status === 'fulfilled' && ext.value) {
+        extensionsSummary = ext.value;
+        logger.debug('[hook:SessionStart] Extensions scan', { project: ext.value.project, global: ext.value.global });
+      } else if (ext.status === 'rejected') {
+        logger.debug('[hook:SessionStart] Extensions scan failed', ext.reason);
       }
     } catch (error) {
-      logger.debug('[hook:SessionStart] MCP detection failed, continuing without MCP data', error);
+      logger.debug('[hook:SessionStart] Setup scan failed, continuing without scan data', error);
     }
 
     // Load SSO credentials if not provided in config
@@ -787,8 +802,9 @@ async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: stri
       },
       workingDirectory,
       status,
-      undefined,   // error
-      mcpSummary   // MCP configuration summary
+      undefined,          // error
+      mcpSummary,         // MCP configuration summary
+      extensionsSummary   // Extensions scan summary
     );
 
     logger.info('[hook:SessionStart] Session start metrics sent successfully');

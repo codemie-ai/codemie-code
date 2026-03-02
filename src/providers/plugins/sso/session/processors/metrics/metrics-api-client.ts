@@ -17,7 +17,7 @@
 
 import type { SessionMetric, MetricsApiConfig, MetricsSyncResponse, MetricsApiError } from './metrics-types.js';
 import type { Session } from '../../../../../../agents/core/session/types.js';
-import type { MCPConfigSummary } from '../../../../../../agents/core/types.js';
+import type { MCPConfigSummary, ExtensionsScanSummary } from '../../../../../../agents/core/types.js';
 import { logger } from '../../../../../../utils/logger.js';
 import { detectGitBranch } from '../../../../../../utils/processes.js';
 import { CODEMIE_ENDPOINTS } from '../../../sso.http-client.js';
@@ -244,13 +244,15 @@ export class MetricsSender {
    * @param status - Session start status object with status and optional reason
    * @param error - Optional error information (required if status=failed)
    * @param mcpSummary - Optional MCP configuration summary
+   * @param extensionsSummary - Optional extensions scan summary (project + global scopes)
    */
   async sendSessionStart(
     session: Pick<Session, 'sessionId' | 'agentName' | 'provider' | 'project' | 'startTime' | 'workingDirectory'> & { model?: string },
     workingDirectory: string,
     status: SessionStartStatus = { status: 'started' },
     error?: SessionError,
-    mcpSummary?: MCPConfigSummary
+    mcpSummary?: MCPConfigSummary,
+    extensionsSummary?: ExtensionsScanSummary
   ): Promise<MetricsSyncResponse> {
     // Detect git branch
     const branch = await detectGitBranch(workingDirectory);
@@ -303,6 +305,37 @@ export class MetricsSender {
         mcp_local_server_names: mcpSummary.localServerNames,
         mcp_project_server_names: mcpSummary.projectServerNames,
         mcp_user_server_names: mcpSummary.userServerNames
+      }),
+
+      // Extensions scan (only if provided)
+      ...(extensionsSummary && {
+        // Counts per scope
+        agents_project: extensionsSummary.project.agents,
+        agents_global: extensionsSummary.global.agents,
+        commands_project: extensionsSummary.project.commands,
+        commands_global: extensionsSummary.global.commands,
+        skills_project: extensionsSummary.project.skills,
+        skills_global: extensionsSummary.global.skills,
+        hooks_project: extensionsSummary.project.hooks,
+        hooks_global: extensionsSummary.global.hooks,
+        rules_project: extensionsSummary.project.rules,
+        rules_global: extensionsSummary.global.rules,
+        // Names per scope + unique totals across both scopes
+        agent_names: [...new Set([...extensionsSummary.projectNames.agents, ...extensionsSummary.globalNames.agents])].sort(),
+        agents_project_names: extensionsSummary.projectNames.agents,
+        agents_global_names: extensionsSummary.globalNames.agents,
+        command_names: [...new Set([...extensionsSummary.projectNames.commands, ...extensionsSummary.globalNames.commands])].sort(),
+        commands_project_names: extensionsSummary.projectNames.commands,
+        commands_global_names: extensionsSummary.globalNames.commands,
+        skill_names: [...new Set([...extensionsSummary.projectNames.skills, ...extensionsSummary.globalNames.skills])].sort(),
+        skills_project_names: extensionsSummary.projectNames.skills,
+        skills_global_names: extensionsSummary.globalNames.skills,
+        hook_names: [...new Set([...extensionsSummary.projectNames.hooks, ...extensionsSummary.globalNames.hooks])].sort(),
+        hooks_project_names: extensionsSummary.projectNames.hooks,
+        hooks_global_names: extensionsSummary.globalNames.hooks,
+        rule_names: [...new Set([...extensionsSummary.projectNames.rules, ...extensionsSummary.globalNames.rules])].sort(),
+        rules_project_names: extensionsSummary.projectNames.rules,
+        rules_global_names: extensionsSummary.globalNames.rules
       })
     };
 
