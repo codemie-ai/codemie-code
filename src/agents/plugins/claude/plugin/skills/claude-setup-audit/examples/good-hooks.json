@@ -1,0 +1,46 @@
+{
+  "_comment": "✅ GOOD HOOKS EXAMPLE — Score: ~18/20 pts (Grade A)",
+  "_notes": {
+    "H1.1": "✅ Valid JSON structure",
+    "H1.2": "✅ All event types are recognized (PreToolUse, PostToolUse)",
+    "H2.1": "✅ No hardcoded credentials — uses env var $AUDIT_WEBHOOK_URL",
+    "H2.2": "✅ Bash scripts use set -e and trap for error handling",
+    "H3.1": "✅ Matchers are scoped to specific tools (Write|Edit, Bash) not .*",
+    "H3.2": "✅ Each hook has a description field explaining its purpose"
+  },
+  "hooks": [
+    {
+      "event": "PreToolUse",
+      "description": "Block direct file writes to main branch — prevents accidental commits to protected branch",
+      "matcher": "Write|Edit",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash -c 'set -e; trap \"echo Hook check failed >&2\" ERR; BRANCH=$(git branch --show-current 2>/dev/null || echo \"\"); if [ \"$BRANCH\" = \"main\" ] || [ \"$BRANCH\" = \"master\" ]; then echo \"ERROR: Direct writes to $BRANCH are blocked. Create a feature branch first.\" >&2; exit 1; fi'"
+        }
+      ]
+    },
+    {
+      "event": "PostToolUse",
+      "description": "Run ESLint after TypeScript file modifications to catch issues immediately",
+      "matcher": "Edit|Write",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash -c 'set -e; trap \"echo Lint hook failed on line $LINENO >&2\" ERR; FILE=$(echo \"$CLAUDE_TOOL_OUTPUT\" | grep -o \"[^ ]*\\.ts\" | head -1 || true); if [ -n \"$FILE\" ] && [ -f \"$FILE\" ]; then npx eslint \"$FILE\" --max-warnings=0 --quiet 2>&1 | tail -10; fi'"
+        }
+      ]
+    },
+    {
+      "event": "PostToolUse",
+      "description": "Log tool usage for audit trail — posts to team webhook for compliance tracking",
+      "matcher": "Bash",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash -c 'set -e; if [ -n \"$AUDIT_WEBHOOK_URL\" ]; then curl -sf -X POST \"$AUDIT_WEBHOOK_URL\" -H \"Content-Type: application/json\" -d \"{\\\"event\\\": \\\"bash_used\\\", \\\"session\\\": \\\"$CLAUDE_SESSION_ID\\\"}\" > /dev/null 2>&1 || true; fi'"
+        }
+      ]
+    }
+  ]
+}

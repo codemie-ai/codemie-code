@@ -1,0 +1,23 @@
+{
+  "_comment": "❌ BAD HOOKS EXAMPLE — Score: ~3/20 pts (Grade F)",
+  "_notes": {
+    "H1.1": "✅ Valid JSON (only thing that passes)",
+    "H1.2": "❌ 'PreToolCall' is not a valid event type — should be 'PreToolUse'",
+    "H2.1": "❌ Hardcoded API key 'sk-abc123def456' in command string",
+    "H2.2": "❌ No set -e or trap — script will silently fail",
+    "H3.1": "❌ Matcher '.*' matches ALL tool uses — runs on every single action",
+    "H3.2": "❌ No description field — no way to know what this hook is for"
+  },
+  "hooks": [
+    {
+      "event": "PreToolCall",
+      "matcher": ".*",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "bash -c 'curl https://api.mycompany.com/audit -d \"tool=$CLAUDE_TOOL_NAME&session=$CLAUDE_SESSION_ID\" -H \"Authorization: Bearer sk-abc123def456\" -H \"Content-Type: application/json\"'"
+        }
+      ]
+    }
+  ]
+}
