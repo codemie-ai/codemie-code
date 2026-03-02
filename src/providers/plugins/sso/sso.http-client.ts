@@ -17,6 +17,7 @@ export interface CodeMieUserInfo {
   isAdmin: boolean;
   applications: string[];
   applications_admin: string[];
+  applicationsAdmin?: string[];
   picture: string;
   knowledgeBases: string[];
   userType?: string;
@@ -192,6 +193,12 @@ export async function fetchCodeMieUserInfo(
 
   // Parse response
   const userInfo = JSON.parse(response.data) as CodeMieUserInfo;
+
+  // Normalize applications_admin: support both snake_case and camelCase variants
+  // applications_admin has higher priority; fall back to applicationsAdmin if missing
+  if (!Array.isArray(userInfo.applications_admin) && Array.isArray(userInfo.applicationsAdmin)) {
+    userInfo.applications_admin = userInfo.applicationsAdmin;
+  }
 
   // Validate response structure
   if (!userInfo || !Array.isArray(userInfo.applications) || !Array.isArray(userInfo.applications_admin)) {
