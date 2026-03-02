@@ -1,4 +1,4 @@
-import { AgentMetadata, AgentAdapter, AgentConfig, MCPConfigSummary, VersionCompatibilityResult } from './types.js';
+import { AgentMetadata, AgentAdapter, AgentConfig, MCPConfigSummary, ExtensionsScanSummary, VersionCompatibilityResult } from './types.js';
 import * as npm from '../../utils/processes.js';
 import { NpmError, createErrorContext } from '../../utils/errors.js';
 import { exec } from '../../utils/processes.js';
@@ -18,6 +18,7 @@ import { mkdir, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { resolveHomeDir } from '../../utils/paths.js';
 import { getMCPConfigSummary as getMCPConfigSummaryUtil } from '../../utils/mcp-config.js';
+import { getExtensionsScanSummary } from '../../utils/extensions-scan.js';
 import {
   executeOnSessionStart,
   executeBeforeRun,
@@ -71,6 +72,17 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    */
   async getMCPConfigSummary(cwd: string): Promise<MCPConfigSummary> {
     return getMCPConfigSummaryUtil(this.metadata.mcpConfig, cwd);
+  }
+
+  /**
+   * Get extensions scan summary for session metrics
+   * Counts agents/commands/skills/hooks/rules at project and global scopes
+   *
+   * @param cwd - Current working directory
+   * @returns Extensions scan summary with counts per scope
+   */
+  async getExtensionsSummary(cwd: string): Promise<ExtensionsScanSummary> {
+    return getExtensionsScanSummary(this.metadata.extensionsConfig, cwd);
   }
 
   get name(): string {

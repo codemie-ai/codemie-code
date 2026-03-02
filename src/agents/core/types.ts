@@ -284,6 +284,13 @@ export interface AgentMetadata {
    * Agent-specific locations for MCP config files
    */
   mcpConfig?: AgentMCPConfig;
+
+  // === Extensions Configuration ===
+  /**
+   * Agent-specific extensions directory paths
+   * Defines where to find agents/commands/skills/hooks/rules for this agent
+   */
+  extensionsConfig?: AgentExtensionsConfig;
 }
 
 /**
@@ -351,6 +358,82 @@ export interface MCPConfigSummary {
   projectServerNames: string[];
   /** Server names in user scope */
   userServerNames: string[];
+}
+
+/**
+ * Agent-specific extensions directory configuration
+ * Defines where agents/commands/skills/hooks/rules live for this agent
+ *
+ * Supports '~/' prefix for home-relative paths and relative paths from cwd
+ */
+export interface AgentExtensionsConfig {
+  /**
+   * Project-level extensions directory (relative to cwd)
+   * Example: '.claude' → scans {cwd}/.claude/{agents,commands,skills,hooks,rules}/
+   */
+  project?: string;
+
+  /**
+   * Global extensions directory (user-level, across all projects)
+   * Example: '~/.claude' → scans ~/.claude/{agents,commands,skills,hooks,rules}/
+   */
+  global?: string;
+
+  /**
+   * Exact filename that represents one skill entry (case-insensitive match)
+   * When set, only files with this name are counted as skills (e.g., 'SKILL.md' for Claude)
+   * When unset, all .md files in the skills/ directory are counted
+   * Example: Claude uses subdirectory-per-skill with a 'SKILL.md' entry file
+   */
+  skillsEntryFile?: string;
+}
+
+/**
+ * Extension counts for a single .claude/ scope directory
+ */
+export interface ExtensionsCount {
+  /** Agent definition files (.md) in agents/ */
+  agents: number;
+  /** Command definition files (.md) in commands/ */
+  commands: number;
+  /** Skill definition files (.md) in skills/ */
+  skills: number;
+  /** Hook scripts (.sh/.js/.py/.ts) in hooks/ */
+  hooks: number;
+  /** Rule definition files (.md) in rules/ */
+  rules: number;
+}
+
+/**
+ * Extension names for a single scope directory
+ * Mirrors MCPConfigSummary's per-scope server name arrays
+ */
+export interface ExtensionsNames {
+  /** Agent names (.md filenames without extension) in agents/ */
+  agents: string[];
+  /** Command names (.md filenames without extension) in commands/ */
+  commands: string[];
+  /** Skill names (directory names for SKILL.md pattern, or .md filenames) in skills/ */
+  skills: string[];
+  /** Hook filenames (.sh/.js/.py/.ts) in hooks/ */
+  hooks: string[];
+  /** Rule names (.md filenames without extension) in rules/ */
+  rules: string[];
+}
+
+/**
+ * Extensions scan result covering project and global scopes
+ * Used for session start metrics
+ */
+export interface ExtensionsScanSummary {
+  /** Extension counts in {cwd}/.claude/ (project-specific, version controlled) */
+  project: ExtensionsCount;
+  /** Extension counts in ~/.claude/ (user-level, all projects) */
+  global: ExtensionsCount;
+  /** Extension names in {cwd}/.claude/ — mirrors MCP's per-scope server name arrays */
+  projectNames: ExtensionsNames;
+  /** Extension names in ~/.claude/ — mirrors MCP's per-scope server name arrays */
+  globalNames: ExtensionsNames;
 }
 
 /**
@@ -543,6 +626,15 @@ export interface AgentAdapter {
    * @returns MCP configuration summary
    */
   getMCPConfigSummary?(cwd: string): Promise<MCPConfigSummary>;
+
+  /**
+   * Get extensions scan summary for session metrics
+   * Returns counts of agents/commands/skills/hooks/rules at project and global scopes
+   *
+   * @param cwd - Current working directory
+   * @returns Extensions scan summary
+   */
+  getExtensionsSummary?(cwd: string): Promise<ExtensionsScanSummary>;
 
   /**
    * Install specific version of agent (optional, for version-managed agents)

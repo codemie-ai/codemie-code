@@ -65,6 +65,17 @@ const metadata = {
     settings: 'settings.json'
   },
 
+  // Extensions configuration for Gemini CLI
+  // - project: {cwd}/.gemini/ (shared with team, version controlled)
+  // - global: ~/.gemini/ (user-level, available across all workspaces)
+  // - agents: .gemini/agents/*.md and ~/.gemini/agents/*.md
+  // - skills: each skill is a subdirectory with a SKILL.md entry file
+  extensionsConfig: {
+    project: '.gemini',
+    global: '~/.gemini',
+    skillsEntryFile: 'SKILL.md',
+  },
+
   // MCP configuration paths for Gemini CLI
   // - User: ~/.gemini/settings.json → mcpServers (available across all projects)
   // - Project: .gemini/settings.json → mcpServers (project-specific)
