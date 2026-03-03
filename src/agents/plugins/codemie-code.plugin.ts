@@ -173,7 +173,8 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
     { flags: '--task <task>', description: 'Execute a single task and exit' },
     { flags: '--debug', description: 'Enable debug logging' },
     { flags: '--plan', description: 'Enable planning mode' },
-    { flags: '--plan-only', description: 'Plan without execution' }
+    { flags: '--plan-only', description: 'Plan without execution' },
+    { flags: '--plugin-dir <path>', description: 'Load plugins from specified directory' }
   ],
 
   isBuiltIn: true,
@@ -200,27 +201,30 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
       }
 
       // Welcome/goodbye messages are shown by BaseAgentAdapter (which invokes this handler).
-      // Parse agent-specific flags from original args (--debug, --task, --plan, --plan-only).
+      // Parse agent-specific flags from original args (--debug, --task, --plan, --plan-only, --plugin-dir).
       const debug = args.includes('--debug');
       const taskIdx = args.indexOf('--task');
       const task = taskIdx !== -1 && taskIdx < args.length - 1 ? args[taskIdx + 1] : undefined;
       const plan = args.includes('--plan');
       const planOnly = args.includes('--plan-only');
-      // Remaining args (excluding known flags and --task value) are treated as a prompt
-      const knownFlags = new Set(['--debug', '--task', '--plan', '--plan-only']);
+      const pluginDirIdx = args.indexOf('--plugin-dir');
+      const pluginDir = pluginDirIdx !== -1 && pluginDirIdx < args.length - 1 ? args[pluginDirIdx + 1] : undefined;
+      // Remaining args (excluding known flags and --task/--plugin-dir values) are treated as a prompt
+      const knownFlags = new Set(['--debug', '--task', '--plan', '--plan-only', '--plugin-dir']);
       const promptArgs = args.filter((a, i) => {
         if (knownFlags.has(a)) return false;
-        if (i > 0 && args[i - 1] === '--task') return false;
+        if (i > 0 && (args[i - 1] === '--task' || args[i - 1] === '--plugin-dir')) return false;
         return true;
       });
 
+      const pluginDirs = pluginDir ? [pluginDir] : undefined;
       const codeMie = new CodeMieCode(workingDir);
-      await codeMie.initialize({ debug: debug as boolean | undefined });
+      await codeMie.initialize({ debug, pluginDirs });
 
       if (task) {
         await codeMie.executeTaskWithUI(task, {
-          planMode: (plan || planOnly) as boolean | undefined,
-          planOnly: planOnly as boolean | undefined
+          planMode: plan || planOnly,
+          planOnly,
         });
       } else if (promptArgs.length > 0) {
         await codeMie.executeTaskWithUI(promptArgs.join(' '));
@@ -326,6 +330,23 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
         } catch {
           // Non-critical — profile config parse failure doesn't block startup
         }
+      }
+
+      // 2b. Merge plugin hooks (lower priority than profile hooks)
+      try {
+        const { resolvePlugins, readPluginSettings } = await import('../../plugins/core/index.js');
+        const { mergeHooks } = await import('../../plugins/loaders/hooks-loader.js');
+        const pluginSettings = await readPluginSettings();
+        const resolvedPlugins = await resolvePlugins({ cwd: process.cwd(), settings: pluginSettings });
+
+        for (const plugin of resolvedPlugins) {
+          if (plugin.enabled && plugin.hooks) {
+            mergedHooks = mergeHooks(mergedHooks as any, plugin.hooks) as any;
+            logger.debug(`[codemie-code] Merged hooks from plugin "${plugin.manifest.name}"`);
+          }
+        }
+      } catch {
+        // Plugin hooks merge failure is non-blocking
       }
 
       env.OPENCODE_HOOKS = JSON.stringify({ hooks: mergedHooks });

@@ -2,8 +2,10 @@ import { readFile } from 'fs/promises';
 import { join } from 'path';
 import fg from 'fast-glob';
 import { getCodemiePath } from '../../../../utils/paths.js';
+import { logger } from '../../../../utils/logger.js';
 import { parseFrontmatter, FrontmatterParseError } from '../utils/frontmatter.js';
 import { SkillMetadataSchema } from './types.js';
+import { resolvePlugins, readPluginSettings } from '../../../../plugins/core/index.js';
 import type {
   Skill,
   SkillMetadata,
@@ -19,6 +21,7 @@ import type {
 const SOURCE_PRIORITY: Record<SkillSource, number> = {
   project: 1000, // Highest priority
   'mode-specific': 500, // Medium priority
+  plugin: 200, // Plugin priority (between global and mode-specific)
   global: 100, // Lowest priority
 };
 
@@ -46,15 +49,16 @@ export class SkillDiscovery {
       return this.cache.get(cacheKey)!;
     }
 
-    // Discover from all locations
-    const [projectSkills, modeSkills, globalSkills] = await Promise.all([
+    // Discover from all locations (including plugins)
+    const [projectSkills, modeSkills, pluginSkills, globalSkills] = await Promise.all([
       this.discoverProjectSkills(cwd),
       this.discoverModeSkills(options.mode),
+      this.discoverPluginSkills(cwd, options.pluginDirs),
       this.discoverGlobalSkills(),
     ]);
 
     // Combine and deduplicate by name (higher priority wins)
-    const allSkills = [...projectSkills, ...modeSkills, ...globalSkills];
+    const allSkills = [...projectSkills, ...modeSkills, ...pluginSkills, ...globalSkills];
     const deduplicatedSkills = this.deduplicateSkills(allSkills);
 
     // Filter by agent if specified
@@ -101,6 +105,65 @@ export class SkillDiscovery {
   private async discoverGlobalSkills(): Promise<Skill[]> {
     const globalSkillsDir = getCodemiePath('skills');
     return this.discoverFromDirectory(globalSkillsDir, 'global');
+  }
+
+  /**
+   * Discover skills from loaded plugins
+   *
+   * Resolves all enabled plugins and converts their skills to the Skill format.
+   */
+  private async discoverPluginSkills(cwd: string, pluginDirs?: string[]): Promise<Skill[]> {
+    try {
+      const settings = await readPluginSettings();
+      const plugins = await resolvePlugins({
+        cliDirs: pluginDirs,
+        cwd,
+        settings,
+      });
+
+      const skills: Skill[] = [];
+      for (const plugin of plugins) {
+        if (!plugin.enabled) continue;
+
+        for (const pluginSkill of plugin.skills) {
+          const metadata: SkillMetadata = {
+            name: pluginSkill.namespacedName,
+            description: (pluginSkill.metadata.description as string) || `Skill from plugin ${pluginSkill.pluginName}`,
+            priority: (pluginSkill.metadata.priority as number) || 0,
+          };
+          if (pluginSkill.metadata.version) metadata.version = pluginSkill.metadata.version as string;
+          if (pluginSkill.metadata.modes) metadata.modes = pluginSkill.metadata.modes as string[];
+          skills.push({
+            metadata,
+            content: pluginSkill.content,
+            filePath: pluginSkill.filePath,
+            source: 'plugin',
+            computedPriority: this.computePriority(metadata, 'plugin'),
+          });
+        }
+
+        // Also convert plugin commands to skills (commands are similar to skills)
+        for (const pluginCommand of plugin.commands) {
+          const metadata: SkillMetadata = {
+            name: pluginCommand.namespacedName,
+            description: (pluginCommand.metadata.description as string) || `Command from plugin ${pluginCommand.pluginName}`,
+            priority: (pluginCommand.metadata.priority as number) || 0,
+          };
+          skills.push({
+            metadata,
+            content: pluginCommand.content,
+            filePath: pluginCommand.filePath,
+            source: 'plugin',
+            computedPriority: this.computePriority(metadata, 'plugin'),
+          });
+        }
+      }
+
+      return skills;
+    } catch (error) {
+      logger.debug(`[plugin] Plugin skill discovery failed: ${error instanceof Error ? error.message : String(error)}`);
+      return [];
+    }
   }
 
   /**

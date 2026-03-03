@@ -85,6 +85,13 @@ export interface ProviderProfile {
 
   // Hooks configuration
   hooks?: HooksConfiguration;
+
+  // Plugin configuration
+  plugins?: {
+    enabled?: string[];
+    disabled?: string[];
+    dirs?: string[];
+  };
 }
 
 /**

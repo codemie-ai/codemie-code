@@ -14,6 +14,8 @@ function formatSource(source: Skill['source']): string {
       return chalk.green('project');
     case 'mode-specific':
       return chalk.blue('mode-specific');
+    case 'plugin':
+      return chalk.magenta('plugin');
     case 'global':
       return chalk.white('global');
     default:

@@ -35,7 +35,7 @@ export class CodeMieCode {
   /**
    * Initialize the CodeMie agent asynchronously
    */
-  async initialize(cliOverrides?: { debug?: boolean }): Promise<InitializationResult> {
+  async initialize(cliOverrides?: { debug?: boolean; pluginDirs?: string[] }): Promise<InitializationResult> {
     try {
       // Load configuration with CLI overrides
       this.config = await loadCodeMieConfig(this.workingDirectory, cliOverrides);
@@ -66,6 +66,7 @@ export class CodeMieCode {
           this.skills = await manager.getSkillsForAgent('codemie-code', {
             cwd: this.workingDirectory,
             mode: this.config.skills.mode,
+            pluginDirs: cliOverrides?.pluginDirs,
           });
 
           if (this.config.debug) {

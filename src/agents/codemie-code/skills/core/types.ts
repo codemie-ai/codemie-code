@@ -27,7 +27,7 @@ export type SkillMetadata = z.infer<typeof SkillMetadataSchema>;
 /**
  * Source type for a skill
  */
-export type SkillSource = 'global' | 'project' | 'mode-specific';
+export type SkillSource = 'global' | 'project' | 'mode-specific' | 'plugin';
 
 /**
  * Complete skill with metadata, content, and location info
@@ -76,6 +76,9 @@ export interface SkillDiscoveryOptions {
 
   /** Force cache reload */
   forceReload?: boolean;
+
+  /** Plugin directories to discover skills from */
+  pluginDirs?: string[];
 }
 
 /**
