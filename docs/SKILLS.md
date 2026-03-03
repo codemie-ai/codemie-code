@@ -102,6 +102,21 @@ Skills are discovered from these locations (in priority order):
 **Priority**: 100 + metadata priority
 **When to use**: General guidelines applicable across all projects
 
+### 4. Plugin Skills
+
+Skills bundled inside [plugins](./PLUGINS.md) are discovered automatically when the plugin is loaded.
+
+```
+.codemie/plugins/my-plugin/
+└── skills/
+    └── my-skill/
+        └── SKILL.md
+```
+
+**Source**: `plugin`
+**Namespace**: Plugin skills are namespaced as `plugin-name:skill-name`
+**When to use**: Distributable skill packages shared via plugins
+
 ## Priority Resolution
 
 Skills with the same name are deduplicated using priority:
@@ -439,7 +454,7 @@ Only loads when `config.skills.mode` is `code` or `testing`.
 Planned features:
 - ✨ Auto-reload on file changes (`autoReload: true`)
 - ✨ Skill versioning and updates
-- ✨ Skill marketplace/sharing
+- ✅ Skill distribution via [plugins](./PLUGINS.md)
 - ✨ Skill templates
 - ✨ Skill dependencies
 - ✨ Skill-specific tools
