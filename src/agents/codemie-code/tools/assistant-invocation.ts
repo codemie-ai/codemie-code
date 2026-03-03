@@ -62,7 +62,8 @@ async function invokeAssistantViaSdk(
       conversation_id: sessionId, // Pass session ID to maintain conversation context
       text: message,
       history: history && history.length > 0 ? history : [], // Always provide array, empty if no history
-      stream: false
+      stream: false,
+      save_history: false
     };
 
     logger.debug('Calling assistants.chat', {

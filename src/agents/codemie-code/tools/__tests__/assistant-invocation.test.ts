@@ -195,7 +195,8 @@ describe('Assistant Invocation Tool', () => {
         conversation_id: 'test-session-123',
         text: 'Test message',
         stream: false,
-        history: []
+        history: [],
+        save_history: false
       });
     });
 
@@ -220,7 +221,8 @@ describe('Assistant Invocation Tool', () => {
         conversation_id: 'test-session-123',
         text: 'Follow-up message',
         history: history,
-        stream: false
+        stream: false,
+        save_history: false
       });
     });
 

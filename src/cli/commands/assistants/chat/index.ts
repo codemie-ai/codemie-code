@@ -272,7 +272,8 @@ async function sendMessageWithHistory(
     text: message,
     content_raw: message,
     history,
-    stream: false
+    stream: false,
+    save_history: false
   });
 
   return (response.generated as string) ?? '';
