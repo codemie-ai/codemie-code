@@ -131,7 +131,6 @@ export class GeminiSessionAdapter implements SessionAdapter {
           },
           messages: [],
           metrics: {
-            tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
             tools: {},
             toolStatus: {},
             fileOperations: []
@@ -151,8 +150,7 @@ export class GeminiSessionAdapter implements SessionAdapter {
 
       logger.debug(
         `[gemini-adapter] Parsed session ${sessionId}: ${sessionData.messages.length} messages, ` +
-        `${metrics.tokens?.input || 0} input tokens, ${metrics.tokens?.output || 0} output tokens, ` +
-        `${metrics.tokens?.cacheRead || 0} cached tokens`
+        `${Object.keys(metrics.tools).length} tool types`
       );
 
       return {
@@ -172,22 +170,9 @@ export class GeminiSessionAdapter implements SessionAdapter {
 
   /**
    * Extract metrics data from Gemini messages.
-   * Aggregates tokens (5 fields), tools, and file operations.
-   *
-   * Token mapping strategy (from tech spec):
-   * - input → input (direct)
-   * - output → output (direct)
-   * - cached → cacheRead (semantic match)
-   * - cacheWrite → 0 (not available in Gemini)
-   * - thoughts, tool → stored in metadata (Gemini-specific)
+   * Aggregates tools and file operations.
    */
   private extractMetrics(messages: GeminiMessage[]) {
-    let inputTokens = 0;
-    let outputTokens = 0;
-    let cachedTokens = 0;
-    // Note: Gemini-specific token fields (thoughts, tool) are tracked but not included
-    // in the unified metrics format. They could be added to metadata if needed later.
-
     const toolCounts: Record<string, number> = {};
     const toolStatus: Record<string, { success: number; failure: number }> = {};
     const fileOperations: Array<{
@@ -197,14 +182,6 @@ export class GeminiSessionAdapter implements SessionAdapter {
 
     // Aggregate metrics from all messages
     for (const msg of messages) {
-      // Extract token usage (Gemini has 5 fields)
-      if (msg.tokens) {
-        inputTokens += msg.tokens.input || 0;
-        outputTokens += msg.tokens.output || 0;
-        cachedTokens += msg.tokens.cached || 0;
-        // thoughts and tool tokens are Gemini-specific and not mapped to unified format
-      }
-
       // Extract tool usage and status from self-contained toolCalls
       if (msg.toolCalls && Array.isArray(msg.toolCalls)) {
         for (const tool of msg.toolCalls) {
@@ -232,13 +209,6 @@ export class GeminiSessionAdapter implements SessionAdapter {
     }
 
     return {
-      tokens: {
-        input: inputTokens,
-        output: outputTokens,
-        cacheRead: cachedTokens,  // Map Gemini's "cached" to "cacheRead"
-        cacheWrite: 0              // Not available in Gemini
-        // Note: thoughts and tool tokens stored separately if needed
-      },
       tools: toolCounts,
       toolStatus,
       fileOperations

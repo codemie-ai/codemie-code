@@ -285,20 +285,6 @@ describe('Gemini Metrics Processor - File Operations', () => {
     }
   });
 
-  it('should have token usage for each delta with file operations', () => {
-    const deltas = readMetricsFile(TEST_SESSION_ID);
-
-    const deltasWithFileOps = deltas.filter(d => d.fileOperations && d.fileOperations.length > 0);
-
-    for (const delta of deltasWithFileOps) {
-      expect(delta.tokens).toBeDefined();
-      expect(delta.tokens.input).toBeGreaterThan(0);
-      expect(delta.tokens.output).toBeGreaterThan(0);
-      expect(delta.tokens.cacheRead).toBeGreaterThanOrEqual(0);
-      expect(delta.tokens.cacheCreation).toBe(0); // Gemini always has 0 cache creation
-    }
-  });
-
   it('should handle Gemini-specific semantics (linesAdded = final state)', () => {
     const deltas = readMetricsFile(TEST_SESSION_ID);
 

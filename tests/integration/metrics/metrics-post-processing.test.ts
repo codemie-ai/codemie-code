@@ -36,12 +36,6 @@ describe('Metrics Post-Processing Integration', () => {
         agentSessionId: 'agent-session-1',
         timestamp: Date.now(),
         gitBranch: 'main',
-        tokens: {
-          input: 100,
-          output: 50,
-          cacheRead: 0,
-          cacheCreation: 0
-        },
         tools: {
           Read: 2,
           Bash: 1
@@ -60,12 +54,6 @@ describe('Metrics Post-Processing Integration', () => {
         agentSessionId: 'agent-session-1',
         timestamp: Date.now() + 1000,
         gitBranch: 'main',
-        tokens: {
-          input: 200,
-          output: 100,
-          cacheRead: 50,
-          cacheCreation: 25
-        },
         tools: {
           Write: 1,
           Edit: 1
@@ -104,12 +92,6 @@ describe('Metrics Post-Processing Integration', () => {
     expect(metric.attributes.repository).toBe('codemie-ai/codemie-code');
     expect(metric.attributes.repository).not.toContain('/Users/');
 
-    // Check token aggregation
-    expect(metric.attributes.total_input_tokens).toBe(300);
-    expect(metric.attributes.total_output_tokens).toBe(150);
-    expect(metric.attributes.total_cache_read_input_tokens).toBe(50);
-    expect(metric.attributes.total_cache_creation_tokens).toBe(25);
-
     // Check tool aggregation
     expect(metric.attributes.total_tool_calls).toBe(5);
     expect(metric.attributes.successful_tool_calls).toBe(4);
@@ -146,7 +128,6 @@ describe('Metrics Post-Processing Integration', () => {
         agentSessionId: 'agent-session-1',
         timestamp: Date.now(),
         gitBranch: 'main',
-        tokens: {input: 100, output: 50},
         tools: {Read: 1},
         syncStatus: 'pending',
         syncAttempts: 0
@@ -157,7 +138,6 @@ describe('Metrics Post-Processing Integration', () => {
         agentSessionId: 'agent-session-1',
         timestamp: Date.now() + 1000,
         gitBranch: 'feature/test',
-        tokens: {input: 200, output: 100},
         tools: {Write: 1},
         syncStatus: 'pending',
         syncAttempts: 0
@@ -178,9 +158,9 @@ describe('Metrics Post-Processing Integration', () => {
     expect(mainMetric!.attributes.repository).toBe('codemie-ai/codemie-code');
     expect(featureMetric!.attributes.repository).toBe('codemie-ai/codemie-code');
 
-    // Check token separation
-    expect(mainMetric!.attributes.total_input_tokens).toBe(100);
-    expect(featureMetric!.attributes.total_input_tokens).toBe(200);
+    // Check tool separation
+    expect(mainMetric!.attributes.total_tool_calls).toBe(1);
+    expect(featureMetric!.attributes.total_tool_calls).toBe(1);
   });
 
   it('should handle empty project paths gracefully', () => {
@@ -196,7 +176,6 @@ describe('Metrics Post-Processing Integration', () => {
         agentSessionId: 'agent-session-1',
         timestamp: Date.now(),
         gitBranch: 'main',
-        tokens: {input: 100, output: 50},
         tools: {Read: 1},
         syncStatus: 'pending',
         syncAttempts: 0
@@ -217,7 +196,6 @@ describe('Metrics Post-Processing Integration', () => {
         agentSessionId: 'agent-session-1',
         timestamp: Date.now(),
         gitBranch: 'main',
-        tokens: {input: 100, output: 50},
         tools: {Read: 1},
         toolStatus: {
           Read: {success: 0, failure: 1}
@@ -250,7 +228,6 @@ describe('Metrics Post-Processing Integration', () => {
         agentSessionId: 'agent-session-1',
         timestamp: Date.now(),
         gitBranch: 'main',
-        tokens: {input: 100, output: 50},
         tools: {Read: 1},
         toolStatus: {
           Read: {success: 1, failure: 0}
@@ -277,7 +254,6 @@ describe('Metrics Post-Processing Integration', () => {
         agentSessionId: 'agent-session-1',
         timestamp: Date.now(),
         gitBranch: 'main',
-        tokens: {input: 100, output: 50},
         tools: {Read: 1},
         toolStatus: {
           Read: {success: 0, failure: 1}

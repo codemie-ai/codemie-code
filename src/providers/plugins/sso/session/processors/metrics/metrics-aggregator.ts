@@ -14,6 +14,21 @@ import {postProcessMetric} from './metrics-post-processor.js';
 import {MetricsSender} from './metrics-api-client.js';
 
 /**
+ * Extract parent/repo format from a working directory path.
+ * e.g. /Users/john/projects/codemie-code → projects/codemie-code
+ */
+function extractRepository(workingDirectory: string): string {
+  const parts = workingDirectory.split(/[/\\]/);
+  const filtered = parts.filter(p => p.length > 0);
+
+  if (filtered.length >= 2) {
+    return `${filtered[filtered.length - 2]}/${filtered[filtered.length - 1]}`;
+  }
+
+  return filtered[filtered.length - 1] || 'unknown';
+}
+
+/**
  * Aggregate pending deltas into session metrics grouped by branch
  * Returns one metric per branch to prevent mixing metrics between branches
  *
@@ -193,7 +208,7 @@ function buildSessionAttributes(
     agent: session.agentName,
     agent_version: version,
     llm_model: primaryModel || 'unknown',
-    repository: session.workingDirectory,
+    repository: extractRepository(session.workingDirectory),
     session_id: agentSessionId,  // Use agent session ID for API correlation
     branch: branch,
     ...(session.project && { project: session.project }),

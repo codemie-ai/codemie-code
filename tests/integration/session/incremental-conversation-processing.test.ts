@@ -196,8 +196,6 @@ describe('Incremental Conversation Processing - Simple Session', () => {
       const expAssistant = expected.payload.history.find((h: any) => h.role === 'Assistant');
 
       expect(genAssistant.message).toBe(expAssistant.message);
-      expect(genAssistant.input_tokens).toBe(expAssistant.input_tokens);
-      expect(genAssistant.output_tokens).toBe(expAssistant.output_tokens);
     }
   });
 
@@ -360,28 +358,6 @@ describe('Incremental Conversation Processing - Session with Subagents', () => {
     expect(foundAgentThoughts).toBe(true);
   });
 
-  it('should aggregate tokens from main session and subagents', async () => {
-    const records = readConversationFile(TEST_SESSION_ID);
-    const record2 = records[1]; // Turn continuation with complete data
-    
-    const assistant = record2.payload.history[0];
-    
-    // Should have tokens from both main and subagent
-    expect(assistant.input_tokens).toBeGreaterThan(0);
-    expect(assistant.output_tokens).toBeGreaterThan(0);
-    
-    // Check if subagent tokens are included
-    const agentThoughts = assistant.thoughts?.filter((t: any) => 
-      t.author_type === 'Agent' && t.metadata?.token_usage
-    );
-    
-    if (agentThoughts && agentThoughts.length > 0) {
-      const agentThought = agentThoughts[0];
-      expect(agentThought.metadata.token_usage).toHaveProperty('input');
-      expect(agentThought.metadata.token_usage).toHaveProperty('output');
-    }
-  });
-
   it('should match expected conversation structure with subagents', () => {
     const generatedRecords = readConversationFile(TEST_SESSION_ID);
     const expectedContent = readFileSync(expectedFile, 'utf-8');
@@ -401,8 +377,6 @@ describe('Incremental Conversation Processing - Session with Subagents', () => {
     const expAssistant = expected.payload.history[0];
 
     expect(genAssistant.message).toBe(expAssistant.message);
-    expect(genAssistant.input_tokens).toBe(expAssistant.input_tokens);
-    expect(genAssistant.output_tokens).toBe(expAssistant.output_tokens);
     expect(genAssistant.thoughts.length).toBe(expAssistant.thoughts.length);
   });
 

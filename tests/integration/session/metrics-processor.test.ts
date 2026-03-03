@@ -201,37 +201,6 @@ describe('MetricsProcessor - Full Pipeline Integration Test', () => {
     });
   });
 
-  describe('Golden Dataset - Token Aggregation', () => {
-    it('should preserve total input tokens', async () => {
-      const updatedDeltas = await metricsWriter.readAll();
-      const totalInput = updatedDeltas.reduce((sum, d) => sum + d.tokens.input, 0);
-
-      // Same calculation as original plugin
-      expect(totalInput).toBeGreaterThan(0);
-      // Verify sum matches initial (no token loss during processing)
-      const initialInput = initialDeltas.reduce((sum, d) => sum + d.tokens.input, 0);
-      expect(totalInput).toBe(initialInput);
-    });
-
-    it('should preserve total output tokens', async () => {
-      const updatedDeltas = await metricsWriter.readAll();
-      const totalOutput = updatedDeltas.reduce((sum, d) => sum + d.tokens.output, 0);
-
-      expect(totalOutput).toBeGreaterThan(0);
-      const initialOutput = initialDeltas.reduce((sum, d) => sum + d.tokens.output, 0);
-      expect(totalOutput).toBe(initialOutput);
-    });
-
-    it('should preserve cache tokens', async () => {
-      const updatedDeltas = await metricsWriter.readAll();
-      const totalCacheRead = updatedDeltas.reduce((sum, d) => sum + (d.tokens.cacheRead || 0), 0);
-      const totalCacheCreation = updatedDeltas.reduce((sum, d) => sum + (d.tokens.cacheCreation || 0), 0);
-
-      expect(totalCacheRead).toBeGreaterThan(0);
-      expect(totalCacheCreation).toBeGreaterThan(0);
-    });
-  });
-
   describe('Golden Dataset - Tool Aggregation', () => {
     it('should preserve tool call counts', async () => {
       const updatedDeltas = await metricsWriter.readAll();
