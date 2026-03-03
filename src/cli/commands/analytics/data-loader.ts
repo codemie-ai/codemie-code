@@ -41,13 +41,6 @@ interface SessionEndEvent {
     endTime: number;
     duration: number;
     totalTurns: number;
-    totalTokens: {
-      input: number;
-      output: number;
-      cacheRead: number;
-      cacheCreation?: number;
-    };
-    totalCost: number;
   };
 }
 
@@ -65,13 +58,6 @@ interface TurnEvent {
   syncStatus: string;
   data: {
     turnNumber: number;
-    tokens: {
-      input: number;
-      output: number;
-      cacheRead: number;
-      cacheCreation?: number;
-    };
-    cost: number;
     model: string;
   };
 }
@@ -216,14 +202,7 @@ export class MetricsDataLoader {
           data: {
             endTime: sessionMetadata.endTime,
             duration: sessionMetadata.endTime - sessionMetadata.startTime,
-            totalTurns: 0, // Will be calculated from deltas
-            totalTokens: {
-              input: 0,
-              output: 0,
-              cacheRead: 0,
-              cacheCreation: 0
-            },
-            totalCost: 0
+            totalTurns: 0 // Will be calculated from deltas
           }
         };
       }
@@ -240,8 +219,8 @@ export class MetricsDataLoader {
             const record = JSON.parse(line) as MetricsRecord;
 
             // The _metrics.jsonl files contain direct MetricDelta records
-            // Check if it has the MetricDelta structure (recordId, sessionId, tokens, etc.)
-            if ('recordId' in record && 'sessionId' in record && 'tokens' in record) {
+            // Check if it has the MetricDelta structure (recordId, sessionId, syncAttempts)
+            if ('recordId' in record && 'sessionId' in record && 'syncAttempts' in record) {
               deltas.push(record as MetricDelta);
             }
           } catch {

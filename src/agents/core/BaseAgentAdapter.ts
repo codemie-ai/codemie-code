@@ -1,7 +1,7 @@
 import { AgentMetadata, AgentAdapter, AgentConfig, MCPConfigSummary, ExtensionsScanSummary, VersionCompatibilityResult } from './types.js';
 import * as npm from '../../utils/processes.js';
 import { NpmError, createErrorContext } from '../../utils/errors.js';
-import { exec } from '../../utils/processes.js';
+import { exec, detectGitBranch } from '../../utils/processes.js';
 import { compareVersions } from '../../utils/version-utils.js';
 import { logger } from '../../utils/logger.js';
 import { spawn } from 'child_process';
@@ -17,6 +17,7 @@ import { existsSync } from 'fs';
 import { mkdir, writeFile } from 'fs/promises';
 import { join } from 'path';
 import { resolveHomeDir } from '../../utils/paths.js';
+import { extractRepository } from '../../utils/repository.js';
 import { getMCPConfigSummary as getMCPConfigSummaryUtil } from '../../utils/mcp-config.js';
 import { getExtensionsScanSummary } from '../../utils/extensions-scan.js';
 import {
@@ -722,7 +723,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   /**
    * Build proxy configuration from environment variables
    */
-  private buildProxyConfig(env: NodeJS.ProcessEnv): ProxyConfig {
+  private async buildProxyConfig(env: NodeJS.ProcessEnv): Promise<ProxyConfig> {
     // Get and validate target URL
     const targetApiUrl = env.CODEMIE_BASE_URL;
     if (!targetApiUrl) {
@@ -743,6 +744,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       }
     }
 
+    // Detect repository and branch for header injection
+    const cwd = process.cwd();
+    const branch = await detectGitBranch(cwd);
+    const repository = extractRepository(cwd);
+
     return {
       targetApiUrl,
       clientType: this.metadata.ssoConfig?.clientType || 'unknown',
@@ -755,9 +761,12 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       version: env.CODEMIE_CLI_VERSION,
       profileConfig,
       authMethod: (env.CODEMIE_AUTH_METHOD as 'sso' | 'jwt') || undefined,
-      jwtToken: env.CODEMIE_JWT_TOKEN || undefined
+      jwtToken: env.CODEMIE_JWT_TOKEN || undefined,
+      repository,
+      branch: branch || 'unknown'
     };
   }
+
 
   /**
    * Centralized proxy setup
@@ -771,7 +780,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
     try {
       // Build proxy configuration
-      const config = this.buildProxyConfig(env);
+      const config = await this.buildProxyConfig(env);
 
       // Create and start the proxy
       this.proxy = new CodeMieProxy(config);

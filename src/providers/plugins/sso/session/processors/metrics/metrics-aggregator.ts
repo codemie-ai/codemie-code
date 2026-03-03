@@ -7,7 +7,7 @@
 
 import type { MetricDelta } from '../../../../../../agents/core/metrics/types.js';
 import type { Session } from '../../../../../../agents/core/session/types.js';
-import type {SessionAttributes, SessionMetric} from './metrics-types.js';
+import type {ToolUsageAttributes, SessionMetric} from './metrics-types.js';
 import type {AgentMetricsConfig} from '../../../../../../agents/core/types.js';
 import {logger} from '../../../../../../utils/logger.js';
 import {postProcessMetric} from './metrics-post-processor.js';
@@ -56,7 +56,7 @@ export function aggregateDeltas(
 
     // Create session metric for this branch
     const metric: SessionMetric = {
-      name: MetricsSender.METRIC_USAGE_TOTAL,
+      name: MetricsSender.METRIC_TOOL_USAGE_TOTAL,
       attributes
     };
 
@@ -76,18 +76,13 @@ function buildSessionAttributes(
   session: Session,
   version: string,
   branch: string
-): SessionAttributes {
+): ToolUsageAttributes {
   // Use agent session ID from session correlation for API calls
   // This is the canonical source of truth set during SessionStart
   // Fallback: If correlation not set, try deltas, then session ID
   const agentSessionId = session.correlation?.agentSessionId
     || deltas[0]?.agentSessionId
     || session.sessionId;
-  // Token aggregation
-  let totalInput = 0;
-  let totalOutput = 0;
-  let totalCacheRead = 0;
-  let totalCacheCreation = 0;
 
   // Tool tracking
   const toolCounts: Record<string, number> = {};
@@ -113,12 +108,6 @@ function buildSessionAttributes(
 
   // Aggregate all deltas
   for (const delta of deltas) {
-    // Tokens
-    totalInput += delta.tokens?.input || 0;
-    totalOutput += delta.tokens?.output || 0;
-    totalCacheRead += delta.tokens?.cacheRead || 0;
-    totalCacheCreation += delta.tokens?.cacheCreation || 0;
-
     // Tools (defensive: old deltas might not have tools field)
     if (delta.tools) {
       for (const [toolName, count] of Object.entries(delta.tools)) {
@@ -199,7 +188,7 @@ function buildSessionAttributes(
   const sessionDuration = calculateDurationFromDeltas(deltas, session);
 
   // Build attributes
-  const attributes: any = {
+  const attributes: ToolUsageAttributes = {
     // Identity
     agent: session.agentName,
     agent_version: version,
@@ -212,13 +201,9 @@ function buildSessionAttributes(
     // Interaction Metrics
     total_user_prompts: userPromptCount,
 
-    // Token Metrics
-    total_input_tokens: totalInput,
-    total_output_tokens: totalOutput,
-    total_cache_read_input_tokens: totalCacheRead,
-    total_cache_creation_tokens: totalCacheCreation,
-
     // Tool Metrics
+    tool_names: Object.keys(toolCounts).sort(),
+    tool_counts: { ...toolCounts },
     total_tool_calls: totalToolCalls,
     successful_tool_calls: successfulToolCalls,
     failed_tool_calls: failedToolCalls,

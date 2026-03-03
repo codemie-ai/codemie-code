@@ -14,19 +14,6 @@ import type {
 export type { MetricDelta, SyncStatus, FileOperation, ToolStatus };
 
 /**
- * Token breakdown for aggregated metrics
- * Matches MetricDelta.tokens but adds computed fields
- */
-export interface TokenBreakdown {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheCreation: number;
-  total: number;
-  cacheHitRate: number;
-}
-
-/**
  * Model usage statistics
  */
 export interface ModelStats {
@@ -56,7 +43,6 @@ export interface LanguageStats {
   filesModified: number;
   linesAdded: number;
   linesRemoved: number;
-  tokens: number;
   percentage: number;
 }
 
@@ -85,9 +71,6 @@ export interface SessionAnalytics {
   startTime: number;
   endTime: number;
   duration: number;
-
-  // Token metrics (aggregated from MetricDelta.tokens)
-  tokens: TokenBreakdown;
 
   // Counts
   totalTurns: number;
@@ -127,7 +110,6 @@ export interface BranchAnalytics {
   // Aggregated stats
   totalSessions: number;
   totalDuration: number;
-  totalTokens: TokenBreakdown;
   totalTurns: number;
   totalFileOperations: number;
   totalLinesAdded: number;
@@ -156,7 +138,6 @@ export interface ProjectAnalytics {
   // Aggregated stats
   totalSessions: number;
   totalDuration: number;
-  totalTokens: TokenBreakdown;
   totalTurns: number;
   totalFileOperations: number;
   totalLinesAdded: number;
@@ -184,7 +165,6 @@ export interface RootAnalytics {
   // Aggregated stats
   totalSessions: number;
   totalDuration: number;
-  totalTokens: TokenBreakdown;
   totalTurns: number;
   totalFileOperations: number;
   totalLinesAdded: number;

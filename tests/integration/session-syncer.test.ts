@@ -210,10 +210,6 @@ describe('SessionSyncer - API Sync Validation', () => {
     expect(attrs).toBeDefined();
     expect(attrs.agent).toBe('test-agent');
     expect(attrs.branch).toBeDefined(); // Branch might be 'unknown' if not in delta
-    expect(attrs.total_input_tokens).toBe(1000);
-    expect(attrs.total_output_tokens).toBe(500);
-    expect(attrs.total_cache_read_input_tokens).toBe(200);
-    expect(attrs.total_cache_creation_tokens).toBe(100);
     expect(attrs.total_tool_calls).toBe(2);
     expect(attrs.successful_tool_calls).toBe(2);
     expect(attrs.files_created).toBe(1);
@@ -326,8 +322,6 @@ describe('SessionSyncer - API Sync Validation', () => {
     expect(mockSendMetricCalls.length).toBe(1);
 
     const call = mockSendMetricCalls[0];
-    expect(call.metric.attributes.total_input_tokens).toBe(800); // 500 + 300
-    expect(call.metric.attributes.total_output_tokens).toBe(400); // 250 + 150
     expect(call.metric.attributes.total_tool_calls).toBe(2);
   });
 

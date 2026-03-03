@@ -5,7 +5,7 @@
  *
  * Responsibilities:
  * - Parse Claude messages (user, assistant, tools)
- * - Extract token usage, tool calls, file operations
+ * - Extract tool calls, file operations
  * - Write deltas to JSONL with status 'pending'
  *
  * Note: API sync is handled separately by SSO provider's MetricsSyncProcessor
@@ -256,16 +256,6 @@ export class MetricsProcessor implements SessionProcessor {
         return;
       }
 
-      // Extract tokens
-      const usage = msgWithUsage.message.usage;
-      const tokens = {
-        input: usage.input_tokens || 0,
-        output: usage.output_tokens || 0,
-        cacheCreation: usage.cache_creation_input_tokens || undefined,
-        cacheRead: usage.cache_read_input_tokens || undefined
-      };
-
-      // Aggregate tools and file operations
       const tools: Record<string, number> = {};
       const toolStatus: Record<string, { success: number; failure: number }> = {};
       const fileOperations: Array<{ type: string; path?: string; linesAdded?: number; linesRemoved?: number }> = [];
@@ -307,8 +297,7 @@ export class MetricsProcessor implements SessionProcessor {
         agentSessionId: msgWithUsage.sessionId || '',
         timestamp: msgWithUsage.timestamp || new Date().toISOString(),
         gitBranch: msgWithUsage.gitBranch,
-        tokens,
-        ...(Object.keys(tools).length > 0 && { tools }),
+        tools,  // Always present — required field, empty object when no tools
         ...(Object.keys(toolStatus).length > 0 && { toolStatus }),
         ...(msgWithUsage.message?.model && { models: [msgWithUsage.message.model] })
       };

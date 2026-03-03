@@ -6,7 +6,6 @@
  * Key differences from Claude:
  * - Messages have direct `type` field ('user' | 'gemini'), not nested `message.role`
  * - Content is a string, not an array of content blocks
- * - Tokens are in `tokens` object with 5 fields: input, output, cached, thoughts, tool
  * - Tool calls are self-contained in `toolCalls` array (not separate tool_use/tool_result messages)
  */
 
@@ -34,14 +33,6 @@ interface GeminiMessage {
   }>;
   thoughts?: string[];
   model?: string;
-  tokens?: {
-    input: number;
-    output: number;
-    cached: number;
-    thoughts: number;
-    tool: number;
-    total: number;
-  };
 }
 
 export class GeminiMetricsProcessor implements SessionProcessor {
@@ -130,14 +121,6 @@ export class GeminiMetricsProcessor implements SessionProcessor {
           agentSessionId: (session as any).agentSessionId || session.sessionId,  // Fall back to CodeMie sessionId if no agent session
           timestamp: new Date(msg.timestamp).getTime(),
           gitBranch: undefined,  // Gemini doesn't track git branch per message
-
-          // Token usage (from msg.tokens)
-          tokens: {
-            input: msg.tokens?.input || 0,
-            output: msg.tokens?.output || 0,
-            cacheRead: msg.tokens?.cached || 0,  // Gemini's 'cached' maps to 'cacheRead'
-            cacheCreation: 0  // Not available in Gemini
-          },
 
           // Required field - initialize as empty, populate if tools exist
           tools: {}
