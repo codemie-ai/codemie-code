@@ -482,57 +482,6 @@ export class ConversationsProcessor implements SessionProcessor {
         }
       }
 
-      let totalInputTokens = 0;
-      let totalOutputTokens = 0;
-      let totalCacheCreationTokens = 0;
-      let totalCacheReadTokens = 0;
-
-      // Deduplicate token counting by message.id (streaming chunks share same id)
-      // Use LAST occurrence since output_tokens increases progressively during streaming
-      // (input_tokens is same across chunks, output_tokens has final value in last chunk)
-      const messageUsageMap = new Map<string, {
-        input: number;
-        output: number;
-        cacheCreation: number;
-        cacheRead: number;
-      }>();
-
-      for (const assistantMsg of assistantMessages) {
-        const usage = assistantMsg.message?.usage;
-        if (usage) {
-          const messageId = assistantMsg.message?.id;
-          const usageData = {
-            input: usage.input_tokens || 0,
-            output: usage.output_tokens || 0,
-            cacheCreation: usage.cache_creation_input_tokens || 0,
-            cacheRead: usage.cache_read_input_tokens || 0
-          };
-
-          if (messageId) {
-            // Overwrite to keep last occurrence (has final output_tokens)
-            messageUsageMap.set(messageId, usageData);
-          }
-        }
-      }
-
-      // Sum deduplicated values
-      for (const usage of messageUsageMap.values()) {
-        totalInputTokens += usage.input;
-        totalOutputTokens += usage.output;
-        totalCacheCreationTokens += usage.cacheCreation;
-        totalCacheReadTokens += usage.cacheRead;
-      }
-
-      for (const thought of allThoughts) {
-        if (thought.author_type === 'Agent' && thought.metadata?.token_usage) {
-          const agentTokens = thought.metadata.token_usage as any;
-          totalInputTokens += agentTokens.input || 0;
-          totalOutputTokens += agentTokens.output || 0;
-          totalCacheCreationTokens += agentTokens.cacheCreation || 0;
-          totalCacheReadTokens += agentTokens.cacheRead || 0;
-        }
-      }
-
       const assistantText = this.extractTextContent(finalAssistantMsg);
       const finalHasError = finalAssistantMsg.message?.Output?.__type ||
                            finalAssistantMsg.message?.error;
@@ -554,10 +503,6 @@ export class ConversationsProcessor implements SessionProcessor {
         history_index: historyIndex,
         date: finalAssistantMsg.timestamp,
         response_time,
-        input_tokens: totalInputTokens,
-        output_tokens: totalOutputTokens,
-        cache_creation_input_tokens: totalCacheCreationTokens,
-        cache_read_input_tokens: totalCacheReadTokens,
         assistant_id: assistantId,
         thoughts: allThoughts.length > 0 ? allThoughts : undefined
       });
@@ -898,21 +843,6 @@ export class ConversationsProcessor implements SessionProcessor {
 
       let agentMessage = '';
       const toolChildren: any[] = [];
-      const tokenUsage = {
-        input: 0,
-        output: 0,
-        cacheCreation: 0,
-        cacheRead: 0
-      };
-
-      // Deduplicate token counting by message.id (streaming chunks share same id)
-      // Use LAST occurrence since output_tokens increases progressively during streaming
-      const messageUsageMap = new Map<string, {
-        input: number;
-        output: number;
-        cacheCreation: number;
-        cacheRead: number;
-      }>();
 
       for (const record of records) {
         if (record.sessionId !== sessionId) {
@@ -958,29 +888,6 @@ export class ConversationsProcessor implements SessionProcessor {
           }
         }
 
-        const usage = record.message.usage;
-        if (usage) {
-          const messageId = record.message.id;
-          const usageData = {
-            input: usage.input_tokens || 0,
-            output: usage.output_tokens || 0,
-            cacheCreation: usage.cache_creation_input_tokens || 0,
-            cacheRead: usage.cache_read_input_tokens || 0
-          };
-
-          if (messageId) {
-            // Overwrite to keep last occurrence (has final output_tokens)
-            messageUsageMap.set(messageId, usageData);
-          }
-        }
-      }
-
-      // Sum deduplicated values
-      for (const usage of messageUsageMap.values()) {
-        tokenUsage.input += usage.input;
-        tokenUsage.output += usage.output;
-        tokenUsage.cacheCreation += usage.cacheCreation;
-        tokenUsage.cacheRead += usage.cacheRead;
       }
 
       for (const record of records) {
@@ -1024,7 +931,6 @@ export class ConversationsProcessor implements SessionProcessor {
         subagentType,
         agentMessage: agentMessage.trim(),
         toolChildren,
-        tokenUsage,
         startTimestamp: records[0].timestamp,
         endTimestamp: records[records.length - 1].timestamp
       };
@@ -1043,8 +949,7 @@ export class ConversationsProcessor implements SessionProcessor {
         slug: parsed.slug,
         subagent_type: parsed.subagentType,
         start_timestamp: parsed.startTimestamp,
-        end_timestamp: parsed.endTimestamp,
-        token_usage: parsed.tokenUsage
+        end_timestamp: parsed.endTimestamp
       },
       in_progress: false,
       input_text: '',

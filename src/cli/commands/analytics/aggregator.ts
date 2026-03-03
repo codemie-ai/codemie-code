@@ -8,7 +8,6 @@ import type {
   BranchAnalytics,
   ProjectAnalytics,
   RootAnalytics,
-  TokenBreakdown,
   ModelStats,
   ToolStats,
   LanguageStats,
@@ -75,7 +74,6 @@ export class AnalyticsAggregator {
           branches: [],
           totalSessions: 0,
           totalDuration: 0,
-          totalTokens: this.emptyTokenBreakdown(),
           totalTurns: 0,
           totalFileOperations: 0,
           totalLinesAdded: 0,
@@ -107,7 +105,6 @@ export class AnalyticsAggregator {
           sessions: contributingSessions, // Sessions that contributed deltas to this branch
           totalSessions: new Set(deltas.map(d => d.sessionId)).size, // Count unique sessions
           totalDuration: 0, // Will be calculated from sessions
-          totalTokens: this.calculateTokenBreakdown(deltas),
           totalTurns: deltas.length,
           totalFileOperations: 0,
           totalLinesAdded: 0,
@@ -142,7 +139,6 @@ export class AnalyticsAggregator {
       projects,
       totalSessions: 0,
       totalDuration: 0,
-      totalTokens: this.emptyTokenBreakdown(),
       totalTurns: 0,
       totalFileOperations: 0,
       totalLinesAdded: 0,
@@ -175,9 +171,6 @@ export class AnalyticsAggregator {
     if (!startEvent) {
       return null;
     }
-
-    // Calculate token breakdown from MetricDelta records
-    const tokens = this.calculateTokenBreakdown(deltas);
 
     // Build model distribution from MetricDelta.models
     const modelCounts = new Map<string, number>();
@@ -255,7 +248,7 @@ export class AnalyticsAggregator {
     }
 
     // Build language stats from FileOperation.language
-    const languageCounts = new Map<string, { created: number; modified: number; lines: number; tokens: number }>();
+    const languageCounts = new Map<string, { created: number; modified: number; lines: number }>();
     const totalLines = Array.from(fileOps.values()).reduce((sum, f) => sum + f.linesAdded, 0) || 1;
 
     for (const delta of deltas) {
@@ -265,7 +258,7 @@ export class AnalyticsAggregator {
 
           const lang = fileOp.language;
           if (!languageCounts.has(lang)) {
-            languageCounts.set(lang, { created: 0, modified: 0, lines: 0, tokens: 0 });
+            languageCounts.set(lang, { created: 0, modified: 0, lines: 0 });
           }
 
           const counts = languageCounts.get(lang)!;
@@ -275,10 +268,6 @@ export class AnalyticsAggregator {
             counts.modified++;
           }
           counts.lines += fileOp.linesAdded || 0;
-
-          // Proportional token attribution
-          const tokenShare = ((fileOp.linesAdded || 0) / totalLines) * tokens.total;
-          counts.tokens += tokenShare;
         }
       }
     }
@@ -290,13 +279,12 @@ export class AnalyticsAggregator {
         filesModified: counts.modified,
         linesAdded: counts.lines,
         linesRemoved: 0,
-        tokens: counts.tokens,
         percentage: totalLines > 0 ? (counts.lines / totalLines) * 100 : 0
       }))
       .sort((a, b) => b.linesAdded - a.linesAdded);
 
     // Build format stats from FileOperation.format
-    const formatCounts = new Map<string, { created: number; modified: number; lines: number; tokens: number }>();
+    const formatCounts = new Map<string, { created: number; modified: number; lines: number }>();
 
     for (const delta of deltas) {
       if (delta.fileOperations) {
@@ -305,7 +293,7 @@ export class AnalyticsAggregator {
 
           const fmt = fileOp.format;
           if (!formatCounts.has(fmt)) {
-            formatCounts.set(fmt, { created: 0, modified: 0, lines: 0, tokens: 0 });
+            formatCounts.set(fmt, { created: 0, modified: 0, lines: 0 });
           }
 
           const counts = formatCounts.get(fmt)!;
@@ -315,10 +303,6 @@ export class AnalyticsAggregator {
             counts.modified++;
           }
           counts.lines += fileOp.linesAdded || 0;
-
-          // Proportional token attribution
-          const tokenShare = ((fileOp.linesAdded || 0) / totalLines) * tokens.total;
-          counts.tokens += tokenShare;
         }
       }
     }
@@ -330,7 +314,6 @@ export class AnalyticsAggregator {
         filesModified: counts.modified,
         linesAdded: counts.lines,
         linesRemoved: 0,
-        tokens: counts.tokens,
         percentage: totalLines > 0 ? (counts.lines / totalLines) * 100 : 0
       }))
       .sort((a, b) => b.linesAdded - a.linesAdded);
@@ -356,7 +339,6 @@ export class AnalyticsAggregator {
       startTime: startEvent.data.startTime,
       endTime: endEvent?.data.endTime || Date.now(),
       duration: endEvent?.data.duration || (Date.now() - startEvent.data.startTime),
-      tokens,
       totalTurns: deltas.length,
       totalFileOperations,
       totalLinesAdded,
@@ -372,36 +354,6 @@ export class AnalyticsAggregator {
       files: fileOpsArray,
       languages,
       formats
-    };
-  }
-
-  /**
-   * Calculate token breakdown from MetricDelta records
-   */
-  private static calculateTokenBreakdown(deltas: MetricDelta[]): TokenBreakdown {
-    let input = 0;
-    let output = 0;
-    let cacheRead = 0;
-    let cacheCreation = 0;
-
-    for (const delta of deltas) {
-      input += delta.tokens.input || 0;
-      output += delta.tokens.output || 0;
-      cacheRead += delta.tokens.cacheRead || 0;
-      cacheCreation += delta.tokens.cacheCreation || 0;
-    }
-
-    const total = input + output + cacheRead + cacheCreation;
-    const totalInput = input + cacheCreation + cacheRead;
-    const cacheHitRate = totalInput > 0 ? cacheRead / totalInput : 0;
-
-    return {
-      input,
-      output,
-      cacheRead,
-      cacheCreation,
-      total,
-      cacheHitRate
     };
   }
 
@@ -511,29 +463,24 @@ export class AnalyticsAggregator {
       filesModified: Set<string>;
       linesAdded: number;
       linesRemoved: number;
-      tokens: number;
     }>();
     const formatCounts = new Map<string, {
       filesCreated: Set<string>;
       filesModified: Set<string>;
       linesAdded: number;
       linesRemoved: number;
-      tokens: number;
     }>();
 
     // Track file operations per language/format
     for (const delta of deltas) {
       if (delta.fileOperations) {
         for (const op of delta.fileOperations) {
-          const deltaTokens = (delta.tokens.input || 0) + (delta.tokens.output || 0);
-
           if (op.language) {
             const existing = languageCounts.get(op.language) || {
               filesCreated: new Set(),
               filesModified: new Set(),
               linesAdded: 0,
-              linesRemoved: 0,
-              tokens: 0
+              linesRemoved: 0
             };
 
             if (op.type === 'write' && op.path) {
@@ -544,7 +491,6 @@ export class AnalyticsAggregator {
 
             existing.linesAdded += op.linesAdded || 0;
             existing.linesRemoved += op.linesRemoved || 0;
-            existing.tokens += deltaTokens;
             languageCounts.set(op.language, existing);
           }
 
@@ -553,8 +499,7 @@ export class AnalyticsAggregator {
               filesCreated: new Set(),
               filesModified: new Set(),
               linesAdded: 0,
-              linesRemoved: 0,
-              tokens: 0
+              linesRemoved: 0
             };
 
             if (op.type === 'write' && op.path) {
@@ -565,7 +510,6 @@ export class AnalyticsAggregator {
 
             existing.linesAdded += op.linesAdded || 0;
             existing.linesRemoved += op.linesRemoved || 0;
-            existing.tokens += deltaTokens;
             formatCounts.set(op.format, existing);
           }
         }
@@ -579,7 +523,6 @@ export class AnalyticsAggregator {
       filesModified: data.filesModified.size,
       linesAdded: data.linesAdded,
       linesRemoved: data.linesRemoved,
-      tokens: data.tokens,
       percentage: totalLinesForLang > 0 ? (data.linesAdded / totalLinesForLang) * 100 : 0
     })).sort((a, b) => b.linesAdded - a.linesAdded);
 
@@ -590,7 +533,6 @@ export class AnalyticsAggregator {
       filesModified: data.filesModified.size,
       linesAdded: data.linesAdded,
       linesRemoved: data.linesRemoved,
-      tokens: data.tokens,
       percentage: totalLinesForFormat > 0 ? (data.linesAdded / totalLinesForFormat) * 100 : 0
     })).sort((a, b) => b.linesAdded - a.linesAdded);
   }
@@ -611,18 +553,6 @@ export class AnalyticsAggregator {
     branch.successfulToolCalls = branch.sessions.reduce((sum, s) => sum + s.successfulToolCalls, 0);
     branch.failedToolCalls = branch.sessions.reduce((sum, s) => sum + s.failedToolCalls, 0);
     branch.toolSuccessRate = branch.totalToolCalls > 0 ? (branch.successfulToolCalls / branch.totalToolCalls) * 100 : 0;
-
-    // Aggregate tokens
-    branch.totalTokens = {
-      input: branch.sessions.reduce((sum, s) => sum + s.tokens.input, 0),
-      output: branch.sessions.reduce((sum, s) => sum + s.tokens.output, 0),
-      cacheRead: branch.sessions.reduce((sum, s) => sum + s.tokens.cacheRead, 0),
-      cacheCreation: branch.sessions.reduce((sum, s) => sum + s.tokens.cacheCreation, 0),
-      total: branch.sessions.reduce((sum, s) => sum + s.tokens.total, 0),
-      cacheHitRate: 0
-    };
-    const totalInput = branch.totalTokens.input + branch.totalTokens.cacheCreation + branch.totalTokens.cacheRead;
-    branch.totalTokens.cacheHitRate = totalInput > 0 ? branch.totalTokens.cacheRead / totalInput : 0;
 
     // Aggregate models
     branch.models = this.aggregateModels(branch.sessions.flatMap(s => s.models));
@@ -654,18 +584,6 @@ export class AnalyticsAggregator {
     project.failedToolCalls = project.branches.reduce((sum, b) => sum + b.failedToolCalls, 0);
     project.toolSuccessRate = project.totalToolCalls > 0 ? (project.successfulToolCalls / project.totalToolCalls) * 100 : 0;
 
-    // Aggregate tokens
-    project.totalTokens = {
-      input: project.branches.reduce((sum, b) => sum + b.totalTokens.input, 0),
-      output: project.branches.reduce((sum, b) => sum + b.totalTokens.output, 0),
-      cacheRead: project.branches.reduce((sum, b) => sum + b.totalTokens.cacheRead, 0),
-      cacheCreation: project.branches.reduce((sum, b) => sum + b.totalTokens.cacheCreation, 0),
-      total: project.branches.reduce((sum, b) => sum + b.totalTokens.total, 0),
-      cacheHitRate: 0
-    };
-    const totalInput = project.totalTokens.input + project.totalTokens.cacheCreation + project.totalTokens.cacheRead;
-    project.totalTokens.cacheHitRate = totalInput > 0 ? project.totalTokens.cacheRead / totalInput : 0;
-
     // Aggregate models
     project.models = this.aggregateModels(project.branches.flatMap(b => b.models));
 
@@ -695,18 +613,6 @@ export class AnalyticsAggregator {
     root.successfulToolCalls = root.projects.reduce((sum, p) => sum + p.successfulToolCalls, 0);
     root.failedToolCalls = root.projects.reduce((sum, p) => sum + p.failedToolCalls, 0);
     root.toolSuccessRate = root.totalToolCalls > 0 ? (root.successfulToolCalls / root.totalToolCalls) * 100 : 0;
-
-    // Aggregate tokens
-    root.totalTokens = {
-      input: root.projects.reduce((sum, p) => sum + p.totalTokens.input, 0),
-      output: root.projects.reduce((sum, p) => sum + p.totalTokens.output, 0),
-      cacheRead: root.projects.reduce((sum, p) => sum + p.totalTokens.cacheRead, 0),
-      cacheCreation: root.projects.reduce((sum, p) => sum + p.totalTokens.cacheCreation, 0),
-      total: root.projects.reduce((sum, p) => sum + p.totalTokens.total, 0),
-      cacheHitRate: 0
-    };
-    const totalInput = root.totalTokens.input + root.totalTokens.cacheCreation + root.totalTokens.cacheRead;
-    root.totalTokens.cacheHitRate = totalInput > 0 ? root.totalTokens.cacheRead / totalInput : 0;
 
     // Aggregate models
     root.models = this.aggregateModels(root.projects.flatMap(p => p.models));
@@ -776,18 +682,17 @@ export class AnalyticsAggregator {
    * Aggregate language/format statistics
    */
   private static aggregateLanguages(languages: LanguageStats[]): LanguageStats[] {
-    const langCounts = new Map<string, { created: number; modified: number; lines: number; tokens: number }>();
+    const langCounts = new Map<string, { created: number; modified: number; lines: number }>();
 
     for (const lang of languages) {
       if (!langCounts.has(lang.language)) {
-        langCounts.set(lang.language, { created: 0, modified: 0, lines: 0, tokens: 0 });
+        langCounts.set(lang.language, { created: 0, modified: 0, lines: 0 });
       }
 
       const counts = langCounts.get(lang.language)!;
       counts.created += lang.filesCreated;
       counts.modified += lang.filesModified;
       counts.lines += lang.linesAdded;
-      counts.tokens += lang.tokens;
     }
 
     const totalLines = Array.from(langCounts.values()).reduce((sum, c) => sum + c.lines, 0) || 1;
@@ -799,23 +704,8 @@ export class AnalyticsAggregator {
         filesModified: counts.modified,
         linesAdded: counts.lines,
         linesRemoved: 0,
-        tokens: counts.tokens,
         percentage: totalLines > 0 ? (counts.lines / totalLines) * 100 : 0
       }))
       .sort((a, b) => b.linesAdded - a.linesAdded);
-  }
-
-  /**
-   * Create empty token breakdown
-   */
-  private static emptyTokenBreakdown(): TokenBreakdown {
-    return {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheCreation: 0,
-      total: 0,
-      cacheHitRate: 0
-    };
   }
 }

@@ -5,7 +5,6 @@
  */
 
 import { ToolMetadata } from './types.js';
-import { formatTokens, formatCost } from './tokenUtils.js';
 import path from 'path';
 import { ReadFileTool, WriteFileTool, ListDirectoryTool, ExecuteCommandTool } from './tools/index.js';
 
@@ -278,8 +277,7 @@ function extractExecuteCommandMetadata(result: string, toolArgs?: Record<string,
  */
 export function formatToolMetadata(toolName: string, metadata: ToolMetadata): string {
   if (!metadata.success) {
-    const baseMsg = `✗ ${toolName} failed${metadata.filePath ? ` (${path.basename(metadata.filePath)})` : ''}`;
-    return addTokenInfo(baseMsg, metadata);
+    return `✗ ${toolName} failed${metadata.filePath ? ` (${path.basename(metadata.filePath)})` : ''}`;
   }
 
   let baseMessage = '';
@@ -314,36 +312,6 @@ export function formatToolMetadata(toolName: string, metadata: ToolMetadata): st
 
     default:
       baseMessage = `✓ ${toolName} completed`;
-  }
-
-  return addTokenInfo(baseMessage, metadata);
-}
-
-/**
- * Add token usage information to the tool message
- */
-function addTokenInfo(baseMessage: string, metadata: ToolMetadata): string {
-  if (!metadata.tokenUsage) {
-    return baseMessage;
-  }
-
-  const tokenInfo: string[] = [];
-
-  // Add token counts with clear input/output labels
-  tokenInfo.push(`${formatTokens(metadata.tokenUsage.inputTokens)} in, ${formatTokens(metadata.tokenUsage.outputTokens)} out`);
-
-  // Add cached tokens if present
-  if (metadata.tokenUsage.cachedTokens && metadata.tokenUsage.cachedTokens > 0) {
-    tokenInfo.push(`${formatTokens(metadata.tokenUsage.cachedTokens)} cached`);
-  }
-
-  // Add cost if present
-  if (metadata.tokenUsage.estimatedCost && metadata.tokenUsage.estimatedCost > 0) {
-    tokenInfo.push(formatCost(metadata.tokenUsage.estimatedCost));
-  }
-
-  if (tokenInfo.length > 0) {
-    return `${baseMessage} [${tokenInfo.join(', ')}]`;
   }
 
   return baseMessage;

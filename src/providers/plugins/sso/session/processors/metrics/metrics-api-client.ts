@@ -87,7 +87,9 @@ class MetricsApiClient {
       'Content-Type': 'application/json',
       'User-Agent': `codemie-cli/${this.config.version}`,
       'X-CodeMie-CLI': `codemie-cli/${this.config.version}`,
-      'X-CodeMie-Client': this.config.clientType
+      'X-CodeMie-Client': this.config.clientType,
+      'X-CodeMie-Repository': metric.attributes.repository,
+      'X-CodeMie-Branch': metric.attributes.branch
     };
 
     if (this.config.apiKey) {
@@ -209,11 +211,11 @@ export class MetricsSender {
    * Metric name constants
    * - METRIC_SESSION_TOTAL: Session lifecycle events (start, end)
    *   Differentiated by 'status' attribute: started, completed, failed, interrupted
-   * - METRIC_USAGE_TOTAL: Aggregated usage metrics (periodic sync)
-   *   Contains accumulated token, tool, and file operation metrics
+   * - METRIC_TOOL_USAGE_TOTAL: Aggregated tool/file usage metrics (periodic sync)
+   *   Contains accumulated tool and file operation metrics (no token fields)
    */
   static readonly METRIC_SESSION_TOTAL = 'codemie_cli_session_total';
-  static readonly METRIC_USAGE_TOTAL = 'codemie_cli_usage_total';
+  static readonly METRIC_TOOL_USAGE_TOTAL = 'codemie_cli_tool_usage_total';
 
   private client: MetricsApiClient;
   private dryRun: boolean;
@@ -270,21 +272,6 @@ export class MetricsSender {
       session_id: session.sessionId,
       branch: branch || 'unknown',
       ...(session.project && { project: session.project }),
-
-      // Zero metrics (session just started)
-      total_user_prompts: 0,
-      total_input_tokens: 0,
-      total_output_tokens: 0,
-      total_cache_read_input_tokens: 0,
-      total_cache_creation_tokens: 0,
-      total_tool_calls: 0,
-      successful_tool_calls: 0,
-      failed_tool_calls: 0,
-      files_created: 0,
-      files_modified: 0,
-      files_deleted: 0,
-      total_lines_added: 0,
-      total_lines_removed: 0,
 
       // Session metadata
       session_duration_ms: 0,
@@ -415,21 +402,6 @@ export class MetricsSender {
       branch: branch || 'unknown',
       ...(session.project && { project: session.project }),
 
-      // Zero metrics (detailed metrics come from aggregated usage)
-      total_user_prompts: 0,
-      total_input_tokens: 0,
-      total_output_tokens: 0,
-      total_cache_read_input_tokens: 0,
-      total_cache_creation_tokens: 0,
-      total_tool_calls: 0,
-      successful_tool_calls: 0,
-      failed_tool_calls: 0,
-      files_created: 0,
-      files_modified: 0,
-      files_deleted: 0,
-      total_lines_added: 0,
-      total_lines_removed: 0,
-
       // Session metadata
       session_duration_ms: durationMs,
       ...(activeDurationMs !== undefined && { active_duration_ms: activeDurationMs }),
@@ -500,10 +472,7 @@ export class MetricsSender {
           attributes: {
             agent: metric.attributes.agent,
             session_id: metric.attributes.session_id,
-            branch: metric.attributes.branch,
-            total_user_prompts: metric.attributes.total_user_prompts,
-            total_input_tokens: metric.attributes.total_input_tokens,
-            total_output_tokens: metric.attributes.total_output_tokens
+            branch: metric.attributes.branch
           }
         }
       });
@@ -516,8 +485,6 @@ export class MetricsSender {
     logger.debug('[MetricsSender] Aggregated usage metric sent', {
       agent: metric.attributes.agent,
       branch: metric.attributes.branch,
-      prompts: metric.attributes.total_user_prompts,
-      tokens: metric.attributes.total_input_tokens + metric.attributes.total_output_tokens,
       session: metric.attributes.session_id
     });
 

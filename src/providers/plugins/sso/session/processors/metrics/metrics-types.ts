@@ -5,102 +5,111 @@
  */
 
 /**
- * Session metric sent to CodeMie API
- * Format matches Prometheus-style metrics with attributes
+ * Base identity fields shared by all metric types
  */
+export interface MetricIdentity {
+  agent: string;
+  agent_version: string;
+  repository: string;
+  session_id: string;
+  branch: string;
+  project?: string;
+  count: number;  // Always 1 (Prometheus compatibility)
+}
+
+/**
+ * Attributes for codemie_cli_session_total
+ * Lifecycle events: started, completed, failed, interrupted
+ */
+export interface SessionLifecycleAttributes extends MetricIdentity {
+  llm_model: string;
+  status: 'started' | 'completed' | 'failed' | 'interrupted';
+  reason?: string;
+  session_duration_ms: number;
+  had_errors: boolean;
+  errors?: Record<string, string[]>;
+
+  // MCP fields (optional, only at session start)
+  mcp_total_servers?: number;
+  mcp_local_servers?: number;
+  mcp_project_servers?: number;
+  mcp_user_servers?: number;
+  mcp_server_names?: string[];
+  mcp_local_server_names?: string[];
+  mcp_project_server_names?: string[];
+  mcp_user_server_names?: string[];
+
+  // Extensions fields (optional, only at session start)
+  agents_project?: number;
+  agents_global?: number;
+  commands_project?: number;
+  commands_global?: number;
+  skills_project?: number;
+  skills_global?: number;
+  hooks_project?: number;
+  hooks_global?: number;
+  rules_project?: number;
+  rules_global?: number;
+  agent_names?: string[];
+  agents_project_names?: string[];
+  agents_global_names?: string[];
+  command_names?: string[];
+  commands_project_names?: string[];
+  commands_global_names?: string[];
+  skill_names?: string[];
+  skills_project_names?: string[];
+  skills_global_names?: string[];
+  hook_names?: string[];
+  hooks_project_names?: string[];
+  hooks_global_names?: string[];
+  rule_names?: string[];
+  rules_project_names?: string[];
+  rules_global_names?: string[];
+}
+
+/**
+ * Attributes for codemie_cli_tool_usage_total
+ * Periodic sync of tool/file metrics (replaces codemie_cli_usage_total)
+ * NOTE: No token fields.
+ */
+export interface ToolUsageAttributes extends MetricIdentity {
+  llm_model: string;
+  total_user_prompts: number;
+  session_duration_ms: number;
+  had_errors: boolean;
+  errors?: Record<string, string[]>;
+
+  // Tool metrics
+  tool_names: string[];
+  tool_counts: Record<string, number>;
+  total_tool_calls: number;
+  successful_tool_calls: number;
+  failed_tool_calls: number;
+
+  // File metrics
+  files_created: number;
+  files_modified: number;
+  files_deleted: number;
+  total_lines_added: number;
+  total_lines_removed: number;
+}
+
+/**
+ * Union type for backward compatibility during migration
+ * @deprecated Use SessionLifecycleAttributes or ToolUsageAttributes directly
+ */
+export type SessionAttributes = SessionLifecycleAttributes | ToolUsageAttributes;
+
 export interface SessionMetric {
   /**
    * Metric name
    * - 'codemie_cli_session_total': Session lifecycle events (start/end)
-   * - 'codemie_cli_usage_total': Aggregated usage metrics
+   * - 'codemie_cli_tool_usage_total': Aggregated tool usage metrics
    */
   name: string;
 
   /** Metric attributes */
-  attributes: SessionAttributes;
-}
-
-/**
- * Session attributes for metrics
- */
-export interface SessionAttributes {
-  // Identity
-  agent: string;                         // 'claude', 'gemini', 'codemie-code'
-  agent_version: string;                 // CLI version
-  llm_model: string;                     // Most-used model in session
-  repository: string;                    // Repository name (parent/current format)
-  session_id: string;                    // Session UUID
-  branch: string;                        // Git branch for this metric
-  project?: string;                      // SSO project name (optional, only for ai-run-sso provider)
-
-  // Interaction Metrics
-  total_user_prompts: number;            // User prompt count
-
-  // Token Metrics (aggregated)
-  total_input_tokens: number;            // Sum of input tokens
-  total_output_tokens: number;           // Sum of output tokens
-  total_cache_read_input_tokens: number; // Sum of cache read tokens
-  total_cache_creation_tokens: number;   // Sum of cache creation tokens
-
-  // Tool Metrics
-  total_tool_calls: number;              // Tool invocation count
-  successful_tool_calls: number;         // Successful tools
-  failed_tool_calls: number;             // Failed tools
-
-  // File Operation Metrics
-  files_created: number;                 // Files created
-  files_modified: number;                // Files edited
-  files_deleted: number;                 // Files deleted
-  total_lines_added: number;             // Lines added
-  total_lines_removed: number;           // Lines removed
-
-  // Session Metadata
-  session_duration_ms: number;           // Duration in milliseconds
-  had_errors: boolean;                   // Boolean error flag
-  errors?: Record<string, string[]>;     // Tool name -> array of error messages (only if had_errors: true)
-
-  // MCP Configuration - Counts (optional, only at session start)
-  mcp_total_servers?: number;            // Total MCP servers across all scopes
-  mcp_local_servers?: number;            // MCP servers in local scope (.claude.json in project)
-  mcp_project_servers?: number;          // MCP servers in project scope (.mcp.json)
-  mcp_user_servers?: number;             // MCP servers in user scope (~/.claude.json)
-
-  // MCP Configuration - Server Names (optional, only at session start)
-  mcp_server_names?: string[];           // All unique server names
-  mcp_local_server_names?: string[];     // Server names in local scope
-  mcp_project_server_names?: string[];   // Server names in project scope
-  mcp_user_server_names?: string[];      // Server names in user scope
-
-  // Extensions - Counts per scope (optional, only at session start)
-  agents_project?: number;               // Agent .md files in project .claude/agents/
-  agents_global?: number;                // Agent .md files in ~/.claude/agents/
-  commands_project?: number;             // Command .md files in project .claude/commands/
-  commands_global?: number;              // Command .md files in ~/.claude/commands/
-  skills_project?: number;               // Skill .md files in project .claude/skills/
-  skills_global?: number;                // Skill .md files in ~/.claude/skills/
-  hooks_project?: number;                // Hook scripts in project .claude/hooks/
-  hooks_global?: number;                 // Hook scripts in ~/.claude/hooks/
-  rules_project?: number;                // Rule .md files in project .claude/rules/
-  rules_global?: number;                 // Rule .md files in ~/.claude/rules/
-
-  // Extensions - Names per scope (optional, only at session start)
-  agent_names?: string[];                // All unique agent names across both scopes
-  agents_project_names?: string[];       // Agent names in project .claude/agents/
-  agents_global_names?: string[];        // Agent names in ~/.claude/agents/
-  command_names?: string[];              // All unique command names across both scopes
-  commands_project_names?: string[];     // Command names in project .claude/commands/
-  commands_global_names?: string[];      // Command names in ~/.claude/commands/
-  skill_names?: string[];                // All unique skill names across both scopes
-  skills_project_names?: string[];       // Skill names in project .claude/skills/
-  skills_global_names?: string[];        // Skill names in ~/.claude/skills/
-  hook_names?: string[];                 // All unique hook filenames across both scopes
-  hooks_project_names?: string[];        // Hook filenames in project .claude/hooks/
-  hooks_global_names?: string[];         // Hook filenames in ~/.claude/hooks/
-  rule_names?: string[];                 // All unique rule names across both scopes
-  rules_project_names?: string[];        // Rule names in project .claude/rules/
-  rules_global_names?: string[];         // Rule names in ~/.claude/rules/
-
-  count: number;                         // Always 1 (Prometheus compatibility)
+  attributes: SessionLifecycleAttributes | ToolUsageAttributes;
 }
 
 /**

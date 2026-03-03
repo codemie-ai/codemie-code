@@ -22,7 +22,6 @@ import { logger } from '../../../../../utils/logger.js';
 import { getSessionConversationPath } from '../../../../core/session/session-config.js';
 import { SessionStore } from '../../../../core/session/SessionStore.js';
 import { detectTurns, filterNewMessages, type GeminiMessage, type TurnBoundary } from '../utils/turn-detector.js';
-import { aggregateTokens } from '../utils/token-aggregator.js';
 import { extractToolThoughts } from '../utils/tool-aggregator.js';
 import { appendFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
@@ -133,9 +132,6 @@ export class GeminiConversationsProcessor implements SessionProcessor {
         .filter(c => c.trim().length > 0)
         .join('\n\n');
 
-      // Aggregate tokens
-      const tokens = aggregateTokens(turn.geminiMessages);
-
       // Extract tool thoughts
       const thoughts = extractToolThoughts(turn.geminiMessages);
 
@@ -154,10 +150,6 @@ export class GeminiConversationsProcessor implements SessionProcessor {
         history_index: currentHistoryIndex,
         date: lastGemini?.timestamp || turn.userMessage.timestamp,
         response_time: responseTimeSec,
-        input_tokens: tokens.input_tokens,
-        output_tokens: tokens.output_tokens,
-        cache_creation_input_tokens: tokens.cache_creation_input_tokens,
-        cache_read_input_tokens: tokens.cache_read_input_tokens,
         assistant_id: '5a430368-9e91-4564-be20-989803bf4da2' // Constant per agent type
       };
 

@@ -3,7 +3,6 @@ import chalk from 'chalk';
 import { CodeMieAgent } from './agent.js';
 import { ExecutionStep, TodoUpdateEvent } from './types.js';
 import { formatToolMetadata } from './toolMetadata.js';
-import { formatCost, formatTokens, formatTokenUsageSummary } from './tokenUtils.js';
 import type { ClipboardImage } from '@/utils/clipboard.js';
 import { TodoPanel } from './ui/todoPanel.js';
 import { ProgressTracker, getProgressTracker } from './ui/progressTracker.js';
@@ -482,12 +481,6 @@ export class CodeMieTerminalUI {
     }
 
     const statsText = [
-      `${chalk.yellow('Token Usage:')}`,
-      `  Input: ${chalk.cyan(formatTokens(stats.inputTokens))}`,
-      `  Output: ${chalk.cyan(formatTokens(stats.outputTokens))}${stats.cachedTokens > 0 ? ` + ${chalk.green(formatTokens(stats.cachedTokens))} cached` : ''}`,
-      `  Total: ${chalk.cyan(formatTokens(stats.totalTokens))}`,
-      `  Cost: ${chalk.green(formatCost(stats.estimatedTotalCost))}`,
-      '',
       `${chalk.yellow('Execution Stats:')}`,
       `  LLM Calls: ${chalk.cyan(stats.llmCalls)}`,
       `  Tool Calls: ${chalk.cyan(stats.toolCalls)} (${chalk.green(stats.successfulTools)} success, ${chalk.red(stats.failedTools)} failed)`,
@@ -642,20 +635,11 @@ export class CodeMieTerminalUI {
         }
       }, images);
 
-      // Show success message with token usage
-      const stats = this.agent.getStats();
+      // Show success message
       const summaryParts: string[] = [];
 
       if (toolCallCount > 0) {
         summaryParts.push(`Used ${toolCallCount} tool${toolCallCount > 1 ? 's' : ''}`);
-      }
-
-      if (stats.totalTokens > 0) {
-        summaryParts.push(`${formatTokens(stats.totalTokens)} tokens`);
-      }
-
-      if (stats.estimatedTotalCost > 0) {
-        summaryParts.push(`${formatCost(stats.estimatedTotalCost)}`);
       }
 
       if (summaryParts.length > 0) {
@@ -763,17 +747,8 @@ export class CodeMieTerminalUI {
 
       planSpinner.stop();
 
-      // Show success message with token usage
-      const stats = this.agent.getStats();
+      // Show success message
       const summaryParts: string[] = [];
-
-      if (stats.totalTokens > 0) {
-        summaryParts.push(`${formatTokens(stats.totalTokens)} tokens`);
-      }
-
-      if (stats.estimatedTotalCost > 0) {
-        summaryParts.push(`${formatCost(stats.estimatedTotalCost)}`);
-      }
 
       if (summaryParts.length > 0) {
         console.log(chalk.white(`${summaryParts.join(' • ')}\n`));
@@ -846,20 +821,10 @@ export class CodeMieTerminalUI {
    * Show task completion summary with token usage
    */
   private showTaskSummary(toolCallCount: number): void {
-    const stats = this.agent.getStats();
-
     const summaryParts: string[] = [];
 
     if (toolCallCount > 0) {
       summaryParts.push(`Used ${toolCallCount} tool${toolCallCount > 1 ? 's' : ''}`);
-    }
-
-    if (stats.totalTokens > 0) {
-      summaryParts.push(`${formatTokens(stats.totalTokens)} tokens (${formatTokens(stats.inputTokens)} in, ${formatTokens(stats.outputTokens)} out)`);
-    }
-
-    if (stats.estimatedTotalCost > 0) {
-      summaryParts.push(`${formatCost(stats.estimatedTotalCost)} estimated cost`);
     }
 
     if (summaryParts.length > 0) {
@@ -879,10 +844,6 @@ export class CodeMieTerminalUI {
       const duration = step.duration ? `${step.duration}ms` : 'ongoing';
 
       if (step.type === 'llm_call') {
-        const tokenInfo = step.tokenUsage
-          ? ` (${formatTokenUsageSummary(step.tokenUsage)})`
-          : '';
-
         // Create descriptive label based on LLM context
         let llmLabel = 'LLM Call';
         if (step.llmContext === 'initial_input') {
@@ -893,7 +854,7 @@ export class CodeMieTerminalUI {
           llmLabel = 'Final Reasoning';
         }
 
-        stepLines.push(`  ${chalk.cyan(`${step.stepNumber}.`)} ${llmLabel} - ${chalk.white(duration)}${tokenInfo}`);
+        stepLines.push(`  ${chalk.cyan(`${step.stepNumber}.`)} ${llmLabel} - ${chalk.white(duration)}`);
       } else {
         const success = step.toolSuccess !== undefined
           ? (step.toolSuccess ? chalk.green('✓') : chalk.red('✗'))

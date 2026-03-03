@@ -75,7 +75,6 @@ export class ClaudeSessionAdapter implements SessionAdapter {
           },
           messages: [],
           metrics: {
-            tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
             tools: {},
             toolStatus: {},
             fileOperations: []
@@ -145,8 +144,7 @@ export class ClaudeSessionAdapter implements SessionAdapter {
 
       logger.debug(
         `[claude-adapter] Parsed session ${sessionId}: ${messages.length} main messages, ` +
-        `${subagents.length} sub-agent${subagents.length !== 1 ? 's' : ''}, ` +
-        `${metrics.tokens?.input || 0} input tokens, ${metrics.tokens?.output || 0} output tokens`
+        `${subagents.length} sub-agent${subagents.length !== 1 ? 's' : ''}`
       );
 
       return {
@@ -169,11 +167,6 @@ export class ClaudeSessionAdapter implements SessionAdapter {
    * Aggregates tokens, tools, and file operations.
    */
   private extractMetrics(messages: ClaudeMessage[]) {
-    let inputTokens = 0;
-    let outputTokens = 0;
-    let cacheReadTokens = 0;
-    let cacheWriteTokens = 0;
-
     const toolCounts: Record<string, number> = {};
     const toolStatus: Record<string, { success: number; failure: number }> = {};
     const fileOperations: Array<{
@@ -185,11 +178,6 @@ export class ClaudeSessionAdapter implements SessionAdapter {
 
     // Build tool results map (tool_use_id → isError) for status tracking
     const toolResultsMap = new Map<string, boolean>();
-
-    // Track processed message IDs to avoid duplicate token counting
-    // Claude streaming creates multiple JSONL entries (thinking, text, tool_use)
-    // for the same API response, each with identical usage data
-    const processedMessageIds = new Set<string>();
 
     // First pass: collect tool results
     for (const msg of messages) {
@@ -206,18 +194,6 @@ export class ClaudeSessionAdapter implements SessionAdapter {
 
     // Second pass: aggregate metrics
     for (const msg of messages) {
-      // Extract token usage (deduplicate by message.id - streaming chunks share same id)
-      if (msg.message?.usage && msg.message?.id) {
-        if (!processedMessageIds.has(msg.message.id)) {
-          processedMessageIds.add(msg.message.id);
-          const usage = msg.message.usage;
-          inputTokens += usage.input_tokens || 0;
-          outputTokens += usage.output_tokens || 0;
-          cacheReadTokens += usage.cache_read_input_tokens || 0;
-          cacheWriteTokens += usage.cache_creation_input_tokens || 0;
-        }
-      }
-
       // Extract tool usage and status
       if (msg.message?.content && Array.isArray(msg.message.content)) {
         for (const item of msg.message.content as ContentItem[]) {
@@ -262,12 +238,6 @@ export class ClaudeSessionAdapter implements SessionAdapter {
     }
 
     return {
-      tokens: {
-        input: inputTokens,
-        output: outputTokens,
-        cacheRead: cacheReadTokens,
-        cacheWrite: cacheWriteTokens
-      },
       tools: toolCounts,
       toolStatus,
       fileOperations

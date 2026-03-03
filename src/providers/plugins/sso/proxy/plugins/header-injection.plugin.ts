@@ -62,6 +62,14 @@ class HeaderInjectionInterceptor implements ProxyInterceptor {
       context.headers['X-CodeMie-Client'] = config.clientType;
     }
 
+    // Add repository and branch headers
+    if (config.repository) {
+      context.headers['X-CodeMie-Repository'] = config.repository;
+    }
+    if (config.branch) {
+      context.headers['X-CodeMie-Branch'] = config.branch;
+    }
+
     logger.debug(`[${this.name}] Injected CodeMie headers`);
   }
 }

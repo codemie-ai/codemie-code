@@ -88,7 +88,6 @@ export class MetricsSyncProcessor implements SessionProcessor {
             timestamp: typeof d.timestamp === 'number'
               ? new Date(d.timestamp).toISOString()
               : d.timestamp,
-            tokens: d.tokens,
             tools: {
               total: totalTools,
               success: successCount,
@@ -144,25 +143,21 @@ export class MetricsSyncProcessor implements SessionProcessor {
             branch: metric.attributes.branch,
 
             // Interaction totals
-            total_user_prompts: metric.attributes.total_user_prompts,
-
-            // Token totals
-            total_input_tokens: metric.attributes.total_input_tokens,
-            total_output_tokens: metric.attributes.total_output_tokens,
-            total_cache_read_input_tokens: metric.attributes.total_cache_read_input_tokens,
-            total_cache_creation_tokens: metric.attributes.total_cache_creation_tokens,
+            total_user_prompts: (metric.attributes as any).total_user_prompts,
 
             // Tool totals
-            total_tool_calls: metric.attributes.total_tool_calls,
-            successful_tool_calls: metric.attributes.successful_tool_calls,
-            failed_tool_calls: metric.attributes.failed_tool_calls,
+            tool_names: (metric.attributes as any).tool_names,
+            tool_counts: (metric.attributes as any).tool_counts,
+            total_tool_calls: (metric.attributes as any).total_tool_calls,
+            successful_tool_calls: (metric.attributes as any).successful_tool_calls,
+            failed_tool_calls: (metric.attributes as any).failed_tool_calls,
 
             // File operation totals
-            files_created: metric.attributes.files_created,
-            files_modified: metric.attributes.files_modified,
-            files_deleted: metric.attributes.files_deleted,
-            total_lines_added: metric.attributes.total_lines_added,
-            total_lines_removed: metric.attributes.total_lines_removed,
+            files_created: (metric.attributes as any).files_created,
+            files_modified: (metric.attributes as any).files_modified,
+            files_deleted: (metric.attributes as any).files_deleted,
+            total_lines_added: (metric.attributes as any).total_lines_added,
+            total_lines_removed: (metric.attributes as any).total_lines_removed,
 
             // Session info
             session_duration_ms: metric.attributes.session_duration_ms,

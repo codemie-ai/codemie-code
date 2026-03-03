@@ -25,6 +25,8 @@ export interface ProxyConfig {
   profileConfig?: CodeMieConfigOptions; // Full profile config (read once at CLI level)
   authMethod?: 'sso' | 'jwt';  // Authentication method
   jwtToken?: string;             // JWT token (from CLI arg or env var)
+  repository?: string;           // Repository name (parent/current format) for header injection
+  branch?: string;               // Git branch at startup for header injection
 }
 
 /**

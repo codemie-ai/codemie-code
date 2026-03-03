@@ -1,7 +1,7 @@
 import { AgentMetadata, AgentAdapter, AgentConfig, MCPConfigSummary, ExtensionsScanSummary, VersionCompatibilityResult } from './types.js';
 import * as npm from '../../utils/processes.js';
 import { NpmError, createErrorContext } from '../../utils/errors.js';
-import { exec } from '../../utils/processes.js';
+import { exec, detectGitBranch } from '../../utils/processes.js';
 import { compareVersions } from '../../utils/version-utils.js';
 import { logger } from '../../utils/logger.js';
 import { spawn } from 'child_process';
@@ -386,12 +386,23 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     // All components (logger, metrics, proxy) will use this same session ID
     const sessionId = randomUUID();
 
+    // Detect repository and branch once at session start so all downstream
+    // components (proxy config, metrics sender, etc.) can reuse without re-computing
+    const workingDir = process.cwd();
+    const sessionBranch = await detectGitBranch(workingDir);
+    const repoParts = workingDir.split(/[/\\]/).filter((p: string) => p.length > 0);
+    const sessionRepository = repoParts.length >= 2
+      ? `${repoParts[repoParts.length - 2]}/${repoParts[repoParts.length - 1]}`
+      : repoParts[repoParts.length - 1] || 'unknown';
+
     // Merge environment variables
     let env: NodeJS.ProcessEnv = {
       ...process.env,
       ...envOverrides,
       CODEMIE_SESSION_ID: sessionId,
-      CODEMIE_AGENT: this.metadata.name
+      CODEMIE_AGENT: this.metadata.name,
+      CODEMIE_REPOSITORY: sessionRepository,
+      ...(sessionBranch && { CODEMIE_GIT_BRANCH: sessionBranch })
     };
 
     // Initialize logger with session ID
@@ -743,6 +754,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       }
     }
 
+    // Repository and branch are computed once at session start in run() and
+    // propagated via env to avoid redundant detectGitBranch() calls
+    const repository = env.CODEMIE_REPOSITORY || 'unknown';
+    const branch = env.CODEMIE_GIT_BRANCH;
+
     return {
       targetApiUrl,
       clientType: this.metadata.ssoConfig?.clientType || 'unknown',
@@ -755,7 +771,9 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       version: env.CODEMIE_CLI_VERSION,
       profileConfig,
       authMethod: (env.CODEMIE_AUTH_METHOD as 'sso' | 'jwt') || undefined,
-      jwtToken: env.CODEMIE_JWT_TOKEN || undefined
+      jwtToken: env.CODEMIE_JWT_TOKEN || undefined,
+      repository,
+      branch: branch || undefined
     };
   }
 

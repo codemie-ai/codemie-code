@@ -10,12 +10,11 @@ import { ChatOpenAI } from '@langchain/openai';
 import type { StructuredTool } from '@langchain/core/tools';
 import type { BaseMessage } from '@langchain/core/messages';
 import { HumanMessage, SystemMessage, AIMessage } from '@langchain/core/messages';
-import type { CodeMieConfig, EventCallback, AgentStats, ExecutionStep, TokenUsage } from './types.js';
+import type { CodeMieConfig, EventCallback, AgentStats, ExecutionStep } from './types.js';
 import { EVENT_TYPES, CodeMieAgentError } from './types.js';
 import type { ClipboardImage } from '@/utils/clipboard.js';
 import { getSystemPrompt } from './prompts.js';
 import { extractToolMetadata } from './toolMetadata.js';
-import { extractTokenUsageFromStreamChunk, extractTokenUsageFromFinalState } from './tokenUtils.js';
 import { setGlobalToolEventCallback } from './tools/index.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeCookies, sanitizeAuthToken } from '@/utils/security.js';
@@ -37,16 +36,10 @@ export class CodeMieAgent {
   private readonly toolCallArgs: Map<string, Record<string, any>> = new Map(); // Store tool args by tool call ID
   private currentExecutionSteps: ExecutionStep[] = [];
   private currentStepNumber = 0;
-  private currentLLMTokenUsage: TokenUsage | null = null; // Store token usage for associating with next tool call
   private isFirstLLMCall = true; // Track if this is the initial user input processing
   private readonly hookExecutor: HookExecutor | null = null; // Hook executor for lifecycle hooks
   private hookLoopCounter = 0; // Track Stop hook retry attempts
   private stats: AgentStats = {
-    inputTokens: 0,
-    outputTokens: 0,
-    cachedTokens: 0,
-    totalTokens: 0,
-    estimatedTotalCost: 0,
     executionTime: 0,
     toolCalls: 0,
     successfulTools: 0,
@@ -663,26 +656,6 @@ export class CodeMieAgent {
         }
         break;
       }
-      // Try to extract token usage from stream chunk
-      const tokenUsage = extractTokenUsageFromStreamChunk(
-        chunk,
-        this.config.model,
-        this.config.provider
-      );
-
-      if (tokenUsage && currentStep?.type === 'llm_call') {
-        // Update current step with token usage
-        currentStep.tokenUsage = tokenUsage;
-        this.updateStatsWithTokenUsage(tokenUsage);
-
-        // Store token usage to associate with next tool call
-        this.currentLLMTokenUsage = tokenUsage;
-
-        if (this.config.debug) {
-          logger.debug(`Token usage: ${tokenUsage.inputTokens} in, ${tokenUsage.outputTokens} out`);
-        }
-      }
-
       await this.processStreamChunk(chunk, onEvent, (toolStarted) => {
         if (toolStarted) {
           // Complete current LLM step if it exists
@@ -723,30 +696,11 @@ export class CodeMieAgent {
       this.completeStep(currentStep);
     }
 
-    // Update conversation history with final messages and try to extract any missed token usage
+    // Update conversation history with final messages
     try {
       const finalState = await this.agent.getState();
       if (finalState?.messages) {
         this.conversationHistory = finalState.messages;
-
-        // Try to extract token usage from final state if we missed it during streaming
-        const finalTokenUsage = extractTokenUsageFromFinalState(
-          finalState,
-          this.config.model,
-          this.config.provider
-        );
-
-        if (finalTokenUsage && this.currentExecutionSteps.length > 0) {
-          // Find the last LLM step that doesn't have token usage
-          for (let i = this.currentExecutionSteps.length - 1; i >= 0; i--) {
-            const step = this.currentExecutionSteps[i];
-            if (step.type === 'llm_call' && !step.tokenUsage) {
-              step.tokenUsage = finalTokenUsage;
-              this.updateStatsWithTokenUsage(finalTokenUsage);
-              break;
-            }
-          }
-        }
       }
     } catch {
       // If getState fails, continue without updating history
@@ -840,8 +794,6 @@ export class CodeMieAgent {
 
       if (this.config.debug) {
         logger.debug(`Agent completed in ${this.stats.executionTime}ms`);
-        logger.debug(`Total tokens: ${this.stats.totalTokens} (${this.stats.inputTokens} in, ${this.stats.outputTokens} out)`);
-        logger.debug(`Estimated cost: $${this.stats.estimatedTotalCost.toFixed(4)}`);
       }
     } catch (error) {
     this.stats.executionTime = Date.now() - startTime;
@@ -994,17 +946,7 @@ export class CodeMieAgent {
           }
 
           // Extract enhanced metadata from the tool result
-          let toolMetadata = extractToolMetadata(toolName, result, toolArgs);
-
-          // Associate token usage from the LLM call that triggered this tool
-          if (toolMetadata && this.currentLLMTokenUsage) {
-            toolMetadata = {
-              ...toolMetadata,
-              tokenUsage: this.currentLLMTokenUsage
-            };
-            // Clear the stored token usage after associating it
-            this.currentLLMTokenUsage = null;
-          }
+          const toolMetadata = extractToolMetadata(toolName, result, toolArgs);
 
           // Store metadata in the execution step for this tool
           const toolStep = this.currentExecutionSteps
@@ -1105,16 +1047,10 @@ export class CodeMieAgent {
     this.toolCallArgs.clear(); // Clear stored tool args
     this.currentExecutionSteps = [];
     this.currentStepNumber = 0;
-    this.currentLLMTokenUsage = null;
     this.isFirstLLMCall = true;
 
     // Reset stats
     this.stats = {
-      inputTokens: 0,
-      outputTokens: 0,
-      cachedTokens: 0,
-      totalTokens: 0,
-      estimatedTotalCost: 0,
       executionTime: 0,
       toolCalls: 0,
       successfulTools: 0,
@@ -1267,24 +1203,6 @@ export class CodeMieAgent {
     if (this.config.debug) {
       const type = step.type === 'llm_call' ? 'LLM' : `Tool (${step.toolName})`;
       logger.debug(`Completed ${type} step ${step.stepNumber} in ${step.duration}ms`);
-    }
-  }
-
-  /**
-   * Update aggregate statistics with token usage
-   */
-  private updateStatsWithTokenUsage(tokenUsage: TokenUsage): void {
-    this.stats.inputTokens += tokenUsage.inputTokens;
-    this.stats.outputTokens += tokenUsage.outputTokens;
-
-    if (tokenUsage.cachedTokens) {
-      this.stats.cachedTokens += tokenUsage.cachedTokens;
-    }
-
-    this.stats.totalTokens = this.stats.inputTokens + this.stats.outputTokens;
-
-    if (tokenUsage.estimatedCost) {
-      this.stats.estimatedTotalCost += tokenUsage.estimatedCost;
     }
   }
 

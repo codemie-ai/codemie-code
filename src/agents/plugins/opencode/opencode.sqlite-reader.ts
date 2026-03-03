@@ -211,8 +211,6 @@ export async function readMessagesFromDb(
           providerID: data.providerID as string | undefined,
           modelID: data.modelID as string | undefined,
           path: data.path as string[] | undefined,
-          tokens: data.tokens as OpenCodeAssistantMessage['tokens'],
-          cost: data.cost as number | undefined,
           agent: data.agent as string | undefined,
         };
         messages.push(msg);

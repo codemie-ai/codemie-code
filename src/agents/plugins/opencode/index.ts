@@ -21,8 +21,7 @@ export {
 export type {
   OpenCodeSession,
   OpenCodeMessage,
-  OpenCodePart,
-  OpenCodeTokens
+  OpenCodePart
 } from './opencode-message-types.js';
 // Export type guards for external use
 export {

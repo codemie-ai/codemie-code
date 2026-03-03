@@ -44,12 +44,6 @@ export interface ParsedSession {
 
   // Parsed metrics data (optional - for metrics processor)
   metrics?: {
-    tokens?: {
-      input: number;
-      output: number;
-      cacheRead?: number;
-      cacheWrite?: number;
-    };
     tools?: Record<string, number>;
     toolStatus?: Record<string, { success: number; failure: number }>;
     fileOperations?: Array<{

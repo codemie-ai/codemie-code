@@ -105,9 +105,6 @@ export interface ToolMetadata {
   /** Error message if applicable */
   errorMessage?: string;
 
-  /** Token usage for the LLM reasoning that led to this tool call */
-  tokenUsage?: TokenUsage;
-
   /** Data processing metrics */
   dataMetrics?: {
     /** Amount of data read/processed (in bytes) */
@@ -321,27 +318,7 @@ export interface ToolContext {
 }
 
 /**
- * Token usage details for a single LLM call
- */
-export interface TokenUsage {
-  /** Input tokens (prompt) */
-  inputTokens: number;
-
-  /** Output tokens (completion) */
-  outputTokens: number;
-
-  /** Cached tokens (if supported by provider) */
-  cachedTokens?: number;
-
-  /** Total tokens (input + output) */
-  totalTokens: number;
-
-  /** Estimated cost in USD (if supported) */
-  estimatedCost?: number;
-}
-
-/**
- * Step execution details with token tracking
+ * Step execution details
  */
 export interface ExecutionStep {
   /** Step number in the execution sequence */
@@ -358,9 +335,6 @@ export interface ExecutionStep {
 
   /** Duration in milliseconds */
   duration?: number;
-
-  /** Token usage for this step (only for llm_call type) */
-  tokenUsage?: TokenUsage;
 
   /** Tool name (only for tool_execution type) */
   toolName?: string;
@@ -379,24 +353,9 @@ export interface ExecutionStep {
 }
 
 /**
- * Agent runtime statistics with detailed token tracking
+ * Agent runtime statistics
  */
 export interface AgentStats {
-  /** Total tokens used in input across all steps */
-  inputTokens: number;
-
-  /** Total tokens generated in output across all steps */
-  outputTokens: number;
-
-  /** Total cached tokens across all steps */
-  cachedTokens: number;
-
-  /** Total tokens (input + output) */
-  totalTokens: number;
-
-  /** Estimated total cost in USD */
-  estimatedTotalCost: number;
-
   /** Total execution time in milliseconds */
   executionTime: number;
 

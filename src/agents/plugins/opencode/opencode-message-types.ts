@@ -24,21 +24,6 @@ export interface OpenCodeSession {
 }
 
 /**
- * Token tracking structure
- *
- * Source: packages/opencode/src/session/message-v2.ts
- */
-export interface OpenCodeTokens {
-  input: number;
-  output: number;
-  reasoning?: number;
-  cache?: {
-    read: number;
-    write: number;
-  };
-}
-
-/**
  * OpenCode Message (MessageV2 format)
  *
  * Source: packages/opencode/src/session/message-v2.ts
@@ -73,7 +58,7 @@ export interface OpenCodeUserMessage extends OpenCodeMessageBase {
 }
 
 /**
- * Assistant message with tokens and cost
+ * Assistant message
  */
 export interface OpenCodeAssistantMessage extends OpenCodeMessageBase {
   role: 'assistant';
@@ -81,8 +66,6 @@ export interface OpenCodeAssistantMessage extends OpenCodeMessageBase {
   providerID?: string;
   modelID?: string;
   path?: string[];
-  tokens?: OpenCodeTokens;
-  cost?: number;
   // Legacy: agent field (may still exist in some sessions)
   agent?: string;
 }
@@ -163,14 +146,10 @@ export interface OpenCodeReasoningPart extends OpenCodePartBase {
 }
 
 /**
- * Step finish part (contains token info and cost)
- *
- * tokens and cost are REQUIRED per OpenCode source
+ * Step finish part
  */
 export interface OpenCodeStepFinishPart extends OpenCodePartBase {
   type: 'step-finish';
-  tokens: OpenCodeTokens;  // REQUIRED
-  cost: number;            // REQUIRED
   reason?: string;         // Finish reason (e.g., "tool-calls", "stop")
   snapshot?: string;       // Snapshot hash
 }

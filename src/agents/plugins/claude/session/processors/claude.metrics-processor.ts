@@ -232,9 +232,9 @@ export class MetricsProcessor implements SessionProcessor {
         return;
       }
 
-      // Find message with usage
-      const msgWithUsage = messages.find(m => m.message?.usage);
-      if (!msgWithUsage) {
+      // Find completed message (one that has usage object — skips incomplete streaming chunks)
+      const completedMsg = messages.find(m => m.message?.usage);
+      if (!completedMsg) {
         return;
       }
 
@@ -255,15 +255,6 @@ export class MetricsProcessor implements SessionProcessor {
       if (hasUnresolvedTools) {
         return;
       }
-
-      // Extract tokens
-      const usage = msgWithUsage.message.usage;
-      const tokens = {
-        input: usage.input_tokens || 0,
-        output: usage.output_tokens || 0,
-        cacheCreation: usage.cache_creation_input_tokens || undefined,
-        cacheRead: usage.cache_read_input_tokens || undefined
-      };
 
       // Aggregate tools and file operations
       const tools: Record<string, number> = {};
@@ -304,13 +295,12 @@ export class MetricsProcessor implements SessionProcessor {
       const delta: Omit<MetricDelta, 'syncStatus' | 'syncAttempts'> = {
         recordId,
         sessionId,
-        agentSessionId: msgWithUsage.sessionId || '',
-        timestamp: msgWithUsage.timestamp || new Date().toISOString(),
-        gitBranch: msgWithUsage.gitBranch,
-        tokens,
+        agentSessionId: completedMsg.sessionId || '',
+        timestamp: completedMsg.timestamp || new Date().toISOString(),
+        gitBranch: completedMsg.gitBranch,
         ...(Object.keys(tools).length > 0 && { tools }),
         ...(Object.keys(toolStatus).length > 0 && { toolStatus }),
-        ...(msgWithUsage.message?.model && { models: [msgWithUsage.message.model] })
+        ...(completedMsg.message?.model && { models: [completedMsg.message.model] })
       };
 
       if (fileOperations.length > 0) {
