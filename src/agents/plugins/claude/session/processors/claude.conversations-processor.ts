@@ -12,11 +12,12 @@
  * Note: API sync is handled separately by SSO provider's ConversationSyncProcessor
  */
 
-import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../../../../core/session/BaseProcessor.js';
-import type { ParsedSession } from '../../../../core/session/BaseSessionAdapter.js';
-import { CONVERSATION_SYNC_STATUS } from '../../../../../providers/plugins/sso/session/processors/conversations/types.js';
-import { logger } from '../../../../../utils/logger.js';
-import { getSessionConversationPath } from '../../../../core/session/session-config.js';
+import type { SessionProcessor, ProcessingContext, ProcessingResult } from '@/agents/core/session/BaseProcessor.js';
+import type { ParsedSession } from '@/agents/core/session/BaseSessionAdapter.js';
+import { CONVERSATION_SYNC_STATUS } from '@/providers/plugins/sso/session/processors/conversations/types.js';
+import { logger } from '@/utils/logger.js';
+import { getSessionConversationPath } from '@/agents/core/session/session-config.js';
+import { saveAttachmentFiles } from './conversations-processor/attachments.js';
 
 export class ConversationsProcessor implements SessionProcessor {
   readonly name = 'conversations';
@@ -96,6 +97,13 @@ export class ConversationsProcessor implements SessionProcessor {
       const outputDir = dirname(conversationsPath);
       if (!existsSync(outputDir)) {
         await mkdir(outputDir, { recursive: true });
+      }
+  
+      try { // Save attachment files
+        const savedFiles = await saveAttachmentFiles(session.messages as any[], session.sessionId);
+        if (savedFiles.size > 0) logger.info(`[${this.name}] Saved ${savedFiles.size} attachment(s) to disk`);
+      } catch (error) {
+        logger.error(`[${this.name}] Failed to save attachments:`, error);
       }
 
       // Process ONE turn (incremental mode)
@@ -366,6 +374,7 @@ export class ConversationsProcessor implements SessionProcessor {
     }
 
     const userText = this.extractUserMessage(userMessage);
+
     history.push({
       role: 'User',
       message: userText,

@@ -1,9 +1,9 @@
 import { Command } from 'commander';
-import { logger } from '../../utils/logger.js';
-import { AgentRegistry } from '../../agents/registry.js';
-import { getSessionPath, getSessionMetricsPath, getSessionConversationPath } from '../../agents/core/session/session-config.js';
-import type { BaseHookEvent, HookTransformer, MCPConfigSummary, ExtensionsScanSummary } from '../../agents/core/types.js';
-import type { ProcessingContext } from '../../agents/core/session/BaseProcessor.js';
+import { logger } from '@/utils/logger.js';
+import { AgentRegistry } from '@/agents/registry.js';
+import { getSessionPath, getSessionMetricsPath, getSessionConversationPath, getSessionConversationRawPath } from '@/agents/core/session/session-config.js';
+import type { BaseHookEvent, HookTransformer, MCPConfigSummary, ExtensionsScanSummary } from '@/agents/core/types.js';
+import type { ProcessingContext } from '@/agents/core/session/BaseProcessor.js';
 
 /**
  * Hook event handlers for agent lifecycle events
@@ -931,6 +931,41 @@ async function renameSessionFiles(sessionId: string): Promise<void> {
     const errorMessage = error instanceof Error ? error.message : String(error);
     errors.push(`conversations: ${errorMessage}`);
     logger.warn(`[hook:SessionEnd] Failed to rename conversations file: ${errorMessage}`);
+  }
+
+  // 4. Rename raw conversations file
+  try {
+    const rawConversationsFile = getSessionConversationRawPath(sessionId);
+    const newRawConversationsFile = await addCompletedPrefix(rawConversationsFile);
+
+    if (existsSync(rawConversationsFile)) {
+      await rename(rawConversationsFile, newRawConversationsFile);
+      renamedFiles.push('raw-conversations');
+      logger.debug(`[hook:SessionEnd] Renamed raw conversations file: ${sessionId}_conversation_raw.jsonl → completed_${sessionId}_conversation_raw.jsonl`);
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    errors.push(`raw-conversations: ${errorMessage}`);
+    logger.warn(`[hook:SessionEnd] Failed to rename raw conversations file: ${errorMessage}`);
+  }
+
+  // 5. Rename attachments directory
+  try {
+    const { getCodemieHome } = await import('../../utils/paths.js');
+    const { join } = await import('path');
+
+    const attachmentsDir = join(getCodemieHome(), 'sessions', `${sessionId}_attachments`);
+    const newAttachmentsDir = join(getCodemieHome(), 'sessions', `completed_${sessionId}_attachments`);
+
+    if (existsSync(attachmentsDir)) {
+      await rename(attachmentsDir, newAttachmentsDir);
+      renamedFiles.push('attachments');
+      logger.debug(`[hook:SessionEnd] Renamed attachments directory: ${sessionId}_attachments → completed_${sessionId}_attachments`);
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    errors.push(`attachments: ${errorMessage}`);
+    logger.warn(`[hook:SessionEnd] Failed to rename attachments directory: ${errorMessage}`);
   }
 
   // Log summary
