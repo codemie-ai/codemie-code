@@ -1,9 +1,9 @@
 import { Command } from 'commander';
 import Table from 'cli-table3';
 import chalk from 'chalk';
-import { SkillManager, SkillSync } from '../../agents/codemie-code/skills/index.js';
+import { SkillManager, SkillSync } from '../../skills/index.js';
 import { logger } from '../../utils/logger.js';
-import type { Skill } from '../../agents/codemie-code/skills/index.js';
+import type { Skill } from '../../skills/index.js';
 
 /**
  * Format skill source with color
@@ -14,6 +14,8 @@ function formatSource(source: Skill['source']): string {
       return chalk.green('project');
     case 'mode-specific':
       return chalk.blue('mode-specific');
+    case 'plugin':
+      return chalk.magenta('plugin');
     case 'global':
       return chalk.white('global');
     default:

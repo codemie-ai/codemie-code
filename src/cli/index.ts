@@ -26,6 +26,7 @@ import { createLogCommand } from './commands/log/index.js';
 import { createHookCommand } from './commands/hook.js';
 import { createSoundCommand } from './commands/sound.js';
 import { createSkillCommand } from './commands/skill.js';
+import { createPluginCommand } from './commands/plugin.js';
 import { createOpencodeMetricsCommand } from './commands/opencode-metrics.js';
 import { createTestMetricsCommand } from './commands/test-metrics.js';
 import { createAssistantsCommand } from './commands/assistants/index.js';
@@ -68,6 +69,7 @@ program.addCommand(createLogCommand());
 program.addCommand(createHookCommand());
 program.addCommand(createSoundCommand());
 program.addCommand(createSkillCommand());
+program.addCommand(createPluginCommand());
 program.addCommand(createOpencodeMetricsCommand());
 program.addCommand(createTestMetricsCommand());
 

@@ -86,6 +86,13 @@ export interface ProviderProfile {
   // Hooks configuration
   hooks?: HooksConfiguration;
 
+  // Plugin configuration
+  plugins?: {
+    enabled?: string[];
+    disabled?: string[];
+    dirs?: string[];
+  };
+
   // Assistants chat configuration
   assistants?: {
     maxHistoryMessages?: number; // Maximum conversation turns to load (default: 10, which loads 20 messages = 10 user + 10 AI)
