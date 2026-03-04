@@ -201,11 +201,14 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
     attachment: true,
     structured_output: true,
     temperature: false,
+    temperature: false,
+    structured_output: true,
     modalities: {
       input: ['text', 'image'],
       output: ['text']
     },
     knowledge: '2025-12-31',
+    knowledge: '2025-10-31',
     release_date: '2026-02-24',
     last_updated: '2026-02-24',
     open_weights: false,
