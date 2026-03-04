@@ -6,20 +6,11 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
-import type { Skill } from '../core/types.js';
-import { logger } from '../../../../utils/logger.js';
+import type { Skill, SkillWithInventory } from '../core/types.js';
+import { logger } from '../../utils/logger.js';
 
-/**
- * Skill with file inventory
- */
-export interface SkillWithInventory {
-  /** Base skill metadata and content */
-  skill: Skill;
-  /** Relative file paths (excluding SKILL.md) */
-  files: string[];
-  /** Formatted content ready for prompt injection */
-  formattedContent: string;
-}
+// Re-export for consumers that imported from here
+export type { SkillWithInventory } from '../core/types.js';
 
 /**
  * File extensions to include in inventory
@@ -84,13 +75,7 @@ async function buildFileInventory(
   const files: string[] = [];
 
   try {
-    // Check if directory exists
-    if (!fs.existsSync(skillDirectoryPath)) {
-      logger.warn(`Skill directory not found: ${skillDirectoryPath}`);
-      return [];
-    }
-
-    // Scan directory recursively
+    // Scan directory recursively (handles missing directory via readdir error)
     await scanDirectory(skillDirectoryPath, skillDirectoryPath, files, 0);
 
     // Sort alphabetically for consistent output
@@ -98,9 +83,8 @@ async function buildFileInventory(
 
     return files;
   } catch (error) {
-    logger.warn(
-      `Failed to build file inventory for ${skillDirectoryPath}:`,
-      error
+    logger.debug(
+      `Failed to build file inventory for ${skillDirectoryPath}: ${error instanceof Error ? error.message : String(error)}`
     );
     return [];
   }

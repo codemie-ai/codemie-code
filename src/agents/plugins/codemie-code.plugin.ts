@@ -13,8 +13,6 @@ import { getHooksPluginFileUrl, cleanupHooksPlugin } from './codemie-code-hooks/
 import { getReasoningSanitizerPluginUrl, cleanupReasoningSanitizerPlugin } from './reasoning-sanitizer/index.js';
 import { getCodemieHome } from '../../utils/paths.js';
 import type { HookProcessingConfig } from '../../cli/commands/hook.js';
-import { CodeMieCode } from '../codemie-code/index.js';
-import { loadCodeMieConfig } from '../codemie-code/config.js';
 import { toBedrockModelId } from '../../providers/plugins/bedrock/bedrock.utils.js';
 import { MAX_ENV_SIZE, writeConfigToTempFile } from '../core/temp-config.js';
 import { ensureSessionFile } from '../core/session/ensure-session.js';
@@ -179,67 +177,6 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
 
   isBuiltIn: true,
 
-  // Custom handler for built-in agent.
-  // Receives the original (pre-enrichArgs) args from BaseAgentAdapter so that
-  // --task, --debug, --plan, --plan-only can be parsed reliably.
-  // The `options` parameter is always {} (reserved); args parsing is authoritative.
-  customRunHandler: async (args, _options, agentConfig) => {
-    try {
-      // Check if we have a valid configuration first
-      const workingDir = process.cwd();
-
-      // Use profile from AgentConfig (set by BaseAgentAdapter from CODEMIE_PROFILE_NAME)
-      // or fall back to environment variable set by AgentCLI
-      const profileName = agentConfig?.profileName || process.env.CODEMIE_PROFILE_NAME;
-
-      try {
-        await loadCodeMieConfig(workingDir, profileName ? { name: profileName } : undefined);
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        logger.error('Configuration loading failed:', errorMessage);
-        throw new Error(`CodeMie configuration required: ${errorMessage}. Please run: codemie setup`);
-      }
-
-      // Welcome/goodbye messages are shown by BaseAgentAdapter (which invokes this handler).
-      // Parse agent-specific flags from original args (--debug, --task, --plan, --plan-only, --plugin-dir).
-      const debug = args.includes('--debug');
-      const taskIdx = args.indexOf('--task');
-      const task = taskIdx !== -1 && taskIdx < args.length - 1 ? args[taskIdx + 1] : undefined;
-      const plan = args.includes('--plan');
-      const planOnly = args.includes('--plan-only');
-      const pluginDirIdx = args.indexOf('--plugin-dir');
-      const pluginDir = pluginDirIdx !== -1 && pluginDirIdx < args.length - 1 ? args[pluginDirIdx + 1] : undefined;
-      // Remaining args (excluding known flags and --task/--plugin-dir values) are treated as a prompt
-      const knownFlags = new Set(['--debug', '--task', '--plan', '--plan-only', '--plugin-dir']);
-      const promptArgs = args.filter((a, i) => {
-        if (knownFlags.has(a)) return false;
-        if (i > 0 && (args[i - 1] === '--task' || args[i - 1] === '--plugin-dir')) return false;
-        return true;
-      });
-
-      const pluginDirs = pluginDir ? [pluginDir] : undefined;
-      const codeMie = new CodeMieCode(workingDir);
-      await codeMie.initialize({ debug, pluginDirs });
-
-      if (task) {
-        await codeMie.executeTaskWithUI(task, {
-          planMode: plan || planOnly,
-          planOnly,
-        });
-      } else if (promptArgs.length > 0) {
-        await codeMie.executeTaskWithUI(promptArgs.join(' '));
-        if (!planOnly) {
-          await codeMie.startInteractive();
-        }
-      } else {
-        await codeMie.startInteractive();
-      }
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      throw new Error(`Failed to run CodeMie Native: ${errorMessage}`);
-    }
-  },
-
   envMapping: {
     baseUrl: [],
     apiKey: [],
@@ -327,8 +264,9 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
             mergedHooks = { ...defaultHooks, ...profileConfig.hooks };
             logger.debug('[codemie-code] Merged profile hooks with defaults');
           }
-        } catch {
-          // Non-critical — profile config parse failure doesn't block startup
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          logger.debug(`[codemie-code] Profile config parse failed (non-blocking): ${msg}`);
         }
       }
 
@@ -345,8 +283,9 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
             logger.debug(`[codemie-code] Merged hooks from plugin "${plugin.manifest.name}"`);
           }
         }
-      } catch {
-        // Plugin hooks merge failure is non-blocking
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.debug(`[codemie-code] Plugin hooks merge failed (non-blocking): ${msg}`);
       }
 
       env.OPENCODE_HOOKS = JSON.stringify({ hooks: mergedHooks });
@@ -480,31 +419,12 @@ export class CodeMieCodePlugin extends BaseAgentAdapter {
 
   /**
    * Check if the agent is available.
-   * Returns true if the whitelabel binary is present, OR if only the built-in
-   * CodeMieCode handler is available (always the case when isBuiltIn: true).
-   * Warns at log level when the binary is absent so the condition is surfaced
-   * by doctor checks and debug sessions rather than silently swallowed.
+   * Returns true only if the whitelabel binary is present on disk.
    */
   async isInstalled(): Promise<boolean> {
     const binaryPath = resolveCodemieOpenCodeBinary();
-
-    if (!binaryPath) {
-      // Binary not found in node_modules — falling back to built-in CodeMieCode handler
-      logger.warn('[codemie-code] Whitelabel binary not found — running built-in CodeMieCode handler as fallback');
-      logger.warn('[codemie-code] Install the binary with: npm i -g @codemieai/codemie-opencode');
-      return true; // Built-in handler is always available
-    }
-
-    const installed = existsSync(binaryPath);
-
-    if (!installed) {
-      // Binary path resolved at load time but the file is now missing
-      logger.warn('[codemie-code] Binary path resolved but file not found — running built-in CodeMieCode handler as fallback');
-      logger.warn('[codemie-code] Reinstall with: codemie install codemie-code');
-    }
-
-    // Binary present (use it) or absent (fall back to built-in handler)
-    return true;
+    if (!binaryPath) return false;
+    return existsSync(binaryPath);
   }
 
   /**

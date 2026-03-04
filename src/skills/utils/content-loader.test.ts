@@ -60,8 +60,10 @@ describe('loadSkillWithInventory', () => {
   });
 
   it('should handle missing directory gracefully', async () => {
-    // Mock directory does not exist
-    vi.mocked(fs.existsSync).mockReturnValue(false);
+    // Mock readdir throwing ENOENT (directory does not exist)
+    vi.mocked(fs.promises.readdir).mockRejectedValueOnce(
+      new Error('ENOENT: no such file or directory')
+    );
 
     const result = await loadSkillWithInventory(mockSkill);
 

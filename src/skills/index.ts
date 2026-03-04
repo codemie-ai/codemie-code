@@ -21,18 +21,19 @@ export type {
   SkillDiscoveryOptions,
   SkillValidationResult,
   SkillsConfig,
+  SkillWithInventory,
 } from './core/types.js';
 export { SkillMetadataSchema } from './core/types.js';
 
-// Utility exports
+// Utility exports - import directly from shared utils
 export {
   parseFrontmatter,
   hasFrontmatter,
   extractMetadata,
   extractContent,
   FrontmatterParseError,
-} from './utils/frontmatter.js';
-export type { FrontmatterResult } from './utils/frontmatter.js';
+} from '../utils/frontmatter.js';
+export type { FrontmatterResult } from '../utils/frontmatter.js';
 
 
 // Pattern matcher exports

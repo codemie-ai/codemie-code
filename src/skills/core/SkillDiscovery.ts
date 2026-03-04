@@ -1,11 +1,11 @@
 import { readFile } from 'fs/promises';
 import { join } from 'path';
 import fg from 'fast-glob';
-import { getCodemiePath } from '../../../../utils/paths.js';
-import { logger } from '../../../../utils/logger.js';
-import { parseFrontmatter, FrontmatterParseError } from '../utils/frontmatter.js';
+import { getCodemiePath } from '../../utils/paths.js';
+import { logger } from '../../utils/logger.js';
+import { parseFrontmatter, FrontmatterParseError } from '../../utils/frontmatter.js';
 import { SkillMetadataSchema } from './types.js';
-import { resolvePlugins, readPluginSettings } from '../../../../plugins/core/index.js';
+import { resolvePlugins, readPluginSettings } from '../../plugins/core/index.js';
 import type {
   Skill,
   SkillMetadata,
@@ -126,36 +126,12 @@ export class SkillDiscovery {
         if (!plugin.enabled) continue;
 
         for (const pluginSkill of plugin.skills) {
-          const metadata: SkillMetadata = {
-            name: pluginSkill.namespacedName,
-            description: (pluginSkill.metadata.description as string) || `Skill from plugin ${pluginSkill.pluginName}`,
-            priority: (pluginSkill.metadata.priority as number) || 0,
-          };
-          if (pluginSkill.metadata.version) metadata.version = pluginSkill.metadata.version as string;
-          if (pluginSkill.metadata.modes) metadata.modes = pluginSkill.metadata.modes as string[];
-          skills.push({
-            metadata,
-            content: pluginSkill.content,
-            filePath: pluginSkill.filePath,
-            source: 'plugin',
-            computedPriority: this.computePriority(metadata, 'plugin'),
-          });
+          skills.push(this.convertPluginItemToSkill(pluginSkill, 'Skill'));
         }
 
         // Also convert plugin commands to skills (commands are similar to skills)
         for (const pluginCommand of plugin.commands) {
-          const metadata: SkillMetadata = {
-            name: pluginCommand.namespacedName,
-            description: (pluginCommand.metadata.description as string) || `Command from plugin ${pluginCommand.pluginName}`,
-            priority: (pluginCommand.metadata.priority as number) || 0,
-          };
-          skills.push({
-            metadata,
-            content: pluginCommand.content,
-            filePath: pluginCommand.filePath,
-            source: 'plugin',
-            computedPriority: this.computePriority(metadata, 'plugin'),
-          });
+          skills.push(this.convertPluginItemToSkill(pluginCommand, 'Command'));
         }
       }
 
@@ -164,6 +140,29 @@ export class SkillDiscovery {
       logger.debug(`[plugin] Plugin skill discovery failed: ${error instanceof Error ? error.message : String(error)}`);
       return [];
     }
+  }
+
+  /**
+   * Convert a plugin skill or command item to the unified Skill format.
+   */
+  private convertPluginItemToSkill(
+    item: { namespacedName: string; pluginName: string; content: string; filePath: string; metadata: Record<string, unknown> },
+    label: string
+  ): Skill {
+    const metadata: SkillMetadata = {
+      name: item.namespacedName,
+      description: (item.metadata.description as string) || `${label} from plugin ${item.pluginName}`,
+      priority: (item.metadata.priority as number) || 0,
+    };
+    if (item.metadata.version) metadata.version = item.metadata.version as string;
+    if (item.metadata.modes) metadata.modes = item.metadata.modes as string[];
+    return {
+      metadata,
+      content: item.content,
+      filePath: item.filePath,
+      source: 'plugin',
+      computedPriority: this.computePriority(metadata, 'plugin'),
+    };
   }
 
   /**
@@ -200,8 +199,10 @@ export class SkillDiscovery {
         .map((result) => result.skill);
 
       return skills;
-    } catch {
-      // Directory doesn't exist or other error - return empty array
+    } catch (error) {
+      logger.debug(
+        `Failed to discover skills from ${directory}: ${error instanceof Error ? error.message : String(error)}`
+      );
       return [];
     }
   }

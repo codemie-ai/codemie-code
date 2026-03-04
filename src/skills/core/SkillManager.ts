@@ -6,7 +6,7 @@ import type {
   SkillWithInventory,
 } from './types.js';
 import { loadSkillWithInventory } from '../utils/content-loader.js';
-import { logger } from '../../../../utils/logger.js';
+import { logger } from '../../utils/logger.js';
 
 /**
  * Skill manager singleton
@@ -94,24 +94,31 @@ export class SkillManager {
     names: string[],
     options: SkillDiscoveryOptions = {}
   ): Promise<SkillWithInventory[]> {
-    const results: SkillWithInventory[] = [];
-
     // Discover all skills (uses cache)
     const allSkills = await this.discovery.discoverSkills(options);
 
-    // Find and load each requested skill
+    // Match requested names to discovered skills
+    const matchedSkills: Skill[] = [];
     for (const name of names) {
       const skill = allSkills.find((s) => s.metadata.name === name);
-
       if (skill) {
-        try {
-          const withInventory = await loadSkillWithInventory(skill);
-          results.push(withInventory);
-        } catch (error) {
-          logger.warn(`Failed to load inventory for skill '${name}':`, error);
-        }
+        matchedSkills.push(skill);
       } else {
         logger.debug(`Skill '${name}' not found during pattern invocation`);
+      }
+    }
+
+    // Load inventories in parallel
+    const settled = await Promise.allSettled(
+      matchedSkills.map((skill) => loadSkillWithInventory(skill))
+    );
+
+    const results: SkillWithInventory[] = [];
+    for (const result of settled) {
+      if (result.status === 'fulfilled') {
+        results.push(result.value);
+      } else {
+        logger.warn('Failed to load skill inventory:', result.reason);
       }
     }
 

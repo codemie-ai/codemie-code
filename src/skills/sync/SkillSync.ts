@@ -1,7 +1,7 @@
 import { readdir, stat, mkdir, copyFile, readFile, writeFile, rm } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join, dirname } from 'path';
-import { logger } from '../../../../utils/logger.js';
+import { logger } from '../../utils/logger.js';
 import { SkillManager } from '../core/SkillManager.js';
 import type { SkillSource } from '../core/types.js';
 
@@ -223,6 +223,7 @@ export class SkillSync {
     await mkdir(dest, { recursive: true });
 
     const entries = await readdir(src, { withFileTypes: true });
+    const ops: Promise<void>[] = [];
 
     for (const entry of entries) {
       const srcPath = join(src, entry.name);
@@ -233,10 +234,12 @@ export class SkillSync {
         if (entry.name.startsWith('.') || entry.name === 'node_modules') {
           continue;
         }
-        await this.copyDirectory(srcPath, destPath);
+        ops.push(this.copyDirectory(srcPath, destPath));
       } else {
-        await copyFile(srcPath, destPath);
+        ops.push(copyFile(srcPath, destPath));
       }
     }
+
+    await Promise.all(ops);
   }
 }
