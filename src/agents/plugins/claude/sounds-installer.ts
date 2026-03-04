@@ -2,7 +2,7 @@
  * Sounds Installer
  *
  * Automated installation of the sound hooks system for Claude Code.
- * Creates hook directories, installs play-random-sound.sh script, and configures hooks.
+ * Creates sound directories and configures hooks.
  */
 
 import chalk from 'chalk';
@@ -100,9 +100,6 @@ function displayPostInstallInstructions(): void {
     console.log(chalk.blueBright('   https://x.com/delba_oliveira/status/2020515010985005255'));
     console.log();
     console.log(chalk.dim(`⚙️  Hooks configuration saved in: ${getCodemiePath('claude-plugin/hooks/hooks.json')}`));
-    console.log(chalk.dim(`📜 Script location: ${join(soundsDir, 'play-random-sound.sh')}`));
-    console.log(chalk.dim('   Script would appear after codemie-claude first run'));
-    console.log(chalk.white('💡 If script did not appear, remove ~/.codemie/claude-plugin directory and restart codemie-claude'));
     console.log();
 }
 

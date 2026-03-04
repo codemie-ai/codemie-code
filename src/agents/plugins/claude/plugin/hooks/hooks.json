@@ -11,7 +11,7 @@
           },
           {
             "type": "command",
-            "command": "~/.codemie/claude-plugin/sounds/play-random-sound.sh ~/.codemie/sounds/SessionStart"
+            "command": "codemie sound SessionStart"
           },
           {
             "type": "command",
@@ -41,7 +41,7 @@
           },
           {
             "type": "command",
-            "command": "~/.codemie/claude-plugin/sounds/play-random-sound.sh ~/.codemie/sounds/PermissionRequest"
+            "command": "codemie sound PermissionRequest"
           }
         ]
       }
@@ -67,7 +67,7 @@
           },
           {
             "type": "command",
-            "command": "~/.codemie/claude-plugin/sounds/play-random-sound.sh ~/.codemie/sounds/Stop"
+            "command": "codemie sound Stop"
           }
         ]
       }
@@ -82,7 +82,7 @@
           },
           {
             "type": "command",
-            "command": "~/.codemie/claude-plugin/sounds/play-random-sound.sh ~/.codemie/sounds/UserPromptSubmit"
+            "command": "codemie sound UserPromptSubmit"
           }
         ]
       }
