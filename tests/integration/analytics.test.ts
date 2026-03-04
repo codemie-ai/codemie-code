@@ -70,24 +70,6 @@ describe('Analytics E2E Test - Golden Dataset Validation', () => {
     expect(analytics.projects[0].projectPath).toBe('/tmp/private');
   });
 
-  it('should calculate correct token totals from golden dataset', () => {
-    const loader = new MetricsDataLoader();
-    const sessions = loader.loadSessions({ sessionId: testSessionId });
-    const analytics = AnalyticsAggregator.aggregate(sessions, true);
-
-    // Calculate expected from raw deltas
-    const expectedInput = sessions[0].deltas.reduce((sum, d) => sum + d.tokens.input, 0);
-    const expectedOutput = sessions[0].deltas.reduce((sum, d) => sum + d.tokens.output, 0);
-    const expectedCacheCreation = sessions[0].deltas.reduce((sum, d) => sum + (d.tokens.cacheCreation || 0), 0);
-    const expectedCacheRead = sessions[0].deltas.reduce((sum, d) => sum + (d.tokens.cacheRead || 0), 0);
-
-    // Validate aggregated totals match
-    expect(analytics.totalTokens.input).toBe(expectedInput);
-    expect(analytics.totalTokens.output).toBe(expectedOutput);
-    expect(analytics.totalTokens.cacheCreation).toBe(expectedCacheCreation);
-    expect(analytics.totalTokens.cacheRead).toBe(expectedCacheRead);
-    expect(analytics.totalTokens.total).toBe(expectedInput + expectedOutput + expectedCacheCreation + expectedCacheRead);
-  });
 
   it('should track tool usage correctly', () => {
     const loader = new MetricsDataLoader();
@@ -163,14 +145,8 @@ describe('Analytics E2E Test - Golden Dataset Validation', () => {
     // Raw deltas
     expect(sessions[0].deltas).toHaveLength(11);
 
-    // Calculate raw totals
-    const rawInput = sessions[0].deltas.reduce((sum, d) => sum + d.tokens.input, 0);
-    const rawOutput = sessions[0].deltas.reduce((sum, d) => sum + d.tokens.output, 0);
-
     // Aggregated totals should match exactly
     const analytics = AnalyticsAggregator.aggregate(sessions, true);
-    expect(analytics.totalTokens.input).toBe(rawInput);
-    expect(analytics.totalTokens.output).toBe(rawOutput);
 
     // No data loss
     expect(analytics.totalSessions).toBe(1);
@@ -190,16 +166,6 @@ describe('Analytics E2E Test - Golden Dataset Validation', () => {
       .split('\n')
       .filter(line => line.length > 0)
       .map(line => JSON.parse(line));
-
-    // Calculate expected totals from golden dataset
-    const expectedTokens = expectedDeltas.reduce((acc, d) => {
-      acc.input += d.tokens.input || 0;
-      acc.output += d.tokens.output || 0;
-      acc.cacheCreation += d.tokens.cacheCreation || 0;
-      acc.cacheRead += d.tokens.cacheRead || 0;
-      return acc;
-    }, { input: 0, output: 0, cacheCreation: 0, cacheRead: 0 });
-    expectedTokens.total = expectedTokens.input + expectedTokens.output + expectedTokens.cacheCreation + expectedTokens.cacheRead;
 
     // Count tools from golden dataset
     const expectedTools = {};
@@ -229,13 +195,6 @@ describe('Analytics E2E Test - Golden Dataset Validation', () => {
     const sessions = loader.loadSessions({ sessionId: testSessionId });
     const analytics = AnalyticsAggregator.aggregate(sessions, true);
 
-    // Validate exact token counts
-    expect(analytics.totalTokens.input).toBe(expectedTokens.input);
-    expect(analytics.totalTokens.output).toBe(expectedTokens.output);
-    expect(analytics.totalTokens.cacheCreation).toBe(expectedTokens.cacheCreation);
-    expect(analytics.totalTokens.cacheRead).toBe(expectedTokens.cacheRead);
-    expect(analytics.totalTokens.total).toBe(expectedTokens.total);
-
     // Validate exact tool counts
     const actualTotalToolCalls = analytics.tools.reduce((sum, t) => sum + t.totalCalls, 0);
     expect(actualTotalToolCalls).toBe(expectedTotalToolCalls);
@@ -258,17 +217,7 @@ describe('Analytics E2E Test - Golden Dataset Validation', () => {
     // 3. Turns (total deltas)
     expect(analytics.totalTurns).toBe(expectedDeltas.length);
 
-    // 4. Token breakdown (already validated above, but let's be explicit)
-    expect(analytics.totalTokens.input).toBe(expectedTokens.input);
-    expect(analytics.totalTokens.output).toBe(expectedTokens.output);
-    expect(analytics.totalTokens.cacheCreation).toBe(expectedTokens.cacheCreation);
-    expect(analytics.totalTokens.cacheRead).toBe(expectedTokens.cacheRead);
-    expect(analytics.totalTokens.total).toBe(expectedTokens.total);
-    expect(analytics.totalTokens.cacheHitRate).toBeDefined();
-    expect(analytics.totalTokens.cacheHitRate).toBeGreaterThanOrEqual(0);
-    expect(analytics.totalTokens.cacheHitRate).toBeLessThanOrEqual(1);
-
-    // 5. File operations count (already validated)
+    // 4. File operations count
     expect(analytics.totalFileOperations).toBeGreaterThan(0);
 
     // 6. Lines added/removed/modified
@@ -325,9 +274,6 @@ describe('Analytics E2E Test - Golden Dataset Validation', () => {
     const project = analytics.projects[0];
     expect(project.projectPath).toBe('/tmp/private');
     expect(project.totalSessions).toBe(1);
-    expect(project.totalTokens.input).toBe(analytics.totalTokens.input);
-    expect(project.totalTokens.output).toBe(analytics.totalTokens.output);
-    expect(project.totalTokens.total).toBe(analytics.totalTokens.total);
     expect(project.branches).toBeDefined();
     expect(Array.isArray(project.branches)).toBe(true);
 
@@ -337,11 +283,6 @@ describe('Analytics E2E Test - Golden Dataset Validation', () => {
     console.log(`  Sessions: ${analytics.totalSessions}`);
     console.log(`  Duration: ${analytics.totalDuration}ms`);
     console.log(`  Turns: ${analytics.totalTurns}`);
-    console.log(`  Tokens: ${analytics.totalTokens.total.toLocaleString()}`);
-    console.log(`    Input: ${analytics.totalTokens.input.toLocaleString()}`);
-    console.log(`    Output: ${analytics.totalTokens.output.toLocaleString()}`);
-    console.log(`    Cache Creation: ${analytics.totalTokens.cacheCreation.toLocaleString()}`);
-    console.log(`    Cache Read: ${analytics.totalTokens.cacheRead.toLocaleString()}`);
     console.log(`  File Operations: ${analytics.totalFileOperations}`);
     console.log(`  Lines: +${analytics.totalLinesAdded} -${analytics.totalLinesRemoved} ~${analytics.totalLinesModified} (${analytics.netLinesChanged})`);
     console.log(`  Tool Calls: ${analytics.totalToolCalls} (✓${analytics.successfulToolCalls} ✗${analytics.failedToolCalls} ${analytics.toolSuccessRate.toFixed(1)}%)`);
@@ -355,7 +296,7 @@ describe('Analytics E2E Test - Golden Dataset Validation', () => {
     });
     console.log('\nLANGUAGES:');
     analytics.languages.forEach(l => {
-      console.log(`  ${l.language}: ${l.filesCreated} created, ${l.filesModified} modified, ${l.tokens} tokens`);
+      console.log(`  ${l.language}: ${l.filesCreated} created, ${l.filesModified} modified, ${l.linesAdded} lines`);
     });
     console.log('\nPROJECTS:');
     analytics.projects.forEach(p => {

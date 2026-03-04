@@ -17,7 +17,7 @@
 
 import type { SessionMetric, MetricsApiConfig, MetricsSyncResponse, MetricsApiError } from './metrics-types.js';
 import type { Session } from '../../../../../../agents/core/session/types.js';
-import type { MCPConfigSummary } from '../../../../../../agents/core/types.js';
+import type { MCPConfigSummary, ExtensionsScanSummary } from '../../../../../../agents/core/types.js';
 import { logger } from '../../../../../../utils/logger.js';
 import { detectGitBranch } from '../../../../../../utils/processes.js';
 import { CODEMIE_ENDPOINTS } from '../../../sso.http-client.js';
@@ -87,7 +87,9 @@ class MetricsApiClient {
       'Content-Type': 'application/json',
       'User-Agent': `codemie-cli/${this.config.version}`,
       'X-CodeMie-CLI': `codemie-cli/${this.config.version}`,
-      'X-CodeMie-Client': this.config.clientType
+      'X-CodeMie-Client': this.config.clientType,
+      'X-CodeMie-Repository': metric.attributes.repository,
+      'X-CodeMie-Branch': metric.attributes.branch
     };
 
     if (this.config.apiKey) {
@@ -209,11 +211,11 @@ export class MetricsSender {
    * Metric name constants
    * - METRIC_SESSION_TOTAL: Session lifecycle events (start, end)
    *   Differentiated by 'status' attribute: started, completed, failed, interrupted
-   * - METRIC_USAGE_TOTAL: Aggregated usage metrics (periodic sync)
-   *   Contains accumulated token, tool, and file operation metrics
+   * - METRIC_TOOL_USAGE_TOTAL: Aggregated tool/file usage metrics (periodic sync)
+   *   Contains accumulated tool and file operation metrics (no token fields)
    */
   static readonly METRIC_SESSION_TOTAL = 'codemie_cli_session_total';
-  static readonly METRIC_USAGE_TOTAL = 'codemie_cli_usage_total';
+  static readonly METRIC_TOOL_USAGE_TOTAL = 'codemie_cli_tool_usage_total';
 
   private client: MetricsApiClient;
   private dryRun: boolean;
@@ -244,13 +246,15 @@ export class MetricsSender {
    * @param status - Session start status object with status and optional reason
    * @param error - Optional error information (required if status=failed)
    * @param mcpSummary - Optional MCP configuration summary
+   * @param extensionsSummary - Optional extensions scan summary (project + global scopes)
    */
   async sendSessionStart(
     session: Pick<Session, 'sessionId' | 'agentName' | 'provider' | 'project' | 'startTime' | 'workingDirectory'> & { model?: string },
     workingDirectory: string,
     status: SessionStartStatus = { status: 'started' },
     error?: SessionError,
-    mcpSummary?: MCPConfigSummary
+    mcpSummary?: MCPConfigSummary,
+    extensionsSummary?: ExtensionsScanSummary
   ): Promise<MetricsSyncResponse> {
     // Detect git branch
     const branch = await detectGitBranch(workingDirectory);
@@ -268,21 +272,6 @@ export class MetricsSender {
       session_id: session.sessionId,
       branch: branch || 'unknown',
       ...(session.project && { project: session.project }),
-
-      // Zero metrics (session just started)
-      total_user_prompts: 0,
-      total_input_tokens: 0,
-      total_output_tokens: 0,
-      total_cache_read_input_tokens: 0,
-      total_cache_creation_tokens: 0,
-      total_tool_calls: 0,
-      successful_tool_calls: 0,
-      failed_tool_calls: 0,
-      files_created: 0,
-      files_modified: 0,
-      files_deleted: 0,
-      total_lines_added: 0,
-      total_lines_removed: 0,
 
       // Session metadata
       session_duration_ms: 0,
@@ -303,6 +292,37 @@ export class MetricsSender {
         mcp_local_server_names: mcpSummary.localServerNames,
         mcp_project_server_names: mcpSummary.projectServerNames,
         mcp_user_server_names: mcpSummary.userServerNames
+      }),
+
+      // Extensions scan (only if provided)
+      ...(extensionsSummary && {
+        // Counts per scope
+        agents_project: extensionsSummary.project.agents,
+        agents_global: extensionsSummary.global.agents,
+        commands_project: extensionsSummary.project.commands,
+        commands_global: extensionsSummary.global.commands,
+        skills_project: extensionsSummary.project.skills,
+        skills_global: extensionsSummary.global.skills,
+        hooks_project: extensionsSummary.project.hooks,
+        hooks_global: extensionsSummary.global.hooks,
+        rules_project: extensionsSummary.project.rules,
+        rules_global: extensionsSummary.global.rules,
+        // Names per scope + unique totals across both scopes
+        agent_names: [...new Set([...extensionsSummary.projectNames.agents, ...extensionsSummary.globalNames.agents])].sort(),
+        agents_project_names: extensionsSummary.projectNames.agents,
+        agents_global_names: extensionsSummary.globalNames.agents,
+        command_names: [...new Set([...extensionsSummary.projectNames.commands, ...extensionsSummary.globalNames.commands])].sort(),
+        commands_project_names: extensionsSummary.projectNames.commands,
+        commands_global_names: extensionsSummary.globalNames.commands,
+        skill_names: [...new Set([...extensionsSummary.projectNames.skills, ...extensionsSummary.globalNames.skills])].sort(),
+        skills_project_names: extensionsSummary.projectNames.skills,
+        skills_global_names: extensionsSummary.globalNames.skills,
+        hook_names: [...new Set([...extensionsSummary.projectNames.hooks, ...extensionsSummary.globalNames.hooks])].sort(),
+        hooks_project_names: extensionsSummary.projectNames.hooks,
+        hooks_global_names: extensionsSummary.globalNames.hooks,
+        rule_names: [...new Set([...extensionsSummary.projectNames.rules, ...extensionsSummary.globalNames.rules])].sort(),
+        rules_project_names: extensionsSummary.projectNames.rules,
+        rules_global_names: extensionsSummary.globalNames.rules
       })
     };
 
@@ -382,21 +402,6 @@ export class MetricsSender {
       branch: branch || 'unknown',
       ...(session.project && { project: session.project }),
 
-      // Zero metrics (detailed metrics come from aggregated usage)
-      total_user_prompts: 0,
-      total_input_tokens: 0,
-      total_output_tokens: 0,
-      total_cache_read_input_tokens: 0,
-      total_cache_creation_tokens: 0,
-      total_tool_calls: 0,
-      successful_tool_calls: 0,
-      failed_tool_calls: 0,
-      files_created: 0,
-      files_modified: 0,
-      files_deleted: 0,
-      total_lines_added: 0,
-      total_lines_removed: 0,
-
       // Session metadata
       session_duration_ms: durationMs,
       ...(activeDurationMs !== undefined && { active_duration_ms: activeDurationMs }),
@@ -467,10 +472,7 @@ export class MetricsSender {
           attributes: {
             agent: metric.attributes.agent,
             session_id: metric.attributes.session_id,
-            branch: metric.attributes.branch,
-            total_user_prompts: metric.attributes.total_user_prompts,
-            total_input_tokens: metric.attributes.total_input_tokens,
-            total_output_tokens: metric.attributes.total_output_tokens
+            branch: metric.attributes.branch
           }
         }
       });
@@ -483,8 +485,6 @@ export class MetricsSender {
     logger.debug('[MetricsSender] Aggregated usage metric sent', {
       agent: metric.attributes.agent,
       branch: metric.attributes.branch,
-      prompts: metric.attributes.total_user_prompts,
-      tokens: metric.attributes.total_input_tokens + metric.attributes.total_output_tokens,
       session: metric.attributes.session_id
     });
 

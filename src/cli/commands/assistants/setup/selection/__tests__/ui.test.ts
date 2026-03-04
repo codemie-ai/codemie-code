@@ -93,8 +93,11 @@ describe('Selection UI - ui.ts', () => {
       searchQuery: '',
       selectedIds: new Set<string>(),
       registeredIds: new Set<string>(),
+      registeredAssistants: [],
       isSearchFocused: false,
       isPaginationFocused: null,
+      areNavigationButtonsFocused: false,
+      focusedButton: 'continue',
     };
 
     // Mock process.stdout.columns

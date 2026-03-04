@@ -163,29 +163,6 @@ describe('Gemini Conversation Processing', () => {
     }
   });
 
-  it('should have correct token aggregation', () => {
-    const records = readConversationFile(TEST_SESSION_ID);
-
-    for (const record of records) {
-      const assistant = record.payload.history.find((h: any) => h.role === 'Assistant');
-      if (assistant) {
-        // Should have token fields
-        expect(assistant).toHaveProperty('input_tokens');
-        expect(assistant).toHaveProperty('output_tokens');
-        expect(assistant).toHaveProperty('cache_read_input_tokens');
-        expect(assistant).toHaveProperty('cache_creation_input_tokens');
-
-        // Tokens should be numbers
-        expect(typeof assistant.input_tokens).toBe('number');
-        expect(typeof assistant.output_tokens).toBe('number');
-        expect(typeof assistant.cache_read_input_tokens).toBe('number');
-        expect(typeof assistant.cache_creation_input_tokens).toBe('number');
-
-        // Cache creation should always be 0 for Gemini
-        expect(assistant.cache_creation_input_tokens).toBe(0);
-      }
-    }
-  });
 
   it('should extract tool thoughts from tool calls', () => {
     const records = readConversationFile(TEST_SESSION_ID);

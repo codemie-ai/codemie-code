@@ -122,7 +122,7 @@ async function runTestMetrics(options: {
   const cliVersion = process.env.CODEMIE_CLI_VERSION || '1.0.0';
 
   const metric: SessionMetric = {
-    name: 'codemie_cli_usage_total',
+    name: 'codemie_cli_tool_usage_total',
     attributes: {
       agent: options.agent,
       agent_version: cliVersion,
@@ -133,10 +133,8 @@ async function runTestMetrics(options: {
       ...(projectName && { project: projectName }), // Conditional inclusion
 
       total_user_prompts: 1,
-      total_input_tokens: 100,
-      total_output_tokens: 50,
-      total_cache_read_input_tokens: 0,
-      total_cache_creation_tokens: 0,
+      tool_names: ['Read'],
+      tool_counts: { 'Read': 1 },
       total_tool_calls: 1,
       successful_tool_calls: 1,
       failed_tool_calls: 0,

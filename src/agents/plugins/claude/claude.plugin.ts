@@ -105,6 +105,16 @@ export const ClaudePluginMetadata: AgentMetadata = {
     excludeErrorsFromTools: ['Bash'],
   },
 
+  // Extensions configuration for Claude Code
+  // - project: {cwd}/.claude/ (project-specific, version controlled)
+  // - global: ~/.claude/ (user-level, available across all projects)
+  // - skillsEntryFile: each skill is a subdirectory with a SKILL.md entry file
+  extensionsConfig: {
+    project: '.claude',
+    global: '~/.claude',
+    skillsEntryFile: 'SKILL.md',
+  },
+
   // MCP configuration paths for Claude Code
   // - Local: ~/.claude.json → projects[cwd].mcpServers (project-specific, private)
   // - Project: .mcp.json → mcpServers (shared with team)

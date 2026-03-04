@@ -19,7 +19,7 @@ describe('Assistants Command (Parent)', () => {
     });
 
     it('should have correct description', () => {
-      expect(command.description()).toBe('Manage CodeMie assistants');
+      expect(command.description()).toBe('Chat with CodeMie assistant');
     });
 
     it('should be configured as a Commander command', () => {
@@ -89,7 +89,7 @@ describe('Assistants Command (Parent)', () => {
       // Assistants command is now focused on chat operations
       // Setup has been moved to `codemie setup assistants`
       expect(command.name()).toBe('assistants');
-      expect(command.description()).toContain('assistants');
+      expect(command.description()).toContain('assistant');
     });
   });
 

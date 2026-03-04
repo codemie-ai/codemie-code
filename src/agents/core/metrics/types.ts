@@ -46,14 +46,6 @@ export interface MetricDelta {
   timestamp: number | string;    // Unix ms or ISO string
   gitBranch?: string;            // Git branch at time of this turn (can change mid-session)
 
-  // Incremental metrics for this turn
-  tokens: {
-    input: number;
-    output: number;
-    cacheCreation?: number;
-    cacheRead?: number;
-  };
-
   // Tools used in this turn (counts)
   tools: {
     [toolName: string]: number;  // e.g., {"Read": 1, "Edit": 1}

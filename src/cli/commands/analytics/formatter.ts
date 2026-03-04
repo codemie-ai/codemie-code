@@ -8,7 +8,6 @@ import type {
   ProjectAnalytics,
   BranchAnalytics,
   SessionAnalytics,
-  TokenBreakdown,
   ModelStats,
   ToolStats,
   LanguageStats
@@ -164,15 +163,6 @@ export class AnalyticsFormatter {
     console.log(chalk.gray(`      Duration:  ${this.formatDuration(session.duration)}`));
     console.log(chalk.gray(`      Turns:     ${session.totalTurns}`));
 
-    // Token breakdown
-    console.log(chalk.yellow('\n      Token Breakdown:'));
-    console.log(chalk.gray(`        Input:          ${session.tokens.input.toLocaleString()}`));
-    console.log(chalk.gray(`        Cache Creation: ${session.tokens.cacheCreation.toLocaleString()}`));
-    console.log(chalk.gray(`        Cache Read:     ${session.tokens.cacheRead.toLocaleString()}`));
-    console.log(chalk.gray(`        Output:         ${session.tokens.output.toLocaleString()}`));
-    console.log(chalk.gray(`        Total:          ${session.tokens.total.toLocaleString()}`));
-    console.log(chalk.gray(`        Cache Hit Rate: ${(session.tokens.cacheHitRate * 100).toFixed(1)}%`));
-
     // Models
     if (session.models.length > 0) {
       console.log(chalk.yellow('\n      Models:'));
@@ -215,7 +205,6 @@ export class AnalyticsFormatter {
     stats: {
       totalSessions: number;
       totalDuration: number;
-      totalTokens: TokenBreakdown;
       totalTurns: number;
       totalFileOperations: number;
       totalLinesAdded: number;
@@ -232,7 +221,6 @@ export class AnalyticsFormatter {
     console.log(`${indent}${chalk.cyan('Sessions:')} ${stats.totalSessions}`);
     console.log(`${indent}${chalk.cyan('Duration:')} ${this.formatDuration(stats.totalDuration)}`);
     console.log(`${indent}${chalk.cyan('Turns:')} ${stats.totalTurns}`);
-    console.log(`${indent}${chalk.cyan('Tokens:')} ${stats.totalTokens.total.toLocaleString()}`);
     console.log(`${indent}${chalk.cyan('File Operations:')} ${stats.totalFileOperations}`);
     console.log(`${indent}${chalk.cyan('Lines:')} ${chalk.green(`+${stats.totalLinesAdded}`)} ${chalk.red(`-${stats.totalLinesRemoved}`)} ${chalk.yellow(`~${stats.totalLinesModified}`)} ${chalk.white(`(${stats.netLinesChanged >= 0 ? '+' : ''}${stats.netLinesChanged})`)}`);
 

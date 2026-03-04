@@ -131,14 +131,6 @@ export class GeminiMetricsProcessor implements SessionProcessor {
           timestamp: new Date(msg.timestamp).getTime(),
           gitBranch: undefined,  // Gemini doesn't track git branch per message
 
-          // Token usage (from msg.tokens)
-          tokens: {
-            input: msg.tokens?.input || 0,
-            output: msg.tokens?.output || 0,
-            cacheRead: msg.tokens?.cached || 0,  // Gemini's 'cached' maps to 'cacheRead'
-            cacheCreation: 0  // Not available in Gemini
-          },
-
           // Required field - initialize as empty, populate if tools exist
           tools: {}
         };

@@ -140,19 +140,13 @@ describe('SessionSyncer - API Sync Validation', () => {
   it('should send metrics to /v1/metrics endpoint', async () => {
     const sessionId = 'test-syncer-metrics';
 
-    // Create test deltas with tokens and file operations
+    // Create test deltas with file operations
     const deltas: Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>[] = [
       {
         recordId: 'delta-1',
         sessionId,
         agentSessionId: 'test-session-1',
         timestamp: Date.now(),
-        tokens: {
-          input: 1000,
-          output: 500,
-          cacheRead: 200,
-          cacheCreation: 100
-        },
         tools: {
           write: 1,
           read: 1
@@ -202,7 +196,7 @@ describe('SessionSyncer - API Sync Validation', () => {
     // Note: The metric might just have attributes at top level, not nested under name
     // Check if we have name + attributes or just attributes
     if (call.metric.name) {
-      expect(call.metric.name).toBe('codemie_cli_usage_total');
+      expect(call.metric.name).toBe('codemie_cli_tool_usage_total');
     }
 
     // Attributes might be directly on metric or under attributes property
@@ -210,10 +204,6 @@ describe('SessionSyncer - API Sync Validation', () => {
     expect(attrs).toBeDefined();
     expect(attrs.agent).toBe('test-agent');
     expect(attrs.branch).toBeDefined(); // Branch might be 'unknown' if not in delta
-    expect(attrs.total_input_tokens).toBe(1000);
-    expect(attrs.total_output_tokens).toBe(500);
-    expect(attrs.total_cache_read_input_tokens).toBe(200);
-    expect(attrs.total_cache_creation_tokens).toBe(100);
     expect(attrs.total_tool_calls).toBe(2);
     expect(attrs.successful_tool_calls).toBe(2);
     expect(attrs.files_created).toBe(1);
@@ -237,7 +227,6 @@ describe('SessionSyncer - API Sync Validation', () => {
         sessionId,
         agentSessionId: 'test-session-1',
         timestamp: Date.now(),
-        tokens: { input: 100, output: 50 },
         tools: {}
       }
     ];
@@ -287,7 +276,6 @@ describe('SessionSyncer - API Sync Validation', () => {
         sessionId,
         agentSessionId: 'test-session-1',
         timestamp: Date.now(),
-        tokens: { input: 500, output: 250 },
         tools: { write: 1 },
         toolStatus: { write: { success: 1, failure: 0 } },
         models: ['anthropic/claude-sonnet-4-6']
@@ -297,7 +285,6 @@ describe('SessionSyncer - API Sync Validation', () => {
         sessionId,
         agentSessionId: 'test-session-1',
         timestamp: Date.now() + 1000,
-        tokens: { input: 300, output: 150 },
         tools: { read: 1 },
         toolStatus: { read: { success: 1, failure: 0 } },
         models: ['anthropic/claude-sonnet-4-6']
@@ -326,8 +313,6 @@ describe('SessionSyncer - API Sync Validation', () => {
     expect(mockSendMetricCalls.length).toBe(1);
 
     const call = mockSendMetricCalls[0];
-    expect(call.metric.attributes.total_input_tokens).toBe(800); // 500 + 300
-    expect(call.metric.attributes.total_output_tokens).toBe(400); // 250 + 150
     expect(call.metric.attributes.total_tool_calls).toBe(2);
   });
 
@@ -343,7 +328,6 @@ describe('SessionSyncer - API Sync Validation', () => {
         sessionId,
         agentSessionId: 'test-session-1',
         timestamp: Date.now(),
-        tokens: { input: 100, output: 50 },
         tools: {}
       }
     ];
@@ -382,7 +366,6 @@ describe('SessionSyncer - API Sync Validation', () => {
         sessionId,
         agentSessionId: 'test-session-1',
         timestamp: Date.now(),
-        tokens: { input: 1000, output: 500 },
         tools: {}
       }
     ];

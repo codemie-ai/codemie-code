@@ -8,7 +8,6 @@ import type { AgentMetadata } from '../../core/types.js';
 import type {
   OpenCodeSession,
   OpenCodeMessage,
-  OpenCodeAssistantMessage,
 } from './opencode-message-types.js';
 import { getOpenCodeSessionsPath, getOpenCodeDbPath } from './opencode.paths.js';
 import {
@@ -138,8 +137,7 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
       const metrics = this.extractMetrics(messages);
 
       logger.debug(
-        `[opencode-adapter] Parsed session ${sessionId}: ${messages.length} messages, ` +
-        `${metrics?.tokens?.input || 0} input tokens, ${metrics?.tokens?.output || 0} output tokens`
+        `[opencode-adapter] Parsed session ${sessionId}: ${messages.length} messages`
       );
 
       // UPDATED (GPT-5.9): Convert numeric timestamps to ISO strings
@@ -211,8 +209,7 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
 
       logger.debug(
         `[opencode-adapter] Parsed SQLite session ${sessionId}: ${messages.length} messages, ` +
-        `${Object.keys(partsMap).length} messages with parts, ` +
-        `${metrics?.tokens?.input || 0} input tokens, ${metrics?.tokens?.output || 0} output tokens`
+        `${Object.keys(partsMap).length} messages with parts`
       );
 
       // Derive storagePath from dbPath: dbPath is .../opencode/opencode.db → storage is .../opencode/storage
@@ -332,35 +329,10 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
    * UPDATED (GPT-5.9): Use isAssistantMessage type guard for safe access
    * to assistant-specific fields (tokens, cost, etc.)
    */
-  private extractMetrics(messages: OpenCodeMessage[]): ParsedSession['metrics'] {
-    let inputTokens = 0;
-    let outputTokens = 0;
-    let cacheReadTokens = 0;
-    let cacheWriteTokens = 0;
-    const toolCounts: Record<string, number> = {};
-
-    for (const msg of messages) {
-      // UPDATED (GPT-5.9): Type-safe access to assistant message fields
-      if (msg.role === 'assistant') {
-        const assistantMsg = msg as OpenCodeAssistantMessage;
-        if (assistantMsg.tokens) {
-          inputTokens += assistantMsg.tokens.input || 0;
-          outputTokens += assistantMsg.tokens.output || 0;
-          cacheReadTokens += assistantMsg.tokens.cache?.read || 0;
-          cacheWriteTokens += assistantMsg.tokens.cache?.write || 0;
-        }
-      }
-      // Tool counting would require loading parts - defer to processor
-    }
-
+  private extractMetrics(_messages: OpenCodeMessage[]): ParsedSession['metrics'] {
+    // Tool counting requires loading parts - deferred to processor
     return {
-      tokens: {
-        input: inputTokens,
-        output: outputTokens,
-        cacheRead: cacheReadTokens,
-        cacheWrite: cacheWriteTokens
-      },
-      tools: toolCounts,
+      tools: {},
       toolStatus: {},
       fileOperations: []
     };

@@ -21,10 +21,9 @@ import type {
   OpenCodeAssistantMessage,
   OpenCodePart,
   OpenCodeToolPart,
-  OpenCodeStepFinishPart,
   OpenCodeMetadata,
 } from '../../opencode-message-types.js';
-import { isToolPart, isStepFinishPart } from '../../opencode-message-types.js';
+import { isToolPart } from '../../opencode-message-types.js';
 import { readJsonWithRetry, readJsonlTolerant } from '../../opencode.storage-utils.js';
 import { logger } from '../../../../../utils/logger.js';
 import { getCodemiePath } from '../../../../../utils/paths.js';
@@ -34,19 +33,6 @@ import { join } from 'path';
 
 // Cooldown to prevent concurrent processing of same session (ADR-18)
 const REPROCESS_COOLDOWN_MS = 60_000; // 60 seconds
-
-/**
- * Token source tracking for observability
- */
-interface TokenSource {
-  source: 'message' | 'step-finish' | 'none';
-  tokens?: {
-    input: number;
-    output: number;
-    reasoning?: number;
-    cache?: { read: number; write: number };
-  };
-}
 
 /**
  * OpenCode Metrics Processor
@@ -129,9 +115,6 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
       if (deltas.length === 0) {
         logger.debug(`[opencode-metrics] No new deltas to write for session ${session.sessionId}`);
 
-        // Still update session.metrics for backward compat
-        this.updateSessionMetrics(session, messages);
-
         return {
           success: true,
           message: `No new deltas (${stats.skippedDueToDedup} already processed)`,
@@ -153,7 +136,6 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
       for (const delta of deltas) {
         // Log delta details for debugging
         logger.debug(`[opencode-metrics] Delta ${delta.recordId}:`, {
-          tokens: delta.tokens,
           tools: Object.keys(delta.tools || {}),
           toolStatus: delta.toolStatus ? Object.keys(delta.toolStatus) : [],
           fileOps: (delta.fileOperations || []).length,
@@ -166,9 +148,6 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
 
       // Mark session as processed (ADR-18)
       await this.markSessionProcessed(session.sessionId);
-
-      // Update session.metrics for backward compat
-      this.updateSessionMetrics(session, messages);
 
       logger.info(`[opencode-metrics] Wrote ${deltas.length} deltas for session ${session.sessionId}`);
       logger.info(`[opencode-metrics] Metrics file: ${writer.getFilePath()}`);
@@ -246,22 +225,12 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
   ): Promise<{
     deltas: Array<Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>>;
     stats: {
-      messagesWithTokens: number;
-      messagesWithoutTokens: number;
-      tokensFromMessage: number;
-      tokensFromStepFinish: number;
       skippedDueToDedup: number;
-      tokenCoverageRate: number;
     };
   }> {
     const deltas: Array<Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>> = [];
     const stats = {
-      messagesWithTokens: 0,
-      messagesWithoutTokens: 0,
-      tokensFromMessage: 0,
-      tokensFromStepFinish: 0,
-      skippedDueToDedup: 0,
-      tokenCoverageRate: 0
+      skippedDueToDedup: 0
     };
 
     // Get existing record IDs for deduplication (ADR-5)
@@ -285,11 +254,8 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
     const newPrompts = allUserPrompts.filter(p => !alreadyAttachedPrompts.has(p.text));
     let promptsAttached = false;
 
-    let totalAssistantMessages = 0;
-
     for (const msg of messages) {
       if (msg.role !== 'assistant') continue;
-      totalAssistantMessages++;
 
       const assistantMsg = msg as OpenCodeAssistantMessage;
 
@@ -302,23 +268,15 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
       // Load parts for this message (use pre-loaded partsMap if available from SQLite)
       const parts = await this.loadPartsForMessage(storagePath, assistantMsg.id, openCodeSessionId, sessionMetadata.partsMap);
 
-      // Resolve token source (ADR-13)
-      const tokenSource = await this.resolveTokenSource(assistantMsg, parts);
-
-      if (tokenSource.source === 'none') {
-        stats.messagesWithoutTokens++;
-        continue;
-      }
-
-      if (tokenSource.source === 'message') {
-        stats.tokensFromMessage++;
-      } else {
-        stats.tokensFromStepFinish++;
-      }
-      stats.messagesWithTokens++;
-
       // Extract tool metrics
       const { tools, toolStatus, fileOperations } = this.extractToolMetrics(parts);
+
+      // Skip if no tools, file ops, and not a prompt carrier (nothing meaningful to record)
+      const hasData = Object.keys(tools).length > 0 || fileOperations.length > 0;
+      const isPromptCarrier = !promptsAttached && newPrompts.length > 0;
+      if (!hasData && !isPromptCarrier) {
+        continue;
+      }
 
       // Build delta (ADR-15: recordId is message.id)
       const delta: Omit<MetricDelta, 'syncStatus' | 'syncAttempts'> = {
@@ -326,12 +284,6 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
         sessionId: codemieSessionId,
         agentSessionId: openCodeSessionId,
         timestamp: this.resolveTimestamp(assistantMsg, sessionMetadata),
-        tokens: {
-          input: tokenSource.tokens!.input,
-          output: tokenSource.tokens!.output,
-          ...(tokenSource.tokens!.cache?.write && { cacheCreation: tokenSource.tokens!.cache.write }),
-          ...(tokenSource.tokens!.cache?.read && { cacheRead: tokenSource.tokens!.cache.read })
-        },
         tools,
         ...(Object.keys(toolStatus).length > 0 && { toolStatus }),
         ...(fileOperations.length > 0 && { fileOperations })
@@ -352,48 +304,7 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
       deltas.push(delta);
     }
 
-    // Calculate coverage rate
-    stats.tokenCoverageRate = totalAssistantMessages > 0
-      ? stats.messagesWithTokens / totalAssistantMessages
-      : 0;
-
     return { deltas, stats };
-  }
-
-  /**
-   * Resolve token source with fallback (ADR-13)
-   */
-  private async resolveTokenSource(
-    assistantMsg: OpenCodeAssistantMessage,
-    parts: OpenCodePart[]
-  ): Promise<TokenSource> {
-    // Primary: message.tokens (both input AND output must be valid numbers)
-    if (
-      typeof assistantMsg.tokens?.input === 'number' && !isNaN(assistantMsg.tokens.input) &&
-      typeof assistantMsg.tokens?.output === 'number' && !isNaN(assistantMsg.tokens.output)
-    ) {
-      return { source: 'message', tokens: assistantMsg.tokens };
-    }
-
-    // Fallback: step-finish parts (sorted for deterministic selection per ADR-13 G6)
-    const stepFinishParts = parts
-      .filter(isStepFinishPart)
-      .sort((a, b) => a.id.localeCompare(b.id)) as OpenCodeStepFinishPart[];
-
-    for (const part of stepFinishParts) {
-      const tokens = part.tokens;
-      if (
-        typeof tokens?.input === 'number' && !isNaN(tokens.input) &&
-        typeof tokens?.output === 'number' && !isNaN(tokens.output)
-      ) {
-        logger.debug(`[opencode-metrics] Using step-finish tokens for message ${assistantMsg.id}`);
-        return { source: 'step-finish', tokens };
-      }
-    }
-
-    // Neither available
-    logger.warn(`[opencode-metrics] No valid tokens found for message ${assistantMsg.id}`);
-    return { source: 'none' };
   }
 
   /**
@@ -769,42 +680,5 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
     return provider ? `${provider}/${model}` : model;
   }
 
-  /**
-   * Update session.metrics for backward compatibility
-   */
-  private updateSessionMetrics(session: ParsedSession, messages: OpenCodeMessage[]): void {
-    let totalInput = 0;
-    let totalOutput = 0;
-    let cacheRead = 0;
-    let cacheWrite = 0;
-
-    for (const msg of messages) {
-      if (msg.role === 'assistant') {
-        const assistantMsg = msg as OpenCodeAssistantMessage;
-        if (assistantMsg.tokens) {
-          totalInput += assistantMsg.tokens.input || 0;
-          totalOutput += assistantMsg.tokens.output || 0;
-          cacheRead += assistantMsg.tokens.cache?.read || 0;
-          cacheWrite += assistantMsg.tokens.cache?.write || 0;
-        }
-      }
-    }
-
-    // Ensure session.metrics exists before mutating
-    if (!session.metrics) {
-      (session as { metrics: ParsedSession['metrics'] }).metrics = {
-        tokens: { input: 0, output: 0 },
-        tools: {},
-        toolStatus: {},
-        fileOperations: []
-      };
-    }
-
-    session.metrics!.tokens = {
-      input: totalInput,
-      output: totalOutput,
-      cacheRead,
-      cacheWrite
-    };
-  }
 }
+

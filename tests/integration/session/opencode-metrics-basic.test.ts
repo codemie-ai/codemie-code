@@ -129,7 +129,7 @@ describe('OpenCode Metrics Processor - Basic Validation', () => {
     expect(session?.agentName).toBe('opencode');
   });
 
-  it('should generate metrics JSONL with token data', async () => {
+  it('should generate metrics JSONL with delta data', async () => {
     const result = await processSessionViaAdapter(SESSION_FILE, TEST_SESSION_ID);
 
     expect(result.success).toBe(true);
@@ -137,14 +137,6 @@ describe('OpenCode Metrics Processor - Basic Validation', () => {
 
     const deltas = readMetricsFile(TEST_SESSION_ID);
     expect(deltas.length).toBeGreaterThan(0);
-
-    // Verify token data in deltas
-    const deltaWithTokens = deltas.find(d => d.tokens && d.tokens.input > 0);
-    expect(deltaWithTokens).toBeDefined();
-    expect(deltaWithTokens?.tokens.input).toBe(1000);
-    expect(deltaWithTokens?.tokens.output).toBe(500);
-    expect(deltaWithTokens?.tokens.cacheRead).toBe(200);
-    expect(deltaWithTokens?.tokens.cacheCreation).toBe(100);
   });
 
   it('should extract write operations with correct file path', () => {
