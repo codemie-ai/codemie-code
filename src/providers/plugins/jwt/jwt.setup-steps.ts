@@ -112,7 +112,7 @@ export const JWTBearerSetupSteps: ProviderSetupSteps = {
     // Return default models - actual model list will be fetched at runtime with JWT token
     // User can override model selection via CLI or config
     return [
-      'claude-4-5-sonnet',
+      'claude-sonnet-4-6',
       'claude-opus-4-6',
       'claude-4-5-haiku',
       'gpt-4-turbo',

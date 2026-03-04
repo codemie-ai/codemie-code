@@ -20,7 +20,7 @@ export const BedrockTemplate = registerProvider<ProviderTemplate>({
   priority: 15,
   defaultProfileName: 'bedrock',
   recommendedModels: [
-    'claude-sonnet-4-5',      // Latest Claude Sonnet 4.5
+    'claude-sonnet-4-6',      // Latest Claude Sonnet 4.6
   ],
 
   capabilities: ['streaming', 'tools', 'function-calling', 'vision'],

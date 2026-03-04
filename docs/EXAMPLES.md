@@ -32,7 +32,7 @@ codemie config test
 codemie config init
 
 # Temporary model override
-codemie-claude --model claude-4-5-sonnet "Explain this algorithm"
+codemie-claude --model claude-sonnet-4-6 "Explain this algorithm"
 ```
 
 ## Multi-Provider Workflow Examples
@@ -45,7 +45,7 @@ codemie setup
 # → Name: "work"
 # → Provider: LiteLLM
 # → URL: https://litellm.company.com
-# → Model: claude-4-5-sonnet
+# → Model: claude-sonnet-4-6
 
 # Setup personal profile with OpenAI
 codemie setup
@@ -55,7 +55,7 @@ codemie setup
 
 # List profiles to verify
 codemie profile
-# ● work (litellm) - claude-4-5-sonnet
+# ● work (litellm) - claude-sonnet-4-6
 # ○ personal (openai) - gpt-4.1
 
 # Use work profile during work hours
@@ -132,7 +132,7 @@ codemie analytics show \
 codemie-claude \
   --base-url "${CODEMIE_BASE_URL}" \
   --api-key "${CODEMIE_API_KEY}" \
-  --model "${CODEMIE_MODEL:-claude-4-5-sonnet}" \
+  --model "${CODEMIE_MODEL:-claude-sonnet-4-6}" \
   --provider "litellm" \
   -p "$(cat /tmp/review-prompt.txt)" \
   --max-turns "${CODEMIE_MAX_TURNS:-50}" \

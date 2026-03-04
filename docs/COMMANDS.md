@@ -61,7 +61,7 @@ codemie-code --help              # Show help with all options
 
 # With configuration overrides
 codemie-code --profile work-litellm "analyze codebase"
-codemie-code --model claude-4-5-sonnet "review code"
+codemie-code --model claude-sonnet-4-6 "review code"
 codemie-code --provider ollama --model codellama "generate tests"
 ```
 
@@ -83,7 +83,7 @@ codemie-gemini health
 # It's designed to be invoked by IDEs via ACP protocol
 
 # With configuration overrides
-codemie-claude --model claude-4-5-sonnet --api-key sk-... "review code"
+codemie-claude --model claude-sonnet-4-6 --api-key sk-... "review code"
 codemie-gemini -m gemini-2.5-flash --api-key key "optimize performance"
 # With profile selection
 codemie-claude --profile personal-openai "review PR"

@@ -21,7 +21,7 @@ export const SSOTemplate = registerProvider<ProviderTemplate>({
   priority: 0, // Highest priority (shown first)
   defaultProfileName: 'codemie-sso',
   recommendedModels: [
-    'claude-4-5-sonnet',
+    'claude-sonnet-4-6',
   ],
   capabilities: ['streaming', 'tools', 'sso-auth', 'function-calling', 'embeddings'],
   supportsModelInstallation: false,

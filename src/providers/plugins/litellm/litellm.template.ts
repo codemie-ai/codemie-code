@@ -20,7 +20,7 @@ export const LiteLLMTemplate = registerProvider<ProviderTemplate>({
   priority: 14,
   defaultProfileName: 'litellm',
   recommendedModels: [
-    'claude-4-5-sonnet'
+    'claude-sonnet-4-6'
   ],
   capabilities: ['streaming', 'tools', 'function-calling'],
   supportsModelInstallation: false,

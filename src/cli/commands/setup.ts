@@ -444,7 +444,7 @@ async function promptForModelSelection(
         type: 'input',
         name: 'manualModel',
         message: 'No models found. Enter model name manually:',
-        default: 'claude-4-5-sonnet',
+        default: 'claude-sonnet-4-6',
         validate: (input: string) => input.trim() !== '' || 'Model name is required'
       }
     ]);

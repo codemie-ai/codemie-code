@@ -22,7 +22,7 @@ export const JWTTemplate = registerProvider<ProviderTemplate>({
   hidden: true, // Not shown in interactive setup - used only for script/auto-configuration
   defaultProfileName: 'jwt-bearer',
   recommendedModels: [
-    'claude-4-5-sonnet',
+    'claude-sonnet-4-6',
     'claude-opus-4-6',
     'gpt-4-turbo',
   ],
