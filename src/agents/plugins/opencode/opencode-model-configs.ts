@@ -191,6 +191,35 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
     }
   },
 
+  'gpt-5.3-codex-2026-02-24': {
+    id: 'gpt-5.3-codex-2026-02-24',
+    name: 'GPT-5.3 Codex',
+    displayName: 'GPT-5.3 Codex (Feb 2026)',
+    family: 'gpt-5-codex',
+    tool_call: true,
+    reasoning: true,
+    attachment: true,
+    temperature: false,
+    structured_output: true,
+    modalities: {
+      input: ['text', 'image'],
+      output: ['text']
+    },
+    knowledge: '2025-10-31',
+    release_date: '2026-02-24',
+    last_updated: '2026-02-24',
+    open_weights: false,
+    cost: {
+      input: 1.75,
+      output: 14,
+      cache_read: 0.175
+    },
+    limit: {
+      context: 400000,
+      output: 128000
+    }
+  },
+
   // ── Claude Models ──────────────────────────────────────────────────
   'claude-4-5-sonnet': {
     id: 'claude-4-5-sonnet',
@@ -446,14 +475,24 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
 };
 
 /**
+ * Strip CodeMie-specific fields (displayName, providerOptions) from a model config.
+ * Returns a config suitable for direct injection into OpenCode's provider config.
+ */
+export function toOpenCodeConfig(
+  config: OpenCodeModelConfig
+): Omit<OpenCodeModelConfig, 'displayName' | 'providerOptions'> {
+  const { displayName: _, providerOptions: _po, ...opencodeConfig } = config;
+  return opencodeConfig;
+}
+
+/**
  * Get all model configs stripped of CodeMie-specific fields (displayName, providerOptions).
  * Used to populate all models in the OpenCode config so users can switch models during a session.
  */
 export function getAllOpenCodeModelConfigs(): Record<string, Omit<OpenCodeModelConfig, 'displayName' | 'providerOptions'>> {
   const result: Record<string, Omit<OpenCodeModelConfig, 'displayName' | 'providerOptions'>> = {};
   for (const [id, config] of Object.entries(OPENCODE_MODEL_CONFIGS)) {
-    const { displayName: _displayName, providerOptions: _providerOptions, ...opencodeConfig } = config;
-    result[id] = opencodeConfig;
+    result[id] = toOpenCodeConfig(config);
   }
   return result;
 }

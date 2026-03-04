@@ -1,6 +1,6 @@
 import type { AgentMetadata, AgentConfig } from '../../core/types.js';
 import { logger } from '../../../utils/logger.js';
-import { getModelConfig, getAllOpenCodeModelConfigs } from './opencode-model-configs.js';
+import { getModelConfig, getAllOpenCodeModelConfigs, toOpenCodeConfig } from './opencode-model-configs.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
@@ -64,13 +64,19 @@ export const OpenCodePluginMetadata: AgentMetadata = {
       }
 
       // Model selection priority: env var > config > default
-      const selectedModel = env.CODEMIE_MODEL || config?.model || 'gpt-5-2-2025-12-11';
+      const selectedModel = env.CODEMIE_MODEL || config?.model || 'claude-sonnet-4-6';
       const modelConfig = getModelConfig(selectedModel);
 
       const { providerOptions } = modelConfig;
 
       // Build all models for codemie-proxy (stripped of CodeMie-specific fields)
       const allModels = getAllOpenCodeModelConfigs();
+
+      // Ensure the selected model is always in the provider's model list,
+      // even if it's not in the pre-configured registry (fallback-resolved models)
+      if (!allModels[selectedModel]) {
+        allModels[selectedModel] = toOpenCodeConfig(modelConfig);
+      }
 
       // Determine URLs based on provider type
       const isBedrock = provider === 'bedrock';

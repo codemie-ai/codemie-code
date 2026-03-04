@@ -89,7 +89,7 @@ vi.mock('../opencode/opencode.session.js', () => ({
   }),
 }));
 
-// Mock getModelConfig and getAllOpenCodeModelConfigs
+// Mock getModelConfig, getAllOpenCodeModelConfigs, and toOpenCodeConfig
 vi.mock('../opencode/opencode-model-configs.js', () => ({
   getModelConfig: vi.fn(() => ({
     id: 'gpt-5-2-2025-12-11',
@@ -99,6 +99,10 @@ vi.mock('../opencode/opencode-model-configs.js', () => ({
     reasoning: true,
   })),
   getAllOpenCodeModelConfigs: vi.fn(() => ({})),
+  toOpenCodeConfig: vi.fn((config: any) => {
+    const { displayName: _, providerOptions: _po, ...rest } = config;
+    return rest;
+  }),
 }));
 
 // Mock fs

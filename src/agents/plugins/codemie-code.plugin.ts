@@ -2,7 +2,7 @@ import type { AgentMetadata, AgentConfig } from '../core/types.js';
 import { join } from 'path';
 import { existsSync } from 'fs';
 import { logger } from '../../utils/logger.js';
-import { getModelConfig, getAllOpenCodeModelConfigs } from './opencode/opencode-model-configs.js';
+import { getModelConfig, getAllOpenCodeModelConfigs, toOpenCodeConfig } from './opencode/opencode-model-configs.js';
 import { BaseAgentAdapter } from '../core/BaseAgentAdapter.js';
 import type { SessionAdapter } from '../core/session/BaseSessionAdapter.js';
 import type { BaseExtensionInstaller } from '../core/extension/BaseExtensionInstaller.js';
@@ -285,10 +285,16 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
         return env;
       }
 
-      const selectedModel = env.CODEMIE_MODEL || config?.model || 'gpt-5-2-2025-12-11';
+      const selectedModel = env.CODEMIE_MODEL || config?.model || 'claude-sonnet-4-6';
       const modelConfig = getModelConfig(selectedModel);
       const { providerOptions } = modelConfig;
       const allModels = getAllOpenCodeModelConfigs();
+
+      // Ensure the selected model is always in the provider's model list,
+      // even if it's not in the pre-configured registry (fallback-resolved models)
+      if (!allModels[selectedModel]) {
+        allModels[selectedModel] = toOpenCodeConfig(modelConfig);
+      }
 
       const isBedrock = provider === 'bedrock';
       const isLiteLLM = provider === 'litellm';
