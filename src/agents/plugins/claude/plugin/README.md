@@ -103,7 +103,7 @@ codemie install claude --sounds
 - ✅ Creates sound directories in `~/.codemie/sounds/`
 - ✅ Configures hooks to play sounds on events
 
-**Note**: The `play-random-sound.sh` script and hook configuration will be **automatically installed** to `~/.codemie/claude-plugin/` when you **first run** `codemie-claude`. This happens seamlessly in the background - you don't need to do anything manually.
+**Note**: Hook configuration will be **automatically installed** to `~/.codemie/claude-plugin/` when you **first run** `codemie-claude`. This happens seamlessly in the background - you don't need to do anything manually.
 
 **Installation Structure:**
 
@@ -116,8 +116,6 @@ After installation and first run, you'll have:
 │   ├── PermissionRequest/
 │   └── Stop/
 └── claude-plugin/                    # Auto-created on first run
-    ├── sounds/
-    │   └── play-random-sound.sh      # Hook script
     └── hooks/
         └── hooks.json                # Hook configuration
 ```
@@ -152,17 +150,6 @@ If sounds are not playing:
 1. Verify audio player is installed: `which afplay` (macOS) or `which aplay` (Linux)
 2. Check that sound files exist in `~/.codemie/sounds/<EventName>/`
 3. Ensure sound files are in WAV or MP3 format
-4. Check that `~/.codemie/claude-plugin/sounds/play-random-sound.sh` exists (created on first run)
-5. If script is missing, remove `~/.codemie/claude-plugin/` directory and restart `codemie-claude`
-
-**⚠️ WINDOWS USERS:**
-
-After the first run of `codemie-claude`, you need to update the hooks configuration:
-
-1. Edit `~/.codemie/claude-plugin/hooks/hooks.json`
-2. Change all instances of `play-random-sound.sh` to `play-random-sound.ps1`
-
-This is required because Windows uses PowerShell scripts (.ps1) instead of bash scripts (.sh).
 
 To completely remove sounds:
 ```bash
