@@ -89,7 +89,8 @@ class MetricsApiClient {
       'X-CodeMie-CLI': `codemie-cli/${this.config.version}`,
       'X-CodeMie-Client': this.config.clientType,
       'X-CodeMie-Repository': metric.attributes.repository,
-      'X-CodeMie-Branch': metric.attributes.branch
+      'X-CodeMie-Branch': metric.attributes.branch,
+      ...(metric.attributes.project && { 'X-CodeMie-Project': metric.attributes.project })
     };
 
     if (this.config.apiKey) {
