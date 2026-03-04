@@ -9,10 +9,12 @@
  */
 
 import { writeFile, mkdir } from 'fs/promises';
-import { join } from 'path';
+import { join, basename, resolve } from 'path';
 import { existsSync } from 'fs';
 import { getCodemieHome } from '@/utils/paths.js';
 import { logger } from '@/utils/logger.js';
+import { PathSecurityError } from '@/utils/errors.js';
+import { createErrorContext } from '@/utils/errors.js';
 
 // ============================================================================
 // Types
@@ -56,6 +58,10 @@ const ATTACHMENT_PATH_PATTERN = /\[(Image|Document): source: ([^\]]+)\]/g;
 const ATTACHMENT_TYPES: AttachmentType[] = ['image', 'document'];
 const USER_MESSAGE_TYPE = 'user';
 
+// Blocks Windows/Unix reserved chars and control characters (0x00-0x1F)
+// eslint-disable-next-line no-control-regex
+const UNSAFE_FILENAME_CHARS = /[<>:"|?*\x00-\x1f]/g;
+
 // ============================================================================
 // Type Guards & Validators
 // ============================================================================
@@ -90,7 +96,7 @@ const hasAttachmentContent = (message: ClaudeMessage): boolean => {
 // ============================================================================
 
 const extractFileName = (filePath: string): string => {
-  return filePath.split('/').pop() || filePath;
+  return basename(filePath);
 };
 
 const extractFileNamesFromText = (text: string): string[] => {
@@ -174,15 +180,32 @@ const saveAttachmentItem = async (
     return null;
   }
 
-  const filePath = join(attachmentsDir, fileName);
+  const sanitizedFileName = basename(fileName);
+
+  if (sanitizedFileName.startsWith('.') || UNSAFE_FILENAME_CHARS.test(sanitizedFileName)) {
+    logger.warn(`[attachments] Blocked suspicious file name: ${fileName}`);
+    return null;
+  }
+
+  const filePath = join(attachmentsDir, sanitizedFileName);
+  const resolvedPath = resolve(filePath);
+  const resolvedDir = resolve(attachmentsDir);
+
+  if (!resolvedPath.startsWith(resolvedDir)) {
+    logger.error(`[attachments] Path traversal attempt blocked: ${fileName}`);
+    throw new PathSecurityError(
+      `File path escapes attachments directory: ${fileName}`,
+      createErrorContext(new Error(), { fileName, attachmentsDir })
+    );
+  }
 
   try {
     const buffer = Buffer.from(item.source.data, 'base64');
     await writeFile(filePath, buffer);
-    logger.debug(`[attachments] Saved: ${fileName} (${buffer.length} bytes)`);
+    logger.debug(`[attachments] Saved: ${sanitizedFileName} (${buffer.length} bytes)`);
     return filePath;
   } catch (error) {
-    logger.error(`[attachments] Failed to save ${fileName}:`, error);
+    logger.error(`[attachments] Failed to save ${sanitizedFileName}:`, error);
     return null;
   }
 };
