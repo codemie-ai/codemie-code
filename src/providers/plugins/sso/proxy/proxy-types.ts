@@ -27,6 +27,7 @@ export interface ProxyConfig {
   jwtToken?: string;             // JWT token (from CLI arg or env var)
   repository?: string;           // Repository name (parent/current format) for header injection
   branch?: string;               // Git branch at startup for header injection
+  project?: string;              // CodeMie project name for header injection
 }
 
 /**
