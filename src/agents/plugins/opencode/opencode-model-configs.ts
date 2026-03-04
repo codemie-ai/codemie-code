@@ -471,6 +471,36 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
       context: 1048576,
       output: 65536
     }
+  },
+
+  // ── Kimi Models ───────────────────────────────────────────────────
+  'kimi-k2.5': {
+    id: 'kimi-k2.5',
+    name: 'Kimi K2.5',
+    displayName: 'Kimi K2.5',
+    family: 'kimi',
+    tool_call: true,
+    reasoning: true,
+    attachment: false,
+    temperature: false,
+    structured_output: true,
+    modalities: {
+      input: ['text', 'image', 'video'],
+      output: ['text']
+    },
+    knowledge: '2025-01-01',
+    release_date: '2026-01-01',
+    last_updated: '2026-01-01',
+    open_weights: true,
+    cost: {
+      input: 0.6,
+      output: 3,
+      cache_read: 0.1
+    },
+    limit: {
+      context: 262144,
+      output: 262144
+    }
   }
 };
 
@@ -536,6 +566,14 @@ const MODEL_FAMILY_DEFAULTS: Record<string, Partial<OpenCodeModelConfig>> = {
     temperature: true,
     modalities: { input: ['text'], output: ['text'] },
     limit: { context: 262000, output: 65536 }
+  },
+  'kimi': {
+    family: 'kimi',
+    reasoning: true,
+    attachment: false,
+    temperature: false,
+    modalities: { input: ['text', 'image', 'video'], output: ['text'] },
+    limit: { context: 262144, output: 262144 }
   }
 };
 
