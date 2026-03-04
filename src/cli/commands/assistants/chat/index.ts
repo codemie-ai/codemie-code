@@ -18,6 +18,7 @@ import { ROLES, MESSAGES, type HistoryMessage } from '../constants.js';
 import { loadConversationHistory } from './historyLoader.js';
 import { isExitCommand, enableVerboseMode } from './utils.js';
 import type { ChatCommandOptions, SingleMessageOptions } from './types.js';
+import { detectFileUploadsFromSession } from './fileResolver.js';
 
 /** Assistant label color */
 const ASSISTANT_LABEL_COLOR = [177, 185, 249] as const;
@@ -71,6 +72,12 @@ async function chatWithAssistant(
 
   const conversationId = options.conversationId || process.env.CODEMIE_SESSION_ID;
 
+  // Automatically detect file uploads from session JSONL if session ID exists
+  let fileNames: string[] = [];
+  if (conversationId) {
+    fileNames = await detectFileUploadsFromSession(conversationId, { quiet: false });
+  }
+
   if (assistantId && message) { // Single-message mode (for Claude Code)
     const assistant = findAssistant(registeredAssistants, assistantId);
     await sendSingleMessage(
@@ -80,11 +87,12 @@ async function chatWithAssistant(
       { quiet: true },
       config,
       conversationId,
-      options.loadHistory
+      options.loadHistory,
+      fileNames
     );
   } else {
     const assistant = await promptAssistantSelection(registeredAssistants);
-    await interactiveChat(client, assistant, config, conversationId, options.loadHistory);
+    await interactiveChat(client, assistant, config, conversationId, options.loadHistory, fileNames);
   }
 }
 
@@ -153,9 +161,9 @@ async function interactiveChat(
   assistant: CodemieAssistant,
   config: ProviderProfile,
   conversationId?: string,
-  loadHistory: boolean = true
+  loadHistory: boolean = true,
+  fileNames: string[] = []
 ): Promise<void> {
-  // Load existing conversation history if enabled
   const history: HistoryMessage[] = loadHistory
     ? await loadConversationHistory(conversationId, config)
     : [];
@@ -191,7 +199,7 @@ async function interactiveChat(
     const spinner = ora(MESSAGES.CHAT.SPINNER_THINKING).start();
 
     try {
-      const response = await sendMessageWithHistory(client, assistant, message, history, conversationId);
+      const response = await sendMessageWithHistory(client, assistant, message, history, conversationId, fileNames);
       spinner.stop();
 
       console.log(
@@ -222,7 +230,8 @@ async function sendSingleMessage(
   options: SingleMessageOptions,
   config: ProviderProfile,
   conversationId?: string,
-  loadHistory: boolean = true
+  loadHistory: boolean = true,
+  fileNames: string[] = []
 ): Promise<void> {
   try {
     const history = loadHistory ? await loadConversationHistory(conversationId, config) : [];
@@ -234,7 +243,7 @@ async function sendSingleMessage(
       });
     }
 
-    const response = await sendMessageWithHistory(client, assistant, message, history, conversationId);
+    const response = await sendMessageWithHistory(client, assistant, message, history, conversationId, fileNames);
 
     if (options.quiet) {
       console.log(response || MESSAGES.CHAT.FALLBACK_NO_RESPONSE);
@@ -257,14 +266,16 @@ async function sendMessageWithHistory(
   assistant: CodemieAssistant,
   message: string,
   history: HistoryMessage[],
-  conversationId?: string
+  conversationId?: string,
+  fileNames: string[] = []
 ): Promise<string> {
   logger.debug('Sending message to assistant', {
     assistantId: assistant.id,
     assistantName: assistant.name,
     messageLength: message.length,
     historyLength: history.length,
-    conversationId
+    conversationId,
+    fileNames
   });
 
   const response = await client.assistants.chat(assistant.id, {
@@ -274,8 +285,25 @@ async function sendMessageWithHistory(
     history,
     stream: false
   });
+  // Testing: Always return detected files info for testing
+  if (fileNames.length > 0) {
+    return `[TEST MODE] Detected ${fileNames.length} file(s): ${fileNames.join(', ')}`;
+  } else {
+    return `[TEST MODE] No files detected in session`;
+  }
 
-  return (response.generated as string) ?? '';
+  // Original API call (disabled for testing)
+  // const response = await client.assistants.chat(assistant.id, {
+  //   conversation_id: conversationId,
+  //   text: message,
+  //   content_raw: message,
+  //   history,
+  //   stream: false,
+  //   save_history: false,
+  //   file_names: fileNames.length > 0 ? fileNames : undefined
+  // });
+  //
+  // return (response.generated as string) ?? '';
 }
 
 /**

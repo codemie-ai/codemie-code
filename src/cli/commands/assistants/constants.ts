@@ -41,6 +41,8 @@ export const MESSAGES = {
     COMMAND_DESCRIPTION: 'Send a message to a registered CodeMie assistant',
     ARGUMENT_ASSISTANT_ID: 'Assistant ID (if provided, runs in single-message mode)',
     ARGUMENT_MESSAGE: 'Message to send (required when assistant-id is provided)',
+    OPTION_FILE: 'Attach file from Claude session attachments directory (repeatable)',
+    ERROR_NO_SESSION_ID: 'Cannot attach files without a session ID. Provide --conversation-id or set CODEMIE_SESSION_ID.',
     HEADER: (name: string) => `\n💬 Chat with ${name}`,
     INSTRUCTIONS: 'Type your message and press Enter. Type "/exit" or "/quit" to end the conversation.\n',
     GOODBYE: '\nGoodbye!\n',

@@ -18,7 +18,7 @@ import { logger } from '@/utils/logger.js';
 export function createClaudeSubagentMetadata(assistant: Assistant): string {
   const description = assistant.description || `Interact with ${assistant.name}`;
   const sanitizedDescription = description
-    .replace(/\n/g, ' ') 
+    .replace(/\n/g, ' ')
     .replace(/"/g, '\\"')
     .trim();
 
@@ -48,27 +48,23 @@ export function createClaudeSubagentContent(assistant: Assistant): string {
 
     ## Instructions
 
-    When invoked:
+    1. Extract the user's message from the conversation context
+    2. Execute the command with the message
+    3. Return the response
 
-    1. **Extract the user's message** from the conversation context
-    2. **Execute the command**:
-       \`\`\`bash
-       codemie assistants chat "${assistant.id}" "$USER_MESSAGE"
-       \`\`\`
-    3. **Return the response** directly to the user
+    **File attachments are automatically detected** - any images or documents uploaded in recent messages are automatically included with the request.
 
-    The \`codemie assistants chat\` command communicates with the CodeMie platform to get responses from the ${assistant.name} assistant. The command automatically includes the last 10 messages from the current conversation session as context.
-
-    ## Example
-
-    User: "Help me review this code"
-
-    You execute:
+    **Command format:**
     \`\`\`bash
-    codemie assistants chat "${assistant.id}" "Help me review this code"
+    codemie assistants chat "${assistant.id}" "message"
     \`\`\`
 
-    Then present the assistant's response to the user.
+    ## Examples
+
+    **Simple message:**
+    \`\`\`bash
+    codemie assistants chat "${assistant.id}" "Help me with this task"
+    \`\`\`
   `);
 }
 

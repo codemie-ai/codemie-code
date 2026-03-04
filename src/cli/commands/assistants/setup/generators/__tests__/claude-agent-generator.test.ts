@@ -185,7 +185,7 @@ describe('Claude Agent Generator', () => {
       const content = createClaudeSubagentContent(mockAssistant);
 
       // Assert
-      expect(content).toContain('codemie assistants chat "asst-123" "$USER_MESSAGE"');
+      expect(content).toContain('codemie assistants chat "asst-123" "message"');
     });
 
     it('should include example section', () => {
@@ -193,9 +193,8 @@ describe('Claude Agent Generator', () => {
       const content = createClaudeSubagentContent(mockAssistant);
 
       // Assert
-      expect(content).toContain('## Example');
-      expect(content).toContain('User: "Help me review this code"');
-      expect(content).toContain('codemie assistants chat "asst-123" "Help me review this code"');
+      expect(content).toContain('## Examples');
+      expect(content).toContain('**Simple message:**');
     });
 
     it('should reference assistant name in instructions', () => {
@@ -203,7 +202,9 @@ describe('Claude Agent Generator', () => {
       const content = createClaudeSubagentContent(mockAssistant);
 
       // Assert
-      expect(content).toContain('communicates with the CodeMie platform to get responses from the Test Assistant assistant');
+      expect(content).toContain('## Instructions');
+      expect(content).toContain('Extract the user\'s message from the conversation context');
+      expect(content).toContain('**File attachments are automatically detected**');
     });
 
     it('should handle assistant with no description', () => {

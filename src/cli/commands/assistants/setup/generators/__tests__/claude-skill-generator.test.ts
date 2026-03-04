@@ -115,7 +115,7 @@ describe('Claude Skill Generator', () => {
 			// Assert
 			expect(fs.writeFile).toHaveBeenCalledWith(
 				expect.any(String),
-				expect.stringContaining('codemie assistants chat "asst-123" "$ARGUMENTS"'),
+				expect.stringContaining('codemie assistants chat "asst-123" "message"'),
 				'utf-8'
 			);
 		});
@@ -388,7 +388,7 @@ describe('Claude Skill Generator', () => {
 			// Assert
 			const callArgs = vi.mocked(fs.writeFile).mock.calls[0];
 			const content = callArgs[1] as string;
-			expect(content).toContain('Send the user\'s message to the Test Assistant assistant');
+			expect(content).toContain('Extract the user\'s message from the conversation context');
 		});
 	});
 
@@ -657,14 +657,14 @@ describe('Claude Skill Generator', () => {
 			expect(content).toContain('```');
 		});
 
-		it('should use $ARGUMENTS variable in command', async () => {
+		it('should use message parameter in command', async () => {
 			// Act
 			await registerClaudeSkill(mockAssistant);
 
 			// Assert
 			const callArgs = vi.mocked(fs.writeFile).mock.calls[0];
 			const content = callArgs[1] as string;
-			expect(content).toContain('$ARGUMENTS');
+			expect(content).toContain('"message"');
 		});
 
 		it('should have proper heading hierarchy', async () => {
@@ -680,7 +680,7 @@ describe('Claude Skill Generator', () => {
 			const h2Count = lines.filter(l => l.startsWith('## ')).length;
 
 			expect(h1Count).toBe(1); // Only one main title
-			expect(h2Count).toBe(1); // Instructions section
+			expect(h2Count).toBe(2); // Instructions and Examples sections
 		});
 	});
 

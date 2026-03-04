@@ -17,7 +17,6 @@ import type { ParsedSession } from '@/agents/core/session/BaseSessionAdapter.js'
 import { CONVERSATION_SYNC_STATUS } from '@/providers/plugins/sso/session/processors/conversations/types.js';
 import { logger } from '@/utils/logger.js';
 import { getSessionConversationPath } from '@/agents/core/session/session-config.js';
-import { saveAttachmentFiles } from './conversations-processor/attachments.js';
 
 export class ConversationsProcessor implements SessionProcessor {
   readonly name = 'conversations';
@@ -99,13 +98,6 @@ export class ConversationsProcessor implements SessionProcessor {
         await mkdir(outputDir, { recursive: true });
       }
   
-      try { // Save attachment files
-        const savedFiles = await saveAttachmentFiles(session.messages as any[], session.sessionId);
-        if (savedFiles.size > 0) logger.info(`[${this.name}] Saved ${savedFiles.size} attachment(s) to disk`);
-      } catch (error) {
-        logger.error(`[${this.name}] Failed to save attachments:`, error);
-      }
-
       // Process ONE turn (incremental mode)
       const result = await this.transformMessages(
         session.messages as any[],

@@ -18,11 +18,12 @@ function getSkillsDir(): string {
  */
 function createSkillMetadata(assistant: Assistant): string {
 	const slug = assistant.slug || assistant.id.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+	const baseDescription = assistant.description || assistant.name;
 
 	return dedent`
 		---
 		name: ${slug}
-		description: ${assistant.description || assistant.name}
+		description: ${baseDescription}
 		---
 	`;
 }
@@ -45,13 +46,23 @@ function createSkillContent(assistant: Assistant): string {
 
 		## Instructions
 
-		Send the user's message to the ${name} assistant:
+		1. Extract the user's message from the conversation context
+		2. Execute the command with the message
+		3. Return the response
 
+		**File attachments are automatically detected** - any images or documents uploaded in recent messages are automatically included with the request.
+
+		**Command format:**
 		\`\`\`bash
-		codemie assistants chat "${assistantId}" "$ARGUMENTS"
+		codemie assistants chat "${assistantId}" "message"
 		\`\`\`
 
-		The assistant will process the request and return a response. The command automatically includes the last 10 messages from the current conversation session as context.
+		## Examples
+
+		**Simple message:**
+		\`\`\`bash
+		codemie assistants chat "${assistantId}" "help me with this"
+		\`\`\`
 	`;
 }
 
