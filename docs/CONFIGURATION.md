@@ -59,9 +59,9 @@ codemie setup
 # List all profiles (shows active profile with ●)
 codemie profile
 # Output:
-# ● work-litellm (litellm) - claude-4-5-sonnet
+# ● work-litellm (litellm) - claude-sonnet-4-6
 # ○ personal-openai (openai) - gpt-4.1
-# ○ enterprise-sso (ai-run-sso) - claude-4-5-sonnet
+# ○ enterprise-sso (ai-run-sso) - claude-sonnet-4-6
 
 # Switch active profile
 codemie profile switch personal-openai
@@ -91,7 +91,7 @@ Profiles are stored in `~/.codemie/codemie-cli.config.json`:
       "provider": "litellm",
       "baseUrl": "https://litellm.company.com",
       "apiKey": "sk-***",
-      "model": "claude-4-5-sonnet",
+      "model": "claude-sonnet-4-6",
       "timeout": 300
     },
     "personal-openai": {
@@ -259,7 +259,7 @@ Location: `~/.codemie/codemie-cli.config.json`
 ```json
 {
   "provider": "litellm",
-  "model": "claude-sonnet-4-5",
+  "model": "claude-sonnet-4-6",
   "baseUrl": "https://litellm.codemie.example.com",
   "apiKey": "your-api-key",
   "timeout": 300

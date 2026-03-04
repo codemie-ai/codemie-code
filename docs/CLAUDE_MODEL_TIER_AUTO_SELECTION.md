@@ -42,7 +42,7 @@ If environment variables are not set, auto-select from available models:
 2. **Sonnet Tier**: User's selected model
    - Use the model the user selected during setup
    - This is the default/main model for the profile
-   - Example: `claude-4-5-sonnet`
+   - Example: `claude-sonnet-4-6`
 
 3. **Opus Tier**: Latest opus model
    - Filter models containing "opus" (case-insensitive)
@@ -112,13 +112,13 @@ Result: `claude-opus-4-6-20260205` is selected as the latest opus model.
 
 Available models:
 - `claude-haiku-4-5-20251001`
-- `claude-4-5-sonnet` (user selects this)
+- `claude-sonnet-4-6` (user selects this)
 - `claude-opus-4-5-20251101`
 - `claude-opus-4-6-20260205`
 
 Result:
 - Haiku: `claude-haiku-4-5-20251001` (only haiku available)
-- Sonnet: `claude-4-5-sonnet` (user's selection)
+- Sonnet: `claude-sonnet-4-6` (user's selection)
 - Opus: `claude-opus-4-6-20260205` (latest opus: 4.6 > 4.5)
 
 ### Scenario 2: Environment Variables Set

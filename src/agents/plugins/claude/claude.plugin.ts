@@ -86,7 +86,7 @@ export const ClaudePluginMetadata: AgentMetadata = {
 
   supportedProviders: ['litellm', 'ai-run-sso', 'bedrock', 'bearer-auth'],
   blockedModelPatterns: [],
-  recommendedModels: ['claude-4-5-sonnet', 'claude-4-opus', 'gpt-4.1'],
+  recommendedModels: ['claude-sonnet-4-6', 'claude-4-opus', 'gpt-4.1'],
 
   ssoConfig: {
     enabled: true,
