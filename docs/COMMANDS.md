@@ -18,6 +18,7 @@ codemie uninstall [agent]        # Uninstall an agent
 codemie update [agent]           # Update installed agents
 codemie self-update              # Update CodeMie CLI itself
 codemie doctor [options]         # Health check and diagnostics
+codemie plugin <command>         # Manage native plugins
 codemie version                  # Show version information
 ```
 
@@ -352,6 +353,35 @@ codemie workflow uninstall pr-review     # Remove workflow
 **Supported Platforms:**
 - GitHub Actions (auto-detected from `.git/config`)
 - GitLab CI (auto-detected from `.git/config`)
+
+## Plugin Commands
+
+Manage native plugins (Anthropic format) for extending CodeMie Code with reusable packages of skills, commands, agents, hooks, and MCP servers.
+
+```bash
+# List all discovered plugins
+codemie plugin list [--cwd <path>]
+
+# Install a plugin from a local path
+codemie plugin install <path>
+
+# Remove a plugin from the cache
+codemie plugin uninstall <name>
+
+# Enable a disabled plugin
+codemie plugin enable <name>
+
+# Disable a plugin without removing it
+codemie plugin disable <name>
+```
+
+**Plugin Sources (priority order):**
+- CLI flag `--plugin-dir` (highest)
+- Project `.codemie/plugins/`
+- User cache `~/.codemie/plugins/cache/`
+- Config `plugins.dirs` (lowest)
+
+For full documentation, see [Plugin System](./PLUGINS.md).
 
 ## Detailed Command Reference
 

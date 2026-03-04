@@ -180,7 +180,7 @@ async function handleSessionStart(event: SessionStartEvent, _rawInput: string, s
 async function syncSkillsToClaude(cwd: string): Promise<void> {
   try {
     const { SkillSync } = await import(
-      '../../agents/codemie-code/skills/sync/SkillSync.js'
+      '../../skills/sync/SkillSync.js'
     );
     const sync = new SkillSync();
     const result = await sync.syncToClaude({ cwd });
