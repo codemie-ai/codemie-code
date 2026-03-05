@@ -230,3 +230,4 @@ pip install msal requests
 ```
 
 If `msal` or `requests` are not installed, the script prints the install command and exits.
+IMPORTANT: you must work with current date (get it from sh/bash)
