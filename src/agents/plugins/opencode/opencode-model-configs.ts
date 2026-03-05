@@ -191,6 +191,35 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
     }
   },
 
+  'gpt-5.3-codex-2026-02-24': {
+    id: 'gpt-5.3-codex-2026-02-24',
+    name: 'GPT-5.3 Codex',
+    displayName: 'GPT-5.3 Codex (Feb 2026)',
+    family: 'gpt-5-codex',
+    tool_call: true,
+    reasoning: true,
+    attachment: true,
+    structured_output: true,
+    temperature: false,
+    modalities: {
+      input: ['text', 'image'],
+      output: ['text']
+    },
+    knowledge: '2025-12-31',
+    release_date: '2026-02-24',
+    last_updated: '2026-02-24',
+    open_weights: false,
+    cost: {
+      input: 1.75,
+      output: 14,
+      cache_read: 0.175
+    },
+    limit: {
+      context: 400000,
+      output: 128000
+    }
+  },
+
   // ── Claude Models ──────────────────────────────────────────────────
   'claude-4-5-sonnet': {
     id: 'claude-4-5-sonnet',
@@ -386,6 +415,34 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
     }
   },
 
+  // ── Kimi Models (via Bedrock) ──────────────────────────────────────
+  'moonshotai.kimi-k2.5': {
+    id: 'moonshotai.kimi-k2.5',
+    name: 'Kimi K2.5',
+    displayName: 'Kimi K2.5',
+    family: 'kimi',
+    tool_call: true,
+    reasoning: true,
+    attachment: true,
+    temperature: true,
+    modalities: {
+      input: ['text', 'image'],
+      output: ['text']
+    },
+    knowledge: '2025-09-01',
+    release_date: '2025-09-01',
+    last_updated: '2025-09-01',
+    open_weights: false,
+    cost: {
+      input: 0.60,
+      output: 3.03
+    },
+    limit: {
+      context: 262144,
+      output: 262144
+    }
+  },
+
   // ── Gemini Models ──────────────────────────────────────────────────
   'gemini-2.5-pro': {
     id: 'gemini-2.5-pro',
@@ -446,14 +503,24 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
 };
 
 /**
+ * Strip CodeMie-specific fields (displayName, providerOptions) from a model config.
+ * Returns a config suitable for direct injection into OpenCode's provider config.
+ */
+export function toOpenCodeConfig(
+  config: OpenCodeModelConfig
+): Omit<OpenCodeModelConfig, 'displayName' | 'providerOptions'> {
+  const { displayName: _, providerOptions: _po, ...opencodeConfig } = config;
+  return opencodeConfig;
+}
+
+/**
  * Get all model configs stripped of CodeMie-specific fields (displayName, providerOptions).
  * Used to populate all models in the OpenCode config so users can switch models during a session.
  */
 export function getAllOpenCodeModelConfigs(): Record<string, Omit<OpenCodeModelConfig, 'displayName' | 'providerOptions'>> {
   const result: Record<string, Omit<OpenCodeModelConfig, 'displayName' | 'providerOptions'>> = {};
   for (const [id, config] of Object.entries(OPENCODE_MODEL_CONFIGS)) {
-    const { displayName: _displayName, providerOptions: _providerOptions, ...opencodeConfig } = config;
-    result[id] = opencodeConfig;
+    result[id] = toOpenCodeConfig(config);
   }
   return result;
 }
@@ -497,6 +564,14 @@ const MODEL_FAMILY_DEFAULTS: Record<string, Partial<OpenCodeModelConfig>> = {
     temperature: true,
     modalities: { input: ['text'], output: ['text'] },
     limit: { context: 262000, output: 65536 }
+  },
+  'moonshotai': {
+    family: 'kimi',
+    reasoning: true,
+    attachment: true,
+    temperature: true,
+    modalities: { input: ['text', 'image'], output: ['text'] },
+    limit: { context: 262144, output: 262144 }
   }
 };
 
