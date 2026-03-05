@@ -6,30 +6,24 @@ Work with your Microsoft 365 account from Claude Code — emails, calendar, Shar
 
 ## Quick Start
 
-### 1. Install dependencies
+### 1. Log in (first time only)
 
 ```bash
-pip install msal requests
-```
-
-### 2. Log in (first time only)
-
-```bash
-python .codemie/claude-plugin/skills/msgraph/msgraph.py login
+node .codemie/claude-plugin/skills/msgraph/scripts/msgraph.js login
 ```
 
 You'll see a message like:
 ```
-==============================
+============================================================
 To sign in, use a web browser to open the page https://microsoft.com/devicelogin
 and enter the code ABCD-1234 to authenticate.
-==============================
+============================================================
 ```
 
 Open the URL in your browser, enter the code, and sign in with your Microsoft account.
 Your token is cached at `~/.ms_graph_token_cache.json` — you won't need to log in again until it expires (tokens refresh automatically).
 
-### 3. Ask Claude anything
+### 2. Ask Claude anything
 
 After logging in, just ask Claude naturally:
 
@@ -43,10 +37,17 @@ Claude will use this skill automatically.
 
 ---
 
+## No dependencies required
+
+The CLI uses **only built-in Node.js modules** — no `pip install`, no `npm install`.
+Node.js >= 18 is the only requirement, which CodeMie already provides.
+
+---
+
 ## CLI Reference
 
 ```
-python .codemie/claude-plugin/skills/msgraph/msgraph.py <command> [options]
+node .codemie/claude-plugin/skills/msgraph/scripts/msgraph.js <command> [options]
 ```
 
 ### Auth commands
@@ -78,54 +79,54 @@ Add `--json` to any command for machine-readable JSON output.
 
 ```bash
 # List 20 most recent emails
-python .codemie/claude-plugin/skills/msgraph/msgraph.py emails --limit 20
+node .codemie/claude-plugin/skills/msgraph/scripts/msgraph.js emails --limit 20
 
 # Read a specific email (paste the ID from list output)
-python .codemie/claude-plugin/skills/msgraph/msgraph.py emails --read AAMkAGI2...
+node .codemie/claude-plugin/skills/msgraph/scripts/msgraph.js emails --read AAMkAGI2...
 
 # Send an email
-python .codemie/claude-plugin/skills/msgraph/msgraph.py emails \
+node .codemie/claude-plugin/skills/msgraph/scripts/msgraph.js emails \
   --send colleague@company.com \
   --subject "Quick question" \
   --body "Are you free tomorrow at 2pm?"
 
 # Upcoming calendar events
-python .codemie/claude-plugin/skills/msgraph/msgraph.py calendar --limit 5
+node .codemie/claude-plugin/skills/msgraph/scripts/msgraph.js calendar --limit 5
 
 # Create a meeting
-python .codemie/claude-plugin/skills/msgraph/msgraph.py calendar \
+node .codemie/claude-plugin/skills/msgraph/scripts/msgraph.js calendar \
   --create "Design Review" \
   --start "2024-03-20T14:00" \
   --end "2024-03-20T15:00" \
   --timezone "Europe/Berlin"
 
 # List SharePoint sites you follow
-python .codemie/claude-plugin/skills/msgraph/msgraph.py sharepoint --sites
+node .codemie/claude-plugin/skills/msgraph/scripts/msgraph.js sharepoint --sites
 
 # Browse a site's documents
-python .codemie/claude-plugin/skills/msgraph/msgraph.py sharepoint \
+node .codemie/claude-plugin/skills/msgraph/scripts/msgraph.js sharepoint \
   --site "contoso.sharepoint.com,abc123,def456" \
   --path "Documents/2024"
 
 # Download a OneDrive file
-python .codemie/claude-plugin/skills/msgraph/msgraph.py onedrive --download ITEM_ID --output report.xlsx
+node .codemie/claude-plugin/skills/msgraph/scripts/msgraph.js onedrive --download ITEM_ID --output report.xlsx
 
 # Upload to OneDrive
-python .codemie/claude-plugin/skills/msgraph/msgraph.py onedrive \
+node .codemie/claude-plugin/skills/msgraph/scripts/msgraph.js onedrive \
   --upload ./presentation.pptx \
   --dest "Documents/presentations/deck.pptx"
 
 # Recent Teams chats
-python .codemie/claude-plugin/skills/msgraph/msgraph.py teams --chats
+node .codemie/claude-plugin/skills/msgraph/scripts/msgraph.js teams --chats
 
 # Read a chat conversation
-python .codemie/claude-plugin/skills/msgraph/msgraph.py teams --messages 19:abc123@thread.v2
+node .codemie/claude-plugin/skills/msgraph/scripts/msgraph.js teams --messages 19:abc123@thread.v2
 
 # Search your contacts
-python .codemie/claude-plugin/skills/msgraph/msgraph.py people --search "John"
+node .codemie/claude-plugin/skills/msgraph/scripts/msgraph.js people --search "John"
 
 # Your manager
-python .codemie/claude-plugin/skills/msgraph/msgraph.py org --manager
+node .codemie/claude-plugin/skills/msgraph/scripts/msgraph.js org --manager
 ```
 
 ---
@@ -133,9 +134,9 @@ python .codemie/claude-plugin/skills/msgraph/msgraph.py org --manager
 ## Token Cache
 
 Credentials are stored in `~/.ms_graph_token_cache.json`.
-- Access tokens refresh automatically (they last ~1 hour, but MSAL handles renewal)
-- Refresh tokens last longer (~90 days by default in Azure)
-- Run `logout` to remove the cache: `python msgraph.py logout`
+- Access tokens refresh automatically (they last ~1 hour, silently renewed via refresh token)
+- Refresh tokens last ~90 days by default in Azure
+- Run `logout` to remove the cache: `node msgraph.js logout`
 
 ---
 
@@ -154,6 +155,7 @@ The script requests these Microsoft Graph scopes on first login:
 | `Chat.Read` / `Chat.ReadWrite` | Teams chats |
 | `People.Read` | People rankings |
 | `Contacts.Read` | Outlook contacts |
+| `offline_access` | Silent token refresh |
 
 If your organization restricts some permissions, certain commands may return `Permission denied`.
 
@@ -161,14 +163,14 @@ If your organization restricts some permissions, certain commands may return `Pe
 
 ## Troubleshooting
 
-**`ModuleNotFoundError: No module named 'msal'`**
-```bash
-pip install msal requests
-```
-
 **`NOT_LOGGED_IN`**
 ```bash
-python .codemie/claude-plugin/skills/msgraph/msgraph.py login
+node .codemie/claude-plugin/skills/msgraph/scripts/msgraph.js login
+```
+
+**`TOKEN_EXPIRED`**
+```bash
+node .codemie/claude-plugin/skills/msgraph/scripts/msgraph.js login
 ```
 
 **`Permission denied (403)`**
@@ -176,8 +178,5 @@ Your organization may have restricted that Graph API permission. Contact your IT
 
 **`Authentication expired (401)`**
 ```bash
-python .codemie/claude-plugin/skills/msgraph/msgraph.py login
+node .codemie/claude-plugin/skills/msgraph/scripts/msgraph.js login
 ```
-
-**Token cache is at wrong path**
-Edit `CACHE_FILE` at the top of `msgraph.py` to change the location.
