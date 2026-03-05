@@ -21,7 +21,7 @@ or extra packages needed, only the Node.js that CodeMie already requires.
 **Check login status first** — always run this before any other command:
 
 ```bash
-node scripts/msgraph.js status
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js status
 ```
 
 **Output interpretation:**
@@ -32,7 +32,7 @@ node scripts/msgraph.js status
 ### Login Flow (first time or after expiry)
 
 ```bash
-node scripts/msgraph.js login
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js login
 ```
 
 This starts the **Device Code Flow** — it will print a URL and a short code like:
@@ -50,7 +50,7 @@ If status returns `NOT_LOGGED_IN` or `TOKEN_EXPIRED`, tell the user:
 
 > "You need to log in to Microsoft first. Run this command in your terminal:
 > ```
-> node scripts/msgraph.js login
+> node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js login
 > ```
 > A code and URL will appear — open the URL in your browser and enter the code."
 
@@ -62,59 +62,59 @@ If status returns `NOT_LOGGED_IN` or `TOKEN_EXPIRED`, tell the user:
 
 ```bash
 # Your profile
-node scripts/msgraph.js me
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js me
 
 # Your manager
-node scripts/msgraph.js org --manager
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js org --manager
 
 # Your direct reports
-node scripts/msgraph.js org --reports
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js org --reports
 ```
 
 ### Emails
 
 ```bash
 # List recent emails (default 10)
-node scripts/msgraph.js emails
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js emails
 
 # More emails
-node scripts/msgraph.js emails --limit 25
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js emails --limit 25
 
 # Unread only
-node scripts/msgraph.js emails --unread
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js emails --unread
 
 # Search emails
-node scripts/msgraph.js emails --search "invoice Q4"
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js emails --search "invoice Q4"
 
 # Read a specific email by ID (copy ID from list output)
-node scripts/msgraph.js emails --read MESSAGE_ID
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js emails --read MESSAGE_ID
 
 # Send an email
-node scripts/msgraph.js emails --send recipient@example.com --subject "Hello" --body "Message text"
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js emails --send recipient@example.com --subject "Hello" --body "Message text"
 
 # Browse specific folder (inbox, sentitems, drafts, deleteditems, junkemail)
-node scripts/msgraph.js emails --folder sentitems --limit 5
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js emails --folder sentitems --limit 5
 
 # Machine-readable JSON output
-node scripts/msgraph.js emails --json
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js emails --json
 ```
 
 ### Calendar
 
 ```bash
 # Upcoming events (default 10)
-node scripts/msgraph.js calendar
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js calendar
 
 # More events
-node scripts/msgraph.js calendar --limit 20
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js calendar --limit 20
 
 # Create an event
-node scripts/msgraph.js calendar --create "Team Standup" \
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js calendar --create "Team Standup" \
   --start "2024-03-20T09:00" --end "2024-03-20T09:30" \
   --location "Teams" --timezone "Europe/Berlin"
 
 # Check availability for a time window
-node scripts/msgraph.js calendar --availability \
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js calendar --availability \
   --start "2024-03-20T09:00:00" --end "2024-03-20T18:00:00"
 ```
 
@@ -122,64 +122,64 @@ node scripts/msgraph.js calendar --availability \
 
 ```bash
 # List followed/joined SharePoint sites
-node scripts/msgraph.js sharepoint --sites
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js sharepoint --sites
 
 # Browse files in a specific site (use ID from --sites output)
-node scripts/msgraph.js sharepoint --site SITE_ID
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js sharepoint --site SITE_ID
 
 # Browse a subfolder within a site
-node scripts/msgraph.js sharepoint --site SITE_ID --path "Documents/Reports"
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js sharepoint --site SITE_ID --path "Documents/Reports"
 
 # Download a file
-node scripts/msgraph.js sharepoint --download ITEM_ID --output report.xlsx
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js sharepoint --download ITEM_ID --output report.xlsx
 ```
 
 ### Teams
 
 ```bash
 # List all Teams chats
-node scripts/msgraph.js teams --chats
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js teams --chats
 
 # Read messages from a chat (use chat ID from --chats output)
-node scripts/msgraph.js teams --messages CHAT_ID
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js teams --messages CHAT_ID
 
 # Send a message to a chat
-node scripts/msgraph.js teams --send "Hello team!" --chat-id CHAT_ID
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js teams --send "Hello team!" --chat-id CHAT_ID
 
 # List teams you're a member of
-node scripts/msgraph.js teams --teams-list
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js teams --teams-list
 ```
 
 ### OneDrive
 
 ```bash
 # List root files
-node scripts/msgraph.js onedrive
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js onedrive
 
 # Browse a folder
-node scripts/msgraph.js onedrive --path "Documents"
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js onedrive --path "Documents"
 
 # Upload a file
-node scripts/msgraph.js onedrive --upload ./report.pdf --dest "Documents/report.pdf"
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js onedrive --upload ./report.pdf --dest "Documents/report.pdf"
 
 # Download a file by ID
-node scripts/msgraph.js onedrive --download ITEM_ID --output local_copy.pdf
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js onedrive --download ITEM_ID --output local_copy.pdf
 
 # File metadata
-node scripts/msgraph.js onedrive --info ITEM_ID
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js onedrive --info ITEM_ID
 ```
 
 ### People & Contacts
 
 ```bash
 # Frequent collaborators (AI-ranked by Microsoft)
-node scripts/msgraph.js people
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js people
 
 # Search people by name
-node scripts/msgraph.js people --search "Alice"
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js people --search "Alice"
 
 # Outlook address book contacts
-node scripts/msgraph.js people --contacts
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js people --contacts
 ```
 
 ---
