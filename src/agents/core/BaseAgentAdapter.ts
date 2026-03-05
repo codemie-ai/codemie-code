@@ -34,7 +34,7 @@ import inquirer from 'inquirer';
  */
 export abstract class BaseAgentAdapter implements AgentAdapter {
   protected proxy: CodeMieProxy | null = null;
-  protected metadata: AgentMetadata;
+  public readonly metadata: AgentMetadata;
 
   constructor(metadata: AgentMetadata) {
     // Clone metadata to allow runtime overrides (e.g., CLI flags)
