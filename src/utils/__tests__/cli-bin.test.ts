@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import os from 'os';
 
 vi.mock('../logger.js', () => ({
   logger: {
@@ -23,6 +24,17 @@ vi.mock('fs/promises', () => ({
   }
 }));
 
+vi.mock('os', async () => {
+  const actual = await vi.importActual<typeof import('os')>('os');
+  return {
+    ...actual,
+    default: {
+      ...actual,
+      platform: vi.fn(() => 'linux')
+    }
+  };
+});
+
 import { logger } from '../logger.js';
 import { exec } from '../exec.js';
 import fs from 'fs/promises';
@@ -45,6 +57,17 @@ function mockSymlink(isSymlink = true) {
 describe('restoreCliBinLink', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(os.platform).mockReturnValue('linux');
+  });
+
+  it('should skip on Windows platform', async () => {
+    vi.mocked(os.platform).mockReturnValue('win32');
+
+    await restoreCliBinLink();
+
+    expect(exec).not.toHaveBeenCalled();
+    expect(fs.lstat).not.toHaveBeenCalled();
+    expect(logger.debug).toHaveBeenCalledWith('Skipping CLI binary link restore on Windows');
   });
 
   it('should restore symlink when overwritten by agent package', async () => {
@@ -106,17 +129,21 @@ describe('restoreCliBinLink', () => {
     expect(fs.lstat).not.toHaveBeenCalled();
   });
 
-  it('should silently catch when lstat throws ENOENT', async () => {
+  it('should return silently when lstat throws ENOENT (binary does not exist)', async () => {
     mockNpmPrefix();
     const enoent = Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
     vi.mocked(fs.lstat).mockRejectedValue(enoent);
 
     await expect(restoreCliBinLink()).resolves.toBeUndefined();
 
-    expect(logger.debug).toHaveBeenCalledWith(
+    // Should NOT log the misleading "Could not verify/restore" message
+    expect(logger.debug).not.toHaveBeenCalledWith(
       'Could not verify/restore CLI binary link:',
       expect.any(Error)
     );
+    // Should not attempt any symlink operations
+    expect(fs.readlink).not.toHaveBeenCalled();
+    expect(fs.symlink).not.toHaveBeenCalled();
   });
 
   it('should clean up temp file when atomic rename fails', async () => {

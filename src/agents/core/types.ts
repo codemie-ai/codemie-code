@@ -575,6 +575,7 @@ export interface AgentAdapter {
   name: string;
   displayName: string;
   description: string;
+  readonly metadata: AgentMetadata;
   install(): Promise<void>;
   uninstall(): Promise<void>;
   isInstalled(): Promise<boolean>;

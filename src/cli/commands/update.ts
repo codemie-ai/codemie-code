@@ -1,28 +1,14 @@
 import { Command } from 'commander';
 import { AgentRegistry } from '../../agents/registry.js';
 import { AgentAdapter } from '../../agents/core/types.js';
-import { AgentNotFoundError, getErrorMessage } from '../../utils/errors.js';
+import { AgentNotFoundError, AgentInstallationError, getErrorMessage } from '../../utils/errors.js';
 import { logger } from '../../utils/logger.js';
 import * as npm from '../../utils/processes.js';
 import { restoreCliBinLink } from '../../utils/cli-bin.js';
+import { compareVersions, isValidSemanticVersion } from '../../utils/version-utils.js';
 import ora from 'ora';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
-
-/**
- * Get npm package name from agent (if available)
- * Built-in agents return null
- */
-function getNpmPackage(agent: AgentAdapter): string | null {
-  return (agent as { metadata?: { npmPackage?: string | null } }).metadata?.npmPackage ?? null;
-}
-
-/**
- * Check if the agent is the built-in agent (codemie-code)
- */
-function isBuiltInAgent(agent: AgentAdapter): boolean {
-  return (agent as { metadata?: { isBuiltIn?: boolean } }).metadata?.isBuiltIn === true;
-}
 
 /**
  * Result of checking a single agent for updates
@@ -48,39 +34,8 @@ interface UpdateCheckResult {
  *       "v1.2.3-beta" -> "1.2.3"
  */
 function extractVersion(versionString: string): string | null {
-  // Match semver pattern: major.minor.patch (optionally with v prefix and pre-release)
   const match = versionString.match(/v?(\d+\.\d+\.\d+)/);
   return match ? match[1] : null;
-}
-
-/**
- * Compare two semver versions
- * @returns -1 if v1 < v2, 0 if equal, 1 if v1 > v2
- */
-function compareVersions(v1: string, v2: string): number {
-  // Extract clean version numbers
-  const clean1 = extractVersion(v1);
-  const clean2 = extractVersion(v2);
-
-  // If we can't extract versions, treat as equal (no update needed)
-  if (!clean1 || !clean2) {
-    return 0;
-  }
-
-  const parts1 = clean1.split('.').map(Number);
-  const parts2 = clean2.split('.').map(Number);
-
-  const maxLen = Math.max(parts1.length, parts2.length);
-
-  for (let i = 0; i < maxLen; i++) {
-    const p1 = parts1[i] || 0;
-    const p2 = parts2[i] || 0;
-
-    if (p1 < p2) return -1;
-    if (p1 > p2) return 1;
-  }
-
-  return 0;
 }
 
 /**
@@ -100,39 +55,49 @@ async function checkAgentForUpdate(agent: AgentAdapter): Promise<UpdateCheckResu
   }
 
   // Special handling for Claude (uses native installer, not npm)
-  if (agent.name === 'claude' && 'checkVersionCompatibility' in agent) {
-    const compat = await (agent as any).checkVersionCompatibility();
+  if (agent.name === 'claude' && agent.checkVersionCompatibility) {
+    const compat = await agent.checkVersionCompatibility();
     const supportedVersion = compat.supportedVersion;
     const cleanCurrentVersion = extractVersion(currentVersion) || currentVersion;
 
+    // Validate versions before comparing
+    const cleanSupported = extractVersion(supportedVersion);
+    if (!cleanSupported) return null;
+
     // Check if update available (current < supported)
-    const hasUpdate = compareVersions(currentVersion, supportedVersion) < 0;
+    const hasUpdate = compareVersions(cleanCurrentVersion, cleanSupported) < 0;
 
     return {
       name: agent.name,
       displayName: agent.displayName,
       currentVersion: cleanCurrentVersion,
-      latestVersion: supportedVersion,
+      latestVersion: cleanSupported,
       hasUpdate,
       npmPackage: '@anthropic-ai/claude-code' // Keep for compatibility, won't be used
     };
   }
 
   // Special handling for built-in agent (codemie-code) — uses CLI package version
-  if (isBuiltInAgent(agent)) {
+  if (agent.metadata.isBuiltIn) {
     const { getCurrentCliVersion } = await import('../../utils/cli-updater.js');
-    const currentVersion = await getCurrentCliVersion();
-    if (!currentVersion) return null;
+    const cliVersion = await getCurrentCliVersion();
+    if (!cliVersion) return null;
 
     const latestVersion = await npm.getLatestVersion('@codemieai/code');
     if (!latestVersion) return null;
 
-    const hasUpdate = compareVersions(currentVersion, latestVersion) < 0;
+    // Validate both versions before comparing
+    if (!isValidSemanticVersion(cliVersion) || !isValidSemanticVersion(latestVersion)) {
+      logger.debug('Invalid version format for built-in agent', { cliVersion, latestVersion });
+      return null;
+    }
+
+    const hasUpdate = compareVersions(cliVersion, latestVersion) < 0;
 
     return {
       name: agent.name,
       displayName: agent.displayName,
-      currentVersion,
+      currentVersion: cliVersion,
       latestVersion,
       hasUpdate,
       npmPackage: '@codemieai/code',
@@ -140,7 +105,7 @@ async function checkAgentForUpdate(agent: AgentAdapter): Promise<UpdateCheckResu
   }
 
   // Standard npm-based agents
-  const npmPackage = getNpmPackage(agent);
+  const npmPackage = agent.metadata.npmPackage;
   if (!npmPackage) {
     return null;
   }
@@ -155,8 +120,14 @@ async function checkAgentForUpdate(agent: AgentAdapter): Promise<UpdateCheckResu
   const cleanCurrentVersion = extractVersion(currentVersion) || currentVersion;
   const cleanLatestVersion = extractVersion(latestVersion) || latestVersion;
 
+  // Validate versions before comparing (canonical compareVersions throws on invalid input)
+  if (!isValidSemanticVersion(cleanCurrentVersion) || !isValidSemanticVersion(cleanLatestVersion)) {
+    logger.debug('Invalid version format, skipping update check', { cleanCurrentVersion, cleanLatestVersion });
+    return null;
+  }
+
   // Compare versions
-  const hasUpdate = compareVersions(currentVersion, latestVersion) < 0;
+  const hasUpdate = compareVersions(cleanCurrentVersion, cleanLatestVersion) < 0;
 
   return {
     name: agent.name,
@@ -237,21 +208,24 @@ async function promptAgentSelection(outdated: UpdateCheckResult[]): Promise<stri
  */
 async function updateAgent(agent: AgentAdapter, latestVersion: string): Promise<void> {
   // Special handling for Claude (uses native installer)
-  if (agent.name === 'claude' && 'installVersion' in agent) {
-    await (agent as any).installVersion('supported');
+  if (agent.name === 'claude' && agent.installVersion) {
+    await agent.installVersion('supported');
     return;
   }
 
   // Special handling for built-in agent — update the CLI package
-  if (isBuiltInAgent(agent)) {
+  if (agent.metadata.isBuiltIn) {
     await npm.installGlobal('@codemieai/code', { version: latestVersion, force: true });
     return;
   }
 
   // Standard npm-based agents
-  const npmPackage = getNpmPackage(agent);
+  const npmPackage = agent.metadata.npmPackage;
   if (!npmPackage) {
-    throw new Error(`${agent.displayName} cannot be updated (no npm package)`);
+    throw new AgentInstallationError(
+      agent.name,
+      `${agent.displayName} cannot be updated (no npm package configured)`
+    );
   }
 
   // Use force: true to avoid ENOTEMPTY errors when updating global packages
@@ -285,9 +259,8 @@ export function createUpdateCommand(): Command {
             throw new AgentNotFoundError(name);
           }
 
-          // Check if it's a built-in agent
-          const npmPackage = getNpmPackage(agent);
-          if (!npmPackage) {
+          // Built-in agents are updated via 'codemie self-update' (CLI package update)
+          if (agent.metadata.isBuiltIn) {
             console.log(chalk.blueBright(`${agent.displayName} is a built-in agent and cannot be updated externally`));
             return;
           }

@@ -9,6 +9,7 @@
 
 import fs from 'fs/promises';
 import path from 'path';
+import os from 'os';
 import { exec } from './exec.js';
 import { logger } from './logger.js';
 
@@ -24,6 +25,13 @@ import { logger } from './logger.js';
  * using an atomic rename to avoid leaving a window where the binary is missing.
  */
 export async function restoreCliBinLink(): Promise<void> {
+  // Skip on Windows — npm global layout differs (no bin/ subdirectory)
+  // and fs.rename over an existing path throws EPERM
+  if (os.platform() === 'win32') {
+    logger.debug('Skipping CLI binary link restore on Windows');
+    return;
+  }
+
   try {
     const prefixResult = await exec('npm', ['prefix', '-g']);
     if (prefixResult.code !== 0) return;
@@ -31,8 +39,15 @@ export async function restoreCliBinLink(): Promise<void> {
     const npmPrefix = prefixResult.stdout.trim();
     const globalBinPath = path.join(npmPrefix, 'bin', 'codemie');
 
-    // Check if the path is a symlink; if not (e.g., regular file), skip
-    const stat = await fs.lstat(globalBinPath);
+    // Check if the path is a symlink; if not (e.g., regular file), skip.
+    // On fresh installs the binary may not exist yet — return silently.
+    let stat;
+    try {
+      stat = await fs.lstat(globalBinPath);
+    } catch (error: unknown) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; // Binary doesn't exist yet
+      throw error;
+    }
     if (!stat.isSymbolicLink()) return;
 
     // Read current symlink target
@@ -44,8 +59,9 @@ export async function restoreCliBinLink(): Promise<void> {
       return; // Still correct
     }
 
-    // Build the correct relative symlink target
-    const correctTarget = path.join(
+    // Build the correct relative symlink target.
+    // Use posix.join so the path always uses forward slashes (symlink targets are Unix paths).
+    const correctTarget = path.posix.join(
       '..', 'lib', 'node_modules', '@codemieai', 'code', 'bin', 'codemie.js'
     );
 
@@ -54,9 +70,9 @@ export async function restoreCliBinLink(): Promise<void> {
     try {
       await fs.symlink(correctTarget, tmpPath);
       await fs.rename(tmpPath, globalBinPath);
-    } catch {
+    } catch (cause) {
       await fs.unlink(tmpPath).catch(() => {});
-      throw new Error('Failed to atomically restore codemie symlink');
+      throw new Error('Failed to atomically restore codemie symlink', { cause });
     }
 
     logger.debug('Restored codemie CLI binary link after agent update');

@@ -194,7 +194,7 @@ export function createInstallCommand(): Command {
             console.log();
 
             // Check for custom post-install hints (for ACP adapters, IDE integrations, etc.)
-            const metadata = (agent as any).metadata;
+            const metadata = agent.metadata;
             if (metadata?.postInstallHints && metadata.postInstallHints.length > 0) {
               console.log(chalk.cyan('💡 Next steps:'));
               for (const line of metadata.postInstallHints) {
