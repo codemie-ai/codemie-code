@@ -4,6 +4,7 @@ import { AgentAdapter } from '../../agents/core/types.js';
 import { AgentNotFoundError, getErrorMessage } from '../../utils/errors.js';
 import { logger } from '../../utils/logger.js';
 import * as npm from '../../utils/processes.js';
+import { restoreCliBinLink } from '../../utils/cli-bin.js';
 import ora from 'ora';
 import chalk from 'chalk';
 import inquirer from 'inquirer';
@@ -14,6 +15,13 @@ import inquirer from 'inquirer';
  */
 function getNpmPackage(agent: AgentAdapter): string | null {
   return (agent as { metadata?: { npmPackage?: string | null } }).metadata?.npmPackage ?? null;
+}
+
+/**
+ * Check if the agent is the built-in agent (codemie-code)
+ */
+function isBuiltInAgent(agent: AgentAdapter): boolean {
+  return (agent as { metadata?: { isBuiltIn?: boolean } }).metadata?.isBuiltIn === true;
 }
 
 /**
@@ -107,6 +115,27 @@ async function checkAgentForUpdate(agent: AgentAdapter): Promise<UpdateCheckResu
       latestVersion: supportedVersion,
       hasUpdate,
       npmPackage: '@anthropic-ai/claude-code' // Keep for compatibility, won't be used
+    };
+  }
+
+  // Special handling for built-in agent (codemie-code) — uses CLI package version
+  if (isBuiltInAgent(agent)) {
+    const { getCurrentCliVersion } = await import('../../utils/cli-updater.js');
+    const currentVersion = await getCurrentCliVersion();
+    if (!currentVersion) return null;
+
+    const latestVersion = await npm.getLatestVersion('@codemieai/code');
+    if (!latestVersion) return null;
+
+    const hasUpdate = compareVersions(currentVersion, latestVersion) < 0;
+
+    return {
+      name: agent.name,
+      displayName: agent.displayName,
+      currentVersion,
+      latestVersion,
+      hasUpdate,
+      npmPackage: '@codemieai/code',
     };
   }
 
@@ -213,6 +242,12 @@ async function updateAgent(agent: AgentAdapter, latestVersion: string): Promise<
     return;
   }
 
+  // Special handling for built-in agent — update the CLI package
+  if (isBuiltInAgent(agent)) {
+    await npm.installGlobal('@codemieai/code', { version: latestVersion, force: true });
+    return;
+  }
+
   // Standard npm-based agents
   const npmPackage = getNpmPackage(agent);
   if (!npmPackage) {
@@ -298,6 +333,7 @@ export function createUpdateCommand(): Command {
 
           try {
             await updateAgent(agent, result.latestVersion);
+            await restoreCliBinLink();
             updateSpinner.succeed(`${agent.displayName} updated to ${result.latestVersion}`);
           } catch (error: unknown) {
             updateSpinner.fail(`Failed to update ${agent.displayName}`);
@@ -373,6 +409,11 @@ export function createUpdateCommand(): Command {
             updateSpinner.fail(`Failed to update ${result.displayName}: ${getErrorMessage(error)}`);
             failCount++;
           }
+        }
+
+        // Restore CLI bin link once after all updates (agent packages may overwrite it)
+        if (successCount > 0) {
+          await restoreCliBinLink();
         }
 
         console.log();

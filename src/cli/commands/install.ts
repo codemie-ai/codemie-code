@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { AgentRegistry } from '../../agents/registry.js';
 import { AgentInstallationError, getErrorMessage } from '../../utils/errors.js';
 import { logger } from '../../utils/logger.js';
+import { restoreCliBinLink } from '../../utils/cli-bin.js';
 import type { AgentInstallationOptions } from '../../agents/core/types.js';
 import ora from 'ora';
 import chalk from 'chalk';
@@ -163,6 +164,9 @@ export function createInstallCommand(): Command {
             } else {
               await agent.install();
             }
+
+            // Restore CLI bin link if overwritten by agent package
+            await restoreCliBinLink();
 
             // Get installed version for success message
             const installedVersion = await agent.getVersion();
