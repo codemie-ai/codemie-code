@@ -199,13 +199,13 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
     tool_call: true,
     reasoning: true,
     attachment: true,
-    temperature: false,
     structured_output: true,
+    temperature: false,
     modalities: {
       input: ['text', 'image'],
       output: ['text']
     },
-    knowledge: '2025-10-31',
+    knowledge: '2025-12-31',
     release_date: '2026-02-24',
     last_updated: '2026-02-24',
     open_weights: false,
@@ -415,6 +415,34 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
     }
   },
 
+  // ── Kimi Models (via Bedrock) ──────────────────────────────────────
+  'moonshotai.kimi-k2.5': {
+    id: 'moonshotai.kimi-k2.5',
+    name: 'Kimi K2.5',
+    displayName: 'Kimi K2.5',
+    family: 'kimi',
+    tool_call: true,
+    reasoning: true,
+    attachment: true,
+    temperature: true,
+    modalities: {
+      input: ['text', 'image'],
+      output: ['text']
+    },
+    knowledge: '2025-09-01',
+    release_date: '2025-09-01',
+    last_updated: '2025-09-01',
+    open_weights: false,
+    cost: {
+      input: 0.60,
+      output: 3.03
+    },
+    limit: {
+      context: 262144,
+      output: 262144
+    }
+  },
+
   // ── Gemini Models ──────────────────────────────────────────────────
   'gemini-2.5-pro': {
     id: 'gemini-2.5-pro',
@@ -470,36 +498,6 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
     limit: {
       context: 1048576,
       output: 65536
-    }
-  },
-
-  // ── Kimi Models ───────────────────────────────────────────────────
-  'kimi-k2.5': {
-    id: 'kimi-k2.5',
-    name: 'Kimi K2.5',
-    displayName: 'Kimi K2.5',
-    family: 'kimi',
-    tool_call: true,
-    reasoning: true,
-    attachment: false,
-    temperature: false,
-    structured_output: true,
-    modalities: {
-      input: ['text', 'image', 'video'],
-      output: ['text']
-    },
-    knowledge: '2025-01-01',
-    release_date: '2026-01-01',
-    last_updated: '2026-01-01',
-    open_weights: true,
-    cost: {
-      input: 0.6,
-      output: 3,
-      cache_read: 0.1
-    },
-    limit: {
-      context: 262144,
-      output: 262144
     }
   }
 };
@@ -567,12 +565,12 @@ const MODEL_FAMILY_DEFAULTS: Record<string, Partial<OpenCodeModelConfig>> = {
     modalities: { input: ['text'], output: ['text'] },
     limit: { context: 262000, output: 65536 }
   },
-  'kimi': {
+  'moonshotai': {
     family: 'kimi',
     reasoning: true,
-    attachment: false,
-    temperature: false,
-    modalities: { input: ['text', 'image', 'video'], output: ['text'] },
+    attachment: true,
+    temperature: true,
+    modalities: { input: ['text', 'image'], output: ['text'] },
     limit: { context: 262144, output: 262144 }
   }
 };
