@@ -2,12 +2,13 @@
 name: msgraph
 description: >
   Work with Microsoft 365 services via the Graph API — emails, calendar events, SharePoint sites,
-  Teams chats, OneDrive files, contacts, and org chart. Use this skill whenever the user asks
-  about their emails, inbox, unread messages, meetings, calendar, Teams messages or chats,
-  SharePoint documents, OneDrive files, colleagues, manager, direct reports, or any personal/
-  organizational Microsoft data. Invoke proactively any time the user mentions Outlook, Teams,
-  SharePoint, OneDrive, or wants to interact with their Microsoft 365 account. The skill uses
-  a local Node.js CLI (msgraph.js) that handles authentication, token caching, and all API calls.
+  Teams chats, OneDrive files, OneNote notebooks, contacts, and org chart. Use this skill whenever
+  the user asks about their emails, inbox, unread messages, meetings, calendar, Teams messages or
+  chats, SharePoint documents, OneDrive files, OneNote notes or notebooks, colleagues, manager,
+  direct reports, or any personal/organizational Microsoft data. Invoke proactively any time the
+  user mentions Outlook, Teams, SharePoint, OneDrive, OneNote, or wants to interact with their
+  Microsoft 365 account. The skill uses a local Node.js CLI (msgraph.js) that handles
+  authentication, token caching, and all API calls.
 ---
 
 # Microsoft Graph API Skill
@@ -169,6 +170,32 @@ node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js onedrive --download
 node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js onedrive --info ITEM_ID
 ```
 
+### OneNote
+
+```bash
+# List all notebooks
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js onenote --notebooks
+
+# List sections in a notebook (use ID from --notebooks output)
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js onenote --sections NOTEBOOK_ID
+
+# List pages in a section (use ID from --sections output)
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js onenote --pages SECTION_ID
+
+# Read a page's content (use ID from --pages output)
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js onenote --read PAGE_ID
+
+# Search pages across all notebooks
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js onenote --search "meeting notes"
+
+# Create a new page in a section
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js onenote --create "My Note" \
+  --section SECTION_ID --body "Note content here"
+
+# Machine-readable JSON output
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js onenote --notebooks --json
+```
+
 ### People & Contacts
 
 ```bash
@@ -204,6 +231,12 @@ node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js people --contacts
 ### "Check my Teams messages"
 1. Run `teams --chats` → list chats
 2. User picks a chat → run `teams --messages CHAT_ID`
+
+### "Show me my OneNote notes" / "Find a note about X"
+1. Run `onenote --notebooks` → list notebooks
+2. Run `onenote --sections NOTEBOOK_ID` → list sections
+3. Run `onenote --pages SECTION_ID` → list pages, or use `onenote --search "keyword"` to search directly
+4. Run `onenote --read PAGE_ID` → display page content
 
 ### "Who's my manager?" / "Who reports to me?"
 - Run `org --manager` or `org --reports`
