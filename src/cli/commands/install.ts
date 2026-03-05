@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { AgentRegistry } from '../../agents/registry.js';
 import { AgentInstallationError, getErrorMessage } from '../../utils/errors.js';
 import { logger } from '../../utils/logger.js';
+import { restoreCliBinLink } from '../../utils/cli-bin.js';
 import type { AgentInstallationOptions } from '../../agents/core/types.js';
 import ora from 'ora';
 import chalk from 'chalk';
@@ -164,6 +165,9 @@ export function createInstallCommand(): Command {
               await agent.install();
             }
 
+            // Restore CLI bin link if overwritten by agent package
+            await restoreCliBinLink();
+
             // Get installed version for success message
             const installedVersion = await agent.getVersion();
             const installedVersionStr = installedVersion ? ` v${installedVersion}` : '';
@@ -190,7 +194,7 @@ export function createInstallCommand(): Command {
             console.log();
 
             // Check for custom post-install hints (for ACP adapters, IDE integrations, etc.)
-            const metadata = (agent as any).metadata;
+            const metadata = agent.metadata;
             if (metadata?.postInstallHints && metadata.postInstallHints.length > 0) {
               console.log(chalk.cyan('💡 Next steps:'));
               for (const line of metadata.postInstallHints) {
