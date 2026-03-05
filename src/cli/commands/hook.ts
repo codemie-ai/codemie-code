@@ -933,26 +933,6 @@ async function renameSessionFiles(sessionId: string): Promise<void> {
     logger.warn(`[hook:SessionEnd] Failed to rename conversations file: ${errorMessage}`);
   }
 
-
-  // 5. Rename attachments directory
-  try {
-    const { getCodemieHome } = await import('../../utils/paths.js');
-    const { join } = await import('path');
-
-    const attachmentsDir = join(getCodemieHome(), 'sessions', `${sessionId}_attachments`);
-    const newAttachmentsDir = join(getCodemieHome(), 'sessions', `completed_${sessionId}_attachments`);
-
-    if (existsSync(attachmentsDir)) {
-      await rename(attachmentsDir, newAttachmentsDir);
-      renamedFiles.push('attachments');
-      logger.debug(`[hook:SessionEnd] Renamed attachments directory: ${sessionId}_attachments → completed_${sessionId}_attachments`);
-    }
-  } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    errors.push(`attachments: ${errorMessage}`);
-    logger.warn(`[hook:SessionEnd] Failed to rename attachments directory: ${errorMessage}`);
-  }
-
   // Log summary
   if (renamedFiles.length > 0) {
     logger.info(`[hook:SessionEnd] Renamed files: ${renamedFiles.join(', ')}`);

@@ -66,7 +66,6 @@ export interface ContentItem {
   content?: string;
   isError?: boolean;
 
-  // Image/document source data
   source?: {
     type: 'base64' | 'url';
     media_type?: string; // e.g., 'image/png', 'image/jpeg'

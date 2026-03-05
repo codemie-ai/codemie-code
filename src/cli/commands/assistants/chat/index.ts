@@ -18,7 +18,7 @@ import { ROLES, MESSAGES, type HistoryMessage } from '../constants.js';
 import { loadConversationHistory } from './historyLoader.js';
 import { isExitCommand, enableVerboseMode } from './utils.js';
 import type { ChatCommandOptions, SingleMessageOptions } from './types.js';
-import { detectFileUploadsFromSession, type DetectedFile } from './fileResolver.js';
+import { detectFileUploadsFromSession, type DetectedFile } from './uploadDetector.js';
 import type { FileToUpload } from 'codemie-sdk';
 
 /** Assistant label color */
@@ -73,7 +73,6 @@ async function chatWithAssistant(
 
   const conversationId = options.conversationId || process.env.CODEMIE_SESSION_ID;
 
-  // Automatically detect file uploads from session JSONL if session ID exists
   let detectedFiles: DetectedFile[] = [];
   if (conversationId) {
     detectedFiles = await detectFileUploadsFromSession(conversationId, { quiet: false });
