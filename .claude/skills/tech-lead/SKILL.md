@@ -215,36 +215,54 @@ Alternatively, proceed with implementation if user accepts the complexity. Ask u
 
 ### Phase 5: Implementation Start
 
-**Step 7: Branch Creation and Implementation**
+**Step 7: Branch Protection Check and Implementation**
 
 If user agrees to proceed with implementation:
 
-**CRITICAL: Always create feature branch before any code changes**
+**CRITICAL: NEVER implement on main/master. Always check branch first.**
 
-1. **Create Feature Branch:**
-   ```bash
-   # Check current branch
-   git branch --show-current
+**7a. Check Current Branch (MANDATORY FIRST STEP):**
+```bash
+git branch --show-current
+```
 
-   # Create and switch to feature branch
-   # For Jira tickets:
-   git checkout -b EPMCDME-XXXXX
+**7b. If on `main` or `master` branch — STOP immediately:**
 
-   # For non-Jira tasks (use determined branch name):
-   git checkout -b feature/branch-name
-   ```
+Do NOT write any code. Display this message:
 
-2. **Verify Branch:**
-   ```bash
-   # Confirm on new branch
-   git branch --show-current
-   ```
+```markdown
+⚠️ **Branch Protection**: You are currently on the `main` branch.
 
-3. **Begin Implementation:**
-   - Follow patterns identified in analysis phase
-   - Reference guides for standard approaches
-   - Implement changes layer by layer (API → Service → Repository)
-   - Apply security and performance patterns
+Implementation cannot start on `main`. I will create a feature branch first.
+
+Creating branch: `[determined-branch-name]`...
+```
+
+Then create the feature branch immediately before touching any files.
+
+**7c. If already on a feature branch — proceed normally.**
+
+**7d. Create Feature Branch (if on main/master or no branch exists):**
+```bash
+# Create and switch to feature branch
+# For Jira tickets:
+git checkout -b EPMCDME-XXXXX
+
+# For non-Jira tasks (use determined branch name):
+git checkout -b feature/branch-name
+```
+
+**7e. Verify Branch:**
+```bash
+# Confirm on correct branch (must NOT be main or master)
+git branch --show-current
+```
+
+**7f. Begin Implementation:**
+- Follow patterns identified in analysis phase
+- Reference guides for standard approaches
+- Implement changes layer by layer (API → Service → Repository)
+- Apply security and performance patterns
 
 **Branch Naming:**
 
@@ -283,6 +301,7 @@ For non-Jira tasks:
 ❌ Don't skip guide consultation
 ❌ Don't ask generic clarifying questions
 ❌ Don't start coding without branch creation
+❌ Don't write ANY code while on `main` or `master` branch
 ❌ Don't make architectural decisions for complex features without user input
 ❌ Don't fetch unnecessary Jira fields (when using Jira)
 ❌ Don't guess at complexity—analyze systematically
@@ -381,6 +400,18 @@ Unable to fetch Jira ticket [ID]. Please verify:
 - Ticket exists in Jira
 - You have access to view this ticket
 ```
+
+### Currently on Main Branch
+
+When `git branch --show-current` returns `main` or `master`:
+
+```markdown
+⚠️ **Branch Protection**: You are currently on the `main` branch.
+
+Implementation cannot start on `main`. Creating feature branch `[branch-name]` now...
+```
+
+Then immediately run `git checkout -b [branch-name]` before any file edits.
 
 ### Branch Already Exists
 ```markdown
