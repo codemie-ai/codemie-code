@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import path from 'path';
 import os from 'os';
 
 vi.mock('../logger.js', () => ({
@@ -87,7 +88,7 @@ describe('restoreCliBinLink', () => {
     );
     expect(fs.rename).toHaveBeenCalledWith(
       expect.stringContaining('.codemie-tmp-'),
-      '/usr/local/bin/codemie'
+      path.join('/usr/local', 'bin', 'codemie')
     );
     expect(logger.debug).toHaveBeenCalledWith(
       'Restored codemie CLI binary link after agent update'
