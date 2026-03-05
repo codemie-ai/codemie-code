@@ -3,14 +3,15 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { detectFileUploadsFromSession } from '../uploadDetector.js';
+import { detectFileUploadsFromSession, readFilesFromPaths } from '../uploadDetector.js';
 import type { ClaudeMessage } from '@/agents/plugins/claude/claude-message-types.js';
 import type { Session } from '@/agents/core/session/types.js';
 
 // Mock dependencies
 vi.mock('fs', () => ({
   existsSync: vi.fn(),
-  readFileSync: vi.fn()
+  readFileSync: vi.fn(),
+  statSync: vi.fn()
 }));
 
 vi.mock('@/utils/logger.js', () => ({
@@ -41,7 +42,7 @@ vi.mock('chalk', () => ({
 }));
 
 // Import mocked modules
-import { existsSync, readFileSync } from 'fs';
+import { existsSync, readFileSync, statSync } from 'fs';
 import { logger } from '@/utils/logger.js';
 import { readJSONL } from '@/agents/core/session/utils/jsonl-reader.js';
 import { getSessionPath } from '@/agents/core/session/session-config.js';
@@ -822,6 +823,347 @@ describe('fileResolver', () => {
         const result = await detectFileUploadsFromSession(mockSessionId);
 
         expect(result).toEqual([]);
+      });
+    });
+  });
+
+  describe('readFilesFromPaths', () => {
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    describe('successful file reading', () => {
+      it('should read a single file from disk', async () => {
+        const filePath = '/path/to/test.png';
+        const fileContent = Buffer.from('fake-png-content');
+
+        vi.mocked(existsSync).mockReturnValue(true);
+        vi.mocked(statSync).mockReturnValue({
+          isFile: () => true,
+          size: fileContent.length
+        } as any);
+        vi.mocked(readFileSync).mockReturnValue(fileContent);
+
+        const result = await readFilesFromPaths([filePath]);
+
+        expect(result).toHaveLength(1);
+        expect(result[0]).toMatchObject({
+          fileName: 'test.png',
+          data: fileContent.toString('base64'),
+          mediaType: 'image/png',
+          type: 'image',
+          sizeBytes: fileContent.length
+        });
+      });
+
+      it('should read multiple files from disk', async () => {
+        const filePaths = ['/path/to/image.jpg', '/path/to/document.pdf'];
+        const imageContent = Buffer.from('fake-jpg-content');
+        const pdfContent = Buffer.from('fake-pdf-content');
+
+        vi.mocked(existsSync).mockReturnValue(true);
+        vi.mocked(statSync)
+          .mockReturnValueOnce({
+            isFile: () => true,
+            size: imageContent.length
+          } as any)
+          .mockReturnValueOnce({
+            isFile: () => true,
+            size: pdfContent.length
+          } as any);
+        vi.mocked(readFileSync)
+          .mockReturnValueOnce(imageContent)
+          .mockReturnValueOnce(pdfContent);
+
+        const result = await readFilesFromPaths(filePaths);
+
+        expect(result).toHaveLength(2);
+        expect(result[0].fileName).toBe('image.jpg');
+        expect(result[0].mediaType).toBe('image/jpeg');
+        expect(result[0].type).toBe('image');
+        expect(result[1].fileName).toBe('document.pdf');
+        expect(result[1].mediaType).toBe('application/pdf');
+        expect(result[1].type).toBe('document');
+      });
+
+      it('should detect MIME types correctly', async () => {
+        const testCases = [
+          { path: '/test/file.py', expectedMime: 'application/octet-stream', expectedType: 'document' }, // mime-types doesn't have .py
+          { path: '/test/file.js', expectedMime: 'text/javascript', expectedType: 'document' },
+          { path: '/test/file.json', expectedMime: 'application/json', expectedType: 'document' },
+          { path: '/test/file.png', expectedMime: 'image/png', expectedType: 'image' },
+          { path: '/test/file.jpg', expectedMime: 'image/jpeg', expectedType: 'image' },
+          { path: '/test/file.pdf', expectedMime: 'application/pdf', expectedType: 'document' }
+        ];
+
+        for (const testCase of testCases) {
+          const fileContent = Buffer.from('test-content');
+
+          vi.mocked(existsSync).mockReturnValue(true);
+          vi.mocked(statSync).mockReturnValue({
+            isFile: () => true,
+            size: fileContent.length
+          } as any);
+          vi.mocked(readFileSync).mockReturnValue(fileContent);
+
+          const result = await readFilesFromPaths([testCase.path]);
+
+          expect(result).toHaveLength(1);
+          expect(result[0].mediaType).toBe(testCase.expectedMime);
+          expect(result[0].type).toBe(testCase.expectedType);
+        }
+      });
+
+      it('should use default MIME type for unknown extensions', async () => {
+        const filePath = '/path/to/file.unknown';
+        const fileContent = Buffer.from('unknown-content');
+
+        vi.mocked(existsSync).mockReturnValue(true);
+        vi.mocked(statSync).mockReturnValue({
+          isFile: () => true,
+          size: fileContent.length
+        } as any);
+        vi.mocked(readFileSync).mockReturnValue(fileContent);
+
+        const result = await readFilesFromPaths([filePath]);
+
+        expect(result).toHaveLength(1);
+        expect(result[0].mediaType).toBe('application/octet-stream');
+        expect(result[0].type).toBe('document');
+      });
+
+      it('should handle relative paths', async () => {
+        const filePath = './test.png';
+        const fileContent = Buffer.from('content');
+
+        vi.mocked(existsSync).mockReturnValue(true);
+        vi.mocked(statSync).mockReturnValue({
+          isFile: () => true,
+          size: fileContent.length
+        } as any);
+        vi.mocked(readFileSync).mockReturnValue(fileContent);
+
+        const result = await readFilesFromPaths([filePath]);
+
+        expect(result).toHaveLength(1);
+        expect(result[0].fileName).toBe('test.png');
+      });
+    });
+
+    describe('error handling', () => {
+      it('should return empty array for empty file paths', async () => {
+        const result = await readFilesFromPaths([]);
+
+        expect(result).toEqual([]);
+        expect(existsSync).not.toHaveBeenCalled();
+      });
+
+      it('should skip files that do not exist', async () => {
+        const filePath = '/path/to/nonexistent.png';
+
+        vi.mocked(existsSync).mockReturnValue(false);
+
+        const result = await readFilesFromPaths([filePath]);
+
+        expect(result).toEqual([]);
+        expect(logger.warn).toHaveBeenCalledWith(
+          '[uploadDetector] File does not exist',
+          expect.objectContaining({ filePath: expect.stringContaining('nonexistent.png') })
+        );
+      });
+
+      it('should skip directories', async () => {
+        const dirPath = '/path/to/directory';
+
+        vi.mocked(existsSync).mockReturnValue(true);
+        vi.mocked(statSync).mockReturnValue({
+          isFile: () => false
+        } as any);
+
+        const result = await readFilesFromPaths([dirPath]);
+
+        expect(result).toEqual([]);
+        expect(logger.warn).toHaveBeenCalledWith(
+          '[uploadDetector] Path is not a file',
+          expect.objectContaining({ filePath: expect.stringContaining('directory') })
+        );
+      });
+
+      it('should skip files exceeding size limit (100MB)', async () => {
+        const filePath = '/path/to/large-file.bin';
+        const largeSize = 101 * 1024 * 1024; // 101 MB
+
+        vi.mocked(existsSync).mockReturnValue(true);
+        vi.mocked(statSync).mockReturnValue({
+          isFile: () => true,
+          size: largeSize
+        } as any);
+
+        const result = await readFilesFromPaths([filePath]);
+
+        expect(result).toEqual([]);
+        expect(logger.warn).toHaveBeenCalledWith(
+          '[uploadDetector] File exceeds size limit',
+          expect.objectContaining({
+            limit: 100
+          })
+        );
+      });
+
+      it('should handle read errors gracefully', async () => {
+        const filePath = '/path/to/error.txt';
+
+        vi.mocked(existsSync).mockReturnValue(true);
+        vi.mocked(statSync).mockReturnValue({
+          isFile: () => true,
+          size: 100
+        } as any);
+        vi.mocked(readFileSync).mockImplementation(() => {
+          throw new Error('Permission denied');
+        });
+
+        const result = await readFilesFromPaths([filePath]);
+
+        expect(result).toEqual([]);
+        expect(logger.warn).toHaveBeenCalledWith(
+          '[uploadDetector] Failed to read file',
+          expect.objectContaining({ filePath })
+        );
+      });
+
+      it('should continue with valid files when some fail', async () => {
+        const filePaths = [
+          '/path/to/valid.png',
+          '/path/to/nonexistent.jpg',
+          '/path/to/another-valid.pdf'
+        ];
+        const validContent = Buffer.from('valid-content');
+
+        vi.mocked(existsSync)
+          .mockReturnValueOnce(true)  // valid.png exists
+          .mockReturnValueOnce(false) // nonexistent.jpg doesn't exist
+          .mockReturnValueOnce(true); // another-valid.pdf exists
+
+        vi.mocked(statSync)
+          .mockReturnValueOnce({
+            isFile: () => true,
+            size: validContent.length
+          } as any)
+          .mockReturnValueOnce({
+            isFile: () => true,
+            size: validContent.length
+          } as any);
+
+        vi.mocked(readFileSync)
+          .mockReturnValueOnce(validContent)
+          .mockReturnValueOnce(validContent);
+
+        const result = await readFilesFromPaths(filePaths);
+
+        expect(result).toHaveLength(2);
+        expect(result[0].fileName).toBe('valid.png');
+        expect(result[1].fileName).toBe('another-valid.pdf');
+      });
+    });
+
+    describe('quiet mode', () => {
+      it('should not log to console in quiet mode', async () => {
+        const filePath = '/path/to/test.png';
+        const fileContent = Buffer.from('content');
+
+        vi.mocked(existsSync).mockReturnValue(true);
+        vi.mocked(statSync).mockReturnValue({
+          isFile: () => true,
+          size: fileContent.length
+        } as any);
+        vi.mocked(readFileSync).mockReturnValue(fileContent);
+
+        consoleLogSpy.mockClear();
+        await readFilesFromPaths([filePath], { quiet: true });
+
+        expect(consoleLogSpy).not.toHaveBeenCalled();
+      });
+
+      it('should log to console when not in quiet mode', async () => {
+        consoleLogSpy.mockRestore();
+        const tempConsoleLogSpy = vi.spyOn(console, 'log');
+
+        const filePath = '/path/to/test.png';
+        const fileContent = Buffer.from('content');
+
+        vi.mocked(existsSync).mockReturnValue(true);
+        vi.mocked(statSync).mockReturnValue({
+          isFile: () => true,
+          size: fileContent.length
+        } as any);
+        vi.mocked(readFileSync).mockReturnValue(fileContent);
+
+        await readFilesFromPaths([filePath], { quiet: false });
+
+        expect(tempConsoleLogSpy).toHaveBeenCalled();
+        tempConsoleLogSpy.mockRestore();
+      });
+    });
+
+    describe('edge cases', () => {
+      it('should handle files with no extension', async () => {
+        const filePath = '/path/to/README';
+        const fileContent = Buffer.from('readme content');
+
+        vi.mocked(existsSync).mockReturnValue(true);
+        vi.mocked(statSync).mockReturnValue({
+          isFile: () => true,
+          size: fileContent.length
+        } as any);
+        vi.mocked(readFileSync).mockReturnValue(fileContent);
+
+        const result = await readFilesFromPaths([filePath]);
+
+        expect(result).toHaveLength(1);
+        expect(result[0].fileName).toBe('README');
+        expect(result[0].mediaType).toBe('application/octet-stream');
+      });
+
+      it('should handle files with multiple dots in name', async () => {
+        const filePath = '/path/to/my.backup.tar.gz';
+        const fileContent = Buffer.from('tar content');
+
+        vi.mocked(existsSync).mockReturnValue(true);
+        vi.mocked(statSync).mockReturnValue({
+          isFile: () => true,
+          size: fileContent.length
+        } as any);
+        vi.mocked(readFileSync).mockReturnValue(fileContent);
+
+        const result = await readFilesFromPaths([filePath]);
+
+        expect(result).toHaveLength(1);
+        expect(result[0].fileName).toBe('my.backup.tar.gz');
+        expect(result[0].mediaType).toBe('application/gzip');
+      });
+
+      it('should handle zero-byte files', async () => {
+        const filePath = '/path/to/empty.txt';
+        const fileContent = Buffer.from('');
+
+        vi.mocked(existsSync).mockReturnValue(true);
+        vi.mocked(statSync).mockReturnValue({
+          isFile: () => true,
+          size: 0
+        } as any);
+        vi.mocked(readFileSync).mockReturnValue(fileContent);
+
+        const result = await readFilesFromPaths([filePath]);
+
+        expect(result).toHaveLength(1);
+        expect(result[0].sizeBytes).toBe(0);
+        expect(result[0].data).toBe('');
       });
     });
   });

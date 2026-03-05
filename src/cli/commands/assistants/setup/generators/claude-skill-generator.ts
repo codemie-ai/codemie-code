@@ -52,6 +52,8 @@ function createSkillContent(assistant: Assistant): string {
 
 		**File attachments are automatically detected** - any images or documents uploaded in recent messages are automatically included with the request.
 
+		**ARGUMENTS**: "message"
+
 		**Command format:**
 		\`\`\`bash
 		codemie assistants chat "${assistantId}" "message"
@@ -62,6 +64,18 @@ function createSkillContent(assistant: Assistant): string {
 		**Simple message:**
 		\`\`\`bash
 		codemie assistants chat "${assistantId}" "help me with this"
+		\`\`\`
+
+		**ARGUMENTS**: "check this code" --file /Users/Andriy_Lukashchuk/Desktop/todo_edit.py
+
+		**With file attachment:**
+		\`\`\`bash
+		codemie assistants chat "${assistantId}" "analyze this code" --file "script.py"
+		\`\`\`
+
+		**With multiple files:**
+		\`\`\`bash
+		codemie assistants chat "${assistantId}" "review these files" --file "file1.png" --file "file2.py"
 		\`\`\`
 	`;
 }

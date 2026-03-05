@@ -11,6 +11,7 @@ export interface ChatCommandOptions {
   verbose?: boolean;
   conversationId?: string;
   loadHistory?: boolean;
+  file?: string[];
 }
 
 /**

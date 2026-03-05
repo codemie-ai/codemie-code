@@ -54,6 +54,8 @@ export function createClaudeSubagentContent(assistant: Assistant): string {
 
     **File attachments are automatically detected** - any images or documents uploaded in recent messages are automatically included with the request.
 
+    **ARGUMENTS**: "message"
+
     **Command format:**
     \`\`\`bash
     codemie assistants chat "${assistant.id}" "message"
@@ -64,6 +66,18 @@ export function createClaudeSubagentContent(assistant: Assistant): string {
     **Simple message:**
     \`\`\`bash
     codemie assistants chat "${assistant.id}" "Help me with this task"
+    \`\`\`
+
+    **ARGUMENTS**: "check this code" --file /Users/Andriy_Lukashchuk/Desktop/todo_edit.py
+
+    **With file attachment:**
+    \`\`\`bash
+    codemie assistants chat "${assistant.id}" "Analyze this code" --file "script.py"
+    \`\`\`
+
+    **With multiple files:**
+    \`\`\`bash
+    codemie assistants chat "${assistant.id}" "Review these files" --file "file1.png" --file "file2.py"
     \`\`\`
   `);
 }

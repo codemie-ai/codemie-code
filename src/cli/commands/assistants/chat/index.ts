@@ -18,7 +18,7 @@ import { ROLES, MESSAGES, type HistoryMessage } from '../constants.js';
 import { loadConversationHistory } from './historyLoader.js';
 import { isExitCommand, enableVerboseMode } from './utils.js';
 import type { ChatCommandOptions, SingleMessageOptions } from './types.js';
-import { detectFileUploadsFromSession, type DetectedFile } from './uploadDetector.js';
+import { detectFileUploadsFromSession, readFilesFromPaths, type DetectedFile } from './uploadDetector.js';
 import type { FileToUpload } from 'codemie-sdk';
 
 /** Assistant label color */
@@ -37,6 +37,9 @@ export function createAssistantsChatCommand(): Command {
     .option('-v, --verbose', MESSAGES.SHARED.OPTION_VERBOSE)
     .option('--conversation-id <id>', 'Conversation ID for maintaining context across calls')
     .option('--load-history', 'Load conversation history from previous sessions (default: true)', true)
+    .option('-f, --file <path>', 'File path to upload (can be used multiple times)', (value: string, previous: string[]) => {
+      return previous ? [...previous, value] : [value];
+    }, [] as string[])
     .action(async (
       assistantId: string | undefined,
       message: string | undefined,
@@ -73,9 +76,18 @@ async function chatWithAssistant(
 
   const conversationId = options.conversationId || process.env.CODEMIE_SESSION_ID;
 
+  // Collect files from session and CLI paths
   let detectedFiles: DetectedFile[] = [];
+
+  // 1. Detect files from session (if conversationId exists)
   if (conversationId) {
     detectedFiles = await detectFileUploadsFromSession(conversationId, { quiet: false });
+  }
+
+  // 2. Read files from --file paths (if provided)
+  if (options.file && options.file.length > 0) {
+    const filesFromPaths = await readFilesFromPaths(options.file, { quiet: false });
+    detectedFiles = [...detectedFiles, ...filesFromPaths];
   }
 
   if (assistantId && message) { // Single-message mode (for Claude Code)
@@ -347,7 +359,7 @@ async function sendMessageWithHistory(
     content_raw: message,
     history,
     stream: false,
-    save_history: true,
+    save_history: false,
     file_names: fileUrls.length > 0 ? fileUrls : undefined
   });
 
