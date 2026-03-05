@@ -9,7 +9,7 @@ Work with your Microsoft 365 account from Claude Code — emails, calendar, Shar
 ### 1. Log in (first time only)
 
 ```bash
-node .codemie/claude-plugin/skills/msgraph/scripts/msgraph.js login
+node ~/.codemie/claude-plugin/skills/msgraph/scripts/msgraph.js login
 ```
 
 You'll see a message like:

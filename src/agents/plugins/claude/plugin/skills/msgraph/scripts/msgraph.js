@@ -25,7 +25,9 @@ const SCOPES     = [
   'Calendars.Read', 'Calendars.ReadWrite',
   'Files.Read', 'Files.ReadWrite',
   'Sites.Read.All', 'Chat.Read', 'Chat.ReadWrite',
-  'People.Read', 'Contacts.Read', 'offline_access',
+  'People.Read', 'Contacts.Read',
+  'Notes.Read', 'Notes.ReadWrite',
+  'offline_access',
 ].join(' ');
 const CACHE_FILE = path.join(os.homedir(), '.ms_graph_token_cache.json');
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
@@ -676,11 +678,98 @@ async function cmdOrg(args) {
   for (const p of colleagues) console.log(`  ${p.displayName}`);
 }
 
+async function cmdOnenote(args) {
+  const token = await getValidToken();
+  const limit = parseInt(args.limit) || 20;
+
+  if (args.notebooks) {
+    const data      = await graphGet('/me/onenote/notebooks', token, { $top: limit, $select: 'id,displayName,lastModifiedDateTime' });
+    const notebooks = data.value || [];
+    if (args.json) { console.log(JSON.stringify(notebooks, null, 2)); return; }
+    if (!notebooks.length) { console.log('No notebooks found.'); return; }
+    console.log(`\n${'ID'.padEnd(36)}  ${'Modified'.padEnd(18)}  Name`);
+    console.log('─'.repeat(80));
+    for (const nb of notebooks)
+      console.log(`${(nb.id || '').padEnd(36)}  ${fmtDt(nb.lastModifiedDateTime).padEnd(18)}  ${nb.displayName || 'N/A'}`);
+    return;
+  }
+
+  if (args.sections) {
+    const data     = await graphGet(`/me/onenote/notebooks/${args.sections}/sections`, token, { $top: limit, $select: 'id,displayName,lastModifiedDateTime' });
+    const sections = data.value || [];
+    if (args.json) { console.log(JSON.stringify(sections, null, 2)); return; }
+    if (!sections.length) { console.log('No sections found.'); return; }
+    console.log(`\nSections in notebook ${args.sections.slice(0, 20)}...:`);
+    console.log(`${'ID'.padEnd(36)}  Name`);
+    console.log('─'.repeat(70));
+    for (const s of sections)
+      console.log(`${(s.id || '').padEnd(36)}  ${s.displayName || 'N/A'}`);
+    return;
+  }
+
+  if (args.pages) {
+    const data  = await graphGet(`/me/onenote/sections/${args.pages}/pages`, token, { $top: limit, $select: 'id,title,lastModifiedDateTime' });
+    const pages = data.value || [];
+    if (args.json) { console.log(JSON.stringify(pages, null, 2)); return; }
+    if (!pages.length) { console.log('No pages found.'); return; }
+    console.log(`\nPages in section ${args.pages.slice(0, 20)}...:`);
+    console.log(`${'ID'.padEnd(36)}  ${'Modified'.padEnd(18)}  Title`);
+    console.log('─'.repeat(80));
+    for (const p of pages)
+      console.log(`${(p.id || '').padEnd(36)}  ${fmtDt(p.lastModifiedDateTime).padEnd(18)}  ${p.title || '(untitled)'}`);
+    return;
+  }
+
+  if (args.read) {
+    const res  = await httpsRequest(`${GRAPH_BASE}/me/onenote/pages/${args.read}/content`, { headers: { Authorization: `Bearer ${token}` } });
+    if (args.json) { console.log(JSON.stringify({ id: args.read, content: res.body })); return; }
+    console.log(stripHtml(res.body));
+    return;
+  }
+
+  if (args.search) {
+    const data  = await graphGet('/me/onenote/pages', token, { $search: `"${args.search}"`, $top: limit, $select: 'id,title,createdDateTime' });
+    const pages = data.value || [];
+    if (args.json) { console.log(JSON.stringify(pages, null, 2)); return; }
+    if (!pages.length) { console.log(`No pages found matching "${args.search}".`); return; }
+    console.log(`\nSearch results for "${args.search}" (${pages.length}):`);
+    console.log(`${'ID'.padEnd(36)}  Title`);
+    console.log('─'.repeat(70));
+    for (const p of pages)
+      console.log(`${(p.id || '').padEnd(36)}  ${p.title || '(untitled)'}`);
+    return;
+  }
+
+  if (args.create) {
+    if (!args.section) {
+      console.error('Error: --create requires --section SECTION_ID');
+      process.exit(1);
+    }
+    const htmlBody = `<!DOCTYPE html><html><head><title>${args.create}</title></head><body>${args.body || ''}</body></html>`;
+    const res = await httpsRequest(`${GRAPH_BASE}/me/onenote/sections/${args.section}/pages`, {
+      method:  'POST',
+      headers: {
+        Authorization:    `Bearer ${token}`,
+        'Content-Type':   'text/html',
+        'Content-Length': Buffer.byteLength(htmlBody),
+      },
+    }, htmlBody);
+    const page = JSON.parse(res.body);
+    console.log(`Page created: ${page.title || args.create}`);
+    console.log(`ID: ${page.id}`);
+    return;
+  }
+
+  console.log('OneNote: --notebooks | --sections NOTEBOOK_ID | --pages SECTION_ID');
+  console.log('         --read PAGE_ID | --search QUERY');
+  console.log('         --create TITLE --section SECTION_ID [--body CONTENT]');
+}
+
 // ── CLI Parser ────────────────────────────────────────────────────────────────
 function parseArgs(argv) {
   // Flags that take no value (boolean)
   const BOOL = new Set(['json','unread','sites','chats','teamsList','contacts',
-                        'manager','reports','availability','help']);
+                        'manager','reports','availability','notebooks','help']);
   const args = { _: [] };
   let i = 0;
   while (i < argv.length) {
@@ -724,6 +813,9 @@ Data:
            [--info ID] [--json]
   people [--contacts] [--search NAME] [--limit N] [--json]
   org [--manager] [--reports] [--json]
+  onenote [--notebooks] [--sections NOTEBOOK_ID] [--pages SECTION_ID]
+          [--read PAGE_ID] [--search QUERY] [--limit N] [--json]
+          [--create TITLE --section SECTION_ID [--body CONTENT]]
 
 Add --json to any command for machine-readable output.
 
@@ -734,6 +826,12 @@ Examples:
   node ${name} calendar --create "Standup" --start 2024-03-15T09:00 --end 2024-03-15T09:30
   node ${name} teams --chats
   node ${name} onedrive --upload report.pdf --dest "Documents/report.pdf"
+  node ${name} onenote --notebooks
+  node ${name} onenote --sections NOTEBOOK_ID
+  node ${name} onenote --pages SECTION_ID
+  node ${name} onenote --read PAGE_ID
+  node ${name} onenote --search "meeting notes"
+  node ${name} onenote --create "My Note" --section SECTION_ID --body "Content here"
 `);
 }
 
@@ -757,6 +855,7 @@ async function main() {
     onedrive:   () => cmdOnedrive(args),
     people:     () => cmdPeople(args),
     org:        () => cmdOrg(args),
+    onenote:    () => cmdOnenote(args),
     help:       () => { printHelp(); process.exit(0); },
   };
 
