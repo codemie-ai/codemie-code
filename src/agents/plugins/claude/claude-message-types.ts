@@ -65,6 +65,14 @@ export interface ContentItem {
   tool_use_id?: string;
   content?: string;
   isError?: boolean;
+
+  // Image/document source data
+  source?: {
+    type: 'base64' | 'url';
+    media_type?: string; // e.g., 'image/png', 'image/jpeg'
+    data?: string; // base64 encoded binary data
+    url?: string;
+  };
 }
 
 /**

@@ -24,6 +24,16 @@ const ATTACHMENT_PATH_PATTERN = /\[(Image|Document): source: ([^\]]+)\]/g;
 const RECENT_MESSAGES_LIMIT = 2;
 
 /**
+ * Detected file with content
+ */
+export interface DetectedFile {
+  fileName: string; // From meta message (e.g., "screenshot.png")
+  data: string; // Base64 encoded content
+  mediaType: string; // MIME type (e.g., "image/png")
+  type: 'image' | 'document';
+}
+
+/**
  * Extract file name from file path
  */
 function extractFileName(filePath: string): string {
@@ -140,15 +150,18 @@ function extractAgentSessionFile(session: Session): string | null {
 }
 
 /**
- * Parse messages and extract file uploads with their actual file names
+ * Extract file content with base64 data from messages
  * Only checks the last X user messages (defined by RECENT_MESSAGES_LIMIT)
  *
  * @param messages - Array of Claude messages from JSONL
- * @returns Array of detected file names from recent user messages (empty if no attachments)
+ * @param attachmentMap - Map of message UUIDs to file names
+ * @returns Array of detected files with content (empty if no attachments)
  */
-function parseMessagesForUploads(messages: ClaudeMessage[]): string[] {
-  // Build map of message UUIDs to file names
-  const attachmentMap = buildAttachmentMap(messages);
+function extractFileContentFromMessages(
+  messages: ClaudeMessage[],
+  attachmentMap: Map<string, string[]>
+): DetectedFile[] {
+  const detectedFiles: DetectedFile[] = [];
 
   // Find the last X user messages
   const recentUserMessages: ClaudeMessage[] = [];
@@ -173,9 +186,7 @@ function parseMessagesForUploads(messages: ClaudeMessage[]): string[] {
     return [];
   }
 
-  // Extract files from all recent user messages
-  const fileUploads: string[] = [];
-
+  // Extract file content from each message
   for (const userMessage of recentUserMessages) {
     // Check if content is array (not just string)
     if (!userMessage.message?.content || !Array.isArray(userMessage.message.content)) {
@@ -186,17 +197,30 @@ function parseMessagesForUploads(messages: ClaudeMessage[]): string[] {
     const fileNames = attachmentMap.get(userMessage.uuid!) ?? [];
     let fileIndex = 0;
 
-    // Look for image/document content items
+    // Extract image/document items
     for (const item of userMessage.message.content) {
       if (item.type === 'image' || item.type === 'document') {
-        // Use actual file name from meta message, or generate fallback
-        const fileName = fileNames[fileIndex] ?? `attachment_${fileUploads.length}_${Date.now()}`;
-        fileUploads.push(fileName);
-        logger.debug('[fileResolver] Detected file upload in recent message', {
-          fileName,
-          type: item.type,
-          messageUuid: userMessage.uuid
-        });
+        const fileName = fileNames[fileIndex] ?? `attachment_${detectedFiles.length}_${Date.now()}`;
+
+        // Extract base64 data and media type from source
+        if (item.source?.type === 'base64' && item.source.data) {
+          detectedFiles.push({
+            fileName,
+            data: item.source.data,
+            mediaType: item.source.media_type || 'application/octet-stream',
+            type: item.type
+          });
+
+          logger.debug('[fileResolver] Extracted file content', {
+            fileName,
+            mediaType: item.source.media_type,
+            dataLength: item.source.data.length,
+            messageUuid: userMessage.uuid
+          });
+        } else {
+          logger.warn('[fileResolver] Missing base64 data for file', { fileName });
+        }
+
         fileIndex++;
       }
     }
@@ -204,26 +228,27 @@ function parseMessagesForUploads(messages: ClaudeMessage[]): string[] {
 
   logger.debug('[fileResolver] Checked recent messages', {
     messagesChecked: recentUserMessages.length,
-    filesFound: fileUploads.length
+    filesFound: detectedFiles.length
   });
 
-  return fileUploads;
+  return detectedFiles;
 }
 
 /**
  * Log detected files to console
  *
- * @param files - Array of detected file names
+ * @param files - Array of detected files with content
  * @param quiet - Whether to suppress console output
  */
-function logDetectedFiles(files: string[], quiet: boolean): void {
+function logDetectedFiles(files: DetectedFile[], quiet: boolean): void {
   if (files.length === 0 || quiet) {
     return;
   }
 
-  console.log(chalk.cyan(`\n📎 Detected ${files.length} file upload(s) in conversation:`));
+  console.log(chalk.cyan(`\n📎 Detected ${files.length} file(s) with content:`));
   files.forEach((file, index) => {
-    console.log(chalk.dim(`  ${index + 1}. ${file}`));
+    const sizeKB = Math.round(Buffer.from(file.data, 'base64').length / 1024);
+    console.log(chalk.dim(`  ${index + 1}. ${file.fileName} (${file.mediaType}, ${sizeKB} KB)`));
   });
   console.log('');
 }
@@ -231,21 +256,21 @@ function logDetectedFiles(files: string[], quiet: boolean): void {
 /**
  * Detect file uploads from session JSONL conversation
  *
- * Reads session metadata, extracts JSONL path, parses messages to detect image/document uploads.
- * More direct than reading attachments directory - reads from source of truth.
+ * Reads session metadata, extracts JSONL path, parses messages to detect image/document uploads
+ * with their base64 content and media types.
  *
  * @param sessionId - Claude session ID for locating session metadata
  * @param options - Options (quiet mode)
- * @returns Array of file names detected in conversation (or empty array if none/error)
+ * @returns Array of detected files with content (or empty array if none/error)
  *
  * @example
  * const files = await detectFileUploadsFromSession('session-123', { quiet: false });
- * // returns: ['Image attachment 1', 'Image attachment 2', ...]
+ * // returns: [{ fileName: 'screenshot.png', data: 'base64...', mediaType: 'image/png', type: 'image' }]
  */
 export async function detectFileUploadsFromSession(
   sessionId: string,
   options: { quiet?: boolean } = {}
-): Promise<string[]> {
+): Promise<DetectedFile[]> {
   const { quiet = false } = options;
 
   logger.debug('[fileResolver] Detecting file uploads from session', { sessionId });
@@ -270,17 +295,18 @@ export async function detectFileUploadsFromSession(
       agentSessionFile
     });
 
-    // Step 4: Parse messages for uploads
-    const fileUploads = parseMessagesForUploads(messages);
+    // Step 4: Build attachment map and extract file content
+    const attachmentMap = buildAttachmentMap(messages);
+    const detectedFiles = extractFileContentFromMessages(messages, attachmentMap);
 
     // Step 5: Log detected files
-    logDetectedFiles(fileUploads, quiet);
+    logDetectedFiles(detectedFiles, quiet);
 
     logger.debug('[fileResolver] Detection complete', {
-      filesDetected: fileUploads.length
+      filesDetected: detectedFiles.length
     });
 
-    return fileUploads;
+    return detectedFiles;
   } catch (error) {
     logger.debug('[fileResolver] Failed to detect file uploads', { error });
     return [];

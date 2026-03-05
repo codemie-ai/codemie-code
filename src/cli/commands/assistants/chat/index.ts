@@ -18,7 +18,8 @@ import { ROLES, MESSAGES, type HistoryMessage } from '../constants.js';
 import { loadConversationHistory } from './historyLoader.js';
 import { isExitCommand, enableVerboseMode } from './utils.js';
 import type { ChatCommandOptions, SingleMessageOptions } from './types.js';
-import { detectFileUploadsFromSession } from './fileResolver.js';
+import { detectFileUploadsFromSession, type DetectedFile } from './fileResolver.js';
+import type { FileToUpload } from 'codemie-sdk';
 
 /** Assistant label color */
 const ASSISTANT_LABEL_COLOR = [177, 185, 249] as const;
@@ -73,9 +74,9 @@ async function chatWithAssistant(
   const conversationId = options.conversationId || process.env.CODEMIE_SESSION_ID;
 
   // Automatically detect file uploads from session JSONL if session ID exists
-  let fileNames: string[] = [];
+  let detectedFiles: DetectedFile[] = [];
   if (conversationId) {
-    fileNames = await detectFileUploadsFromSession(conversationId, { quiet: false });
+    detectedFiles = await detectFileUploadsFromSession(conversationId, { quiet: false });
   }
 
   if (assistantId && message) { // Single-message mode (for Claude Code)
@@ -88,11 +89,11 @@ async function chatWithAssistant(
       config,
       conversationId,
       options.loadHistory,
-      fileNames
+      detectedFiles
     );
   } else {
     const assistant = await promptAssistantSelection(registeredAssistants);
-    await interactiveChat(client, assistant, config, conversationId, options.loadHistory, fileNames);
+    await interactiveChat(client, assistant, config, conversationId, options.loadHistory, detectedFiles);
   }
 }
 
@@ -162,7 +163,7 @@ async function interactiveChat(
   config: ProviderProfile,
   conversationId?: string,
   loadHistory: boolean = true,
-  fileNames: string[] = []
+  detectedFiles: DetectedFile[] = []
 ): Promise<void> {
   const history: HistoryMessage[] = loadHistory
     ? await loadConversationHistory(conversationId, config)
@@ -199,7 +200,7 @@ async function interactiveChat(
     const spinner = ora(MESSAGES.CHAT.SPINNER_THINKING).start();
 
     try {
-      const response = await sendMessageWithHistory(client, assistant, message, history, conversationId, fileNames);
+      const response = await sendMessageWithHistory(client, assistant, message, history, conversationId, detectedFiles);
       spinner.stop();
 
       console.log(
@@ -231,7 +232,7 @@ async function sendSingleMessage(
   config: ProviderProfile,
   conversationId?: string,
   loadHistory: boolean = true,
-  fileNames: string[] = []
+  detectedFiles: DetectedFile[] = []
 ): Promise<void> {
   try {
     const history = loadHistory ? await loadConversationHistory(conversationId, config) : [];
@@ -243,7 +244,7 @@ async function sendSingleMessage(
       });
     }
 
-    const response = await sendMessageWithHistory(client, assistant, message, history, conversationId, fileNames);
+    const response = await sendMessageWithHistory(client, assistant, message, history, conversationId, detectedFiles);
 
     if (options.quiet) {
       console.log(response || MESSAGES.CHAT.FALLBACK_NO_RESPONSE);
@@ -259,6 +260,64 @@ async function sendSingleMessage(
 }
 
 /**
+ * Upload files to CodeMie platform via SDK
+ */
+async function uploadFilesToCodeMie(
+  client: CodeMieClient,
+  files: DetectedFile[]
+): Promise<string[]> {
+  if (files.length === 0) {
+    return [];
+  }
+
+  logger.debug('[chat] Uploading files to CodeMie', {
+    fileCount: files.length,
+    fileNames: files.map(f => f.fileName)
+  });
+
+  try {
+    // Convert DetectedFile[] to SDK FileToUpload[] format
+    const filesToUpload: FileToUpload[] = files.map(f => ({
+      name: f.fileName,
+      content: Buffer.from(f.data, 'base64'),
+      mimeType: f.mediaType
+    }));
+
+    // Upload via SDK bulk endpoint
+    const response = await client.files.bulkUpload(filesToUpload);
+
+    // Check for failed files
+    if (response.failed_files && Object.keys(response.failed_files).length > 0) {
+      logger.warn('[chat] Some files failed to upload', {
+        failedFiles: response.failed_files
+      });
+
+      // Log warnings to console
+      Object.entries(response.failed_files).forEach(([name, error]) => {
+        console.log(chalk.yellow(`⚠ Failed to upload ${name}: ${error}`));
+      });
+    }
+
+    // Extract file URLs from successful uploads
+    const fileUrls = response.files.map(f => f.file_url);
+
+    logger.info('[chat] Files uploaded successfully', {
+      successCount: fileUrls.length,
+      failedCount: Object.keys(response.failed_files || {}).length
+    });
+
+    console.log(chalk.green(`✓ Uploaded ${fileUrls.length} file(s) to CodeMie`));
+
+    return fileUrls;
+
+  } catch (error) {
+    logger.error('[chat] Failed to upload files', { error });
+    console.log(chalk.yellow('⚠ File upload failed, continuing without attachments'));
+    return [];
+  }
+}
+
+/**
  * Send message to assistant with conversation history
  */
 async function sendMessageWithHistory(
@@ -267,7 +326,7 @@ async function sendMessageWithHistory(
   message: string,
   history: HistoryMessage[],
   conversationId?: string,
-  fileNames: string[] = []
+  detectedFiles: DetectedFile[] = []
 ): Promise<string> {
   logger.debug('Sending message to assistant', {
     assistantId: assistant.id,
@@ -275,35 +334,25 @@ async function sendMessageWithHistory(
     messageLength: message.length,
     historyLength: history.length,
     conversationId,
-    fileNames
+    fileCount: detectedFiles.length
   });
+
+  let fileUrls: string[] = [];
+  if (detectedFiles.length > 0) {
+    fileUrls = await uploadFilesToCodeMie(client, detectedFiles);
+  }
 
   const response = await client.assistants.chat(assistant.id, {
     conversation_id: conversationId,
     text: message,
     content_raw: message,
     history,
-    stream: false
+    stream: false,
+    save_history: true,
+    file_names: fileUrls.length > 0 ? fileUrls : undefined
   });
-  // Testing: Always return detected files info for testing
-  if (fileNames.length > 0) {
-    return `[TEST MODE] Detected ${fileNames.length} file(s): ${fileNames.join(', ')}`;
-  } else {
-    return `[TEST MODE] No files detected in session`;
-  }
 
-  // Original API call (disabled for testing)
-  // const response = await client.assistants.chat(assistant.id, {
-  //   conversation_id: conversationId,
-  //   text: message,
-  //   content_raw: message,
-  //   history,
-  //   stream: false,
-  //   save_history: false,
-  //   file_names: fileNames.length > 0 ? fileNames : undefined
-  // });
-  //
-  // return (response.generated as string) ?? '';
+  return (response.generated as string) ?? '';
 }
 
 /**
