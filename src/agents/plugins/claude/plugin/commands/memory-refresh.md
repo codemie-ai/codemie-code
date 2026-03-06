@@ -215,7 +215,7 @@ Read .codemie/guides/[category]/[guide].md
 
 **Load template** (for structural reference):
 ```bash
-Read .codemie/claude-templates/templates/guides/[category]/[template].md.template
+Read ${CLAUDE_PLUGIN_ROOT}/claude-templates/templates/guides/[category]/[template].md.template
 ```
 
 **Check**:
@@ -373,7 +373,7 @@ Only modify files where changes are actually needed:
 5. Ensure info is in most appropriate file
 
 **For Codemie Guides** (if updating in traditional mode):
-1. Maintain template structure from `.codemie/claude-templates/`
+1. Maintain template structure from `${CLAUDE_PLUGIN_ROOT}/claude-templates/`
 2. Update specific sections that are outdated
 3. Preserve existing valid examples
 4. Keep guides within size limits (200-400 lines)

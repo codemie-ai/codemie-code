@@ -51,33 +51,33 @@ describe('BaseExtensionInstaller - Windows Path Handling', () => {
   describe('Glob Pattern Matching', () => {
     describe('Windows Path Scenarios', () => {
       it('should match Windows path after normalization', () => {
-        const windowsPath = 'claude-templates\\README.md';
+        const windowsPath = 'sound\\notify.mp3';
         const normalized = normalizePathSeparators(windowsPath);
-        const pattern = 'claude-templates/**';
+        const pattern = 'sound/**';
 
         expect(matchesPattern(normalized, pattern)).toBe(true);
       });
 
       it('should match nested Windows paths after normalization', () => {
-        const windowsPath = 'claude-templates\\guides\\testing\\patterns.md';
+        const windowsPath = 'sound\\themes\\dark\\complete.mp3';
         const normalized = normalizePathSeparators(windowsPath);
-        const pattern = 'claude-templates/**';
+        const pattern = 'sound/**';
 
         expect(matchesPattern(normalized, pattern)).toBe(true);
       });
 
       it('should not match Windows path WITHOUT normalization (bug scenario)', () => {
-        const windowsPath = 'claude-templates\\README.md'; // Backslashes
-        const pattern = 'claude-templates/**'; // Forward slashes
+        const windowsPath = 'sound\\notify.mp3'; // Backslashes
+        const pattern = 'sound/**'; // Forward slashes
 
         // This was the bug: Windows paths don't match forward-slash patterns
         expect(matchesPattern(windowsPath, pattern)).toBe(false);
       });
 
       it('should match Windows path WITH normalization (fix scenario)', () => {
-        const windowsPath = 'claude-templates\\README.md';
+        const windowsPath = 'sound\\notify.mp3';
         const normalized = normalizePathSeparators(windowsPath);
-        const pattern = 'claude-templates/**';
+        const pattern = 'sound/**';
 
         // After normalization, pattern matching works
         expect(matchesPattern(normalized, pattern)).toBe(true);
@@ -86,15 +86,15 @@ describe('BaseExtensionInstaller - Windows Path Handling', () => {
 
     describe('Unix Path Scenarios', () => {
       it('should match Unix paths (already use forward slashes)', () => {
-        const unixPath = 'claude-templates/README.md';
-        const pattern = 'claude-templates/**';
+        const unixPath = 'sound/notify.mp3';
+        const pattern = 'sound/**';
 
         expect(matchesPattern(unixPath, pattern)).toBe(true);
       });
 
       it('should match nested Unix paths', () => {
-        const unixPath = 'claude-templates/guides/testing/patterns.md';
-        const pattern = 'claude-templates/**';
+        const unixPath = 'sound/themes/dark/complete.mp3';
+        const pattern = 'sound/**';
 
         expect(matchesPattern(unixPath, pattern)).toBe(true);
       });
@@ -102,22 +102,22 @@ describe('BaseExtensionInstaller - Windows Path Handling', () => {
 
     describe('Pattern Variations', () => {
       it('should match single wildcard', () => {
-        const path = 'claude-templates/README.md';
-        const pattern = 'claude-templates/*.md';
+        const path = 'sound/notify.mp3';
+        const pattern = 'sound/*.mp3';
 
         expect(matchesPattern(path, pattern)).toBe(true);
       });
 
       it('should match double wildcard (recursive)', () => {
-        const path = 'claude-templates/guides/security/patterns.md';
-        const pattern = 'claude-templates/**/*.md';
+        const path = 'sound/themes/dark/complete.mp3';
+        const pattern = 'sound/**/*.mp3';
 
         expect(matchesPattern(path, pattern)).toBe(true);
       });
 
       it('should match question mark wildcard', () => {
-        const path = 'claude-templates/test1.md';
-        const pattern = 'claude-templates/test?.md';
+        const path = 'sound/alert1.mp3';
+        const pattern = 'sound/alert?.mp3';
 
         expect(matchesPattern(path, pattern)).toBe(true);
       });
@@ -125,21 +125,21 @@ describe('BaseExtensionInstaller - Windows Path Handling', () => {
 
     describe('Exclusion Patterns', () => {
       it('should exclude DS_Store files', () => {
-        const path = 'claude-templates/.DS_Store';
+        const path = 'sound/.DS_Store';
         const pattern = '**/.DS_Store';
 
         expect(matchesPattern(path, pattern)).toBe(true);
       });
 
       it('should exclude test files', () => {
-        const path = 'claude-templates/utils.test.js';
+        const path = 'sound/utils.test.js';
         const pattern = '**/*.test.js';
 
         expect(matchesPattern(path, pattern)).toBe(true);
       });
 
       it('should exclude node_modules', () => {
-        const path = 'claude-templates/node_modules/package.json';
+        const path = 'sound/node_modules/package.json';
         const pattern = '**/node_modules/**';
 
         expect(matchesPattern(path, pattern)).toBe(true);
@@ -148,15 +148,15 @@ describe('BaseExtensionInstaller - Windows Path Handling', () => {
   });
 
   describe('Real-World Windows Scenarios', () => {
-    it('should handle typical Claude templates structure on Windows', () => {
+    it('should handle typical sound assets structure on Windows', () => {
       const windowsPaths = [
-        'claude-templates\\README.md',
-        'claude-templates\\templates\\CLAUDE.md.template',
-        'claude-templates\\templates\\guides\\testing\\testing-patterns.md.template',
-        'claude-templates\\templates\\guides\\security\\security-practices.md.template',
+        'sound\\notify.mp3',
+        'sound\\alert.wav',
+        'sound\\themes\\dark\\complete.mp3',
+        'sound\\themes\\light\\error.wav',
       ];
 
-      const pattern = 'claude-templates/**';
+      const pattern = 'sound/**';
 
       // All paths should match after normalization
       windowsPaths.forEach(path => {
@@ -167,9 +167,9 @@ describe('BaseExtensionInstaller - Windows Path Handling', () => {
 
     it('should exclude unwanted files even with Windows paths', () => {
       const windowsPaths = [
-        'claude-templates\\.DS_Store',
-        'claude-templates\\node_modules\\package.json',
-        'claude-templates\\utils.test.js',
+        'sound\\.DS_Store',
+        'sound\\node_modules\\package.json',
+        'sound\\utils.test.js',
       ];
 
       const excludePatterns = ['**/.DS_Store', '**/node_modules/**', '**/*.test.js'];
@@ -186,7 +186,7 @@ describe('BaseExtensionInstaller - Windows Path Handling', () => {
   });
 
   describe('Hybrid Strategy (Include + Exclude)', () => {
-    const includes = ['claude-templates/**'];
+    const includes = ['sound/**'];
     const excludes = ['**/.DS_Store', '**/node_modules/**', '**/*.test.js'];
 
     const shouldInclude = (path: string): boolean => {
@@ -208,21 +208,21 @@ describe('BaseExtensionInstaller - Windows Path Handling', () => {
       return !excluded;
     };
 
-    it('should include valid template files', () => {
-      expect(shouldInclude('claude-templates\\README.md')).toBe(true);
-      expect(shouldInclude('claude-templates\\templates\\CLAUDE.md.template')).toBe(true);
+    it('should include valid sound files', () => {
+      expect(shouldInclude('sound\\notify.mp3')).toBe(true);
+      expect(shouldInclude('sound\\themes\\dark\\complete.mp3')).toBe(true);
     });
 
     it('should exclude DS_Store files', () => {
-      expect(shouldInclude('claude-templates\\.DS_Store')).toBe(false);
+      expect(shouldInclude('sound\\.DS_Store')).toBe(false);
     });
 
     it('should exclude test files', () => {
-      expect(shouldInclude('claude-templates\\utils.test.js')).toBe(false);
+      expect(shouldInclude('sound\\utils.test.js')).toBe(false);
     });
 
     it('should exclude node_modules', () => {
-      expect(shouldInclude('claude-templates\\node_modules\\package.json')).toBe(false);
+      expect(shouldInclude('sound\\node_modules\\package.json')).toBe(false);
     });
   });
 });

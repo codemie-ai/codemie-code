@@ -2,8 +2,7 @@
   "enabled": true,
   "strategy": "hybrid",
   "includes": [
-    "sound/**",
-    "claude-templates/**"
+    "sound/**"
   ],
   "excludes": [
     "**/*.test.js",

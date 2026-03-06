@@ -22,7 +22,7 @@ Analyze any software project and generate AI-optimized documentation for Claude 
 
 - [ ] Project is cloned and accessible
 - [ ] Read access to the codebase
-- [ ] Templates available at `.codemie/claude-templates/templates/`
+- [ ] Templates available at `${CLAUDE_PLUGIN_ROOT}/claude-templates/templates/`
 
 ---
 
@@ -256,7 +256,7 @@ mkdir -p .codemie/guides
 **For each guide in approved list**:
 
 **3.2.1: Load Template**
-- Read from `.codemie/claude-templates/templates/guides/[category]/[guide].md.template`
+- Read from `${CLAUDE_PLUGIN_ROOT}/claude-templates/templates/guides/[category]/[guide].md.template`
 - If no specific template exists, use category base template
 
 **3.2.2: Analyze Codebase for This Guide**
@@ -318,7 +318,7 @@ Security:
 
 #### Step 4.1: Load Template
 
-- Read `.codemie/claude-templates/templates/CLAUDE.md.template`
+- Read `${CLAUDE_PLUGIN_ROOT}/claude-templates/templates/CLAUDE.md.template`
 
 ---
 
