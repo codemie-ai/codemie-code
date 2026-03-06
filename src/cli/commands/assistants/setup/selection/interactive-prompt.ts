@@ -302,7 +302,14 @@ export function createInteractivePrompt(options: InteractivePromptOptions): Inte
    */
   function handleToggleSelection(): void {
     const state = options.state;
-    if (!state.isSearchFocused && !state.areNavigationButtonsFocused && state.isPaginationFocused === null) {
+
+    // When search is focused, treat space as regular input
+    if (state.isSearchFocused) {
+      handleRegularInput(' ');
+      return;
+    }
+
+    if (!state.areNavigationButtonsFocused && state.isPaginationFocused === null) {
       options.actions.handleToggleSelection();
       render();
     }

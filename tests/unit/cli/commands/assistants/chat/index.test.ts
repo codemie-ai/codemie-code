@@ -59,8 +59,15 @@ describe('Chat Command Structure', () => {
       expect(historyOption?.defaultValue).toBe(true);
     });
 
+    it('should have file option', () => {
+      const fileOption = command.options.find(opt => opt.long === '--file');
+      expect(fileOption).toBeDefined();
+      expect(fileOption?.short).toBe('-f');
+      expect(fileOption?.description).toBe('File path to upload (can be used multiple times)');
+    });
+
     it('should have all expected options', () => {
-      expect(command.options).toHaveLength(3);
+      expect(command.options).toHaveLength(4);
     });
   });
 

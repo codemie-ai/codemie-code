@@ -1,9 +1,9 @@
 import { Command } from 'commander';
-import { logger } from '../../utils/logger.js';
-import { AgentRegistry } from '../../agents/registry.js';
-import { getSessionPath, getSessionMetricsPath, getSessionConversationPath } from '../../agents/core/session/session-config.js';
-import type { BaseHookEvent, HookTransformer, MCPConfigSummary, ExtensionsScanSummary } from '../../agents/core/types.js';
-import type { ProcessingContext } from '../../agents/core/session/BaseProcessor.js';
+import { logger } from '@/utils/logger.js';
+import { AgentRegistry } from '@/agents/registry.js';
+import { getSessionPath, getSessionMetricsPath, getSessionConversationPath } from '@/agents/core/session/session-config.js';
+import type { BaseHookEvent, HookTransformer, MCPConfigSummary, ExtensionsScanSummary } from '@/agents/core/types.js';
+import type { ProcessingContext } from '@/agents/core/session/BaseProcessor.js';
 
 /**
  * Hook event handlers for agent lifecycle events

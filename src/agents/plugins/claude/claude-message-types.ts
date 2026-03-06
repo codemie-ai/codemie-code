@@ -16,6 +16,7 @@ export interface ClaudeMessage {
   sessionId: string;
   timestamp: string;
   cwd?: string;
+  isMeta?: boolean;  // For meta messages (attachment file paths, etc.)
   message?: {
     id?: string;  // API-level message ID (shared by streaming chunks)
     role: 'user' | 'assistant';
@@ -55,7 +56,7 @@ export interface ClaudeMessage {
  * Content item in Claude message
  */
 export interface ContentItem {
-  type: 'text' | 'tool_use' | 'tool_result' | 'thinking';
+  type: 'text' | 'tool_use' | 'tool_result' | 'thinking' | 'image' | 'document';
   text?: string;
   thinking?: string;  // For thinking blocks
   id?: string;
@@ -64,6 +65,13 @@ export interface ContentItem {
   tool_use_id?: string;
   content?: string;
   isError?: boolean;
+
+  source?: {
+    type: 'base64' | 'url';
+    media_type?: string; // e.g., 'image/png', 'image/jpeg'
+    data?: string; // base64 encoded binary data
+    url?: string;
+  };
 }
 
 /**

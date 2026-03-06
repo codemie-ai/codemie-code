@@ -74,9 +74,9 @@ describe('Assistants Chat Command', () => {
   });
 
   describe('Command Options', () => {
-    it('should have verbose, conversation-id, and load-history options', () => {
+    it('should have verbose, conversation-id, load-history, and file options', () => {
       const command = createAssistantsChatCommand();
-      expect(command.options).toHaveLength(3);
+      expect(command.options).toHaveLength(4);
     });
 
     it('should accept --verbose flag', () => {
@@ -95,15 +95,37 @@ describe('Assistants Chat Command', () => {
       expect(conversationIdOption?.long).toBe('--conversation-id');
     });
 
+    it('should accept --file option', () => {
+      const command = createAssistantsChatCommand();
+      const fileOption = command.options.find(opt => opt.long === '--file');
+
+      expect(fileOption).toBeDefined();
+      expect(fileOption?.short).toBe('-f');
+      expect(fileOption?.long).toBe('--file');
+    });
+
+    it('should accept multiple --file options', () => {
+      const command = createAssistantsChatCommand();
+      const fileOption = command.options.find(opt => opt.long === '--file');
+
+      expect(fileOption).toBeDefined();
+      // File option should accept multiple values
+      expect(fileOption?.variadic).toBe(false); // Not variadic, but can be specified multiple times
+    });
+
     it('should have all options defined', () => {
       const command = createAssistantsChatCommand();
 
-      // Verify both options exist
+      // Verify all options exist
       const verboseOption = command.options.find(opt => opt.long === '--verbose');
       const conversationIdOption = command.options.find(opt => opt.long === '--conversation-id');
+      const loadHistoryOption = command.options.find(opt => opt.long === '--load-history');
+      const fileOption = command.options.find(opt => opt.long === '--file');
 
       expect(verboseOption).toBeDefined();
       expect(conversationIdOption).toBeDefined();
+      expect(loadHistoryOption).toBeDefined();
+      expect(fileOption).toBeDefined();
     });
   });
 

@@ -12,11 +12,11 @@
  * Note: API sync is handled separately by SSO provider's ConversationSyncProcessor
  */
 
-import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../../../../core/session/BaseProcessor.js';
-import type { ParsedSession } from '../../../../core/session/BaseSessionAdapter.js';
-import { CONVERSATION_SYNC_STATUS } from '../../../../../providers/plugins/sso/session/processors/conversations/types.js';
-import { logger } from '../../../../../utils/logger.js';
-import { getSessionConversationPath } from '../../../../core/session/session-config.js';
+import type { SessionProcessor, ProcessingContext, ProcessingResult } from '@/agents/core/session/BaseProcessor.js';
+import type { ParsedSession } from '@/agents/core/session/BaseSessionAdapter.js';
+import { CONVERSATION_SYNC_STATUS } from '@/providers/plugins/sso/session/processors/conversations/types.js';
+import { logger } from '@/utils/logger.js';
+import { getSessionConversationPath } from '@/agents/core/session/session-config.js';
 
 export class ConversationsProcessor implements SessionProcessor {
   readonly name = 'conversations';
@@ -97,7 +97,7 @@ export class ConversationsProcessor implements SessionProcessor {
       if (!existsSync(outputDir)) {
         await mkdir(outputDir, { recursive: true });
       }
-
+  
       // Process ONE turn (incremental mode)
       const result = await this.transformMessages(
         session.messages as any[],
@@ -366,6 +366,7 @@ export class ConversationsProcessor implements SessionProcessor {
     }
 
     const userText = this.extractUserMessage(userMessage);
+
     history.push({
       role: 'User',
       message: userText,
