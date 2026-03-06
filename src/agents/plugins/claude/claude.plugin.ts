@@ -30,17 +30,17 @@ let statuslineManagedThisSession = false;
  *
  * **UPDATE THIS WHEN BUMPING CLAUDE VERSION**
  */
-const CLAUDE_SUPPORTED_VERSION = '2.1.56';
+const CLAUDE_SUPPORTED_VERSION = '2.1.63';
 
 /**
  * Minimum supported Claude Code version
  * Versions below this are known to be incompatible and will be blocked from starting
  * Rule: always 10 patch versions below CLAUDE_SUPPORTED_VERSION
- * e.g. supported = 2.1.56 → minimum = 2.1.41
+ * e.g. supported = 2.1.63 → minimum = 2.1.53
  *
  * **UPDATE THIS WHEN BUMPING CLAUDE VERSION**
  */
-const CLAUDE_MINIMUM_SUPPORTED_VERSION = '2.1.41';
+const CLAUDE_MINIMUM_SUPPORTED_VERSION = '2.1.53';
 
 /**
  * Claude Code installer URLs
@@ -155,6 +155,12 @@ export const ClaudePluginMetadata: AgentMetadata = {
       // https://code.claude.com/docs/en/settings
       if (!env.DISABLE_AUTOUPDATER) {
         env.DISABLE_AUTOUPDATER = '1';
+      }
+
+      // WORKAROUND: Disable tool search feature introduced in 2.1.69+
+      // Claude Code 2.1.69+ fails to start without this flag when using CodeMie proxy
+      if (!env.ENABLE_TOOL_SEARCH) {
+        env.ENABLE_TOOL_SEARCH = '0';
       }
 
       // Statusline setup: when --status flag is passed, configure Claude Code
