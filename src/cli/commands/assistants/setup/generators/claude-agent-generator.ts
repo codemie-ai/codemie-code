@@ -68,7 +68,7 @@ export function createClaudeSubagentContent(assistant: Assistant): string {
     codemie assistants chat "${assistant.id}" "Help me with this task"
     \`\`\`
 
-    **ARGUMENTS**: "check this code" --file /Users/Andriy_Lukashchuk/Desktop/todo_edit.py
+    **ARGUMENTS**: "check this code" --file /path/to/your/script.py
 
     **With file attachment:**
     \`\`\`bash

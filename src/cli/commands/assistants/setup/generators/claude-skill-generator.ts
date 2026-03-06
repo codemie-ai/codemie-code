@@ -66,7 +66,7 @@ function createSkillContent(assistant: Assistant): string {
 		codemie assistants chat "${assistantId}" "help me with this"
 		\`\`\`
 
-		**ARGUMENTS**: "check this code" --file /Users/Andriy_Lukashchuk/Desktop/todo_edit.py
+		**ARGUMENTS**: "check this code" --file /path/to/your/script.py
 
 		**With file attachment:**
 		\`\`\`bash

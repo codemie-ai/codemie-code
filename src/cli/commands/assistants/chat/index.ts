@@ -18,7 +18,7 @@ import { ROLES, MESSAGES, type HistoryMessage } from '../constants.js';
 import { loadConversationHistory } from './historyLoader.js';
 import { isExitCommand, enableVerboseMode } from './utils.js';
 import type { ChatCommandOptions, SingleMessageOptions } from './types.js';
-import { detectFileUploadsFromSession, readFilesFromPaths, type DetectedFile } from './uploadDetector.js';
+import { detectFileUploadsFromSession, readFilesFromPaths, type DetectedFile } from './claudeUploadsDetector.js';
 import type { FileToUpload } from 'codemie-sdk';
 
 /** Assistant label color */
@@ -191,7 +191,8 @@ async function interactiveChat(
   console.log(chalk.bold.cyan(MESSAGES.CHAT.HEADER(assistant.name)));
   console.log(chalk.dim(MESSAGES.CHAT.INSTRUCTIONS));
 
-  // Chat loop
+  // Chat loop - files are only sent with the first message
+  let pendingFiles = detectedFiles;
   while (true) {
     const { message } = await inquirer.prompt<{ message: string }>([
       {
@@ -211,8 +212,10 @@ async function interactiveChat(
     const spinner = ora(MESSAGES.CHAT.SPINNER_THINKING).start();
 
     try {
-      const response = await sendMessageWithHistory(client, assistant, message, history, conversationId, detectedFiles);
+      const response = await sendMessageWithHistory(client, assistant, message, history, conversationId, pendingFiles);
       spinner.stop();
+
+      pendingFiles = [];
 
       console.log(
         chalk.rgb(...ASSISTANT_LABEL_COLOR)(`[Assistant @${assistant.slug}]`),

@@ -1,5 +1,8 @@
 /**
- * Upload Detection for Assistants Chat
+ * Claude Upload Detection for Assistants Chat
+ *
+ * Detects file uploads from Claude session JSONL files.
+ * Claude-specific implementation that parses Claude message types.
  */
 
 import { existsSync, readFileSync, statSync } from 'fs';
@@ -35,7 +38,7 @@ const CORRELATION_STATUS = {
 } as const;
 
 const DEFAULT_MEDIA_TYPE = 'application/octet-stream';
-const LOG_PREFIX = '[uploadDetector]';
+const LOG_PREFIX = '[claudeUploadsDetector]';
 
 export interface DetectedFile {
   fileName: string;
@@ -305,7 +308,9 @@ export async function readFilesFromPaths(
       // Check if file exists
       if (!existsSync(absolutePath)) {
         logger.warn(`${LOG_PREFIX} File does not exist`, { filePath: absolutePath });
-        console.log(chalk.yellow(`⚠ File not found: ${filePath}`));
+        if (!quiet) {
+          console.log(chalk.yellow(`⚠ File not found: ${filePath}`));
+        }
         continue;
       }
 
@@ -313,7 +318,9 @@ export async function readFilesFromPaths(
       const stats = statSync(absolutePath);
       if (!stats.isFile()) {
         logger.warn(`${LOG_PREFIX} Path is not a file`, { filePath: absolutePath });
-        console.log(chalk.yellow(`⚠ Not a file: ${filePath}`));
+        if (!quiet) {
+          console.log(chalk.yellow(`⚠ Not a file: ${filePath}`));
+        }
         continue;
       }
 
@@ -325,7 +332,9 @@ export async function readFilesFromPaths(
           sizeMB: bytesToMB(fileSize),
           limit: MAX_FILE_SIZE_MB
         });
-        console.log(chalk.yellow(`⚠ File too large (>${MAX_FILE_SIZE_MB}MB): ${filePath}`));
+        if (!quiet) {
+          console.log(chalk.yellow(`⚠ File too large (>${MAX_FILE_SIZE_MB}MB): ${filePath}`));
+        }
         continue;
       }
 
@@ -355,7 +364,9 @@ export async function readFilesFromPaths(
 
     } catch (error) {
       logger.warn(`${LOG_PREFIX} Failed to read file`, { filePath, error });
-      console.log(chalk.yellow(`⚠ Failed to read file: ${filePath}`));
+      if (!quiet) {
+        console.log(chalk.yellow(`⚠ Failed to read file: ${filePath}`));
+      }
     }
   }
 

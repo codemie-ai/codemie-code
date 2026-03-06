@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { detectFileUploadsFromSession, readFilesFromPaths } from '../uploadDetector.js';
+import { detectFileUploadsFromSession, readFilesFromPaths } from '../claudeUploadsDetector.js';
 import type { ClaudeMessage } from '@/agents/plugins/claude/claude-message-types.js';
 import type { Session } from '@/agents/core/session/types.js';
 
@@ -73,7 +73,7 @@ describe('fileResolver', () => {
 
         expect(result).toEqual([]);
         expect(logger.debug).toHaveBeenCalledWith(
-          '[uploadDetector] Session metadata file does not exist',
+          '[claudeUploadsDetector] Session metadata file does not exist',
           { sessionPath: mockSessionPath }
         );
       });
@@ -475,7 +475,7 @@ describe('fileResolver', () => {
 
         expect(result).toHaveLength(0);
         expect(logger.warn).toHaveBeenCalledWith(
-          '[uploadDetector] Missing base64 data for file',
+          '[claudeUploadsDetector] Missing base64 data for file',
           expect.any(Object)
         );
       });
@@ -563,7 +563,7 @@ describe('fileResolver', () => {
 
         expect(result).toHaveLength(0);
         expect(logger.warn).toHaveBeenCalledWith(
-          '[uploadDetector] File exceeds size limit, skipping',
+          '[claudeUploadsDetector] File exceeds size limit, skipping',
           expect.objectContaining({
             limit: 100
           })
@@ -608,7 +608,7 @@ describe('fileResolver', () => {
 
         expect(result).toHaveLength(0);
         expect(logger.warn).toHaveBeenCalledWith(
-          '[uploadDetector] Missing base64 data for file',
+          '[claudeUploadsDetector] Missing base64 data for file',
           expect.any(Object)
         );
       });
@@ -973,7 +973,7 @@ describe('fileResolver', () => {
 
         expect(result).toEqual([]);
         expect(logger.warn).toHaveBeenCalledWith(
-          '[uploadDetector] File does not exist',
+          '[claudeUploadsDetector] File does not exist',
           expect.objectContaining({ filePath: expect.stringContaining('nonexistent.png') })
         );
       });
@@ -990,7 +990,7 @@ describe('fileResolver', () => {
 
         expect(result).toEqual([]);
         expect(logger.warn).toHaveBeenCalledWith(
-          '[uploadDetector] Path is not a file',
+          '[claudeUploadsDetector] Path is not a file',
           expect.objectContaining({ filePath: expect.stringContaining('directory') })
         );
       });
@@ -1009,7 +1009,7 @@ describe('fileResolver', () => {
 
         expect(result).toEqual([]);
         expect(logger.warn).toHaveBeenCalledWith(
-          '[uploadDetector] File exceeds size limit',
+          '[claudeUploadsDetector] File exceeds size limit',
           expect.objectContaining({
             limit: 100
           })
@@ -1032,7 +1032,7 @@ describe('fileResolver', () => {
 
         expect(result).toEqual([]);
         expect(logger.warn).toHaveBeenCalledWith(
-          '[uploadDetector] Failed to read file',
+          '[claudeUploadsDetector] Failed to read file',
           expect.objectContaining({ filePath })
         );
       });
