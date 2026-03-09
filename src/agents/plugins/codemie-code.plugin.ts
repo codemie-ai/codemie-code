@@ -2,7 +2,7 @@ import type { AgentMetadata, AgentConfig } from '../core/types.js';
 import { join } from 'path';
 import { existsSync } from 'fs';
 import { logger } from '../../utils/logger.js';
-import { getModelConfig, getAllOpenCodeModelConfigs } from './opencode/opencode-model-configs.js';
+import { getModelConfig, getChatCompletionsModelConfigs, getResponsesApiModelConfigs } from './opencode/opencode-model-configs.js';
 import { BaseAgentAdapter } from '../core/BaseAgentAdapter.js';
 import type { SessionAdapter } from '../core/session/BaseSessionAdapter.js';
 import type { BaseExtensionInstaller } from '../core/extension/BaseExtensionInstaller.js';
@@ -73,6 +73,10 @@ function resolveOllamaBaseUrl(baseUrl: string, provider: string | undefined): st
 
 /**
  * Build the OpenCode config object that gets passed to the whitelabel binary.
+ *
+ * Models are split into two groups:
+ * - chatModels: routed via codemie-proxy/litellm (Chat Completions API)
+ * - responsesApiModels: routed via OpenCode's built-in openai CUSTOM_LOADER (Responses API)
  */
 function buildOpenCodeConfig(params: {
   proxyBaseUrl: string | undefined;
@@ -83,10 +87,13 @@ function buildOpenCodeConfig(params: {
   modelId: string;
   timeout: number;
   providerOptions?: any;
-  allModels: Record<string, unknown>;
+  chatModels: Record<string, unknown>;
+  responsesApiModels: Record<string, unknown>;
+  responsesApiBaseUrl: string | undefined;
 }): Record<string, unknown> {
+  const hasResponsesApiModels = Object.keys(params.responsesApiModels).length > 0;
   return {
-    enabled_providers: ['codemie-proxy', 'ollama', 'amazon-bedrock', 'litellm'],
+    enabled_providers: ['codemie-proxy', 'openai', 'ollama', 'amazon-bedrock', 'litellm'],
     share: 'disabled',
     provider: {
       ...(params.proxyBaseUrl && {
@@ -99,7 +106,24 @@ function buildOpenCodeConfig(params: {
             timeout: params.timeout,
             ...(params.providerOptions?.headers && { headers: params.providerOptions.headers })
           },
-          models: params.allModels
+          models: params.chatModels
+        }
+      }),
+      // OpenCode's built-in openai CUSTOM_LOADER — uses @ai-sdk/openai sdk.responses()
+      // which calls POST /v1/responses instead of /v1/chat/completions
+      ...(params.responsesApiBaseUrl && hasResponsesApiModels && {
+        openai: {
+          name: 'CodeMie SSO',
+          // whitelist: suppress the built-in openai model list (GPT-4, GPT-4o, etc.)
+          // OpenCode merges user models with models.dev — whitelist restricts to ours only
+          whitelist: Object.keys(params.responsesApiModels),
+          options: {
+            baseURL: `${params.responsesApiBaseUrl}/`,
+            apiKey: 'proxy-handled',
+            timeout: params.timeout,
+            ...(params.providerOptions?.headers && { headers: params.providerOptions.headers })
+          },
+          models: params.responsesApiModels
         }
       }),
       ...(params.litellmBaseUrl && {
@@ -111,7 +135,7 @@ function buildOpenCodeConfig(params: {
             apiKey: params.litellmApiKey || 'not-required',
             timeout: params.timeout,
           },
-          models: params.allModels
+          models: params.chatModels
         }
       }),
       ollama: {
@@ -229,7 +253,8 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
       const selectedModel = env.CODEMIE_MODEL || config?.model || 'gpt-5-2-2025-12-11';
       const modelConfig = getModelConfig(selectedModel);
       const { providerOptions } = modelConfig;
-      const allModels = getAllOpenCodeModelConfigs();
+      const chatModels = getChatCompletionsModelConfigs();
+      const responsesApiModels = getResponsesApiModelConfigs();
 
       const isBedrock = provider === 'bedrock';
       const isLiteLLM = provider === 'litellm';
@@ -241,11 +266,21 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
         ? toBedrockModelId(modelConfig.id, env.AWS_REGION || env.CODEMIE_AWS_REGION)
         : modelConfig.id;
 
+      // Responses API base URL: use proxyBaseUrl for SSO/bearer-auth, or baseUrl for LiteLLM.
+      // Always set regardless of selected model — fixes model-switching bug where switching
+      // from a Claude model to a GPT model mid-session would miss the CUSTOM_LOADER.
+      const responsesApiBaseUrl = proxyBaseUrl || (isLiteLLM ? baseUrl : undefined);
+      if (responsesApiBaseUrl && Object.keys(responsesApiModels).length > 0) {
+        env.OPENAI_API_KEY = 'proxy-handled';
+        logger.debug('[codemie-code] Enabling openai CUSTOM_LOADER for Responses API models');
+      }
+
       const openCodeConfig = buildOpenCodeConfig({
         proxyBaseUrl,
         litellmBaseUrl: isLiteLLM ? baseUrl : undefined,
         litellmApiKey: isLiteLLM ? env.CODEMIE_API_KEY : undefined,
-        ollamaBaseUrl, activeProvider, modelId, timeout, providerOptions, allModels
+        ollamaBaseUrl, activeProvider, modelId, timeout, providerOptions,
+        chatModels, responsesApiModels, responsesApiBaseUrl
       });
 
       // --- Hooks injection ---

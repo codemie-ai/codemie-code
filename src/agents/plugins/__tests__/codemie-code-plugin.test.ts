@@ -84,7 +84,7 @@ vi.mock('../opencode/opencode.session.js', () => ({
   }),
 }));
 
-// Mock getModelConfig and getAllOpenCodeModelConfigs
+// Mock getModelConfig and model config helpers
 vi.mock('../opencode/opencode-model-configs.js', () => ({
   getModelConfig: vi.fn(() => ({
     id: 'gpt-5-2-2025-12-11',
@@ -102,7 +102,8 @@ vi.mock('../opencode/opencode-model-configs.js', () => ({
     cost: { input: 2.5, output: 10 },
     limit: { context: 1048576, output: 65536 },
   })),
-  getAllOpenCodeModelConfigs: vi.fn(() => ({})),
+  getChatCompletionsModelConfigs: vi.fn(() => ({})),
+  getResponsesApiModelConfigs: vi.fn(() => ({})),
 }));
 
 // Mock fs

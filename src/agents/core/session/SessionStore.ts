@@ -7,7 +7,7 @@
 
 import { readFile, writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
-import { dirname } from 'path';
+import { dirname, basename, join } from 'path';
 import type { Session } from './types.js';
 import { getSessionPath } from './session-config.js';
 import { logger } from '../../../utils/logger.js';
@@ -41,13 +41,24 @@ export class SessionStore {
 
   /**
    * Load session from disk
+   *
+   * Falls back to the 'completed_' prefixed filename when the primary path is
+   * not found. This handles the race where handleSessionEnd renames
+   * {sessionId}.json → completed_{sessionId}.json before the final SSO sync runs.
    */
   async loadSession(sessionId: string): Promise<Session | null> {
-    const sessionPath = getSessionPath(sessionId);
+    let sessionPath = getSessionPath(sessionId);
 
     if (!existsSync(sessionPath)) {
-      logger.debug(`[SessionStore] Session file not found: ${sessionId}`);
-      return null;
+      // Fallback: session may have been renamed with 'completed_' prefix by handleSessionEnd
+      const completedPath = join(dirname(sessionPath), `completed_${basename(sessionPath)}`);
+      if (existsSync(completedPath)) {
+        sessionPath = completedPath;
+        logger.debug(`[SessionStore] Using completed session file: ${sessionId}`);
+      } else {
+        logger.debug(`[SessionStore] Session file not found: ${sessionId}`);
+        return null;
+      }
     }
 
     try {

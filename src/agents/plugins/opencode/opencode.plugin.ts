@@ -1,6 +1,6 @@
 import type { AgentMetadata, AgentConfig } from '../../core/types.js';
 import { logger } from '../../../utils/logger.js';
-import { getModelConfig, getAllOpenCodeModelConfigs } from './opencode-model-configs.js';
+import { getModelConfig, getChatCompletionsModelConfigs, getResponsesApiModelConfigs } from './opencode-model-configs.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
@@ -69,8 +69,9 @@ export const OpenCodePluginMetadata: AgentMetadata = {
 
       const { providerOptions } = modelConfig;
 
-      // Build all models for codemie-proxy (stripped of CodeMie-specific fields)
-      const allModels = getAllOpenCodeModelConfigs();
+      // Split models by API type
+      const chatModels = getChatCompletionsModelConfigs();
+      const responsesApiModels = getResponsesApiModelConfigs();
 
       // Determine URLs based on provider type
       const isBedrock = provider === 'bedrock';
@@ -86,8 +87,17 @@ export const OpenCodePluginMetadata: AgentMetadata = {
       const activeProvider = provider === 'ollama' ? 'ollama' : (isBedrock ? 'amazon-bedrock' : 'codemie-proxy');
       const timeout = providerOptions?.timeout ?? parseInt(env.CODEMIE_TIMEOUT || '600') * 1000;
 
+      // Always enable openai CUSTOM_LOADER when Responses API models exist.
+      // This fixes model-switching: if user starts with Claude and switches to GPT,
+      // the CUSTOM_LOADER must already be registered.
+      if (proxyBaseUrl && Object.keys(responsesApiModels).length > 0) {
+        env.OPENAI_API_KEY = 'proxy-handled';
+        logger.debug('[opencode] Enabling openai CUSTOM_LOADER for Responses API models');
+      }
+
+      const hasResponsesApiModels = Object.keys(responsesApiModels).length > 0;
       const openCodeConfig: Record<string, unknown> = {
-        enabled_providers: ['codemie-proxy', 'ollama', 'amazon-bedrock'],
+        enabled_providers: ['codemie-proxy', 'openai', 'ollama', 'amazon-bedrock'],
         share: 'disabled',
         provider: {
           ...(proxyBaseUrl && {
@@ -100,7 +110,23 @@ export const OpenCodePluginMetadata: AgentMetadata = {
                 timeout,
                 ...(providerOptions?.headers && { headers: providerOptions.headers })
               },
-              models: allModels
+              models: chatModels
+            }
+          }),
+          // Built-in openai CUSTOM_LOADER: routes Responses API models via sdk.responses()
+          ...(proxyBaseUrl && hasResponsesApiModels && {
+            openai: {
+              name: 'CodeMie SSO',
+              // whitelist: suppress the built-in openai model list (GPT-4, GPT-4o, etc.)
+              // OpenCode merges user models with models.dev — whitelist restricts to ours only
+              whitelist: Object.keys(responsesApiModels),
+              options: {
+                baseURL: `${proxyBaseUrl}/`,
+                apiKey: 'proxy-handled',
+                timeout,
+                ...(providerOptions?.headers && { headers: providerOptions.headers })
+              },
+              models: responsesApiModels
             }
           }),
           ollama: {
