@@ -3,6 +3,7 @@ import { join } from 'path';
 import { existsSync } from 'fs';
 import { logger } from '../../utils/logger.js';
 import { getModelConfig, getChatCompletionsModelConfigs, getResponsesApiModelConfigs } from './opencode/opencode-model-configs.js';
+import { fetchDynamicModelConfigs } from './opencode/opencode-dynamic-models.js';
 import { BaseAgentAdapter } from '../core/BaseAgentAdapter.js';
 import type { SessionAdapter } from '../core/session/BaseSessionAdapter.js';
 import type { BaseExtensionInstaller } from '../core/extension/BaseExtensionInstaller.js';
@@ -250,11 +251,21 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
         return env;
       }
 
+      // Fetch live model catalogue from the CodeMie API.
+      // Falls back to the static OPENCODE_MODEL_CONFIGS on any error.
+      const allModels = await fetchDynamicModelConfigs(
+        baseUrl,
+        env.CODEMIE_URL,
+        env.CODEMIE_JWT_TOKEN,
+      );
+
+      // Model selection priority: env var > config > default
+      // Use dynamic catalogue first, then fall back to static getModelConfig for unknown IDs.
       const selectedModel = env.CODEMIE_MODEL || config?.model || 'gpt-5-2-2025-12-11';
-      const modelConfig = getModelConfig(selectedModel);
+      const modelConfig = allModels[selectedModel] ?? getModelConfig(selectedModel);
       const { providerOptions } = modelConfig;
-      const chatModels = getChatCompletionsModelConfigs();
-      const responsesApiModels = getResponsesApiModelConfigs();
+      const chatModels = getChatCompletionsModelConfigs(allModels);
+      const responsesApiModels = getResponsesApiModelConfigs(allModels);
 
       const isBedrock = provider === 'bedrock';
       const isLiteLLM = provider === 'litellm';

@@ -527,10 +527,15 @@ export function getAllOpenCodeModelConfigs(): Record<string, Omit<OpenCodeModelC
 /**
  * Get model configs for Chat Completions API providers (codemie-proxy, litellm).
  * Excludes models that require the OpenAI Responses API.
+ *
+ * @param source - Model map to filter; defaults to the static OPENCODE_MODEL_CONFIGS.
+ *                 Pass the result of fetchDynamicModelConfigs() for live model lists.
  */
-export function getChatCompletionsModelConfigs(): Record<string, Omit<OpenCodeModelConfig, 'displayName' | 'providerOptions' | 'use_responses_api'>> {
+export function getChatCompletionsModelConfigs(
+  source: Record<string, OpenCodeModelConfig> = OPENCODE_MODEL_CONFIGS
+): Record<string, Omit<OpenCodeModelConfig, 'displayName' | 'providerOptions' | 'use_responses_api'>> {
   const result: Record<string, Omit<OpenCodeModelConfig, 'displayName' | 'providerOptions' | 'use_responses_api'>> = {};
-  for (const [id, config] of Object.entries(OPENCODE_MODEL_CONFIGS)) {
+  for (const [id, config] of Object.entries(source)) {
     if (config.use_responses_api) continue;
     const { displayName: _d, providerOptions: _p, use_responses_api: _r, ...opencodeConfig } = config;
     result[id] = opencodeConfig;
@@ -542,10 +547,15 @@ export function getChatCompletionsModelConfigs(): Record<string, Omit<OpenCodeMo
  * Get model configs that require the OpenAI Responses API.
  * These are routed through OpenCode's built-in openai CUSTOM_LOADER
  * which calls POST /v1/responses instead of POST /v1/chat/completions.
+ *
+ * @param source - Model map to filter; defaults to the static OPENCODE_MODEL_CONFIGS.
+ *                 Pass the result of fetchDynamicModelConfigs() for live model lists.
  */
-export function getResponsesApiModelConfigs(): Record<string, Omit<OpenCodeModelConfig, 'displayName' | 'providerOptions' | 'use_responses_api'>> {
+export function getResponsesApiModelConfigs(
+  source: Record<string, OpenCodeModelConfig> = OPENCODE_MODEL_CONFIGS
+): Record<string, Omit<OpenCodeModelConfig, 'displayName' | 'providerOptions' | 'use_responses_api'>> {
   const result: Record<string, Omit<OpenCodeModelConfig, 'displayName' | 'providerOptions' | 'use_responses_api'>> = {};
-  for (const [id, config] of Object.entries(OPENCODE_MODEL_CONFIGS)) {
+  for (const [id, config] of Object.entries(source)) {
     if (!config.use_responses_api) continue;
     const { displayName: _d, providerOptions: _p, use_responses_api: _r, ...opencodeConfig } = config;
     result[id] = opencodeConfig;

@@ -102,6 +102,11 @@ vi.mock('../opencode/opencode-model-configs.js', () => ({
   getResponsesApiModelConfigs: vi.fn(() => ({})),
 }));
 
+// Mock dynamic model fetcher so tests don't make real API calls
+vi.mock('../opencode/opencode-dynamic-models.js', () => ({
+  fetchDynamicModelConfigs: vi.fn(() => Promise.resolve({})),
+}));
+
 // Mock fs
 vi.mock('fs', () => ({
   existsSync: vi.fn(() => true),

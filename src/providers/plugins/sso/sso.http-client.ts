@@ -83,6 +83,82 @@ export function ensureApiBase(rawUrl: string): string {
 }
 
 /**
+ * Full model descriptor returned by GET /v1/llm_models?include_all=true
+ */
+export interface LlmModel {
+  base_name: string;
+  deployment_name: string;
+  label: string;
+  multimodal?: boolean;
+  react_agent?: boolean;
+  enabled: boolean;
+  provider?: string;
+  default?: boolean;
+  cost?: {
+    input?: number;
+    output?: number;
+    cache_read_input_token_cost?: number;
+    cache_creation_input_token_cost?: number;
+  };
+  features?: {
+    streaming?: boolean;
+    tools?: boolean;
+    temperature?: boolean;
+    parallel_tool_calls?: boolean;
+    system_prompt?: boolean;
+    max_tokens?: boolean;
+    top_p?: boolean;
+  };
+  forbidden_for_web?: boolean;
+}
+
+/**
+ * Fetch full model objects from /v1/llm_models?include_all=true (supports both cookies and JWT)
+ *
+ * Unlike fetchCodeMieModels (which returns only IDs), this returns the complete model
+ * descriptor including cost, features, and provider metadata.
+ *
+ * Overload 1: SSO cookies
+ * Overload 2: JWT token string
+ */
+/* eslint-disable no-redeclare */
+export function fetchCodeMieLlmModels(
+  apiUrl: string,
+  cookies: Record<string, string>
+): Promise<LlmModel[]>;
+export function fetchCodeMieLlmModels(
+  apiUrl: string,
+  jwtToken: string
+): Promise<LlmModel[]>;
+export async function fetchCodeMieLlmModels(
+  apiUrl: string,
+  auth: Record<string, string> | string
+): Promise<LlmModel[]> {
+/* eslint-enable no-redeclare */
+  const headers = buildAuthHeaders(auth);
+  const url = `${apiUrl}${CODEMIE_ENDPOINTS.MODELS}`;
+
+  const client = new HTTPClient({
+    timeout: 10000,
+    maxRetries: 3,
+    rejectUnauthorized: false,
+  });
+
+  const response = await client.getRaw(url, headers);
+
+  if (!response.statusCode || response.statusCode < 200 || response.statusCode >= 300) {
+    if (response.statusCode === 401 || response.statusCode === 403) {
+      throw new Error('Authentication failed - invalid or expired credentials');
+    }
+    throw new Error(`Failed to fetch models: ${response.statusCode} ${response.statusMessage}`);
+  }
+
+  const parsed = JSON.parse(response.data);
+  if (!Array.isArray(parsed)) return [];
+  return parsed as LlmModel[];
+}
+
+/**
  * Fetch models from CodeMie API (supports both cookies and JWT)
  *
  * Overload 1: SSO cookies (backward compatible - existing callers unchanged)
