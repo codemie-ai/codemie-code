@@ -21,6 +21,8 @@ export interface OpenCodeModelConfig {
   temperature: boolean;
   /** Structured output support (OpenCode format: structured_output) */
   structured_output?: boolean;
+  /** Whether model requires OpenAI Responses API instead of Chat Completions API */
+  use_responses_api?: boolean;
   /** Modality support */
   modalities: {
     input: string[];
@@ -70,6 +72,7 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
     release_date: '2025-12-11',
     last_updated: '2025-12-11',
     open_weights: false,
+    use_responses_api: true,
     cost: {
       input: 1.75,
       output: 14,
@@ -97,6 +100,7 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
     release_date: '2025-11-14',
     last_updated: '2025-11-14',
     open_weights: false,
+    use_responses_api: true,
     cost: {
       input: 1.25,
       output: 10,
@@ -124,6 +128,7 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
     release_date: '2025-11-14',
     last_updated: '2025-11-14',
     open_weights: false,
+    use_responses_api: true,
     cost: {
       input: 0.25,
       output: 2,
@@ -152,6 +157,7 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
     release_date: '2025-11-13',
     last_updated: '2025-11-13',
     open_weights: false,
+    use_responses_api: true,
     cost: {
       input: 1.25,
       output: 10,
@@ -180,6 +186,7 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
     release_date: '2025-12-11',
     last_updated: '2025-12-11',
     open_weights: false,
+    use_responses_api: true,
     cost: {
       input: 1.75,
       output: 14,
@@ -188,6 +195,36 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
     limit: {
       context: 128000,
       output: 16384
+    }
+  },
+
+  'gpt-5.3-codex-2026-02-24': {
+    id: 'gpt-5.3-codex-2026-02-24',
+    name: 'GPT-5.3 Codex',
+    displayName: 'GPT-5.3 Codex',
+    family: 'gpt-5-codex',
+    tool_call: true,
+    reasoning: true,
+    attachment: true,
+    temperature: false,
+    structured_output: true,
+    modalities: {
+      input: ['text', 'image'],
+      output: ['text']
+    },
+    knowledge: '2025-08-31',
+    release_date: '2026-02-24',
+    last_updated: '2026-02-24',
+    open_weights: false,
+    use_responses_api: true,
+    cost: {
+      input: 1.75,
+      output: 14,
+      cache_read: 0.175
+    },
+    limit: {
+      context: 272000,
+      output: 128000
     }
   },
 
@@ -305,14 +342,15 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
     }
   },
   'claude-haiku-4-5': {
-    id: 'claude-haiku-4-5',
+    id: 'claude-haiku-4-5-20251001',
     name: 'Claude Haiku 4.5',
     displayName: 'Claude Haiku 4.5',
     family: 'claude-4',
     tool_call: true,
-    reasoning: false,
+    reasoning: true,
     attachment: true,
     temperature: true,
+    structured_output: true,
     modalities: {
       input: ['text', 'image'],
       output: ['text']
@@ -322,13 +360,13 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
     last_updated: '2025-10-01',
     open_weights: false,
     cost: {
-      input: 0.8,
-      output: 4,
-      cache_read: 0.08
+      input: 1.10,
+      output: 5.50,
+      cache_read: 0.11
     },
     limit: {
       context: 200000,
-      output: 8192
+      output: 64000
     }
   },
 
@@ -383,6 +421,34 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
     limit: {
       context: 262000,
       output: 65536
+    }
+  },
+
+  // ── Kimi Models (via Bedrock) ──────────────────────────────────────
+  'moonshotai.kimi-k2.5': {
+    id: 'moonshotai.kimi-k2.5',
+    name: 'Kimi K2.5',
+    displayName: 'Kimi K2.5',
+    family: 'kimi',
+    tool_call: true,
+    reasoning: true,
+    attachment: true,
+    temperature: true,
+    modalities: {
+      input: ['text', 'image'],
+      output: ['text']
+    },
+    knowledge: '2025-03-01',
+    release_date: '2025-10-01',
+    last_updated: '2025-10-01',
+    open_weights: true,
+    cost: {
+      input: 0.6,
+      output: 3.03
+    },
+    limit: {
+      context: 262144,
+      output: 262144
     }
   },
 
@@ -446,13 +512,52 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
 };
 
 /**
- * Get all model configs stripped of CodeMie-specific fields (displayName, providerOptions).
+ * Get all model configs stripped of CodeMie-specific fields (displayName, providerOptions, use_responses_api).
  * Used to populate all models in the OpenCode config so users can switch models during a session.
  */
-export function getAllOpenCodeModelConfigs(): Record<string, Omit<OpenCodeModelConfig, 'displayName' | 'providerOptions'>> {
-  const result: Record<string, Omit<OpenCodeModelConfig, 'displayName' | 'providerOptions'>> = {};
+export function getAllOpenCodeModelConfigs(): Record<string, Omit<OpenCodeModelConfig, 'displayName' | 'providerOptions' | 'use_responses_api'>> {
+  const result: Record<string, Omit<OpenCodeModelConfig, 'displayName' | 'providerOptions' | 'use_responses_api'>> = {};
   for (const [id, config] of Object.entries(OPENCODE_MODEL_CONFIGS)) {
-    const { displayName: _displayName, providerOptions: _providerOptions, ...opencodeConfig } = config;
+    const { displayName: _d, providerOptions: _p, use_responses_api: _r, ...opencodeConfig } = config;
+    result[id] = opencodeConfig;
+  }
+  return result;
+}
+
+/**
+ * Get model configs for Chat Completions API providers (codemie-proxy, litellm).
+ * Excludes models that require the OpenAI Responses API.
+ *
+ * @param source - Model map to filter; defaults to the static OPENCODE_MODEL_CONFIGS.
+ *                 Pass the result of fetchDynamicModelConfigs() for live model lists.
+ */
+export function getChatCompletionsModelConfigs(
+  source: Record<string, OpenCodeModelConfig> = OPENCODE_MODEL_CONFIGS
+): Record<string, Omit<OpenCodeModelConfig, 'displayName' | 'providerOptions' | 'use_responses_api'>> {
+  const result: Record<string, Omit<OpenCodeModelConfig, 'displayName' | 'providerOptions' | 'use_responses_api'>> = {};
+  for (const [id, config] of Object.entries(source)) {
+    if (config.use_responses_api) continue;
+    const { displayName: _d, providerOptions: _p, use_responses_api: _r, ...opencodeConfig } = config;
+    result[id] = opencodeConfig;
+  }
+  return result;
+}
+
+/**
+ * Get model configs that require the OpenAI Responses API.
+ * These are routed through OpenCode's built-in openai CUSTOM_LOADER
+ * which calls POST /v1/responses instead of POST /v1/chat/completions.
+ *
+ * @param source - Model map to filter; defaults to the static OPENCODE_MODEL_CONFIGS.
+ *                 Pass the result of fetchDynamicModelConfigs() for live model lists.
+ */
+export function getResponsesApiModelConfigs(
+  source: Record<string, OpenCodeModelConfig> = OPENCODE_MODEL_CONFIGS
+): Record<string, Omit<OpenCodeModelConfig, 'displayName' | 'providerOptions' | 'use_responses_api'>> {
+  const result: Record<string, Omit<OpenCodeModelConfig, 'displayName' | 'providerOptions' | 'use_responses_api'>> = {};
+  for (const [id, config] of Object.entries(source)) {
+    if (!config.use_responses_api) continue;
+    const { displayName: _d, providerOptions: _p, use_responses_api: _r, ...opencodeConfig } = config;
     result[id] = opencodeConfig;
   }
   return result;

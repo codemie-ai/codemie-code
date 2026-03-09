@@ -89,7 +89,7 @@ vi.mock('../opencode/opencode.session.js', () => ({
   }),
 }));
 
-// Mock getModelConfig and getAllOpenCodeModelConfigs
+// Mock getModelConfig and model config helpers
 vi.mock('../opencode/opencode-model-configs.js', () => ({
   getModelConfig: vi.fn(() => ({
     id: 'gpt-5-2-2025-12-11',
@@ -98,7 +98,13 @@ vi.mock('../opencode/opencode-model-configs.js', () => ({
     tool_call: true,
     reasoning: true,
   })),
-  getAllOpenCodeModelConfigs: vi.fn(() => ({})),
+  getChatCompletionsModelConfigs: vi.fn(() => ({})),
+  getResponsesApiModelConfigs: vi.fn(() => ({})),
+}));
+
+// Mock dynamic model fetcher so tests don't make real API calls
+vi.mock('../opencode/opencode-dynamic-models.js', () => ({
+  fetchDynamicModelConfigs: vi.fn(() => Promise.resolve({})),
 }));
 
 // Mock fs

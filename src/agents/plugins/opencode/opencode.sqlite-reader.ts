@@ -1,12 +1,14 @@
 /**
  * OpenCode SQLite Reader
  *
- * Reads session/message/part data from OpenCode's SQLite database (opencode.db)
- * using the system `sqlite3` CLI with `-json` output.
+ * Reads session/message/part data from OpenCode's SQLite database (opencode.db).
  *
  * OpenCode migrated from file-based storage (JSON in storage/session/, storage/message/,
- * storage/part/) to SQLite. This module provides read access to the new format without
- * adding any npm dependencies — it shells out to the pre-installed sqlite3 CLI.
+ * storage/part/) to SQLite. This module provides read access to the new format.
+ *
+ * Query strategy (in priority order):
+ * 1. node:sqlite — Node.js built-in (22.5+, no external tools required)
+ * 2. sqlite3 CLI — fallback for older Node.js versions
  *
  * Usage: Called once at session end (not performance-critical).
  */
@@ -25,9 +27,20 @@ import type {
 } from './opencode-message-types.js';
 
 /**
- * Check if the sqlite3 CLI is available on this system.
+ * Check if SQLite reading is available on this system.
+ *
+ * Prefers node:sqlite (Node.js 22.5+, no external tools required).
+ * Falls back to checking for the sqlite3 CLI binary.
  */
 export async function isSqliteAvailable(): Promise<boolean> {
+  // Try node:sqlite first (Node.js 22.5+, no external tools required)
+  try {
+    const { DatabaseSync } = await import('node:sqlite');
+    return typeof DatabaseSync === 'function';
+  } catch {
+    // node:sqlite not available (Node.js < 22.5)
+  }
+  // Fall back to sqlite3 CLI
   return commandExists('sqlite3');
 }
 
@@ -47,13 +60,43 @@ export function getDbPathFromStorage(storagePath: string): string | null {
 }
 
 /**
+ * Execute a read-only SQLite query using Node.js native node:sqlite (Node.js 22.5+).
+ *
+ * @returns Parsed rows, or null if node:sqlite is unavailable or the query fails
+ */
+async function queryDbViaNative<T>(dbPath: string, sql: string): Promise<T[] | null> {
+  try {
+    const { DatabaseSync } = await import('node:sqlite');
+    const db = new DatabaseSync(dbPath, { open: true });
+    try {
+      const stmt = db.prepare(sql);
+      return stmt.all() as unknown as T[];
+    } finally {
+      db.close();
+    }
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Execute a read-only SQLite query and return parsed JSON rows.
+ *
+ * Tries node:sqlite first (Node.js 22.5+, no external tools required).
+ * Falls back to the sqlite3 CLI if node:sqlite is unavailable.
  *
  * @param dbPath - Path to the SQLite database
  * @param sql - SQL query to execute
  * @returns Parsed rows as an array of objects
  */
 async function queryDb<T>(dbPath: string, sql: string): Promise<T[]> {
+  // Try native node:sqlite first (no external tool required)
+  const nativeResult = await queryDbViaNative<T>(dbPath, sql);
+  if (nativeResult !== null) {
+    return nativeResult;
+  }
+
+  // Fallback to sqlite3 CLI
   try {
     const result = await exec('sqlite3', ['-json', '-readonly', dbPath, sql], {
       timeout: 10_000,
