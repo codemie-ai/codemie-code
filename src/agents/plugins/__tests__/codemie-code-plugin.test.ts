@@ -103,6 +103,8 @@ vi.mock('../opencode/opencode-model-configs.js', () => ({
     limit: { context: 1048576, output: 65536 },
   })),
   getAllOpenCodeModelConfigs: vi.fn(() => ({})),
+  getChatCompletionsModelConfigs: vi.fn(() => ({})),
+  getResponsesApiModelConfigs: vi.fn(() => ({})),
 }));
 
 // Mock fs

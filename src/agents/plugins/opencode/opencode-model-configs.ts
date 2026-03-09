@@ -45,6 +45,12 @@ export interface OpenCodeModelConfig {
     context: number;
     output: number;
   };
+  /**
+   * Use OpenAI Responses API instead of Chat Completions (CodeMie extension).
+   * Required for models like gpt-5.3-codex that don't support /v1/chat/completions.
+   * When true, OpenCode routes via `<provider>.responses/<model>` which sends to /v1/responses.
+   */
+  use_responses_api?: boolean;
   /** Provider-specific options (CodeMie extension) */
   providerOptions?: {
     headers?: Record<string, string>;
@@ -201,14 +207,12 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
     attachment: true,
     structured_output: true,
     temperature: false,
-    temperature: false,
-    structured_output: true,
+    use_responses_api: true,
     modalities: {
       input: ['text', 'image'],
       output: ['text']
     },
     knowledge: '2025-12-31',
-    knowledge: '2025-10-31',
     release_date: '2026-02-24',
     last_updated: '2026-02-24',
     open_weights: false,
@@ -506,24 +510,53 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
 };
 
 /**
- * Strip CodeMie-specific fields (displayName, providerOptions) from a model config.
+ * Strip CodeMie-specific fields (displayName, providerOptions, use_responses_api) from a model config.
  * Returns a config suitable for direct injection into OpenCode's provider config.
  */
 export function toOpenCodeConfig(
   config: OpenCodeModelConfig
-): Omit<OpenCodeModelConfig, 'displayName' | 'providerOptions'> {
-  const { displayName: _, providerOptions: _po, ...opencodeConfig } = config;
+): Omit<OpenCodeModelConfig, 'displayName' | 'providerOptions' | 'use_responses_api'> {
+  const { displayName: _, providerOptions: _po, use_responses_api: _ra, ...opencodeConfig } = config;
   return opencodeConfig;
 }
 
 /**
- * Get all model configs stripped of CodeMie-specific fields (displayName, providerOptions).
+ * Get all model configs stripped of CodeMie-specific fields (displayName, providerOptions, use_responses_api).
  * Used to populate all models in the OpenCode config so users can switch models during a session.
  */
-export function getAllOpenCodeModelConfigs(): Record<string, Omit<OpenCodeModelConfig, 'displayName' | 'providerOptions'>> {
-  const result: Record<string, Omit<OpenCodeModelConfig, 'displayName' | 'providerOptions'>> = {};
+export function getAllOpenCodeModelConfigs(): Record<string, Omit<OpenCodeModelConfig, 'displayName' | 'providerOptions' | 'use_responses_api'>> {
+  const result: Record<string, Omit<OpenCodeModelConfig, 'displayName' | 'providerOptions' | 'use_responses_api'>> = {};
   for (const [id, config] of Object.entries(OPENCODE_MODEL_CONFIGS)) {
     result[id] = toOpenCodeConfig(config);
+  }
+  return result;
+}
+
+/**
+ * Get model configs that use Chat Completions API (NOT Responses API).
+ * These models are routed through custom providers (codemie-proxy, litellm, etc.).
+ */
+export function getChatCompletionsModelConfigs(): Record<string, Omit<OpenCodeModelConfig, 'displayName' | 'providerOptions' | 'use_responses_api'>> {
+  const result: Record<string, Omit<OpenCodeModelConfig, 'displayName' | 'providerOptions' | 'use_responses_api'>> = {};
+  for (const [id, config] of Object.entries(OPENCODE_MODEL_CONFIGS)) {
+    if (!config.use_responses_api) {
+      result[id] = toOpenCodeConfig(config);
+    }
+  }
+  return result;
+}
+
+/**
+ * Get model configs that require the OpenAI Responses API.
+ * These models must be routed through the built-in `openai` CUSTOM_LOADER (sdk.responses()).
+ * They should NOT appear in codemie-proxy/litellm models to prevent Chat Completions routing.
+ */
+export function getResponsesApiModelConfigs(): Record<string, Omit<OpenCodeModelConfig, 'displayName' | 'providerOptions' | 'use_responses_api'>> {
+  const result: Record<string, Omit<OpenCodeModelConfig, 'displayName' | 'providerOptions' | 'use_responses_api'>> = {};
+  for (const [id, config] of Object.entries(OPENCODE_MODEL_CONFIGS)) {
+    if (config.use_responses_api) {
+      result[id] = toOpenCodeConfig(config);
+    }
   }
   return result;
 }

@@ -2,7 +2,7 @@ import type { AgentMetadata, AgentConfig } from '../core/types.js';
 import { join } from 'path';
 import { existsSync } from 'fs';
 import { logger } from '../../utils/logger.js';
-import { getModelConfig, getAllOpenCodeModelConfigs, toOpenCodeConfig } from './opencode/opencode-model-configs.js';
+import { getModelConfig, getChatCompletionsModelConfigs, getResponsesApiModelConfigs, toOpenCodeConfig } from './opencode/opencode-model-configs.js';
 import { BaseAgentAdapter } from '../core/BaseAgentAdapter.js';
 import type { SessionAdapter } from '../core/session/BaseSessionAdapter.js';
 import type { BaseExtensionInstaller } from '../core/extension/BaseExtensionInstaller.js';
@@ -83,10 +83,29 @@ function buildOpenCodeConfig(params: {
   modelId: string;
   timeout: number;
   providerOptions?: any;
-  allModels: Record<string, unknown>;
+  /**
+   * Models that use Chat Completions API. These go in codemie-proxy/litellm providers.
+   * Responses API models are intentionally excluded to prevent Chat Completions routing.
+   */
+  chatCompletionsModels: Record<string, unknown>;
+  /**
+   * When set, adds a built-in `openai` provider that routes through @ai-sdk/openai
+   * using sdk.responses() for the Responses API (/v1/responses).
+   * Required for models like gpt-5.3-codex that don't support Chat Completions.
+   */
+  openaiProvider?: {
+    baseUrl: string;
+    apiKey: string;
+    models: Record<string, unknown>;
+    whitelist: string[];
+    timeout: number;
+  };
 }): Record<string, unknown> {
   return {
-    enabled_providers: ['codemie-proxy', 'ollama', 'amazon-bedrock', 'litellm'],
+    enabled_providers: [
+      'codemie-proxy', 'ollama', 'amazon-bedrock', 'litellm',
+      ...(params.openaiProvider ? ['openai'] : [])
+    ],
     share: 'disabled',
     provider: {
       ...(params.proxyBaseUrl && {
@@ -99,7 +118,7 @@ function buildOpenCodeConfig(params: {
             timeout: params.timeout,
             ...(params.providerOptions?.headers && { headers: params.providerOptions.headers })
           },
-          models: params.allModels
+          models: params.chatCompletionsModels
         }
       }),
       ...(params.litellmBaseUrl && {
@@ -111,7 +130,23 @@ function buildOpenCodeConfig(params: {
             apiKey: params.litellmApiKey || 'not-required',
             timeout: params.timeout,
           },
-          models: params.allModels
+          models: params.chatCompletionsModels
+        }
+      }),
+      // Responses API provider: uses built-in @ai-sdk/openai which always calls sdk.responses().
+      // baseURL points to the CodeMie proxy; @ai-sdk/openai appends /responses to this URL.
+      // whitelist limits the openai provider to only Responses API models (excludes all default
+      // OpenAI models from models.dev to prevent accidental Chat Completions routing).
+      ...(params.openaiProvider && {
+        openai: {
+          name: 'CodeMie SSO',
+          options: {
+            baseURL: params.openaiProvider.baseUrl,
+            apiKey: params.openaiProvider.apiKey,
+            timeout: params.openaiProvider.timeout,
+          },
+          models: params.openaiProvider.models,
+          whitelist: params.openaiProvider.whitelist
         }
       }),
       ollama: {
@@ -229,29 +264,75 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
       const selectedModel = env.CODEMIE_MODEL || config?.model || 'claude-sonnet-4-6';
       const modelConfig = getModelConfig(selectedModel);
       const { providerOptions } = modelConfig;
-      const allModels = getAllOpenCodeModelConfigs();
-
-      // Ensure the selected model is always in the provider's model list,
-      // even if it's not in the pre-configured registry (fallback-resolved models)
-      if (!allModels[selectedModel]) {
-        allModels[selectedModel] = toOpenCodeConfig(modelConfig);
-      }
 
       const isBedrock = provider === 'bedrock';
       const isLiteLLM = provider === 'litellm';
       const proxyBaseUrl = provider !== 'ollama' && !isBedrock && !isLiteLLM ? baseUrl : undefined;
       const ollamaBaseUrl = resolveOllamaBaseUrl(baseUrl, provider);
-      const activeProvider = determineActiveProvider(provider);
+
+      // Split models into two groups:
+      // - chatCompletionsModels: routed through codemie-proxy/litellm via Chat Completions API
+      // - responsesApiModels: routed through openai CUSTOM_LOADER via Responses API (/v1/responses)
+      // Responses API models are intentionally excluded from codemie-proxy/litellm models to prevent
+      // Chat Completions routing when the user switches models within OpenCode.
+      const chatCompletionsModels = getChatCompletionsModelConfigs();
+      const responsesApiModels = getResponsesApiModelConfigs();
+
+      // Add selected model to appropriate group if not in registry (fallback-resolved models)
+      if (!chatCompletionsModels[selectedModel] && !responsesApiModels[selectedModel]) {
+        if (modelConfig.use_responses_api) {
+          responsesApiModels[selectedModel] = toOpenCodeConfig(modelConfig);
+        } else {
+          chatCompletionsModels[selectedModel] = toOpenCodeConfig(modelConfig);
+        }
+      }
+
+      // The URL to use for the openai (Responses API) provider
+      const responsesApiBaseUrl = proxyBaseUrl || (isLiteLLM ? baseUrl : undefined);
+      // Whether we can set up the openai CUSTOM_LOADER (requires a proxy URL and non-special provider)
+      const canUseResponsesApi = !isBedrock && provider !== 'ollama' && !!responsesApiBaseUrl;
+      // Whether the initially selected model uses Responses API (for setting the default model)
+      const selectedModelUsesResponsesApi = !!modelConfig.use_responses_api && canUseResponsesApi;
+      // Whether to include the openai provider — always true when there are Responses API models,
+      // regardless of which model was selected at startup. This ensures model switching works correctly.
+      const hasResponsesApiModels = canUseResponsesApi && Object.keys(responsesApiModels).length > 0;
+
+      const baseActiveProvider = determineActiveProvider(provider);
+      const activeProvider = selectedModelUsesResponsesApi ? 'openai' : baseActiveProvider;
       const timeout = providerOptions?.timeout ?? parseInt(env.CODEMIE_TIMEOUT || '600') * 1000;
       const modelId = isBedrock
         ? toBedrockModelId(modelConfig.id, env.AWS_REGION || env.CODEMIE_AWS_REGION)
         : modelConfig.id;
 
+      logger.debug(`[codemie-code] Responses API decision: provider=${provider}, isLiteLLM=${isLiteLLM}, isBedrock=${isBedrock}, canUseResponsesApi=${canUseResponsesApi}, hasResponsesApiModels=${hasResponsesApiModels}, selectedModelUsesResponsesApi=${selectedModelUsesResponsesApi}`);
+      logger.debug(`[codemie-code] Model: selectedModel=${selectedModel}, modelId=${modelId}, activeProvider=${activeProvider}`);
+      logger.debug(`[codemie-code] Model counts: chatCompletions=${Object.keys(chatCompletionsModels).length}, responsesApi=${Object.keys(responsesApiModels).length}`);
+
+      // Always set OPENAI_API_KEY when there are Responses API models so OpenCode's state builder
+      // creates providers["openai"] before the CUSTOM_LOADERS step. This ensures the openai
+      // CUSTOM_LOADER is registered regardless of which model is selected at startup,
+      // enabling correct model switching within OpenCode.
+      if (hasResponsesApiModels) {
+        env.OPENAI_API_KEY = 'proxy-handled';
+        logger.debug(`[codemie-code] Set OPENAI_API_KEY=proxy-handled to trigger OpenCode openai CUSTOM_LOADER`);
+        logger.debug(`[codemie-code] openaiProvider.baseUrl=${responsesApiBaseUrl}, models=${Object.keys(responsesApiModels).join(', ')}`);
+      }
+
       const openCodeConfig = buildOpenCodeConfig({
         proxyBaseUrl,
         litellmBaseUrl: isLiteLLM ? baseUrl : undefined,
         litellmApiKey: isLiteLLM ? env.CODEMIE_API_KEY : undefined,
-        ollamaBaseUrl, activeProvider, modelId, timeout, providerOptions, allModels
+        ollamaBaseUrl, activeProvider, modelId, timeout, providerOptions,
+        chatCompletionsModels,
+        openaiProvider: hasResponsesApiModels ? {
+          // Use proxy URL when SSO proxy is running, or LiteLLM URL directly for litellm provider
+          baseUrl: responsesApiBaseUrl!,
+          // Use real API key for LiteLLM direct connection, 'proxy-handled' when going through SSO proxy
+          apiKey: isLiteLLM ? (env.CODEMIE_API_KEY || 'not-required') : 'proxy-handled',
+          models: responsesApiModels,
+          whitelist: Object.keys(responsesApiModels),
+          timeout
+        } : undefined
       });
 
       // --- Hooks injection ---
@@ -319,6 +400,8 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
 
       env.OPENCODE_DISABLE_SHARE = 'true';
       const configJson = JSON.stringify(openCodeConfig);
+
+      logger.debug(`[codemie-code] OpenCode config (${configJson.length} bytes): ${configJson}`);
 
       if (configJson.length > MAX_ENV_SIZE) {
         logger.warn(`Config size (${configJson.length} bytes) exceeds env var limit (${MAX_ENV_SIZE}), using temp file fallback`, {

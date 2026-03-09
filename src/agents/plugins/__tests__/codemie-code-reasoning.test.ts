@@ -99,6 +99,8 @@ vi.mock('../opencode/opencode-model-configs.js', () => ({
     reasoning: true,
   })),
   getAllOpenCodeModelConfigs: vi.fn(() => ({})),
+  getChatCompletionsModelConfigs: vi.fn(() => ({})),
+  getResponsesApiModelConfigs: vi.fn(() => ({})),
   toOpenCodeConfig: vi.fn((config: any) => {
     const { displayName: _, providerOptions: _po, ...rest } = config;
     return rest;

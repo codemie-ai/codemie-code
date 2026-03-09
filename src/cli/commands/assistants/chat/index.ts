@@ -339,7 +339,8 @@ async function sendMessageWithHistory(
   assistant: CodemieAssistant,
   message: string,
   history: HistoryMessage[],
-  conversationId?: string
+  conversationId?: string,
+  detectedFiles: DetectedFile[] = []
 ): Promise<string> {
   logger.debug('Sending message to assistant', {
     assistantId: assistant.id,

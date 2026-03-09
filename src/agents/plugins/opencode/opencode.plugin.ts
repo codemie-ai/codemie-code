@@ -1,6 +1,6 @@
 import type { AgentMetadata, AgentConfig } from '../../core/types.js';
 import { logger } from '../../../utils/logger.js';
-import { getModelConfig, getAllOpenCodeModelConfigs, toOpenCodeConfig } from './opencode-model-configs.js';
+import { getModelConfig, getChatCompletionsModelConfigs, getResponsesApiModelConfigs, toOpenCodeConfig } from './opencode-model-configs.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
@@ -69,15 +69,6 @@ export const OpenCodePluginMetadata: AgentMetadata = {
 
       const { providerOptions } = modelConfig;
 
-      // Build all models for codemie-proxy (stripped of CodeMie-specific fields)
-      const allModels = getAllOpenCodeModelConfigs();
-
-      // Ensure the selected model is always in the provider's model list,
-      // even if it's not in the pre-configured registry (fallback-resolved models)
-      if (!allModels[selectedModel]) {
-        allModels[selectedModel] = toOpenCodeConfig(modelConfig);
-      }
-
       // Determine URLs based on provider type
       const isBedrock = provider === 'bedrock';
       const proxyBaseUrl = provider !== 'ollama' && !isBedrock ? baseUrl : undefined;
@@ -85,15 +76,48 @@ export const OpenCodePluginMetadata: AgentMetadata = {
         ? (baseUrl.endsWith('/v1') || baseUrl.includes('/v1/') ? baseUrl : `${baseUrl.replace(/\/$/, '')}/v1`)
         : 'http://localhost:11434/v1';
 
-      // Determine default model provider
-      // - ollama: uses ollama provider directly
-      // - bedrock: uses OpenCode's built-in amazon-bedrock provider (AWS env vars set by provider hook)
-      // - all others: route through codemie-proxy (SSO/proxy)
-      const activeProvider = provider === 'ollama' ? 'ollama' : (isBedrock ? 'amazon-bedrock' : 'codemie-proxy');
+      // Split models into two groups:
+      // - chatCompletionsModels: routed through codemie-proxy via Chat Completions API
+      // - responsesApiModels: routed through openai CUSTOM_LOADER via Responses API (/v1/responses)
+      // Responses API models are intentionally excluded from codemie-proxy models to prevent
+      // Chat Completions routing when the user switches models within OpenCode.
+      const chatCompletionsModels = getChatCompletionsModelConfigs();
+      const responsesApiModels = getResponsesApiModelConfigs();
+
+      // Add selected model to appropriate group if not in registry (fallback-resolved models)
+      if (!chatCompletionsModels[selectedModel] && !responsesApiModels[selectedModel]) {
+        if (modelConfig.use_responses_api) {
+          responsesApiModels[selectedModel] = toOpenCodeConfig(modelConfig);
+        } else {
+          chatCompletionsModels[selectedModel] = toOpenCodeConfig(modelConfig);
+        }
+      }
+
+      // Whether to include the openai provider — always true when there are Responses API models,
+      // regardless of which model was selected at startup. This ensures model switching works correctly.
+      const canUseResponsesApi = !isBedrock && provider !== 'ollama' && !!proxyBaseUrl;
+      const selectedModelUsesResponsesApi = !!modelConfig.use_responses_api && canUseResponsesApi;
+      const hasResponsesApiModels = canUseResponsesApi && Object.keys(responsesApiModels).length > 0;
+      const baseActiveProvider = provider === 'ollama' ? 'ollama' : (isBedrock ? 'amazon-bedrock' : 'codemie-proxy');
+      const activeProvider = selectedModelUsesResponsesApi ? 'openai' : baseActiveProvider;
       const timeout = providerOptions?.timeout ?? parseInt(env.CODEMIE_TIMEOUT || '600') * 1000;
 
+      logger.debug(`[opencode] Responses API decision: provider=${provider}, isBedrock=${isBedrock}, canUseResponsesApi=${canUseResponsesApi}, hasResponsesApiModels=${hasResponsesApiModels}, selectedModelUsesResponsesApi=${selectedModelUsesResponsesApi}`);
+      logger.debug(`[opencode] Model: selectedModel=${selectedModel}, activeProvider=${activeProvider}`);
+      logger.debug(`[opencode] Model counts: chatCompletions=${Object.keys(chatCompletionsModels).length}, responsesApi=${Object.keys(responsesApiModels).length}`);
+
+      // Always set OPENAI_API_KEY when there are Responses API models so OpenCode's state builder
+      // creates providers["openai"] before the CUSTOM_LOADERS step. This ensures the openai
+      // CUSTOM_LOADER is registered regardless of which model is selected at startup,
+      // enabling correct model switching within OpenCode.
+      if (hasResponsesApiModels) {
+        env.OPENAI_API_KEY = 'proxy-handled';
+        logger.debug(`[opencode] Set OPENAI_API_KEY=proxy-handled to trigger OpenCode openai CUSTOM_LOADER`);
+        logger.debug(`[opencode] openaiProvider.baseUrl=${proxyBaseUrl}, models=${Object.keys(responsesApiModels).join(', ')}`);
+      }
+
       const openCodeConfig: Record<string, unknown> = {
-        enabled_providers: ['codemie-proxy', 'ollama', 'amazon-bedrock'],
+        enabled_providers: ['codemie-proxy', 'ollama', 'amazon-bedrock', ...(hasResponsesApiModels ? ['openai'] : [])],
         share: 'disabled',
         provider: {
           ...(proxyBaseUrl && {
@@ -106,7 +130,25 @@ export const OpenCodePluginMetadata: AgentMetadata = {
                 timeout,
                 ...(providerOptions?.headers && { headers: providerOptions.headers })
               },
-              models: allModels
+              models: chatCompletionsModels
+            }
+          }),
+          // Responses API provider: uses built-in @ai-sdk/openai which always calls sdk.responses().
+          // baseURL points to the CodeMie proxy; @ai-sdk/openai appends /responses to this URL.
+          // whitelist limits the openai provider to only Responses API models (excludes all default
+          // OpenAI models from models.dev to prevent accidental Chat Completions routing).
+          // Always included when there are Responses API models, regardless of initial model selection,
+          // to ensure model switching within OpenCode works correctly.
+          ...(hasResponsesApiModels && proxyBaseUrl && {
+            openai: {
+              name: 'CodeMie SSO',
+              options: {
+                baseURL: proxyBaseUrl,
+                apiKey: 'proxy-handled',
+                timeout,
+              },
+              models: responsesApiModels,
+              whitelist: Object.keys(responsesApiModels)
             }
           }),
           ollama: {
@@ -146,6 +188,8 @@ export const OpenCodePluginMetadata: AgentMetadata = {
 
       env.OPENCODE_DISABLE_SHARE = 'true';
       const configJson = JSON.stringify(openCodeConfig);
+
+      logger.debug(`[opencode] OpenCode config (${configJson.length} bytes): ${configJson}`);
 
       // Config injection strategy:
       // 1. Primary: OPENCODE_CONFIG_CONTENT env var (inline JSON)
