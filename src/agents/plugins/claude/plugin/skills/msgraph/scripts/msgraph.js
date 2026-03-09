@@ -401,6 +401,12 @@ async function cmdCalendar(args) {
     };
     if (args.location) payload.location = { displayName: args.location };
     if (args.body)     payload.body     = { contentType: 'Text', content: args.body };
+    if (args.attendees) {
+      payload.attendees = args.attendees.split(',').map(email => ({
+        emailAddress: { address: email.trim() },
+        type: 'required',
+      }));
+    }
     const event = await graphPost('/me/events', token, payload);
     console.log(`Event created: ${event.subject}`);
     console.log(`ID: ${event.id}`);
