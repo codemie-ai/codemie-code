@@ -17,7 +17,7 @@ const path  = require('node:path');
 const os    = require('node:os');
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const CLIENT_ID  = '14d82eec-204b-4c2f-b7e8-296a70dab67e';
+const CLIENT_ID  = '3d7688c6-f449-4d04-8b0d-57d94818e922'; // CodeMie APP
 const TOKEN_URL  = 'https://login.microsoftonline.com/common/oauth2/v2.0/token';
 const DEVICE_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/devicecode';
 const SCOPES     = [
@@ -25,9 +25,8 @@ const SCOPES     = [
   'Calendars.Read', 'Calendars.ReadWrite',
   'Files.Read', 'Files.ReadWrite',
   'Sites.Read.All', 'Chat.Read', 'Chat.ReadWrite',
-  'People.Read', 'Contacts.Read',
-  'Notes.Read', 'Notes.ReadWrite',
-  'offline_access',
+  'OnlineMeetingTranscript.Read.All', 'OnlineMeetings.Read',
+  'People.Read', 'Contacts.Read', 'offline_access',
 ].join(' ');
 const CACHE_FILE = path.join(os.homedir(), '.ms_graph_token_cache.json');
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
@@ -258,13 +257,13 @@ function fmtSize(n) {
 
 function stripHtml(s) {
   return (s || '')
-    .replace(/<[^>]*>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/\r?\n\s*\r?\n/g, '\n')
-    .trim();
+      .replace(/<[^>]*>/g, '')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/\r?\n\s*\r?\n/g, '\n')
+      .trim();
 }
 
 function pad(str, len) {
@@ -315,7 +314,7 @@ async function cmdMe(args) {
   const me    = await graphGet('/me', token);
   if (args.json) {
     const fields = ['displayName','userPrincipalName','id','mail','jobTitle',
-                    'department','officeLocation','businessPhones','mobilePhone'];
+      'department','officeLocation','businessPhones','mobilePhone'];
     const out = {};
     for (const k of fields) if (me[k] != null) out[k] = me[k];
     console.log(JSON.stringify(out, null, 2));
@@ -484,8 +483,8 @@ async function cmdSharepoint(args) {
   if (args.site) {
     const p  = args.path || 'root';
     const ep = p === 'root'
-      ? `/sites/${args.site}/drive/root/children`
-      : `/sites/${args.site}/drive/root:/${p}:/children`;
+        ? `/sites/${args.site}/drive/root/children`
+        : `/sites/${args.site}/drive/root:/${p}:/children`;
     const data  = await graphGet(ep, token, { $top: limit, $select: 'id,name,size,lastModifiedDateTime,file,folder' });
     const items = data.value || [];
     if (args.json) { console.log(JSON.stringify(items, null, 2)); return; }
@@ -526,9 +525,68 @@ async function cmdTeams(args) {
     return;
   }
 
+  // ── NEW: resolve a person's AAD user ID from their email/UPN ──────────────
+  // Usage: teams --lookup-user someone@company.com
+  // Shows AAD ID, display name, title, and the expected oneOnOne chat ID pattern.
+  // Note: oneOnOne chat IDs follow the pattern 19:ID1_ID2@unq.gbl.spaces
+  //       where the IDs appear in the order Teams assigned them (not guaranteed sort order).
+  //       Always verify by listing --chats and matching the target user's ID fragment.
+  if (args.lookupUser) {
+    const user = await graphGet(`/users/${args.lookupUser}`, token, {
+      $select: 'id,displayName,userPrincipalName,jobTitle,department',
+    });
+    const me = await graphGet('/me', token, { $select: 'id' });
+    console.log(`Display Name : ${user.displayName}`);
+    console.log(`Email        : ${user.userPrincipalName}`);
+    console.log(`AAD User ID  : ${user.id}`);
+    console.log(`Job Title    : ${user.jobTitle || 'N/A'}`);
+    console.log(`Department   : ${user.department || 'N/A'}`);
+    console.log(`\nYour AAD ID  : ${me.id}`);
+    console.log(`\nTo find the direct chat, run:`);
+    console.log(`  teams --chats   (look for a oneOnOne chat containing "${user.id.slice(0, 8)}")`);
+    console.log(`\nThen send with:`);
+    console.log(`  teams --dm ${args.lookupUser} --send "your message"`);
+    return;
+  }
+
+  // ── NEW: send a DM directly by email address ──────────────────────────────
+  // Usage: teams --dm someone@company.com --send "hello"
+  // Resolves the user's AAD ID, finds their oneOnOne chat from the chat list,
+  // and sends the message. More reliable than guessing the chat ID.
+  if (args.dm && args.send) {
+    // 1. Resolve target user's AAD ID
+    const user = await graphGet(`/users/${args.dm}`, token, {
+      $select: 'id,displayName',
+    });
+
+    // 2. List chats and find the oneOnOne chat containing the target user's ID
+    const chatsData = await graphGet('/me/chats', token, {
+      $top: 50,
+      $select: 'id,topic,chatType',
+    });
+    const chats = chatsData.value || [];
+    const directChat = chats.find(c =>
+        c.chatType === 'oneOnOne' && c.id.includes(user.id)
+    );
+
+    if (!directChat) {
+      console.error(`No existing direct chat found with ${user.displayName} (${args.dm}).`);
+      console.error(`They may need to message you first, or check --chats list manually.`);
+      process.exit(1);
+    }
+
+    const res = await graphPost(`/me/chats/${directChat.id}/messages`, token, {
+      body: { content: args.send },
+    });
+    console.log(`DM sent to ${user.displayName}. Message ID: ${res.id}`);
+    return;
+  }
+
+  // ── FIXED: $select is NOT supported by the Teams chat messages endpoint ───
+  // The Graph API returns HTTP 400 if $select is used here. Pass $top only.
   if (args.messages) {
     const data = await graphGet(`/me/chats/${args.messages}/messages`, token, {
-      $top: limit, $select: 'id,from,body,createdDateTime',
+      $top: limit,
     });
     const msgs = data.value || [];
     if (args.json) { console.log(JSON.stringify(msgs, null, 2)); return; }
@@ -556,7 +614,112 @@ async function cmdTeams(args) {
     return;
   }
 
-  console.log('Teams: --chats | --messages CHAT_ID | --send MSG --chat-id ID | --teams-list');
+  console.log('Teams: --chats | --messages CHAT_ID | --send MSG --chat-id ID');
+  console.log('       --lookup-user EMAIL | --dm EMAIL --send MSG | --teams-list');
+}
+
+async function cmdTranscripts(args) {
+  const token = await getValidToken();
+
+  // Search calendar events by date + optional subject keyword, then resolve meeting IDs + transcripts
+  // Usage: transcripts --start 2026-03-06 [--end 2026-03-06] [--subject "keyword"]
+  if (args.list || (!args.meeting && !args.download)) {
+    const startDate = args.start || new Date(Date.now() - 7 * 86400 * 1000).toISOString().slice(0, 10);
+    const endDate   = args.end || startDate;
+    const startDT   = startDate + 'T00:00:00Z';
+    const endDT     = endDate   + 'T23:59:59Z';
+
+    const data = await graphGet('/me/calendarView', token, {
+      startDateTime: startDT,
+      endDateTime:   endDT,
+      $select: 'id,subject,start,end,isOnlineMeeting,onlineMeeting',
+      $top: 50,
+      $orderby: 'start/dateTime',
+    });
+    const events = (data.value || []).filter(e => e.isOnlineMeeting && e.onlineMeeting?.joinUrl);
+    if (args.subject) {
+      const kw = args.subject.toLowerCase();
+      const filtered = events.filter(e => (e.subject || '').toLowerCase().includes(kw));
+      if (!filtered.length) {
+        console.log(`No online meetings matching "${args.subject}" on ${startDate}.`);
+        return;
+      }
+      for (const e of filtered) {
+        console.log(`\nMeeting: ${e.subject}`);
+        console.log(`Start  : ${fmtDt(e.start?.dateTime)}`);
+        const joinUrl = e.onlineMeeting.joinUrl;
+        // Resolve to online meeting object via joinWebUrl
+        let meetingId = null;
+        try {
+          const om = await graphGet('/me/onlineMeetings', token, {
+            $filter: `joinWebUrl eq '${joinUrl}'`,
+          });
+          const meetings = om.value || [];
+          if (meetings.length) {
+            meetingId = meetings[0].id;
+            console.log(`Meeting ID: ${meetingId}`);
+          }
+        } catch (e2) {
+          console.log(`Could not resolve meeting ID: ${e2.message}`);
+        }
+        if (meetingId) {
+          try {
+            const td = await graphGet(`/me/onlineMeetings/${meetingId}/transcripts`, token);
+            const transcripts = td.value || [];
+            if (!transcripts.length) {
+              console.log('No transcripts available for this meeting.');
+            } else {
+              for (const t of transcripts)
+                console.log(`Transcript ID: ${t.id}  Created: ${fmtDt(t.createdDateTime)}`);
+            }
+          } catch (e3) {
+            console.log(`Transcripts error: ${e3.message}`);
+          }
+        }
+      }
+      return;
+    }
+
+    if (!events.length) { console.log('No online meetings found in range.'); return; }
+    console.log(`\nOnline meetings (${startDate} – ${endDate}):`);
+    console.log('─'.repeat(80));
+    for (const e of events)
+      console.log(`  ${fmtDt(e.start?.dateTime).padEnd(20)}  ${e.subject || '(no title)'}`);
+    return;
+  }
+
+  // List transcripts for a specific meeting ID
+  if (args.meeting && !args.transcript) {
+    const data = await graphGet(`/me/onlineMeetings/${args.meeting}/transcripts`, token);
+    const transcripts = data.value || [];
+    if (!transcripts.length) { console.log('No transcripts found for this meeting.'); return; }
+    console.log(`\nTranscripts for meeting ${args.meeting.slice(0, 30)}...:`);
+    console.log('─'.repeat(60));
+    for (const t of transcripts)
+      console.log(`ID: ${t.id}  Created: ${fmtDt(t.createdDateTime)}`);
+    return;
+  }
+
+  // Download transcript content
+  if (args.meeting && args.transcript) {
+    const contentType = args.vtt ? 'text/vtt' : 'text/plain';
+    const url = `${GRAPH_BASE}/me/onlineMeetings/${args.meeting}/transcripts/${args.transcript}/content`;
+    const res = await httpsRequest(url, {
+      headers: { Authorization: `Bearer ${token}`, Accept: contentType },
+    });
+    const text = res.body;
+    if (args.output) {
+      fs.writeFileSync(args.output, text, 'utf8');
+      console.log(`Transcript saved to ${args.output}`);
+    } else {
+      console.log(text);
+    }
+    return;
+  }
+
+  console.log('Usage: transcripts --start YYYY-MM-DD [--end YYYY-MM-DD] [--subject "keyword"]');
+  console.log('       transcripts --meeting MEETING_ID');
+  console.log('       transcripts --meeting MEETING_ID --transcript TRANSCRIPT_ID [--output FILE] [--vtt]');
 }
 
 async function cmdOnedrive(args) {
@@ -773,9 +936,8 @@ async function cmdOnenote(args) {
 
 // ── CLI Parser ────────────────────────────────────────────────────────────────
 function parseArgs(argv) {
-  // Flags that take no value (boolean)
   const BOOL = new Set(['json','unread','sites','chats','teamsList','contacts',
-                        'manager','reports','availability','notebooks','help']);
+    'manager','reports','availability','notebooks','list','vtt','help']);
   const args = { _: [] };
   let i = 0;
   while (i < argv.length) {
@@ -814,7 +976,8 @@ Data:
            [--create TITLE --start DT --end DT [--location L] [--timezone TZ]]
            [--availability --start DT --end DT]
   sharepoint [--sites] [--site ID [--path P]] [--download ID [--output FILE]] [--json]
-  teams [--chats] [--messages CHAT_ID] [--send MSG --chat-id ID] [--teams-list] [--json]
+  teams [--chats] [--messages CHAT_ID] [--send MSG --chat-id ID] [--teams-list]
+        [--lookup-user EMAIL] [--dm EMAIL --send MSG] [--json]
   onedrive [--path P] [--upload FILE [--dest PATH]] [--download ID [--output FILE]]
            [--info ID] [--json]
   people [--contacts] [--search NAME] [--limit N] [--json]
@@ -831,6 +994,8 @@ Examples:
   node ${name} emails --send user@corp.com --subject "Hi" --body "Hello"
   node ${name} calendar --create "Standup" --start 2024-03-15T09:00 --end 2024-03-15T09:30
   node ${name} teams --chats
+  node ${name} teams --lookup-user alice@corp.com
+  node ${name} teams --dm alice@corp.com --send "Hello from the avatar!"
   node ${name} onedrive --upload report.pdf --dest "Documents/report.pdf"
   node ${name} onenote --notebooks
   node ${name} onenote --sections NOTEBOOK_ID
@@ -862,6 +1027,7 @@ async function main() {
     people:     () => cmdPeople(args),
     org:        () => cmdOrg(args),
     onenote:    () => cmdOnenote(args),
+    transcripts:  () => cmdTranscripts(args),
     help:       () => { printHelp(); process.exit(0); },
   };
 

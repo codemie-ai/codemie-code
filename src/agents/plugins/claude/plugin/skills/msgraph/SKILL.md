@@ -196,6 +196,31 @@ node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js onenote --create "M
 node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js onenote --notebooks --json
 ```
 
+### Transcripts
+
+```bash
+# List online meetings in a date range (defaults to last 7 days)
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js transcripts --start 2026-03-06
+
+# List online meetings in a specific date range
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js transcripts --start 2026-03-06 --end 2026-03-07
+
+# Find meetings by subject keyword and show their transcripts
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js transcripts --start 2026-03-06 --subject "standup"
+
+# List transcripts for a known meeting ID
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js transcripts --meeting MEETING_ID
+
+# Read transcript content (plain text, printed to stdout)
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js transcripts --meeting MEETING_ID --transcript TRANSCRIPT_ID
+
+# Save transcript to a file
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js transcripts --meeting MEETING_ID --transcript TRANSCRIPT_ID --output meeting.txt
+
+# Download as VTT (timestamped captions format)
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js transcripts --meeting MEETING_ID --transcript TRANSCRIPT_ID --vtt --output meeting.vtt
+```
+
 ### People & Contacts
 
 ```bash
@@ -237,6 +262,15 @@ node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js people --contacts
 2. Run `onenote --sections NOTEBOOK_ID` → list sections
 3. Run `onenote --pages SECTION_ID` → list pages, or use `onenote --search "keyword"` to search directly
 4. Run `onenote --read PAGE_ID` → display page content
+
+### "Show me the transcript from yesterday's standup"
+1. Run `transcripts --start YYYY-MM-DD --subject "standup"` → finds the meeting and lists transcript IDs
+2. Run `transcripts --meeting MEETING_ID --transcript TRANSCRIPT_ID` → reads full transcript text
+
+### "Get all meeting transcripts for today"
+1. Run `transcripts --start YYYY-MM-DD` → lists all online meetings for the day
+2. Run `transcripts --meeting MEETING_ID` → lists available transcripts per meeting
+3. Run `transcripts --meeting MEETING_ID --transcript TRANSCRIPT_ID --output meeting.txt` → saves each transcript
 
 ### "Who's my manager?" / "Who reports to me?"
 - Run `org --manager` or `org --reports`
