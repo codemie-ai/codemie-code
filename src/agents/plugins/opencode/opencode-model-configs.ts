@@ -68,6 +68,7 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
     reasoning: true,
     attachment: true,
     temperature: false,
+    use_responses_api: true,
     modalities: {
       input: ['text', 'image'],
       output: ['text']
@@ -95,6 +96,7 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
     reasoning: true,
     attachment: false,
     temperature: false,
+    use_responses_api: true,
     modalities: {
       input: ['text', 'image', 'audio'],
       output: ['text', 'image', 'audio']
@@ -122,6 +124,7 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
     reasoning: true,
     attachment: false,
     temperature: false,
+    use_responses_api: true,
     modalities: {
       input: ['text', 'image'],
       output: ['text']
@@ -150,6 +153,7 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
     attachment: true,
     structured_output: true,
     temperature: false,
+    use_responses_api: true,
     modalities: {
       input: ['text', 'image'],
       output: ['text']
@@ -178,6 +182,7 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
     attachment: true,
     structured_output: true,
     temperature: false,
+    use_responses_api: true,
     modalities: {
       input: ['text', 'image'],
       output: ['text']
