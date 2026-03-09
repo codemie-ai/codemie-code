@@ -660,6 +660,51 @@ export class ConfigLoader {
   }
 
   /**
+   * Save assistants configuration to project-local config file
+   * Only updates the codemieAssistants field in the specified profile,
+   * leaving all other local config fields untouched.
+   * Creates the local config file if it does not exist.
+   */
+  static async saveAssistantsToProjectConfig(
+    workingDir: string,
+    profileName: string,
+    assistants: CodemieAssistant[]
+  ): Promise<void> {
+    const localConfigPath = path.join(workingDir, this.LOCAL_CONFIG);
+    const configDir = path.dirname(localConfigPath);
+    await fs.mkdir(configDir, { recursive: true });
+
+    const rawConfig = await this.loadJsonConfig(localConfigPath);
+
+    let config: MultiProviderConfig;
+
+    if (isMultiProviderConfig(rawConfig)) {
+      config = rawConfig;
+    } else {
+      config = {
+        version: 2,
+        activeProfile: profileName,
+        profiles: {}
+      };
+    }
+
+    if (config.profiles[profileName]) {
+      config.profiles[profileName].codemieAssistants = assistants;
+    } else {
+      config.profiles[profileName] = { codemieAssistants: assistants };
+    }
+
+    // Keep activeProfile pointing at a valid profile.
+    // Update it to profileName when: no active profile is set, the current active
+    // profile no longer exists, or this is the only profile in the file.
+    if (!config.activeProfile || !config.profiles[config.activeProfile] || Object.keys(config.profiles).length === 1) {
+      config.activeProfile = profileName;
+    }
+
+    await fs.writeFile(localConfigPath, JSON.stringify(config, null, 2), 'utf-8');
+  }
+
+  /**
    * Delete global config file
    */
   static async deleteGlobalConfig(): Promise<void> {

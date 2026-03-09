@@ -79,6 +79,11 @@ export const MESSAGES = {
     SUMMARY_REGISTERED: (count: number) => `  Registered: ${count}`,
     SUMMARY_UNREGISTERED: (count: number) => `  Unregistered: ${count}`,
     SUMMARY_PROFILE: (profile: string) => `  Profile: ${profile}\n`,
-    CURRENTLY_REGISTERED: 'Currently registered assistants:'
+    CURRENTLY_REGISTERED: 'Currently registered assistants:',
+    PROMPT_STORAGE_SCOPE: 'Where would you like to save assistant configuration?',
+    STORAGE_GLOBAL_LABEL: 'Global (~/.codemie/) - Available across all projects',
+    STORAGE_LOCAL_LABEL: 'Local (.codemie/) - Only for this project',
+    STORAGE_LOCAL_NOTE: 'Project-scoped assistants will override global ones for this repository.',
+    SUMMARY_CONFIG_LOCATION: (location: string) => `  Config: ${location}\n`
   }
 } as const;

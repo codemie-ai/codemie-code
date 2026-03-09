@@ -18,11 +18,15 @@ export function displaySummary(
   toRegister: Assistant[],
   toUnregister: CodemieAssistant[],
   profileName: string,
-  config: ProviderProfile
+  config: ProviderProfile,
+  configLocation?: string
 ): void {
   const totalChanges = toRegister.length + toUnregister.length;
   console.log(chalk.green(MESSAGES.SETUP.SUMMARY_UPDATED(totalChanges)));
   console.log(chalk.dim(MESSAGES.SETUP.SUMMARY_PROFILE(profileName)));
+  if (configLocation) {
+    console.log(chalk.dim(MESSAGES.SETUP.SUMMARY_CONFIG_LOCATION(configLocation)));
+  }
 
   displayCurrentlyRegistered(config);
 }
