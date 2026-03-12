@@ -193,10 +193,14 @@ export const CodexPluginMetadata: AgentMetadata = {
         const adapter = new CodexSessionAdapter(CodexPluginMetadata);
         const sessions = await adapter.discoverSessions({ maxAgeDays: 1 });
 
-        if (sessions.length === 0) {
-          logger.warn('[codex] No recent Codex rollout files found for processing');
+        const RECENT_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
+        const now = Date.now();
+        const recentSessions = sessions.filter(s => now - s.createdAt <= RECENT_WINDOW_MS);
+
+        if (recentSessions.length === 0) {
+          logger.warn('[codex] No rollout file modified in the last 5 minutes, skipping metrics');
         } else {
-          const latestSession = sessions[0];
+          const latestSession = recentSessions[0];
           logger.debug(`[codex] Processing latest rollout: ${latestSession.sessionId}`);
 
           const context = {

@@ -9,6 +9,7 @@
 
 import { readFile } from 'fs/promises';
 import { logger } from '../../../utils/logger.js';
+import { readJSONLTolerant } from '../../core/session/utils/jsonl-reader.js';
 
 // Retry config per tech spec "F10 FIX":
 // - 1 initial read + 3 retries = 4 total read attempts
@@ -74,32 +75,5 @@ export async function readJsonWithRetry<T>(
  * @returns Array of parsed records (corrupted lines skipped)
  */
 export async function readJsonlTolerant<T>(filePath: string): Promise<T[]> {
-  try {
-    const content = await readFile(filePath, 'utf-8');
-    const lines = content.trim().split('\n');
-    const results: T[] = [];
-    let corruptedCount = 0;
-
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      try {
-        results.push(JSON.parse(line) as T);
-      } catch {
-        corruptedCount++;
-      }
-    }
-
-    if (corruptedCount > 0) {
-      logger.warn(`[opencode-storage] Skipped ${corruptedCount} corrupted JSONL lines in ${filePath}`);
-    }
-    return results;
-  } catch (error: unknown) {
-    const err = error as NodeJS.ErrnoException;
-    if (err.code === 'ENOENT') {
-      // File doesn't exist, return empty array
-      return [];
-    }
-    logger.debug(`[opencode-storage] Failed to read JSONL ${filePath}: ${err.message}`);
-    return [];
-  }
+  return readJSONLTolerant<T>(filePath, '[opencode-storage]');
 }

@@ -14,6 +14,8 @@
  * - https://github.com/openai/codex/blob/main/codex-rs/docs/configuration.md
  */
 
+import { ConfigurationError } from '../../../utils/errors.js';
+
 /** Top-level wrapper for every JSONL line in a rollout file */
 export interface CodexRolloutRecord {
   type: 'session_meta' | 'turn_context' | 'response_item' | 'event_msg';
@@ -86,7 +88,7 @@ export function validateCodexMetadata(metadata: unknown): asserts metadata is Co
     metadata === null ||
     typeof (metadata as CodexSessionMetadata).codexSessionId !== 'string'
   ) {
-    throw new Error('Invalid Codex session metadata: codexSessionId is required');
+    throw new ConfigurationError('Invalid Codex session metadata: codexSessionId is required');
   }
 }
 

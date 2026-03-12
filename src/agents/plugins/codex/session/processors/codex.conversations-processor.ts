@@ -12,13 +12,8 @@
 import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../../../../core/session/BaseProcessor.js';
 import type { ParsedSession } from '../../../../core/session/BaseSessionAdapter.js';
 import type { CodexRolloutRecord, CodexResponseItem, CodexEventMsg } from '../../codex-message-types.js';
+import type { BaseNormalizedMessage } from '../../../../core/session/types.js';
 import { logger } from '../../../../../utils/logger.js';
-
-interface NormalizedMessage {
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp?: string;
-}
 
 export class CodexConversationsProcessor implements SessionProcessor {
   readonly name = 'codex-conversations';
@@ -31,7 +26,7 @@ export class CodexConversationsProcessor implements SessionProcessor {
   async process(session: ParsedSession, _context: ProcessingContext): Promise<ProcessingResult> {
     try {
       const records = session.messages as CodexRolloutRecord[];
-      const normalizedMessages: NormalizedMessage[] = [];
+      const normalizedMessages: BaseNormalizedMessage[] = [];
 
       for (const record of records) {
         if (record.type === 'event_msg') {

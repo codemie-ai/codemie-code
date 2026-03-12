@@ -40,6 +40,7 @@ import type {
 import { getCodexSessionsPath } from './codex.paths.js';
 import { readCodexJsonlTolerant } from './codex.storage-utils.js';
 import { logger } from '../../../utils/logger.js';
+import { ConfigurationError } from '../../../utils/errors.js';
 import { sanitizeLogArgs } from '../../../utils/security.js';
 import { CodexMetricsProcessor } from './session/processors/codex.metrics-processor.js';
 import { CodexConversationsProcessor } from './session/processors/codex.conversations-processor.js';
@@ -53,7 +54,7 @@ export class CodexSessionAdapter implements SessionAdapter {
 
   constructor(private readonly metadata: AgentMetadata) {
     if (!metadata.dataPaths?.home) {
-      throw new Error('Agent metadata must provide dataPaths.home');
+      throw new ConfigurationError('Agent metadata must provide dataPaths.home');
     }
     this.initializeProcessors();
   }
@@ -97,49 +98,61 @@ export class CodexSessionAdapter implements SessionAdapter {
       // Level 1: year directories
       const yearDirs = await readdir(sessionsPath);
 
-      for (const yearDir of yearDirs) {
-        const yearPath = join(sessionsPath, yearDir);
-        if (!await isDirectory(yearPath)) continue;
+      const yearPaths = (await Promise.all(
+        yearDirs.map(async (yearDir) => {
+          const yearPath = join(sessionsPath, yearDir);
+          return (await isDirectory(yearPath)) ? yearPath : null;
+        })
+      )).filter((p): p is string => p !== null);
 
+      await Promise.all(yearPaths.map(async (yearPath) => {
         // Level 2: month directories
         let monthDirs: string[];
         try {
           monthDirs = await readdir(yearPath);
         } catch {
-          continue;
+          return;
         }
 
-        for (const monthDir of monthDirs) {
-          const monthPath = join(yearPath, monthDir);
-          if (!await isDirectory(monthPath)) continue;
+        const monthPaths = (await Promise.all(
+          monthDirs.map(async (monthDir) => {
+            const monthPath = join(yearPath, monthDir);
+            return (await isDirectory(monthPath)) ? monthPath : null;
+          })
+        )).filter((p): p is string => p !== null);
 
+        await Promise.all(monthPaths.map(async (monthPath) => {
           // Level 3: day directories
           let dayDirs: string[];
           try {
             dayDirs = await readdir(monthPath);
           } catch {
-            continue;
+            return;
           }
 
-          for (const dayDir of dayDirs) {
-            const dayPath = join(monthPath, dayDir);
-            if (!await isDirectory(dayPath)) continue;
+          const dayPaths = (await Promise.all(
+            dayDirs.map(async (dayDir) => {
+              const dayPath = join(monthPath, dayDir);
+              return (await isDirectory(dayPath)) ? dayPath : null;
+            })
+          )).filter((p): p is string => p !== null);
 
+          await Promise.all(dayPaths.map(async (dayPath) => {
             // Level 4: rollout files
             let files: string[];
             try {
               files = await readdir(dayPath);
             } catch {
-              continue;
+              return;
             }
 
-            for (const file of files) {
-              if (!file.endsWith('.jsonl')) continue;
+            await Promise.all(files.map(async (file) => {
+              if (!file.endsWith('.jsonl')) return;
 
               const match = ROLLOUT_UUID_REGEX.exec(file);
               if (!match) {
                 logger.debug(`[codex-discovery] Skipping file without UUID in name: ${file}`);
-                continue;
+                return;
               }
 
               const sessionUuid = match[1];
@@ -152,7 +165,7 @@ export class CodexSessionAdapter implements SessionAdapter {
                 // Age filter based on mtime (D-3)
                 if (mtime < cutoffMs) {
                   logger.debug(`[codex-discovery] Skipping old rollout: ${file}`);
-                  continue;
+                  return;
                 }
 
                 results.push({
@@ -164,10 +177,10 @@ export class CodexSessionAdapter implements SessionAdapter {
               } catch {
                 logger.debug(`[codex-discovery] Could not stat file: ${filePath}`);
               }
-            }
-          }
-        }
-      }
+            }));
+          }));
+        }));
+      }));
 
       // Sort by mtime descending (newest first)
       results.sort((a, b) => b.createdAt - a.createdAt);
@@ -202,7 +215,7 @@ export class CodexSessionAdapter implements SessionAdapter {
       const records = await readCodexJsonlTolerant<CodexRolloutRecord>(filePath);
 
       if (records.length === 0) {
-        throw new Error(`Rollout file is empty or unreadable: ${filePath}`);
+        throw new ConfigurationError(`Rollout file is empty or unreadable: ${filePath}`);
       }
 
       // Separate records by type
@@ -220,12 +233,12 @@ export class CodexSessionAdapter implements SessionAdapter {
       }
 
       if (!sessionMeta) {
-        throw new Error(`No session_meta record found in rollout file: ${filePath}`);
+        throw new ConfigurationError(`No session_meta record found in rollout file: ${filePath}`);
       }
 
       // Validate session_meta.id (D-6: recordId uses this UUID)
       if (!sessionMeta.id || typeof sessionMeta.id !== 'string') {
-        throw new Error(`session_meta.id is missing or invalid in rollout file: ${filePath}`);
+        throw new ConfigurationError(`session_meta.id is missing or invalid in rollout file: ${filePath}`);
       }
 
       // Sanitize cwd before logging (security requirement)
