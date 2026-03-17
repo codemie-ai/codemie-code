@@ -10,6 +10,7 @@ import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
 import { ProxyContext } from '../proxy-types.js';
 import { ProviderRegistry } from '../../../../core/registry.js';
 import { logger } from '../../../../../utils/logger.js';
+import { detectGitBranch } from '../../../../../utils/processes.js';
 
 export class HeaderInjectionPlugin implements ProxyPlugin {
   id = '@codemie/proxy-headers';
@@ -66,8 +67,9 @@ class HeaderInjectionInterceptor implements ProxyInterceptor {
     if (config.repository) {
       context.headers['X-CodeMie-Repository'] = config.repository;
     }
-    if (config.branch) {
-      context.headers['X-CodeMie-Branch'] = config.branch;
+    const currentBranch = await detectGitBranch(process.cwd()) ?? config.branch;
+    if (currentBranch) {
+      context.headers['X-CodeMie-Branch'] = currentBranch;
     }
     if (config.project) {
       context.headers['X-CodeMie-Project'] = config.project;
