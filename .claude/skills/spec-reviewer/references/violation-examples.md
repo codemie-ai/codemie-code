@@ -124,7 +124,7 @@ The adapter plugin contains installation checking logic.
 ```
 Configuration:
   openai:
-    apiKey: "sk-proj-abc123..."
+    apiKey: "YOUR_OPENAI_API_KEY"
     baseUrl: "https://api.openai.com"
 ```
 

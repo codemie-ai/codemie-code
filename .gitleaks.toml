@@ -3,9 +3,13 @@
 
 title = "Gitleaks Configuration"
 
+[extend]
+useDefault = true
+
 # Exclude test files from secrets detection
 [allowlist]
-description = "Exclude sanitize test file containing intentional fake secrets for testing"
+description = "Exclude test files and build artifacts containing intentional fake secrets"
 paths = [
-  '''src/utils/__tests__/sanitize\.test\.ts$'''
+  '''src/utils/__tests__/sanitize\.test\.ts$''',
+  '''dist/'''
 ]

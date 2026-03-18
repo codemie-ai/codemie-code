@@ -138,7 +138,7 @@ After setup, provide tokens via environment variable or CLI option:
 **Environment Variable (Recommended):**
 ```bash
 # Set token in your environment
-export CODEMIE_JWT_TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+export CODEMIE_JWT_TOKEN="<YOUR_JWT_TOKEN>"
 
 # Run commands normally
 codemie-claude "analyze this code"
@@ -147,13 +147,13 @@ codemie-claude "analyze this code"
 **CLI Option:**
 ```bash
 # Provide token per command
-codemie-claude --jwt-token "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." "analyze this code"
+codemie-claude --jwt-token "<YOUR_JWT_TOKEN>" "analyze this code"
 ```
 
 **Custom Environment Variable:**
 ```bash
 # If you configured a custom env var during setup
-export MY_CUSTOM_TOKEN="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+export MY_CUSTOM_TOKEN="<YOUR_JWT_TOKEN>"
 codemie-claude "analyze this code"
 ```
 

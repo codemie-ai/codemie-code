@@ -255,7 +255,7 @@ it('should parse npm network error correctly', async () => {
 **Example**:
 ```typescript
 test('should sanitize API key in logs', () => {
-  const input = { apiKey: 'sk-1234567890abcdef' };
+  const input = { apiKey: 'sk-test-placeholder-value' };
   const sanitized = sanitizeObject(input);
 
   expect(sanitized.apiKey).toBe('[REDACTED]');
