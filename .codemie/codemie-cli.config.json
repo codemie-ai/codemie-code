@@ -1,0 +1,47 @@
+{
+  "version": 2,
+  "activeProfile": "epm-cdme",
+  "profiles": {
+    "epm-cdme": {
+      "codeMieProject": "epm-cdme",
+      "provider": "ai-run-sso",
+      "codeMieUrl": "https://codemie.lab.epam.com",
+      "apiKey": "sso-provided",
+      "baseUrl": "https://codemie.lab.epam.com/code-assistant-api",
+      "model": "claude-sonnet-4-6",
+      "haikuModel": "claude-haiku-4-5-20251001",
+      "sonnetModel": "claude-sonnet-4-6",
+      "opusModel": "claude-opus-4-6-20260205",
+      "name": "epm-cdme",
+      "codemieAssistants": [
+        {
+          "id": "05959338-06de-477d-9cc3-08369f858057",
+          "name": "AI/Run FAQ",
+          "slug": "codemie-onboarding",
+          "description": "This is smart CodeMie assistant which can help you with onboarding process.\nCodeMie can answer to all you questions about capabilities, usage and so on.",
+          "project": "codemie",
+          "registeredAt": "2026-03-18T18:38:32.179Z",
+          "registrationMode": "skill"
+        },
+        {
+          "id": "0368dce9-3987-49ac-b12e-41ce45623a20",
+          "name": "SonarQube MCP Analyzer",
+          "slug": "sonarqube-mcp-analyzer",
+          "description": "A highly specialized assistant designed to analyze SonarQube reports using SonarQube MCP Server tools. It processes report links, interpreting all available metrics such as the number and types of issues, severities, affected code snippets, coverage details, and more. Serving both direct users and other AI Assistants, it delivers in-depth insights and actionable recommendations on code quality, technical debt, and coverage improvement.",
+          "project": "epm-cdme",
+          "registeredAt": "2026-03-18T18:38:32.180Z",
+          "registrationMode": "skill"
+        },
+        {
+          "id": "f14e801a-1e6c-4d2a-ab70-f59795c11a1b",
+          "name": "BriAnnA",
+          "slug": "brianna",
+          "description": "Business Analyst Assistant - expert to work with Jira. Used for creating/getting/managing Jira tickets in EPM-CDME project (Epics, Stories, Tasks, and Bugs). Main role is to analyze requirements from the request, clarify additional questions if necessary, generate requirements with the description structure defined in the prompt and additional details from the request, and create tickets in EPM-CDME project Jira. The Assistant uses Generic Jira tool for Jira tickets creation.",
+          "project": "epm-cdme",
+          "registeredAt": "2026-03-18T18:38:32.181Z",
+          "registrationMode": "skill"
+        }
+      ]
+    }
+  }
+}
