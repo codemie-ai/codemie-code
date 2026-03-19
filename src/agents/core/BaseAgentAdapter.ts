@@ -98,7 +98,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   }
 
   /**
-   * Install agent via npm
+   * Install agent via npm (latest version)
    */
   async install(): Promise<void> {
     if (!this.metadata.npmPackage) {
@@ -107,6 +107,42 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
     try {
       await npm.installGlobal(this.metadata.npmPackage);
+    } catch (error: unknown) {
+      if (error instanceof NpmError) {
+        throw new Error(`Failed to install ${this.displayName}: ${error.message}`);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Install agent via npm with specific version
+   * Resolves 'supported' to the version from metadata.supportedVersion
+   *
+   * Override in agent plugins for non-npm installation (e.g., native installers)
+   *
+   * @param version - Specific version, 'supported', or undefined for latest
+   */
+  async installVersion(version?: string): Promise<void> {
+    if (!this.metadata.npmPackage) {
+      throw new Error(`${this.displayName} is built-in and cannot be installed`);
+    }
+
+    // Resolve 'supported' to actual version from metadata
+    let resolvedVersion: string | undefined = version;
+    if (version === 'supported') {
+      if (!this.metadata.supportedVersion) {
+        throw new Error(`${this.displayName}: No supported version defined in metadata`);
+      }
+      resolvedVersion = this.metadata.supportedVersion;
+      logger.debug('Resolved version', {
+        from: 'supported',
+        to: resolvedVersion,
+      });
+    }
+
+    try {
+      await npm.installGlobal(this.metadata.npmPackage, { version: resolvedVersion });
     } catch (error: unknown) {
       if (error instanceof NpmError) {
         throw new Error(`Failed to install ${this.displayName}: ${error.message}`);
