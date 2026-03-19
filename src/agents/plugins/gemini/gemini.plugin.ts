@@ -131,12 +131,19 @@ export const GeminiPluginMetadata: AgentMetadata = {
   // Uses BaseAgentAdapter methods for cross-platform file operations
   lifecycle: {
     enrichArgs: (args, config) => {
-      // Gemini CLI uses -m flag for model selection
+      // Subcommands that do not accept global -m/--model (e.g. extensions install)
+      const noModelSubcommands = ['extensions', 'health'];
+      const firstIsNoModelSubcommand = args[0] && noModelSubcommands.includes(args[0]);
+
       const hasModelArg = args.some((arg, idx) =>
         (arg === '-m' || arg === '--model') && idx < args.length - 1
       );
 
-      if (!hasModelArg && config.model) {
+      if (
+        !firstIsNoModelSubcommand &&
+        !hasModelArg &&
+        config.model
+      ) {
         return ['-m', config.model, ...args];
       }
 
