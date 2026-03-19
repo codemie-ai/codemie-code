@@ -10,6 +10,7 @@ import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
 import { ProxyContext } from '../proxy-types.js';
 import { ProviderRegistry } from '../../../../core/registry.js';
 import { logger } from '../../../../../utils/logger.js';
+import { detectGitBranch } from '../../../../../utils/processes.js';
 
 export class HeaderInjectionPlugin implements ProxyPlugin {
   id = '@codemie/proxy-headers';
@@ -22,10 +23,24 @@ export class HeaderInjectionPlugin implements ProxyPlugin {
   }
 }
 
+const BRANCH_CACHE_TTL_MS = 30_000;
+
 class HeaderInjectionInterceptor implements ProxyInterceptor {
   name = 'header-injection';
 
+  private cachedBranch: string | undefined;
+  private branchCachedAt = 0;
+
   constructor(private context: PluginContext) {}
+
+  private async getCurrentBranch(): Promise<string | undefined> {
+    if (Date.now() - this.branchCachedAt < BRANCH_CACHE_TTL_MS) {
+      return this.cachedBranch;
+    }
+    this.cachedBranch = await detectGitBranch(process.cwd()) ?? this.context.config.branch;
+    this.branchCachedAt = Date.now();
+    return this.cachedBranch;
+  }
 
   async onRequest(context: ProxyContext): Promise<void> {
     // Request and session ID headers
@@ -66,8 +81,9 @@ class HeaderInjectionInterceptor implements ProxyInterceptor {
     if (config.repository) {
       context.headers['X-CodeMie-Repository'] = config.repository;
     }
-    if (config.branch) {
-      context.headers['X-CodeMie-Branch'] = config.branch;
+    const currentBranch = await this.getCurrentBranch();
+    if (currentBranch) {
+      context.headers['X-CodeMie-Branch'] = currentBranch;
     }
     if (config.project) {
       context.headers['X-CodeMie-Project'] = config.project;
