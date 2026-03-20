@@ -155,27 +155,39 @@ Provide a structured complexity assessment in this format:
 
 **Complexity Criteria:**
 
+> **IMPORTANT — Evaluation logic:**
+> Rate as **Complex** if ANY single Complex criterion below applies.
+> Rate as **Medium** only when NO Complex criteria apply AND multiple Medium criteria apply.
+> Rate as **Simple** only when ALL Simple criteria apply.
+> File count is a supporting signal, NOT the primary driver — qualitative criteria take precedence.
+
+**Hard triggers → always Complex (any one is sufficient):**
+- New integration with an external tool, CLI, or service (new agent plugin, new provider, new API client)
+- Novel parsing or calculation logic that must be reverse-engineered (undocumented formats, no existing adapter)
+- Significant architectural decisions needed (new interface contracts, new layer interactions)
+- Cross-cutting concerns that affect security, reliability, or metrics pipeline integrity
+
 **Simple:**
 - Single component affected
 - Well-defined requirements
-- Existing patterns to follow
+- Existing patterns to follow exactly (copy-paste with trivial changes)
 - No architectural decisions needed
 - Estimated 1-3 files to change
 
 **Medium:**
-- 2-3 components affected
+- 2-3 components affected (no hard triggers above)
 - Clear requirements with minor gaps
-- May require some architectural decisions
+- Adapts an existing pattern with moderate changes
 - Estimated 4-8 files to change
-- Requires coordination between layers
+- Requires coordination between layers but no new contracts
 
 **Complex:**
-- 4+ components affected
-- Ambiguous or incomplete requirements
-- Significant architectural decisions needed
+- Any hard trigger above applies, OR
+- 4+ distinct components affected
+- Ambiguous or incomplete requirements requiring significant inference
 - Estimated 9+ files to change
-- Cross-cutting concerns (security, performance)
 - New integrations or external dependencies
+- Novel computation / parsing logic with no existing reference in codebase
 
 ### Phase 4: Recommendation
 

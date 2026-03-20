@@ -11,7 +11,8 @@
     "codemie-claude": "./bin/codemie-claude.js",
     "codemie-claude-acp": "./bin/codemie-claude-acp.js",
     "codemie-gemini": "./bin/codemie-gemini.js",
-    "codemie-opencode": "./bin/codemie-opencode.js"
+    "codemie-opencode": "./bin/codemie-opencode.js",
+    "codemie-codex": "./bin/codemie-codex.js"
   },
   "files": [
     "dist",
