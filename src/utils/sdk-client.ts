@@ -89,7 +89,7 @@ export async function getCodemieClient(quiet = false): Promise<CodeMieClient> {
     const client = new CodeMieClient({
       codemie_api_domain: credentials.apiUrl,
       cookies: credentials.cookies,
-      verify_ssl: false
+      verify_ssl: process.env.CODEMIE_INSECURE !== '1'
     });
 
     logger.debug('CodeMieClient created with cookies', { apiUrl: credentials.apiUrl });
