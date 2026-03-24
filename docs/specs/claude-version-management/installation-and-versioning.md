@@ -106,37 +106,72 @@ Claude Code has deprecated npm installation and now requires native installation
 3. **Version Checking on Agent Execution**:
    - Before `claude.run()`: Check installed version vs supported version
    
+   **Scenario 0: Below Minimum Version** (user version < minimum supported version — hard block):
+     ```
+     ✗ Claude Code v2.0.10 is no longer supported
+       Minimum required version: v2.0.30
+       Recommended version:      v2.1.25 (recommended)
+
+       This version is known to be incompatible with CodeMie and must be upgraded.
+
+     ? What would you like to do? (Use arrow keys)
+     ❯ Install v2.1.25 now and continue
+       Exit
+     ```
+   - If **Install**: Installs the supported version and proceeds with agent execution
+   - If **Exit**: Prints manual update command and exits with code 0:
+     ```
+       If you want to update manually, run:
+          codemie update claude
+     ```
+
    **Scenario 1: Newer Untested Version** (user version > supported version):
      ```
      ⚠️  WARNING: You are running Claude Code v2.0.45
-     CodeMie has only tested and verified Claude Code v2.0.30
+        CodeMie has only tested and verified Claude Code v2.0.30
 
-     Running a newer version may cause compatibility issues with the CodeMie backend proxy.
+        Running a newer version may cause compatibility issues with the CodeMie backend proxy.
 
-     To install the supported version, run:
-       codemie install claude --supported
+        To install the supported version, run:
+          codemie install claude --supported
 
-     Or install a specific version:
-       codemie install claude 2.0.30
+        Or install a specific version:
+          codemie install claude 2.0.30
 
-     Continue anyway? [y/N]:
+     ? What would you like to do? (Use arrow keys)
+     ❯ Install v2.0.30 now and continue
+       Continue with current version
+       Exit
      ```
-   - Exit code 1 if user declines (non-zero exit)
-   - Proceed if user confirms
-   
+   - If **Install**: Installs the supported version and proceeds
+   - If **Continue**: Proceeds with the currently installed (newer) version
+   - If **Exit**: Prints install commands and exits with code 0:
+     ```
+        To install the supported version, run:
+          codemie install claude --supported
+
+        Or install a specific version:
+          codemie install claude 2.0.30
+     ```
+
    **Scenario 2: Update Available** (newer supported version exists, current version compatible):
      ```
      ℹ️  A new supported version of Claude Code is available!
         Current version: v2.1.20
         Latest version:  v2.1.22 (recommended)
 
-        To update, run:
-          codemie update claude
-
-     Continue with current version? [Y/n]:
+     ? What would you like to do? (Use arrow keys)
+     ❯ Install v2.1.22 now and continue
+       Continue with current version
+       Exit
      ```
-   - Exit code 1 if user declines (non-zero exit)
-   - Proceed if user confirms (default: yes)
+   - If **Install**: Installs the supported version and proceeds
+   - If **Continue**: Proceeds with the currently installed version
+   - If **Exit**: Prints manual update command and exits with code 0:
+     ```
+       If you want to update manually, run:
+          codemie update claude
+     ```
 
 **User-Facing Output**:
 - Success: "Claude Code v2.0.30 installed successfully ✓"
@@ -273,11 +308,13 @@ export class ClaudePlugin extends BaseAgentAdapter {
 }
 
 interface VersionCompatibilityResult {
-  compatible: boolean;           // true if versions match or installed <= supported
-  installedVersion: string | null; // null if not installed
-  supportedVersion: string;        // from metadata
-  isNewer: boolean;                // true if installed > supported (warning case)
-  hasUpdate: boolean;              // true if newer supported version available (info prompt)
+  compatible: boolean;                    // true if versions match or installed <= supported
+  installedVersion: string | null;        // null if not installed
+  supportedVersion: string;               // from metadata
+  isNewer: boolean;                       // true if installed > supported (warning case)
+  hasUpdate: boolean;                     // true if newer supported version available (info prompt)
+  isBelowMinimum: boolean;               // true if installed < minimumSupportedVersion (hard block)
+  minimumSupportedVersion?: string;       // from metadata, minimum version still compatible
 }
 ```
 
@@ -299,10 +336,10 @@ Claude Code includes a built-in auto-updater that can automatically update to ne
 
 When a newer supported version is available (installed < supported), users receive an informational prompt:
 - **Message Type**: ℹ️ Info (cyan, non-threatening)
-- **Default Action**: Continue with current version (Y is default)
-- **Command**: `codemie update claude`
-- **Behavior**: Non-blocking - allows user to proceed with current version or cancel to update
-- **Purpose**: Keep users informed of newer tested versions without forcing immediate updates
+- **Default Action**: Install supported version now (first option in list)
+- **Options**: Install now and continue / Continue with current version / Exit
+- **Behavior**: Non-blocking — user can install immediately, continue with current version, or exit and update manually
+- **Purpose**: Keep users informed of newer tested versions and offer a frictionless upgrade path
 
 **Installation Logic**:
 
@@ -368,11 +405,13 @@ export interface AgentMetadata {
  * Result of version compatibility check
  */
 export interface VersionCompatibilityResult {
-  compatible: boolean;         // true if installed version is compatible
-  installedVersion: string | null; // null if not installed
-  supportedVersion: string;    // version from metadata
-  isNewer: boolean;            // true if installed > supported (requires warning)
-  hasUpdate: boolean;          // true if newer supported version available (info prompt)
+  compatible: boolean;                  // true if installed version is compatible
+  installedVersion: string | null;      // null if not installed
+  supportedVersion: string;             // version from metadata
+  isNewer: boolean;                     // true if installed > supported (requires warning)
+  hasUpdate: boolean;                   // true if newer supported version available (info prompt)
+  isBelowMinimum: boolean;             // true if installed < minimumSupportedVersion (hard block)
+  minimumSupportedVersion?: string;     // from metadata, minimum version still compatible
 }
 ```
 
