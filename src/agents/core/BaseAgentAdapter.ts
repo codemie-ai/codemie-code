@@ -349,16 +349,34 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         console.log();
         console.log(chalk.red(`✗ ${this.displayName} v${installedDisplay} is no longer supported`));
         console.log(chalk.red(`  Minimum required version: v${minimumDisplay}`));
+        console.log(chalk.white(`  Recommended version:      v${compat.supportedVersion} `) + chalk.green('(recommended)'));
         console.log();
         console.log(chalk.white('  This version is known to be incompatible with CodeMie and must be upgraded.'));
         console.log();
-        console.log(chalk.white('  To upgrade, run:'));
-        console.log(chalk.blueBright(`    codemie install ${this.name}`));
-        console.log();
-        process.exit(1);
-      }
 
-      if (compat.isNewer && !this.metadata.silentMode) {
+        const { belowMinChoice } = await inquirer.prompt([
+          {
+            type: 'list',
+            name: 'belowMinChoice',
+            message: 'What would you like to do?',
+            choices: [
+              { name: `Install v${compat.supportedVersion} now and continue`, value: 'install' },
+              { name: 'Exit', value: 'exit' },
+            ],
+            default: 'install',
+          },
+        ]);
+
+        if (belowMinChoice === 'install') {
+          console.log(chalk.blue(`\n  Installing ${this.displayName} v${compat.supportedVersion}...`));
+          await this.installVersion('supported');
+          console.log(); // Add spacing before agent starts
+        } else {
+          console.log(chalk.white('\n  If you want to update manually, run:'));
+          console.log(chalk.blueBright(`     codemie update ${this.name}`));
+          process.exit(0);
+        }
+      } else if (compat.isNewer && !this.metadata.silentMode) {
         // User is running a newer (untested) version
         console.log();
         console.log(chalk.yellow(`⚠️  WARNING: You are running ${this.displayName} v${compat.installedVersion}`));
@@ -373,18 +391,30 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         console.log(chalk.blueBright(`     codemie install ${this.name} ${compat.supportedVersion}`));
         console.log();
 
-        const { continueAnyway } = await inquirer.prompt([
+        const { newerChoice } = await inquirer.prompt([
           {
-            type: 'confirm',
-            name: 'continueAnyway',
-            message: 'Continue anyway?',
-            default: false,
+            type: 'list',
+            name: 'newerChoice',
+            message: 'What would you like to do?',
+            choices: [
+              { name: `Install v${compat.supportedVersion} now and continue`, value: 'install' },
+              { name: 'Continue with current version', value: 'continue' },
+              { name: 'Exit', value: 'exit' },
+            ],
+            default: 'install',
           },
         ]);
 
-        if (!continueAnyway) {
-          console.log(chalk.gray('\nExecution cancelled\n'));
-          process.exit(1);
+        if (newerChoice === 'install') {
+          console.log(chalk.blue(`\n   Installing ${this.displayName} v${compat.supportedVersion}...`));
+          await this.installVersion('supported');
+        } else if (newerChoice === 'exit') {
+          console.log(chalk.white('\n   To install the supported version, run:'));
+          console.log(chalk.blueBright(`     codemie install ${this.name} --supported`));
+          console.log();
+          console.log(chalk.white('   Or install a specific version:'));
+          console.log(chalk.blueBright(`     codemie install ${this.name} ${compat.supportedVersion}`));
+          process.exit(0);
         }
 
         console.log(); // Add spacing before agent starts
@@ -396,22 +426,28 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         console.log(chalk.white(`   Current version: v${compat.installedVersion}`));
         console.log(chalk.white(`   Latest version:  v${compat.supportedVersion} `) + chalk.green('(recommended)'));
         console.log();
-        console.log(chalk.white('   To update, run:'));
-        console.log(chalk.blueBright(`     codemie update ${this.name}`));
-        console.log();
 
-        const { continueWithCurrent } = await inquirer.prompt([
+        const { updateChoice } = await inquirer.prompt([
           {
-            type: 'confirm',
-            name: 'continueWithCurrent',
-            message: 'Continue with current version?',
-            default: true,
+            type: 'list',
+            name: 'updateChoice',
+            message: `What would you like to do?`,
+            choices: [
+              { name: `Install v${compat.supportedVersion} now and continue`, value: 'install' },
+              { name: 'Continue with current version', value: 'continue' },
+              { name: 'Exit', value: 'exit' },
+            ],
+            default: 'install',
           },
         ]);
 
-        if (!continueWithCurrent) {
-          console.log(chalk.gray('\nExecution cancelled. Please run the update command above.\n'));
-          process.exit(1);
+        if (updateChoice === 'install') {
+          console.log(chalk.blue(`\n   Installing ${this.displayName} v${compat.supportedVersion}...`));
+          await this.installVersion('supported');
+        } else if (updateChoice === 'exit') {
+          console.log(chalk.white('\n  If you want to update manually, run:'));
+          console.log(chalk.blueBright(`     codemie update ${this.name}`));
+          process.exit(0);
         }
 
         console.log(); // Add spacing before agent starts
