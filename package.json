@@ -40,7 +40,7 @@
     "commitlint": "commitlint --edit",
     "commitlint:last": "commitlint --from HEAD~1 --to HEAD --verbose",
     "validate:secrets": "node scripts/validate-secrets.js",
-    "license-check": "node scripts/license-check.js",
+    "license-check": "sh scripts/secrets-check.sh",
     "ci": "npm run license-check && npm run lint && npm run build && npm run test:unit && npm run test:integration",
     "ci:full": "npm run commitlint:last && npm run ci",
     "prepare": "husky",
