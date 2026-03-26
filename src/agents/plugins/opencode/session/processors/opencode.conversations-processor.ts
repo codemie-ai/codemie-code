@@ -1,6 +1,7 @@
 // src/agents/plugins/opencode/session/processors/opencode.conversations-processor.ts
 import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../../../../core/session/BaseProcessor.js';
 import type { ParsedSession } from '../../../../core/session/BaseSessionAdapter.js';
+import type { BaseNormalizedMessage } from '../../../../core/session/types.js';
 // FIXED (GPT-5.10/5.11): Import type guards from opencode-message-types.js instead of redefining
 // This removes duplicate function definitions that shadowed the imports
 import type {
@@ -23,11 +24,9 @@ import { logger } from '../../../../../utils/logger.js';
  * Normalized conversation message format
  * Aligns with CodeMie's conversation sync API
  */
-interface NormalizedMessage {
+interface NormalizedMessage extends BaseNormalizedMessage {
   id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp: string;
+  timestamp: string;  // non-optional override
   model?: string;
   agent?: string;
   toolUse?: Array<{

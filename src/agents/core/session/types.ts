@@ -6,6 +6,15 @@
  */
 
 /**
+ * Base normalized message format shared across all conversation processors.
+ */
+export interface BaseNormalizedMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp?: string;
+}
+
+/**
  * Correlation status
  */
 export type CorrelationStatus = 'pending' | 'matched' | 'failed';

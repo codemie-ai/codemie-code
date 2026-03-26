@@ -202,8 +202,14 @@ export class ConfigLoader {
     }
 
     // Legacy single-provider config or partial config
+    // Only apply when no specific profile was requested (or requesting 'default').
+    // If the caller explicitly selected a named profile (e.g. --profile lite-codex),
+    // the legacy local config is a different profile and must not contaminate it.
     if (isLegacyConfig(rawConfig)) {
-      return { ...rawConfig, name: 'default' };
+      if (!profileName || profileName === 'default') {
+        return { ...rawConfig, name: 'default' };
+      }
+      return {};
     }
 
     // Empty or invalid config
