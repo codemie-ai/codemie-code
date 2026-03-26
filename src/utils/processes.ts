@@ -366,6 +366,26 @@ export async function npxRun(
 // ============================================================================
 
 /**
+ * Detect canonical repository identifier from git remote origin URL.
+ * Supports both HTTPS (https://github.com/owner/repo.git) and SSH (git@github.com:owner/repo.git) formats.
+ * Works with GitHub, GitLab, Bitbucket, and self-hosted instances.
+ *
+ * @param cwd - Working directory path
+ * @returns Repository in "owner/repo" format, or undefined if no remote is configured
+ */
+export async function detectGitRemoteRepo(cwd: string): Promise<string | undefined> {
+  try {
+    const { stdout } = await execAsync('git remote get-url origin', { cwd, timeout: 5000 });
+    const remoteUrl = stdout.trim();
+    const match = remoteUrl.match(/[:/]([^/]+)\/([^/.]+?)(?:\.git)?$/);
+    if (match) return `${match[1]}/${match[2]}`;
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Detect current git branch from working directory
  *
  * @param cwd - Working directory path

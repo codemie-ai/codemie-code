@@ -29,9 +29,13 @@ export async function ensureSessionFile(
     const workingDirectory = process.cwd();
 
     let gitBranch: string | undefined;
+    let remoteRepository: string | undefined;
     try {
-      const { detectGitBranch } = await import('../../../utils/processes.js');
-      gitBranch = await detectGitBranch(workingDirectory);
+      const { detectGitBranch, detectGitRemoteRepo } = await import('../../../utils/processes.js');
+      [gitBranch, remoteRepository] = await Promise.all([
+        detectGitBranch(workingDirectory),
+        detectGitRemoteRepo(workingDirectory),
+      ]);
     } catch {
       // Git detection optional
     }
@@ -47,6 +51,7 @@ export async function ensureSessionFile(
       ...(project && { project }),
       startTime: estimatedStartTime,
       workingDirectory,
+      ...(remoteRepository && { repository: remoteRepository }),
       ...(gitBranch && { gitBranch }),
       status: 'completed' as const,
       activeDurationMs: 0,
