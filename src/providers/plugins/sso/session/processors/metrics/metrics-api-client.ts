@@ -250,7 +250,7 @@ export class MetricsSender {
    * @param extensionsSummary - Optional extensions scan summary (project + global scopes)
    */
   async sendSessionStart(
-    session: Pick<Session, 'sessionId' | 'agentName' | 'provider' | 'project' | 'startTime' | 'workingDirectory'> & { model?: string },
+    session: Pick<Session, 'sessionId' | 'agentName' | 'provider' | 'project' | 'startTime' | 'workingDirectory' | 'repository'> & { model?: string },
     workingDirectory: string,
     status: SessionStartStatus = { status: 'started' },
     error?: SessionError,
@@ -260,8 +260,8 @@ export class MetricsSender {
     // Detect git branch
     const branch = await detectGitBranch(workingDirectory);
 
-    // Extract repository from working directory
-    const repository = this.extractRepository(workingDirectory);
+    // Use canonical owner/repo from session if available; fall back to filesystem derivation
+    const repository = session.repository ?? this.extractRepository(workingDirectory);
 
     // Build session start metric with status
     const attributes: any = {
@@ -379,7 +379,7 @@ export class MetricsSender {
    * @param activeDurationMs - Optional active duration excluding idle time
    */
   async sendSessionEnd(
-    session: Pick<Session, 'sessionId' | 'agentName' | 'provider' | 'project' | 'startTime' | 'workingDirectory'> & { model?: string },
+    session: Pick<Session, 'sessionId' | 'agentName' | 'provider' | 'project' | 'startTime' | 'workingDirectory' | 'repository'> & { model?: string },
     workingDirectory: string,
     status: SessionEndStatus,
     durationMs: number,
@@ -389,8 +389,8 @@ export class MetricsSender {
     // Detect git branch
     const branch = await detectGitBranch(workingDirectory);
 
-    // Extract repository from working directory
-    const repository = this.extractRepository(workingDirectory);
+    // Use canonical owner/repo from session if available; fall back to filesystem derivation
+    const repository = session.repository ?? this.extractRepository(workingDirectory);
 
     // Build session end metric with status
     const attributes: any = {

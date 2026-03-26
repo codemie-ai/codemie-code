@@ -637,13 +637,17 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
     // Determine working directory
     const workingDirectory = event.cwd || process.cwd();
 
-    // Detect git branch
+    // Detect git branch and remote repository in parallel
     let gitBranch: string | undefined;
+    let remoteRepository: string | undefined;
     try {
-      const { detectGitBranch } = await import('../../utils/processes.js');
-      gitBranch = await detectGitBranch(workingDirectory);
+      const { detectGitBranch, detectGitRemoteRepo } = await import('../../utils/processes.js');
+      [gitBranch, remoteRepository] = await Promise.all([
+        detectGitBranch(workingDirectory),
+        detectGitRemoteRepo(workingDirectory),
+      ]);
     } catch (error) {
-      logger.debug('[hook:SessionStart] Could not detect git branch:', error);
+      logger.debug('[hook:SessionStart] Could not detect git info:', error);
     }
 
     // Import session types and store
@@ -658,6 +662,7 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
       ...(project && { project }),
       startTime: Date.now(),
       workingDirectory,
+      ...(remoteRepository && { repository: remoteRepository }),
       ...(gitBranch && { gitBranch }),
       status: 'active' as const,
       activeDurationMs: 0, // Initialize active duration tracking

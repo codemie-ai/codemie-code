@@ -1,7 +1,7 @@
 import { AgentMetadata, AgentAdapter, AgentConfig, MCPConfigSummary, ExtensionsScanSummary, VersionCompatibilityResult } from './types.js';
 import * as npm from '../../utils/processes.js';
 import { NpmError, createErrorContext } from '../../utils/errors.js';
-import { exec, detectGitBranch } from '../../utils/processes.js';
+import { exec, detectGitBranch, detectGitRemoteRepo } from '../../utils/processes.js';
 import { compareVersions } from '../../utils/version-utils.js';
 import { logger } from '../../utils/logger.js';
 import { spawn } from 'child_process';
@@ -461,11 +461,18 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     // Detect repository and branch once at session start so all downstream
     // components (proxy config, metrics sender, etc.) can reuse without re-computing
     const workingDir = process.cwd();
-    const sessionBranch = await detectGitBranch(workingDir);
     const repoParts = workingDir.split(/[/\\]/).filter((p: string) => p.length > 0);
-    const sessionRepository = repoParts.length >= 2
+    const filesystemRepository = repoParts.length >= 2
       ? `${repoParts[repoParts.length - 2]}/${repoParts[repoParts.length - 1]}`
       : repoParts[repoParts.length - 1] || 'unknown';
+
+    const [sessionBranch, remoteRepository] = await Promise.all([
+      detectGitBranch(workingDir),
+      detectGitRemoteRepo(workingDir),
+    ]);
+
+    // Use canonical owner/repo from git remote as primary; fall back to filesystem path
+    const sessionRepository = remoteRepository ?? filesystemRepository;
 
     // Merge environment variables
     let env: NodeJS.ProcessEnv = {
