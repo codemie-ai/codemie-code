@@ -227,6 +227,49 @@ export const ClaudePluginMetadata: AgentMetadata = {
         }
       }
 
+      // Warn if settings.json contains env vars that will override CodeMie's profile settings
+      {
+        const { readFile } = await import('fs/promises');
+        const { existsSync } = await import('fs');
+        const { join } = await import('path');
+
+        const settingsPath = join(resolveHomeDir('.claude'), 'settings.json');
+
+        if (existsSync(settingsPath)) {
+          try {
+            const raw = await readFile(settingsPath, 'utf-8');
+            const settings = JSON.parse(raw) as Record<string, unknown>;
+            const settingsEnv = settings.env as Record<string, string> | undefined;
+
+            if (settingsEnv && typeof settingsEnv === 'object') {
+              // Collect all env var names from envMapping
+              const mappedVars = Object.values(ClaudePluginMetadata.envMapping ?? {}).flat();
+              const conflicts = Object.keys(settingsEnv).filter(k => mappedVars.includes(k));
+
+              if (conflicts.length > 0) {
+                // Detect sensitive keys that should have their values masked
+                const sensitiveKeyPatterns = ['TOKEN', 'KEY', 'SECRET', 'PASSWORD', 'AUTH'];
+                const isSensitive = (key: string) =>
+                  sensitiveKeyPatterns.some(pattern => key.toUpperCase().includes(pattern));
+
+                console.warn(chalk.yellow('\n⚠️  Warning: ~/.claude/settings.json contains env vars that will override CodeMie profile settings:'));
+                for (const key of conflicts) {
+                  const value = settingsEnv[key];
+                  // Mask sensitive values to prevent credential leakage
+                  const displayValue = isSensitive(key) ? '***REDACTED***' : `"${value}"`;
+                  console.warn(chalk.yellow(`   - ${key}: ${displayValue}`));
+                }
+                console.warn(chalk.yellow('   These settings.json values take precedence over your CodeMie profile.'));
+                console.warn(chalk.yellow('   Remove them from ~/.claude/settings.json to allow CodeMie to control these settings.\n'));
+                logger.warn('[Claude] settings.json env conflict detected', ...sanitizeLogArgs({ conflicts }));
+              }
+            }
+          } catch {
+            // Silently ignore parse errors - already handled in statusLine block if applicable
+          }
+        }
+      }
+
       return env;
     },
 
