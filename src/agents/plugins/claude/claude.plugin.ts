@@ -163,6 +163,15 @@ export const ClaudePluginMetadata: AgentMetadata = {
         env.ENABLE_TOOL_SEARCH = '0';
       }
 
+      // WORKAROUND: ANTHROPIC_AUTH_TOKEN=proxy-handled causes Claude 2.1.85+ to attempt
+      // OAuth token validation against hardcoded claude.ai URLs (bypassing ANTHROPIC_BASE_URL),
+      // which hangs indefinitely in non-interactive (-p/--task) mode.
+      // Fix: switch to ANTHROPIC_API_KEY which uses direct API key auth (no OAuth flow).
+      if (env.ANTHROPIC_AUTH_TOKEN === 'proxy-handled') {
+        delete env.ANTHROPIC_AUTH_TOKEN;
+        env.ANTHROPIC_API_KEY = 'proxy-handled';
+      }
+
       // Statusline setup: when --status flag is passed, configure Claude Code
       // status bar with a multi-line display showing model, context, git, cost
       // https://code.claude.com/docs/en/statusline

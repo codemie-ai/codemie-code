@@ -133,26 +133,41 @@ codemie setup
 
 ### Providing JWT Tokens
 
-After setup, provide tokens via environment variable or CLI option:
+Tokens can be provided in three ways, resolved in this priority order:
 
-**Environment Variable (Recommended):**
+1. `--jwt-token <token>` CLI flag (highest priority)
+2. `CODEMIE_JWT_TOKEN` environment variable
+3. Credential store (saved by `codemie setup`)
+
+**Environment Variable (Recommended for persistent use):**
 ```bash
-# Set token in your environment
+# Set token in your shell profile or CI environment
 export CODEMIE_JWT_TOKEN="<YOUR_JWT_TOKEN>"
 
-# Run commands normally
+# Run commands normally — token is picked up automatically
 codemie-claude "analyze this code"
 ```
 
-**CLI Option:**
+**CLI Flag (Per-command or ad-hoc):**
 ```bash
-# Provide token per command
+# Provide token inline — no prior setup required
 codemie-claude --jwt-token "<YOUR_JWT_TOKEN>" "analyze this code"
+```
+
+**Without Any Prior Setup:**
+
+`--jwt-token` works standalone — no `codemie setup` needed. Just supply `--base-url` if the URL is not already configured:
+
+```bash
+codemie-claude \
+  --jwt-token "<YOUR_JWT_TOKEN>" \
+  --base-url "https://codemie.lab.epam.com" \
+  "analyze this code"
 ```
 
 **Custom Environment Variable:**
 ```bash
-# If you configured a custom env var during setup
+# If you configured a custom env var name during setup
 export MY_CUSTOM_TOKEN="<YOUR_JWT_TOKEN>"
 codemie-claude "analyze this code"
 ```
@@ -178,12 +193,30 @@ codemie profile status
 
 JWT Bearer Authorization is ideal for:
 
-**CI/CD Pipelines:**
+**CI/CD Pipelines (headless mode with `--task`):**
+
+The `--task` flag runs the agent non-interactively — it executes the prompt and exits. Combined with `--jwt-token`, this gives a fully self-contained command that requires no prior login or setup:
+
 ```bash
-# GitLab CI example
+# GitLab CI
 script:
-  - export CODEMIE_JWT_TOKEN="${CI_JOB_JWT}"
-  - codemie-claude --task "review changes in this commit"
+  - codemie-claude
+      --jwt-token "$CODEMIE_JWT_TOKEN"
+      --task "Review the changes in this commit and report any issues"
+
+# GitHub Actions
+- name: AI Code Review
+  run: |
+    codemie-claude \
+      --jwt-token "${{ secrets.CODEMIE_JWT_TOKEN }}" \
+      --task "Check for security issues in the staged files" \
+      --silent
+
+# OpenCode in CI
+- run: |
+    codemie-opencode \
+      --jwt-token "${{ secrets.CODEMIE_JWT_TOKEN }}" \
+      --task "Fix all findings from the code review"
 ```
 
 **External Auth Systems:**
@@ -191,15 +224,15 @@ script:
 # Obtain token from your auth provider
 TOKEN=$(curl -s https://auth.example.com/token | jq -r .access_token)
 
-# Use with CodeMie
-codemie-claude --jwt-token "$TOKEN" "your prompt"
+# Run a task with that token — no setup needed
+codemie-claude --jwt-token "$TOKEN" --task "analyze this codebase"
 ```
 
 **Testing & Development:**
 ```bash
 # Use short-lived test tokens
 export CODEMIE_JWT_TOKEN="test-token-expires-in-1h"
-codemie-claude "run tests"
+codemie-claude --task "run a quick code review"
 ```
 
 ### JWT vs SSO
