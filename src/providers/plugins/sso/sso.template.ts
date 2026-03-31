@@ -10,12 +10,13 @@
 import type { ProviderTemplate } from '../../core/types.js';
 import type { AgentConfig } from '../../../agents/core/types.js';
 import { registerProvider } from '../../core/index.js';
+import { DEFAULT_CODEMIE_BASE_URL } from '../../core/codemie-auth-helpers.js';
 
 export const SSOTemplate = registerProvider<ProviderTemplate>({
   name: 'ai-run-sso',
   displayName: 'CodeMie SSO',
   description: 'Enterprise SSO Authentication with centralized model management',
-  defaultBaseUrl: 'https://codemie.lab.epam.com', // Default CodeMie URL
+  defaultBaseUrl: DEFAULT_CODEMIE_BASE_URL,
   requiresAuth: true,
   authType: 'sso',
   priority: 0, // Highest priority (shown first)

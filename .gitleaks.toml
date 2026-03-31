@@ -11,5 +11,6 @@ useDefault = true
 description = "Exclude test files and build artifacts containing intentional fake secrets"
 paths = [
   '''src/utils/__tests__/sanitize\.test\.ts$''',
-  '''dist/'''
+  '''dist/''',
+  '''\.idea/'''
 ]

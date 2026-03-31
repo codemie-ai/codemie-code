@@ -257,7 +257,17 @@ async function handlePluginSetup(
     }
 
     // Step 3: Model selection
-    const selectedModel = await promptForModelSelection(models, providerTemplate);
+    let selectedModel: string;
+    const preselectedModel = setupSteps.selectModel
+      ? await setupSteps.selectModel(credentials, models, providerTemplate)
+      : undefined;
+
+    if (preselectedModel) {
+      selectedModel = preselectedModel;
+      console.log(chalk.green(`✓ Model selected automatically: ${chalk.bold(selectedModel)}`));
+    } else {
+      selectedModel = await promptForModelSelection(models, providerTemplate);
+    }
 
     // Step 3.5: Install model if provider supports it (e.g., Ollama)
     if (providerTemplate?.supportsModelInstallation && setupSteps.installModel) {

@@ -11,6 +11,7 @@ import open from 'open';
 import chalk from 'chalk';
 import type { SSOAuthConfig, SSOAuthResult, SSOCredentials } from '../../core/types.js';
 import { CredentialStore } from '../../../utils/security.js';
+import { ensureApiBase } from '../../core/codemie-auth-helpers.js';
 
 /**
  * Normalize URL to base (protocol + host)
@@ -68,7 +69,7 @@ export class CodeMieSSO {
       const port = await this.startLocalServer();
 
       // 2. Construct SSO URL (following plugin pattern)
-      const codeMieBase = this.ensureApiBase(config.codeMieUrl);
+      const codeMieBase = ensureApiBase(config.codeMieUrl);
       const ssoUrl = `${codeMieBase}/v1/auth/login/${port}`;
 
       // 3. Launch browser
@@ -165,18 +166,6 @@ export class CodeMieSSO {
   async clearStoredCredentials(baseUrl?: string): Promise<void> {
     const store = CredentialStore.getInstance();
     await store.clearSSOCredentials(baseUrl);
-  }
-
-  /**
-   * Ensure API base URL has correct format
-   */
-  private ensureApiBase(rawUrl: string): string {
-    let base = rawUrl.replace(/\/$/, '');
-    // If user entered only host, append the known API context
-    if (!/\/code-assistant-api(\/|$)/i.test(base)) {
-      base = `${base}/code-assistant-api`;
-    }
-    return base;
   }
 
   /**
@@ -295,7 +284,7 @@ export class CodeMieSSO {
       }
 
       // Try to fetch config.js to resolve actual API URL
-      let apiUrl = this.ensureApiBase(this.codeMieUrl);
+      let apiUrl = ensureApiBase(this.codeMieUrl);
       try {
         const configResponse = await fetch(`${apiUrl}/config.js`, {
           headers: {

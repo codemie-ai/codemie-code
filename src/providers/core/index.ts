@@ -33,3 +33,12 @@ export { BaseHealthCheck } from './base/BaseHealthCheck.js';
 export { BaseModelProxy } from './base/BaseModelProxy.js';
 export { HTTPClient } from './base/http-client.js';
 export type { HTTPClientConfig, HTTPResponse } from './base/http-client.js';
+export {
+  DEFAULT_CODEMIE_BASE_URL,
+  fetchCodeMieUserInfo,
+  ensureApiBase,
+  buildAuthHeaders,
+  promptForCodeMieUrl,
+  authenticateWithCodeMie,
+  selectCodeMieProject
+} from './codemie-auth-helpers.js';

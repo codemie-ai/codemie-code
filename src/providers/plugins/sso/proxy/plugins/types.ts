@@ -47,6 +47,7 @@ export interface PluginContext {
   config: ProxyConfig;
   logger: typeof logger;
   credentials?: SSOCredentials | JWTCredentials;
+  syncCredentials?: SSOCredentials | JWTCredentials;
   profileConfig?: CodeMieConfigOptions; // Full profile config (read once at CLI level)
   [key: string]: unknown; // Extensible
 }

@@ -796,10 +796,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     const provider = ProviderRegistry.getProvider(providerName);
     const isSSOProvider = provider?.authType === 'sso';
     const isJWTAuth = env.CODEMIE_AUTH_METHOD === 'jwt';
+    const hasCodeMieSync = Boolean(env.CODEMIE_SYNC_API_URL && env.CODEMIE_URL);
     const isProxyEnabled = this.metadata.ssoConfig?.enabled ?? false;
 
     // Proxy needed for SSO cookie injection OR JWT bearer token injection
-    return (isSSOProvider || isJWTAuth) && isProxyEnabled;
+    return (isSSOProvider || isJWTAuth || hasCodeMieSync) && isProxyEnabled;
   }
 
   /**
@@ -846,7 +847,9 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       jwtToken: env.CODEMIE_JWT_TOKEN || undefined,
       repository,
       branch: branch || undefined,
-      project: env.CODEMIE_PROJECT || undefined
+      project: env.CODEMIE_PROJECT || undefined,
+      syncApiUrl: env.CODEMIE_SYNC_API_URL || undefined,
+      syncCodeMieUrl: env.CODEMIE_URL || undefined
     };
   }
 

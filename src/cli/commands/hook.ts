@@ -70,6 +70,8 @@ export interface HookProcessingConfig {
   model?: string;
   /** SSO URL for credential loading */
   ssoUrl?: string;
+  /** Optional dedicated CodeMie API URL for analytics sync */
+  syncApiUrl?: string;
 }
 
 /**
@@ -105,6 +107,7 @@ function getConfigValue(envKey: string, config?: HookProcessingConfig): string |
       'CODEMIE_PROJECT': 'project',
       'CODEMIE_MODEL': 'model',
       'CODEMIE_URL': 'ssoUrl',
+      'CODEMIE_SYNC_API_URL': 'syncApiUrl',
     };
     const configKey = configMap[envKey];
     if (configKey) {
@@ -167,7 +170,7 @@ function initializeLoggerContext(): string {
 async function handleSessionStart(event: SessionStartEvent, _rawInput: string, sessionId: string, config?: HookProcessingConfig): Promise<void> {
   // Create session record with correlation information
   await createSessionRecord(event, sessionId, config);
-  // Send session start metrics (SSO provider only)
+  // Send session start metrics when CodeMie analytics auth is configured
   await sendSessionStartMetrics(event, sessionId, event.session_id, config);
   // Sync CodeMie skills to Claude Code (.claude/skills/)
   await syncSkillsToClaude(event.cwd || process.cwd());
@@ -685,7 +688,7 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
 
 /**
  * Helper: Send session start metrics to CodeMie backend
- * Only works with ai-run-sso provider
+ * Works for providers that have CodeMie analytics authentication configured
  *
  * @param event - SessionStart event data
  * @param sessionId - The CodeMie session ID (for file operations)
@@ -694,17 +697,12 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
  */
 async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: string, agentSessionId: string, config?: HookProcessingConfig): Promise<void> {
   try {
-    // Only send metrics for SSO provider
-    const provider = getConfigValue('CODEMIE_PROVIDER', config);
-    if (provider !== 'ai-run-sso') {
-      logger.debug('[hook:SessionStart] Skipping metrics (not SSO provider)');
-      return;
-    }
-
     // Get required configuration values
     const agentName = getConfigValue('CODEMIE_AGENT', config);
+    const provider = getConfigValue('CODEMIE_PROVIDER', config);
     const ssoUrl = getConfigValue('CODEMIE_URL', config);
-    const apiUrl = getConfigValue('CODEMIE_BASE_URL', config);
+    const syncApiUrl = getConfigValue('CODEMIE_SYNC_API_URL', config);
+    const apiUrl = syncApiUrl || getConfigValue('CODEMIE_BASE_URL', config);
     const cliVersion = getConfigValue('CODEMIE_CLI_VERSION', config);
     const model = getConfigValue('CODEMIE_MODEL', config);
     const project = getConfigValue('CODEMIE_PROJECT', config);
@@ -763,7 +761,13 @@ async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: stri
     }
 
     if (!cookieHeader) {
-      logger.info(`[hook:SessionStart] No SSO credentials available for ${ssoUrl}`);
+      if (syncApiUrl) {
+        logger.info(
+          `[hook:SessionStart] CodeMie analytics sync is configured for ${syncApiUrl}, but no stored credentials were found. Run: codemie profile login --url ${ssoUrl}`
+        );
+      } else {
+        logger.info(`[hook:SessionStart] No SSO credentials available for ${ssoUrl}`);
+      }
       return;
     }
 
@@ -794,7 +798,7 @@ async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: stri
       {
         sessionId: agentSessionId,
         agentName,
-        provider,
+        provider: provider || 'unknown',
         project,
         model,
         startTime: Date.now(),
@@ -945,7 +949,7 @@ async function renameSessionFiles(sessionId: string): Promise<void> {
 
 /**
  * Helper: Send session end metrics to CodeMie backend
- * Only works with ai-run-sso provider
+ * Works for providers that have CodeMie analytics authentication configured
  *
  * @param event - SessionEnd event data
  * @param sessionId - The CodeMie session ID (for file operations)
@@ -954,17 +958,11 @@ async function renameSessionFiles(sessionId: string): Promise<void> {
  */
 async function sendSessionEndMetrics(event: SessionEndEvent, sessionId: string, agentSessionId: string, config?: HookProcessingConfig): Promise<void> {
   try {
-    // Only send metrics for SSO provider
-    const provider = getConfigValue('CODEMIE_PROVIDER', config);
-    if (provider !== 'ai-run-sso') {
-      logger.debug('[hook:SessionEnd] Skipping metrics (not SSO provider)');
-      return;
-    }
-
     // Get required configuration values
     const agentName = getConfigValue('CODEMIE_AGENT', config);
+    const provider = getConfigValue('CODEMIE_PROVIDER', config);
     const ssoUrl = getConfigValue('CODEMIE_URL', config);
-    const apiUrl = getConfigValue('CODEMIE_BASE_URL', config);
+    const apiUrl = getConfigValue('CODEMIE_SYNC_API_URL', config) || getConfigValue('CODEMIE_BASE_URL', config);
     const cliVersion = getConfigValue('CODEMIE_CLI_VERSION', config);
     const model = getConfigValue('CODEMIE_MODEL', config);
     const project = getConfigValue('CODEMIE_PROJECT', config);
@@ -1039,7 +1037,7 @@ async function sendSessionEndMetrics(event: SessionEndEvent, sessionId: string, 
       {
         sessionId: agentSessionId,
         agentName,
-        provider,
+        provider: provider || 'unknown',
         project,
         model,
         startTime: session.startTime,
