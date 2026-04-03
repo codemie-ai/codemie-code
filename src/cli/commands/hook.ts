@@ -129,19 +129,18 @@ function getConfigValue(envKey: string, config?: HookProcessingConfig): string |
 function initializeLoggerContext(): string {
   const agentName = process.env.CODEMIE_AGENT;
   if (!agentName) {
-    // Debug: Log all environment variables that start with CODEMIE_
-    const codemieEnvVars = Object.keys(process.env)
-      .filter(key => key.startsWith('CODEMIE_'))
-      .map(key => `${key}=${process.env[key]}`)
-      .join(', ');
-    console.error(`[hook:debug] CODEMIE_AGENT missing. Available CODEMIE_* vars: ${codemieEnvVars || 'none'}`);
-    throw new Error('CODEMIE_AGENT environment variable is required');
+    // Not running inside a codemie-managed session — exit silently.
+    // This happens when the plugin is loaded via --plugin-dir but CODEMIE_AGENT
+    // was never set (e.g. bare `claude` invocation for a personal account).
+    // Throwing here causes Claude Code to display "Hook cancelled" to the user.
+    process.exit(0);
   }
 
   // Use CODEMIE_SESSION_ID from environment
   const sessionId = process.env.CODEMIE_SESSION_ID;
   if (!sessionId) {
-    throw new Error('CODEMIE_SESSION_ID environment variable is required');
+    // Same rationale: exit silently rather than surfacing an error to the user.
+    process.exit(0);
   }
 
   // Set logger context
@@ -1253,7 +1252,9 @@ export function createHookCommand(): Command {
           process.exit(2); // Blocking error
         }
 
-        if (!event.transcript_path) {
+        // transcript_path is optional for SessionStart/SessionEnd (consistent with validateHookEvent)
+        const transcriptOptionalEvents = ['SessionStart', 'SessionEnd'];
+        if (!event.transcript_path && !transcriptOptionalEvents.includes(event.hook_event_name)) {
           logger.error('[hook] Missing required field: transcript_path');
           logger.debug(`[hook] Received event: ${JSON.stringify(event)}`);
           process.exit(2); // Blocking error
