@@ -36,28 +36,32 @@ export class BedrockModelProxy implements ProviderModelFetcher {
   /**
    * Fetch available models from Bedrock
    */
-  async fetchModels(_config: CodeMieConfigOptions): Promise<ModelInfo[]> {
+  async fetchModels(config: CodeMieConfigOptions): Promise<ModelInfo[]> {
     try {
       const {
         BedrockClient,
         ListInferenceProfilesCommand
       } = await import('@aws-sdk/client-bedrock');
 
-      const clientConfig: any = {
-        region: this.region
-      };
+      // Prefer runtime config values over constructor defaults
+      const region = config.awsRegion || this.region;
+      const awsProfile = config.awsProfile || this.profile;
+      const accessKeyId = config.apiKey || this.accessKeyId;
+      const secretAccessKey = config.awsSecretAccessKey || this.secretAccessKey;
 
-      if (this.profile) {
+      const clientConfig: any = { region };
+
+      if (awsProfile) {
         // Use AWS profile - fromIni returns a credential provider function
         // that the SDK will call when needed
         clientConfig.credentials = fromIni({
-          profile: this.profile
+          profile: awsProfile
         });
-      } else if (this.accessKeyId && this.secretAccessKey) {
+      } else if (accessKeyId && secretAccessKey) {
         // Use direct credentials
         clientConfig.credentials = {
-          accessKeyId: this.accessKeyId,
-          secretAccessKey: this.secretAccessKey
+          accessKeyId,
+          secretAccessKey
         };
       } else {
         // Try to use default credentials chain (environment variables, default profile, etc.)
