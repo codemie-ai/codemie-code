@@ -96,6 +96,18 @@ export class ConfigLoader {
         delete filteredEnvConfig.provider;
         filtered.push('provider');
       }
+      if (!cliOverrides.codeMieUrl && filteredEnvConfig.codeMieUrl) {
+        delete filteredEnvConfig.codeMieUrl;
+        filtered.push('codeMieUrl');
+      }
+      if (!cliOverrides.authMethod && filteredEnvConfig.authMethod) {
+        delete filteredEnvConfig.authMethod;
+        filtered.push('authMethod');
+      }
+      if (!cliOverrides.codeMieIntegration && filteredEnvConfig.codeMieIntegration) {
+        delete filteredEnvConfig.codeMieIntegration;
+        filtered.push('codeMieIntegration');
+      }
 
       if (filtered.length > 0 && config.debug) {
         console.log(`[ConfigLoader] Profile protection: filtered environment vars: ${filtered.join(', ')}`);
@@ -1114,6 +1126,12 @@ export class ConfigLoader {
     if (config.opusModel) env.CODEMIE_OPUS_MODEL = config.opusModel;
     if (config.timeout) env.CODEMIE_TIMEOUT = String(config.timeout);
     if (config.debug) env.CODEMIE_DEBUG = String(config.debug);
+
+    // Always export CODEMIE_AUTH_METHOD so that a stale 'jwt' value written to
+    // process.env by a previous JWT-authenticated session cannot bleed into the
+    // current session and trigger proxy usage for non-JWT providers.
+    // Falls back to '' (no auth method) when the provider doesn't set one.
+    env.CODEMIE_AUTH_METHOD = config.authMethod ?? '';
 
     // Provider-specific environment variables (pluggable)
     // Each provider defines its own exportEnvVars function

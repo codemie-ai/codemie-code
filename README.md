@@ -29,6 +29,7 @@ CodeMie CLI is the all-in-one AI coding assistant for developers.
 - 🔐 **Enterprise Ready** - SSO and JWT authentication, audit logging, and role-based access.
 - ⚡ **Productivity Boost** - Code review, refactoring, test generation, and bug fixing.
 - 🎯 **Profile Management** - Manage work, personal, and team configurations separately.
+- 🧩 **CodeMie Assistants in Claude** - Connect your available CodeMie assistants as Claude subagents or skills.
 - 📊 **Usage Analytics** - Track and analyze AI usage across all agents with detailed insights.
 - 🔧 **CI/CD Workflows** - Automated code review, fixes, and feature implementation.
 
@@ -211,6 +212,33 @@ codemie install claude
 Auto-updates are automatically disabled to maintain version control. CodeMie notifies you when running a different version than supported.
 
 For more detailed information on the available agents, see the [Agents Documentation](docs/AGENTS.md).
+
+### CodeMie Assistants as Claude Skills or Subagents
+
+CodeMie can connect assistants available in your CodeMie account directly into Claude Code. Register them as Claude subagents and call them with `@slug`, or register them as Claude skills and invoke them with `/slug`.
+
+```bash
+# Pick assistants from your CodeMie account and choose how to register them
+codemie setup assistants
+```
+
+During setup, choose:
+- **Claude Subagents** - register selected assistants as `@slug`
+- **Claude Skills** - register selected assistants as `/slug`
+- **Manual Configuration** - choose skill or subagent per assistant
+
+After registration, use them from Claude Code:
+
+```text
+@api-reviewer Review this authentication flow
+/release-checklist prepare a release checklist for this branch
+```
+
+You can also message a registered assistant directly through CodeMie:
+
+```bash
+codemie assistants chat "assistant-id" "Review this API design"
+```
 
 ### Claude Code Built-in Commands
 

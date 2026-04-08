@@ -237,10 +237,13 @@ async function handleSessionEnd(event: SessionEndEvent, sessionId: string, confi
  */
 async function syncPendingDataToAPI(sessionId: string, agentSessionId: string, config?: HookProcessingConfig): Promise<void> {
   try {
-    // Only sync for SSO provider
     const provider = getConfigValue('CODEMIE_PROVIDER', config);
-    if (provider !== 'ai-run-sso') {
-      logger.debug('[hook:SessionEnd] Skipping API sync (not SSO provider)');
+    const ssoUrl = getConfigValue('CODEMIE_URL', config);
+    const syncApiUrl = getConfigValue('CODEMIE_SYNC_API_URL', config);
+    const hasCodeMieAnalyticsAuth = Boolean(ssoUrl && syncApiUrl);
+
+    if (provider !== 'ai-run-sso' && !hasCodeMieAnalyticsAuth) {
+      logger.debug('[hook:SessionEnd] Skipping API sync (CodeMie analytics auth not configured)');
       return;
     }
 
@@ -382,7 +385,7 @@ async function buildProcessingContext(
   // Get configuration values from config object or environment variables
   const provider = getConfigValue('CODEMIE_PROVIDER', config);
   const ssoUrl = getConfigValue('CODEMIE_URL', config);
-  const apiUrl = getConfigValue('CODEMIE_BASE_URL', config) || '';
+  const apiUrl = getConfigValue('CODEMIE_SYNC_API_URL', config) || getConfigValue('CODEMIE_BASE_URL', config) || '';
   const cliVersion = getConfigValue('CODEMIE_CLI_VERSION', config) || '0.0.0';
   const clientType = getConfigValue('CODEMIE_CLIENT_TYPE', config) || 'codemie-cli';
 
@@ -390,8 +393,10 @@ async function buildProcessingContext(
   let cookies = config?.cookies || '';
   let apiKey: string | undefined = config?.apiKey;
 
-  // If SSO provider and credentials not provided in config, try to load them
-  if (provider === 'ai-run-sso' && ssoUrl && apiUrl && !cookies) {
+  // If CodeMie analytics auth is configured and credentials are not provided,
+  // try to load the stored SSO cookies. This also supports native providers
+  // such as anthropic-subscription, where CodeMie auth is analytics-only.
+  if ((provider === 'ai-run-sso' || ssoUrl) && ssoUrl && apiUrl && !cookies) {
     try {
       const { CodeMieSSO } = await import('../../providers/plugins/sso/sso.auth.js');
       const sso = new CodeMieSSO();

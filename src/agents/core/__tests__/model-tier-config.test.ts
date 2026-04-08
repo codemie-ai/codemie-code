@@ -264,4 +264,52 @@ describe('ConfigLoader.exportProviderEnvVars', () => {
     expect(env.CODEMIE_SYNC_API_URL).toBe('https://codemie.lab.epam.com/code-assistant-api');
     expect(env.CODEMIE_PROJECT).toBe('codemie-platform');
   });
+
+  describe('CODEMIE_AUTH_METHOD export (stale-env contamination guard)', () => {
+    it('exports CODEMIE_AUTH_METHOD=manual for anthropic-subscription', async () => {
+      const { ConfigLoader } = await import('../../../utils/config.js');
+
+      const env = ConfigLoader.exportProviderEnvVars({
+        provider: 'anthropic-subscription',
+        baseUrl: 'https://api.anthropic.com',
+        apiKey: '',
+        authMethod: 'manual',
+      });
+
+      expect(env.CODEMIE_AUTH_METHOD).toBe('manual');
+    });
+
+    it('exports CODEMIE_AUTH_METHOD="" when authMethod is not set', async () => {
+      const { ConfigLoader } = await import('../../../utils/config.js');
+
+      const env = ConfigLoader.exportProviderEnvVars({
+        provider: 'openai',
+        baseUrl: 'https://api.openai.com',
+        apiKey: 'sk-test',
+        // authMethod intentionally absent
+      });
+
+      expect(env.CODEMIE_AUTH_METHOD).toBe('');
+    });
+
+    it('CODEMIE_AUTH_METHOD overrides stale jwt value when merged into env', async () => {
+      // Simulates what BaseAgentAdapter does:
+      //   env = { ...process.env (stale), ...envOverrides (fresh) }
+      // The fresh exportProviderEnvVars output must win over the stale value.
+      const { ConfigLoader } = await import('../../../utils/config.js');
+
+      const staleProcessEnv = { CODEMIE_AUTH_METHOD: 'jwt' };
+
+      const providerEnv = ConfigLoader.exportProviderEnvVars({
+        provider: 'anthropic-subscription',
+        baseUrl: 'https://api.anthropic.com',
+        apiKey: '',
+        authMethod: 'manual',
+      });
+
+      const mergedEnv = { ...staleProcessEnv, ...providerEnv };
+
+      expect(mergedEnv.CODEMIE_AUTH_METHOD).toBe('manual');
+    });
+  });
 });

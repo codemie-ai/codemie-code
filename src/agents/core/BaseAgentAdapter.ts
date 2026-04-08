@@ -794,13 +794,20 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     if (!providerName) return false;
 
     const provider = ProviderRegistry.getProvider(providerName);
+
+    // Providers with no authentication requirement never route through the proxy.
+    // This also guards against stale CODEMIE_AUTH_METHOD='jwt' values persisting
+    // in process.env from a previous JWT-authenticated session (written by
+    // Object.assign(process.env, env) at the end of run()).
+    if (provider?.authType === 'none') return false;
+
     const isSSOProvider = provider?.authType === 'sso';
     const isJWTAuth = env.CODEMIE_AUTH_METHOD === 'jwt';
-    const hasCodeMieSync = Boolean(env.CODEMIE_SYNC_API_URL && env.CODEMIE_URL);
     const isProxyEnabled = this.metadata.ssoConfig?.enabled ?? false;
 
-    // Proxy needed for SSO cookie injection OR JWT bearer token injection
-    return (isSSOProvider || isJWTAuth || hasCodeMieSync) && isProxyEnabled;
+    // Proxy is only for model API authentication/forwarding. Analytics sync can
+    // be configured independently and must not force native providers through it.
+    return (isSSOProvider || isJWTAuth) && isProxyEnabled;
   }
 
   /**

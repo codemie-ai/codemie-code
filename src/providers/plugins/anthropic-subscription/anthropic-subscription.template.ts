@@ -8,6 +8,7 @@
  */
 
 import type { ProviderTemplate } from '../../core/types.js';
+import type { AgentConfig } from '../../../agents/core/types.js';
 import { registerProvider } from '../../core/decorators.js';
 import { ensureApiBase } from '../../core/codemie-auth-helpers.js';
 
@@ -30,13 +31,62 @@ export const AnthropicSubscriptionTemplate = registerProvider<ProviderTemplate>(
   supportsStreaming: true,
 
   agentHooks: {
-    'claude': {
-      async beforeRun(env) {
+    '*': {
+      async beforeRun(env: NodeJS.ProcessEnv, config: AgentConfig): Promise<NodeJS.ProcessEnv> {
+        if (config.agent !== 'claude') {
+          return env;
+        }
+
+        // Return a copy so callers that hold a reference to the original env are not affected.
+        const updated = { ...env };
+
         // Native Claude subscription auth relies on Claude Code's stored login.
-        // Any explicit token env var overrides that flow and causes 401s.
-        delete env.ANTHROPIC_AUTH_TOKEN;
-        delete env.ANTHROPIC_API_KEY;
-        return env;
+        // Explicit Anthropic API/proxy env vars override that flow and can cause 401s.
+        delete updated.ANTHROPIC_AUTH_TOKEN;
+        delete updated.ANTHROPIC_API_KEY;
+        delete updated.ANTHROPIC_BASE_URL;
+
+        // Reuse the Claude Code plugin hooks so local metrics/conversation files are
+        // produced even though model traffic is not proxied through CodeMie.
+        //
+        // Dynamic import avoids a circular dependency: AgentRegistry imports all plugins
+        // (including this provider template) as side effects, so a static top-level import
+        // here would form a cycle.  The dynamic import defers resolution until runtime when
+        // the registry is already fully initialised.
+        try {
+          const { AgentRegistry } = await import('../../../agents/registry.js');
+          const agent = AgentRegistry.getAgent('claude');
+          const installer = (agent as any)?.getExtensionInstaller?.();
+
+          if (installer) {
+            const result = await installer.install();
+            updated.CODEMIE_CLAUDE_EXTENSION_DIR = result.targetPath;
+
+            if (!result.success) {
+              const { logger } = await import('../../../utils/logger.js');
+              logger.warn(`[claude] Extension installation returned failure: ${result.error || 'unknown error'}`);
+              logger.warn('[claude] Continuing without extension - hooks may not be available');
+            }
+          }
+        } catch (error) {
+          const { logger } = await import('../../../utils/logger.js');
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          logger.error(`[claude] Extension installation threw exception: ${errorMsg}`);
+          logger.warn('[claude] Continuing without extension - hooks may not be available');
+        }
+
+        return updated;
+      }
+    },
+    'claude': {
+      enrichArgs(args: string[], _config: AgentConfig): string[] {
+        const pluginDir = process.env.CODEMIE_CLAUDE_EXTENSION_DIR;
+
+        if (!pluginDir || args.some(arg => arg === '--plugin-dir')) {
+          return args;
+        }
+
+        return ['--plugin-dir', pluginDir, ...args];
       }
     }
   },
