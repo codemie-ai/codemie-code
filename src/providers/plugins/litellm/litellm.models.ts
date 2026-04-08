@@ -54,9 +54,13 @@ export class LiteLLMModelProxy extends BaseModelProxy {
   }
 
   /**
-   * Fetch models for setup wizard
+   * Fetch models using runtime config values (baseUrl and apiKey).
+   * Falls back to constructor values when config fields are absent.
    */
-  async fetchModels(_config: CodeMieConfigOptions): Promise<ModelInfo[]> {
-    return this.listModels();
+  async fetchModels(config: CodeMieConfigOptions): Promise<ModelInfo[]> {
+    const effectiveBaseUrl = config.baseUrl || this.baseUrl;
+    const effectiveApiKey = config.apiKey !== undefined ? config.apiKey : this.apiKey;
+    const proxy = new LiteLLMModelProxy(effectiveBaseUrl, effectiveApiKey);
+    return proxy.listModels();
   }
 }

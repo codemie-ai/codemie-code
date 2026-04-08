@@ -49,6 +49,8 @@ All agent shortcuts support these options:
 --base-url <url>         # Override base URL
 --timeout <seconds>      # Override timeout (in seconds)
 -s, --silent             # Enable silent mode
+--task <prompt>          # Run a single task in headless (non-interactive) mode and exit
+--jwt-token <token>      # JWT token for authentication (overrides config and CODEMIE_JWT_TOKEN)
 ```
 
 ### Built-in Agent (codemie-code)
@@ -98,6 +100,111 @@ codemie-claude --task "Implement task 1" --silent --dangerously-skip-permissions
 ```
 
 **Note**: Configuration options (`--profile`, `--model`, etc.) are handled by CodeMie CLI wrapper. All other options are passed directly to the underlying agent binary.
+
+## Headless Mode (`--task`)
+
+The `--task` flag runs a single prompt non-interactively: the agent executes the task, prints the result, and exits. No user interaction is required. This is the primary way to use CodeMie agents in CI/CD pipelines and automated scripts.
+
+### How It Works
+
+Each agent maps `--task` to its own non-interactive mechanism:
+
+| Agent | Underlying flag/command | Behaviour |
+|-------|------------------------|-----------|
+| `codemie-claude` | `-p <prompt>` (print mode) | Runs prompt, prints output, exits |
+| `codemie-gemini` | `-p <prompt>` | Runs prompt, prints output, exits |
+| `codemie-opencode` | `opencode run <prompt>` | Runs task via `run` subcommand, exits |
+
+### Basic Usage
+
+```bash
+# Claude
+codemie-claude --task "Summarize the recent changes in this repo"
+
+# Gemini
+codemie-gemini --task "Explain the architecture of this project"
+
+# OpenCode
+codemie-opencode --task "Review the code in src/ for security issues"
+```
+
+### With Profile or Model Override
+
+```bash
+codemie-claude --profile work --task "Fix the failing tests"
+codemie-gemini --model gemini-2.5-flash --task "Generate a changelog for this release"
+```
+
+### Capturing Output
+
+```bash
+# Redirect stdout to a file
+codemie-claude --task "Review this PR" > review.txt
+
+# Capture both stdout and stderr
+codemie-claude --task "Analyze codebase" > output.txt 2>&1
+```
+
+### Non-Interactive Flags (Claude-specific)
+
+When running headless Claude tasks, combine `--task` with these pass-through flags for full automation:
+
+```bash
+codemie-claude \
+  --task "Implement the changes described in SPEC.md" \
+  --silent \
+  --dangerously-skip-permissions \
+  --output-format stream-json \
+  --verbose
+```
+
+### Headless Mode with JWT Authentication
+
+For CI/CD environments where SSO login is not possible, combine `--task` with `--jwt-token`:
+
+```bash
+# Single command — no prior setup required
+codemie-claude \
+  --jwt-token "$CI_JWT_TOKEN" \
+  --task "Review the changes in this commit and list any issues"
+
+# With base URL for environments not yet configured
+codemie-claude \
+  --jwt-token "$CI_JWT_TOKEN" \
+  --base-url "https://codemie.lab.epam.com" \
+  --task "Run a security review of the staged files"
+```
+
+See [JWT Bearer Authorization](./AUTHENTICATION.md#jwt-bearer-authorization) for full token setup options.
+
+### CI/CD Examples
+
+**GitHub Actions:**
+```yaml
+- name: AI Code Review
+  run: |
+    codemie-claude \
+      --jwt-token "${{ secrets.CODEMIE_JWT_TOKEN }}" \
+      --task "Review the changes in this PR and report any issues" \
+      --silent
+```
+
+**GitLab CI:**
+```yaml
+ai-review:
+  script:
+    - codemie-claude
+        --jwt-token "$CODEMIE_JWT_TOKEN"
+        --task "Review changes in this commit"
+        --silent
+```
+
+**Shell script:**
+```bash
+#!/bin/bash
+RESULT=$(codemie-claude --jwt-token "$TOKEN" --task "Analyze src/ for bugs" 2>&1)
+echo "$RESULT" > /tmp/ai-review.txt
+```
 
 ## Profile Management Commands
 

@@ -29,6 +29,7 @@ import { createSkillCommand } from './commands/skill.js';
 import { createPluginCommand } from './commands/plugin.js';
 import { createOpencodeMetricsCommand } from './commands/opencode-metrics.js';
 import { createTestMetricsCommand } from './commands/test-metrics.js';
+import { createModelsCommand } from './commands/models.js';
 import { createAssistantsCommand } from './commands/assistants/index.js';
 import { FirstTimeExperience } from './first-time.js';
 import { getDirname } from '../utils/paths.js';
@@ -72,6 +73,7 @@ program.addCommand(createSkillCommand());
 program.addCommand(createPluginCommand());
 program.addCommand(createOpencodeMetricsCommand());
 program.addCommand(createTestMetricsCommand());
+program.addCommand(createModelsCommand());
 
 // Check for --task option before parsing commands
 const taskIndex = process.argv.indexOf('--task');

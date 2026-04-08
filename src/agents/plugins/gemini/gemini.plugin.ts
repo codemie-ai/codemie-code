@@ -39,7 +39,7 @@ const metadata = {
 
   envMapping: {
     baseUrl: ['GOOGLE_GEMINI_BASE_URL', 'GEMINI_BASE_URL'],
-    apiKey: ['GEMINI_API_KEY', 'GOOGLE_API_KEY'],
+    apiKey: ['GEMINI_API_KEY'],
     model: ['GEMINI_MODEL']
   },
 
