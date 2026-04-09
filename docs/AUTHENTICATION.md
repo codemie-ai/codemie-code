@@ -109,6 +109,7 @@ AI/Run CodeMie SSO provides enterprise-grade features:
 - **Automatic Refresh**: Seamless token renewal without interruption
 - **Multi-Model Access**: Access to Claude, GPT, and other models through unified gateway
 - **Automatic Plugin Installation**: Claude Code plugin auto-installs for session tracking
+- **MCP OAuth Proxy**: Automatic OAuth authorization for remote MCP servers
 - **Audit Logging**: Enterprise audit trails for security compliance
 - **Role-Based Access**: Model access based on organizational permissions
 
@@ -283,3 +284,77 @@ codemie setup  # Choose Bearer Authorization again
 # Or manually edit config
 cat ~/.codemie/codemie-cli.config.json
 ```
+
+## MCP Server Authentication
+
+CodeMie provides a stdio-to-HTTP proxy that enables MCP clients (like Claude Code) to connect to OAuth-protected remote MCP servers. The proxy handles the full OAuth 2.0 authorization code flow transparently.
+
+### Setup
+
+Register the proxy as an MCP server in your Claude Code configuration:
+
+```bash
+# Using the global binary
+claude mcp add my-server -- codemie-mcp-proxy "https://mcp-server.example.com/sse"
+```
+
+Or configure `.mcp.json` directly:
+
+```json
+{
+  "mcpServers": {
+    "my-server": {
+      "type": "stdio",
+      "command": "codemie-mcp-proxy",
+      "args": ["https://mcp-server.example.com/sse"],
+      "env": {
+        "MCP_CLIENT_NAME": "Claude Code (my-server)"
+      }
+    }
+  }
+}
+```
+
+### OAuth Flow
+
+When the remote MCP server requires authentication, the proxy handles it automatically:
+
+1. **401 Unauthorized** — the remote server rejects the initial request
+2. **Metadata discovery** — fetch resource metadata and authorization server metadata
+3. **Dynamic Client Registration** — register a client with `client_name` from `MCP_CLIENT_NAME` (default: `CodeMie CLI`)
+4. **Browser authorization** — open the user's browser to the authorization endpoint
+5. **Callback** — receive the authorization code via an ephemeral localhost HTTP server
+6. **Token exchange** — exchange the code for access/refresh tokens
+7. **Retry** — replay the original request with the Bearer token
+
+All tokens and client state are kept in-memory only — re-authorization is required each session.
+
+### SSO Integration
+
+When running through the CodeMie SSO proxy, the MCP Auth Plugin provides additional capabilities:
+
+- **URL rewriting**: Auth metadata URLs are rewritten to route through the proxy (`/mcp_auth` and `/mcp_relay` routes)
+- **Client name override**: `client_name` in Dynamic Client Registration is replaced with the `MCP_CLIENT_NAME` value
+- **SSRF protection**: Private/loopback origins are rejected before forwarding
+- **Per-flow isolation**: Each MCP server flow is scoped by its root origin to prevent cross-flow confusion
+
+### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MCP_CLIENT_NAME` | `CodeMie CLI` | Client name for OAuth Dynamic Client Registration |
+| `MCP_PROXY_DEBUG` | (unset) | Set to `true` for verbose proxy logging |
+| `CODEMIE_PROXY_PORT` | (auto) | Fixed proxy port for stable auth callback URLs |
+
+Logs: `~/.codemie/logs/mcp-proxy.log`
+
+### Troubleshooting
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| Browser doesn't open during auth | `open`/`xdg-open` not available | Copy the URL from logs and open manually |
+| OAuth timeout after 2 minutes | User didn't complete browser authorization | Re-trigger the MCP connection and authorize faster |
+| `401` persists after auth | Token expired or server rejected it | Check logs for token exchange errors |
+| Connection refused | Remote MCP server unreachable | Verify the URL and network connectivity |
+
+For architecture details, see [Proxy Architecture — MCP Auth Plugin](./ARCHITECTURE-PROXY.md#65-mcp-auth-plugin).

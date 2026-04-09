@@ -28,6 +28,7 @@
 The CodeMie Proxy is a **plugin-based HTTP streaming proxy** that sits between AI coding agents and their target API endpoints. It enables:
 
 - **SSO Authentication**: Automatic cookie injection for enterprise SSO
+- **MCP Authorization**: OAuth proxy for remote MCP servers with SSRF protection
 - **Header Management**: CodeMie-specific header injection for traceability
 - **Observability**: Detailed logging and metrics collection
 - **Metrics Sync**: Background sync of session metrics to CodeMie API
@@ -60,6 +61,7 @@ The CodeMie Proxy is a **plugin-based HTTP streaming proxy** that sits between A
 │  ┌────────────────────────────────────────────────────────────┐ │
 │  │               Plugin System (Priority-Based)               │ │
 │  │                                                            │ │
+│  │  [3]   MCP Auth Plugin       → MCP OAuth proxy & URL rewrite│ │
 │  │  [10]  SSO Auth Plugin      → Inject cookies               │ │
 │  │  [20]  Header Injection     → Add X-CodeMie headers        │ │
 │  │  [50]  Logging Plugin       → Log requests/responses       │ │
@@ -161,7 +163,8 @@ The CodeMie Proxy is a **plugin-based HTTP streaming proxy** that sits between A
 - Retrieve plugin configurations
 
 **Plugin Priority Levels**:
-- **0-10**: Authentication and security (SSO Auth: 10)
+- **0-3**: MCP protocol handling (MCP Auth: 3)
+- **4-10**: Authentication and security (SSO Auth: 10)
 - **11-50**: Header manipulation (Header Injection: 20)
 - **51-100**: Observability (Logging: 50, Metrics Sync: 100)
 - **101-500**: Business logic (rate limiting, caching)
@@ -608,6 +611,85 @@ Proxy Stop
 - Verify SSO cookies valid
 - Check network connectivity to API
 - Enable debug logging
+
+### 6.5 MCP Auth Plugin
+
+**Priority**: 3 (runs before all other plugins)
+**File**: `src/providers/plugins/sso/proxy/plugins/mcp-auth.plugin.ts`
+
+**Purpose**: Proxy MCP OAuth authorization flows through the CodeMie proxy so that all auth traffic is routed centrally and `client_name` can be overridden via the `MCP_CLIENT_NAME` environment variable.
+
+#### 6.5.1 URL Scheme
+
+The plugin intercepts two URL patterns:
+
+| Route | Pattern | Purpose |
+|-------|---------|---------|
+| **Initial** | `/mcp_auth?original=<url>` | First MCP connection — starts an OAuth flow |
+| **Relay** | `/mcp_relay/<root_b64>/<relay_b64>/<path>` | Subsequent requests routed through proxy |
+
+- `root_b64`: Base64url-encoded root MCP server origin (for per-flow isolation)
+- `relay_b64`: Base64url-encoded actual target origin (may differ when auth server is on a separate host)
+
+#### 6.5.2 Request Handling
+
+**`/mcp_auth` route:**
+1. Extract `original` query parameter (the real MCP server URL)
+2. Validate URL (SSRF check)
+3. Forward request to the target MCP server
+4. Buffer the JSON response and rewrite all discovered URLs to proxy relay URLs
+5. Return the rewritten response to the MCP client
+
+**`/mcp_relay` route:**
+1. Decode `root_b64` and `relay_b64` to recover target origin
+2. Validate root-relay association (per-flow origin scoping)
+3. Reconstruct the full target URL from relay origin + path + query
+4. Forward request to the real target
+5. Buffer JSON auth metadata responses and rewrite URLs; stream all other responses
+
+#### 6.5.3 Response URL Rewriting
+
+The plugin buffers JSON responses (auth metadata, client registration, etc.) and rewrites all absolute HTTP(S) URLs found in JSON values to proxy relay URLs. This ensures the MCP client routes all subsequent requests through the proxy.
+
+**Exceptions**: Token audience identifiers (e.g., `resource` field) are not rewritten — they are logical identifiers, not URLs to access.
+
+**Browser endpoints** (e.g., `authorization_endpoint`) are left as-is so the user's browser navigates directly to the auth server.
+
+#### 6.5.4 Security
+
+**SSRF Protection:**
+- Private/loopback IP addresses are rejected (both literal hostname check and DNS resolution)
+- Only `http:` and `https:` schemes are allowed
+
+**Per-Flow Origin Scoping:**
+- Discovered origins (from auth metadata) are tagged with their root MCP server origin
+- Relay requests validate that the relay origin is associated with the claimed root origin
+- Prevents cross-flow origin confusion
+
+**Buffering Policy:**
+- Only auth metadata responses are buffered (for URL rewriting)
+- Post-auth MCP traffic streams through without buffering
+
+#### 6.5.5 Companion Components
+
+The MCP Auth Plugin works in conjunction with the stdio-to-HTTP bridge:
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| Stdio-HTTP Bridge | `src/mcp/stdio-http-bridge.ts` | Bridges stdio JSON-RPC to streamable HTTP transport |
+| OAuth Provider | `src/mcp/auth/mcp-oauth-provider.ts` | Implements `OAuthClientProvider` for browser-based OAuth flow |
+| Callback Server | `src/mcp/auth/callback-server.ts` | Ephemeral localhost server for receiving OAuth callbacks |
+| Proxy Logger | `src/mcp/proxy-logger.ts` | File-based logger for proxy operations |
+| Constants | `src/mcp/constants.ts` | `MCP_CLIENT_NAME` default and accessor |
+
+#### 6.5.6 Configuration
+
+**Environment Variables:**
+- `MCP_CLIENT_NAME`: Client name for OAuth Dynamic Client Registration (default: `CodeMie CLI`)
+- `MCP_PROXY_DEBUG`: Enable verbose proxy logging
+- `CODEMIE_PROXY_PORT`: Fixed proxy port (for stable MCP auth URLs across restarts)
+
+**Log Location**: `~/.codemie/logs/mcp-proxy.log`
 
 ---
 
