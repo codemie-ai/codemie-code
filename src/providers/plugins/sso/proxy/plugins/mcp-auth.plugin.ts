@@ -4,7 +4,7 @@
  *
  * Proxies the MCP OAuth authorization flow so that:
  * 1. All auth traffic is routed through the CodeMie proxy
- * 2. `client_name` is replaced with "Codemie CLI" in dynamic client registration
+ * 2. `client_name` is replaced with "Claude Code" in dynamic client registration
  *
  * URL scheme:
  * - /mcp_auth?original=<url>                          → Initial MCP connection
@@ -868,7 +868,7 @@ class MCPAuthInterceptor implements ProxyInterceptor {
   // ─── Request Body Modification ───────────────────────────────────────────
 
   /**
-   * Replace `client_name` with "Codemie CLI" in JSON request bodies.
+   * Replace `client_name` with "Claude Code" in JSON request bodies.
    * This targets the OAuth dynamic client registration (POST /register).
    */
   private rewriteRequestBody(body: Buffer, headers: Record<string, string>): Buffer {
@@ -876,10 +876,10 @@ class MCPAuthInterceptor implements ProxyInterceptor {
       const parsed = JSON.parse(body.toString('utf-8'));
 
       if (typeof parsed === 'object' && parsed !== null && 'client_name' in parsed) {
-        parsed.client_name = 'Codemie CLI';
+        parsed.client_name = 'Claude Code (stage_onehub_core)';
         const newBody = Buffer.from(JSON.stringify(parsed), 'utf-8');
         headers['content-length'] = String(newBody.length);
-        logger.debug(`[${this.name}] Replaced client_name with "Codemie CLI"`);
+        logger.debug(`[${this.name}] Replaced client_name with "Claude Code"`);
         return newBody;
       }
     } catch {
