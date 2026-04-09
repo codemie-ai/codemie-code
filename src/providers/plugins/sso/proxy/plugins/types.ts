@@ -5,11 +5,12 @@
  * KISS: Simple, clear interfaces
  */
 
-import { IncomingHttpHeaders } from 'http';
+import { IncomingHttpHeaders, IncomingMessage, ServerResponse } from 'http';
 import { ProxyConfig, ProxyContext } from '../proxy-types.js';
 import { logger } from '../../../../../utils/logger.js';
 import { SSOCredentials, JWTCredentials } from '../../../../core/types.js';
 import type { CodeMieConfigOptions } from '../../../../../env/types.js';
+import type { ProxyHTTPClient } from '../proxy-http-client.js';
 
 /**
  * Plugin metadata and lifecycle
@@ -87,6 +88,28 @@ export interface ProxyInterceptor {
 
   /** Called on any error */
   onError?(context: ProxyContext, error: Error): Promise<void>;
+
+  /**
+   * Fully handle a request, bypassing normal proxy forwarding.
+   * Called BEFORE onRequest hooks. If returns true, ALL normal flow is skipped:
+   * onRequest, onResponseHeaders, onResponseChunk, onResponseComplete hooks from
+   * other plugins will NOT run for this request.
+   *
+   * This is intentional for traffic that routes to fundamentally different targets
+   * (e.g., MCP auth servers vs LLM APIs). The handling plugin is responsible for
+   * its own security guarantees (SSRF protection, logging, auth) since the standard
+   * pipeline plugins (endpoint blocker, auth injection, request sanitizer) are
+   * designed for LLM API traffic and do not apply to custom-routed requests.
+   *
+   * Use for custom routing (e.g., MCP auth relay to different target URLs).
+   * Errors thrown here are routed through the normal onError pipeline.
+   */
+  handleRequest?(
+    context: ProxyContext,
+    req: IncomingMessage,
+    res: ServerResponse,
+    httpClient: ProxyHTTPClient
+  ): Promise<boolean>;
 }
 
 /**

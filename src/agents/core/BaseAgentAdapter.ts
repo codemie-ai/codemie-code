@@ -831,8 +831,12 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     const repository = env.CODEMIE_REPOSITORY || 'unknown';
     const branch = env.CODEMIE_GIT_BRANCH;
 
+    // Fixed proxy port (e.g., for stable MCP auth URLs across restarts)
+    const port = env.CODEMIE_PROXY_PORT ? parseInt(env.CODEMIE_PROXY_PORT, 10) : undefined;
+
     return {
       targetApiUrl,
+      port,
       clientType: this.metadata.ssoConfig?.clientType || 'unknown',
       timeout: timeoutMs,
       model: env.CODEMIE_MODEL,

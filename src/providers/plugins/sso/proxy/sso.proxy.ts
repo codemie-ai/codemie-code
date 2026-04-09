@@ -140,6 +140,9 @@ export class CodeMieProxy {
           this.actualPort = address.port;
         }
 
+        // Propagate actual port to config so plugins (e.g., MCP auth) get the real port
+        this.config.port = this.actualPort;
+
         const gatewayUrl = `http://localhost:${this.actualPort}`;
         logger.debug(`Proxy started: ${gatewayUrl}`);
         resolve({ port: this.actualPort, url: gatewayUrl });
@@ -192,6 +195,29 @@ export class CodeMieProxy {
     try {
       // 1. Build context
       const context = await this.buildContext(req);
+
+      // 1.5. Try handleRequest hooks (full custom handling, in priority order).
+      // When a plugin handles the request (returns true), the standard pipeline
+      // (onRequest → forward → onResponseHeaders → stream → onResponseComplete)
+      // is ENTIRELY skipped. This is by design for traffic that targets different
+      // upstream hosts (e.g., MCP auth servers vs LLM APIs). The handling plugin
+      // owns all security guarantees for its traffic. See ProxyInterceptor.handleRequest
+      // in types.ts for the full contract.
+      for (const interceptor of this.interceptors) {
+        if (interceptor.handleRequest) {
+          try {
+            const handled = await interceptor.handleRequest(context, req, res, this.httpClient);
+            if (handled) {
+              logger.debug(`[proxy] Request fully handled by ${interceptor.name}`);
+              return;
+            }
+          } catch (error) {
+            // Route through the normal error pipeline so onError interceptors run
+            await this.handleError(error, req, res);
+            return;
+          }
+        }
+      }
 
       // 2. Run onRequest interceptors (with early termination if blocked)
       await this.runHook('onRequest', interceptor =>
@@ -498,8 +524,12 @@ export class CodeMieProxy {
       }
     }
 
-    // Send structured error response
-    this.sendErrorResponse(res, error, context);
+    // Send structured error response (or destroy if headers already sent)
+    if (!res.headersSent) {
+      this.sendErrorResponse(res, error, context);
+    } else {
+      res.destroy();
+    }
   }
 
   /**
