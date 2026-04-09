@@ -7,6 +7,10 @@
  * Lazy connect: the HTTP transport is created and started only when the first
  * stdio message arrives. If the server requires OAuth, the auth flow runs during
  * that first connection (blocking the first message until auth completes).
+ *
+ * Cookie jar: Node's fetch doesn't persist cookies between requests. Some MCP
+ * auth gateways set session cookies during the OAuth flow that must be sent with
+ * subsequent requests. The bridge maintains a per-origin cookie jar automatically.
  */
 
 import {
@@ -28,14 +32,51 @@ function log(msg: string): void {
 function errorDetail(error: unknown): string {
   if (!(error instanceof Error)) return String(error);
   const parts: string[] = [`${error.constructor.name}: ${error.message}`];
-  // Capture any extra properties the SDK may attach (status, statusCode, body, response, etc.)
-  for (const key of ['status', 'statusCode', 'code', 'body', 'response', 'statusText']) {
+  for (const key of ['status', 'statusCode', 'code', 'body', 'response', 'statusText', 'data']) {
     const val = (error as unknown as Record<string, unknown>)[key];
     if (val !== undefined) parts.push(`  ${key}: ${JSON.stringify(val).slice(0, 500)}`);
   }
   if (error.cause) parts.push(`  cause: ${errorDetail(error.cause)}`);
   if (error.stack) parts.push(`  stack: ${error.stack}`);
   return parts.join('\n');
+}
+
+/**
+ * Minimal cookie jar: stores Set-Cookie values keyed by origin, sends them
+ * back on subsequent requests to the same origin.
+ */
+class CookieJar {
+  /** origin → Map<cookie-name, full-cookie-string> */
+  private cookies = new Map<string, Map<string, string>>();
+
+  /** Extract and store cookies from a response's Set-Cookie headers. */
+  capture(requestUrl: string, response: Response): void {
+    const origin = new URL(requestUrl).origin;
+    // getSetCookie() returns individual Set-Cookie header values
+    const setCookies = response.headers.getSetCookie?.() ?? [];
+    if (setCookies.length === 0) return;
+
+    let jar = this.cookies.get(origin);
+    if (!jar) {
+      jar = new Map();
+      this.cookies.set(origin, jar);
+    }
+    for (const raw of setCookies) {
+      const name = raw.split('=')[0]?.trim();
+      if (name) {
+        jar.set(name, raw.split(';')[0]!); // store "name=value" only
+        log(`[mcp-proxy] Cookie stored for ${origin}: ${name}=***`);
+      }
+    }
+  }
+
+  /** Build a Cookie header value for the given request URL. */
+  headerFor(requestUrl: string): string | undefined {
+    const origin = new URL(requestUrl).origin;
+    const jar = this.cookies.get(origin);
+    if (!jar || jar.size === 0) return undefined;
+    return [...jar.values()].join('; ');
+  }
 }
 
 export interface BridgeOptions {
@@ -48,6 +89,7 @@ export class StdioHttpBridge {
   private httpTransport: StreamableHTTPClientTransport | null = null;
   private oauthProvider: McpOAuthProvider;
   private serverUrl: URL;
+  private cookieJar = new CookieJar();
   private connected = false;
   private connecting = false;
   private shuttingDown = false;
@@ -65,7 +107,6 @@ export class StdioHttpBridge {
    * HTTP connection is deferred until the first message arrives.
    */
   async start(): Promise<void> {
-    // Wire up stdio transport to handle incoming messages
     this.stdioTransport.onmessage = (message: JSONRPCMessage) => {
       this.handleStdioMessage(message);
     };
@@ -79,7 +120,6 @@ export class StdioHttpBridge {
       log(`[mcp-proxy] Stdio transport error: ${error.message}`);
     };
 
-    // Start listening on stdio
     await this.stdioTransport.start();
     log('[mcp-proxy] Stdio transport started, waiting for messages');
   }
@@ -87,7 +127,6 @@ export class StdioHttpBridge {
   /**
    * Handle a message from Claude Code (stdio side).
    * On the first message, lazily connect the HTTP transport.
-   * Drops messages if shutdown is in progress.
    */
   private handleStdioMessage(message: JSONRPCMessage): void {
     if (this.shuttingDown) return;
@@ -95,7 +134,6 @@ export class StdioHttpBridge {
     log(`[mcp-proxy] Received stdio message: ${JSON.stringify(message).slice(0, 200)}`);
 
     if (this.connected && this.httpTransport) {
-      // Fast path: already connected, forward immediately
       this.httpTransport.send(message).catch((error: unknown) => {
         log(`[mcp-proxy] Error forwarding to HTTP:\n${errorDetail(error)}`);
         this.shutdown();
@@ -103,14 +141,12 @@ export class StdioHttpBridge {
       return;
     }
 
-    // Queue message while connecting
     this.pendingMessages.push(message);
     log(`[mcp-proxy] Queued message (${this.pendingMessages.length} pending), connecting=${this.connecting}`);
 
     if (!this.connecting) {
       this.connecting = true;
       this.connectHttpTransport().catch((error: unknown) => {
-        // Suppress connection errors during shutdown — not a fatal failure
         if (this.shuttingDown) {
           log(`[mcp-proxy] Connection aborted during shutdown: ${errorDetail(error)}`);
           return;
@@ -128,64 +164,100 @@ export class StdioHttpBridge {
   private async connectHttpTransport(): Promise<void> {
     log(`[mcp-proxy] Connecting to MCP server: ${this.serverUrl}`);
 
-    // First attempt: connect WITHOUT auth provider.
-    // If the server doesn't require auth, this avoids the transport sending
-    // OAuth client metadata (client_name etc.) that the server may reject.
-    this.httpTransport = this.createHttpTransport();
-    log('[mcp-proxy] HTTP transport created (no auth)');
+    await this.oauthProvider.ensureCallbackServer();
+    log('[mcp-proxy] Callback server pre-started');
+
+    this.httpTransport = this.createHttpTransport(this.oauthProvider);
+    log('[mcp-proxy] HTTP transport created with auth provider');
 
     try {
-      try {
-        log('[mcp-proxy] Starting HTTP transport...');
-        await this.httpTransport.start();
-        log('[mcp-proxy] HTTP transport started successfully (no auth needed)');
-      } catch (error) {
-        log(`[mcp-proxy] HTTP transport start error:\n${errorDetail(error)}`);
-        if (error instanceof UnauthorizedError) {
-          log('[mcp-proxy] Server requires authorization, reconnecting with OAuth');
-
-          // Pre-start callback server so clientMetadata.redirect_uris is populated
-          // before the SDK calls registerClient() during the OAuth flow.
-          await this.oauthProvider.ensureCallbackServer();
-          log('[mcp-proxy] Callback server pre-started');
-
-          // Recreate transport WITH auth provider
-          this.httpTransport = this.createHttpTransport(this.oauthProvider);
-          log('[mcp-proxy] HTTP transport recreated with auth provider');
-
-          // Start will trigger the OAuth flow via the provider
-          try {
-            await this.httpTransport.start();
-            log('[mcp-proxy] HTTP transport started (may need browser auth)');
-          } catch (authError) {
-            if (authError instanceof UnauthorizedError) {
-              log('[mcp-proxy] OAuth redirect initiated, waiting for browser auth');
-              await this.handleOAuthFlow();
-            } else {
-              throw authError;
-            }
-          }
-        } else {
-          throw error;
-        }
-      }
+      log('[mcp-proxy] Starting HTTP transport...');
+      await this.httpTransport.start();
+      log('[mcp-proxy] HTTP transport started');
 
       this.connected = true;
       log('[mcp-proxy] HTTP transport connected');
 
-      // Flush any queued messages
-      await this.flushPendingMessages();
+      try {
+        await this.flushPendingMessages();
+      } catch (error) {
+        if (error instanceof UnauthorizedError) {
+          log('[mcp-proxy] Auth required on first send, completing OAuth flow');
+          await this.handleOAuthFlow(this.httpTransport);
+          log('[mcp-proxy] OAuth complete, retrying queued messages');
+          await this.flushPendingMessages();
+        } else {
+          throw error;
+        }
+      }
+    } catch (error) {
+      if (error instanceof UnauthorizedError) {
+        log('[mcp-proxy] Auth required on start, completing OAuth flow');
+        await this.handleOAuthFlow(this.httpTransport!);
+
+        this.connected = true;
+        log('[mcp-proxy] HTTP transport connected after OAuth');
+
+        await this.flushPendingMessages();
+      } else {
+        throw error;
+      }
     } finally {
       this.connecting = false;
     }
   }
 
   /**
-   * Create an HTTP transport with common event handlers.
+   * Create an HTTP transport with cookie jar and logging.
    */
   private createHttpTransport(authProvider?: McpOAuthProvider): StreamableHTTPClientTransport {
-    const opts = authProvider ? { authProvider } : {};
-    const transport = new StreamableHTTPClientTransport(this.serverUrl, opts);
+    const jar = this.cookieJar;
+
+    // Wrap fetch to: (1) inject cookies, (2) capture Set-Cookie, (3) log details
+    const cookieFetch: typeof fetch = async (input, init) => {
+      const reqUrl = typeof input === 'string' ? input : input instanceof URL ? input.toString() : (input as Request).url;
+      const method = init?.method ?? 'GET';
+      log(`[mcp-proxy] HTTP ${method} ${reqUrl}`);
+      if (init?.body) log(`[mcp-proxy] Request body: ${String(init.body).slice(0, 300)}`);
+
+      // Inject stored cookies into the request
+      const cookieHeader = jar.headerFor(reqUrl);
+      if (cookieHeader && init?.headers) {
+        const headers = init.headers instanceof Headers ? init.headers : new Headers(init.headers as Record<string, string>);
+        headers.set('Cookie', cookieHeader);
+        init = { ...init, headers };
+        log(`[mcp-proxy] Injected cookies for ${new URL(reqUrl).origin}`);
+      }
+
+      // Log auth header presence (not value)
+      if (init?.headers instanceof Headers) {
+        log(`[mcp-proxy] Has Authorization: ${init.headers.has('Authorization')}`);
+        log(`[mcp-proxy] Request headers: ${[...init.headers.keys()].join(', ')}`);
+      }
+
+      const response = await fetch(input, init);
+
+      log(`[mcp-proxy] HTTP response: ${response.status} ${response.statusText}`);
+      const ct = response.headers.get('content-type');
+      if (ct) log(`[mcp-proxy] Response content-type: ${ct}`);
+
+      // Capture any Set-Cookie headers from the response
+      jar.capture(reqUrl, response);
+
+      // Log error response bodies
+      if (!response.ok) {
+        const cloned = response.clone();
+        const errorBody = await cloned.text().catch(() => '(unreadable)');
+        log(`[mcp-proxy] Error response body: ${errorBody.slice(0, 500)}`);
+      }
+
+      return response;
+    };
+
+    const transport = new StreamableHTTPClientTransport(this.serverUrl, {
+      fetch: cookieFetch,
+      ...(authProvider ? { authProvider } : {}),
+    });
 
     transport.onmessage = (message: JSONRPCMessage) => {
       log(`[mcp-proxy] Received HTTP message: ${JSON.stringify(message).slice(0, 200)}`);
@@ -208,28 +280,19 @@ export class StdioHttpBridge {
 
   /**
    * Handle the OAuth authorization code flow.
-   * 1. The provider's redirectToAuthorization() has already opened the browser
-   * 2. Wait for the callback with the authorization code
-   * 3. Call finishAuth() on the transport
-   * 4. Restart the transport
    */
-  private async handleOAuthFlow(): Promise<void> {
-    // Wait for the user to complete browser authorization
+  private async handleOAuthFlow(transport: StreamableHTTPClientTransport): Promise<void> {
     log('[mcp-proxy] Waiting for authorization code from browser...');
     const code = await this.oauthProvider.waitForAuthorizationCode();
     log('[mcp-proxy] Authorization code received, exchanging for token');
 
-    // Exchange the code for tokens
-    await this.httpTransport!.finishAuth(code);
-    log('[mcp-proxy] Token exchange complete, reconnecting');
-
-    // Restart the transport — now with valid tokens
-    await this.httpTransport!.start();
-    log('[mcp-proxy] Reconnected after OAuth');
+    await transport.finishAuth(code);
+    log('[mcp-proxy] Token exchange complete, transport ready');
   }
 
   /**
    * Forward any messages that arrived while we were connecting/authenticating.
+   * UnauthorizedError is re-thrown so the caller can handle the OAuth flow.
    */
   private async flushPendingMessages(): Promise<void> {
     const messages = this.pendingMessages;
@@ -239,6 +302,12 @@ export class StdioHttpBridge {
       try {
         await this.httpTransport!.send(message);
       } catch (error) {
+        if (error instanceof UnauthorizedError) {
+          const remaining = messages.slice(messages.indexOf(message));
+          this.pendingMessages = remaining.concat(this.pendingMessages);
+          log(`[mcp-proxy] UnauthorizedError during flush, re-queued ${remaining.length} message(s)`);
+          throw error;
+        }
         log(`[mcp-proxy] Error flushing pending message:\n${errorDetail(error)}`);
       }
     }
@@ -249,7 +318,7 @@ export class StdioHttpBridge {
   }
 
   /**
-   * Graceful shutdown: close both transports. Idempotent — safe to call multiple times.
+   * Graceful shutdown: close both transports. Idempotent.
    */
   async shutdown(): Promise<void> {
     if (this.shuttingDown) return;

@@ -5,11 +5,12 @@
  * OAuth authorization code flow. All state is memory-only (no persistent storage).
  *
  * Flow: 401 → resource metadata → auth server metadata → dynamic client registration
- * (client_name = "Claude Code") → browser authorization → callback → token exchange.
+ * (client_name from MCP_CLIENT_NAME env var, default "CodeMie CLI") → browser authorization → callback → token exchange.
  */
 
 import { execFile } from 'child_process';
 import { logger } from '../../utils/logger.js';
+import { getMcpClientName } from '../constants.js';
 import { startCallbackServer, type CallbackResult } from './callback-server.js';
 
 import type {
@@ -39,7 +40,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
 
   get clientMetadata(): OAuthClientMetadata {
     return {
-      client_name: 'Claude Code (stage_onehub_core)',
+      client_name: getMcpClientName(),
       redirect_uris: this._redirectUrl ? [this._redirectUrl] : [],
       grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'],

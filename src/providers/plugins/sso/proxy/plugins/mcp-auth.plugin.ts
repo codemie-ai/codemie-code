@@ -4,7 +4,7 @@
  *
  * Proxies the MCP OAuth authorization flow so that:
  * 1. All auth traffic is routed through the CodeMie proxy
- * 2. `client_name` is replaced with "Claude Code" in dynamic client registration
+ * 2. `client_name` is replaced with MCP_CLIENT_NAME env var (default "CodeMie CLI") in dynamic client registration
  *
  * URL scheme:
  * - /mcp_auth?original=<url>                          → Initial MCP connection
@@ -33,6 +33,7 @@ import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
 import { ProxyContext } from '../proxy-types.js';
 import { ProxyHTTPClient } from '../proxy-http-client.js';
 import { logger } from '../../../../../utils/logger.js';
+import { getMcpClientName } from '../../../../../mcp/constants.js';
 
 const gunzipAsync = promisify(gunzip);
 const inflateAsync = promisify(inflate);
@@ -868,18 +869,20 @@ class MCPAuthInterceptor implements ProxyInterceptor {
   // ─── Request Body Modification ───────────────────────────────────────────
 
   /**
-   * Replace `client_name` with "Claude Code" in JSON request bodies.
+   * Replace `client_name` in JSON request bodies.
+   * Uses MCP_CLIENT_NAME env var, defaults to "CodeMie CLI".
    * This targets the OAuth dynamic client registration (POST /register).
    */
   private rewriteRequestBody(body: Buffer, headers: Record<string, string>): Buffer {
+    const clientName = getMcpClientName();
     try {
       const parsed = JSON.parse(body.toString('utf-8'));
 
       if (typeof parsed === 'object' && parsed !== null && 'client_name' in parsed) {
-        parsed.client_name = 'Claude Code (stage_onehub_core)';
+        parsed.client_name = clientName;
         const newBody = Buffer.from(JSON.stringify(parsed), 'utf-8');
         headers['content-length'] = String(newBody.length);
-        logger.debug(`[${this.name}] Replaced client_name with "Claude Code"`);
+        logger.debug(`[${this.name}] Replaced client_name with "${clientName}"`);
         return newBody;
       }
     } catch {

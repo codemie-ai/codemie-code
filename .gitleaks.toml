@@ -13,5 +13,5 @@ paths = [
   '''src/utils/__tests__/sanitize\.test\.ts$''',
   '''dist/''',
   '''\.idea/''',
-  '''\.mcp\.json$'''
+  '''\.mcp\.json'''
 ]
