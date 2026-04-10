@@ -20,6 +20,7 @@ export interface ExecResult {
   code: number;
   stdout: string;
   stderr: string;
+  signal?: NodeJS.Signals | null;
 }
 
 /**
@@ -101,13 +102,19 @@ export async function exec(
       reject(new Error(`Failed to execute ${command}: ${error.message}`));
     });
 
-    child.on('close', (code) => {
+    child.on('close', (code, signal) => {
       cleanup();
 
+      if (code === null) {
+        reject(new Error(`Command terminated by signal ${signal ?? 'unknown'}`));
+        return;
+      }
+
       const result = {
-        code: code || 0,
+        code,
         stdout: stdout.trim(),
-        stderr: stderr.trim()
+        stderr: stderr.trim(),
+        signal,
       };
 
       // In interactive mode, reject on non-zero exit codes
