@@ -16,6 +16,8 @@ vi.mock('fs');
 vi.mock('../../../../utils/paths.js', () => ({
   resolveHomeDir: vi.fn((dir: string) => `/home/testuser/${dir.replace(/^\./, '')}`),
   getDirname: vi.fn(() => '/fake/dist/plugins/claude'),
+  getCodemieHome: vi.fn(() => '/home/testuser/.codemie'),
+  getCodemiePath: vi.fn((...parts: string[]) => `/home/testuser/.codemie/${parts.join('/')}`),
 }));
 
 vi.mock('../../../../utils/logger.js', () => ({

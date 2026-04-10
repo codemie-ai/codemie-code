@@ -168,11 +168,17 @@ export const SSOSetupSteps: ProviderSetupSteps = {
       integrations = [];
     }
 
-    // Always prompt for integration selection
+    // Resolve integration: auto-select if single, prompt if multiple, preserve existing on failure
     let integrationInfo: CodeMieIntegrationInfo | undefined;
 
-    if (integrations.length > 0) {
-      const projectLabel = selectedProject ? ` for project "${selectedProject}"` : '';
+    const projectLabel = selectedProject ? ` for project "${selectedProject}"` : '';
+
+    if (integrations.length === 1) {
+      // Auto-select the only available integration
+      const single = integrations[0];
+      integrationInfo = { id: single.id, alias: single.alias };
+      console.log(chalk.green(`✓ Auto-selected LiteLLM integration: ${chalk.bold(integrationInfo.alias)}\n`));
+    } else if (integrations.length > 1) {
       console.log(chalk.cyan(`📦 Found ${integrations.length} LiteLLM integration(s)${projectLabel}\n`));
       const integrationAnswers = await inquirer.prompt([
         {
@@ -190,8 +196,7 @@ export const SSOSetupSteps: ProviderSetupSteps = {
       ]);
       integrationInfo = integrationAnswers.integration;
     } else {
-      // Show message if no integrations found
-      const projectLabel = selectedProject ? ` for project "${selectedProject}"` : '';
+      // No integrations found
       if (integrationsFetchError) {
         console.log(chalk.dim(`ℹ️  Proceeding without LiteLLM integration (fetch failed)\n`));
       } else {
