@@ -4,6 +4,13 @@ import { exec } from '../../../utils/exec.js';
 import { getCommandPath } from '../../../utils/processes.js';
 import { resolveHomeDir } from '../../../utils/paths.js';
 
+async function ensureProxyCommandExists(): Promise<void> {
+  const proxyCommand = await getCommandPath('codemie-mcp-proxy');
+  if (!proxyCommand) {
+    throw new Error('proxy-not-found');
+  }
+}
+
 async function resolveClaudeCommand(): Promise<{ command: string; shell: boolean }> {
   if (process.platform !== 'win32') {
     const fullPath = resolveHomeDir('.local/bin/claude');
@@ -54,8 +61,15 @@ function createMcpAddCommand(): Command {
       let claudeCommand: string;
       let useShell: boolean;
       try {
+        await ensureProxyCommandExists();
         ({ command: claudeCommand, shell: useShell } = await resolveClaudeCommand());
-      } catch {
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message === 'proxy-not-found') {
+          console.error('codemie-mcp-proxy not found. Reinstall @codemieai/code to restore the MCP proxy binary.');
+          process.exit(1);
+        }
+
         console.error('claude CLI not found. Install Claude Code: https://claude.ai/code');
         process.exit(1);
       }
