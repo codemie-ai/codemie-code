@@ -160,8 +160,12 @@ function openBrowser(url: string): void {
     command = 'open';
     args = [url];
   } else if (platform === 'win32') {
-    command = 'cmd';
-    args = ['/c', 'start', '', url];
+    // Use PowerShell Start-Process to avoid CMD metacharacter parsing:
+    // `cmd /c start "" url` splits on `&`, truncating auth URLs with query params.
+    // PowerShell passes the URL directly to the OS shell handler, preserving all chars.
+    const escapedUrl = url.replace(/'/g, "''"); // PowerShell single-quote escaping
+    command = 'powershell';
+    args = ['-NoProfile', '-Command', `Start-Process '${escapedUrl}'`];
   } else {
     command = 'xdg-open';
     args = [url];
