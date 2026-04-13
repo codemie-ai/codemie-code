@@ -49,6 +49,7 @@ const CLAUDE_MINIMUM_SUPPORTED_VERSION = '2.1.82';
 const CLAUDE_INSTALLER_URLS = {
   macOS: 'https://claude.ai/install.sh',
   windows: 'https://claude.ai/install.cmd',
+  windowsPs: 'https://claude.ai/install.ps1',
   linux: 'https://claude.ai/install.sh',
 };
 

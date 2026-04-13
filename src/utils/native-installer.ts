@@ -15,7 +15,8 @@ import { ensureCommandInPath } from './windows-path.js';
  */
 export interface PlatformInstallerUrls {
 	macOS: string; // Shell script URL
-	windows: string; // PowerShell script URL
+	windows: string; // CMD fallback installer URL
+	windowsPs?: string; // PowerShell installer URL (preferred when PowerShell detected)
 	linux: string; // Shell script URL
 }
 
@@ -54,6 +55,26 @@ function detectPlatform(): 'macOS' | 'windows' | 'linux' {
 		// Assume Linux for all other platforms (linux, freebsd, etc.)
 		return 'linux';
 	}
+}
+
+/**
+ * Detect the active Windows shell: PowerShell, bash (Git Bash/MSYS2), or CMD
+ *
+ * Detection signals:
+ * - PowerShell: PSModulePath is set on startup (PS5 & PS7); PWSH_VERSION set by PS7+
+ * - Git Bash / MSYS2: MSYSTEM env var is set (MINGW64, MINGW32, MSYS, CLANG64, …)
+ * - CMD: none of the above
+ *
+ * @returns 'powershell' | 'bash' | 'cmd'
+ */
+export function detectWindowsShell(): 'powershell' | 'bash' | 'cmd' {
+	if (process.env.PSModulePath || process.env.PWSH_VERSION) {
+		return 'powershell';
+	}
+	if (process.env.MSYSTEM) {
+		return 'bash';
+	}
+	return 'cmd';
 }
 
 /**
@@ -113,10 +134,30 @@ function buildInstallerCommand(
 
 	// Build platform-specific command
 	if (platform === 'windows') {
-		// Windows CMD command (simpler and more universal than PowerShell)
-		// Download install.cmd, execute with args, then delete
+		const shell = detectWindowsShell();
 		const versionArg = version ? ` ${version}` : '';
 		const flagsArg = installFlags && installFlags.length > 0 ? ` ${installFlags.join(' ')}` : '';
+
+		if (shell === 'powershell' && installerUrls.windowsPs) {
+			// PowerShell installer — more reliable, handles arguments natively
+			const psUrl = installerUrls.windowsPs;
+			if (version || (installFlags && installFlags.length > 0)) {
+				// Scriptblock form required when passing version/flags as arguments
+				return `powershell.exe -ExecutionPolicy Bypass -Command "& ([scriptblock]::Create((irm '${psUrl}')))${versionArg}${flagsArg}"`;
+			}
+			// Simple install: pipe form
+			return `powershell.exe -ExecutionPolicy Bypass -Command "irm '${psUrl}' | iex"`;
+		}
+
+		if (shell === 'bash') {
+			// Git Bash / MSYS2 — use the Unix shell installer (same as macOS/Linux)
+			const bashUrl = installerUrls.linux;
+			const bashVersionArg = version ? ` -s -- ${version}` : '';
+			const bashFlagsArg = installFlags && installFlags.length > 0 ? ` ${installFlags.join(' ')}` : '';
+			return `curl -fsSL ${bashUrl} | bash${bashVersionArg}${bashFlagsArg}`;
+		}
+
+		// CMD fallback: download install.cmd, execute with args, then delete
 		return `curl -fsSL ${url} -o install.cmd && install.cmd${versionArg}${flagsArg} && del install.cmd`;
 	} else {
 		// macOS/Linux shell script command

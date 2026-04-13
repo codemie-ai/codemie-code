@@ -200,6 +200,7 @@ export interface AgentMetadata {
   installerUrls?: {
     macOS: string;
     windows: string;
+    windowsPs?: string; // PowerShell installer URL (preferred when PowerShell detected)
     linux: string;
   };
 
