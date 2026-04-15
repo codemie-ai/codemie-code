@@ -1,6 +1,9 @@
 # Run lint-staged (lint + test changed files)
 npx lint-staged
 
+# TypeScript type check
+npm run typecheck
+
 # Check for secrets (only if Docker daemon is running)
 if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
   echo "🔍 Checking for secrets with Gitleaks..."

@@ -26,6 +26,18 @@ export interface CodemieAssistant {
 }
 
 /**
+ * CodeMie skill information
+ */
+export interface CodemieSkill {
+  id: string;
+  name: string;
+  slug: string;
+  description: string;
+  project: string;
+  registeredAt: string;
+}
+
+/**
  * Provider profile configuration
  */
 export interface ProviderProfile {
@@ -97,6 +109,9 @@ export interface ProviderProfile {
   assistants?: {
     maxHistoryMessages?: number; // Maximum conversation turns to load (default: 10, which loads 20 messages = 10 user + 10 AI)
   };
+
+  // Skills configuration
+  codemieSkills?: CodemieSkill[];
 }
 
 /**

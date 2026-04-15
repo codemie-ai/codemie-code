@@ -10,18 +10,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "cd \"$CLAUDE_PROJECT_DIR\" && npm run format"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "cd \"$CLAUDE_PROJECT_DIR\" && npm run check:pre-commit"
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && FILE=$(echo \"$CLAUDE_TOOL_INPUT\" | python3 -c \"import sys,json; print(json.load(sys.stdin).get('file_path',''))\") && [[ \"$FILE\" == *.ts ]] && npx eslint --fix \"$FILE\" 2>/dev/null || true"
           }
         ]
       }
