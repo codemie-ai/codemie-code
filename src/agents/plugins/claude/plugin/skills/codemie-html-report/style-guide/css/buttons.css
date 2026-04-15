@@ -1,0 +1,253 @@
+/**
+ * CodeMie Button Components
+ * All button variants, sizes, and states.
+ *
+ * Usage: <button class="btn btn-primary btn-md">Label</button>
+ */
+
+/* ============================================================
+   BASE BUTTON
+   ============================================================ */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1-5);
+  font-family: var(--font-sans);
+  font-weight: 600;
+  white-space: nowrap;
+  border-radius: var(--radius-lg);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition:
+    background-color var(--transition-base),
+    border-color var(--transition-base),
+    color var(--transition-base),
+    opacity var(--transition-base);
+  text-decoration: none;
+  user-select: none;
+  outline: none;
+  position: relative;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+.btn:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+}
+
+.btn:disabled,
+.btn[aria-disabled='true'] {
+  cursor: not-allowed;
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+/* ============================================================
+   SIZES
+   ============================================================ */
+/* Small — 24px height */
+.btn-sm {
+  height: 24px;
+  padding: 0 var(--space-1-5);
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  line-height: 20px;
+}
+
+/* Medium — 28px height (default) */
+.btn-md {
+  height: 28px;
+  padding: 0 var(--space-2);
+  gap: var(--space-1-5);
+  font-size: var(--text-xs);
+  line-height: 24px;
+}
+
+/* Large — 44px height */
+.btn-lg {
+  height: 44px;
+  padding: 0 var(--space-4);
+  gap: var(--space-2-5);
+  font-size: var(--text-sm);
+  line-height: 28px;
+}
+
+/* ============================================================
+   VARIANTS
+   ============================================================ */
+
+/* Primary — Navy/gradient background with gradient border */
+.btn-primary {
+  background-color: var(--color-bg-btn-primary);
+  color: var(--color-text-secondary);
+  border: 1px solid transparent;
+  background-image:
+    linear-gradient(var(--color-bg-btn-primary), var(--color-bg-btn-primary)),
+    var(--gradient-primary-btn);
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background-image:
+    linear-gradient(var(--color-bg-btn-primary-h), var(--color-bg-btn-primary-h)),
+    var(--gradient-primary-btn);
+}
+
+/* Secondary — Subtle bordered */
+.btn-secondary {
+  background-color: var(--color-bg-secondary);
+  color: var(--color-text-secondary);
+  border-color: var(--color-border-btn-secondary);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background-color: var(--color-bg-hover-strong);
+  border-color: var(--color-border-btn-secondary-h);
+}
+
+/* Base — Standard outlined */
+.btn-base {
+  background-color: var(--color-bg-secondary);
+  color: var(--color-text-primary);
+  border-color: var(--color-border-structural);
+}
+
+.btn-base:hover:not(:disabled) {
+  background-color: var(--color-border-structural);
+}
+
+/* Action — Accent highlighted (blue tint bg in dark) */
+.btn-action {
+  background-color: var(--color-bg-btn-primary);
+  color: var(--color-text-secondary);
+  border-color: var(--color-bg-input-prefix);
+}
+
+.btn-action:hover:not(:disabled) {
+  border-color: var(--color-border-btn-secondary-h);
+  background-color: var(--color-bg-btn-primary-h);
+}
+
+/* Delete — Red destructive */
+.btn-delete {
+  background-color: rgba(254, 59, 76, 0.1);
+  color: var(--color-error-text);
+  border-color: var(--color-error-border);
+}
+
+.btn-delete:hover:not(:disabled) {
+  background-color: rgba(254, 59, 76, 0.15);
+  border-color: var(--color-error);
+}
+
+/* Tertiary / Ghost — no background */
+.btn-tertiary,
+.btn-ghost {
+  background-color: transparent;
+  color: var(--color-text-primary);
+  border-color: transparent;
+}
+
+.btn-tertiary:hover:not(:disabled),
+.btn-ghost:hover:not(:disabled) {
+  background-color: var(--color-border-structural);
+}
+
+/* Magical — Gradient fill, brand colors */
+.btn-magical {
+  background: var(--gradient-magical);
+  color: var(--color-text-inverse);
+  border-color: var(--color-border-structural);
+}
+
+.btn-magical:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+/* Link — Plain text, no box */
+.btn-link {
+  background: transparent;
+  border-color: transparent;
+  color: var(--color-text-link);
+  padding-left: 0;
+  padding-right: 0;
+  font-weight: 500;
+  height: auto;
+}
+
+.btn-link:hover:not(:disabled) {
+  text-decoration: underline;
+}
+
+/* ============================================================
+   ICON BUTTON (square)
+   ============================================================ */
+.btn-icon {
+  padding: 0;
+  aspect-ratio: 1;
+}
+
+.btn-icon.btn-sm { width: 24px; }
+.btn-icon.btn-md { width: 28px; }
+.btn-icon.btn-lg { width: 44px; }
+
+/* ============================================================
+   FULL WIDTH
+   ============================================================ */
+.btn-full {
+  width: 100%;
+}
+
+/* ============================================================
+   LOADING STATE
+   ============================================================ */
+.btn-loading {
+  cursor: wait;
+  pointer-events: none;
+}
+
+.btn-loading::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.12) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: btn-shimmer 1.5s infinite linear;
+}
+
+@keyframes btn-shimmer {
+  from { background-position: -200% 0; }
+  to   { background-position:  200% 0; }
+}
+
+/* ============================================================
+   BUTTON GROUP
+   ============================================================ */
+.btn-group {
+  display: inline-flex;
+  gap: 0;
+}
+
+.btn-group .btn {
+  border-radius: 0;
+}
+
+.btn-group .btn:first-child {
+  border-radius: var(--radius-lg) 0 0 var(--radius-lg);
+}
+
+.btn-group .btn:last-child {
+  border-radius: 0 var(--radius-lg) var(--radius-lg) 0;
+}
+
+.btn-group .btn:not(:first-child) {
+  margin-left: -1px;
+}
