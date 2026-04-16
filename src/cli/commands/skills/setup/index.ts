@@ -100,7 +100,11 @@ async function showDisclaimer(): Promise<boolean> {
 }
 
 async function setupSkills(options: { profile?: string }): Promise<void> {
-  const config = await ConfigLoader.load();
+  // Resolve profile name first so both load and save use the same profile.
+  // Without this, ConfigLoader.load() may pull a different global activeProfile
+  // than the local config's activeProfile, causing codemieSkills to be invisible.
+  const profileName = options.profile ?? await ConfigLoader.getActiveProfileName() ?? 'default';
+  const config = await ConfigLoader.load(process.cwd(), { name: profileName });
   const client = await getAuthenticatedClient(config);
 
   // Show disclaimer before skill selection
@@ -155,7 +159,6 @@ async function setupSkills(options: { profile?: string }): Promise<void> {
   ];
 
   // Save to config
-  const profileName = options.profile || await ConfigLoader.getActiveProfileName() || 'default';
   config.codemieSkills = updatedSkills;
   await ConfigLoader.saveProfile(profileName, config);
 
