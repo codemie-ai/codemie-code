@@ -264,7 +264,7 @@ async function handlePluginSetup(
 
     if (preselectedModel) {
       selectedModel = preselectedModel;
-      console.log(chalk.green(`✓ Model selected automatically: ${chalk.bold(selectedModel)}`));
+      logger.success(`Model selected automatically: ${selectedModel}`);
     } else {
       selectedModel = await promptForModelSelection(models, providerTemplate);
     }

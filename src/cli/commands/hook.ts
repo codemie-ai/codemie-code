@@ -383,7 +383,6 @@ async function buildProcessingContext(
   config?: HookProcessingConfig
 ): Promise<ProcessingContext> {
   // Get configuration values from config object or environment variables
-  const provider = getConfigValue('CODEMIE_PROVIDER', config);
   const ssoUrl = getConfigValue('CODEMIE_URL', config);
   const apiUrl = getConfigValue('CODEMIE_SYNC_API_URL', config) || getConfigValue('CODEMIE_BASE_URL', config) || '';
   const cliVersion = getConfigValue('CODEMIE_CLI_VERSION', config) || '0.0.0';
@@ -396,7 +395,7 @@ async function buildProcessingContext(
   // If CodeMie analytics auth is configured and credentials are not provided,
   // try to load the stored SSO cookies. This also supports native providers
   // such as anthropic-subscription, where CodeMie auth is analytics-only.
-  if ((provider === 'ai-run-sso' || ssoUrl) && ssoUrl && apiUrl && !cookies) {
+  if (ssoUrl && apiUrl && !cookies) {
     try {
       const { CodeMieSSO } = await import('../../providers/plugins/sso/sso.auth.js');
       const sso = new CodeMieSSO();

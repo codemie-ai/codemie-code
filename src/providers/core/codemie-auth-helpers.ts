@@ -1,7 +1,7 @@
 import inquirer from 'inquirer';
+import chalk from 'chalk';
 import { HTTPClient } from './base/http-client.js';
 import type { SSOAuthResult } from './types.js';
-import { logger } from '../../utils/logger.js';
 import { ConfigurationError } from '../../utils/errors.js';
 
 export const DEFAULT_CODEMIE_BASE_URL = 'https://codemie.lab.epam.com';
@@ -104,6 +104,7 @@ export async function fetchCodeMieUserInfo(
   const client = new HTTPClient({
     timeout: 10000,
     maxRetries: 3,
+    // Enterprise on-premises CodeMie deployments commonly use self-signed certificates.
     rejectUnauthorized: false
   });
 
@@ -111,9 +112,9 @@ export async function fetchCodeMieUserInfo(
 
   if (!response.statusCode || response.statusCode < 200 || response.statusCode >= 300) {
     if (response.statusCode === 401 || response.statusCode === 403) {
-      throw new Error('Authentication failed - invalid or expired credentials');
+      throw new ConfigurationError('Authentication failed - invalid or expired credentials');
     }
-    throw new Error(`Failed to fetch user info: ${response.statusCode} ${response.statusMessage}`);
+    throw new ConfigurationError(`Failed to fetch user info: ${response.statusCode} ${response.statusMessage}`);
   }
 
   const userInfo = JSON.parse(response.data) as CodeMieUserInfo;
@@ -123,7 +124,7 @@ export async function fetchCodeMieUserInfo(
   }
 
   if (!userInfo || !Array.isArray(userInfo.applications) || !Array.isArray(userInfo.applications_admin)) {
-    throw new Error('Invalid user info response: missing applications arrays');
+    throw new ConfigurationError('Invalid user info response: missing applications arrays');
   }
 
   return userInfo;
@@ -153,11 +154,11 @@ export async function selectCodeMieProject(authResult: SSOAuthResult): Promise<s
 
   if (sortedProjects.length === 1) {
     const selectedProject = sortedProjects[0];
-    logger.success(`Auto-selected project: ${selectedProject}`);
+    console.log(chalk.green(`✓ Auto-selected project: ${chalk.bold(selectedProject)}`));
     return selectedProject;
   }
 
-  logger.info(`Found ${sortedProjects.length} accessible project(s)`);
+  console.log(chalk.dim(`Found ${sortedProjects.length} accessible project(s)`));
 
   const projectAnswers = await inquirer.prompt([
     {
@@ -172,6 +173,6 @@ export async function selectCodeMieProject(authResult: SSOAuthResult): Promise<s
     }
   ]);
 
-  logger.success(`Selected project: ${projectAnswers.project}`);
+  console.log(chalk.green(`✓ Selected project: ${chalk.bold(projectAnswers.project)}`));
   return projectAnswers.project;
 }

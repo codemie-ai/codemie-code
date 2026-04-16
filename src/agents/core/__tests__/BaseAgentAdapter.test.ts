@@ -218,4 +218,64 @@ describe('BaseAgentAdapter', () => {
       })).toBe(false);
     });
   });
+
+  describe('buildProxyConfig authMethod guard', () => {
+    const proxyCapableMetadata: AgentMetadata = {
+      name: 'test',
+      displayName: 'Test Agent',
+      description: 'Test agent for unit testing',
+      npmPackage: null,
+      cliCommand: null,
+      envMapping: {},
+      supportedProviders: ['ai-run-sso'],
+      ssoConfig: { enabled: true, clientType: 'codemie-claude' },
+    };
+
+    const baseEnv = {
+      CODEMIE_BASE_URL: 'https://api.example.com',
+      CODEMIE_PROVIDER: 'ai-run-sso',
+    };
+
+    it('maps sso auth method correctly', () => {
+      const adapter = new TestAdapter(proxyCapableMetadata);
+      const config = (adapter as any).buildProxyConfig({
+        ...baseEnv,
+        CODEMIE_AUTH_METHOD: 'sso',
+      });
+      expect(config.authMethod).toBe('sso');
+    });
+
+    it('maps jwt auth method correctly', () => {
+      const adapter = new TestAdapter(proxyCapableMetadata);
+      const config = (adapter as any).buildProxyConfig({
+        ...baseEnv,
+        CODEMIE_AUTH_METHOD: 'jwt',
+      });
+      expect(config.authMethod).toBe('jwt');
+    });
+
+    it('sets authMethod to undefined for manual auth method', () => {
+      const adapter = new TestAdapter(proxyCapableMetadata);
+      const config = (adapter as any).buildProxyConfig({
+        ...baseEnv,
+        CODEMIE_AUTH_METHOD: 'manual',
+      });
+      expect(config.authMethod).toBeUndefined();
+    });
+
+    it('sets authMethod to undefined when CODEMIE_AUTH_METHOD is not set', () => {
+      const adapter = new TestAdapter(proxyCapableMetadata);
+      const config = (adapter as any).buildProxyConfig(baseEnv);
+      expect(config.authMethod).toBeUndefined();
+    });
+
+    it('sets authMethod to undefined for unknown auth methods', () => {
+      const adapter = new TestAdapter(proxyCapableMetadata);
+      const config = (adapter as any).buildProxyConfig({
+        ...baseEnv,
+        CODEMIE_AUTH_METHOD: 'api-key',
+      });
+      expect(config.authMethod).toBeUndefined();
+    });
+  });
 });

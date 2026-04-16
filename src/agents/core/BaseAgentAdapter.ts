@@ -861,7 +861,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       sessionId: env.CODEMIE_SESSION_ID,
       version: env.CODEMIE_CLI_VERSION,
       profileConfig,
-      authMethod: (env.CODEMIE_AUTH_METHOD as 'sso' | 'jwt') || undefined,
+      authMethod: (env.CODEMIE_AUTH_METHOD === 'sso' || env.CODEMIE_AUTH_METHOD === 'jwt') ? env.CODEMIE_AUTH_METHOD : undefined,
       jwtToken: env.CODEMIE_JWT_TOKEN || undefined,
       repository,
       branch: branch || undefined,

@@ -56,7 +56,7 @@ export const AnthropicSubscriptionTemplate = registerProvider<ProviderTemplate>(
         try {
           const { AgentRegistry } = await import('../../../agents/registry.js');
           const agent = AgentRegistry.getAgent('claude');
-          const installer = (agent as any)?.getExtensionInstaller?.();
+          const installer = agent?.getExtensionInstaller?.();
 
           if (installer) {
             const result = await installer.install();
