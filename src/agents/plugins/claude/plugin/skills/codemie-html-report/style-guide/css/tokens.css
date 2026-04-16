@@ -1,0 +1,323 @@
+/**
+ * CodeMie Design Tokens
+ * CSS Custom Properties for the CodeMie UI design system.
+ * Dark theme is default. Add class="light" to <html> for light mode.
+ *
+ * Source: tailwind.config.ts + component analysis from codemie-ui-next
+ */
+
+/* ============================================================
+   FONT IMPORT
+   ============================================================ */
+@import url('https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap');
+
+/* ============================================================
+   GLOBAL SCALE (theme-independent)
+   ============================================================ */
+:root {
+  /* --- Typography --- */
+  --font-sans: 'Inter', 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', 'GeistMono', 'Fira Code', 'Courier New', monospace;
+
+  --text-xs-1:  0.625rem;  /* 10px  */
+  --text-xs:    0.75rem;   /* 12px  */
+  --text-sm-1:  0.813rem;  /* 13px  */
+  --text-sm:    0.875rem;  /* 14px  */
+  --text-base:  1rem;      /* 16px  */
+  --text-h1:    2rem;      /* 32px  */
+  --text-h2:    1.5rem;    /* 24px  */
+  --text-h3:    1rem;      /* 16px  */
+  --text-h4:    0.875rem;  /* 14px  */
+  --text-h5:    0.75rem;   /* 12px  */
+
+  --lh-h1:   2rem;    /* 32px */
+  --lh-h2:   1.5rem;  /* 24px */
+  --lh-h3:   1.3125rem; /* 21px */
+  --lh-h4:   1.125rem;  /* 18px */
+  --lh-h5:   1rem;      /* 16px */
+
+  /* --- Border Radius --- */
+  --radius-sm:   4px;
+  --radius-md:   6px;
+  --radius-lg:   8px;
+  --radius-xl:   12px;
+  --radius-2xl:  16px;
+  --radius-full: 9999px;
+
+  /* --- Spacing --- */
+  --space-0-5: 0.125rem;  /* 2px  */
+  --space-1:   0.25rem;   /* 4px  */
+  --space-1-5: 0.375rem;  /* 6px  */
+  --space-2:   0.5rem;    /* 8px  */
+  --space-2-5: 0.625rem;  /* 10px */
+  --space-3:   0.75rem;   /* 12px */
+  --space-4:   1rem;      /* 16px */
+  --space-5:   1.25rem;   /* 20px */
+  --space-6:   1.5rem;    /* 24px */
+  --space-8:   2rem;      /* 32px */
+
+  /* --- Shadows (dark-friendly defaults) --- */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -2px rgba(0, 0, 0, 0.3);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.6), 0 4px 6px -4px rgba(0, 0, 0, 0.4);
+  --shadow-sidebar: -1px 0 0 0 rgba(255, 255, 255, 0.1);
+
+  /* --- Transitions --- */
+  --transition-fast: 120ms ease;
+  --transition-base: 200ms ease;
+  --transition-slow: 300ms ease;
+
+  /* --- Layout --- */
+  --navbar-width:          72px;
+  --navbar-width-expanded: 196px;
+  --sidebar-width:         308px;
+  --layout-header-height:  56px;
+  --card-height:           158px;
+
+  /* --- Z-index --- */
+  --z-dropdown:  30;
+  --z-sticky:    40;
+  --z-modal:     50;
+  --z-toast:     60;
+}
+
+/* ============================================================
+   DARK THEME (default)
+   ============================================================ */
+:root,
+:root.dark {
+
+  /* --- Surface / Background --- */
+  --color-bg-page:           #1A1A1A;   /* Main page background         */
+  --color-bg-sidebar:        #151515;   /* Sidebar & card backgrounds   */
+  --color-bg-card:           #151515;   /* Card surface                 */
+  --color-bg-nav:            #000000;   /* Navigation rail              */
+  --color-bg-elevated:       #2E2E2E;   /* Modals, dropdowns, popovers  */
+  --color-bg-secondary:      #212224;   /* Secondary panels             */
+  --color-bg-tertiary:       #2E3033;   /* Tertiary areas               */
+  --color-bg-quaternary:     #333436;   /* Table headers, input prefix  */
+  --color-bg-hover:          #212224;   /* Interactive hover state      */
+  --color-bg-hover-strong:   #333436;   /* Stronger hover               */
+  --color-bg-input:          #1A1A1A;   /* Input & textarea background  */
+  --color-bg-input-prefix:   #333436;   /* Input side label             */
+  --color-bg-btn-primary:    #20222E;   /* Primary button background    */
+  --color-bg-btn-primary-h:  #262941;   /* Primary button hover         */
+  --color-bg-pagination-active: #212224;
+
+  /* --- Text --- */
+  --color-text-primary:      #FFFFFF;   /* Main body text               */
+  --color-text-secondary:    #F2F0EF;   /* Secondary text               */
+  --color-text-tertiary:     #CCCCCC;   /* Tertiary / subdued           */
+  --color-text-muted:        #BBBBBB;   /* Labels, captions             */
+  --color-text-placeholder:  #CCCCCC;   /* Input placeholder            */
+  --color-text-link:         #F2F0EF;   /* Links in dark mode           */
+  --color-text-link-hover:   #F2F0EF;
+  --color-text-inverse:      #FFFFFF;   /* Text on colored backgrounds  */
+  --color-text-heading:      #BBBBBB;   /* Section headings             */
+  --color-text-nav:          #CCCCCC;   /* Navigation labels            */
+
+  /* --- Borders --- */
+  --color-border-primary:    #333436;   /* Default border               */
+  --color-border-secondary:  #47484A;   /* Hover/focus border           */
+  --color-border-structural: #333436;   /* Layout dividers              */
+  --color-border-subtle:     #4C4C4C;   /* Very subtle border           */
+  --color-border-accent:     #FFFFFF;   /* Accent / active border       */
+  --color-border-focus:      #FFFFFF;   /* Focus ring                   */
+  --color-border-error:      #F9303C;   /* Error state border           */
+  --color-border-panel:      #333436;   /* Panel outlines               */
+  --color-border-btn-secondary: #333436;
+  --color-border-btn-secondary-h: transparent;
+
+  /* --- Icons --- */
+  --color-icon-primary:      #FFFFFF;
+  --color-icon-secondary:    #CCCCCC;
+  --color-icon-tertiary:     #999999;
+  --color-icon-error:        #F9303C;
+
+  /* --- Semantic Colors --- */
+  --color-success:           #259F4C;
+  --color-success-bg:        #1B271F;
+  --color-success-border:    #259F4C;
+  --color-success-text:      #259F4C;
+
+  --color-error:             #F9303C;
+  --color-error-bg:          #262121;
+  --color-error-border:      #FE3B4C;
+  --color-error-text:        #FE3B4C;
+
+  --color-warning:           #F5A534;
+  --color-warning-bg:        #492B00;
+  --color-warning-border:    #663B00;
+  --color-warning-text:      #F5A534;
+
+  --color-info:              #2297F6;
+  --color-info-bg:           #002442;
+  --color-info-border:       #003A69;
+  --color-info-text:         #2297F6;
+
+  --color-purple:            #C084FC;
+  --color-purple-bg:         #2D1B3D;
+  --color-purple-border:     #2D1B3D;
+  --color-purple-text:       #F3E8FF;
+
+  --color-cyan:              #06B6D4;
+  --color-cyan-bg:           #003942;
+  --color-cyan-border:       #005866;
+
+  /* --- Status Badges --- */
+  --status-not-started-text: #A0A0A0;
+  --status-not-started-bg:   #333333;
+  --status-not-started-border: #4C4C4C;
+
+  --status-in-progress-text: #2297F6;
+  --status-in-progress-bg:   #002442;
+  --status-in-progress-border: #003A69;
+
+  --status-pending-text:     #06B6D4;
+  --status-pending-bg:       #003942;
+  --status-pending-border:   #005866;
+
+  --status-success-text:     #259F4C;
+  --status-success-bg:       #1B271F;
+  --status-success-border:   #259F4C;
+
+  --status-error-text:       #FE3B4C;
+  --status-error-bg:         #262121;
+  --status-error-border:     #FE3B4C;
+
+  --status-warning-text:     #F5A534;
+  --status-warning-bg:       #492B00;
+  --status-warning-border:   #663B00;
+
+  --status-advanced-text:    #C084FC;
+  --status-advanced-bg:      #2D1B3D;
+  --status-advanced-border:  #2D1B3D;
+
+  /* --- Gradients --- */
+  --gradient-primary-btn:    linear-gradient(90deg, #672D92, #547CCC);
+  --gradient-brand:          linear-gradient(152deg, #0078C2, #0047FF, #8453D2);
+  --gradient-magical:        linear-gradient(90deg, #672D92, #5677C8);
+  --gradient-purple-radial:  radial-gradient(271.77% 163.1% at 50% -10.71%, #200E32 0%, #9E00FF 75.14%, #EC56FF 100%);
+  --gradient-switch-off:     linear-gradient(to right, #BBB, #666);
+  --gradient-switch-on:      linear-gradient(to right, #672C92, #547CCC);
+
+  /* --- Primitive Palette (for swatch display) --- */
+  --blue-25:   #F1F8FF;  --blue-50:   #D5E7FC;  --blue-100:  #B2D7FF;
+  --blue-300:  #2297F6;  --blue-400:  #007AFF;  --blue-500:  #4E32FF;
+  --blue-550:  #0C4DAF;  --blue-600:  #003A69;  --blue-800:  #002442;
+}
+
+/* ============================================================
+   LIGHT THEME
+   Apply class="light" to <html> or <body>
+   ============================================================ */
+.light {
+  --color-bg-page:           #F9F9F9;
+  --color-bg-sidebar:        #FBFBFB;
+  --color-bg-card:           #FFFFFF;
+  --color-bg-nav:            #FBFBFB;
+  --color-bg-elevated:       #FFFFFF;
+  --color-bg-secondary:      #FFFFFF;
+  --color-bg-tertiary:       #FBFBFB;
+  --color-bg-quaternary:     #B2D7FF;
+  --color-bg-hover:          #D5E7FC;
+  --color-bg-hover-strong:   #D5E7FC;
+  --color-bg-input:          #FFFFFF;
+  --color-bg-input-prefix:   #EEEEEE;
+  --color-bg-btn-primary:    #D5E7FC;
+  --color-bg-btn-primary-h:  #B2D7FF;
+  --color-bg-pagination-active: #D5E7FC;
+
+  --color-text-primary:      #333333;
+  --color-text-secondary:    #333333;
+  --color-text-tertiary:     #333333;
+  --color-text-muted:        #666666;
+  --color-text-placeholder:  #999999;
+  --color-text-link:         #007AFF;
+  --color-text-link-hover:   #0C4DAF;
+  --color-text-inverse:      #FFFFFF;
+  --color-text-heading:      #007AFF;
+  --color-text-nav:          #FFFFFF;
+
+  --color-border-primary:    #CCCCCC;
+  --color-border-secondary:  #BBBBBB;
+  --color-border-structural: #E5E5E5;
+  --color-border-subtle:     #999999;
+  --color-border-accent:     #007AFF;
+  --color-border-focus:      #000000;
+  --color-border-error:      #F9303C;
+  --color-border-panel:      #E5E5E5;
+  --color-border-btn-secondary: transparent;
+  --color-border-btn-secondary-h: #007AFF;
+
+  --color-icon-primary:      #666666;
+  --color-icon-secondary:    #333333;
+  --color-icon-tertiary:     #707070;
+  --color-icon-error:        #F9303C;
+
+  --color-success:           #259F4C;
+  --color-success-bg:        #E6F7E6;
+  --color-success-border:    #259F4C;
+  --color-success-text:      #259F4C;
+
+  --color-error:             #F9303C;
+  --color-error-bg:          #F0E2E3;
+  --color-error-border:      #FE3B4C;
+  --color-error-text:        #FE3B4C;
+
+  --color-warning:           #F5A534;
+  --color-warning-bg:        #FAF2E7;
+  --color-warning-border:    #F5A534;
+  --color-warning-text:      #F5A534;
+
+  --color-info:              #2297F6;
+  --color-info-bg:           #D5E7FC;
+  --color-info-border:       #2297F6;
+  --color-info-text:         #2297F6;
+
+  --color-purple:            #8B5CF6;
+  --color-purple-bg:         #F3E8FF;
+  --color-purple-border:     #F3E8FF;
+  --color-purple-text:       #C084FC;
+
+  --color-cyan:              #06B6D4;
+  --color-cyan-bg:           #DFFAFF;
+  --color-cyan-border:       #005866;
+
+  --status-not-started-text: #A0A0A0;
+  --status-not-started-bg:   #EEEEEE;
+  --status-not-started-border: #999999;
+
+  --status-in-progress-text: #2297F6;
+  --status-in-progress-bg:   #D5E7FC;
+  --status-in-progress-border: #2297F6;
+
+  --status-pending-text:     #06B6D4;
+  --status-pending-bg:       #DFFAFF;
+  --status-pending-border:   #06B6D4;
+
+  --status-success-text:     #259F4C;
+  --status-success-bg:       #E6F7E6;
+  --status-success-border:   #259F4C;
+
+  --status-error-text:       #FE3B4C;
+  --status-error-bg:         #F0E2E3;
+  --status-error-border:     #FE3B4C;
+
+  --status-warning-text:     #F5A534;
+  --status-warning-bg:       #FAF2E7;
+  --status-warning-border:   #F5A534;
+
+  --status-advanced-text:    #8B5CF6;
+  --status-advanced-bg:      #F3E8FF;
+  --status-advanced-border:  #C084FC;
+
+  --gradient-primary-btn:    linear-gradient(90deg, #3676f7, #cc22f2);
+  --gradient-magical:        linear-gradient(90deg, #3676f7, #cc22f2);
+  --gradient-switch-off:     linear-gradient(to right, #fff, #fff);
+  --gradient-switch-on:      linear-gradient(to right, #007AFF, #007AFF);
+
+  --shadow-sm:  0 1px 2px rgba(0, 0, 0, 0.06);
+  --shadow-md:  0 4px 6px -1px rgba(0, 0, 0, 0.08), 0 2px 4px -2px rgba(0, 0, 0, 0.06);
+  --shadow-lg:  0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.08);
+}

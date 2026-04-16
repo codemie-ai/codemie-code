@@ -12,5 +12,6 @@ description = "Exclude test files and build artifacts containing intentional fak
 paths = [
   '''src/utils/__tests__/sanitize\.test\.ts$''',
   '''dist/''',
-  '''\.idea/'''
+  '''\.idea/''',
+  '''\.mcp\.json'''
 ]

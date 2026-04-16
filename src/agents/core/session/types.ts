@@ -103,6 +103,7 @@ export interface Session {
   endTime?: number; // Unix timestamp (ms)
   workingDirectory: string; // CWD where agent was launched
   gitBranch?: string; // Git branch at session start (optional, detected from workingDirectory)
+  repository?: string; // Resolved repository identifier: owner/repo from git remote, or parent/current fallback
 
   correlation: CorrelationResult;
   status: SessionStatus;

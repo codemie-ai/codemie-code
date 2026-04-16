@@ -146,6 +146,35 @@ codemie-claude \
   --max-turns 30
 ```
 
+## MCP Proxy Examples
+
+```bash
+# Register an OAuth-protected MCP server with Claude Code
+claude mcp add my-server -- codemie-mcp-proxy "https://mcp-server.example.com/sse"
+
+# With a custom OAuth client name
+MCP_CLIENT_NAME="My Team Agent" claude mcp add team-tools -- codemie-mcp-proxy "https://tools.example.com/mcp"
+
+# Enable debug logging for troubleshooting
+# In .mcp.json:
+# {
+#   "mcpServers": {
+#     "my-server": {
+#       "type": "stdio",
+#       "command": "codemie-mcp-proxy",
+#       "args": ["https://mcp-server.example.com/sse"],
+#       "env": {
+#         "MCP_PROXY_DEBUG": "true",
+#         "MCP_CLIENT_NAME": "Claude Code (my-server)"
+#       }
+#     }
+#   }
+# }
+
+# View proxy logs
+tail -f ~/.codemie/logs/mcp-proxy.log
+```
+
 ## Workflow Installation Examples
 
 ```bash
