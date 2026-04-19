@@ -12,6 +12,7 @@ import { SSOAuthPlugin } from './sso-auth.plugin.js';
 import { JWTAuthPlugin } from './jwt-auth.plugin.js';
 import { HeaderInjectionPlugin } from './header-injection.plugin.js';
 import { RequestSanitizerPlugin } from './request-sanitizer.plugin.js';
+import { ClaudeThinkingTransformerPlugin } from './claude-thinking-transformer.plugin.js';
 import { LoggingPlugin } from './logging.plugin.js';
 import { SSOSessionSyncPlugin } from './sso.session-sync.plugin.js';
 
@@ -28,6 +29,7 @@ export function registerCorePlugins(): void {
   registry.register(new SSOAuthPlugin());
   registry.register(new JWTAuthPlugin());
   registry.register(new RequestSanitizerPlugin()); // Priority 15 - strips unsupported reasoning params
+  registry.register(new ClaudeThinkingTransformerPlugin()); // Priority 16 - transforms thinking params for Claude 4.7+ models
   registry.register(new HeaderInjectionPlugin());
   registry.register(new LoggingPlugin()); // Always enabled - logs to log files at INFO level
   registry.register(new SSOSessionSyncPlugin()); // Priority 100 - syncs sessions via multiple processors
@@ -37,7 +39,16 @@ export function registerCorePlugins(): void {
 registerCorePlugins();
 
 // Re-export for convenience
-export { MCPAuthPlugin, EndpointBlockerPlugin, SSOAuthPlugin, JWTAuthPlugin, HeaderInjectionPlugin, RequestSanitizerPlugin, LoggingPlugin };
+export {
+  MCPAuthPlugin,
+  EndpointBlockerPlugin,
+  SSOAuthPlugin,
+  JWTAuthPlugin,
+  HeaderInjectionPlugin,
+  RequestSanitizerPlugin,
+  ClaudeThinkingTransformerPlugin,
+  LoggingPlugin,
+};
 export { SSOSessionSyncPlugin } from './sso.session-sync.plugin.js';
 export { getPluginRegistry, resetPluginRegistry } from './registry.js';
 export * from './types.js';
