@@ -4,24 +4,14 @@
  * CodeMie-specific HTTP client with SSO cookie handling
  */
 
-import { HTTPClient } from '../../core/base/http-client.js';
 import type { CodeMieModel, CodeMieIntegration, CodeMieIntegrationsResponse } from '../../core/types.js';
-
-/**
- * User info response from /v1/user endpoint
- */
-export interface CodeMieUserInfo {
-  userId: string;
-  name: string;
-  username: string;
-  isAdmin: boolean;
-  applications: string[];
-  applications_admin: string[];
-  applicationsAdmin?: string[];
-  picture: string;
-  knowledgeBases: string[];
-  userType?: string;
-}
+import { HTTPClient } from '../../core/base/http-client.js';
+import {
+  fetchCodeMieUserInfo,
+  buildAuthHeaders
+} from '../../core/codemie-auth-helpers.js';
+export { fetchCodeMieUserInfo };
+export type { CodeMieUserInfo } from '../../core/codemie-auth-helpers.js';
 
 /**
  * CodeMie API endpoints
@@ -35,52 +25,6 @@ export const CODEMIE_ENDPOINTS = {
   AUTH_LOGIN: '/v1/auth/login'
 } as const;
 
-/**
- * Internal helper: build auth headers from cookies or JWT token
- */
-function buildAuthHeaders(auth: Record<string, string> | string): Record<string, string> {
-  const cliVersion = process.env.CODEMIE_CLI_VERSION || 'unknown';
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    'User-Agent': `codemie-cli/${cliVersion}`,
-    'X-CodeMie-CLI': `codemie-cli/${cliVersion}`,
-    'X-CodeMie-Client': 'codemie-cli'
-  };
-
-  if (typeof auth === 'string') {
-    // JWT token (string)
-    headers['authorization'] = `Bearer ${auth}`;
-  } else {
-    // SSO cookies (object) - existing behavior
-    headers['cookie'] = Object.entries(auth)
-      .map(([key, value]) => `${key}=${value}`)
-      .join(';');
-  }
-
-  return headers;
-}
-
-/**
- * Ensure API base URL has correct format with /code-assistant-api suffix
- *
- * @param rawUrl - Raw URL from user input (e.g., https://codemie.lab.epam.com)
- * @returns Normalized URL with /code-assistant-api suffix
- *
- * @example
- * ensureApiBase('https://codemie.lab.epam.com')
- * // => 'https://codemie.lab.epam.com/code-assistant-api'
- *
- * ensureApiBase('https://codemie.lab.epam.com/code-assistant-api')
- * // => 'https://codemie.lab.epam.com/code-assistant-api'
- */
-export function ensureApiBase(rawUrl: string): string {
-  let base = rawUrl.replace(/\/$/, ''); // Remove trailing slash
-  // If URL doesn't have /code-assistant-api suffix, append it
-  if (!/\/code-assistant-api(\/|$)/i.test(base)) {
-    base = `${base}/code-assistant-api`;
-  }
-  return base;
-}
 
 /**
  * Full model descriptor returned by GET /v1/llm_models?include_all=true
@@ -182,8 +126,8 @@ export async function fetchCodeMieModels(
   const url = `${apiUrl}${CODEMIE_ENDPOINTS.MODELS}`;
 
   const client = new HTTPClient({
-    timeout: 10000,
-    maxRetries: 3,
+    timeout: 30000,
+    maxRetries: 5,
     rejectUnauthorized: false
   });
 
@@ -223,67 +167,6 @@ export async function fetchCodeMieModels(
 
   return filteredModels;
 }
-
-/**
- * Fetch user information including accessible applications (supports both cookies and JWT)
- *
- * @param apiUrl - CodeMie API base URL
- * @param auth - SSO session cookies or JWT token
- * @returns User info with applications array
- * @throws Error if request fails or response invalid
- *
- * Overload 1: SSO cookies (backward compatible - existing callers unchanged)
- * Overload 2: JWT token string (new)
- */
-/* eslint-disable no-redeclare */
-export function fetchCodeMieUserInfo(
-  apiUrl: string,
-  cookies: Record<string, string>
-): Promise<CodeMieUserInfo>;
-export function fetchCodeMieUserInfo(
-  apiUrl: string,
-  jwtToken: string
-): Promise<CodeMieUserInfo>;
-export async function fetchCodeMieUserInfo(
-  apiUrl: string,
-  auth: Record<string, string> | string
-): Promise<CodeMieUserInfo> {
-  const headers = buildAuthHeaders(auth);
-  const url = `${apiUrl}${CODEMIE_ENDPOINTS.USER}`;
-
-  const client = new HTTPClient({
-    timeout: 10000,
-    maxRetries: 3,
-    rejectUnauthorized: false
-  });
-
-  const response = await client.getRaw(url, headers);
-
-  // Handle HTTP errors
-  if (!response.statusCode || response.statusCode < 200 || response.statusCode >= 300) {
-    if (response.statusCode === 401 || response.statusCode === 403) {
-      throw new Error('Authentication failed - invalid or expired credentials');
-    }
-    throw new Error(`Failed to fetch user info: ${response.statusCode} ${response.statusMessage}`);
-  }
-
-  // Parse response
-  const userInfo = JSON.parse(response.data) as CodeMieUserInfo;
-
-  // Normalize applications_admin: support both snake_case and camelCase variants
-  // applications_admin has higher priority; fall back to applicationsAdmin if missing
-  if (!Array.isArray(userInfo.applications_admin) && Array.isArray(userInfo.applicationsAdmin)) {
-    userInfo.applications_admin = userInfo.applicationsAdmin;
-  }
-
-  // Validate response structure
-  if (!userInfo || !Array.isArray(userInfo.applications) || !Array.isArray(userInfo.applications_admin)) {
-    throw new Error('Invalid user info response: missing applications arrays');
-  }
-
-  return userInfo;
-}
-/* eslint-enable no-redeclare */
 
 /**
  * Fetch application details (non-blocking, best-effort) - supports both cookies and JWT

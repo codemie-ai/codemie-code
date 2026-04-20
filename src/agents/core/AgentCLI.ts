@@ -192,11 +192,11 @@ export class AgentCLI {
       }
 
       // NEW: Auth validation via provider plugin
+      // Skip when --jwt-token is explicitly provided: it overrides any configured provider auth
       try {
-        // Check if provider implements auth validation
         const setupSteps = provider ? ProviderRegistry.getSetupSteps(config.provider || '') : null;
 
-        if (setupSteps?.validateAuth) {
+        if (setupSteps?.validateAuth && !options.jwtToken) {
           const validationResult = await setupSteps.validateAuth(config);
 
           if (!validationResult.valid) {
@@ -221,6 +221,15 @@ export class AgentCLI {
       }
 
       const providerEnv = ConfigLoader.exportProviderEnvVars(config);
+
+      // JWT token from CLI overrides the profile's auth method in envOverrides.
+      // Without this, exportProviderEnvVars would emit CODEMIE_AUTH_METHOD='sso'
+      // which gets spread after process.env in BaseAgentAdapter.run(), erasing the
+      // 'jwt' value we set in process.env above and causing the proxy to use the SSO path.
+      if (options.jwtToken) {
+        providerEnv.CODEMIE_AUTH_METHOD = 'jwt';
+        providerEnv.CODEMIE_JWT_TOKEN = options.jwtToken as string;
+      }
 
       // Pass config info for welcome message display
       providerEnv.CODEMIE_PROFILE_NAME = config.name || 'default';

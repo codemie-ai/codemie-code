@@ -20,6 +20,7 @@ export interface ExecResult {
   code: number;
   stdout: string;
   stderr: string;
+  signal?: NodeJS.Signals | null;
 }
 
 /**
@@ -57,9 +58,13 @@ export async function exec(
     let finalArgs = args;
 
     if (useShell && args.length > 0) {
-      // Quote arguments that contain spaces or special characters
+      // Quote arguments that contain spaces or shell-special characters.
+      // On Windows CMD, & | < > ^ % are metacharacters and must be quoted.
+      const needsQuoting = (arg: string) =>
+        arg.includes(' ') || arg.includes('"') ||
+        (isWindows && /[&|<>^%]/.test(arg));
       const quotedArgs = args.map(arg =>
-        arg.includes(' ') || arg.includes('"') ? `"${arg.replace(/"/g, '\\"')}"` : arg
+        needsQuoting(arg) ? `"${arg.replace(/"/g, '\\"')}"` : arg
       );
       finalCommand = `${command} ${quotedArgs.join(' ')}`;
       finalArgs = [];
@@ -101,13 +106,19 @@ export async function exec(
       reject(new Error(`Failed to execute ${command}: ${error.message}`));
     });
 
-    child.on('close', (code) => {
+    child.on('close', (code, signal) => {
       cleanup();
 
+      if (code === null) {
+        reject(new Error(`Command terminated by signal ${signal ?? 'unknown'}`));
+        return;
+      }
+
       const result = {
-        code: code || 0,
+        code,
         stdout: stdout.trim(),
-        stderr: stderr.trim()
+        stderr: stderr.trim(),
+        signal,
       };
 
       // In interactive mode, reject on non-zero exit codes

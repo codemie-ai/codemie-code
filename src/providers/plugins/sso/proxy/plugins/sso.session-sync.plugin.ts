@@ -25,6 +25,7 @@ import { logger } from '../../../../../utils/logger.js';
 import type { ProcessingContext } from '../../session/BaseProcessor.js';
 import { SessionSyncer } from '../../session/SessionSyncer.js';
 import type { SSOCredentials } from '../../../../core/types.js';
+import { ConfigurationError } from '../../../../../utils/errors.js';
 
 export class SSOSessionSyncPlugin implements ProxyPlugin {
   id = '@codemie/sso-session-sync';
@@ -33,28 +34,30 @@ export class SSOSessionSyncPlugin implements ProxyPlugin {
   priority = 100; // Run after logging (priority 50)
 
   async createInterceptor(context: PluginContext): Promise<ProxyInterceptor> {
+    const syncCredentials = context.syncCredentials || context.credentials;
+
     // Only create interceptor if we have necessary context
     if (!context.config.sessionId) {
       logger.debug('[SSOSessionSyncPlugin] Skipping: Session ID not available');
-      throw new Error('Session ID not available (session sync disabled)');
+      throw new ConfigurationError('Session ID not available (session sync disabled)');
     }
 
     // Guard: skip if credentials are JWT (not SSO)
-    if (!context.credentials || !('cookies' in context.credentials)) {
+    if (!syncCredentials || !('cookies' in syncCredentials)) {
       logger.debug('[SSOSessionSyncPlugin] Skipping: Not SSO credentials');
-      throw new Error('SSO credentials not available (session sync disabled)');
+      throw new ConfigurationError('SSO credentials not available (session sync disabled)');
     }
 
     if (!context.config.clientType) {
       logger.debug('[SSOSessionSyncPlugin] Skipping: Client type not available');
-      throw new Error('Client type not available (session sync disabled)');
+      throw new ConfigurationError('Client type not available (session sync disabled)');
     }
 
     // Check if sync is enabled (from config or env var)
     const syncEnabled = this.isSyncEnabled(context);
     if (!syncEnabled) {
       logger.debug('[SSOSessionSyncPlugin] Skipping: Session sync disabled by configuration');
-      throw new Error('Session sync disabled by configuration');
+      throw new ConfigurationError('Session sync disabled by configuration');
     }
 
     logger.debug('[SSOSessionSyncPlugin] Initializing unified session sync');
@@ -63,11 +66,11 @@ export class SSOSessionSyncPlugin implements ProxyPlugin {
     const dryRun = this.isDryRunEnabled(context);
 
     // Cast credentials to SSOCredentials (already validated above)
-    const ssoCredentials = context.credentials as SSOCredentials;
+    const ssoCredentials = syncCredentials as SSOCredentials;
 
     return new SSOSessionSyncInterceptor(
       context.config.sessionId,
-      context.config.targetApiUrl,
+      context.config.syncApiUrl || context.config.targetApiUrl,
       ssoCredentials.cookies,
       context.config.clientType,
       context.config.version,

@@ -26,6 +26,7 @@ import { createServer, Server, IncomingMessage, ServerResponse } from 'http';
 import { randomUUID } from 'crypto';
 import { URL } from 'url';
 import { ProviderRegistry } from '../../../core/registry.js';
+import type { JWTCredentials, SSOCredentials } from '../../../core/types.js';
 import { logger } from '../../../../utils/logger.js';
 import { ProxyHTTPClient } from './proxy-http-client.js';
 import { ProxyConfig, ProxyContext } from './proxy-types.js';
@@ -60,7 +61,8 @@ export class CodeMieProxy {
     const authMethod = this.config.authMethod || 'sso';  // Default: SSO for backward compat
 
     // 2. Load credentials based on auth method
-    let credentials: any = null;
+    let credentials: SSOCredentials | JWTCredentials | null = null;
+    let syncCredentials: SSOCredentials | JWTCredentials | null = null;
 
     if (authMethod === 'jwt') {
       // JWT path: token from CLI arg, env var, or credential store
@@ -94,11 +96,23 @@ export class CodeMieProxy {
       }
     }
 
+    if (this.config.syncCodeMieUrl) {
+      const { CodeMieSSO } = await import('../sso.auth.js');
+      const sso = new CodeMieSSO();
+      syncCredentials = await sso.getStoredCredentials(this.config.syncCodeMieUrl);
+      if (!syncCredentials) {
+        logger.debug(
+          `[CodeMieProxy] Analytics sync is configured for ${this.config.syncCodeMieUrl}, but no stored credentials were found. Re-authenticate with: codemie profile login --url ${this.config.syncCodeMieUrl}`
+        );
+      }
+    }
+
     // 3. Build plugin context (includes profile config read once at CLI level)
     const pluginContext: PluginContext = {
       config: this.config,
       logger,
       credentials: credentials || undefined,
+      syncCredentials: syncCredentials || undefined,
       profileConfig: this.config.profileConfig
     };
 
@@ -139,6 +153,9 @@ export class CodeMieProxy {
         if (typeof address === 'object' && address) {
           this.actualPort = address.port;
         }
+
+        // Propagate actual port to config so plugins (e.g., MCP auth) get the real port
+        this.config.port = this.actualPort;
 
         const gatewayUrl = `http://localhost:${this.actualPort}`;
         logger.debug(`Proxy started: ${gatewayUrl}`);
@@ -192,6 +209,29 @@ export class CodeMieProxy {
     try {
       // 1. Build context
       const context = await this.buildContext(req);
+
+      // 1.5. Try handleRequest hooks (full custom handling, in priority order).
+      // When a plugin handles the request (returns true), the standard pipeline
+      // (onRequest → forward → onResponseHeaders → stream → onResponseComplete)
+      // is ENTIRELY skipped. This is by design for traffic that targets different
+      // upstream hosts (e.g., MCP auth servers vs LLM APIs). The handling plugin
+      // owns all security guarantees for its traffic. See ProxyInterceptor.handleRequest
+      // in types.ts for the full contract.
+      for (const interceptor of this.interceptors) {
+        if (interceptor.handleRequest) {
+          try {
+            const handled = await interceptor.handleRequest(context, req, res, this.httpClient);
+            if (handled) {
+              logger.debug(`[proxy] Request fully handled by ${interceptor.name}`);
+              return;
+            }
+          } catch (error) {
+            // Route through the normal error pipeline so onError interceptors run
+            await this.handleError(error, req, res);
+            return;
+          }
+        }
+      }
 
       // 2. Run onRequest interceptors (with early termination if blocked)
       await this.runHook('onRequest', interceptor =>
@@ -498,8 +538,12 @@ export class CodeMieProxy {
       }
     }
 
-    // Send structured error response
-    this.sendErrorResponse(res, error, context);
+    // Send structured error response (or destroy if headers already sent)
+    if (!res.headersSent) {
+      this.sendErrorResponse(res, error, context);
+    } else {
+      res.destroy();
+    }
   }
 
   /**

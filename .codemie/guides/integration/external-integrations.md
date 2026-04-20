@@ -23,6 +23,7 @@ External service integration patterns for CodeMie Code: LangGraph orchestration,
 | Azure OpenAI | GPT via Azure | API Key + Endpoint | Azure credentials |
 | LiteLLM | 100+ providers proxy | Varies | Provider-specific |
 | OpenCode | Open-source AI assistant | SSO/API Key | Via CodeMie proxy |
+| MCP Servers | Remote MCP tool servers | OAuth 2.0 (auto) | Via `codemie-mcp-proxy` |
 | Enterprise SSO | Corporate auth | SAML/OAuth | SSO base URL |
 
 ---
@@ -654,6 +655,67 @@ export class ConfigLoader {
 
 ---
 
+## MCP Server Integration
+
+### Overview
+
+The MCP (Model Context Protocol) proxy enables MCP clients to connect to remote MCP servers over HTTP, with automatic OAuth 2.0 authorization. It bridges stdio JSON-RPC to streamable HTTP transport.
+
+**Key Components:**
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| Stdio-HTTP Bridge | `src/mcp/stdio-http-bridge.ts` | Bridges stdio JSON-RPC ↔ streamable HTTP |
+| OAuth Provider | `src/mcp/auth/mcp-oauth-provider.ts` | Browser-based OAuth authorization code flow |
+| Callback Server | `src/mcp/auth/callback-server.ts` | Ephemeral localhost server for OAuth callbacks |
+| MCP Auth Plugin | `src/providers/plugins/sso/proxy/plugins/mcp-auth.plugin.ts` | SSO proxy plugin for URL rewriting and SSRF protection |
+
+### Architecture Patterns
+
+**Bridge Pattern (stdio ↔ HTTP):**
+```typescript
+// Source: src/mcp/stdio-http-bridge.ts
+// StdioHttpBridge reads JSON-RPC messages from stdin, forwards them
+// over streamable HTTP, and writes responses back to stdout.
+const bridge = new StdioHttpBridge({ serverUrl: 'https://mcp-server.example.com/sse' });
+await bridge.start();
+```
+
+**OAuth Client Pattern:**
+```typescript
+// Source: src/mcp/auth/mcp-oauth-provider.ts
+// Implements OAuthClientProvider from @modelcontextprotocol/client
+// Flow: 401 → metadata → dynamic registration → browser auth → callback → token
+```
+
+**Cookie Jar Pattern:**
+```typescript
+// Source: src/mcp/stdio-http-bridge.ts (CookieJar class)
+// Per-origin cookie storage: captures Set-Cookie from responses,
+// injects Cookie header on subsequent requests to the same origin.
+```
+
+### SSO Proxy Plugin
+
+When running through the CodeMie SSO proxy, the MCP Auth Plugin (priority 3) provides:
+
+- **URL rewriting**: `/mcp_auth?original=<url>` for initial connections, `/mcp_relay/<root_b64>/<relay_b64>/<path>` for relayed requests
+- **Client name override**: Replaces `client_name` in Dynamic Client Registration with `MCP_CLIENT_NAME`
+- **SSRF protection**: Rejects private/loopback origins (hostname + DNS resolution)
+- **Per-flow origin scoping**: Tags discovered origins with their root MCP server to prevent cross-flow confusion
+
+### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MCP_CLIENT_NAME` | `CodeMie CLI` | Client name for OAuth registration |
+| `MCP_PROXY_DEBUG` | (unset) | Verbose proxy logging |
+| `CODEMIE_PROXY_PORT` | (auto) | Fixed proxy port |
+
+For full architecture details, see [Proxy Architecture — MCP Auth Plugin](../../docs/ARCHITECTURE-PROXY.md#65-mcp-auth-plugin).
+
+---
+
 ## Troubleshooting
 
 | Issue | Cause | Solution |
@@ -671,6 +733,8 @@ export class ConfigLoader {
 
 ## References
 
+- **MCP Proxy**: `src/mcp/`
+- **MCP Auth Plugin**: `src/providers/plugins/sso/proxy/plugins/mcp-auth.plugin.ts`
 - **Provider Plugins**: `src/providers/plugins/`
 - **Provider Core**: `src/providers/core/types.ts`
 - **Agent System**: `src/agents/codemie-code/`

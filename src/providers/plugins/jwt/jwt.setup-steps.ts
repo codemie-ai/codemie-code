@@ -13,7 +13,7 @@ import type {
   AuthValidationResult
 } from '../../core/types.js';
 import type { CodeMieConfigOptions } from '../../../env/types.js';
-import { ensureApiBase } from '../sso/sso.http-client.js';
+import { ensureApiBase } from '../../core/codemie-auth-helpers.js';
 
 export const JWTBearerSetupSteps: ProviderSetupSteps = {
   name: 'bearer-auth',

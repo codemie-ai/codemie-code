@@ -208,7 +208,7 @@ function buildSessionAttributes(
     agent: session.agentName,
     agent_version: version,
     llm_model: primaryModel || 'unknown',
-    repository: extractRepository(session.workingDirectory),
+    repository: session.repository ?? extractRepository(session.workingDirectory),
     session_id: agentSessionId,  // Use agent session ID for API correlation
     branch: branch,
     ...(session.project && { project: session.project }),

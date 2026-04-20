@@ -19,6 +19,7 @@ codemie update [agent]           # Update installed agents
 codemie self-update              # Update CodeMie CLI itself
 codemie doctor [options]         # Health check and diagnostics
 codemie plugin <command>         # Manage native plugins
+codemie mcp-proxy <url>          # Stdio-to-HTTP MCP proxy with OAuth support
 codemie version                  # Show version information
 ```
 
@@ -489,6 +490,92 @@ codemie plugin disable <name>
 - Config `plugins.dirs` (lowest)
 
 For full documentation, see [Plugin System](./PLUGINS.md).
+
+## MCP Proxy Command
+
+Run a stdio-to-HTTP bridge that connects MCP clients (like Claude Code) to remote MCP servers, handling OAuth 2.0 authorization automatically.
+
+```bash
+codemie mcp-proxy <url>
+```
+
+**Arguments:**
+- `<url>` — Remote MCP server URL (must be a valid HTTP/HTTPS URL)
+
+**Features:**
+- Stdio-to-HTTP bridge (JSON-RPC over stdio ↔ streamable HTTP transport)
+- Automatic OAuth 2.0 with Dynamic Client Registration
+- Per-origin cookie jar for session persistence
+- Browser-based authorization with ephemeral localhost callback server
+- Graceful shutdown on SIGINT/SIGTERM
+
+### Registering with Claude Code
+
+Use `claude mcp add` to register the proxy as an MCP server:
+
+```bash
+# Using the global binary (requires global install)
+claude mcp add my-server -- codemie-mcp-proxy "https://mcp-server.example.com/sse"
+
+# Using node directly (works without global install)
+claude mcp add my-server -- node /path/to/bin/codemie-mcp-proxy.js "https://mcp-server.example.com/sse"
+```
+
+Or configure `.mcp.json` directly:
+
+```json
+{
+  "mcpServers": {
+    "my-server": {
+      "type": "stdio",
+      "command": "codemie-mcp-proxy",
+      "args": ["https://mcp-server.example.com/sse"],
+      "env": {
+        "MCP_CLIENT_NAME": "Claude Code (my-server)"
+      }
+    }
+  }
+}
+```
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MCP_CLIENT_NAME` | `CodeMie CLI` | Client name used in OAuth Dynamic Client Registration |
+| `MCP_PROXY_DEBUG` | (unset) | Set to `true` to enable verbose proxy logging |
+| `CODEMIE_DEBUG` | (unset) | Set to `true` to enable general debug logging |
+
+### OAuth Flow
+
+When the remote MCP server returns `401 Unauthorized`:
+
+1. Discover resource metadata and authorization server metadata
+2. Register a client dynamically (`client_name` from `MCP_CLIENT_NAME`)
+3. Open the user's browser for authorization
+4. Receive the authorization code via ephemeral localhost callback server
+5. Exchange the code for tokens
+6. Retry the original request with the Bearer token
+
+All state is in-memory only — re-authorization is required each session.
+
+### Logs
+
+Proxy logs are written to `~/.codemie/logs/mcp-proxy.log`. Enable verbose logging with `MCP_PROXY_DEBUG=true`.
+
+### Troubleshooting
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| `Invalid MCP server URL` | URL argument is malformed | Verify the URL is a valid HTTP/HTTPS URL |
+| Browser doesn't open | System `open`/`xdg-open` not available | Open the URL printed in logs manually |
+| OAuth timeout | User didn't complete browser auth in 2 minutes | Re-run the command and complete auth faster |
+| `ECONNREFUSED` | Remote MCP server is unreachable | Check the URL and network connectivity |
+| No tools appearing | OAuth flow not completed | Check `~/.codemie/logs/mcp-proxy.log` for errors |
+
+### Architecture
+
+For implementation details including the SSO proxy plugin, URL rewriting, and SSRF protection, see [Proxy Architecture](./ARCHITECTURE-PROXY.md#65-mcp-auth-plugin).
 
 ## Detailed Command Reference
 

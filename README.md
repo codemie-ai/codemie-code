@@ -26,9 +26,11 @@ CodeMie CLI is the all-in-one AI coding assistant for developers.
 - 🔄 **Multi-Provider Support** - OpenAI, Azure OpenAI, AWS Bedrock, LiteLLM, Ollama, Enterprise SSO, and JWT Bearer Auth.
 - 🚀 **Built-in Agent** - A powerful LangGraph-based assistant with file operations, command execution, and planning tools.
 - 🖥️ **Cross-Platform** - Full support for Windows, Linux, and macOS with platform-specific optimizations.
+- 🔗 **MCP Proxy** - Connect to remote MCP servers with automatic OAuth authorization.
 - 🔐 **Enterprise Ready** - SSO and JWT authentication, audit logging, and role-based access.
 - ⚡ **Productivity Boost** - Code review, refactoring, test generation, and bug fixing.
 - 🎯 **Profile Management** - Manage work, personal, and team configurations separately.
+- 🧩 **CodeMie Assistants in Claude** - Connect your available CodeMie assistants as Claude subagents or skills.
 - 📊 **Usage Analytics** - Track and analyze AI usage across all agents with detailed insights.
 - 🔧 **CI/CD Workflows** - Automated code review, fixes, and feature implementation.
 
@@ -57,6 +59,9 @@ codemie-code "Analyze this codebase"
 
 # 6. Execute a single task and exit
 codemie --task "Generate unit tests"
+
+# 7. Connect to a remote MCP server (with automatic OAuth)
+claude mcp add my-server -- codemie-mcp-proxy "https://mcp-server.example.com/sse"
 ```
 
 **Prefer not to install globally?** Use npx with the full package name:
@@ -212,6 +217,33 @@ Auto-updates are automatically disabled to maintain version control. CodeMie not
 
 For more detailed information on the available agents, see the [Agents Documentation](docs/AGENTS.md).
 
+### CodeMie Assistants as Claude Skills or Subagents
+
+CodeMie can connect assistants available in your CodeMie account directly into Claude Code. Register them as Claude subagents and call them with `@slug`, or register them as Claude skills and invoke them with `/slug`.
+
+```bash
+# Pick assistants from your CodeMie account and choose how to register them
+codemie setup assistants
+```
+
+During setup, choose:
+- **Claude Subagents** - register selected assistants as `@slug`
+- **Claude Skills** - register selected assistants as `/slug`
+- **Manual Configuration** - choose skill or subagent per assistant
+
+After registration, use them from Claude Code:
+
+```text
+@api-reviewer Review this authentication flow
+/release-checklist prepare a release checklist for this branch
+```
+
+You can also message a registered assistant directly through CodeMie:
+
+```bash
+codemie assistants chat "assistant-id" "Review this API design"
+```
+
 ### Claude Code Built-in Commands
 
 When using Claude Code (`codemie-claude`), you get access to powerful built-in commands for project documentation:
@@ -268,6 +300,7 @@ codemie profile          # Manage provider profiles
 codemie analytics        # View usage analytics (sessions, tokens, costs, tools)
 codemie workflow <cmd>   # Manage CI/CD workflows
 codemie doctor           # Health check and diagnostics
+codemie mcp-proxy <url>  # Stdio-to-HTTP MCP proxy with OAuth
 ```
 
 For a full command reference, see the [Commands Documentation](docs/COMMANDS.md).
@@ -285,6 +318,7 @@ Comprehensive guides are available in the `docs/` directory:
 - **[Authentication](docs/AUTHENTICATION.md)** - SSO setup, token management, enterprise authentication
 - **[Examples](docs/EXAMPLES.md)** - Common workflows, multi-provider examples, CI/CD integration
 - **[Configuration Architecture](docs/ARCHITECTURE-CONFIGURATION.md)** - How configuration flows through the system from CLI to proxy plugins
+- **[Proxy Architecture](docs/ARCHITECTURE-PROXY.md)** - Proxy plugin system, MCP authorization flow
 - **[Claude Code Plugin](src/agents/plugins/claude/plugin/README.md)** - Built-in commands, hooks system, and plugin architecture
 
 ## Contributing

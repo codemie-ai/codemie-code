@@ -1,0 +1,166 @@
+/**
+ * CodeMie Base Styles
+ * Reset, body, scrollbar, and global base rules.
+ */
+
+/* ============================================================
+   RESET
+   ============================================================ */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* ============================================================
+   BODY
+   ============================================================ */
+html {
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  line-height: 1.5;
+  color: var(--color-text-primary);
+  background-color: var(--color-bg-page);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ============================================================
+   LINKS
+   ============================================================ */
+a {
+  color: var(--color-text-link);
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+
+a:hover {
+  color: var(--color-text-link-hover);
+  text-decoration: underline;
+}
+
+/* ============================================================
+   SCROLLBAR (WebKit)
+   ============================================================ */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border-subtle);
+  border-radius: var(--radius-full);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border-secondary);
+}
+
+/* ============================================================
+   SELECTION
+   ============================================================ */
+::selection {
+  background: rgba(34, 151, 246, 0.3);
+  color: var(--color-text-primary);
+}
+
+/* ============================================================
+   FOCUS RING
+   ============================================================ */
+:focus-visible {
+  outline: 2px solid var(--color-border-focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ============================================================
+   IMAGES & MEDIA
+   ============================================================ */
+img, svg, video {
+  display: block;
+  max-width: 100%;
+}
+
+/* ============================================================
+   LISTS
+   ============================================================ */
+ul, ol {
+  list-style: none;
+}
+
+/* ============================================================
+   CODE
+   ============================================================ */
+code, pre, kbd, samp {
+  font-family: var(--font-mono);
+}
+
+code {
+  font-size: 0.875em;
+  background: var(--color-bg-quaternary);
+  color: var(--color-text-secondary);
+  padding: 0.1em 0.4em;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-primary);
+}
+
+pre {
+  background: var(--color-bg-quaternary);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  overflow-x: auto;
+  font-size: var(--text-xs);
+  line-height: 1.6;
+  color: var(--color-text-secondary);
+}
+
+pre code {
+  background: transparent;
+  border: none;
+  padding: 0;
+  font-size: inherit;
+}
+
+/* ============================================================
+   HR / DIVIDER
+   ============================================================ */
+hr, .divider {
+  border: none;
+  border-top: 1px solid var(--color-border-structural);
+  margin: var(--space-4) 0;
+}
+
+/* ============================================================
+   LAYOUT HELPERS
+   ============================================================ */
+.container {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 var(--space-4);
+}
+
+.section {
+  padding: var(--space-8) 0;
+}
+
+/* ============================================================
+   ICON (inline SVG sizing helpers)
+   ============================================================ */
+.icon-xs  { width: 12px; height: 12px; flex-shrink: 0; }
+.icon-sm  { width: 16px; height: 16px; flex-shrink: 0; }
+.icon-md  { width: 18px; height: 18px; flex-shrink: 0; }
+.icon-lg  { width: 20px; height: 20px; flex-shrink: 0; }
+.icon-xl  { width: 24px; height: 24px; flex-shrink: 0; }
+.icon-2xl { width: 32px; height: 32px; flex-shrink: 0; }

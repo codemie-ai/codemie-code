@@ -1,0 +1,550 @@
+/**
+ * CodeMie Form Components
+ * Input, Textarea, Select, Checkbox, Radio, Switch.
+ */
+
+/* ============================================================
+   FORM GROUP (field wrapper)
+   ============================================================ */
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+/* ============================================================
+   LABEL
+   ============================================================ */
+.form-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-0-5);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--color-text-muted);
+}
+
+.form-label .required {
+  color: var(--color-error);
+  margin-left: 1px;
+}
+
+/* ============================================================
+   INPUT
+   ============================================================ */
+.input-wrapper {
+  display: flex;
+  align-items: stretch;
+  min-height: 32px;
+  max-height: 32px;
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--radius-lg);
+  background-color: var(--color-bg-input);
+  transition:
+    border-color var(--transition-base),
+    box-shadow var(--transition-base);
+  overflow: hidden;
+}
+
+.input-wrapper:hover:not(.input-disabled) {
+  border-color: var(--color-border-secondary);
+}
+
+.input-wrapper:focus-within:not(.input-disabled) {
+  border-color: var(--color-border-secondary);
+}
+
+.input-wrapper.input-error {
+  border-color: var(--color-border-error);
+}
+
+.input-wrapper.input-disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* The actual <input> inside wrapper */
+.form-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--color-text-primary);
+  padding: 0 var(--space-2);
+  min-width: 0;
+}
+
+.form-input::placeholder {
+  color: var(--color-text-placeholder);
+}
+
+.form-input:disabled {
+  cursor: not-allowed;
+}
+
+/* Standalone input (no wrapper needed) */
+input.input,
+.input {
+  display: block;
+  width: 100%;
+  height: 32px;
+  padding: 0 var(--space-2);
+  background-color: var(--color-bg-input);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--radius-lg);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--color-text-primary);
+  outline: none;
+  transition: border-color var(--transition-base);
+}
+
+input.input::placeholder,
+.input::placeholder {
+  color: var(--color-text-placeholder);
+}
+
+input.input:hover,
+.input:hover {
+  border-color: var(--color-border-secondary);
+}
+
+input.input:focus,
+.input:focus {
+  border-color: var(--color-border-secondary);
+}
+
+input.input.input-error,
+.input.input-error {
+  border-color: var(--color-border-error);
+}
+
+input.input:disabled,
+.input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Sizes */
+.input-lg {
+  height: 40px;
+  font-size: var(--text-base);
+  padding: 0 var(--space-3);
+}
+
+/* Input prefix / suffix labels */
+.input-prefix,
+.input-suffix {
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--color-text-tertiary);
+  background-color: var(--color-bg-input-prefix);
+  white-space: nowrap;
+  flex-shrink: 0;
+  border-right: 1px solid var(--color-border-subtle);
+}
+
+.input-suffix {
+  border-right: none;
+  border-left: 1px solid var(--color-border-subtle);
+}
+
+.input-adornment {
+  display: flex;
+  align-items: center;
+  padding: 0 var(--space-2);
+  color: var(--color-icon-tertiary);
+  flex-shrink: 0;
+}
+
+/* ============================================================
+   TEXTAREA
+   ============================================================ */
+textarea.textarea,
+.textarea {
+  display: block;
+  width: 100%;
+  min-height: 80px;
+  max-height: 384px; /* max-h-96 */
+  padding: var(--space-2-5) var(--space-3);
+  background-color: var(--color-bg-input);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--radius-lg);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--color-text-primary);
+  outline: none;
+  resize: vertical;
+  line-height: 1.5;
+  transition: border-color var(--transition-base);
+}
+
+textarea.textarea::placeholder,
+.textarea::placeholder {
+  color: var(--color-text-placeholder);
+}
+
+textarea.textarea:hover,
+.textarea:hover {
+  border-color: var(--color-border-secondary);
+}
+
+textarea.textarea:focus,
+.textarea:focus {
+  border-color: var(--color-border-secondary);
+}
+
+textarea.textarea.textarea-error,
+.textarea.textarea-error {
+  border-color: var(--color-border-error);
+}
+
+textarea.textarea:disabled,
+.textarea:disabled {
+  background-color: var(--color-bg-secondary);
+  color: var(--color-text-tertiary);
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+/* ============================================================
+   SELECT
+   ============================================================ */
+.select-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 32px;
+  padding: 0 var(--space-2);
+  background-color: var(--color-bg-input);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--radius-lg);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  user-select: none;
+  transition: border-color var(--transition-base);
+  gap: var(--space-2);
+}
+
+.select-trigger:hover {
+  border-color: var(--color-border-secondary);
+}
+
+.select-trigger.select-open {
+  border-color: var(--color-border-secondary);
+}
+
+.select-trigger .select-arrow {
+  color: var(--color-icon-tertiary);
+  flex-shrink: 0;
+  transition: transform var(--transition-base);
+}
+
+.select-trigger.select-open .select-arrow {
+  transform: rotate(180deg);
+}
+
+/* Native select fallback */
+select.select {
+  display: block;
+  width: 100%;
+  height: 32px;
+  padding: 0 var(--space-2);
+  background-color: var(--color-bg-input);
+  border: 1px solid var(--color-border-primary);
+  border-radius: var(--radius-lg);
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--color-text-primary);
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23999' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 8px center;
+  padding-right: 28px;
+}
+
+select.select:hover {
+  border-color: var(--color-border-secondary);
+}
+
+select.select:focus {
+  border-color: var(--color-border-secondary);
+}
+
+/* Dropdown panel */
+.select-panel {
+  position: absolute;
+  z-index: var(--z-dropdown);
+  min-width: 160px;
+  max-width: 256px;
+  margin-top: var(--space-2);
+  padding: var(--space-1-5);
+  background-color: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-panel);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.select-option {
+  display: block;
+  padding: var(--space-1-5) var(--space-2-5);
+  font-size: var(--text-sm);
+  color: var(--color-text-primary);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background-color var(--transition-fast);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.select-option:hover {
+  background-color: var(--color-bg-hover-strong);
+}
+
+.select-option.selected {
+  background-color: var(--color-bg-hover);
+  font-weight: 500;
+}
+
+/* ============================================================
+   CHECKBOX
+   ============================================================ */
+.checkbox-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  user-select: none;
+}
+
+.checkbox-wrapper input[type='checkbox'] {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.checkbox-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  border-radius: var(--radius-md);
+  border: 2px solid var(--color-border-primary);
+  background-color: var(--color-bg-elevated);
+  transition:
+    border-color var(--transition-fast),
+    background-color var(--transition-fast);
+}
+
+.checkbox-wrapper:hover .checkbox-box {
+  border-color: var(--color-border-secondary);
+}
+
+.checkbox-wrapper input[type='checkbox']:checked + .checkbox-box {
+  border-color: var(--color-text-primary);
+  background-color: var(--color-text-primary);
+}
+
+.checkbox-check {
+  display: none;
+  width: 12px;
+  height: 12px;
+  color: var(--color-bg-page);
+}
+
+.checkbox-wrapper input[type='checkbox']:checked + .checkbox-box .checkbox-check {
+  display: block;
+}
+
+.checkbox-label {
+  font-size: var(--text-sm);
+  color: var(--color-text-primary);
+}
+
+.checkbox-wrapper.disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* ============================================================
+   RADIO
+   ============================================================ */
+.radio-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  user-select: none;
+}
+
+.radio-wrapper input[type='radio'] {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.radio-dot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border-radius: var(--radius-full);
+  border: 2px solid var(--color-border-primary);
+  background-color: var(--color-bg-elevated);
+  transition:
+    border-color var(--transition-fast),
+    background-color var(--transition-fast);
+}
+
+.radio-dot::after {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background-color: var(--color-bg-page);
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.radio-wrapper:hover .radio-dot {
+  border-color: var(--color-border-secondary);
+}
+
+.radio-wrapper input[type='radio']:checked + .radio-dot {
+  border-color: var(--color-text-primary);
+  background-color: var(--color-text-primary);
+}
+
+.radio-wrapper input[type='radio']:checked + .radio-dot::after {
+  opacity: 1;
+}
+
+.radio-label {
+  font-size: var(--text-sm);
+  color: var(--color-text-primary);
+}
+
+/* ============================================================
+   SWITCH (Toggle)
+   ============================================================ */
+.switch-wrapper {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  user-select: none;
+}
+
+.switch-wrapper input[type='checkbox'] {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.switch-track {
+  position: relative;
+  width: 32px;
+  height: 16px;
+  border-radius: var(--radius-full);
+  background: var(--gradient-switch-off);
+  border: 1px solid var(--color-border-primary);
+  transition:
+    background var(--transition-base),
+    border-color var(--transition-base);
+  flex-shrink: 0;
+}
+
+.switch-wrapper input[type='checkbox']:checked + .switch-track {
+  background: var(--gradient-switch-on);
+  border-color: var(--color-border-accent);
+}
+
+.switch-knob {
+  position: absolute;
+  top: 1px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: var(--radius-full);
+  background-color: #CCCCCC;
+  transition: transform var(--transition-base), background-color var(--transition-base);
+  pointer-events: none;
+}
+
+.switch-wrapper input[type='checkbox']:checked ~ .switch-track .switch-knob {
+  transform: translateX(16px);
+  background-color: #FFFFFF;
+}
+
+/* Alternative pure CSS switch using :has() or JS class */
+.switch-track.switch-on .switch-knob {
+  transform: translateX(16px);
+  background-color: #FFFFFF;
+}
+
+.switch-label {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  transition: color var(--transition-fast);
+}
+
+.switch-wrapper:hover .switch-label {
+  color: var(--color-border-accent);
+}
+
+/* ============================================================
+   FORM ERROR / HELPER TEXT
+   ============================================================ */
+.form-error {
+  font-size: var(--text-sm);
+  color: var(--color-error-text);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  margin-top: var(--space-0-5);
+}
+
+.form-helper {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  margin-top: var(--space-0-5);
+}
+
+/* ============================================================
+   SEARCH INPUT
+   ============================================================ */
+.search-input-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.search-input-wrapper .search-icon {
+  position: absolute;
+  left: var(--space-2);
+  color: var(--color-icon-tertiary);
+  pointer-events: none;
+}
+
+.search-input-wrapper input {
+  padding-left: 28px;
+}
