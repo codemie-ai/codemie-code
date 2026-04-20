@@ -2,7 +2,7 @@ import chalk from 'chalk';
 import type { SelectionState, PanelState } from './types.js';
 import { TEXT, CONFIG } from './constants.js';
 import { COLOR } from '../constants.js';
-import { SYMBOL } from '@/cli/commands/shared/selection/constants.js';
+import { ANSI, SYMBOL } from '@/cli/commands/shared/selection/constants.js';
 import {
   buildTopLine,
   buildPanelHeader,
@@ -15,7 +15,7 @@ import {
 export function renderUI(state: SelectionState, cursorIndex: number): string {
   const activePanel = state.panels.find(p => p.id === state.activePanelId)!;
 
-  let output = '';
+  let output = ANSI.CURSOR_HOME_CLEAR;
 
   output += buildTopLine();
   output += buildPanelHeader(state.panels, state.activePanelId, TEXT.LABEL);
