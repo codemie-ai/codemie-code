@@ -1,7 +1,7 @@
 import { Command } from 'commander';
 import { logger } from '@/utils/logger.js';
 import { AgentRegistry } from '@/agents/registry.js';
-import { getSessionPath, getSessionMetricsPath, getSessionConversationPath } from '@/agents/core/session/session-config.js';
+import { getSessionPath, getSessionMetricsPath, getSessionConversationPath, METRICS_CONFIG } from '@/agents/core/session/session-config.js';
 import type { BaseHookEvent, HookTransformer, MCPConfigSummary, ExtensionsScanSummary } from '@/agents/core/types.js';
 import type { ProcessingContext } from '@/agents/core/session/BaseProcessor.js';
 
@@ -238,12 +238,9 @@ async function handleSessionEnd(event: SessionEndEvent, sessionId: string, confi
 async function syncPendingDataToAPI(sessionId: string, agentSessionId: string, config?: HookProcessingConfig): Promise<void> {
   try {
     const provider = getConfigValue('CODEMIE_PROVIDER', config);
-    const ssoUrl = getConfigValue('CODEMIE_URL', config);
-    const syncApiUrl = getConfigValue('CODEMIE_SYNC_API_URL', config);
-    const hasCodeMieAnalyticsAuth = Boolean(ssoUrl && syncApiUrl);
 
-    if (provider !== 'ai-run-sso' && !hasCodeMieAnalyticsAuth) {
-      logger.debug('[hook:SessionEnd] Skipping API sync (CodeMie analytics auth not configured)');
+    if (provider !== 'ai-run-sso') {
+      logger.debug(`[hook:SessionEnd] Skipping API sync — metrics sync is exclusive to ai-run-sso (provider=${provider || 'unknown'})`);
       return;
     }
 
@@ -296,6 +293,15 @@ async function performIncrementalSync(event: BaseHookEvent, hookName: string, se
   try {
     // Get agent name from config or environment
     const agentName = getConfigValue('CODEMIE_AGENT', config);
+
+    // Check if metrics gathering (JSONL transcript extraction) is enabled for this provider.
+    // NOTE: This gates JSONL file creation only. The session .json record is unconditionally
+    // created in handleSessionStart → createSessionRecord, so it is not affected by this check.
+    const provider = getConfigValue('CODEMIE_PROVIDER', config) || '';
+    if (!METRICS_CONFIG.enabled(provider)) {
+      logger.debug(`[hook:${hookName}] Metrics gathering (JSONL extraction) disabled for provider=${provider || 'unknown'}`);
+      return;
+    }
 
     if (!agentName) {
       if (config) {

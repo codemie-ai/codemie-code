@@ -19,10 +19,117 @@ import {
   detectInstallationMethod,
   type InstallationMethod,
 } from '../../../utils/installation-detector.js';
+import type { HookProcessingConfig } from '../../../cli/commands/hook.js';
+import { ensureSessionFile } from '../../core/session/ensure-session.js';
 
 // Module-level flag to track statusline management within a session.
 // Using module scope (not env var) avoids leaking internal state into subprocess environments.
 let statuslineManagedThisSession = false;
+
+const CLAUDE_AGENT_NAME = 'claude';
+
+function buildHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProcessingConfig {
+  return {
+    agentName: env.CODEMIE_AGENT || CLAUDE_AGENT_NAME,
+    sessionId,
+    provider: env.CODEMIE_PROVIDER,
+    apiBaseUrl: env.CODEMIE_BASE_URL,
+    ssoUrl: env.CODEMIE_URL,
+    version: env.CODEMIE_CLI_VERSION,
+    profileName: env.CODEMIE_PROFILE_NAME,
+    project: env.CODEMIE_PROJECT,
+    model: env.CODEMIE_MODEL,
+    clientType: 'codemie-claude',
+  };
+}
+
+/**
+ * Scan a single directory for the most recently modified Claude session JSONL file.
+ */
+async function findNewestJsonlInDir(
+  dir: string,
+  maxAgeMs: number,
+): Promise<string | undefined> {
+  const { readdir, stat } = await import('fs/promises');
+  const { join } = await import('path');
+
+  let newest: { path: string; mtime: number } | undefined;
+  try {
+    const files = await readdir(dir);
+    for (const file of files) {
+      if (!file.endsWith('.jsonl') || file.startsWith('agent-')) continue;
+      const filePath = join(dir, file);
+      try {
+        const s = await stat(filePath);
+        const mtime = s.mtimeMs;
+        const now = Date.now();
+        if (now - mtime <= maxAgeMs && (!newest || mtime > newest.mtime)) {
+          newest = { path: filePath, mtime };
+        }
+      } catch {
+        // ignore stat errors
+      }
+    }
+  } catch {
+    // ignore readdir errors
+  }
+  return newest?.path;
+}
+
+/**
+ * Find the most recently modified Claude session JSONL file for the given working directory.
+ * Claude Code derives a deterministic project directory name as SHA-256(cwd).
+ * We search there first; if that directory doesn't exist we fall back to a broad scan of all
+ * project directories (handles edge cases where the hash differs, e.g. symlinks or Windows
+ * short-path names). The broad scan uses a tighter 2-minute window to reduce the chance of
+ * picking up a transcript from a different concurrently-running session.
+ */
+async function findRecentClaudeTranscript(cwd: string): Promise<string | undefined> {
+  const { access } = await import('fs/promises');
+  const { join } = await import('path');
+  const { homedir } = await import('os');
+  const { createHash } = await import('crypto');
+
+  const projectsDir = join(homedir(), '.claude', 'projects');
+  try {
+    await access(projectsDir);
+  } catch {
+    return undefined;
+  }
+
+  // Primary: search only the cwd-specific hash directory (5-minute window)
+  const expectedHash = createHash('sha256').update(cwd).digest('hex');
+  const hashPath = join(projectsDir, expectedHash);
+  try {
+    await access(hashPath);
+    const result = await findNewestJsonlInDir(hashPath, 5 * 60 * 1000);
+    if (result) return result;
+  } catch {
+    // hash directory not found — fall through to broad scan
+  }
+
+  // Fallback: scan all project directories with a tighter 2-minute window
+  const { readdir } = await import('fs/promises');
+  let newest: { path: string; mtime: number } | undefined;
+  try {
+    const hashDirs = await readdir(projectsDir);
+    for (const hashDir of hashDirs) {
+      const result = await findNewestJsonlInDir(join(projectsDir, hashDir), 2 * 60 * 1000);
+      if (result) {
+        const { stat } = await import('fs/promises');
+        try {
+          const s = await stat(result);
+          if (!newest || s.mtimeMs > newest.mtime) {
+            newest = { path: result, mtime: s.mtimeMs };
+          }
+        } catch { /* ignore */ }
+      }
+    }
+  } catch {
+    // ignore top-level readdir errors
+  }
+  return newest?.path;
+}
 
 /**
  * Supported Claude Code version
@@ -135,6 +242,67 @@ export const ClaudePluginMetadata: AgentMetadata = {
   },
 
   lifecycle: {
+    async onSessionStart(sessionId: string, env: NodeJS.ProcessEnv) {
+      try {
+        const { processEvent } = await import('../../../cli/commands/hook.js');
+        const event = {
+          hook_event_name: 'SessionStart',
+          session_id: sessionId,
+          transcript_path: '',
+          permission_mode: 'default',
+          cwd: process.cwd(),
+          source: 'startup',
+        };
+        await processEvent(event, buildHookConfig(env, sessionId));
+        logger.info(`[claude] SessionStart hook completed for session ${sessionId}`);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.error(`[claude] SessionStart hook failed (non-blocking): ${msg}`);
+      }
+      // Safety net: guarantee the session file exists even if processEvent failed above.
+      // Without this, onSessionEnd would find no record and produce no artifacts.
+      await ensureSessionFile(sessionId, env, CLAUDE_AGENT_NAME);
+    },
+
+    async onSessionEnd(exitCode: number, env: NodeJS.ProcessEnv) {
+      const sessionId = env.CODEMIE_SESSION_ID;
+      if (!sessionId) {
+        logger.warn('[claude] No CODEMIE_SESSION_ID in env, session end metrics will be skipped');
+        return;
+      }
+
+      try {
+        let transcriptPath = '';
+        try {
+          const discovered = await findRecentClaudeTranscript(process.cwd());
+          if (discovered) {
+            transcriptPath = discovered;
+            logger.debug(`[claude] Discovered Claude transcript: ${discovered}`);
+          } else {
+            logger.debug('[claude] No recent Claude transcript found, continuing without it');
+          }
+        } catch (discoverError) {
+          const msg = discoverError instanceof Error ? discoverError.message : String(discoverError);
+          logger.debug(`[claude] Transcript discovery failed (non-blocking): ${msg}`);
+        }
+
+        const { processEvent } = await import('../../../cli/commands/hook.js');
+        const event = {
+          hook_event_name: 'SessionEnd',
+          session_id: sessionId,
+          transcript_path: transcriptPath,
+          permission_mode: 'default',
+          cwd: process.cwd(),
+          reason: exitCode === 0 ? 'exit' : `exit(${exitCode})`,
+        };
+        await processEvent(event, buildHookConfig(env, sessionId));
+        logger.info(`[claude] SessionEnd hook completed for session ${sessionId}`);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.error(`[claude] SessionEnd hook failed (non-blocking): ${msg}`);
+      }
+    },
+
     // Default hooks for ALL providers (provider-agnostic)
     async beforeRun(env) {
       // Disable experimental betas if not already set

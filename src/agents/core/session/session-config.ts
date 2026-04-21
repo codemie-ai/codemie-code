@@ -14,15 +14,13 @@ import { getCodemieHome } from '@/utils/paths.js';
  */
 export const METRICS_CONFIG: MetricsConfig = {
   /**
-   * Metrics only enabled for ai-run-sso provider
-   * Can be disabled at runtime via CODEMIE_METRICS_DISABLED env var
+   * Metrics gathering (transcript parsing → JSONL files) is enabled for all providers.
+   * Sync to the CodeMie backend remains exclusive to ai-run-sso (see syncPendingDataToAPI).
+   * Session record creation (*.json) is unconditional and not gated by this flag.
+   * Can be disabled at runtime via CODEMIE_METRICS_DISABLED env var.
    */
-  enabled: (provider: string) => {
-    // Check if metrics are disabled at runtime
-    if (process.env.CODEMIE_METRICS_DISABLED === '1') {
-      return false;
-    }
-    return provider === 'ai-run-sso';
+  enabled: (_provider: string) => {
+    return process.env.CODEMIE_METRICS_DISABLED !== '1';
   },
 
   /**
