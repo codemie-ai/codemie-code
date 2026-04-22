@@ -91,6 +91,11 @@ export class SessionStore {
     }
     if (status === 'completed' || status === 'recovered' || status === 'failed') {
       session.endTime = Date.now();
+      // Fallback: if activity tracking never fired (e.g. task mode without UserPromptSubmit hook),
+      // use wall-clock duration so activeDurationMs is always > 0 on a completed session.
+      if (!session.activeDurationMs) {
+        session.activeDurationMs = session.endTime - session.startTime;
+      }
     }
 
     await this.saveSession(session);
