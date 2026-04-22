@@ -12,9 +12,9 @@
  *
  * Environment variables:
  * - DEFAULT_TIMEOUT: Command timeout in seconds (default: 60)
- * - SKIP_CODEMIE_CODE_INSTALL: Set to "true" to skip @codemieai/code installation
+ * - SKIP_CODEMIE_CODE_INSTALL: is taken from process.env.SKIP_CODEMIE_CODE_INSTALL, default is true
  * - CODEMIE_CODE_INSTALL_PATH: Custom path for local npm install/build/link
- * - SKIP_CLAUDE_INSTALL: Set to "true" to skip Claude provider installation
+ * - SKIP_CLAUDE_INSTALL: is taken from process.env.SKIP_CLAUDE_INSTALL, default is true
  * - CLAUDE_VERSION: Claude version to install (default: "latest")
  * - FRONTEND_URL: CodeMie frontend URL for sso-autotest profile
  * - CODEMIE_API_DOMAIN: CodeMie API domain for sso-autotest profile
@@ -165,8 +165,7 @@ describe('codemie-claude CLI task execution', () => {
       }
     }
 
-    // const skipInstall = process.env.SKIP_CODEMIE_CODE_INSTALL === 'true';
-    const skipInstall = true;
+    const skipInstall = process.env.SKIP_CODEMIE_CODE_INSTALL === 'true';
     const customPath = process.env.CODEMIE_CODE_INSTALL_PATH;
 
     if (!skipInstall) {
@@ -233,8 +232,7 @@ describe('codemie-claude CLI task execution', () => {
 
   // Equivalent to setup_claude_provider (session-scoped fixture in test file)
   beforeAll(() => {
-    // const skipInstall = process.env.SKIP_CLAUDE_INSTALL === 'true';
-    const skipInstall = true;
+    const skipInstall = process.env.SKIP_CLAUDE_INSTALL === 'true';
     if (skipInstall) return;
 
     const claudeVersion = process.env.CLAUDE_VERSION ?? 'latest';
