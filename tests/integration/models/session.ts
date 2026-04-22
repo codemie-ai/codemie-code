@@ -4,21 +4,21 @@ const CorrelationSchema = z.object({
   status: z.string(),
   agentSessionId: z.string(),
   agentSessionFile: z.string(),
-  retryCount: z.number().int().gte(0),
+  retryCount: z.number().int(),
 }).passthrough();
 
 const SyncMetricsSchema = z.object({
   lastProcessedTimestamp: z.number().int(),
   processedRecordIds: z.array(z.string()),
   totalDeltas: z.number().int(),
-  totalSynced: z.number().int().gte(0),
-  totalFailed: z.literal(0),
+  totalSynced: z.number().int(),
+  totalFailed: z.number().int(),
 }).passthrough();
 
 const SyncConversationsSchema = z.object({
   lastSyncedMessageUuid: z.string(),
   lastSyncedHistoryIndex: z.number().int(),
-  totalMessagesSynced: z.number().int().gt(0),
+  totalMessagesSynced: z.number().int(),
   totalSyncAttempts: z.number().int(),
   conversationId: z.string(),
   lastSyncAt: z.number().int(),
@@ -33,14 +33,14 @@ export const SessionDataSchema = z.object({
   sessionId: z.string(),
   agentName: z.string(),
   provider: z.string(),
-  startTime: z.number().int().gt(0),
+  startTime: z.number().int(),
   workingDirectory: z.string(),
-  status: z.literal('completed'),
-  activeDurationMs: z.number().int().gt(0),
+  status: z.string(),
+  activeDurationMs: z.number().int(),
   correlation: CorrelationSchema,
   sync: SyncSchema,
   reason: z.string(),
-  endTime: z.number().int().gt(0),
+  endTime: z.number().int(),
 }).passthrough();
 
 export type SessionData = z.infer<typeof SessionDataSchema>;

@@ -6,7 +6,7 @@ export const UserMessageSchema = z.object({
   history_index: z.number().int(),
   message: z.string(),
   message_raw: z.string(),
-  role: z.literal('User'),
+  role: z.string(),
 }).passthrough();
 
 export const AssistantMessageSchema = z.object({
@@ -15,19 +15,19 @@ export const AssistantMessageSchema = z.object({
   history_index: z.number().int(),
   message: z.string(),
   message_raw: z.string(),
-  response_time: z.number().gt(0),
-  role: z.literal('Assistant'),
+  response_time: z.number(),
+  role: z.string(),
 }).passthrough();
 
 const ConversationPayloadSchema = z.object({
   conversationId: z.string(),
-  history: z.array(z.record(z.string(), z.unknown())).min(2),
+  history: z.array(z.record(z.string(), z.unknown())),
 }).passthrough();
 
 export const ConversationRecordSchema = z.object({
   historyIndices: z.array(z.number().int()),
   isTurnContinuation: z.boolean(),
-  messageCount: z.number().int().gt(0),
+  messageCount: z.number().int(),
   payload: ConversationPayloadSchema,
   status: z.string(),
   timestamp: z.number().int(),

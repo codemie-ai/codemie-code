@@ -5,28 +5,28 @@ const FileOperationSchema = z.object({
   language: z.string(),
   path: z.string(),
   type: z.string(),
-  linesAdded: z.number().int().gt(0),
+  linesAdded: z.number().int(),
 }).passthrough();
 
 const UserPromptSchema = z.object({
-  count: z.number().int().gt(0),
+  count: z.number().int(),
   text: z.string(),
 }).passthrough();
 
 export const MetricsRecordSchema = z.object({
   agentSessionId: z.string(),
-  fileOperations: z.array(FileOperationSchema).min(1),
+  fileOperations: z.array(FileOperationSchema),
   gitBranch: z.string(),
-  models: z.array(z.string()).min(1),
+  models: z.array(z.string()),
   recordId: z.string(),
   sessionId: z.string(),
-  syncAttempts: z.number().int().gt(0),
-  syncStatus: z.literal('synced'),
-  syncedAt: z.number().int().gt(0),
+  syncAttempts: z.number().int(),
+  syncStatus: z.string(),
+  syncedAt: z.number().int(),
   timestamp: z.string(),
   toolStatus: z.record(z.string(), z.unknown()),
   tools: z.record(z.string(), z.unknown()),
-  userPrompts: z.array(UserPromptSchema).min(1),
+  userPrompts: z.array(UserPromptSchema),
 }).passthrough();
 
 export type MetricsRecord = z.infer<typeof MetricsRecordSchema>;
