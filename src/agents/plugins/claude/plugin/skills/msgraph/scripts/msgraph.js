@@ -29,7 +29,7 @@ const https    = require('node:https');
 const fs       = require('node:fs');
 const path     = require('node:path');
 const os       = require('node:os');
-const { exec } = require('node:child_process');
+const { execFile } = require('node:child_process');
 
 // ── Config ────────────────────────────────────────────────────────────────────
 const CLIENT_ID  = '3d7688c6-f449-4d04-8b0d-57d94818e922';
@@ -162,18 +162,20 @@ function generatePKCE() {
 }
 
 function openBrowser(url) {
-  const cmd = process.platform === 'darwin' ? `open "${url}"` :
-              process.platform === 'win32'   ? `start "" "${url}"` :
-                                              `xdg-open "${url}"`;
-  exec(cmd, err => {
+  const cb = err => {
     if (err) console.error(`Warning: could not open browser automatically: ${err.message}`);
-  });
+  };
+  if (process.platform === 'win32') {
+    execFile('cmd', ['/c', 'start', '', url], cb);
+  } else {
+    execFile(process.platform === 'darwin' ? 'open' : 'xdg-open', [url], cb);
+  }
 }
 
 function startLocalServer() {
   return new Promise((resolve, reject) => {
     const server = http.createServer();
-    server.listen(0, '127.0.0.1', () => {
+    server.listen(0, 'localhost', () => {
       const { port } = server.address();
       const waitForCode = () => new Promise((res, rej) => {
         const timer = setTimeout(() => {
@@ -181,9 +183,8 @@ function startLocalServer() {
           rej(new Error('Authentication timed out (5 minutes). Run login again.'));
         }, TIMEOUT_MS);
 
-        server.once('request', (req, response) => {
-          clearTimeout(timer);
-          const url   = new URL(req.url, `http://127.0.0.1:${port}`);
+        server.on('request', (req, response) => {
+          const url   = new URL(req.url, `http://localhost:${port}`);
           const code  = url.searchParams.get('code');
           const state = url.searchParams.get('state');
           const error = url.searchParams.get('error');
@@ -195,6 +196,7 @@ function startLocalServer() {
             return;
           }
 
+          clearTimeout(timer);
           const html = code
             ? `<!DOCTYPE html><html><head><title>Login successful</title></head><body style="font-family:sans-serif;padding:40px">
                 <h2 style="color:#107c10">&#10003; Authentication successful</h2>
@@ -310,19 +312,7 @@ async function getAccessToken(forceLogin = false) {
 }
 
 async function getValidToken() {
-  const cache = loadCache();
-  if (!cache?.access_token) {
-    const { token } = await pkceLogin();
-    return token;
-  }
-  const now = Math.floor(Date.now() / 1000);
-  if (!cache.expires_at || now < cache.expires_at - 60) return cache.access_token;
-  if (cache.refresh_token) {
-    const t = await tryRefresh(cache.refresh_token, cache.username);
-    if (t) return t;
-  }
-  const { token } = await pkceLogin();
-  return token;
+  return getAccessToken(false);
 }
 
 async function tryGetToken() {
@@ -662,6 +652,7 @@ async function cmdTeams(args) {
   }
 
   if (args.messages) {
+    // Graph returns HTTP 400 if $select is used on the Teams messages endpoint — pass $top only.
     const data = await graphGet(`/me/chats/${args.messages}/messages`, token, { $top: limit });
     const msgs = data.value || [];
     if (args.json) { console.log(JSON.stringify(msgs, null, 2)); return; }
@@ -903,16 +894,17 @@ function cmdClaims(args) {
     return;
   }
 
+  const tty = process.stdout.isTTY;
   const c = {
-    reset:  '\x1b[0m',
-    bold:   '\x1b[1m',
-    dim:    '\x1b[2m',
-    cyan:   '\x1b[36m',
-    green:  '\x1b[32m',
-    red:    '\x1b[31m',
-    yellow: '\x1b[33m',
-    white:  '\x1b[97m',
-    gray:   '\x1b[90m',
+    reset:  tty ? '\x1b[0m'  : '',
+    bold:   tty ? '\x1b[1m'  : '',
+    dim:    tty ? '\x1b[2m'  : '',
+    cyan:   tty ? '\x1b[36m' : '',
+    green:  tty ? '\x1b[32m' : '',
+    red:    tty ? '\x1b[31m' : '',
+    yellow: tty ? '\x1b[33m' : '',
+    white:  tty ? '\x1b[97m' : '',
+    gray:   tty ? '\x1b[90m' : '',
   };
 
   const W    = 54;
@@ -1133,9 +1125,10 @@ function printHelp() {
 Usage: node ${name} <command> [options]
 
 Auth:
-  login                                Authenticate via browser (PKCE flow)
+  login [--force]                      Authenticate via browser (PKCE flow)
   logout                               Remove cached credentials
   status                               Check login status
+  claims [--json]                      Decode cached JWT — identity, device claims, auth methods
 
 Data:
   me [--json]                          Your profile
