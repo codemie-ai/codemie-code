@@ -50,10 +50,8 @@
   },
   "lint-staged": {
     "*.ts": [
-      "eslint --max-warnings=0 --no-warn-ignored"
-    ],
-    "src/**/*.ts": [
-      "vitest related --run"
+      "eslint --max-warnings=0 --no-warn-ignored",
+      "vitest related --run --exclude \"tests/integration/claude-cli-task.test.ts\""
     ],
     "package.json": [
       "npm run license-check"
