@@ -19,6 +19,7 @@
  * - FRONTEND_URL: CodeMie frontend URL for sso-autotest profile
  * - CODEMIE_API_DOMAIN: CodeMie API domain for sso-autotest profile
  * - CODEMIE_MODEL: Model name for sso-autotest profile (default: "claude-sonnet-4-6")
+ * - RUN_E2E_TESTS: Set to "true" to enable this test suite (default: skipped)
  */
 
 import { config as loadEnv } from 'dotenv';
@@ -145,7 +146,9 @@ function resolveLongPath(p: string): string {
   }
 }
 
-describe('codemie-claude CLI task execution', () => {
+const INCLUDE_SSO_TESTS = process.env.INCLUDE_SSO_TESTS === 'true';
+
+describe.runIf(INCLUDE_SSO_TESTS)('codemie-claude CLI task execution', () => {
   const getConfigDir = (): string => join(homedir(), '.codemie');
   const getConfigFilePath = (): string => join(getConfigDir(), 'codemie-cli.config.json');
 
