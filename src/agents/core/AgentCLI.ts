@@ -167,8 +167,6 @@ export class AgentCLI {
         process.env.CODEMIE_JWT_TOKEN = options.jwtToken as string;
         process.env.CODEMIE_AUTH_METHOD = 'jwt';
 
-        // When --jwt-token is used without a pre-configured profile (fresh npm install),
-        // apply bearer-auth defaults so validation and provider compatibility checks pass.
         const hasNoConfig = !options.provider
           && !(await ConfigLoader.hasGlobalConfig())
           && !(await ConfigLoader.hasLocalConfig(process.cwd()));
