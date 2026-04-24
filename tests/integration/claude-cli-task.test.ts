@@ -156,6 +156,15 @@ describe.runIf(INCLUDE_SSO_TESTS)('codemie-claude CLI task execution', () => {
       throw new Error(`Expected CLI entry point not found after build: ${CLAUDE_BIN}`);
     }
 
+    // ── Link local build to global PATH ──────────────────────────────────────
+    // Claude fires "codemie hook" via its hooks.json — this must resolve in PATH.
+    // npm link makes the local build's binaries (codemie, codemie-claude, …)
+    // globally available without a separate npm install -g.
+    const linkResult = runCmd('npm', ['link'], { env: cleanEnv(), cwd: repoRoot, timeout: SETUP_TIMEOUT_MS });
+    if (linkResult.status !== 0) {
+      throw new Error(`npm link failed:\n${linkResult.stderr}\n${linkResult.stdout}`);
+    }
+
     // ── Write sso-autotest config ─────────────────────────────────────────────
     mkdirSync(configDir, { recursive: true });
 
