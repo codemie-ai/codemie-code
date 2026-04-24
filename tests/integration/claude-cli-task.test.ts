@@ -4,22 +4,16 @@
  * Migrated from: codemie-sdk/test-harness/.../test_codemie_cli_claude.py
  *
  * This test suite verifies:
- * 1. Installation of @codemieai/code npm package
- * 2. Configuration file creation
- * 3. Claude provider installation
- * 4. Command execution and response validation
- * 5. File creation with task mode and permission handling
+ * 1. Configuration file creation
+ * 2. Command execution and response validation
+ * 3. File creation with task mode and permission handling
  *
  * Environment variables:
  * - DEFAULT_TIMEOUT: Command timeout in seconds (default: 60)
- * - SKIP_CODEMIE_CODE_INSTALL: is taken from process.env.SKIP_CODEMIE_CODE_INSTALL, default is true
- * - CODEMIE_CODE_INSTALL_PATH: Custom path for local npm install/build/link
- * - SKIP_CLAUDE_INSTALL: is taken from process.env.SKIP_CLAUDE_INSTALL, default is true
- * - CLAUDE_VERSION: Claude version to install (default: "latest")
  * - FRONTEND_URL: CodeMie frontend URL for sso-autotest profile
  * - CODEMIE_API_DOMAIN: CodeMie API domain for sso-autotest profile
  * - CODEMIE_MODEL: Model name for sso-autotest profile (default: "claude-sonnet-4-6")
- * - RUN_E2E_TESTS: Set to "true" to enable this test suite (default: skipped)
+ * - INCLUDE_SSO_TESTS: Set to "true" to enable this test suite (default: skipped)
  */
 
 import { config as loadEnv } from 'dotenv';
@@ -36,7 +30,8 @@ import {
   realpathSync,
 } from 'fs';
 import { homedir, tmpdir } from 'os';
-import { join } from 'path';
+import { join, dirname, resolve } from 'path';
+import { fileURLToPath } from 'url';
 import { randomUUID } from 'crypto';
 import { SessionDataSchema } from './models/session.js';
 import { MetricsRecordSchema } from './models/metrics.js';
@@ -89,18 +84,6 @@ function cleanEnv(): NodeJS.ProcessEnv {
 }
 
 /**
- * Check whether a command is available in PATH.
- * Equivalent to Python's shutil.which() used for verification only.
- */
-function isInPath(command: string): boolean {
-  const [cmd, args] = IS_WINDOWS
-    ? (['cmd', ['/c', 'where', command]] as const)
-    : (['which', [command]] as const);
-  const result = spawnSync(cmd, args, { encoding: 'utf-8', timeout: 5000, env: cleanEnv() });
-  return result.status === 0 && Boolean(result.stdout?.trim());
-}
-
-/**
  * Run an external command cross-platform.
  * On Windows, wraps via `cmd /c` to resolve .cmd wrappers from PATH without
  * triggering DEP0190 (shell:true + args array deprecation in Node.js v22+).
@@ -120,19 +103,6 @@ function runCmd(
   });
 }
 
-/** Build a readable error detail string from a spawnSync result. */
-function spawnError(result: ReturnType<typeof spawnSync>): string {
-  return [
-    result.stderr?.toString().trim(),
-    result.stdout?.toString().trim(),
-    result.error?.message,
-    result.signal ? `signal: ${result.signal}` : undefined,
-    result.status == null ? '(process timed out or was killed)' : undefined,
-  ]
-    .filter(Boolean)
-    .join('\n') || '(no output)';
-}
-
 /**
  * Resolve Windows 8.3 short path names to full long paths.
  * Equivalent to ctypes.windll.kernel32.GetLongPathNameW in Python.
@@ -145,6 +115,12 @@ function resolveLongPath(p: string): string {
     return p;
   }
 }
+
+// Repo root is 2 levels up from tests/integration/
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+
+// Path to the local codemie-claude entry point (uses dist/ from this repo)
+const CLAUDE_BIN = join(repoRoot, 'bin', 'codemie-claude.js');
 
 const INCLUDE_SSO_TESTS = process.env.INCLUDE_SSO_TESTS === 'true';
 
@@ -169,35 +145,15 @@ describe.runIf(INCLUDE_SSO_TESTS)('codemie-claude CLI task execution', () => {
       }
     }
 
-    // ── Install @codemieai/code ───────────────────────────────────────────────
-    const skipCodemieInstall = (process.env.SKIP_CODEMIE_CODE_INSTALL ?? 'true') === 'true';
-    const customPath = process.env.CODEMIE_CODE_INSTALL_PATH;
+    // ── Build local dist/ ────────────────────────────────────────────────────
+    // Always rebuild to guarantee dist/ reflects the current branch source.
+    const buildResult = runCmd('npm', ['run', 'build'], { env: cleanEnv(), cwd: repoRoot, timeout: SETUP_TIMEOUT_MS });
+    if (buildResult.status !== 0) {
+      throw new Error(`npm run build failed:\n${buildResult.stderr}\n${buildResult.stdout}`);
+    }
 
-    if (!skipCodemieInstall) {
-      if (customPath) {
-        const installResult = runCmd('npm', ['install'], { env: cleanEnv(), cwd: customPath, timeout: SETUP_TIMEOUT_MS });
-        if (installResult.status !== 0) {
-          throw new Error(`npm install failed: ${spawnError(installResult)}`);
-        }
-
-        const buildResult = runCmd('npm', ['run', 'build'], { env: cleanEnv(), cwd: customPath, timeout: SETUP_TIMEOUT_MS });
-        if (buildResult.status !== 0) {
-          throw new Error(`npm run build failed: ${spawnError(buildResult)}`);
-        }
-
-        const linkResult = runCmd('npm', ['link'], { env: cleanEnv(), cwd: customPath, timeout: SETUP_TIMEOUT_MS });
-        if (linkResult.status !== 0) {
-          throw new Error(`npm link failed: ${spawnError(linkResult)}`);
-        }
-      } else {
-        const installResult = runCmd('npm', ['install', '-g', '@codemieai/code'], {
-          env: cleanEnv(),
-          timeout: SETUP_TIMEOUT_MS,
-        });
-        if (installResult.status !== 0) {
-          throw new Error(`Failed to install @codemieai/code:\n${spawnError(installResult)}`);
-        }
-      }
+    if (!existsSync(CLAUDE_BIN)) {
+      throw new Error(`Expected CLI entry point not found after build: ${CLAUDE_BIN}`);
     }
 
     // ── Write sso-autotest config ─────────────────────────────────────────────
@@ -232,42 +188,6 @@ describe.runIf(INCLUDE_SSO_TESTS)('codemie-claude CLI task execution', () => {
 
     writeFileSync(configFilePath, JSON.stringify(config, null, 2));
 
-    // ── Install Claude provider ───────────────────────────────────────────────
-    const skipClaudeInstall = (process.env.SKIP_CLAUDE_INSTALL ?? 'true') === 'true';
-    if (skipClaudeInstall) return;
-
-    const claudeVersion = process.env.CLAUDE_VERSION ?? 'latest';
-
-    runCmd('codemie', ['uninstall', 'claude'], { env: cleanEnv(), timeout: SETUP_TIMEOUT_MS });
-
-    if (!IS_WINDOWS) {
-      const nativeBinary = join(homedir(), '.local', 'bin', 'claude');
-      if (existsSync(nativeBinary)) {
-        try {
-          rmSync(nativeBinary);
-        } catch {
-          // ignore removal errors
-        }
-      }
-    }
-
-    const claudeInstallResult = runCmd('codemie', ['install', 'claude', claudeVersion], {
-      env: cleanEnv(),
-      input: 'Y\n',  // Answer Y to reinstall prompt if it appears
-      timeout: SETUP_TIMEOUT_MS,
-    });
-
-    if (claudeInstallResult.status !== 0) {
-      // Non-zero is a warning in the Python original, not fatal
-      console.warn(`codemie install claude returned non-zero:\n${spawnError(claudeInstallResult)}`);
-    }
-
-    if (!isInPath('codemie-claude')) {
-      throw new Error(
-        `Claude installation succeeded but codemie-claude command not found in PATH. ` +
-          `Installation output: ${claudeInstallResult.stdout}`,
-      );
-    }
   }, SETUP_TIMEOUT_MS);
 
   // Restore original activeProfile after all tests (equivalent to Python finalizer).
@@ -304,13 +224,14 @@ describe.runIf(INCLUDE_SSO_TESTS)('codemie-claude CLI task execution', () => {
     // Generate unique UUID to track this test session
     const testUuid = randomUUID();
 
-    // Run codemie-claude with --task and --permission-mode flags.
-    // Use a clean environment (strip outer CODEMIE_* session vars, keep CODEMIE_HOME)
-    // so the process reads config from the isolated CODEMIE_HOME directory, not from
-    // the inherited session of the shell running this test.
+    // Run the local codemie-claude entry point (bin/codemie-claude.js → dist/)
+    // so the test always uses the current branch build, not a globally installed binary.
+    // Use a clean environment (strip outer CODEMIE_* session vars) so the process
+    // reads config from ~/.codemie, not the inherited session of the test runner.
     const result = runCmd(
-      'codemie-claude',
+      'node',
       [
+        CLAUDE_BIN,
         '--task',
         `Create java file with helloworld app that prints: ${testUuid}`,
         '--permission-mode',
