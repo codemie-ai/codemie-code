@@ -2,6 +2,7 @@ import type { AgentMetadata, AgentConfig } from '../../core/types.js';
 import { logger } from '../../../utils/logger.js';
 import { getModelConfig, getChatCompletionsModelConfigs, getResponsesApiModelConfigs } from './opencode-model-configs.js';
 import { fetchDynamicModelConfigs } from './opencode-dynamic-models.js';
+import { mergeOpenCodeProviders } from './opencode-config-merger.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
@@ -172,6 +173,29 @@ export const OpenCodePluginMetadata: AgentMetadata = {
         openCodeConfig.plugin = (openCodeConfig.plugin as string[] | undefined) || [];
         (openCodeConfig.plugin as string[]).push(pluginUrl);
         logger.debug(`[opencode] Injected hooks plugin: ${pluginUrl}`);
+      }
+
+      // --- Optional: merge with user's ~/.config/opencode/config.json ---
+      // Activated by `codemie-opencode --merge-providers`. Keeps the user's
+      // additional providers (anthropic, github-copilot, openrouter, ...) so
+      // they can switch between providers inside opencode while still using
+      // CodeMie SSO by default.
+      //
+      // Merge is failure-isolated: on any IO/parse error we log a warning and
+      // fall back to the CodeMie-only config. The user's file is never written.
+      //
+      // Safety: the `codemie-proxy` provider entry is always the freshly
+      // generated one, so the proxy baseURL, auth wiring, and model catalogue
+      // can never be overridden by a stale user-side entry.
+      if (env.CODEMIE_MERGE_PROVIDERS === 'true') {
+        try {
+          await mergeOpenCodeProviders(openCodeConfig);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          logger.warn(
+            `[opencode] --merge-providers failed, continuing with CodeMie-only config: ${message}`,
+          );
+        }
       }
 
       env.OPENCODE_DISABLE_SHARE = 'true';
