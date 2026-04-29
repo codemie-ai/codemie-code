@@ -305,6 +305,55 @@ codemie mcp-proxy <url>  # Stdio-to-HTTP MCP proxy with OAuth
 
 For a full command reference, see the [Commands Documentation](docs/COMMANDS.md).
 
+## Connect Claude Desktop via CodeMie Proxy
+
+Use Claude Desktop 3P through CodeMie proxy routing to capture `claude-desktop` metrics and synced conversations.
+
+### Prerequisites
+
+- `codemie` installed
+- a valid CodeMie SSO profile
+- Claude Desktop 3P installed
+
+### 1. Select the active CodeMie profile
+
+```bash
+codemie profile switch codemie-prod
+```
+
+### 2. Connect Claude Desktop
+
+```bash
+codemie proxy connect desktop
+```
+
+By default this uses your current active CodeMie profile. Override it for one run with:
+
+```bash
+codemie proxy connect desktop --profile codemie-new
+```
+
+### 3. Restart Claude Desktop
+
+Quit and reopen Claude Desktop after the proxy configuration is written.
+
+### 4. Inspect and troubleshoot
+
+```bash
+codemie proxy status
+codemie proxy inspect desktop --limit 5
+codemie proxy stop
+```
+
+### If Claude Desktop was already using Anthropic subscription or another Gateway
+
+1. Quit Claude Desktop.
+2. Sign out or disconnect the previous Anthropic or Gateway provider setup in Claude Desktop.
+3. Run `codemie proxy connect desktop`.
+4. Reopen Claude Desktop.
+
+CodeMie cannot safely log you out from Claude Desktop automatically. If the old provider still appears active, clear it in Claude Desktop first and then reconnect through CodeMie.
+
 
 
 ## Documentation

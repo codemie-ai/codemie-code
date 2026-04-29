@@ -32,6 +32,7 @@ The CodeMie Proxy is a **plugin-based HTTP streaming proxy** that sits between A
 - **Header Management**: CodeMie-specific header injection for traceability
 - **Observability**: Detailed logging and metrics collection
 - **Metrics Sync**: Background sync of session metrics to CodeMie API
+- **Desktop Telemetry**: Local Claude Desktop 3P transcript discovery and conversation sync when daemon mode is enabled
 - **Extensibility**: Plugin architecture for future features
 
 ### 1.2 Key Design Principles
@@ -483,6 +484,19 @@ Proxy Stop
       ├─ Final sync (ensures all pending deltas sent)
       └─ Log: "Final sync completed"
 ```
+
+#### 6.4.3 Claude Desktop 3P Telemetry Runtime
+
+When the proxy daemon is started in Desktop mode, the daemon also starts a local telemetry runtime for Claude Desktop 3P:
+
+- Discovers session metadata under `~/Library/Application Support/Claude-3p/local-agent-mode-sessions/`
+- Reads sibling `audit.jsonl` transcripts for each detected `local_<session>` directory
+- Correlates each local Desktop session to a CodeMie session stored in `~/.codemie/sessions/`
+- Normalizes Desktop events into the existing Claude metrics/conversation processors
+- Syncs pending JSONL metrics and conversations through `SessionSyncer`
+- Sends session lifecycle metrics with client identity `claude-desktop`
+
+This path is intentionally separate from the hook-based `codemie-claude` flow. Claude Desktop does not expose CodeMie-managed lifecycle hooks, so ingestion is file-discovery driven rather than event-callback driven. The shared runtime is generic; client-specific logic lives behind a Desktop adapter so future IDE or desktop clients can plug into the same sync pipeline.
 
 **Components**:
 - MetricsSyncPlugin: Plugin registration and initialization

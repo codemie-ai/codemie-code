@@ -23,6 +23,77 @@ codemie mcp-proxy <url>          # Stdio-to-HTTP MCP proxy with OAuth support
 codemie version                  # Show version information
 ```
 
+## Proxy Commands
+
+```bash
+codemie proxy start              # Start the local proxy daemon
+codemie proxy stop               # Stop the local proxy daemon
+codemie proxy status             # Show daemon status
+codemie proxy connect desktop    # Configure Claude Desktop (3P) to use the local proxy
+codemie proxy inspect desktop    # Inspect Desktop telemetry and sync state
+```
+
+`codemie proxy connect desktop` does more than write the gateway config. When the daemon is started through this path, CodeMie also discovers Claude Desktop 3P local session transcripts from the `Claude-3p` storage directory and syncs metrics plus conversations to CodeMie with client identity `claude-desktop`.
+
+### Claude Desktop 3P
+
+#### `codemie proxy connect desktop`
+
+Connect Claude Desktop 3P to the local CodeMie proxy.
+
+```bash
+codemie proxy connect desktop
+codemie proxy connect desktop --profile codemie-new
+```
+
+Behavior:
+- uses the current active CodeMie profile by default
+- `--profile` overrides for the current run only
+- fails if the resolved profile is not a CodeMie SSO profile
+
+Recommended setup:
+
+```bash
+codemie profile switch codemie-prod
+codemie proxy connect desktop
+```
+
+After the config is written, quit and reopen Claude Desktop.
+
+#### `codemie proxy inspect desktop`
+
+Inspect Claude Desktop 3P proxy readiness and recent discovered sessions.
+
+```bash
+codemie proxy inspect desktop --limit 5
+```
+
+At a high level, this shows:
+- whether the daemon is running
+- which profile and target URL are active
+- whether Claude Desktop storage was found
+- recently discovered Desktop sessions
+- whether sessions were ingested and whether metrics/conversation JSONL files exist
+
+#### Troubleshooting Claude Desktop 3P
+
+```bash
+codemie profile status
+codemie proxy connect desktop
+codemie proxy status
+codemie proxy inspect desktop --limit 5
+codemie proxy stop
+codemie proxy connect desktop
+```
+
+If Claude Desktop still appears connected to Anthropic subscription or another Gateway:
+1. Quit Claude Desktop.
+2. Sign out or clear the previous provider setup in Claude Desktop.
+3. Reconnect with CodeMie.
+4. Reopen Claude Desktop.
+
+CodeMie cannot forcibly log you out from Claude Desktop. It can only write the CodeMie proxy configuration and help you inspect the current integration state.
+
 ### Global Options
 
 ```bash

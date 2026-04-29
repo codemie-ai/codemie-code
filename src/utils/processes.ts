@@ -5,9 +5,9 @@
  * Built on top of the foundational exec utility.
  */
 
-import { exec as childProcessExec } from 'child_process';
-import { promisify } from 'util';
-import os from 'os';
+import { exec as childProcessExec, spawn } from 'node:child_process';
+import { promisify } from 'node:util';
+import os from 'node:os';
 import { logger } from './logger.js';
 import { exec, type ExecOptions, type ExecResult } from './exec.js';
 
@@ -99,6 +99,27 @@ export interface NpmInstallOptions extends NpmOptions {
 export interface NpxRunOptions extends NpmOptions {
   /** Enable interactive mode for user prompts */
   interactive?: boolean;
+}
+
+export interface DetachedSpawnOptions {
+  cwd?: string;
+  env?: NodeJS.ProcessEnv;
+  stdio?: 'ignore' | 'inherit';
+}
+
+export function spawnDetached(
+  command: string,
+  args: string[] = [],
+  options: DetachedSpawnOptions = {}
+): number {
+  const child = spawn(command, args, {
+    cwd: options.cwd,
+    env: options.env,
+    detached: true,
+    stdio: options.stdio ?? 'ignore',
+  });
+  child.unref();
+  return child.pid ?? -1;
 }
 
 /**

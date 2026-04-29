@@ -12,7 +12,8 @@
     "codemie-claude-acp": "./bin/codemie-claude-acp.js",
     "codemie-gemini": "./bin/codemie-gemini.js",
     "codemie-opencode": "./bin/codemie-opencode.js",
-    "codemie-mcp-proxy": "./bin/codemie-mcp-proxy.js"
+    "codemie-mcp-proxy": "./bin/codemie-mcp-proxy.js",
+    "proxy-daemon": "./bin/proxy-daemon.js"
   },
   "files": [
     "dist",
