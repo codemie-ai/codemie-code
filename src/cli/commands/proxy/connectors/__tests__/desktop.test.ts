@@ -47,9 +47,13 @@ describe('buildGatewayConfig', () => {
 });
 
 describe('getDesktopBaseDir', () => {
-  it('points to Claude-3p on the current platform', () => {
+  it.skipIf(process.platform === 'linux')('points to Claude-3p on the current platform', () => {
     const dir = getDesktopBaseDir();
     expect(dir).toMatch(/Claude-3p$/);
+  });
+
+  it.runIf(process.platform === 'linux')('throws ConfigurationError on linux', () => {
+    expect(() => getDesktopBaseDir()).toThrow('not supported on platform');
   });
 
   it('uses APPDATA on windows (simulated)', () => {
