@@ -17,7 +17,7 @@ import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
 import { ProxyContext } from '../proxy-types.js';
 import { logger } from '../../../../../utils/logger.js';
 
-const ALLOWED_AGENTS = ['claude-desktop'];
+const ALLOWED_AGENTS = ['claude-desktop', 'codemie-claude'];
 const THINKING_BLOCK_TYPES = new Set(['thinking', 'redacted_thinking']);
 const THINKING_BETA_PATTERN = /^interleaved-thinking-[^,\s]+$/i;
 

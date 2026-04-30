@@ -1,8 +1,8 @@
 /**
  * Claude Non-Thinking Model Sanitizer Plugin Tests
  *
- * Verifies Claude Desktop requests are sanitized when the selected Claude model
- * does not support extended thinking, such as Claude Haiku.
+ * Verifies Claude API clients are sanitized when the selected Claude model does
+ * not support extended thinking, such as Claude Haiku.
  *
  * @group unit
  */
@@ -75,9 +75,16 @@ describe('ClaudeNonThinkingModelSanitizerPlugin', () => {
       expect(interceptor.name).toBe('claude-non-thinking-model-sanitizer');
     });
 
-    it('throws for codemie-claude', async () => {
-      await expect(plugin.createInterceptor(createPluginContext('codemie-claude')))
-        .rejects.toThrow('Plugin disabled for agent: codemie-claude');
+    it('creates interceptor for codemie-claude', async () => {
+      const interceptor = await plugin.createInterceptor(createPluginContext('codemie-claude'));
+
+      expect(interceptor).toBeDefined();
+      expect(interceptor.name).toBe('claude-non-thinking-model-sanitizer');
+    });
+
+    it('throws for codemie-opencode', async () => {
+      await expect(plugin.createInterceptor(createPluginContext('codemie-opencode')))
+        .rejects.toThrow('Plugin disabled for agent: codemie-opencode');
     });
   });
 
