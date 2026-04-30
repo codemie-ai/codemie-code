@@ -108,12 +108,12 @@
     "url": "https://github.com/codemie-ai/codemie-code/issues"
   },
   "dependencies": {
-    "@aws-sdk/client-bedrock": "^3.949.0",
-    "@aws-sdk/client-bedrock-runtime": "^3.948.0",
-    "@aws-sdk/credential-providers": "^3.948.0",
+    "@aws-sdk/client-bedrock": "^3.1039.0",
+    "@aws-sdk/client-bedrock-runtime": "^3.1039.0",
+    "@aws-sdk/credential-providers": "^3.1039.0",
     "@clack/core": "^0.5.0",
     "@clack/prompts": "^0.11.0",
-    "@codemieai/codemie-opencode": "0.0.46",
+    "@codemieai/codemie-opencode": "0.0.47",
     "@langchain/core": "^1.0.4",
     "@langchain/langgraph": "^1.0.2",
     "@langchain/openai": "^1.1.0",
@@ -121,12 +121,12 @@
     "@modelcontextprotocol/server": "^2.0.0-alpha.2",
     "chalk": "^5.3.0",
     "cli-table3": "^0.6.5",
-    "codemie-sdk": "^0.1.415",
+    "codemie-sdk": "^0.1.428",
     "commander": "^11.1.0",
     "cors": "^2.8.5",
     "dedent": "^1.7.1",
     "dotenv": "^16.3.1",
-    "express": "^5.1.0",
+    "express": "^5.2.1",
     "fast-glob": "^3.3.2",
     "http-proxy-agent": "^7.0.2",
     "https-proxy-agent": "^7.0.5",
@@ -137,7 +137,7 @@
     "open": "^10.2.0",
     "ora": "^7.0.1",
     "strip-ansi": "^7.1.2",
-    "yaml": "^2.3.4",
+    "yaml": "^2.8.3",
     "zod": "^4.1.12"
   },
   "devDependencies": {
@@ -152,13 +152,24 @@
     "@types/node": "^20.10.5",
     "@typescript-eslint/eslint-plugin": "^8.46.2",
     "@typescript-eslint/parser": "^8.46.2",
-    "@vitest/ui": "^4.0.10",
+    "@vitest/ui": "^4.1.5",
     "eslint": "^9.38.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.2.7",
     "tsc-alias": "^1.8.16",
     "typescript": "^5.3.3",
-    "vitest": "^4.0.10"
+    "vitest": "^4.1.5"
+  },
+  "overrides": {
+    "form-data": "^4.0.5",
+    "flatted": "^3.4.2",
+    "fast-xml-parser": "^5.7.2",
+    "path-to-regexp": "^8.4.2",
+    "picomatch": "^4.0.4",
+    "vite": "7.3.2",
+    "micromatch": {
+      "picomatch": "^2.3.2"
+    }
   },
   "engines": {
     "node": ">=20.0.0"
