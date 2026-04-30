@@ -30,6 +30,10 @@ describe('AnthropicSubscriptionTemplate', () => {
 
   it('includes recommended Claude models', () => {
     expect(AnthropicSubscriptionTemplate.recommendedModels).toContain('claude-sonnet-4-6');
+    expect(AnthropicSubscriptionTemplate.recommendedModels).toContain('claude-opus-4-7');
+    expect(AnthropicSubscriptionTemplate.recommendedModels).not.toContain('claude-opus-4-6');
+    expect(AnthropicSubscriptionTemplate.recommendedModels).toContain('claude-haiku-4-5-20251001');
+    expect(AnthropicSubscriptionTemplate.recommendedModels).not.toContain('claude-4-5-haiku');
     expect(AnthropicSubscriptionTemplate.recommendedModels.length).toBeGreaterThan(0);
   });
 
@@ -170,6 +174,38 @@ describe('AnthropicSubscriptionTemplate', () => {
     it('always exports CODEMIE_API_KEY as empty string', () => {
       const env = AnthropicSubscriptionTemplate.exportEnvVars!({} as any);
       expect(env.CODEMIE_API_KEY).toBe('');
+    });
+
+    it('normalizes gateway Haiku aliases to Anthropic-native Haiku for Claude Code', () => {
+      const env = AnthropicSubscriptionTemplate.exportEnvVars!({
+        model: 'claude-4-5-haiku',
+        haikuModel: 'claude-haiku-4-5-20251001',
+      } as any);
+
+      expect(env.CODEMIE_MODEL).toBe('claude-haiku-4-5-20251001');
+      expect(env.CODEMIE_HAIKU_MODEL).toBeUndefined();
+    });
+
+    it('normalizes stale Opus defaults to Claude Code subscription Opus 4.7', () => {
+      const env = AnthropicSubscriptionTemplate.exportEnvVars!({
+        model: 'claude-opus-4-6',
+        opusModel: 'claude-opus-4-6[1m]',
+      } as any);
+
+      expect(env.CODEMIE_MODEL).toBe('claude-opus-4-7');
+      expect(env.CODEMIE_OPUS_MODEL).toBe('claude-opus-4-7[1m]');
+    });
+
+    it('does not rewrite non-Haiku Anthropic subscription models', () => {
+      const env = AnthropicSubscriptionTemplate.exportEnvVars!({
+        model: 'claude-sonnet-4-6',
+        haikuModel: 'claude-haiku-4-5-20251001',
+        opusModel: 'claude-opus-4-7',
+      } as any);
+
+      expect(env.CODEMIE_MODEL).toBeUndefined();
+      expect(env.CODEMIE_HAIKU_MODEL).toBeUndefined();
+      expect(env.CODEMIE_OPUS_MODEL).toBeUndefined();
     });
 
     it('exports CODEMIE_URL and CODEMIE_SYNC_API_URL when codeMieUrl is set', () => {
