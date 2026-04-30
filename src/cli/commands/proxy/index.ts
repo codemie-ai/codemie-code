@@ -87,6 +87,22 @@ async function resolveDesktopProxyConfig(profileName?: string): Promise<{
   );
 }
 
+async function verifySsoCredentials(baseUrl: string, profileName: string): Promise<void> {
+  try {
+    const { CodeMieSSO } = await import('../../../providers/plugins/sso/sso.auth.js');
+    const sso = new CodeMieSSO();
+    const creds = await sso.getStoredCredentials(baseUrl);
+    if (!creds) {
+      console.error(chalk.red(`✗ No SSO credentials found for profile '${profileName}'.`));
+      console.error(`  Run: codemie profile login --url ${baseUrl}`);
+      process.exit(1);
+    }
+  } catch (err) {
+    console.error(chalk.red(`✗ Failed to verify credentials: ${(err as Error).message}`));
+    process.exit(1);
+  }
+}
+
 export function createProxyCommand(): Command {
   const proxy = new Command('proxy');
   proxy.description('Manage the CodeMie local gateway proxy daemon');
@@ -115,20 +131,7 @@ export function createProxyCommand(): Command {
         process.exit(1);
       }
 
-      // Verify SSO credentials exist before spawning
-      try {
-        const { CodeMieSSO } = await import('../../../providers/plugins/sso/sso.auth.js');
-        const sso = new CodeMieSSO();
-        const creds = await sso.getStoredCredentials(config.baseUrl);
-        if (!creds) {
-          console.error(chalk.red(`✗ No SSO credentials found for profile '${config.name ?? 'default'}'.`));
-          console.error(`  Run: codemie profile login --url ${config.baseUrl}`);
-          process.exit(1);
-        }
-      } catch (err) {
-        console.error(chalk.red(`✗ Failed to verify credentials: ${(err as Error).message}`));
-        process.exit(1);
-      }
+      await verifySsoCredentials(config.baseUrl, config.name ?? 'default');
 
       console.log('Starting proxy daemon...');
       const daemonState = await spawnDaemon({
@@ -224,6 +227,7 @@ export function createProxyCommand(): Command {
             `(source: ${profileSource === 'explicit' ? '--profile' : 'active profile'})`
           )
         );
+        await verifySsoCredentials(config.baseUrl, config.name ?? 'default');
         state = await spawnDaemon({
           targetUrl: config.baseUrl,
           provider: config.provider ?? 'ai-run-sso',
