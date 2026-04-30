@@ -26,6 +26,7 @@
   "scripts": {
     "build": "tsc && tsc-alias && npm run copy-plugin",
     "copy-plugin": "node scripts/copy-plugins.js",
+    "prepare:install-artifacts": "node scripts/prepare-install-artifacts.mjs",
     "dev": "tsc --watch",
     "test": "vitest",
     "test:unit": "vitest run src",

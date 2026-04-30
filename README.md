@@ -38,29 +38,15 @@ Perfect for developers seeking a powerful alternative to GitHub Copilot or Curso
 
 ## Quick Start
 
+Install CodeMie using the instructions for your shell, then run:
+
 ```bash
-# Install globally for best experience
-npm install -g @codemieai/code
-
-# 1. Setup (interactive wizard)
 codemie setup
-
-# 2. Check system health
 codemie doctor
-
-# 3. Install an external agent (e.g., Claude Code - latest supported version)
 codemie install claude --supported
-
-# 4. Use the installed agent
 codemie-claude "Review my API code"
-
-# 5. Use the built-in agent
 codemie-code "Analyze this codebase"
-
-# 6. Execute a single task and exit
 codemie --task "Generate unit tests"
-
-# 7. Connect to a remote MCP server (with automatic OAuth)
 claude mcp add my-server -- codemie-mcp-proxy "https://mcp-server.example.com/sse"
 ```
 
@@ -75,16 +61,76 @@ npx @codemieai/code install claude --supported
 
 ## Installation
 
-### Global Installation (Recommended)
+### Native Bootstrap Installers
 
-For the best experience with all features and agent shortcuts:
+For Windows and macOS, use the CodeMie bootstrap installers instead of installing directly with npm. The bootstrap installers are plain scripts stored in this public GitHub repo, so they do not require a Windows-built `.exe` or a private Artifactory mirror.
+
+The bootstrap path is recommended for non-technical users and managed enterprise machines because it:
+
+- avoids PowerShell `npm.ps1` execution-policy failures on Windows,
+- avoids global npm permission errors such as macOS `EACCES`,
+- installs into a user-writable location where possible,
+- checks Node.js, npm, registry access, and CodeMie package visibility before installing,
+- prints actionable remediation when the enterprise npm registry is not configured correctly.
+
+The examples below use GitHub raw URLs from the `main` branch. For reproducible installs, replace `main` with a release tag such as `v0.0.57`. Enterprise teams can mirror the same scripts to Artifactory later by setting `CODEMIE_INSTALL_URL` to the mirrored script directory.
+
+Channel selection is not implemented in the bootstrap scripts yet. To pin a version on Windows PowerShell, pass `-Version 0.0.57`. To pin a version on macOS, Linux, or WSL, set `CODEMIE_PACKAGE_VERSION=0.0.57` before running the install command.
+
+### Windows PowerShell
+
+The Windows bootstrapper installs CodeMie in user-local portable mode by default and calls `npm.cmd` directly, so it does not permanently change PowerShell execution policy.
+
+```powershell
+irm https://raw.githubusercontent.com/codemie-ai/codemie-code/main/install/windows/install.ps1 | iex
+```
+
+To pass explicit options:
+
+```powershell
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/codemie-ai/codemie-code/main/install/windows/install.ps1))) -RegistryUrl https://registry.npmjs.org/
+```
+
+### Windows CMD
+
+Use this fallback when PowerShell copy-paste guidance is not practical:
+
+```cmd
+curl -fsSL https://raw.githubusercontent.com/codemie-ai/codemie-code/main/install/windows/install.cmd -o install.cmd && install.cmd && del install.cmd
+```
+
+### macOS
+
+The macOS bootstrapper uses npm global installation only when it is user-writable. If global npm is not writable, it configures a user-local npm prefix instead.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/codemie-ai/codemie-code/main/install/macos/install.sh | bash
+```
+
+To install a specific package version:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/codemie-ai/codemie-code/main/install/macos/install.sh | env CODEMIE_PACKAGE_VERSION=0.0.57 bash
+```
+
+### Linux and WSL
+
+Use the same shell bootstrapper for Linux and WSL:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/codemie-ai/codemie-code/main/install/macos/install.sh | bash
+```
+
+### npm Fallback
+
+Use npm fallback only when Node.js 20+ and npm global installs are already configured correctly:
 
 ```bash
 npm install -g @codemieai/code
 codemie --help
 ```
 
-### Local/Project Installation
+### Local/Project npm Installation
 
 For project-specific usage:
 
@@ -96,6 +142,16 @@ npx @codemieai/code --help
 ```
 
 **Note:** Agent shortcuts (`codemie-claude`, `codemie-code`, `codemie-opencode`, etc.) require global installation.
+
+### Installation Troubleshooting
+
+If PowerShell reports that `npm.ps1` cannot be loaded, use the CodeMie bootstrap installer. It calls `npm.cmd` directly and does not permanently change your execution policy.
+
+If npm reports `EACCES` on macOS, use the bootstrap installer or configure npm to use a user-local prefix.
+
+If npm reports `404 Not Found`, verify that you are installing `@codemieai/code`, not `codemie`, and that your enterprise npm virtual registry exposes the `@codemieai` scope.
+
+If the installer says `@codemieai/code` is not visible in the registry, ask IT to expose the package through the approved virtual npm repository.
 
 ### From Source
 
