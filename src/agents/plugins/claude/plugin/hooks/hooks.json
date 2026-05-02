@@ -18,6 +18,24 @@
             "command": "~/.codemie/claude-plugin/scripts/bash/rtk-baseline.sh"
           }
         ]
+      },
+      {
+        "matcher": "compact|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.codemie/claude-plugin/scripts/bash/handoff-session-resume.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "compact|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.codemie/claude-plugin/scripts/bash/cbm-session-reminder.sh"
+          }
+        ]
       }
     ],
     "SessionEnd": [
@@ -94,6 +112,21 @@
             "type": "command",
             "command": "codemie hook",
             "timeout": 2
+          },
+          {
+            "type": "command",
+            "command": "~/.codemie/claude-plugin/scripts/bash/handoff-precompact.sh",
+            "timeout": 90
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.codemie/claude-plugin/scripts/bash/cbm-mcp-marker.sh"
           }
         ]
       }
@@ -104,7 +137,20 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.codemie/claude-plugin/scripts/bash/rtk-auto-wrapper.sh"
+            "command": "~/.codemie/claude-plugin/scripts/bash/rtk-rewrite.sh"
+          },
+          {
+            "type": "command",
+            "command": "~/.codemie/claude-plugin/scripts/bash/bash-ban-raw-tools.sh"
+          }
+        ]
+      },
+      {
+        "matcher": "Grep|Glob|Read|Search",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.codemie/claude-plugin/scripts/bash/cbm-code-discovery-gate.sh"
           }
         ]
       }
