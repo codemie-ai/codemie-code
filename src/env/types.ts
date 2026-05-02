@@ -97,6 +97,9 @@ export interface ProviderProfile {
   assistants?: {
     maxHistoryMessages?: number; // Maximum conversation turns to load (default: 10, which loads 20 messages = 10 user + 10 AI)
   };
+
+  // Claude Code-specific settings
+  claudeAutocompactPct?: number; // Auto-compact threshold percentage (sets CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, default: 70)
 }
 
 /**
