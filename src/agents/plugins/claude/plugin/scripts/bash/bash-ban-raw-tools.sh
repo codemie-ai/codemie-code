@@ -3,9 +3,8 @@
 # Forces Read/Grep/Glob tools (which compress output).
 # Silently skipped if jq not installed.
 # Escape hatch: touch /tmp/bash-raw-unlock (expires 10 min).
-set -euo pipefail
-
 command -v jq &>/dev/null || exit 0
+set -euo pipefail
 
 INPUT=$(cat)
 TOOL=$(echo "$INPUT" | jq -r '.tool_name // empty')
