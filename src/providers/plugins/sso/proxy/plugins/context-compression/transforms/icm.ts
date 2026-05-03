@@ -1,11 +1,18 @@
 import { Tokenizer } from '../tokenizer/tiktoken.js';
 import { ContentRouter } from './content-router.js';
 import { CompressionResult } from '../compressors/types.js';
+import { CompressConfig, DEFAULT_COMPRESS_CONFIG } from './config.js';
+import { CompressionHooks, CompressionContext, CompressionEvent } from './hooks.js';
 
 export interface ICMMessage {
   role: 'user' | 'assistant' | 'tool' | 'system';
   content: string | Array<{ type: string; text?: string; [key: string]: unknown }>;
   [key: string]: unknown;
+}
+
+export interface ICMResult {
+  messages: ICMMessage[];
+  cacheKeys: string[];
 }
 
 export interface ICMConfig {
@@ -59,6 +66,63 @@ async function compressMessage(
   };
 }
 
+function buildFrozenRoles(cfg: CompressConfig): Set<string> {
+  const frozen = new Set<string>();
+  if (!cfg.compressSystemMessages) frozen.add('system');
+  if (!cfg.compressUserMessages) frozen.add('user');
+  if (cfg.protectAnalysisContext) frozen.add('tool');
+  return frozen;
+}
+
+export enum ContextStrategy {
+  NONE = 'none',
+  COMPRESS_FIRST = 'compress',
+  DROP_BY_SCORE = 'drop_scored',
+}
+
+export interface MessageScore {
+  index: number;
+  total: number;
+  recencyScore: number;
+  errorScore: number;
+}
+
+export interface DropCandidate {
+  indices: number[];
+  score: number;
+  position: number;
+}
+
+export function scoreMessage(
+  msg: ICMMessage,
+  index: number,
+  total: number,
+): MessageScore {
+  const recencyScore = total > 1 ? index / (total - 1) : 1.0;
+  const text = extractText(msg.content).toLowerCase();
+  let errorScore = 0;
+  const errorTerms = ['error', 'exception', 'fatal', 'traceback', 'fail', 'timeout', 'abort', 'denied', 'rejected'];
+  for (const term of errorTerms) {
+    if (text.includes(term)) { errorScore = 0.5; break; }
+  }
+  const total_ = Math.min(1.0, recencyScore * 0.7 + errorScore * 0.3);
+  return { index, total: total_, recencyScore, errorScore };
+}
+
+export function buildDropCandidates(
+  messages: ICMMessage[],
+  protected_: Set<number>,
+): DropCandidate[] {
+  const candidates: DropCandidate[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    if (protected_.has(i)) continue;
+    const score = scoreMessage(messages[i], i, messages.length);
+    candidates.push({ indices: [i], score: score.total, position: i });
+  }
+  candidates.sort((a, b) => a.score - b.score || a.position - b.position);
+  return candidates;
+}
+
 export class IntelligentContextManager {
   private readonly router: ContentRouter;
   private readonly tokenizer: Tokenizer;
@@ -70,60 +134,114 @@ export class IntelligentContextManager {
     this.config = { ...DEFAULT_CONFIG, ...config };
   }
 
-  async apply(messages: ICMMessage[], contextLimit?: number): Promise<ICMMessage[]> {
+  async apply(
+    messages: ICMMessage[],
+    contextLimit?: number,
+    compressConfig?: CompressConfig,
+    hooks?: CompressionHooks,
+    requestId?: string,
+  ): Promise<ICMResult> {
     const limit = contextLimit ?? this.config.contextLimit;
-    const { frozenRoles, tailSize } = this.config;
+    const cfg = compressConfig ?? DEFAULT_COMPRESS_CONFIG;
 
     let current = [...messages];
-    let tokenCount = await this.tokenizer.countMessages(current);
 
-    const isFrozen = (msg: ICMMessage): boolean => frozenRoles.includes(msg.role);
+    if (hooks?.preCompress) {
+      const ctx: CompressionContext = { messages: current, config: cfg, requestId };
+      current = await hooks.preCompress(ctx);
+    }
+
+    const cacheKeys: string[] = [];
+
+    let currentTokens = await this.tokenizer.countMessages(current);
+    const originalTokens = currentTokens;
+    if (currentTokens <= cfg.minTokensToCompress) {
+      return { messages: current, cacheKeys };
+    }
+
+    const frozenRoles = buildFrozenRoles(cfg);
+    const isFrozen = (msg: ICMMessage): boolean => frozenRoles.has(msg.role);
 
     const mutableIndices = current
       .map((msg, idx) => ({ msg, idx }))
       .filter(({ msg }) => !isFrozen(msg))
       .map(({ idx }) => idx);
 
-    const tailIndices = new Set(mutableIndices.slice(-tailSize));
+    const protectCount = cfg.protectRecent;
+    const tailIndices = new Set(mutableIndices.slice(-protectCount));
 
     // Phase 1: compress tail messages (most recent) — only when already over context limit
     for (const idx of tailIndices) {
-      if (tokenCount <= limit) break;
+      if (currentTokens <= limit) break;
       const outcome = await compressMessage(current[idx], this.router);
       if (outcome !== null) {
+        if (outcome.result.cacheKey) cacheKeys.push(outcome.result.cacheKey);
+        const event: CompressionEvent = {
+          messageIndex: idx,
+          role: current[idx].role,
+          originalTokens: outcome.result.originalTokens,
+          compressedTokens: outcome.result.compressedTokens,
+          compressionRatio: outcome.result.compressionRatio,
+          cacheKey: outcome.result.cacheKey,
+        };
         current[idx] = outcome.message;
-        tokenCount = await this.tokenizer.countMessages(current);
+        currentTokens = await this.tokenizer.countMessages(current);
+        if (hooks?.postCompress) await hooks.postCompress(event);
+        if (cfg.targetRatio !== null && currentTokens / originalTokens <= cfg.targetRatio) break;
       }
     }
 
     const nonTailMutableIndices = mutableIndices.filter(idx => !tailIndices.has(idx));
 
-    // Phase 2: compress non-tail (older) messages — always runs when tokenSavingMode is on
+    // Phase 2: compress non-tail (older) messages — always runs when compression is enabled
     for (const idx of nonTailMutableIndices) {
       const outcome = await compressMessage(current[idx], this.router);
       if (outcome !== null) {
+        if (outcome.result.cacheKey) cacheKeys.push(outcome.result.cacheKey);
+        const event: CompressionEvent = {
+          messageIndex: idx,
+          role: current[idx].role,
+          originalTokens: outcome.result.originalTokens,
+          compressedTokens: outcome.result.compressedTokens,
+          compressionRatio: outcome.result.compressionRatio,
+          cacheKey: outcome.result.cacheKey,
+        };
         current[idx] = outcome.message;
-        tokenCount = await this.tokenizer.countMessages(current);
+        currentTokens = await this.tokenizer.countMessages(current);
+        if (hooks?.postCompress) await hooks.postCompress(event);
+        if (cfg.targetRatio !== null && currentTokens / originalTokens <= cfg.targetRatio) break;
       }
     }
 
-    tokenCount = await this.tokenizer.countMessages(current);
-    if (tokenCount <= limit) {
-      return current;
+    currentTokens = await this.tokenizer.countMessages(current);
+    if (currentTokens <= limit) {
+      return { messages: current, cacheKeys };
     }
 
-    // Build list of droppable messages by reference (before any filtering)
-    const droppableMessages = [...nonTailMutableIndices, ...Array.from(tailIndices)]
-      .map(idx => current[idx]);
-    // non-tail first (oldest), then tail (oldest-within-tail) — Set iteration preserves insertion order (ES2015+)
+    // Phase 3: drop messages by score (lowest first)
+    const protected_ = new Set<number>();
+    current.forEach((msg, idx) => {
+      if (isFrozen(msg)) protected_.add(idx);
+    });
+    // Protect tail
+    for (const idx of tailIndices) protected_.add(idx);
 
-    for (const msg of droppableMessages) {
-      if (tokenCount <= limit) break;
-      current = current.filter(m => m !== msg);
-      tokenCount = await this.tokenizer.countMessages(current);
+    const dropCandidates = buildDropCandidates(current, protected_);
+    let biasedCandidates = dropCandidates;
+    if (hooks?.computeBiases) {
+      const biases = await hooks.computeBiases(current);
+      biasedCandidates = [...dropCandidates].sort(
+        (a, b) => (biases[a.indices[0]] ?? a.score) - (biases[b.indices[0]] ?? b.score),
+      );
+    }
+    for (const candidate of biasedCandidates) {
+      if (currentTokens <= limit) break;
+      const toRemove = new Set(candidate.indices);
+      current = current.filter((_, idx) => !toRemove.has(idx));
+      currentTokens = await this.tokenizer.countMessages(current);
     }
 
-    return current;
+    return { messages: current, cacheKeys };
   }
 }
 
