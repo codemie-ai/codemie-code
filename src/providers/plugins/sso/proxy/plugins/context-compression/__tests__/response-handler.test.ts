@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { CCRResponseHandler, ResponseHandlerConfig } from '../ccr/response_handler.js';
+import { CCRResponseHandler } from '../ccr/response_handler.js';
 import { createCompressionStore } from '../ccr/store.js';
 
 function makeAnthropicResponse(withCcrToolCall: boolean, hash = 'testhash') {
@@ -51,6 +51,16 @@ describe('CCRResponseHandler', () => {
 
     expect(result).toEqual(finalResponse);
     expect(apiCall).toHaveBeenCalledTimes(1);
+
+    // Verify the tool_result message shape passed to apiCallFn
+    const calledMessages = apiCall.mock.calls[0][0] as Array<Record<string, unknown>>;
+    const userTurn = calledMessages.find((m) => m['role'] === 'user');
+    expect(userTurn).toBeDefined();
+    const toolResults = userTurn!['content'] as Array<Record<string, unknown>>;
+    expect(toolResults[0]['type']).toBe('tool_result');
+    expect(toolResults[0]['tool_use_id']).toBe('toolu_01abc');
+    expect(typeof toolResults[0]['content']).toBe('string');
+    expect(toolResults[0]['content'] as string).toContain('original full content');
   });
 
   it('returns error result when hash not found in store', async () => {
