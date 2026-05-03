@@ -1,5 +1,6 @@
 import { Compressor, CompressionResult } from './types.js';
 import { Tokenizer } from '../tokenizer/tiktoken.js';
+import type { CcrStore } from '../ccr/types.js';
 
 export interface DiffCompressorConfig {
   maxContextLines: number;
@@ -35,6 +36,8 @@ const DEFAULT_CONFIG: DiffCompressorConfig = {
   maxFiles: 20,
   minLinesForCompression: 50,
 };
+
+const CCR_RATIO_THRESHOLD = 0.6;
 
 const PRIORITY_PATTERNS = [
   /\b(error|exception|fail(?:ed|ure)?|fatal|critical|crash|panic)\b/i,
@@ -320,6 +323,7 @@ export class DiffCompressor implements Compressor {
   constructor(
     private tokenizer: Tokenizer,
     private config: DiffCompressorConfig = DEFAULT_CONFIG,
+    private store?: CcrStore,
   ) {}
 
   async compress(content: string, contextHint = ''): Promise<CompressionResult> {
@@ -361,15 +365,22 @@ export class DiffCompressor implements Compressor {
     );
     const compressedTokens = await this.tokenizer.countText(compressed);
 
-    return {
-      compressed,
-      originalTokens,
-      compressedTokens,
-      compressionRatio: originalTokens > 0 ? compressedTokens / originalTokens : 1.0,
-    };
+    const compressionRatio = originalTokens > 0 ? compressedTokens / originalTokens : 1.0;
+    let cacheKey: string | undefined;
+    let finalCompressed = compressed;
+    if (this.store && compressionRatio < CCR_RATIO_THRESHOLD) {
+      cacheKey = this.store.store(content, compressed, {
+        originalTokens,
+        compressedTokens,
+        compressionStrategy: 'diff',
+      });
+      const saved = originalTokens - compressedTokens;
+      finalCompressed = `[COMPRESSED id=${cacheKey} tokens_saved=${saved} type=diff]\n${compressed}`;
+    }
+    return { compressed: finalCompressed, originalTokens, compressedTokens, compressionRatio, cacheKey };
   }
 }
 
-export function createDiffCompressor(tokenizer: Tokenizer, config?: Partial<DiffCompressorConfig>): DiffCompressor {
-  return new DiffCompressor(tokenizer, { ...DEFAULT_CONFIG, ...config });
+export function createDiffCompressor(tokenizer: Tokenizer, config?: Partial<DiffCompressorConfig>, store?: CcrStore): DiffCompressor {
+  return new DiffCompressor(tokenizer, { ...DEFAULT_CONFIG, ...config }, store);
 }

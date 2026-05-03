@@ -1,5 +1,6 @@
 import { Compressor, CompressionResult } from './types.js';
 import { Tokenizer } from '../tokenizer/tiktoken.js';
+import type { CcrStore } from '../ccr/types.js';
 
 export interface LogCompressorConfig {
   maxLines: number;
@@ -14,6 +15,8 @@ const DEFAULT_CONFIG: LogCompressorConfig = {
   minLinesForCompression: 50,
   deduplicateThreshold: 3,
 };
+
+const CCR_RATIO_THRESHOLD = 0.6;
 
 const ERROR_PATTERN = /\b(error|exception|traceback|fatal|critical|panic)\b/i;
 const WARN_PATTERN = /\bwarn(?:ing)?\b/i;
@@ -186,6 +189,7 @@ export class LogCompressor implements Compressor {
   constructor(
     private tokenizer: Tokenizer,
     private config: LogCompressorConfig = DEFAULT_CONFIG,
+    private store?: CcrStore,
   ) {}
 
   async compress(content: string, _contextHint?: string): Promise<CompressionResult> {
@@ -216,15 +220,22 @@ export class LogCompressor implements Compressor {
       };
     }
 
-    return {
-      compressed,
-      originalTokens,
-      compressedTokens,
-      compressionRatio: originalTokens > 0 ? compressedTokens / originalTokens : 1.0,
-    };
+    const compressionRatio = originalTokens > 0 ? compressedTokens / originalTokens : 1.0;
+    let cacheKey: string | undefined;
+    let finalCompressed = compressed;
+    if (this.store && compressionRatio < CCR_RATIO_THRESHOLD) {
+      cacheKey = this.store.store(content, compressed, {
+        originalTokens,
+        compressedTokens,
+        compressionStrategy: 'log',
+      });
+      const saved = originalTokens - compressedTokens;
+      finalCompressed = `[COMPRESSED id=${cacheKey} tokens_saved=${saved} type=log]\n${compressed}`;
+    }
+    return { compressed: finalCompressed, originalTokens, compressedTokens, compressionRatio, cacheKey };
   }
 }
 
-export function createLogCompressor(tokenizer: Tokenizer, config?: Partial<LogCompressorConfig>): LogCompressor {
-  return new LogCompressor(tokenizer, { ...DEFAULT_CONFIG, ...config });
+export function createLogCompressor(tokenizer: Tokenizer, config?: Partial<LogCompressorConfig>, store?: CcrStore): LogCompressor {
+  return new LogCompressor(tokenizer, { ...DEFAULT_CONFIG, ...config }, store);
 }

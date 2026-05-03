@@ -1,5 +1,6 @@
 import { Compressor, CompressionResult } from './types.js';
 import { Tokenizer } from '../tokenizer/tiktoken.js';
+import type { CcrStore } from '../ccr/types.js';
 
 export interface SearchCompressorConfig {
   maxResults: number;
@@ -21,6 +22,8 @@ const DEFAULT_CONFIG: SearchCompressorConfig = {
   minLinesForCompression: 20,
   groupByFile: true,
 };
+
+const CCR_RATIO_THRESHOLD = 0.6;
 
 function parseGrepLine(line: string): { file?: string; lineNum?: number; content: string } | null {
   // filename:linenum:content
@@ -186,6 +189,7 @@ export class SearchCompressor implements Compressor {
   constructor(
     private tokenizer: Tokenizer,
     private config: SearchCompressorConfig = DEFAULT_CONFIG,
+    private store?: CcrStore,
   ) {}
 
   async compress(content: string, _contextHint?: string): Promise<CompressionResult> {
@@ -224,15 +228,22 @@ export class SearchCompressor implements Compressor {
       return { compressed: content, originalTokens, compressedTokens: originalTokens, compressionRatio: 1.0 };
     }
 
-    return {
-      compressed,
-      originalTokens,
-      compressedTokens,
-      compressionRatio: originalTokens > 0 ? compressedTokens / originalTokens : 1.0,
-    };
+    const compressionRatio = originalTokens > 0 ? compressedTokens / originalTokens : 1.0;
+    let cacheKey: string | undefined;
+    let finalCompressed = compressed;
+    if (this.store && compressionRatio < CCR_RATIO_THRESHOLD) {
+      cacheKey = this.store.store(content, compressed, {
+        originalTokens,
+        compressedTokens,
+        compressionStrategy: 'search',
+      });
+      const saved = originalTokens - compressedTokens;
+      finalCompressed = `[COMPRESSED id=${cacheKey} tokens_saved=${saved} type=search]\n${compressed}`;
+    }
+    return { compressed: finalCompressed, originalTokens, compressedTokens, compressionRatio, cacheKey };
   }
 }
 
-export function createSearchCompressor(tokenizer: Tokenizer, config?: Partial<SearchCompressorConfig>): SearchCompressor {
-  return new SearchCompressor(tokenizer, { ...DEFAULT_CONFIG, ...config });
+export function createSearchCompressor(tokenizer: Tokenizer, config?: Partial<SearchCompressorConfig>, store?: CcrStore): SearchCompressor {
+  return new SearchCompressor(tokenizer, { ...DEFAULT_CONFIG, ...config }, store);
 }
