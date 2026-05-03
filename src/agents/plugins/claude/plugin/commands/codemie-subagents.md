@@ -1,3 +1,8 @@
+---
+description: Generate project-specific subagent files by analyzing the codebase and existing guides, then writing optimized definitions to .claude/agents/.
+allowed-tools: Bash, Read, Glob, Grep, Write
+---
+
 # Codemie Subagents - Generate Project-Specific Subagent Files
 
 **Command Name**: `codemie-subagents`

@@ -1,3 +1,8 @@
+---
+description: Initialize documentation for a project using CodeMie approach — analyze structure and generate AI-optimized guides.
+allowed-tools: Bash, Read, Glob, Grep, Write, Edit
+---
+
 # Codemie Init - Generate Project Documentation
 
 **Command Name**: `codemie-init`

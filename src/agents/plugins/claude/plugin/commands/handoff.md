@@ -51,12 +51,6 @@ Write current session state to `docs/handoff-context.md` as strict JSON. No prea
 - **Pure JSON**: file must parse. No headings, no fences, no trailing prose.
 - **Overwrite**: always overwrite. One handoff per project.
 
-Then commit:
-```bash
-git -C /Users/Nikita_Levyankov/repos/codemie-ai/codemie-code add src/agents/plugins/claude/plugin/commands/handoff.md
-git -C /Users/Nikita_Levyankov/repos/codemie-ai/codemie-code commit -m "feat(agents): add /handoff slash command"
-```
-
-Verify: `head -3` shows the `---` frontmatter delimiters and the description line.
+Verify: `head -3` of the output file shows the `---` frontmatter delimiters and the description line.
 
 Report DONE or BLOCKED.
