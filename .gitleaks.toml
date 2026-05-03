@@ -14,5 +14,6 @@ paths = [
   '''dist/''',
   '''\.idea/''',
   '''\.mcp\.json''',
-  '''docs/superpowers/plans/'''
+  '''docs/superpowers/plans/''',
+  '''docs/handoff-context\.md$'''
 ]

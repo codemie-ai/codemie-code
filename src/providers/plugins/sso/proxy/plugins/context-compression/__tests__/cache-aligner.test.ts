@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { createCacheAligner } from '../transforms/cache-aligner.js';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { createCacheAligner, CacheAligner } from '../transforms/cache-aligner.js';
 import type { ICMMessage } from '../transforms/icm.js';
 
 function systemMsg(text: string): ICMMessage {
@@ -7,7 +7,11 @@ function systemMsg(text: string): ICMMessage {
 }
 
 describe('CacheAligner — Tier 1 categories', () => {
-  const aligner = createCacheAligner({ enabled: true });
+  let aligner: CacheAligner;
+
+  beforeEach(() => {
+    aligner = createCacheAligner({ enabled: true });
+  });
 
   it('strips ISO 8601 timestamps', () => {
     const { messages } = aligner.align([systemMsg('Last run: 2025-11-15T08:30:00Z')]);
@@ -46,9 +50,13 @@ describe('CacheAligner — Tier 1 categories', () => {
   });
 
   it('strips structural label=value patterns for dynamic labels', () => {
-    const { messages } = aligner.align([systemMsg('session_id: user-abc-123\nupdated: 2024-01-01')]);
-    const content = messages[0].content as string;
-    expect(content).not.toContain('user-abc-123');
+    const { messages: m1 } = aligner.align([systemMsg('session_id: user-abc-123')]);
+    expect(m1[0].content as string).not.toContain('user-abc-123');
+    expect(m1[0].content as string).toContain('<dynamic>');
+
+    const { messages: m2 } = aligner.align([systemMsg('request_id=req_XYZ9876543')]);
+    expect(m2[0].content as string).not.toContain('req_XYZ9876543');
+    expect(m2[0].content as string).toContain('<dynamic>');
   });
 
   it('preserves static system instructions unchanged', () => {

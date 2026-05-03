@@ -16,7 +16,7 @@ const DEFAULT_DYNAMIC_PATTERNS: RegExp[] = [
   // ISO 8601 datetime (must come before plain date)
   /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})/g,
   // ISO 8601 date
-  /\d{4}-\d{2}-\d{2}/g,
+  /\b\d{4}-\d{2}-\d{2}\b/g,
   // UUID
   /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi,
   // Unix timestamp (standalone 10-digit number starting with 1)
@@ -128,7 +128,7 @@ export class CacheAligner {
     // Structural label=value detection
     for (const label of this.config.dynamicLabels) {
       const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const labelPattern = new RegExp(`(^|\\s)(${escapedLabel})[:\\s=]\\s*(\\S+)`, 'gim');
+      const labelPattern = new RegExp(`(^|\\s)(${escapedLabel})[:=]\\s*(\\S+)`, 'gim');
       cleaned = cleaned.replace(labelPattern, (match, prefix, lbl, value) => {
         // Skip if value is already a placeholder
         if (value === this.config.placeholder) return match;
@@ -176,8 +176,8 @@ export class CacheAligner {
     return collapsed.join('\n').trim();
   }
 
-  private reinsertDynamic(messages: ICMMessage[], dynamic: string[]): void {
-    const note = `[${dynamic.length} dynamic value(s) extracted]`;
+  private reinsertDynamic(messages: ICMMessage[], extracted: string[]): void {
+    const note = `[${extracted.length} dynamic value(s) extracted]`;
 
     const separator = this.config.dynamicTailSeparator;
 
