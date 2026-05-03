@@ -3,6 +3,7 @@ import { ContentRouter } from './content-router.js';
 import { CompressionResult } from '../compressors/types.js';
 import { CompressConfig, DEFAULT_COMPRESS_CONFIG } from './config.js';
 import { CompressionHooks, CompressionContext, CompressionEvent } from './hooks.js';
+import { findToolUnits, getToolUnitIndices } from './rolling-window.js';
 
 export interface ICMMessage {
   role: 'user' | 'assistant' | 'tool' | 'system';
@@ -119,12 +120,26 @@ export function buildDropCandidates(
   messages: ICMMessage[],
   protected_: Set<number>,
 ): DropCandidate[] {
+  const units = findToolUnits(messages);
+  const toolUnitIndices = getToolUnitIndices(units);
   const candidates: DropCandidate[] = [];
+
+  // Add tool units as atomic candidates
+  for (const unit of units) {
+    if (protected_.has(unit.assistantIdx)) continue;
+    const allIdxs = [unit.assistantIdx, ...unit.responseIndices];
+    const scores = allIdxs.map(idx => scoreMessage(messages[idx], idx, messages.length).total);
+    const avgScore = scores.reduce((a, b) => a + b, 0) / scores.length;
+    candidates.push({ indices: allIdxs, score: avgScore, position: unit.assistantIdx });
+  }
+
+  // Add non-tool-unit messages
   for (let i = 0; i < messages.length; i++) {
-    if (protected_.has(i)) continue;
+    if (protected_.has(i) || toolUnitIndices.has(i)) continue;
     const score = scoreMessage(messages[i], i, messages.length);
     candidates.push({ indices: [i], score: score.total, position: i });
   }
+
   candidates.sort((a, b) => a.score - b.score || a.position - b.position);
   return candidates;
 }
