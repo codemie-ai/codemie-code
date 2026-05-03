@@ -74,6 +74,12 @@ function buildFrozenRoles(cfg: CompressConfig): Set<string> {
   return frozen;
 }
 
+/**
+ * Strategy enum for future caller-controlled phase selection.
+ * Currently Phase 3 always uses DROP_BY_SCORE. This enum is exported
+ * to allow callers to express intent without breaking changes when
+ * the strategy parameter is added to `apply()`.
+ */
 export enum ContextStrategy {
   NONE = 'none',
   COMPRESS_FIRST = 'compress',
@@ -236,8 +242,8 @@ export class IntelligentContextManager {
     }
     for (const candidate of biasedCandidates) {
       if (currentTokens <= limit) break;
-      const toRemove = new Set(candidate.indices);
-      current = current.filter((_, idx) => !toRemove.has(idx));
+      const snapshots = candidate.indices.map(i => current[i]);
+      current = current.filter(m => !snapshots.includes(m));
       currentTokens = await this.tokenizer.countMessages(current);
     }
 

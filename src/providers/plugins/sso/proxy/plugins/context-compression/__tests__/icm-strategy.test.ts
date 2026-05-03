@@ -39,14 +39,16 @@ describe('scoreMessage', () => {
 describe('buildDropCandidates', () => {
   it('returns candidates sorted by score ascending (lowest first to drop first)', () => {
     const msgs: ICMMessage[] = [
-      { role: 'user', content: 'error: fatal crash' },     // index 0, high score
+      { role: 'user', content: 'error: fatal crash' },     // index 0, low total (0 recency, 0.5 error → 0.15)
       { role: 'assistant', content: 'hi there' },           // index 1, low score
       { role: 'user', content: 'another message here' },    // index 2, medium score
     ];
     const protected_ = new Set<number>([]);
     const candidates = buildDropCandidates(msgs, protected_);
-    // First candidate should have lowest score
-    expect(candidates[0].score).toBeLessThanOrEqual(candidates[candidates.length - 1].score);
+    // All candidates in ascending score order
+    for (let i = 1; i < candidates.length; i++) {
+      expect(candidates[i].score).toBeGreaterThanOrEqual(candidates[i - 1].score);
+    }
   });
 
   it('excludes protected indices from candidates', () => {
