@@ -351,16 +351,26 @@ export class ConfigLoader {
   /**
    * Add or update a profile
    */
-  static async saveProfile(profileName: string, profile: ProviderProfile): Promise<void> {
-    const config = await this.loadMultiProviderConfig();
-
-    // Set profile name
+  static async saveProfile(profileName: string, profile: ProviderProfile, workingDir: string = process.cwd()): Promise<void> {
     profile.name = profileName;
 
-    // Add or update profile
+    const hasLocal = await this.hasLocalConfig(workingDir);
+
+    if (hasLocal) {
+      const localConfigPath = path.join(workingDir, this.LOCAL_CONFIG);
+      const localConfig = await this.loadJsonConfig(localConfigPath);
+
+      if (isMultiProviderConfig(localConfig) && localConfig.profiles[profileName]) {
+        localConfig.profiles[profileName] = profile;
+        await fs.writeFile(localConfigPath, JSON.stringify(localConfig, null, 2), 'utf-8');
+        return;
+      }
+    }
+
+    // Save to global config
+    const config = await this.loadMultiProviderConfig();
     config.profiles[profileName] = profile;
 
-    // If this is the first profile, make it active
     if (Object.keys(config.profiles).length === 1) {
       config.activeProfile = profileName;
     }

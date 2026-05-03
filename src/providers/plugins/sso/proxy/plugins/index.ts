@@ -16,6 +16,7 @@ import { RequestSanitizerPlugin } from './request-sanitizer.plugin.js';
 import { ClaudeThinkingTransformerPlugin } from './claude-thinking-transformer.plugin.js';
 import { LoggingPlugin } from './logging.plugin.js';
 import { SSOSessionSyncPlugin } from './sso.session-sync.plugin.js';
+import { contextCompressionPlugin } from './context-compression/index.js';
 
 /**
  * Register core plugins
@@ -35,6 +36,7 @@ export function registerCorePlugins(): void {
   registry.register(new HeaderInjectionPlugin());
   registry.register(new LoggingPlugin()); // Always enabled - logs to log files at INFO level
   registry.register(new SSOSessionSyncPlugin()); // Priority 100 - syncs sessions via multiple processors
+  registry.register(contextCompressionPlugin);   // Priority 50 - compresses messages when tokenSavingMode enabled
 }
 
 // Auto-register on import

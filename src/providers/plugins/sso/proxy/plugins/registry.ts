@@ -58,6 +58,11 @@ export class PluginRegistry {
       }
     }
 
+    const pluginSummary = enabledPlugins
+      .map(p => `${p.name || p.id}(priority:${p.priority})`)
+      .join(', ');
+    logger.info(`[PluginRegistry] ${interceptors.length} plugin(s) registered: ${pluginSummary}`);
+
     return interceptors;
   }
 

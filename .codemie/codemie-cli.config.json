@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "activeProfile": "codemie-prod",
+  "activeProfile": "epm-cdme",
   "profiles": {
     "epm-cdme": {
       "codeMieProject": "epm-cdme",
@@ -41,7 +41,10 @@
           "registeredAt": "2026-03-18T18:38:32.181Z",
           "registrationMode": "skill"
         }
-      ]
+      ],
+      "features": {
+        "tokenSavingMode": true
+      }
     }
   }
 }

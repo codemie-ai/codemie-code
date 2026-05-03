@@ -100,6 +100,11 @@ export interface ProviderProfile {
 
   // Claude Code-specific settings
   claudeAutocompactPct?: number; // Auto-compact threshold percentage (sets CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, default: 70)
+
+  // Feature flags
+  features?: {
+    tokenSavingMode?: boolean;  // default: false
+  };
 }
 
 /**

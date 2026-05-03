@@ -1,0 +1,230 @@
+import { Compressor, CompressionResult } from './types.js';
+import { Tokenizer } from '../tokenizer/tiktoken.js';
+
+export interface LogCompressorConfig {
+  maxLines: number;
+  contextWindow: number;
+  minLinesForCompression: number;
+  deduplicateThreshold: number;
+}
+
+const DEFAULT_CONFIG: LogCompressorConfig = {
+  maxLines: 200,
+  contextWindow: 3,
+  minLinesForCompression: 50,
+  deduplicateThreshold: 3,
+};
+
+const ERROR_PATTERN = /\b(error|exception|traceback|fatal|critical|panic)\b/i;
+const WARN_PATTERN = /\bwarn(?:ing)?\b/i;
+const STACK_TRACE_PATTERN = /^(\s+at\s|\s*File\s"|\s+\^)/;
+const STRUCTURAL_COLON_PATTERN = /:\s*$/;
+const TIMESTAMP_PATTERN = /\d{2}:\d{2}/;
+const LOG_LEVEL_PATTERN = /\[(INFO|ERROR|DEBUG|WARN)\]/;
+function scoreLine(line: string, index: number, totalLines: number): number {
+  let score = 0.0;
+
+  if (ERROR_PATTERN.test(line)) {
+    score += 0.4;
+  }
+
+  if (WARN_PATTERN.test(line)) {
+    score += 0.2;
+  }
+
+  if (STACK_TRACE_PATTERN.test(line)) {
+    score += 0.1;
+  }
+
+  if (
+    STRUCTURAL_COLON_PATTERN.test(line) ||
+    TIMESTAMP_PATTERN.test(line) ||
+    LOG_LEVEL_PATTERN.test(line)
+  ) {
+    score += 0.15;
+  }
+
+  const numericMatches = [...line.matchAll(/\d+(?:\.\d+)?/g)];
+  if (numericMatches.length >= 3) {
+    score += 0.1;
+  }
+
+  const positionalBoundary = 5;
+  if (index < positionalBoundary || index >= totalLines - positionalBoundary) {
+    score += 0.2;
+  }
+
+  return Math.min(1.0, score);
+}
+
+function deduplicateLines(
+  lines: string[],
+  threshold: number,
+): string[] {
+  const counts = new Map<string, number>();
+  for (const line of lines) {
+    counts.set(line, (counts.get(line) ?? 0) + 1);
+  }
+
+  const result: string[] = [];
+  const seen = new Map<string, number>();
+
+  for (const line of lines) {
+    const total = counts.get(line) ?? 1;
+    if (total <= threshold) {
+      result.push(line);
+      continue;
+    }
+
+    const seenCount = seen.get(line) ?? 0;
+    if (seenCount < threshold) {
+      result.push(line);
+      seen.set(line, seenCount + 1);
+    } else if (seenCount === threshold) {
+      const remaining = total - threshold;
+      result.push(`[... repeated ${remaining} more times]`);
+      seen.set(line, seenCount + 1);
+    }
+  }
+
+  return result;
+}
+
+function selectKeptIndices(
+  lines: string[],
+  contextWindow: number,
+  maxLines: number,
+): Set<number> {
+  const total = lines.length;
+  const scores = lines.map((line, i) => scoreLine(line, i, total));
+
+  const importanceThreshold = 0.3;
+  const important = new Set<number>();
+
+  for (let i = 0; i < total; i++) {
+    if (scores[i] >= importanceThreshold || /^\[... repeated \d+ more times\]$/.test(lines[i])) {
+      important.add(i);
+    }
+  }
+
+  const kept = new Set<number>();
+
+  for (const idx of important) {
+    const start = Math.max(0, idx - contextWindow);
+    const end = Math.min(total - 1, idx + contextWindow);
+    for (let i = start; i <= end; i++) {
+      kept.add(i);
+    }
+  }
+
+  const frameSize = 3;
+  for (let i = 0; i < Math.min(frameSize, total); i++) {
+    kept.add(i);
+  }
+  for (let i = Math.max(0, total - frameSize); i < total; i++) {
+    kept.add(i);
+  }
+
+  if (kept.size <= maxLines) {
+    return kept;
+  }
+
+  const sortedIndices = Array.from(kept).sort((a, b) => a - b);
+  const headLines = new Set(sortedIndices.slice(0, frameSize));
+  const tailLines = new Set(sortedIndices.slice(-frameSize));
+  const frameLines = new Set([...headLines, ...tailLines]);
+
+  const middleSlots = maxLines - frameLines.size;
+  if (middleSlots <= 0) {
+    return frameLines;
+  }
+
+  // fill middle slots with highest-scored non-frame lines
+  const middleCandidates = sortedIndices
+    .filter(i => !frameLines.has(i))
+    .sort((a, b) => scores[b] - scores[a]);  // sort by descending score
+
+  const selected = new Set(frameLines);
+  for (let i = 0; i < Math.min(middleSlots, middleCandidates.length); i++) {
+    selected.add(middleCandidates[i]);
+  }
+  return selected;
+}
+
+function reassemble(lines: string[], keptIndices: Set<number>): string {
+  const sorted = Array.from(keptIndices).sort((a, b) => a - b);
+  if (sorted.length === 0) {
+    return '';
+  }
+
+  const parts: string[] = [];
+  let prev = -1;
+
+  for (const idx of sorted) {
+    if (prev === -1) {
+      if (idx > 0) {
+        parts.push(`[... ${idx} lines omitted ...]`);
+      }
+    } else if (idx > prev + 1) {
+      const gap = idx - prev - 1;
+      parts.push(`[... ${gap} lines omitted ...]`);
+    }
+    parts.push(lines[idx]);
+    prev = idx;
+  }
+
+  const lastKept = sorted[sorted.length - 1];
+  if (lastKept < lines.length - 1) {
+    const trailing = lines.length - 1 - lastKept;
+    parts.push(`[... ${trailing} lines omitted ...]`);
+  }
+
+  return parts.join('\n');
+}
+
+export class LogCompressor implements Compressor {
+  constructor(
+    private tokenizer: Tokenizer,
+    private config: LogCompressorConfig = DEFAULT_CONFIG,
+  ) {}
+
+  async compress(content: string, _contextHint?: string): Promise<CompressionResult> {
+    const originalTokens = await this.tokenizer.countText(content);
+
+    const lines = content.split(/\r?\n/);
+    if (lines.length < this.config.minLinesForCompression) {
+      return {
+        compressed: content,
+        originalTokens,
+        compressedTokens: originalTokens,
+        compressionRatio: 1.0,
+      };
+    }
+
+    const deduplicated = deduplicateLines(lines, this.config.deduplicateThreshold);
+    const keptIndices = selectKeptIndices(deduplicated, this.config.contextWindow, this.config.maxLines);
+    const compressed = reassemble(deduplicated, keptIndices);
+
+    const compressedTokens = await this.tokenizer.countText(compressed);
+
+    if (compressedTokens >= originalTokens) {
+      return {
+        compressed: content,
+        originalTokens,
+        compressedTokens: originalTokens,
+        compressionRatio: 1.0,
+      };
+    }
+
+    return {
+      compressed,
+      originalTokens,
+      compressedTokens,
+      compressionRatio: originalTokens > 0 ? compressedTokens / originalTokens : 1.0,
+    };
+  }
+}
+
+export function createLogCompressor(tokenizer: Tokenizer, config?: Partial<LogCompressorConfig>): LogCompressor {
+  return new LogCompressor(tokenizer, { ...DEFAULT_CONFIG, ...config });
+}
