@@ -63,7 +63,7 @@ export function parseToolCall(response: AnyRecord, provider: 'anthropic' | 'open
         block?.type === 'tool_use' &&
         block?.name === CCR_TOOL_NAME
       ) {
-        const input = block.input as AnyRecord ?? {};
+        const input = (block.input ?? {}) as AnyRecord;
         results.push({
           toolCallId: String(block.id ?? ''),
           hashKey: String(input['hash'] ?? ''),

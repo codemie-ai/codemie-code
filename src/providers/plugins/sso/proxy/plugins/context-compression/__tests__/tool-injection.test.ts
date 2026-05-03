@@ -98,6 +98,43 @@ describe('parseToolCall', () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].hashKey).toBe('def456');
   });
+
+  it('returns empty hashKey when openai arguments is invalid JSON', () => {
+    const badResponse = {
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            tool_calls: [
+              {
+                id: 'call_bad',
+                type: 'function',
+                function: { name: 'headroom_retrieve', arguments: 'not-json' },
+              },
+            ],
+          },
+        },
+      ],
+    };
+    const calls = parseToolCall(badResponse, 'openai');
+    expect(calls).toHaveLength(1);
+    expect(calls[0].hashKey).toBe('');
+  });
+
+  it('returns undefined query when not present in anthropic input', () => {
+    const response = {
+      content: [
+        {
+          type: 'tool_use',
+          id: 'toolu_noquery',
+          name: 'headroom_retrieve',
+          input: { hash: 'xyz' },
+        },
+      ],
+    };
+    const calls = parseToolCall(response, 'anthropic');
+    expect(calls[0].query).toBeUndefined();
+  });
 });
 
 describe('injectCcrTool', () => {
@@ -128,5 +165,19 @@ describe('injectCcrTool', () => {
     const injected = injectCcrTool(body, 'anthropic');
     expect(injected.system as string).toContain(CCR_TOOL_NAME);
     expect(injected.system as string).toContain('You are helpful.');
+  });
+
+  it('creates system field when system is absent', () => {
+    const body = { model: 'claude-3-opus' };
+    const injected = injectCcrTool(body, 'anthropic');
+    expect(typeof injected.system).toBe('string');
+    expect(injected.system as string).toContain(CCR_TOOL_NAME);
+  });
+
+  it('adds openai-format tool when provider is openai', () => {
+    const body = { model: 'gpt-4o', tools: [] };
+    const injected = injectCcrTool(body, 'openai');
+    expect((injected.tools as Array<{ type: string; function: { name: string } }>)[0].type).toBe('function');
+    expect((injected.tools as Array<{ type: string; function: { name: string } }>)[0].function.name).toBe(CCR_TOOL_NAME);
   });
 });
