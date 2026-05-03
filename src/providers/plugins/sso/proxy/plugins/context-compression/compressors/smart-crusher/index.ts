@@ -69,6 +69,37 @@ function compressJsonArray(arr: unknown[]): string[] {
   return lines;
 }
 
+const JSON_ARRAY_MIN_ITEMS = 10;
+
+export function extractJsonSchema(items: Record<string, unknown>[]): string {
+  if (items.length === 0) return '';
+  const keys = new Set<string>();
+  for (const item of items) {
+    for (const key of Object.keys(item)) keys.add(key);
+  }
+  return [...keys].join(', ');
+}
+
+export function compactDocumentJson(json: string): string | null {
+  let parsed: unknown;
+  try { parsed = JSON.parse(json); } catch { return null; }
+  if (!Array.isArray(parsed)) return null;
+  if (parsed.length < JSON_ARRAY_MIN_ITEMS) return null;
+
+  const items = parsed as Record<string, unknown>[];
+  const schema = extractJsonSchema(items);
+  if (!schema) return null;
+
+  const lines = [`[Schema: {${schema}}]`, `[${items.length} items]`];
+  for (let i = 0; i < Math.min(3, items.length); i++) {
+    lines.push(JSON.stringify(items[i]));
+  }
+  if (items.length > 3) {
+    lines.push(`... ${items.length - 3} more items`);
+  }
+  return lines.join('\n');
+}
+
 function tryCompressJson(content: string): string | null {
   let parsed: unknown;
   try {
@@ -101,6 +132,19 @@ export class SmartCrusher implements Compressor {
     const lines = content.split(/\r?\n/);
     if (lines.length < this.config.minLinesForCompression) {
       return { compressed: content, originalTokens, compressedTokens: originalTokens, compressionRatio: 1.0 };
+    }
+
+    // Try JSON array schema factoring first
+    const trimmed = content.trim();
+    if (trimmed.startsWith('[')) {
+      const compact = compactDocumentJson(trimmed);
+      if (compact !== null) {
+        const compactTokens = await this.tokenizer.countText(compact);
+        const compactRatio = originalTokens > 0 ? compactTokens / originalTokens : 1.0;
+        if (compactRatio < 1.0) {
+          return { compressed: compact, originalTokens, compressedTokens: compactTokens, compressionRatio: compactRatio };
+        }
+      }
     }
 
     const protector = this.config.preserveTags ? new TagProtector() : null;
