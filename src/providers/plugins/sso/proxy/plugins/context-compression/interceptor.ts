@@ -21,11 +21,18 @@ import { OpenAIAdapter } from './adapters/openai.js';
 import { OpenAICompatibleAdapter } from './adapters/openai-compatible.js';
 import { MessageAdapter, ProviderFormat } from './adapters/types.js';
 import { SavingsTracker, createSavingsTracker } from './savings/tracker.js';
+import { CompressionStore, createCompressionStore } from './ccr/store.js';
+import { CacheAligner, createCacheAligner } from './transforms/cache-aligner.js';
+import { buildCompressConfig } from './transforms/config.js';
+import { injectCcrTool } from './ccr/tool_injection.js';
+import { CCRResponseHandler, createCcrResponseHandler } from './ccr/response_handler.js';
 
 interface CompressionState {
   originalTokens: number;
   compressedTokens: number;
   model: string;
+  cacheKeys: string[];
+  stablePrefixHash: string;
 }
 
 function resolveContextLimit(model: unknown): number {
@@ -71,6 +78,9 @@ export class ContextCompressionInterceptor implements ProxyInterceptor {
   private readonly pluginContext: PluginContext;
   private readonly tokenizer: Tokenizer;
   private readonly savingsTracker: SavingsTracker;
+  private readonly ccrStore: CompressionStore;
+  private readonly cacheAligner: CacheAligner;
+  private readonly _ccrResponseHandler: CCRResponseHandler;
 
   /** Per-request compression result, keyed by requestId */
   private readonly compressionState = new Map<string, CompressionState>();
@@ -79,6 +89,9 @@ export class ContextCompressionInterceptor implements ProxyInterceptor {
     this.pluginContext = pluginContext;
     this.tokenizer = createTokenizer();
     this.savingsTracker = createSavingsTracker();
+    this.ccrStore = createCompressionStore();
+    this.cacheAligner = createCacheAligner();
+    this._ccrResponseHandler = createCcrResponseHandler(undefined, this.ccrStore);
   }
 
   async onRequest(context: ProxyContext): Promise<void> {
@@ -114,7 +127,10 @@ export class ContextCompressionInterceptor implements ProxyInterceptor {
       const normalized: ICMMessage[] = adapter.normalize(rawMessages);
 
       const model = originalBody['model'];
+      const modelStr = typeof model === 'string' ? model : 'unknown';
       const contextLimit = resolveContextLimit(model);
+
+      const compressConfig = buildCompressConfig(features);
 
       const originalTokens = await this.tokenizer.countMessages(normalized);
 
@@ -129,10 +145,29 @@ export class ContextCompressionInterceptor implements ProxyInterceptor {
         logger.info(`[${this.name}] msg role=${msg.role} tokens=${t} lines=${lines}`);
       }
 
-      const router: ContentRouter = createContentRouter(this.tokenizer);
+      // Phase 0: CacheAligner — stabilize system-message prefix for KV-cache hits
+      // Only active when features.cacheAligner === true; otherwise pass normalized through unchanged.
+      const alignerEnabled = features?.['cacheAligner'] === true;
+      const { messages: alignedMessages, stablePrefixHash, dynamicExtracted } = alignerEnabled
+        ? this.cacheAligner.align(normalized)
+        : { messages: normalized, stablePrefixHash: '', dynamicExtracted: [] };
+      if (dynamicExtracted.length > 0) {
+        logger.info(
+          `[${this.name}] CacheAligner: extracted ${dynamicExtracted.length} dynamic patterns,` +
+            ` prefix hash=${stablePrefixHash}`,
+        );
+      }
+
+      const router: ContentRouter = createContentRouter(this.tokenizer, undefined, this.ccrStore);
       const icm: IntelligentContextManager = createICM(router, this.tokenizer);
 
-      const compressed: ICMMessage[] = await icm.apply(normalized, contextLimit);
+      const { messages: compressed, cacheKeys } = await icm.apply(
+        alignedMessages,
+        contextLimit,
+        compressConfig,
+        undefined,
+        context.requestId,
+      );
       const compressedTokens = await this.tokenizer.countMessages(compressed);
 
       // Serialize back to the provider's native format
@@ -140,7 +175,13 @@ export class ContextCompressionInterceptor implements ProxyInterceptor {
 
       // Re-build body with compressed messages
       const newBody: Record<string, unknown> = { ...originalBody, messages: serialized };
-      const newBodyStr = JSON.stringify(newBody);
+
+      // Inject CCR retrieval tool when compression occurred
+      const ccrProvider: 'anthropic' | 'openai' = format === 'anthropic' ? 'anthropic' : 'openai';
+      const bodyToSend = cacheKeys.length > 0
+        ? injectCcrTool(newBody, ccrProvider)
+        : newBody;
+      const newBodyStr = JSON.stringify(bodyToSend);
       context.requestBody = Buffer.from(newBodyStr, 'utf-8');
       context.headers['content-length'] = String(context.requestBody.length);
 
@@ -148,20 +189,24 @@ export class ContextCompressionInterceptor implements ProxyInterceptor {
       this.compressionState.set(context.requestId, {
         originalTokens,
         compressedTokens,
-        model: typeof model === 'string' ? model : 'unknown',
+        model: modelStr,
+        cacheKeys,
+        stablePrefixHash,
       });
 
       const tokensSaved = originalTokens - compressedTokens;
       const ratio = originalTokens > 0 ? (compressedTokens / originalTokens).toFixed(2) : '1.00';
       logger.info(
         `[${this.name}] ${context.requestId}: ${originalTokens} → ${compressedTokens} tokens` +
-        ` (saved ${tokensSaved}, ratio ${ratio}, model: ${typeof model === 'string' ? model : 'unknown'})`
+        ` (saved ${tokensSaved}, ratio ${ratio}, ccr=${cacheKeys.length}, model: ${modelStr})`,
       );
       logger.debug(`[${this.name}] Compressed messages for ${context.requestId}`, {
         model,
         originalTokens,
         compressedTokens,
         tokensSaved,
+        ccrKeys: cacheKeys.length,
+        stablePrefixHash,
       });
     } catch (err) {
       // Compression is never on the critical path — log and pass through
@@ -188,6 +233,8 @@ export class ContextCompressionInterceptor implements ProxyInterceptor {
     headers['x-codemie-compression-ratio'] = ratioStr;
     headers['x-codemie-compression-strategy'] = 'context-compression';
     headers['x-codemie-model'] = state.model;
+    headers['x-codemie-ccr-keys'] = String(state.cacheKeys.length);
+    headers['x-codemie-prefix-hash'] = state.stablePrefixHash;
   }
 
   async onError(context: ProxyContext, _error: Error): Promise<void> {
