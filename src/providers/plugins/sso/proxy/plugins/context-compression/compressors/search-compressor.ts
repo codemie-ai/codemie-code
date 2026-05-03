@@ -1,6 +1,7 @@
 import { Compressor, CompressionResult } from './types.js';
 import { Tokenizer } from '../tokenizer/tiktoken.js';
 import type { CcrStore } from '../ccr/types.js';
+import { contentHasErrorIndicators } from './error-detection.js';
 
 export interface SearchCompressorConfig {
   maxResults: number;
@@ -246,4 +247,39 @@ export class SearchCompressor implements Compressor {
 
 export function createSearchCompressor(tokenizer: Tokenizer, config?: Partial<SearchCompressorConfig>, store?: CcrStore): SearchCompressor {
   return new SearchCompressor(tokenizer, { ...DEFAULT_CONFIG, ...config }, store);
+}
+
+export interface ScoredLine {
+  content: string;
+  score: number;
+}
+
+export function findKneedle(scores: number[]): number {
+  if (scores.length <= 1) return 1;
+  const max = Math.max(...scores);
+  const min = Math.min(...scores);
+  const range = max - min;
+  if (range === 0) return 1;
+  const norm = scores.map(s => (s - min) / range);
+
+  const n = scores.length;
+  let maxDist = -1;
+  let knee = 1;
+  for (let i = 0; i < n; i++) {
+    const x = i / (n - 1);
+    const y = norm[i];
+    const dist = Math.abs(x + y - 1) / Math.SQRT2;
+    if (dist > maxDist) {
+      maxDist = dist;
+      knee = i + 1;
+    }
+  }
+  return Math.max(1, Math.min(knee, scores.length));
+}
+
+export function boostErrors(lines: ScoredLine[]): ScoredLine[] {
+  return lines.map(line => ({
+    ...line,
+    score: contentHasErrorIndicators(line.content) ? line.score + 0.3 : line.score,
+  }));
 }
