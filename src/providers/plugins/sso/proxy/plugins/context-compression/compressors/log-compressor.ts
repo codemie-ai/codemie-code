@@ -2,8 +2,27 @@ import { Compressor, CompressionResult } from './types.js';
 import { Tokenizer } from '../tokenizer/tiktoken.js';
 import type { CcrStore } from '../ccr/types.js';
 
+export enum LogFormat {
+  PYTEST = 'pytest',
+  NPM = 'npm',
+  CARGO = 'cargo',
+  MAKE = 'make',
+  JEST = 'jest',
+  GENERIC = 'generic',
+}
+
+export enum LogLevel {
+  ERROR = 'error',
+  WARN = 'warn',
+  INFO = 'info',
+  DEBUG = 'debug',
+  FAIL = 'fail',
+}
+
 export interface LogCompressorConfig {
   maxLines: number;
+  maxTotalLines?: number;
+  maxErrors?: number;
   contextWindow: number;
   minLinesForCompression: number;
   deduplicateThreshold: number;
@@ -12,7 +31,7 @@ export interface LogCompressorConfig {
 const DEFAULT_CONFIG: LogCompressorConfig = {
   maxLines: 200,
   contextWindow: 3,
-  minLinesForCompression: 50,
+  minLinesForCompression: 5,
   deduplicateThreshold: 3,
 };
 
@@ -24,6 +43,20 @@ const STACK_TRACE_PATTERN = /^(\s+at\s|\s*File\s"|\s+\^)/;
 const STRUCTURAL_COLON_PATTERN = /:\s*$/;
 const TIMESTAMP_PATTERN = /\d{2}:\d{2}/;
 const LOG_LEVEL_PATTERN = /\[(INFO|ERROR|DEBUG|WARN)\]/;
+
+function isStackTraceStart(line: string): boolean {
+  return /^Traceback \(most recent call last\)/i.test(line) ||
+    /^[ ]{2}File ".*", line \d+/i.test(line);
+}
+
+function isStackTraceContinuation(line: string): boolean {
+  return /^\s{2,}/.test(line) ||
+    /^[ ]{2}File ".*", line \d+/.test(line) ||
+    /^[A-Z][a-zA-Z]*Error:/.test(line) ||
+    /^During handling of the above/.test(line) ||
+    line.trim() === '';
+}
+
 function scoreLine(line: string, index: number, totalLines: number): number {
   let score = 0.0;
 
@@ -60,33 +93,48 @@ function scoreLine(line: string, index: number, totalLines: number): number {
   return Math.min(1.0, score);
 }
 
+function normalizeForDedupe(line: string): string {
+  const colonIdx = line.indexOf(':');
+  const eqIdx = line.indexOf('=');
+  const splitIdx = Math.min(
+    colonIdx >= 0 ? colonIdx : Infinity,
+    eqIdx >= 0 ? eqIdx : Infinity,
+  );
+  if (!isFinite(splitIdx)) return line;
+  const prefix = line.slice(0, splitIdx);
+  const suffix = line.slice(splitIdx).replace(/\b\d+\.\d+\.\d+\.\d+\b|\b\d{5,}\b/g, 'N');
+  return prefix + suffix;
+}
+
 function deduplicateLines(
   lines: string[],
   threshold: number,
 ): string[] {
-  const counts = new Map<string, number>();
+  const normCounts = new Map<string, number>();
   for (const line of lines) {
-    counts.set(line, (counts.get(line) ?? 0) + 1);
+    const key = normalizeForDedupe(line);
+    normCounts.set(key, (normCounts.get(key) ?? 0) + 1);
   }
 
   const result: string[] = [];
-  const seen = new Map<string, number>();
+  const normSeen = new Map<string, number>();
 
   for (const line of lines) {
-    const total = counts.get(line) ?? 1;
+    const key = normalizeForDedupe(line);
+    const total = normCounts.get(key) ?? 1;
     if (total <= threshold) {
       result.push(line);
       continue;
     }
 
-    const seenCount = seen.get(line) ?? 0;
+    const seenCount = normSeen.get(key) ?? 0;
     if (seenCount < threshold) {
       result.push(line);
-      seen.set(line, seenCount + 1);
+      normSeen.set(key, seenCount + 1);
     } else if (seenCount === threshold) {
       const remaining = total - threshold;
       result.push(`[... repeated ${remaining} more times]`);
-      seen.set(line, seenCount + 1);
+      normSeen.set(key, seenCount + 1);
     }
   }
 
@@ -107,6 +155,20 @@ function selectKeptIndices(
   for (let i = 0; i < total; i++) {
     if (scores[i] >= importanceThreshold || /^\[... repeated \d+ more times\]$/.test(lines[i])) {
       important.add(i);
+    }
+  }
+
+  // Stack-trace pass: mark all lines inside tracebacks as important
+  let inStackTrace = false;
+  for (let i = 0; i < total; i++) {
+    if (isStackTraceStart(lines[i])) {
+      inStackTrace = true;
+    }
+    if (inStackTrace) {
+      important.add(i);
+      if (!isStackTraceContinuation(lines[i]) && !isStackTraceStart(lines[i])) {
+        inStackTrace = false;
+      }
     }
   }
 
@@ -237,5 +299,9 @@ export class LogCompressor implements Compressor {
 }
 
 export function createLogCompressor(tokenizer: Tokenizer, config?: Partial<LogCompressorConfig>, store?: CcrStore): LogCompressor {
-  return new LogCompressor(tokenizer, { ...DEFAULT_CONFIG, ...config }, store);
+  const merged = { ...DEFAULT_CONFIG, ...config };
+  if (config?.maxTotalLines !== undefined) {
+    merged.maxLines = config.maxTotalLines;
+  }
+  return new LogCompressor(tokenizer, merged, store);
 }
