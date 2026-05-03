@@ -21,6 +21,7 @@ export interface ContentRouterConfig {
   enableMixedContent: boolean;
   minRatioRelaxed: number;
   minRatioAggressive: number;
+  /** When true, the ICM layer skips routing user-role messages through compression. */
   skipUserMessages: boolean;
 }
 
@@ -72,6 +73,12 @@ export class ContentRouter {
     }
   }
 
+  /**
+   * Routes content through compression and applies a pressure-based minimum ratio gate.
+   * If the compressor result does not achieve `pressureRatio` (i.e. compressionRatio > pressureRatio),
+   * returns the original uncompressed content with compressionRatio=1.0.
+   * Callers should treat compressionRatio=1.0 as "threshold not met" rather than "no-op compression".
+   */
   async routeWithPressure(
     content: string,
     fillFraction: number,
