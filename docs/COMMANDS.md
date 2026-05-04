@@ -9,6 +9,7 @@ codemie --task "task"            # Execute single task with built-in agent and e
 
 codemie setup                    # Interactive configuration wizard
 codemie setup skills             # Manage CodeMie platform skills (register/unregister)
+codemie setup assistants         # Manage CodeMie assistants as Claude subagents or skills
 codemie profile <command>        # Manage provider profiles
 codemie analytics [options]      # View usage analytics
 codemie log [options]            # View and manage debug logs and sessions
@@ -696,6 +697,42 @@ codemie setup skills [options]
 ```text
 /skill-name run the skill
 ```
+
+#### `codemie setup assistants`
+
+Manage CodeMie assistants — browse, register, or unregister assistants from your CodeMie account as Claude Code subagents or slash commands.
+
+**Usage:**
+```bash
+codemie setup assistants [options]
+```
+
+**Options:**
+- `--profile <name>` - Profile to use (defaults to active profile)
+- `--project <project>` - Filter assistants by project name
+- `--all-projects` - Show assistants from all projects
+- `-v, --verbose` - Enable verbose debug output
+
+**Workflow:**
+1. Prompts for storage scope: **Global** (saved to `~/.codemie/codemie-cli.config.json`) or **Local** (saved to `.codemie/codemie-cli.config.json`, overrides global for the current repository).
+2. Opens an interactive selection UI — check/uncheck assistants to register or unregister.
+3. Prompts for registration mode:
+   - **Claude Subagents** — registers all selected assistants as `@slug` subagents
+   - **Claude Skills** — registers all selected assistants as `/slug` slash commands
+   - **Manual Configuration** — choose subagent or skill per individual assistant
+
+**Features:**
+- Assistants are registered **with their tools and MCP servers** (unlike platform skills)
+- Global vs. local scope (local config overrides global per-repository)
+- Re-registration on each run keeps assistant definitions up to date
+
+**After registration**, use assistants from Claude Code:
+```text
+@assistant-slug Review this authentication flow
+/assistant-slug prepare a release checklist
+```
+
+> **Tip:** For lightweight skills without tools, use `codemie setup skills` instead.
 
 ### `codemie list`
 
