@@ -1,3 +1,8 @@
+---
+description: Detect code changes and update project documentation to reflect current implementation. Only updates docs when changes are materially relevant.
+allowed-tools: Bash, Read, Glob, Grep, Write, Edit
+---
+
 # Refresh and Audit Project Documentation
 
 **Purpose**: Intelligently detect code changes and update documentation to reflect current implementation.
