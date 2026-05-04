@@ -199,6 +199,19 @@ node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js onenote --create "M
 node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js onenote --notebooks --json
 ```
 
+### Channels
+
+```bash
+# List channels in a team (use team ID from teams --teams-list)
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js channels --team-id TEAM_ID --list
+
+# Read recent messages in a channel
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js channels --team-id TEAM_ID --channel-id CHANNEL_ID --messages
+
+# Post a message to a channel
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js channels --team-id TEAM_ID --channel-id CHANNEL_ID --send "Hello channel!"
+```
+
 ### Transcripts
 
 ```bash
@@ -274,6 +287,11 @@ node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js people --contacts
 1. Run `transcripts --start YYYY-MM-DD` → lists all online meetings for the day
 2. Run `transcripts --meeting MEETING_ID` → lists available transcripts per meeting
 3. Run `transcripts --meeting MEETING_ID --transcript TRANSCRIPT_ID --output meeting.txt` → saves each transcript
+
+### "Post a message to a Teams channel"
+1. Run `teams --teams-list` → get the team ID
+2. Run `channels --team-id TEAM_ID --list` → get the channel ID
+3. Run `channels --team-id TEAM_ID --channel-id CHANNEL_ID --send "message"`
 
 ### "Who's my manager?" / "Who reports to me?"
 - Run `org --manager` or `org --reports`
