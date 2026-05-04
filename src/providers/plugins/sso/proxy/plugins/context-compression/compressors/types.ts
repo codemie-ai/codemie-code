@@ -3,6 +3,8 @@ export interface CompressionResult {
   originalTokens: number;
   compressedTokens: number;
   compressionRatio: number;
+  /** Set when original was stored in CompressionStore due to aggressive truncation. */
+  cacheKey?: string;
 }
 
 export interface Compressor {
