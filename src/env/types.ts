@@ -25,6 +25,21 @@ export interface CodemieAssistant {
   registrationMode?: 'agent' | 'skill';
 }
 
+export interface ContextCompressionFeatures {
+  enabled?: boolean;
+  cacheAligner?: boolean;
+  compressUserMessages?: boolean;
+  compressSystemMessages?: boolean;
+  protectAnalysisContext?: boolean;
+  protectRecent?: number;
+  targetRatio?: number | null;
+  minTokensToCompress?: number;
+}
+
+export interface ProfileFeatures {
+  contextCompression?: ContextCompressionFeatures;
+}
+
 /**
  * Provider profile configuration
  */
@@ -102,9 +117,7 @@ export interface ProviderProfile {
   claudeAutocompactPct?: number; // Auto-compact threshold percentage (sets CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, default: 70)
 
   // Feature flags
-  features?: {
-    tokenSavingMode?: boolean;  // default: false
-  };
+  features?: ProfileFeatures;
 }
 
 /**
