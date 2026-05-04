@@ -112,6 +112,9 @@ export interface ProviderProfile {
 
   // Skills configuration
   codemieSkills?: CodemieSkill[];
+
+  // Claude Code-specific settings
+  claudeAutocompactPct?: number; // Auto-compact threshold percentage (sets CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, default: 70)
 }
 
 /**

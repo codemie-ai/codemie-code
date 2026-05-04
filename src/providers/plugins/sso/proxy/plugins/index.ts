@@ -8,11 +8,13 @@
 import { getPluginRegistry } from './registry.js';
 import { MCPAuthPlugin } from './mcp-auth.plugin.js';
 import { EndpointBlockerPlugin } from './endpoint-blocker.plugin.js';
+import { GatewayKeyPlugin } from './gateway-key.plugin.js';
 import { SSOAuthPlugin } from './sso-auth.plugin.js';
 import { JWTAuthPlugin } from './jwt-auth.plugin.js';
 import { HeaderInjectionPlugin } from './header-injection.plugin.js';
 import { RequestSanitizerPlugin } from './request-sanitizer.plugin.js';
 import { ClaudeThinkingTransformerPlugin } from './claude-thinking-transformer.plugin.js';
+import { ClaudeNonThinkingModelSanitizerPlugin } from './claude-non-thinking-model-sanitizer.plugin.js';
 import { LoggingPlugin } from './logging.plugin.js';
 import { SSOSessionSyncPlugin } from './sso.session-sync.plugin.js';
 
@@ -26,10 +28,12 @@ export function registerCorePlugins(): void {
   // Register in any order (priority determines execution order)
   registry.register(new MCPAuthPlugin());          // Priority 3 - MCP auth relay routing
   registry.register(new EndpointBlockerPlugin()); // Priority 5 - blocks unwanted endpoints early
+  registry.register(new GatewayKeyPlugin());      // Priority 7 - gateway key validation (daemon mode)
   registry.register(new SSOAuthPlugin());
   registry.register(new JWTAuthPlugin());
   registry.register(new RequestSanitizerPlugin()); // Priority 15 - strips unsupported reasoning params
   registry.register(new ClaudeThinkingTransformerPlugin()); // Priority 16 - transforms thinking params for Claude 4.7+ models
+  registry.register(new ClaudeNonThinkingModelSanitizerPlugin()); // Priority 17 - strips thinking blocks for Claude models without thinking support
   registry.register(new HeaderInjectionPlugin());
   registry.register(new LoggingPlugin()); // Always enabled - logs to log files at INFO level
   registry.register(new SSOSessionSyncPlugin()); // Priority 100 - syncs sessions via multiple processors
@@ -42,11 +46,13 @@ registerCorePlugins();
 export {
   MCPAuthPlugin,
   EndpointBlockerPlugin,
+  GatewayKeyPlugin,
   SSOAuthPlugin,
   JWTAuthPlugin,
   HeaderInjectionPlugin,
   RequestSanitizerPlugin,
   ClaudeThinkingTransformerPlugin,
+  ClaudeNonThinkingModelSanitizerPlugin,
   LoggingPlugin,
 };
 export { SSOSessionSyncPlugin } from './sso.session-sync.plugin.js';

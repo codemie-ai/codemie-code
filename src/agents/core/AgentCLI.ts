@@ -4,6 +4,8 @@ import { join } from 'path';
 import chalk from 'chalk';
 import { AgentAdapter } from './types.js';
 import { ConfigLoader, CodeMieConfigOptions } from '../../utils/config.js';
+import { ensureApiBase, DEFAULT_CODEMIE_BASE_URL } from '../../providers/core/codemie-auth-helpers.js';
+import { JWTTemplate } from '../../providers/plugins/jwt/jwt.template.js';
 import { logger } from '../../utils/logger.js';
 import { getDirname } from '../../utils/paths.js';
 import { BUILTIN_AGENT_NAME } from '../registry.js';
@@ -164,6 +166,23 @@ export class AgentCLI {
       if (options.jwtToken) {
         process.env.CODEMIE_JWT_TOKEN = options.jwtToken as string;
         process.env.CODEMIE_AUTH_METHOD = 'jwt';
+
+        const hasNoConfig = !options.provider
+          && !(await ConfigLoader.hasGlobalConfig())
+          && !(await ConfigLoader.hasLocalConfig(process.cwd()));
+
+        if (hasNoConfig) {
+          config.provider = 'bearer-auth';
+          if (!config.model) {
+            config.model = JWTTemplate.recommendedModels?.[0];
+          }
+        }
+        if (!config.baseUrl) {
+          config.baseUrl = config.codeMieUrl
+            ? ensureApiBase(config.codeMieUrl)
+            : ensureApiBase(DEFAULT_CODEMIE_BASE_URL);
+        }
+        config.authMethod = 'jwt';
       }
 
       // Validate essential configuration

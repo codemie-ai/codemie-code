@@ -8,6 +8,7 @@ codemie --version                # Show version information
 codemie --task "task"            # Execute single task with built-in agent and exit
 
 codemie setup                    # Interactive configuration wizard
+codemie setup skills             # Manage CodeMie platform skills (register/unregister)
 codemie profile <command>        # Manage provider profiles
 codemie analytics [options]      # View usage analytics
 codemie log [options]            # View and manage debug logs and sessions
@@ -22,6 +23,77 @@ codemie plugin <command>         # Manage native plugins
 codemie mcp-proxy <url>          # Stdio-to-HTTP MCP proxy with OAuth support
 codemie version                  # Show version information
 ```
+
+## Proxy Commands
+
+```bash
+codemie proxy start              # Start the local proxy daemon
+codemie proxy stop               # Stop the local proxy daemon
+codemie proxy status             # Show daemon status
+codemie proxy connect desktop    # Configure Claude Desktop (3P) to use the local proxy
+codemie proxy inspect desktop    # Inspect Desktop telemetry and sync state
+```
+
+`codemie proxy connect desktop` does more than write the gateway config. When the daemon is started through this path, CodeMie also discovers Claude Desktop 3P local session transcripts from the `Claude-3p` storage directory and syncs metrics plus conversations to CodeMie with client identity `claude-desktop`.
+
+### Claude Desktop 3P
+
+#### `codemie proxy connect desktop`
+
+Connect Claude Desktop 3P to the local CodeMie proxy.
+
+```bash
+codemie proxy connect desktop
+codemie proxy connect desktop --profile codemie-new
+```
+
+Behavior:
+- uses the current active CodeMie profile by default
+- `--profile` overrides for the current run only
+- fails if the resolved profile is not a CodeMie SSO profile
+
+Recommended setup:
+
+```bash
+codemie profile switch codemie-prod
+codemie proxy connect desktop
+```
+
+After the config is written, quit and reopen Claude Desktop.
+
+#### `codemie proxy inspect desktop`
+
+Inspect Claude Desktop 3P proxy readiness and recent discovered sessions.
+
+```bash
+codemie proxy inspect desktop --limit 5
+```
+
+At a high level, this shows:
+- whether the daemon is running
+- which profile and target URL are active
+- whether Claude Desktop storage was found
+- recently discovered Desktop sessions
+- whether sessions were ingested and whether metrics/conversation JSONL files exist
+
+#### Troubleshooting Claude Desktop 3P
+
+```bash
+codemie profile status
+codemie proxy connect desktop
+codemie proxy status
+codemie proxy inspect desktop --limit 5
+codemie proxy stop
+codemie proxy connect desktop
+```
+
+If Claude Desktop still appears connected to Anthropic subscription or another Gateway:
+1. Quit Claude Desktop.
+2. Sign out or clear the previous provider setup in Claude Desktop.
+3. Reconnect with CodeMie.
+4. Reopen Claude Desktop.
+
+CodeMie cannot forcibly log you out from Claude Desktop. It can only write the CodeMie proxy configuration and help you inspect the current integration state.
 
 ### Global Options
 
@@ -594,6 +666,36 @@ codemie setup [options]
 - Health endpoint testing during setup
 - Profile management (add new or update existing)
 - Credential validation before saving
+
+#### `codemie setup skills`
+
+Manage CodeMie platform skills — browse, register, or unregister skills from your CodeMie account as Claude Code slash commands.
+
+**Usage:**
+```bash
+codemie setup skills [options]
+```
+
+**Options:**
+- `--profile <name>` - Profile to use (defaults to active profile)
+- `-v, --verbose` - Enable verbose debug output
+
+**Workflow:**
+1. Shows a disclaimer: skills are installed **without tools or MCP servers**. If you need tools or MCP servers with a skill, attach it to an assistant and use `codemie setup assistants` instead.
+2. Prompts for storage scope: **Global** (saved to `~/.codemie/codemie-cli.config.json`, available in all projects) or **Local** (saved to `.codemie/codemie-cli.config.json`, overrides global for the current repository).
+3. Opens an interactive selection UI — check/uncheck skills to register or unregister.
+
+**Features:**
+- Browse all skills available in your CodeMie account
+- Register selected skills as Claude Code `/skill-name` slash commands
+- Unregister skills you no longer need
+- Global vs. local scope (local config overrides global per-repository)
+- Auto-sync on agent startup — SKILL.md files are refreshed with the latest content from the platform each time Claude starts
+
+**After registration**, invoke skills directly in Claude Code:
+```text
+/skill-name run the skill
+```
 
 ### `codemie list`
 

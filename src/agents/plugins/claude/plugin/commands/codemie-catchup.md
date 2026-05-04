@@ -1,3 +1,8 @@
+---
+description: Summarize all changes in current branch vs main — features, breaking changes, and documentation gaps.
+allowed-tools: Bash, Read, Glob, Grep
+---
+
 Read all files that changed in my current git branch compared to main.
 
 Summarize:

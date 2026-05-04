@@ -2,24 +2,40 @@
 /**
  * msgraph.js — Microsoft Graph API CLI for Claude Code skill
  *
- * Authentication: OAuth2 device code flow with persistent token cache.
- * First time:   node msgraph.js login
- * Subsequent:   token refreshed silently from cache.
+ * Authentication: Authorization Code + PKCE via system browser.
+ * The browser-based flow allows the Microsoft Enterprise SSO plug-in (macOS/
+ * Intune) and WAM (Windows/Azure AD join) to attach device claims to the
+ * Entra ID sign-in, satisfying Conditional Access Policies that require
+ * managed/compliant devices.
+ *
+ * First time:   node msgraph.js login   (opens browser)
+ * Subsequent:   token refreshed silently from cache
+ *
+ * Prerequisites for device claims (CAP compliance):
+ *   - App registration must have http://localhost as a Mobile and desktop
+ *     applications redirect URI (loopback matching per RFC 8252).
+ *   - macOS: device enrolled in Intune + Microsoft Enterprise SSO Extension
+ *     deployed via MDM profile.
+ *   - Windows: device Azure AD joined (WAM handles it automatically).
  *
  * Dependencies: node >= 18 (built-in modules only — zero npm installs needed)
  */
 
 'use strict';
 
-const https = require('node:https');
-const fs    = require('node:fs');
-const path  = require('node:path');
-const os    = require('node:os');
+const crypto   = require('node:crypto');
+const http     = require('node:http');
+const https    = require('node:https');
+const fs       = require('node:fs');
+const path     = require('node:path');
+const os       = require('node:os');
+const { execFile } = require('node:child_process');
 
 // ── Config ────────────────────────────────────────────────────────────────────
-const CLIENT_ID  = '3d7688c6-f449-4d04-8b0d-57d94818e922'; // CodeMie APP
-const TOKEN_URL  = 'https://login.microsoftonline.com/common/oauth2/v2.0/token';
-const DEVICE_URL = 'https://login.microsoftonline.com/common/oauth2/v2.0/devicecode';
+const CLIENT_ID  = '3d7688c6-f449-4d04-8b0d-57d94818e922';
+const TENANT     = 'common';
+const AUTH_URL   = `https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/authorize`;
+const TOKEN_URL  = `https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/token`;
 const SCOPES     = [
   'User.Read', 'Mail.Read', 'Mail.Send',
   'Calendars.Read', 'Calendars.ReadWrite',
@@ -29,8 +45,9 @@ const SCOPES     = [
   'People.Read', 'Contacts.Read', 'offline_access',
   'Notes.Read', 'Notes.ReadWrite',
 ].join(' ');
-const CACHE_FILE = path.join(os.homedir(), '.ms_graph_token_cache.json');
-const GRAPH_BASE = 'https://graph.microsoft.com/v1.0';
+const CACHE_FILE  = path.join(os.homedir(), '.ms_graph_token_cache.json');
+const GRAPH_BASE  = 'https://graph.microsoft.com/v1.0';
+const TIMEOUT_MS  = 5 * 60 * 1000;
 
 // ── HTTP Helpers ──────────────────────────────────────────────────────────────
 function httpsRequest(urlStr, options = {}, body = null) {
@@ -94,7 +111,6 @@ async function graphPost(endpoint, token, body) {
   return res.body ? JSON.parse(res.body) : {};
 }
 
-/** Download file content, following 302 redirects (Graph uses CDN redirects). */
 function graphDownload(endpoint, token) {
   function fetch(url, auth) {
     return new Promise((resolve, reject) => {
@@ -138,6 +154,75 @@ function saveCache(data) {
   fs.writeFileSync(CACHE_FILE, JSON.stringify(data, null, 2), { mode: 0o600 });
 }
 
+// ── PKCE helpers ──────────────────────────────────────────────────────────────
+function generatePKCE() {
+  const verifier  = crypto.randomBytes(32).toString('base64url');
+  const challenge = crypto.createHash('sha256').update(verifier).digest('base64url');
+  return { verifier, challenge };
+}
+
+function openBrowser(url) {
+  const cb = err => {
+    if (err) console.error(`Warning: could not open browser automatically: ${err.message}`);
+  };
+  if (process.platform === 'win32') {
+    execFile('cmd', ['/c', 'start', '', url], cb);
+  } else {
+    execFile(process.platform === 'darwin' ? 'open' : 'xdg-open', [url], cb);
+  }
+}
+
+function startLocalServer() {
+  return new Promise((resolve, reject) => {
+    const server = http.createServer();
+    server.listen(0, 'localhost', () => {
+      const { port } = server.address();
+      const waitForCode = () => new Promise((res, rej) => {
+        const timer = setTimeout(() => {
+          server.close();
+          rej(new Error('Authentication timed out (5 minutes). Run login again.'));
+        }, TIMEOUT_MS);
+
+        server.on('request', (req, response) => {
+          const url   = new URL(req.url, `http://localhost:${port}`);
+          const code  = url.searchParams.get('code');
+          const state = url.searchParams.get('state');
+          const error = url.searchParams.get('error');
+          const desc  = url.searchParams.get('error_description');
+
+          if (!code && !error) {
+            response.writeHead(404);
+            response.end();
+            return;
+          }
+
+          clearTimeout(timer);
+          const html = code
+            ? `<!DOCTYPE html><html><head><title>Login successful</title></head><body style="font-family:sans-serif;padding:40px">
+                <h2 style="color:#107c10">&#10003; Authentication successful</h2>
+                <p>You can close this tab and return to the terminal.</p>
+                <script>window.close();</script>
+               </body></html>`
+            : `<!DOCTYPE html><html><head><title>Login failed</title></head><body style="font-family:sans-serif;padding:40px">
+                <h2 style="color:#d13438">&#10007; Authentication failed</h2>
+                <p><strong>${error || 'Unknown error'}</strong></p>
+                <p>${desc || ''}</p>
+               </body></html>`;
+
+          response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+          response.end(html, () => {
+            server.close();
+            if (code) res({ code, state });
+            else rej(new Error(`Auth error: ${error}${desc ? ' — ' + desc : ''}`));
+          });
+        });
+      });
+      resolve({ port, waitForCode });
+    });
+    server.on('error', reject);
+  });
+}
+
 // ── Authentication ────────────────────────────────────────────────────────────
 async function tryRefresh(refreshTkn, username) {
   try {
@@ -160,31 +245,54 @@ async function tryRefresh(refreshTkn, username) {
   return null;
 }
 
-/** Returns a valid token, silently refreshing if needed. Exits if not logged in. */
-async function getValidToken() {
-  const cache = loadCache();
-  if (!cache?.access_token) {
-    console.log('NOT_LOGGED_IN');
-    process.exit(2);
-  }
-  const now = Math.floor(Date.now() / 1000);
-  if (!cache.expires_at || now < cache.expires_at - 60) return cache.access_token;
-  if (cache.refresh_token) {
-    const t = await tryRefresh(cache.refresh_token, cache.username);
-    if (t) return t;
-  }
-  console.log('TOKEN_EXPIRED');
-  process.exit(2);
-}
+async function pkceLogin(forcePrompt = false) {
+  const { verifier, challenge } = generatePKCE();
+  const state                   = crypto.randomBytes(16).toString('hex');
+  const { port, waitForCode }   = await startLocalServer();
+  const redirectUri             = `http://localhost:${port}`;
 
-/** Like getValidToken but returns null instead of exiting (used by status cmd). */
-async function tryGetToken() {
-  const cache = loadCache();
-  if (!cache?.access_token) return null;
-  const now = Math.floor(Date.now() / 1000);
-  if (!cache.expires_at || now < cache.expires_at - 60) return cache.access_token;
-  if (cache.refresh_token) return tryRefresh(cache.refresh_token, cache.username);
-  return null;
+  const authParams = new URLSearchParams({
+    client_id:             CLIENT_ID,
+    response_type:         'code',
+    redirect_uri:          redirectUri,
+    scope:                 SCOPES,
+    state,
+    code_challenge:        challenge,
+    code_challenge_method: 'S256',
+    prompt:                forcePrompt ? 'login' : 'select_account',
+  });
+
+  const fullAuthUrl = `${AUTH_URL}?${authParams}`;
+  console.log('\nOpening browser for Microsoft authentication...');
+  console.log('If the browser does not open, navigate to:\n');
+  console.log(`  ${fullAuthUrl}\n`);
+  openBrowser(fullAuthUrl);
+  console.log('Waiting for authentication (timeout: 5 minutes)...');
+
+  const { code, state: returnedState } = await waitForCode();
+  if (returnedState !== state) throw new Error('State mismatch — possible CSRF. Login aborted.');
+
+  process.stdout.write('Exchanging authorization code for tokens...');
+  const tokens = await oauthPost(TOKEN_URL, {
+    client_id:     CLIENT_ID,
+    grant_type:    'authorization_code',
+    code,
+    redirect_uri:  redirectUri,
+    code_verifier: verifier,
+    scope:         SCOPES,
+  });
+  console.log(' done.');
+
+  if (!tokens.access_token) throw new Error(`Token exchange failed: ${JSON.stringify(tokens)}`);
+
+  const me = await graphGet('/me', tokens.access_token, { $select: 'userPrincipalName,displayName,id' });
+  saveCache({
+    access_token:  tokens.access_token,
+    refresh_token: tokens.refresh_token || '',
+    expires_at:    Math.floor(Date.now() / 1000) + (tokens.expires_in || 3600),
+    username:      me.userPrincipalName || '',
+  });
+  return { token: tokens.access_token, me };
 }
 
 async function getAccessToken(forceLogin = false) {
@@ -199,46 +307,21 @@ async function getAccessToken(forceLogin = false) {
       }
     }
   }
+  const { token } = await pkceLogin();
+  return token;
+}
 
-  // Device Code Flow
-  const device = await oauthPost(DEVICE_URL, { client_id: CLIENT_ID, scope: SCOPES });
-  if (!device.device_code) throw new Error(`Device flow failed: ${JSON.stringify(device)}`);
+async function getValidToken() {
+  return getAccessToken(false);
+}
 
-  console.log('\n' + '='.repeat(60));
-  console.log(device.message);
-  console.log('='.repeat(60) + '\n');
-
-  const interval = (device.interval || 5) * 1000;
-  const deadline = Date.now() + (device.expires_in || 900) * 1000;
-
-  while (Date.now() < deadline) {
-    await new Promise(r => setTimeout(r, interval));
-    try {
-      const res = await oauthPost(TOKEN_URL, {
-        client_id:   CLIENT_ID,
-        grant_type:  'urn:ietf:params:oauth:grant-type:device_code',
-        device_code: device.device_code,
-      });
-      if (res.access_token) {
-        const me = await graphGet('/me', res.access_token, { $select: 'userPrincipalName' });
-        saveCache({
-          access_token:  res.access_token,
-          refresh_token: res.refresh_token || '',
-          expires_at:    Math.floor(Date.now() / 1000) + (res.expires_in || 3600),
-          username:      me.userPrincipalName || '',
-        });
-        return res.access_token;
-      }
-    } catch (err) {
-      let body = {};
-      try { body = JSON.parse(err.responseBody || '{}'); } catch {}
-      if (body.error === 'authorization_pending') continue;
-      if (body.error === 'slow_down') { await new Promise(r => setTimeout(r, 5000)); continue; }
-      if (body.error === 'expired_token') throw new Error('Device code expired. Run login again.');
-      throw err;
-    }
-  }
-  throw new Error('Authentication timed out.');
+async function tryGetToken() {
+  const cache = loadCache();
+  if (!cache?.access_token) return null;
+  const now = Math.floor(Date.now() / 1000);
+  if (!cache.expires_at || now < cache.expires_at - 60) return cache.access_token;
+  if (cache.refresh_token) return tryRefresh(cache.refresh_token, cache.username);
+  return null;
 }
 
 // ── Formatters ────────────────────────────────────────────────────────────────
@@ -273,13 +356,20 @@ function pad(str, len) {
 }
 
 // ── Commands ──────────────────────────────────────────────────────────────────
-async function cmdLogin() {
-  console.log('Starting Microsoft authentication...');
-  const token = await getAccessToken(true);
-  const me    = await graphGet('/me', token);
+async function cmdLogin(args) {
+  const cache = loadCache();
+  if (cache?.access_token) {
+    const now = Math.floor(Date.now() / 1000);
+    if (cache.expires_at && now < cache.expires_at - 60 && !args.force) {
+      console.log(`Already logged in as: ${cache.username}`);
+      console.log('Use --force to re-authenticate.');
+      return;
+    }
+  }
+  const { token, me } = await pkceLogin(!!args.force);
   console.log(`\nLogged in as: ${me.displayName} <${me.userPrincipalName}>`);
-  console.log(`User ID: ${me.id}`);
-  console.log(`Token cached at: ${CACHE_FILE}`);
+  console.log(`User ID     : ${me.id}`);
+  console.log(`Token cached: ${CACHE_FILE}`);
 }
 
 function cmdLogout() {
@@ -526,12 +616,6 @@ async function cmdTeams(args) {
     return;
   }
 
-  // ── NEW: resolve a person's AAD user ID from their email/UPN ──────────────
-  // Usage: teams --lookup-user someone@company.com
-  // Shows AAD ID, display name, title, and the expected oneOnOne chat ID pattern.
-  // Note: oneOnOne chat IDs follow the pattern 19:ID1_ID2@unq.gbl.spaces
-  //       where the IDs appear in the order Teams assigned them (not guaranteed sort order).
-  //       Always verify by listing --chats and matching the target user's ID fragment.
   if (args.lookupUser) {
     const user = await graphGet(`/users/${args.lookupUser}`, token, {
       $select: 'id,displayName,userPrincipalName,jobTitle,department',
@@ -550,32 +634,16 @@ async function cmdTeams(args) {
     return;
   }
 
-  // ── NEW: send a DM directly by email address ──────────────────────────────
-  // Usage: teams --dm someone@company.com --send "hello"
-  // Resolves the user's AAD ID, finds their oneOnOne chat from the chat list,
-  // and sends the message. More reliable than guessing the chat ID.
   if (args.dm && args.send) {
-    // 1. Resolve target user's AAD ID
-    const user = await graphGet(`/users/${args.dm}`, token, {
-      $select: 'id,displayName',
-    });
-
-    // 2. List chats and find the oneOnOne chat containing the target user's ID
-    const chatsData = await graphGet('/me/chats', token, {
-      $top: 50,
-      $select: 'id,topic,chatType',
-    });
+    const user = await graphGet(`/users/${args.dm}`, token, { $select: 'id,displayName' });
+    const chatsData = await graphGet('/me/chats', token, { $top: 50, $select: 'id,topic,chatType' });
     const chats = chatsData.value || [];
-    const directChat = chats.find(c =>
-        c.chatType === 'oneOnOne' && c.id.includes(user.id)
-    );
-
+    const directChat = chats.find(c => c.chatType === 'oneOnOne' && c.id.includes(user.id));
     if (!directChat) {
       console.error(`No existing direct chat found with ${user.displayName} (${args.dm}).`);
       console.error(`They may need to message you first, or check --chats list manually.`);
       process.exit(1);
     }
-
     const res = await graphPost(`/me/chats/${directChat.id}/messages`, token, {
       body: { content: args.send },
     });
@@ -583,12 +651,9 @@ async function cmdTeams(args) {
     return;
   }
 
-  // ── FIXED: $select is NOT supported by the Teams chat messages endpoint ───
-  // The Graph API returns HTTP 400 if $select is used here. Pass $top only.
   if (args.messages) {
-    const data = await graphGet(`/me/chats/${args.messages}/messages`, token, {
-      $top: limit,
-    });
+    // Graph returns HTTP 400 if $select is used on the Teams messages endpoint — pass $top only.
+    const data = await graphGet(`/me/chats/${args.messages}/messages`, token, { $top: limit });
     const msgs = data.value || [];
     if (args.json) { console.log(JSON.stringify(msgs, null, 2)); return; }
     console.log(`\nMessages in chat ${args.messages.slice(0, 20)}...:`);
@@ -622,8 +687,6 @@ async function cmdTeams(args) {
 async function cmdTranscripts(args) {
   const token = await getValidToken();
 
-  // Search calendar events by date + optional subject keyword, then resolve meeting IDs + transcripts
-  // Usage: transcripts --start 2026-03-06 [--end 2026-03-06] [--subject "keyword"]
   if (args.list || (!args.meeting && !args.download)) {
     const startDate = args.start || new Date(Date.now() - 7 * 86400 * 1000).toISOString().slice(0, 10);
     const endDate   = args.end || startDate;
@@ -649,7 +712,6 @@ async function cmdTranscripts(args) {
         console.log(`\nMeeting: ${e.subject}`);
         console.log(`Start  : ${fmtDt(e.start?.dateTime)}`);
         const joinUrl = e.onlineMeeting.joinUrl;
-        // Resolve to online meeting object via joinWebUrl
         let meetingId = null;
         try {
           const om = await graphGet('/me/onlineMeetings', token, {
@@ -689,7 +751,6 @@ async function cmdTranscripts(args) {
     return;
   }
 
-  // List transcripts for a specific meeting ID
   if (args.meeting && !args.transcript) {
     const data = await graphGet(`/me/onlineMeetings/${args.meeting}/transcripts`, token);
     const transcripts = data.value || [];
@@ -701,7 +762,6 @@ async function cmdTranscripts(args) {
     return;
   }
 
-  // Download transcript content
   if (args.meeting && args.transcript) {
     const contentType = args.vtt ? 'text/vtt' : 'text/plain';
     const url = `${GRAPH_BASE}/me/onlineMeetings/${args.meeting}/transcripts/${args.transcript}/content`;
@@ -812,6 +872,107 @@ async function cmdPeople(args) {
   }
 }
 
+function cmdClaims(args) {
+  const cache = loadCache();
+  if (!cache?.access_token) {
+    console.log('NOT_LOGGED_IN — run: node msgraph.js login');
+    process.exit(2);
+  }
+
+  let payload;
+  try {
+    const parts = cache.access_token.split('.');
+    if (parts.length !== 3) throw new Error('Not a JWT');
+    payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
+  } catch {
+    console.error('Error: could not decode cached token.');
+    process.exit(1);
+  }
+
+  if (args.json) {
+    console.log(JSON.stringify(payload, null, 2));
+    return;
+  }
+
+  const tty = process.stdout.isTTY;
+  const c = {
+    reset:  tty ? '\x1b[0m'  : '',
+    bold:   tty ? '\x1b[1m'  : '',
+    dim:    tty ? '\x1b[2m'  : '',
+    cyan:   tty ? '\x1b[36m' : '',
+    green:  tty ? '\x1b[32m' : '',
+    red:    tty ? '\x1b[31m' : '',
+    yellow: tty ? '\x1b[33m' : '',
+    white:  tty ? '\x1b[97m' : '',
+    gray:   tty ? '\x1b[90m' : '',
+  };
+
+  const W    = 54;
+  const line = () => `${c.gray}${'─'.repeat(W)}${c.reset}`;
+  const section = label => `\n${c.bold}${c.cyan}  ${label}${c.reset}\n${line()}`;
+  const row = (label, value, color = c.white) =>
+    `  ${c.gray}${label.padEnd(12)}${c.reset}  ${color}${value}${c.reset}`;
+  const absent = `${c.dim}(not present)${c.reset}`;
+
+  const now      = Math.floor(Date.now() / 1000);
+  const expTs    = payload.exp || 0;
+  const iatTs    = payload.iat || 0;
+  const secsLeft = expTs - now;
+  const minsLeft = Math.floor(secsLeft / 60);
+  const expStr   = expTs
+    ? new Date(expTs * 1000).toISOString().slice(0, 19).replace('T', ' ')
+    : 'N/A';
+  const iatStr   = iatTs
+    ? new Date(iatTs * 1000).toISOString().slice(0, 19).replace('T', ' ')
+    : 'N/A';
+  const expiryHint = secsLeft > 0
+    ? `${c.dim} (expires in ${minsLeft}m)${c.reset}`
+    : `${c.red} (EXPIRED)${c.reset}`;
+
+  const deviceId = payload.deviceid || payload.device_id || null;
+  const upn      = payload.upn || payload.unique_name || 'N/A';
+
+  console.log(`\n${c.bold}${c.cyan}╭${'─'.repeat(W)}╮${c.reset}`);
+  console.log(`${c.bold}${c.cyan}│${c.reset}  ${c.bold}Token Claims${c.reset}  ${c.gray}${upn.slice(0, W - 16).padEnd(W - 14)}${c.cyan}│${c.reset}`);
+  console.log(`${c.bold}${c.cyan}╰${'─'.repeat(W)}╯${c.reset}`);
+
+  console.log(section('IDENTITY'));
+  console.log(row('UPN',       upn));
+  console.log(row('Object ID', payload.oid || 'N/A', c.gray));
+  console.log(row('Tenant ID', payload.tid || 'N/A', c.gray));
+  console.log(row('Issued',    iatStr, c.dim));
+  console.log(row('Expires',   expStr) + expiryHint);
+
+  console.log(section('DEVICE CLAIMS'));
+  if (deviceId) {
+    console.log(row('Device ID', deviceId, c.green) + `  ${c.green}✓ present${c.reset}`);
+  } else {
+    console.log(row('Device ID', '(not present)', c.red) + `  ${c.red}✗${c.reset}`);
+    console.log(`\n  ${c.yellow}⚠  Device claims are missing.${c.reset}`);
+    console.log(`  ${c.dim}   SSO Extension may not be deployed, or this device${c.reset}`);
+    console.log(`  ${c.dim}   is not registered in Entra ID.${c.reset}`);
+  }
+  console.log(row('Join Type', payload.join_type            || absent));
+  console.log(row('MDM URL',   payload.mdm_compliance_url   || absent));
+
+  console.log(section('AUTH METHODS'));
+  const amrList = Array.isArray(payload.amr) ? payload.amr : (payload.amr || '').split(',');
+  const amrFmt  = amrList.map(m => `${c.bold}${m.trim()}${c.reset}`).join(`  ${c.gray}·${c.reset}  `);
+  console.log(`  ${amrFmt}`);
+
+  console.log(section('SCOPES'));
+  const scopes    = (payload.scp || '').split(' ').filter(Boolean).sort();
+  const colWidth  = 26;
+  const cols      = 2;
+  for (let i = 0; i < scopes.length; i += cols) {
+    const row2 = scopes.slice(i, i + cols)
+      .map(s => `${c.dim}•${c.reset} ${s.padEnd(colWidth)}`)
+      .join('  ');
+    console.log(`  ${row2}`);
+  }
+  console.log('');
+}
+
 async function cmdOrg(args) {
   const token = await getValidToken();
 
@@ -836,7 +997,6 @@ async function cmdOrg(args) {
     return;
   }
 
-  // Default: show org context
   try {
     const mgr = await graphGet('/me/manager', token);
     console.log(`Manager: ${mgr.displayName}`);
@@ -938,7 +1098,7 @@ async function cmdOnenote(args) {
 // ── CLI Parser ────────────────────────────────────────────────────────────────
 function parseArgs(argv) {
   const BOOL = new Set(['json','unread','sites','chats','teamsList','contacts',
-    'manager','reports','availability','notebooks','list','vtt','help']);
+    'manager','reports','availability','notebooks','list','vtt','help','force']);
   const args = { _: [] };
   let i = 0;
   while (i < argv.length) {
@@ -965,9 +1125,10 @@ function printHelp() {
 Usage: node ${name} <command> [options]
 
 Auth:
-  login                                Authenticate (device code flow)
+  login [--force]                      Authenticate via browser (PKCE flow)
   logout                               Remove cached credentials
   status                               Check login status
+  claims [--json]                      Decode cached JWT — identity, device claims, auth methods
 
 Data:
   me [--json]                          Your profile
@@ -986,24 +1147,10 @@ Data:
   onenote [--notebooks] [--sections NOTEBOOK_ID] [--pages SECTION_ID]
           [--read PAGE_ID] [--search QUERY] [--limit N] [--json]
           [--create TITLE --section SECTION_ID [--body CONTENT]]
+  transcripts [--start YYYY-MM-DD] [--end YYYY-MM-DD] [--subject KEYWORD]
+              [--meeting ID] [--transcript ID] [--output FILE] [--vtt]
 
 Add --json to any command for machine-readable output.
-
-Examples:
-  node ${name} login
-  node ${name} emails --limit 20
-  node ${name} emails --send user@corp.com --subject "Hi" --body "Hello"
-  node ${name} calendar --create "Standup" --start 2024-03-15T09:00 --end 2024-03-15T09:30
-  node ${name} teams --chats
-  node ${name} teams --lookup-user alice@corp.com
-  node ${name} teams --dm alice@corp.com --send "Hello from the avatar!"
-  node ${name} onedrive --upload report.pdf --dest "Documents/report.pdf"
-  node ${name} onenote --notebooks
-  node ${name} onenote --sections NOTEBOOK_ID
-  node ${name} onenote --pages SECTION_ID
-  node ${name} onenote --read PAGE_ID
-  node ${name} onenote --search "meeting notes"
-  node ${name} onenote --create "My Note" --section SECTION_ID --body "Content here"
 `);
 }
 
@@ -1016,20 +1163,21 @@ async function main() {
   const args    = parseArgs(argv.slice(1));
 
   const COMMANDS = {
-    login:      () => cmdLogin(),
-    logout:     () => cmdLogout(),
-    status:     () => cmdStatus(),
-    me:         () => cmdMe(args),
-    emails:     () => cmdEmails(args),
-    calendar:   () => cmdCalendar(args),
-    sharepoint: () => cmdSharepoint(args),
-    teams:      () => cmdTeams(args),
-    onedrive:   () => cmdOnedrive(args),
-    people:     () => cmdPeople(args),
-    org:        () => cmdOrg(args),
-    onenote:    () => cmdOnenote(args),
-    transcripts:  () => cmdTranscripts(args),
-    help:       () => { printHelp(); process.exit(0); },
+    login:       () => cmdLogin(args),
+    logout:      () => cmdLogout(),
+    status:      () => cmdStatus(),
+    me:          () => cmdMe(args),
+    emails:      () => cmdEmails(args),
+    calendar:    () => cmdCalendar(args),
+    sharepoint:  () => cmdSharepoint(args),
+    teams:       () => cmdTeams(args),
+    onedrive:    () => cmdOnedrive(args),
+    people:      () => cmdPeople(args),
+    org:         () => cmdOrg(args),
+    onenote:     () => cmdOnenote(args),
+    transcripts: () => cmdTranscripts(args),
+    claims:      () => cmdClaims(args),
+    help:        () => { printHelp(); process.exit(0); },
   };
 
   if (!COMMANDS[command]) {

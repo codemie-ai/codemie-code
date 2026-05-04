@@ -3,6 +3,7 @@ node_modules/
 
 # Build output
 dist/
+artifacts/
 
 # Environment variables
 .env
@@ -69,5 +70,5 @@ local/*
 MCP directories
 /.serena/
 /.agents/skills/bmad*
-
+docs/superpowers
 .codemie

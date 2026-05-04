@@ -12,6 +12,19 @@ import type { AgentConfig } from '../../../agents/core/types.js';
 import { registerProvider } from '../../core/decorators.js';
 import { ensureApiBase } from '../../core/codemie-auth-helpers.js';
 
+const ANTHROPIC_SUBSCRIPTION_DEFAULT_HAIKU_MODEL = 'claude-haiku-4-5-20251001';
+const ANTHROPIC_SUBSCRIPTION_DEFAULT_OPUS_MODEL = 'claude-opus-4-7';
+
+const ANTHROPIC_SUBSCRIPTION_MODEL_ALIASES: Record<string, string> = {
+  'claude-4-5-haiku': ANTHROPIC_SUBSCRIPTION_DEFAULT_HAIKU_MODEL,
+  'claude-opus-4-6': ANTHROPIC_SUBSCRIPTION_DEFAULT_OPUS_MODEL,
+  'claude-opus-4-6[1m]': `${ANTHROPIC_SUBSCRIPTION_DEFAULT_OPUS_MODEL}[1m]`,
+};
+
+function normalizeAnthropicSubscriptionModel(model: string | undefined): string | undefined {
+  return model ? ANTHROPIC_SUBSCRIPTION_MODEL_ALIASES[model] ?? model : undefined;
+}
+
 export const AnthropicSubscriptionTemplate = registerProvider<ProviderTemplate>({
   name: 'anthropic-subscription',
   displayName: 'Anthropic Subscription',
@@ -23,8 +36,8 @@ export const AnthropicSubscriptionTemplate = registerProvider<ProviderTemplate>(
   defaultProfileName: 'anthropic-subscription',
   recommendedModels: [
     'claude-sonnet-4-6',
-    'claude-opus-4-6',
-    'claude-4-5-haiku',
+    ANTHROPIC_SUBSCRIPTION_DEFAULT_OPUS_MODEL,
+    ANTHROPIC_SUBSCRIPTION_DEFAULT_HAIKU_MODEL,
   ],
   capabilities: ['streaming', 'tools', 'function-calling', 'vision'],
   supportsModelInstallation: false,
@@ -98,6 +111,22 @@ export const AnthropicSubscriptionTemplate = registerProvider<ProviderTemplate>(
       // for native Claude auth before the Claude process is spawned.
       CODEMIE_API_KEY: '',
     };
+
+    // SSO/JWT use CodeMie gateway model names, but this provider talks directly to
+    // Anthropic via Claude Code's native subscription session.
+    const model = normalizeAnthropicSubscriptionModel(config.model);
+    const haikuModel = normalizeAnthropicSubscriptionModel(config.haikuModel);
+    const opusModel = normalizeAnthropicSubscriptionModel(config.opusModel);
+
+    if (model && model !== config.model) {
+      env.CODEMIE_MODEL = model;
+    }
+    if (haikuModel && haikuModel !== config.haikuModel) {
+      env.CODEMIE_HAIKU_MODEL = haikuModel;
+    }
+    if (opusModel && opusModel !== config.opusModel) {
+      env.CODEMIE_OPUS_MODEL = opusModel;
+    }
 
     if (config.codeMieUrl) {
       env.CODEMIE_URL = config.codeMieUrl;

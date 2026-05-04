@@ -163,6 +163,25 @@ export const ClaudePluginMetadata: AgentMetadata = {
         env.ENABLE_TOOL_SEARCH = '0';
       }
 
+      if (!env.ENABLE_PROMPT_CACHING_1H) {
+        env.ENABLE_PROMPT_CACHING_1H = '1';
+      }
+
+      if (!env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE) {
+        let autocompactPct = 70;
+        if (env.CODEMIE_PROFILE_CONFIG) {
+          try {
+            const profileConfig = JSON.parse(env.CODEMIE_PROFILE_CONFIG);
+            if (typeof profileConfig.claudeAutocompactPct === 'number') {
+              autocompactPct = profileConfig.claudeAutocompactPct;
+            }
+          } catch {
+            // ignore malformed profile config
+          }
+        }
+        env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = String(autocompactPct);
+      }
+
       // Statusline setup: when --status flag is passed, configure Claude Code
       // status bar with a multi-line display showing model, context, git, cost
       // https://code.claude.com/docs/en/statusline

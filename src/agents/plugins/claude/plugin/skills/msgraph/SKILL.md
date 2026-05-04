@@ -36,14 +36,15 @@ node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js status
 node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js login
 ```
 
-This starts the **Device Code Flow** — it will print a URL and a short code like:
-```
-To sign in, use a web browser to open the page https://microsoft.com/devicelogin
-and enter the code ABCD-1234 to authenticate.
-```
+This opens the **system browser** for Microsoft authentication (PKCE flow). If the browser
+does not open automatically, a URL will be printed in the terminal — navigate to it manually.
+After successful sign-in, the token is cached at `~/.ms_graph_token_cache.json` and all
+subsequent commands run silently.
 
-Tell the user exactly that message, then wait. Once they complete login in the browser,
-the token is cached at `~/.ms_graph_token_cache.json` and all subsequent commands run silently.
+Use `--force` to re-authenticate even when already logged in:
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js login --force
+```
 
 ### When NOT logged in or token expired
 
@@ -53,7 +54,8 @@ If status returns `NOT_LOGGED_IN` or `TOKEN_EXPIRED`, tell the user:
 > ```
 > node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js login
 > ```
-> A code and URL will appear — open the URL in your browser and enter the code."
+> Your browser will open for Microsoft sign-in. If it doesn't open automatically, a URL
+> will appear in the terminal — navigate to it to complete authentication."
 
 ---
 

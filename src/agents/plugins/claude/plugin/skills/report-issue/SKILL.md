@@ -10,6 +10,7 @@ description: >-
   automatically collects diagnostic context (OS, Node.js, CLI version, installed agents,
   active profile, codemie doctor output, recent debug logs) and creates a structured GitHub
   issue via `gh issue create` with a user-confirmed preview step before submission.
+allowed-tools: [Bash, Read, Grep]
 ---
 
 # Report Issue to CodeMie Code

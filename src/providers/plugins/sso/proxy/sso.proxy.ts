@@ -128,6 +128,8 @@ export class CodeMieProxy {
     // 6. Find available port
     this.actualPort = this.config.port || await this.findAvailablePort();
 
+    const bindHost = this.config.host || 'localhost';
+
     return new Promise((resolve, reject) => {
       this.server = createServer((req, res) => {
         this.handleRequest(req, res).catch(error => {
@@ -142,13 +144,13 @@ export class CodeMieProxy {
         if (error.code === 'EADDRINUSE') {
           // Try a different random port
           this.actualPort = 0; // Let system assign
-          this.server?.listen(this.actualPort, 'localhost');
+          this.server?.listen(this.actualPort, bindHost);
         } else {
           reject(error);
         }
       });
 
-      this.server.listen(this.actualPort, 'localhost', () => {
+      this.server.listen(this.actualPort, bindHost, () => {
         const address = this.server?.address();
         if (typeof address === 'object' && address) {
           this.actualPort = address.port;
@@ -157,7 +159,7 @@ export class CodeMieProxy {
         // Propagate actual port to config so plugins (e.g., MCP auth) get the real port
         this.config.port = this.actualPort;
 
-        const gatewayUrl = `http://localhost:${this.actualPort}`;
+        const gatewayUrl = `http://${bindHost}:${this.actualPort}`;
         logger.debug(`Proxy started: ${gatewayUrl}`);
         resolve({ port: this.actualPort, url: gatewayUrl });
       });
