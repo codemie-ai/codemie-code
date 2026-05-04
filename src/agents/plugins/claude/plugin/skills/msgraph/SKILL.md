@@ -1,14 +1,15 @@
 ---
 name: msgraph
 description: >
-  Work with Microsoft 365 services via the Graph API — emails, calendar events, SharePoint sites,
-  Teams chats, OneDrive files, OneNote notebooks, contacts, and org chart. Use this skill whenever
-  the user asks about their emails, inbox, unread messages, meetings, calendar, Teams messages or
-  chats, SharePoint documents, OneDrive files, OneNote notes or notebooks, colleagues, manager,
-  direct reports, or any personal/organizational Microsoft data. Invoke proactively any time the
-  user mentions Outlook, Teams, SharePoint, OneDrive, OneNote, or wants to interact with their
-  Microsoft 365 account. The skill uses a local Node.js CLI (msgraph.js) that handles
-  authentication, token caching, and all API calls.
+  Work with Microsoft 365 services via the Graph API — emails, calendar events, SharePoint sites
+  (read and write), Teams chats and channel messages, OneDrive files, OneNote notebooks, contacts,
+  and org chart. Use this skill whenever the user asks about their emails, inbox, unread messages,
+  meetings, calendar, Teams messages or chats, channel messages, SharePoint documents, OneDrive
+  files, OneNote notes or notebooks, colleagues, manager, direct reports, or any
+  personal/organizational Microsoft data. Invoke proactively any time the user mentions Outlook,
+  Teams, SharePoint, OneDrive, OneNote, or wants to interact with their Microsoft 365 account.
+  The skill uses a local Node.js CLI (msgraph.js) that handles authentication, token caching,
+  and all API calls.
 ---
 
 # Microsoft Graph API Skill
