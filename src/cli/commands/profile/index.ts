@@ -7,6 +7,7 @@ import { ProfileDisplay } from './display.js';
 import { ProviderRegistry } from '../../../providers/core/registry.js';
 import { handleAuthValidationFailure } from '../../../providers/core/auth-validation.js';
 import { createLoginCommand, createLogoutCommand, createRefreshCommand } from './auth.js';
+import { createSetCommand } from './set.js';
 
 export function createProfileCommand(): Command {
   const command = new Command('profile');
@@ -333,50 +334,3 @@ function createRenameCommand(): Command {
   return command;
 }
 
-export function createSetCommand(): Command {
-  const command = new Command('set');
-
-  command
-    .description('Set a profile configuration value')
-    .argument('<setting>', 'Setting name (e.g. token-saving-mode)')
-    .argument('<value>', 'Setting value (e.g. on or off)')
-    .action(async (setting: string, value: string) => {
-      try {
-        const workingDir = process.cwd();
-        const profiles = await ConfigLoader.listProfiles(workingDir);
-        const activeProfileName = await ConfigLoader.getActiveProfileName(workingDir);
-        const entry = profiles.find(p => p.name === activeProfileName);
-
-        if (!entry) {
-          console.log(chalk.yellow('\nNo active profile found. Run "codemie setup" to create one.\n'));
-          process.exit(1);
-        }
-
-        const { name: profileName, profile } = entry;
-
-        if (setting === 'token-saving-mode') {
-          if (value !== 'on' && value !== 'off') {
-            console.log(chalk.red('\n✗ Invalid value. Use "on" or "off".\n'));
-            process.exit(1);
-          }
-
-          profile.features = { ...profile.features, tokenSavingMode: value === 'on' };
-          await ConfigLoader.saveProfile(profileName, profile, workingDir);
-
-          if (value === 'on') {
-            console.log(chalk.green(`\n✓ Token saving mode enabled for profile "${profileName}"\n`));
-          } else {
-            console.log(chalk.green(`\n✓ Token saving mode disabled for profile "${profileName}"\n`));
-          }
-        } else {
-          console.log(chalk.red(`\n✗ Unknown setting: "${setting}"\n`));
-          process.exit(1);
-        }
-      } catch (error: unknown) {
-        logger.error('Failed to set profile configuration:', error);
-        process.exit(1);
-      }
-    });
-
-  return command;
-}

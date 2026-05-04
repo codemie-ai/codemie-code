@@ -3,7 +3,7 @@
  *
  * Implements ProxyInterceptor to compress LLM request message arrays
  * before forwarding to the upstream API, reducing token usage when
- * tokenSavingMode is enabled in the profile configuration.
+ * features.contextCompression.enabled is true in the profile configuration.
  *
  * SOLID: Single responsibility = compress messages on request
  * KISS: Errors are caught and logged; compression is never on the critical path
@@ -24,6 +24,7 @@ import { SavingsTracker, createSavingsTracker } from './savings/tracker.js';
 import { CompressionStore, createCompressionStore } from './ccr/store.js';
 import { CacheAligner, createCacheAligner } from './transforms/cache-aligner.js';
 import { buildCompressConfig } from './transforms/config.js';
+import type { ProfileFeatures } from '../../../../../../env/types.js';
 import { injectCcrTool } from './ccr/tool_injection.js';
 import { CCRResponseHandler, createCcrResponseHandler } from './ccr/response_handler.js';
 
@@ -100,10 +101,10 @@ export class ContextCompressionInterceptor implements ProxyInterceptor {
       return;
     }
 
-    // Check feature flag (features.tokenSavingMode is added in Task 13; access defensively)
     const profileConfig = this.pluginContext.profileConfig as (Record<string, unknown> | undefined);
     const features = profileConfig?.['features'] as Record<string, unknown> | undefined;
-    if (features?.['tokenSavingMode'] !== true) {
+    const ccFeatures = features?.['contextCompression'] as Record<string, unknown> | undefined;
+    if (ccFeatures?.['enabled'] !== true) {
       return;
     }
 
@@ -130,7 +131,7 @@ export class ContextCompressionInterceptor implements ProxyInterceptor {
       const modelStr = typeof model === 'string' ? model : 'unknown';
       const contextLimit = resolveContextLimit(model);
 
-      const compressConfig = buildCompressConfig(features);
+      const compressConfig = buildCompressConfig(features as ProfileFeatures | undefined);
 
       const originalTokens = await this.tokenizer.countMessages(normalized);
 
@@ -146,8 +147,8 @@ export class ContextCompressionInterceptor implements ProxyInterceptor {
       }
 
       // Phase 0: CacheAligner — stabilize system-message prefix for KV-cache hits
-      // Only active when features.cacheAligner === true; otherwise pass normalized through unchanged.
-      const alignerEnabled = features?.['cacheAligner'] === true;
+      // Only active when features.contextCompression.cacheAligner === true; otherwise pass through unchanged.
+      const alignerEnabled = ccFeatures?.['cacheAligner'] === true;
       const { messages: alignedMessages, stablePrefixHash, dynamicExtracted } = alignerEnabled
         ? this.cacheAligner.align(normalized)
         : { messages: normalized, stablePrefixHash: '', dynamicExtracted: [] };

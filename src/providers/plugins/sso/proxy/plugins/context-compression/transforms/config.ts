@@ -1,3 +1,5 @@
+import type { ProfileFeatures } from '../../../../../../../env/types.js';
+
 export interface CompressConfig {
   protectRecent: number;
   targetRatio: number | null;
@@ -16,36 +18,19 @@ export const DEFAULT_COMPRESS_CONFIG: CompressConfig = {
   compressSystemMessages: true,
 };
 
-export function buildCompressConfig(features: Record<string, unknown> | undefined): CompressConfig {
-  if (!features) return { ...DEFAULT_COMPRESS_CONFIG };
+export function buildCompressConfig(features: ProfileFeatures | undefined): CompressConfig {
+  const cc = features?.contextCompression;
+  if (!cc) return { ...DEFAULT_COMPRESS_CONFIG };
 
   const config = { ...DEFAULT_COMPRESS_CONFIG };
 
-  if (typeof features['protectRecent'] === 'number') {
-    config.protectRecent = features['protectRecent'];
-  }
-
-  if (typeof features['targetRatio'] === 'number') {
-    config.targetRatio = features['targetRatio'];
-  } else if (features['targetRatio'] === null) {
-    config.targetRatio = null;
-  }
-
-  if (typeof features['compressUserMessages'] === 'boolean') {
-    config.compressUserMessages = features['compressUserMessages'];
-  }
-
-  if (typeof features['protectAnalysisContext'] === 'boolean') {
-    config.protectAnalysisContext = features['protectAnalysisContext'];
-  }
-
-  if (typeof features['minTokensToCompress'] === 'number') {
-    config.minTokensToCompress = features['minTokensToCompress'];
-  }
-
-  if (typeof features['compressSystemMessages'] === 'boolean') {
-    config.compressSystemMessages = features['compressSystemMessages'];
-  }
+  if (typeof cc.protectRecent === 'number')           config.protectRecent           = cc.protectRecent;
+  if (typeof cc.targetRatio === 'number')             config.targetRatio             = cc.targetRatio;
+  else if (cc.targetRatio === null)                   config.targetRatio             = null;
+  if (typeof cc.compressUserMessages === 'boolean')   config.compressUserMessages    = cc.compressUserMessages;
+  if (typeof cc.protectAnalysisContext === 'boolean') config.protectAnalysisContext  = cc.protectAnalysisContext;
+  if (typeof cc.minTokensToCompress === 'number')     config.minTokensToCompress     = cc.minTokensToCompress;
+  if (typeof cc.compressSystemMessages === 'boolean') config.compressSystemMessages  = cc.compressSystemMessages;
 
   return config;
 }

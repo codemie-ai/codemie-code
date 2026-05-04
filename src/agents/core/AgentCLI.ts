@@ -262,7 +262,10 @@ export class AgentCLI {
 
       // Apply token saving mode from CLI flag
       if (options.enableTokenSaving) {
-        config.features = { ...config.features, tokenSavingMode: true };
+        config.features = {
+          ...config.features,
+          contextCompression: { ...(config.features?.contextCompression ?? {}), enabled: true },
+        };
       }
 
       // Serialize full profile config for proxy plugins (read once at CLI level)
