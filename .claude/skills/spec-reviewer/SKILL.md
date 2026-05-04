@@ -1,6 +1,6 @@
 ---
 name: spec-reviewer
-description: Reviews technical specifications and implementation plans produced by superpowers:writing-plans against Jira ticket requirements and project design guidelines. Identifies critical gaps and design principle violations. Provides focused feedback without code snippets. Verdict is APPROVED for implementation or NEEDS WORK with specific issues. Use when superpowers:writing-plans or superpowers:brainstorming has produced a plan or spec, before starting implementation. Also triggers on: review spec, validate specification, check design doc, spec review.
+description: Reviews technical specifications from solution-architect against Jira ticket requirements and project design guidelines. Identifies critical gaps and design principle violations. Provides focused feedback without code snippets. Verdict is APPROVED for implementation or NEEDS WORK with specific issues.
 version: 0.1.0
 ---
 
@@ -8,7 +8,7 @@ version: 0.1.0
 
 ## Purpose
 
-This skill reviews technical specifications and implementation plans produced by superpowers:writing-plans or superpowers:brainstorming to ensure they:
+This skill reviews technical specifications produced by the solution-architect agent to ensure they:
 - Address all requirements from the Jira ticket
 - Follow project design guidelines from `.codemie/guides/`
 - Comply with architectural principles and patterns
@@ -19,8 +19,7 @@ The skill provides a binary verdict (APPROVED or NEEDS WORK) with critical feedb
 ## When to Use This Skill
 
 Use this skill when:
-- superpowers:writing-plans has produced an implementation plan or spec doc
-- superpowers:brainstorming has produced a design document
+- Solution-architect agent has produced a technical specification
 - Before starting implementation of a complex feature
 - User asks to "review spec", "validate specification", "check design doc"
 - Need to verify specification against Jira ticket requirements
@@ -224,7 +223,7 @@ This specification is **APPROVED** for implementation.
 - ✅ [Additional positive findings]
 
 ### Next Steps
-Proceed with implementation. Tech-lead will invoke superpowers:subagent-driven-development to begin implementation.
+Proceed with implementation following the specification. Use tech-lead skill to guide implementation.
 ```
 
 #### If Critical Issues Found:
@@ -390,10 +389,10 @@ Spec Reviewer:
 
 ## Integration with Other Skills
 
-### superpowers:writing-plans / superpowers:brainstorming
-- **Input source**: Plans/specs produced by superpowers:writing-plans (simple features) or superpowers:brainstorming → superpowers:writing-plans (complex features)
-- **Workflow**: brainstorming (complex) OR writing-plans directly (simple) → spec-reviewer validates → implement or revise
-- **Feedback loop**: If NEEDS WORK, revise the plan/spec and resubmit for review
+### Solution-Architect Skill
+- **Input source**: Specs produced by solution-architect
+- **Workflow**: solution-architect creates spec → spec-reviewer validates → implement or revise
+- **Feedback loop**: If NEEDS WORK, solution-architect revises based on feedback
 
 ### Brianna Skill
 - **Purpose**: Fetch Jira ticket for alignment verification
@@ -401,9 +400,9 @@ Spec Reviewer:
 - **Handle missing**: If ticket not found, cannot verify alignment (note in review)
 
 ### Tech-Lead Skill
-- **Handoff**: After APPROVED verdict, tech-lead invokes superpowers:subagent-driven-development
-- **Workflow**: spec-reviewer approves → tech-lead invokes superpowers:subagent-driven-development → implementation begins
-- **Dependency**: tech-lead should not start implementation without an approved spec for complex features
+- **Handoff**: After APPROVED verdict, tech-lead can guide implementation
+- **Workflow**: spec-reviewer approves → tech-lead implements
+- **Dependency**: tech-lead should not start without approved spec for complex features
 
 ## Error Handling
 
@@ -467,5 +466,5 @@ This skill coordinates with:
 - **CLAUDE.md**: Uses guide references and task classifier
 - **`.codemie/guides/`**: Loads all applicable guides for compliance verification
 - **brianna skill**: Fetches Jira ticket information for alignment check
-- **superpowers:writing-plans / superpowers:brainstorming**: Produces specs/plans reviewed by this skill
+- **solution-architect skill**: Reviews specs produced by this skill
 - **tech-lead skill**: Hands off to tech-lead after APPROVED verdict

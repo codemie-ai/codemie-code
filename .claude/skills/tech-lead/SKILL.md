@@ -1,63 +1,64 @@
 ---
 name: tech-lead
-description: Use when starting implementation of a Jira ticket, feature, or task. Orchestrates the full SDLC from requirements to QA — requirements gathering → worktree creation → complexity scoring → brainstorming (complex) or writing-plans (simple) → spec-reviewer → subagent-driven-development → qa-lead. Also triggers on: "implement a Jira ticket", "start working on EPMCDME ticket", "analyze task", "begin implementation", "implement new task", "implement feature", "act as tech lead", "plan implementation", "how should I implement".
-version: 0.2.0
+description: This skill should be used when the user asks to "implement a Jira ticket", "start working on EPMCDME ticket", "analyze task", "begin implementation", "implement new task", "implement feature", "act as tech lead", "plan implementation", "how should I implement", or wants structured technical leadership for implementing features. Acts as a technical lead to guide implementation from requirements (Jira ticket or user description) through complexity assessment, architectural analysis, branch creation, and pattern-driven coding.
+version: 0.1.0
 ---
 
-# Tech Lead: Full SDLC Orchestrator
+# Tech Lead: Structured Implementation Guide
 
 ## Purpose
 
-This skill orchestrates the full development lifecycle from requirements to QA. It:
-- Gathers requirements (Jira ticket or free-form description)
-- Creates an isolated worktree for the feature
-- Scores complexity across 5 dimensions to route to the right planning path
-- Drives planning, review, implementation, and quality gates
+This skill acts as a technical lead to guide implementation of features and tasks with a structured approach. It bridges the gap between requirements and code by:
+- Gathering requirements (from Jira tickets or user descriptions)
+- Analyzing codebase and architectural patterns
+- Assessing complexity and risks
+- Creating feature branches
+- Driving implementation with proper guidance
 
-## Full SDLC Flow
+The skill ensures structured, informed development that follows project patterns and architectural guidelines.
 
-```
-Phase 1: Requirements Gathering
-    ↓
-superpowers:using-git-worktrees  (isolated branch + worktree)
-    ↓
-Phase 2: Assessment + Complexity Scoring  (inside worktree)
-    ↓
-Score 5–7  → superpowers:writing-plans → spec-reviewer → superpowers:subagent-driven-development
-Score 8–15 → superpowers:brainstorming → superpowers:writing-plans → spec-reviewer → superpowers:subagent-driven-development
-    ↓
-superpowers:requesting-code-review + superpowers:receiving-code-review
-    ↓
-qa-lead
-```
+## When to Use This Skill
 
----
+Use this skill when:
+- Starting work on a Jira ticket (EPMCDME-XXXX)
+- Implementing a new feature or task (with or without Jira ticket)
+- Need to assess implementation complexity before coding
+- Want guidance on where and how to implement changes
+- Need to create a proper feature branch
+- Transitioning from requirements to implementation
 
-## Phase 1: Requirements Gathering
+## Implementation Workflow
 
-### Step 1: Determine Requirement Source
+### Phase 1: Requirement Gathering
+
+**Step 1: Determine Requirement Source**
 
 Check if user provided:
 - **Jira ticket ID** (EPMCDME-XXXXX format)
 - **Task description** (user-provided text)
 
-**If Jira Ticket Provided:**
+**Step 1a: If Jira Ticket Provided**
 
-Use the brianna skill to fetch description and summary fields only:
+Use the brianna skill to fetch ONLY description and summary fields:
 
 ```
-Use Skill tool with skill="brianna" and args:
-"Get ticket details for EPMCDME-XXXXX. I need only the description and summary fields."
+Use Skill tool with skill="brianna" and args containing:
+- Action: get ticket details
+- Ticket ID: [provided by user]
+- Fields: description, summary ONLY
 ```
 
-Do NOT request status, assignee, or other fields unless needed for the complexity assessment.
+Do NOT request other fields like status, assignee, or custom fields unless explicitly needed for complexity assessment.
 
-**If Task Description Provided:**
+**Step 1b: If Task Description Provided**
 
-1. Confirm understanding of requirements
-2. Ask clarifying questions if requirements are vague
-3. Document requirements in structured format:
+If user provides a task description without a Jira ticket:
 
+1. **Confirm understanding** of the requirements
+2. **Ask clarifying questions** if requirements are vague
+3. **Document requirements** in a structured format for later reference
+
+Example:
 ```markdown
 ## Task Requirements
 
@@ -66,235 +67,398 @@ Do NOT request status, assignee, or other fields unless needed for the complexit
 **Acceptance Criteria**:
 - [Criterion 1]
 - [Criterion 2]
+- [Criterion 3]
 
 **Context**: [Any additional context or constraints]
 ```
 
-### Step 2: Determine Branch Name
+**Step 2: Branch Naming Decision**
 
-**If Jira ticket:** Branch name = `EPMCDME-XXXXX` (exact ticket ID, no prefix)
+Determine appropriate branch name:
 
-**If no Jira ticket:** Suggest `feature/descriptive-name` or `task/descriptive-name` (kebab-case). Confirm with user before proceeding.
+**If Jira ticket exists:**
+- Branch name: `EPMCDME-XXXXX` (exact ticket ID)
 
-### Step 3: Create Worktree
+**If no Jira ticket:**
+- Ask user for preferred branch name
+- Suggest format: `feature/descriptive-name` or `task/descriptive-name`
+- Example: `feature/add-user-logging`, `task/improve-error-handling`
 
-Invoke `superpowers:using-git-worktrees` with the determined branch name. All subsequent work happens inside the worktree.
+### Phase 2: Technical Analysis
 
-```
-Invoke Skill: superpowers:using-git-worktrees
-Provide: branch name [EPMCDME-XXXXX or feature/name]
-```
+**Step 3: Explore Codebase and Guides**
 
----
+After obtaining ticket details, perform targeted exploration:
 
-## Phase 2: Assessment (Inside Worktree)
+1. **Check Relevant Guides First (MANDATORY)**
+   - Identify task category from ticket (API, Agent, Database, etc.)
+   - Use Read tool to load P0 guides from `.codemie/guides/`
+   - Reference CLAUDE.md Task Classifier for guide mapping
 
-### Step 4: Load Guides and Search Codebase
+2. **Search Codebase**
+   - Use Grep to find related code patterns
+   - Use Glob to locate relevant files
+   - Identify existing implementations to follow
 
-**Load relevant guides first** from `.codemie/guides/` based on task type:
+3. **Understand Architecture**
+   - Determine affected layers (API → Service → Repository)
+   - Identify integration points
+   - Check for similar existing features
 
-| Task Keywords | P0 Guide |
-|---|---|
-| plugin, agent, registry, adapter | architecture/architecture.md |
-| security, auth, credentials | security/security-practices.md |
-| test, coverage, mock | testing/testing-patterns.md |
-| provider, LLM, integration | integration/external-integrations.md |
-| git, workflow, CI/CD | standards/git-workflow.md |
-| error, exception, validation | development/development-practices.md |
-| cli, command | architecture/architecture.md |
+**Exploration Guidelines:**
+- Focus on code patterns mentioned in ticket
+- Prioritize guides over blind codebase search
+- Look for existing similar implementations
+- Identify affected components and dependencies
 
-Then search the codebase for related implementations (Grep/Glob) and identify affected components.
+**Step 4: Clarifying Questions (Selective)**
 
-### Step 5: Complexity Scoring
+Ask clarifying questions ONLY when:
+- Requirements are ambiguous or contradictory
+- Multiple valid implementation approaches exist
+- Architectural decisions need user input
+- Ticket lacks critical technical details
 
-Score each dimension 1–3 points. Total range: 5–15.
+**Do NOT ask about:**
+- Information already present in code
+- Generic questions ("Should I use async?")
+- Standard patterns covered in guides
+- Details that can be inferred from existing implementations
 
-| Dimension | 1 pt | 2 pts | 3 pts |
-|---|---|---|---|
-| **Component Scope** | Single file/function | 2–5 files, 1–2 layers | 6+ files, 3+ layers |
-| **Requirements Clarity** | Fully specified | Minor gaps | Ambiguous or missing |
-| **Technical Risk** | Known pattern, low risk | Some unknowns | New integration or security impact |
-| **File Estimate** | 1–3 files | 4–8 files | 9+ files |
-| **Dependencies** | No new deps | 1–2 existing deps | New external dep or new service |
+Use AskUserQuestion tool with focused, specific questions that unblock implementation decisions.
 
-**Routing:**
-- **Score 5–7** → **Simple** → invoke `superpowers:writing-plans` directly
-- **Score 8–15** → **Medium/Complex** → invoke `superpowers:brainstorming` first
+### Phase 3: Complexity Assessment
 
-Always report the score breakdown before routing:
+**Step 5: Analyze and Report Complexity**
 
-```
-Complexity Score: 9/15 (Medium)
-- Component Scope:       2 pts  (2–5 files, 2 layers)
-- Requirements Clarity:  2 pts  (minor gaps in ticket)
-- Technical Risk:        2 pts  (some unknowns)
-- File Estimate:         2 pts  (4–8 files estimated)
-- Dependencies:          1 pt   (uses existing deps only)
+Provide a structured complexity assessment in this format:
 
-Routing → superpowers:brainstorming
-```
+```markdown
+## Implementation Analysis: [TICKET-ID]
 
----
+### Complexity Rating: [Simple | Medium | Complex]
 
-## Phase 3: Planning
+### Reasoning:
+- **[Point 1]**: [Explanation of complexity factor]
+- **[Point 2]**: [Explanation of complexity factor]
+- **[Point 3]**: [Explanation of complexity factor]
+- **[Point 4]**: [Explanation of complexity factor - optional]
 
-### Simple Path (Score 5–7)
+### Clarity Assessment:
+[Clear | Partially Clear | Unclear] - [Brief explanation]
 
-Invoke `superpowers:writing-plans` directly, passing requirements summary, guide findings, and affected files as context.
-
-After writing-plans produces a plan → invoke `spec-reviewer`:
-
-```
-Invoke Skill: spec-reviewer
-Provide: plan file path, Jira ticket ID (if available)
-```
-
-After spec-reviewer **APPROVED** → proceed to Phase 4.
-
-If spec-reviewer returns **NEEDS WORK** → address the issues and resubmit.
-
-### Medium/Complex Path (Score 8–15)
-
-Invoke `superpowers:brainstorming`, passing requirements summary, guide findings, complexity score, and open architectural questions.
-
-After brainstorming produces design doc → invoke `superpowers:writing-plans`, passing the design doc.
-
-After writing-plans produces a plan → invoke `spec-reviewer`:
-
-```
-Invoke Skill: spec-reviewer
-Provide: plan file path, Jira ticket ID (if available)
+### Affected Components:
+- **[Component 1]**: [File path or module] - [Nature of change]
+- **[Component 2]**: [File path or module] - [Nature of change]
+- **[Component 3]**: [File path or module] - [Nature of change]
 ```
 
-After spec-reviewer **APPROVED** → proceed to Phase 4.
+**Complexity Criteria:**
 
----
+**Simple:**
+- Single component affected
+- Well-defined requirements
+- Existing patterns to follow
+- No architectural decisions needed
+- Estimated 1-3 files to change
 
-## Phase 4: Implementation
+**Medium:**
+- 2-3 components affected
+- Clear requirements with minor gaps
+- May require some architectural decisions
+- Estimated 4-8 files to change
+- Requires coordination between layers
 
-Invoke `superpowers:subagent-driven-development`, passing the plan file path, worktree path, and key architectural context from Phase 2.
+**Complex:**
+- 4+ components affected
+- Ambiguous or incomplete requirements
+- Significant architectural decisions needed
+- Estimated 9+ files to change
+- Cross-cutting concerns (security, performance)
+- New integrations or external dependencies
 
-After all implementation tasks complete and code review passes → proceed to Phase 5.
+### Phase 4: Recommendation
 
----
+**Step 6: Provide Implementation Recommendation**
 
-## Phase 5: Quality Gates
+Based on complexity assessment, provide one of these recommendations:
 
-Invoke `qa-lead`, passing branch name, spec file path (if available), and Jira ticket ID (if available).
+**For Simple/Medium Complexity:**
+```markdown
+### Recommendation
 
-qa-lead orchestrates automated tests, UI tests (conditional), spec-refinement (if needed), and `/memory-refresh` reminder.
+This feature is [Simple/Medium] complexity and can be implemented directly.
 
----
+**Suggested Approach:**
+1. Create feature branch: `[branch-name]`
+2. [Step-by-step implementation guidance]
+3. [Key patterns to follow]
+4. [Testing approach]
+
+Upon user confirmation, create the feature branch and begin implementation.
+```
+
+**For Complex Complexity:**
+```markdown
+### Recommendation
+
+This feature is Complex and would benefit from architectural planning.
+
+**Suggested Next Steps:**
+1. Use solution-architect skill to create detailed specification
+2. Address architectural decisions: [list key decisions]
+3. Define interfaces and contracts
+4. Create implementation plan with milestones
+
+Alternatively, proceed with implementation if user accepts the complexity. Ask user to choose approach.
+```
+
+### Phase 5: Implementation Start
+
+**Step 7: Branch Protection Check and Implementation**
+
+If user agrees to proceed with implementation:
+
+**CRITICAL: NEVER implement on main/master. Always check branch first.**
+
+**7a. Check Current Branch (MANDATORY FIRST STEP):**
+```bash
+git branch --show-current
+```
+
+**7b. If on `main` or `master` branch — STOP immediately:**
+
+Do NOT write any code. Display this message:
+
+```markdown
+⚠️ **Branch Protection**: You are currently on the `main` branch.
+
+Implementation cannot start on `main`. I will create a feature branch first.
+
+Creating branch: `[determined-branch-name]`...
+```
+
+Then create the feature branch immediately before touching any files.
+
+**7c. If already on a feature branch — proceed normally.**
+
+**7d. Create Feature Branch (if on main/master or no branch exists):**
+```bash
+# Create and switch to feature branch
+# For Jira tickets:
+git checkout -b EPMCDME-XXXXX
+
+# For non-Jira tasks (use determined branch name):
+git checkout -b feature/branch-name
+```
+
+**7e. Verify Branch:**
+```bash
+# Confirm on correct branch (must NOT be main or master)
+git branch --show-current
+```
+
+**7f. Begin Implementation:**
+- Follow patterns identified in analysis phase
+- Reference guides for standard approaches
+- Implement changes layer by layer (API → Service → Repository)
+- Apply security and performance patterns
+
+**Branch Naming:**
+
+For Jira tickets:
+- Format: `EPMCDME-XXXXX` (exactly as ticket ID)
+- No prefixes like `feature/` or `fix/`
+- Use ticket number as-is
+
+For non-Jira tasks:
+- Format: `feature/descriptive-name` or `task/descriptive-name`
+- Use kebab-case for names
+- Keep names concise but descriptive
+- Examples: `feature/add-logging`, `task/refactor-auth`
+
+**Implementation Guidelines:**
+- Start with repository layer (data access)
+- Then service layer (business logic)
+- Then API layer (endpoints)
+- Test incrementally
+- Follow project patterns in guides
 
 ## Key Principles
 
 ### Do's
-✅ Gather requirements fully before creating worktree
-✅ Load `.codemie/guides/` before searching codebase
-✅ Report complexity score breakdown before routing
-✅ Follow score routing strictly — do not override without explicit user input
-✅ Ask specific, blocking questions only (not generic ones)
+✅ Always check guides before searching codebase
+✅ Accept both Jira tickets and task descriptions
+✅ Fetch only required Jira fields (description, summary) when applicable
+✅ Provide evidence-based complexity assessment
+✅ Create feature branch BEFORE any changes
+✅ Follow established patterns from guides
+✅ Ask specific, blocking questions only
+✅ Provide clear, actionable recommendations
+✅ Adapt branch naming to context (Jira vs non-Jira)
 
 ### Don'ts
-❌ Never create branches with raw git commands — `superpowers:using-git-worktrees` handles it
-❌ Never call `solution-architect` — use `superpowers:brainstorming` for complex features
-❌ Never start implementation before spec-reviewer APPROVED
-❌ Never ask about information already in the code or guides
-❌ Never implement on main/master (worktrees enforce this)
+❌ Don't skip guide consultation
+❌ Don't ask generic clarifying questions
+❌ Don't start coding without branch creation
+❌ Don't write ANY code while on `main` or `master` branch
+❌ Don't make architectural decisions for complex features without user input
+❌ Don't fetch unnecessary Jira fields (when using Jira)
+❌ Don't guess at complexity—analyze systematically
+❌ Don't assume every task has a Jira ticket
 
----
-
-## Integration with Other Skills
-
-### superpowers:using-git-worktrees
-- Invoked between Phase 1 and Phase 2
-- Creates isolated branch + worktree — all Phase 2+ work happens there
-- Handles all branch creation, no manual `git checkout -b` needed
-
-### superpowers:brainstorming
-- Invoked for Medium/Complex features (score 8–15)
-- Produces design doc that feeds into `superpowers:writing-plans`
-
-### superpowers:writing-plans
-- Invoked for Simple features (score 5–7) directly, or after brainstorming
-- Produces the implementation plan reviewed by spec-reviewer
-
-### spec-reviewer
-- Validates plan/spec before implementation starts
-- Must return APPROVED before `superpowers:subagent-driven-development` is invoked
-
-### superpowers:subagent-driven-development
-- Invoked after spec-reviewer APPROVED
-- Dispatches fresh subagent per task, with two-stage review after each
-
-### qa-lead
-- Invoked after all implementation tasks and code review are complete
-- Orchestrates all quality gates before the branch is merged
-
-### brianna
-- Fetches Jira ticket details (description + summary only)
-- Used in Phase 1 when Jira ticket ID is provided
-
-### codemie-commit / codemie-pr
-- Used after qa-lead passes for commits and PR creation
-
----
-
-## Example Workflows
+## Example Workflow
 
 ### Example 1: Simple Feature (Jira Ticket)
 
 ```
 User: "Implement EPMCDME-10500"
 
-1. Fetches EPMCDME-10500 via brianna (description + summary)
-2. Determines branch: EPMCDME-10500
-3. Invokes superpowers:using-git-worktrees
-4. Inside worktree: loads .codemie/guides/api/ and architecture guide
-5. Scores complexity: 6/15 (Simple — 1 endpoint, standard CRUD, clear requirements)
-6. Routes to superpowers:writing-plans
-7. After plan produced → invokes spec-reviewer
-8. spec-reviewer APPROVED → invokes superpowers:subagent-driven-development
-9. After implementation + code review → invokes qa-lead
+Tech Lead:
+1. Identifies Jira ticket format
+2. Fetches ticket via brianna (description + summary)
+3. Reads .codemie/guides/api/rest-api-patterns.md
+4. Searches for similar endpoints with Grep
+5. Assesses: Simple (1 endpoint, standard CRUD, existing pattern)
+6. Recommends: Direct implementation
+7. Creates branch: EPMCDME-10500
+8. Implements following REST API patterns
 ```
 
-### Example 2: Complex Feature (Jira Ticket)
+### Example 1b: Simple Feature (No Jira Ticket)
 
 ```
-User: "Start work on EPMCDME-10700"
+User: "Add logging to the authentication endpoint"
 
-1. Fetches EPMCDME-10700 via brianna
-2. Determines branch: EPMCDME-10700
-3. Invokes superpowers:using-git-worktrees
-4. Inside worktree: loads architecture + integration guides
-5. Scores complexity: 12/15 (Complex — new external integration, 9+ files, security impact)
-6. Routes to superpowers:brainstorming
-7. brainstorming produces design doc → invokes superpowers:writing-plans
-8. writing-plans produces plan → invokes spec-reviewer
-9. spec-reviewer APPROVED → invokes superpowers:subagent-driven-development
-10. After implementation + code review → invokes qa-lead
+Tech Lead:
+1. Identifies task description (no Jira ticket)
+2. Documents requirements in structured format
+3. Asks user for branch name preference
+4. Reads .codemie/guides/development/logging-patterns.md
+5. Searches for auth endpoint with Grep
+6. Assesses: Simple (1 file, standard pattern, clear requirements)
+7. Recommends: Direct implementation
+8. Creates branch: feature/add-auth-logging
+9. Implements following logging patterns
 ```
 
-### Example 3: Free-Form Task (No Jira Ticket)
+### Example 2: Medium Feature (Jira Ticket)
 
 ```
-User: "Add structured logging to the agent executor"
+User: "Start work on EPMCDME-10600"
 
-1. Confirms requirements, documents acceptance criteria
-2. Suggests branch: feature/add-agent-executor-logging (confirmed by user)
-3. Invokes superpowers:using-git-worktrees
-4. Inside worktree: loads development-practices guide
-5. Scores complexity: 7/15 (Simple — known pattern, 2–3 files, clear requirements)
-6. Routes to superpowers:writing-plans
-7. After plan produced → invokes spec-reviewer
-8. spec-reviewer APPROVED → invokes superpowers:subagent-driven-development
-9. After implementation + code review → invokes qa-lead
+Tech Lead:
+1. Fetches ticket via brianna
+2. Reads guides: agents/langchain-agent-patterns.md, integration/llm-providers.md
+3. Searches codebase for similar agents
+4. Asks: "Should the new agent use streaming or batch mode?"
+5. Assesses: Medium (new agent + tool, 5 files, clear patterns)
+6. Recommends: Direct implementation with guidance
+7. Creates branch: EPMCDME-10600
+8. Implements agent following LangChain patterns
 ```
 
----
+### Example 3: Complex Feature
+
+```
+User: "Implement EPMCDME-10700"
+
+Tech Lead:
+1. Fetches ticket via brianna
+2. Reads multiple guides (architecture, workflows, integrations)
+3. Identifies: 12+ files affected, new external service integration
+4. Asks: "Which cloud provider should be used?" "What's the data retention policy?"
+5. Assesses: Complex (multi-layer, new integration, security concerns)
+6. Recommends: Use solution-architect skill first
+7. If user insists: Creates branch and starts with high-level plan
+```
+
+## Integration with Other Skills
+
+### Brianna Skill
+- Use for Jira ticket retrieval (when Jira ticket is provided)
+- Request ONLY description and summary fields
+- Handle ticket not found gracefully
+- Skip if user provides task description without Jira ticket
+
+### Solution Architect Skill
+- Invoke for Complex features needing specs
+- Pass task details (Jira or user-provided) and analysis findings
+- Wait for specification before implementation
+
+### Codemie-Commit Skill
+- Use after implementation completion
+- Ensure commit message references Jira ticket (if applicable)
+- Follow git workflow from guides
+
+## Error Handling
+
+### Ticket Not Found
+```markdown
+Unable to fetch Jira ticket [ID]. Please verify:
+- Ticket ID format is correct (EPMCDME-XXXXX)
+- Ticket exists in Jira
+- You have access to view this ticket
+```
+
+### Currently on Main Branch
+
+When `git branch --show-current` returns `main` or `master`:
+
+```markdown
+⚠️ **Branch Protection**: You are currently on the `main` branch.
+
+Implementation cannot start on `main`. Creating feature branch `[branch-name]` now...
+```
+
+Then immediately run `git checkout -b [branch-name]` before any file edits.
+
+### Branch Already Exists
+```markdown
+Branch [EPMCDME-XXXXX] already exists.
+
+Options:
+1. Switch to existing branch: `git checkout EPMCDME-XXXXX`
+2. Delete and recreate: `git branch -D EPMCDME-XXXXX && git checkout -b EPMCDME-XXXXX`
+3. Use different branch name (not recommended)
+
+Which option do you prefer?
+```
+
+### Guides Not Found
+```markdown
+Warning: Unable to locate relevant guides for this task.
+
+Proceeding with codebase exploration only. This may result in patterns inconsistent with project standards.
+
+Continue? Consider updating guide paths if this persists.
+```
+
+## Success Criteria
+
+A successful tech-lead session results in:
+- ✅ Jira ticket details retrieved and understood
+- ✅ Relevant guides consulted
+- ✅ Codebase patterns identified
+- ✅ Complexity accurately assessed
+- ✅ Clear recommendation provided
+- ✅ Feature branch created with correct name
+- ✅ Implementation started following project patterns
+- ✅ User has clarity on next steps
 
 ## Additional Resources
 
-For detailed complexity criteria and branch naming conventions:
-- **`references/complexity-assessment-guide.md`** — detailed scoring examples
-- **`references/branch-workflow.md`** — branch naming rules and examples
+### Reference Files
+
+For detailed patterns referenced during analysis:
+- **`references/complexity-assessment-guide.md`** - Detailed complexity criteria and examples
+- **`references/branch-workflow.md`** - Git branching best practices for Jira tickets
+
+### Integration Points
+
+This skill coordinates with:
+- **CLAUDE.md**: Uses Task Classifier and guide references
+- **`.codemie/guides/`**: Consults all relevant guides based on task type
+- **brianna skill**: Fetches Jira ticket information
+- **solution-architect skill**: Escalates complex features for specification
+- **codemie-commit skill**: Completes implementation with proper commits

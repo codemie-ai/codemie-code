@@ -106,10 +106,11 @@ This guide provides detailed criteria and examples for assessing feature complex
 
 Score each dimension (1=Simple, 2=Medium, 3=Complex):
 
-| Total Score | Complexity      | Routing |
-|-------------|-----------------|---------|
-| 5-7         | Simple          | → `superpowers:writing-plans` directly |
-| 8-15        | Medium/Complex  | → `superpowers:brainstorming` first |
+| Total Score | Complexity |
+|-------------|------------|
+| 5-7         | Simple     |
+| 8-11        | Medium     |
+| 12-15       | Complex    |
 
 Example scoring:
 - Component Scope: 2 (2 components)
@@ -392,7 +393,7 @@ If user believes complexity is different:
 3. Reassess with additional context
 4. Document the agreed complexity
 
-### Borderline Cases (Score 7-8)
+### Borderline Cases (Score 7-8 or 11-12)
 
 For borderline scores:
 - Lean toward higher complexity if risks are present
