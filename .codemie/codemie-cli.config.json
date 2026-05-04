@@ -2,7 +2,7 @@
   "version": 2,
   "activeProfile": "codemie-prod",
   "profiles": {
-    "epm-cdme": {
+    "codemie-prod": {
       "codeMieProject": "epm-cdme",
       "provider": "ai-run-sso",
       "codeMieUrl": "https://codemie.lab.epam.com",
@@ -12,7 +12,7 @@
       "haikuModel": "claude-haiku-4-5-20251001",
       "sonnetModel": "claude-sonnet-4-6",
       "opusModel": "claude-opus-4-6-20260205",
-      "name": "epm-cdme",
+      "name": "codemie-prod",
       "codemieAssistants": [
         {
           "id": "05959338-06de-477d-9cc3-08369f858057",
