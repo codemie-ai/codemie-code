@@ -6,7 +6,7 @@
 
 import chalk from 'chalk';
 import type { Assistant } from 'codemie-sdk';
-import type { CodemieAssistant, ProviderProfile } from '@/env/types.js';
+import type { CodemieAssistant } from '@/env/types.js';
 import { MESSAGES } from '@/cli/commands/assistants/constants.js';
 import { REGISTRATION_MODE } from '@/cli/commands/assistants/setup/manualConfiguration/constants.js';
 import { COLOR } from '../constants.js';
@@ -18,7 +18,7 @@ export function displaySummary(
   toRegister: Assistant[],
   toUnregister: CodemieAssistant[],
   profileName: string,
-  config: ProviderProfile,
+  assistants: CodemieAssistant[],
   configLocation?: string
 ): void {
   const totalChanges = toRegister.length + toUnregister.length;
@@ -28,14 +28,14 @@ export function displaySummary(
     console.log(chalk.dim(MESSAGES.SETUP.SUMMARY_CONFIG_LOCATION(configLocation)));
   }
 
-  displayCurrentlyRegistered(config);
+  displayCurrentlyRegistered(assistants);
 }
 
 /**
  * Display currently registered assistants
  */
-export function displayCurrentlyRegistered(config: ProviderProfile): void {
-  if (!config.codemieAssistants || config.codemieAssistants.length === 0) {
+export function displayCurrentlyRegistered(assistants: CodemieAssistant[]): void {
+  if (!assistants || assistants.length === 0) {
     return;
   }
 
@@ -47,7 +47,7 @@ export function displayCurrentlyRegistered(config: ProviderProfile): void {
   console.log(chalk.bold('Registered assistants:'));
   console.log('');
 
-  config.codemieAssistants.forEach((assistant: CodemieAssistant) => {
+  assistants.forEach((assistant: CodemieAssistant) => {
     const mode = assistant.registrationMode || REGISTRATION_MODE.AGENT;
 
     // Build location info based on registration mode

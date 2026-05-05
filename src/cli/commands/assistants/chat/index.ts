@@ -70,8 +70,13 @@ async function chatWithAssistant(
   message: string | undefined,
   options: ChatCommandOptions
 ): Promise<void> {
-  const config = await ConfigLoader.load();
-  const registeredAssistants = config.codemieAssistants || [];
+  const workingDir = process.cwd();
+  const config = await ConfigLoader.load(workingDir);
+  const [globalAssistants, localAssistants] = await Promise.all([
+    ConfigLoader.loadAssistantsByScope('global', workingDir).catch(() => [] as CodemieAssistant[]),
+    ConfigLoader.loadAssistantsByScope('local', workingDir).catch(() => [] as CodemieAssistant[]),
+  ]);
+  const registeredAssistants = [...globalAssistants, ...localAssistants];
   const client = await getAuthenticatedClient(config);
 
   const conversationId = options.conversationId || process.env.CODEMIE_SESSION_ID;

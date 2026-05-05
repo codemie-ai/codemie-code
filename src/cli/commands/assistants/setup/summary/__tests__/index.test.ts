@@ -55,7 +55,7 @@ describe('Summary Display - summary/index.ts', () => {
 				},
 			];
 
-			displaySummary(toRegister, toUnregister, 'default', mockConfig);
+			displaySummary(toRegister, toUnregister, 'default', mockConfig.codemieAssistants ?? []);
 
 			expect(consoleLogSpy).toHaveBeenCalledWith(
 				expect.stringContaining(MESSAGES.SETUP.SUMMARY_UPDATED(3))
@@ -63,7 +63,7 @@ describe('Summary Display - summary/index.ts', () => {
 		});
 
 		it('should display profile name', () => {
-			displaySummary([], [], 'custom-profile', mockConfig);
+			displaySummary([], [], 'custom-profile', mockConfig.codemieAssistants ?? []);
 
 			expect(consoleLogSpy).toHaveBeenCalledWith(
 				expect.stringContaining(MESSAGES.SETUP.SUMMARY_PROFILE('custom-profile'))
@@ -84,14 +84,14 @@ describe('Summary Display - summary/index.ts', () => {
 				],
 			};
 
-			displaySummary([], [], 'default', config);
+			displaySummary([], [], 'default', config.codemieAssistants ?? []);
 
 			// Should show registered assistants section
 			expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('Registered assistants:'));
 		});
 
 		it('should handle empty changes', () => {
-			displaySummary([], [], 'default', mockConfig);
+			displaySummary([], [], 'default', mockConfig.codemieAssistants ?? []);
 
 			expect(consoleLogSpy).toHaveBeenCalledWith(
 				expect.stringContaining(MESSAGES.SETUP.SUMMARY_UPDATED(0))
@@ -103,7 +103,7 @@ describe('Summary Display - summary/index.ts', () => {
 				{ id: '1', name: 'New Assistant', slug: 'new-assistant' },
 			];
 
-			displaySummary(toRegister, [], 'default', mockConfig);
+			displaySummary(toRegister, [], 'default', mockConfig.codemieAssistants ?? []);
 
 			expect(consoleLogSpy).toHaveBeenCalledWith(
 				expect.stringContaining(MESSAGES.SETUP.SUMMARY_UPDATED(1))
@@ -121,7 +121,7 @@ describe('Summary Display - summary/index.ts', () => {
 				},
 			];
 
-			displaySummary([], toUnregister, 'default', mockConfig);
+			displaySummary([], toUnregister, 'default', mockConfig.codemieAssistants ?? []);
 
 			expect(consoleLogSpy).toHaveBeenCalledWith(
 				expect.stringContaining(MESSAGES.SETUP.SUMMARY_UPDATED(1))
@@ -143,7 +143,7 @@ describe('Summary Display - summary/index.ts', () => {
 				},
 			];
 
-			displaySummary(toRegister, toUnregister, 'default', mockConfig);
+			displaySummary(toRegister, toUnregister, 'default', mockConfig.codemieAssistants ?? []);
 
 			expect(consoleLogSpy).toHaveBeenCalledWith(
 				expect.stringContaining(MESSAGES.SETUP.SUMMARY_UPDATED(3))
@@ -159,7 +159,7 @@ describe('Summary Display - summary/index.ts', () => {
 				codemieAssistants: [],
 			};
 
-			displayCurrentlyRegistered(config);
+			displayCurrentlyRegistered(config.codemieAssistants ?? []);
 
 			expect(consoleLogSpy).not.toHaveBeenCalledWith(
 				expect.stringContaining('Registered assistants:')
@@ -172,7 +172,7 @@ describe('Summary Display - summary/index.ts', () => {
 				apiKey: 'test-key',
 			};
 
-			displayCurrentlyRegistered(config);
+			displayCurrentlyRegistered(config.codemieAssistants ?? []);
 
 			expect(consoleLogSpy).not.toHaveBeenCalledWith(
 				expect.stringContaining('Registered assistants:')
@@ -194,7 +194,7 @@ describe('Summary Display - summary/index.ts', () => {
 				],
 			};
 
-			displayCurrentlyRegistered(config);
+			displayCurrentlyRegistered(config.codemieAssistants ?? []);
 
 			expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('Registered assistants:'));
 		});
@@ -214,7 +214,7 @@ describe('Summary Display - summary/index.ts', () => {
 				],
 			};
 
-			displayCurrentlyRegistered(config);
+			displayCurrentlyRegistered(config.codemieAssistants ?? []);
 
 			expect(consoleLogSpy).toHaveBeenCalledWith(
 				expect.stringContaining('@agent-assistant in code or claude')
@@ -236,7 +236,7 @@ describe('Summary Display - summary/index.ts', () => {
 				],
 			};
 
-			displayCurrentlyRegistered(config);
+			displayCurrentlyRegistered(config.codemieAssistants ?? []);
 
 			expect(consoleLogSpy).toHaveBeenCalledWith(
 				expect.stringContaining('/skill-assistant in claude')
@@ -261,7 +261,7 @@ describe('Summary Display - summary/index.ts', () => {
 				],
 			};
 
-			displayCurrentlyRegistered(config);
+			displayCurrentlyRegistered(config.codemieAssistants ?? []);
 
 			expect(consoleLogSpy).toHaveBeenCalledWith(
 				expect.stringContaining('@no-mode in code or claude')
@@ -297,7 +297,7 @@ describe('Summary Display - summary/index.ts', () => {
 				],
 			};
 
-			displayCurrentlyRegistered(config);
+			displayCurrentlyRegistered(config.codemieAssistants ?? []);
 
 			expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('first'));
 			expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('second'));
@@ -319,7 +319,7 @@ describe('Summary Display - summary/index.ts', () => {
 				],
 			};
 
-			displayCurrentlyRegistered(config);
+			displayCurrentlyRegistered(config.codemieAssistants ?? []);
 
 			expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('awesome'));
 			expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('My Awesome Assistant'));
@@ -340,7 +340,7 @@ describe('Summary Display - summary/index.ts', () => {
 				],
 			};
 
-			displayCurrentlyRegistered(config);
+			displayCurrentlyRegistered(config.codemieAssistants ?? []);
 
 			// Should have separator lines
 			const calls = consoleLogSpy.mock.calls.map(call => call[0]);
@@ -363,7 +363,7 @@ describe('Summary Display - summary/index.ts', () => {
 				],
 			};
 
-			displayCurrentlyRegistered(config);
+			displayCurrentlyRegistered(config.codemieAssistants ?? []);
 
 			// Should have empty lines for spacing
 			const calls = consoleLogSpy.mock.calls.map(call => call[0]);
@@ -386,7 +386,7 @@ describe('Summary Display - summary/index.ts', () => {
 				],
 			};
 
-			displayCurrentlyRegistered(config);
+			displayCurrentlyRegistered(config.codemieAssistants ?? []);
 
 			expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('•'));
 		});
@@ -408,7 +408,7 @@ describe('Summary Display - summary/index.ts', () => {
 				],
 			};
 
-			expect(() => displayCurrentlyRegistered(config)).not.toThrow();
+			expect(() => displayCurrentlyRegistered(config.codemieAssistants ?? [])).not.toThrow();
 		});
 
 		it('should handle assistants with empty slugs', () => {
@@ -426,7 +426,7 @@ describe('Summary Display - summary/index.ts', () => {
 				],
 			};
 
-			expect(() => displayCurrentlyRegistered(config)).not.toThrow();
+			expect(() => displayCurrentlyRegistered(config.codemieAssistants ?? [])).not.toThrow();
 		});
 
 		it('should handle very long assistant names', () => {
@@ -444,7 +444,7 @@ describe('Summary Display - summary/index.ts', () => {
 				],
 			};
 
-			expect(() => displayCurrentlyRegistered(config)).not.toThrow();
+			expect(() => displayCurrentlyRegistered(config.codemieAssistants ?? [])).not.toThrow();
 		});
 
 		it('should handle very long slugs', () => {
@@ -462,7 +462,7 @@ describe('Summary Display - summary/index.ts', () => {
 				],
 			};
 
-			expect(() => displayCurrentlyRegistered(config)).not.toThrow();
+			expect(() => displayCurrentlyRegistered(config.codemieAssistants ?? [])).not.toThrow();
 		});
 
 		it('should handle large number of changes in summary', () => {
@@ -472,11 +472,7 @@ describe('Summary Display - summary/index.ts', () => {
 				slug: `assistant-${i}`,
 			}));
 
-			displaySummary(toRegister, [], 'default', {
-				provider: 'anthropic',
-				apiKey: 'test-key',
-				codemieAssistants: [],
-			});
+			displaySummary(toRegister, [], 'default', []);
 
 			expect(consoleLogSpy).toHaveBeenCalledWith(
 				expect.stringContaining(MESSAGES.SETUP.SUMMARY_UPDATED(100))
@@ -498,7 +494,7 @@ describe('Summary Display - summary/index.ts', () => {
 				codemieAssistants: assistants,
 			};
 
-			expect(() => displayCurrentlyRegistered(config)).not.toThrow();
+			expect(() => displayCurrentlyRegistered(config.codemieAssistants ?? [])).not.toThrow();
 		});
 	});
 
@@ -522,7 +518,7 @@ describe('Summary Display - summary/index.ts', () => {
 				],
 			};
 
-			displaySummary(toRegister, [], 'default', config);
+			displaySummary(toRegister, [], 'default', config.codemieAssistants ?? []);
 
 			expect(consoleLogSpy).toHaveBeenCalledWith(
 				expect.stringContaining('new-assistant')
@@ -546,7 +542,7 @@ describe('Summary Display - summary/index.ts', () => {
 				codemieAssistants: [],
 			};
 
-			displaySummary([], toUnregister, 'default', config);
+			displaySummary([], toUnregister, 'default', config.codemieAssistants ?? []);
 
 			const calls = consoleLogSpy.mock.calls.map(call => call[0]);
 			const hasRemovedAssistant = calls.some((call: string) =>

@@ -36,7 +36,7 @@ export async function syncRegisteredSkills(profileName?: string, cwd?: string): 
 
 		for (const { skill, scope } of allSkills) {
 			try {
-				const detail = await (client as any).skills.get(skill.id);
+				const detail = await client.skills.get(skill.id);
 				await registerClaudeSkill(detail, scope, scope === 'local' ? workingDir : undefined);
 				logger.debug(`[skills-sync] Synced skill: ${skill.name} (${scope})`);
 			} catch (error) {
