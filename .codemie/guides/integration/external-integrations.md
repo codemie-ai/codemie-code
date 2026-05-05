@@ -716,6 +716,56 @@ For full architecture details, see [Proxy Architecture — MCP Auth Plugin](../.
 
 ---
 
+## skills.sh Wrapper (`codemie skills`)
+
+### Overview
+
+`codemie skills` is a thin, **catalog-agnostic** wrapper around the upstream `skills` CLI (npm package `skills`). It is intentionally not a discovery catalog or trust engine — discovery, ranking, tenant ownership, and source classification live in the future CodeMie UI/catalog and are out of scope for this CLI. The legacy singular `codemie skill` namespace (backed by `SkillManager` / `SkillSync`) is preserved alongside it.
+
+### Command Surface
+
+```bash
+codemie skills add <source> [--global] [--agent <agents...>] [--skill <skills...>] [--yes] [--copy]
+codemie skills update [skills...] [--global] [--project] [--yes]
+codemie skills remove [skills...] [--global] [--agent <agents...>] [--skill <skills...>] [--yes]
+codemie skills list [--global] [--agent <agent>] [--json]
+```
+
+`<source>` may be any input the upstream `skills` CLI accepts: GitHub shorthand (`owner/repo`), HTTPS URL, SSH URL, local path, or a well-known endpoint. The wrapper does not encode internal launch assumptions about source ownership.
+
+### What the Wrapper Owns
+
+- **CodeMie SSO auth gating** for every subcommand (no skills.sh spawn or metric emission until credentials are present).
+- **Egress suppression** for upstream telemetry/audit by injecting `NODE_OPTIONS=--require <shim>` plus `DO_NOT_TRACK=1`, `DISABLE_TELEMETRY=1`, `CI=1`. The shim blocks only host `add-skill.vercel.sh`; legitimate source fetches remain available.
+- **Best-effort agent detection for `add`** when the user does not pass `--agent`:
+  - `.claude/` → passes `--agent claude-code` automatically
+  - `.cursor/` → passes `--agent cursor` automatically
+  - Multiple strong markers + interactive TTY → wrapper prompts the user
+  - No marker, or non-interactive ambiguous case → wrapper invokes `skills.sh` without `--agent` and lets upstream handle it
+- **Lifecycle events** POSTed to `<api-base>/v1/skills/events` with `started`, `completed`, or `failed` status. Persisted in Postgres so install-count queries remain accurate beyond Elastic retention. Attributes are wrapper-known only; the wrapper never parses upstream interactive output to infer skills installed or selected agents. When the user passes `--skill foo bar`, one event is emitted per skill (fan-out) so backend `COUNT(*)` over `skill_id` is correct.
+
+### What the Wrapper Does Not Own
+
+- Catalog browsing or `codemie skills find` (deferred — UI/catalog will generate direct install commands).
+- Source trust labels, tenant classification, or domain allow/deny lists.
+- Alias resolution from skill names to repositories.
+- Parsing `skills.sh` output as a source of truth.
+
+### Future UI/Catalog Integration
+
+The CodeMie UI/catalog will surface curated and client-specific skill sources and produce ready-to-paste `codemie skills add <source> ...` commands. Because this CLI is catalog-agnostic, no CLI change is needed to support new tenant sources — the UI simply generates the right command.
+
+### Reference Files
+
+- Wrapper entry: `src/cli/commands/skills/index.ts`
+- Telemetry shim: `assets/skills-sh-egress-guard.cjs` (copied to `dist/assets/` on build)
+- Spawn helper: `src/cli/commands/skills/lib/run-skills-cli.ts`
+- Auth gate: `src/cli/commands/skills/lib/require-auth.ts`
+- Event emitter: `src/cli/commands/skills/lib/skills-metrics.ts` (defines `SkillEventBody` and `POST /v1/skills/events`)
+- Error classifier: `src/cli/commands/skills/lib/error-classify.ts`
+
+---
+
 ## Troubleshooting
 
 | Issue | Cause | Solution |
