@@ -10,13 +10,19 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { rmSync, existsSync, mkdirSync } from 'fs';
+import { rmSync, existsSync, mkdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 import { ClaudePluginInstaller } from '../../src/agents/plugins/claude/claude.plugin-installer.js';
 import { ClaudePluginMetadata } from '../../src/agents/plugins/claude/claude.plugin.js';
 import { SSOTemplate } from '../../src/providers/plugins/sso/index.js';
 import type { AgentConfig } from '../../src/agents/core/types.js';
+
+const sourcePluginJsonPath = join(
+  process.cwd(),
+  'src/agents/plugins/claude/plugin/.claude-plugin/plugin.json'
+);
+const sourcePluginVersion = JSON.parse(readFileSync(sourcePluginJsonPath, 'utf-8')).version as string;
 
 describe('SSO Provider - Claude Plugin Auto-Install', () => {
   // Use temp directory instead of real plugin directory to avoid deleting user's actual plugin
@@ -280,7 +286,7 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
       expect(result.success).toBe(true);
       expect(result.action).toBe('copied');
       expect(result.sourceVersion).toBeDefined();
-      expect(result.sourceVersion).toBe('1.0.20');
+      expect(result.sourceVersion).toBe(sourcePluginVersion);
       expect(result.installedVersion).toBeUndefined(); // First install
     });
 
@@ -293,8 +299,8 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
       const result2 = await installer.install();
       expect(result2.success).toBe(true);
       expect(result2.action).toBe('already_exists');
-      expect(result2.sourceVersion).toBe('1.0.20');
-      expect(result2.installedVersion).toBe('1.0.20');
+      expect(result2.sourceVersion).toBe(sourcePluginVersion);
+      expect(result2.installedVersion).toBe(sourcePluginVersion);
     });
 
     it('should detect version in installed plugin', async () => {
@@ -302,13 +308,12 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
       await installer.install();
 
       // Read plugin.json to verify version
-      const { readFileSync } = await import('fs');
       const pluginJsonPath = join(pluginTargetDir, '.claude-plugin', 'plugin.json');
       const content = readFileSync(pluginJsonPath, 'utf-8');
       const json = JSON.parse(content);
 
       expect(json.version).toBeDefined();
-      expect(json.version).toBe('1.0.20');
+      expect(json.version).toBe(sourcePluginVersion);
     });
   });
 });

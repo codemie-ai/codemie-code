@@ -122,9 +122,9 @@ describe('selectPreferredClaudeModels', () => {
 
   it('returns exact matches when present and dated fallbacks otherwise', () => {
     expect(selectPreferredClaudeModels(available)).toEqual([
+      'claude-sonnet-4-6',        // exact
       'claude-opus-4-7',          // exact
       'claude-opus-4-6-20260205', // dated fallback
-      'claude-sonnet-4-6',        // exact
       'claude-haiku-4-5-20251001',// dated fallback
     ]);
   });
@@ -222,10 +222,10 @@ describe('writeDesktopConfig', () => {
   it('populates inferenceModels with the curated preferred Claude set', async () => {
     const written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir);
     const config = JSON.parse(await readFile(written, 'utf-8'));
-    expect(config.inferenceModels).toEqual([
+    expect(JSON.parse(config.inferenceModels)).toEqual([
+      { name: 'claude-sonnet-4-6' },
       { name: 'claude-opus-4-7' },
       { name: 'claude-opus-4-6-20260205' },
-      { name: 'claude-sonnet-4-6' },
       { name: 'claude-haiku-4-5-20251001' },
     ]);
   });
@@ -240,10 +240,10 @@ describe('writeDesktopConfig', () => {
 
     const written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir);
     const config = JSON.parse(await readFile(written, 'utf-8'));
-    expect(config.inferenceModels).toEqual([
+    expect(JSON.parse(config.inferenceModels)).toEqual([
+      { name: 'claude-sonnet-4-6' },
       { name: 'claude-opus-4-7' },
       { name: 'claude-opus-4-6-20260205' },
-      { name: 'claude-sonnet-4-6' },
       { name: 'claude-haiku-4-5-20251001' },
     ]);
   });

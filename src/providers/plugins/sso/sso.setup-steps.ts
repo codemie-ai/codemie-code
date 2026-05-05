@@ -79,7 +79,7 @@ export const SSOSetupSteps: ProviderSetupSteps = {
     let integrations;
     let integrationsFetchError: string | undefined;
 
-    const integrationsSpinner = ora('Fetching available integrations...').start();
+    const integrationsSpinner = ora('Fetching user integrations...').start();
     try {
       // Use authResult.cookies directly (same as userInfo fetch) instead of retrieving from storage
       // This ensures we use the same authenticated session for all API calls during setup
@@ -115,21 +115,17 @@ export const SSOSetupSteps: ProviderSetupSteps = {
       // Auto-select the only available integration
       const single = integrations[0];
       integrationInfo = { id: single.id, alias: single.alias };
-      console.log(chalk.green(`✓ Auto-selected LiteLLM integration: ${chalk.bold(integrationInfo.alias)}\n`));
     } else if (integrations.length > 1) {
       console.log(chalk.cyan(`📦 Found ${integrations.length} LiteLLM integration(s)${projectLabel}\n`));
       const integrationAnswers = await inquirer.prompt([
         {
           type: 'list',
           name: 'integration',
-          message: 'Select LiteLLM integration (optional):',
-          choices: [
-            { name: 'None (use CodeMie models directly)', value: null },
-            ...integrations.map(i => ({
-              name: `${i.alias} (${i.project_name || 'Default'})`,
-              value: { id: i.id, alias: i.alias }
-            }))
-          ]
+          message: 'Select LiteLLM integration:',
+          choices: integrations.map(i => ({
+            name: `${i.alias} (${i.project_name || 'Default'})`,
+            value: { id: i.id, alias: i.alias }
+          }))
         }
       ]);
       integrationInfo = integrationAnswers.integration;

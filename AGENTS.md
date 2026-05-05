@@ -357,6 +357,7 @@ Useful commands:
 ### Git Policy
 
 - Only perform git operations on explicit user request.
+- Before any git operation, load and follow `.codemie/guides/standards/git-workflow.md`.
 - Branch format: `<type>/<description>`
 - Commit format: Conventional Commits like `feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`
 

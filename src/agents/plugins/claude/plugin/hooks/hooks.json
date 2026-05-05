@@ -104,7 +104,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "~/.codemie/claude-plugin/scripts/bash/rtk-auto-wrapper.sh"
+            "command": "~/.codemie/claude-plugin/scripts/bash/rtk-rewrite.sh"
           }
         ]
       }

@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { getClaudeDesktopBaseDir } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
+import managedMcpServers from './desktop-managed-mcp-servers.json' with { type: 'json' };
 
 const INFERENCE_KEYS = [
   'inferenceProvider',
@@ -13,6 +14,13 @@ const INFERENCE_KEYS = [
 
 interface InferenceModelEntry {
   name: string;
+}
+
+interface ManagedMcpServerEntry {
+  name: string;
+  url: string;
+  transport?: 'http' | 'sse';
+  oauth?: boolean;
 }
 
 interface ModelsListResponse {
@@ -28,11 +36,16 @@ interface ModelsListResponse {
  * receives a model name it has registered.
  */
 export const PREFERRED_CLAUDE_MODELS = [
+  'claude-sonnet-4-6',
   'claude-opus-4-7',
   'claude-opus-4-6',
-  'claude-sonnet-4-6',
   'claude-haiku-4-5',
 ] as const;
+
+export const DEFAULT_COWORK_EGRESS_ALLOWED_HOSTS = ['*'] as const;
+
+export const DEFAULT_MANAGED_MCP_SERVERS =
+  managedMcpServers as readonly ManagedMcpServerEntry[];
 
 /**
  * Fetch the model list from the gateway's `/v1/models` endpoint and return
@@ -87,6 +100,49 @@ export function selectPreferredClaudeModels(
     if (dated) resolved.push(dated);
   }
   return resolved;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function getManagedMcpServerName(server: unknown): string | undefined {
+  if (!isRecord(server)) return undefined;
+  return typeof server.name === 'string' ? server.name : undefined;
+}
+
+function parseJsonArray(value: unknown): unknown[] {
+  if (Array.isArray(value)) {
+    return value;
+  }
+
+  if (typeof value !== 'string') {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function mergeManagedMcpServers(existingServers: unknown): unknown[] {
+  const merged = [...parseJsonArray(existingServers)];
+  const existingNames = new Set(
+    merged
+      .map((server) => getManagedMcpServerName(server)?.toLowerCase())
+      .filter((name): name is string => Boolean(name))
+  );
+
+  for (const server of DEFAULT_MANAGED_MCP_SERVERS) {
+    if (!existingNames.has(server.name.toLowerCase())) {
+      merged.push({ ...server });
+    }
+  }
+
+  return merged;
 }
 
 export interface DesktopGatewayConfig {
@@ -145,10 +201,10 @@ export async function getDesktopConfigPath(baseDir: string = getDesktopBaseDir()
 }
 
 /**
- * Write/merge the inference gateway settings into Claude Desktop's
+ * Write/merge the CodeMie gateway settings into Claude Desktop's
  * `configLibrary/<UUID>.json` and update `_meta.json` so the app picks them up.
  *
- * Preserves all non-inference keys in the existing config file.
+ * Preserves unrelated keys in the existing config file.
  * Returns the absolute path of the config file written.
  */
 export async function writeDesktopConfig(
@@ -188,16 +244,21 @@ export async function writeDesktopConfig(
   const discoveredModels = await fetchClaudeModels(proxyUrl, gatewayKey);
   const resolvedModels = selectPreferredClaudeModels(discoveredModels);
   const inferenceModels: InferenceModelEntry[] = resolvedModels.map((name) => ({ name }));
+  const managedMcpServers = mergeManagedMcpServers(existing.managedMcpServers);
 
   for (const key of INFERENCE_KEYS) {
     delete existing[key];
   }
   delete existing.inferenceModels;
+  delete existing.coworkEgressAllowedHosts;
+  delete existing.managedMcpServers;
 
   const merged = {
     ...existing,
     ...buildGatewayConfig(proxyUrl, gatewayKey),
-    ...(inferenceModels.length > 0 ? { inferenceModels } : {}),
+    ...(inferenceModels.length > 0 ? { inferenceModels: JSON.stringify(inferenceModels) } : {}),
+    coworkEgressAllowedHosts: JSON.stringify([...DEFAULT_COWORK_EGRESS_ALLOWED_HOSTS]),
+    managedMcpServers: JSON.stringify(managedMcpServers),
   };
   await writeFile(configPath, JSON.stringify(merged, null, 2), 'utf-8');
 

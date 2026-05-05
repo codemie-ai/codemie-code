@@ -40,7 +40,8 @@ const SCOPES     = [
   'User.Read', 'Mail.Read', 'Mail.Send',
   'Calendars.Read', 'Calendars.ReadWrite',
   'Files.Read', 'Files.ReadWrite',
-  'Sites.Read.All', 'Chat.Read', 'Chat.ReadWrite',
+  'Sites.Read.All', 'Sites.ReadWrite.All', 'Chat.Read', 'Chat.ReadWrite',
+  'ChannelMessage.Read.All', 'ChannelMessage.Send',
   'OnlineMeetingTranscript.Read.All', 'OnlineMeetings.Read',
   'People.Read', 'Contacts.Read', 'offline_access',
   'Notes.Read', 'Notes.ReadWrite',
@@ -667,7 +668,7 @@ async function cmdTeams(args) {
   }
 
   if (args.send && args.chatId) {
-    const res = await graphPost(`/me/chats/${args.chatId}/messages`, token, { body: { content: args.send } });
+    const res = await graphPost(`/me/chats/${args.chatId}/messages`, token, { body: { contentType: 'html', content: args.send } });
     console.log(`Message sent. ID: ${res.id}`);
     return;
   }
@@ -682,6 +683,61 @@ async function cmdTeams(args) {
 
   console.log('Teams: --chats | --messages CHAT_ID | --send MSG --chat-id ID');
   console.log('       --lookup-user EMAIL | --dm EMAIL --send MSG | --teams-list');
+}
+
+async function cmdChannels(args) {
+  const token = await getValidToken();
+  const limit = parseInt(args.limit) || 20;
+
+  if (!args.teamId) {
+    console.error('Error: --team-id TEAM_ID is required');
+    console.log('channels --team-id ID --list');
+    console.log('         --team-id ID --channel-id ID --messages [--limit N]');
+    console.log('         --team-id ID --channel-id ID --send MSG');
+    process.exit(1);
+  }
+
+  if (args.list) {
+    const data     = await graphGet(`/teams/${args.teamId}/channels`, token, { $select: 'id,displayName,description' });
+    const channels = data.value || [];
+    if (args.json) { console.log(JSON.stringify(channels, null, 2)); return; }
+    console.log(`\n${'ID'.padEnd(50)}  Name`);
+    console.log('─'.repeat(80));
+    for (const c of channels)
+      console.log(`${(c.id || '').padEnd(50)}  ${c.displayName || 'N/A'}`);
+    return;
+  }
+
+  if (!args.channelId) {
+    console.error('Error: --channel-id CHANNEL_ID is required');
+    process.exit(1);
+  }
+
+  if (args.messages) {
+    const data = await graphGet(`/teams/${args.teamId}/channels/${args.channelId}/messages`, token, { $top: limit });
+    const msgs = data.value || [];
+    if (args.json) { console.log(JSON.stringify(msgs, null, 2)); return; }
+    console.log(`\nMessages in channel ${args.channelId.slice(0, 30)}...:`);
+    console.log('─'.repeat(60));
+    for (const m of [...msgs].reverse()) {
+      const sender = m.from?.user?.displayName || 'System';
+      const body   = stripHtml(m.body?.content || '').slice(0, 200);
+      console.log(`[${fmtDt(m.createdDateTime)}] ${sender}: ${body}`);
+    }
+    return;
+  }
+
+  if (args.send) {
+    const res = await graphPost(`/teams/${args.teamId}/channels/${args.channelId}/messages`, token, {
+      body: { contentType: 'html', content: args.send },
+    });
+    console.log(`Message sent. ID: ${res.id}`);
+    return;
+  }
+
+  console.log('channels --team-id ID --list');
+  console.log('         --team-id ID --channel-id ID --messages [--limit N]');
+  console.log('         --team-id ID --channel-id ID --send MSG');
 }
 
 async function cmdTranscripts(args) {
@@ -1098,7 +1154,7 @@ async function cmdOnenote(args) {
 // ── CLI Parser ────────────────────────────────────────────────────────────────
 function parseArgs(argv) {
   const BOOL = new Set(['json','unread','sites','chats','teamsList','contacts',
-    'manager','reports','availability','notebooks','list','vtt','help','force']);
+    'manager','reports','availability','notebooks','list','messages','vtt','help','force']);
   const args = { _: [] };
   let i = 0;
   while (i < argv.length) {
@@ -1140,6 +1196,9 @@ Data:
   sharepoint [--sites] [--site ID [--path P]] [--download ID [--output FILE]] [--json]
   teams [--chats] [--messages CHAT_ID] [--send MSG --chat-id ID] [--teams-list]
         [--lookup-user EMAIL] [--dm EMAIL --send MSG] [--json]
+  channels --team-id ID --list
+           --team-id ID --channel-id ID --messages [--limit N]
+           --team-id ID --channel-id ID --send MSG [--json]
   onedrive [--path P] [--upload FILE [--dest PATH]] [--download ID [--output FILE]]
            [--info ID] [--json]
   people [--contacts] [--search NAME] [--limit N] [--json]
@@ -1170,6 +1229,7 @@ async function main() {
     emails:      () => cmdEmails(args),
     calendar:    () => cmdCalendar(args),
     sharepoint:  () => cmdSharepoint(args),
+    channels:    () => cmdChannels(args),
     teams:       () => cmdTeams(args),
     onedrive:    () => cmdOnedrive(args),
     people:      () => cmdPeople(args),
