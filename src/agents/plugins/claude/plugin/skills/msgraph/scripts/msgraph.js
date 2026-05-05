@@ -668,7 +668,7 @@ async function cmdTeams(args) {
   }
 
   if (args.send && args.chatId) {
-    const res = await graphPost(`/me/chats/${args.chatId}/messages`, token, { body: { content: args.send } });
+    const res = await graphPost(`/me/chats/${args.chatId}/messages`, token, { body: { contentType: 'html', content: args.send } });
     console.log(`Message sent. ID: ${res.id}`);
     return;
   }
