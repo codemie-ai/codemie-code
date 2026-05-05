@@ -30,6 +30,8 @@ interface AddOptions {
   copy?: boolean;
 }
 
+const ADD_GIT_TIMEOUT_MS = 120_000;
+
 export function createAddCommand(): Command {
   return new Command('add')
     .description('Install skills via the upstream skills CLI')
@@ -74,7 +76,14 @@ export function createAddCommand(): Command {
       const args = buildAddArgs(source, options, agentSelection.agents);
 
       try {
-        const result = await runSkillsCli(args, { cwd });
+        const result = await runSkillsCli(args, {
+          cwd,
+          timeoutMs: ADD_GIT_TIMEOUT_MS,
+          env: {
+            GIT_TERMINAL_PROMPT: '0',
+            GCM_INTERACTIVE: 'never',
+          },
+        });
 
         if (result.code === 0) {
           await emitCompleted(metric, {
@@ -89,6 +98,9 @@ export function createAddCommand(): Command {
         }
 
         const errorCode = classifySkillError({ result });
+        if (shouldShowGitAccessHelp(source, errorCode)) {
+          process.stderr.write(formatGitAccessHelp(sanitizedSource, errorCode));
+        }
         await emitFailed(metric, {
           scope,
           source: sanitizedSource,
@@ -104,6 +116,9 @@ export function createAddCommand(): Command {
         logger.error(
           `[skills] add failed: ${error instanceof Error ? error.message : String(error)}`
         );
+        if (shouldShowGitAccessHelp(source, errorCode)) {
+          process.stderr.write(formatGitAccessHelp(sanitizedSource, errorCode));
+        }
         await emitFailed(metric, {
           scope,
           source: sanitizedSource,
@@ -137,4 +152,48 @@ function buildAddArgs(
   }
 
   return args;
+}
+
+function shouldShowGitAccessHelp(source: string, errorCode: string): boolean {
+  return (
+    errorCode === 'git_fetch_failed' ||
+    errorCode === 'git_fetch_timeout' ||
+    isGitSource(source)
+  );
+}
+
+function isGitSource(source: string): boolean {
+  return (
+    /^https?:\/\/.+\.git(?:[#?].*)?$/i.test(source) ||
+    /^ssh:\/\/.+\.git(?:[#?].*)?$/i.test(source) ||
+    /^git@[^:]+:.+\.git(?:[#?].*)?$/i.test(source)
+  );
+}
+
+function formatGitAccessHelp(source: string | undefined, errorCode: string): string {
+  const timeoutLine =
+    errorCode === 'git_fetch_timeout'
+      ? `The repository clone did not finish within ${ADD_GIT_TIMEOUT_MS / 1000} seconds.\n`
+      : 'The repository clone failed.\n';
+  const sourceLine = source ? `Source: ${source}\n` : '';
+
+  return [
+    '',
+    timeoutLine,
+    sourceLine,
+    'CodeMie cannot read this Git repository yet. Check access from your terminal:',
+    source ? `  git ls-remote ${source}` : '  git ls-remote <repo-url>',
+    '',
+    'For HTTPS GitLab URLs:',
+    '  - Sign in with Git Credential Manager, or',
+    '  - create a GitLab personal/project access token with read_repository access.',
+    '',
+    'For SSH GitLab URLs:',
+    '  - add your SSH key to GitLab,',
+    '  - ensure the key is loaded in your SSH agent,',
+    '  - verify access with: ssh -T git@<gitlab-host>',
+    '',
+    'After Git access works, run `codemie skills add` again.',
+    '',
+  ].join('\n');
 }

@@ -10,6 +10,7 @@ import type { ExecResult } from '@/utils/exec.js';
 export type SkillErrorCode =
   | 'egress_blocked'
   | 'skill_not_found'
+  | 'git_fetch_timeout'
   | 'git_fetch_failed'
   | 'interrupted'
   | 'all_searches_failed'
@@ -21,6 +22,7 @@ export interface ClassifyInput {
 }
 
 const EGRESS_MARKERS = ['CODEMIE_SKILL_EGRESS_BLOCKED', 'add-skill.vercel.sh'];
+const TIMEOUT_MARKERS = ['CODEMIE_SKILLS_TIMEOUT', 'timed out'];
 const NOT_FOUND_MARKERS = ['skill not found', 'no such skill', 'could not find skill'];
 const GIT_FETCH_MARKERS = [
   'git clone',
@@ -40,6 +42,10 @@ export function classifySkillError(input: ClassifyInput): SkillErrorCode {
 
   if (containsAny(haystack, EGRESS_MARKERS)) {
     return 'egress_blocked';
+  }
+
+  if (containsAny(haystack, TIMEOUT_MARKERS)) {
+    return 'git_fetch_timeout';
   }
 
   if (containsAny(haystack, NOT_FOUND_MARKERS)) {

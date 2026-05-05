@@ -39,6 +39,8 @@ export interface RunSkillsCliOptions {
   interactive?: boolean;
   /** Additional env to merge in (caller may override telemetry vars too). */
   env?: Record<string, string>;
+  /** Maximum runtime before terminating the upstream CLI. */
+  timeoutMs?: number;
 }
 
 /**
@@ -74,6 +76,7 @@ export async function runSkillsCli(
   }
 
   const env = { ...process.env, ...baseEnv, ...options.env };
+  const timeoutMs = options.timeoutMs;
 
   logger.debug('[skills] Spawning skills CLI', {
     bin: skillsBin,
@@ -102,6 +105,26 @@ export async function runSkillsCli(
 
     let stdout = '';
     let stderr = '';
+    let timedOut = false;
+    let timeout: NodeJS.Timeout | undefined;
+    let forceKillTimeout: NodeJS.Timeout | undefined;
+    let settled = false;
+
+    const cleanup = (): void => {
+      if (timeout) {
+        clearTimeout(timeout);
+        timeout = undefined;
+      }
+      if (forceKillTimeout) {
+        clearTimeout(forceKillTimeout);
+        forceKillTimeout = undefined;
+      }
+    };
+
+    const timeoutMessage = (): string => {
+      const seconds = Math.ceil((timeoutMs ?? 0) / 1000);
+      return `CODEMIE_SKILLS_TIMEOUT: skills CLI did not finish within ${seconds}s.`;
+    };
 
     // stdout is null when inherited (interactive mode); only fires when piped.
     child.stdout?.on('data', (data: Buffer) => {
@@ -117,17 +140,41 @@ export async function runSkillsCli(
     });
 
     child.on('error', (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
       reject(new Error(`Failed to spawn skills CLI: ${error.message}`));
     });
 
     child.on('close', (code, signal) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup();
       resolve({
-        code: code ?? (signal ? 130 : 1),
+        code: timedOut ? 124 : code ?? (signal ? 130 : 1),
         stdout: stdout.trim(),
         stderr: stderr.trim(),
         signal,
       });
     });
+
+    if (timeoutMs && timeoutMs > 0) {
+      timeout = setTimeout(() => {
+        timedOut = true;
+        const message = timeoutMessage();
+        stderr += stderr.length > 0 ? `\n${message}` : message;
+        child.kill('SIGTERM');
+        forceKillTimeout = setTimeout(() => {
+          if (!settled) {
+            child.kill('SIGKILL');
+          }
+        }, 5000);
+      }, timeoutMs);
+    }
   });
 }
 
