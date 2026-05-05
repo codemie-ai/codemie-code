@@ -107,17 +107,18 @@ describe('codemie skills (subprocess e2e)', () => {
   it('shows help for `codemie skills` without spawning upstream', () => {
     const result = runCLI(['--help']);
     expect(result.exitCode).toBe(0);
-    expect(result.stdout).toMatch(/Install and manage skills/);
+    expect(result.stdout).toMatch(/Install, manage, and discover skills/);
     expect(result.stdout).toMatch(/\badd\b/);
     expect(result.stdout).toMatch(/\bupdate\b/);
     expect(result.stdout).toMatch(/\bremove\b/);
     expect(result.stdout).toMatch(/\blist\b/);
+    expect(result.stdout).toMatch(/\bfind\b/);
     // Help bypasses auth and never reaches the upstream binary.
     expect(readInvocations()).toHaveLength(0);
   });
 
   it('shows help for each subcommand', () => {
-    for (const sub of ['add', 'update', 'remove', 'list']) {
+    for (const sub of ['add', 'update', 'remove', 'list', 'find']) {
       const result = runCLI([sub, '--help']);
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toMatch(new RegExp(sub));

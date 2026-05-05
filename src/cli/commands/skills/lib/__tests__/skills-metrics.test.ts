@@ -273,6 +273,49 @@ describe('skill events emitter (transport behavior)', () => {
     await expect(emitStarted(session, { scope: 'global' })).resolves.toBeUndefined();
   });
 
+  it('includes attributes JSONB payload when the find command supplies them', async () => {
+    mockConfigLoad.mockResolvedValue({ codeMieUrl: 'https://codemie.lab.epam.com' });
+    mockGetStoredCredentials.mockResolvedValue({
+      cookies: { session: 'abc' },
+      apiUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+    });
+
+    const { startSkillMetric, emitCompleted } = await importMetrics();
+    const session = await startSkillMetric('find');
+    await emitCompleted(session, {
+      attributes: {
+        query_length: 3,
+        internal_available: false,
+        result_count_public: 5,
+      },
+    });
+
+    const body = JSON.parse(fetchSpy.mock.calls[0]![1].body);
+    expect(body.command).toBe('find');
+    expect(body.attributes).toEqual({
+      query_length: 3,
+      internal_available: false,
+      result_count_public: 5,
+    });
+    // find has no scope; the field must be absent.
+    expect(body.scope).toBeUndefined();
+  });
+
+  it('omits the attributes envelope when partial.attributes is empty', async () => {
+    mockConfigLoad.mockResolvedValue({ codeMieUrl: 'https://codemie.lab.epam.com' });
+    mockGetStoredCredentials.mockResolvedValue({
+      cookies: { session: 'abc' },
+      apiUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+    });
+
+    const { startSkillMetric, emitCompleted } = await importMetrics();
+    const session = await startSkillMetric('list');
+    await emitCompleted(session, { scope: 'project' });
+
+    const body = JSON.parse(fetchSpy.mock.calls[0]![1].body);
+    expect(body.attributes).toBeUndefined();
+  });
+
   it('falls back to ensureApiBase when credentials store has no apiUrl', async () => {
     mockConfigLoad.mockResolvedValue({ codeMieUrl: 'https://codemie.lab.epam.com' });
     mockGetStoredCredentials.mockResolvedValue({

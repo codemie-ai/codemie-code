@@ -15,7 +15,6 @@ import { classifySkillError } from './lib/error-classify.js';
 import {
   emitCompleted,
   emitFailed,
-  emitStarted,
   startSkillMetric,
   type SkillScope,
 } from './lib/skills-metrics.js';
@@ -39,7 +38,6 @@ export function createListCommand(): Command {
       const scope: SkillScope = options.global ? 'global' : 'project';
 
       const metric = await startSkillMetric('list', cwd);
-      await emitStarted(metric, { scope });
 
       const args = ['list'];
       if (options.global) args.push('--global');

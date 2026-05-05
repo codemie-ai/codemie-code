@@ -33,23 +33,26 @@ const ENDPOINT_PATH = '/v1/skills/events';
 
 // Wrapper-known input shapes (typed once here so command files don't reach
 // across module boundaries to import an unrelated metrics-types module).
-//
-// Spec §3 defers `find` to the future UI/catalog layer; do not add it to this
-// union until the subcommand is wired and the backend agrees on what discovery
-// events look like.
-export type SkillCommand = 'add' | 'update' | 'remove' | 'list';
+export type SkillCommand = 'add' | 'update' | 'remove' | 'list' | 'find';
 export type SkillStatus = 'started' | 'completed' | 'failed';
 export type SkillScope = 'global' | 'project' | 'unknown';
 export type AgentSelectionMode = 'explicit' | 'auto_detected' | 'prompted' | 'upstream';
 
 interface PartialAttributes {
-  scope: SkillScope;
+  scope?: SkillScope;
   source?: string;
   skill_names?: string[];
   skill_count?: number;
   target_agents?: string[];
   agent_selection_mode?: AgentSelectionMode;
   error_code?: string;
+  /**
+   * Forward-compat escape hatch matching the backend `attributes` JSONB
+   * field on `SkillEventRequest`. Use this for command-specific telemetry
+   * (e.g. `find`'s `query_length`, `internal_available`, `result_count_*`)
+   * that does not fit the strict top-level schema.
+   */
+  attributes?: Record<string, unknown>;
 }
 
 export interface SkillMetricSession {
@@ -133,6 +136,7 @@ interface SkillEventBody {
   repository?: string;
   branch?: string;
   project?: string;
+  attributes?: Record<string, unknown>;
 }
 
 async function emit(
@@ -156,7 +160,7 @@ async function emit(
       session_id: session.sessionId,
       command: session.command,
       status,
-      scope: partial.scope,
+      ...(partial.scope !== undefined && { scope: partial.scope }),
       ...(partial.error_code !== undefined && { error_code: partial.error_code }),
       ...(partial.agent_selection_mode !== undefined && {
         agent_selection_mode: partial.agent_selection_mode,
@@ -169,6 +173,9 @@ async function emit(
       agent_version: session.agentVersion,
       ...(repository && { repository }),
       ...(branch && { branch }),
+      ...(partial.attributes && Object.keys(partial.attributes).length > 0 && {
+        attributes: partial.attributes,
+      }),
     };
 
     const targetedSkills = partial.skill_names ?? [];

@@ -19,7 +19,6 @@ import { classifySkillError } from './lib/error-classify.js';
 import {
   emitCompleted,
   emitFailed,
-  emitStarted,
   startSkillMetric,
 } from './lib/skills-metrics.js';
 
@@ -71,14 +70,6 @@ export function createAddCommand(): Command {
         agentSelection.mode === 'upstream' ? undefined : agentSelection.mode;
 
       const metric = await startSkillMetric('add', cwd);
-      await emitStarted(metric, {
-        scope,
-        source: sanitizedSource,
-        skill_names: skillNames,
-        skill_count: skillCount,
-        target_agents: targetAgents,
-        agent_selection_mode: selectionMode,
-      });
 
       const args = buildAddArgs(source, options, agentSelection.agents);
 

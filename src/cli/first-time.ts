@@ -137,6 +137,11 @@ export class FirstTimeExperience {
 
     await this.showAgentSectionsAsync();
 
+    console.log(chalk.bold('Skills:'));
+    console.log(chalk.cyan('  codemie skills find <query>') + chalk.white(' # Discover skills (EPAM Internal + skills.sh)'));
+    console.log(chalk.cyan('  codemie skills add <source>') + chalk.white(' # Install skills via the upstream skills CLI'));
+    console.log(chalk.cyan('  codemie skills list') + chalk.white('         # List installed skills (use --global for user scope)\n'));
+
     console.log(chalk.bold('Analytics:'));
     console.log(chalk.cyan('  codemie analytics') + chalk.white('         # View usage statistics\n'));
 

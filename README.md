@@ -48,6 +48,7 @@ codemie install claude --supported
 codemie-claude "Review my API code"
 codemie-code "Analyze this codebase"
 codemie --task "Generate unit tests"
+codemie skills find pdf                    # discover agent skills (EPAM internal + skills.sh)
 claude mcp add my-server -- codemie-mcp-proxy "https://mcp-server.example.com/sse"
 ```
 
@@ -324,6 +325,33 @@ After registration, use them directly in Claude Code:
 Skills are automatically synced on every Claude agent startup, so the local SKILL.md files stay up to date with the latest content from the CodeMie platform.
 
 > **Tip:** For skills that require MCP servers or tools, use `codemie setup assistants` instead.
+
+### Manage skills.sh and EPAM Skills (`codemie skills`)
+
+`codemie skills` is a SSO-gated wrapper around the upstream [skills.sh](https://skills.sh) CLI. It lets you discover, install, update, and remove agent skills from any compatible catalog while keeping CodeMie's authentication, telemetry, and EPAM-internal catalog support in one place.
+
+```bash
+# Discover skills (two-section results: EPAM Internal first, public skills.sh second)
+codemie skills find pdf
+codemie skills find pdf --json
+codemie skills find pdf --limit 25
+
+# Install / update / remove skills via the upstream skills CLI
+codemie skills add anthropics/skills --skill pdf --agent claude-code -y
+codemie skills update                      # update everything in the current scope
+codemie skills remove pdf -y               # remove a specific skill
+
+# List installed skills (use --global for user-scope)
+codemie skills list
+codemie skills list --global --json
+```
+
+Notes:
+
+- **EPAM Internal catalog is opt-in.** Until your team configures the internal endpoint, `codemie skills find` shows the friendly placeholder for the internal section and returns public results from skills.sh. Enable the internal catalog by exporting `CODEMIE_SKILLS_SEARCH_URL` or by adding `skillsSearchUrl` to your CodeMie profile (`~/.codemie/codemie-cli.config.json`).
+- **Authentication.** Every `codemie skills *` subcommand requires an active CodeMie SSO session. Run `codemie setup` or `codemie profile login` first.
+- **Telemetry.** A single lifecycle event is recorded per invocation (`completed` or `failed`). The raw query string is never sent.
+- **Pass-through.** `codemie skills find` (no query) hands off to the upstream `skills find` interactive prompt, so the existing UX still works while the two-section view becomes the default for direct queries.
 
 ### Claude Code Built-in Commands
 

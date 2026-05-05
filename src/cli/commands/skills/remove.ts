@@ -16,7 +16,6 @@ import { classifySkillError } from './lib/error-classify.js';
 import {
   emitCompleted,
   emitFailed,
-  emitStarted,
   startSkillMetric,
   type AgentSelectionMode,
   type SkillScope,
@@ -54,13 +53,6 @@ export function createRemoveCommand(): Command {
         options.agent && options.agent.length > 0 ? 'explicit' : undefined;
 
       const metric = await startSkillMetric('remove', cwd);
-      await emitStarted(metric, {
-        scope,
-        skill_names: skillNames,
-        skill_count: skillCount,
-        target_agents: targetAgents,
-        agent_selection_mode: selectionMode,
-      });
 
       const args = ['remove'];
       if (options.global) args.push('--global');

@@ -12,6 +12,7 @@ export type SkillErrorCode =
   | 'skill_not_found'
   | 'git_fetch_failed'
   | 'interrupted'
+  | 'all_searches_failed'
   | 'unknown';
 
 export interface ClassifyInput {

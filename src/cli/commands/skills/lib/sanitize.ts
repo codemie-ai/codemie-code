@@ -74,7 +74,7 @@ function normalizeHome(value: string): string {
   return value;
 }
 
-function stripControlChars(value: string): string {
+export function stripControlChars(value: string): string {
   return value.replace(CONTROL_CHARS, '');
 }
 

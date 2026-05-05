@@ -12,7 +12,6 @@ import { classifySkillError } from './lib/error-classify.js';
 import {
   emitCompleted,
   emitFailed,
-  emitStarted,
   startSkillMetric,
   type SkillScope,
 } from './lib/skills-metrics.js';
@@ -44,11 +43,6 @@ export function createUpdateCommand(): Command {
       const skillCount = skills.length || undefined;
 
       const metric = await startSkillMetric('update', cwd);
-      await emitStarted(metric, {
-        scope,
-        skill_names: skillNames,
-        skill_count: skillCount,
-      });
 
       const args = ['update'];
       if (options.global) args.push('--global');
