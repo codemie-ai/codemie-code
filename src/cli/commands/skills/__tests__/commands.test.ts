@@ -14,7 +14,7 @@
  */
 
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import os, { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -97,11 +97,16 @@ async function parse(argv: string[]): Promise<void> {
 
 describe('codemie skills add', () => {
   it('passes explicit --agent through to the upstream binary verbatim (spec §11)', async () => {
-    await parse(['add', 'owner/repo', '--skill', 'foo', '-a', 'claude-code', '-y']);
-    expect(mockRequireAuth).toHaveBeenCalledOnce();
-    expect(mockRunSkillsCli).toHaveBeenCalledOnce();
-    const [args] = mockRunSkillsCli.mock.calls[0]!;
-    expect(args).toEqual(['add', 'owner/repo', '--yes', '--skill', 'foo', '--agent', 'claude-code']);
+    const platformSpy = vi.spyOn(os, 'platform').mockReturnValue('linux' as NodeJS.Platform);
+    try {
+      await parse(['add', 'owner/repo', '--skill', 'foo', '-a', 'claude-code', '-y']);
+      expect(mockRequireAuth).toHaveBeenCalledOnce();
+      expect(mockRunSkillsCli).toHaveBeenCalledOnce();
+      const [args] = mockRunSkillsCli.mock.calls[0]!;
+      expect(args).toEqual(['add', 'owner/repo', '--yes', '--skill', 'foo', '--agent', 'claude-code']);
+    } finally {
+      platformSpy.mockRestore();
+    }
   });
 
   it('auto-passes --agent claude-code when only .claude/ exists (spec §4)', async () => {

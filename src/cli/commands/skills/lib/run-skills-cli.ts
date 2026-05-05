@@ -73,7 +73,7 @@ export async function runSkillsCli(
     baseEnv.CI = process.env.CI ?? '1';
   }
 
-  const env = { ...process.env, ...baseEnv, ...(options.env ?? {}) };
+  const env = { ...process.env, ...baseEnv, ...options.env };
 
   logger.debug('[skills] Spawning skills CLI', {
     bin: skillsBin,
@@ -175,9 +175,10 @@ function resolveShimPath(): string {
 }
 
 function buildNodeOptions(shimAbsPath: string): string {
-  // Quote always so paths with spaces survive on every platform; on Windows
-  // double quotes are also the only reliable form for NODE_OPTIONS values.
-  const ours = `--require "${shimAbsPath}"`;
+  // Forward slashes work on all platforms (Node accepts them on Windows too)
+  // and avoid backslash-handling edge cases in NODE_OPTIONS on Windows.
+  const normalizedPath = shimAbsPath.replaceAll('\\', '/');
+  const ours = `--require "${normalizedPath}"`;
   const inherited = process.env.NODE_OPTIONS;
   // Preserve user-supplied NODE_OPTIONS (e.g., --max-old-space-size) but
   // append our require so the shim runs first in child processes.
