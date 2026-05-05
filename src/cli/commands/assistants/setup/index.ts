@@ -144,24 +144,23 @@ async function setupAssistants(options: SetupCommandOptions, hostAgent?: TargetA
     target
   );
 
-  config.codemieAssistants = newRegistrations;
-
   if (registered.length === 0 && unregistered.length === 0) {
-    displaySummary(registered, unregistered, profileName, config);
+    displaySummary(registered, unregistered, profileName, registeredAssistants);
     return;
   }
 
-  let configLocation: string;
+  const keptAssistants = registeredAssistants.filter(
+    a => selectedIds.includes(a.id) && !newRegistrations.some(n => n.id === a.id)
+  );
+  const allRegistered = [...keptAssistants, ...newRegistrations];
 
-  if (storageScope === 'local') {
-    await ConfigLoader.saveAssistantsToProjectConfig(workingDir, profileName, newRegistrations);
-    configLocation = `${workingDir}/.codemie/codemie-cli.config.json`;
-  } else {
-    await ConfigLoader.saveProfile(profileName, config);
-    configLocation = `global (~/.codemie/codemie-cli.config.json)`;
-  }
+  await ConfigLoader.saveAssistantsToProjectConfig(workingDir, storageScope, allRegistered);
 
-  displaySummary(registered, unregistered, profileName, config, configLocation);
+  const configLocation = storageScope === 'local'
+    ? `${workingDir}/.codemie/codemie-cli.config.json`
+    : `global (~/.codemie/codemie-cli.config.json)`;
+
+  displaySummary(registered, unregistered, profileName, allRegistered, configLocation);
 }
 
 async function applyChanges(

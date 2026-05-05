@@ -25,6 +25,5 @@ export type { Migration, MigrationResult, MigrationRecord, MigrationHistory } fr
 import './001-config-rename.migration.js';
 import './002-consolidate-sessions.migration.js';
 import './003-remove-hooks-node.migration.js';
-
-// Future migrations will be imported here:
-// import './004-restructure-profiles.migration.js';
+import './004-skills-assistants-top-level.migration.js';
+import './005-skill-slug-format.migration.js';

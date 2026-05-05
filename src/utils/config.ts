@@ -356,7 +356,7 @@ export class ConfigLoader {
       return rawConfig;
     }
 
-    // Legacy format - migrate to multi-provider
+    // Legacy format - migrate in-memory only; caller decides whether to persist
     if (isLegacyConfig(rawConfig)) {
       const defaultProfile: ProviderProfile = {
         name: 'default',
@@ -366,9 +366,7 @@ export class ConfigLoader {
       return {
         version: 2,
         activeProfile: 'default',
-        profiles: {
-          default: defaultProfile
-        }
+        profiles: { default: defaultProfile }
       };
     }
 
@@ -378,6 +376,36 @@ export class ConfigLoader {
       activeProfile: 'default',
       profiles: {}
     };
+  }
+
+  static async loadLocalMultiProviderConfig(workingDir: string): Promise<MultiProviderConfig> {
+    const localConfigPath = path.join(workingDir, this.LOCAL_CONFIG);
+    const rawConfig = await this.loadJsonConfig(localConfigPath);
+
+    if (isMultiProviderConfig(rawConfig)) {
+      return rawConfig;
+    }
+
+    if (Object.keys(rawConfig).length === 0) {
+      return {
+        version: 2,
+        activeProfile: 'default',
+        profiles: {}
+      };
+    }
+
+    throw new Error(`Unrecognized config format at ${localConfigPath}. Expected multi-provider (version 2) format.`);
+  }
+
+  /**
+   * Write multi-provider config to the local project config file at
+   * <workingDir>/.codemie/codemie-cli.config.json.
+   */
+  static async saveLocalMultiProviderConfig(workingDir: string, config: MultiProviderConfig): Promise<void> {
+    const localConfigPath = path.join(workingDir, this.LOCAL_CONFIG);
+    const configDir = path.dirname(localConfigPath);
+    await fs.mkdir(configDir, { recursive: true });
+    await fs.writeFile(localConfigPath, JSON.stringify(config, null, 2), 'utf-8');
   }
 
   /**
@@ -393,11 +421,11 @@ export class ConfigLoader {
   static async saveProfile(profileName: string, profile: ProviderProfile): Promise<void> {
     const config = await this.loadMultiProviderConfig();
 
-    // Set profile name
-    profile.name = profileName;
+    // Strip top-level-only fields that must not live inside a profile
+    const { codemieSkills: _skills, codemieAssistants: _assistants, ...cleanProfile } = profile as any;
 
-    // Add or update profile
-    config.profiles[profileName] = profile;
+    cleanProfile.name = profileName;
+    config.profiles[profileName] = cleanProfile;
 
     // If this is the first profile, make it active
     if (Object.keys(config.profiles).length === 1) {
@@ -710,59 +738,34 @@ export class ConfigLoader {
     );
   }
 
-  /**
-   * Save assistants configuration to project-local config file
-   * Only updates the codemieAssistants field in the specified profile,
-   * leaving all other local config fields untouched.
-   * Creates the local config file if it does not exist.
-   */
   static async saveAssistantsToProjectConfig(
     workingDir: string,
-    profileName: string,
+    scope: 'global' | 'local',
     assistants: CodemieAssistant[]
   ): Promise<void> {
-    const localConfigPath = path.join(workingDir, this.LOCAL_CONFIG);
-    const configDir = path.dirname(localConfigPath);
-    await fs.mkdir(configDir, { recursive: true });
-
-    const rawConfig = await this.loadJsonConfig(localConfigPath);
-
-    let config: MultiProviderConfig;
-
-    if (isMultiProviderConfig(rawConfig)) {
-      config = rawConfig;
+    if (scope === 'global') {
+      const config = await this.loadMultiProviderConfig();
+      config.codemieAssistants = assistants;
+      await this.saveMultiProviderConfig(config);
     } else {
-      config = {
-        version: 2,
-        activeProfile: profileName,
-        profiles: {}
-      };
+      const config = await this.loadLocalMultiProviderConfig(workingDir);
+      config.codemieAssistants = assistants;
+      await this.saveLocalMultiProviderConfig(workingDir, config);
     }
-
-    if (config.profiles[profileName]) {
-      config.profiles[profileName].codemieAssistants = assistants;
-    } else {
-      config.profiles[profileName] = { codemieAssistants: assistants };
-    }
-
-    // Keep activeProfile pointing at a valid profile.
-    // Update it to profileName when: no active profile is set, the current active
-    // profile no longer exists, or this is the only profile in the file.
-    if (!config.activeProfile || !config.profiles[config.activeProfile] || Object.keys(config.profiles).length === 1) {
-      config.activeProfile = profileName;
-    }
-
-    await fs.writeFile(localConfigPath, JSON.stringify(config, null, 2), 'utf-8');
   }
 
   static async loadSkillsByScope(
     scope: 'global' | 'local',
     workingDir: string,
-    profileName: string
+    // Skills are stored at the top-level MultiProviderConfig, not per-profile.
+    // This parameter exists only for call-site compatibility and is intentionally ignored.
+    _profileName?: string
   ): Promise<CodemieSkill[]> {
-    const skills = scope === 'global'
-      ? (await this.loadGlobalConfigProfile(profileName)).codemieSkills || []
-      : (await this.loadLocalConfigProfile(workingDir, profileName)).codemieSkills || [];
+    const config = scope === 'global'
+      ? await this.loadMultiProviderConfig()
+      : await this.loadLocalMultiProviderConfig(workingDir);
+
+    const skills = config.codemieSkills ?? [];
 
     const skillsDir = scope === 'global'
       ? path.join(os.homedir(), '.claude', 'skills')
@@ -783,14 +786,19 @@ export class ConfigLoader {
   static async loadAssistantsByScope(
     scope: 'global' | 'local',
     workingDir: string,
-    profileName: string
+    // Assistants are stored at the top-level MultiProviderConfig, not per-profile.
+    // This parameter exists only for call-site compatibility and is intentionally ignored.
+    _profileName?: string
   ): Promise<CodemieAssistant[]> {
-    const assistants = scope === 'global'
-      ? (await this.loadGlobalConfigProfile(profileName)).codemieAssistants || []
-      : (await this.loadLocalConfigProfile(workingDir, profileName)).codemieAssistants || [];
+    const config = scope === 'global'
+      ? await this.loadMultiProviderConfig()
+      : await this.loadLocalMultiProviderConfig(workingDir);
 
+    const assistants = config.codemieAssistants ?? [];
     const baseDir = scope === 'global' ? os.homedir() : workingDir;
 
+    // One fs.access per assistant — acceptable for small lists (<20) but may add
+    // measurable latency on agent startup if the list grows large.
     const verified = await Promise.all(assistants.map(async (assistant) => {
       try {
         const isSkill = assistant.registrationMode === 'skill';
@@ -809,38 +817,18 @@ export class ConfigLoader {
 
   static async saveSkillsToProjectConfig(
     workingDir: string,
-    profileName: string,
+    scope: 'global' | 'local',
     skills: CodemieSkill[]
   ): Promise<void> {
-    const localConfigPath = path.join(workingDir, this.LOCAL_CONFIG);
-    const configDir = path.dirname(localConfigPath);
-    await fs.mkdir(configDir, { recursive: true });
-
-    const rawConfig = await this.loadJsonConfig(localConfigPath);
-
-    let config: MultiProviderConfig;
-
-    if (isMultiProviderConfig(rawConfig)) {
-      config = rawConfig;
+    if (scope === 'global') {
+      const config = await this.loadMultiProviderConfig();
+      config.codemieSkills = skills;
+      await this.saveMultiProviderConfig(config);
     } else {
-      config = {
-        version: 2,
-        activeProfile: profileName,
-        profiles: {}
-      };
+      const config = await this.loadLocalMultiProviderConfig(workingDir);
+      config.codemieSkills = skills;
+      await this.saveLocalMultiProviderConfig(workingDir, config);
     }
-
-    if (config.profiles[profileName]) {
-      config.profiles[profileName].codemieSkills = skills;
-    } else {
-      config.profiles[profileName] = { codemieSkills: skills };
-    }
-
-    if (!config.activeProfile || !config.profiles[config.activeProfile] || Object.keys(config.profiles).length === 1) {
-      config.activeProfile = profileName;
-    }
-
-    await fs.writeFile(localConfigPath, JSON.stringify(config, null, 2), 'utf-8');
   }
 
   /**
@@ -1310,8 +1298,12 @@ export async function getInstallationId(): Promise<string> {
  */
 export async function loadRegisteredAssistants(): Promise<CodemieAssistant[]> {
   try {
-    const config = await ConfigLoader.load();
-    return config.codemieAssistants || [];
+    const workingDir = process.cwd();
+    const [globalAssistants, localAssistants] = await Promise.all([
+      ConfigLoader.loadAssistantsByScope('global', workingDir).catch(() => [] as CodemieAssistant[]),
+      ConfigLoader.loadAssistantsByScope('local', workingDir).catch(() => [] as CodemieAssistant[]),
+    ]);
+    return [...globalAssistants, ...localAssistants];
   } catch {
     return [];
   }

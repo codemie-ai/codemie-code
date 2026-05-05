@@ -142,16 +142,11 @@ async function setupSkills(options: { profile?: string; agent?: string }, hostAg
     ...newlyRegistered,
   ];
 
-  let configLocation: string;
+  await ConfigLoader.saveSkillsToProjectConfig(workingDir, storageScope, updatedSkills);
 
-  if (storageScope === 'local') {
-    await ConfigLoader.saveSkillsToProjectConfig(workingDir, profileName, updatedSkills);
-    configLocation = `${workingDir}/.codemie/codemie-cli.config.json`;
-  } else {
-    config.codemieSkills = updatedSkills;
-    await ConfigLoader.saveProfile(profileName, config);
-    configLocation = `global (~/.codemie/codemie-cli.config.json)`;
-  }
+  const configLocation = storageScope === 'local'
+    ? `${workingDir}/.codemie/codemie-cli.config.json`
+    : `global (~/.codemie/codemie-cli.config.json)`;
 
   console.log('');
   if (newlyRegistered.length > 0) {
