@@ -53,6 +53,10 @@ export async function promptStorageScope({
     return lines.join('\n');
   }
 
+  if (!process.stdin.isTTY || typeof process.stdin.setRawMode !== 'function') {
+    return Promise.resolve('global' as const);
+  }
+
   return new Promise((resolve) => {
     let keepAliveTimer: NodeJS.Timeout | null = null;
 

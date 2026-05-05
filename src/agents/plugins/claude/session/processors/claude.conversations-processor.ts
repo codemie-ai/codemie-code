@@ -552,6 +552,10 @@ export class ConversationsProcessor implements SessionProcessor {
     // Filter system messages (including stop hooks)
     if (msg.type === 'system') return true;
 
+    // Filter skill injection meta messages — they are context injected by Claude Code,
+    // not actual user input. They are still captured as thoughts via metaMessages branch.
+    if ((msg as any).isMeta) return true;
+
     return this.isConversationSplitter(msg) ||
            this.isSystemMessage(msg) ||
            Boolean(msg.isMeta) ||

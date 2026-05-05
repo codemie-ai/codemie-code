@@ -47,12 +47,42 @@ function generateSlug(skill: SkillDetail): string {
  */
 function createSkillContent(skill: SkillDetail): string {
 	const metadata = createSkillMetadata(skill);
-	const content = skill.content || `# ${skill.name}\n\n${skill.description || ''}`;
+	const description = skill.description || skill.name;
 
 	return dedent`
 		${metadata}
 
-		${content}
+		# ${skill.name}
+
+		${description}
+
+		## Instructions
+
+		1. Extract the user's message from the conversation context
+		2. Execute the command with the message
+		3. Return the response to the user verbatim
+
+		**File attachments are automatically detected** - any images or documents uploaded in
+		recent messages are automatically included with the request.
+
+		**ARGUMENTS**: "message"
+
+		**Command format:**
+		\`\`\`bash
+		codemie skill run "${skill.id}" "message"
+		\`\`\`
+
+		## Examples
+
+		**Simple message:**
+		\`\`\`bash
+		codemie skill run "${skill.id}" "help me with this"
+		\`\`\`
+
+		**With file attachment:**
+		\`\`\`bash
+		codemie skill run "${skill.id}" "analyze this code" --file "script.py"
+		\`\`\`
 	`;
 }
 

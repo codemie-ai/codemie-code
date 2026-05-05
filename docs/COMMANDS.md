@@ -1164,6 +1164,77 @@ codemie log list-sessions --last 7d --sort duration --reverse
 - Use `follow` mode for real-time monitoring during development
 - Session data is never auto-deleted (only via explicit `clean --sessions`)
 
+### `codemie skill`
+
+Manage CodeMie skills registered for use with Claude Code.
+
+**Subcommands:**
+
+#### `codemie skill list`
+
+List all locally discovered skills.
+
+```bash
+codemie skill list [--mode <mode>] [--agent <agent>] [--cwd <path>]
+```
+
+#### `codemie skill run <skill-id> [message]`
+
+Run a CodeMie skill by its backend UUID. Fetches the skill's assistant configuration from the CodeMie backend and calls the virtual assistant endpoint to generate a response.
+
+```bash
+codemie skill run <skill-id> "Your message here"
+
+# Read message from stdin (piped input)
+echo "Your message here" | codemie skill run <skill-id>
+
+# Maintain conversation context across calls
+codemie skill run <skill-id> "Follow-up question" --conversation-id <id>
+```
+
+**Arguments:**
+- `<skill-id>` — Backend UUID of the skill (required)
+- `[message]` — Message to send; reads from stdin if omitted
+
+**Options:**
+- `-v, --verbose` — Enable verbose debug output
+- `--conversation-id <id>` — Conversation ID for context continuity
+
+**Output:** The response text is printed to stdout with no decoration, making it suitable for capture by Claude Code.
+
+**Error handling:**
+- Skill not found (404) → prints `Skill not found: <skill-id>` and exits 1
+- Authentication failure (401/403) → prompts re-authentication and exits 1
+- Empty message → prints `Message is required` and exits 1
+
+This command is invoked automatically by `SKILL.md` files generated via `codemie setup skills`.
+
+#### `codemie skill validate`
+
+Validate all skill files for correctness.
+
+```bash
+codemie skill validate [--cwd <path>]
+```
+
+#### `codemie skill reload`
+
+Clear the skill cache and force reload on next agent start.
+
+```bash
+codemie skill reload
+```
+
+#### `codemie skill sync`
+
+Sync CodeMie skills to a target agent (e.g. Claude Code).
+
+```bash
+codemie skill sync [--target claude] [--clean] [--dry-run] [--cwd <path>]
+```
+
+---
+
 ### `codemie version`
 
 Show version information for CodeMie CLI.

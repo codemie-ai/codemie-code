@@ -61,6 +61,10 @@ async function showDisclaimer(): Promise<boolean> {
 
   process.stdout.write(lines.join('\n'));
 
+  if (!process.stdin.isTTY || typeof process.stdin.setRawMode !== 'function') {
+    return Promise.resolve(true);
+  }
+
   return new Promise((resolve) => {
     process.stdin.setRawMode(true);
     process.stdin.resume();

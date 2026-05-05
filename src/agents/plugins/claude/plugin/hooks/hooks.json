@@ -63,7 +63,7 @@
           {
             "type": "command",
             "command": "codemie hook",
-            "timeout": 2
+            "timeout": 15
           },
           {
             "type": "command",

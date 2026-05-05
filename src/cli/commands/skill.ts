@@ -4,6 +4,51 @@ import chalk from 'chalk';
 import { SkillManager, SkillSync } from '../../skills/index.js';
 import { logger } from '../../utils/logger.js';
 import type { Skill } from '../../skills/index.js';
+import { ConfigLoader } from '@/utils/config.js';
+import { createErrorContext, formatErrorForUser } from '@/utils/errors.js';
+import { getAuthenticatedClient, promptReauthentication } from '@/utils/auth.js';
+import { loadConversationHistory } from '@/cli/commands/assistants/chat/historyLoader.js';
+import type { SkillDetail, VirtualAssistantChatParams } from 'codemie-sdk';
+import { NotFoundError, ApiError } from 'codemie-sdk';
+
+interface RunCommandOptions {
+  verbose?: boolean;
+  conversationId?: string;
+}
+
+
+async function readStdin(): Promise<string> {
+  if (process.stdin.isTTY) {
+    return '';
+  }
+  const chunks: Buffer[] = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks).toString('utf-8').trim();
+}
+
+function stripNulls<T extends Record<string, unknown>>(obj: T): T {
+  return Object.fromEntries(
+    Object.entries(obj).filter(([, v]) => v !== null)
+  ) as T;
+}
+
+function extractAssistantParams(skill: SkillDetail): Omit<VirtualAssistantChatParams, 'text'> {
+  const mcpServers = ((skill.mcp_servers ?? []) as Record<string, unknown>[]).map(server => {
+    const cleaned = stripNulls(server);
+    if (cleaned['config'] && typeof cleaned['config'] === 'object') {
+      cleaned['config'] = stripNulls(cleaned['config'] as Record<string, unknown>);
+    }
+    return cleaned;
+  });
+
+  return {
+    system_prompt: skill.content,
+    toolkits: skill.toolkits as VirtualAssistantChatParams['toolkits'],
+    mcp_servers: mcpServers as VirtualAssistantChatParams['mcp_servers'],
+  };
+}
 
 /**
  * Format skill source with color
@@ -288,6 +333,75 @@ function createSyncCommand(): Command {
 }
 
 /**
+ * Create skill run command
+ */
+function createRunCommand(): Command {
+  return new Command('run')
+    .description('Run a CodeMie skill by ID, using its assistant configuration')
+    .argument('<skill-id>', 'Backend UUID of the skill to run')
+    .argument('[message]', 'Message to send to the skill (reads from stdin if omitted)')
+    .option('-v, --verbose', 'Enable verbose debug output')
+    .option('--conversation-id <id>', 'Conversation ID for context continuity')
+    .action(async (skillId: string, message: string | undefined, options: RunCommandOptions) => {
+      try {
+        const config = await ConfigLoader.load();
+        const client = await getAuthenticatedClient(config);
+
+        if (message === undefined) {
+          message = await readStdin();
+        }
+
+        if (!message) {
+          console.error('Message is required');
+          process.exit(1);
+        }
+
+        const conversationId = options.conversationId || process.env.CODEMIE_SESSION_ID;
+
+        let skill: SkillDetail;
+        try {
+          skill = await client.skills.get(skillId);
+        } catch (error: unknown) {
+          if (error instanceof NotFoundError) {
+            console.error(`Skill not found: ${skillId}`);
+            process.exit(1);
+          }
+          if (error instanceof ApiError && (error.statusCode === 401 || error.statusCode === 403)) {
+            await promptReauthentication(config);
+            process.exit(1);
+          }
+          const context = createErrorContext(error);
+          console.error(formatErrorForUser(context));
+          process.exit(1);
+        }
+
+        const assistantParams = extractAssistantParams(skill);
+        const history = await loadConversationHistory(conversationId, config);
+
+        const response = await client.assistants.askVirtual({
+          ...assistantParams,
+          text: message,
+          stream: false,
+          conversation_id: conversationId,
+          history,
+        });
+
+        console.log(response.generated ?? '');
+      } catch (error: unknown) {
+        if (error instanceof ApiError && (error.statusCode === 401 || error.statusCode === 403)) {
+          const config = await ConfigLoader.load();
+          await promptReauthentication(config);
+          process.exit(1);
+        }
+        const context = createErrorContext(error);
+        logger.error('Failed to run skill', context);
+        console.error(formatErrorForUser(context));
+        process.exit(1);
+      }
+    });
+}
+
+/**
  * Create main skill command with subcommands
  */
 export function createSkillCommand(): Command {
@@ -299,6 +413,7 @@ export function createSkillCommand(): Command {
   skill.addCommand(createValidateCommand());
   skill.addCommand(createReloadCommand());
   skill.addCommand(createSyncCommand());
+  skill.addCommand(createRunCommand());
 
   return skill;
 }

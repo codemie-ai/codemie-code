@@ -325,6 +325,33 @@ Skills are automatically synced on every Claude agent startup, so the local SKIL
 
 > **Tip:** For skills that require MCP servers or tools, use `codemie setup assistants` instead.
 
+### CodeMie Skills
+
+CodeMie skills are reusable assistant configurations you can register directly into Claude Code. Register them from your CodeMie account and invoke them as `/skill-name` inside Claude Code.
+
+Registered skills use `codemie skill run` under the hood — when you invoke `/skill-name` in Claude Code, it calls the backend virtual assistant endpoint with the skill's full configuration (system prompt, toolkits, MCP servers).
+
+You can also invoke a skill directly from the terminal:
+
+```bash
+codemie skill run "<skill-id>" "Your message here"
+
+# Pipe message from stdin
+echo "Explain this function" | codemie skill run "<skill-id>"
+
+# Maintain conversation context
+codemie skill run "<skill-id>" "Follow-up" --conversation-id <id>
+```
+
+Manage registered skills:
+
+```bash
+codemie skill list      # List all discovered skills
+codemie skill validate  # Validate skill files
+codemie skill sync      # Sync skills to Claude Code
+codemie skill reload    # Clear skill cache
+```
+
 ### Claude Code Built-in Commands
 
 When using Claude Code (`codemie-claude`), you get access to powerful built-in commands for project documentation:
