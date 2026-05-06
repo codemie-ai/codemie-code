@@ -25,9 +25,13 @@ const SHIM_PATH = path.resolve(
 );
 
 let originalFetch: typeof globalThis.fetch | undefined;
+let originalCaptureUpdateStdout: string | undefined;
+let stderrSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   originalFetch = globalThis.fetch;
+  originalCaptureUpdateStdout = process.env.CODEMIE_CAPTURE_SKILLS_SH_UPDATE_STDOUT;
+  stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 });
 
 afterEach(() => {
@@ -37,6 +41,12 @@ afterEach(() => {
     // @ts-expect-error - allow undefined reset
     delete globalThis.fetch;
   }
+  if (originalCaptureUpdateStdout === undefined) {
+    delete process.env.CODEMIE_CAPTURE_SKILLS_SH_UPDATE_STDOUT;
+  } else {
+    process.env.CODEMIE_CAPTURE_SKILLS_SH_UPDATE_STDOUT = originalCaptureUpdateStdout;
+  }
+  stderrSpy.mockRestore();
 });
 
 describe('skills-sh-egress-guard', () => {
@@ -107,5 +117,27 @@ describe('skills-sh-egress-guard', () => {
       /CODEMIE_SKILL_EGRESS_BLOCKED/
     );
     expect(upstream).not.toHaveBeenCalled();
+  });
+
+  it('captures successful update lines as structured telemetry without blocking stdout', () => {
+    process.env.CODEMIE_CAPTURE_SKILLS_SH_UPDATE_STDOUT = '1';
+    const stdoutSpy = vi
+      .spyOn(process.stdout, 'write')
+      .mockImplementation(() => true);
+
+    try {
+      loadShim();
+      process.stdout.write('\u001b[32m✓\u001b[0m Updated alpha-skill\n');
+      process.stdout.write('✓ Updated 1 skill(s)\n');
+
+      expect(stderrSpy).toHaveBeenCalledWith(
+        'CODEMIE_SKILLS_SH_TELEMETRY {"event":"update","skills":"alpha-skill"}\n'
+      );
+      expect(stderrSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining('"skills":"1 skill(s)"')
+      );
+    } finally {
+      stdoutSpy.mockRestore();
+    }
   });
 });

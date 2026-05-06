@@ -55,13 +55,15 @@ export class ConfigLoader {
       ignorePatterns: ['node_modules', '.git', 'dist', 'build']
     };
 
+    const profileName = await this.resolveProfileName(workingDir, cliOverrides?.name);
+
     // 4. Global config (~/.codemie/codemie-cli.config.json)
-    // Load from active profile if multi-provider, otherwise load as-is
-    const globalConfig = await this.loadGlobalConfigProfile(cliOverrides?.name);
+    // Load from the locally active profile name when local config points at a global profile.
+    const globalConfig = await this.loadGlobalConfigProfile(profileName);
     Object.assign(config, this.removeUndefined(globalConfig));
 
     // 3. Project-local config (.codemie/codemie-cli.config.json)
-    const localConfig = await this.loadLocalConfigProfile(workingDir, cliOverrides?.name);
+    const localConfig = await this.loadLocalConfigProfile(workingDir, profileName);
     Object.assign(config, this.removeUndefined(localConfig));
 
     // 2. Environment variables (load .env first if in project)
@@ -170,6 +172,10 @@ export class ConfigLoader {
       }
 
       if (!rawConfig.profiles[profile]) {
+        if (profileName) {
+          // Profile was specified from a local config and doesn't exist globally — local-only profile, skip global.
+          return {};
+        }
         const availableProfiles = Object.keys(rawConfig.profiles);
         if (availableProfiles.length === 0) {
           throw new Error('No profiles configured. Run: codemie setup');
@@ -222,6 +228,31 @@ export class ConfigLoader {
 
     // Empty or invalid config
     return {};
+  }
+
+  /**
+   * Resolve the effective profile name before loading profile data.
+   *
+   * Local configs can set activeProfile to a profile that exists only globally.
+   * In that case, the global profile must be loaded as the base before local
+   * overrides are applied.
+   */
+  private static async resolveProfileName(
+    workingDir: string,
+    explicitProfileName?: string
+  ): Promise<string | undefined> {
+    if (explicitProfileName) {
+      return explicitProfileName;
+    }
+
+    const localConfigPath = path.join(workingDir, this.LOCAL_CONFIG);
+    const localConfig = await this.loadJsonConfig(localConfigPath);
+
+    if (isMultiProviderConfig(localConfig) && localConfig.activeProfile) {
+      return localConfig.activeProfile;
+    }
+
+    return undefined;
   }
 
   /**
@@ -1027,6 +1058,8 @@ export class ConfigLoader {
       source: 'default' | 'global' | 'project' | 'env' | 'cli';
     };
 
+    const profileName = await this.resolveProfileName(workingDir, cliOverrides?.name);
+
     const configs: ConfigLayer[] = [
       {
         data: {
@@ -1036,11 +1069,11 @@ export class ConfigLoader {
         source: 'default'
       },
       {
-        data: await this.loadGlobalConfigProfile(cliOverrides?.name),
+        data: await this.loadGlobalConfigProfile(profileName),
         source: 'global'
       },
       {
-        data: await this.loadLocalConfigProfile(workingDir, cliOverrides?.name),
+        data: await this.loadLocalConfigProfile(workingDir, profileName),
         source: 'project'
       },
       {

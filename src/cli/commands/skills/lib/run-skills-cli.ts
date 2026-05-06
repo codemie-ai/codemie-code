@@ -26,6 +26,7 @@ import os from 'node:os';
 import type { ExecResult } from '@/utils/exec.js';
 import { logger } from '@/utils/logger.js';
 import { getDirname } from '@/utils/paths.js';
+import { SKILLS_SH_TELEMETRY_MARKER } from './skills-sh-telemetry.js';
 
 const SHIM_FILENAME = 'skills-sh-egress-guard.cjs';
 
@@ -63,10 +64,23 @@ export async function runSkillsCli(
   const interactive = options.interactive !== false;
 
   const baseEnv: Record<string, string> = {
-    DO_NOT_TRACK: '1',
-    DISABLE_TELEMETRY: '1',
     NODE_OPTIONS: buildNodeOptions(shimPath),
   };
+  if (args[0] === 'add' || args[0] === 'remove' || args[0] === 'update') {
+    // We temporarily reopen upstream's telemetry gate only after resolving
+    // NODE_OPTIONS with the CodeMie egress guard shim. The shim captures the
+    // selected-skill payload locally and blocks add-skill.vercel.sh, so the
+    // request never leaves the machine.
+    baseEnv.DO_NOT_TRACK = '';
+    baseEnv.DISABLE_TELEMETRY = '';
+    baseEnv.CODEMIE_CAPTURE_SKILLS_SH_INSTALL_TELEMETRY = '1';
+    if (args[0] === 'update') {
+      baseEnv.CODEMIE_CAPTURE_SKILLS_SH_UPDATE_STDOUT = '1';
+    }
+  } else {
+    baseEnv.DO_NOT_TRACK = '1';
+    baseEnv.DISABLE_TELEMETRY = '1';
+  }
   // Force CI=1 only for non-interactive runs to suppress any prompts the
   // upstream might fire. Forcing it on interactive runs interferes with
   // Clack/inquirer prompt + spinner behavior; DO_NOT_TRACK / DISABLE_TELEMETRY
@@ -105,6 +119,7 @@ export async function runSkillsCli(
 
     let stdout = '';
     let stderr = '';
+    let interactiveStderrBuffer = '';
     let timedOut = false;
     let timeout: NodeJS.Timeout | undefined;
     let forceKillTimeout: NodeJS.Timeout | undefined;
@@ -135,7 +150,14 @@ export async function runSkillsCli(
       const text = data.toString();
       stderr += text;
       if (interactive) {
-        process.stderr.write(text);
+        interactiveStderrBuffer += text;
+        const lines = interactiveStderrBuffer.split(/\r?\n/);
+        interactiveStderrBuffer = lines.pop() ?? '';
+        for (const line of lines) {
+          if (!line.startsWith(`${SKILLS_SH_TELEMETRY_MARKER} `)) {
+            process.stderr.write(`${line}\n`);
+          }
+        }
       }
     });
 
@@ -154,6 +176,13 @@ export async function runSkillsCli(
       }
       settled = true;
       cleanup();
+      if (
+        interactive &&
+        interactiveStderrBuffer.length > 0 &&
+        !interactiveStderrBuffer.startsWith(`${SKILLS_SH_TELEMETRY_MARKER} `)
+      ) {
+        process.stderr.write(interactiveStderrBuffer);
+      }
       resolve({
         code: timedOut ? 124 : code ?? (signal ? 130 : 1),
         stdout: stdout.trim(),

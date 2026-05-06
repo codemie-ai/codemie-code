@@ -20,6 +20,7 @@ import {
   type AgentSelectionMode,
   type SkillScope,
 } from './lib/skills-metrics.js';
+import { parseSkillNamesFromSkillsTelemetry } from './lib/skills-sh-telemetry.js';
 
 interface RemoveOptions {
   global?: boolean;
@@ -68,10 +69,15 @@ export function createRemoveCommand(): Command {
       try {
         const result = await runSkillsCli(args, { cwd });
         if (result.code === 0) {
+          // Explicit names describe the requested removal. Interactive mode has
+          // no request-time names, so use the upstream success payload instead.
+          const metricSkillNames =
+            skillNames ?? parseSkillNamesFromSkillsTelemetry(result.stderr, 'remove');
+          const metricSkillCount = metricSkillNames?.length;
           await emitCompleted(metric, {
             scope,
-            skill_names: skillNames,
-            skill_count: skillCount,
+            skill_names: metricSkillNames,
+            skill_count: metricSkillCount,
             target_agents: targetAgents,
             agent_selection_mode: selectionMode,
           });

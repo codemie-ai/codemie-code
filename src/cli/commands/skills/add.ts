@@ -21,6 +21,7 @@ import {
   emitFailed,
   startSkillMetric,
 } from './lib/skills-metrics.js';
+import { parseSkillNamesFromSkillsTelemetry } from './lib/skills-sh-telemetry.js';
 
 interface AddOptions {
   global?: boolean;
@@ -64,8 +65,10 @@ export function createAddCommand(): Command {
 
       const scope = options.global ? 'global' : 'project';
       const sanitizedSource = sanitizeSource(source);
-      const skillNames = capList(options.skill);
-      const skillCount = options.skill?.length;
+      const requestedSkillNames = options.skill?.includes('*')
+        ? undefined
+        : capList(options.skill);
+      const requestedSkillCount = requestedSkillNames?.length;
       const targetAgents =
         agentSelection.mode === 'upstream' ? undefined : capList(agentSelection.agents);
       const selectionMode =
@@ -86,11 +89,15 @@ export function createAddCommand(): Command {
         });
 
         if (result.code === 0) {
+          const metricSkillNames =
+            requestedSkillNames ??
+            parseSkillNamesFromSkillsTelemetry(result.stderr, 'install');
+          const metricSkillCount = metricSkillNames?.length;
           await emitCompleted(metric, {
             scope,
             source: sanitizedSource,
-            skill_names: skillNames,
-            skill_count: skillCount,
+            skill_names: metricSkillNames,
+            skill_count: metricSkillCount,
             target_agents: targetAgents,
             agent_selection_mode: selectionMode,
           });
@@ -104,8 +111,8 @@ export function createAddCommand(): Command {
         await emitFailed(metric, {
           scope,
           source: sanitizedSource,
-          skill_names: skillNames,
-          skill_count: skillCount,
+          skill_names: requestedSkillNames,
+          skill_count: requestedSkillCount,
           target_agents: targetAgents,
           agent_selection_mode: selectionMode,
           error_code: errorCode,
@@ -122,8 +129,8 @@ export function createAddCommand(): Command {
         await emitFailed(metric, {
           scope,
           source: sanitizedSource,
-          skill_names: skillNames,
-          skill_count: skillCount,
+          skill_names: requestedSkillNames,
+          skill_count: requestedSkillCount,
           target_agents: targetAgents,
           agent_selection_mode: selectionMode,
           error_code: errorCode,

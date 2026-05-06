@@ -12,8 +12,8 @@
  * - **Fan-out per skill.** When the wrapper knows which skills the operation
  *   targets (explicit `--skill foo bar`), one POST is emitted per skill so
  *   the backend stores `(event, skill)` rows and trivial COUNT(*) queries
- *   work. For ops without a specific skill (bare `list`, `find`, interactive
- *   `add`), a single POST is sent with `skill_*` fields null.
+ *   work. For ops without a specific skill (bare `list`, interactive `add`),
+ *   a single POST is sent with `skill_*` fields null.
  * - **Best-effort.** Any failure to load credentials, resolve the API URL,
  *   or POST is logged at debug level and swallowed — telemetry must never
  *   block a real user command.
@@ -49,7 +49,6 @@ interface PartialAttributes {
   /**
    * Forward-compat escape hatch matching the backend `attributes` JSONB
    * field on `SkillEventRequest`. Use this for command-specific telemetry
-   * (e.g. `find`'s `query_length`, `internal_available`, `result_count_*`)
    * that does not fit the strict top-level schema.
    */
   attributes?: Record<string, unknown>;
@@ -145,6 +144,16 @@ async function emit(
   partial: PartialAttributes
 ): Promise<void> {
   if (!session.transport) {
+    if (shouldLogSkillMetricDebug(session.command)) {
+      logSkillMetricDebug(session.command, {
+        sent: false,
+        reason: 'no event transport; missing CodeMie URL, SSO cookies, or API base',
+        command: session.command,
+        status,
+        session_id: session.sessionId,
+        partial,
+      });
+    }
     return;
   }
 
@@ -217,6 +226,15 @@ async function postOne(transport: SkillEventTransport, body: SkillEventBody): Pr
   if (body.branch) headers['X-CodeMie-Branch'] = body.branch;
   if (body.project) headers['X-CodeMie-Project'] = body.project;
 
+  if (shouldLogSkillMetricDebug(body.command)) {
+    const debugPayload = {
+      url,
+      headers: redactSensitiveHeaders(headers),
+      body,
+    };
+    logSkillMetricDebug(body.command, { sent: true, ...debugPayload });
+  }
+
   try {
     const response = await fetch(url, {
       method: 'POST',
@@ -243,6 +261,23 @@ async function postOne(transport: SkillEventTransport, body: SkillEventBody): Pr
     const message = error instanceof Error ? error.message : String(error);
     logger.debug(`[skills] Skill event POST failed: ${message}`);
   }
+}
+
+function redactSensitiveHeaders(headers: Record<string, string>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(headers).map(([key, value]) => [
+      key,
+      key.toLowerCase() === 'cookie' ? '<redacted>' : value,
+    ])
+  );
+}
+
+function shouldLogSkillMetricDebug(command: SkillCommand): boolean {
+  return command === 'add' || command === 'remove' || command === 'update';
+}
+
+function logSkillMetricDebug(command: SkillCommand, payload: Record<string, unknown>): void {
+  logger.debug(`[skills] CodeMie ${command} metric debug`, payload);
 }
 
 /**

@@ -1,6 +1,8 @@
 /**
  * `codemie skills find <query>` — two-section search across the EPAM
  * internal catalog and the public skills.sh registry.
+ * Find/search intentionally does not emit CodeMie lifecycle metrics because
+ * interactive discovery can be noisy and does not change installed state.
  *
  * - Empty query: delegates to upstream `skills find` so the existing
  *   interactive prompt keeps working. The egress guard shim still
@@ -9,22 +11,11 @@
  * - Query >=2 chars: fetches both sections in parallel; each section
  *   degrades independently. Exit 0 if any HTTP call succeeded; exit 1
  *   only when every attempted call failed.
- *
- * Find-specific telemetry (`query_length`, `internal_available`,
- * `result_count_internal`, `result_count_public`) is shipped inside
- * the `attributes` JSONB escape hatch on the existing
- * `/v1/skills/events` endpoint. The query string itself is never sent.
  */
 import { Command } from 'commander';
 import { logger } from '@/utils/logger.js';
 import { runSkillsCli } from './lib/run-skills-cli.js';
 import { requireAuthenticatedSession } from './lib/require-auth.js';
-import { classifySkillError } from './lib/error-classify.js';
-import {
-  emitCompleted,
-  emitFailed,
-  startSkillMetric,
-} from './lib/skills-metrics.js';
 import {
   resolveInternalContext,
   searchInternal,
@@ -68,14 +59,12 @@ export function createFindCommand(): Command {
       }
 
       const limit = clampLimit(options.limit);
-      const cwd = process.cwd();
       // Resolve the internal endpoint and SSO headers once. The same
       // result drives both the "internal configured" UX flag and the
       // HTTP call inside `searchInternal`, so we avoid loading config
       // multiple times per invocation.
       const internalContext = await resolveInternalContext();
       const internalConfigured = internalContext !== null;
-      const metric = await startSkillMetric('find', cwd);
 
       const [internal, publicResults] = await Promise.all([
         searchInternal(trimmed, limit, internalContext),
@@ -100,49 +89,24 @@ export function createFindCommand(): Command {
         process.stdout.write(renderSections(renderInput));
       }
 
-      const attributes: Record<string, unknown> = {
-        query_length: trimmed.length,
-        internal_available: internal.available && internalConfigured,
-        result_count_public: publicResults.results.length,
-      };
-      if (internalConfigured) {
-        attributes.result_count_internal = internal.results.length;
-      }
-
       if (allFailed) {
-        await emitFailed(metric, {
-          attributes,
-          error_code: 'all_searches_failed',
-        });
         process.exit(1);
       }
-
-      await emitCompleted(metric, { attributes });
     });
 }
 
 async function delegateToUpstream(): Promise<void> {
   const cwd = process.cwd();
-  const metric = await startSkillMetric('find', cwd);
   try {
     const result = await runSkillsCli(['find'], { cwd });
     if (result.code === 0) {
-      await emitCompleted(metric, { attributes: { interactive_prompt: true } });
       return;
     }
-    await emitFailed(metric, {
-      attributes: { interactive_prompt: true },
-      error_code: classifySkillError({ result }),
-    });
     process.exit(result.code || 1);
   } catch (error) {
     logger.error(
       `[skills] find failed: ${error instanceof Error ? error.message : String(error)}`
     );
-    await emitFailed(metric, {
-      attributes: { interactive_prompt: true },
-      error_code: classifySkillError({ error }),
-    });
     process.exit(1);
   }
 }

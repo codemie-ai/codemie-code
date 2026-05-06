@@ -48,6 +48,7 @@ vi.mock('inquirer', () => ({
 let workspace: string;
 let exitSpy: ReturnType<typeof vi.spyOn>;
 let cwdSpy: ReturnType<typeof vi.spyOn>;
+let stderrSpy: ReturnType<typeof vi.spyOn>;
 let exitCalls: number[];
 
 beforeEach(() => {
@@ -74,12 +75,14 @@ beforeEach(() => {
     exitCalls.push(code ?? 0);
     throw new Error(`__EXIT__:${code ?? 0}`);
   }) as never);
+  stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 });
 
 afterEach(() => {
   rmSync(workspace, { recursive: true, force: true });
   exitSpy.mockRestore();
   cwdSpy.mockRestore();
+  stderrSpy.mockRestore();
   vi.resetModules();
 });
 
@@ -205,21 +208,61 @@ describe('codemie skills update', () => {
   });
 
   it('reports scope=unknown when neither --global nor --project is set', async () => {
+    mockRunSkillsCli.mockResolvedValueOnce({
+      code: 0,
+      stdout: '',
+      stderr: 'CODEMIE_SKILLS_SH_TELEMETRY {"event":"update","skills":"foo"}',
+      signal: null,
+    });
     await parse(['update', 'foo', '-y']);
     const [, attrs] = mockEmitCompleted.mock.calls[0]!;
     expect(attrs.scope).toBe('unknown');
   });
 
   it('reports scope=global when --global is set', async () => {
+    mockRunSkillsCli.mockResolvedValueOnce({
+      code: 0,
+      stdout: '',
+      stderr: 'CODEMIE_SKILLS_SH_TELEMETRY {"event":"update","skills":"foo"}',
+      signal: null,
+    });
     await parse(['update', '--global', '-y']);
     const [, attrs] = mockEmitCompleted.mock.calls[0]!;
     expect(attrs.scope).toBe('global');
+  });
+
+  it('emits completed metrics only for successfully updated skills captured from skills.sh', async () => {
+    mockRunSkillsCli.mockResolvedValueOnce({
+      code: 0,
+      stdout: '',
+      stderr: 'CODEMIE_SKILLS_SH_TELEMETRY {"event":"update","skills":"foo,bar"}',
+      signal: null,
+    });
+
+    await parse(['update', 'foo', 'bar', 'baz', '-y']);
+
+    expect(mockEmitCompleted).toHaveBeenCalledOnce();
+    expect(mockEmitFailed).not.toHaveBeenCalled();
+    const [, attrs] = mockEmitCompleted.mock.calls[0]!;
+    expect(attrs.skill_names).toEqual(['foo', 'bar']);
+    expect(attrs.skill_count).toBe(2);
+  });
+
+  it('does not emit metrics when update succeeds but no skill was actually updated', async () => {
+    await parse(['update', 'foo', '-y']);
+
+    expect(mockEmitCompleted).not.toHaveBeenCalled();
+    expect(mockEmitFailed).not.toHaveBeenCalled();
+    expect(stderrSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining('CodeMie update metric debug')
+    );
   });
 
   it('exits with upstream non-zero exit code', async () => {
     mockRunSkillsCli.mockResolvedValueOnce({ code: 3, stdout: '', stderr: '', signal: null });
     await expect(parse(['update'])).rejects.toThrow(/__EXIT__:/);
     expect(exitCalls[0]).toBe(3);
+    expect(mockEmitFailed).not.toHaveBeenCalled();
   });
 });
 
@@ -251,6 +294,21 @@ describe('codemie skills remove', () => {
     await parse(['remove', 'pos1', '-s', 'opt1', '-y']);
     const [, attrs] = mockEmitCompleted.mock.calls[0]!;
     expect(attrs.skill_names).toEqual(['pos1', 'opt1']);
+  });
+
+  it('uses removed skills captured from interactive skills.sh remove telemetry', async () => {
+    mockRunSkillsCli.mockResolvedValueOnce({
+      code: 0,
+      stdout: '',
+      stderr: 'CODEMIE_SKILLS_SH_TELEMETRY {"event":"remove","skills":"alpha,beta"}',
+      signal: null,
+    });
+
+    await parse(['remove']);
+
+    const [, attrs] = mockEmitCompleted.mock.calls[0]!;
+    expect(attrs.skill_names).toEqual(['alpha', 'beta']);
+    expect(attrs.skill_count).toBe(2);
   });
 });
 
@@ -295,13 +353,12 @@ describe('codemie skills list', () => {
     expect(args).toEqual(['list', '--agent', 'claude-code']);
   });
 
-  it('reports project scope by default and global when --global is set', async () => {
+  it('does not emit lifecycle metrics', async () => {
     await parse(['list']);
-    expect(mockEmitCompleted.mock.calls[0]![1].scope).toBe('project');
 
-    mockEmitCompleted.mockClear();
-    await parse(['list', '--global']);
-    expect(mockEmitCompleted.mock.calls[0]![1].scope).toBe('global');
+    expect(mockStartSkillMetric).not.toHaveBeenCalled();
+    expect(mockEmitCompleted).not.toHaveBeenCalled();
+    expect(mockEmitFailed).not.toHaveBeenCalled();
   });
 });
 

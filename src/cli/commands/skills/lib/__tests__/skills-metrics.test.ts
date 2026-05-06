@@ -38,6 +38,7 @@ vi.mock('@/providers/core/codemie-auth-helpers.js', () => ({
 }));
 
 let fetchSpy: ReturnType<typeof vi.fn>;
+let stderrSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   mockGetStoredCredentials.mockReset();
@@ -54,9 +55,12 @@ beforeEach(() => {
     text: async () => '',
   });
   globalThis.fetch = fetchSpy as unknown as typeof globalThis.fetch;
+  delete process.env.CODEMIE_DEBUG;
+  stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 });
 
 afterEach(() => {
+  stderrSpy.mockRestore();
   vi.resetModules();
 });
 
@@ -160,6 +164,27 @@ describe('skill events emitter (transport behavior)', () => {
       expect(body.scope).toBe('project');
       expect(body.source).toBe('owner/repo');
     }
+  });
+
+  it('does not write command metric debug payloads directly to stderr', async () => {
+    mockConfigLoad.mockResolvedValue({ codeMieUrl: 'https://codemie.lab.epam.com' });
+    mockGetStoredCredentials.mockResolvedValue({
+      cookies: { session: 'abc' },
+      apiUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+    });
+
+    const { startSkillMetric, emitCompleted } = await importMetrics();
+    const session = await startSkillMetric('add');
+    await emitCompleted(session, {
+      scope: 'project',
+      source: 'owner/repo',
+      skill_names: ['Foo Bar'],
+      skill_count: 1,
+    });
+
+    expect(stderrSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining('CodeMie add metric debug')
+    );
   });
 
   it('includes SSO cookies as Cookie header on every POST', async () => {

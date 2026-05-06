@@ -8,13 +8,12 @@ import { logger } from '@/utils/logger.js';
 import { runSkillsCli } from './lib/run-skills-cli.js';
 import { requireAuthenticatedSession } from './lib/require-auth.js';
 import { capList } from './lib/sanitize.js';
-import { classifySkillError } from './lib/error-classify.js';
 import {
   emitCompleted,
-  emitFailed,
   startSkillMetric,
   type SkillScope,
 } from './lib/skills-metrics.js';
+import { parseSkillNamesFromSkillsTelemetry } from './lib/skills-sh-telemetry.js';
 
 interface UpdateOptions {
   global?: boolean;
@@ -40,7 +39,6 @@ export function createUpdateCommand(): Command {
           : 'unknown';
 
       const skillNames = capList(skills);
-      const skillCount = skills.length || undefined;
 
       const metric = await startSkillMetric('update', cwd);
 
@@ -53,32 +51,36 @@ export function createUpdateCommand(): Command {
       try {
         const result = await runSkillsCli(args, { cwd });
         if (result.code === 0) {
+          // Upstream update can partially fail while still exiting 0. The shim
+          // emits only "Updated <skill>" success lines, so metrics represent
+          // actual successful updates rather than requested or failed skills.
+          const updatedSkillNames = parseSkillNamesFromSkillsTelemetry(
+            result.stderr,
+            'update'
+          );
+          if (!updatedSkillNames || updatedSkillNames.length === 0) {
+            logger.debug('[skills] CodeMie update metric debug', {
+              sent: false,
+              reason: 'no successfully updated skills captured from skills.sh',
+              scope,
+              requested_skills: skillNames,
+            });
+            return;
+          }
           await emitCompleted(metric, {
             scope,
-            skill_names: skillNames,
-            skill_count: skillCount,
+            skill_names: updatedSkillNames,
+            skill_count: updatedSkillNames.length,
           });
           return;
         }
-        const errorCode = classifySkillError({ result });
-        await emitFailed(metric, {
-          scope,
-          skill_names: skillNames,
-          skill_count: skillCount,
-          error_code: errorCode,
-        });
+        // Failed update attempts are intentionally not sent to CodeMie because
+        // this metric tracks successful skill lifecycle changes only.
         process.exit(result.code || 1);
       } catch (error) {
-        const errorCode = classifySkillError({ error });
         logger.error(
           `[skills] update failed: ${error instanceof Error ? error.message : String(error)}`
         );
-        await emitFailed(metric, {
-          scope,
-          skill_names: skillNames,
-          skill_count: skillCount,
-          error_code: errorCode,
-        });
         process.exit(1);
       }
     });

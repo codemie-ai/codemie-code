@@ -36,7 +36,7 @@ beforeEach(() => {
       '  NODE_OPTIONS: process.env.NODE_OPTIONS,',
       '  ARGV: process.argv.slice(2),',
       '};',
-      'process.stdout.write(JSON.stringify(env));',
+      'if (!process.argv.includes("--telemetry-stderr")) process.stdout.write(JSON.stringify(env));',
       'if (process.argv.includes("--exit")) {',
       '  const idx = process.argv.indexOf("--exit");',
       '  process.exit(Number(process.argv[idx + 1]));',
@@ -44,6 +44,10 @@ beforeEach(() => {
       'if (process.argv.includes("--stderr")) {',
       '  process.stderr.write("CODEMIE_SKILL_EGRESS_BLOCKED test marker");',
       '  process.exit(7);',
+      '}',
+      'if (process.argv.includes("--telemetry-stderr")) {',
+      '  process.stderr.write("CODEMIE_SKILLS_SH_TELEMETRY {\\"event\\":\\"remove\\",\\"skills\\":\\"alpha\\"}\\n");',
+      '  process.stderr.write("visible stderr\\n");',
       '}',
       'process.exit(0);',
     ].join('\n')
@@ -111,6 +115,20 @@ describe('runSkillsCli', () => {
     const result = await runSkillsCli(['--stderr'], { interactive: false });
     expect(result.code).toBe(7);
     expect(result.stderr).toContain('CODEMIE_SKILL_EGRESS_BLOCKED');
+  });
+
+  it('hides internal skills telemetry markers from interactive stderr while keeping them captured', async () => {
+    const stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    const { runSkillsCli } = await importRunner();
+
+    const result = await runSkillsCli(['remove', '--telemetry-stderr']);
+
+    expect(result.stderr).toContain('CODEMIE_SKILLS_SH_TELEMETRY');
+    expect(result.stderr).toContain('visible stderr');
+    expect(stderrSpy).not.toHaveBeenCalledWith(
+      expect.stringContaining('CODEMIE_SKILLS_SH_TELEMETRY')
+    );
+    expect(stderrSpy).toHaveBeenCalledWith('visible stderr\n');
   });
 
   it('appends to inherited NODE_OPTIONS when one already exists', async () => {

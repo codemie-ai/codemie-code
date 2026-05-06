@@ -6,8 +6,7 @@
  *   - empty query → delegates to upstream `skills find`
  *   - query <2 chars → exits 0 with hint, no HTTP, no metric
  *   - all-source failure → exit 1, error_code='all_searches_failed'
- *   - one terminal metric per invocation, never `started`
- *   - find-specific fields land inside `attributes`
+ *   - no lifecycle metrics; find/search is intentionally too noisy
  *   - SSO-gated
  */
 
@@ -146,22 +145,15 @@ describe('codemie skills find', () => {
     expect(publicIdx).toBeGreaterThan(internalIdx);
   });
 
-  it('emits ONE completed metric with attributes inside attributes envelope, never started', async () => {
+  it('does not emit lifecycle metrics for successful searches', async () => {
     await parse(['find', 'pdf']);
 
-    expect(mockEmitCompleted).toHaveBeenCalledOnce();
+    expect(mockStartSkillMetric).not.toHaveBeenCalled();
+    expect(mockEmitCompleted).not.toHaveBeenCalled();
     expect(mockEmitFailed).not.toHaveBeenCalled();
-
-    const [, attrs] = mockEmitCompleted.mock.calls[0]!;
-    expect(attrs.attributes).toBeDefined();
-    expect(attrs.attributes.query_length).toBe(3);
-    expect(attrs.attributes.internal_available).toBe(false);
-    expect(attrs.attributes.result_count_public).toBe(1);
-    // result_count_internal should NOT be reported when internal is unconfigured
-    expect(attrs.attributes.result_count_internal).toBeUndefined();
   });
 
-  it('records result_count_internal when the internal endpoint is configured', async () => {
+  it('does not emit lifecycle metrics when the internal endpoint is configured', async () => {
     mockResolveInternalContext.mockResolvedValue({
       url: 'https://internal.example.com/search',
       headers: { Cookie: 'session=abc' },
@@ -173,9 +165,9 @@ describe('codemie skills find', () => {
 
     await parse(['find', 'pdf']);
 
-    const [, attrs] = mockEmitCompleted.mock.calls[0]!;
-    expect(attrs.attributes.internal_available).toBe(true);
-    expect(attrs.attributes.result_count_internal).toBe(1);
+    expect(mockStartSkillMetric).not.toHaveBeenCalled();
+    expect(mockEmitCompleted).not.toHaveBeenCalled();
+    expect(mockEmitFailed).not.toHaveBeenCalled();
   });
 
   it('exits 1 with all_searches_failed when every attempted call fails', async () => {
@@ -184,13 +176,12 @@ describe('codemie skills find', () => {
     await expect(parse(['find', 'pdf'])).rejects.toThrow(/__EXIT__:/);
 
     expect(exitCalls[0]).toBe(1);
-    expect(mockEmitFailed).toHaveBeenCalledOnce();
-    const [, attrs] = mockEmitFailed.mock.calls[0]!;
-    expect(attrs.error_code).toBe('all_searches_failed');
+    expect(mockStartSkillMetric).not.toHaveBeenCalled();
+    expect(mockEmitFailed).not.toHaveBeenCalled();
     expect(mockEmitCompleted).not.toHaveBeenCalled();
   });
 
-  it('exits 0 with status=completed when partial degradation (only public failed)', async () => {
+  it('exits 0 without metrics when partial degradation still has one successful source', async () => {
     mockResolveInternalContext.mockResolvedValue({
       url: 'https://internal.example.com/search',
       headers: { Cookie: 'session=abc' },
@@ -203,11 +194,10 @@ describe('codemie skills find', () => {
 
     await parse(['find', 'pdf']);
 
-    expect(mockEmitCompleted).toHaveBeenCalledOnce();
+    expect(mockStartSkillMetric).not.toHaveBeenCalled();
+    expect(mockEmitCompleted).not.toHaveBeenCalled();
     expect(mockEmitFailed).not.toHaveBeenCalled();
     expect(exitCalls).toEqual([]);
-    const [, attrs] = mockEmitCompleted.mock.calls[0]!;
-    expect(attrs.attributes.result_count_public).toBe(0);
   });
 
   it('--json emits a JSON object and never sends the raw query in metrics', async () => {
@@ -219,9 +209,9 @@ describe('codemie skills find', () => {
     expect(parsed.public.available).toBe(true);
     expect(parsed.internal.available).toBe(false);
 
-    const [, attrs] = mockEmitCompleted.mock.calls[0]!;
-    // Sanity: the raw query never appears in metric attributes
-    expect(JSON.stringify(attrs)).not.toContain('"pdf"');
+    expect(mockStartSkillMetric).not.toHaveBeenCalled();
+    expect(mockEmitCompleted).not.toHaveBeenCalled();
+    expect(mockEmitFailed).not.toHaveBeenCalled();
   });
 
   it('caps --limit at 50 and forwards the value to both searches', async () => {
