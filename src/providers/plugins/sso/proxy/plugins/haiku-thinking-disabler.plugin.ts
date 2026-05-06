@@ -1,5 +1,5 @@
 /**
- * Haiku Thinking Disabler Plugin
+ * Claude Thinking Disabler Plugin
  * Priority: 14 (runs before RequestSanitizer at 15 and ClaudeThinkingTransformer at 16)
  *
  * Problem: Haiku 4-5 and similar models do not support thinking (extended output).
@@ -25,66 +25,66 @@ import { logger } from "../../../../../utils/logger.js";
 const NO_THINKING_MODEL_PATTERNS: RegExp[] = [/claude-haiku-4-5(?:[^0-9]|$)/i];
 
 function modelDisablesThinking(modelName: string): boolean {
-  return NO_THINKING_MODEL_PATTERNS.some((p) => p.test(modelName));
+	return NO_THINKING_MODEL_PATTERNS.some((p) => p.test(modelName));
 }
 
 const ALLOWED_AGENT = "codemie-claude";
 
 export class ClaudeThinkingDisablerPlugin implements ProxyPlugin {
-  id = "@codemie/proxy-haiku-thinking-disabler";
-  name = "Haiku Thinking Disabler";
-  version = "1.0.0";
-  priority = 14; // Before RequestSanitizer (15) and ClaudeThinkingTransformer (16)
+	id = "@codemie/proxy-haiku-thinking-disabler";
+	name = "Haiku Thinking Disabler";
+	version = "1.0.0";
+	priority = 14; // Before RequestSanitizer (15) and ClaudeThinkingTransformer (16)
 
-  async createInterceptor(context: PluginContext): Promise<ProxyInterceptor> {
-    const clientType = context.config.clientType;
-    if (!clientType || clientType !== ALLOWED_AGENT) {
-      throw new Error(`Plugin disabled for agent: ${clientType}`);
-    }
-    return new HaikuThinkingDisablerInterceptor(context.config.model);
-  }
+	async createInterceptor(context: PluginContext): Promise<ProxyInterceptor> {
+		const clientType = context.config.clientType;
+		if (!clientType || clientType !== ALLOWED_AGENT) {
+			throw new Error(`Plugin disabled for agent: ${clientType}`);
+		}
+		return new CladueThinkingDisablerInterceptor(context.config.model);
+	}
 }
 
-class HaikuThinkingDisablerInterceptor implements ProxyInterceptor {
-  name = "haiku-thinking-disabler";
+class CladueThinkingDisablerInterceptor implements ProxyInterceptor {
+	name = "haiku-thinking-disabler";
 
-  constructor(private readonly configModel?: string) { }
+	constructor(private readonly configModel?: string) {}
 
-  async onRequest(context: ProxyContext): Promise<void> {
-    if (
-      !context.requestBody ||
-      !context.headers["content-type"]?.includes("application/json")
-    ) {
-      return;
-    }
+	async onRequest(context: ProxyContext): Promise<void> {
+		if (
+			!context.requestBody ||
+			!context.headers["content-type"]?.includes("application/json")
+		) {
+			return;
+		}
 
-    try {
-      const bodyStr = context.requestBody.toString("utf-8");
-      const body = JSON.parse(bodyStr);
+		try {
+			const bodyStr = context.requestBody.toString("utf-8");
+			const body = JSON.parse(bodyStr);
 
-      if (!body.thinking) {
-        return;
-      }
+			if (!body.thinking) {
+				return;
+			}
 
-      const model =
-        (typeof body.model === "string" && body.model) ||
-        this.configModel ||
-        "";
-      if (!model || !modelDisablesThinking(model)) {
-        return;
-      }
+			const model =
+				(typeof body.model === "string" && body.model) ||
+				this.configModel ||
+				"";
+			if (!model || !modelDisablesThinking(model)) {
+				return;
+			}
 
-      delete body.thinking;
+			delete body.thinking;
 
-      logger.debug(
-        `[${this.name}] Removed thinking field for unsupported model: ${model}`,
-      );
+			logger.debug(
+				`[${this.name}] Removed thinking field for unsupported model: ${model}`,
+			);
 
-      const newBodyStr = JSON.stringify(body);
-      context.requestBody = Buffer.from(newBodyStr, "utf-8");
-      context.headers["content-length"] = String(context.requestBody.length);
-    } catch {
-      // Not valid JSON or unexpected structure — pass through unchanged
-    }
-  }
+			const newBodyStr = JSON.stringify(body);
+			context.requestBody = Buffer.from(newBodyStr, "utf-8");
+			context.headers["content-length"] = String(context.requestBody.length);
+		} catch {
+			// Not valid JSON or unexpected structure — pass through unchanged
+		}
+	}
 }
