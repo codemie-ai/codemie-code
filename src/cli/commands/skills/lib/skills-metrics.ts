@@ -101,6 +101,9 @@ export async function emitStarted(
     'scope' | 'source' | 'skill_names' | 'skill_count' | 'target_agents' | 'agent_selection_mode'
   >
 ): Promise<void> {
+  // Kept as a lifecycle primitive for callers that need in-flight visibility.
+  // Current skills commands emit terminal states only so interrupted upstream
+  // prompts do not leave durable started-only rows.
   await emit(session, 'started', partial);
 }
 

@@ -76,7 +76,8 @@ export function createAddCommand(): Command {
 
       const metric = await startSkillMetric('add', cwd);
 
-      const args = buildAddArgs(source, options, agentSelection.agents);
+      const upstreamSource = normalizeHttpsRepositorySource(source) ?? source;
+      const args = buildAddArgs(upstreamSource, options, agentSelection.agents);
 
       try {
         const result = await runSkillsCli(args, {
@@ -174,6 +175,39 @@ function isGitSource(source: string): boolean {
     /^https?:\/\/.+\.git(?:[#?].*)?$/i.test(source) ||
     /^ssh:\/\/.+\.git(?:[#?].*)?$/i.test(source) ||
     /^git@[^:]+:.+\.git(?:[#?].*)?$/i.test(source)
+  );
+}
+
+function normalizeHttpsRepositorySource(source: string): string | undefined {
+  let parsed: URL;
+  try {
+    parsed = new URL(source);
+  } catch {
+    return undefined;
+  }
+
+  if (parsed.protocol !== 'https:' || parsed.search || parsed.hash) {
+    return undefined;
+  }
+
+  const pathWithoutTrailingSlash = parsed.pathname.replace(/\/+$/, '');
+  if (
+    !pathWithoutTrailingSlash ||
+    pathWithoutTrailingSlash.toLowerCase().endsWith('.git') ||
+    isWellKnownSkillsEndpoint(pathWithoutTrailingSlash)
+  ) {
+    return undefined;
+  }
+
+  parsed.pathname = `${pathWithoutTrailingSlash}.git`;
+  return parsed.toString();
+}
+
+function isWellKnownSkillsEndpoint(pathname: string): boolean {
+  const normalizedPathname = pathname.toLowerCase();
+  return (
+    normalizedPathname.endsWith('/.well-known/agent-skills/index.json') ||
+    normalizedPathname.endsWith('/.well-known/skills/index.json')
   );
 }
 

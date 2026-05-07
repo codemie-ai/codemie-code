@@ -25,11 +25,13 @@ const SHIM_PATH = path.resolve(
 );
 
 let originalFetch: typeof globalThis.fetch | undefined;
+let originalCaptureInstallTelemetry: string | undefined;
 let originalCaptureUpdateStdout: string | undefined;
 let stderrSpy: ReturnType<typeof vi.spyOn>;
 
 beforeEach(() => {
   originalFetch = globalThis.fetch;
+  originalCaptureInstallTelemetry = process.env.CODEMIE_CAPTURE_SKILLS_SH_INSTALL_TELEMETRY;
   originalCaptureUpdateStdout = process.env.CODEMIE_CAPTURE_SKILLS_SH_UPDATE_STDOUT;
   stderrSpy = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 });
@@ -40,6 +42,11 @@ afterEach(() => {
   } else {
     // @ts-expect-error - allow undefined reset
     delete globalThis.fetch;
+  }
+  if (originalCaptureInstallTelemetry === undefined) {
+    delete process.env.CODEMIE_CAPTURE_SKILLS_SH_INSTALL_TELEMETRY;
+  } else {
+    process.env.CODEMIE_CAPTURE_SKILLS_SH_INSTALL_TELEMETRY = originalCaptureInstallTelemetry;
   }
   if (originalCaptureUpdateStdout === undefined) {
     delete process.env.CODEMIE_CAPTURE_SKILLS_SH_UPDATE_STDOUT;
@@ -119,6 +126,34 @@ describe('skills-sh-egress-guard', () => {
     expect(upstream).not.toHaveBeenCalled();
   });
 
+  it('forces GitHub repo probes to public only while capturing install telemetry', async () => {
+    process.env.CODEMIE_CAPTURE_SKILLS_SH_INSTALL_TELEMETRY = '1';
+    const upstream = vi.fn().mockResolvedValue(new Response(JSON.stringify({ private: true })));
+    globalThis.fetch = upstream as unknown as typeof globalThis.fetch;
+    loadShim();
+
+    const response = await globalThis.fetch('https://api.github.com/repos/example/private-repo');
+
+    expect(upstream).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ private: false });
+  });
+
+  it('does not force public responses for deeper GitHub repo API paths', async () => {
+    process.env.CODEMIE_CAPTURE_SKILLS_SH_INSTALL_TELEMETRY = '1';
+    const upstream = vi.fn().mockResolvedValue(new Response(JSON.stringify({ tag_name: 'v1' })));
+    globalThis.fetch = upstream as unknown as typeof globalThis.fetch;
+    loadShim();
+
+    const response = await globalThis.fetch(
+      'https://api.github.com/repos/example/private-repo/releases'
+    );
+
+    expect(upstream).toHaveBeenCalledOnce();
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ tag_name: 'v1' });
+  });
+
   it('captures successful update lines as structured telemetry without blocking stdout', () => {
     process.env.CODEMIE_CAPTURE_SKILLS_SH_UPDATE_STDOUT = '1';
     const stdoutSpy = vi
@@ -140,4 +175,5 @@ describe('skills-sh-egress-guard', () => {
       stdoutSpy.mockRestore();
     }
   });
+
 });

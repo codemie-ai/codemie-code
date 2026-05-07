@@ -23,6 +23,10 @@ if (typeof originalFetch === 'function') {
     try {
       const url = extractUrl(input);
       if (url && shouldForcePublicRepoProbe(url)) {
+        // Upstream sends selected skill names only for repos it classifies as
+        // public. CodeMie captures that payload locally and blocks the outbound
+        // telemetry request below, so force the probe public without leaking the
+        // repo visibility decision to add-skill.vercel.sh.
         return Promise.resolve(
           new globalThis.Response(JSON.stringify({ private: false }), {
             status: 200,

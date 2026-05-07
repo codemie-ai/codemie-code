@@ -40,8 +40,6 @@ export function createUpdateCommand(): Command {
 
       const skillNames = capList(skills);
 
-      const metric = await startSkillMetric('update', cwd);
-
       const args = ['update'];
       if (options.global) args.push('--global');
       if (options.project) args.push('--project');
@@ -67,6 +65,7 @@ export function createUpdateCommand(): Command {
             });
             return;
           }
+          const metric = await startSkillMetric('update', cwd);
           await emitCompleted(metric, {
             scope,
             skill_names: updatedSkillNames,

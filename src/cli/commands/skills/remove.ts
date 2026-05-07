@@ -48,7 +48,7 @@ export function createRemoveCommand(): Command {
         ...(options.skill ?? []),
       ];
       const skillNames = capList(explicitSkills);
-      const skillCount = explicitSkills.length || undefined;
+      const skillCount = skillNames?.length;
       const targetAgents = capList(options.agent);
       const selectionMode: AgentSelectionMode | undefined =
         options.agent && options.agent.length > 0 ? 'explicit' : undefined;
