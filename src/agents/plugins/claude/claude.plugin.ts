@@ -168,7 +168,7 @@ export const ClaudePluginMetadata: AgentMetadata = {
       }
 
       if (!env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE) {
-        let autocompactPct = 70;
+        let autocompactPct = 80;
         if (env.CODEMIE_PROFILE_CONFIG) {
           try {
             const profileConfig = JSON.parse(env.CODEMIE_PROFILE_CONFIG);
