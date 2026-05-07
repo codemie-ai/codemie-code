@@ -179,117 +179,129 @@ describe('codemie skills add', () => {
     expect(attrs.error_code).toBe('egress_blocked');
   });
 
-  it('normalizes HTTPS repository-like sources with .git before spawning upstream', async () => {
-    const source = 'https://gitbud.example.com/group/repo';
-    await parse(['add', source, '-y']);
+  describe('HTTPS source normalization', () => {
+    let platformSpy: ReturnType<typeof vi.spyOn>;
 
-    expect(mockRunSkillsCli).toHaveBeenCalledOnce();
-    expect(mockRunSkillsCli.mock.calls[0]![0]).toEqual(['add', `${source}.git`, '--yes']);
-
-    expect(mockEmitCompleted).toHaveBeenCalledOnce();
-    const [, attrs] = mockEmitCompleted.mock.calls[0]!;
-    expect(attrs.source).toBe(source);
-    expect(mockEmitFailed).not.toHaveBeenCalled();
-  });
-
-  it('does not append .git to HTTPS sources that already end with .git', async () => {
-    const source = 'https://gitbud.example.com/group/repo.git';
-    await parse(['add', source, '-y']);
-
-    expect(mockRunSkillsCli).toHaveBeenCalledOnce();
-    expect(mockRunSkillsCli.mock.calls[0]![0]).toEqual(['add', source, '--yes']);
-  });
-
-  it('does not append .git to well-known HTTPS endpoint URLs', async () => {
-    const source = 'https://gitbud.example.com/.well-known/agent-skills/index.json';
-    await parse(['add', source, '-y']);
-
-    expect(mockRunSkillsCli).toHaveBeenCalledOnce();
-    expect(mockRunSkillsCli.mock.calls[0]![0]).toEqual(['add', source, '--yes']);
-  });
-
-  it('does not append .git to HTTPS sources with query strings or fragments', async () => {
-    const querySource = 'https://gitbud.example.com/group/repo?ref=main';
-    await parse(['add', querySource, '-y']);
-
-    expect(mockRunSkillsCli).toHaveBeenCalledOnce();
-    expect(mockRunSkillsCli.mock.calls[0]![0]).toEqual(['add', querySource, '--yes']);
-
-    mockRunSkillsCli.mockClear();
-    mockEmitCompleted.mockClear();
-
-    const fragmentSource = 'https://gitbud.example.com/group/repo#main';
-    await parse(['add', fragmentSource, '-y']);
-
-    expect(mockRunSkillsCli).toHaveBeenCalledOnce();
-    expect(mockRunSkillsCli.mock.calls[0]![0]).toEqual(['add', fragmentSource, '--yes']);
-  });
-
-  it('does not retry ambiguous HTTPS sources with .git for unrelated upstream failures', async () => {
-    mockRunSkillsCli.mockResolvedValueOnce({
-      code: 7,
-      stdout: '',
-      stderr: 'CODEMIE_SKILL_EGRESS_BLOCKED audit attempt',
-      signal: null,
+    beforeEach(() => {
+      platformSpy = vi.spyOn(os, 'platform').mockReturnValue('linux' as NodeJS.Platform);
     });
 
-    await expect(parse(['add', 'https://gitbud.example.com/group/repo', '-y'])).rejects.toThrow(
-      /__EXIT__:/
-    );
-
-    expect(mockRunSkillsCli).toHaveBeenCalledOnce();
-    expect(exitCalls[0]).toBe(7);
-  });
-
-  it('does not show Git access help for egress-blocked normalized HTTPS sources', async () => {
-    mockRunSkillsCli.mockResolvedValueOnce({
-      code: 7,
-      stdout: '',
-      stderr: 'CODEMIE_SKILL_EGRESS_BLOCKED audit attempt',
-      signal: null,
+    afterEach(() => {
+      platformSpy.mockRestore();
     });
 
-    const source = 'https://gitbud.example.com/group/repo';
-    await expect(parse(['add', source, '-y'])).rejects.toThrow(/__EXIT__:/);
+    it('normalizes HTTPS repository-like sources with .git before spawning upstream', async () => {
+      const source = 'https://gitbud.example.com/group/repo';
+      await parse(['add', source, '-y']);
 
-    expect(mockRunSkillsCli).toHaveBeenCalledOnce();
-    expect(mockRunSkillsCli.mock.calls[0]![0]).toEqual(['add', `${source}.git`, '--yes']);
-    expect(stderrSpy).not.toHaveBeenCalledWith(
-      expect.stringContaining('CodeMie cannot read this Git repository yet')
-    );
-    expect(exitCalls[0]).toBe(7);
-  });
+      expect(mockRunSkillsCli).toHaveBeenCalledOnce();
+      expect(mockRunSkillsCli.mock.calls[0]![0]).toEqual(['add', `${source}.git`, '--yes']);
 
-  it('does not append .git to http sources', async () => {
-    mockRunSkillsCli.mockResolvedValueOnce({
-      code: 0,
-      stdout: '',
-      stderr: '',
-      signal: null,
+      expect(mockEmitCompleted).toHaveBeenCalledOnce();
+      const [, attrs] = mockEmitCompleted.mock.calls[0]!;
+      expect(attrs.source).toBe(source);
+      expect(mockEmitFailed).not.toHaveBeenCalled();
     });
 
-    const source = 'http://gitbud.example.com/group/repo';
-    await parse(['add', source, '-y']);
+    it('does not append .git to HTTPS sources that already end with .git', async () => {
+      const source = 'https://gitbud.example.com/group/repo.git';
+      await parse(['add', source, '-y']);
 
-    expect(mockRunSkillsCli).toHaveBeenCalledOnce();
-    expect(mockRunSkillsCli.mock.calls[0]![0]).toEqual(['add', source, '--yes']);
-  });
-
-  it('shows Git access help for failed normalized HTTPS repository-like sources', async () => {
-    mockRunSkillsCli.mockResolvedValueOnce({
-      code: 1,
-      stdout: '',
-      stderr: 'git clone failed: unable to access repository',
-      signal: null,
+      expect(mockRunSkillsCli).toHaveBeenCalledOnce();
+      expect(mockRunSkillsCli.mock.calls[0]![0]).toEqual(['add', source, '--yes']);
     });
-    const source = 'https://gitbud.example.com/group/repo';
-    await expect(parse(['add', source, '-y'])).rejects.toThrow(/__EXIT__:/);
 
-    expect(mockRunSkillsCli).toHaveBeenCalledOnce();
-    expect(mockRunSkillsCli.mock.calls[0]![0]).toEqual(['add', `${source}.git`, '--yes']);
-    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('The repository clone failed.'));
-    expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining(`git ls-remote ${source}`));
-    expect(exitCalls[0]).toBe(1);
+    it('does not append .git to well-known HTTPS endpoint URLs', async () => {
+      const source = 'https://gitbud.example.com/.well-known/agent-skills/index.json';
+      await parse(['add', source, '-y']);
+
+      expect(mockRunSkillsCli).toHaveBeenCalledOnce();
+      expect(mockRunSkillsCli.mock.calls[0]![0]).toEqual(['add', source, '--yes']);
+    });
+
+    it('does not append .git to HTTPS sources with query strings or fragments', async () => {
+      const querySource = 'https://gitbud.example.com/group/repo?ref=main';
+      await parse(['add', querySource, '-y']);
+
+      expect(mockRunSkillsCli).toHaveBeenCalledOnce();
+      expect(mockRunSkillsCli.mock.calls[0]![0]).toEqual(['add', querySource, '--yes']);
+
+      mockRunSkillsCli.mockClear();
+      mockEmitCompleted.mockClear();
+
+      const fragmentSource = 'https://gitbud.example.com/group/repo#main';
+      await parse(['add', fragmentSource, '-y']);
+
+      expect(mockRunSkillsCli).toHaveBeenCalledOnce();
+      expect(mockRunSkillsCli.mock.calls[0]![0]).toEqual(['add', fragmentSource, '--yes']);
+    });
+
+    it('does not retry ambiguous HTTPS sources with .git for unrelated upstream failures', async () => {
+      mockRunSkillsCli.mockResolvedValueOnce({
+        code: 7,
+        stdout: '',
+        stderr: 'CODEMIE_SKILL_EGRESS_BLOCKED audit attempt',
+        signal: null,
+      });
+
+      await expect(parse(['add', 'https://gitbud.example.com/group/repo', '-y'])).rejects.toThrow(
+        /__EXIT__:/
+      );
+
+      expect(mockRunSkillsCli).toHaveBeenCalledOnce();
+      expect(exitCalls[0]).toBe(7);
+    });
+
+    it('does not show Git access help for egress-blocked normalized HTTPS sources', async () => {
+      mockRunSkillsCli.mockResolvedValueOnce({
+        code: 7,
+        stdout: '',
+        stderr: 'CODEMIE_SKILL_EGRESS_BLOCKED audit attempt',
+        signal: null,
+      });
+
+      const source = 'https://gitbud.example.com/group/repo';
+      await expect(parse(['add', source, '-y'])).rejects.toThrow(/__EXIT__:/);
+
+      expect(mockRunSkillsCli).toHaveBeenCalledOnce();
+      expect(mockRunSkillsCli.mock.calls[0]![0]).toEqual(['add', `${source}.git`, '--yes']);
+      expect(stderrSpy).not.toHaveBeenCalledWith(
+        expect.stringContaining('CodeMie cannot read this Git repository yet')
+      );
+      expect(exitCalls[0]).toBe(7);
+    });
+
+    it('does not append .git to http sources', async () => {
+      mockRunSkillsCli.mockResolvedValueOnce({
+        code: 0,
+        stdout: '',
+        stderr: '',
+        signal: null,
+      });
+
+      const source = 'http://gitbud.example.com/group/repo';
+      await parse(['add', source, '-y']);
+
+      expect(mockRunSkillsCli).toHaveBeenCalledOnce();
+      expect(mockRunSkillsCli.mock.calls[0]![0]).toEqual(['add', source, '--yes']);
+    });
+
+    it('shows Git access help for failed normalized HTTPS repository-like sources', async () => {
+      mockRunSkillsCli.mockResolvedValueOnce({
+        code: 1,
+        stdout: '',
+        stderr: 'git clone failed: unable to access repository',
+        signal: null,
+      });
+      const source = 'https://gitbud.example.com/group/repo';
+      await expect(parse(['add', source, '-y'])).rejects.toThrow(/__EXIT__:/);
+
+      expect(mockRunSkillsCli).toHaveBeenCalledOnce();
+      expect(mockRunSkillsCli.mock.calls[0]![0]).toEqual(['add', `${source}.git`, '--yes']);
+      expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining('The repository clone failed.'));
+      expect(stderrSpy).toHaveBeenCalledWith(expect.stringContaining(`git ls-remote ${source}`));
+      expect(exitCalls[0]).toBe(1);
+    });
   });
 
   it('forwards --skill list to upstream args (spec §8.3 fan-out source)', async () => {
