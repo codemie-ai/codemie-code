@@ -73,32 +73,6 @@ Reviews all changes in your current git branch compared to main and provides a c
 - Before creating a PR to review all changes
 - When onboarding to an in-progress feature
 
-### `/codemie-commit` - Create Git Commit
-
-Creates a git commit following conventional commit standards with branch protection.
-
-**Usage:**
-```
-/codemie-commit
-```
-
-**What it does:**
-1. Checks current branch (protects main/master)
-2. If on main/master: suggests and creates feature branch first
-3. Stages relevant changes
-4. Creates commit with conventional commit format
-5. Follows commitlint rules
-
-**Commit Format:**
-- `<type>(<scope>): <subject>` or `<type>: <subject>`
-- Types: feat, fix, docs, style, refactor, perf, test, chore, ci, revert
-- Scopes: cli, agents, providers, config, proxy, workflows, ci, analytics, utils, deps, tests
-
-**When to use:**
-- After completing a logical chunk of work
-- When you want properly formatted commit messages
-- To avoid accidentally committing to main/master
-
 ## Memory Management
 
 ### `/memory-refresh` - Smart Documentation Refresh & Audit
@@ -180,10 +154,8 @@ Sync:           ✓ Connected (last: 30s ago)
 ### Development Workflow
 
 **Working on a Feature:**
-1. `/codemie-commit` - Create properly formatted commits
-2. Work on changes
-3. `/codemie-commit` - Commit logical chunks
-4. `/memory-refresh` - Update docs after significant changes
+1. Work on changes
+2. `/memory-refresh` - Update docs after significant changes
 
 **Reviewing Branch State:**
 1. `/codemie-catchup` - Understand all changes in branch
@@ -195,7 +167,6 @@ Sync:           ✓ Connected (last: 30s ago)
 
 | Command | Purpose | When to Use |
 |---------|---------|-------------|
-| `/codemie-commit` | Create conventional commits | After completing work chunks |
 | `/codemie-catchup` | Summarize branch changes | Before PR, after time away, onboarding |
 
 ## Command Principles

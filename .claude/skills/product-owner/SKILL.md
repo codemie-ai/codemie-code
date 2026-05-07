@@ -1,280 +1,206 @@
 ---
 name: product-owner
-description: Use when a user wants to turn an idea, wireframe, screenshot, or plain-text description into a detailed functional requirements document with story breakdown. Triggers on: "act as product owner", "create requirements for", "write functional requirements", "I have an idea help me spec it out", "create stories for", "break this into user stories", "write user stories", "define acceptance criteria", "create a functional requirements document", "create an FRD". This skill is non-technical — it produces business requirements, not architecture docs. Always invoke it when the user describes a feature idea without asking for code or implementation.
-version: 0.1.0
+description: Use when a user wants to create, draft, or refine a user story, feature story, or Jira ticket. Triggers on "create story", "draft story", "write a story", "new story for", "story for this feature", "I need a story", "help me write a story", "create a ticket", "draft a ticket", "write acceptance criteria", "act as product owner", "create requirements for", "write functional requirements", "I have an idea help me spec it out", "create stories for", "break this into user stories", "define acceptance criteria", "create an FRD". Invoke whenever the user describes a feature idea, improvement, or bug fix and wants it turned into a structured story — even if they don't say "story" explicitly. Always explore the codebase for context before asking questions.
+version: 0.3.0
 ---
 
-# Product Owner: Functional Requirements Generator
+# Product Owner: Story Drafter
 
 ## Purpose
 
-Transform raw user input — text descriptions, wireframes, screenshots, mockups — into a structured functional requirements document (FRD) with epic and story breakdown. Output is non-technical: business language, user flows, acceptance criteria. No code, no architecture.
-
-## Input Formats Accepted
-
-- Plain text description of an idea or feature
-- Wireframe or mockup images
-- Screenshots of existing flows or competitor products
-- Links to existing tickets or docs
-- Any combination of the above
-
-If the user provides a one-liner only, ask for more context before proceeding. Never infer requirements from minimal input.
+Turn a raw idea, feature description, or conversation into a well-structured user story saved to `docs/stories/`. The story is your primary output — a file the user can review, edit, approve, and then ship to Jira.
 
 ## Flow
 
 ```
-Step 1: Input Collection
-Step 2: Clarifying Questions (one at a time — max 5 questions)
-Step 3: Explore Subagent — map existing capabilities
-Step 4: superpowers:brainstorming — non-technical scope, visual companion
-Step 5: FRD Assembly → save to docs/product/
-Step 6: Story Breakdown → append to FRD
-Step 7: Ticket Creation (optional, always confirm first)
+Step 1: Input Collection — assess specificity of request
+Step 2: Scope Clarification (conditional) — only if request is too broad
+Step 3: Explore Codebase — find relevant existing capabilities and context
+Step 4: Focused Questions — 3–5 targeted questions informed by the exploration
+Step 5: Draft Story — save to docs/stories/YYYY-MM-DD-[feature-name].md
+Step 6: Review Loop — user requests changes → update file → repeat until approved
+Step 7: On Approval — call brianna to create Jira ticket
 ```
 
 ---
 
 ## Step 1: Input Collection
 
-Acknowledge what the user provided. If images/wireframes were shared, describe what you see to confirm understanding before asking questions.
+Acknowledge what the user described. Then assess whether the request is specific enough to explore meaningfully.
+
+**Signs a request is too broad** (any one of these → go to Step 2):
+- No feature area mentioned ("improve the system", "add better UX", "make it faster")
+- Multiple unrelated areas implied ("notifications, search, and reporting")
+- No user mentioned and no problem implied
+- Scope would require exploring more than 3–4 unrelated parts of the codebase
+
+**Signs a request is specific enough** (skip Step 2 → go straight to Step 3):
+- A named feature or flow is mentioned ("add bulk export to the datasource list")
+- A clear persona + problem is implied ("users can't cancel a running job")
+- The user is asking about an existing thing ("improve the error message on the login page")
 
 ---
 
-## Step 2: Clarifying Questions
+## Step 2: Scope Clarification (conditional — only if request is too broad)
 
-Ask one question at a time until all five answers are clear:
+Ask **2–3 short questions** — all at once, not one at a time — to narrow scope before exploring. Explain briefly why you're asking: "Your request is quite broad — a couple of quick questions before I dig into the codebase."
 
-1. **Who are the target users?** Describe them as people, not roles — what do they do, what frustrates them today?
-2. **What problem does this solve?** The job-to-be-done in one sentence.
-3. **What does success look like?** A measurable outcome or observable user behavior change.
-4. **What is explicitly out of scope for this release?**
-5. **Are there constraints?** Brand, accessibility, regulatory, device, language, or deadline constraints.
+Choose from:
+1. **Which part of the product does this touch?** (e.g., which feature, flow, or screen)
+2. **Who is the primary user affected?** (role or persona)
+3. **What's the one thing they can't do today that they should be able to?**
 
-Stop asking questions as soon as the feature is sufficiently defined — you do not need to ask all five if the answers are already clear from prior context or the user's input.
-
-Do not ask technical questions (stack, database, API design, etc.). If the user volunteers technical details, note them but do not let them drive the requirements.
+Do not ask more than 3 clarifying questions at this stage. Once answers narrow the scope to a single feature area, proceed to Step 3.
 
 ---
 
-## Step 3: Explore Subagent
+## Step 3: Explore Codebase
 
-Use the Agent tool with `subagent_type="Explore"` and this prompt (fill in `[feature area]` from context):
+Use the Agent tool with `subagent_type="Explore"` to find relevant context. Tailor the prompt to the feature area described:
 
 ```
-Research the existing system for capabilities related to [feature area].
+Research the existing codebase for context relevant to [feature area].
 
 Find:
-1. Existing flows, screens, or features that overlap with or relate to [feature area]
-2. User-facing capabilities that already exist
+1. Existing features, flows, or components that overlap with or relate to [feature area]
+2. User-facing capabilities that already exist in this area
 3. Gaps between current capabilities and what is being requested
+4. Any related models, services, or API endpoints (names only — no code)
 
-Return a capability map:
-- What already exists (feature names, screen names, flow names — no code)
+Return:
+- What already exists (feature names, component names, flow names — no code snippets)
 - What is missing or partially supported
 - What overlaps with the new request
 
-Keep findings at the concept level. No code snippets. Max 200 words.
+Keep findings at the concept level. Max 200 words.
 ```
 
-Use the capability map to ground the FRD in current system reality. Note overlaps and gaps explicitly in the FRD.
+Use these findings to:
+- Ground your questions in current system reality
+- Avoid asking about things that are already obvious from the code
+- Surface gaps and overlaps explicitly in the story's Context section
 
 ---
 
-## Step 4: superpowers:brainstorming (non-technical scope)
+## Step 4: Focused Questions
 
-Invoke `superpowers:brainstorming` with this framing passed as context:
+Ask **one question at a time**, up to 5 total. Stop as soon as the story is sufficiently clear — you don't need all five if earlier answers cover the ground.
 
-**In scope:**
-- User flows and journey maps
-- Screen states, transitions, and empty states
-- Business rules and decision points
-- Edge cases from the user's perspective
-- Visual structure — offer the visual companion early for wireframes, flow diagrams, and mockup comparisons
-- Acceptance scenarios ("given X, when Y, then Z")
+Tailor the questions to gaps in your understanding after exploring the codebase. Default questions to draw from:
 
-**Out of scope — redirect if raised:**
-- Architecture, tech stack, database schema
-- API design or system internals
-- Code patterns or performance details
+1. **Who is this for?** Describe the user as a person — what do they do, what frustrates them today?
+2. **What problem does this solve?** One sentence: the job-to-be-done.
+3. **What does done look like?** A measurable outcome or observable change in user behavior.
+4. **What is explicitly out of scope for this story?**
+5. **Any constraints?** Deadline, accessibility, device, or regulatory constraints.
 
-The visual companion should be offered at the start of brainstorming — wireframes and flow diagrams are primary deliverables of this step.
-
-Brainstorming output is the primary input to Step 5.
+Do not ask technical questions (stack, API design, database). If the user volunteers technical details, note them but do not let them drive the story.
 
 ---
 
-## Step 5: FRD Assembly
+## Step 5: Draft Story
 
-Save to `docs/product/YYYY-MM-DD-[feature-name]-requirements.md`. Create the `docs/product/` directory if it does not exist.
+Save to `docs/stories/YYYY-MM-DD-[feature-name].md`. Create `docs/stories/` if it does not exist.
 
 Use this exact structure:
 
 ```markdown
-# [Feature Name] — Functional Requirements
+# [Feature Name] — Story
 
-**Date:** YYYY-MM-DD
-**Status:** Draft
-**Author:** Product Owner (AI-assisted)
-
----
-
-## Business Context
-
-[Problem statement: what pain exists today, who experiences it, why it matters now]
+**Date**: YYYY-MM-DD
+**Status**: Draft
+**Ticket**: TBD
 
 ---
 
-## System Context
+## Context
 
-[Existing capabilities relevant to this feature — from the Explore subagent findings in Step 3. What already works, what is missing, what overlaps.]
-
----
-
-## Target Users
-
-### [Persona Name]
-[Who they are in plain language. What they need. What frustrates them today.]
-
-### [Persona Name 2] (if applicable)
+[Findings from codebase exploration: what already exists, what is missing, what overlaps with this request. Keep it factual and brief — 3–5 bullet points.]
 
 ---
 
-## Goals & Success Criteria
+## Story
 
-- [ ] [Measurable outcome — observable user behavior or business metric]
-- [ ] [Measurable outcome 2]
-
----
-
-## Constraints
-
-- [Brand, accessibility, regulatory, device, language, or deadline constraints — from Step 2 question 5]
+**As a** [persona], **I want** [goal] **so that** [outcome].
 
 ---
 
-## Functional Requirements
+## Background
 
-### FR-001: [Requirement name]
-[What the system must do — one clear statement in plain language]
-**Priority:** Must Have | Should Have | Nice to Have
-
-### FR-002: [Requirement name]
-...
+[Problem this solves. Who experiences it. Why it matters now. 2–4 sentences.]
 
 ---
 
-## User Flows
+## Acceptance Criteria
 
-### Flow: [Flow name]
-[Numbered steps describing the user journey. No technical steps. Written as "User does X, system shows Y."]
-
-1. User [action]
-2. System [response]
-3. User [action]
-4. System [response]
-...
-
----
-
-## Visual References
-
-[Wireframes, mockups, or flow diagrams produced in Step 4. Embed or link.]
+- [ ] Given [context], when [action], then [result]
+- [ ] Given [context], when [action], then [result]
+- [ ] Given [context], when [action], then [result]
 
 ---
 
 ## Out of Scope
 
-- [What is explicitly excluded from this release]
+- [What is explicitly excluded from this story]
 
 ---
 
 ## Open Questions
 
 - [Unresolved items that need stakeholder input before implementation]
-
----
 ```
 
----
+Rules:
+- At least 3 acceptance criteria
+- Each criterion is independently verifiable ("given / when / then")
+- No code snippets, no architecture decisions, no tech stack references
+- Open Questions captures things you couldn't resolve from exploration or user answers
 
-## Step 6: Story Breakdown
-
-Append directly to the requirements doc after the `---` at the end:
-
-```markdown
-## Story Breakdown
-
-### Epic: [Epic name]
-[One sentence: the user outcome this epic delivers]
-
-#### Story [E].[N]: [Story title]
-**As a** [persona], **I want** [goal] **so that** [outcome].
-
-**Acceptance Criteria:**
-- [ ] Given [context], when [action], then [result]
-- [ ] Given [context], when [action], then [result]
-
-**Size:** [XS | S | M | L] ← business complexity, not technical effort
-  - XS: single screen state or label change
-  - S: one self-contained user flow (happy path only)
-  - M: multi-step flow with edge cases or empty states
-  - L: cross-persona flow or feature spanning multiple screens/states
-**Priority:** Must Have | Should Have | Nice to Have
-
----
-```
-
-Rules for stories:
-- Each story delivers independently observable value to the user
-- No story depends on another story being done first (within the same release)
-- Every story has at least two acceptance criteria
-- Tasks (sub-steps within a story) are only added when a story has distinct sequential steps the team would need to track separately
+After saving, tell the user the file path and ask: **"Does this look right, or do you want any changes?"**
 
 ---
 
-## Step 7: Ticket Creation (optional)
+## Step 6: Review Loop
 
-**REQUIRED: Always ask the user before creating any tickets. Never create tickets automatically — not even one.**
+If the user requests changes:
+1. Update the story file directly — do not create a new file
+2. Tell the user what changed
+3. Ask again: "Does this look right, or do you want any more changes?"
 
-After saving and committing the doc, check for available integrations:
+Repeat until the user approves. Watch for phrases like "looks good", "approved", "create the ticket", "ship it", "go ahead" — these signal approval.
 
-**Jira** — if the `brianna` skill is available:
-```
-Ask user: "I can create these epics and stories in Jira. Each story becomes one Jira issue with acceptance criteria in the description. Shall I proceed?"
-```
-If confirmed: use `brianna` to create one issue per story. Epic becomes the Jira Epic link. Acceptance criteria go in the description field.
+---
 
-**Other trackers** — if Azure DevOps, Linear, or other integrations are configured and available, use them the same way.
+## Step 7: On Approval — Create Jira Ticket
 
-**No integration available** — output a copy-paste export block:
+When the user approves the story:
 
-```markdown
-## Export: Stories for Ticket Tracker
+1. Update the file's `**Status**` field from `Draft` to `Approved`
+2. Invoke the `brianna` skill to create a Jira ticket
 
-### Epic: [Epic name]
-| Story | Priority | Acceptance Criteria (summary) |
-|-------|----------|-------------------------------|
-| [Story title] | [P] | [AC 1]; [AC 2] |
-| [Story title] | [P] | [AC 1]; [AC 2] |
-```
+Pass to brianna:
+- **Summary**: the story title (the `# [Feature Name] — Story` heading)
+- **Description**: the full story content (Story + Background + Acceptance Criteria sections)
+- **Issue type**: Story
+- **Acceptance criteria**: the formatted criteria list from the story file
 
-**Always ask before creating tickets. Never create automatically.**
+After the ticket is created, update the `**Ticket**` field in the story file with the Jira issue key (e.g., `EPMCDME-1234`).
 
 ---
 
 ## Key Principles
 
-**Do's:**
-- Use plain, non-technical language at all times
-- Anchor every requirement to a user goal or business outcome
-- Offer the visual companion early — wireframes are primary outputs, not illustrations
-- Keep stories independently deliverable
-- Ask before creating tickets
-- Note existing capabilities (from Step 3) so the team knows what already works
+**Do:**
+- Check scope before exploring — if the request is too broad, ask 2–3 clarifying questions first
+- Explore the codebase after scope is clear — context makes feature questions sharper
+- Keep stories small enough to be independently deliverable
+- Write acceptance criteria as given/when/then — not as a feature checklist
+- Update the story file in place when changes are requested (same file, same path)
+- Ask before creating any ticket — never auto-create
 
-**Don'ts:**
-- No code snippets anywhere in the FRD or story breakdown
-- No architecture, tech stack, or implementation decisions
-- No assumptions about database, API, or infrastructure
-- No story without at least two acceptance criteria
-- Never auto-create tickets
+**Don't:**
+- No code snippets anywhere in the story
+- No architecture or implementation decisions
+- No story without at least 3 acceptance criteria
+- Never create a Jira ticket before explicit user approval
+- Never create a new file for revisions — always update the existing draft

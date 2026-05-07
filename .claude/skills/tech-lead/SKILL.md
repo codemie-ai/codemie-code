@@ -1,292 +1,180 @@
 ---
 name: tech-lead
-description: Use when starting implementation of a Jira ticket, feature, or task. Orchestrates the full SDLC from requirements to QA — requirements gathering → worktree creation → complexity scoring → brainstorming (complex) or writing-plans (simple) → spec-reviewer → subagent-driven-development → qa-lead. Also triggers on: "implement a Jira ticket", "start working on EPMCDME ticket", "analyze task", "begin implementation", "implement new task", "implement feature", "act as tech lead", "plan implementation", "how should I implement".
-version: 0.2.0
+description: Use when starting implementation of a Jira ticket, feature, or task. Kicks off the SDLC with requirements gathering, branch setup, and complexity assessment — then routes to brainstorming or direct implementation. Triggers on: "implement EPMCDME ticket", "start working on EPMCDME-XXXXX", "begin implementation", "implement new task", "implement feature", "act as tech lead", "plan implementation", "analyze task". Each phase pauses for user confirmation before proceeding.
+version: 1.0.0
 ---
 
-# Tech Lead: Full SDLC Orchestrator
+# Tech Lead: SDLC Kickoff
 
 ## Purpose
 
-This skill orchestrates the full development lifecycle from requirements to QA. It:
-- Gathers requirements (Jira ticket or free-form description)
-- Creates an isolated worktree for the feature
-- Scores complexity across 6 dimensions to route to the right planning path
-- Drives planning, review, implementation, and quality gates
+Entry point for all development work. Gathers requirements, sets up the branch, and assesses complexity to route you to the right next step — either design (brainstorming) or direct implementation.
 
-## Full SDLC Flow
-
-```
-Phase 1: Requirements Gathering
-    ↓
-superpowers:using-git-worktrees  (isolated branch + worktree)
-    ↓
-Phase 2: Assessment + Complexity Scoring  (inside worktree)
-    ↓
-Score 6–14  → superpowers:writing-plans → spec-reviewer → superpowers:subagent-driven-development
-Score 15–36 → superpowers:brainstorming → superpowers:writing-plans → spec-reviewer → superpowers:subagent-driven-development
-    ↓
-superpowers:requesting-code-review + superpowers:receiving-code-review
-    ↓
-qa-lead
-```
+This skill does three things and nothing else. It does not load guides, explore the codebase, run tests, create PRs, or perform code review. Those steps belong to downstream skills in the chain.
 
 ---
 
-## Phase 1: Requirements Gathering
+## Phase 1: Requirements
 
-### Step 1: Determine Requirement Source
+### If a Jira ticket ID is provided (EPMCDME-XXXXX format)
 
-Check if user provided:
-- **Jira ticket ID** (EPMCDME-XXXXX format)
-- **Task description** (user-provided text)
-
-**If Jira Ticket Provided:**
-
-Use the brianna skill to fetch description and summary fields only:
+Fetch it via brianna — description and summary fields only:
 
 ```
-Use Skill tool with skill="brianna" and args:
-"Get ticket details for EPMCDME-XXXXX. I need only the description and summary fields."
+Invoke Skill: brianna
+Args: "Get ticket details for EPMCDME-XXXXX. I need only the description and summary fields."
 ```
 
-Do NOT request status, assignee, or other fields unless needed for the complexity assessment.
+Do not request status, assignee, or other fields.
 
-**If Task Description Provided:**
+### If a task description is provided instead
 
-1. Confirm understanding of requirements
-2. Ask clarifying questions if requirements are vague
-3. Document requirements in structured format:
+Confirm your understanding of the requirements. If anything is vague or ambiguous, ask clarifying questions before proceeding. Document requirements in this format:
 
 ```markdown
 ## Task Requirements
 
-**Goal**: [What needs to be implemented]
+**Goal**: [what needs to be implemented]
 
 **Acceptance Criteria**:
-- [Criterion 1]
-- [Criterion 2]
+- [criterion 1]
+- [criterion 2]
 
-**Context**: [Any additional context or constraints]
-```
-
-### Step 2: Determine Branch Name
-
-**If Jira ticket:** Branch name = `EPMCDME-XXXXX` (exact ticket ID, no prefix)
-
-**If no Jira ticket:** Suggest `feature/descriptive-name` or `task/descriptive-name` (kebab-case). Confirm with user before proceeding.
-
-### Step 3: Create Worktree
-
-Invoke `superpowers:using-git-worktrees` with the determined branch name. All subsequent work happens inside the worktree.
-
-```
-Invoke Skill: superpowers:using-git-worktrees
-Provide: branch name [EPMCDME-XXXXX or feature/name]
+**Context**: [any constraints or dependencies]
 ```
 
 ---
 
-## Phase 2: Assessment (Inside Worktree)
+## Phase 2: Branch Setup
 
-### Step 4: Load Guides and Search Codebase
+### Step 1: Check for local changes
 
-**Load relevant guides first** from `.codemie/guides/` based on task type:
+```bash
+git status --short
+```
 
-| Task Keywords | P0 Guide |
-|---|---|
-| plugin, agent, registry, adapter | architecture/architecture.md |
-| security, auth, credentials | security/security-practices.md |
-| test, coverage, mock | testing/testing-patterns.md |
-| provider, LLM, integration | integration/external-integrations.md |
-| git, workflow, CI/CD | standards/git-workflow.md |
-| error, exception, validation | development/development-practices.md |
-| cli, command | architecture/architecture.md |
+If the output is non-empty, **stop here** and tell the user:
+> "There are uncommitted local changes. Please stash or commit them before I sync to main."
 
-Then search the codebase for related implementations (Grep/Glob) and identify affected components.
+Only continue once the working tree is clean.
 
-### Step 5: Complexity Scoring
+### Step 2: Check current branch state
 
-Dispatch the `complexity-assessor` agent using the Agent tool:
+Fetch latest from remote and check whether the current branch has commits not yet in main:
+
+```bash
+git fetch origin
+git branch --show-current
+git log origin/main..HEAD --oneline
+```
+
+If commits exist ahead of `origin/main` → **stop and ask the user before doing anything destructive**:
+> "The current branch `<branch-name>` has [N] commit(s) not yet in main — resetting will permanently lose them.
+> (a) Reset to main anyway
+> (b) Keep this branch as-is (I'll create the target branch from main and continue)"
+
+Wait for the user's answer:
+- **(a) Reset** → continue to Step 3.
+- **(b) Keep** → skip Step 3, go directly to Step 4. When creating the target branch, use `origin/main` as the base instead of the current HEAD:
+  ```bash
+  git checkout -b <branch-name> origin/main
+  git push -u origin <branch-name>
+  ```
+  Then continue to Phase 3 as normal.
+
+If there are **no commits ahead of main** → continue directly to Step 3 (safe to reset without prompting).
+
+### Step 3: Sync to latest main
+
+```bash
+git reset --hard origin/main
+```
+
+### Step 4: Determine and set up target branch
+
+- **Jira ticket**: branch name = `EPMCDME-XXXXX` (exact ticket ID, no prefix)
+- **No Jira ticket**: suggest `task/kebab-case-description` and ask the user to confirm before proceeding
+
+If arriving here via the **(b) Keep** path from Step 2, skip the checks below — the branch was already created from `origin/main` and you are already on it. Continue to Phase 3.
+
+Otherwise, check if the target branch already exists:
+
+```bash
+git branch --list <branch-name>
+```
+
+- **Branch does not exist** → create it:
+  ```bash
+  git checkout -b <branch-name>
+  git push -u origin <branch-name>
+  ```
+- **Branch already exists and we are not on it** → check it out:
+  ```bash
+  git checkout <branch-name>
+  ```
+- **Already on the target branch** → nothing to do; continue to Phase 3.
+
+---
+
+## Phase 3: Complexity Assessment and Routing
+
+Dispatch the `complexity-assessor` agent:
 
 ```
 Use the Agent tool:
   description: "Complexity assessment for [feature area]"
+  subagent_type: "complexity-assessor"
   prompt: |
-    task_description='[task description from Phase 1]'
-    feature_area='[keywords — e.g. provider integration, CLI command]'
+    task_description: "[full task description from Phase 1]"
+    feature_area: "[keywords — e.g. 'budget service LLM', 'datasource indexer', 'agent tool']"
+    branch: "[current branch name]"
 ```
 
-`complexity-assessor` runs in isolation, researches the codebase, and returns a structured assessment block with a numeric score (6–36) and one of: `superpowers:writing-plans`, `superpowers:brainstorming`, or `SPLIT REQUIRED`. Use the Routing line to proceed.
+Present the full assessment block returned by the agent.
+
+### Routing
+
+Based on the total score:
+
+- **Score ≥ 15** → tell the user:
+  > "Next step: run `/brainstorming` to design the solution before implementation."
+
+- **Score < 15** → tell the user:
+  > "Next step: run `/subagent-driven-development` to implement directly."
+
+- **SPLIT REQUIRED (score 27+)** → tell the user:
+  > "This task is too large to implement as a single story. Please decompose it into smaller stories using the splitting strategies above, then come back with the first story."
+
+Do not invoke brainstorming or subagent-driven-development automatically. The user triggers the next step manually.
 
 ---
 
-## Phase 3: Planning
+## Fast-Track / Skip Requests
 
-### Simple Path (Score 6–14)
+If the user says "skip [phase]" or asks to bypass a step:
 
-Invoke `superpowers:writing-plans` directly, passing requirements summary, guide findings, and affected files as context.
+1. Confirm the skip: > "Skipping [phase name]. Continuing from [next phase]."
+2. Note what was bypassed so the context is clear.
+3. Proceed from the requested phase.
 
-After writing-plans produces a plan → invoke `spec-reviewer`:
-
-```
-Invoke Skill: spec-reviewer
-Provide: plan file path, Jira ticket ID (if available)
-```
-
-After spec-reviewer **APPROVED** → proceed to Phase 4.
-
-If spec-reviewer returns **NEEDS WORK** → address the issues and resubmit.
-
-### Medium/Complex Path (Score 15–36)
-
-Invoke `superpowers:brainstorming`, passing requirements summary, guide findings, complexity score (6–36), and open architectural questions.
-
-After brainstorming produces design doc → invoke `superpowers:writing-plans`, passing the design doc.
-
-After writing-plans produces a plan → invoke `spec-reviewer`:
-
-```
-Invoke Skill: spec-reviewer
-Provide: plan file path, Jira ticket ID (if available)
-```
-
-After spec-reviewer **APPROVED** → proceed to Phase 4.
+Skipping is the user's prerogative — acknowledge and adapt.
 
 ---
 
-## Phase 4: Implementation
+## Error Handling
 
-Invoke `superpowers:subagent-driven-development`, passing the plan file path, worktree path, and key architectural context from Phase 2.
-
-After all implementation tasks complete and code review passes → proceed to Phase 5.
-
----
-
-## Phase 5: Quality Gates
-
-Invoke `qa-lead`, passing branch name, spec file path (if available), and Jira ticket ID (if available).
-
-qa-lead orchestrates automated tests, UI tests (conditional), spec-refinement (if needed), and `/memory-refresh` reminder.
-
----
-
-## Key Principles
-
-### Do's
-✅ Gather requirements fully before creating worktree
-✅ Load `.codemie/guides/` before searching codebase
-✅ Report complexity score breakdown before routing
-✅ Follow score routing strictly — do not override without explicit user input
-✅ Ask specific, blocking questions only (not generic ones)
-
-### Don'ts
-❌ Never create branches with raw git commands — `superpowers:using-git-worktrees` handles it
-❌ Never call `solution-architect` — use `superpowers:brainstorming` for complex features
-❌ Never start implementation before spec-reviewer APPROVED
-❌ Never ask about information already in the code or guides
-❌ Never implement on main/master (worktrees enforce this)
-
----
-
-## Integration with Other Skills
-
-### superpowers:using-git-worktrees
-- Invoked between Phase 1 and Phase 2
-- Creates isolated branch + worktree — all Phase 2+ work happens there
-- Handles all branch creation, no manual `git checkout -b` needed
-
-### complexity-assessor (agent)
-- Dispatched at the end of Phase 2 (Step 5) with task description and feature area
-- Runs in isolated context — performs its own codebase research via Glob/Grep
-- Scores complexity across 6 dimensions (6–36 total) and returns routing decision
-- Guide and calibration examples live in `.claude/references/complexity-assessment/`
-
-### superpowers:brainstorming
-- Invoked for Medium/Complex features (score 15–36)
-- Produces design doc that feeds into `superpowers:writing-plans`
-
-### superpowers:writing-plans
-- Invoked for Simple features (score 6–14) directly, or after brainstorming
-- Produces the implementation plan reviewed by spec-reviewer
-
-### spec-reviewer
-- Validates plan/spec before implementation starts
-- Must return APPROVED before `superpowers:subagent-driven-development` is invoked
-
-### superpowers:subagent-driven-development
-- Invoked after spec-reviewer APPROVED
-- Dispatches fresh subagent per task, with two-stage review after each
-
-### qa-lead
-- Invoked after all implementation tasks and code review are complete
-- Orchestrates all quality gates before the branch is merged
-
-### brianna
-- Fetches Jira ticket details (description + summary only)
-- Used in Phase 1 when Jira ticket ID is provided
-
-### codemie-commit / codemie-pr
-- Used after qa-lead passes for commits and PR creation
-
----
-
-## Example Workflows
-
-### Example 1: Simple Feature (Jira Ticket)
+### Ticket not found
 
 ```
-User: "Implement EPMCDME-10500"
-
-1. Fetches EPMCDME-10500 via brianna (description + summary)
-2. Determines branch: EPMCDME-10500
-3. Invokes superpowers:using-git-worktrees
-4. Inside worktree: loads .codemie/guides/api/ and architecture guide
-5. Scores complexity: 8/36 — S (Simple — 1 endpoint, standard CRUD, clear requirements)
-6. Routes to superpowers:writing-plans
-7. After plan produced → invokes spec-reviewer
-8. spec-reviewer APPROVED → invokes superpowers:subagent-driven-development
-9. After implementation + code review → invokes qa-lead
+Unable to fetch Jira ticket [ID]. Verify the ticket ID format (EPMCDME-XXXXX) and your access.
 ```
 
-### Example 2: Complex Feature (Jira Ticket)
+### complexity-assessor fails
 
-```
-User: "Start work on EPMCDME-10700"
+Check whether `.claude/references/complexity-assessment/` exists:
 
-1. Fetches EPMCDME-10700 via brianna
-2. Determines branch: EPMCDME-10700
-3. Invokes superpowers:using-git-worktrees
-4. Inside worktree: loads architecture + integration guides
-5. Scores complexity: 28/36 — XL (Complex — new external integration, 9+ files, security impact)
-6. Routes to superpowers:brainstorming
-7. brainstorming produces design doc → invokes superpowers:writing-plans
-8. writing-plans produces plan → invokes spec-reviewer
-9. spec-reviewer APPROVED → invokes superpowers:subagent-driven-development
-10. After implementation + code review → invokes qa-lead
-```
+- **Exists** → use the 6-dimension scoring criteria to produce a manual estimate:
+  > "Complexity assessor failed. Manual estimate: [X]/36 — [Size]. Routing: [brainstorming | direct implementation]. Confirm to proceed."
 
-### Example 3: Free-Form Task (No Jira Ticket)
-
-```
-User: "Add structured logging to the agent executor"
-
-1. Confirms requirements, documents acceptance criteria
-2. Suggests branch: feature/add-agent-executor-logging (confirmed by user)
-3. Invokes superpowers:using-git-worktrees
-4. Inside worktree: loads development-practices guide
-5. Scores complexity: 10/36 — S (Simple — known pattern, 2–3 files, clear requirements)
-6. Routes to superpowers:writing-plans
-7. After plan produced → invokes spec-reviewer
-8. spec-reviewer APPROVED → invokes superpowers:subagent-driven-development
-9. After implementation + code review → invokes qa-lead
-```
-
----
-
-## Additional Resources
-
-For branch naming conventions:
-- **`references/branch-workflow.md`** — branch naming rules and examples
-
-Complexity criteria and examples are owned by the `complexity-assessor` agent.
+- **Does not exist** → ask the user:
+  > "Complexity assessor failed and the fallback guide is not present. Please give me a rough size estimate (XS/S/M/L/XL/XXL) so I can route correctly."
