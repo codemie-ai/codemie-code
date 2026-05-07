@@ -424,29 +424,17 @@ Use Claude Desktop 3P through CodeMie proxy routing to capture `claude-desktop` 
 - a valid CodeMie SSO profile
 - Claude Desktop 3P installed
 
-### 1. Select the active CodeMie profile
-
-```bash
-codemie profile switch <e.g. codemie-prod, should be your SSO profile name>
-```
-
-### 2. Connect Claude Desktop
+### 1. Connect Claude Desktop
 
 ```bash
 codemie proxy connect desktop
 ```
 
-By default this uses your current active CodeMie profile. Override it for one run with ("codemie-prod" is example here):
-
-```bash
-codemie proxy connect desktop --profile codemie-prod
-```
-
-### 3. Restart Claude Desktop
+### 2. Restart Claude Desktop
 
 Quit and reopen Claude Desktop after the proxy configuration is written.
 
-### 4. Inspect and troubleshoot
+### 3. Inspect and troubleshoot
 
 ```bash
 codemie proxy status
