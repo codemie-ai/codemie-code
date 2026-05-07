@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This guide provides detailed criteria for assessing feature complexity. Each dimension is scored XS–XXL (1–6). Six dimensions sum to a total of 6–36, which maps directly to the T-shirt size output. The scoring system is self-consistent: if all dimensions score M, the story is M; if all score XL, the story is XL.
+This guide provides detailed criteria for assessing feature complexity. Each dimension is scored XS–XXL (1–6). Six dimensions sum to a total of 6–36, which maps directly to the T-shirt size output and Story Point estimate. The scoring system is self-consistent: if all dimensions score M, the story is M; if all score XL, the story is XL.
 
 ## Scoring Scale
 
@@ -226,14 +226,14 @@ Scores which architectural/infrastructure layers require changes: UI, API/backen
 
 Score each dimension XS–XXL (1–6). Total range: 6–36.
 
-| Total Score | Size | Typical Cycle | Routing |
-|-------------|------|---------------|---------|
-| 6–9         | XS   | < half day    | → `superpowers:writing-plans` directly |
-| 10–14       | S    | 1 day         | → `superpowers:writing-plans` directly |
-| 15–20       | M    | 2–3 days      | → `superpowers:brainstorming` first |
-| 21–26       | L    | 4–5 days      | → `superpowers:brainstorming` first |
-| 27–31       | XL   | > 1 sprint    | → **Recommend splitting** before planning |
-| 32–36       | XXL  | > 1 sprint    | → **Must split** — do not proceed until decomposed |
+| Total Score | Size | Story Points | Typical Cycle | Routing |
+|-------------|------|--------------|---------------|---------|
+| 6–9         | XS   | 1            | < half day    | → `superpowers:writing-plans` directly |
+| 10–14       | S    | 2            | 1 day         | → `superpowers:writing-plans` directly |
+| 15–20       | M    | 3            | 2–3 days      | → `superpowers:brainstorming` first |
+| 21–26       | L    | 5            | 4–5 days      | → `superpowers:brainstorming` first |
+| 27–31       | XL   | 8            | > 1 sprint    | → **Recommend splitting** before planning |
+| 32–36       | XXL  | 13           | > 1 sprint    | → **Must split** — do not proceed until decomposed |
 
 Self-check: all-M dimensions (6×3=18) → M. All-L (6×4=24) → L. All-XL (6×5=30) → XL. ✓
 
@@ -280,6 +280,7 @@ Example scoring:
 ### Total Score: [sum]/36
 
 ### Size: [XS | S | M | L | XL | XXL]
+### Story Points: [1 | 2 | 3 | 5 | 8 | 13]
 ```
 
 ## Example Assessments
@@ -382,6 +383,7 @@ Always provide assessment in this structure:
 ## Implementation Analysis: EPMCDME-XXXXX
 
 ### Size: [XS | S | M | L | XL | XXL]  ([total]/36)
+### Story Points: [1 | 2 | 3 | 5 | 8 | 13]
 
 ### Dimension Scores:
 | Dimension            | Score | Label |

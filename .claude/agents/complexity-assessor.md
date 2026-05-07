@@ -117,16 +117,16 @@ Cap any dimension at 6 (XXL) after bumping.
 
 ### Step 6 — Calculate total and determine routing
 
-Sum all 6 dimension scores. Map to size label:
+Sum all 6 dimension scores. Map to size label and story points:
 
-| Total | Size | Routing |
-|-------|------|---------|
-| 6–9   | XS   | Direct implementation — superpowers:subagent-driven-development (no planning needed) |
-| 10–14 | S    | Direct implementation — superpowers:subagent-driven-development (no planning needed) |
-| 15–20 | M    | superpowers:brainstorming |
-| 21–26 | L    | superpowers:brainstorming |
-| 27–31 | XL   | SPLIT REQUIRED — present splitting strategies, wait for user decomposition |
-| 32–36 | XXL  | SPLIT REQUIRED — hard block, do not invoke any planning skill |
+| Total | Size | Story Points | Routing |
+|-------|------|--------------|---------|
+| 6–9   | XS   | 1            | Direct implementation — superpowers:subagent-driven-development (no planning needed) |
+| 10–14 | S    | 2            | Direct implementation — superpowers:subagent-driven-development (no planning needed) |
+| 15–20 | M    | 3            | superpowers:brainstorming |
+| 21–26 | L    | 5            | superpowers:brainstorming |
+| 27–31 | XL   | 8            | SPLIT REQUIRED — present splitting strategies, wait for user decomposition |
+| 32–36 | XXL  | 13           | SPLIT REQUIRED — hard block, do not invoke any planning skill |
 
 For borderline scores (9→10, 14→15, 20→21, 26→27, 31→32): lean higher if Technical Risk or Component Scope is at XL (5) or XXL (6). Lean lower only if Technical Risk is M (3) or below AND existing patterns cover more than half the implementation.
 
@@ -156,6 +156,7 @@ Return exactly this structure, filled in with your assessment:
 | Affected Layers      | [1-6] | [XS–XXL] |
 
 ### Total: [sum]/36 — [XS | S | M | L | XL | XXL]
+### Story Points: [1 | 2 | 3 | 5 | 8 | 13]
 
 ### Key Reasoning:
 - **[List all dimensions scoring L (4) or higher]**: [why — component names, not code]
@@ -195,6 +196,7 @@ If the user disagrees with the assessment — by providing corrections, pointing
 If the user says yes:
 - Determine the file name: use the ticket ID from task_description if present (e.g., `epmcdme-12345-short-description.md`), otherwise derive from feature_area keywords (e.g., `feature-add-sharepoint-indexer.md`).
 - Determine `<size>` from the final agreed label (xs/s/m/l/xl/xxl).
+- Determine `<story_points>` according to size to story point mapping.
 - Write the file to `.claude/references/complexity-assessment/examples/<size>/<filename>.md` using this format (match existing examples):
 
 ```markdown
@@ -202,6 +204,7 @@ If the user says yes:
 
 **Ticket:** [ticket ID or "N/A"]
 **Size:** [XS | S | M | L | XL | XXL]
+**Story Points:** [1 | 2 | 3 | 5 | 8 | 13]
 **Actual Outcome:** [brief description]
 
 ## Assessment

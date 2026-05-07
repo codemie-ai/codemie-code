@@ -118,6 +118,8 @@ git branch --list <branch-name>
 
 ## Phase 3: Complexity Assessment and Routing
 
+### Assessment
+
 Dispatch the `complexity-assessor` agent:
 
 ```
@@ -131,6 +133,8 @@ Use the Agent tool:
 ```
 
 Present the full assessment block returned by the agent.
+
+**If a Jira ticket was provided**, update the Story Points field on the ticket with the estimated SP value via brianna skill.
 
 ### Routing
 
