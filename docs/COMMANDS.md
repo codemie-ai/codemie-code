@@ -56,7 +56,6 @@ Behavior:
 Recommended setup:
 
 ```bash
-codemie profile switch codemie-prod
 codemie proxy connect desktop
 ```
 
