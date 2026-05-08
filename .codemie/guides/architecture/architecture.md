@@ -19,6 +19,7 @@ codemie-code/
 │   ├── agents/         Agent system (registry + plugins)
 │   ├── providers/      LLM provider system
 │   ├── frameworks/     Framework integrations
+│   ├── mcp/            MCP proxy bridge & OAuth
 │   ├── utils/          Shared utilities
 │   ├── env/            Environment management
 │   ├── workflows/      CI/CD templates
@@ -48,6 +49,11 @@ src/
 ├── frameworks/         Framework System
 │   ├── core/           Framework interfaces
 │   └── plugins/        Framework implementations (LangGraph)
+├── mcp/                MCP Proxy System
+│   ├── auth/           OAuth provider & callback server
+│   ├── stdio-http-bridge.ts  Stdio-to-HTTP bridge
+│   ├── proxy-logger.ts       File-based proxy logger
+│   └── constants.ts          MCP proxy constants
 └── utils/              Utilities Layer
     ├── errors.ts       Error classes
     ├── logger.ts       Logging utilities

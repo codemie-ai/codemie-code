@@ -5,11 +5,12 @@
  * One file per session: ~/.codemie/sessions/{sessionId}.json
  */
 
-import { readFile, writeFile, mkdir } from 'fs/promises';
+import { readFile, writeFile, mkdir, readdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import { dirname, basename, join } from 'path';
 import type { Session } from './types.js';
 import { getSessionPath } from './session-config.js';
+import { getCodemiePath } from '../../../utils/paths.js';
 import { logger } from '../../../utils/logger.js';
 import { createErrorContext, formatErrorForLog } from '../../../utils/errors.js';
 
@@ -72,6 +73,48 @@ export class SessionStore {
       logger.error(`[SessionStore] Failed to load session: ${sessionId}`, formatErrorForLog(errorContext));
       return null;
     }
+  }
+
+  /**
+   * Find a persisted session by external/local-client session identifier.
+   */
+  async findSessionByExternalId(agentName: string, externalSessionId: string): Promise<Session | null> {
+    const sessionsDir = getCodemiePath('sessions');
+    if (!existsSync(sessionsDir)) {
+      return null;
+    }
+
+    try {
+      const files = await readdir(sessionsDir);
+      const sessionFiles = files.filter((file) => file.endsWith('.json'));
+
+      for (const file of sessionFiles) {
+        const filePath = join(sessionsDir, file);
+        try {
+          const content = await readFile(filePath, 'utf-8');
+          const session = JSON.parse(content) as Session;
+
+          if (session.agentName !== agentName) {
+            continue;
+          }
+
+          if (session.runtimeCheckpoint?.externalSessionId === externalSessionId) {
+            logger.debug(`[SessionStore] Found session by external ID: ${externalSessionId}`);
+            return session;
+          }
+        } catch (error) {
+          logger.debug('[SessionStore] Skipping unreadable session file during external ID lookup', {
+            filePath,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+    } catch (error) {
+      const errorContext = createErrorContext(error, { sessionId: externalSessionId });
+      logger.error('[SessionStore] Failed external session scan', formatErrorForLog(errorContext));
+    }
+
+    return null;
   }
 
 

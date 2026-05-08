@@ -43,7 +43,7 @@ describe('sanitize utilities', () => {
     });
 
     it('should detect JWT tokens', () => {
-      const jwt = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c';
+      const jwt = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c'; // gitleaks:allow
       const result = sanitizeValue(jwt);
       expect(result).toContain('[REDACTED]');
     });
@@ -57,7 +57,7 @@ describe('sanitize utilities', () => {
   describe('sanitizeObject', () => {
     it('should sanitize all sensitive keys in object', () => {
       const obj = {
-        apiKey: 'sk-1234567890abcdefghij',
+        apiKey: 'sk-1234567890abcdefghij', // gitleaks:allow
         username: 'john',
         password: 'secret123',
         sessionId: 'abc-def-ghi-jkl'
@@ -74,7 +74,7 @@ describe('sanitize utilities', () => {
     it('should handle nested objects', () => {
       const obj = {
         config: {
-          apiKey: 'sk-1234567890abcdefghij',
+          apiKey: 'sk-1234567890abcdefghij', // gitleaks:allow
           timeout: 5000
         },
         name: 'test'
@@ -89,7 +89,7 @@ describe('sanitize utilities', () => {
 
     it('should handle arrays', () => {
       const obj = {
-        tokens: ['sk-1234567890abcdefghijklmnop', 'sk-9876543210zyxwvutsrqponmlkjihgfedcba'],
+        tokens: ['sk-1234567890abcdefghijklmnop', 'sk-9876543210zyxwvutsrqponmlkjihgfedcba'], // gitleaks:allow
         names: ['alice', 'bob']
       };
 
@@ -134,7 +134,7 @@ describe('sanitize utilities', () => {
 
   describe('sanitizeAuthToken', () => {
     it('should mask real tokens', () => {
-      const token = 'sk-1234567890abcdefghij1234567890';
+      const token = 'sk-1234567890abcdefghij1234567890'; // gitleaks:allow
       const result = sanitizeAuthToken(token);
 
       expect(result).toContain('sk-12345');
@@ -163,8 +163,8 @@ describe('sanitize utilities', () => {
     it('should sanitize multiple arguments', () => {
       const args = [
         'normal string',
-        { apiKey: 'sk-1234567890abcdefghijklmnop', name: 'test' },
-        'sk-9876543210zyxwvutsrq9876543210'
+        { apiKey: 'sk-1234567890abcdefghijklmnop', name: 'test' }, // gitleaks:allow
+        'sk-9876543210zyxwvutsrq9876543210' // gitleaks:allow
       ];
 
       const result = sanitizeLogArgs(...args);
@@ -181,7 +181,7 @@ describe('sanitize utilities', () => {
         123,
         true,
         null,
-        { apiKey: 'sk-1234567890abcdefghijklmnop' }
+        { apiKey: 'sk-1234567890abcdefghijklmnop' } // gitleaks:allow
       ];
 
       const result = sanitizeLogArgs(...args);

@@ -8,13 +8,10 @@ import type { ActionHandlers } from '../actions.js';
 import { createInteractivePrompt } from '../interactive-prompt.js';
 import { KEY, PANEL_ID } from '../constants.js';
 
-// Mock renderUI
-vi.mock('../ui.js', () => ({
-  renderUI: vi.fn((state: SelectionState, cursorIndex: number) => `Rendered UI with cursor at ${cursorIndex}`),
-}));
 
 describe('Interactive Prompt - interactive-prompt.ts', () => {
   let mockState: SelectionState;
+  let mockRenderFn: ReturnType<typeof vi.fn>;
   let mockActions: ActionHandlers;
   let mockStdout: any;
   let mockStdin: any;
@@ -22,6 +19,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
 
   beforeEach(() => {
     dataListeners = [];
+    mockRenderFn = vi.fn().mockReturnValue(`Rendered UI with cursor at 0`);
 
     // Setup mock state
     mockState = {
@@ -138,6 +136,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       expect(prompt).toHaveProperty('start');
@@ -153,6 +152,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();
@@ -170,6 +170,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();
@@ -185,6 +186,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();
@@ -202,6 +204,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();
@@ -219,6 +222,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();
@@ -236,6 +240,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();
@@ -251,6 +256,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();
@@ -273,6 +279,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const _startPromise = prompt.start();
@@ -294,6 +301,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();
@@ -316,6 +324,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();
@@ -337,6 +346,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();
@@ -356,6 +366,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();
@@ -374,6 +385,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();
@@ -392,6 +404,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();
@@ -410,6 +423,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();
@@ -430,6 +444,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();
@@ -448,6 +463,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();
@@ -466,6 +482,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();
@@ -484,6 +501,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();
@@ -504,6 +522,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();
@@ -528,6 +547,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();
@@ -559,6 +579,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const _startPromise = prompt.start();
@@ -578,6 +599,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();
@@ -604,6 +626,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();
@@ -626,6 +649,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();
@@ -646,6 +670,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();
@@ -664,6 +689,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();
@@ -690,6 +716,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();
@@ -710,6 +737,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();
@@ -730,6 +758,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       expect(prompt.getCursorIndex()).toBe(0);
@@ -739,6 +768,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       prompt.setCursorIndex(5);
@@ -752,6 +782,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();
@@ -771,6 +802,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();
@@ -794,6 +826,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();
@@ -814,6 +847,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const _startPromise = prompt.start();
@@ -834,6 +868,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();
@@ -854,6 +889,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();
@@ -880,6 +916,7 @@ describe('Interactive Prompt - interactive-prompt.ts', () => {
       const prompt = createInteractivePrompt({
         state: mockState,
         actions: mockActions,
+        renderFn: mockRenderFn,
       });
 
       const startPromise = prompt.start();

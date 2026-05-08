@@ -78,3 +78,17 @@ Following KISS principles, this script:
 - Can be extended easily if needed
 
 The release-manager agent can run this script instead of individual git commands, making releases more reliable and consistent.
+
+## Proxy Endpoint Smoke Test
+
+`scripts/test-proxy-endpoint.js` sends a small sample request to a local proxy or upstream HTTP endpoint.
+
+```bash
+node scripts/test-proxy-endpoint.js --url http://127.0.0.1:4001
+```
+
+By default it posts to `/v1/messages` with a minimal messages payload. Override the request path or prompt when needed:
+
+```bash
+node scripts/test-proxy-endpoint.js --url http://127.0.0.1:4001 --endpoint /v1/messages --message "hello"
+```

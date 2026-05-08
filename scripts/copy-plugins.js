@@ -23,6 +23,11 @@ const copyConfigs = [
     name: 'Gemini extension',
     src: join(rootDir, 'src/agents/plugins/gemini/extension'),
     dest: join(rootDir, 'dist/agents/plugins/gemini/extension')
+  },
+  {
+    name: 'Top-level assets',
+    src: join(rootDir, 'assets'),
+    dest: join(rootDir, 'dist/assets')
   }
 ];
 

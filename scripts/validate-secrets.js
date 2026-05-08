@@ -25,7 +25,7 @@ const args = [
   '--rm',
   '-v',
   `${projectPath}:/path`,
-  'ghcr.io/gitleaks/gitleaks:latest',
+  'ghcr.io/gitleaks/gitleaks:v8.30.1',
   'detect',
   '--source=/path',
   '--verbose',

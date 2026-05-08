@@ -1,476 +1,180 @@
 ---
 name: tech-lead
-description: This skill should be used when the user asks to "implement a Jira ticket", "start working on EPMCDME ticket", "analyze task", "begin implementation", "implement new task", "implement feature", "act as tech lead", "plan implementation", "how should I implement", or wants structured technical leadership for implementing features. Acts as a technical lead to guide implementation from requirements (Jira ticket or user description) through complexity assessment, architectural analysis, branch creation, and pattern-driven coding.
-version: 0.1.0
+description: Use when starting implementation of a Jira ticket, feature, or task. Kicks off the SDLC with requirements gathering, branch setup, and complexity assessment — then routes to brainstorming or direct implementation. Triggers on: "implement EPMCDME ticket", "start working on EPMCDME-XXXXX", "begin implementation", "implement new task", "implement feature", "act as tech lead", "plan implementation", "analyze task". Each phase pauses for user confirmation before proceeding.
+version: 1.0.0
 ---
 
-# Tech Lead: Structured Implementation Guide
+# Tech Lead: SDLC Kickoff
 
 ## Purpose
 
-This skill acts as a technical lead to guide implementation of features and tasks with a structured approach. It bridges the gap between requirements and code by:
-- Gathering requirements (from Jira tickets or user descriptions)
-- Analyzing codebase and architectural patterns
-- Assessing complexity and risks
-- Creating feature branches
-- Driving implementation with proper guidance
+Entry point for all development work. Gathers requirements, sets up the branch, and assesses complexity to route you to the right next step — either design (brainstorming) or direct implementation.
 
-The skill ensures structured, informed development that follows project patterns and architectural guidelines.
+This skill does three things and nothing else. It does not load guides, explore the codebase, run tests, create PRs, or perform code review. Those steps belong to downstream skills in the chain.
 
-## When to Use This Skill
+---
 
-Use this skill when:
-- Starting work on a Jira ticket (EPMCDME-XXXX)
-- Implementing a new feature or task (with or without Jira ticket)
-- Need to assess implementation complexity before coding
-- Want guidance on where and how to implement changes
-- Need to create a proper feature branch
-- Transitioning from requirements to implementation
+## Phase 1: Requirements
 
-## Implementation Workflow
+### If a Jira ticket ID is provided (EPMCDME-XXXXX format)
 
-### Phase 1: Requirement Gathering
-
-**Step 1: Determine Requirement Source**
-
-Check if user provided:
-- **Jira ticket ID** (EPMCDME-XXXXX format)
-- **Task description** (user-provided text)
-
-**Step 1a: If Jira Ticket Provided**
-
-Use the brianna skill to fetch ONLY description and summary fields:
+Fetch it via brianna — description and summary fields only:
 
 ```
-Use Skill tool with skill="brianna" and args containing:
-- Action: get ticket details
-- Ticket ID: [provided by user]
-- Fields: description, summary ONLY
+Invoke Skill: brianna
+Args: "Get ticket details for EPMCDME-XXXXX. I need only the description and summary fields."
 ```
 
-Do NOT request other fields like status, assignee, or custom fields unless explicitly needed for complexity assessment.
+Do not request status, assignee, or other fields.
 
-**Step 1b: If Task Description Provided**
+### If a task description is provided instead
 
-If user provides a task description without a Jira ticket:
+Confirm your understanding of the requirements. If anything is vague or ambiguous, ask clarifying questions before proceeding. Document requirements in this format:
 
-1. **Confirm understanding** of the requirements
-2. **Ask clarifying questions** if requirements are vague
-3. **Document requirements** in a structured format for later reference
-
-Example:
 ```markdown
 ## Task Requirements
 
-**Goal**: [What needs to be implemented]
+**Goal**: [what needs to be implemented]
 
 **Acceptance Criteria**:
-- [Criterion 1]
-- [Criterion 2]
-- [Criterion 3]
+- [criterion 1]
+- [criterion 2]
 
-**Context**: [Any additional context or constraints]
+**Context**: [any constraints or dependencies]
 ```
 
-**Step 2: Branch Naming Decision**
+---
 
-Determine appropriate branch name:
+## Phase 2: Branch Setup
 
-**If Jira ticket exists:**
-- Branch name: `EPMCDME-XXXXX` (exact ticket ID)
+### Step 1: Check for local changes
 
-**If no Jira ticket:**
-- Ask user for preferred branch name
-- Suggest format: `feature/descriptive-name` or `task/descriptive-name`
-- Example: `feature/add-user-logging`, `task/improve-error-handling`
-
-### Phase 2: Technical Analysis
-
-**Step 3: Explore Codebase and Guides**
-
-After obtaining ticket details, perform targeted exploration:
-
-1. **Check Relevant Guides First (MANDATORY)**
-   - Identify task category from ticket (API, Agent, Database, etc.)
-   - Use Read tool to load P0 guides from `.codemie/guides/`
-   - Reference CLAUDE.md Task Classifier for guide mapping
-
-2. **Search Codebase**
-   - Use Grep to find related code patterns
-   - Use Glob to locate relevant files
-   - Identify existing implementations to follow
-
-3. **Understand Architecture**
-   - Determine affected layers (API → Service → Repository)
-   - Identify integration points
-   - Check for similar existing features
-
-**Exploration Guidelines:**
-- Focus on code patterns mentioned in ticket
-- Prioritize guides over blind codebase search
-- Look for existing similar implementations
-- Identify affected components and dependencies
-
-**Step 4: Clarifying Questions (Selective)**
-
-Ask clarifying questions ONLY when:
-- Requirements are ambiguous or contradictory
-- Multiple valid implementation approaches exist
-- Architectural decisions need user input
-- Ticket lacks critical technical details
-
-**Do NOT ask about:**
-- Information already present in code
-- Generic questions ("Should I use async?")
-- Standard patterns covered in guides
-- Details that can be inferred from existing implementations
-
-Use AskUserQuestion tool with focused, specific questions that unblock implementation decisions.
-
-### Phase 3: Complexity Assessment
-
-**Step 5: Analyze and Report Complexity**
-
-Provide a structured complexity assessment in this format:
-
-```markdown
-## Implementation Analysis: [TICKET-ID]
-
-### Complexity Rating: [Simple | Medium | Complex]
-
-### Reasoning:
-- **[Point 1]**: [Explanation of complexity factor]
-- **[Point 2]**: [Explanation of complexity factor]
-- **[Point 3]**: [Explanation of complexity factor]
-- **[Point 4]**: [Explanation of complexity factor - optional]
-
-### Clarity Assessment:
-[Clear | Partially Clear | Unclear] - [Brief explanation]
-
-### Affected Components:
-- **[Component 1]**: [File path or module] - [Nature of change]
-- **[Component 2]**: [File path or module] - [Nature of change]
-- **[Component 3]**: [File path or module] - [Nature of change]
-```
-
-**Complexity Criteria:**
-
-> **IMPORTANT — Evaluation logic:**
-> Rate as **Complex** if ANY single Complex criterion below applies.
-> Rate as **Medium** only when NO Complex criteria apply AND multiple Medium criteria apply.
-> Rate as **Simple** only when ALL Simple criteria apply.
-> File count is a supporting signal, NOT the primary driver — qualitative criteria take precedence.
-
-**Hard triggers → always Complex (any one is sufficient):**
-- New integration with an external tool, CLI, or service (new agent plugin, new provider, new API client)
-- Novel parsing or calculation logic that must be reverse-engineered (undocumented formats, no existing adapter)
-- Significant architectural decisions needed (new interface contracts, new layer interactions)
-- Cross-cutting concerns that affect security, reliability, or metrics pipeline integrity
-
-**Simple:**
-- Single component affected
-- Well-defined requirements
-- Existing patterns to follow exactly (copy-paste with trivial changes)
-- No architectural decisions needed
-- Estimated 1-3 files to change
-
-**Medium:**
-- 2-3 components affected (no hard triggers above)
-- Clear requirements with minor gaps
-- Adapts an existing pattern with moderate changes
-- Estimated 4-8 files to change
-- Requires coordination between layers but no new contracts
-
-**Complex:**
-- Any hard trigger above applies, OR
-- 4+ distinct components affected
-- Ambiguous or incomplete requirements requiring significant inference
-- Estimated 9+ files to change
-- New integrations or external dependencies
-- Novel computation / parsing logic with no existing reference in codebase
-
-### Phase 4: Recommendation
-
-**Step 6: Provide Implementation Recommendation**
-
-Based on complexity assessment, provide one of these recommendations:
-
-**For Simple/Medium Complexity:**
-```markdown
-### Recommendation
-
-This feature is [Simple/Medium] complexity and can be implemented directly.
-
-**Suggested Approach:**
-1. Create feature branch: `[branch-name]`
-2. [Step-by-step implementation guidance]
-3. [Key patterns to follow]
-4. [Testing approach]
-
-Upon user confirmation, create the feature branch and begin implementation.
-```
-
-**For Complex Complexity:**
-```markdown
-### Recommendation
-
-This feature is Complex and would benefit from architectural planning.
-
-**Suggested Next Steps:**
-1. Use solution-architect skill to create detailed specification
-2. Address architectural decisions: [list key decisions]
-3. Define interfaces and contracts
-4. Create implementation plan with milestones
-
-Alternatively, proceed with implementation if user accepts the complexity. Ask user to choose approach.
-```
-
-### Phase 5: Implementation Start
-
-**Step 7: Branch Protection Check and Implementation**
-
-If user agrees to proceed with implementation:
-
-**CRITICAL: NEVER implement on main/master. Always check branch first.**
-
-**7a. Check Current Branch (MANDATORY FIRST STEP):**
 ```bash
+git status --short
+```
+
+If the output is non-empty, **stop here** and tell the user:
+> "There are uncommitted local changes. Please stash or commit them before I sync to main."
+
+Only continue once the working tree is clean.
+
+### Step 2: Check current branch state
+
+Fetch latest from remote and check whether the current branch has commits not yet in main:
+
+```bash
+git fetch origin
 git branch --show-current
+git log origin/main..HEAD --oneline
 ```
 
-**7b. If on `main` or `master` branch — STOP immediately:**
+If commits exist ahead of `origin/main` → **stop and ask the user before doing anything destructive**:
+> "The current branch `<branch-name>` has [N] commit(s) not yet in main — resetting will permanently lose them.
+> (a) Reset to main anyway
+> (b) Keep this branch as-is (I'll create the target branch from main and continue)"
 
-Do NOT write any code. Display this message:
+Wait for the user's answer:
+- **(a) Reset** → continue to Step 3.
+- **(b) Keep** → skip Step 3, go directly to Step 4. When creating the target branch, use `origin/main` as the base instead of the current HEAD:
+  ```bash
+  git checkout -b <branch-name> origin/main
+  git push -u origin <branch-name>
+  ```
+  Then continue to Phase 3 as normal.
 
-```markdown
-⚠️ **Branch Protection**: You are currently on the `main` branch.
+If there are **no commits ahead of main** → continue directly to Step 3 (safe to reset without prompting).
 
-Implementation cannot start on `main`. I will create a feature branch first.
+### Step 3: Sync to latest main
 
-Creating branch: `[determined-branch-name]`...
-```
-
-Then create the feature branch immediately before touching any files.
-
-**7c. If already on a feature branch — proceed normally.**
-
-**7d. Create Feature Branch (if on main/master or no branch exists):**
 ```bash
-# Create and switch to feature branch
-# For Jira tickets:
-git checkout -b EPMCDME-XXXXX
-
-# For non-Jira tasks (use determined branch name):
-git checkout -b feature/branch-name
+git reset --hard origin/main
 ```
 
-**7e. Verify Branch:**
+### Step 4: Determine and set up target branch
+
+- **Jira ticket**: branch name = `EPMCDME-XXXXX` (exact ticket ID, no prefix)
+- **No Jira ticket**: suggest `task/kebab-case-description` and ask the user to confirm before proceeding
+
+If arriving here via the **(b) Keep** path from Step 2, skip the checks below — the branch was already created from `origin/main` and you are already on it. Continue to Phase 3.
+
+Otherwise, check if the target branch already exists:
+
 ```bash
-# Confirm on correct branch (must NOT be main or master)
-git branch --show-current
+git branch --list <branch-name>
 ```
 
-**7f. Begin Implementation:**
-- Follow patterns identified in analysis phase
-- Reference guides for standard approaches
-- Implement changes layer by layer (API → Service → Repository)
-- Apply security and performance patterns
+- **Branch does not exist** → create it:
+  ```bash
+  git checkout -b <branch-name>
+  git push -u origin <branch-name>
+  ```
+- **Branch already exists and we are not on it** → check it out:
+  ```bash
+  git checkout <branch-name>
+  ```
+- **Already on the target branch** → nothing to do; continue to Phase 3.
 
-**Branch Naming:**
+---
 
-For Jira tickets:
-- Format: `EPMCDME-XXXXX` (exactly as ticket ID)
-- No prefixes like `feature/` or `fix/`
-- Use ticket number as-is
+## Phase 3: Complexity Assessment and Routing
 
-For non-Jira tasks:
-- Format: `feature/descriptive-name` or `task/descriptive-name`
-- Use kebab-case for names
-- Keep names concise but descriptive
-- Examples: `feature/add-logging`, `task/refactor-auth`
-
-**Implementation Guidelines:**
-- Start with repository layer (data access)
-- Then service layer (business logic)
-- Then API layer (endpoints)
-- Test incrementally
-- Follow project patterns in guides
-
-## Key Principles
-
-### Do's
-✅ Always check guides before searching codebase
-✅ Accept both Jira tickets and task descriptions
-✅ Fetch only required Jira fields (description, summary) when applicable
-✅ Provide evidence-based complexity assessment
-✅ Create feature branch BEFORE any changes
-✅ Follow established patterns from guides
-✅ Ask specific, blocking questions only
-✅ Provide clear, actionable recommendations
-✅ Adapt branch naming to context (Jira vs non-Jira)
-
-### Don'ts
-❌ Don't skip guide consultation
-❌ Don't ask generic clarifying questions
-❌ Don't start coding without branch creation
-❌ Don't write ANY code while on `main` or `master` branch
-❌ Don't make architectural decisions for complex features without user input
-❌ Don't fetch unnecessary Jira fields (when using Jira)
-❌ Don't guess at complexity—analyze systematically
-❌ Don't assume every task has a Jira ticket
-
-## Example Workflow
-
-### Example 1: Simple Feature (Jira Ticket)
+Dispatch the `complexity-assessor` agent:
 
 ```
-User: "Implement EPMCDME-10500"
-
-Tech Lead:
-1. Identifies Jira ticket format
-2. Fetches ticket via brianna (description + summary)
-3. Reads .codemie/guides/api/rest-api-patterns.md
-4. Searches for similar endpoints with Grep
-5. Assesses: Simple (1 endpoint, standard CRUD, existing pattern)
-6. Recommends: Direct implementation
-7. Creates branch: EPMCDME-10500
-8. Implements following REST API patterns
+Use the Agent tool:
+  description: "Complexity assessment for [feature area]"
+  subagent_type: "complexity-assessor"
+  prompt: |
+    task_description: "[full task description from Phase 1]"
+    feature_area: "[keywords — e.g. 'budget service LLM', 'datasource indexer', 'agent tool']"
+    branch: "[current branch name]"
 ```
 
-### Example 1b: Simple Feature (No Jira Ticket)
+Present the full assessment block returned by the agent.
 
-```
-User: "Add logging to the authentication endpoint"
+### Routing
 
-Tech Lead:
-1. Identifies task description (no Jira ticket)
-2. Documents requirements in structured format
-3. Asks user for branch name preference
-4. Reads .codemie/guides/development/logging-patterns.md
-5. Searches for auth endpoint with Grep
-6. Assesses: Simple (1 file, standard pattern, clear requirements)
-7. Recommends: Direct implementation
-8. Creates branch: feature/add-auth-logging
-9. Implements following logging patterns
-```
+Based on the total score:
 
-### Example 2: Medium Feature (Jira Ticket)
+- **Score ≥ 15** → tell the user:
+  > "Next step: run `/brainstorming` to design the solution before implementation."
 
-```
-User: "Start work on EPMCDME-10600"
+- **Score < 15** → tell the user:
+  > "Next step: run `/subagent-driven-development` to implement directly."
 
-Tech Lead:
-1. Fetches ticket via brianna
-2. Reads guides: agents/langchain-agent-patterns.md, integration/llm-providers.md
-3. Searches codebase for similar agents
-4. Asks: "Should the new agent use streaming or batch mode?"
-5. Assesses: Medium (new agent + tool, 5 files, clear patterns)
-6. Recommends: Direct implementation with guidance
-7. Creates branch: EPMCDME-10600
-8. Implements agent following LangChain patterns
-```
+- **SPLIT REQUIRED (score 27+)** → tell the user:
+  > "This task is too large to implement as a single story. Please decompose it into smaller stories using the splitting strategies above, then come back with the first story."
 
-### Example 3: Complex Feature
+Do not invoke brainstorming or subagent-driven-development automatically. The user triggers the next step manually.
 
-```
-User: "Implement EPMCDME-10700"
+---
 
-Tech Lead:
-1. Fetches ticket via brianna
-2. Reads multiple guides (architecture, workflows, integrations)
-3. Identifies: 12+ files affected, new external service integration
-4. Asks: "Which cloud provider should be used?" "What's the data retention policy?"
-5. Assesses: Complex (multi-layer, new integration, security concerns)
-6. Recommends: Use solution-architect skill first
-7. If user insists: Creates branch and starts with high-level plan
-```
+## Fast-Track / Skip Requests
 
-## Integration with Other Skills
+If the user says "skip [phase]" or asks to bypass a step:
 
-### Brianna Skill
-- Use for Jira ticket retrieval (when Jira ticket is provided)
-- Request ONLY description and summary fields
-- Handle ticket not found gracefully
-- Skip if user provides task description without Jira ticket
+1. Confirm the skip: > "Skipping [phase name]. Continuing from [next phase]."
+2. Note what was bypassed so the context is clear.
+3. Proceed from the requested phase.
 
-### Solution Architect Skill
-- Invoke for Complex features needing specs
-- Pass task details (Jira or user-provided) and analysis findings
-- Wait for specification before implementation
+Skipping is the user's prerogative — acknowledge and adapt.
 
-### Codemie-Commit Skill
-- Use after implementation completion
-- Ensure commit message references Jira ticket (if applicable)
-- Follow git workflow from guides
+---
 
 ## Error Handling
 
-### Ticket Not Found
-```markdown
-Unable to fetch Jira ticket [ID]. Please verify:
-- Ticket ID format is correct (EPMCDME-XXXXX)
-- Ticket exists in Jira
-- You have access to view this ticket
+### Ticket not found
+
+```
+Unable to fetch Jira ticket [ID]. Verify the ticket ID format (EPMCDME-XXXXX) and your access.
 ```
 
-### Currently on Main Branch
+### complexity-assessor fails
 
-When `git branch --show-current` returns `main` or `master`:
+Check whether `.claude/references/complexity-assessment/` exists:
 
-```markdown
-⚠️ **Branch Protection**: You are currently on the `main` branch.
+- **Exists** → use the 6-dimension scoring criteria to produce a manual estimate:
+  > "Complexity assessor failed. Manual estimate: [X]/36 — [Size]. Routing: [brainstorming | direct implementation]. Confirm to proceed."
 
-Implementation cannot start on `main`. Creating feature branch `[branch-name]` now...
-```
-
-Then immediately run `git checkout -b [branch-name]` before any file edits.
-
-### Branch Already Exists
-```markdown
-Branch [EPMCDME-XXXXX] already exists.
-
-Options:
-1. Switch to existing branch: `git checkout EPMCDME-XXXXX`
-2. Delete and recreate: `git branch -D EPMCDME-XXXXX && git checkout -b EPMCDME-XXXXX`
-3. Use different branch name (not recommended)
-
-Which option do you prefer?
-```
-
-### Guides Not Found
-```markdown
-Warning: Unable to locate relevant guides for this task.
-
-Proceeding with codebase exploration only. This may result in patterns inconsistent with project standards.
-
-Continue? Consider updating guide paths if this persists.
-```
-
-## Success Criteria
-
-A successful tech-lead session results in:
-- ✅ Jira ticket details retrieved and understood
-- ✅ Relevant guides consulted
-- ✅ Codebase patterns identified
-- ✅ Complexity accurately assessed
-- ✅ Clear recommendation provided
-- ✅ Feature branch created with correct name
-- ✅ Implementation started following project patterns
-- ✅ User has clarity on next steps
-
-## Additional Resources
-
-### Reference Files
-
-For detailed patterns referenced during analysis:
-- **`references/complexity-assessment-guide.md`** - Detailed complexity criteria and examples
-- **`references/branch-workflow.md`** - Git branching best practices for Jira tickets
-
-### Integration Points
-
-This skill coordinates with:
-- **CLAUDE.md**: Uses Task Classifier and guide references
-- **`.codemie/guides/`**: Consults all relevant guides based on task type
-- **brianna skill**: Fetches Jira ticket information
-- **solution-architect skill**: Escalates complex features for specification
-- **codemie-commit skill**: Completes implementation with proper commits
+- **Does not exist** → ask the user:
+  > "Complexity assessor failed and the fallback guide is not present. Please give me a rough size estimate (XS/S/M/L/XL/XXL) so I can route correctly."

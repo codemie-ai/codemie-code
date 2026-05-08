@@ -20,11 +20,16 @@ import type {
 } from '../../core/types.js';
 import type { CodeMieConfigOptions, CodeMieIntegrationInfo } from '../../../env/types.js';
 import { ProviderRegistry } from '../../core/registry.js';
-import { SSOTemplate } from './sso.template.js';
 import { CodeMieSSO } from './sso.auth.js';
 import { SSOModelProxy } from './sso.models.js';
-import { fetchCodeMieUserInfo, fetchCodeMieModels, fetchCodeMieIntegrations } from './sso.http-client.js';
+import { fetchCodeMieModels, fetchCodeMieIntegrations } from './sso.http-client.js';
 import { logger } from '../../../utils/logger.js';
+import {
+  DEFAULT_CODEMIE_BASE_URL,
+  authenticateWithCodeMie,
+  promptForCodeMieUrl,
+  selectCodeMieProject
+} from '../../core/codemie-auth-helpers.js';
 
 /**
  * SSO setup steps implementation
@@ -38,34 +43,11 @@ export const SSOSetupSteps: ProviderSetupSteps = {
    * Prompts for CodeMie URL and performs browser-based authentication
    */
   async getCredentials(): Promise<ProviderCredentials> {
-    // Prompt for CodeMie URL
-    const answers = await inquirer.prompt([
-      {
-        type: 'input',
-        name: 'codeMieUrl',
-        message: 'CodeMie organization URL:',
-        default: SSOTemplate.defaultBaseUrl,
-        validate: (input: string) => {
-          if (!input.trim()) {
-            return 'CodeMie URL is required';
-          }
-          if (!input.startsWith('http://') && !input.startsWith('https://')) {
-            return 'Please enter a valid URL starting with http:// or https://';
-          }
-          return true;
-        }
-      }
-    ]);
-
-    const codeMieUrl = answers.codeMieUrl.trim();
+    const codeMieUrl = await promptForCodeMieUrl(DEFAULT_CODEMIE_BASE_URL);
 
     // Authenticate via browser
     console.log(chalk.cyan('\n🔐 Authenticating via browser...\n'));
-    const sso = new CodeMieSSO();
-    const authResult = await sso.authenticate({
-      codeMieUrl,
-      timeout: 120000 // 2 minutes
-    });
+    const authResult = await authenticateWithCodeMie(codeMieUrl, 120000);
 
     if (!authResult.success) {
       throw new Error(`SSO authentication failed: ${authResult.error || 'Unknown error'}`);
@@ -84,51 +66,7 @@ export const SSOSetupSteps: ProviderSetupSteps = {
         throw new Error('API URL or cookies not found in authentication result');
       }
 
-      // Fetch user's accessible applications
-      const userInfo = await fetchCodeMieUserInfo(
-        authResult.apiUrl,
-        authResult.cookies
-      );
-
-      // Merge applications and applicationsAdmin arrays (deduplicated)
-      const applications = userInfo.applications || [];
-      const applicationsAdmin = userInfo.applications_admin || [];
-      const allProjects = [...new Set([...applications, ...applicationsAdmin])];
-
-      // Validate that user has at least one project
-      if (allProjects.length === 0) {
-        throw new Error('No projects found for your account. Please contact your administrator.');
-      }
-
-      // Sort projects alphabetically (case-insensitive)
-      const sortedProjects = allProjects.sort((a, b) =>
-        a.localeCompare(b, undefined, { sensitivity: 'base' })
-      );
-
-      // Auto-select if only one project
-      if (sortedProjects.length === 1) {
-        selectedProject = sortedProjects[0];
-        console.log(chalk.green(`✓ Auto-selected project: ${chalk.bold(selectedProject)}\n`));
-      } else {
-        // Multiple projects - prompt user to select
-        console.log(chalk.dim(`Found ${sortedProjects.length} accessible project(s)\n`));
-
-        const projectAnswers = await inquirer.prompt([
-          {
-            type: 'list',
-            name: 'project',
-            message: 'Select your project:',
-            choices: sortedProjects.map(proj => ({
-              name: proj,
-              value: proj
-            })),
-            pageSize: 15
-          }
-        ]);
-
-        selectedProject = projectAnswers.project;
-        console.log(chalk.green(`✓ Selected project: ${chalk.bold(selectedProject)}\n`));
-      }
+      selectedProject = await selectCodeMieProject(authResult);
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       console.log(chalk.red(`✗ Project selection failed: ${errorMsg}\n`));
@@ -141,7 +79,7 @@ export const SSOSetupSteps: ProviderSetupSteps = {
     let integrations;
     let integrationsFetchError: string | undefined;
 
-    const integrationsSpinner = ora('Fetching available integrations...').start();
+    const integrationsSpinner = ora('Fetching user integrations...').start();
     try {
       // Use authResult.cookies directly (same as userInfo fetch) instead of retrieving from storage
       // This ensures we use the same authenticated session for all API calls during setup
@@ -168,30 +106,31 @@ export const SSOSetupSteps: ProviderSetupSteps = {
       integrations = [];
     }
 
-    // Always prompt for integration selection
+    // Resolve integration: auto-select if single, prompt if multiple, preserve existing on failure
     let integrationInfo: CodeMieIntegrationInfo | undefined;
 
-    if (integrations.length > 0) {
-      const projectLabel = selectedProject ? ` for project "${selectedProject}"` : '';
+    const projectLabel = selectedProject ? ` for project "${selectedProject}"` : '';
+
+    if (integrations.length === 1) {
+      // Auto-select the only available integration
+      const single = integrations[0];
+      integrationInfo = { id: single.id, alias: single.alias };
+    } else if (integrations.length > 1) {
       console.log(chalk.cyan(`📦 Found ${integrations.length} LiteLLM integration(s)${projectLabel}\n`));
       const integrationAnswers = await inquirer.prompt([
         {
           type: 'list',
           name: 'integration',
-          message: 'Select LiteLLM integration (optional):',
-          choices: [
-            { name: 'None (use CodeMie models directly)', value: null },
-            ...integrations.map(i => ({
-              name: `${i.alias} (${i.project_name || 'Default'})`,
-              value: { id: i.id, alias: i.alias }
-            }))
-          ]
+          message: 'Select LiteLLM integration:',
+          choices: integrations.map(i => ({
+            name: `${i.alias} (${i.project_name || 'Default'})`,
+            value: { id: i.id, alias: i.alias }
+          }))
         }
       ]);
       integrationInfo = integrationAnswers.integration;
     } else {
-      // Show message if no integrations found
-      const projectLabel = selectedProject ? ` for project "${selectedProject}"` : '';
+      // No integrations found
       if (integrationsFetchError) {
         console.log(chalk.dim(`ℹ️  Proceeding without LiteLLM integration (fetch failed)\n`));
       } else {

@@ -41,7 +41,7 @@ litellm --port 4000
 ## Docker
 
 \`\`\`bash
-docker run -p 4000:4000 ghcr.io/berriai/litellm:main-latest
+docker run -p 4000:4000 ghcr.io/berriai/litellm:v1.82.3-stable.patch.2
 \`\`\`
 
 

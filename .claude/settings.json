@@ -2,5 +2,29 @@
   "attribution": {
     "commit": "Generated with AI\n\nCo-Authored-By: codemie-ai <codemie.ai@gmail.com>",
     "pr": ""
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|MultiEdit|Write|Update",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && npm run format"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR\" && npm run check:pre-commit"
+          }
+        ]
+      }
+    ]
   }
 }

@@ -23,6 +23,7 @@ External service integration patterns for CodeMie Code: LangGraph orchestration,
 | Azure OpenAI | GPT via Azure | API Key + Endpoint | Azure credentials |
 | LiteLLM | 100+ providers proxy | Varies | Provider-specific |
 | OpenCode | Open-source AI assistant | SSO/API Key | Via CodeMie proxy |
+| MCP Servers | Remote MCP tool servers | OAuth 2.0 (auto) | Via `codemie-mcp-proxy` |
 | Enterprise SSO | Corporate auth | SAML/OAuth | SSO base URL |
 
 ---
@@ -654,6 +655,117 @@ export class ConfigLoader {
 
 ---
 
+## MCP Server Integration
+
+### Overview
+
+The MCP (Model Context Protocol) proxy enables MCP clients to connect to remote MCP servers over HTTP, with automatic OAuth 2.0 authorization. It bridges stdio JSON-RPC to streamable HTTP transport.
+
+**Key Components:**
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| Stdio-HTTP Bridge | `src/mcp/stdio-http-bridge.ts` | Bridges stdio JSON-RPC ↔ streamable HTTP |
+| OAuth Provider | `src/mcp/auth/mcp-oauth-provider.ts` | Browser-based OAuth authorization code flow |
+| Callback Server | `src/mcp/auth/callback-server.ts` | Ephemeral localhost server for OAuth callbacks |
+| MCP Auth Plugin | `src/providers/plugins/sso/proxy/plugins/mcp-auth.plugin.ts` | SSO proxy plugin for URL rewriting and SSRF protection |
+
+### Architecture Patterns
+
+**Bridge Pattern (stdio ↔ HTTP):**
+```typescript
+// Source: src/mcp/stdio-http-bridge.ts
+// StdioHttpBridge reads JSON-RPC messages from stdin, forwards them
+// over streamable HTTP, and writes responses back to stdout.
+const bridge = new StdioHttpBridge({ serverUrl: 'https://mcp-server.example.com/sse' });
+await bridge.start();
+```
+
+**OAuth Client Pattern:**
+```typescript
+// Source: src/mcp/auth/mcp-oauth-provider.ts
+// Implements OAuthClientProvider from @modelcontextprotocol/client
+// Flow: 401 → metadata → dynamic registration → browser auth → callback → token
+```
+
+**Cookie Jar Pattern:**
+```typescript
+// Source: src/mcp/stdio-http-bridge.ts (CookieJar class)
+// Per-origin cookie storage: captures Set-Cookie from responses,
+// injects Cookie header on subsequent requests to the same origin.
+```
+
+### SSO Proxy Plugin
+
+When running through the CodeMie SSO proxy, the MCP Auth Plugin (priority 3) provides:
+
+- **URL rewriting**: `/mcp_auth?original=<url>` for initial connections, `/mcp_relay/<root_b64>/<relay_b64>/<path>` for relayed requests
+- **Client name override**: Replaces `client_name` in Dynamic Client Registration with `MCP_CLIENT_NAME`
+- **SSRF protection**: Rejects private/loopback origins (hostname + DNS resolution)
+- **Per-flow origin scoping**: Tags discovered origins with their root MCP server to prevent cross-flow confusion
+
+### Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MCP_CLIENT_NAME` | `CodeMie CLI` | Client name for OAuth registration |
+| `MCP_PROXY_DEBUG` | (unset) | Verbose proxy logging |
+| `CODEMIE_PROXY_PORT` | (auto) | Fixed proxy port |
+
+For full architecture details, see [Proxy Architecture — MCP Auth Plugin](../../docs/ARCHITECTURE-PROXY.md#65-mcp-auth-plugin).
+
+---
+
+## skills.sh Wrapper (`codemie skills`)
+
+### Overview
+
+`codemie skills` is a thin, **catalog-agnostic** wrapper around the upstream `skills` CLI (npm package `skills`). It is intentionally not a discovery catalog or trust engine — discovery, ranking, tenant ownership, and source classification live in the future CodeMie UI/catalog and are out of scope for this CLI. The legacy singular `codemie skill` namespace (backed by `SkillManager` / `SkillSync`) is preserved alongside it.
+
+### Command Surface
+
+```bash
+codemie skills add <source> [--global] [--agent <agents...>] [--skill <skills...>] [--yes] [--copy]
+codemie skills update [skills...] [--global] [--project] [--yes]
+codemie skills remove [skills...] [--global] [--agent <agents...>] [--skill <skills...>] [--yes]
+codemie skills list [--global] [--agent <agent>] [--json]
+```
+
+`<source>` may be any input the upstream `skills` CLI accepts: GitHub shorthand (`owner/repo`), HTTPS URL, SSH URL, local path, or a well-known endpoint. The wrapper does not encode internal launch assumptions about source ownership.
+
+### What the Wrapper Owns
+
+- **CodeMie SSO auth gating** for every subcommand (no skills.sh spawn or metric emission until credentials are present).
+- **Egress suppression** for upstream telemetry/audit by injecting `NODE_OPTIONS=--require <shim>` plus `DO_NOT_TRACK=1`, `DISABLE_TELEMETRY=1`, `CI=1`. The shim blocks only host `add-skill.vercel.sh`; legitimate source fetches remain available.
+- **Best-effort agent detection for `add`** when the user does not pass `--agent`:
+  - `.claude/` → passes `--agent claude-code` automatically
+  - `.cursor/` → passes `--agent cursor` automatically
+  - Multiple strong markers + interactive TTY → wrapper prompts the user
+  - No marker, or non-interactive ambiguous case → wrapper invokes `skills.sh` without `--agent` and lets upstream handle it
+- **Lifecycle events** POSTed to `<api-base>/v1/skills/events` with `started`, `completed`, or `failed` status. Persisted in Postgres so install-count queries remain accurate beyond Elastic retention. Attributes are wrapper-known only; the wrapper never parses upstream interactive output to infer skills installed or selected agents. When the user passes `--skill foo bar`, one event is emitted per skill (fan-out) so backend `COUNT(*)` over `skill_id` is correct.
+
+### What the Wrapper Does Not Own
+
+- Catalog browsing or `codemie skills find` (deferred — UI/catalog will generate direct install commands).
+- Source trust labels, tenant classification, or domain allow/deny lists.
+- Alias resolution from skill names to repositories.
+- Parsing `skills.sh` output as a source of truth.
+
+### Future UI/Catalog Integration
+
+The CodeMie UI/catalog will surface curated and client-specific skill sources and produce ready-to-paste `codemie skills add <source> ...` commands. Because this CLI is catalog-agnostic, no CLI change is needed to support new tenant sources — the UI simply generates the right command.
+
+### Reference Files
+
+- Wrapper entry: `src/cli/commands/skills/index.ts`
+- Telemetry shim: `assets/skills-sh-egress-guard.cjs` (copied to `dist/assets/` on build)
+- Spawn helper: `src/cli/commands/skills/lib/run-skills-cli.ts`
+- Auth gate: `src/cli/commands/skills/lib/require-auth.ts`
+- Event emitter: `src/cli/commands/skills/lib/skills-metrics.ts` (defines `SkillEventBody` and `POST /v1/skills/events`)
+- Error classifier: `src/cli/commands/skills/lib/error-classify.ts`
+
+---
+
 ## Troubleshooting
 
 | Issue | Cause | Solution |
@@ -671,6 +783,8 @@ export class ConfigLoader {
 
 ## References
 
+- **MCP Proxy**: `src/mcp/`
+- **MCP Auth Plugin**: `src/providers/plugins/sso/proxy/plugins/mcp-auth.plugin.ts`
 - **Provider Plugins**: `src/providers/plugins/`
 - **Provider Core**: `src/providers/core/types.ts`
 - **Agent System**: `src/agents/codemie-code/`

@@ -160,9 +160,20 @@ export function createDoctorCommand(): Command {
             if (healthCheck) {
               formatter.startCheck('Provider');
 
+              const PROVIDER_CHECK_TIMEOUT_MS = 15_000;
+              let providerTimeoutHandle!: ReturnType<typeof setTimeout>;
               try {
                 const providerStartTime = Date.now();
-                const providerResult = await healthCheck.check(config);
+                const providerResult = await Promise.race([
+                  healthCheck.check(config),
+                  new Promise<never>((_, reject) => {
+                    providerTimeoutHandle = setTimeout(
+                      () => reject(new Error(`Provider check timed out after ${PROVIDER_CHECK_TIMEOUT_MS / 1000}s`)),
+                      PROVIDER_CHECK_TIMEOUT_MS
+                    );
+                  })
+                ]);
+                clearTimeout(providerTimeoutHandle);
                 const elapsed = Date.now() - providerStartTime;
 
                 logger.debug(`Provider check completed in ${elapsed}ms`);
@@ -172,6 +183,7 @@ export function createDoctorCommand(): Command {
                 results.push(doctorResult);
                 formatter.displayCheckWithHeader(doctorResult);
               } catch (error) {
+                clearTimeout(providerTimeoutHandle);
                 const errorMessage = error instanceof Error ? error.message : String(error);
                 logger.error(`Provider check failed: ${errorMessage}`);
                 if (error instanceof Error && error.stack) {

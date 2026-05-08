@@ -1,13 +1,5 @@
-/**
- * Selection UI Module
- *
- * Main orchestration for assistant selection with panel interface
- */
-
 import type { CodeMieClient } from 'codemie-sdk';
 import { ACTIONS } from '@/cli/commands/assistants/constants.js';
-
-type ActionType = typeof ACTIONS.UPDATE | typeof ACTIONS.CANCEL;
 import type { ProviderProfile, CodemieAssistant } from '@/env/types.js';
 import type { SetupCommandOptions } from '../index.js';
 import type { SelectionState } from './types.js';
@@ -15,8 +7,11 @@ import { PANEL_ID, ANSI } from './constants.js';
 import { createDataFetcher } from '../data.js';
 import { createInteractivePrompt, type InteractivePrompt } from './interactive-prompt.js';
 import { createActionHandlers } from './actions.js';
+import { renderUI } from './ui.js';
 import { logger } from '@/utils/logger.js';
 import ora from 'ora';
+
+type ActionType = typeof ACTIONS.UPDATE | typeof ACTIONS.CANCEL;
 
 export interface SelectionOptions {
   registeredIds: Set<string>;
@@ -34,11 +29,8 @@ const DEFAULT_PANEL_PARAMS = {
   currentPage: 0,
   totalItems: 0,
   totalPages: 0,
-}
-/**
- * Initialize state with 3 panels (Registered, Project, Marketplace)
- * Smart default: Project tab if no registered assistants exist
- */
+};
+
 function initializeState(registeredAssistants: CodemieAssistant[]): SelectionState {
   const registeredIds = new Set(registeredAssistants.map(a => a.id));
   const hasRegisteredAssistants = registeredIds.size > 0;
@@ -63,8 +55,8 @@ function initializeState(registeredAssistants: CodemieAssistant[]): SelectionSta
       {
         id: PANEL_ID.MARKETPLACE,
         label: 'Marketplace',
-        ...DEFAULT_PANEL_PARAMS
-      }
+        ...DEFAULT_PANEL_PARAMS,
+      },
     ],
     activePanelId: defaultPanelId,
     searchQuery: '',
@@ -74,34 +66,28 @@ function initializeState(registeredAssistants: CodemieAssistant[]): SelectionSta
     isSearchFocused: false,
     isPaginationFocused: null,
     areNavigationButtonsFocused: false,
-    focusedButton: 'continue'
+    focusedButton: 'continue',
   };
 }
 
-/**
- * Prompt user to select assistants with panel interface
- */
 export async function promptAssistantSelection(
   config: ProviderProfile,
   options: SetupCommandOptions,
   client: CodeMieClient
 ): Promise<{ selectedIds: string[]; action: ActionType }> {
   const state = initializeState(config.codemieAssistants || []);
-  const fetcher = createDataFetcher({
-    config,
-    client,
-    options
-  });
+  const fetcher = createDataFetcher({ config, client, options });
 
   let prompt: InteractivePrompt | null = null;
   let isCancelled = false;
 
   const actionHandlers = createActionHandlers({
     state,
-    fetcher,
+    fetchItems: (params) => fetcher.fetchAssistants(params),
+    entityLabel: 'Assistant',
     prompt: () => prompt,
     setPrompt: (p) => { prompt = p; },
-    setCancelled: (cancelled) => { isCancelled = cancelled; }
+    setCancelled: (cancelled) => { isCancelled = cancelled; },
   });
 
   const spinner = ora('Loading assistants...').start();
@@ -110,7 +96,7 @@ export async function promptAssistantSelection(
     const result = await fetcher.fetchAssistants({
       scope: state.activePanelId,
       searchQuery: state.searchQuery,
-      page: 0
+      page: 0,
     });
     activePanel.data = result.data;
     activePanel.filteredData = result.data;
@@ -124,22 +110,19 @@ export async function promptAssistantSelection(
     activePanel.totalPages = 0;
   }
 
-  // Clear spinner output before starting interactive mode
   process.stdout.write(ANSI.CLEAR_LINE_ABOVE);
 
   prompt = createInteractivePrompt({
     state,
-    actions: actionHandlers
+    actions: actionHandlers,
+    renderFn: (s, cursor) => renderUI(s as SelectionState, cursor),
   });
 
   await prompt.start();
 
   if (isCancelled) {
     logger.debug('[AssistantSelection] Selection cancelled');
-    return {
-      selectedIds: [],
-      action: ACTIONS.CANCEL
-    };
+    return { selectedIds: [], action: ACTIONS.CANCEL };
   }
 
   const selectedIdsArray = Array.from(state.selectedIds);
@@ -147,11 +130,8 @@ export async function promptAssistantSelection(
     totalSelected: selectedIdsArray.length,
     selectedIds: selectedIdsArray,
     registeredCount: state.registeredIds.size,
-    registeredIds: Array.from(state.registeredIds)
+    registeredIds: Array.from(state.registeredIds),
   });
 
-  return {
-    selectedIds: selectedIdsArray,
-    action: ACTIONS.UPDATE
-  };
+  return { selectedIds: selectedIdsArray, action: ACTIONS.UPDATE };
 }

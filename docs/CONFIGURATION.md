@@ -133,6 +133,7 @@ Environment variables override config file values and are useful for CI/CD, Dock
 | `CODEMIE_MODEL` | Model to use | - | `claude-sonnet-4-5-20250929` |
 | `CODEMIE_TIMEOUT` | Request timeout in milliseconds | `300000` | `600000` |
 | `CODEMIE_DEBUG` | Enable debug logging | `false` | `true` |
+| `CODEMIE_INSECURE` | Disable SSL certificate verification (for self-signed certs or local dev only) | `false` | `1` |
 
 #### AI/Run SSO Configuration
 

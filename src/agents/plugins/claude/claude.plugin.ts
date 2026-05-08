@@ -30,17 +30,17 @@ let statuslineManagedThisSession = false;
  *
  * **UPDATE THIS WHEN BUMPING CLAUDE VERSION**
  */
-const CLAUDE_SUPPORTED_VERSION = '2.1.63';
+const CLAUDE_SUPPORTED_VERSION = '2.1.114';
 
 /**
  * Minimum supported Claude Code version
  * Versions below this are known to be incompatible and will be blocked from starting
  * Rule: always 10 patch versions below CLAUDE_SUPPORTED_VERSION
- * e.g. supported = 2.1.63 → minimum = 2.1.53
+ * e.g. supported = 2.1.114 → minimum = 2.1.104
  *
  * **UPDATE THIS WHEN BUMPING CLAUDE VERSION**
  */
-const CLAUDE_MINIMUM_SUPPORTED_VERSION = '2.1.53';
+const CLAUDE_MINIMUM_SUPPORTED_VERSION = '2.1.104';
 
 /**
  * Claude Code installer URLs
@@ -84,7 +84,7 @@ export const ClaudePluginMetadata: AgentMetadata = {
     opusModel: ['ANTHROPIC_DEFAULT_OPUS_MODEL'],
   },
 
-  supportedProviders: ['litellm', 'ai-run-sso', 'bedrock', 'bearer-auth'],
+  supportedProviders: ['litellm', 'ai-run-sso', 'bedrock', 'bearer-auth', 'anthropic-subscription'],
   blockedModelPatterns: [],
   recommendedModels: ['claude-sonnet-4-6', 'claude-4-opus', 'gpt-4.1'],
 
@@ -161,6 +161,25 @@ export const ClaudePluginMetadata: AgentMetadata = {
       // Claude Code 2.1.69+ fails to start without this flag when using CodeMie proxy
       if (!env.ENABLE_TOOL_SEARCH) {
         env.ENABLE_TOOL_SEARCH = '0';
+      }
+
+      if (!env.ENABLE_PROMPT_CACHING_1H) {
+        env.ENABLE_PROMPT_CACHING_1H = '1';
+      }
+
+      if (!env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE) {
+        let autocompactPct = 80;
+        if (env.CODEMIE_PROFILE_CONFIG) {
+          try {
+            const profileConfig = JSON.parse(env.CODEMIE_PROFILE_CONFIG);
+            if (typeof profileConfig.claudeAutocompactPct === 'number') {
+              autocompactPct = profileConfig.claudeAutocompactPct;
+            }
+          } catch {
+            // ignore malformed profile config
+          }
+        }
+        env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = String(autocompactPct);
       }
 
       // Statusline setup: when --status flag is passed, configure Claude Code

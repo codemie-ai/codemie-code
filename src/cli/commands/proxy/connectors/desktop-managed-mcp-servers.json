@@ -1,0 +1,50 @@
+[
+  {
+    "name": "Atlassian Jira and Confluence",
+    "url": "https://mcp.atlassian.com/v1/mcp/authv2",
+    "transport": "http",
+    "oauth": true
+  },
+  {
+    "name": "Notion",
+    "url": "https://mcp.notion.com/mcp",
+    "transport": "http",
+    "oauth": true
+  },
+  {
+    "name": "Linear",
+    "url": "https://mcp.linear.app/mcp",
+    "transport": "http",
+    "oauth": true
+  },
+  {
+    "name": "Box",
+    "url": "https://mcp.box.com",
+    "transport": "http",
+    "oauth": true
+  },
+  {
+    "name": "Canva",
+    "url": "https://mcp.canva.com/mcp",
+    "transport": "http",
+    "oauth": true
+  },
+  {
+    "name": "Vercel",
+    "url": "https://mcp.vercel.com",
+    "transport": "http",
+    "oauth": true
+  },
+  {
+    "name": "Netlify",
+    "url": "https://netlify-mcp.netlify.app/mcp",
+    "transport": "http",
+    "oauth": true
+  },
+  {
+    "name": "Miro",
+    "url": "https://mcp.miro.com",
+    "transport": "http",
+    "oauth": true
+  }
+]

@@ -225,8 +225,8 @@ describe('Assistants Setup Helpers - helpers.ts', () => {
 		it('should call both unregister functions', async () => {
 			await unregisterAssistant(mockAssistant);
 
-			expect(unregisterClaudeSubagent).toHaveBeenCalledWith('test-assistant');
-			expect(unregisterClaudeSkill).toHaveBeenCalledWith('test-assistant');
+			expect(unregisterClaudeSubagent).toHaveBeenCalledWith('test-assistant', 'global', undefined);
+			expect(unregisterClaudeSkill).toHaveBeenCalledWith('test-assistant', 'global', undefined);
 		});
 
 		it('should handle unregister errors gracefully', async () => {
@@ -271,8 +271,8 @@ describe('Assistants Setup Helpers - helpers.ts', () => {
 
 			await unregisterAssistant(assistantNoSlug);
 
-			expect(unregisterClaudeSubagent).toHaveBeenCalledWith('');
-			expect(unregisterClaudeSkill).toHaveBeenCalledWith('');
+			expect(unregisterClaudeSubagent).toHaveBeenCalledWith('', 'global', undefined);
+			expect(unregisterClaudeSkill).toHaveBeenCalledWith('', 'global', undefined);
 		});
 	});
 
@@ -293,7 +293,7 @@ describe('Assistants Setup Helpers - helpers.ts', () => {
 		it('should register as agent only by default', async () => {
 			const result = await registerAssistant(mockAssistant);
 
-			expect(registerClaudeSubagent).toHaveBeenCalledWith(mockAssistant);
+			expect(registerClaudeSubagent).toHaveBeenCalledWith(mockAssistant, 'global', undefined);
 			expect(registerClaudeSkill).not.toHaveBeenCalled();
 			expect(result).toBeDefined();
 			expect(result?.registrationMode).toBe('agent');
@@ -302,7 +302,7 @@ describe('Assistants Setup Helpers - helpers.ts', () => {
 		it('should register as agent when mode is AGENT', async () => {
 			const result = await registerAssistant(mockAssistant, REGISTRATION_MODE.AGENT);
 
-			expect(registerClaudeSubagent).toHaveBeenCalledWith(mockAssistant);
+			expect(registerClaudeSubagent).toHaveBeenCalledWith(mockAssistant, 'global', undefined);
 			expect(registerClaudeSkill).not.toHaveBeenCalled();
 			expect(result?.registrationMode).toBe('agent');
 		});
@@ -311,7 +311,7 @@ describe('Assistants Setup Helpers - helpers.ts', () => {
 			const result = await registerAssistant(mockAssistant, REGISTRATION_MODE.SKILL);
 
 			expect(registerClaudeSubagent).not.toHaveBeenCalled();
-			expect(registerClaudeSkill).toHaveBeenCalledWith(mockAssistant);
+			expect(registerClaudeSkill).toHaveBeenCalledWith(mockAssistant, 'global', undefined);
 			expect(result?.registrationMode).toBe('skill');
 		});
 

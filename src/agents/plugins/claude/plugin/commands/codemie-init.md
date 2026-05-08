@@ -1,58 +1,57 @@
-# Codemie Init - Generate Project Documentation
-
-**Command Name**: `codemie-init`
-**Description**: Initialize documentation for any project using CodeMie approach - analyze structure and generate AI-optimized guides
-**Category**: Documentation Generation
-
+---
+description: Initialize documentation for a project using CodeMie approach — analyze structure, generate AI-optimized guides, and install superpowers skills.
+allowed-tools: Bash, Read, Glob, Grep, Write, Edit
 ---
 
-## Additional user's input
-Additional context/input from user: $ARGUMENTS. Might be empty by default.
+# Codemie Init
+
+Additional context: $ARGUMENTS
 
 ## Purpose
 
-Analyze any software project and generate AI-optimized documentation for Claude Code:
-- Main CLAUDE.md file with project-specific workflows
-- Detailed guides for relevant patterns (only those that exist in codebase)
-- Properly structured .codemie/guides/ directory
+Initialize a project for AI-assisted development:
+1. Install superpowers skills (project-level)
+2. Generate `.codemie/guides/` for patterns that actually exist in the codebase
+3. Generate a `CLAUDE.md` that imports those guides
 
 ---
 
-## Prerequisites
+## Phase 0: Install Superpowers Skills
 
-- [ ] Project is cloned and accessible
-- [ ] Read access to the codebase
-- [ ] Templates available at `${CLAUDE_PLUGIN_ROOT}/claude-templates/templates/`
+Install superpowers skills at project level using the [skills CLI](https://github.com/vercel-labs/skills):
+
+```bash
+npx skills add obra/superpowers --all -a claude-code
+```
+
+This installs to `.claude/skills/` in the project root. Skip if `.claude/skills/` already contains superpowers skills.
+
+**Verify**: check that `.claude/skills/brainstorming/SKILL.md` exists after install.
 
 ---
 
-## 🚨 CRITICAL RULES
+## Critical Rules
 
-### Size Limits (MANDATORY)
+### Size Limits (mandatory)
+
 - **CLAUDE.md**: 200-300 lines maximum
 - **Each guide**: 200-400 lines maximum
 
-### Generation Principles
-- ✅ Create guides ONLY for patterns/categories that exist in codebase
-- ✅ Brief code examples (5-15 lines, max 20)
-- ✅ Use tables for patterns instead of long explanations
-- ✅ ONE example per pattern
-- ✅ Reference file:line instead of copying entire functions
-- ✅ Multiple .md files per category allowed (e.g., component-specific guides in development/)
-- ❌ NO guides for non-existent features (no API = no API guide)
-- ❌ NO extensive code blocks
-- ❌ NO multiple examples for same pattern
+### Generation principles
+- Create guides ONLY for patterns that actually exist in the codebase
+- Brief code examples (5-15 lines max), one per pattern
+- Reference `file:line` instead of copying entire functions
+- Multiple `.md` files per category are fine
+- No guides for non-existent features
 
-### Existing Documentation Handling
-- If CLAUDE.md exists → Analyze and UPDATE/ADJUST (don't overwrite blindly)
-- If guides exist in .codemie/guides/ → READ, INCLUDE in CLAUDE.md, and ADJUST if needed
-- Preserve user customizations where possible
+### Existing documentation
+- If `CLAUDE.md` exists → update/adjust, do not overwrite
+- If guides exist in `.codemie/guides/` → read, include, adjust if outdated
+- Preserve user customizations
 
 ---
 
-## Execution Steps
-
-### Phase 1: Discovery & Analysis
+## Phase 1: Discovery & Analysis
 
 #### Step 1.1: Check Existing Documentation
 
@@ -148,7 +147,7 @@ Analyze any software project and generate AI-optimized documentation for Claude 
 
 ---
 
-### Phase 2: Determine Required Guides
+## Phase 2: Determine Required Guides
 
 #### Step 2.1: Map Categories to Guides
 
@@ -239,7 +238,7 @@ Proceed with this plan? (Yes / Customize)
 
 ---
 
-### Phase 3: Generate Guides
+## Phase 3: Generate Guides
 
 #### Step 3.1: Create Directory Structure
 
@@ -314,7 +313,7 @@ Security:
 
 ---
 
-### Phase 4: Generate CLAUDE.md
+## Phase 4: Generate CLAUDE.md
 
 #### Step 4.1: Load Template
 
@@ -399,7 +398,7 @@ Create intent-based category mapping (ONLY for categories that have guides):
 
 ---
 
-### Phase 5: Validation
+## Phase 5: Validation
 
 #### Step 5.1: Verify All References
 
@@ -476,9 +475,9 @@ done
 
 ## Next Steps
 
-1. Review generated documentation
-2. Test by asking Claude Code to perform a task
-3. Customize any sections needing refinement
+1. Verify superpowers installed: `.claude/skills/brainstorming/SKILL.md` exists
+2. Review generated `CLAUDE.md` and guides
+3. Start a feature with `/tech-lead` — it will orchestrate the full SDLC via superpowers
 ```
 
 ---

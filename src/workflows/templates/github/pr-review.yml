@@ -80,12 +80,12 @@ jobs:
 
     steps:
       - name: Checkout PR code
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
           node-version: '24'
 
@@ -184,7 +184,7 @@ jobs:
                 "command": "npx",
                 "args": [
                   "-y",
-                  "@modelcontextprotocol/server-github"
+                  "@modelcontextprotocol/server-github@2025.4.8"
                 ],
                 "env": {
                   "GITHUB_PERSONAL_ACCESS_TOKEN": "$GITHUB_TOKEN"
@@ -616,7 +616,7 @@ jobs:
 
       - name: Upload Review Output
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: codemie-review-output-${{ github.run_number }}
           path: /tmp/codemie-review-output.log
@@ -624,7 +624,7 @@ jobs:
 
       - name: Post failure comment
         if: failure() && steps.claude_review.outcome == 'failure'
-        uses: actions/github-script@v7
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
         with:
           github-token: ${{ steps.generate_token.outputs.token }}
           script: |

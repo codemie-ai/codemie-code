@@ -284,6 +284,15 @@ export interface ProviderSetupSteps {
   fetchModels(credentials: ProviderCredentials): Promise<string[]>;
 
   /**
+   * Optional: choose model programmatically and skip interactive model selection
+   */
+  selectModel?(
+    credentials: ProviderCredentials,
+    models: string[],
+    template?: ProviderTemplate
+  ): Promise<string | null | undefined>;
+
+  /**
    * Step 3: Build final configuration
    *
    * Transform credentials + model selection into CodeMieConfigOptions
@@ -447,7 +456,7 @@ export interface CodeMieIntegration {
  * CodeMie integrations API response
  */
 export interface CodeMieIntegrationsResponse {
-  integrations?: CodeMieIntegration[];
+  data?: CodeMieIntegration[];
   // Allow for flexible response structure
   [key: string]: any;
 }

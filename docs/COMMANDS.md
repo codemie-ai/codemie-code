@@ -8,6 +8,8 @@ codemie --version                # Show version information
 codemie --task "task"            # Execute single task with built-in agent and exit
 
 codemie setup                    # Interactive configuration wizard
+codemie setup skills             # Manage CodeMie platform skills (register/unregister)
+codemie setup assistants         # Manage CodeMie assistants as Claude subagents or skills
 codemie profile <command>        # Manage provider profiles
 codemie analytics [options]      # View usage analytics
 codemie log [options]            # View and manage debug logs and sessions
@@ -19,8 +21,79 @@ codemie update [agent]           # Update installed agents
 codemie self-update              # Update CodeMie CLI itself
 codemie doctor [options]         # Health check and diagnostics
 codemie plugin <command>         # Manage native plugins
+codemie mcp-proxy <url>          # Stdio-to-HTTP MCP proxy with OAuth support
 codemie version                  # Show version information
 ```
+
+## Proxy Commands
+
+```bash
+codemie proxy start              # Start the local proxy daemon
+codemie proxy stop               # Stop the local proxy daemon
+codemie proxy status             # Show daemon status
+codemie proxy connect desktop    # Configure Claude Desktop (3P) to use the local proxy
+codemie proxy inspect desktop    # Inspect Desktop telemetry and sync state
+```
+
+`codemie proxy connect desktop` does more than write the gateway config. When the daemon is started through this path, CodeMie also discovers Claude Desktop 3P local session transcripts from the `Claude-3p` storage directory and syncs metrics plus conversations to CodeMie with client identity `claude-desktop`.
+
+### Claude Desktop 3P
+
+#### `codemie proxy connect desktop`
+
+Connect Claude Desktop 3P to the local CodeMie proxy.
+
+```bash
+codemie proxy connect desktop
+codemie proxy connect desktop --profile codemie-new
+```
+
+Behavior:
+- uses the current active CodeMie profile by default
+- `--profile` overrides for the current run only
+- fails if the resolved profile is not a CodeMie SSO profile
+
+Recommended setup:
+
+```bash
+codemie proxy connect desktop
+```
+
+After the config is written, quit and reopen Claude Desktop.
+
+#### `codemie proxy inspect desktop`
+
+Inspect Claude Desktop 3P proxy readiness and recent discovered sessions.
+
+```bash
+codemie proxy inspect desktop --limit 5
+```
+
+At a high level, this shows:
+- whether the daemon is running
+- which profile and target URL are active
+- whether Claude Desktop storage was found
+- recently discovered Desktop sessions
+- whether sessions were ingested and whether metrics/conversation JSONL files exist
+
+#### Troubleshooting Claude Desktop 3P
+
+```bash
+codemie profile status
+codemie proxy connect desktop
+codemie proxy status
+codemie proxy inspect desktop --limit 5
+codemie proxy stop
+codemie proxy connect desktop
+```
+
+If Claude Desktop still appears connected to Anthropic subscription or another Gateway:
+1. Quit Claude Desktop.
+2. Sign out or clear the previous provider setup in Claude Desktop.
+3. Reconnect with CodeMie.
+4. Reopen Claude Desktop.
+
+CodeMie cannot forcibly log you out from Claude Desktop. It can only write the CodeMie proxy configuration and help you inspect the current integration state.
 
 ### Global Options
 
@@ -49,6 +122,8 @@ All agent shortcuts support these options:
 --base-url <url>         # Override base URL
 --timeout <seconds>      # Override timeout (in seconds)
 -s, --silent             # Enable silent mode
+--task <prompt>          # Run a single task in headless (non-interactive) mode and exit
+--jwt-token <token>      # JWT token for authentication (overrides config and CODEMIE_JWT_TOKEN)
 ```
 
 ### Built-in Agent (codemie-code)
@@ -98,6 +173,111 @@ codemie-claude --task "Implement task 1" --silent --dangerously-skip-permissions
 ```
 
 **Note**: Configuration options (`--profile`, `--model`, etc.) are handled by CodeMie CLI wrapper. All other options are passed directly to the underlying agent binary.
+
+## Headless Mode (`--task`)
+
+The `--task` flag runs a single prompt non-interactively: the agent executes the task, prints the result, and exits. No user interaction is required. This is the primary way to use CodeMie agents in CI/CD pipelines and automated scripts.
+
+### How It Works
+
+Each agent maps `--task` to its own non-interactive mechanism:
+
+| Agent | Underlying flag/command | Behaviour |
+|-------|------------------------|-----------|
+| `codemie-claude` | `-p <prompt>` (print mode) | Runs prompt, prints output, exits |
+| `codemie-gemini` | `-p <prompt>` | Runs prompt, prints output, exits |
+| `codemie-opencode` | `opencode run <prompt>` | Runs task via `run` subcommand, exits |
+
+### Basic Usage
+
+```bash
+# Claude
+codemie-claude --task "Summarize the recent changes in this repo"
+
+# Gemini
+codemie-gemini --task "Explain the architecture of this project"
+
+# OpenCode
+codemie-opencode --task "Review the code in src/ for security issues"
+```
+
+### With Profile or Model Override
+
+```bash
+codemie-claude --profile work --task "Fix the failing tests"
+codemie-gemini --model gemini-2.5-flash --task "Generate a changelog for this release"
+```
+
+### Capturing Output
+
+```bash
+# Redirect stdout to a file
+codemie-claude --task "Review this PR" > review.txt
+
+# Capture both stdout and stderr
+codemie-claude --task "Analyze codebase" > output.txt 2>&1
+```
+
+### Non-Interactive Flags (Claude-specific)
+
+When running headless Claude tasks, combine `--task` with these pass-through flags for full automation:
+
+```bash
+codemie-claude \
+  --task "Implement the changes described in SPEC.md" \
+  --silent \
+  --dangerously-skip-permissions \
+  --output-format stream-json \
+  --verbose
+```
+
+### Headless Mode with JWT Authentication
+
+For CI/CD environments where SSO login is not possible, combine `--task` with `--jwt-token`:
+
+```bash
+# Single command — no prior setup required
+codemie-claude \
+  --jwt-token "$CI_JWT_TOKEN" \
+  --task "Review the changes in this commit and list any issues"
+
+# With base URL for environments not yet configured
+codemie-claude \
+  --jwt-token "$CI_JWT_TOKEN" \
+  --base-url "https://codemie.lab.epam.com" \
+  --task "Run a security review of the staged files"
+```
+
+See [JWT Bearer Authorization](./AUTHENTICATION.md#jwt-bearer-authorization) for full token setup options.
+
+### CI/CD Examples
+
+**GitHub Actions:**
+```yaml
+- name: AI Code Review
+  run: |
+    codemie-claude \
+      --jwt-token "${{ secrets.CODEMIE_JWT_TOKEN }}" \
+      --task "Review the changes in this PR and report any issues" \
+      --silent
+```
+
+**GitLab CI:**
+```yaml
+ai-review:
+  script:
+    - codemie-claude
+        --jwt-token "$CODEMIE_JWT_TOKEN"
+        --task "Review changes in this commit"
+        --silent
+```
+
+**Shell script:**
+```bash
+#!/bin/bash
+RESULT=$(codemie-claude --jwt-token "$TOKEN" --task "Analyze src/ for bugs" 2>&1)
+echo "$RESULT" > /tmp/ai-review.txt
+```
 
 ## Profile Management Commands
 
@@ -383,6 +563,92 @@ codemie plugin disable <name>
 
 For full documentation, see [Plugin System](./PLUGINS.md).
 
+## MCP Proxy Command
+
+Run a stdio-to-HTTP bridge that connects MCP clients (like Claude Code) to remote MCP servers, handling OAuth 2.0 authorization automatically.
+
+```bash
+codemie mcp-proxy <url>
+```
+
+**Arguments:**
+- `<url>` — Remote MCP server URL (must be a valid HTTP/HTTPS URL)
+
+**Features:**
+- Stdio-to-HTTP bridge (JSON-RPC over stdio ↔ streamable HTTP transport)
+- Automatic OAuth 2.0 with Dynamic Client Registration
+- Per-origin cookie jar for session persistence
+- Browser-based authorization with ephemeral localhost callback server
+- Graceful shutdown on SIGINT/SIGTERM
+
+### Registering with Claude Code
+
+Use `claude mcp add` to register the proxy as an MCP server:
+
+```bash
+# Using the global binary (requires global install)
+claude mcp add my-server -- codemie-mcp-proxy "https://mcp-server.example.com/sse"
+
+# Using node directly (works without global install)
+claude mcp add my-server -- node /path/to/bin/codemie-mcp-proxy.js "https://mcp-server.example.com/sse"
+```
+
+Or configure `.mcp.json` directly:
+
+```json
+{
+  "mcpServers": {
+    "my-server": {
+      "type": "stdio",
+      "command": "codemie-mcp-proxy",
+      "args": ["https://mcp-server.example.com/sse"],
+      "env": {
+        "MCP_CLIENT_NAME": "Claude Code (my-server)"
+      }
+    }
+  }
+}
+```
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MCP_CLIENT_NAME` | `CodeMie CLI` | Client name used in OAuth Dynamic Client Registration |
+| `MCP_PROXY_DEBUG` | (unset) | Set to `true` to enable verbose proxy logging |
+| `CODEMIE_DEBUG` | (unset) | Set to `true` to enable general debug logging |
+
+### OAuth Flow
+
+When the remote MCP server returns `401 Unauthorized`:
+
+1. Discover resource metadata and authorization server metadata
+2. Register a client dynamically (`client_name` from `MCP_CLIENT_NAME`)
+3. Open the user's browser for authorization
+4. Receive the authorization code via ephemeral localhost callback server
+5. Exchange the code for tokens
+6. Retry the original request with the Bearer token
+
+All state is in-memory only — re-authorization is required each session.
+
+### Logs
+
+Proxy logs are written to `~/.codemie/logs/mcp-proxy.log`. Enable verbose logging with `MCP_PROXY_DEBUG=true`.
+
+### Troubleshooting
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| `Invalid MCP server URL` | URL argument is malformed | Verify the URL is a valid HTTP/HTTPS URL |
+| Browser doesn't open | System `open`/`xdg-open` not available | Open the URL printed in logs manually |
+| OAuth timeout | User didn't complete browser auth in 2 minutes | Re-run the command and complete auth faster |
+| `ECONNREFUSED` | Remote MCP server is unreachable | Check the URL and network connectivity |
+| No tools appearing | OAuth flow not completed | Check `~/.codemie/logs/mcp-proxy.log` for errors |
+
+### Architecture
+
+For implementation details including the SSO proxy plugin, URL rewriting, and SSRF protection, see [Proxy Architecture](./ARCHITECTURE-PROXY.md#65-mcp-auth-plugin).
+
 ## Detailed Command Reference
 
 ### `codemie setup`
@@ -400,6 +666,72 @@ codemie setup [options]
 - Health endpoint testing during setup
 - Profile management (add new or update existing)
 - Credential validation before saving
+
+#### `codemie setup skills`
+
+Manage CodeMie platform skills — browse, register, or unregister skills from your CodeMie account as Claude Code slash commands.
+
+**Usage:**
+```bash
+codemie setup skills [options]
+```
+
+**Options:**
+- `--profile <name>` - Profile to use (defaults to active profile)
+- `-v, --verbose` - Enable verbose debug output
+
+**Workflow:**
+1. Shows a disclaimer: skills are installed **without tools or MCP servers**. If you need tools or MCP servers with a skill, attach it to an assistant and use `codemie setup assistants` instead.
+2. Prompts for storage scope: **Global** (saved to `~/.codemie/codemie-cli.config.json`, available in all projects) or **Local** (saved to `.codemie/codemie-cli.config.json`, overrides global for the current repository).
+3. Opens an interactive selection UI — check/uncheck skills to register or unregister.
+
+**Features:**
+- Browse all skills available in your CodeMie account
+- Register selected skills as Claude Code `/skill-name` slash commands
+- Unregister skills you no longer need
+- Global vs. local scope (local config overrides global per-repository)
+- Auto-sync on agent startup — SKILL.md files are refreshed with the latest content from the platform each time Claude starts
+
+**After registration**, invoke skills directly in Claude Code:
+```text
+/skill-name run the skill
+```
+
+#### `codemie setup assistants`
+
+Manage CodeMie assistants — browse, register, or unregister assistants from your CodeMie account as Claude Code subagents or slash commands.
+
+**Usage:**
+```bash
+codemie setup assistants [options]
+```
+
+**Options:**
+- `--profile <name>` - Profile to use (defaults to active profile)
+- `--project <project>` - Filter assistants by project name
+- `--all-projects` - Show assistants from all projects
+- `-v, --verbose` - Enable verbose debug output
+
+**Workflow:**
+1. Prompts for storage scope: **Global** (saved to `~/.codemie/codemie-cli.config.json`) or **Local** (saved to `.codemie/codemie-cli.config.json`, overrides global for the current repository).
+2. Opens an interactive selection UI — check/uncheck assistants to register or unregister.
+3. Prompts for registration mode:
+   - **Claude Subagents** — registers all selected assistants as `@slug` subagents
+   - **Claude Skills** — registers all selected assistants as `/slug` slash commands
+   - **Manual Configuration** — choose subagent or skill per individual assistant
+
+**Features:**
+- Assistants are registered **with their tools and MCP servers** (unlike platform skills)
+- Global vs. local scope (local config overrides global per-repository)
+- Re-registration on each run keeps assistant definitions up to date
+
+**After registration**, use assistants from Claude Code:
+```text
+@assistant-slug Review this authentication flow
+/assistant-slug prepare a release checklist
+```
+
+> **Tip:** For lightweight skills without tools, use `codemie setup skills` instead.
 
 ### `codemie list`
 

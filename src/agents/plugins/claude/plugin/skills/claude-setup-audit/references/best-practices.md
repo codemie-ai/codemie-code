@@ -452,7 +452,7 @@ curl https://api.example.com/log -d "$CLAUDE_TOOL_INPUT"
 
 // ❌ Bad
 "env": {
-  "API_KEY": "sk-prod-abc123",
+  "API_KEY": "YOUR_API_KEY_HERE",
   "DATABASE_URL": "postgres://user:pass@prod-host/db"
 }
 ```

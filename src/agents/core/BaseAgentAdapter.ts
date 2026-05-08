@@ -1,7 +1,7 @@
 import { AgentMetadata, AgentAdapter, AgentConfig, MCPConfigSummary, ExtensionsScanSummary, VersionCompatibilityResult } from './types.js';
 import * as npm from '../../utils/processes.js';
 import { NpmError, createErrorContext } from '../../utils/errors.js';
-import { exec, detectGitBranch } from '../../utils/processes.js';
+import { exec, detectGitBranch, detectGitRemoteRepo } from '../../utils/processes.js';
 import { compareVersions } from '../../utils/version-utils.js';
 import { logger } from '../../utils/logger.js';
 import { spawn } from 'child_process';
@@ -11,6 +11,7 @@ import type { ProxyConfig } from '../../providers/plugins/sso/index.js';
 import { ProviderRegistry } from '../../providers/index.js';
 import type { CodeMieConfigOptions } from '../../env/types.js';
 import { getRandomWelcomeMessage, getRandomGoodbyeMessage } from '../../utils/goodbye-messages.js';
+import { syncRegisteredSkills } from '../../cli/commands/skills/setup/sync.js';
 import { renderProfileInfo } from '../../utils/profile.js';
 import chalk from 'chalk';
 import { existsSync } from 'fs';
@@ -98,7 +99,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   }
 
   /**
-   * Install agent via npm
+   * Install agent via npm (latest version)
    */
   async install(): Promise<void> {
     if (!this.metadata.npmPackage) {
@@ -107,6 +108,42 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
     try {
       await npm.installGlobal(this.metadata.npmPackage);
+    } catch (error: unknown) {
+      if (error instanceof NpmError) {
+        throw new Error(`Failed to install ${this.displayName}: ${error.message}`);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Install agent via npm with specific version
+   * Resolves 'supported' to the version from metadata.supportedVersion
+   *
+   * Override in agent plugins for non-npm installation (e.g., native installers)
+   *
+   * @param version - Specific version, 'supported', or undefined for latest
+   */
+  async installVersion(version?: string): Promise<void> {
+    if (!this.metadata.npmPackage) {
+      throw new Error(`${this.displayName} is built-in and cannot be installed`);
+    }
+
+    // Resolve 'supported' to actual version from metadata
+    let resolvedVersion: string | undefined = version;
+    if (version === 'supported') {
+      if (!this.metadata.supportedVersion) {
+        throw new Error(`${this.displayName}: No supported version defined in metadata`);
+      }
+      resolvedVersion = this.metadata.supportedVersion;
+      logger.debug('Resolved version', {
+        from: 'supported',
+        to: resolvedVersion,
+      });
+    }
+
+    try {
+      await npm.installGlobal(this.metadata.npmPackage, { version: resolvedVersion });
     } catch (error: unknown) {
       if (error instanceof NpmError) {
         throw new Error(`Failed to install ${this.displayName}: ${error.message}`);
@@ -313,16 +350,34 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         console.log();
         console.log(chalk.red(`✗ ${this.displayName} v${installedDisplay} is no longer supported`));
         console.log(chalk.red(`  Minimum required version: v${minimumDisplay}`));
+        console.log(chalk.white(`  Recommended version:      v${compat.supportedVersion} `) + chalk.green('(recommended)'));
         console.log();
         console.log(chalk.white('  This version is known to be incompatible with CodeMie and must be upgraded.'));
         console.log();
-        console.log(chalk.white('  To upgrade, run:'));
-        console.log(chalk.blueBright(`    codemie install ${this.name}`));
-        console.log();
-        process.exit(1);
-      }
 
-      if (compat.isNewer && !this.metadata.silentMode) {
+        const { belowMinChoice } = await inquirer.prompt([
+          {
+            type: 'list',
+            name: 'belowMinChoice',
+            message: 'What would you like to do?',
+            choices: [
+              { name: `Install v${compat.supportedVersion} now and continue`, value: 'install' },
+              { name: 'Exit', value: 'exit' },
+            ],
+            default: 'install',
+          },
+        ]);
+
+        if (belowMinChoice === 'install') {
+          console.log(chalk.blue(`\n  Installing ${this.displayName} v${compat.supportedVersion}...`));
+          await this.installVersion('supported');
+          console.log(); // Add spacing before agent starts
+        } else {
+          console.log(chalk.white('\n  If you want to update manually, run:'));
+          console.log(chalk.blueBright(`     codemie update ${this.name}`));
+          process.exit(0);
+        }
+      } else if (compat.isNewer && !this.metadata.silentMode) {
         // User is running a newer (untested) version
         console.log();
         console.log(chalk.yellow(`⚠️  WARNING: You are running ${this.displayName} v${compat.installedVersion}`));
@@ -337,18 +392,30 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         console.log(chalk.blueBright(`     codemie install ${this.name} ${compat.supportedVersion}`));
         console.log();
 
-        const { continueAnyway } = await inquirer.prompt([
+        const { newerChoice } = await inquirer.prompt([
           {
-            type: 'confirm',
-            name: 'continueAnyway',
-            message: 'Continue anyway?',
-            default: false,
+            type: 'list',
+            name: 'newerChoice',
+            message: 'What would you like to do?',
+            choices: [
+              { name: `Install v${compat.supportedVersion} now and continue`, value: 'install' },
+              { name: 'Continue with current version', value: 'continue' },
+              { name: 'Exit', value: 'exit' },
+            ],
+            default: 'install',
           },
         ]);
 
-        if (!continueAnyway) {
-          console.log(chalk.gray('\nExecution cancelled\n'));
-          process.exit(1);
+        if (newerChoice === 'install') {
+          console.log(chalk.blue(`\n   Installing ${this.displayName} v${compat.supportedVersion}...`));
+          await this.installVersion('supported');
+        } else if (newerChoice === 'exit') {
+          console.log(chalk.white('\n   To install the supported version, run:'));
+          console.log(chalk.blueBright(`     codemie install ${this.name} --supported`));
+          console.log();
+          console.log(chalk.white('   Or install a specific version:'));
+          console.log(chalk.blueBright(`     codemie install ${this.name} ${compat.supportedVersion}`));
+          process.exit(0);
         }
 
         console.log(); // Add spacing before agent starts
@@ -360,22 +427,28 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         console.log(chalk.white(`   Current version: v${compat.installedVersion}`));
         console.log(chalk.white(`   Latest version:  v${compat.supportedVersion} `) + chalk.green('(recommended)'));
         console.log();
-        console.log(chalk.white('   To update, run:'));
-        console.log(chalk.blueBright(`     codemie update ${this.name}`));
-        console.log();
 
-        const { continueWithCurrent } = await inquirer.prompt([
+        const { updateChoice } = await inquirer.prompt([
           {
-            type: 'confirm',
-            name: 'continueWithCurrent',
-            message: 'Continue with current version?',
-            default: true,
+            type: 'list',
+            name: 'updateChoice',
+            message: `What would you like to do?`,
+            choices: [
+              { name: `Install v${compat.supportedVersion} now and continue`, value: 'install' },
+              { name: 'Continue with current version', value: 'continue' },
+              { name: 'Exit', value: 'exit' },
+            ],
+            default: 'install',
           },
         ]);
 
-        if (!continueWithCurrent) {
-          console.log(chalk.gray('\nExecution cancelled. Please run the update command above.\n'));
-          process.exit(1);
+        if (updateChoice === 'install') {
+          console.log(chalk.blue(`\n   Installing ${this.displayName} v${compat.supportedVersion}...`));
+          await this.installVersion('supported');
+        } else if (updateChoice === 'exit') {
+          console.log(chalk.white('\n  If you want to update manually, run:'));
+          console.log(chalk.blueBright(`     codemie update ${this.name}`));
+          process.exit(0);
         }
 
         console.log(); // Add spacing before agent starts
@@ -389,11 +462,18 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     // Detect repository and branch once at session start so all downstream
     // components (proxy config, metrics sender, etc.) can reuse without re-computing
     const workingDir = process.cwd();
-    const sessionBranch = await detectGitBranch(workingDir);
     const repoParts = workingDir.split(/[/\\]/).filter((p: string) => p.length > 0);
-    const sessionRepository = repoParts.length >= 2
+    const filesystemRepository = repoParts.length >= 2
       ? `${repoParts[repoParts.length - 2]}/${repoParts[repoParts.length - 1]}`
       : repoParts[repoParts.length - 1] || 'unknown';
+
+    const [sessionBranch, remoteRepository] = await Promise.all([
+      detectGitBranch(workingDir),
+      detectGitRemoteRepo(workingDir),
+    ]);
+
+    // Use canonical owner/repo from git remote as primary; fall back to filesystem path
+    const sessionRepository = remoteRepository ?? filesystemRepository;
 
     // Merge environment variables
     let env: NodeJS.ProcessEnv = {
@@ -439,6 +519,9 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       // Show random welcome message
       console.log(chalk.cyan.bold(getRandomWelcomeMessage()));
       console.log(''); // Empty line for spacing
+
+      // Silently sync registered skills in background (fire-and-forget)
+      syncRegisteredSkills(profileName, process.cwd()).catch(() => {});
     }
 
     // Transform CODEMIE_* → agent-specific env vars (based on envMapping)
@@ -722,11 +805,19 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     if (!providerName) return false;
 
     const provider = ProviderRegistry.getProvider(providerName);
+
+    // Providers with no authentication requirement never route through the proxy.
+    // This also guards against stale CODEMIE_AUTH_METHOD='jwt' values persisting
+    // in process.env from a previous JWT-authenticated session (written by
+    // Object.assign(process.env, env) at the end of run()).
+    if (provider?.authType === 'none') return false;
+
     const isSSOProvider = provider?.authType === 'sso';
     const isJWTAuth = env.CODEMIE_AUTH_METHOD === 'jwt';
     const isProxyEnabled = this.metadata.ssoConfig?.enabled ?? false;
 
-    // Proxy needed for SSO cookie injection OR JWT bearer token injection
+    // Proxy is only for model API authentication/forwarding. Analytics sync can
+    // be configured independently and must not force native providers through it.
     return (isSSOProvider || isJWTAuth) && isProxyEnabled;
   }
 
@@ -759,8 +850,12 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     const repository = env.CODEMIE_REPOSITORY || 'unknown';
     const branch = env.CODEMIE_GIT_BRANCH;
 
+    // Fixed proxy port (e.g., for stable MCP auth URLs across restarts)
+    const port = env.CODEMIE_PROXY_PORT ? parseInt(env.CODEMIE_PROXY_PORT, 10) : undefined;
+
     return {
       targetApiUrl,
+      port,
       clientType: this.metadata.ssoConfig?.clientType || 'unknown',
       timeout: timeoutMs,
       model: env.CODEMIE_MODEL,
@@ -770,11 +865,13 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       sessionId: env.CODEMIE_SESSION_ID,
       version: env.CODEMIE_CLI_VERSION,
       profileConfig,
-      authMethod: (env.CODEMIE_AUTH_METHOD as 'sso' | 'jwt') || undefined,
+      authMethod: (env.CODEMIE_AUTH_METHOD === 'sso' || env.CODEMIE_AUTH_METHOD === 'jwt') ? env.CODEMIE_AUTH_METHOD : undefined,
       jwtToken: env.CODEMIE_JWT_TOKEN || undefined,
       repository,
       branch: branch || undefined,
-      project: env.CODEMIE_PROJECT || undefined
+      project: env.CODEMIE_PROJECT || undefined,
+      syncApiUrl: env.CODEMIE_SYNC_API_URL || undefined,
+      syncCodeMieUrl: env.CODEMIE_URL || undefined
     };
   }
 

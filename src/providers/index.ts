@@ -36,6 +36,7 @@ import './plugins/sso/index.js';
 import './plugins/jwt/index.js';
 import './plugins/litellm/index.js';
 import './plugins/bedrock/index.js';
+import './plugins/anthropic-subscription/index.js';
 
 // Re-export plugin modules for direct access if needed
 export * as Ollama from './plugins/ollama/index.js';
@@ -43,3 +44,4 @@ export * as SSO from './plugins/sso/index.js';
 export * as JWT from './plugins/jwt/index.js';
 export * as LiteLLM from './plugins/litellm/index.js';
 export * as Bedrock from './plugins/bedrock/index.js';
+export * as AnthropicSubscription from './plugins/anthropic-subscription/index.js';

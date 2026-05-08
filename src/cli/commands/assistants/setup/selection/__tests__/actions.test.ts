@@ -4,7 +4,6 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { SelectionState } from '../types.js';
-import type { DataFetcher } from '../../data.js';
 import type { InteractivePrompt } from '../interactive-prompt.js';
 import { createActionHandlers, type ActionHandlerDependencies } from '../actions.js';
 import { PANEL_ID } from '../constants.js';
@@ -20,7 +19,7 @@ vi.mock('@/utils/logger.js', () => ({
 
 describe('Selection Actions - actions.ts', () => {
   let mockState: SelectionState;
-  let mockFetcher: DataFetcher;
+  let mockFetchItems: ReturnType<typeof vi.fn>;
   let mockPrompt: InteractivePrompt | null;
   let mockSetPrompt: (p: InteractivePrompt | null) => void;
   let mockSetCancelled: (cancelled: boolean) => void;
@@ -82,14 +81,12 @@ describe('Selection Actions - actions.ts', () => {
       focusedButton: 'continue',
     };
 
-    // Setup mock fetcher
-    mockFetcher = {
-      fetchAssistants: vi.fn().mockResolvedValue({
-        data: [],
-        total: 0,
-        pages: 0,
-      }),
-    } as any;
+    // Setup mock fetchItems
+    mockFetchItems = vi.fn().mockResolvedValue({
+      data: [],
+      total: 0,
+      pages: 0,
+    });
 
     // Setup mock prompt
     mockPrompt = {
@@ -107,7 +104,7 @@ describe('Selection Actions - actions.ts', () => {
     // Create dependencies
     const deps: ActionHandlerDependencies = {
       state: mockState,
-      fetcher: mockFetcher,
+      fetchItems: mockFetchItems,
       prompt: () => mockPrompt,
       setPrompt: mockSetPrompt,
       setCancelled: mockSetCancelled,
@@ -177,7 +174,7 @@ describe('Selection Actions - actions.ts', () => {
       // Advance timers to trigger setTimeout
       await vi.runAllTimersAsync();
 
-      expect(mockFetcher.fetchAssistants).toHaveBeenCalledWith({
+      expect(mockFetchItems).toHaveBeenCalledWith({
         scope: PANEL_ID.PROJECT,
         searchQuery: '',
         page: 0,
@@ -213,7 +210,7 @@ describe('Selection Actions - actions.ts', () => {
 
       await vi.runAllTimersAsync();
 
-      expect(mockFetcher.fetchAssistants).toHaveBeenCalledWith({
+      expect(mockFetchItems).toHaveBeenCalledWith({
         scope: PANEL_ID.REGISTERED,
         searchQuery: 'test',
         page: 0,
@@ -225,7 +222,7 @@ describe('Selection Actions - actions.ts', () => {
 
       await vi.runAllTimersAsync();
 
-      expect(mockFetcher.fetchAssistants).toHaveBeenCalledWith({
+      expect(mockFetchItems).toHaveBeenCalledWith({
         scope: PANEL_ID.REGISTERED,
         searchQuery: '',
         page: 0,
@@ -453,7 +450,7 @@ describe('Selection Actions - actions.ts', () => {
 
       await vi.runAllTimersAsync();
 
-      expect(mockFetcher.fetchAssistants).toHaveBeenCalledWith({
+      expect(mockFetchItems).toHaveBeenCalledWith({
         scope: PANEL_ID.REGISTERED,
         searchQuery: '',
         page: 1,
@@ -489,7 +486,7 @@ describe('Selection Actions - actions.ts', () => {
 
       await vi.runAllTimersAsync();
 
-      expect(mockFetcher.fetchAssistants).toHaveBeenCalledWith({
+      expect(mockFetchItems).toHaveBeenCalledWith({
         scope: PANEL_ID.REGISTERED,
         searchQuery: '',
         page: 0,
@@ -501,7 +498,7 @@ describe('Selection Actions - actions.ts', () => {
     it('should set isFetching to true during fetch', async () => {
       let resolveFunc: any;
       const fetchPromise = new Promise(resolve => { resolveFunc = resolve; });
-      vi.mocked(mockFetcher.fetchAssistants).mockReturnValue(fetchPromise as any);
+      vi.mocked(mockFetchItems).mockReturnValue(fetchPromise as any);
 
       handlers.handleSearchUpdate('test');
 
@@ -518,7 +515,7 @@ describe('Selection Actions - actions.ts', () => {
     });
 
     it('should handle fetch timeout', async () => {
-      vi.mocked(mockFetcher.fetchAssistants).mockImplementation(
+      vi.mocked(mockFetchItems).mockImplementation(
         () => new Promise(resolve => setTimeout(() => resolve({ data: [], total: 0, pages: 0 }), 20000))
       );
 
@@ -529,7 +526,7 @@ describe('Selection Actions - actions.ts', () => {
     });
 
     it('should handle fetch errors', async () => {
-      vi.mocked(mockFetcher.fetchAssistants).mockRejectedValue(new Error('Network error'));
+      vi.mocked(mockFetchItems).mockRejectedValue(new Error('Network error'));
 
       handlers.handleSearchUpdate('test');
       await vi.runAllTimersAsync();
@@ -541,7 +538,7 @@ describe('Selection Actions - actions.ts', () => {
       const mockData = [
         { id: '10', name: 'New Assistant', slug: 'new' },
       ];
-      vi.mocked(mockFetcher.fetchAssistants).mockResolvedValue({
+      vi.mocked(mockFetchItems).mockResolvedValue({
         data: mockData,
         total: 1,
         pages: 1,
@@ -577,7 +574,7 @@ describe('Selection Actions - actions.ts', () => {
       await vi.runAllTimersAsync();
 
       // Should fetch for the new panel with the search query
-      expect(mockFetcher.fetchAssistants).toHaveBeenCalled();
+      expect(mockFetchItems).toHaveBeenCalled();
     });
 
     it('should handle very long search queries', async () => {

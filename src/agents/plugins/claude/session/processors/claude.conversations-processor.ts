@@ -163,6 +163,13 @@ export class ConversationsProcessor implements SessionProcessor {
     agentName?: string,
     sessionFilePath?: string
   ): Promise<{ history: any[]; isTurnContinuation: boolean; lastProcessedMessageUuid: string; currentHistoryIndex: number }> {
+    const messagesByUuid = new Map<string, any>();
+    for (const msg of messages) {
+      if (msg.uuid) {
+        messagesByUuid.set(msg.uuid, msg);
+      }
+    }
+
     let startIndex = 0;
     if (syncState.lastSyncedMessageUuid) {
       const lastSyncedIndex = messages.findIndex(
@@ -200,7 +207,7 @@ export class ConversationsProcessor implements SessionProcessor {
         break;
       }
 
-      if (this.shouldFilterMessage(msg)) continue;
+      if (this.shouldFilterMessage(msg, messagesByUuid)) continue;
 
       firstRealMessage = msg;
       break;
@@ -245,7 +252,7 @@ export class ConversationsProcessor implements SessionProcessor {
         for (let i = lastSyncedIndex; i >= 0; i--) {
           const msg = messages[i];
           if (!msg.uuid) continue;
-          if (msg.type === 'user' && !this.shouldFilterMessage(msg) && !this.isToolResult(msg)) {
+          if (msg.type === 'user' && !this.shouldFilterMessage(msg, messagesByUuid) && !this.isToolResult(msg)) {
             turnStartIndex = i;
             break;
           }
@@ -263,7 +270,7 @@ export class ConversationsProcessor implements SessionProcessor {
           break;
         }
 
-        if (msg.type === 'user' && !this.shouldFilterMessage(msg) && !this.isToolResult(msg)) {
+        if (msg.type === 'user' && !this.shouldFilterMessage(msg, messagesByUuid) && !this.isToolResult(msg)) {
           turnEndIndex = i;
           break;
         }
@@ -271,7 +278,7 @@ export class ConversationsProcessor implements SessionProcessor {
 
       const turnMessages = messages.slice(turnStartIndex, turnEndIndex);
 
-      const turnHistory = await this.transformTurn(
+      const fullHistory = await this.transformTurn(
         turnMessages,
         currentHistoryIndex,
         assistantId,
@@ -279,7 +286,8 @@ export class ConversationsProcessor implements SessionProcessor {
         sessionFilePath
       );
 
-      history = turnHistory.filter((entry: any) => entry.role === 'Assistant');
+      // Turn continuation: only emit the updated Assistant entry, not the User again
+      history = fullHistory.filter((h: any) => h.role === 'Assistant');
 
       for (let i = turnEndIndex - 1; i >= turnStartIndex; i--) {
         if (messages[i].uuid) {
@@ -293,7 +301,7 @@ export class ConversationsProcessor implements SessionProcessor {
       for (let i = startIndex; i < messages.length; i++) {
         const msg = messages[i];
         if (!msg.uuid) continue;
-        if (msg.type === 'user' && !this.shouldFilterMessage(msg) && !this.isToolResult(msg)) {
+        if (msg.type === 'user' && !this.shouldFilterMessage(msg, messagesByUuid) && !this.isToolResult(msg)) {
           firstUserIndex = i;
           break;
         }
@@ -310,7 +318,7 @@ export class ConversationsProcessor implements SessionProcessor {
           break;
         }
 
-        if (msg.type === 'user' && !this.shouldFilterMessage(msg) && !this.isToolResult(msg)) {
+        if (msg.type === 'user' && !this.shouldFilterMessage(msg, messagesByUuid) && !this.isToolResult(msg)) {
           turnEndIndex = i;
           break;
         }
@@ -350,12 +358,19 @@ export class ConversationsProcessor implements SessionProcessor {
     sessionFilePath?: string
   ): Promise<any[]> {
     const history: any[] = [];
+    const messagesByUuid = new Map<string, any>();
+
+    for (const msg of turnMessages) {
+      if (msg.uuid) {
+        messagesByUuid.set(msg.uuid, msg);
+      }
+    }
 
     const toolResultsMap = this.buildToolResultsMap(turnMessages);
 
     let userMessage: any | null = null;
     for (const msg of turnMessages) {
-      if (msg.type === 'user' && !this.shouldFilterMessage(msg) && !this.isToolResult(msg)) {
+      if (msg.type === 'user' && !this.shouldFilterMessage(msg, messagesByUuid) && !this.isToolResult(msg)) {
         userMessage = msg;
         break;
       }
@@ -377,14 +392,11 @@ export class ConversationsProcessor implements SessionProcessor {
     });
 
     const assistantMessages: any[] = [];
-    const metaMessages: any[] = [];
     const systemErrors: any[] = [];
 
     for (const msg of turnMessages) {
       if (msg.type === 'assistant') {
         assistantMessages.push(msg);
-      } else if (msg.type === 'user' && (msg as any).isMeta) {
-        metaMessages.push(msg);
       } else if (msg.type === 'system' && msg.subtype === 'api_error') {
         systemErrors.push(msg);
       }
@@ -394,18 +406,6 @@ export class ConversationsProcessor implements SessionProcessor {
       const finalAssistantMsg = assistantMessages[assistantMessages.length - 1];
 
       const allThoughts: any[] = [];
-
-      for (const metaMsg of metaMessages) {
-        const metaText = this.extractTextContent(metaMsg);
-        if (metaText.trim()) {
-          allThoughts.push(this.createCodemieThought(
-            metaMsg.uuid,
-            metaText,
-            agentName || 'Claude Code',
-            metaMsg.timestamp
-          ));
-        }
-      }
 
       for (let k = 0; k < assistantMessages.length; k++) {
         const assistantMsg = assistantMessages[k];
@@ -548,12 +548,14 @@ export class ConversationsProcessor implements SessionProcessor {
     return history;
   }
 
-  private shouldFilterMessage(msg: any): boolean {
+  private shouldFilterMessage(msg: any, messagesByUuid?: Map<string, any>): boolean {
     // Filter system messages (including stop hooks)
     if (msg.type === 'system') return true;
 
     return this.isConversationSplitter(msg) ||
            this.isSystemMessage(msg) ||
+           Boolean(msg.isMeta) ||
+           this.isSyntheticUserPrompt(msg, messagesByUuid) ||
            this.isToolResult(msg);
   }
 
@@ -583,7 +585,7 @@ export class ConversationsProcessor implements SessionProcessor {
   }
 
   private isToolResult(msg: any): boolean {
-    if (msg.type !== 'user') return false;
+    if (!msg || msg.type !== 'user') return false;
     const content = msg.message?.content;
     if (!Array.isArray(content)) return false;
 
@@ -595,6 +597,15 @@ export class ConversationsProcessor implements SessionProcessor {
     );
 
     return hasToolResult && !hasText;
+  }
+
+  private isSyntheticUserPrompt(msg: any, messagesByUuid?: Map<string, any>): boolean {
+    if (msg?.type !== 'user' || !msg.parentUuid || !messagesByUuid) {
+      return false;
+    }
+
+    const parent = messagesByUuid.get(msg.parentUuid);
+    return this.isToolResult(parent);
   }
 
   private hasCommand(msg: any, commands: string[]): boolean {

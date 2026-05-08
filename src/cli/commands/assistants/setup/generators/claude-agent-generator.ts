@@ -85,18 +85,19 @@ export function createClaudeSubagentContent(assistant: Assistant): string {
 /**
  * Get subagent file path for a given slug
  */
-function getSubagentFilePath(slug: string): string {
-  const homeDir = os.homedir();
-  const fileName = `${slug}.md`;
-  return path.join(homeDir, '.claude', 'agents', fileName);
+function getSubagentFilePath(slug: string, scope: 'global' | 'local' = 'global', workingDir?: string): string {
+  const agentsDir = scope === 'local' && workingDir
+    ? path.join(workingDir, '.claude', 'agents')
+    : path.join(os.homedir(), '.claude', 'agents');
+  return path.join(agentsDir, `${slug}.md`);
 }
 
 /**
  * Register Claude subagent
- * Creates subagent file in ~/.claude/agents/
+ * Creates subagent file in ~/.claude/agents/ (global) or {cwd}/.claude/agents/ (local)
  */
-export async function registerClaudeSubagent(assistant: Assistant): Promise<void> {
-  const subagentPath = getSubagentFilePath(assistant.slug!);
+export async function registerClaudeSubagent(assistant: Assistant, scope: 'global' | 'local' = 'global', workingDir?: string): Promise<void> {
+  const subagentPath = getSubagentFilePath(assistant.slug!, scope, workingDir);
   const claudeAgentsDir = path.dirname(subagentPath);
 
   logger.debug('Registering Claude subagent', {
@@ -121,10 +122,10 @@ export async function registerClaudeSubagent(assistant: Assistant): Promise<void
 
 /**
  * Unregister Claude subagent
- * Removes subagent file from ~/.claude/agents/
+ * Removes subagent file from ~/.claude/agents/ (global) or {cwd}/.claude/agents/ (local)
  */
-export async function unregisterClaudeSubagent(slug: string): Promise<void> {
-  const subagentPath = getSubagentFilePath(slug);
+export async function unregisterClaudeSubagent(slug: string, scope: 'global' | 'local' = 'global', workingDir?: string): Promise<void> {
+  const subagentPath = getSubagentFilePath(slug, scope, workingDir);
 
   try {
     await fs.unlink(subagentPath);

@@ -28,6 +28,12 @@ export interface ProxyConfig {
   repository?: string;           // Repository name (parent/current format) for header injection
   branch?: string;               // Git branch at startup for header injection
   project?: string;              // CodeMie project name for header injection
+  syncApiUrl?: string;           // Optional CodeMie API URL for analytics/session sync
+  syncCodeMieUrl?: string;       // Optional CodeMie org URL for credential lookup
+  gatewayKey?: string;           // Static bearer key for gateway/daemon mode
+  telemetryMode?: 'none' | 'claude-desktop';
+  telemetryPollIntervalMs?: number;
+  telemetryInactivityTimeoutMs?: number;
 }
 
 /**

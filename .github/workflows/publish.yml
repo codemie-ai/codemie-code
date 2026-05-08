@@ -15,6 +15,9 @@ jobs:
     name: Publish Package
     runs-on: ubuntu-latest
     environment: prod
+    env:
+      ARTIFACTORY_INSTALL_URL: ${{ secrets.ARTIFACTORY_INSTALL_URL }}
+      ARTIFACTORY_TOKEN: ${{ secrets.ARTIFACTORY_TOKEN }}
 
     steps:
       - name: Confirm publish
@@ -24,10 +27,10 @@ jobs:
           exit 1
 
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
         with:
           node-version: '20'
           registry-url: 'https://registry.npmjs.org'
@@ -50,3 +53,26 @@ jobs:
         run: npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Prepare installer artifacts
+        run: npm run prepare:install-artifacts
+
+      - name: Upload installer artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: codemie-installers
+          path: artifacts/install
+
+      - name: Publish installer artifacts to Artifactory
+        if: ${{ env.ARTIFACTORY_INSTALL_URL != '' && env.ARTIFACTORY_TOKEN != '' }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          for file in artifacts/install/*; do
+            name=$(basename "$file")
+            curl -fsS -H "Authorization: Bearer ${ARTIFACTORY_TOKEN}" \
+              -T "$file" \
+              "${ARTIFACTORY_INSTALL_URL}/${VERSION}/${name}"
+            curl -fsS -H "Authorization: Bearer ${ARTIFACTORY_TOKEN}" \
+              -T "$file" \
+              "${ARTIFACTORY_INSTALL_URL}/stable/${name}"
+          done

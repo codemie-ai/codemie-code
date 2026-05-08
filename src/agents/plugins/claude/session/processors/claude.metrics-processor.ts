@@ -156,6 +156,13 @@ export class MetricsProcessor implements SessionProcessor {
     attachedUserPrompts: Set<string>
   ): Array<Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>> {
     const deltas: Array<Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>> = [];
+    const messagesByUuid = new Map<string, any>();
+
+    for (const msg of messages) {
+      if (msg.uuid) {
+        messagesByUuid.set(msg.uuid, msg);
+      }
+    }
 
     // Build tool results map with full content
     const toolResultsMap = new Map<string, { isError: boolean; content: any }>();
@@ -190,7 +197,11 @@ export class MetricsProcessor implements SessionProcessor {
     // Build user prompts map: uuid → text content
     const userPromptsMap = new Map<string, string>();
     for (const msg of messages) {
-      if (msg.message?.role === 'user' && msg.uuid) {
+      if (
+        msg.message?.role === 'user' &&
+        msg.uuid &&
+        !this.isSyntheticUserPrompt(msg, messagesByUuid)
+      ) {
         let textContent = '';
 
         if (Array.isArray(msg.message.content)) {
@@ -329,6 +340,24 @@ export class MetricsProcessor implements SessionProcessor {
     }
 
     return deltas;
+  }
+
+  private isToolResultMessage(msg: any): boolean {
+    if (msg?.type !== 'user') return false;
+
+    const content = msg.message?.content;
+    if (!Array.isArray(content)) return false;
+
+    return content.some((item: any) => item.type === 'tool_result');
+  }
+
+  private isSyntheticUserPrompt(msg: any, messagesByUuid: Map<string, any>): boolean {
+    if (msg?.type !== 'user' || !msg.parentUuid) {
+      return false;
+    }
+
+    const parent = messagesByUuid.get(msg.parentUuid);
+    return this.isToolResultMessage(parent);
   }
 
   /**
