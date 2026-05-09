@@ -14,15 +14,31 @@
  *
  * Session lifecycle (CLI-level via processEvent):
  * 1. onSessionStart  → processEvent(SessionStart) — creates session record + sends start metrics
+ *                    → startCodexIncrementalSync — kicks off the in-process timer
  * 2. enrichArgs      → transform --task, inject --model + model_providers.codemie + tuning flags
  * 3. [Codex runs]
- * 4. onSessionEnd    → process rollout metrics → processEvent(SessionEnd) — syncs + sends end metrics
+ * 4. onSessionEnd    → stopCodexIncrementalSync → process rollout → processEvent(SessionEnd)
+ *
+ * Why no Codex hooks?
+ * Codex 0.129.0 advertises a `hooks` feature (stable per `codex features list`),
+ * but smoke tests on 2026-05-09 showed that neither -c overrides
+ * (`-c 'hooks.SessionStart=[...]'`) nor a direct `[[hooks.SessionStart]]` block
+ * in `~/.codex/config.toml` fired the configured command in `codex exec`.
+ * See docs/superpowers/plans/2026-05-09-codex-hooks-incremental-sync.md
+ * and https://github.com/openai/codex/issues/17532.
+ *
+ * Until the actual hook delivery mechanism is documented (likely tied to the
+ * `~/.codex/plugins/<name>/.codex-plugin/plugin.json` plugin manifest format),
+ * we run an in-process timer (codex.incremental-sync.ts) inside `codemie-cli`
+ * to keep `_metrics.jsonl` and `_conversation.jsonl` warm. The SSO proxy timer
+ * (sso.session-sync.plugin.ts) handles the API push as usual.
  *
  * References:
  * - OpenAI Codex CLI: https://github.com/openai/codex
  * - Configuration: https://github.com/openai/codex/blob/main/codex-rs/docs/configuration.md
  * - Advanced config: https://developers.openai.com/codex/config-advanced
  * - CLI Reference: https://github.com/openai/codex/blob/main/codex-rs/docs/cli-reference.md
+ * - Hooks (deferred): https://developers.openai.com/codex/hooks
  */
 
 import type { AgentMetadata, AgentConfig } from '../../core/types.js';
