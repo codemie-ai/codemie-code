@@ -139,3 +139,54 @@ describe('CodexMetricsProcessor — per-call_id deltas', () => {
     expect(result.metadata?.failureReason).toBe('NO_CODEX_SESSION_ID');
   });
 });
+
+describe('CodexMetricsProcessor — gitBranch fallback', () => {
+  let tempHome: string;
+  let originalCodemieHome: string | undefined;
+
+  beforeEach(() => {
+    tempHome = mkdtempSync(join(tmpdir(), 'codex-metrics-fallback-'));
+    originalCodemieHome = process.env.CODEMIE_HOME;
+    process.env.CODEMIE_HOME = tempHome;
+    vi.resetModules();
+  });
+
+  afterEach(() => {
+    rmSync(tempHome, { recursive: true, force: true });
+    if (originalCodemieHome !== undefined) {
+      process.env.CODEMIE_HOME = originalCodemieHome;
+    } else {
+      delete process.env.CODEMIE_HOME;
+    }
+  });
+
+  it('falls back to detectGitBranch when session metadata has no branch', async () => {
+    const detectGitBranch = vi.fn().mockResolvedValue('main');
+    vi.doMock('../../../../utils/processes.js', () => ({ detectGitBranch }));
+
+    const { CodexMetricsProcessor } = await import('../session/processors/codex.metrics-processor.js');
+    const session = {
+      sessionId: 'sess-no-branch',
+      agentName: 'Codex CLI',
+      metadata: {
+        codexSessionId: 'codex-x',
+        projectPath: '/tmp/work',
+        createdAt: '2026-05-09T12:00:00Z',
+        model: 'gpt-5.4',
+      },
+      messages: [
+        { type: 'response_item', payload: { type: 'function_call', call_id: 'cx', name: 'exec_command' } },
+        { type: 'response_item', payload: { type: 'function_call_output', call_id: 'cx' } },
+      ],
+      metrics: { tools: {}, toolStatus: {}, fileOperations: [] },
+    } as unknown as import('../../../core/session/BaseSessionAdapter.js').ParsedSession;
+
+    const result = await new CodexMetricsProcessor().process(session, {} as never);
+    expect(result.success).toBe(true);
+
+    const path = join(tempHome, 'sessions', 'sess-no-branch_metrics.jsonl');
+    const line = JSON.parse(readFileSync(path, 'utf-8').trim());
+    expect(line.gitBranch).toBe('main');
+    expect(detectGitBranch).toHaveBeenCalledWith('/tmp/work');
+  });
+});
