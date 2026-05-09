@@ -28,11 +28,42 @@
 import type { AgentMetadata, AgentConfig } from '../../core/types.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
+import type { SessionDescriptor } from '../../core/session/discovery-types.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
 import type { HookProcessingConfig } from '../../../cli/commands/hook.js';
-import { commandExists } from '../../../utils/processes.js';
+import { commandExists, exec } from '../../../utils/processes.js';
 import { logger } from '../../../utils/logger.js';
+import { ConfigurationError } from '../../../utils/errors.js';
 import { CodexSessionAdapter } from './codex.session.js';
+import {
+  assertExplicitCodexModelAllowed,
+  isCodexCompatibleModelName,
+  resolveCodexModel,
+} from './codex-models.js';
+import { resolveHomeDir } from '../../../utils/paths.js';
+import {
+  startCodexIncrementalSync,
+  stopCodexIncrementalSync,
+} from './codex.incremental-sync.js';
+import { realpath as fsRealpath } from 'fs/promises';
+
+/**
+ * Supported Codex CLI version
+ * Latest version tested and verified with CodeMie backend
+ *
+ * **UPDATE THIS WHEN BUMPING CODEX VERSION**
+ */
+const CODEX_SUPPORTED_VERSION = '0.129.0';
+
+/**
+ * Minimum supported Codex CLI version
+ * Versions below this are known to be incompatible and will be blocked from starting
+ * Rule: always 10 minor versions below CODEX_SUPPORTED_VERSION for 0.x Codex releases
+ * e.g. supported = 0.129.0 → minimum = 0.119.0
+ *
+ * **UPDATE THIS WHEN BUMPING CODEX VERSION**
+ */
+const CODEX_MINIMUM_SUPPORTED_VERSION = '0.119.0';
 
 /**
  * Build a hook config object from environment variables.
@@ -45,6 +76,7 @@ function buildHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProcess
     provider: env.CODEMIE_PROVIDER,
     apiBaseUrl: env.CODEMIE_BASE_URL,
     ssoUrl: env.CODEMIE_URL,
+    syncApiUrl: env.CODEMIE_SYNC_API_URL,
     version: env.CODEMIE_CLI_VERSION,
     profileName: env.CODEMIE_PROFILE_NAME,
     project: env.CODEMIE_PROJECT,
@@ -59,6 +91,11 @@ export const CodexPluginMetadata: AgentMetadata = {
   description: 'OpenAI Codex CLI - AI coding agent by OpenAI',
   npmPackage: '@openai/codex',
   cliCommand: process.env.CODEMIE_CODEX_BIN || 'codex',
+
+  // Version management configuration
+  supportedVersion: CODEX_SUPPORTED_VERSION,       // Latest version tested with CodeMie backend
+  minimumSupportedVersion: CODEX_MINIMUM_SUPPORTED_VERSION, // Minimum version required to run
+
   dataPaths: {
     home: '.codex', // ~/.codex is fixed for Codex (no XDG convention)
   },
@@ -73,9 +110,32 @@ export const CodexPluginMetadata: AgentMetadata = {
     apiKey: ['OPENAI_API_KEY'],
     model: [],
   },
-  supportedProviders: [],
+  supportedProviders: ['ai-run-sso', 'bearer-auth', 'litellm'],
+  blockedModelPatterns: [],
+  recommendedModels: ['gpt-5.5', 'gpt-5.4', 'gpt-5.3-codex', 'gpt-5.2-codex'],
+
+  ssoConfig: {
+    enabled: true,
+    clientType: 'codemie-codex',
+  },
 
   lifecycle: {
+    /**
+     * Keep CodeMie-managed Codex state separate from native Codex state.
+     *
+     * Plain `codex` and Codex Desktop continue to use Codex's default home
+     * unless the user configured CODEX_HOME themselves. codemie-codex runs
+     * with a CodeMie-owned CODEX_HOME so generated catalogs, selected models,
+     * history, and rollout files do not pollute native Codex state.
+     */
+    async beforeRun(env: NodeJS.ProcessEnv) {
+      if (!env.CODEX_HOME) {
+        env.CODEX_HOME = resolveHomeDir('.codex/codemie/home');
+      }
+
+      return env;
+    },
+
     /**
      * Send session start metrics via the CLI-level hook pipeline.
      *
@@ -84,6 +144,9 @@ export const CodexPluginMetadata: AgentMetadata = {
      * - Sends session start metrics to v1/metrics API (SSO provider only)
      */
     async onSessionStart(sessionId: string, env: NodeJS.ProcessEnv) {
+      const startedAt = Date.now();
+      env.CODEMIE_CODEX_STARTED_AT = String(startedAt);
+
       try {
         const { processEvent } = await import('../../../cli/commands/hook.js');
         const event = {
@@ -99,6 +162,30 @@ export const CodexPluginMetadata: AgentMetadata = {
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         logger.error(`[codex] SessionStart hook failed (non-blocking): ${msg}`);
+      }
+
+      // Start the in-process incremental sync timer. Because Codex 0.129.0
+      // hooks were verified non-firing on `codex exec`, we re-parse the rollout
+      // file every ~30 s and write deltas/conversations to JSONL. The SSO proxy
+      // timer (sso.session-sync.plugin.ts) pushes them to the API.
+      try {
+        startCodexIncrementalSync({
+          sessionId,
+          startedAt,
+          cwd: process.cwd(),
+          metadata: CodexPluginMetadata,
+          buildContext: () => ({
+            sessionId,
+            apiBaseUrl: env.CODEMIE_BASE_URL || '',
+            cookies: '',
+            clientType: 'codemie-codex',
+            version: env.CODEMIE_CLI_VERSION || '0.0.0',
+            dryRun: false,
+          }),
+        });
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.error(`[codex] Failed to start incremental sync timer: ${msg}`);
       }
     },
 
@@ -129,8 +216,16 @@ export const CodexPluginMetadata: AgentMetadata = {
         ];
       }
 
-      // 2. Inject model via --model when not already overridden
-      if (config?.model && !enriched.includes('-m') && !enriched.includes('--model')) {
+      // 2. Inject model via --model when not already overridden.
+      const explicitModel = getExplicitModelArg(enriched);
+      const availableModels = (process.env.CODEMIE_CODEX_AVAILABLE_MODELS || '')
+        .split(',')
+        .map(model => model.trim())
+        .filter(Boolean);
+
+      if (explicitModel) {
+        assertExplicitCodexModelAllowed(explicitModel, availableModels);
+      } else if (config?.model) {
         enriched = ['--model', config.model, ...enriched];
       }
 
@@ -140,14 +235,16 @@ export const CodexPluginMetadata: AgentMetadata = {
       // CODEMIE_API_KEY (set by transformEnvVars) bypasses auth.json entirely, since
       // auth.json only stores credentials for the default openai provider.
       // --config uses TOML values: strings must be double-quoted.
-      const sentinel = ['not-required', 'sso-provided', 'proxy-handled'];
-      if (config?.apiKey && !sentinel.includes(config.apiKey) && config?.baseUrl) {
+      if (config?.apiKey && config.apiKey !== 'not-required' && config?.baseUrl) {
         enriched = [
           '--config', 'model_provider="codemie"',
           '--config', 'model_providers.codemie.name="codemie"',
           '--config', `model_providers.codemie.base_url="${config.baseUrl}"`,
           '--config', 'model_providers.codemie.env_key="CODEMIE_API_KEY"',
           '--config', 'model_providers.codemie.wire_api="responses"',
+          ...(process.env.CODEMIE_CODEX_MODEL_CATALOG_JSON
+            ? ['--config', `model_catalog_json="${process.env.CODEMIE_CODEX_MODEL_CATALOG_JSON}"`]
+            : []),
           ...enriched,
         ];
       }
@@ -186,19 +283,44 @@ export const CodexPluginMetadata: AgentMetadata = {
         return;
       }
 
+      // Stop the in-process incremental sync timer first so it doesn't race
+      // the final flush below.
+      stopCodexIncrementalSync(sessionId);
+
       // 1. Process rollout file → MetricDelta JSONL (must run before SessionEnd sync)
       try {
         logger.info(`[codex] Processing session metrics (code=${exitCode})`);
 
         const adapter = new CodexSessionAdapter(CodexPluginMetadata);
-        const sessions = await adapter.discoverSessions({ maxAgeDays: 1 });
+        const sessions = await adapter.discoverSessions({ maxAgeDays: 1, limit: 20 });
 
-        const RECENT_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
-        const now = Date.now();
-        const recentSessions = sessions.filter(s => now - s.createdAt <= RECENT_WINDOW_MS);
+        const startedAt = env.CODEMIE_CODEX_STARTED_AT
+          ? Number(env.CODEMIE_CODEX_STARTED_AT)
+          : Date.now() - 5 * 60 * 1000;
+        const currentCwd = process.cwd();
+        const cwdReal = await safeRealpath(currentCwd);
+        const recentSessions: SessionDescriptor[] = [];
+
+        for (const session of sessions) {
+          if (session.createdAt < startedAt - 10_000) {
+            continue;
+          }
+
+          try {
+            const parsed = await adapter.parseSessionFile(session.filePath, sessionId);
+            const projectPath = parsed.metadata?.projectPath;
+            if (!projectPath) continue;
+            const projectReal = await safeRealpath(projectPath);
+            if (projectReal === cwdReal) {
+              recentSessions.push(session);
+            }
+          } catch (error) {
+            logger.debug('[codex] Skipping unparsable rollout candidate:', error);
+          }
+        }
 
         if (recentSessions.length === 0) {
-          logger.warn('[codex] No rollout file modified in the last 5 minutes, skipping metrics');
+          logger.warn('[codex] No rollout file matched the current run, skipping metrics');
         } else {
           const latestSession = recentSessions[0];
           logger.debug(`[codex] Processing latest rollout: ${latestSession.sessionId}`);
@@ -246,6 +368,33 @@ export const CodexPluginMetadata: AgentMetadata = {
   },
 };
 
+function getExplicitModelArg(args: string[]): string | undefined {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '-m' || arg === '--model') {
+      return args[i + 1];
+    }
+    if (arg.startsWith('--model=')) {
+      return arg.slice('--model='.length);
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * Resolve a path through symlinks, falling back to the original path on error.
+ * Used so a `cwd` of `/Users/foo` and a rollout's `projectPath` of
+ * `/private/Users/foo` (or vice versa) compare equal.
+ */
+async function safeRealpath(p: string): Promise<string> {
+  try {
+    return await fsRealpath(p);
+  } catch {
+    return p;
+  }
+}
+
 /**
  * Codex agent plugin
  *
@@ -277,6 +426,54 @@ export class CodexPlugin extends BaseAgentAdapter {
     }
 
     return installed;
+  }
+
+  /**
+   * Get Codex version (override from BaseAgentAdapter).
+   * Codex versions can be emitted as plain semver or with a command prefix,
+   * for example: '0.129.0', 'codex 0.129.0', or 'codex-cli 0.129.0'.
+   * Base compatibility checks require just the semantic version.
+   *
+   * @returns Version string or null if not installed
+   */
+  async getVersion(): Promise<string | null> {
+    if (!this.metadata.cliCommand) {
+      return null;
+    }
+
+    try {
+      const result = await exec(this.metadata.cliCommand, ['--version']);
+      const output = result.stdout.trim();
+      const versionMatch = output.match(/(\d+\.\d+\.\d+)/);
+      return versionMatch ? versionMatch[1] : output;
+    } catch {
+      return null;
+    }
+  }
+
+  protected override async setupProxy(env: NodeJS.ProcessEnv): Promise<void> {
+    if (env.CODEMIE_PROVIDER === 'litellm') {
+      if (!isCodexCompatibleModelName(env.CODEMIE_MODEL)) {
+        throw new ConfigurationError(
+          `Model "${env.CODEMIE_MODEL ?? 'unknown'}" is not compatible with codemie-codex. ` +
+          'Use a GPT/Codex model for LiteLLM.'
+        );
+      }
+
+      env.CODEMIE_CODEX_AVAILABLE_MODELS = env.CODEMIE_MODEL;
+      await super.setupProxy(env);
+      return;
+    }
+
+    const resolution = await resolveCodexModel(env);
+
+    env.CODEMIE_MODEL = resolution.selectedModel;
+    env.CODEMIE_CODEX_AVAILABLE_MODELS = resolution.availableModels.join(',');
+    if (resolution.catalogPath) {
+      env.CODEMIE_CODEX_MODEL_CATALOG_JSON = resolution.catalogPath;
+    }
+
+    await super.setupProxy(env);
   }
 
   /**
