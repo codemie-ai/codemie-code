@@ -23,6 +23,9 @@ export type ConversationSyncStatus = 'pending' | 'success' | 'failed';
  * Used for tracking conversation sync status
  */
 export interface ConversationPayloadRecord {
+  /** Stable unique identifier for this queued payload window */
+  payloadId?: string;
+
   /** Timestamp when sync was attempted */
   timestamp: number;
 
@@ -42,10 +45,16 @@ export interface ConversationPayloadRecord {
   payload: {
     conversationId: string;
     history: any[];
+    assistantId?: string;
+    folder?: string;
+    llmModel?: string;
   };
 
   /** Sync result status */
   status: ConversationSyncStatus;
+
+  /** Number of sync attempts made for this payload */
+  syncAttempts?: number;
 
   /** Error message if failed */
   error?: string;
@@ -87,8 +96,9 @@ export interface ConversationSyncResponse {
  * CodeMie history entry format for API
  */
 export interface CodemieHistoryEntry {
-  role: 'user' | 'assistant';
-  content: string;
+  role: 'User' | 'Assistant' | 'user' | 'assistant';
+  content?: string;
+  message?: string;
   timestamp?: number;
   [key: string]: any;
 }

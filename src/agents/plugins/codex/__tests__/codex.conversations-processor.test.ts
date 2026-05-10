@@ -63,7 +63,7 @@ describe('CodexConversationsProcessor — incremental', () => {
 
     const baseMessages = [
       { type: 'event_msg', payload: { type: 'user_message', message: 'hello' } },
-      { type: 'response_item', payload: { type: 'message', output: 'hi there' } },
+      { type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'hi there' }] } },
     ];
 
     const ctx = { agentSessionId: '019e-test' } as unknown as import('../../../core/session/BaseProcessor.js').ProcessingContext;
@@ -72,14 +72,17 @@ describe('CodexConversationsProcessor — incremental', () => {
     expect(first.success).toBe(true);
     expect(first.metadata?.recordsProcessed).toBe(2);
 
-    // Apply the syncUpdates the adapter would normally persist back into the session.
+    // The codex processor records the sentinel on the JSONL payload; the SSO
+    // sync processor is what advances session.sync.conversations after a
+    // successful upload. Simulate that here so the next run can dedup.
+    const conversationsPathFirst = join(tempHome, 'sessions', 'sess-conv-1_conversation.jsonl');
+    const firstPayload = JSON.parse(readFileSync(conversationsPathFirst, 'utf-8').trim().split('\n')[0]);
     const sessionPath = join(tempHome, 'sessions', 'sess-conv-1.json');
     const session = JSON.parse(readFileSync(sessionPath, 'utf-8'));
-    const syncUpdates = (first.metadata as { syncUpdates: { conversations: { lastSyncedMessageUuid: string; lastSyncedHistoryIndex: number } } }).syncUpdates.conversations;
     session.sync = {
       conversations: {
-        lastSyncedMessageUuid: syncUpdates.lastSyncedMessageUuid,
-        lastSyncedHistoryIndex: syncUpdates.lastSyncedHistoryIndex,
+        lastSyncedMessageUuid: firstPayload.lastProcessedMessageUuid,
+        lastSyncedHistoryIndex: Math.max(...(firstPayload.historyIndices as number[])),
       },
     };
     writeFileSync(sessionPath, JSON.stringify(session));
@@ -99,8 +102,19 @@ describe('CodexConversationsProcessor — incremental', () => {
     const lines = readFileSync(conversationsPath, 'utf-8').trim().split('\n').map((l) => JSON.parse(l));
     expect(lines).toHaveLength(2);
     expect(lines[0].messageCount).toBe(2);
+    expect(lines[0].payload.history[0]).toMatchObject({
+      role: 'User',
+      message: 'hello',
+      message_raw: 'hello',
+      history_index: 0,
+    });
+    expect(lines[0].payload.history[1]).toMatchObject({
+      role: 'Assistant',
+      message: 'hi there',
+      history_index: 0,
+    });
     expect(lines[1].messageCount).toBe(1);
-    expect(lines[1].payload.history[0].history_index).toBe(2);
+    expect(lines[1].payload.history[0].history_index).toBe(1);
   });
 
   it('returns recordsProcessed=0 when there are no new messages beyond lastSyncedHistoryIndex', async () => {
@@ -109,7 +123,7 @@ describe('CodexConversationsProcessor — incremental', () => {
 
     const baseMessages = [
       { type: 'event_msg', payload: { type: 'user_message', message: 'hello' } },
-      { type: 'response_item', payload: { type: 'message', output: 'hi there' } },
+      { type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'hi there' }] } },
     ];
 
     const ctx = { agentSessionId: '019e-test' } as unknown as import('../../../core/session/BaseProcessor.js').ProcessingContext;

@@ -10,23 +10,9 @@ import type { Session } from '../../../../../../agents/core/session/types.js';
 import type {ToolUsageAttributes, SessionMetric} from './metrics-types.js';
 import type {AgentMetricsConfig} from '../../../../../../agents/core/types.js';
 import {logger} from '../../../../../../utils/logger.js';
+import { extractRepository } from '../../../../../../utils/paths.js';
 import {postProcessMetric} from './metrics-post-processor.js';
 import {MetricsSender} from './metrics-api-client.js';
-
-/**
- * Extract parent/repo format from a working directory path.
- * e.g. /Users/john/projects/codemie-code → projects/codemie-code
- */
-function extractRepository(workingDirectory: string): string {
-  const parts = workingDirectory.split(/[/\\]/);
-  const filtered = parts.filter(p => p.length > 0);
-
-  if (filtered.length >= 2) {
-    return `${filtered[filtered.length - 2]}/${filtered[filtered.length - 1]}`;
-  }
-
-  return filtered[filtered.length - 1] || 'unknown';
-}
 
 /**
  * Aggregate pending deltas into session metrics grouped by branch
@@ -41,6 +27,7 @@ export function aggregateDeltas(
   deltas: MetricDelta[],
   session: Session,
   version: string,
+  clientType: string,
   agentConfig?: AgentMetricsConfig
 ): SessionMetric[] {
   logger.debug(`[aggregator] Aggregating ${deltas.length} deltas for session ${session.sessionId}`);
@@ -67,7 +54,7 @@ export function aggregateDeltas(
     logger.debug(`[aggregator] Building metric for branch "${branch}" with ${branchDeltas.length} deltas`);
 
     // Build attributes from deltas for this branch
-    const attributes = buildSessionAttributes(branchDeltas, session, version, branch);
+    const attributes = buildSessionAttributes(branchDeltas, session, version, clientType, branch);
 
     // Create session metric for this branch
     const metric: SessionMetric = {
@@ -90,6 +77,7 @@ function buildSessionAttributes(
   deltas: MetricDelta[],
   session: Session,
   version: string,
+  clientType: string,
   branch: string
 ): ToolUsageAttributes {
   // Use agent session ID from session correlation for API calls
@@ -192,21 +180,24 @@ function buildSessionAttributes(
   }
 
   // Determine most-used model
-  const primaryModel = getMostUsedModel(modelCounts);
+  const sessionModel = (session as Session & { model?: string }).model;
+  const primaryModel = getMostUsedModel(modelCounts) || sessionModel;
 
   // Calculate total tool calls
   const totalToolCalls = Object.values(toolCounts).reduce((sum, count) => sum + count, 0);
   const successfulToolCalls = Object.values(toolSuccess).reduce((sum, count) => sum + count, 0);
   const failedToolCalls = Object.values(toolFailures).reduce((sum, count) => sum + count, 0);
+  const toolNames = expandToolNames(toolCounts);
 
   // Calculate session duration from deltas (incremental batch duration)
   const sessionDuration = calculateDurationFromDeltas(deltas, session);
 
   // Build attributes
-  const attributes: any = {
+  const attributes: ToolUsageAttributes = {
     // Identity
     agent: session.agentName,
     agent_version: version,
+    codemie_client: clientType,
     llm_model: primaryModel || 'unknown',
     repository: session.repository ?? extractRepository(session.workingDirectory),
     session_id: agentSessionId,  // Use agent session ID for API correlation
@@ -217,8 +208,7 @@ function buildSessionAttributes(
     total_user_prompts: userPromptCount,
 
     // Tool Metrics
-    tool_names: Object.keys(toolCounts).sort(),
-    tool_counts: { ...toolCounts },
+    tool_names: toolNames,
     total_tool_calls: totalToolCalls,
     successful_tool_calls: successfulToolCalls,
     failed_tool_calls: failedToolCalls,
@@ -242,6 +232,17 @@ function buildSessionAttributes(
   }
 
   return attributes;
+}
+
+function expandToolNames(toolCounts: Record<string, number>): string[] {
+  const names: string[] = [];
+  for (const toolName of Object.keys(toolCounts).sort()) {
+    const count = Math.max(0, Math.floor(toolCounts[toolName] || 0));
+    for (let index = 0; index < count; index++) {
+      names.push(toolName);
+    }
+  }
+  return names;
 }
 
 /**
@@ -291,4 +292,3 @@ function calculateDurationFromDeltas(deltas: MetricDelta[], session: Session): n
 
   return batchDuration;
 }
-

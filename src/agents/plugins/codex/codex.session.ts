@@ -30,7 +30,7 @@ import type {
   SessionDiscoveryOptions,
   SessionDescriptor,
 } from '../../core/session/BaseSessionAdapter.js';
-import type { SessionProcessor, ProcessingContext } from '../../core/session/BaseProcessor.js';
+import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../../core/session/BaseProcessor.js';
 import type { AgentMetadata } from '../../core/types.js';
 import type {
   CodexRolloutRecord,
@@ -69,6 +69,33 @@ export class CodexSessionAdapter implements SessionAdapter {
     this.processors.push(processor);
     this.processors.sort((a, b) => a.priority - b.priority);
     logger.debug(`[codex-adapter] Registered processor: ${processor.name} (priority: ${processor.priority})`);
+  }
+
+  private async applySyncUpdates(sessionId: string, results: ProcessingResult[]): Promise<void> {
+    try {
+      const { SessionStore } = await import('../../core/session/SessionStore.js');
+      const { applyProcessingSyncUpdates } = await import('../../core/session/sync-state-utils.js');
+      const sessionStore = new SessionStore();
+      const session = await sessionStore.loadSession(sessionId);
+
+      if (!session) {
+        logger.warn(`[codex-adapter] Session not found for sync updates: ${sessionId}`);
+        return;
+      }
+
+      const hasChanges = applyProcessingSyncUpdates(session, results);
+
+      if (!hasChanges) {
+        logger.debug('[codex-adapter] No processor sync updates to persist');
+        return;
+      }
+
+      await sessionStore.saveSession(session);
+      logger.debug('[codex-adapter] Session persisted after processor sync updates');
+    } catch (error) {
+      logger.error('[codex-adapter] Failed to apply sync updates:', error);
+      throw error;
+    }
   }
 
   /**
@@ -299,6 +326,7 @@ export class CodexSessionAdapter implements SessionAdapter {
         recordsProcessed?: number;
       }> = {};
       const failedProcessors: string[] = [];
+      const allResults: ProcessingResult[] = [];
       let totalRecords = 0;
 
       for (const processor of this.processors) {
@@ -310,6 +338,7 @@ export class CodexSessionAdapter implements SessionAdapter {
 
           logger.debug(`[codex-adapter] Running processor: ${processor.name}`);
           const result = await processor.process(parsedSession, context);
+          allResults.push(result);
 
           processorResults[processor.name] = {
             success: result.success,
@@ -329,10 +358,14 @@ export class CodexSessionAdapter implements SessionAdapter {
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : 'Unknown error';
           logger.error(`[codex-adapter] Processor ${processor.name} threw:`, error);
-          processorResults[processor.name] = { success: false, message: errorMessage };
+          const failedResult: ProcessingResult = { success: false, message: errorMessage };
+          processorResults[processor.name] = failedResult;
+          allResults.push(failedResult);
           failedProcessors.push(processor.name);
         }
       }
+
+      await this.applySyncUpdates(sessionId, allResults);
 
       return {
         success: failedProcessors.length === 0,

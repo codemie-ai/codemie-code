@@ -93,8 +93,8 @@ export function createInstallCommand(): Command {
           } else if (version) {
             versionToInstall = version;
             actualVersionToInstall = version;
-          } else if (agent.name === 'claude' && agent.checkVersionCompatibility) {
-            // Default to supported version for Claude (native installer)
+          } else if ((agent.name === 'claude' || agent.name === 'codex') && agent.checkVersionCompatibility) {
+            // Default to supported version for agents whose backend compatibility is version-sensitive
             versionToInstall = 'supported';
             const compat = await agent.checkVersionCompatibility();
             actualVersionToInstall = compat.supportedVersion;

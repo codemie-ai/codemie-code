@@ -10,6 +10,7 @@
 export interface MetricIdentity {
   agent: string;
   agent_version: string;
+  codemie_client: string;
   repository: string;
   session_id: string;
   branch: string;
@@ -26,6 +27,9 @@ export interface SessionLifecycleAttributes extends MetricIdentity {
   status: 'started' | 'completed' | 'failed' | 'interrupted';
   reason?: string;
   session_duration_ms: number;
+  active_duration_ms?: number;
+  start_time?: number;
+  end_time?: number;
   had_errors: boolean;
   errors?: Record<string, string[]>;
 
@@ -81,7 +85,11 @@ export interface ToolUsageAttributes extends MetricIdentity {
 
   // Tool metrics
   tool_names: string[];
-  tool_counts: Record<string, number>;
+  // Do not send tool_counts to /v1/metrics. The backend/Elastic pipeline
+  // accepts the request but drops documents containing that field.
+  // Repeat tool_names once per invocation so backend raw-document classifiers
+  // can still recover per-tool counts.
+  tool_counts?: never;
   total_tool_calls: number;
   successful_tool_calls: number;
   failed_tool_calls: number;

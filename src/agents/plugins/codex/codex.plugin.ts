@@ -61,7 +61,7 @@ import {
   startCodexIncrementalSync,
   stopCodexIncrementalSync,
 } from './codex.incremental-sync.js';
-import { realpath as fsRealpath } from 'fs/promises';
+import { mkdir, realpath as fsRealpath } from 'fs/promises';
 
 /**
  * Supported Codex CLI version
@@ -148,6 +148,8 @@ export const CodexPluginMetadata: AgentMetadata = {
       if (!env.CODEX_HOME) {
         env.CODEX_HOME = resolveHomeDir('.codex/codemie/home');
       }
+
+      await mkdir(env.CODEX_HOME, { recursive: true });
 
       return env;
     },

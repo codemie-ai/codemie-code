@@ -22,7 +22,8 @@ export const RETRY_DELAY_MS = [1000, 2000, 5000] as const;
 // ============================================================================
 
 /** CodeMie Assistant ID for conversation imports */
-export const CODEMIE_ASSISTANT_ID = '5a430368-9e91-4564-be20-989803bf4da2';
+export const CODEMIE_ASSISTANT_ID =
+  process.env.CODEMIE_CONVERSATION_ASSISTANT_ID || '5a430368-9e91-4564-be20-989803bf4da2';
 
 /** API endpoint path for conversation history */
 export const CONVERSATIONS_API_PATH = 'v1/conversations';
@@ -35,7 +36,7 @@ export const DEFAULT_CONVERSATION_FOLDER = 'Claude Imports';
 // ============================================================================
 
 /** HTTP status codes that should NOT trigger retry logic */
-export const NON_RETRYABLE_HTTP_CODES = [400, 401, 403] as const;
+export const NON_RETRYABLE_HTTP_CODES = [400, 401, 403, 422] as const;
 
 // ============================================================================
 // Processor Configuration

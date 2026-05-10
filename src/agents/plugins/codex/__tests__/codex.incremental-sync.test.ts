@@ -29,6 +29,9 @@ async function waitFor(predicate: () => boolean, timeoutMs = 1500): Promise<void
   }
 }
 
+let testCounter = 0;
+let currentSessionId = '';
+
 describe('codex.incremental-sync', () => {
   beforeEach(() => {
     discoverSessions.mockReset();
@@ -36,22 +39,29 @@ describe('codex.incremental-sync', () => {
     processSession.mockReset();
     delete process.env.CODEMIE_CODEX_SYNC_ENABLED;
     delete process.env.CODEMIE_CODEX_SYNC_INTERVAL_MS;
+    testCounter++;
+    currentSessionId = `s-${testCounter}`;
   });
 
   afterEach(async () => {
     const { stopCodexIncrementalSync } = await import('../codex.incremental-sync.js');
-    stopCodexIncrementalSync('s1');
+    stopCodexIncrementalSync(currentSessionId);
+    // Drain any in-flight tick that started before stop.
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    discoverSessions.mockReset();
+    parseSessionFile.mockReset();
+    processSession.mockReset();
   });
 
   function commonOptions() {
     return {
-      sessionId: 's1',
+      sessionId: currentSessionId,
       startedAt: Date.now(),
       cwd: process.cwd(),
       metadata: { name: 'codex', dataPaths: { home: '.codex' } } as never,
       buildContext: () =>
         ({
-          sessionId: 's1',
+          sessionId: currentSessionId,
           apiBaseUrl: '',
           cookies: '',
           clientType: 'codemie-codex',
@@ -75,7 +85,7 @@ describe('codex.incremental-sync', () => {
     await waitFor(() => processSession.mock.calls.length >= 2);
     expect(processSession.mock.calls[0]).toEqual([
       '/tmp/rollout.jsonl',
-      's1',
+      currentSessionId,
       expect.any(Object),
     ]);
   });
@@ -144,7 +154,7 @@ describe('codex.incremental-sync', () => {
 
     const { startCodexIncrementalSync, stopCodexIncrementalSync } = await import('../codex.incremental-sync.js');
     startCodexIncrementalSync(commonOptions());
-    stopCodexIncrementalSync('s1');
+    stopCodexIncrementalSync(currentSessionId);
 
     await new Promise((resolve) => setTimeout(resolve, 120));
     expect(discoverSessions).not.toHaveBeenCalled();

@@ -3,12 +3,13 @@
  * Codex path utilities.
  *
  * Codex stores rollout files at:
- *   ~/.codex/sessions/YYYY/MM/DD/rollout-{ISO8601}-{uuid}.jsonl
+ *   ${CODEX_HOME:-~/.codex}/sessions/YYYY/MM/DD/rollout-{ISO8601}-{uuid}.jsonl
  *
- * Unlike OpenCode, Codex does NOT use XDG conventions — ~/.codex is fixed.
+ * Codex does not use XDG conventions by default, but it supports CODEX_HOME
+ * for isolating local state.
  *
  * References:
- * - https://github.com/openai/codex/blob/main/codex-rs/docs/configuration.md
+ * - https://developers.openai.com/codex/config-advanced
  */
 
 import { homedir } from 'os';
@@ -16,24 +17,24 @@ import { join } from 'path';
 import { existsSync } from 'fs';
 
 /**
- * Returns the Codex home directory: ~/.codex
+ * Returns the Codex home directory.
  */
 export function getCodexHomePath(): string {
-  return join(homedir(), '.codex');
+  return process.env.CODEX_HOME || join(homedir(), '.codex');
 }
 
 /**
- * Returns the Codex sessions base directory: ~/.codex/sessions
+ * Returns the Codex sessions base directory.
  * Returns null if the directory does not exist (Codex not run yet).
  */
 export function getCodexSessionsPath(): string | null {
-  const sessionsPath = join(homedir(), '.codex', 'sessions');
+  const sessionsPath = join(getCodexHomePath(), 'sessions');
   return existsSync(sessionsPath) ? sessionsPath : null;
 }
 
 /**
  * Returns the day-specific session directory for a given date:
- *   ~/.codex/sessions/YYYY/MM/DD
+ *   ${CODEX_HOME:-~/.codex}/sessions/YYYY/MM/DD
  *
  * Note: This directory may not exist yet.
  */
