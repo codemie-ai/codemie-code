@@ -61,6 +61,7 @@ import {
   startCodexIncrementalSync,
   stopCodexIncrementalSync,
 } from './codex.incremental-sync.js';
+import { reconcileStaleCodexSessions } from './codex.reconciliation.js';
 import { mkdir, realpath as fsRealpath } from 'fs/promises';
 
 /**
@@ -181,6 +182,15 @@ export const CodexPluginMetadata: AgentMetadata = {
         const msg = error instanceof Error ? error.message : String(error);
         logger.error(`[codex] SessionStart hook failed (non-blocking): ${msg}`);
       }
+
+      // Reconcile previously stranded codex sessions. Codex 0.129.0 has no
+      // graceful-shutdown guarantee, so kill -9 / OS shutdown leaves sessions
+      // marked `active` with no terminal lifecycle metric. Fire-and-forget so
+      // a slow reconcile never blocks the new session from starting.
+      void reconcileStaleCodexSessions(env, buildHookConfig).catch((error) => {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.debug(`[codex] Stale-session reconciliation failed (non-blocking): ${msg}`);
+      });
 
       // Start the in-process incremental sync timer. Because Codex 0.129.0
       // hooks were verified non-firing on `codex exec`, we re-parse the rollout
