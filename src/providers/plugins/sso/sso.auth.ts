@@ -7,7 +7,6 @@
 
 import { createServer, Server } from 'http';
 import { URL } from 'url';
-import open from 'open';
 import chalk from 'chalk';
 import type { SSOAuthConfig, SSOAuthResult, SSOCredentials } from '../../core/types.js';
 import { CredentialStore } from '../../../utils/security.js';
@@ -74,7 +73,13 @@ export class CodeMieSSO {
 
       // 3. Launch browser
       console.log(chalk.white(`Opening browser for authentication...`));
-      await open(ssoUrl);
+      try {
+        const { default: open } = await import('open');
+        await open(ssoUrl);
+      } catch (error) {
+        console.log(chalk.yellow(`Open this URL in your browser: ${ssoUrl}`));
+        console.log(chalk.dim(`Browser launch failed: ${error instanceof Error ? error.message : String(error)}`));
+      }
 
       // 4. Wait for callback with timeout and abort signal
       const result = await this.waitForCallback(

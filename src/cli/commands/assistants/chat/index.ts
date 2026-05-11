@@ -229,7 +229,7 @@ async function interactiveChat(
       );
     } catch (error) {
       spinner.fail(chalk.red(MESSAGES.CHAT.ERROR_SEND_FAILED));
-      await handleChatError(error, config);
+      await handleChatError(error, config, { showToUser: true });
       console.log(chalk.yellow(MESSAGES.CHAT.RETRY_PROMPT));
     }
   }
@@ -372,9 +372,16 @@ async function sendMessageWithHistory(
 /**
  * Handle chat errors with proper context
  */
-async function handleChatError(error: unknown, config: ProviderProfile): Promise<void> {
+async function handleChatError(
+  error: unknown,
+  config: ProviderProfile,
+  options: { showToUser?: boolean } = {}
+): Promise<void> {
   const context = createErrorContext(error);
   logger.error('Assistant chat API call failed', context);
+  if (options.showToUser) {
+    console.error(formatErrorForUser(context, { showSystem: false }));
+  }
 
   if (error instanceof Error && (error.message.includes('401') || error.message.includes('403'))) {
     await promptReauthentication(config);

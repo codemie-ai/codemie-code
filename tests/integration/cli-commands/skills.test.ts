@@ -4,8 +4,9 @@
  * Exercises the real built CLI (`bin/codemie.js`) against a stub upstream
  * `skills` binary so we can prove end-to-end:
  *   - the auth gate fires before any skills.sh spawn for unauthenticated users
- *   - `runSkillsCli` injects `DO_NOT_TRACK`, `DISABLE_TELEMETRY`, `CI`,
- *     and `NODE_OPTIONS=--require <egress shim>` into the upstream env
+ *   - `runSkillsCli` injects `NODE_OPTIONS=--require <egress shim>` into
+ *     the upstream env and captures install/update telemetry locally without
+ *     allowing outbound egress.
  *   - argv mapping for each subcommand survives into the upstream invocation
  *   - upstream non-zero exit codes are propagated, not collapsed to 1
  *
@@ -193,11 +194,11 @@ describe.runIf(HAS_LOCAL_SSO)('codemie skills (authenticated upstream spawn)', (
     expect(invocation.argv).toContain('bar');
   });
 
-  it('add: injects DO_NOT_TRACK / DISABLE_TELEMETRY / CI / NODE_OPTIONS shim', () => {
+  it('add: reopens upstream telemetry only behind the local egress guard shim', () => {
     runCLI(['add', 'owner/repo', '-a', 'claude-code', '-y']);
     const [invocation] = readInvocations();
-    expect(invocation.env.DO_NOT_TRACK).toBe('1');
-    expect(invocation.env.DISABLE_TELEMETRY).toBe('1');
+    expect(invocation.env.DO_NOT_TRACK).toBe('');
+    expect(invocation.env.DISABLE_TELEMETRY).toBe('');
     expect(invocation.env.CI).toBe('1');
     expect(invocation.env.NODE_OPTIONS).toMatch(/--require\s+"[^"]+skills-sh-egress-guard\.cjs"/);
   });

@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import * as fs from 'fs';
 import * as path from 'path';
+import { inspect } from 'util';
 import { sanitizeLogArgs } from './security.js';
 import { getCodemiePath } from './paths.js';
 
@@ -311,17 +312,49 @@ class Logger {
     this.writeToLogFile('warn', message, ...args);
   }
 
+  private formatErrorDetails(error: unknown): string {
+    if (error instanceof Error) {
+      const details: Record<string, unknown> = {
+        name: error.name,
+        message: error.message
+      };
+
+      if ((error as NodeJS.ErrnoException).code) {
+        details.code = (error as NodeJS.ErrnoException).code;
+      }
+
+      for (const key of Object.keys(error)) {
+        details[key] = (error as Error & Record<string, unknown>)[key];
+      }
+
+      let formatted = this.formatStructuredValue(details);
+      if (error.stack) {
+        formatted += `\n${error.stack}`;
+      }
+      return formatted;
+    }
+
+    return this.formatStructuredValue(error);
+  }
+
+  private formatStructuredValue(value: unknown): string {
+    const [sanitized] = sanitizeLogArgs(value);
+
+    if (typeof sanitized === 'string') {
+      return sanitized;
+    }
+
+    try {
+      return JSON.stringify(sanitized, null, 2);
+    } catch {
+      return inspect(sanitized, { depth: 8, colors: false });
+    }
+  }
+
   error(message: string, error?: Error | unknown): void {
     let errorDetails = '';
     if (error) {
-      if (error instanceof Error) {
-        errorDetails = error.message;
-        if (error.stack) {
-          errorDetails += `\n${error.stack}`;
-        }
-      } else {
-        errorDetails = String(error);
-      }
+      errorDetails = this.formatErrorDetails(error);
     }
 
     // Always write to log file
@@ -331,14 +364,7 @@ class Logger {
         // Console output
         console.error(chalk.red(`✗ ${message}`));
         if (error) {
-            if (error instanceof Error) {
-                console.error(chalk.red(error.message));
-                if (error.stack) {
-                    console.error(chalk.white(error.stack));
-                }
-            } else {
-                console.error(chalk.red(String(error)));
-            }
+            console.error(chalk.red(errorDetails));
         }
     }
   }
