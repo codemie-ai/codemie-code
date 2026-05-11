@@ -103,10 +103,10 @@ describe('Metrics Post-Processing Integration', () => {
     expect(metric.attributes.total_lines_added).toBe(15);
     expect(metric.attributes.total_lines_removed).toBe(3);
 
-    // Check error filtering (Bash should be excluded for Claude agent)
-    // Since only Bash tool failed and it's excluded, had_errors should be false
+    // Bash is excluded for claude agent — all tools filtered → session is error-free
     expect(metric.attributes.had_errors).toBe(false);
-    expect(metric.attributes.errors).toBeUndefined();
+    expect((metric.attributes as any).error_tools).toBeUndefined();
+    expect((metric.attributes as any).error_messages).toBeUndefined();
 
     // Check user prompts
     expect(metric.attributes.total_user_prompts).toBe(1);
@@ -209,15 +209,13 @@ describe('Metrics Post-Processing Integration', () => {
     const metrics = aggregateDeltas(deltas, mockSession, '1.0.0');
 
     expect(metrics).toHaveLength(1);
-    expect(metrics[0].attributes.had_errors).toBe(true);
-    expect(metrics[0].attributes.errors).toBeDefined();
-
-    if (metrics[0].attributes.errors) {
-      const readErrors = metrics[0].attributes.errors.Read;
-      expect(readErrors).toBeDefined();
-      expect(readErrors[0]).not.toContain('\x1b'); // ANSI stripped
-      expect(readErrors[0]).toContain('\\n'); // Newlines escaped
-    }
+    const attrs = metrics[0].attributes as any;
+    expect(attrs.had_errors).toBe(true);
+    expect(attrs.error_tools).toBeDefined();
+    expect(attrs.error_tools).toContain('Read');
+    expect(attrs.error_messages).toBeDefined();
+    expect(attrs.error_messages[0]).not.toContain('\x1b'); // ANSI stripped
+    expect(attrs.error_messages[0]).toContain('\n');       // newlines preserved (not JSON-escaped)
   });
 
   it('should handle metrics with no errors', () => {
@@ -241,7 +239,8 @@ describe('Metrics Post-Processing Integration', () => {
 
     expect(metrics).toHaveLength(1);
     expect(metrics[0].attributes.had_errors).toBe(false);
-    expect(metrics[0].attributes.errors).toBeUndefined();
+    expect((metrics[0].attributes as any).error_tools).toBeUndefined();
+    expect((metrics[0].attributes as any).error_messages).toBeUndefined();
   });
 
   it('should truncate very long error messages', () => {
@@ -268,11 +267,8 @@ describe('Metrics Post-Processing Integration', () => {
 
     expect(metrics).toHaveLength(1);
 
-    if (metrics[0].attributes.errors) {
-      const readErrors = metrics[0].attributes.errors.Read;
-      expect(readErrors).toBeDefined();
-      expect(readErrors[0].length).toBeLessThanOrEqual(1017); // 1000 + '...[truncated]'
-      expect(readErrors[0]).toContain('...[truncated]');
-    }
+    const truncAttrs = metrics[0].attributes as any;
+    expect(truncAttrs.error_messages).toBeDefined();
+    expect(truncAttrs.error_messages[0].length).toBeLessThanOrEqual(500); // v2 cap
   });
 });

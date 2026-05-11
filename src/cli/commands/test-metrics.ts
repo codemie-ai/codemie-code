@@ -134,7 +134,6 @@ async function runTestMetrics(options: {
 
       total_user_prompts: 1,
       tool_names: ['Read'],
-      tool_counts: { 'Read': 1 },
       total_tool_calls: 1,
       successful_tool_calls: 1,
       failed_tool_calls: 0,

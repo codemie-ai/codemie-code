@@ -27,7 +27,9 @@ export interface SessionLifecycleAttributes extends MetricIdentity {
   reason?: string;
   session_duration_ms: number;
   had_errors: boolean;
-  errors?: Record<string, string[]>;
+  error_tools?: string[];    // unique tool names that errored (v2, replaces errors dict)
+  error_messages?: string[]; // flat list of error messages (v2, replaces errors dict)
+  schema_version?: number;   // 2 = v2 shape; absent/1 = legacy
 
   // MCP fields (optional, only at session start)
   mcp_total_servers?: number;
@@ -77,11 +79,12 @@ export interface ToolUsageAttributes extends MetricIdentity {
   total_user_prompts: number;
   session_duration_ms: number;
   had_errors: boolean;
-  errors?: Record<string, string[]>;
+  error_tools?: string[];    // unique tool names that errored (v2, replaces errors dict)
+  error_messages?: string[]; // flat list of error messages (v2, replaces errors dict)
+  schema_version?: number;   // 2 = v2 shape; absent/1 = legacy
 
-  // Tool metrics
+  // Tool metrics — tool_counts is intentionally not emitted (backend uses tool_names)
   tool_names: string[];
-  tool_counts: Record<string, number>;
   total_tool_calls: number;
   successful_tool_calls: number;
   failed_tool_calls: number;

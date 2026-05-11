@@ -250,7 +250,7 @@ export class MetricsSender {
    * @param extensionsSummary - Optional extensions scan summary (project + global scopes)
    */
   async sendSessionStart(
-    session: Pick<Session, 'sessionId' | 'agentName' | 'provider' | 'project' | 'startTime' | 'workingDirectory' | 'repository'> & { model?: string },
+    session: Pick<Session, 'sessionId' | 'agentName' | 'provider' | 'project' | 'startTime' | 'workingDirectory'> & { model?: string },
     workingDirectory: string,
     status: SessionStartStatus = { status: 'started' },
     error?: SessionError,
@@ -260,8 +260,8 @@ export class MetricsSender {
     // Detect git branch
     const branch = await detectGitBranch(workingDirectory);
 
-    // Use canonical owner/repo from session if available; fall back to filesystem derivation
-    const repository = session.repository ?? this.extractRepository(workingDirectory);
+    // Extract repository from working directory
+    const repository = this.extractRepository(workingDirectory);
 
     // Build session start metric with status
     const attributes: any = {
@@ -327,12 +327,12 @@ export class MetricsSender {
       })
     };
 
-    // Add error details if session start failed
+    // Add error details if session start failed (v2 parallel arrays — no dict keys in ES)
     if (status.status === 'failed' && error) {
-      attributes.errors = {
-        [error.type]: [error.code ? `[${error.code}] ${error.message}` : error.message]
-      };
+      attributes.error_tools = [error.type];
+      attributes.error_messages = [error.code ? `[${error.code}] ${error.message}` : error.message];
     }
+    attributes.schema_version = 2;
 
     const metric: SessionMetric = {
       name: MetricsSender.METRIC_SESSION_TOTAL,
@@ -379,7 +379,7 @@ export class MetricsSender {
    * @param activeDurationMs - Optional active duration excluding idle time
    */
   async sendSessionEnd(
-    session: Pick<Session, 'sessionId' | 'agentName' | 'provider' | 'project' | 'startTime' | 'workingDirectory' | 'repository'> & { model?: string },
+    session: Pick<Session, 'sessionId' | 'agentName' | 'provider' | 'project' | 'startTime' | 'workingDirectory'> & { model?: string },
     workingDirectory: string,
     status: SessionEndStatus,
     durationMs: number,
@@ -389,8 +389,8 @@ export class MetricsSender {
     // Detect git branch
     const branch = await detectGitBranch(workingDirectory);
 
-    // Use canonical owner/repo from session if available; fall back to filesystem derivation
-    const repository = session.repository ?? this.extractRepository(workingDirectory);
+    // Extract repository from working directory
+    const repository = this.extractRepository(workingDirectory);
 
     // Build session end metric with status
     const attributes: any = {
@@ -416,12 +416,12 @@ export class MetricsSender {
       ...(status.reason && { reason: status.reason })
     };
 
-    // Add error details if session ended with error
+    // Add error details if session ended with error (v2 parallel arrays — no dict keys in ES)
     if (status.status === 'failed' && error) {
-      attributes.errors = {
-        [error.type]: [error.code ? `[${error.code}] ${error.message}` : error.message]
-      };
+      attributes.error_tools = [error.type];
+      attributes.error_messages = [error.code ? `[${error.code}] ${error.message}` : error.message];
     }
+    attributes.schema_version = 2;
 
     const metric: SessionMetric = {
       name: MetricsSender.METRIC_SESSION_TOTAL,
