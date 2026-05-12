@@ -14,6 +14,7 @@ import { CodeMieCodePluginMetadata } from '../plugins/codemie-code.plugin.js';
 import { GeminiPluginMetadata } from '../plugins/gemini/gemini.plugin.js';
 import { OpenCodePluginMetadata } from '../plugins/opencode/opencode.plugin.js';
 import {ClaudeAcpPluginMetadata} from "../plugins/claude/claude-acp.plugin.js";
+import { CodexPluginMetadata } from '../plugins/codex/codex.plugin.js';
 
 /**
  * Universal CLI builder for any agent
@@ -436,6 +437,7 @@ export class AgentCLI {
       'gemini': GeminiPluginMetadata,
       'opencode': OpenCodePluginMetadata,
       'claude-acp': ClaudeAcpPluginMetadata,
+      'codex': CodexPluginMetadata,
     };
     return metadataMap[this.adapter.name];
   }
@@ -453,8 +455,8 @@ export class AgentCLI {
     const provider = config.provider || 'unknown';
     const model = config.model || 'unknown';
 
-    // Check provider compatibility
-    if (!metadata.supportedProviders.includes(provider)) {
+    // Check provider compatibility (skip when empty — agent manages its own auth)
+    if (metadata.supportedProviders.length > 0 && !metadata.supportedProviders.includes(provider)) {
       logger.error(`Provider '${provider}' is not supported by ${this.adapter.displayName}`);
       console.log(chalk.white(`\nSupported providers: ${metadata.supportedProviders.join(', ')}`));
       console.log(chalk.white('\nOptions:'));

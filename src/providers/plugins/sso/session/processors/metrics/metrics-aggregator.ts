@@ -11,6 +11,7 @@ import type { Session } from '../../../../../../agents/core/session/types.js';
 import type {ToolUsageAttributes, SessionMetric} from './metrics-types.js';
 import type {AgentMetricsConfig} from '../../../../../../agents/core/types.js';
 import {logger} from '../../../../../../utils/logger.js';
+import { extractRepository } from '../../../../../../utils/paths.js';
 import {postProcessMetric} from './metrics-post-processor.js';
 import {MetricsSender} from './metrics-api-client.js';
 
@@ -41,21 +42,6 @@ function sanitizeErrorMessage(message: string): string {
 }
 
 /**
- * Extract parent/repo format from a working directory path.
- * e.g. /Users/john/projects/codemie-code → projects/codemie-code
- */
-function extractRepository(workingDirectory: string): string {
-  const parts = workingDirectory.split(/[/\\]/);
-  const filtered = parts.filter(p => p.length > 0);
-
-  if (filtered.length >= 2) {
-    return `${filtered[filtered.length - 2]}/${filtered[filtered.length - 1]}`;
-  }
-
-  return filtered[filtered.length - 1] || 'unknown';
-}
-
-/**
  * Aggregate pending deltas into session metrics grouped by branch
  * Returns one metric per branch to prevent mixing metrics between branches
  *
@@ -68,6 +54,7 @@ export function aggregateDeltas(
   deltas: MetricDelta[],
   session: Session,
   version: string,
+  clientType: string,
   agentConfig?: AgentMetricsConfig
 ): SessionMetric[] {
   logger.debug(`[aggregator] Aggregating ${deltas.length} deltas for session ${session.sessionId}`);
@@ -94,7 +81,7 @@ export function aggregateDeltas(
     logger.debug(`[aggregator] Building metric for branch "${branch}" with ${branchDeltas.length} deltas`);
 
     // Build attributes from deltas for this branch
-    const attributes = buildSessionAttributes(branchDeltas, session, version, branch);
+    const attributes = buildSessionAttributes(branchDeltas, session, version, clientType, branch);
 
     // Create session metric for this branch
     const metric: SessionMetric = {
@@ -117,6 +104,7 @@ function buildSessionAttributes(
   deltas: MetricDelta[],
   session: Session,
   version: string,
+  clientType: string,
   branch: string
 ): ToolUsageAttributes {
   // Use agent session ID from session correlation for API calls
@@ -217,26 +205,30 @@ function buildSessionAttributes(
   }
 
   // Determine most-used model
-  const primaryModel = getMostUsedModel(modelCounts);
-
-  // tool_names: sorted array of unique valid tool names (backend uses this for analytics)
-  const toolNames = Object.keys(toolCounts).sort();
+  const sessionModel = (session as Session & { model?: string }).model;
+  const primaryModel = getMostUsedModel(modelCounts) || sessionModel;
 
   // Calculate total tool calls from internal counts
   const totalToolCalls = Object.values(toolCounts).reduce((sum, c) => sum + c, 0);
   const successfulToolCalls = Object.values(toolSuccess).reduce((sum, c) => sum + c, 0);
   const failedToolCalls = Object.values(toolFailures).reduce((sum, c) => sum + c, 0);
 
+  // tool_names is repeated once per invocation so backend raw-document classifiers can
+  // recover per-tool counts (tool_counts dict is intentionally not emitted — ES drops docs
+  // containing dict fields with unbounded keys).
+  const toolNames = expandToolNames(toolCounts);
+
   // Calculate session duration from deltas (incremental batch duration)
   const sessionDuration = calculateDurationFromDeltas(deltas, session);
 
   // Build attributes — v2 schema: no errors dict, no tool_counts dict
-  const attributes: any = {
+  const attributes: ToolUsageAttributes = {
     // Identity
     agent: session.agentName,
     agent_version: version,
+    codemie_client: clientType,
     llm_model: primaryModel || 'unknown',
-    repository: extractRepository(session.workingDirectory),
+    repository: session.repository ?? extractRepository(session.workingDirectory),
     session_id: agentSessionId,
     branch: branch,
     ...(session.project && { project: session.project }),
@@ -244,7 +236,7 @@ function buildSessionAttributes(
     // Interaction Metrics
     total_user_prompts: userPromptCount,
 
-    // Tool Metrics — tool_counts dict intentionally omitted; backend falls back to tool_names
+    // Tool Metrics — tool_counts dict intentionally omitted; tool_names is per-invocation
     tool_names: toolNames,
     total_tool_calls: totalToolCalls,
     successful_tool_calls: successfulToolCalls,
@@ -272,6 +264,17 @@ function buildSessionAttributes(
   }
 
   return attributes;
+}
+
+function expandToolNames(toolCounts: Record<string, number>): string[] {
+  const names: string[] = [];
+  for (const toolName of Object.keys(toolCounts).sort()) {
+    const count = Math.max(0, Math.floor(toolCounts[toolName] || 0));
+    for (let index = 0; index < count; index++) {
+      names.push(toolName);
+    }
+  }
+  return names;
 }
 
 /**

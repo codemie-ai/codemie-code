@@ -766,6 +766,33 @@ The CodeMie UI/catalog will surface curated and client-specific skill sources an
 
 ---
 
+## Codex Cost & Metrics Reporting (SSO Provider)
+
+Codex uses the same two-pipeline model as claude. Cost is computed server-side; the CLI never sends `money_spent`.
+
+**Pipeline A — CLI tool / lifecycle metrics → `POST /v1/metrics`**
+- Tool deltas: `src/agents/plugins/codex/session/processors/codex.metrics-processor.ts` (keyed by `call_id`).
+- Lifecycle: `src/agents/plugins/codex/codex.plugin.ts:onSessionStart` and `:onSessionEnd` route through `processEvent(SessionStart/SessionEnd)` in `src/cli/commands/hook.ts:170-228`.
+- `status` is hardcoded to `'completed'` for both claude and codex (`src/cli/commands/hook.ts:1000-1003`); the actual end signal travels in the `reason` field. Reconciled stale sessions carry `reason: 'interrupted'`.
+- Aggregation and HTTP push are shared with claude (`src/providers/plugins/sso/session/processors/metrics/`).
+
+**Pipeline B — LLM proxy traffic → `codemie_litellm_proxy_usage`**
+- Codex's LLM HTTP traffic flows through `CODEMIE_BASE_URL` via the custom `model_providers.codemie` block written in `src/agents/plugins/codex/codex.plugin.ts:enrichArgs` (`:222-281`).
+- Headers attached on every codex LLM request by the SSO proxy (`src/providers/plugins/sso/proxy/plugins/header-injection.plugin.ts:30-83`):
+  - `X-CodeMie-Request-ID`, `X-CodeMie-Session-ID`, `X-CodeMie-CLI`, `X-CodeMie-CLI-Model`, `X-CodeMie-Client: codemie-codex`
+  - Codex-only: `x-litellm-session-id` (proxy session id, not the codex rollout id)
+- Backend computes `money_spent` from `cost_config` model pricing; analytics joins to Pipeline A by `session_id`.
+
+**Stale-session reconciliation**
+- Codex 0.129.0 has no graceful-shutdown guarantee, so kill -9 and OS shutdown leave sessions stranded as `status: "active"`.
+- On every codex `onSessionStart`, `reconcileStaleCodexSessions` (`src/agents/plugins/codex/codex.reconciliation.ts`) scans `~/.codemie/sessions/` for codex sessions with `status: "active"` and last activity older than 30 minutes (lookback capped at 24 hours), and synthesises a `SessionEnd` with `reason: 'interrupted'`.
+- Runs fire-and-forget; never blocks new session startup.
+
+**`session_id` coherence**
+- Pipeline A `session_id` and Pipeline B `X-CodeMie-Session-ID` both use the codemie session UUID v4 (the codex rollout UUID v7 is used only for conversation sync). Cross-pipeline join works without remediation.
+
+---
+
 ## Troubleshooting
 
 | Issue | Cause | Solution |
@@ -778,6 +805,8 @@ The CodeMie UI/catalog will surface curated and client-specific skill sources an
 | LiteLLM connection error | Proxy not running | Start LiteLLM: `litellm --port 4000` |
 | OpenCode not found | Not installed | `codemie install opencode` or `npm i -g opencode-ai` |
 | OpenCode sessions not syncing | Metrics processing failed | Check `codemie opencode-metrics --discover --verbose` |
+| Codex sessions stuck `status: active` | Hard kill skipped `onSessionEnd` | Next codex run reconciles them within 30 min via `codex.reconciliation.ts` |
+| Codex `money_spent` is 0 in analytics | Backend `cost_config` missing entry for the gpt model | Add the model's pricing in the codemie backend `cost_config` |
 
 ---
 

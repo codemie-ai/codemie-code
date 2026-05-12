@@ -19,6 +19,7 @@ import { logger } from '../../../../utils/logger.js';
 import { SessionStore } from '../../../../agents/core/session/SessionStore.js';
 import { MetricsSyncProcessor } from './processors/metrics/metrics-sync-processor.js';
 import { createSyncProcessor as createConversationSyncProcessor } from './processors/conversations/syncProcessor.js';
+import { applyProcessingSyncUpdates } from '../../../../agents/core/session/sync-state-utils.js';
 
 export interface SessionSyncResult {
   success: boolean;
@@ -55,87 +56,11 @@ export class SessionSyncer {
         return;
       }
 
-      for (const result of results) {
-        if (!result.metadata?.syncUpdates) continue;
+      const hasChanges = applyProcessingSyncUpdates(session, results);
 
-        const { syncUpdates } = result.metadata;
-
-        // Apply metrics updates
-        if (syncUpdates.metrics) {
-          session.sync ??= {};
-          session.sync.metrics ??= {
-            lastProcessedTimestamp: Date.now(),
-            processedRecordIds: [],
-            totalDeltas: 0,
-            totalSynced: 0,
-            totalFailed: 0
-          };
-
-          // Merge processedRecordIds (deduplicate)
-          if (syncUpdates.metrics.processedRecordIds) {
-            const existing = new Set(session.sync.metrics.processedRecordIds || []);
-            for (const id of syncUpdates.metrics.processedRecordIds) {
-              existing.add(id);
-            }
-            session.sync.metrics.processedRecordIds = Array.from(existing);
-          }
-
-          // Update counters (increment, don't overwrite)
-          if (syncUpdates.metrics.totalDeltas !== undefined) {
-            session.sync.metrics.totalDeltas = syncUpdates.metrics.totalDeltas;
-          }
-          if (syncUpdates.metrics.totalSynced !== undefined) {
-            session.sync.metrics.totalSynced = (session.sync.metrics.totalSynced || 0) + syncUpdates.metrics.totalSynced;
-          }
-          if (syncUpdates.metrics.totalFailed !== undefined) {
-            session.sync.metrics.totalFailed = (session.sync.metrics.totalFailed || 0) + syncUpdates.metrics.totalFailed;
-          }
-          if (syncUpdates.metrics.lastProcessedTimestamp !== undefined) {
-            session.sync.metrics.lastProcessedTimestamp = syncUpdates.metrics.lastProcessedTimestamp;
-          }
-        }
-
-        // Apply conversations updates
-        if (syncUpdates.conversations) {
-          session.sync ??= {};
-          session.sync.conversations ??= {
-            lastSyncedMessageUuid: undefined,
-            lastSyncedHistoryIndex: -1,
-            totalMessagesSynced: 0,
-            totalSyncAttempts: 0
-          };
-
-          // Update conversation tracking (latest wins)
-          if (syncUpdates.conversations.lastSyncedMessageUuid !== undefined) {
-            session.sync.conversations.lastSyncedMessageUuid =
-              syncUpdates.conversations.lastSyncedMessageUuid;
-          }
-          if (syncUpdates.conversations.lastSyncedHistoryIndex !== undefined) {
-            session.sync.conversations.lastSyncedHistoryIndex =
-              Math.max(
-                session.sync.conversations.lastSyncedHistoryIndex ?? -1,
-                syncUpdates.conversations.lastSyncedHistoryIndex
-              );
-          }
-          if (syncUpdates.conversations.conversationId !== undefined) {
-            session.sync.conversations.conversationId = syncUpdates.conversations.conversationId;
-          }
-          if (syncUpdates.conversations.lastSyncAt !== undefined) {
-            session.sync.conversations.lastSyncAt = syncUpdates.conversations.lastSyncAt;
-          }
-
-          // Update counters (increment, don't overwrite)
-          if (syncUpdates.conversations.totalMessagesSynced !== undefined) {
-            session.sync.conversations.totalMessagesSynced =
-              (session.sync.conversations.totalMessagesSynced || 0) +
-              syncUpdates.conversations.totalMessagesSynced;
-          }
-          if (syncUpdates.conversations.totalSyncAttempts !== undefined) {
-            session.sync.conversations.totalSyncAttempts =
-              (session.sync.conversations.totalSyncAttempts || 0) +
-              syncUpdates.conversations.totalSyncAttempts;
-          }
-        }
+      if (!hasChanges) {
+        logger.debug('[SessionSyncer] No processor sync updates to persist');
+        return;
       }
 
       // Persist session ONCE after all updates applied

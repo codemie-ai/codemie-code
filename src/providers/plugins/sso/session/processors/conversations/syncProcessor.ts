@@ -24,9 +24,12 @@ import {
   DEFAULT_API_TIMEOUT_MS,
   DEFAULT_RETRY_ATTEMPTS,
   CODEMIE_ASSISTANT_ID,
+  DEFAULT_CONVERSATION_FOLDER,
   CONVERSATION_PROCESSOR_PRIORITY,
   CONVERSATION_PROCESSOR_NAME
 } from './constants.js';
+
+const MAX_CONVERSATION_SYNC_ATTEMPTS = 3;
 
 /**
  * Create a conversation sync processor instance
@@ -50,7 +53,11 @@ export function createSyncProcessor(): SessionProcessor {
       const conversationsFile = getSessionConversationPath(session.sessionId);
       const allPayloads = await readJSONL<ConversationPayloadRecord>(conversationsFile);
 
-      const pendingPayloads = allPayloads.filter(p => p.status === CONVERSATION_SYNC_STATUS.PENDING);
+      const pendingPayloads = allPayloads.filter(p =>
+        p.status === CONVERSATION_SYNC_STATUS.PENDING ||
+        (p.status === CONVERSATION_SYNC_STATUS.FAILED &&
+          (p.syncAttempts ?? 0) < MAX_CONVERSATION_SYNC_ATTEMPTS)
+      );
 
       if (pendingPayloads.length === 0) {
         logger.debug(`[${CONVERSATION_PROCESSOR_NAME}] No pending conversation payloads for session ${session.sessionId}`);
@@ -74,13 +81,19 @@ export function createSyncProcessor(): SessionProcessor {
       // Send each pending payload to API
       let successCount = 0;
       let totalMessages = 0;
+      const successfulPayloadIds = new Set<string>();
+      const failedByPayloadId = new Map<string, string>();
 
       for (const pendingPayload of pendingPayloads) {
-        const { conversationId, history } = pendingPayload.payload;
+        const payloadId = getPayloadId(pendingPayload);
+        const { conversationId, history, assistantId, folder, llmModel } = pendingPayload.payload;
+        const resolvedAssistantId = assistantId || CODEMIE_ASSISTANT_ID;
+        const resolvedFolder = folder || resolveConversationFolder(context.clientType, session.agentName);
 
         logger.debug(
           `[${CONVERSATION_PROCESSOR_NAME}] Sending payload: conversationId=${conversationId}, ` +
-          `messages=${history.length}, isTurnContinuation=${pendingPayload.isTurnContinuation}`
+          `messages=${history.length}, folder=${resolvedFolder}, llmModel=${llmModel || 'unknown'}, ` +
+          `isTurnContinuation=${pendingPayload.isTurnContinuation}`
         );
 
         try {
@@ -89,12 +102,14 @@ export function createSyncProcessor(): SessionProcessor {
           const response = await apiClient.upsertConversation(
             conversationId,
             history,
-            CODEMIE_ASSISTANT_ID,
-            session.agentName // Agent display name (e.g., "Claude Code")
+            resolvedAssistantId,
+            resolvedFolder,
+            llmModel
           );
 
           if (!response.success) {
             logger.error(`[${CONVERSATION_PROCESSOR_NAME}] Failed to sync conversation ${conversationId}: ${response.message}`);
+            failedByPayloadId.set(payloadId, response.message);
             // Continue with other payloads even if one fails
             continue;
           }
@@ -102,28 +117,44 @@ export function createSyncProcessor(): SessionProcessor {
           logger.info(`[${CONVERSATION_PROCESSOR_NAME}] Successfully synced conversation ${conversationId} (${response.new_messages} new, ${response.total_messages} total)`);
           successCount++;
           totalMessages += history.length;
+          successfulPayloadIds.add(payloadId);
 
         } catch (error: any) {
           logger.error(`[${CONVERSATION_PROCESSOR_NAME}] Error syncing conversation ${conversationId}:`, error.message);
+          failedByPayloadId.set(payloadId, error.message || 'Unknown error');
           // Continue with other payloads
         }
       }
 
       // Mark payloads as synced in JSONL (atomic rewrite)
       const syncedAt = Date.now();
-      const pendingTimestamps = new Set(pendingPayloads.map(p => p.timestamp));
 
-      const updatedPayloads = allPayloads.map((p): ConversationPayloadRecord =>
-        pendingTimestamps.has(p.timestamp)
-          ? {
-              ...p,
-              status: CONVERSATION_SYNC_STATUS.SUCCESS,
-              response: {
-                syncedCount: p.payload.history.length
-              }
+      const updatedPayloads = allPayloads.map((p): ConversationPayloadRecord => {
+        const payloadId = getPayloadId(p);
+        if (successfulPayloadIds.has(payloadId)) {
+          return {
+            ...p,
+            status: CONVERSATION_SYNC_STATUS.SUCCESS,
+            syncAttempts: (p.syncAttempts ?? 0) + 1,
+            error: undefined,
+            response: {
+              syncedCount: p.payload.history.length
             }
-          : p
-      );
+          };
+        }
+
+        const error = failedByPayloadId.get(payloadId);
+        if (error) {
+          return {
+            ...p,
+            status: CONVERSATION_SYNC_STATUS.FAILED,
+            syncAttempts: (p.syncAttempts ?? 0) + 1,
+            error,
+          };
+        }
+
+        return p;
+      });
 
       await writeJSONLAtomic(conversationsFile, updatedPayloads);
 
@@ -134,29 +165,50 @@ export function createSyncProcessor(): SessionProcessor {
       // Calculate sync updates for the adapter to persist
       let maxHistoryIndex = -1;
       let conversationId: string | undefined;
+      let lastSyncedMessageUuid: string | undefined;
 
       if (successCount > 0) {
-        // Find the highest history index from successfully synced payloads
+        let latestPayload: ConversationPayloadRecord | undefined;
         for (const payload of pendingPayloads) {
+          if (!successfulPayloadIds.has(getPayloadId(payload))) continue;
           const historyIndices = payload.historyIndices || [];
+          const payloadMaxIndex = historyIndices.length > 0
+            ? Math.max(...historyIndices)
+            : -1;
+          const payloadRank = Math.max(
+            payloadMaxIndex,
+            parseSourceIndex(payload.lastProcessedMessageUuid)
+          );
+          const latestRank = latestPayload
+            ? Math.max(
+              latestPayload.historyIndices.length > 0 ? Math.max(...latestPayload.historyIndices) : -1,
+              parseSourceIndex(latestPayload.lastProcessedMessageUuid)
+            )
+            : -1;
+
+          if (!latestPayload || payloadRank > latestRank) {
+            latestPayload = payload;
+          }
+
           if (historyIndices.length > 0) {
-            const payloadMaxIndex = Math.max(...historyIndices);
             maxHistoryIndex = Math.max(maxHistoryIndex, payloadMaxIndex);
           }
         }
 
-        // Get conversation ID from first payload
-        if (pendingPayloads.length > 0) {
-          conversationId = pendingPayloads[0].payload.conversationId;
+        if (latestPayload) {
+          conversationId = latestPayload.payload.conversationId;
+          lastSyncedMessageUuid = latestPayload.lastProcessedMessageUuid;
         }
       }
 
       // Debug: Log which payloads were marked as synced
       logger.debug(`[${CONVERSATION_PROCESSOR_NAME}] Marked payloads as synced:`, {
         syncedAt: new Date(syncedAt).toISOString(),
-        timestamps: Array.from(pendingTimestamps),
+        payloadIds: Array.from(successfulPayloadIds),
+        failedPayloadIds: Array.from(failedByPayloadId.keys()),
         totalPayloadsInFile: updatedPayloads.length,
         syncedCount: updatedPayloads.filter(p => p.status === CONVERSATION_SYNC_STATUS.SUCCESS).length,
+        failedCount: updatedPayloads.filter(p => p.status === CONVERSATION_SYNC_STATUS.FAILED).length,
         pendingCount: updatedPayloads.filter(p => p.status === CONVERSATION_SYNC_STATUS.PENDING).length
       });
 
@@ -169,6 +221,7 @@ export function createSyncProcessor(): SessionProcessor {
           payloadsSynced: successCount,
           syncUpdates: successCount > 0 ? {
             conversations: {
+              lastSyncedMessageUuid,
               lastSyncedHistoryIndex: maxHistoryIndex,
               conversationId,
               totalMessagesSynced: totalMessages,
@@ -202,4 +255,32 @@ export function createSyncProcessor(): SessionProcessor {
       return processConversations(session, context);
     }
   };
+}
+
+function resolveConversationFolder(clientType?: string, agentName?: string): string {
+  if (clientType === 'codemie-codex' || agentName === 'codex') {
+    return 'codex';
+  }
+  if (clientType === 'codemie-gemini' || agentName === 'gemini') {
+    return 'gemini';
+  }
+  if (clientType === 'codemie-claude' || agentName === 'claude') {
+    return 'claude';
+  }
+  return DEFAULT_CONVERSATION_FOLDER;
+}
+
+function getPayloadId(payload: ConversationPayloadRecord): string {
+  return payload.payloadId ||
+    payload.lastProcessedMessageUuid ||
+    `${payload.payload.conversationId}:${payload.timestamp}`;
+}
+
+function parseSourceIndex(value: unknown): number {
+  if (typeof value !== 'string') {
+    return -1;
+  }
+
+  const index = Number.parseInt(value.slice(value.lastIndexOf('@') + 1), 10);
+  return Number.isFinite(index) ? index : -1;
 }

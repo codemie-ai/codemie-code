@@ -26,6 +26,7 @@ import type { ProcessingContext } from '../../session/BaseProcessor.js';
 import { SessionSyncer } from '../../session/SessionSyncer.js';
 import type { SSOCredentials } from '../../../../core/types.js';
 import { ConfigurationError } from '../../../../../utils/errors.js';
+import type { ProxyConfig } from '../proxy-types.js';
 
 export class SSOSessionSyncPlugin implements ProxyPlugin {
   id = '@codemie/sso-session-sync';
@@ -70,7 +71,8 @@ export class SSOSessionSyncPlugin implements ProxyPlugin {
 
     return new SSOSessionSyncInterceptor(
       context.config.sessionId,
-      context.config.syncApiUrl || context.config.targetApiUrl,
+      context.config.syncApiUrl,
+      context.config,
       ssoCredentials.cookies,
       context.config.clientType,
       context.config.version,
@@ -129,10 +131,12 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
   private context: ProcessingContext;
   private syncInterval: number;
   private isSyncing = false;
+  private readonly isLocalDev: boolean;
 
   constructor(
     private sessionId: string,
-    baseUrl: string,
+    private explicitSyncApiUrl: string | undefined,
+    private proxyConfig: ProxyConfig,
     cookies: Record<string, string>,
     clientType: string,
     version: string = '0.0.0',
@@ -147,22 +151,22 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
     const devApiKey = process.env.CODEMIE_DEV_API_KEY;
 
     // Use dev settings if both are provided
-    const isLocalDev = !!devApiUrl && !!devApiKey;
+    this.isLocalDev = !!devApiUrl && !!devApiKey;
 
-    if (isLocalDev) {
+    if (this.isLocalDev) {
       logger.info(`[sso-session-sync] Local development mode: using ${devApiUrl} with user-id header`);
     }
 
     // Build cookie header (only if not in local dev mode)
-    const cookieHeader = isLocalDev ? '' : Object.entries(cookies)
+    const cookieHeader = this.isLocalDev ? '' : Object.entries(cookies)
       .map(([key, value]) => `${key}=${value}`)
       .join('; ');
 
     // Create processing context (shared by SessionSyncer)
     this.context = {
-      apiBaseUrl: isLocalDev ? devApiUrl : baseUrl,
+      apiBaseUrl: this.isLocalDev ? devApiUrl! : this.resolveSyncApiBaseUrl(),
       cookies: cookieHeader,
-      apiKey: isLocalDev ? devApiKey : undefined,
+      apiKey: this.isLocalDev ? devApiKey : undefined,
       clientType,
       version,
       dryRun
@@ -182,8 +186,14 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
    * Called when proxy starts - initialize background timer
    */
   async onProxyStart(): Promise<void> {
+    if (!this.isLocalDev) {
+      this.context.apiBaseUrl = this.resolveSyncApiBaseUrl();
+    }
+
     const intervalMinutes = Math.round(this.syncInterval / 60000);
-    logger.info(`[${this.name}] Session sync enabled - syncing every ${intervalMinutes} minute${intervalMinutes !== 1 ? 's' : ''}`);
+    logger.info(
+      `[${this.name}] Session sync enabled - syncing every ${intervalMinutes} minute${intervalMinutes !== 1 ? 's' : ''} via ${this.context.apiBaseUrl}`
+    );
 
     // Start background timer
     this.syncTimer = setInterval(() => {
@@ -249,4 +259,16 @@ class SSOSessionSyncInterceptor implements ProxyInterceptor {
     }
   }
 
+  private resolveSyncApiBaseUrl(): string {
+    if (this.explicitSyncApiUrl) {
+      return this.explicitSyncApiUrl;
+    }
+
+    if (this.proxyConfig.port) {
+      const host = this.proxyConfig.host || 'localhost';
+      return `http://${host}:${this.proxyConfig.port}`;
+    }
+
+    return this.proxyConfig.targetApiUrl;
+  }
 }

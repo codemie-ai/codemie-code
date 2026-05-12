@@ -23,6 +23,8 @@ import { readJSONL } from '../../utils/jsonl-reader.js';
 import { writeJSONLAtomic } from '../../utils/jsonl-writer.js';
 import type { MetricDelta } from '../../../../../../agents/core/metrics/types.js';
 
+const MAX_SYNC_ATTEMPTS = 3;
+
 export class MetricsSyncProcessor implements SessionProcessor {
   readonly name = 'metrics-sync';
   readonly priority = 2; // Run after metrics transformation (priority 1)
@@ -50,8 +52,11 @@ export class MetricsSyncProcessor implements SessionProcessor {
       // 1. Read all deltas from JSONL
       const allDeltas = await readJSONL<MetricDelta>(metricsFile);
 
-      // 2. Filter for pending deltas only
-      const pendingDeltas = allDeltas.filter(d => d.syncStatus === 'pending');
+      // 2. Retry pending deltas and previously failed deltas until the attempt cap.
+      const pendingDeltas = allDeltas.filter(d =>
+        d.syncStatus === 'pending' ||
+        (d.syncStatus === 'failed' && d.syncAttempts < MAX_SYNC_ATTEMPTS)
+      );
 
       if (pendingDeltas.length === 0) {
         logger.debug(`[${this.name}] No pending deltas to sync for session ${session.sessionId}`);
@@ -60,50 +65,49 @@ export class MetricsSyncProcessor implements SessionProcessor {
 
       logger.info(`[${this.name}] Syncing usage data (${pendingDeltas.length} interaction${pendingDeltas.length !== 1 ? 's' : ''})`);
 
-      // Debug: Log collected deltas
-      logger.debug(`[${this.name}] Collected pending deltas:`, {
-        count: pendingDeltas.length,
-        deltas: pendingDeltas.map(d => {
-          // Calculate tool stats from tools and toolStatus
-          const totalTools = Object.values(d.tools || {}).reduce((sum: number, count: number) => sum + count, 0);
-          let successCount = 0;
-          let failureCount = 0;
-          if (d.toolStatus) {
-            for (const status of Object.values(d.toolStatus)) {
-              successCount += (status as { success: number; failure: number }).success || 0;
-              failureCount += (status as { success: number; failure: number }).failure || 0;
+      if (logger.isDebugMode()) {
+        logger.debug(`[${this.name}] Collected pending deltas:`, {
+          count: pendingDeltas.length,
+          deltas: pendingDeltas.map(d => {
+            const totalTools = Object.values(d.tools || {}).reduce((sum: number, count: number) => sum + count, 0);
+            let successCount = 0;
+            let failureCount = 0;
+            if (d.toolStatus) {
+              for (const status of Object.values(d.toolStatus)) {
+                successCount += status.success || 0;
+                failureCount += status.failure || 0;
+              }
             }
-          }
 
-          // Calculate file operation totals
-          const fileOps = d.fileOperations || [];
-          const linesAdded = fileOps.reduce((sum, op) => sum + (op.linesAdded || 0), 0);
-          const linesRemoved = fileOps.reduce((sum, op) => sum + (op.linesRemoved || 0), 0);
-          const writeOps = fileOps.filter(op => op.type === 'write').length;
-          const editOps = fileOps.filter(op => op.type === 'edit').length;
-          const deleteOps = fileOps.filter(op => op.type === 'delete').length;
+            const fileOps = d.fileOperations || [];
+            const linesAdded = fileOps.reduce((sum, op) => sum + (op.linesAdded || 0), 0);
+            const linesRemoved = fileOps.reduce((sum, op) => sum + (op.linesRemoved || 0), 0);
+            const writeOps = fileOps.filter(op => op.type === 'write').length;
+            const editOps = fileOps.filter(op => op.type === 'edit').length;
+            const deleteOps = fileOps.filter(op => op.type === 'delete').length;
 
-          return {
-            recordId: d.recordId,
-            timestamp: typeof d.timestamp === 'number'
-              ? new Date(d.timestamp).toISOString()
-              : d.timestamp,
-            tools: {
-              total: totalTools,
-              success: successCount,
-              failure: failureCount,
-              breakdown: d.tools
-            },
-            fileOperations: {
-              created: writeOps,
-              modified: editOps,
-              deleted: deleteOps,
-              linesAdded,
-              linesRemoved
-            }
-          };
-        })
-      });
+            return {
+              recordId: d.recordId,
+              timestamp: typeof d.timestamp === 'number'
+                ? new Date(d.timestamp).toISOString()
+                : d.timestamp,
+              tools: {
+                total: totalTools,
+                success: successCount,
+                failure: failureCount,
+                breakdown: d.tools
+              },
+              fileOperations: {
+                created: writeOps,
+                modified: editOps,
+                deleted: deleteOps,
+                linesAdded,
+                linesRemoved
+              }
+            };
+          })
+        });
+      }
 
       // 3. Load session metadata
       const sessionMetadata = await this.sessionStore.loadSession(session.sessionId);
@@ -125,45 +129,40 @@ export class MetricsSyncProcessor implements SessionProcessor {
       }
 
       // 5. Aggregate pending deltas into metrics grouped by branch
-      const metrics = aggregateDeltas(pendingDeltas, sessionMetadata, context.version, agentConfig);
+      const clientType = context.clientType || 'codemie-cli';
+      const metrics = aggregateDeltas(pendingDeltas, sessionMetadata, context.version, clientType, agentConfig);
 
       logger.info(`[${this.name}] Aggregated ${metrics.length} branch-specific metrics from ${pendingDeltas.length} deltas`);
 
-      // Debug: Log aggregated metrics
-      for (const metric of metrics) {
-        logger.debug(`[${this.name}] Aggregated metric for branch "${metric.attributes.branch}":`, {
-          name: metric.name,
-          attributes: {
-            // Identity
-            agent: metric.attributes.agent,
-            agent_version: metric.attributes.agent_version,
-            llm_model: metric.attributes.llm_model,
-            repository: metric.attributes.repository,
-            session_id: metric.attributes.session_id,
-            branch: metric.attributes.branch,
+      if (logger.isDebugMode()) {
+        for (const metric of metrics) {
+          if (!('total_user_prompts' in metric.attributes)) continue;
 
-            // Interaction totals
-            total_user_prompts: (metric.attributes as any).total_user_prompts,
-
-            // Tool totals
-            tool_names: (metric.attributes as any).tool_names,
-            tool_counts: (metric.attributes as any).tool_counts,
-            total_tool_calls: (metric.attributes as any).total_tool_calls,
-            successful_tool_calls: (metric.attributes as any).successful_tool_calls,
-            failed_tool_calls: (metric.attributes as any).failed_tool_calls,
-
-            // File operation totals
-            files_created: (metric.attributes as any).files_created,
-            files_modified: (metric.attributes as any).files_modified,
-            files_deleted: (metric.attributes as any).files_deleted,
-            total_lines_added: (metric.attributes as any).total_lines_added,
-            total_lines_removed: (metric.attributes as any).total_lines_removed,
-
-            // Session info
-            session_duration_ms: metric.attributes.session_duration_ms,
-            count: metric.attributes.count
-          }
-        });
+          logger.debug(`[${this.name}] Aggregated metric for branch "${metric.attributes.branch}":`, {
+            name: metric.name,
+            attributes: {
+              agent: metric.attributes.agent,
+              agent_version: metric.attributes.agent_version,
+              codemie_client: metric.attributes.codemie_client,
+              llm_model: metric.attributes.llm_model,
+              repository: metric.attributes.repository,
+              session_id: metric.attributes.session_id,
+              branch: metric.attributes.branch,
+              total_user_prompts: metric.attributes.total_user_prompts,
+              tool_names: metric.attributes.tool_names,
+              total_tool_calls: metric.attributes.total_tool_calls,
+              successful_tool_calls: metric.attributes.successful_tool_calls,
+              failed_tool_calls: metric.attributes.failed_tool_calls,
+              files_created: metric.attributes.files_created,
+              files_modified: metric.attributes.files_modified,
+              files_deleted: metric.attributes.files_deleted,
+              total_lines_added: metric.attributes.total_lines_added,
+              total_lines_removed: metric.attributes.total_lines_removed,
+              session_duration_ms: metric.attributes.session_duration_ms,
+              count: metric.attributes.count
+            }
+          });
+        }
       }
 
       // 6. Initialize metrics sender
@@ -174,64 +173,105 @@ export class MetricsSyncProcessor implements SessionProcessor {
         timeout: 30000,
         retryAttempts: 3,
         version: context.version,
-        clientType: context.clientType || 'codemie-cli',
+        clientType,
         dryRun: context.dryRun
       });
 
       // 7. Send each branch metric to API (dry-run handled by MetricsSender)
+      const successfulRecordIds = new Set<string>();
+      const failedByRecordId = new Map<string, string>();
+
       for (const metric of metrics) {
-        const response = await metricsSender.sendSessionMetric(metric);
+        const branchDeltas = pendingDeltas.filter((delta) =>
+          (delta.gitBranch || 'unknown') === metric.attributes.branch
+        );
 
-        if (!response.success) {
-          logger.error(`[${this.name}] Sync failed for branch "${metric.attributes.branch}": ${response.message}`);
-          // Continue with other branches even if one fails
-          continue;
+        try {
+          const response = await metricsSender.sendSessionMetric(metric);
+
+          if (!response.success) {
+            logger.error(`[${this.name}] Sync failed for branch "${metric.attributes.branch}": ${response.message}`);
+            for (const delta of branchDeltas) {
+              failedByRecordId.set(delta.recordId, response.message);
+            }
+            continue;
+          }
+
+          for (const delta of branchDeltas) {
+            successfulRecordIds.add(delta.recordId);
+          }
+          logger.info(`[${this.name}] Successfully synced metric for branch "${metric.attributes.branch}"`);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          logger.error(`[${this.name}] Sync threw for branch "${metric.attributes.branch}": ${message}`);
+          for (const delta of branchDeltas) {
+            failedByRecordId.set(delta.recordId, message);
+          }
         }
-
-        logger.info(`[${this.name}] Successfully synced metric for branch "${metric.attributes.branch}"`);
       }
 
-      // 8. Mark deltas as synced in JSONL (atomic rewrite)
+      // 8. Mark deltas as synced/failed in JSONL (atomic rewrite)
       const syncedAt = Date.now();
-      const pendingRecordIds = new Set(pendingDeltas.map(d => d.recordId));
 
-      const updatedDeltas = allDeltas.map(d =>
-        pendingRecordIds.has(d.recordId)
-          ? {
-              ...d,
-              syncStatus: 'synced' as const,
-              syncAttempts: d.syncAttempts + 1,
-              syncedAt
-            }
-          : d
-      );
+      const updatedDeltas = allDeltas.map((d): MetricDelta => {
+        if (successfulRecordIds.has(d.recordId)) {
+          return {
+            ...d,
+            syncStatus: 'synced',
+            syncAttempts: d.syncAttempts + 1,
+            syncedAt,
+            syncError: undefined,
+          };
+        }
+
+        const syncError = failedByRecordId.get(d.recordId);
+        if (syncError) {
+          return {
+            ...d,
+            syncStatus: 'failed',
+            syncAttempts: d.syncAttempts + 1,
+            syncError,
+          };
+        }
+
+        return d;
+      });
 
       await writeJSONLAtomic(metricsFile, updatedDeltas);
 
-      logger.info(
-        `[${this.name}] Successfully synced ${pendingDeltas.length} deltas across ${metrics.length} branches`
-      );
+      const successCount = successfulRecordIds.size;
+      const failedCount = failedByRecordId.size;
+      const message = `Synced ${successCount}/${pendingDeltas.length} deltas across ${metrics.length} branches`;
+      if (failedCount > 0) {
+        logger.warn(`[${this.name}] ${message}; ${failedCount} failed`);
+      } else {
+        logger.info(`[${this.name}] Successfully ${message}`);
+      }
 
       // Debug: Log which deltas were marked as synced
       logger.debug(`[${this.name}] Marked deltas as synced:`, {
         syncedAt: new Date(syncedAt).toISOString(),
-        recordIds: Array.from(pendingRecordIds),
+        recordIds: Array.from(successfulRecordIds),
+        failedRecordIds: Array.from(failedByRecordId.keys()),
         totalDeltasInFile: updatedDeltas.length,
         syncedCount: updatedDeltas.filter(d => d.syncStatus === 'synced').length,
+        failedCount: updatedDeltas.filter(d => d.syncStatus === 'failed').length,
         pendingCount: updatedDeltas.filter(d => d.syncStatus === 'pending').length
       });
 
       return {
-        success: true,
-        message: `Synced ${pendingDeltas.length} deltas across ${metrics.length} branches`,
+        success: failedCount === 0,
+        message,
         metadata: {
-          deltasProcessed: pendingDeltas.length,
+          deltasProcessed: successCount,
+          deltasFailed: failedCount,
           branchCount: metrics.length,
           syncUpdates: {
             metrics: {
-              processedRecordIds: Array.from(pendingRecordIds),
-              totalSynced: pendingDeltas.length,
-              totalDeltas: updatedDeltas.length
+              processedRecordIds: Array.from(successfulRecordIds),
+              totalSynced: successCount,
+              totalFailed: failedCount,
+              totalDeltas: pendingDeltas.length
             }
           }
         }

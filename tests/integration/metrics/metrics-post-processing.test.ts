@@ -83,7 +83,7 @@ describe('Metrics Post-Processing Integration', () => {
       }
     ];
 
-    const metrics = aggregateDeltas(deltas, mockSession, '1.0.0');
+    const metrics = aggregateDeltas(deltas, mockSession, '1.0.0', 'codemie-claude');
 
     expect(metrics).toHaveLength(1); // One metric for 'main' branch
     const metric = metrics[0];
@@ -144,7 +144,7 @@ describe('Metrics Post-Processing Integration', () => {
       }
     ];
 
-    const metrics = aggregateDeltas(deltas, mockSession, '1.0.0');
+    const metrics = aggregateDeltas(deltas, mockSession, '1.0.0', 'codemie-claude');
 
     expect(metrics).toHaveLength(2); // Two metrics for two branches
 
@@ -182,7 +182,7 @@ describe('Metrics Post-Processing Integration', () => {
       }
     ];
 
-    const metrics = aggregateDeltas(deltas, sessionWithEmptyPath, '1.0.0');
+    const metrics = aggregateDeltas(deltas, sessionWithEmptyPath, '1.0.0', 'codemie-claude');
 
     expect(metrics).toHaveLength(1);
     expect(metrics[0].attributes.repository).toBe('unknown');
@@ -206,7 +206,7 @@ describe('Metrics Post-Processing Integration', () => {
       }
     ];
 
-    const metrics = aggregateDeltas(deltas, mockSession, '1.0.0');
+    const metrics = aggregateDeltas(deltas, mockSession, '1.0.0', 'codemie-claude');
 
     expect(metrics).toHaveLength(1);
     const attrs = metrics[0].attributes as any;
@@ -235,7 +235,7 @@ describe('Metrics Post-Processing Integration', () => {
       }
     ];
 
-    const metrics = aggregateDeltas(deltas, mockSession, '1.0.0');
+    const metrics = aggregateDeltas(deltas, mockSession, '1.0.0', 'codemie-claude');
 
     expect(metrics).toHaveLength(1);
     expect(metrics[0].attributes.had_errors).toBe(false);
@@ -263,7 +263,7 @@ describe('Metrics Post-Processing Integration', () => {
       }
     ];
 
-    const metrics = aggregateDeltas(deltas, mockSession, '1.0.0');
+    const metrics = aggregateDeltas(deltas, mockSession, '1.0.0', 'codemie-claude');
 
     expect(metrics).toHaveLength(1);
 

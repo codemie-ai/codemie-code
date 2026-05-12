@@ -160,6 +160,7 @@ export class GeminiConversationsProcessor implements SessionProcessor {
 
       // Create payload
       const payload: ConversationPayloadRecord = {
+        payloadId: `${context.agentSessionId}:${currentHistoryIndex}`,
         timestamp: Date.now(),
         isTurnContinuation: false, // TODO: Detect continuations
         historyIndices: [currentHistoryIndex, currentHistoryIndex],

@@ -375,6 +375,24 @@ export function getCodemiePath(...paths: string[]): string {
   return path.join(getCodemieHome(), ...paths);
 }
 
+/**
+ * Extract parent/repo format from a working directory path.
+ *
+ * @example
+ * extractRepository('/Users/john/projects/codemie-code')
+ * // Returns: 'projects/codemie-code'
+ */
+export function extractRepository(workingDirectory: string): string {
+  const parts = splitPath(workingDirectory);
+  const filtered = parts.filter(p => p.length > 0);
+
+  if (filtered.length >= 2) {
+    return `${filtered[filtered.length - 2]}/${filtered[filtered.length - 1]}`;
+  }
+
+  return filtered[filtered.length - 1] || 'unknown';
+}
+
 // ============================================================================
 // ESM Module Path Utilities
 // ============================================================================

@@ -120,12 +120,7 @@ export class CodeMieProxy {
     const registry = getPluginRegistry();
     this.interceptors = await registry.initialize(pluginContext);
 
-    // 5. Call onProxyStart lifecycle hooks
-    await this.runHook('onProxyStart', interceptor =>
-      interceptor.onProxyStart?.()
-    );
-
-    // 6. Find available port
+    // 5. Find available port
     this.actualPort = this.config.port || await this.findAvailablePort();
 
     const bindHost = this.config.host || 'localhost';
@@ -161,7 +156,15 @@ export class CodeMieProxy {
 
         const gatewayUrl = `http://${bindHost}:${this.actualPort}`;
         logger.debug(`Proxy started: ${gatewayUrl}`);
-        resolve({ port: this.actualPort, url: gatewayUrl });
+
+        // Start plugin lifecycles only after the final bound port is known.
+        // Session-sync uses this port so analytics follow the same proxy path
+        // as session lifecycle hooks.
+        this.runHook('onProxyStart', interceptor =>
+          interceptor.onProxyStart?.()
+        )
+          .then(() => resolve({ port: this.actualPort, url: gatewayUrl }))
+          .catch(reject);
       });
     });
   }

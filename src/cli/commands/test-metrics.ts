@@ -111,7 +111,7 @@ async function runTestMetrics(options: {
 
   if (options.verbose) {
     console.log(chalk.dim(`API URL: ${apiUrl}`));
-    console.log(chalk.dim(`Cookies: ${cookieHeader.substring(0, 40)}...`));
+    console.log(chalk.dim(`Cookies: ${Object.keys(credentials.cookies).length} stored cookie(s), values redacted`));
   }
 
   // 4. Build test metric payload
@@ -126,6 +126,7 @@ async function runTestMetrics(options: {
     attributes: {
       agent: options.agent,
       agent_version: cliVersion,
+      codemie_client: clientType,
       llm_model: options.model,
       repository,
       session_id: sessionId,
@@ -158,10 +159,9 @@ async function runTestMetrics(options: {
 
   if (options.dryRun) {
     console.log(chalk.bold('\nEquivalent curl:'));
-    const curlCookie = cookieHeader.substring(0, 20) + '...';
     console.log(`curl -X POST '${url}' \\`);
     console.log(`  -H 'Content-Type: application/json' \\`);
-    console.log(`  -H 'Cookie: ${curlCookie}' \\`);
+    console.log(`  -H 'Cookie: <redacted>' \\`);
     console.log(`  -H 'User-Agent: codemie-cli/${cliVersion}' \\`);
     console.log(`  -H 'X-CodeMie-CLI: codemie-cli/${cliVersion}' \\`);
     console.log(`  -H 'X-CodeMie-Client: ${clientType}' \\`);

@@ -28,7 +28,8 @@ export interface ConversationApiClient {
     conversationId: string,
     history: CodemieHistoryEntry[],
     assistantId?: string,
-    folder?: string
+    folder?: string,
+    llmModel?: string
   ): Promise<ConversationSyncResponse>;
 }
 
@@ -83,7 +84,8 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
       conversationId: string,
       history: CodemieHistoryEntry[],
       assistantId: string = 'claude-code-import',
-      folder: string = DEFAULT_CONVERSATION_FOLDER
+      folder: string = DEFAULT_CONVERSATION_FOLDER,
+      llmModel?: string
     ): Promise<ConversationSyncResponse> {
       const url = `${apiConfig.baseUrl}/v1/conversations/${conversationId}/history`;
 
@@ -99,7 +101,9 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
           url,
           conversationId,
           historyCount: history.length,
-          payload: JSON.stringify(payload, null, 2)
+          assistantId,
+          folder,
+          llmModel
         });
 
         return {
@@ -154,17 +158,24 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
               errorData = { message: errorText };
             }
 
+            const apiMessage = errorData?.error?.message
+              || errorData?.message
+              || response.statusText;
+            const apiDetails = errorData?.error?.details
+              || errorData?.details;
+            const message = `API error: ${response.status} ${apiMessage}${apiDetails ? ` (${apiDetails})` : ''}`;
+
             // Check for non-retryable errors
             if (isNonRetryableError(response.status)) {
               logger.error(`[ConversationApiClient] Non-retryable error (${response.status}):`, errorData);
               return {
                 success: false,
-                message: `API error: ${response.status} ${errorData.message || response.statusText}`
+                message
               };
             }
 
             // Retryable error - throw to retry
-            throw new Error(`API error: ${response.status} ${errorData.message || response.statusText}`);
+            throw new Error(message);
           }
 
           // Success
@@ -180,6 +191,19 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
             totalMessages: data.total_messages,
             created: data.created
           });
+
+          if (llmModel?.trim()) {
+            const metadataResult = await updateConversationMetadata(conversationId, {
+              llm_model: llmModel
+            });
+
+            if (!metadataResult.success) {
+              logger.warn('[ConversationApiClient] Conversation metadata update failed after history sync', {
+                conversationId,
+                message: metadataResult.message
+              });
+            }
+          }
 
           return {
             success: true,
@@ -210,4 +234,86 @@ export function createApiClient(config: ConversationApiConfig): ConversationApiC
       };
     }
   };
+
+  async function updateConversationMetadata(
+    conversationId: string,
+    metadata: { llm_model?: string }
+  ): Promise<ConversationSyncResponse> {
+    const url = `${apiConfig.baseUrl}/v1/conversations/${conversationId}`;
+
+    if (apiConfig.dryRun) {
+      logger.info('[ConversationApiClient] DRY-RUN: Would update conversation metadata', {
+        url,
+        conversationId,
+        metadata
+      });
+      return {
+        success: true,
+        message: '[DRY-RUN] Conversation metadata logged (not sent)',
+        conversation_id: conversationId
+      };
+    }
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'X-CodeMie-CLI': `${apiConfig.clientType}/${apiConfig.version}`,
+      'X-CodeMie-Client': apiConfig.clientType
+    };
+
+    if (apiConfig.apiKey) {
+      headers['user-id'] = apiConfig.apiKey;
+    } else if (apiConfig.cookies) {
+      headers['Cookie'] = apiConfig.cookies;
+    }
+
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), apiConfig.timeout);
+      const response = await fetch(url, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify(metadata),
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        let errorData;
+
+        try {
+          errorData = JSON.parse(errorText);
+        } catch {
+          errorData = { message: errorText };
+        }
+
+        const apiMessage = errorData?.error?.message
+          || errorData?.message
+          || response.statusText;
+        const apiDetails = errorData?.error?.details
+          || errorData?.details;
+        return {
+          success: false,
+          message: `Metadata update failed: ${response.status} ${apiMessage}${apiDetails ? ` (${apiDetails})` : ''}`
+        };
+      }
+
+      logger.debug('[ConversationApiClient] Conversation metadata updated successfully', {
+        conversationId,
+        llmModel: metadata.llm_model
+      });
+
+      return {
+        success: true,
+        message: 'Conversation metadata updated successfully',
+        conversation_id: conversationId
+      };
+    } catch (error: any) {
+      logger.error(`[ConversationApiClient] Metadata update failed for ${conversationId}:`, error.message);
+      return {
+        success: false,
+        message: `Metadata update failed: ${error.message || 'Unknown error'}`
+      };
+    }
+  }
 }

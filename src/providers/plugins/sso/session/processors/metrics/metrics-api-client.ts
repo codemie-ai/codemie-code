@@ -15,12 +15,25 @@
  * Only works with ai-run-sso provider which provides authentication cookies.
  */
 
-import type { SessionMetric, MetricsApiConfig, MetricsSyncResponse, MetricsApiError } from './metrics-types.js';
+import type {
+  SessionMetric,
+  MetricsApiConfig,
+  MetricsSyncResponse,
+  MetricsApiError,
+  SessionLifecycleAttributes,
+} from './metrics-types.js';
 import type { Session } from '../../../../../../agents/core/session/types.js';
 import type { MCPConfigSummary, ExtensionsScanSummary } from '../../../../../../agents/core/types.js';
 import { logger } from '../../../../../../utils/logger.js';
 import { detectGitBranch } from '../../../../../../utils/processes.js';
+import { extractRepository } from '../../../../../../utils/paths.js';
 import { CODEMIE_ENDPOINTS } from '../../../sso.http-client.js';
+
+interface MetricsRequestError extends Error {
+  statusCode?: number;
+  response?: unknown;
+  responseText?: string;
+}
 
 /**
  * Low-level HTTP client for sending metrics to CodeMie API
@@ -63,7 +76,7 @@ class MetricsApiClient {
         lastError = error as Error;
         const errorMessage = error instanceof Error ? error.message : String(error);
         const errorName = error instanceof Error ? error.name : 'Unknown';
-        const statusCode = (error as any).statusCode;
+        const statusCode = (error as MetricsRequestError).statusCode;
 
         if (!this.isRetryable(error as Error)) {
           logger.error(`[MetricsApiClient] Non-retryable error [${errorName}]: ${errorMessage}${statusCode ? ` (HTTP ${statusCode})` : ''}`);
@@ -81,7 +94,43 @@ class MetricsApiClient {
     const url = `${this.config.baseUrl}${CODEMIE_ENDPOINTS.METRICS}`;
     const body = JSON.stringify(metric);
 
-    logger.debug(`[MetricsApiClient] Sending metric to ${url}. Body ${body}`);
+    logger.debug('[MetricsApiClient] Sending metric payload', {
+      url,
+      authMode: this.config.apiKey ? 'apiKey' : this.config.cookies ? 'cookies' : 'none',
+      metricName: metric.name,
+      attributes: {
+        agent: metric.attributes.agent,
+        agent_version: metric.attributes.agent_version,
+        codemie_client: metric.attributes.codemie_client,
+        llm_model: 'llm_model' in metric.attributes ? metric.attributes.llm_model : undefined,
+        repository: metric.attributes.repository,
+        session_id: metric.attributes.session_id,
+        branch: metric.attributes.branch,
+        project: metric.attributes.project,
+        count: metric.attributes.count,
+        session_duration_ms: 'session_duration_ms' in metric.attributes
+          ? metric.attributes.session_duration_ms
+          : undefined,
+        total_user_prompts: 'total_user_prompts' in metric.attributes
+          ? metric.attributes.total_user_prompts
+          : undefined,
+        total_tool_calls: 'total_tool_calls' in metric.attributes
+          ? metric.attributes.total_tool_calls
+          : undefined,
+        successful_tool_calls: 'successful_tool_calls' in metric.attributes
+          ? metric.attributes.successful_tool_calls
+          : undefined,
+        failed_tool_calls: 'failed_tool_calls' in metric.attributes
+          ? metric.attributes.failed_tool_calls
+          : undefined,
+        tool_names: 'tool_names' in metric.attributes ? metric.attributes.tool_names : undefined,
+        files_created: 'files_created' in metric.attributes ? metric.attributes.files_created : undefined,
+        files_modified: 'files_modified' in metric.attributes ? metric.attributes.files_modified : undefined,
+        files_deleted: 'files_deleted' in metric.attributes ? metric.attributes.files_deleted : undefined,
+        total_lines_added: 'total_lines_added' in metric.attributes ? metric.attributes.total_lines_added : undefined,
+        total_lines_removed: 'total_lines_removed' in metric.attributes ? metric.attributes.total_lines_removed : undefined,
+      },
+    });
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -112,7 +161,8 @@ class MetricsApiClient {
 
       clearTimeout(timeoutId);
 
-      const data = await response.json() as MetricsSyncResponse | MetricsApiError;
+      const responseText = await response.text();
+      const data = parseMetricsResponse(responseText, response.status, response.headers.get('content-type'));
 
       if (!response.ok) {
         if ('code' in data && 'details' in data) {
@@ -121,25 +171,33 @@ class MetricsApiClient {
           if (errorData.details) errorMessage += `\nDetails: ${errorData.details}`;
           if (errorData.help) errorMessage += `\nHelp: ${errorData.help}`;
 
-          const error = new Error(errorMessage);
-          (error as any).statusCode = response.status;
-          (error as any).response = data;
+          const error = new Error(errorMessage) as MetricsRequestError;
+          error.statusCode = response.status;
+          error.response = data;
           throw error;
         }
 
         const errorMessage = 'message' in data ? data.message : response.statusText;
-        const error = new Error(`API returned ${response.status}: ${errorMessage}`);
-        (error as any).statusCode = response.status;
-        (error as any).response = data;
+        const error = new Error(`API returned ${response.status}: ${errorMessage}`) as MetricsRequestError;
+        error.statusCode = response.status;
+        error.response = data;
         throw error;
       }
 
       const successData = data as MetricsSyncResponse;
       logger.debug(`[MetricsApiClient] Response from ${url}: success=${successData.success}, message="${successData.message}"`);
 
+      if (typeof successData.success !== 'boolean') {
+        const error = new Error(`API returned malformed metrics response: missing boolean success`) as MetricsRequestError;
+        error.statusCode = response.status;
+        error.response = data;
+        throw error;
+      }
+
       if (!successData.success) {
-        const error = new Error(`API reported failure: ${successData.message}`);
-        (error as any).response = data;
+        const error = new Error(`API reported failure: ${successData.message}`) as MetricsRequestError;
+        error.statusCode = response.status;
+        error.response = data;
         throw error;
       }
 
@@ -156,7 +214,7 @@ class MetricsApiClient {
   }
 
   private isRetryable(error: Error): boolean {
-    const statusCode = (error as any).statusCode;
+    const statusCode = (error as MetricsRequestError).statusCode;
     if (!statusCode) return true;  // Network errors
     if (statusCode >= 500 || statusCode === 429) return true;  // Server errors and rate limit
     return false;  // 4xx errors (except 429)
@@ -164,6 +222,24 @@ class MetricsApiClient {
 
   private sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+}
+
+function parseMetricsResponse(
+  responseText: string,
+  statusCode: number,
+  contentType: string | null
+): MetricsSyncResponse | MetricsApiError {
+  try {
+    return JSON.parse(responseText) as MetricsSyncResponse | MetricsApiError;
+  } catch {
+    const excerpt = responseText.trim().slice(0, 240);
+    const error = new Error(
+      `API returned non-JSON metrics response (HTTP ${statusCode}, content-type=${contentType || 'unknown'}): ${excerpt}`
+    ) as MetricsRequestError;
+    error.statusCode = statusCode;
+    error.responseText = excerpt;
+    throw error;
   }
 }
 
@@ -221,10 +297,12 @@ export class MetricsSender {
   private client: MetricsApiClient;
   private dryRun: boolean;
   private version: string;
+  private clientType: string;
 
   constructor(options: MetricsSenderOptions) {
     this.dryRun = options.dryRun || false;
     this.version = options.version || 'unknown';
+    this.clientType = options.clientType || 'codemie-cli';
     const config: MetricsApiConfig = {
       baseUrl: options.baseUrl,
       cookies: options.cookies,
@@ -250,7 +328,7 @@ export class MetricsSender {
    * @param extensionsSummary - Optional extensions scan summary (project + global scopes)
    */
   async sendSessionStart(
-    session: Pick<Session, 'sessionId' | 'agentName' | 'provider' | 'project' | 'startTime' | 'workingDirectory'> & { model?: string },
+    session: Pick<Session, 'sessionId' | 'agentName' | 'provider' | 'project' | 'startTime' | 'workingDirectory' | 'repository'> & { model?: string },
     workingDirectory: string,
     status: SessionStartStatus = { status: 'started' },
     error?: SessionError,
@@ -260,14 +338,15 @@ export class MetricsSender {
     // Detect git branch
     const branch = await detectGitBranch(workingDirectory);
 
-    // Extract repository from working directory
-    const repository = this.extractRepository(workingDirectory);
+    // Use canonical owner/repo from session if available; fall back to filesystem derivation
+    const repository = session.repository ?? extractRepository(workingDirectory);
 
     // Build session start metric with status
-    const attributes: any = {
+    const attributes: SessionLifecycleAttributes = {
       // Identity
       agent: session.agentName,
       agent_version: this.version,
+      codemie_client: this.clientType,
       llm_model: session.model || 'unknown', // From profile config
       repository,
       session_id: session.sessionId,
@@ -347,6 +426,7 @@ export class MetricsSender {
           name: metric.name,
           attributes: {
             agent: metric.attributes.agent,
+            codemie_client: metric.attributes.codemie_client,
             session_id: metric.attributes.session_id,
             branch: metric.attributes.branch,
             repository: metric.attributes.repository,
@@ -362,7 +442,15 @@ export class MetricsSender {
 
     const response = await this.client.sendMetric(metric);
 
-    logger.info(`[MetricsSender] Session start metric sent`, metric);
+    logger.debug('[MetricsSender] Session start metric sent', {
+      name: metric.name,
+      agent: attributes.agent,
+      codemie_client: attributes.codemie_client,
+      session_id: attributes.session_id,
+      branch: attributes.branch,
+      repository: attributes.repository,
+      status: attributes.status,
+    });
 
     return response;
   }
@@ -379,7 +467,7 @@ export class MetricsSender {
    * @param activeDurationMs - Optional active duration excluding idle time
    */
   async sendSessionEnd(
-    session: Pick<Session, 'sessionId' | 'agentName' | 'provider' | 'project' | 'startTime' | 'workingDirectory'> & { model?: string },
+    session: Pick<Session, 'sessionId' | 'agentName' | 'provider' | 'project' | 'startTime' | 'workingDirectory' | 'repository'> & { model?: string },
     workingDirectory: string,
     status: SessionEndStatus,
     durationMs: number,
@@ -389,14 +477,15 @@ export class MetricsSender {
     // Detect git branch
     const branch = await detectGitBranch(workingDirectory);
 
-    // Extract repository from working directory
-    const repository = this.extractRepository(workingDirectory);
+    // Use canonical owner/repo from session if available; fall back to filesystem derivation
+    const repository = session.repository ?? extractRepository(workingDirectory);
 
     // Build session end metric with status
-    const attributes: any = {
+    const attributes: SessionLifecycleAttributes = {
       // Identity
       agent: session.agentName,
       agent_version: this.version,
+      codemie_client: this.clientType,
       llm_model: session.model || 'unknown',
       repository,
       session_id: session.sessionId,
@@ -436,6 +525,7 @@ export class MetricsSender {
           name: metric.name,
           attributes: {
             agent: metric.attributes.agent,
+            codemie_client: metric.attributes.codemie_client,
             session_id: metric.attributes.session_id,
             branch: metric.attributes.branch,
             repository: metric.attributes.repository,
@@ -452,7 +542,16 @@ export class MetricsSender {
 
     const response = await this.client.sendMetric(metric);
 
-    logger.info(`[MetricsSender] Session end metric sent`, metric);
+    logger.debug('[MetricsSender] Session end metric sent', {
+      name: metric.name,
+      agent: attributes.agent,
+      codemie_client: attributes.codemie_client,
+      session_id: attributes.session_id,
+      branch: attributes.branch,
+      repository: attributes.repository,
+      status: attributes.status,
+      duration_ms: durationMs,
+    });
 
     return response;
   }
@@ -492,22 +591,4 @@ export class MetricsSender {
     return response;
   }
 
-  /**
-   * Extract repository name from working directory
-   * Format: parent/current
-   *
-   * @example
-   * /Users/john/projects/codemie-code → projects/codemie-code
-   * C:\Users\john\projects\codemie-code → projects\codemie-code
-   */
-  private extractRepository(workingDirectory: string): string {
-    const parts = workingDirectory.split(/[/\\]/);
-    const filtered = parts.filter(p => p.length > 0);
-
-    if (filtered.length >= 2) {
-      return `${filtered[filtered.length - 2]}/${filtered[filtered.length - 1]}`;
-    }
-
-    return filtered[filtered.length - 1] || 'unknown';
-  }
 }
