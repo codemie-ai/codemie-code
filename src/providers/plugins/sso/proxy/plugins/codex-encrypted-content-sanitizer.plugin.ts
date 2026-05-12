@@ -42,6 +42,8 @@ export class CodexEncryptedContentSanitizerPlugin implements ProxyPlugin {
 class CodexEncryptedContentSanitizerInterceptor implements ProxyInterceptor {
   name = 'codex-encrypted-content-sanitizer';
 
+  requiresRequestBody(): boolean { return true; }
+
   async onRequest(context: ProxyContext): Promise<void> {
     if (!context.requestBody || !context.headers['content-type']?.includes('application/json')) {
       return;

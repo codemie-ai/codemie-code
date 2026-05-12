@@ -24,6 +24,16 @@ import { ProxyPlugin, PluginContext, ProxyInterceptor, ResponseMetadata } from '
 import { ProxyContext } from '../proxy-types.js';
 import { logger } from '../../../../../utils/logger.js';
 
+const MAX_LOG_BODY_BYTES = 65_536; // 64 KB cap on buffered response chunks
+
+interface RequestLogState {
+  chunkCount: number;
+  totalBytes: number;
+  bufferedBytes: number;
+  responseChunks: Buffer[];
+  responseContentType: string | null;
+}
+
 export class LoggingPlugin implements ProxyPlugin {
   id = '@codemie/proxy-logging';
   name = 'Logging';
@@ -37,18 +47,28 @@ export class LoggingPlugin implements ProxyPlugin {
 
 class LoggingInterceptor implements ProxyInterceptor {
   name = 'logging';
-  private chunkCount = 0;
-  private totalBytes = 0;
-  private responseChunks: Buffer[] = [];
-  private responseContentType: string | null = null;
+  private readonly requestStates = new Map<string, RequestLogState>();
+
+  private getState(requestId: string): RequestLogState {
+    let state = this.requestStates.get(requestId);
+    if (!state) {
+      state = { chunkCount: 0, totalBytes: 0, bufferedBytes: 0, responseChunks: [], responseContentType: null };
+      this.requestStates.set(requestId, state);
+    }
+    return state;
+  }
+
+  private clearState(requestId: string): RequestLogState | undefined {
+    const state = this.requestStates.get(requestId);
+    this.requestStates.delete(requestId);
+    return state;
+  }
 
   async onRequest(context: ProxyContext): Promise<void> {
     try {
-      // Reset counters for new request
-      this.chunkCount = 0;
-      this.totalBytes = 0;
-      this.responseChunks = [];
-      this.responseContentType = null;
+      // Initialise fresh per-request state (clears any leftover state from a prior error)
+      this.requestStates.delete(context.requestId);
+      this.getState(context.requestId);
 
       // Get request content type
       const contentType = context.headers['content-type'] || context.headers['Content-Type'] || 'unknown';
@@ -98,9 +118,10 @@ class LoggingInterceptor implements ProxyInterceptor {
     headers: Record<string, string | string[] | undefined>
   ): Promise<void> {
     try {
+      const state = this.getState(context.requestId);
       // Capture response content type for use in response body logging
       const contentTypeHeader = headers['content-type'] || headers['Content-Type'];
-      this.responseContentType = Array.isArray(contentTypeHeader)
+      state.responseContentType = Array.isArray(contentTypeHeader)
         ? contentTypeHeader[0]
         : contentTypeHeader || 'unknown';
 
@@ -114,7 +135,7 @@ class LoggingInterceptor implements ProxyInterceptor {
           provider: context.provider,
           model: context.model,
           headers: {
-            'content-type': this.responseContentType,
+            'content-type': state.responseContentType,
             'content-length': headers['content-length'],
             'transfer-encoding': headers['transfer-encoding']
           }
@@ -130,22 +151,26 @@ class LoggingInterceptor implements ProxyInterceptor {
     chunk: Buffer
   ): Promise<Buffer | null> {
     try {
-      this.chunkCount++;
-      this.totalBytes += chunk.length;
+      const state = this.getState(context.requestId);
+      state.chunkCount++;
+      state.totalBytes += chunk.length;
 
-      // Collect chunks for full response body
-      this.responseChunks.push(Buffer.from(chunk));
+      // Only buffer chunks when debug logging is active and cap is not reached
+      if (logger.isDebugMode() && state.bufferedBytes < MAX_LOG_BODY_BYTES) {
+        state.responseChunks.push(chunk);
+        state.bufferedBytes += chunk.length;
+      }
 
-      // Log every 1000th chunk to avoid spam (or first/last chunks)
-      if (this.chunkCount === 1 || this.chunkCount % 1000 === 0) {
+      // Log every 1000th chunk to avoid spam (or first chunk)
+      if (state.chunkCount === 1 || state.chunkCount % 1000 === 0) {
         logger.debug(
           `[proxy-streaming] ${context.url}`,
           {
             requestId: context.requestId,
             sessionId: context.sessionId,
-            chunkNumber: this.chunkCount,
+            chunkNumber: state.chunkCount,
             chunkSize: chunk.length,
-            totalBytes: this.totalBytes
+            totalBytes: state.totalBytes
           }
         );
       }
@@ -161,18 +186,13 @@ class LoggingInterceptor implements ProxyInterceptor {
     metadata: ResponseMetadata
   ): Promise<void> {
     try {
-      // Capture chunks for logging (use local reference to avoid race conditions)
-      const chunksToLog = this.responseChunks;
-      const chunkCount = this.chunkCount;
-      const totalBytes = this.totalBytes;
-      const contentType = this.responseContentType || 'unknown';
+      // Pull and delete state atomically — clears memory immediately
+      const state = this.clearState(context.requestId);
+      const chunksToLog = state?.responseChunks ?? [];
+      const chunkCount = state?.chunkCount ?? 0;
+      const totalBytes = state?.totalBytes ?? 0;
+      const contentType = state?.responseContentType || 'unknown';
       const isSessionSyncEndpoint = this.isSessionSyncEndpoint(context.url);
-
-      // CRITICAL: Clear state immediately for next request
-      this.responseChunks = [];
-      this.chunkCount = 0;
-      this.totalBytes = 0;
-      this.responseContentType = null;
 
       // Process response body asynchronously (don't block)
       // Use setImmediate to defer heavy work to next tick
@@ -264,6 +284,7 @@ class LoggingInterceptor implements ProxyInterceptor {
 
   async onError(context: ProxyContext, error: Error): Promise<void> {
     try {
+      this.clearState(context.requestId);
       logger.debug(
         `[proxy-error] ${error.name}: ${error.message}`,
         {

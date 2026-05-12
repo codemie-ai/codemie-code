@@ -51,6 +51,8 @@ export class RequestSanitizerPlugin implements ProxyPlugin {
 class RequestSanitizerInterceptor implements ProxyInterceptor {
   name = 'request-sanitizer';
 
+  requiresRequestBody(): boolean { return true; }
+
   async onRequest(context: ProxyContext): Promise<void> {
     // Only process JSON request bodies (POST/PUT/PATCH with content)
     if (!context.requestBody || !context.headers['content-type']?.includes('application/json')) {

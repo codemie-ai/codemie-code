@@ -44,6 +44,7 @@ export class CodeMieProxy {
   private httpClient: ProxyHTTPClient;
   private interceptors: ProxyInterceptor[] = [];
   private actualPort: number = 0;
+  private needsBodyBuffer: boolean = false;
 
   constructor(private config: ProxyConfig) {
     // Initialize HTTP client with streaming support
@@ -119,6 +120,7 @@ export class CodeMieProxy {
     // 4. Initialize plugins from registry
     const registry = getPluginRegistry();
     this.interceptors = await registry.initialize(pluginContext);
+    this.needsBodyBuffer = this.interceptors.some(i => i.requiresRequestBody?.() === true);
 
     // 5. Find available port
     this.actualPort = this.config.port || await this.findAvailablePort();
@@ -261,7 +263,9 @@ export class CodeMieProxy {
       const upstreamResponse = await this.httpClient.forward(targetUrl, {
         method: req.method!,
         headers: context.headers,
-        body: context.requestBody || undefined
+        // When body was buffered (and possibly transformed by plugins), use the Buffer.
+        // Otherwise stream the raw request directly to upstream to avoid buffering latency.
+        body: context.requestBody ?? (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH' ? req : undefined)
       });
       logger.debug(`[proxy] Received upstream response object for ${context.requestId}`);
 
@@ -306,7 +310,10 @@ export class CodeMieProxy {
    * Build proxy context from incoming request
    */
   private async buildContext(req: IncomingMessage): Promise<ProxyContext> {
-    const requestBody = await this.readBody(req);
+    // Only buffer the request body when a body-transform plugin is active.
+    // When no plugin needs to inspect/mutate the body, skip buffering entirely —
+    // the raw request stream is piped directly to upstream in the forward step.
+    const requestBody = this.needsBodyBuffer ? await this.readBody(req) : null;
 
     // Prepare headers for forwarding
     const forwardHeaders: Record<string, string> = {};
@@ -420,7 +427,7 @@ export class CodeMieProxy {
 
     for await (const chunk of upstream) {
       chunkCount++;
-      let processedChunk: Buffer | null = Buffer.from(chunk);
+      let processedChunk: Buffer | null = chunk as Buffer;
 
       // Run onResponseChunk hooks (optional transform)
       for (const interceptor of this.interceptors) {
@@ -436,8 +443,12 @@ export class CodeMieProxy {
 
       // Write to client (if not filtered out)
       if (processedChunk) {
-        downstream.write(processedChunk);
+        const canContinue = downstream.write(processedChunk);
         bytesSent += processedChunk.length;
+        // Honour backpressure: wait for drain before pulling more chunks
+        if (!canContinue && !downstreamClosed) {
+          await new Promise<void>(resolve => downstream.once('drain', resolve));
+        }
       }
 
       // Check if downstream disconnected

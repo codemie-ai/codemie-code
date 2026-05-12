@@ -7,6 +7,7 @@
  */
 
 import { pipeline } from 'stream/promises';
+import { Readable } from 'stream';
 import https from 'https';
 import http from 'http';
 import { HttpsProxyAgent } from 'https-proxy-agent';
@@ -22,7 +23,8 @@ export interface HTTPClientOptions {
 export interface ForwardRequestOptions {
   method: string;
   headers: Record<string, string>;
-  body?: Buffer | string; // Accept Buffer or string
+  /** Accept Buffer/string for pre-buffered bodies, or Readable to stream directly */
+  body?: Buffer | string | Readable;
 }
 
 /**
@@ -218,13 +220,22 @@ export class ProxyHTTPClient {
 
       // Write body for POST/PUT/PATCH requests
       if (options.body) {
-        req.write(options.body);
+        if (options.body instanceof Readable) {
+          // Stream body directly — pipeline ends req automatically (no req.end() needed)
+          pipeline(options.body, req).catch(reject);
+        } else {
+          req.write(options.body);
+          req.end();
+          logger.debug('[http-client] Request.end() called', {
+            url: url.toString()
+          });
+        }
+      } else {
+        req.end();
+        logger.debug('[http-client] Request.end() called', {
+          url: url.toString()
+        });
       }
-
-      req.end();
-      logger.debug('[http-client] Request.end() called', {
-        url: url.toString()
-      });
     });
   }
 
