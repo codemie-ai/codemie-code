@@ -132,9 +132,9 @@ export const SSOSetupSteps: ProviderSetupSteps = {
     } else {
       // No integrations found
       if (integrationsFetchError) {
-        console.log(chalk.dim(`ℹ️  Proceeding without LiteLLM integration (fetch failed)\n`));
+        logger.debug(`Proceeding without LiteLLM integration (fetch failed): ${integrationsFetchError}`);
       } else {
-        console.log(chalk.dim(`ℹ️  No LiteLLM integrations configured${projectLabel}\n`));
+        logger.debug(`No LiteLLM integrations configured${projectLabel}`);
       }
     }
 

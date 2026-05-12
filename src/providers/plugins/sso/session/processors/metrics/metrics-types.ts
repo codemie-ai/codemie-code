@@ -31,7 +31,9 @@ export interface SessionLifecycleAttributes extends MetricIdentity {
   start_time?: number;
   end_time?: number;
   had_errors: boolean;
-  errors?: Record<string, string[]>;
+  error_tools?: string[];    // unique tool names that errored (v2, replaces errors dict)
+  error_messages?: string[]; // flat list of error messages (v2, replaces errors dict)
+  schema_version?: number;   // 2 = v2 shape; absent/1 = legacy
 
   // MCP fields (optional, only at session start)
   mcp_total_servers?: number;
@@ -81,14 +83,15 @@ export interface ToolUsageAttributes extends MetricIdentity {
   total_user_prompts: number;
   session_duration_ms: number;
   had_errors: boolean;
-  errors?: Record<string, string[]>;
+  error_tools?: string[];    // unique tool names that errored (v2, replaces errors dict)
+  error_messages?: string[]; // flat list of error messages (v2, replaces errors dict)
+  schema_version?: number;   // 2 = v2 shape; absent/1 = legacy
 
-  // Tool metrics
+  // Tool metrics — tool_counts is intentionally not emitted (backend/Elastic pipeline
+  // accepts the request but drops documents containing that field). Banned at the type
+  // level via `never`. tool_names is repeated once per invocation so backend raw-document
+  // classifiers can recover per-tool counts.
   tool_names: string[];
-  // Do not send tool_counts to /v1/metrics. The backend/Elastic pipeline
-  // accepts the request but drops documents containing that field.
-  // Repeat tool_names once per invocation so backend raw-document classifiers
-  // can still recover per-tool counts.
   tool_counts?: never;
   total_tool_calls: number;
   successful_tool_calls: number;

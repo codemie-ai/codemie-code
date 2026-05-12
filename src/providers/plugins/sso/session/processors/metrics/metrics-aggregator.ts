@@ -5,6 +5,7 @@
  * Reuses patterns from analytics system.
  */
 
+import stripAnsi from 'strip-ansi';
 import type { MetricDelta } from '../../../../../../agents/core/metrics/types.js';
 import type { Session } from '../../../../../../agents/core/session/types.js';
 import type {ToolUsageAttributes, SessionMetric} from './metrics-types.js';
@@ -13,6 +14,32 @@ import {logger} from '../../../../../../utils/logger.js';
 import { extractRepository } from '../../../../../../utils/paths.js';
 import {postProcessMetric} from './metrics-post-processor.js';
 import {MetricsSender} from './metrics-api-client.js';
+
+const ERROR_TOOLS_CAP = 100;
+const ERROR_MESSAGES_CAP = 200;
+const ERROR_TOOL_MAX_LEN = 200;
+const ERROR_MESSAGE_MAX_LEN = 500;
+
+/**
+ * Sanitize a tool name for error_tools: strip control chars and <>" then truncate.
+ * Returns null if the result is empty or contains internal spaces (garbled XML/JSX noise).
+ * e.g. `Agent\" id=\"agent_discovery` → strips `"` → `Agent\ id=\agent_discovery` → null (space)
+ */
+function sanitizeToolNameForError(name: string): string | null {
+  // eslint-disable-next-line no-control-regex
+  const stripped = name.replace(/[\x00-\x1f\x7f<>"]/g, '').trim();
+  if (!stripped || stripped.includes(' ')) return null;
+  return stripped.substring(0, ERROR_TOOL_MAX_LEN);
+}
+
+/**
+ * Sanitize an error message: strip ANSI, normalize newlines, truncate.
+ */
+function sanitizeErrorMessage(message: string): string {
+  let s = stripAnsi(message);
+  s = s.replace(/\r\n/g, '\n');
+  return s.substring(0, ERROR_MESSAGE_MAX_LEN);
+}
 
 /**
  * Aggregate pending deltas into session metrics grouped by branch
@@ -87,7 +114,7 @@ function buildSessionAttributes(
     || deltas[0]?.agentSessionId
     || session.sessionId;
 
-  // Tool tracking
+  // Tool tracking (internal — counts used for totals/tool_names only, not emitted as dict)
   const toolCounts: Record<string, number> = {};
   const toolSuccess: Record<string, number> = {};
   const toolFailures: Record<string, number> = {};
@@ -105,24 +132,32 @@ function buildSessionAttributes(
   // User prompts
   let userPromptCount = 0;
 
-  // Error tracking
+  // Error tracking — parallel arrays (v2 schema, no dict keys in ES)
   let hadErrors = false;
-  const errorsByTool: Record<string, string[]> = {};
+  const errorToolSet = new Set<string>(); // deduped
+  const errorMessages: string[] = [];
 
   // Aggregate all deltas
   for (const delta of deltas) {
     // Tools (defensive: old deltas might not have tools field)
     if (delta.tools) {
       for (const [toolName, count] of Object.entries(delta.tools)) {
-        toolCounts[toolName] = (toolCounts[toolName] || 0) + count;
+        const clean = sanitizeToolNameForError(toolName);
+        if (!clean) {
+          logger.debug(`[aggregator] Skipping malformed tool name: "${toolName.substring(0, 60)}"`);
+          continue;
+        }
+        toolCounts[clean] = (toolCounts[clean] || 0) + count;
       }
     }
 
     // Tool status
     if (delta.toolStatus) {
       for (const [toolName, status] of Object.entries(delta.toolStatus)) {
-        toolSuccess[toolName] = (toolSuccess[toolName] || 0) + status.success;
-        toolFailures[toolName] = (toolFailures[toolName] || 0) + status.failure;
+        const clean = sanitizeToolNameForError(toolName);
+        if (!clean) continue;
+        toolSuccess[clean] = (toolSuccess[clean] || 0) + status.success;
+        toolFailures[clean] = (toolFailures[clean] || 0) + status.failure;
       }
     }
 
@@ -150,31 +185,21 @@ function buildSessionAttributes(
       userPromptCount += delta.userPrompts.length;
     }
 
-    // Errors - collect all tool-specific error messages (tools can have multiple errors)
+    // Errors — collect into parallel arrays (correlation intentionally dropped per spec)
     if (delta.apiErrorMessage) {
       hadErrors = true;
 
-      // Try to extract tool name from delta
-      // If we have toolStatus with failures, associate error with that tool
       if (delta.toolStatus) {
         for (const [toolName, status] of Object.entries(delta.toolStatus)) {
           if (status.failure > 0) {
-            // Initialize array if not exists
-            if (!errorsByTool[toolName]) {
-              errorsByTool[toolName] = [];
-            }
-            // Add error to the tool's error list
-            errorsByTool[toolName].push(delta.apiErrorMessage);
+            const clean = sanitizeToolNameForError(toolName);
+            if (clean) errorToolSet.add(clean);
           }
         }
       }
 
-      // If no tool status with failures, it's a general error
-      if (Object.keys(errorsByTool).length === 0) {
-        if (!errorsByTool['general']) {
-          errorsByTool['general'] = [];
-        }
-        errorsByTool['general'].push(delta.apiErrorMessage);
+      if (errorMessages.length < ERROR_MESSAGES_CAP) {
+        errorMessages.push(sanitizeErrorMessage(delta.apiErrorMessage));
       }
     }
   }
@@ -183,16 +208,20 @@ function buildSessionAttributes(
   const sessionModel = (session as Session & { model?: string }).model;
   const primaryModel = getMostUsedModel(modelCounts) || sessionModel;
 
-  // Calculate total tool calls
-  const totalToolCalls = Object.values(toolCounts).reduce((sum, count) => sum + count, 0);
-  const successfulToolCalls = Object.values(toolSuccess).reduce((sum, count) => sum + count, 0);
-  const failedToolCalls = Object.values(toolFailures).reduce((sum, count) => sum + count, 0);
+  // Calculate total tool calls from internal counts
+  const totalToolCalls = Object.values(toolCounts).reduce((sum, c) => sum + c, 0);
+  const successfulToolCalls = Object.values(toolSuccess).reduce((sum, c) => sum + c, 0);
+  const failedToolCalls = Object.values(toolFailures).reduce((sum, c) => sum + c, 0);
+
+  // tool_names is repeated once per invocation so backend raw-document classifiers can
+  // recover per-tool counts (tool_counts dict is intentionally not emitted — ES drops docs
+  // containing dict fields with unbounded keys).
   const toolNames = expandToolNames(toolCounts);
 
   // Calculate session duration from deltas (incremental batch duration)
   const sessionDuration = calculateDurationFromDeltas(deltas, session);
 
-  // Build attributes
+  // Build attributes — v2 schema: no errors dict, no tool_counts dict
   const attributes: ToolUsageAttributes = {
     // Identity
     agent: session.agentName,
@@ -200,14 +229,14 @@ function buildSessionAttributes(
     codemie_client: clientType,
     llm_model: primaryModel || 'unknown',
     repository: session.repository ?? extractRepository(session.workingDirectory),
-    session_id: agentSessionId,  // Use agent session ID for API correlation
+    session_id: agentSessionId,
     branch: branch,
     ...(session.project && { project: session.project }),
 
     // Interaction Metrics
     total_user_prompts: userPromptCount,
 
-    // Tool Metrics
+    // Tool Metrics — tool_counts dict intentionally omitted; tool_names is per-invocation
     tool_names: toolNames,
     total_tool_calls: totalToolCalls,
     successful_tool_calls: successfulToolCalls,
@@ -223,12 +252,15 @@ function buildSessionAttributes(
     // Session Metadata
     session_duration_ms: sessionDuration,
     had_errors: hadErrors,
+    schema_version: 2,
     count: 1 // Prometheus compatibility
   };
 
-  // Add errors map only if there are errors
-  if (hadErrors && Object.keys(errorsByTool).length > 0) {
-    attributes.errors = errorsByTool;
+  // Add parallel error arrays only when present (v2 — no dict keys, ES mapping stays bounded)
+  if (hadErrors) {
+    const tools = [...errorToolSet].slice(0, ERROR_TOOLS_CAP);
+    if (tools.length > 0) attributes.error_tools = tools;
+    if (errorMessages.length > 0) attributes.error_messages = errorMessages;
   }
 
   return attributes;

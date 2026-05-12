@@ -116,7 +116,7 @@ git branch --list <branch-name>
 
 ---
 
-## Phase 3: Complexity Assessment and Routing
+## Phase 3: Complexity Assessment
 
 Dispatch the `complexity-assessor` agent:
 
@@ -132,7 +132,16 @@ Use the Agent tool:
 
 Present the full assessment block returned by the agent.
 
-### Routing
+### If a Jira ticket ID is provided (EPMCDME-XXXXX format)
+
+Update ticket with estimated [Total Score] from complexity assessment via brianna skill:
+
+```
+Invoke Skill: brianna
+Args: "Update ticket complexity score for EPMCDME-XXXXX with [Total Score] value."
+```
+
+## Phase 4: Routing
 
 Based on the total score:
 

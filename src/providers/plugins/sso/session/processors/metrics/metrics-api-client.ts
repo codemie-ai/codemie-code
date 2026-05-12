@@ -406,12 +406,12 @@ export class MetricsSender {
       })
     };
 
-    // Add error details if session start failed
+    // Add error details if session start failed (v2 parallel arrays — no dict keys in ES)
     if (status.status === 'failed' && error) {
-      attributes.errors = {
-        [error.type]: [error.code ? `[${error.code}] ${error.message}` : error.message]
-      };
+      attributes.error_tools = [error.type];
+      attributes.error_messages = [error.code ? `[${error.code}] ${error.message}` : error.message];
     }
+    attributes.schema_version = 2;
 
     const metric: SessionMetric = {
       name: MetricsSender.METRIC_SESSION_TOTAL,
@@ -505,12 +505,12 @@ export class MetricsSender {
       ...(status.reason && { reason: status.reason })
     };
 
-    // Add error details if session ended with error
+    // Add error details if session ended with error (v2 parallel arrays — no dict keys in ES)
     if (status.status === 'failed' && error) {
-      attributes.errors = {
-        [error.type]: [error.code ? `[${error.code}] ${error.message}` : error.message]
-      };
+      attributes.error_tools = [error.type];
+      attributes.error_messages = [error.code ? `[${error.code}] ${error.message}` : error.message];
     }
+    attributes.schema_version = 2;
 
     const metric: SessionMetric = {
       name: MetricsSender.METRIC_SESSION_TOTAL,
