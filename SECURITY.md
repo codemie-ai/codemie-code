@@ -61,7 +61,7 @@ When using CodeMie CLI:
 
 3. **SSO Authentication**: When using AI/Run SSO:
    - Tokens are stored securely in the system keychain
-   - Use `codemie auth logout` to clear tokens when needed
+   - Use `codemie profile logout` to clear tokens when needed
 
 4. **Proxy Server**: When using the built-in proxy:
    - Only run on localhost
