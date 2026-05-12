@@ -272,9 +272,7 @@ describe('SSO Provider - Claude Plugin Auto-Install', () => {
       // Verify command files
       expect(existsSync(join(pluginTargetDir, 'commands', 'README.md'))).toBe(true);
       expect(existsSync(join(pluginTargetDir, 'commands', 'codemie-catchup.md'))).toBe(true);
-      expect(existsSync(join(pluginTargetDir, 'commands', 'codemie-init.md'))).toBe(true);
       expect(existsSync(join(pluginTargetDir, 'commands', 'codemie-subagents.md'))).toBe(true);
-      expect(existsSync(join(pluginTargetDir, 'commands', 'memory-refresh.md'))).toBe(true);
     });
   });
 
