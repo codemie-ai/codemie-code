@@ -183,6 +183,11 @@ function isPrivateOrLoopbackIP(ip: string): boolean {
   return false;
 }
 
+const DNS_CACHE_TTL_MS = 30_000;
+
+interface DnsCacheEntry { isPrivate: boolean; expiresAt: number; }
+const dnsPrivateIPCache = new Map<string, DnsCacheEntry>();
+
 /**
  * Resolve a hostname via DNS and check if it points to a private/loopback IP.
  * Defense-in-depth against DNS rebinding SSRF attacks.
@@ -190,15 +195,27 @@ function isPrivateOrLoopbackIP(ip: string): boolean {
  * Note: There is an inherent TOCTOU window between this check and the actual
  * HTTP connection (the hostname could re-resolve differently). This is mitigated
  * by OS-level DNS caching and the short interval between check and connect.
+ * The in-process TTL cache (30 s) avoids repeated lookups for the same target
+ * on every MCP relay request while keeping the window short enough to detect
+ * DNS rebinding within a reasonable timeframe.
  */
 async function resolvesToPrivateIP(hostname: string): Promise<boolean> {
   // Skip DNS resolution for IP literals — already checked by isPrivateOrLoopbackOrigin
   if (/^\d+\.\d+\.\d+\.\d+$/.test(hostname) || hostname.includes(':')) {
     return false;
   }
+
+  const now = Date.now();
+  const cached = dnsPrivateIPCache.get(hostname);
+  if (cached && now < cached.expiresAt) {
+    return cached.isPrivate;
+  }
+
   try {
     const { address } = await lookup(hostname);
-    return isPrivateOrLoopbackIP(address);
+    const isPrivate = isPrivateOrLoopbackIP(address);
+    dnsPrivateIPCache.set(hostname, { isPrivate, expiresAt: now + DNS_CACHE_TTL_MS });
+    return isPrivate;
   } catch {
     // DNS resolution failed — let the HTTP client handle the error naturally
     return false;

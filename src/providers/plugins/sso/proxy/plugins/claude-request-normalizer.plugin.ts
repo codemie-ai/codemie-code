@@ -137,6 +137,8 @@ class ClaudeRequestNormalizerInterceptor implements ProxyInterceptor {
 
   constructor(private readonly configModel?: string) {}
 
+  requiresRequestBody(): boolean { return true; }
+
   async onRequest(context: ProxyContext): Promise<void> {
     if (!context.requestBody || !context.headers['content-type']?.includes('application/json')) {
       return;

@@ -75,6 +75,13 @@ export interface ProxyInterceptor {
   /** Called when proxy stops (for cleanup) */
   onProxyStop?(): Promise<void>;
 
+  /**
+   * Declare that this interceptor needs the request body fully buffered before
+   * onRequest runs. When all interceptors return false/undefined here, the proxy
+   * streams the request body directly to upstream (lower latency, lower memory).
+   */
+  requiresRequestBody?(): boolean;
+
   /** Called before forwarding request */
   onRequest?(context: ProxyContext): Promise<void>;
 
