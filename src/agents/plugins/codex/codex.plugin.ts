@@ -202,6 +202,9 @@ export const CodexPluginMetadata: AgentMetadata = {
           startedAt,
           cwd: process.cwd(),
           metadata: CodexPluginMetadata,
+          ssoUrl: env.CODEMIE_URL,
+          syncApiUrl: env.CODEMIE_SYNC_API_URL || env.CODEMIE_BASE_URL,
+          cliVersion: env.CODEMIE_CLI_VERSION,
           buildContext: () => ({
             sessionId,
             apiBaseUrl: env.CODEMIE_BASE_URL || '',

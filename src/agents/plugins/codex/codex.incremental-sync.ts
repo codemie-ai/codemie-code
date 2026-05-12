@@ -11,9 +11,9 @@
  * block in `~/.codex/config.toml` fired the configured command. See
  * docs/superpowers/plans/2026-05-09-codex-hooks-incremental-sync.md.
  *
- * The SSO proxy already runs a 2-minute timer that pushes the JSONL we write
- * to the CodeMie API (sso.session-sync.plugin.ts), so this module's job is
- * only to keep the JSONL warm.
+ * The incremental sync timer writes per-call_id metric deltas + new
+ * conversation slices to JSONL on every tick, then uploads PENDING payloads
+ * to the CodeMie API via SessionSyncer when SSO credentials are available.
  */
 
 import { realpath as fsRealpath } from 'fs/promises';
@@ -33,6 +33,12 @@ export interface StartCodexIncrementalSyncOptions {
   metadata: AgentMetadata;
   /** Builds a fresh ProcessingContext on each tick (cookies/version may rotate). */
   buildContext: () => ProcessingContext;
+  /** CodeMie SSO URL used to load stored credentials (e.g. env.CODEMIE_URL). */
+  ssoUrl?: string;
+  /** Sync API base URL for the upload context (env.CODEMIE_SYNC_API_URL ?? env.CODEMIE_BASE_URL). */
+  syncApiUrl?: string;
+  /** CLI version string forwarded to the upload context. */
+  cliVersion?: string;
 }
 
 const DEFAULT_INTERVAL_MS = 30_000;
@@ -92,6 +98,28 @@ export function startCodexIncrementalSync(options: StartCodexIncrementalSyncOpti
         } catch (error) {
           logger.error('[codex-incremental-sync] processSession failed:', error);
         }
+
+        if (options.ssoUrl && options.syncApiUrl) {
+          try {
+            const uploadContext = await buildUploadContext(
+              options.sessionId,
+              options.ssoUrl,
+              options.syncApiUrl,
+              options.cliVersion
+            );
+            if (uploadContext) {
+              const { SessionSyncer } = await import('../../../providers/plugins/sso/session/SessionSyncer.js');
+              const syncer = new SessionSyncer();
+              const syncResult = await syncer.sync(options.sessionId, uploadContext);
+              logger.debug(
+                `[codex-incremental-sync] upload ${syncResult.success ? 'ok' : 'partial'}: ${syncResult.message}`
+              );
+            }
+          } catch (error) {
+            logger.error('[codex-incremental-sync] upload failed:', error);
+          }
+        }
+
         return; // Only the most recent matching rollout per tick.
       }
     } catch (error) {
@@ -124,6 +152,37 @@ export function stopCodexIncrementalSync(sessionId: string): void {
   activeTimers.delete(sessionId);
   tickInFlight.delete(sessionId);
   logger.debug(`[codex-incremental-sync] Stopped (session=${sessionId})`);
+}
+
+async function buildUploadContext(
+  sessionId: string,
+  ssoUrl: string,
+  syncApiUrl: string,
+  version = '0.0.0'
+): Promise<ProcessingContext | null> {
+  try {
+    const { CodeMieSSO } = await import('../../../providers/plugins/sso/sso.auth.js');
+    const sso = new CodeMieSSO();
+    const credentials = await sso.getStoredCredentials(ssoUrl);
+    if (!credentials?.cookies) {
+      logger.debug('[codex-incremental-sync] No SSO credentials available, skipping upload');
+      return null;
+    }
+    const cookies = Object.entries(credentials.cookies)
+      .map(([k, v]) => `${k}=${v}`)
+      .join('; ');
+    return {
+      apiBaseUrl: syncApiUrl,
+      cookies,
+      clientType: 'codemie-codex',
+      version,
+      dryRun: false,
+      sessionId,
+    };
+  } catch (error) {
+    logger.debug('[codex-incremental-sync] Failed to build upload context:', error);
+    return null;
+  }
 }
 
 async function safeRealpath(p: string): Promise<string> {

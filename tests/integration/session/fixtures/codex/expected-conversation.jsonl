@@ -1,0 +1,2 @@
+{"status":"pending","isTurnContinuation":false,"messageCount":2,"payload":{"history":[{"role":"User","message":"Hello, Codex! Please explain what you do."},{"role":"Assistant","message":"I am Codex, an AI coding assistant by OpenAI."}]}}
+{"status":"pending","isTurnContinuation":false,"messageCount":2,"payload":{"history":[{"role":"User","message":"What languages can you work with?"},{"role":"Assistant","message":"I can work with many programming languages including Python, JavaScript, TypeScript, Go, and Rust."}]}}

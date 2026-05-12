@@ -2,11 +2,17 @@
 /**
  * Codex Conversations Processor
  *
- * Normalises user messages and assistant responses from Codex rollout records
- * into a unified conversation format.
+ * Transforms raw Codex rollout records into incremental CodeMie conversation
+ * payloads while preserving much more of the original interaction shape:
+ * - user prompts
+ * - assistant commentary / progress updates
+ * - reasoning records
+ * - tool calls + outputs
+ * - sub-agent style tool activity
  *
- * This processor is a placeholder for Phase 2 conversation sync.
- * It runs and normalises data but does not write to the API in the initial delivery.
+ * The processor intentionally treats assistant commentary as thoughts rather
+ * than user-facing assistant replies. Only final answers become the visible
+ * Assistant history entry.
  */
 
 import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../../../../core/session/BaseProcessor.js';
@@ -23,17 +29,47 @@ import { CODEMIE_ASSISTANT_ID } from '../../../../../providers/plugins/sso/sessi
 import { getSessionConversationPath } from '../../../../core/session/session-config.js';
 import { logger } from '../../../../../utils/logger.js';
 
-interface CodexConversationMessage {
-  role: 'User' | 'Assistant';
-  message: string;
-  date: string;
+type CodexNormalizedEventKind =
+  | 'user_prompt'
+  | 'assistant_commentary'
+  | 'assistant_final'
+  | 'assistant_other'
+  | 'reasoning'
+  | 'tool_call'
+  | 'tool_output';
+
+interface CodexNormalizedEvent {
+  kind: CodexNormalizedEventKind;
   sourceIndex: number;
+  date: string;
+  text?: string;
+  callId?: string;
+  toolName?: string;
+  inputText?: string;
+  metadata?: Record<string, unknown>;
 }
 
 interface CodexConversationTurn {
-  user?: CodexConversationMessage;
-  assistants: CodexConversationMessage[];
+  user: CodexNormalizedEvent;
+  events: CodexNormalizedEvent[];
   historyIndex: number;
+  isTurnContinuation: boolean;
+}
+
+interface CodexToolThought {
+  id: string;
+  parent_id: string | null;
+  metadata: Record<string, unknown>;
+  in_progress: boolean;
+  input_text: string;
+  message: string;
+  author_type: 'Tool' | 'Agent';
+  author_name: string;
+  output_format: string;
+  error: boolean;
+  interrupted: boolean;
+  aborted: boolean;
+  children: unknown[];
 }
 
 export class CodexConversationsProcessor implements SessionProcessor {
@@ -72,45 +108,16 @@ export class CodexConversationsProcessor implements SessionProcessor {
       );
 
       const records = session.messages as CodexRolloutRecord[];
-      const normalizedMessages: CodexConversationMessage[] = [];
-
-      for (const [sourceIndex, record] of records.entries()) {
-        const timestamp = resolveRecordTimestamp(record, metadata?.createdAt);
-        if (record.type === 'event_msg') {
-          const event = record.payload as CodexEventMsg;
-          if (event.type === 'user_message' && event.message) {
-            normalizedMessages.push({
-              role: 'User',
-              message: event.message,
-              date: timestamp,
-              sourceIndex,
-            });
-          }
-        } else if (record.type === 'response_item') {
-          const item = record.payload as CodexResponseItem;
-          const role = typeof (item as unknown as { role?: unknown }).role === 'string'
-            ? (item as unknown as { role: string }).role
-            : undefined;
-          const content = extractMessageContent(item);
-          if (item.type === 'message' && role === 'assistant' && content) {
-            normalizedMessages.push({
-              role: 'Assistant',
-              message: content,
-              date: timestamp,
-              sourceIndex,
-            });
-          }
-        }
-      }
+      const events = normalizeEvents(records, metadata);
 
       logger.debug(
-        `[codex-conversations] Normalised ${normalizedMessages.length} messages`
+        `[codex-conversations] Normalised ${events.length} events from ${records.length} rollout records`
       );
 
-      if (normalizedMessages.length === 0) {
+      if (events.length === 0) {
         return {
           success: true,
-          message: 'No conversation messages generated',
+          message: 'No conversation events generated',
           metadata: { recordsProcessed: 0 }
         };
       }
@@ -121,11 +128,12 @@ export class CodexConversationsProcessor implements SessionProcessor {
       const queuedCheckpoint = getQueuedCheckpoint(existingPayloads);
       const effectiveSourceIndex = Math.max(lastSyncedSourceIndex, queuedCheckpoint.sourceIndex);
       const effectiveHistoryIndex = Math.max(persistedHistoryIndex, queuedCheckpoint.historyIndex);
-      const newMessages = normalizedMessages.filter(message => message.sourceIndex > effectiveSourceIndex);
 
-      if (newMessages.length === 0) {
+      const turn = buildIncrementalTurn(events, effectiveSourceIndex, effectiveHistoryIndex);
+
+      if (!turn) {
         logger.debug(
-          `[codex-conversations] No new messages past source index ${effectiveSourceIndex} for session ${codexSessionId}`
+          `[codex-conversations] No complete incremental turn past source index ${effectiveSourceIndex} for session ${codexSessionId}`
         );
         return {
           success: true,
@@ -134,17 +142,8 @@ export class CodexConversationsProcessor implements SessionProcessor {
         };
       }
 
-      const turns = buildTurns(newMessages, effectiveHistoryIndex);
-
-      if (turns.length === 0) {
-        return {
-          success: true,
-          message: 'No complete conversation turns',
-          metadata: { recordsProcessed: 0 }
-        };
-      }
-
-      const endSourceIndex = Math.max(...newMessages.map(message => message.sourceIndex));
+      const newTurnEvents = turn.events.filter(event => event.sourceIndex > effectiveSourceIndex);
+      const endSourceIndex = Math.max(...newTurnEvents.map(event => event.sourceIndex));
       const sentinel = `${codexSessionId}@${endSourceIndex}`;
 
       const alreadyQueued = existingPayloads.some(payload =>
@@ -162,7 +161,18 @@ export class CodexConversationsProcessor implements SessionProcessor {
         };
       }
 
-      const history = turns.flatMap(turn => turnToHistory(turn));
+      const history = turnToHistory(turn, effectiveSourceIndex);
+
+      if (history.length === 0) {
+        logger.debug(
+          `[codex-conversations] Turn resolved but produced no visible history for ${sentinel}`
+        );
+        return {
+          success: true,
+          message: 'No visible history generated',
+          metadata: { recordsProcessed: 0 }
+        };
+      }
 
       const { appendFile, mkdir } = await import('fs/promises');
       const { dirname } = await import('path');
@@ -171,7 +181,7 @@ export class CodexConversationsProcessor implements SessionProcessor {
       const payloadRecord: ConversationPayloadRecord = {
         payloadId: sentinel,
         timestamp: Date.now(),
-        isTurnContinuation: turns.some(turn => !turn.user),
+        isTurnContinuation: turn.isTurnContinuation,
         historyIndices: history.map(entry => entry.history_index),
         messageCount: history.length,
         lastProcessedMessageUuid: sentinel,
@@ -189,11 +199,21 @@ export class CodexConversationsProcessor implements SessionProcessor {
 
       return {
         success: true,
-        message: `Generated 1 conversation payload with ${newMessages.length} messages`,
+        message: `Generated 1 conversation payload from ${newTurnEvents.length} new events`,
         metadata: {
-          recordsProcessed: newMessages.length,
-          userMessages: newMessages.filter(m => m.role === 'User').length,
-          assistantMessages: newMessages.filter(m => m.role === 'Assistant').length,
+          recordsProcessed: newTurnEvents.length,
+          userMessages: history.filter(entry => entry.role === 'User').length,
+          assistantMessages: history.filter(entry => entry.role === 'Assistant').length,
+          syncUpdates: {
+            conversations: {
+              lastSyncedMessageUuid: sentinel,
+              lastSyncedHistoryIndex: turn.historyIndex,
+              conversationId: context.agentSessionId || codexSessionId,
+              totalMessagesSynced: history.length,
+              totalSyncAttempts: 1,
+              lastSyncAt: Date.now(),
+            },
+          },
         }
       };
 
@@ -206,6 +226,479 @@ export class CodexConversationsProcessor implements SessionProcessor {
       };
     }
   }
+}
+
+function normalizeEvents(
+  records: CodexRolloutRecord[],
+  metadata: CodexSessionMetadata | undefined
+): CodexNormalizedEvent[] {
+  const events: CodexNormalizedEvent[] = [];
+
+  for (const [sourceIndex, record] of records.entries()) {
+    const date = resolveRecordTimestamp(record, metadata?.createdAt);
+
+    if (record.type === 'event_msg') {
+      const event = record.payload as CodexEventMsg;
+      if (event.type === 'user_message' && typeof event.message === 'string' && event.message.trim()) {
+        events.push({
+          kind: 'user_prompt',
+          sourceIndex,
+          date,
+          text: event.message,
+          metadata: { source: 'event_msg.user_message' },
+        });
+      }
+      continue;
+    }
+
+    if (record.type !== 'response_item') {
+      continue;
+    }
+
+    const item = record.payload as CodexResponseItem & {
+      role?: unknown;
+      phase?: unknown;
+      content?: unknown;
+      input?: unknown;
+      name?: unknown;
+      arguments?: unknown;
+      encrypted_content?: unknown;
+      summary?: unknown;
+    };
+
+    if (item.type === 'message') {
+      const role = typeof item.role === 'string' ? item.role : undefined;
+      const phase = typeof item.phase === 'string' ? item.phase : undefined;
+      const text = extractMessageContent(item);
+
+      if (role === 'assistant' && text) {
+        if (phase === 'commentary') {
+          events.push({
+            kind: 'assistant_commentary',
+            sourceIndex,
+            date,
+            text,
+            metadata: { phase },
+          });
+        } else {
+          events.push({
+            kind: 'assistant_final',
+            sourceIndex,
+            date,
+            text,
+            metadata: { phase: phase ?? 'final_answer_or_legacy' },
+          });
+        }
+      } else if (role === 'assistant' && phase === 'commentary') {
+        events.push({
+          kind: 'assistant_other',
+          sourceIndex,
+          date,
+          metadata: { phase, empty: true },
+        });
+      }
+
+      continue;
+    }
+
+    if (item.type === 'reasoning') {
+      const text = extractReasoningContent(item);
+      events.push({
+        kind: 'reasoning',
+        sourceIndex,
+        date,
+        text,
+        metadata: {
+          encrypted: Boolean(typeof item.encrypted_content === 'string' && item.encrypted_content.length > 0),
+          sourceType: 'reasoning',
+        },
+      });
+      continue;
+    }
+
+    if (isToolCallType(item.type)) {
+      events.push({
+        kind: 'tool_call',
+        sourceIndex,
+        date,
+        callId: typeof item.call_id === 'string' ? item.call_id : undefined,
+        toolName: extractToolName(item),
+        inputText: extractToolInput(item),
+        metadata: {
+          sourceType: item.type,
+          isSubagent: isSubagentTool(extractToolName(item)),
+        },
+      });
+      continue;
+    }
+
+    if (isToolOutputType(item.type)) {
+      events.push({
+        kind: 'tool_output',
+        sourceIndex,
+        date,
+        callId: typeof item.call_id === 'string' ? item.call_id : undefined,
+        text: extractToolOutput(item),
+        metadata: {
+          sourceType: item.type,
+        },
+      });
+    }
+  }
+
+  return dedupeEvents(events);
+}
+
+function buildIncrementalTurn(
+  events: CodexNormalizedEvent[],
+  effectiveSourceIndex: number,
+  effectiveHistoryIndex: number
+): CodexConversationTurn | null {
+  const firstNewEvent = events.find(event => event.sourceIndex > effectiveSourceIndex);
+  if (!firstNewEvent) {
+    return null;
+  }
+
+  const userEvents = events.filter(event => event.kind === 'user_prompt');
+
+  let userEvent: CodexNormalizedEvent | undefined;
+  let historyIndex = effectiveHistoryIndex;
+  let isTurnContinuation = false;
+
+  if (firstNewEvent.kind === 'user_prompt') {
+    userEvent = firstNewEvent;
+    historyIndex = effectiveHistoryIndex + 1;
+  } else {
+    for (let index = userEvents.length - 1; index >= 0; index -= 1) {
+      const candidate = userEvents[index];
+      if (candidate.sourceIndex < firstNewEvent.sourceIndex) {
+        userEvent = candidate;
+        break;
+      }
+    }
+
+    if (!userEvent || effectiveHistoryIndex < 0) {
+      return null;
+    }
+
+    historyIndex = effectiveHistoryIndex;
+    isTurnContinuation = true;
+  }
+
+  const nextUserEvent = userEvents.find(event => event.sourceIndex > userEvent.sourceIndex);
+  const turnEndExclusive = nextUserEvent?.sourceIndex ?? Number.MAX_SAFE_INTEGER;
+  const turnEvents = events.filter(event =>
+    event.sourceIndex >= userEvent.sourceIndex &&
+    event.sourceIndex < turnEndExclusive
+  );
+
+  const hasNewFinalAnswer = turnEvents.some(event =>
+    event.kind === 'assistant_final' && event.sourceIndex > effectiveSourceIndex
+  );
+  const shouldEmitUser = userEvent.sourceIndex > effectiveSourceIndex;
+
+  if (!shouldEmitUser && !hasNewFinalAnswer) {
+    return null;
+  }
+
+  return {
+    user: userEvent,
+    events: turnEvents,
+    historyIndex,
+    isTurnContinuation,
+  };
+}
+
+function turnToHistory(turn: CodexConversationTurn, effectiveSourceIndex: number): any[] {
+  const history: any[] = [];
+  const finalAssistant = getFinalAssistant(turn.events);
+
+  if (turn.user.sourceIndex > effectiveSourceIndex) {
+    history.push({
+      role: 'User',
+      message: turn.user.text,
+      message_raw: turn.user.text,
+      date: turn.user.date,
+      history_index: turn.historyIndex,
+      file_names: [],
+    });
+  }
+
+  if (finalAssistant && finalAssistant.sourceIndex > effectiveSourceIndex) {
+    const thoughts = buildThoughts(turn.events, turn.historyIndex);
+    history.push({
+      role: 'Assistant',
+      message: finalAssistant.text,
+      message_raw: finalAssistant.text,
+      date: finalAssistant.date,
+      history_index: turn.historyIndex,
+      response_time: calculateResponseTime(turn.user.date, finalAssistant.date),
+      assistant_id: CODEMIE_ASSISTANT_ID,
+      thoughts: thoughts.length > 0 ? thoughts : undefined,
+    });
+  }
+
+  return history;
+}
+
+function buildThoughts(events: CodexNormalizedEvent[], historyIndex: number): CodexToolThought[] {
+  const thoughts: CodexToolThought[] = [];
+  const toolThoughtByCallId = new Map<string, CodexToolThought>();
+
+  for (const event of events) {
+    if (event.kind === 'user_prompt' || event.kind === 'assistant_final') {
+      continue;
+    }
+
+    if (event.kind === 'assistant_commentary' || event.kind === 'assistant_other') {
+      if (!event.text?.trim()) {
+        continue;
+      }
+
+      thoughts.push({
+        id: `codex-commentary-${historyIndex}-${event.sourceIndex}`,
+        parent_id: null,
+        metadata: {
+          timestamp: event.date,
+          source_index: event.sourceIndex,
+          event_kind: event.kind,
+          ...(event.metadata ?? {}),
+        },
+        in_progress: false,
+        input_text: '',
+        message: event.text,
+        author_type: 'Agent',
+        author_name: 'Codex Commentary',
+        output_format: 'text',
+        error: false,
+        interrupted: false,
+        aborted: false,
+        children: [],
+      });
+      continue;
+    }
+
+    if (event.kind === 'reasoning') {
+      thoughts.push({
+        id: `codex-reasoning-${historyIndex}-${event.sourceIndex}`,
+        parent_id: null,
+        metadata: {
+          timestamp: event.date,
+          source_index: event.sourceIndex,
+          event_kind: event.kind,
+          ...(event.metadata ?? {}),
+        },
+        in_progress: false,
+        input_text: '',
+        message: event.text || '[reasoning]',
+        author_type: 'Agent',
+        author_name: 'Codex Reasoning',
+        output_format: 'text',
+        error: false,
+        interrupted: false,
+        aborted: false,
+        children: [],
+      });
+      continue;
+    }
+
+    if (event.kind === 'tool_call') {
+      const thought: CodexToolThought = {
+        id: event.callId || `codex-tool-${historyIndex}-${event.sourceIndex}`,
+        parent_id: null,
+        metadata: {
+          timestamp: event.date,
+          source_index: event.sourceIndex,
+          event_kind: event.kind,
+          call_id: event.callId,
+          ...(event.metadata ?? {}),
+        },
+        in_progress: false,
+        input_text: event.inputText || '',
+        message: '',
+        author_type: isSubagentTool(event.toolName) ? 'Agent' : 'Tool',
+        author_name: event.toolName || 'Unknown Tool',
+        output_format: 'text',
+        error: false,
+        interrupted: false,
+        aborted: false,
+        children: [],
+      };
+
+      thoughts.push(thought);
+      if (event.callId) {
+        toolThoughtByCallId.set(event.callId, thought);
+      }
+      continue;
+    }
+
+    if (event.kind === 'tool_output') {
+      const existingThought = event.callId ? toolThoughtByCallId.get(event.callId) : undefined;
+      if (existingThought) {
+        existingThought.message = event.text || '';
+        existingThought.metadata = {
+          ...existingThought.metadata,
+          output_source_index: event.sourceIndex,
+          output_timestamp: event.date,
+        };
+      } else {
+        thoughts.push({
+          id: event.callId || `codex-tool-output-${historyIndex}-${event.sourceIndex}`,
+          parent_id: null,
+          metadata: {
+            timestamp: event.date,
+            source_index: event.sourceIndex,
+            event_kind: event.kind,
+            call_id: event.callId,
+            ...(event.metadata ?? {}),
+          },
+          in_progress: false,
+          input_text: '',
+          message: event.text || '',
+          author_type: 'Tool',
+          author_name: 'Unknown Tool',
+          output_format: 'text',
+          error: false,
+          interrupted: false,
+          aborted: false,
+          children: [],
+        });
+      }
+    }
+  }
+
+  return thoughts;
+}
+
+function getFinalAssistant(events: CodexNormalizedEvent[]): CodexNormalizedEvent | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    if (events[index].kind === 'assistant_final') {
+      return events[index];
+    }
+  }
+  return undefined;
+}
+
+function dedupeEvents(events: CodexNormalizedEvent[]): CodexNormalizedEvent[] {
+  const seen = new Set<string>();
+  const deduped: CodexNormalizedEvent[] = [];
+
+  for (const event of events) {
+    const key = [
+      event.kind,
+      event.sourceIndex,
+      event.callId ?? '',
+      event.toolName ?? '',
+      event.text ?? '',
+      event.inputText ?? '',
+    ].join('|');
+
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    deduped.push(event);
+  }
+
+  return deduped;
+}
+
+function isToolCallType(type: string): boolean {
+  return type === 'function_call' || type === 'custom_tool_call' || type === 'web_search_call';
+}
+
+function isToolOutputType(type: string): boolean {
+  return type === 'function_call_output' || type === 'custom_tool_call_output';
+}
+
+function extractToolName(item: CodexResponseItem & { name?: unknown; type: string }): string {
+  return typeof item.name === 'string' && item.name.trim()
+    ? item.name
+    : item.type;
+}
+
+function extractToolInput(item: CodexResponseItem & { arguments?: unknown; input?: unknown }): string {
+  if (typeof item.arguments === 'string' && item.arguments.trim()) {
+    return item.arguments;
+  }
+
+  if (item.input !== undefined) {
+    try {
+      return typeof item.input === 'string'
+        ? item.input
+        : JSON.stringify(item.input);
+    } catch {
+      return String(item.input);
+    }
+  }
+
+  return '';
+}
+
+function extractToolOutput(item: CodexResponseItem & { output?: unknown }): string {
+  if (typeof item.output === 'string' && item.output.trim()) {
+    return item.output;
+  }
+
+  if (item.output !== undefined) {
+    try {
+      return typeof item.output === 'string'
+        ? item.output
+        : JSON.stringify(item.output);
+    } catch {
+      return String(item.output);
+    }
+  }
+
+  return extractMessageContent(item) || '';
+}
+
+function extractReasoningContent(item: {
+  summary?: unknown;
+  content?: unknown;
+}): string | undefined {
+  if (Array.isArray(item.summary)) {
+    const summaryText = item.summary
+      .map((entry) => {
+        if (typeof entry === 'string') return entry;
+        if (entry && typeof entry === 'object') {
+          const text = (entry as { text?: unknown }).text;
+          if (typeof text === 'string') return text;
+        }
+        return undefined;
+      })
+      .filter((entry): entry is string => Boolean(entry?.trim()))
+      .join('\n');
+
+    if (summaryText.trim()) {
+      return summaryText;
+    }
+  }
+
+  if (typeof item.summary === 'string' && item.summary.trim()) {
+    return item.summary;
+  }
+
+  if (typeof item.content === 'string' && item.content.trim()) {
+    return item.content;
+  }
+
+  return undefined;
+}
+
+function isSubagentTool(toolName?: string): boolean {
+  if (!toolName) {
+    return false;
+  }
+
+  return [
+    'spawn_agent',
+    'send_input',
+    'wait_agent',
+    'resume_agent',
+    'close_agent',
+  ].includes(toolName);
 }
 
 function parseLastSyncedSourceIndex(value: unknown, fallback: number): number {
@@ -236,87 +729,6 @@ function getQueuedCheckpoint(payloads: ConversationPayloadRecord[]): { sourceInd
   return { sourceIndex, historyIndex };
 }
 
-function buildTurns(messages: CodexConversationMessage[], lastSyncedHistoryIndex: number): CodexConversationTurn[] {
-  const turns: CodexConversationTurn[] = [];
-  let current: CodexConversationTurn | undefined;
-  let nextHistoryIndex = lastSyncedHistoryIndex + 1;
-
-  for (const message of messages) {
-    if (message.role === 'User') {
-      current = {
-        user: message,
-        assistants: [],
-        historyIndex: nextHistoryIndex++,
-      };
-      turns.push(current);
-      continue;
-    }
-
-    if (!current) {
-      if (lastSyncedHistoryIndex < 0) {
-        continue;
-      }
-      current = {
-        assistants: [],
-        historyIndex: lastSyncedHistoryIndex,
-      };
-      turns.push(current);
-    }
-
-    current.assistants.push(message);
-  }
-
-  return turns.filter(turn => turn.user || turn.assistants.length > 0);
-}
-
-function turnToHistory(turn: CodexConversationTurn): any[] {
-  const history: any[] = [];
-
-  if (turn.user) {
-    history.push({
-      role: 'User',
-      message: turn.user.message,
-      message_raw: turn.user.message,
-      date: turn.user.date,
-      history_index: turn.historyIndex,
-      file_names: [],
-    });
-  }
-
-  const finalAssistant = turn.assistants[turn.assistants.length - 1];
-  if (finalAssistant) {
-    history.push({
-      role: 'Assistant',
-      message: finalAssistant.message,
-      date: finalAssistant.date,
-      history_index: turn.historyIndex,
-      response_time: turn.user ? calculateResponseTime(turn.user.date, finalAssistant.date) : undefined,
-      assistant_id: CODEMIE_ASSISTANT_ID,
-      thoughts: turn.assistants.map((assistant, index) => createCodemieThought(assistant, turn.historyIndex, index)),
-    });
-  }
-
-  return history;
-}
-
-function createCodemieThought(message: CodexConversationMessage, historyIndex: number, index: number): Record<string, unknown> {
-  return {
-    id: `codex-${historyIndex}-${index}-${message.sourceIndex}`,
-    parent_id: null,
-    metadata: { timestamp: message.date },
-    in_progress: false,
-    input_text: '',
-    message: message.message,
-    author_type: 'Tool',
-    author_name: 'Codemie Thoughts',
-    output_format: 'text',
-    error: false,
-    interrupted: false,
-    aborted: false,
-    children: [],
-  };
-}
-
 function calculateResponseTime(start: string, end: string): number | undefined {
   const startMs = new Date(start).getTime();
   const endMs = new Date(end).getTime();
@@ -337,23 +749,25 @@ function resolveRecordTimestamp(record: CodexRolloutRecord, fallback: unknown): 
   return new Date().toISOString();
 }
 
-function extractMessageContent(item: CodexResponseItem): string | undefined {
+function extractMessageContent(item: CodexResponseItem & { content?: unknown }): string | undefined {
   if (typeof item.output === 'string' && item.output.trim()) {
     return item.output;
   }
 
-  const maybeContent = (item as unknown as { content?: unknown }).content;
+  const maybeContent = item.content;
   if (typeof maybeContent === 'string' && maybeContent.trim()) {
     return maybeContent;
   }
 
   if (Array.isArray(maybeContent)) {
     const parts = maybeContent
-      .map(part => {
+      .map((part) => {
         if (typeof part === 'string') return part;
         if (part && typeof part === 'object') {
-          const text = (part as { text?: unknown }).text;
+          const text = (part as { text?: unknown; thinking?: unknown }).text;
           if (typeof text === 'string') return text;
+          const thinking = (part as { text?: unknown; thinking?: unknown }).thinking;
+          if (typeof thinking === 'string') return thinking;
         }
         return undefined;
       })
