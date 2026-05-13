@@ -61,6 +61,7 @@ export interface ProviderProfile {
   authMethod?: 'manual' | 'sso' | 'jwt' | 'api-key';
   codeMieUrl?: string;
   codeMieProject?: string;  // Selected project/application name
+  userEmail?: string;       // Authenticated user's email
   codemieAssistants?: CodemieAssistant[];
   codeMieIntegration?: CodeMieIntegrationInfo;
   ssoConfig?: {

@@ -176,8 +176,8 @@ async function main() {
   const profile = config.profiles?.[config.activeProfile];
   if (!profile) { process.stdout.write('[budget: no profile]'); return; }
 
-  const { codeMieUrl, codeMieProject, baseUrl } = profile;
-  if (!codeMieUrl || !codeMieProject || !baseUrl) {
+  const { codeMieUrl, userEmail, baseUrl } = profile;
+  if (!codeMieUrl || !userEmail || !baseUrl) {
     process.stdout.write('[budget: incomplete profile]');
     return;
   }
@@ -186,7 +186,7 @@ async function main() {
   if (!headers) { process.stdout.write('[budget: no creds]'); return; }
 
   const [budgetResult, branch] = await Promise.all([
-    fetchBudget(baseUrl, headers, codeMieProject).catch(e => ({ error: e.message })),
+    fetchBudget(baseUrl, headers, userEmail).catch(e => ({ error: e.message })),
     branchPromise,
   ]);
 

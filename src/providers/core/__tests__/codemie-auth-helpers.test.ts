@@ -233,7 +233,7 @@ describe('selectCodeMieProject', () => {
       cookies: { session: 'abc' },
     } as any);
 
-    expect(result).toBe('only-project');
+    expect(result).toEqual({ project: 'only-project', userEmail: 'test' });
     // Verify console.log was called (interactive UX feedback)
     expect(console.log).toHaveBeenCalled();
     const logCall = (console.log as any).mock.calls[0][0];
@@ -286,6 +286,6 @@ describe('selectCodeMieProject', () => {
     } as any);
 
     // Only one project after dedup → auto-selected
-    expect(result).toBe('shared-project');
+    expect(result).toEqual({ project: 'shared-project', userEmail: 'test' });
   });
 });
