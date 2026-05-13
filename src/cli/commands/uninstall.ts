@@ -1,6 +1,12 @@
 import { Command } from 'commander';
-import { AgentRegistry } from '../../agents/registry.js';
-import { AgentNotFoundError, getErrorMessage } from '../../utils/errors.js';
+import { AgentRegistry } from '@/agents/registry.js';
+import { AgentNotFoundError, getErrorMessage } from '@/utils/errors.js';
+import {
+  STATUSLINE_NAME,
+  STATUSLINE_DISPLAY_NAME,
+  uninstallStatusline,
+  isStatuslineInstalled,
+} from '@/agents/plugins/claude/statusline-installer.js';
 import ora from 'ora';
 import chalk from 'chalk';
 
@@ -113,6 +119,23 @@ export function createUninstallCommand(): Command {
             spinner.succeed(`${framework.metadata.displayName} uninstalled successfully`);
           } catch (error: unknown) {
             spinner.fail(`Failed to uninstall ${framework.metadata.displayName}`);
+            throw error;
+          }
+          return;
+        }
+
+        if (name === STATUSLINE_NAME) {
+          if (!isStatuslineInstalled()) {
+            console.log(chalk.blueBright(`${STATUSLINE_DISPLAY_NAME} is not installed`));
+            return;
+          }
+
+          const spinner = ora(`Uninstalling ${STATUSLINE_DISPLAY_NAME}...`).start();
+          try {
+            await uninstallStatusline();
+            spinner.succeed(`${STATUSLINE_DISPLAY_NAME} uninstalled`);
+          } catch (error: unknown) {
+            spinner.fail(`Failed to uninstall ${STATUSLINE_DISPLAY_NAME}`);
             throw error;
           }
           return;

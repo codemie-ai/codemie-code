@@ -58,7 +58,7 @@ describe('Claude Plugin – statusline lifecycle hooks', () => {
   // to get the correct separator on each OS (backslashes on Windows).
   const SCRIPT_DEST = join(CLAUDE_HOME, 'codemie-statusline.mjs');
   const SETTINGS_PATH = join(CLAUDE_HOME, 'settings.json');
-  const SCRIPT_SRC = join('/fake/dist/plugins/claude', 'plugin', 'codemie-statusline.mjs');
+  const SCRIPT_SRC = join('/fake/dist/plugins/claude', 'plugin', 'session-status.mjs');
 
   beforeEach(async () => {
     vi.resetModules(); // Reset module cache → resets statuslineManagedThisSession to false

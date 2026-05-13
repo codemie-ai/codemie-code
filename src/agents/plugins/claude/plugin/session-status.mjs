@@ -5,6 +5,7 @@
 // NOTE: This file is deployed as a standalone script to ~/.claude/ and has no
 // access to the CodeMie utils layer. Direct child_process and path imports are
 // intentional here - this script runs independently without the project runtime.
+/* eslint-disable */
 import { execSync } from 'child_process';
 import { basename } from 'path';
 
