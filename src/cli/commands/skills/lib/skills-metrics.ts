@@ -28,7 +28,15 @@ import { detectGitBranch, detectGitRemoteRepo } from '@/utils/processes.js';
 import { getDirname } from '@/utils/paths.js';
 import type { CodeMieConfigOptions } from '@/env/types.js';
 
-const AGENT_NAME = 'codemie-skills';
+/**
+ * Fallback `agent` value when the wrapper cannot determine the actual target
+ * agent for the operation (e.g. bare `list`/`find`, or `add` with no explicit
+ * `--agent` and no detectable project marker — upstream mode). When the
+ * wrapper does know the targets (via `partial.target_agents`), the emitter
+ * fans out one event per target so the backend's `by_agent` aggregation
+ * counts real agents instead of this wrapper sentinel.
+ */
+const FALLBACK_AGENT_NAME = 'codemie-skills';
 const ENDPOINT_PATH = '/v1/skills/events';
 
 // Wrapper-known input shapes (typed once here so command files don't reach
@@ -168,7 +176,7 @@ async function emit(
       detectGitRemoteRepo(session.workingDirectory),
     ]);
 
-    const baseBody: Omit<SkillEventBody, 'skill_name' | 'skill_slug' | 'skill_id'> = {
+    const baseBody: Omit<SkillEventBody, 'skill_name' | 'skill_slug' | 'skill_id' | 'agent'> = {
       session_id: session.sessionId,
       command: session.command,
       status,
@@ -181,7 +189,6 @@ async function emit(
         target_agents: partial.target_agents,
       }),
       ...(partial.source !== undefined && { source: partial.source }),
-      agent: AGENT_NAME,
       agent_version: session.agentVersion,
       ...(repository && { repository }),
       ...(branch && { branch }),
@@ -190,16 +197,7 @@ async function emit(
       }),
     };
 
-    const targetedSkills = partial.skill_names ?? [];
-    const bodies: SkillEventBody[] =
-      targetedSkills.length > 0
-        ? targetedSkills.map((name) => ({
-            ...baseBody,
-            skill_name: name,
-            skill_slug: toSkillSlug(name),
-            skill_id: composeSkillId(partial.source, toSkillSlug(name)),
-          }))
-        : [{ ...baseBody }];
+    const bodies = buildEventBodies(baseBody, partial);
 
     logger.debug('[skills] Emitting skill events', {
       command: session.command,
@@ -214,6 +212,50 @@ async function emit(
     const message = error instanceof Error ? error.message : String(error);
     logger.debug(`[skills] Event emission failed (${status}): ${message}`);
   }
+}
+
+/**
+ * Expand a base event body into the concrete events to POST. Fan-out runs
+ * along two dimensions:
+ *
+ *   - skill name (when explicit `--skill` or parsed from upstream telemetry)
+ *   - target agent (when wrapper knows them via `target_agents`)
+ *
+ * The combinatorial product is intentional: the backend aggregates `agent`
+ * for `by_agent` analytics, so a single skill installed for two agents must
+ * produce one event per agent. Without target agents, the emitter falls back
+ * to the wrapper sentinel so callers that genuinely don't target an agent
+ * (`list`, `find`, `upstream` add) still produce countable rows.
+ */
+function buildEventBodies(
+  baseBody: Omit<SkillEventBody, 'skill_name' | 'skill_slug' | 'skill_id' | 'agent'>,
+  partial: PartialAttributes
+): SkillEventBody[] {
+  const skillNames = partial.skill_names ?? [];
+  const agentNames =
+    partial.target_agents && partial.target_agents.length > 0
+      ? partial.target_agents
+      : [FALLBACK_AGENT_NAME];
+
+  if (skillNames.length === 0) {
+    return agentNames.map((agent) => ({ ...baseBody, agent }));
+  }
+
+  const bodies: SkillEventBody[] = [];
+  for (const name of skillNames) {
+    const slug = toSkillSlug(name);
+    const skillId = composeSkillId(partial.source, slug);
+    for (const agent of agentNames) {
+      bodies.push({
+        ...baseBody,
+        agent,
+        skill_name: name,
+        skill_slug: slug,
+        ...(skillId !== undefined && { skill_id: skillId }),
+      });
+    }
+  }
+  return bodies;
 }
 
 async function postOne(transport: SkillEventTransport, body: SkillEventBody): Promise<void> {

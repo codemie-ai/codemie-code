@@ -341,6 +341,159 @@ describe('skill events emitter (transport behavior)', () => {
     expect(body.attributes).toBeUndefined();
   });
 
+  it('uses target agent as agent field when a single agent is targeted', async () => {
+    mockConfigLoad.mockResolvedValue({ codeMieUrl: 'https://codemie.lab.epam.com' });
+    mockGetStoredCredentials.mockResolvedValue({
+      cookies: { session: 'abc' },
+      apiUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+    });
+
+    const { startSkillMetric, emitCompleted } = await importMetrics();
+    const session = await startSkillMetric('add');
+    await emitCompleted(session, {
+      scope: 'project',
+      source: 'owner/repo',
+      skill_names: ['foo'],
+      skill_count: 1,
+      target_agents: ['claude-code'],
+      agent_selection_mode: 'auto_detected',
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(fetchSpy.mock.calls[0]![1].body);
+    expect(body.agent).toBe('claude-code');
+    expect(body.target_agents).toEqual(['claude-code']);
+    expect(body.skill_name).toBe('foo');
+  });
+
+  it('fans out one POST per (skill, agent) tuple when both are known', async () => {
+    mockConfigLoad.mockResolvedValue({ codeMieUrl: 'https://codemie.lab.epam.com' });
+    mockGetStoredCredentials.mockResolvedValue({
+      cookies: { session: 'abc' },
+      apiUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+    });
+
+    const { startSkillMetric, emitCompleted } = await importMetrics();
+    const session = await startSkillMetric('add');
+    await emitCompleted(session, {
+      scope: 'project',
+      source: 'owner/repo',
+      skill_names: ['foo', 'bar'],
+      skill_count: 2,
+      target_agents: ['claude-code', 'cursor'],
+      agent_selection_mode: 'explicit',
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(4);
+    const bodies = fetchSpy.mock.calls.map((call) => JSON.parse(call[1].body));
+
+    expect(bodies.map((b) => [b.skill_name, b.agent])).toEqual([
+      ['foo', 'claude-code'],
+      ['foo', 'cursor'],
+      ['bar', 'claude-code'],
+      ['bar', 'cursor'],
+    ]);
+    for (const body of bodies) {
+      expect(body.target_agents).toEqual(['claude-code', 'cursor']);
+      expect(body.agent_selection_mode).toBe('explicit');
+      expect(body.source).toBe('owner/repo');
+    }
+  });
+
+  it('fans out per agent with no skill_name when target agents are known but skill names are not', async () => {
+    mockConfigLoad.mockResolvedValue({ codeMieUrl: 'https://codemie.lab.epam.com' });
+    mockGetStoredCredentials.mockResolvedValue({
+      cookies: { session: 'abc' },
+      apiUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+    });
+
+    const { startSkillMetric, emitCompleted } = await importMetrics();
+    const session = await startSkillMetric('add');
+    await emitCompleted(session, {
+      scope: 'project',
+      source: 'owner/repo',
+      target_agents: ['claude-code', 'cursor'],
+      agent_selection_mode: 'prompted',
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const bodies = fetchSpy.mock.calls.map((call) => JSON.parse(call[1].body));
+    expect(bodies.map((b) => b.agent)).toEqual(['claude-code', 'cursor']);
+    for (const body of bodies) {
+      expect(body.skill_name).toBeUndefined();
+      expect(body.skill_slug).toBeUndefined();
+      expect(body.skill_id).toBeUndefined();
+      expect(body.target_agents).toEqual(['claude-code', 'cursor']);
+    }
+  });
+
+  it('falls back to codemie-skills agent when target_agents is empty (upstream mode)', async () => {
+    mockConfigLoad.mockResolvedValue({ codeMieUrl: 'https://codemie.lab.epam.com' });
+    mockGetStoredCredentials.mockResolvedValue({
+      cookies: { session: 'abc' },
+      apiUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+    });
+
+    const { startSkillMetric, emitCompleted } = await importMetrics();
+    const session = await startSkillMetric('add');
+    await emitCompleted(session, {
+      scope: 'project',
+      source: 'owner/repo',
+      skill_names: ['foo', 'bar'],
+      skill_count: 2,
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const bodies = fetchSpy.mock.calls.map((call) => JSON.parse(call[1].body));
+    for (const body of bodies) {
+      expect(body.agent).toBe('codemie-skills');
+      expect(body.target_agents).toBeUndefined();
+    }
+  });
+
+  it('uses target agent on remove when --agent is supplied', async () => {
+    mockConfigLoad.mockResolvedValue({ codeMieUrl: 'https://codemie.lab.epam.com' });
+    mockGetStoredCredentials.mockResolvedValue({
+      cookies: { session: 'abc' },
+      apiUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+    });
+
+    const { startSkillMetric, emitCompleted } = await importMetrics();
+    const session = await startSkillMetric('remove');
+    await emitCompleted(session, {
+      scope: 'project',
+      skill_names: ['foo'],
+      skill_count: 1,
+      target_agents: ['cursor'],
+      agent_selection_mode: 'explicit',
+    });
+
+    const body = JSON.parse(fetchSpy.mock.calls[0]![1].body);
+    expect(body.command).toBe('remove');
+    expect(body.agent).toBe('cursor');
+    expect(body.skill_name).toBe('foo');
+  });
+
+  it('falls back to codemie-skills agent on remove when --agent is omitted', async () => {
+    mockConfigLoad.mockResolvedValue({ codeMieUrl: 'https://codemie.lab.epam.com' });
+    mockGetStoredCredentials.mockResolvedValue({
+      cookies: { session: 'abc' },
+      apiUrl: 'https://codemie.lab.epam.com/code-assistant-api',
+    });
+
+    const { startSkillMetric, emitCompleted } = await importMetrics();
+    const session = await startSkillMetric('remove');
+    await emitCompleted(session, {
+      scope: 'project',
+      skill_names: ['foo'],
+      skill_count: 1,
+    });
+
+    const body = JSON.parse(fetchSpy.mock.calls[0]![1].body);
+    expect(body.agent).toBe('codemie-skills');
+    expect(body.target_agents).toBeUndefined();
+  });
+
   it('falls back to ensureApiBase when credentials store has no apiUrl', async () => {
     mockConfigLoad.mockResolvedValue({ codeMieUrl: 'https://codemie.lab.epam.com' });
     mockGetStoredCredentials.mockResolvedValue({
