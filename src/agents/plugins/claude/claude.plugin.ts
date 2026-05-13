@@ -196,7 +196,7 @@ export const ClaudePluginMetadata: AgentMetadata = {
 
         // Read the statusline script from the compiled output directory
         const scriptContent = await readFile(
-          join(getDirname(import.meta.url), 'plugin/session-status.mjs'),
+          join(getDirname(import.meta.url), 'plugin/codemie-statusline.mjs'),
           'utf-8'
         );
 

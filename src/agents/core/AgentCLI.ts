@@ -205,7 +205,6 @@ export class AgentCLI {
       }
 
       if (missingFields.length > 0) {
-        console.log(config)
         console.log(chalk.yellow('\n⚠️  Configuration incomplete'));
         console.log(chalk.white('Missing: ') + chalk.red(missingFields.join(', ')));
         console.log(chalk.white('Run ') + chalk.cyan('codemie setup') + chalk.white(' to configure your AI provider.\n'));
