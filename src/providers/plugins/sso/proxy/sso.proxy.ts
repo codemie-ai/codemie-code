@@ -119,6 +119,10 @@ export class CodeMieProxy {
     // 4. Initialize plugins from registry
     const registry = getPluginRegistry();
     this.interceptors = await registry.initialize(pluginContext);
+    logger.info('[proxy] Initialized proxy interceptors', {
+      interceptors: this.interceptors.map((interceptor) => interceptor.name),
+      interceptorCount: this.interceptors.length,
+    });
 
     // 5. Find available port
     this.actualPort = this.config.port || await this.findAvailablePort();
@@ -256,6 +260,22 @@ export class CodeMieProxy {
       // 3. Forward request to upstream
       const targetUrl = this.buildTargetUrl(req.url!);
       context.targetUrl = targetUrl.toString();
+
+      logger.info(
+        '[proxy] Forwarding request to upstream',
+        {
+          requestId: context.requestId,
+          url: context.url,
+          targetUrl: context.targetUrl,
+          hasAuthorizationHeader: Boolean(
+            context.headers['authorization'] ?? context.headers['Authorization']
+          ),
+          authorizationHeader: context.headers['authorization'] ?? context.headers['Authorization'],
+          hasCookieHeader: Boolean(context.headers['cookie'] ?? context.headers['Cookie']),
+          headerKeys: Object.keys(context.headers),
+          gatewayKeyValidated: Boolean(context.metadata.gatewayKeyValidated),
+        }
+      );
 
       logger.debug(`[proxy] Forwarding request to upstream for ${context.requestId}`);
       const upstreamResponse = await this.httpClient.forward(targetUrl, {

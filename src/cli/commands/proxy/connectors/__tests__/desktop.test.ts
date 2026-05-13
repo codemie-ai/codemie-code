@@ -74,7 +74,17 @@ describe('fetchClaudeModels', () => {
   it('returns Claude family ids and excludes vertex / non-claude entries', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => MODEL_LIST_RESPONSE,
+      json: async () => [
+        { base_name: 'claude-sonnet-4-5-20250929' },
+        { base_name: 'claude-4-5-sonnet' },
+        { base_name: 'claude-sonnet-4-6' },
+        { base_name: 'claude-opus-4-5-20251101' },
+        { base_name: 'claude-opus-4-6-20260205' },
+        { base_name: 'claude-opus-4-7' },
+        { base_name: 'claude-haiku-4-5-20251001' },
+        { base_name: 'claude-opus-4-6-vertex' },
+        { base_name: 'gpt-5.5-2026-04-24' },
+      ],
     }) as any;
 
     const models = await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy');
@@ -98,14 +108,16 @@ describe('fetchClaudeModels', () => {
     expect(init.headers.Authorization).toBe('Bearer my-key');
   });
 
-  it('returns [] when fetch fails', async () => {
+  it('throws when fetch fails', async () => {
     globalThis.fetch = vi.fn().mockRejectedValue(new Error('network down')) as any;
-    expect(await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy')).toEqual([]);
+    await expect(fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy'))
+      .rejects.toThrow('Local proxy model discovery could not reach');
   });
 
-  it('returns [] when response is not ok', async () => {
+  it('throws when response is not ok', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, json: async () => ({}) }) as any;
-    expect(await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy')).toEqual([]);
+    await expect(fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy'))
+      .rejects.toThrow('Local proxy model discovery failed');
   });
 });
 
@@ -248,11 +260,10 @@ describe('writeDesktopConfig', () => {
     ]);
   });
 
-  it('omits inferenceModels when discovery returns nothing', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [] }) }) as any;
-    const written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir);
-    const config = JSON.parse(await readFile(written, 'utf-8'));
-    expect(config.inferenceModels).toBeUndefined();
+  it('fails fast when discovery returns nothing', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] }) as any;
+    await expect(writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir))
+      .rejects.toThrow('Local proxy did not expose any Claude models');
   });
 
   it('overwrites the four inference keys with new values', async () => {

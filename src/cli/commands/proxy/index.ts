@@ -8,6 +8,7 @@ import {
   formatErrorForUser,
 } from '../../../utils/errors.js';
 import { logger } from '../../../utils/logger.js';
+import { sanitizeLogArgs } from '../../../utils/security.js';
 import {
   checkStatus,
   readState,
@@ -163,6 +164,7 @@ export function createProxyCommand(): Command {
         provider: config.provider ?? 'ai-run-sso',
         profile: config.name ?? 'default',
         port: parsePortOption(opts.port, DEFAULT_DAEMON_PORT),
+        project: config.codeMieProject,
         syncApiUrl: config.ssoConfig?.apiUrl,
         syncCodeMieUrl: config.codeMieUrl,
       });
@@ -220,6 +222,7 @@ export function createProxyCommand(): Command {
     .option('--verbose', 'Show detailed connection info (URLs, config paths) for debugging')
     .action(async (opts) => {
       const verbose: boolean = Boolean(opts.verbose);
+      let startedInThisRun = false;
       try {
         let { running, state } = await checkStatus();
 
@@ -262,24 +265,61 @@ export function createProxyCommand(): Command {
           } else {
             console.log(chalk.cyan(`Using profile: ${profileLabel}`));
           }
+          logger.info(
+            '[proxy] Resolved Claude Desktop proxy configuration',
+            ...sanitizeLogArgs({
+              profile: profileLabel,
+              profileSource,
+              provider: config.provider ?? 'ai-run-sso',
+              baseUrl: config.baseUrl,
+              codeMieUrl: config.codeMieUrl,
+              syncApiUrl: config.ssoConfig?.apiUrl,
+            })
+          );
           await verifySsoCredentials(config.baseUrl, config.name ?? 'default');
           state = await spawnDaemon({
             targetUrl: config.baseUrl,
             provider: config.provider ?? 'ai-run-sso',
             profile: config.name ?? 'default',
             port: DEFAULT_DAEMON_PORT,
+            project: config.codeMieProject,
             telemetryMode: 'claude-desktop',
             syncApiUrl: config.ssoConfig?.apiUrl,
             syncCodeMieUrl: config.codeMieUrl,
           });
+          startedInThisRun = true;
           if (verbose) {
             console.log(chalk.green(`✓ Proxy started at ${state.url}`));
           } else {
             console.log(chalk.green('✓ Proxy started'));
           }
+          logger.info(
+            '[proxy] Claude Desktop proxy daemon is ready',
+            ...sanitizeLogArgs({
+              url: state.url,
+              port: state.port,
+              profile: state.profile,
+              telemetryMode: state.telemetryMode,
+              targetUrl: state.targetUrl,
+              clientType: state.clientType,
+              syncApiUrl: state.syncApiUrl,
+              syncCodeMieUrl: state.syncCodeMieUrl,
+              inferenceGatewayApiKey: state.gatewayKey,
+            })
+          );
         }
 
         const configPath = await writeDesktopConfig(state!.url, state!.gatewayKey);
+        logger.info(
+          '[proxy] Claude Desktop proxy configuration written',
+          ...sanitizeLogArgs({
+            configPath,
+            gatewayUrl: state!.url,
+            telemetryMode: state!.telemetryMode,
+            profile: state!.profile,
+            inferenceGatewayApiKey: state!.gatewayKey,
+          })
+        );
         console.log(chalk.green('✓ Claude Desktop configured'));
         if (verbose) {
           console.log(`  Config:  ${configPath}`);
@@ -288,6 +328,19 @@ export function createProxyCommand(): Command {
         }
         console.log(chalk.yellow('  Restart Claude Desktop to apply changes.'));
       } catch (error) {
+        if (startedInThisRun) {
+          try {
+            await stopDaemon();
+            logger.info('[proxy] Claude Desktop proxy startup rolled back after configuration failure');
+          } catch (stopError) {
+            logger.warn(
+              '[proxy] Failed to stop Claude Desktop proxy after configuration failure',
+              ...sanitizeLogArgs({
+                error: stopError instanceof Error ? stopError.message : String(stopError),
+              })
+            );
+          }
+        }
         printProxyError(error, 'Failed to connect Claude Desktop proxy');
       }
     });
