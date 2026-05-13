@@ -387,6 +387,12 @@ export class ConfigLoader {
     await this.saveGlobalConfig(config as any);
   }
 
+  static async saveUserEmail(email: string): Promise<void> {
+    const config = await this.loadMultiProviderConfig();
+    config.userEmail = email;
+    await this.saveMultiProviderConfig(config);
+  }
+
   /**
    * Add or update a profile
    */

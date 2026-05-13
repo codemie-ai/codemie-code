@@ -158,6 +158,7 @@ export interface LegacyConfig {
 export interface MultiProviderConfig {
   version: 2;
   activeProfile: string;
+  userEmail?: string;
   profiles: Record<string, ProviderProfile>;
 }
 

@@ -176,7 +176,8 @@ async function main() {
   const profile = config.profiles?.[config.activeProfile];
   if (!profile) { process.stdout.write('[budget: no profile]'); return; }
 
-  const { codeMieUrl, userEmail, baseUrl } = profile;
+  const { codeMieUrl, baseUrl } = profile;
+  const userEmail = config.userEmail;
   if (!codeMieUrl || !userEmail || !baseUrl) {
     process.stdout.write('[budget: incomplete profile]');
     return;
