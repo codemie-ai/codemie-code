@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import type { Assistant, AssistantBase } from 'codemie-sdk';
 import type { CodemieAssistant } from '@/env/types.js';
 import { logger } from '@/utils/logger.js';
+import { StorageScope } from '@/env/types.js';
 import { MESSAGES } from '@/cli/commands/assistants/constants.js';
 import { registerClaudeSubagent, unregisterClaudeSubagent } from '@/cli/commands/assistants/setup/generators/claude-agent-generator.js';
 import { registerClaudeSkill, unregisterClaudeSkill } from '@/cli/commands/assistants/setup/generators/claude-skill-generator.js';
@@ -24,7 +25,7 @@ export function determineChanges(
   return _determineChanges(selectedIds, allAssistants as Assistant[], registeredAssistants) as RegistrationChanges;
 }
 
-export async function unregisterAssistant(assistant: CodemieAssistant, scope: 'global' | 'local' = 'global', workingDir?: string): Promise<void> {
+export async function unregisterAssistant(assistant: CodemieAssistant, scope: StorageScope = StorageScope.GLOBAL, workingDir?: string): Promise<void> {
   await executeWithSpinner(
     MESSAGES.SETUP.SPINNER_UNREGISTERING(chalk.bold(assistant.name)),
     async () => {
@@ -40,7 +41,7 @@ export async function unregisterAssistant(assistant: CodemieAssistant, scope: 'g
 export async function registerAssistant(
   assistant: Assistant,
   mode: RegistrationMode = REGISTRATION_MODE.AGENT,
-  scope: 'global' | 'local' = 'global',
+  scope: StorageScope = StorageScope.GLOBAL,
   workingDir?: string
 ): Promise<CodemieAssistant | null> {
   const modeLabel = mode === REGISTRATION_MODE.SKILL ? 'skill' : 'agent';

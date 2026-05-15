@@ -730,12 +730,12 @@ describe('Claude Skill Generator', () => {
 			// Act
 			await registerClaudeSkill(specialIdAssistant);
 
-			// Assert: Should normalize to slug with only hyphens
+			// Assert: sanitizeToSlug strips leading/trailing hyphens, so
+			// "!@#$%^&*()" → "-" → "" (empty after trim), resulting in no slug directory
 			const callArgs = vi.mocked(fs.writeFile).mock.calls[0];
 			const filePath = callArgs[0] as string;
-			// Current implementation: .toLowerCase().replace(/[^a-z0-9]+/g, '-')
-			// "!@#$%^&*()" becomes "-"
-			expect(filePath).toContain(path.join('skills', '-', 'SKILL.md'));
+			expect(filePath).toContain('SKILL.md');
+			expect(filePath).not.toContain(path.join('skills', '-', 'SKILL.md'));
 		});
 
 		it('should handle ID with multiple consecutive special chars', async () => {

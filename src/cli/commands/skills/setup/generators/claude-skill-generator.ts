@@ -3,13 +3,15 @@ import path from 'path';
 import os from 'os';
 import dedent from 'dedent';
 import { logger } from '@/utils/logger.js';
+import { StorageScope } from '@/env/types.js';
+import { sanitizeToSlug } from '@/utils/slug.js';
 import type { SkillDetail } from 'codemie-sdk';
 
 /**
  * Get the skills directory path for Claude Code
  */
-function getSkillsDir(scope: 'global' | 'local' = 'global', workingDir?: string): string {
-	if (scope === 'local' && workingDir) {
+function getSkillsDir(scope: StorageScope = StorageScope.GLOBAL, workingDir?: string): string {
+	if (scope === StorageScope.LOCAL && workingDir) {
 		return path.join(workingDir, '.claude', 'skills');
 	}
 	return path.join(os.homedir(), '.claude', 'skills');
@@ -25,10 +27,8 @@ function getSkillsDir(scope: 'global' | 'local' = 'global', workingDir?: string)
  * name is intentionally shared — changing it would break the UX for the common case.
  */
 function generateName(skill: SkillDetail): string {
-	const baseName = skill.name.toLowerCase()
-		.replace(/[^a-z0-9]+/g, '-')
-		.replace(/^-+|-+$/g, '');
-	return baseName || skill.id.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+	const baseName = sanitizeToSlug(skill.name);
+	return baseName || sanitizeToSlug(skill.id);
 }
 
 /**
@@ -51,17 +51,9 @@ function createSkillMetadata(skill: SkillDetail): string {
  * Appends project and scope suffixes to prevent directory collisions when
  * multiple skills share the same name across different projects or scopes.
  */
-function generateSlug(skill: SkillDetail, scope: 'global' | 'local'): string {
-	const baseName = skill.name.toLowerCase()
-		.replace(/[^a-z0-9]+/g, '-')
-		.replace(/^-+|-+$/g, '');
-
-	const base = baseName || skill.id.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-
-	const projectSuffix = skill.project
-		? `-${skill.project.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}`
-		: '';
-
+function generateSlug(skill: SkillDetail, scope: StorageScope): string {
+	const base = sanitizeToSlug(skill.name) || sanitizeToSlug(skill.id) || skill.id;
+	const projectSuffix = skill.project ? `-${sanitizeToSlug(skill.project) || skill.project}` : '';
 	return `${base}${projectSuffix}-${scope}`;
 }
 
@@ -83,7 +75,7 @@ function createSkillContent(skill: SkillDetail): string {
  * Register a CodeMie skill as a Claude Code skill
  * Creates: ~/.claude/skills/{slug}/SKILL.md
  */
-export async function registerClaudeSkill(skill: SkillDetail, scope: 'global' | 'local' = 'global', workingDir?: string): Promise<string> {
+export async function registerClaudeSkill(skill: SkillDetail, scope: StorageScope = StorageScope.GLOBAL, workingDir?: string): Promise<string> {
 	const slug = generateSlug(skill, scope);
 	const skillsDir = getSkillsDir(scope, workingDir);
 	const skillDir = path.join(skillsDir, slug);
@@ -107,7 +99,7 @@ export async function registerClaudeSkill(skill: SkillDetail, scope: 'global' | 
  * Unregister a Claude Code skill
  * Removes: ~/.claude/skills/{slug}/
  */
-export async function unregisterClaudeSkill(slug: string, scope: 'global' | 'local' = 'global', workingDir?: string): Promise<void> {
+export async function unregisterClaudeSkill(slug: string, scope: StorageScope = StorageScope.GLOBAL, workingDir?: string): Promise<void> {
 	const skillsDir = getSkillsDir(scope, workingDir);
 	const skillDir = path.join(skillsDir, slug);
 
