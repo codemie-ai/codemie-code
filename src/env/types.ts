@@ -4,6 +4,11 @@
 
 import type { HooksConfiguration } from '../hooks/types.js';
 
+export enum StorageScope {
+  GLOBAL = 'global',
+  LOCAL = 'local',
+}
+
 /**
  * Minimal CodeMie integration info for config storage
  */
@@ -33,7 +38,7 @@ export interface CodemieSkill {
   name: string;
   slug: string;
   description: string;
-  project: string;
+  project?: string;
   registeredAt: string;
 }
 
@@ -61,7 +66,6 @@ export interface ProviderProfile {
   authMethod?: 'manual' | 'sso' | 'jwt' | 'api-key';
   codeMieUrl?: string;
   codeMieProject?: string;  // Selected project/application name
-  codemieAssistants?: CodemieAssistant[];
   codeMieIntegration?: CodeMieIntegrationInfo;
   ssoConfig?: {
     apiUrl?: string;
@@ -110,8 +114,8 @@ export interface ProviderProfile {
     maxHistoryMessages?: number; // Maximum conversation turns to load (default: 10, which loads 20 messages = 10 user + 10 AI)
   };
 
-  // Skills configuration
-  codemieSkills?: CodemieSkill[];
+  // In-memory assistants/skills state (not persisted here; stored at MultiProviderConfig level)
+  codemieAssistants?: CodemieAssistant[];
 
   // Skills search — internal catalog endpoint used by `codemie skills find`.
   // Overridden by the CODEMIE_SKILLS_SEARCH_URL env var. When unset, the
@@ -138,7 +142,6 @@ export interface LegacyConfig {
   authMethod?: 'manual' | 'sso' | 'jwt' | 'api-key';
   codeMieUrl?: string;
   codeMieProject?: string;  // Selected project/application name
-  codemieAssistants?: CodemieAssistant[];
   codeMieIntegration?: CodeMieIntegrationInfo;
   ssoConfig?: {
     apiUrl?: string;
@@ -157,6 +160,8 @@ export interface LegacyConfig {
 export interface MultiProviderConfig {
   version: 2;
   activeProfile: string;
+  codemieSkills?: CodemieSkill[];
+  codemieAssistants?: CodemieAssistant[];
   profiles: Record<string, ProviderProfile>;
 }
 

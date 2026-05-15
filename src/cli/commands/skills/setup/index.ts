@@ -139,16 +139,9 @@ async function setupSkills(options: { profile?: string }): Promise<void> {
     ...newlyRegistered,
   ];
 
-  let configLocation: string;
+  await ConfigLoader.saveSkillsToProjectConfig(workingDir, storageScope, updatedSkills);
 
-  if (storageScope === 'local') {
-    await ConfigLoader.saveSkillsToProjectConfig(workingDir, profileName, updatedSkills);
-    configLocation = `${workingDir}/.codemie/codemie-cli.config.json`;
-  } else {
-    config.codemieSkills = updatedSkills;
-    await ConfigLoader.saveProfile(profileName, config);
-    configLocation = `global (~/.codemie/codemie-cli.config.json)`;
-  }
+  const configLocation = ConfigLoader.getConfigLocationLabel(storageScope, workingDir);
 
   console.log('');
   if (newlyRegistered.length > 0) {

@@ -2,7 +2,9 @@ import chalk from 'chalk';
 import type { SkillDetail, SkillListItem } from 'codemie-sdk';
 import type { CodemieSkill } from '@/env/types.js';
 import { logger } from '@/utils/logger.js';
+import { StorageScope } from '@/env/types.js';
 import { registerClaudeSkill, unregisterClaudeSkill } from '@/cli/commands/skills/setup/generators/claude-skill-generator.js';
+import { sanitizeToSlug } from '@/utils/slug.js';
 import { executeWithSpinner, determineChanges as _determineChanges } from '@/cli/commands/shared/helpers.js';
 
 export { executeWithSpinner };
@@ -20,7 +22,7 @@ export function determineChanges(
   return _determineChanges(selectedIds, allSkills, registeredSkills);
 }
 
-export async function unregisterSkill(skill: CodemieSkill, scope: 'global' | 'local' = 'global', workingDir?: string): Promise<void> {
+export async function unregisterSkill(skill: CodemieSkill, scope: StorageScope = StorageScope.GLOBAL, workingDir?: string): Promise<void> {
   await executeWithSpinner(
     `Unregistering ${chalk.bold(skill.name)}...`,
     async () => {
@@ -34,7 +36,7 @@ export async function unregisterSkill(skill: CodemieSkill, scope: 'global' | 'lo
 
 export async function registerSkill(
   skill: SkillDetail,
-  scope: 'global' | 'local' = 'global',
+  scope: StorageScope = StorageScope.GLOBAL,
   workingDir?: string
 ): Promise<CodemieSkill | null> {
   const result = await executeWithSpinner(
@@ -43,7 +45,7 @@ export async function registerSkill(
       const slug = await registerClaudeSkill(skill, scope, workingDir);
       return slug;
     },
-    `Registered ${chalk.bold(skill.name)} ${chalk.cyan(`/${skill.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`)}`,
+    `Registered ${chalk.bold(skill.name)} ${chalk.cyan(`/${sanitizeToSlug(skill.name)}`)}`,
     `Failed to register ${skill.name}`,
     (error) => logger.error('Skill registration failed', { error, skillId: skill.id })
   );
