@@ -4,7 +4,11 @@ import { ConfigurationError } from '@/utils/errors.js';
 
 export function getClaudeDesktopBaseDir(): string {
   if (process.platform === 'win32') {
-    return join(process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming'), 'Claude-3p');
+    // Claude Desktop reads its enterprise config from %LOCALAPPDATA%\Claude-3p
+    // (not %APPDATA%). This matches the app's own CJe() path resolution.
+    const localAppData =
+      process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local');
+    return join(localAppData, 'Claude-3p');
   }
 
   if (process.platform === 'darwin') {
@@ -12,7 +16,7 @@ export function getClaudeDesktopBaseDir(): string {
   }
 
   throw new ConfigurationError(
-    `Claude Desktop proxy is not supported on platform "${process.platform}"`
+    `Claude Desktop proxy is not supported on platform "${process.platform}"`,
   );
 }
 

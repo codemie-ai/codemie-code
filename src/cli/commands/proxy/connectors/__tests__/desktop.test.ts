@@ -56,13 +56,13 @@ describe('getDesktopBaseDir', () => {
     expect(() => getDesktopBaseDir()).toThrow('not supported on platform');
   });
 
-  it('uses APPDATA on windows (simulated)', () => {
+  it('uses LOCALAPPDATA on windows (simulated)', () => {
     const orig = process.platform;
     Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
-    process.env.APPDATA = 'C:\\Users\\test\\AppData\\Roaming';
-    expect(getDesktopBaseDir()).toContain('Claude-3p');
+    process.env.LOCALAPPDATA = 'C:\\Users\\test\\AppData\\Local';
+    expect(getDesktopBaseDir()).toBe('C:\\Users\\test\\AppData\\Local\\Claude-3p');
     Object.defineProperty(process, 'platform', { value: orig, configurable: true });
-    delete process.env.APPDATA;
+    delete process.env.LOCALAPPDATA;
   });
 });
 
