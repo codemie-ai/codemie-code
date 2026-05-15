@@ -12,14 +12,18 @@ import {
   ConfigWithSources,
   CodemieAssistant,
   CodemieSkill,
+  StorageScope,
   isMultiProviderConfig,
   isLegacyConfig
 } from '../env/types.js';
 import { ProviderRegistry } from '../providers/index.js';
 import { getCodemieHome, getCodemiePath } from './paths.js';
+import { ConfigurationError } from './errors.js';
 
 // Re-export for backward compatibility
 export type { CodeMieConfigOptions, CodeMieIntegrationInfo, ConfigWithSource, ConfigWithSources };
+
+export { StorageScope };
 
 /**
  * Unified configuration loader with priority system:
@@ -36,6 +40,26 @@ export class ConfigLoader {
 
   // Cache for multi-provider config
   private static multiProviderCache: MultiProviderConfig | null = null;
+
+  static getConfigLocationLabel(scope: StorageScope, workingDir: string): string {
+    return scope === StorageScope.LOCAL
+      ? path.join(workingDir, this.LOCAL_CONFIG)
+      : `global (${this.GLOBAL_CONFIG})`;
+  }
+
+  private static async loadConfigByScope(scope: StorageScope, workingDir: string): Promise<MultiProviderConfig> {
+    return scope === StorageScope.GLOBAL
+      ? this.loadMultiProviderConfig()
+      : this.loadLocalMultiProviderConfig(workingDir);
+  }
+
+  private static async saveConfigByScope(scope: StorageScope, workingDir: string, config: MultiProviderConfig): Promise<void> {
+    if (scope === StorageScope.GLOBAL) {
+      await this.saveMultiProviderConfig(config);
+    } else {
+      await this.saveLocalMultiProviderConfig(workingDir, config);
+    }
+  }
 
   /**
    * Load configuration with proper priority:
@@ -394,7 +418,7 @@ export class ConfigLoader {
       };
     }
 
-    throw new Error(`Unrecognized config format at ${localConfigPath}. Expected multi-provider (version 2) format.`);
+    throw new ConfigurationError(`Unrecognized config format at ${localConfigPath}. Expected multi-provider (version 2) format.`);
   }
 
   /**
@@ -740,34 +764,25 @@ export class ConfigLoader {
 
   static async saveAssistantsToProjectConfig(
     workingDir: string,
-    scope: 'global' | 'local',
+    scope: StorageScope,
     assistants: CodemieAssistant[]
   ): Promise<void> {
-    if (scope === 'global') {
-      const config = await this.loadMultiProviderConfig();
-      config.codemieAssistants = assistants;
-      await this.saveMultiProviderConfig(config);
-    } else {
-      const config = await this.loadLocalMultiProviderConfig(workingDir);
-      config.codemieAssistants = assistants;
-      await this.saveLocalMultiProviderConfig(workingDir, config);
-    }
+    const config = await this.loadConfigByScope(scope, workingDir);
+    config.codemieAssistants = assistants;
+    await this.saveConfigByScope(scope, workingDir, config);
   }
 
   static async loadSkillsByScope(
-    scope: 'global' | 'local',
+    scope: StorageScope,
     workingDir: string,
     // Skills are stored at the top-level MultiProviderConfig, not per-profile.
     // This parameter exists only for call-site compatibility and is intentionally ignored.
     _profileName?: string
   ): Promise<CodemieSkill[]> {
-    const config = scope === 'global'
-      ? await this.loadMultiProviderConfig()
-      : await this.loadLocalMultiProviderConfig(workingDir);
-
+    const config = await this.loadConfigByScope(scope, workingDir);
     const skills = config.codemieSkills ?? [];
 
-    const skillsDir = scope === 'global'
+    const skillsDir = scope === StorageScope.GLOBAL
       ? path.join(os.homedir(), '.claude', 'skills')
       : path.join(workingDir, '.claude', 'skills');
 
@@ -784,18 +799,15 @@ export class ConfigLoader {
   }
 
   static async loadAssistantsByScope(
-    scope: 'global' | 'local',
+    scope: StorageScope,
     workingDir: string,
     // Assistants are stored at the top-level MultiProviderConfig, not per-profile.
     // This parameter exists only for call-site compatibility and is intentionally ignored.
     _profileName?: string
   ): Promise<CodemieAssistant[]> {
-    const config = scope === 'global'
-      ? await this.loadMultiProviderConfig()
-      : await this.loadLocalMultiProviderConfig(workingDir);
-
+    const config = await this.loadConfigByScope(scope, workingDir);
     const assistants = config.codemieAssistants ?? [];
-    const baseDir = scope === 'global' ? os.homedir() : workingDir;
+    const baseDir = scope === StorageScope.GLOBAL ? os.homedir() : workingDir;
 
     // One fs.access per assistant — acceptable for small lists (<20) but may add
     // measurable latency on agent startup if the list grows large.
@@ -817,18 +829,12 @@ export class ConfigLoader {
 
   static async saveSkillsToProjectConfig(
     workingDir: string,
-    scope: 'global' | 'local',
+    scope: StorageScope,
     skills: CodemieSkill[]
   ): Promise<void> {
-    if (scope === 'global') {
-      const config = await this.loadMultiProviderConfig();
-      config.codemieSkills = skills;
-      await this.saveMultiProviderConfig(config);
-    } else {
-      const config = await this.loadLocalMultiProviderConfig(workingDir);
-      config.codemieSkills = skills;
-      await this.saveLocalMultiProviderConfig(workingDir, config);
-    }
+    const config = await this.loadConfigByScope(scope, workingDir);
+    config.codemieSkills = skills;
+    await this.saveConfigByScope(scope, workingDir, config);
   }
 
   /**
@@ -1300,8 +1306,8 @@ export async function loadRegisteredAssistants(): Promise<CodemieAssistant[]> {
   try {
     const workingDir = process.cwd();
     const [globalAssistants, localAssistants] = await Promise.all([
-      ConfigLoader.loadAssistantsByScope('global', workingDir).catch(() => [] as CodemieAssistant[]),
-      ConfigLoader.loadAssistantsByScope('local', workingDir).catch(() => [] as CodemieAssistant[]),
+      ConfigLoader.loadAssistantsByScope(StorageScope.GLOBAL, workingDir).catch(() => [] as CodemieAssistant[]),
+      ConfigLoader.loadAssistantsByScope(StorageScope.LOCAL, workingDir).catch(() => [] as CodemieAssistant[]),
     ]);
     return [...globalAssistants, ...localAssistants];
   } catch {

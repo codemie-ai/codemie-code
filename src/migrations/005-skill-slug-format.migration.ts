@@ -4,7 +4,10 @@ import * as os from 'os';
 import type { Migration, MigrationResult } from './types.js';
 import { MigrationRegistry } from './registry.js';
 import { ConfigLoader } from '../utils/config.js';
+import { ConfigurationError } from '../utils/errors.js';
+import { sanitizeToSlug } from '../utils/slug.js';
 import { logger } from '../utils/logger.js';
+import { StorageScope } from '../env/types.js';
 import type { MultiProviderConfig, CodemieSkill } from '../env/types.js';
 
 class SkillSlugFormatMigration implements Migration {
@@ -21,7 +24,7 @@ class SkillSlugFormatMigration implements Migration {
       p => (p as any).codemieSkills?.length > 0
     );
     if (hasProfileLevelSkills && !globalConfig.codemieSkills?.length) {
-      throw new Error(
+      throw new ConfigurationError(
         '005-skill-slug-format migration requires migration 004 (move-skills-to-top-level) to have run first. ' +
         'Skills are still stored inside profiles rather than at the top-level config.'
       );
@@ -29,7 +32,7 @@ class SkillSlugFormatMigration implements Migration {
 
     const globalSkillsDir = path.join(os.homedir(), '.claude', 'skills');
     const { config: migratedGlobal, changed: globalChanged } =
-      await this.migrateSkillSlugs(globalConfig, 'global', globalSkillsDir);
+      await this.migrateSkillSlugs(globalConfig, StorageScope.GLOBAL, globalSkillsDir);
     if (globalChanged) {
       await ConfigLoader.saveMultiProviderConfig(migratedGlobal);
       migrated = true;
@@ -40,7 +43,7 @@ class SkillSlugFormatMigration implements Migration {
       const localConfig = await ConfigLoader.loadLocalMultiProviderConfig(workingDir);
       const localSkillsDir = path.join(workingDir, '.claude', 'skills');
       const { config: migratedLocal, changed: localChanged } =
-        await this.migrateSkillSlugs(localConfig, 'local', localSkillsDir);
+        await this.migrateSkillSlugs(localConfig, StorageScope.LOCAL, localSkillsDir);
       if (localChanged) {
         await ConfigLoader.saveLocalMultiProviderConfig(workingDir, migratedLocal);
         migrated = true;
@@ -52,7 +55,7 @@ class SkillSlugFormatMigration implements Migration {
 
   private async migrateSkillSlugs(
     config: MultiProviderConfig,
-    scope: 'global' | 'local',
+    scope: StorageScope,
     skillsDir: string
   ): Promise<{ config: MultiProviderConfig; changed: boolean }> {
     const skills = config.codemieSkills ?? [];
@@ -90,14 +93,9 @@ class SkillSlugFormatMigration implements Migration {
     return { config: { ...config, codemieSkills: updatedSkills }, changed };
   }
 
-  private computeNewSlug(skill: CodemieSkill, scope: 'global' | 'local'): string {
-    const baseName = skill.name.toLowerCase()
-      .replace(/[^a-z0-9]+/g, '-')
-      .replace(/^-+|-+$/g, '');
-    const base = baseName || skill.id.toLowerCase().replace(/[^a-z0-9]+/g, '-');
-    const projectSuffix = skill.project
-      ? `-${skill.project.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')}`
-      : '';
+  private computeNewSlug(skill: CodemieSkill, scope: StorageScope): string {
+    const base = sanitizeToSlug(skill.name) || sanitizeToSlug(skill.id);
+    const projectSuffix = skill.project ? `-${sanitizeToSlug(skill.project)}` : '';
     return `${base}${projectSuffix}-${scope}`;
   }
 }

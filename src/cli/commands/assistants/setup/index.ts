@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import type { Assistant, AssistantBase } from 'codemie-sdk';
 import { logger } from '@/utils/logger.js';
 import { ConfigLoader } from '@/utils/config.js';
+import { StorageScope } from '@/env/types.js';
 import type { CodemieAssistant } from '@/env/types.js';
 import { MESSAGES, ACTIONS } from '@/cli/commands/assistants/constants.js';
 import { getAuthenticatedClient } from '@/utils/auth.js';
@@ -156,11 +157,7 @@ async function setupAssistants(options: SetupCommandOptions, hostAgent?: TargetA
 
   await ConfigLoader.saveAssistantsToProjectConfig(workingDir, storageScope, allRegistered);
 
-  const configLocation = storageScope === 'local'
-    ? `${workingDir}/.codemie/codemie-cli.config.json`
-    : `global (~/.codemie/codemie-cli.config.json)`;
-
-  displaySummary(registered, unregistered, profileName, allRegistered, configLocation);
+  displaySummary(registered, unregistered, profileName, allRegistered, ConfigLoader.getConfigLocationLabel(storageScope, workingDir));
 }
 
 async function applyChanges(
@@ -168,7 +165,7 @@ async function applyChanges(
   allAssistants: (Assistant | AssistantBase)[],
   registeredAssistants: CodemieAssistant[],
   registrationModes: Map<string, RegistrationMode>,
-  scope: 'global' | 'local' = 'global',
+  scope: StorageScope = StorageScope.GLOBAL,
   workingDir?: string,
   target: AgentSetupTarget = ['claude']
 ): Promise<ApplyChangesResult> {

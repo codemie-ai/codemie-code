@@ -10,6 +10,7 @@ import ora from 'ora';
 import inquirer from 'inquirer';
 import { logger } from '@/utils/logger.js';
 import { ConfigLoader } from '@/utils/config.js';
+import { StorageScope } from '@/env/types.js';
 import { createErrorContext, formatErrorForUser } from '@/utils/errors.js';
 import { getAuthenticatedClient, promptReauthentication } from '@/utils/auth.js';
 import type { CodemieAssistant, ProviderProfile } from '@/env/types.js';
@@ -73,8 +74,8 @@ async function chatWithAssistant(
   const workingDir = process.cwd();
   const config = await ConfigLoader.load(workingDir);
   const [globalAssistants, localAssistants] = await Promise.all([
-    ConfigLoader.loadAssistantsByScope('global', workingDir).catch(() => [] as CodemieAssistant[]),
-    ConfigLoader.loadAssistantsByScope('local', workingDir).catch(() => [] as CodemieAssistant[]),
+    ConfigLoader.loadAssistantsByScope(StorageScope.GLOBAL, workingDir).catch(() => [] as CodemieAssistant[]),
+    ConfigLoader.loadAssistantsByScope(StorageScope.LOCAL, workingDir).catch(() => [] as CodemieAssistant[]),
   ]);
   const registeredAssistants = [...globalAssistants, ...localAssistants];
   const client = await getAuthenticatedClient(config);

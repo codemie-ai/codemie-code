@@ -4,6 +4,11 @@
 
 import type { HooksConfiguration } from '../hooks/types.js';
 
+export enum StorageScope {
+  GLOBAL = 'global',
+  LOCAL = 'local',
+}
+
 /**
  * Minimal CodeMie integration info for config storage
  */
