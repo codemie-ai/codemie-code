@@ -60,7 +60,7 @@ describe('getDesktopBaseDir', () => {
     const orig = process.platform;
     Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
     process.env.LOCALAPPDATA = 'C:\\Users\\test\\AppData\\Local';
-    expect(getDesktopBaseDir()).toBe('C:\\Users\\test\\AppData\\Local\\Claude-3p');
+    expect(getDesktopBaseDir()).toBe(join('C:\\Users\\test\\AppData\\Local', 'Claude-3p'));
     Object.defineProperty(process, 'platform', { value: orig, configurable: true });
     delete process.env.LOCALAPPDATA;
   });
