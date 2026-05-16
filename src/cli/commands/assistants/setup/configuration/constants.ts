@@ -13,8 +13,8 @@ export const CONFIGURATION_CHOICE = {
  * Labels for configuration choices
  */
 export const CONFIGURATION_CHOICE_LABELS: Record<ConfigurationChoice, string> = {
-	[CONFIGURATION_CHOICE.SUBAGENTS]: 'Claude Subagents',
-	[CONFIGURATION_CHOICE.SKILLS]: 'Claude Skills',
+	[CONFIGURATION_CHOICE.SUBAGENTS]: 'Agent Entries',
+	[CONFIGURATION_CHOICE.SKILLS]: 'Agent Skills',
 	[CONFIGURATION_CHOICE.MANUAL]: 'Manual Configuration',
 } as const;
 
@@ -22,8 +22,8 @@ export const CONFIGURATION_CHOICE_LABELS: Record<ConfigurationChoice, string> = 
  * Descriptions for configuration choices
  */
 export const CONFIGURATION_CHOICE_DESCRIPTIONS: Record<ConfigurationChoice, string> = {
-	[CONFIGURATION_CHOICE.SUBAGENTS]: 'Register all as Claude agents (@slug)',
-	[CONFIGURATION_CHOICE.SKILLS]: 'Register all as Claude skills (/slug)',
+	[CONFIGURATION_CHOICE.SUBAGENTS]: 'Register as agent entries where supported',
+	[CONFIGURATION_CHOICE.SKILLS]: 'Register all as skills (/slug)',
 	[CONFIGURATION_CHOICE.MANUAL]: 'Choose individually for each assistant',
 } as const;
 

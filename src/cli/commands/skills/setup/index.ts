@@ -8,24 +8,26 @@ import { determineChanges, registerSkill, unregisterSkill } from './helpers.js';
 import { ACTION_TYPE } from './constants.js';
 import { enableVerboseLogging, handleSetupError } from '@/cli/commands/shared/helpers.js';
 import { promptStorageScope } from '@/cli/commands/shared/prompts/storage-scope.js';
+import { resolveAgentSetupTargets, formatAgentSetupTarget, type TargetAgent } from '@/cli/commands/shared/agent-targets.js';
 import type { CodemieSkill } from '@/env/types.js';
 
 export type { CodemieSkill };
 
-export function createSkillsSetupCommand(): Command {
+export function createSkillsSetupCommand(hostAgent?: TargetAgent): Command {
   const command = new Command('setup');
 
   command
     .description('Manage CodeMie platform skills (view, register, unregister)')
     .option('--profile <name>', 'Profile to use')
+    .option('--agent <agents>', 'Target agent(s), comma-separated: claude, codex, gemini')
     .option('-v, --verbose', 'Enable verbose debug output')
-    .action(async (options: { profile?: string; verbose?: boolean }) => {
+    .action(async (options: { profile?: string; agent?: string; verbose?: boolean }) => {
       if (options.verbose) {
         enableVerboseLogging();
       }
 
       try {
-        await setupSkills(options);
+        await setupSkills(options, hostAgent);
       } catch (error: unknown) {
         handleSetupError(error, 'setup skills');
       }
@@ -85,7 +87,7 @@ async function showDisclaimer(): Promise<boolean> {
   });
 }
 
-async function setupSkills(options: { profile?: string }): Promise<void> {
+async function setupSkills(options: { profile?: string; agent?: string }, hostAgent?: TargetAgent): Promise<void> {
   const profileName = options.profile ?? await ConfigLoader.getActiveProfileName() ?? 'default';
   const workingDir = process.cwd();
 
@@ -95,14 +97,9 @@ async function setupSkills(options: { profile?: string }): Promise<void> {
     return;
   }
 
-  const storageScope = await promptStorageScope({
-    title: 'Where would you like to save skills configuration?',
-    localNote: 'Project-scoped skills will override global ones for this repository.',
-  });
-
   const config = await ConfigLoader.load(workingDir, { name: profileName });
   const client = await getAuthenticatedClient(config);
-  const registeredSkills: CodemieSkill[] = await ConfigLoader.loadSkillsByScope(storageScope, workingDir, profileName);
+  const registeredSkills: CodemieSkill[] = config.codemieSkills || [];
 
   const { selectedIds, action } = await promptSkillSelection(registeredSkills, client);
 
@@ -121,14 +118,20 @@ async function setupSkills(options: { profile?: string }): Promise<void> {
     return;
   }
 
+  const storageScope = await promptStorageScope({
+    title: 'Where would you like to save skills configuration?',
+    localNote: 'Project-scoped skills will override global ones for this repository.',
+  });
+  const target = await resolveAgentSetupTargets(options.agent, hostAgent);
+
   for (const skill of toUnregister) {
-    await unregisterSkill(skill, storageScope, workingDir);
+    await unregisterSkill(skill, storageScope, workingDir, target);
   }
 
   const newlyRegistered: CodemieSkill[] = [];
   for (const skill of toRegister) {
     const detail = await fetcher.fetchSkillById(skill.id);
-    const registered = await registerSkill(detail, storageScope, workingDir);
+    const registered = await registerSkill(detail, storageScope, workingDir, target);
     if (registered) {
       newlyRegistered.push(registered);
     }
@@ -158,5 +161,5 @@ async function setupSkills(options: { profile?: string }): Promise<void> {
     console.log(chalk.yellow(`○ Unregistered ${toUnregister.length} skill(s)`));
   }
   console.log(chalk.dim(`\nSkills saved to: ${configLocation}`));
-  console.log(chalk.dim('Skills are available in Claude Code as /skill-name commands.\n'));
+  console.log(chalk.dim(`Skills are available for ${formatAgentSetupTarget(target)}.\n`));
 }

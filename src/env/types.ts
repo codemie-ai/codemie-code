@@ -23,6 +23,7 @@ export interface CodemieAssistant {
   project?: string;
   registeredAt: string;
   registrationMode?: 'agent' | 'skill';
+  agentTargets?: Array<'claude' | 'codex' | 'gemini'>;
 }
 
 /**
@@ -35,6 +36,7 @@ export interface CodemieSkill {
   description: string;
   project: string;
   registeredAt: string;
+  agentTargets?: Array<'claude' | 'codex' | 'gemini'>;
 }
 
 /**

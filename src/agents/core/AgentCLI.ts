@@ -15,6 +15,9 @@ import { GeminiPluginMetadata } from '../plugins/gemini/gemini.plugin.js';
 import { OpenCodePluginMetadata } from '../plugins/opencode/opencode.plugin.js';
 import {ClaudeAcpPluginMetadata} from "../plugins/claude/claude-acp.plugin.js";
 import { CodexPluginMetadata } from '../plugins/codex/codex.plugin.js';
+import { createAssistantsSetupCommand } from '../../cli/commands/assistants/setup/index.js';
+import { createSkillsSetupCommand } from '../../cli/commands/skills/setup/index.js';
+import type { TargetAgent } from '../../cli/commands/shared/agent-targets.js';
 
 /**
  * Universal CLI builder for any agent
@@ -92,6 +95,15 @@ export class AgentCLI {
       .action(async () => {
         await this.handleHealthCheck();
       });
+
+    if (this.isSetupCapableAgent(this.adapter.name)) {
+      const setupCommand = new Command('setup')
+        .description(`Setup ${this.adapter.displayName} integrations`);
+
+      setupCommand.addCommand(createAssistantsSetupCommand(this.adapter.name).name('assistants'));
+      setupCommand.addCommand(createSkillsSetupCommand(this.adapter.name).name('skills'));
+      this.program.addCommand(setupCommand);
+    }
 
     // Add init command for frameworks, but only when the agent binary doesn't
     // already own an 'init' subcommand (avoids shadowing the binary's native command).
@@ -440,6 +452,10 @@ export class AgentCLI {
       'codex': CodexPluginMetadata,
     };
     return metadataMap[this.adapter.name];
+  }
+
+  private isSetupCapableAgent(agentName: string): agentName is TargetAgent {
+    return agentName === 'claude' || agentName === 'codex' || agentName === 'gemini';
   }
 
   /**

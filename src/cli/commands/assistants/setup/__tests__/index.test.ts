@@ -24,7 +24,7 @@ describe('Assistants Setup Command - index.ts', () => {
 		});
 
 		it('should have all required options', () => {
-			expect(command.options).toHaveLength(4);
+			expect(command.options).toHaveLength(5);
 
 			const profileOption = command.options.find(opt => opt.long === '--profile');
 			expect(profileOption).toBeDefined();
@@ -37,6 +37,10 @@ describe('Assistants Setup Command - index.ts', () => {
 			const allProjectsOption = command.options.find(opt => opt.long === '--all-projects');
 			expect(allProjectsOption).toBeDefined();
 			expect(allProjectsOption?.description).toBe(MESSAGES.SETUP.OPTION_ALL_PROJECTS);
+
+			const agentOption = command.options.find(opt => opt.long === '--agent');
+			expect(agentOption).toBeDefined();
+			expect(agentOption?.description).toBe('Target agent(s), comma-separated: claude, codex, gemini');
 
 			const verboseOption = command.options.find(opt => opt.long === '--verbose');
 			expect(verboseOption).toBeDefined();
@@ -95,7 +99,7 @@ describe('Assistants Setup Command - index.ts', () => {
 		});
 
 		it('should have exactly 4 options', () => {
-			expect(command.options).toHaveLength(4);
+			expect(command.options).toHaveLength(5);
 		});
 
 		it('should have all options as optional', () => {

@@ -116,6 +116,11 @@ export const CodexPluginMetadata: AgentMetadata = {
   dataPaths: {
     home: '.codex', // ~/.codex is fixed for Codex (no XDG convention)
   },
+  extensionsConfig: {
+    project: '.codex',
+    global: '~/.codex',
+    skillsEntryFile: 'SKILL.md',
+  },
   envMapping: {
     // CODEMIE_BASE_URL → OPENAI_BASE_URL (read natively by Codex)
     baseUrl: ['OPENAI_BASE_URL'],

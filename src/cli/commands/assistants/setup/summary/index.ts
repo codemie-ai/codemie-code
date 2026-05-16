@@ -10,6 +10,7 @@ import type { CodemieAssistant, ProviderProfile } from '@/env/types.js';
 import { MESSAGES } from '@/cli/commands/assistants/constants.js';
 import { REGISTRATION_MODE } from '@/cli/commands/assistants/setup/manualConfiguration/constants.js';
 import { COLOR } from '../constants.js';
+import { formatAgentInvocation, type TargetAgent } from '@/cli/commands/shared/agent-targets.js';
 
 /**
  * Display summary of changes
@@ -50,13 +51,12 @@ export function displayCurrentlyRegistered(config: ProviderProfile): void {
   config.codemieAssistants.forEach((assistant: CodemieAssistant) => {
     const mode = assistant.registrationMode || REGISTRATION_MODE.AGENT;
 
-    // Build location info based on registration mode
-    let locationInfo = '';
-    if (mode === REGISTRATION_MODE.AGENT) {
-      locationInfo = chalk.dim(` (@${assistant.slug} in code or claude)`);
-    } else if (mode === REGISTRATION_MODE.SKILL) {
-      locationInfo = chalk.dim(` (/${assistant.slug} in claude or @${assistant.slug} in code)`);
-    }
+    const targets: TargetAgent[] = assistant.agentTargets?.length
+      ? assistant.agentTargets
+      : mode === REGISTRATION_MODE.AGENT
+        ? ['claude']
+        : ['claude'];
+    const locationInfo = chalk.dim(` (${formatInvocationList(assistant.slug, targets)})`);
 
     console.log(`  • ${purpleColor(assistant.slug)} - ${assistant.name}${locationInfo}`);
   });
@@ -64,4 +64,14 @@ export function displayCurrentlyRegistered(config: ProviderProfile): void {
   console.log('');
   console.log(purpleLine);
   console.log('');
+}
+
+function formatInvocationList(slug: string, targets: TargetAgent[]): string {
+  const invocations = targets.map(target => formatAgentInvocation(slug, target));
+
+  if (invocations.length === 1) {
+    return invocations[0];
+  }
+
+  return `${invocations.slice(0, -1).join(', ')} or ${invocations[invocations.length - 1]}`;
 }
