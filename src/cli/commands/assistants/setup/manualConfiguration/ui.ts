@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import type { ConfigurationState, RegistrationMode } from './types.js';
 import { MODE_LABELS, MODE_CYCLE_ORDER, UI_TEXT } from './constants.js';
 import { COLOR, ACTION_TYPE } from '../constants.js';
+import { buildCursorPrefix } from '@/cli/commands/shared/selection/ui.js';
 
 /**
  * Build top line (purple separator)
@@ -54,12 +55,11 @@ function buildAssistantLine(
 	registration: { assistant: { name: string }; mode: RegistrationMode; isAlreadyRegistered: boolean },
 	isCursor: boolean
 ): string {
-	const cursor = isCursor ? chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b)('› ') : '  ';
 	const name = isCursor ? chalk.bold(registration.assistant.name) : chalk.white(registration.assistant.name);
 	const badge = registration.isAlreadyRegistered ? chalk.dim(' (Already registered)') : '';
 	const modeSwitch = buildModeSwitch(registration.mode, isCursor);
 
-	return `${cursor}${name}${badge}\n  Mode: ${modeSwitch}`;
+	return `${buildCursorPrefix(isCursor)}${name}${badge}\n  Mode: ${modeSwitch}`;
 }
 
 /**

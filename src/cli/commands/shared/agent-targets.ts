@@ -2,8 +2,8 @@ import { ConfigurationError } from '@/utils/errors.js';
 import { AgentRegistry } from '@/agents/registry.js';
 import chalk from 'chalk';
 import { COLOR } from '@/cli/commands/shared/constants.js';
-import { buildTopLine, buildButtons } from '@/cli/commands/shared/selection/ui.js';
-import { ANSI, KEY, SYMBOL } from '@/cli/commands/shared/selection/constants.js';
+import { buildTopLine, buildButtons, buildSelectionRow } from '@/cli/commands/shared/selection/ui.js';
+import { ANSI, KEY } from '@/cli/commands/shared/selection/constants.js';
 import type { BaseSelectionState } from '@/cli/commands/shared/selection/types.js';
 
 export type TargetAgent = 'claude' | 'codex' | 'gemini';
@@ -146,17 +146,11 @@ async function promptAgentTargetSelection(targets: TargetAgent[]): Promise<Targe
 
     targets.forEach((target, index) => {
       const isCursor = !buttonsFocused && index === cursorIndex;
-      const circle = selected.has(target)
-        ? chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b)(SYMBOL.CIRCLE_FILLED)
-        : SYMBOL.CIRCLE_EMPTY;
-      const cursor = isCursor
-        ? chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b)(SYMBOL.CURSOR_INDICATOR)
-        : '  ';
-      const label = isCursor
-        ? chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b).bold(TARGET_LABELS[target])
-        : TARGET_LABELS[target];
-
-      output += `${cursor}${circle} ${label}\n`;
+      output += buildSelectionRow({
+        label: TARGET_LABELS[target],
+        isCursor,
+        isSelected: selected.has(target),
+      }) + '\n';
     });
 
     if (validationError) {

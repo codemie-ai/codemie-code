@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import stripAnsi from 'strip-ansi';
 import { renderModeSelectionUI } from '../ui.js';
 import type { ModeSelectionState } from '../types.js';
 import { CONFIGURATION_CHOICE } from '../constants.js';
@@ -136,6 +137,18 @@ describe('Configuration UI', () => {
 
 			// Should contain cursor indicator
 			expect(output).toContain('›');
+		});
+
+		it('should align choice rows with stable cursor and radio gutters', () => {
+			const state: ModeSelectionState = {
+				selectedChoice: CONFIGURATION_CHOICE.SUBAGENTS,
+			};
+			const output = renderModeSelectionUI(state);
+			const visibleOutput = stripAnsi(output);
+
+			expect(visibleOutput).toContain('› ● Agent Entries');
+			expect(visibleOutput).toContain('  ○ Agent Skills');
+			expect(visibleOutput).toContain('  ○ Manual Configuration');
 		});
 	});
 });

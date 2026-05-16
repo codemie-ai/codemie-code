@@ -1,4 +1,5 @@
 import chalk from 'chalk';
+import { buildSingleChoiceRow } from '@/cli/commands/shared/selection/ui.js';
 
 export interface StorageScopeOptions {
   title?: string;
@@ -34,11 +35,17 @@ export async function promptStorageScope({
     ];
 
     choices.forEach((choice, i) => {
-      const marker = i === selectedIndex ? chalk.cyan('●') : chalk.dim('○');
       const label = choice === 'global'
         ? `${chalk.cyan('Global')} ${chalk.dim('Global (~/.codemie/) - Available across all projects')}`
         : `${chalk.yellow('Local')} ${chalk.dim('Local (.codemie/) - Only for this project')}`;
-      lines.push(`  ${marker} ${label}`);
+      lines.push(`  ${buildSingleChoiceRow({
+        label,
+        isCursor: i === selectedIndex,
+        isSelected: i === selectedIndex,
+        formatLabel: value => value,
+        formatSelectedMarker: marker => chalk.cyan(marker),
+        formatUnselectedMarker: marker => chalk.dim(marker),
+      })}`);
     });
 
     lines.push('');

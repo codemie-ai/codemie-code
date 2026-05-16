@@ -1,7 +1,6 @@
 import chalk from 'chalk';
 import type { SelectionState, PanelState } from './types.js';
 import { TEXT, CONFIG } from './constants.js';
-import { COLOR } from '../constants.js';
 import { ANSI, SYMBOL } from '@/cli/commands/shared/selection/constants.js';
 import {
   buildTopLine,
@@ -10,6 +9,8 @@ import {
   buildPaginationControls,
   buildButtons,
   buildInstructions,
+  buildSelectionDetailLine,
+  buildSelectionRow,
 } from '@/cli/commands/shared/selection/ui.js';
 
 export function renderUI(state: SelectionState, cursorIndex: number): string {
@@ -66,31 +67,24 @@ function buildSkillsList(
     const isSelected = selectedIds.has(skill.id);
     const isCursor = index === cursorIndex && !isSearchFocused && isPaginationFocused === null && !areNavigationButtonsFocused;
 
-    const circle = isSelected
-      ? chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b)(SYMBOL.CIRCLE_FILLED)
-      : SYMBOL.CIRCLE_EMPTY;
-
-    const cursor = isCursor
-      ? chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b)(SYMBOL.CURSOR_INDICATOR)
-      : '  ';
-
-    const name = isCursor
-      ? chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b).bold(skill.name)
-      : skill.name;
-
     const projectName = 'project' in skill ? skill.project : null;
     const project = projectName
       ? chalk.dim(` · ${projectName}`)
       : '';
 
-    output += `${cursor}${circle} ${name}${project}\n`;
+    output += buildSelectionRow({
+      label: skill.name,
+      isCursor,
+      isSelected,
+      metadata: project,
+    }) + '\n';
 
     if (skill.description) {
       const singleLine = skill.description.replace(/\n+/g, ' ');
       const desc = singleLine.length > CONFIG.DESCRIPTION_MAX_LENGTH
         ? singleLine.substring(0, CONFIG.DESCRIPTION_MAX_LENGTH) + SYMBOL.TRUNCATION
         : singleLine;
-      output += chalk.dim(`    ${desc}`) + '\n';
+      output += buildSelectionDetailLine(desc) + '\n';
     }
 
     output += '\n';

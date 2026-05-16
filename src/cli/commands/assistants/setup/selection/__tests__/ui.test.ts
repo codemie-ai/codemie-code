@@ -304,6 +304,15 @@ describe('Selection UI - ui.ts', () => {
       expect(description).not.toMatch(/\n/);
     });
 
+    it('should align selected and unselected assistant rows with stable gutters', () => {
+      mockState.selectedIds.add('1');
+      const result = renderUI(mockState, 0);
+
+      expect(result).toContain('[purple]› [/purple][purple]◉[/purple] [purple][bold]Assistant One[/bold][/purple]');
+      expect(result).toContain('  ◯ Assistant Two');
+      expect(result).toContain('[dim]    First assistant[/dim]');
+    });
+
     it('should handle terminal width correctly', () => {
       Object.defineProperty(process.stdout, 'columns', {
         value: 120,

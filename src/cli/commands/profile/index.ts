@@ -7,6 +7,23 @@ import { ProfileDisplay } from './display.js';
 import { ProviderRegistry } from '../../../providers/core/registry.js';
 import { handleAuthValidationFailure } from '../../../providers/core/auth-validation.js';
 import { createLoginCommand, createLogoutCommand, createRefreshCommand } from './auth.js';
+import { buildSingleChoiceRow, buildTopLine } from '../shared/selection/ui.js';
+import { ANSI, KEY } from '../shared/selection/constants.js';
+import { COLOR } from '../shared/constants.js';
+import type { ProfileInfo } from './display.js';
+
+export interface ProfileSelectionChoiceNameOptions {
+  name: string;
+  provider?: string;
+  source?: 'local' | 'global';
+  isActive: boolean;
+}
+
+export interface ProfileSelectionUIOptions {
+  message: string;
+  profiles: ProfileInfo[];
+  cursorIndex: number;
+}
 
 export function createProfileCommand(): Command {
   const command = new Command('profile');
@@ -146,6 +163,139 @@ async function handleStatusWithSources(): Promise<void> {
   await ConfigLoader.showWithSources();
 }
 
+export function buildProfileSelectionChoiceName({
+  name,
+  provider,
+  source,
+  isActive,
+}: ProfileSelectionChoiceNameOptions): string {
+  const providerInfo = chalk.dim(`(${provider || 'N/A'})`);
+  const sourceIndicator = source === 'local'
+    ? chalk.yellow(' [Local]')
+    : chalk.cyan(' [Global]');
+  const displayName = isActive
+    ? chalk.green.bold(name)
+    : chalk.white(name);
+
+  return buildSingleChoiceRow({
+    label: `${displayName} ${providerInfo}${sourceIndicator}`,
+    isCursor: false,
+    isSelected: isActive,
+    formatLabel: value => value,
+    formatSelectedMarker: marker => chalk.green(marker),
+    formatUnselectedMarker: marker => chalk.white(marker),
+  });
+}
+
+function buildProfileSelectionRow(
+  profileInfo: ProfileInfo,
+  currentActive: string | undefined,
+  isCursor: boolean
+): string {
+  const isActive = profileInfo.name === currentActive || profileInfo.active;
+  const providerInfo = chalk.dim(`(${profileInfo.profile.provider || 'N/A'})`);
+  const sourceIndicator = profileInfo.source === 'local'
+    ? chalk.yellow(' [Local]')
+    : chalk.cyan(' [Global]');
+  const displayName = isActive
+    ? chalk.green.bold(profileInfo.name)
+    : chalk.white(profileInfo.name);
+
+  return buildSingleChoiceRow({
+    label: `${displayName} ${providerInfo}${sourceIndicator}`,
+    isCursor,
+    isSelected: isActive,
+    formatLabel: value => value,
+    formatSelectedMarker: marker => chalk.green(marker),
+    formatUnselectedMarker: marker => chalk.white(marker),
+  });
+}
+
+export function renderProfileSelectionUI({
+  message,
+  profiles,
+  cursorIndex,
+}: ProfileSelectionUIOptions): string {
+  const activeProfile = profiles.find(profile => profile.active)?.name;
+  let output = ANSI.CURSOR_HOME_CLEAR;
+
+  output += buildTopLine();
+  output += chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b).bold('Profiles') + '\n\n';
+  output += chalk.dim(message) + '\n\n';
+
+  profiles.forEach((profile, index) => {
+    output += buildProfileSelectionRow(profile, activeProfile, index === cursorIndex) + '\n';
+  });
+
+  output += '\n';
+  output += chalk.dim('↑↓ to Navigate • Enter to Confirm • Esc to Cancel\n');
+
+  return output;
+}
+
+async function promptProfileSelectionCustom(message: string, profiles: ProfileInfo[]): Promise<string> {
+  let cursorIndex = Math.max(0, profiles.findIndex(profile => profile.active));
+  if (cursorIndex < 0) {
+    cursorIndex = 0;
+  }
+
+  function render(): void {
+    process.stdout.write(renderProfileSelectionUI({ message, profiles, cursorIndex }));
+  }
+
+  return new Promise((resolve, reject) => {
+    let keepAliveTimer: NodeJS.Timeout | null = null;
+
+    function cleanup(): void {
+      if (keepAliveTimer) {
+        clearInterval(keepAliveTimer);
+        keepAliveTimer = null;
+      }
+
+      process.stdin.removeAllListeners('data');
+      if (process.stdin.isTTY) {
+        process.stdin.setRawMode(false);
+      }
+      process.stdin.pause();
+      process.stdout.write(ANSI.CURSOR_HOME_CLEAR);
+    }
+
+    process.stdin.resume();
+    if (process.stdin.isTTY) {
+      process.stdin.setRawMode(true);
+    }
+    process.stdin.setEncoding('utf8');
+
+    process.stdin.on('data', (key: string) => {
+      switch (key) {
+        case KEY.ARROW_UP:
+          cursorIndex = Math.max(0, cursorIndex - 1);
+          render();
+          break;
+        case KEY.ARROW_DOWN:
+          cursorIndex = Math.min(profiles.length - 1, cursorIndex + 1);
+          render();
+          break;
+        case KEY.ENTER:
+        case KEY.NEWLINE:
+          cleanup();
+          resolve(profiles[cursorIndex].name);
+          break;
+        case KEY.ESC:
+        case KEY.CTRL_C:
+          cleanup();
+          reject(new Error('Profile selection cancelled.'));
+          break;
+        default:
+          break;
+      }
+    });
+
+    keepAliveTimer = setInterval(() => {}, 1000);
+    render();
+  });
+}
+
 /**
  * Prompt user to select a profile interactively
  * Reusable method for switch, delete, and other commands
@@ -158,37 +308,13 @@ async function promptProfileSelection(message: string, workingDir: string = proc
   }
 
   const currentActive = await ConfigLoader.getActiveProfileName(workingDir);
-
-  // Create choices with visual indicators
-  const choices = profiles.map(({ name, profile, source }) => {
-    const isActive = name === currentActive;
-    const activeMarker = isActive ? chalk.green('● ') : chalk.white('○ ');
-    const providerInfo = chalk.dim(`(${profile.provider})`);
-    const sourceIndicator = source === 'local'
-      ? chalk.yellow(' [Local]')
-      : chalk.cyan(' [Global]');
-    const displayName = isActive
-      ? chalk.green.bold(name)
-      : chalk.white(name);
-
-    return {
-      name: `${activeMarker}${displayName} ${providerInfo}${sourceIndicator}`,
-      value: name,
-      short: name
-    };
-  });
-
-  const { selectedProfile } = await inquirer.prompt([
-    {
-      type: 'list',
-      name: 'selectedProfile',
-      message,
-      choices,
-      pageSize: 10
-    }
-  ]);
-
-  return selectedProfile;
+  return promptProfileSelectionCustom(
+    message,
+    profiles.map(profile => ({
+      ...profile,
+      active: profile.name === currentActive,
+    }))
+  );
 }
 
 function createSwitchCommand(): Command {

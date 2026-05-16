@@ -1,7 +1,6 @@
 import chalk from 'chalk';
 import type { SelectionState, PanelState } from './types.js';
 import { TEXT, CONFIG } from './constants.js';
-import { COLOR } from '../constants.js';
 import { ANSI, SYMBOL } from '@/cli/commands/shared/selection/constants.js';
 import {
   buildTopLine,
@@ -10,6 +9,8 @@ import {
   buildPaginationControls,
   buildButtons,
   buildInstructions,
+  buildSelectionDetailLine,
+  buildSelectionRow,
 } from '@/cli/commands/shared/selection/ui.js';
 import { REGISTRATION_MODE } from '../manualConfiguration/constants.js';
 
@@ -72,18 +73,6 @@ function buildAssistantsList(
     const isSelected = selectedIds.has(assistant.id);
     const isCursor = index === cursorIndex && !isSearchFocused && isPaginationFocused === null && !areNavigationButtonsFocused;
 
-    const circle = isSelected
-      ? chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b)(SYMBOL.CIRCLE_FILLED)
-      : SYMBOL.CIRCLE_EMPTY;
-
-    const cursor = isCursor
-      ? chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b)(SYMBOL.CURSOR_INDICATOR)
-      : '  ';
-
-    const name = isCursor
-      ? chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b).bold(assistant.name)
-      : assistant.name;
-
     const registrationMode = registeredMap.get(assistant.id);
     const badge = registrationMode
       ? registrationMode === REGISTRATION_MODE.AGENT
@@ -104,14 +93,19 @@ function buildAssistantsList(
       : '';
 
     const badgeText = badge ? ` ${badge}` : '';
-    output += `${cursor}${circle} ${name}${badgeText}${project}${uniqueUsers}\n`;
+    output += buildSelectionRow({
+      label: assistant.name,
+      isCursor,
+      isSelected,
+      metadata: `${badgeText}${project}${uniqueUsers}`,
+    }) + '\n';
 
     if (assistant.description) {
       const singleLine = assistant.description.replace(/\n+/g, ' ');
       const desc = singleLine.length > CONFIG.DESCRIPTION_MAX_LENGTH
         ? singleLine.substring(0, CONFIG.DESCRIPTION_MAX_LENGTH) + SYMBOL.TRUNCATION
         : singleLine;
-      output += chalk.dim(`    ${desc}`) + '\n';
+      output += buildSelectionDetailLine(desc) + '\n';
     }
 
     output += '\n';
