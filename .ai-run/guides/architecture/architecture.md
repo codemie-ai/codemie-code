@@ -96,151 +96,20 @@ src/
 
 ## Layer Responsibilities
 
-### CLI Layer - User Interface
+| Layer | Responsibility | Evidence |
+|---|---|---|
+| CLI | Parse commands, prompt users, route to registries | `src/cli/index.ts:72`, `src/cli/commands/install.ts:11` |
+| Registry | Discover and return concrete plugins by name | `src/agents/registry.ts:17`, `src/providers/core/registry.ts:19` |
+| Plugin | Implement agent, provider, framework, and proxy behavior | `src/agents/plugins/codemie-code.plugin.ts:458`, `src/agents/plugins/codex/codex.plugin.ts:435` |
+| Core | Define contracts, base adapters, lifecycle helpers, sessions | `src/agents/core/types.ts:574`, `src/agents/core/BaseAgentAdapter.ts:36` |
+| Utils | Provide typed errors, logging, path/security, process helpers | `src/utils/errors.ts:1`, `src/utils/security.ts:77`, `src/utils/processes.ts:1` |
 
-**Purpose**: Handle user input and command orchestration
-
-```typescript
-// Source: src/cli/commands/install.ts:15-25
-export async function installCommand(agentName: string): Promise<void> {
-  logger.setContext('install', agentName);
-  const adapter = AgentRegistry.getAgent(agentName);
-  if (!adapter) {
-    throw new AgentNotFoundError(agentName);
-  }
-  await adapter.install();
-  logger.success(`Agent ${agentName} installed`);
-}
-```
-
-**Does**: Argument parsing, user prompts, command routing
-**Doesn't**: Business logic, direct plugin access
-
----
-
-### Registry Layer - Orchestration
-
-**Purpose**: Plugin discovery, registration, and routing
-
-```typescript
-// Source: src/agents/registry.ts:14-32
-export class AgentRegistry {
-  private static readonly adapters: Map<string, AgentAdapter> = new Map();
-
-  private static initialize(): void {
-    AgentRegistry.registerPlugin(new CodeMieCodePlugin());
-    AgentRegistry.registerPlugin(new ClaudePlugin());
-    AgentRegistry.registerPlugin(new GeminiPlugin());
-    AgentRegistry.registerPlugin(new OpenCodePlugin());
-  }
-
-  static getAgent(name: string): AgentAdapter | undefined {
-    AgentRegistry.initialize();
-    return AgentRegistry.adapters.get(name);
-  }
-}
-```
-
-**Does**: Plugin management, lazy initialization, routing
-**Doesn't**: Plugin implementation details, CLI handling
-
----
-
-### Plugin Layer - Implementations
-
-**Purpose**: Concrete agent/provider/framework implementations
-
-```typescript
-// Source: src/agents/plugins/claude/claude.plugin.ts:20-35
-export class ClaudePlugin implements AgentAdapter {
-  public readonly name = 'claude';
-
-  async install(): Promise<void> {
-    const installed = await commandExists('claude');
-    if (installed) {
-      logger.info('Claude CLI already installed');
-      return;
-    }
-    await exec('npm', ['install', '-g', '@anthropic-ai/claude-cli']);
-  }
-
-  async execute(args: string[]): Promise<void> {
-    await exec('claude', args);
-  }
-}
-
-// Source: src/agents/plugins/opencode/opencode.plugin.ts:335-386
-export class OpenCodePlugin extends BaseAgentAdapter {
-  private sessionAdapter: SessionAdapter;
-
-  constructor() {
-    super(OpenCodePluginMetadata);
-    this.sessionAdapter = new OpenCodeSessionAdapter(OpenCodePluginMetadata);
-  }
-
-  async isInstalled(): Promise<boolean> {
-    return await commandExists(this.metadata.cliCommand || 'opencode');
-  }
-
-  getSessionAdapter(): SessionAdapter {
-    return this.sessionAdapter;
-  }
-}
-```
-
-**Does**: Specific agent logic, external tool integration, session analytics
-**Doesn't**: Generic patterns, cross-cutting concerns
-
----
-
-### Core Layer - Contracts
-
-**Purpose**: Interfaces and base classes for plugins
-
-```typescript
-// Source: src/agents/core/types.ts:10-25
-export interface AgentAdapter {
-  name: string;
-  install(): Promise<void>;
-  uninstall(): Promise<void>;
-  execute(args: string[], options?: ExecutionOptions): Promise<void>;
-  isInstalled(): Promise<boolean>;
-  getVersion(): Promise<string | undefined>;
-}
-
-export interface AgentAnalyticsAdapter {
-  getSessionId(): string | undefined;
-  getModelUsed(): string | undefined;
-}
-```
-
-**Does**: Define contracts, establish patterns
-**Doesn't**: Implement business logic, handle CLI
-
----
-
-### Utils Layer - Foundation
-
-**Purpose**: Shared utilities and cross-cutting concerns
-
-```typescript
-// Source: src/utils/errors.ts:15-25
-export class CodeMieError extends Error {
-  constructor(message: string, public readonly code?: string) {
-    super(message);
-    this.name = this.constructor.name;
-  }
-}
-
-export class AgentNotFoundError extends CodeMieError {
-  constructor(agentName: string) {
-    super(`Agent not found: ${agentName}`, 'AGENT_NOT_FOUND');
-  }
-}
-```
-
-**Does**: Logging, error handling, security, processes
-**Doesn't**: Business logic, plugin specifics
+| Avoid | Prefer |
+|---|---|
+| CLI commands importing implementation details directly | Route through registries and adapter contracts |
+| Cross-plugin direct calls | Shared contracts in `src/*/core/` and lifecycle hooks |
+| Generic process or logging logic inside plugins | Utilities in `src/utils/` |
+| Provider-specific code inside every agent | Provider hooks resolved by `lifecycle-helpers` |
 
 ---
 
@@ -292,17 +161,14 @@ CLI (catches, formats for user)
 
 **Example**:
 ```typescript
-// Source: src/cli/commands/execute.ts:30-40
+// Source: src/cli/commands/assistants/chat/index.ts:52-58
 try {
-  const adapter = AgentRegistry.getAgent(agentName);
-  if (!adapter) {
-    throw new AgentNotFoundError(agentName);
-  }
-  await adapter.execute(args);
-} catch (error) {
-  const context = createErrorContext(error, { agentName });
-  logger.error('Execution failed', context);
+  await chatWithAssistant(assistantId, message, options);
+} catch (error: unknown) {
+  const context = createErrorContext(error);
+  logger.error('Failed to chat with assistant', context);
   console.error(formatErrorForUser(context));
+  process.exit(1);
 }
 ```
 
@@ -359,12 +225,13 @@ src/
 
 ### Registry Pattern
 
-```typescript
-// Central registry manages all plugins
-AgentRegistry.getAgent('claude')      // Get agent plugin
-ProviderRegistry.getProvider('openai') // Get provider plugin
-FrameworkRegistry.get('langgraph')     // Get framework plugin
-```
+The registry pattern is the main extension mechanism. Agent, provider, and framework plugins are looked up by name through registries instead of being called directly from CLI command handlers.
+
+| Registry | Scope | Evidence |
+|---|---|---|
+| `AgentRegistry` | Claude, Gemini, OpenCode, Codex, CodeMie Code agents | `src/agents/registry.ts:17`, `src/agents/registry.ts:30` |
+| `ProviderRegistry` | OpenAI-compatible, SSO, Bedrock, and other provider plugins | `src/providers/core/registry.ts:19` |
+| `FrameworkRegistry` | Framework adapters such as BMAD and SpecKit | `src/frameworks/core/registry.ts:10` |
 
 ### Plugin Discovery
 
@@ -379,6 +246,46 @@ FrameworkRegistry.get('langgraph')     // Get framework plugin
 2. Add plugin to registry initialization
 3. No changes needed to CLI layer
 4. Plugin is discoverable automatically
+
+---
+
+## Hook-Based Loose Coupling
+
+CodeMie Code uses plugin architecture plus lifecycle hooks to keep integrations loosely coupled. Agents define defaults; providers can override or extend behavior through hook resolution without embedding provider-specific branches into every agent.
+
+| Hook Point | Purpose | Evidence |
+|---|---|---|
+| `onSessionStart` | Create session state and emit start metrics | `src/agents/core/lifecycle-helpers.ts:141`, `src/agents/plugins/codex/codex.plugin.ts:170` |
+| `beforeRun` | Prepare environment before spawning an agent | `src/agents/core/lifecycle-helpers.ts:176`, `src/agents/plugins/codemie-code.plugin.ts:235` |
+| `enrichArgs` | Adjust CLI arguments after environment setup | `src/agents/core/lifecycle-helpers.ts:205`, `src/agents/plugins/gemini/gemini.plugin.ts:133` |
+| `onSessionEnd` | Process transcript, metrics, cleanup, and sync | `src/agents/core/lifecycle-helpers.ts:233`, `src/agents/plugins/codex/codex.plugin.ts:314` |
+| `afterRun` | Final lifecycle cleanup after session end | `src/agents/core/lifecycle-helpers.ts:267` |
+
+### Resolution Rules
+
+| Avoid | Prefer |
+|---|---|
+| Hardcoding provider behavior in each agent plugin | Provider `agentHooks` resolved by `resolveHook()` |
+| Replacing agent defaults when provider customization is needed | Wildcard hook plus agent-specific hook chaining |
+| Throwing from hook processing in a way that blocks the agent | Log and continue for non-critical session extraction paths |
+| Treating hook payloads from all agents as identical | Use hook transformers such as `GeminiHookTransformer` |
+
+### Proxy Plugin Interceptors
+
+The SSO proxy follows the same loose-coupling principle. Proxy behaviors are registered as plugins, ordered by priority, and exposed as interceptors.
+
+| Proxy Concern | Plugin Evidence |
+|---|---|
+| MCP OAuth relay and SSRF protection | `src/providers/plugins/sso/proxy/plugins/mcp-auth.plugin.ts:266` |
+| Endpoint blocking | `src/providers/plugins/sso/proxy/plugins/endpoint-blocker.plugin.ts:25` |
+| Gateway auth | `src/providers/plugins/sso/proxy/plugins/gateway-key.plugin.ts:8` |
+| Request sanitization | `src/providers/plugins/sso/proxy/plugins/request-sanitizer.plugin.ts:36` |
+| Header injection | `src/providers/plugins/sso/proxy/plugins/header-injection.plugin.ts:14` |
+| Session sync | `src/providers/plugins/sso/proxy/plugins/sso.session-sync.plugin.ts:31` |
+
+### Extension Rule
+
+New behavior should attach at the nearest extension point: agent registry for a new agent, provider registry for a new provider, lifecycle hook for provider-specific runtime behavior, and proxy plugin interceptor for request/response concerns. Do not bypass those seams with direct imports between concrete plugins.
 
 ---
 

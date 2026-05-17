@@ -32,13 +32,14 @@ if (!adapter) {
   throw new AgentNotFoundError(name);
 }
 
-// Catch - Source: src/cli/commands/execute.ts:30-38
+// Catch - Source: src/cli/commands/assistants/chat/index.ts:52-58
 try {
-  await adapter.execute(args);
-} catch (error) {
-  const context = createErrorContext(error, { agentName });
-  logger.error('Execution failed', context);
+  await chatWithAssistant(assistantId, message, options);
+} catch (error: unknown) {
+  const context = createErrorContext(error);
+  logger.error('Failed to chat with assistant', context);
   console.error(formatErrorForUser(context));
+  process.exit(1);
 }
 ```
 
@@ -223,12 +224,12 @@ const matches = matchesPathStructure(
 ### Profile Loading
 
 ```typescript
-// Source: src/env/config-loader.ts:50-70
-import { ConfigLoader } from './env/config-loader.js';
+// Source: src/utils/config.ts:44-47
+import { ConfigLoader } from './utils/config.js';
 
 // Load config from working directory
 const config = await ConfigLoader.load(process.cwd(), {
-  profile: 'work',
+  name: 'work',
   provider: 'openai'
 });
 
@@ -261,48 +262,6 @@ NODE_ENV=development                  # Environment mode
 - ❌ Hardcode secrets (use CredentialStore or env vars)
 - ❌ Commit .env files
 
----
-
-## Setup Guide
-
-### Quick Start
-
-```bash
-# Install
-npm install -g @codemieai/code
-
-# Verify
-codemie doctor
-
-# Setup profile
-codemie setup
-
-# Run built-in agent
-codemie-code health
-```
-
-### Development Setup
-
-```bash
-# 1. Clone repository
-git clone https://github.com/codemie-ai/codemie-code.git
-cd codemie-code
-
-# 2. Install dependencies
-npm install
-
-# 3. Build
-npm run build
-
-# 4. Link for local testing
-npm link
-
-# 5. Verify
-codemie doctor
-```
-
----
-
 ## Common Commands
 
 | Task | Command | Notes |
@@ -317,6 +276,29 @@ codemie doctor
 | Test integration | `npm run test:integration` | Integration tests only |
 | CI | `npm run ci` | Full CI pipeline |
 | Link global | `npm link` | Link for local testing |
+
+---
+
+## Lifecycle Hook Development
+
+Provider-specific runtime behavior belongs in lifecycle hooks, not in direct cross-plugin calls. This is the main development pattern that keeps the plugin architecture loosely coupled.
+
+| Hook | Use For | Evidence |
+|---|---|---|
+| `onSessionStart` | Session initialization and start metrics | `src/agents/core/lifecycle-helpers.ts:141` |
+| `beforeRun` | Environment and temp config setup | `src/agents/core/lifecycle-helpers.ts:176` |
+| `enrichArgs` | CLI argument enrichment | `src/agents/core/lifecycle-helpers.ts:205` |
+| `onSessionEnd` | Transcript processing, sync, cleanup | `src/agents/core/lifecycle-helpers.ts:233` |
+| `afterRun` | Final cleanup after session end | `src/agents/core/lifecycle-helpers.ts:267` |
+
+| Avoid | Prefer |
+|---|---|
+| Adding provider branches inside every agent | Provider `agentHooks` resolved by `resolveHook()` |
+| Replacing default agent hooks when extending behavior | Wildcard and agent-specific hook chaining |
+| Letting best-effort hook failures block agent execution | Log context and continue where the code already treats work as non-critical |
+| Assuming hook payloads are identical across agents | Agent-specific `HookTransformer` implementations |
+
+Evidence: `src/agents/core/lifecycle-helpers.ts:7`, `src/agents/core/BaseAgentAdapter.ts:496`, `src/agents/core/BaseAgentAdapter.ts:532`, `src/agents/plugins/gemini/gemini.hook-transformer.ts:53`.
 
 ---
 
@@ -339,27 +321,22 @@ codemie doctor
 ### Dynamic Imports for Mocking
 
 ```typescript
-// Source: src/utils/__tests__/npm.test.ts:10-30
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import * as exec from '../exec.js';
+// Source: src/agents/plugins/__tests__/codemie-code-plugin.test.ts:39-43 and 121-126
+import { describe, it, expect, vi } from 'vitest';
 
-describe('npm utilities', () => {
-  let execSpy: ReturnType<typeof vi.spyOn>;
+vi.mock('../../../utils/processes.js', () => ({
+  installGlobal: vi.fn(),
+  uninstallGlobal: vi.fn(),
+}));
 
-  beforeEach(() => {
-    // Set up spy BEFORE importing module
-    execSpy = vi.spyOn(exec, 'exec').mockResolvedValue({
-      code: 0, stdout: '', stderr: ''
-    });
-  });
+const { installGlobal } = await import('../../../utils/processes.js');
+const { CodeMieCodePlugin } = await import('../codemie-code.plugin.js');
 
-  it('should install package', async () => {
-    // Dynamic import AFTER spy is ready
-    const { installGlobal } = await import('../processes.js');
-    await installGlobal('test-package');
+it('calls installGlobal with the correct package name', async () => {
+  const plugin = new CodeMieCodePlugin();
+  await plugin.install();
 
-    expect(execSpy).toHaveBeenCalledWith('npm', ['install', '-g', 'test-package'], expect.any(Object));
-  });
+  expect(vi.mocked(installGlobal)).toHaveBeenCalledWith('@codemieai/codemie-opencode');
 });
 ```
 
@@ -377,7 +354,7 @@ describe('npm utilities', () => {
 - **Processes**: `src/utils/processes.ts`, `src/utils/exec.ts`
 - **Paths**: `src/utils/paths.ts`
 - **Security**: `src/utils/security.ts`
-- **Configuration**: `src/env/config-loader.ts`
+- **Configuration**: `src/utils/config.ts`
 - **Utils Guide**: `src/utils/CLAUDE.md`
 
 ---
