@@ -16,7 +16,7 @@
  * - Haiku models reject thinking field with HTTP 400
  * - Opus 4-7+ requires adaptive thinking format with output_config.effort
  *
- * Scope: Only enabled for codemie-claude agent (Claude Code via SSO proxy).
+ * Scope: Enabled for codemie-claude (Claude Code via SSO proxy) and claude-desktop (Desktop 3P mode).
  *
  * To add model support: update NO_THINKING_MODEL_PATTERNS or ADAPTIVE_THINKING_MODEL_PATTERNS.
  */
@@ -112,8 +112,8 @@ function handleAdaptiveThinkingTransform(body: any, model: string): boolean {
   return true;
 }
 
-/** Agent that sends Claude API requests through the codemie proxy */
-const ALLOWED_AGENT = 'codemie-claude';
+/** Agents whose Claude API requests need thinking normalization */
+const ALLOWED_AGENTS = ['codemie-claude', 'claude-desktop'];
 
 export class ClaudeRequestNormalizerPlugin implements ProxyPlugin {
   id = '@codemie/proxy-claude-request-normalizer';
@@ -123,7 +123,7 @@ export class ClaudeRequestNormalizerPlugin implements ProxyPlugin {
 
   async createInterceptor(context: PluginContext): Promise<ProxyInterceptor> {
     const clientType = context.config.clientType;
-    if (!clientType || clientType !== ALLOWED_AGENT) {
+    if (!clientType || !ALLOWED_AGENTS.includes(clientType)) {
       throw new Error(`Plugin disabled for agent: ${clientType}`);
     }
     // Pass the configured model as a fallback for requests that omit body.model

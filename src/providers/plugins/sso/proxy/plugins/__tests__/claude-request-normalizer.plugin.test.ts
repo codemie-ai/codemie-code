@@ -82,6 +82,25 @@ describe('ClaudeRequestNormalizerPlugin', () => {
       expect(interceptor.name).toBe('claude-request-normalizer');
     });
 
+    it('creates interceptor for claude-desktop (Desktop 3P mode)', async () => {
+      const interceptor = await plugin.createInterceptor(createPluginContext('claude-desktop'));
+      expect(interceptor).toBeDefined();
+      expect(interceptor.name).toBe('claude-request-normalizer');
+    });
+
+    it('strips haiku thinking for claude-desktop agent', async () => {
+      const interceptor = await plugin.createInterceptor(createPluginContext('claude-desktop'));
+      const context = createProxyContext({
+        model: 'claude-haiku-4-5-20251001',
+        thinking: { type: 'enabled', budget_tokens: 31999 },
+      });
+
+      await interceptor.onRequest!(context);
+
+      const body = JSON.parse(context.requestBody!.toString('utf-8'));
+      expect(body.thinking).toBeUndefined();
+    });
+
     it('throws for codemie-code agent', async () => {
       await expect(plugin.createInterceptor(createPluginContext('codemie-code')))
         .rejects.toThrow('Plugin disabled for agent: codemie-code');
