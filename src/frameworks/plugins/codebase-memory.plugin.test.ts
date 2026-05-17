@@ -15,7 +15,7 @@ describe('CodebaseMemoryPlugin', () => {
     vi.clearAllMocks();
   });
 
-  it('installs the graph visualization UI variant on Unix-like platforms', async () => {
+  it('installs the graph visualization UI variant for the current platform', async () => {
     const { exec } = await import('../../utils/processes.js');
     const { CodebaseMemoryPlugin } = await import('./codebase-memory.plugin.js');
 
@@ -24,14 +24,28 @@ describe('CodebaseMemoryPlugin', () => {
     const plugin = new CodebaseMemoryPlugin();
     await plugin.install();
 
-    expect(exec).toHaveBeenCalledWith(
-      'bash',
-      [
-        '-c',
-        'curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh | bash -s -- --ui',
-      ],
-      { timeout: 300000 }
-    );
+    if (process.platform === 'win32') {
+      expect(exec).toHaveBeenCalledWith(
+        'powershell',
+        [
+          '-NoProfile',
+          '-ExecutionPolicy',
+          'Bypass',
+          '-Command',
+          "$installer = Join-Path $env:TEMP 'codebase-memory-install.ps1'; Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.ps1' -OutFile $installer; & $installer --ui",
+        ],
+        { timeout: 300000 }
+      );
+    } else {
+      expect(exec).toHaveBeenCalledWith(
+        'bash',
+        [
+          '-c',
+          'curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh | bash -s -- --ui',
+        ],
+        { timeout: 300000 }
+      );
+    }
   });
 
   it('initializes agent config, enables auto indexing, and indexes the current repository', async () => {
