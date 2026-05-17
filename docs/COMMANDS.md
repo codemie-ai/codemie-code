@@ -22,8 +22,24 @@ codemie self-update              # Update CodeMie CLI itself
 codemie doctor [options]         # Health check and diagnostics
 codemie plugin <command>         # Manage native plugins
 codemie mcp-proxy <url>          # Stdio-to-HTTP MCP proxy with OAuth support
+codemie codebase <command>       # Manage Codebase Memory graph UI
 codemie version                  # Show version information
 ```
+
+## Codebase Memory Commands
+
+```bash
+codemie install codebase-memory          # Install codebase-memory-mcp with graph UI
+codemie-<agent> init codebase-memory     # Configure agents, auto-index, and index this repo
+
+codemie codebase start                   # Start the graph UI in the background
+codemie codebase stop                    # Stop the graph UI
+codemie codebase status                  # Show graph UI status
+codemie codebase ui                      # Start if needed and open the graph UI
+codemie codebase open                    # Open the graph UI URL only
+```
+
+`codemie-<agent> init codebase-memory` runs the upstream MCP installer configuration, enables automatic indexing, and indexes the current repository. The graph UI defaults to `http://localhost:9749`.
 
 ## Proxy Commands
 

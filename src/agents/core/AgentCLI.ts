@@ -111,7 +111,7 @@ export class AgentCLI {
       this.program
         .command('init')
         .description('Initialize development framework')
-        .argument('[framework]', 'Framework to initialize (speckit, bmad)')
+        .argument('[framework]', 'Framework to initialize (speckit, bmad, codebase-memory)')
         .option('-l, --list', 'List available frameworks')
         .option('--force', 'Force re-initialization')
         .option('--project-name <name>', 'Project name for framework initialization')

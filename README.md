@@ -410,9 +410,22 @@ codemie analytics        # View usage analytics (sessions, tokens, costs, tools)
 codemie workflow <cmd>   # Manage CI/CD workflows
 codemie doctor           # Health check and diagnostics
 codemie mcp-proxy <url>  # Stdio-to-HTTP MCP proxy with OAuth
+codemie codebase ui      # Start and open Codebase Memory graph UI
 ```
 
 For a full command reference, see the [Commands Documentation](docs/COMMANDS.md).
+
+## Codebase Memory MCP
+
+CodeMie can install and orchestrate `codebase-memory-mcp` with its graph visualization UI:
+
+```bash
+codemie install codebase-memory
+codemie-code init codebase-memory
+codemie codebase ui
+```
+
+Use `codemie codebase start|stop|status` to manage the UI process, or `codemie codebase open` to open the URL only.
 
 ## Connect Claude Desktop via CodeMie Proxy
 

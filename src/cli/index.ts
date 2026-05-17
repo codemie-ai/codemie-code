@@ -35,6 +35,7 @@ import { createAssistantsCommand } from './commands/assistants/index.js';
 import { createMcpCommand } from './commands/mcp/index.js';
 import { createMcpProxyCommand } from './commands/mcp-proxy.js';
 import { createProxyCommand } from './commands/proxy/index.js';
+import { createCodebaseCommand } from './commands/codebase/index.js';
 import { FirstTimeExperience } from './first-time.js';
 import { getDirname } from '../utils/paths.js';
 
@@ -62,6 +63,7 @@ Claude Desktop 3P:
   codemie proxy connect desktop           Connect Claude Desktop through CodeMie proxy
   codemie proxy inspect desktop           Inspect Desktop proxy state, sessions, and sync
   codemie proxy stop                      Stop the local proxy daemon
+  codemie codebase ui                     Start and open Codebase Memory graph UI
 
 Profile selection:
   Uses the active CodeMie profile by default.
@@ -93,6 +95,7 @@ program.addCommand(createModelsCommand());
 program.addCommand(createMcpCommand());
 program.addCommand(createMcpProxyCommand());
 program.addCommand(createProxyCommand());
+program.addCommand(createCodebaseCommand());
 
 // Check for --task option before parsing commands
 const taskIndex = process.argv.indexOf('--task');
