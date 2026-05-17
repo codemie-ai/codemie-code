@@ -115,6 +115,12 @@ export class AgentCLI {
         .option('-l, --list', 'List available frameworks')
         .option('--force', 'Force re-initialization')
         .option('--project-name <name>', 'Project name for framework initialization')
+        .option('--preset <preset>', 'Framework preset (for BMAD: sdlc, minimal, interactive)')
+        .option('--bmad-channel <channel>', 'BMAD installer channel (latest, next)')
+        .option('--bmad-modules <modules>', 'BMAD modules to install, comma-separated (for example: bmm,tea)')
+        .option('--bmad-tools <tools>', 'BMAD tool IDs to configure, comma-separated (for example: claude-code)')
+        .option('--bmad-set <key=value...>', 'BMAD module config override; repeat values after the flag')
+        .option('--interactive', 'Use the upstream interactive installer when the framework supports it')
         .action(async (framework, options) => {
           // Commander.js v11 behavior: options might be Command instance or plain object
           const opts = typeof options?.opts === 'function' ? options.opts() : options;
@@ -394,7 +400,12 @@ export class AgentCLI {
       await frameworkAdapter.init(this.adapter.name, {
         force: options.force as boolean | undefined,
         projectName: options.projectName as string | undefined,
-        cwd: process.cwd()
+        cwd: process.cwd(),
+        preset: options.interactive ? 'interactive' : options.preset,
+        bmadChannel: options.bmadChannel,
+        bmadModules: options.bmadModules,
+        bmadTools: options.bmadTools,
+        bmadSet: options.bmadSet
       });
 
     } catch (error) {
