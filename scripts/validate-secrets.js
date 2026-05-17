@@ -6,6 +6,10 @@
  * This script runs Gitleaks in a Docker container for local validation.
  * CI uses the official gitleaks-action@v2 for better GitHub integration.
  * Both share the same .gitleaks.toml configuration.
+ *
+ * Local validation scans the staged git diff instead of the whole working tree.
+ * That keeps generated or user-local files ignored by .gitignore (for example
+ * BMAD installs under _bmad/ and .claude/skills/) out of pre-commit checks.
  */
 
 import { spawn } from 'child_process';
@@ -26,10 +30,10 @@ const args = [
   '-v',
   `${projectPath}:/path`,
   'ghcr.io/gitleaks/gitleaks:v8.30.1',
-  'detect',
+  'protect',
+  '--staged',
   '--source=/path',
-  '--verbose',
-  '--no-git'
+  '--verbose'
 ];
 
 // Add config file if it exists
