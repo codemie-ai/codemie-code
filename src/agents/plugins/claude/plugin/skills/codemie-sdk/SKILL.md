@@ -76,13 +76,13 @@ Once the project is known, use it in all subsequent commands:
 
 | Asset | Example file |
 |-------|-------------|
-| Assistants | [examples/assistants.md](examples/assistants.md) |
-| Workflows | [examples/workflows.md](examples/workflows.md) |
-| Datasources | [examples/datasources.md](examples/datasources.md) |
-| Integrations | [examples/integrations.md](examples/integrations.md) |
-| Skills | [examples/skills.md](examples/skills.md) |
-| Users | [examples/users.md](examples/users.md) |
-| Assistant Categories | [examples/categories.md](examples/categories.md) |
+| Assistants | [examples/assistants.md](${CLAUDE_PLUGIN_ROOT}/skills/codemie-sdk/examples/assistants.md) |
+| Workflows | [examples/workflows.md](${CLAUDE_PLUGIN_ROOT}/skills/codemie-sdk/examples/workflows.md) |
+| Datasources | [examples/datasources.md](${CLAUDE_PLUGIN_ROOT}/skills/codemie-sdk/examples/datasources.md) |
+| Integrations | [examples/integrations.md](${CLAUDE_PLUGIN_ROOT}/skills/codemie-sdk/examples/integrations.md) |
+| Skills | [examples/skills.md](${CLAUDE_PLUGIN_ROOT}/skills/codemie-sdk/examples/skills.md) |
+| Users | [examples/users.md](${CLAUDE_PLUGIN_ROOT}/skills/codemie-sdk/examples/users.md) |
+| Assistant Categories | [examples/categories.md](${CLAUDE_PLUGIN_ROOT}/skills/codemie-sdk/examples/categories.md) |
 
 Do **not** guess field names or skip this step — all required/optional fields, nested schemas, and asset cross-reference commands are documented there.
 
@@ -104,7 +104,7 @@ Do **not** guess field names or skip this step — all required/optional fields,
 
 ## Assistants
 
-> See [examples/assistants.md](examples/assistants.md) for full field reference and examples.
+> See [examples/assistants.md](${CLAUDE_PLUGIN_ROOT}/skills/codemie-sdk/examples/assistants.md) for full field reference and examples.
 
 ```bash
 codemie sdk assistants list [--scope visible_to_user|marketplace] [--search <text>] [--projects <name>] [--page <n>] [--per-page <n>] [--full-response] [--json]
@@ -121,7 +121,7 @@ codemie sdk assistants delete <id>
 
 ## Workflows
 
-> See [examples/workflows.md](examples/workflows.md) for full field reference and examples.
+> See [examples/workflows.md](${CLAUDE_PLUGIN_ROOT}/skills/codemie-sdk/examples/workflows.md) for full field reference and examples.
 
 ```bash
 codemie sdk workflows list [--search <text>] [--projects <name>] [--page <n>] [--per-page <n>] [--json]
@@ -137,7 +137,7 @@ codemie sdk workflows delete <id>
 
 ## Datasources
 
-> See [examples/datasources.md](examples/datasources.md) for full field reference and examples.
+> See [examples/datasources.md](${CLAUDE_PLUGIN_ROOT}/skills/codemie-sdk/examples/datasources.md) for full field reference and examples.
 
 Type subcommands for create/update: `confluence`, `jira`, `file`, `code`, `google`, `provider`, `azure-devops-wiki`, `azure-devops-work-item`, `xray`, `sharepoint`
 
@@ -156,7 +156,7 @@ codemie sdk datasources delete <id>
 
 ## Integrations
 
-> See [examples/integrations.md](examples/integrations.md) for full field reference and examples.
+> See [examples/integrations.md](${CLAUDE_PLUGIN_ROOT}/skills/codemie-sdk/examples/integrations.md) for full field reference and examples.
 
 ```bash
 codemie sdk integrations list [--setting-type user|project] [--search <text>] [--projects <name>] [--page <n>] [--per-page <n>] [--json]
@@ -184,7 +184,7 @@ Use `base_name` when setting `llm_model_type` on an assistant or `embeddings_mod
 
 ## Skills
 
-> See [examples/skills.md](examples/skills.md) for full field reference and examples.
+> See [examples/skills.md](${CLAUDE_PLUGIN_ROOT}/skills/codemie-sdk/examples/skills.md) for full field reference and examples.
 
 ```bash
 codemie sdk skills list [--scope marketplace|project|project_with_marketplace] [--page <n>] [--per-page <n>] [--json]
@@ -213,7 +213,7 @@ codemie sdk skills remove-reactions <id>
 
 ## Users
 
-> See [examples/users.md](examples/users.md) for full field reference and examples.
+> See [examples/users.md](${CLAUDE_PLUGIN_ROOT}/skills/codemie-sdk/examples/users.md) for full field reference and examples.
 
 ```bash
 codemie sdk users me [--json]
@@ -224,7 +224,7 @@ codemie sdk users data [--json]
 
 ## Assistant Categories
 
-> See [examples/categories.md](examples/categories.md) for full field reference and examples.
+> See [examples/categories.md](${CLAUDE_PLUGIN_ROOT}/skills/codemie-sdk/examples/categories.md) for full field reference and examples.
 
 **Note:** Categories can only be used for assistants (set via the `categories` field on create/update).
 
