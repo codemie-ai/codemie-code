@@ -17,32 +17,49 @@ description: >
 
 You are building a standalone HTML page that visually matches the CodeMie (EPAM AI/Run) product UI. The design system is a dark-first, professional theme with Inter font, subtle borders, and semantic color tokens. Every page you produce should feel like a native screen of the CodeMie platform.
 
-## Step 1 — Read the CSS files
+## Step 1 — CSS placeholder
 
-Read **all 8 CSS files** from `${CLAUDE_PLUGIN_ROOT}/skills/codemie-html-report/style-guide/css/` — you will inline them all:
+**Do NOT read any CSS files. Do NOT inline any CSS yourself.**
 
-| File | What it covers |
-|------|---------------|
-| `tokens.css` | All CSS custom properties (colors, spacing, radii, shadows, gradients) |
-| `base.css` | Reset, body, scrollbar, code blocks, links, focus ring |
-| `typography.css` | Headings h1-h6, text size/weight/color utilities |
-| `buttons.css` | btn-primary, btn-secondary, btn-base, btn-delete, btn-tertiary, btn-magical, sizes |
-| `forms.css` | input, textarea, select, checkbox, radio, switch |
-| `components.css` | card, badge, tag, alert, avatar, spinner, progress, tooltip, stat-card, chip, empty-state |
-| `layout.css` | table, tabs, pagination, modal, nav-sidebar, app-shell |
-| `utilities.css` | flex, grid, gap, padding, margin, width, overflow, position, border, shadow |
+In the `<style>` block write exactly this one token as the only content:
 
-All files are located at: `${CLAUDE_PLUGIN_ROOT}/skills/codemie-html-report/style-guide/css/<filename>`
+```css
+/* __CODEMIE_CSS__ */
+```
+
+A post-processing script will replace this token with the full design system CSS after you write the file. All component classes are documented in Steps 3 and 4 — use them freely without reading the source files.
+
+## Step 1.5 — Data placeholders (analytics pipeline only — skip for standalone use)
+
+> **Backwards compatibility:** This step applies **only** when this skill is invoked
+> from the **codemie-analytics** skill as part of its report pipeline. If you are
+> generating a standalone HTML page directly for a user request, **skip this step
+> entirely** and embed any data inline as regular JS variables.
+
+When invoked from **codemie-analytics**, all JS data arrays must use
+`/*__DATA:name__*/` placeholders instead of inline values. The analytics skill's
+`inject-data.js` step replaces these after the HTML file is written.
+
+```html
+<script>
+  /* Data is injected by inject-data.js after this file is written — do NOT hardcode arrays */
+  const LEADERBOARD = /*__DATA:leaderboard-top__*/;
+  const SUMMARIES   = /*__DATA:summaries__*/;
+  const LLM_DATA    = /*__DATA:llms-usage__*/;
+</script>
+```
+
+Rules for analytics-pipeline placeholders:
+- **The placeholder name must exactly match the JSON filename without the `.json` extension.**
+  `/*__DATA:leaderboard-top__*/` is only replaced when `leaderboard-top.json` exists.
+  Wrong name → the placeholder is silently skipped by `inject-data.js`.
+- Every JS variable populated from an API response must use a placeholder.
+- Hardcoded lookup tables (tier colours, dimension labels, etc.) are fine as regular JS.
+- **Never mix placeholders with inline data** in the same variable declaration.
 
 ## Step 2 — Page skeleton (fully self-contained)
 
-**CRITICAL: Every HTML file you produce must be a single self-contained file.** Do NOT use `<link>` tags pointing to external `.css` files. Instead, inline the entire CodeMie design system directly inside a `<style>` block.
-
-Workflow:
-1. Read all 8 CSS files from `${CLAUDE_PLUGIN_ROOT}/skills/codemie-html-report/style-guide/css/`.
-2. Concatenate their contents in order: tokens → base → typography → buttons → forms → components → layout → utilities.
-3. Paste the full concatenated CSS into the `<style>` tag in `<head>`.
-4. Keep the `@import url('https://fonts.googleapis.com/...')` line from `tokens.css` at the very top of the `<style>` block (Google Fonts CDN is acceptable as an external dependency).
+**CRITICAL: Every HTML file you produce must be a single self-contained file.** Do NOT use `<link>` tags. Write the `/* __CODEMIE_CSS__ */` placeholder in the `<style>` block — the inject-css.js script will inline the full design system CSS after you write the file.
 
 ```html
 <!DOCTYPE html>
@@ -52,12 +69,7 @@ Workflow:
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PAGE TITLE</title>
   <style>
-    /* === CodeMie Design System — inlined for portability === */
-    @import url('https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;0,500;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500&display=swap');
-
-    /* PASTE FULL CONTENTS OF: tokens.css, base.css, typography.css,
-       buttons.css, forms.css, components.css, layout.css, utilities.css */
-
+    /* __CODEMIE_CSS__ */
     /* === Page-specific styles (use CSS variables, not hex colors) === */
   </style>
 </head>
@@ -271,3 +283,82 @@ body.p-6 > .container
 ```
 
 This pattern matches the analytics dashboard layout in the live CodeMie product and works for most reporting use cases.
+
+## Final Step — Inject CSS
+
+After writing the HTML file, run this command to replace the placeholder with the full
+design system bundle and make the report self-contained:
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/skills/codemie-html-report/scripts/inject-css.js <path-to-the-html-file-you-just-wrote>
+```
+
+For example:
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/skills/codemie-html-report/scripts/inject-css.js reports/leaderboard-2026-Q1.html
+```
+
+Expected output: `✓ CSS injected into reports/leaderboard-2026-Q1.html`
+
+## Final Step — Inject Data (analytics pipeline only — skip for standalone use)
+
+> This step applies **only** when invoked from the **codemie-analytics** skill. Standalone
+> HTML generation embeds data inline and must skip this step.
+
+After the HTML file is written, run `inject-data.js` to replace every `/*__DATA:name__*/`
+placeholder with the matching JSON file from the temp directory:
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/skills/codemie-html-report/scripts/inject-data.js \
+  <path-to-html> <temp-dir>
+```
+
+For example:
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/skills/codemie-html-report/scripts/inject-data.js \
+  reports/2026-05-07-leaderboard/leaderboard.html \
+  reports/2026-05-07-leaderboard/temp/
+```
+
+**Placeholder names must exactly match the JSON filenames** (without `.json`):
+- `/*__DATA:leaderboard-top__*/` is replaced from `leaderboard-top.json`
+- `/*__DATA:summaries__*/` is replaced from `summaries.json`
+
+A wrong name means the placeholder is silently skipped. If no placeholders are matched at
+all, the script exits with an error.
+
+Expected output:
+```
+  ✓ injected leaderboard-top
+  ✓ injected summaries
+✓ 2 data block(s) injected into reports/2026-05-07-leaderboard/leaderboard.html
+```
+
+**Do not run inject-data.js before the HTML file exists.**
+Run inject-css.js after inject-data.js.
+
+## Final Step — Temp file cleanup (analytics pipeline only — skip for standalone use)
+
+> **Backwards compatibility:** This step applies **only** when this skill is invoked
+> from the **codemie-analytics** skill. Standalone HTML generation has no temp
+> directory and must skip this step.
+
+After the CSS is injected and the report is complete, **always ask the user**:
+
+> The report is ready at `<path>`. The `temp/` directory (`<OUT>`) contains the raw
+> API response files used to build it (~N files). Would you like to delete it?
+
+If the user says **yes**, delete the temp directory:
+
+```bash
+rm -rf "<OUT>"
+# e.g. rm -rf "reports/2026-05-07-executive-spending/temp"
+```
+
+Confirm deletion:
+```
+✓ Temp files deleted → reports/2026-05-07-executive-spending/temp
+```
+
+If the user says **no** (or does not respond), leave the directory intact and note its
+location so they can inspect or re-use the raw data later.
