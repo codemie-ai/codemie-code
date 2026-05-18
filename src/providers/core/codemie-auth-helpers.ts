@@ -130,7 +130,7 @@ export async function fetchCodeMieUserInfo(
   return userInfo;
 }
 
-export async function selectCodeMieProject(authResult: SSOAuthResult): Promise<string> {
+export async function selectCodeMieProject(authResult: SSOAuthResult): Promise<{ project: string; userEmail: string }> {
   if (!authResult.apiUrl || !authResult.cookies) {
     throw new ConfigurationError('API URL or cookies not found in authentication result');
   }
@@ -152,27 +152,29 @@ export async function selectCodeMieProject(authResult: SSOAuthResult): Promise<s
     a.localeCompare(b, undefined, { sensitivity: 'base' })
   );
 
+  let project: string;
   if (sortedProjects.length === 1) {
-    const selectedProject = sortedProjects[0];
-    console.log(chalk.green(`✓ Auto-selected project: ${chalk.bold(selectedProject)}`));
-    return selectedProject;
+    project = sortedProjects[0];
+    console.log(chalk.green(`✓ Auto-selected project: ${chalk.bold(project)}`));
+  } else {
+    console.log(chalk.dim(`Found ${sortedProjects.length} accessible project(s)`));
+
+    const projectAnswers = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'project',
+        message: 'Select your project:',
+        choices: sortedProjects.map(p => ({
+          name: p,
+          value: p
+        })),
+        pageSize: 15
+      }
+    ]);
+
+    project = projectAnswers.project;
+    console.log(chalk.green(`✓ Selected project: ${chalk.bold(project)}`));
   }
 
-  console.log(chalk.dim(`Found ${sortedProjects.length} accessible project(s)`));
-
-  const projectAnswers = await inquirer.prompt([
-    {
-      type: 'list',
-      name: 'project',
-      message: 'Select your project:',
-      choices: sortedProjects.map(project => ({
-        name: project,
-        value: project
-      })),
-      pageSize: 15
-    }
-  ]);
-
-  console.log(chalk.green(`✓ Selected project: ${chalk.bold(projectAnswers.project)}`));
-  return projectAnswers.project;
+  return { project, userEmail: userInfo.username };
 }

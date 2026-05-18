@@ -57,6 +57,7 @@ export const SSOSetupSteps: ProviderSetupSteps = {
 
     // === NEW STEP: Fetch applications and select project ===
     let selectedProject: string | undefined;
+    let selectedUserEmail: string | undefined;
 
     try {
       console.log(chalk.cyan('📂 Fetching available projects...\n'));
@@ -66,7 +67,7 @@ export const SSOSetupSteps: ProviderSetupSteps = {
         throw new Error('API URL or cookies not found in authentication result');
       }
 
-      selectedProject = await selectCodeMieProject(authResult);
+      ({ project: selectedProject, userEmail: selectedUserEmail } = await selectCodeMieProject(authResult));
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
       console.log(chalk.red(`✗ Project selection failed: ${errorMsg}\n`));
@@ -143,6 +144,7 @@ export const SSOSetupSteps: ProviderSetupSteps = {
       additionalConfig: {
         codeMieUrl,
         codeMieProject: selectedProject,
+        userEmail: selectedUserEmail,
         codeMieIntegration: integrationInfo,
         apiUrl: authResult.apiUrl
       }
