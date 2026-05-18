@@ -83,15 +83,11 @@ export async function updateAssistant(
     toolkits: params.toolkits ?? existing.toolkits ?? [],
   };
 
-  if (params.temperature) mergedParams.temperature = params.temperature;
-  else if (existing.temperature === null) {
-    delete mergedParams.temperature;
-  }
+  if (params.temperature !== undefined) mergedParams.temperature = params.temperature;
+  else if (existing.temperature === null) delete mergedParams.temperature;
 
-  if (params.top_p) mergedParams.top_p = params.top_p;
-  else if (existing.top_p === null) {
-    delete mergedParams.top_p;
-  }
+  if (params.top_p !== undefined) mergedParams.top_p = params.top_p;
+  else if (existing.top_p === null) delete mergedParams.top_p;
 
   return client.assistants.update(
     assistantId,

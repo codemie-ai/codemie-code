@@ -26,10 +26,10 @@ export async function createWorkflow(
   yamlConfig?: string,
 ): Promise<unknown> {
   const paramsWithDefaults: WorkflowCreateParams = {
+    ...(params as Partial<WorkflowCreateParams>),
     mode: "Sequential",
     description: params.description ?? "",
     shared: params.shared ?? false,
-    ...(params as Partial<WorkflowCreateParams>),
   } as WorkflowCreateParams;
 
   if (yamlConfig) {

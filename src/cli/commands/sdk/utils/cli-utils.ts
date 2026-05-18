@@ -27,7 +27,11 @@ export async function parseDataInput(
     throw new ConfigurationError('No data provided. Use --data \'{"key":"value"}\'');
   }
 
-  return JSON.parse(dataFlag);
+  try {
+    return JSON.parse(dataFlag);
+  } catch {
+    throw new ConfigurationError(`Invalid JSON passed to --data. Check syntax near the beginning of the string.`);
+  }
 }
 
 /**
