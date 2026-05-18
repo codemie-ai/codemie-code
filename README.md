@@ -395,6 +395,26 @@ codemie opencode-metrics --discover --verbose
 
 Metrics are automatically extracted at session end and synced to the analytics system. Use `codemie analytics` to view comprehensive usage statistics across all agents.
 
+### OpenCode Multi-Provider Mode (`--merge-providers`)
+
+By default, `codemie-opencode` launches `opencode` with only CodeMie-managed providers visible. This ensures a consistent, up-to-date CodeMie SSO model catalogue on every launch, but hides any providers the user has configured in `~/.config/opencode/config.json`.
+
+Pass `--merge-providers` to keep the user's existing providers available alongside CodeMie SSO:
+
+```bash
+codemie-opencode --merge-providers
+```
+
+**What this does:**
+- Reads the user's `~/.config/opencode/config.json` (never modified)
+- Merges the user's providers (anthropic, github-copilot, openrouter, …) with the CodeMie-generated config
+- Removes the injected `enabled_providers` whitelist so authenticated opencode-native providers like GitHub Copilot remain visible
+- The `codemie-proxy` provider is always the fresh, CodeMie-owned entry — stale user entries cannot override proxy wiring
+- The user's top-level `model` field is preserved if set; otherwise CodeMie's default is used
+- Safe fall-back: if the user has no config (or it is malformed), the launch proceeds with the CodeMie-only config
+
+See [OpenCode Merge Providers Guide](.codemie/guides/usage/opencode-merge-providers.md) for the full merge-rules reference.
+
 ## Commands
 
 The CodeMie CLI has a rich set of commands for managing agents, configuration, and more.

@@ -73,6 +73,7 @@ export class AgentCLI {
       .option('--timeout <seconds>', 'Override timeout (in seconds)', parseInt)
       .option('--jwt-token <token>', 'JWT token for authentication (overrides config)')
       .option('--task <prompt>', 'Execute a single task (agent-specific flag mapping)')
+      .option('--merge-providers', 'Merge CodeMie SSO provider with user\'s existing ~/.config/opencode/config.json so user-defined providers remain available (opencode only)')
       .allowUnknownOption()
       .argument('[args...]', `Arguments to pass to ${this.adapter.displayName}`)
       .action(async (args, options) => {
@@ -278,6 +279,13 @@ export class AgentCLI {
         providerEnv.CODEMIE_STATUS = '1';
       }
 
+      // Pass --merge-providers flag to lifecycle hooks. Scoped to opencode today
+      // (OpenCode plugin reads env.CODEMIE_MERGE_PROVIDERS in beforeRun). Silently
+      // ignored by other agents.
+      if (options.mergeProviders) {
+        providerEnv.CODEMIE_MERGE_PROVIDERS = 'true';
+      }
+
       // Serialize full profile config for proxy plugins (read once at CLI level)
       providerEnv.CODEMIE_PROFILE_CONFIG = JSON.stringify(config);
 
@@ -428,7 +436,7 @@ export class AgentCLI {
   ): string[] {
     const agentArgs = [...args];
     // Config-only options (not passed to agent, handled by CodeMie CLI)
-    const configOnlyOptions = ['profile', 'provider', 'apiKey', 'baseUrl', 'timeout', 'model', 'silent', 'status', 'jwtToken'];
+    const configOnlyOptions = ['profile', 'provider', 'apiKey', 'baseUrl', 'timeout', 'model', 'silent', 'status', 'jwtToken', 'mergeProviders'];
 
     for (const [key, value] of Object.entries(options)) {
       // Skip config-only options (handled by CodeMie CLI layer)

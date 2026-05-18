@@ -6,6 +6,16 @@ export {
   type OpenCodeModelConfig
 } from './opencode-model-configs.js';
 
+// Provider-merge helper for `--merge-providers` flag
+export {
+  mergeOpenCodeProviders,
+  readUserOpenCodeConfig,
+  mergeProviderMaps,
+  mergeEnabledProviders,
+  mergePluginArrays,
+  CODEMIE_OWNED_PROVIDER_KEYS
+} from './opencode-config-merger.js';
+
 // Phase 2 exports (Session Analytics)
 export { OpenCodeSessionAdapter } from './opencode.session.js';
 // FIXED (GPT-5.10/5.11): Export canonical function names, not deprecated alias
