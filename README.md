@@ -10,7 +10,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.3%2B-blue.svg)](https://www.typescriptlang.org/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-> **Unified AI Coding Assistant CLI** - Manage Claude Code, Google Gemini, OpenCode, and custom AI agents from one powerful command-line interface. Multi-provider support (OpenAI, Azure OpenAI, AWS Bedrock, LiteLLM, Ollama, Enterprise SSO, JWT Bearer Auth). Built-in LangGraph agent with file operations, command execution, and planning tools. Cross-platform support for Windows, Linux, and macOS.
+> **Unified AI Coding Assistant CLI** - Manage Claude Code, OpenAI Codex, Google Gemini, OpenCode, and custom AI agents from one powerful command-line interface. Multi-provider support (OpenAI, Azure OpenAI, AWS Bedrock, LiteLLM, Ollama, Enterprise SSO, JWT Bearer Auth). Built-in LangGraph agent with file operations, command execution, and planning tools. Cross-platform support for Windows, Linux, and macOS.
 
 ---
 
@@ -22,7 +22,7 @@
 
 CodeMie CLI is the all-in-one AI coding assistant for developers.
 
-- ✨ **One CLI, Multiple AI Agents** - Switch between Claude Code, Gemini, OpenCode, and built-in agent.
+- ✨ **One CLI, Multiple AI Agents** - Switch between Claude Code, OpenAI Codex, Gemini, OpenCode, and built-in agent.
 - 🔄 **Multi-Provider Support** - OpenAI, Azure OpenAI, AWS Bedrock, LiteLLM, Ollama, Enterprise SSO, and JWT Bearer Auth.
 - 🚀 **Built-in Agent** - A powerful LangGraph-based assistant with file operations, command execution, and planning tools.
 - 🖥️ **Cross-Platform** - Full support for Windows, Linux, and macOS with platform-specific optimizations.
@@ -45,8 +45,9 @@ Install CodeMie using the instructions for your shell, then run:
 codemie setup
 codemie doctor
 codemie install claude --supported
+codemie install codex --supported
 codemie-claude "Review my API code"
-codemie-code "Analyze this codebase"
+codemie-codex "Refactor this service"
 codemie --task "Generate unit tests"
 codemie skills find pdf                    # discover agent skills (EPAM internal + skills.sh)
 claude mcp add my-server -- codemie-mcp-proxy "https://mcp-server.example.com/sse"
@@ -143,7 +144,7 @@ npm install @codemieai/code
 npx @codemieai/code --help
 ```
 
-**Note:** Agent shortcuts (`codemie-claude`, `codemie-code`, `codemie-opencode`, etc.) require global installation.
+**Note:** Agent shortcuts (`codemie-claude`, `codemie-codex`, `codemie-code`, `codemie-opencode`, etc.) require global installation.
 
 ### Installation Troubleshooting
 
@@ -196,10 +197,11 @@ codemie-code "Help me refactor this component"
 
 ### External Agents
 
-You can also install and use external agents like Claude Code and Gemini.
+You can also install and use external agents like Claude Code, OpenAI Codex, Gemini, and OpenCode.
 
 **Available Agents:**
 - **Claude Code** (`codemie-claude`) - Anthropic's official CLI with advanced code understanding
+- **OpenAI Codex** (`codemie-codex`) - OpenAI's coding agent CLI with CodeMie-managed model/provider configuration
 - **Claude Code ACP** (`codemie-claude-acp`) - Claude Code for IDE integration via ACP protocol (Zed, JetBrains, Emacs)
 - **Gemini CLI** (`codemie-gemini`) - Google's Gemini for coding tasks
 - **OpenCode** (`codemie-opencode`) - Open-source AI coding assistant with session analytics
@@ -210,6 +212,10 @@ codemie install claude --supported
 
 # Use the agent
 codemie-claude "Review my API code"
+
+# Install Codex
+codemie install codex --supported
+codemie-codex "Refactor this authentication flow"
 
 # Install Gemini
 codemie install gemini
@@ -258,17 +264,22 @@ codemie install claude-acp
 
 **Version Management:**
 
-CodeMie manages agent versions to ensure compatibility. For Claude Code:
+CodeMie manages agent versions to ensure compatibility. For example, with Claude Code or OpenAI Codex:
 
 ```bash
 # Install latest supported version (recommended)
 codemie install claude --supported
 
+# Install latest supported Codex version (recommended)
+codemie install codex --supported
+
 # Install specific version
 codemie install claude 2.1.22
+codemie install codex 0.129.0
 
 # Install latest available version
 codemie install claude
+codemie install codex
 ```
 
 Auto-updates are automatically disabled to maintain version control. CodeMie notifies you when running a different version than supported.
