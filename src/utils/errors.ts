@@ -208,13 +208,66 @@ function getSystemInfo(): ErrorContext['system'] {
   };
 }
 
+function stringifyObject(value: unknown): string | undefined {
+  try {
+    const stringified = JSON.stringify(value, null, 2);
+    if (stringified && stringified !== '{}' && stringified !== '[object Object]') {
+      return stringified;
+    }
+  } catch {
+    // Fall through to key-based fallback.
+  }
+
+  return undefined;
+}
+
+function extractMessageFromObject(
+  errorObj: Record<string, unknown>,
+  visited: WeakSet<object> = new WeakSet(),
+  depth = 0
+): string | undefined {
+  if (visited.has(errorObj) || depth > 4) {
+    return undefined;
+  }
+  visited.add(errorObj);
+
+  const fields = ['message', 'error', 'description', 'detail', 'help'];
+
+  for (const field of fields) {
+    const value = errorObj[field];
+    if (typeof value === 'string' && value.trim()) {
+      return value;
+    }
+  }
+
+  const nestedError = errorObj.error;
+  if (typeof nestedError === 'object' && nestedError !== null) {
+    const nestedMessage = extractMessageFromObject(
+      nestedError as Record<string, unknown>,
+      visited,
+      depth + 1
+    );
+    if (nestedMessage) {
+      return nestedMessage;
+    }
+  }
+
+  return stringifyObject(errorObj);
+}
+
 /**
  * Extract error details from unknown error type
  */
 function extractErrorDetails(error: unknown): ErrorContext['error'] {
   if (error instanceof Error) {
+    const errorObj = error as Error & Record<string, unknown>;
+    const responseMessage = typeof errorObj.response === 'object' && errorObj.response !== null
+      ? extractMessageFromObject(errorObj.response as Record<string, unknown>)
+      : undefined;
+    const message = error.message.trim() || responseMessage || error.name || 'Error';
+
     return {
-      message: error.message,
+      message,
       name: error.name,
       stack: error.stack,
       code: (error as NodeJS.ErrnoException).code
@@ -233,26 +286,7 @@ function extractErrorDetails(error: unknown): ErrorContext['error'] {
   if (typeof error === 'object' && error !== null) {
     const errorObj = error as Record<string, unknown>;
 
-    let message: string;
-
-    if (typeof errorObj.message === 'string' && errorObj.message.trim()) {
-      message = errorObj.message;
-    } else if (typeof errorObj.error === 'string' && errorObj.error.trim()) {
-      message = errorObj.error;
-    } else if (typeof errorObj.description === 'string' && errorObj.description.trim()) {
-      message = errorObj.description;
-    } else {
-      try {
-        const stringified = JSON.stringify(error, null, 2);
-        if (stringified && stringified !== '{}' && stringified !== '[object Object]') {
-          message = stringified;
-        } else {
-          message = `Error object: ${Object.keys(errorObj).join(', ')}`;
-        }
-      } catch {
-        message = `Error object: ${Object.keys(errorObj).join(', ')}`;
-      }
-    }
+    const message = extractMessageFromObject(errorObj) || `Error object: ${Object.keys(errorObj).join(', ')}`;
 
     const name = (typeof errorObj.name === 'string' ? errorObj.name : null) || 'UnknownError';
     const code = (typeof errorObj.code === 'string' ? errorObj.code : undefined);
@@ -312,6 +346,10 @@ export function createErrorContext(
  * Wrap text to a maximum line length
  */
 function wrapText(text: string, maxLength: number, indent: string = ''): string[] {
+  if (!text) {
+    return [indent];
+  }
+
   const words = text.split(' ');
   const lines: string[] = [];
   let currentLine = indent;
@@ -357,7 +395,8 @@ export function formatErrorForUser(
   const lines: string[] = [];
 
   // Error message (just the message, not the name) - wrapped at 100 chars
-  const wrappedError = wrapText(context.error.message, 97, '   '); // 97 to account for "❌ " prefix
+  const message = context.error.message.trim() || context.error.name || 'Error';
+  const wrappedError = wrapText(message, 97, '   '); // 97 to account for "❌ " prefix
   lines.push(`❌ ${wrappedError[0].trim()}`);
   for (let i = 1; i < wrappedError.length; i++) {
     lines.push(wrappedError[i]);
