@@ -13,6 +13,15 @@ import type { SSOAuthConfig, SSOAuthResult, SSOCredentials } from '../../core/ty
 import { CredentialStore } from '../../../utils/security.js';
 import { ensureApiBase } from '../../core/codemie-auth-helpers.js';
 
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#x27;');
+}
+
 /**
  * Normalize URL to base (protocol + host)
  * E.g., https://host.com/path -> https://host.com
@@ -232,7 +241,7 @@ export class CodeMieSSO {
                 </script>` : `
                 <h2 class="error">❌ Authentication Failed</h2>
                 <p>You can close this window and return to your terminal.</p>
-                ${result.error ? `<p class="error">Error: ${result.error}</p>` : ''}`
+                ${result.error ? `<p class="error">Error: ${escapeHtml(result.error)}</p>` : ''}`
                 }
               </body>
             </html>
@@ -254,7 +263,7 @@ export class CodeMieSSO {
               </head>
               <body>
                 <h2>❌ Authentication Failed</h2>
-                <p>Error: ${error.message}</p>
+                <p>Error: ${escapeHtml(error.message)}</p>
                 <p>You can close this window and return to your terminal.</p>
               </body>
             </html>

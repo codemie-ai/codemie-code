@@ -507,22 +507,34 @@ export class CredentialStore {
   }
 
   private encrypt(text: string): string {
-    const iv = crypto.randomBytes(16);
-    // Use a proper 32-byte key by hashing the encryptionKey
+    const iv = crypto.randomBytes(12);
     const key = crypto.createHash('sha256').update(this.encryptionKey).digest();
-    const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
     let encrypted = cipher.update(text, 'utf8', 'hex');
     encrypted += cipher.final('hex');
-    return iv.toString('hex') + ':' + encrypted;
+    const authTag = cipher.getAuthTag();
+    return iv.toString('hex') + ':' + authTag.toString('hex') + ':' + encrypted;
   }
 
   private decrypt(text: string): string {
-    const [ivHex, encryptedHex] = text.split(':');
-    const iv = Buffer.from(ivHex, 'hex');
-    // Use a proper 32-byte key by hashing the encryptionKey
+    const parts = text.split(':');
     const key = crypto.createHash('sha256').update(this.encryptionKey).digest();
+
+    if (parts.length === 3) {
+      // GCM format: iv:authTag:encrypted
+      const iv = Buffer.from(parts[0], 'hex');
+      const authTag = Buffer.from(parts[1], 'hex');
+      const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+      decipher.setAuthTag(authTag);
+      let decrypted = decipher.update(parts[2], 'hex', 'utf8');
+      decrypted += decipher.final('utf8');
+      return decrypted;
+    }
+
+    // Legacy CBC format: iv:encrypted (backward compat for existing stored credentials)
+    const iv = Buffer.from(parts[0], 'hex');
     const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
-    let decrypted = decipher.update(encryptedHex, 'hex', 'utf8');
+    let decrypted = decipher.update(parts[1], 'hex', 'utf8');
     decrypted += decipher.final('utf8');
     return decrypted;
   }
