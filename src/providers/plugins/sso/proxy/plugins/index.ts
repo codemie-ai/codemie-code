@@ -17,6 +17,7 @@ import { ClaudeRequestNormalizerPlugin } from "./claude-request-normalizer.plugi
 import { CodexEncryptedContentSanitizerPlugin } from "./codex-encrypted-content-sanitizer.plugin.js";
 import { LoggingPlugin } from "./logging.plugin.js";
 import { SSOSessionSyncPlugin } from "./sso.session-sync.plugin.js";
+import { SessionExpiryHandlerPlugin } from "./session-expiry-handler.plugin.js";
 
 /**
  * Register core plugins
@@ -36,6 +37,7 @@ export function registerCorePlugins(): void {
   registry.register(new CodexEncryptedContentSanitizerPlugin()); // Priority 16 - strips encrypted reasoning state for Codex
   registry.register(new HeaderInjectionPlugin());
   registry.register(new LoggingPlugin()); // Always enabled - logs to log files at INFO level
+  registry.register(new SessionExpiryHandlerPlugin()); // Priority 20 - detects 401/403, triggers re-auth in proxy core
   registry.register(new SSOSessionSyncPlugin()); // Priority 100 - syncs sessions via multiple processors
 }
 
@@ -56,5 +58,6 @@ export {
   LoggingPlugin,
 };
 export { SSOSessionSyncPlugin } from "./sso.session-sync.plugin.js";
+export { SessionExpiryHandlerPlugin } from "./session-expiry-handler.plugin.js";
 export { getPluginRegistry, resetPluginRegistry } from "./registry.js";
 export * from "./types.js";
