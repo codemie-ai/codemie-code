@@ -1,6 +1,6 @@
 import type { IncomingHttpHeaders } from 'http';
 import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
-import { ProxyContext } from '../proxy-types.js';
+import type { ProxyContext } from '../proxy-types.js';
 import { logger } from '../../../../../utils/logger.js';
 
 const SESSION_EXPIRED_STATUS_CODES = new Set([401, 403]);

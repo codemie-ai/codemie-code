@@ -61,7 +61,7 @@ describe('SessionExpiryHandlerPlugin', () => {
       expect(plugin.version).toBe('1.0.0');
     });
 
-    it('has priority 20 (after auth plugins at 10/13)', () => {
+    it('has priority 20', () => {
       expect(plugin.priority).toBe(20);
     });
   });
