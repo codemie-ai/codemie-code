@@ -202,21 +202,26 @@ function parseJsonArray(value: unknown): unknown[] {
   }
 }
 
+function isValidMcpServerName(name: string): boolean {
+  return /^[a-zA-Z0-9_-]+$/.test(name);
+}
+
 export function mergeManagedMcpServers(existingServers: unknown): unknown[] {
-  const merged = [...parseJsonArray(existingServers)];
-  const existingNames = new Set(
-    merged
-      .map((server) => getManagedMcpServerName(server)?.toLowerCase())
-      .filter((name): name is string => Boolean(name))
-  );
+  const defaultUrls = new Set(DEFAULT_MANAGED_MCP_SERVERS.map((s) => s.url));
+  const defaultNames = new Set(DEFAULT_MANAGED_MCP_SERVERS.map((s) => s.name.toLowerCase()));
 
-  for (const server of DEFAULT_MANAGED_MCP_SERVERS) {
-    if (!existingNames.has(server.name.toLowerCase())) {
-      merged.push({ ...server });
-    }
-  }
+  // Remove existing entries that are invalid (spaces in name) or superseded by a default entry with the same URL
+  const filtered = parseJsonArray(existingServers).filter((server) => {
+    const name = getManagedMcpServerName(server);
+    if (!name) return true;
+    if (!isValidMcpServerName(name)) return false;
+    if (defaultNames.has(name.toLowerCase())) return false;
+    const url = isRecord(server) && typeof server.url === 'string' ? server.url : undefined;
+    if (url && defaultUrls.has(url)) return false;
+    return true;
+  });
 
-  return merged;
+  return [...filtered, ...DEFAULT_MANAGED_MCP_SERVERS.map((s) => ({ ...s }))];
 }
 
 export interface DesktopGatewayConfig {
