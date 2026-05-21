@@ -375,14 +375,26 @@ export function getCodemiePath(...paths: string[]): string {
   return path.join(getCodemieHome(), ...paths);
 }
 
+// Matches Claude Desktop sandbox session directories: local_<8-hex-chars>
+const CLAUDE_DESKTOP_SANDBOX_RE = /(?:^|\/)local_[0-9a-f]{8}(?:[^/]*)(?:\/|$)/i;
+
 /**
  * Extract parent/repo format from a working directory path.
+ * Returns 'Claude Desktop' for sandbox paths used by Claude Desktop sessions.
  *
  * @example
  * extractRepository('/Users/john/projects/codemie-code')
  * // Returns: 'projects/codemie-code'
+ *
+ * @example
+ * extractRepository('/.../.../local_7fb4c6a0-c9f0-4b3e-8c1a-2d5e6f7a8b9c/outputs')
+ * // Returns: 'Claude Desktop'
  */
 export function extractRepository(workingDirectory: string): string {
+  if (CLAUDE_DESKTOP_SANDBOX_RE.test(normalizePathSeparators(workingDirectory))) {
+    return 'Claude Desktop';
+  }
+
   const parts = splitPath(workingDirectory);
   const filtered = parts.filter(p => p.length > 0);
 
