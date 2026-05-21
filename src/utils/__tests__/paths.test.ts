@@ -14,6 +14,7 @@ import {
   matchesPathStructure,
   validatePathDepth,
   getDirname,
+  extractRepository,
 } from '../paths.js';
 
 // Test-only helper functions
@@ -251,6 +252,71 @@ describe('Path Utilities - Cross-Platform', () => {
 
       expect(findDirectoryIndex(path, '.claude')).toBe(3);
       expect(getFilename(path)).toBe('file.jsonl');
+    });
+  });
+
+  describe('extractRepository', () => {
+    describe('normal project paths — unchanged', () => {
+      it('should return last two segments for a standard project path', () => {
+        expect(extractRepository('/Users/alice/projects/codemie-code')).toBe('projects/codemie-code');
+      });
+
+      it('should return last two segments for a deeply nested path', () => {
+        expect(extractRepository('/home/user/work/epam/codemie-ui')).toBe('epam/codemie-ui');
+      });
+
+      it('should return single segment when path has only one meaningful part', () => {
+        expect(extractRepository('/myrepo')).toBe('myrepo');
+      });
+
+      it('should handle Windows-style paths', () => {
+        expect(extractRepository('C:\\Users\\alice\\projects\\codemie-code')).toBe('projects/codemie-code');
+      });
+    });
+
+    describe('Claude Desktop sandbox paths — return Claude Desktop', () => {
+      it('should detect real Desktop sandbox path observed in logs', () => {
+        const path = '/Users/mykola/Library/Application Support/Claude-3p/local-agent-mode-sessions/759182a5-1458-46d1-92e3-d6b6bc1262bd/00000000-0000-4000-8000-000000000001/local_2d5f3a0f-6a50-4778-ac55-9ffbca0446da/outputs';
+        expect(extractRepository(path)).toBe('Claude Desktop');
+      });
+
+      it('should detect sandbox path with different UUID', () => {
+        const path = '/Users/alice/Library/Application Support/Claude-3p/local-agent-mode-sessions/abc/def/local_7fb4c6a0-a7b9-4121-960c-035d0e4830ff/outputs';
+        expect(extractRepository(path)).toBe('Claude Desktop');
+      });
+
+      it('should detect sandbox path ending at the local_<uuid> directory itself', () => {
+        const path = '/some/path/local_74f67be8-ddc7-44c4-a911-1d6cd034ec9d';
+        expect(extractRepository(path)).toBe('Claude Desktop');
+      });
+
+      it('should detect sandbox path with a project subfolder inside outputs', () => {
+        const path = '/Users/alice/Library/Application Support/Claude-3p/local-agent-mode-sessions/s/u/local_95002bb5-744b-4b94-b87b-711c0ebf7a47/outputs/my-project';
+        expect(extractRepository(path)).toBe('Claude Desktop');
+      });
+
+      it('should be case-insensitive for hex digits', () => {
+        const path = '/some/path/local_2D5F3A0F-6A50-4778-AC55-9FFBCA0446DA/outputs';
+        expect(extractRepository(path)).toBe('Claude Desktop');
+      });
+    });
+
+    describe('false-positive guard — must NOT match legitimate project names', () => {
+      it('should NOT match a project named local_ with only 8 hex chars (no UUID dashes)', () => {
+        expect(extractRepository('/home/alice/work/local_deadbeef')).toBe('work/local_deadbeef');
+      });
+
+      it('should NOT match local_cafebabe (8 hex, no dashes)', () => {
+        expect(extractRepository('/home/alice/projects/local_cafebabe/src')).toBe('local_cafebabe/src');
+      });
+
+      it('should NOT match a directory starting with local_ but containing non-hex chars', () => {
+        expect(extractRepository('/home/alice/local_myproject/src')).toBe('local_myproject/src');
+      });
+
+      it('should NOT match a UUID-like name that lacks the local_ prefix', () => {
+        expect(extractRepository('/home/alice/2d5f3a0f-6a50-4778-ac55-9ffbca0446da/outputs')).toBe('2d5f3a0f-6a50-4778-ac55-9ffbca0446da/outputs');
+      });
     });
   });
 
