@@ -155,6 +155,16 @@ function saveCache(data) {
   fs.writeFileSync(CACHE_FILE, JSON.stringify(data, null, 2), { mode: 0o600 });
 }
 
+// ── HTML helpers ──────────────────────────────────────────────────────────────
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#x27;');
+}
+
 // ── PKCE helpers ──────────────────────────────────────────────────────────────
 function generatePKCE() {
   const verifier  = crypto.randomBytes(32).toString('base64url');
@@ -206,8 +216,8 @@ function startLocalServer() {
                </body></html>`
             : `<!DOCTYPE html><html><head><title>Login failed</title></head><body style="font-family:sans-serif;padding:40px">
                 <h2 style="color:#d13438">&#10007; Authentication failed</h2>
-                <p><strong>${error || 'Unknown error'}</strong></p>
-                <p>${desc || ''}</p>
+                <p><strong>${error ? escapeHtml(error) : 'Unknown error'}</strong></p>
+                <p>${desc ? escapeHtml(desc) : ''}</p>
                </body></html>`;
 
           response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
