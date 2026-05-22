@@ -43,6 +43,7 @@ export class CodeMieProxy {
   private server: Server | null = null;
   private httpClient: ProxyHTTPClient;
   private interceptors: ProxyInterceptor[] = [];
+  private chunkInterceptors: ProxyInterceptor[] = [];
   private actualPort: number = 0;
 
   constructor(private config: ProxyConfig) {
@@ -119,6 +120,7 @@ export class CodeMieProxy {
     // 4. Initialize plugins from registry
     const registry = getPluginRegistry();
     this.interceptors = await registry.initialize(pluginContext);
+    this.chunkInterceptors = this.interceptors.filter(i => typeof i.onResponseChunk === 'function');
     logger.info('[proxy] Initialized proxy interceptors', {
       interceptors: this.interceptors.map((interceptor) => interceptor.name),
       interceptorCount: this.interceptors.length,
