@@ -1,11 +1,12 @@
-import { readFile, writeFile, mkdir, chmod, rm } from 'fs/promises';
+import { readFile, writeFile, mkdir, chmod, rm, unlink } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import { getDirname, resolveHomeDir } from '@/utils/paths.js';
+import { getDirname, resolveHomeDir, getCodemieHome } from '@/utils/paths.js';
 import { logger } from '@/utils/logger.js';
-import { sanitizeLogArgs } from '@/utils/security.js';
+import { sanitizeLogArgs, CredentialStore } from '@/utils/security.js';
 import { ConfigurationError } from '@/utils/errors.js';
+import { ConfigLoader } from '@/utils/config.js';
 
 export const STATUSLINE_NAME = 'statusline';
 export const STATUSLINE_DISPLAY_NAME = 'CodeMie Statusline';
@@ -89,4 +90,62 @@ export async function uninstallStatusline(): Promise<void> {
 
 export function isStatuslineInstalled(): boolean {
   return existsSync(join(homedir(), '.claude', SCRIPT_FILENAME));
+}
+
+export async function promptBudgetSelection(): Promise<boolean> {
+  const config = await ConfigLoader.loadMultiProviderConfig();
+  const profileName = config.activeProfile;
+  const profile = config.profiles?.[profileName];
+
+  if (!profile?.codeMieUrl || !profile?.baseUrl) return false;
+
+  const store = CredentialStore.getInstance();
+  const [sso, jwt] = await Promise.all([
+    store.retrieveSSOCredentials(profile.codeMieUrl),
+    store.retrieveJWTCredentials(profile.codeMieUrl),
+  ]);
+
+  const headers: Record<string, string> = {};
+  if (sso?.cookies) {
+    headers['cookie'] = Object.entries(sso.cookies).map(([k, v]) => `${k}=${v}`).join(';');
+  } else if (jwt?.token) {
+    headers['authorization'] = `Bearer ${jwt.token}`;
+  } else {
+    return false;
+  }
+
+  let rows: Array<{ project_name: string }>;
+  try {
+    const res = await fetch(`${profile.baseUrl}/v1/analytics/budget_usage`, {
+      headers: { 'Content-Type': 'application/json', 'X-CodeMie-Client': 'codemie-cli', ...headers },
+    });
+    if (!res.ok) return false;
+    const json = await res.json() as { data?: { rows?: Array<{ project_name: string }> } };
+    rows = json?.data?.rows ?? [];
+  } catch {
+    return false;
+  }
+
+  if (!rows.length) return false;
+
+  const inquirer = (await import('inquirer')).default;
+  const budgetNames = rows.map(r => r.project_name);
+  const { budgetName } = await inquirer.prompt<{ budgetName: string }>([{
+    type: 'list',
+    name: 'budgetName',
+    message: 'Select budget to track in the statusline:',
+    choices: budgetNames,
+    default: profile.statuslineBudgetName ?? budgetNames[0],
+  }]);
+
+  const previousBudgetName = profile.statuslineBudgetName;
+  profile.statuslineBudgetName = budgetName;
+  await ConfigLoader.saveProfile(profileName, profile);
+
+  if (budgetName !== previousBudgetName) {
+    await unlink(join(getCodemieHome(), 'budget-cache.json')).catch(() => {});
+  }
+
+  logger.debug('[Statusline] Budget name saved', ...sanitizeLogArgs({ budgetName }));
+  return true;
 }

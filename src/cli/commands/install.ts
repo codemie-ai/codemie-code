@@ -10,8 +10,8 @@ import {
   STATUSLINE_DESCRIPTION,
   installStatusline,
   isStatuslineInstalled,
+  promptBudgetSelection,
 } from '@/agents/plugins/claude/statusline-installer.js';
-import { ConfigLoader } from '@/utils/config.js';
 import ora from 'ora';
 import chalk from 'chalk';
 
@@ -280,10 +280,12 @@ export function createInstallCommand(): Command {
             console.log(chalk.cyan('💡 The statusline appears at the bottom of every Claude Code session'));
             console.log(chalk.white(`   ${STATUSLINE_DESCRIPTION}`));
             console.log(chalk.gray(`   Script: ${scriptPath}`));
+            console.log();
 
-            const rootConfig = await ConfigLoader.loadMultiProviderConfig();
-            if (!rootConfig.userEmail) {
-              console.log();
+            const budgetSelected = await promptBudgetSelection();
+            if (budgetSelected) {
+              console.log(chalk.green('✓ Budget selected for tracking'));
+            } else {
               console.log(chalk.yellow('⚠️  Budget tracking requires authentication. Run: codemie setup'));
             }
 

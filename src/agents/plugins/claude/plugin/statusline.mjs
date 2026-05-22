@@ -55,14 +55,14 @@ async function getAuthHeaders(codeMieUrl) {
   return null;
 }
 
-async function fetchBudget(baseUrl, headers, profileProject) {
+async function fetchBudget(baseUrl, headers, budgetName) {
   const res = await fetch(`${baseUrl}/v1/analytics/budget_usage`, {
     headers: { 'Content-Type': 'application/json', 'X-CodeMie-Client': 'codemie-cli', ...headers },
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
   const json = await res.json();
-  const row = json?.data?.rows?.find(r => r.project_name === `${profileProject} (cli)`);
+  const row = json?.data?.rows?.find(r => r.project_name === budgetName);
   if (!row) throw new Error('row not found');
 
   const pct = Math.round((row.current_spending / row.budget_limit) * 100);
@@ -179,16 +179,18 @@ async function main() {
     const profile = config.profiles?.[config.activeProfile];
     if (!profile) { budget = '⚠ no profile'; budgetPct = -1; break; }
 
-    const { codeMieUrl, baseUrl } = profile;
-    const userEmail = config.userEmail;
-    if (!codeMieUrl || !userEmail || !baseUrl) {
+    const { codeMieUrl, baseUrl, statuslineBudgetName } = profile;
+    if (!codeMieUrl || !baseUrl) {
       budget = '⚠ incomplete profile'; budgetPct = -1; break;
+    }
+    if (!statuslineBudgetName) {
+      budget = '⚠ run: codemie install statusline'; budgetPct = -1; break;
     }
 
     const headers = await getAuthHeaders(codeMieUrl);
     if (!headers) { budget = '⚠ Reauthenticate'; budgetPct = -1; break; }
 
-    const budgetResult = await fetchBudget(baseUrl, headers, userEmail).catch(e => ({ error: e.message }));
+    const budgetResult = await fetchBudget(baseUrl, headers, statuslineBudgetName).catch(e => ({ error: e.message }));
     if (budgetResult.error) {
       budget = `⚠ ${budgetResult.error}`; budgetPct = -1; break;
     }
