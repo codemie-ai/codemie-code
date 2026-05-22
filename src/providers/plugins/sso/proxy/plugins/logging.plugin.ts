@@ -39,16 +39,35 @@ class LoggingInterceptor implements ProxyInterceptor {
   name = 'logging';
   private chunkCount = 0;
   private totalBytes = 0;
-  private responseChunks: Buffer[] = [];
   private responseContentType: string | null = null;
+  private isStreaming = false;
+
+  // Bounded preview buffers — never the full body for SSE.
+  private headPreview: Buffer[] = [];
+  private tailPreview: Buffer[] = [];
+  private headBytes = 0;
+  private tailBytes = 0;
+
+  // Non-streaming JSON capture, capped to NON_STREAM_MAX.
+  private nonStreamingChunks: Buffer[] = [];
+  private nonStreamingTruncated = false;
+
+  private static readonly PREVIEW_LIMIT = 4096;       // 4 KB head + 4 KB tail
+  private static readonly NON_STREAM_MAX = 64 * 1024; // 64 KB max for buffered JSON bodies
 
   async onRequest(context: ProxyContext): Promise<void> {
     try {
       // Reset counters for new request
       this.chunkCount = 0;
       this.totalBytes = 0;
-      this.responseChunks = [];
       this.responseContentType = null;
+      this.isStreaming = false;
+      this.headPreview = [];
+      this.tailPreview = [];
+      this.headBytes = 0;
+      this.tailBytes = 0;
+      this.nonStreamingChunks = [];
+      this.nonStreamingTruncated = false;
 
       // Get request content type
       const contentType = context.headers['content-type'] || context.headers['Content-Type'] || 'unknown';
@@ -104,6 +123,15 @@ class LoggingInterceptor implements ProxyInterceptor {
         ? contentTypeHeader[0]
         : contentTypeHeader || 'unknown';
 
+      const transferEncoding = headers['transfer-encoding'] || headers['Transfer-Encoding'];
+      const transferEncodingStr = Array.isArray(transferEncoding)
+        ? transferEncoding[0]
+        : transferEncoding;
+      this.isStreaming =
+        (this.responseContentType?.includes('text/event-stream') ?? false) ||
+        (((transferEncodingStr?.includes('chunked')) ?? false) &&
+         !(this.responseContentType?.includes('application/json') ?? false));
+
       logger.debug(
         `[proxy-response-headers] ${context.url}`,
         {
@@ -133,26 +161,46 @@ class LoggingInterceptor implements ProxyInterceptor {
       this.chunkCount++;
       this.totalBytes += chunk.length;
 
-      // Collect chunks for full response body
-      this.responseChunks.push(Buffer.from(chunk));
+      if (this.isStreaming) {
+        // Streaming: only keep bounded head/tail previews, never full body.
+        if (this.headBytes < LoggingInterceptor.PREVIEW_LIMIT) {
+          const remaining = LoggingInterceptor.PREVIEW_LIMIT - this.headBytes;
+          const slice = chunk.length <= remaining ? chunk : chunk.subarray(0, remaining);
+          this.headPreview.push(Buffer.from(slice));
+          this.headBytes += slice.length;
+        }
+        // Rolling tail buffer: retain only the last PREVIEW_LIMIT bytes.
+        this.tailPreview.push(chunk);
+        this.tailBytes += chunk.length;
+        while (
+          this.tailPreview.length > 1 &&
+          this.tailBytes - (this.tailPreview[0]?.length ?? 0) >= LoggingInterceptor.PREVIEW_LIMIT
+        ) {
+          const dropped = this.tailPreview.shift();
+          if (dropped) this.tailBytes -= dropped.length;
+        }
+      } else if (!this.nonStreamingTruncated) {
+        // Non-streaming JSON: bounded buffer up to NON_STREAM_MAX.
+        if (this.totalBytes <= LoggingInterceptor.NON_STREAM_MAX) {
+          this.nonStreamingChunks.push(Buffer.from(chunk));
+        } else {
+          this.nonStreamingTruncated = true;
+          this.nonStreamingChunks = []; // drop partial buffer; log size only.
+        }
+      }
 
-      // Log every 1000th chunk to avoid spam (or first/last chunks)
       if (this.chunkCount === 1 || this.chunkCount % 1000 === 0) {
-        logger.debug(
-          `[proxy-streaming] ${context.url}`,
-          {
-            requestId: context.requestId,
-            sessionId: context.sessionId,
-            chunkNumber: this.chunkCount,
-            chunkSize: chunk.length,
-            totalBytes: this.totalBytes
-          }
-        );
+        logger.debug(`[proxy-streaming] ${context.url}`, {
+          requestId: context.requestId,
+          chunkNumber: this.chunkCount,
+          chunkSize: chunk.length,
+          totalBytes: this.totalBytes,
+          streaming: this.isStreaming,
+        });
       }
     } catch (error) {
       logger.error(`[${this.name}] Error logging chunk:`, error);
     }
-
     return chunk;
   }
 
@@ -161,55 +209,58 @@ class LoggingInterceptor implements ProxyInterceptor {
     metadata: ResponseMetadata
   ): Promise<void> {
     try {
-      // Capture chunks for logging (use local reference to avoid race conditions)
-      const chunksToLog = this.responseChunks;
-      const chunkCount = this.chunkCount;
-      const totalBytes = this.totalBytes;
-      const contentType = this.responseContentType || 'unknown';
       const isSessionSyncEndpoint = this.isSessionSyncEndpoint(context.url);
+      const contentType = this.responseContentType || 'unknown';
+      const streaming = this.isStreaming;
 
-      // CRITICAL: Clear state immediately for next request
-      this.responseChunks = [];
+      // Snapshot state, then clear immediately so next request starts fresh.
+      const headBuf = Buffer.concat(this.headPreview);
+      const tailBuf = Buffer.concat(this.tailPreview);
+      const nonStreamingBuf = streaming || this.nonStreamingTruncated
+        ? null
+        : Buffer.concat(this.nonStreamingChunks);
+      const truncated = this.nonStreamingTruncated;
+      const totalBytes = this.totalBytes;
+      const chunkCount = this.chunkCount;
+
+      this.headPreview = [];
+      this.tailPreview = [];
+      this.headBytes = 0;
+      this.tailBytes = 0;
+      this.nonStreamingChunks = [];
+      this.nonStreamingTruncated = false;
       this.chunkCount = 0;
       this.totalBytes = 0;
       this.responseContentType = null;
+      this.isStreaming = false;
 
-      // Process response body asynchronously (don't block)
-      // Use setImmediate to defer heavy work to next tick
+      // Defer heavy formatting work off the response hot path.
       setImmediate(() => {
         try {
-          let responseBodyParsed: any = null;
-          let isStreaming = false;
+          let responseBodyParsed: unknown = null;
 
-          if (chunksToLog.length > 0 && !isSessionSyncEndpoint) {
-            const fullBody = Buffer.concat(chunksToLog).toString('utf-8');
-
-            // Check if this is a streaming response (SSE)
-            isStreaming = contentType.includes('text/event-stream') || fullBody.startsWith('event:');
-
-            if (isStreaming) {
-              // For streaming responses, log first and last few events instead of full body
-              const lines = fullBody.split('\n').filter(line => line.trim());
-              const eventCount = lines.filter(line => line.startsWith('event:')).length;
-
-              responseBodyParsed = {
-                type: 'text/event-stream',
-                eventCount,
-                firstEvents: lines.slice(0, 10).join('\n'),
-                lastEvents: lines.slice(-10).join('\n'),
-                totalLines: lines.length,
-                bodySizeBytes: fullBody.length
-              };
-            } else if (contentType.includes('application/json')) {
-              // Parse JSON responses
+          if (isSessionSyncEndpoint) {
+            responseBodyParsed = '[omitted: session sync payload]';
+          } else if (streaming) {
+            responseBodyParsed = {
+              type: contentType,
+              mode: 'streaming-bounded',
+              totalBytes,
+              chunkCount,
+              headPreview: headBuf.toString('utf-8'),
+              tailPreview: tailBuf.toString('utf-8'),
+            };
+          } else if (truncated) {
+            responseBodyParsed = `[truncated: body exceeded ${LoggingInterceptor.NON_STREAM_MAX} bytes; total ${totalBytes}]`;
+          } else if (nonStreamingBuf && nonStreamingBuf.length > 0) {
+            const fullBody = nonStreamingBuf.toString('utf-8');
+            if (contentType.includes('application/json')) {
               try {
                 responseBodyParsed = JSON.parse(fullBody);
               } catch {
-                // Invalid JSON - log as string
                 responseBodyParsed = fullBody;
               }
             } else {
-              // Log raw for other content types (truncate if too long)
               responseBodyParsed = fullBody.length > 1000
                 ? fullBody.substring(0, 1000) + '... (truncated)'
                 : fullBody;
@@ -228,36 +279,19 @@ class LoggingInterceptor implements ProxyInterceptor {
               statusCode: metadata.statusCode,
               statusMessage: metadata.statusMessage,
               contentType,
-              isStreaming,
+              isStreaming: streaming,
               bytesSent: metadata.bytesSent,
               durationMs: metadata.durationMs,
               totalChunks: chunkCount,
               totalBytesStreamed: totalBytes,
-              responseBody: responseBodyParsed
-                ?? (isSessionSyncEndpoint ? '[omitted: session sync payload]' : null)
-            }
-          );
-
-          // Log completion marker to track if we reach this point
-          logger.debug(
-            `[proxy-complete] Request fully processed for ${context.url}`,
-            {
-              requestId: context.requestId,
-              sessionId: context.sessionId,
-              agent: context.agentName,
-              profile: context.profile,
-              provider: context.provider,
-              model: context.model,
-              finalStatus: 'success'
+              responseBody: responseBodyParsed,
             }
           );
         } catch (error) {
-          // Don't break proxy flow on logging errors
           logger.error(`[${this.name}] Error logging response (deferred):`, error);
         }
       });
     } catch (error) {
-      // Don't break proxy flow on logging errors
       logger.error(`[${this.name}] Error logging response:`, error);
     }
   }
