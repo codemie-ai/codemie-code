@@ -92,6 +92,7 @@ function fmt(n) {
 }
 
 function budgetColor(pct) {
+  if (pct < 0) return C.yellow;
   return pct > 85 ? C.red : pct > 30 ? C.yellow : C.green;
 }
 
@@ -165,46 +166,48 @@ async function main() {
     } catch {}
   }
 
-  let config;
-  try {
-    config = JSON.parse(await fs.readFile(CONFIG_FILE, 'utf8'));
-  } catch (e) {
-    process.stdout.write(`[budget: no config: ${e.message}]`);
-    return;
-  }
+  let budget = '', budgetPct = 0;
 
-  const profile = config.profiles?.[config.activeProfile];
-  if (!profile) { process.stdout.write('[budget: no profile]'); return; }
+  do {
+    let config;
+    try {
+      config = JSON.parse(await fs.readFile(CONFIG_FILE, 'utf8'));
+    } catch {
+      budget = '⚠ no config'; budgetPct = -1; break;
+    }
 
-  const { codeMieUrl, baseUrl } = profile;
-  const userEmail = config.userEmail;
-  if (!codeMieUrl || !userEmail || !baseUrl) {
-    process.stdout.write('[budget: incomplete profile]');
-    return;
-  }
+    const profile = config.profiles?.[config.activeProfile];
+    if (!profile) { budget = '⚠ no profile'; budgetPct = -1; break; }
 
-  const headers = await getAuthHeaders(codeMieUrl);
-  if (!headers) { process.stdout.write('[budget: no creds]'); return; }
+    const { codeMieUrl, baseUrl } = profile;
+    const userEmail = config.userEmail;
+    if (!codeMieUrl || !userEmail || !baseUrl) {
+      budget = '⚠ incomplete profile'; budgetPct = -1; break;
+    }
 
-  const [budgetResult, branch] = await Promise.all([
-    fetchBudget(baseUrl, headers, userEmail).catch(e => ({ error: e.message })),
-    branchPromise,
-  ]);
+    const headers = await getAuthHeaders(codeMieUrl);
+    if (!headers) { budget = '⚠ Reauthenticate'; budgetPct = -1; break; }
 
-  if (budgetResult.error) {
-    process.stdout.write(`[budget: ${budgetResult.error}]`);
-    return;
-  }
+    const budgetResult = await fetchBudget(baseUrl, headers, userEmail).catch(e => ({ error: e.message }));
+    if (budgetResult.error) {
+      budget = `⚠ ${budgetResult.error}`; budgetPct = -1; break;
+    }
 
-  await fs.writeFile(
-    CACHE_FILE,
-    JSON.stringify({ ts: Date.now(), value: budgetResult.text, pct: budgetResult.pct }),
-    'utf8'
-  );
+    await fs.writeFile(
+      CACHE_FILE,
+      JSON.stringify({ ts: Date.now(), value: budgetResult.text, pct: budgetResult.pct }),
+      'utf8'
+    );
+
+    budget = budgetResult.text;
+    budgetPct = budgetResult.pct;
+  } while (false);
+
+  const branch = await branchPromise;
 
   process.stdout.write(buildStatusLine({
     projectName, branch, model, ctxPct, tokIn, tokOut,
-    budget: budgetResult.text, budgetPct: budgetResult.pct,
+    budget, budgetPct,
   }));
 }
 
