@@ -718,7 +718,7 @@ async function cmdTeams(args) {
       for (const hc of hostedContents) {
         const contentId = hc['@microsoft.graph.temporaryId'] || hc.id;
         if (!contentId) continue;
-        if (!/^[\w\-]+$/.test(String(contentId))) {
+        if (!/^[\w\-+=\/]+$/.test(String(contentId))) {
           console.log(`  [inline image] skipped: unsafe contentId`);
           continue;
         }
