@@ -667,12 +667,53 @@ async function cmdTeams(args) {
     const data = await graphGet(`/me/chats/${args.messages}/messages`, token, { $top: limit });
     const msgs = data.value || [];
     if (args.json) { console.log(JSON.stringify(msgs, null, 2)); return; }
+
+    const saveDir = args.saveImages ? path.resolve(args.saveImages) : null;
+    if (saveDir && !fs.existsSync(saveDir)) fs.mkdirSync(saveDir, { recursive: true });
+
     console.log(`\nMessages in chat ${args.messages.slice(0, 20)}...:`);
     console.log('─'.repeat(60));
     for (const m of [...msgs].reverse()) {
       const sender = m.from?.user?.displayName || 'System';
-      const body   = stripHtml(m.body?.content || '').slice(0, 200);
+      const body   = stripHtml(m.body?.content || '').slice(0, 500);
       console.log(`[${fmtDt(m.createdDateTime)}] ${sender}: ${body}`);
+
+      const attachments = m.attachments || [];
+      for (const att of attachments) {
+        if (att.contentType === 'reference') {
+          console.log(`  [attachment] ${att.name || 'file'}: ${att.contentUrl || att.content || ''}`);
+        } else if (att.contentType && att.contentType.startsWith('image/')) {
+          console.log(`  [image] ${att.name || 'image'} (${att.contentType})`);
+        } else if (att.name) {
+          console.log(`  [attachment] ${att.name} (${att.contentType || 'unknown type'})`);
+        }
+      }
+
+      const hostedContents = m.hostedContents || [];
+      for (const hc of hostedContents) {
+        const contentId = hc['@microsoft.graph.temporaryId'] || hc.id;
+        if (!contentId) continue;
+        try {
+          const url = `${GRAPH_BASE}/me/chats/${args.messages}/messages/${m.id}/hostedContents/${contentId}/$value`;
+          const res = await httpsRequest(url, { headers: { Authorization: `Bearer ${token}` } });
+          const contentType = hc.contentType || 'application/octet-stream';
+          const ext = contentType.includes('png') ? 'png'
+            : contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg'
+            : contentType.includes('gif') ? 'gif'
+            : contentType.includes('webp') ? 'webp'
+            : 'bin';
+          const filename = `${m.id.slice(-8)}_${contentId.slice(-8)}.${ext}`;
+          if (saveDir) {
+            const outPath = path.join(saveDir, filename);
+            fs.writeFileSync(outPath, Buffer.from(res.body, 'binary'));
+            console.log(`  [image saved] ${outPath}`);
+          } else {
+            console.log(`  [inline image] ${filename} (${contentType}, ${res.body.length} bytes) — use --save-images DIR to save`);
+          }
+        } catch (e) {
+          console.log(`  [inline image] could not fetch content: ${e.message}`);
+        }
+      }
     }
     return;
   }
@@ -1204,7 +1245,7 @@ Data:
            [--create TITLE --start DT --end DT [--location L] [--timezone TZ]]
            [--availability --start DT --end DT]
   sharepoint [--sites] [--site ID [--path P]] [--download ID [--output FILE]] [--json]
-  teams [--chats] [--messages CHAT_ID] [--send MSG --chat-id ID] [--teams-list]
+  teams [--chats] [--messages CHAT_ID [--save-images DIR]] [--send MSG --chat-id ID] [--teams-list]
         [--lookup-user EMAIL] [--dm EMAIL --send MSG] [--json]
   channels --team-id ID --list
            --team-id ID --channel-id ID --messages [--limit N]
