@@ -120,12 +120,12 @@ function graphDownload(endpoint, token) {
       https.get({ hostname: u.hostname, path: u.pathname + u.search, headers }, res => {
         if (res.statusCode === 301 || res.statusCode === 302) {
           res.resume();
-          const redirectUrl = new URL(res.headers.location);
-          if (redirectUrl.hostname !== 'graph.microsoft.com') {
-            reject(new Error(`Redirect to untrusted host: ${redirectUrl.hostname}`));
-            return;
-          }
-          fetch(res.headers.location, null).then(resolve, reject);
+          const location = res.headers.location;
+          if (!location) { reject(new Error('Redirect with no Location header')); return; }
+          let redirectUrl;
+          try { redirectUrl = new URL(location, `https://${u.hostname}`); } catch { reject(new Error(`Invalid redirect URL: ${location}`)); return; }
+          if (redirectUrl.hostname !== u.hostname) { reject(new Error(`Redirect to untrusted host: ${redirectUrl.hostname}`)); return; }
+          fetch(redirectUrl.href, null).then(resolve, reject);
           return;
         }
         const chunks = [];
@@ -364,6 +364,10 @@ function stripHtml(s) {
       .replace(/&gt;/g, '>')
       .replace(/\r?\n\s*\r?\n/g, '\n')
       .trim();
+}
+
+function stripAnsi(s) {
+  return (s || '').replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
 }
 
 function pad(str, len) {
@@ -667,13 +671,13 @@ async function cmdTeams(args) {
     return;
   }
 
-  if (args.messages) {
+  if ('messages' in args) {
     if (typeof args.messages !== 'string' || !args.messages) {
       console.error('Error: --messages requires a CHAT_ID argument.');
       process.exit(1);
     }
-    // Graph returns HTTP 400 if $select or $expand is used on the Teams messages endpoint — pass $top only.
-    const data = await graphGet(`/me/chats/${args.messages}/messages`, token, { $top: limit });
+    // Graph returns HTTP 400 if $select is used on the Teams messages endpoint — pass $top only.
+    const data = await graphGet(`/me/chats/${args.messages}/messages`, token, { $top: limit, $expand: 'hostedContents' });
     const msgs = data.value || [];
     if (args.json) { console.log(JSON.stringify(msgs, null, 2)); return; }
 
@@ -689,12 +693,14 @@ async function cmdTeams(args) {
 
       const attachments = m.attachments || [];
       for (const att of attachments) {
+        const name = stripAnsi(att.name || '');
+        const ct   = stripAnsi(att.contentType || '');
         if (att.contentType === 'reference') {
-          console.log(`  [attachment] ${att.name || 'file'}: ${att.contentUrl || att.content || ''}`);
-        } else if (att.contentType && att.contentType.startsWith('image/')) {
-          console.log(`  [image] ${att.name || 'image'} (${att.contentType})`);
-        } else if (att.name) {
-          console.log(`  [attachment] ${att.name} (${att.contentType || 'unknown type'})`);
+          console.log(`  [attachment] ${name || 'file'}: ${stripAnsi(att.contentUrl || att.content || '')}`);
+        } else if (ct && ct.startsWith('image/')) {
+          console.log(`  [image] ${name || 'image'} (${ct})`);
+        } else if (name) {
+          console.log(`  [attachment] ${name} (${ct || 'unknown type'})`);
         }
       }
 
@@ -702,8 +708,12 @@ async function cmdTeams(args) {
       for (const hc of hostedContents) {
         const contentId = hc['@microsoft.graph.temporaryId'] || hc.id;
         if (!contentId) continue;
-        if (!/^[\w\-]+$/.test(contentId)) {
+        if (!/^[\w\-]+$/.test(String(contentId))) {
           console.log(`  [inline image] skipped: unsafe contentId`);
+          continue;
+        }
+        if (!m.id || !/^[\w\-:@.]+$/.test(String(m.id))) {
+          console.log(`  [inline image] skipped: unsafe message id`);
           continue;
         }
         try {
