@@ -52,10 +52,11 @@ class LoggingInterceptor implements ProxyInterceptor {
 
       // Get request content type
       const contentType = context.headers['content-type'] || context.headers['Content-Type'] || 'unknown';
+      const isSessionSyncEndpoint = this.isSessionSyncEndpoint(context.url);
 
       // Parse request body based on content type
       let requestBodyParsed: any = null;
-      if (context.requestBody) {
+      if (context.requestBody && !isSessionSyncEndpoint) {
         try {
           const bodyString = context.requestBody.toString('utf-8');
           if (contentType.includes('application/json')) {
@@ -83,7 +84,7 @@ class LoggingInterceptor implements ProxyInterceptor {
           contentType,
           bodySize: context.requestBody?.length || 0,
           headers: this.sanitizeHeaders(context.headers),
-          requestBody: requestBodyParsed
+          requestBody: isSessionSyncEndpoint ? '[omitted: session sync payload]' : requestBodyParsed
         }
       );
     } catch (error) {
@@ -165,6 +166,7 @@ class LoggingInterceptor implements ProxyInterceptor {
       const chunkCount = this.chunkCount;
       const totalBytes = this.totalBytes;
       const contentType = this.responseContentType || 'unknown';
+      const isSessionSyncEndpoint = this.isSessionSyncEndpoint(context.url);
 
       // CRITICAL: Clear state immediately for next request
       this.responseChunks = [];
@@ -179,7 +181,7 @@ class LoggingInterceptor implements ProxyInterceptor {
           let responseBodyParsed: any = null;
           let isStreaming = false;
 
-          if (chunksToLog.length > 0) {
+          if (chunksToLog.length > 0 && !isSessionSyncEndpoint) {
             const fullBody = Buffer.concat(chunksToLog).toString('utf-8');
 
             // Check if this is a streaming response (SSE)
@@ -232,6 +234,7 @@ class LoggingInterceptor implements ProxyInterceptor {
               totalChunks: chunkCount,
               totalBytesStreamed: totalBytes,
               responseBody: responseBodyParsed
+                ?? (isSessionSyncEndpoint ? '[omitted: session sync payload]' : null)
             }
           );
 
@@ -296,5 +299,10 @@ class LoggingInterceptor implements ProxyInterceptor {
     }
 
     return filtered;
+  }
+
+  private isSessionSyncEndpoint(url: string): boolean {
+    return /^\/v1\/metrics(?:[/?#]|$)/i.test(url) ||
+      /^\/v1\/conversations(?:[/?#]|$)/i.test(url);
   }
 }

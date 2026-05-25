@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import stripAnsi from 'strip-ansi';
 import { renderModeSelectionUI } from '../ui.js';
 import type { ModeSelectionState } from '../types.js';
 import { CONFIGURATION_CHOICE } from '../constants.js';
@@ -22,8 +23,8 @@ describe('Configuration UI', () => {
 			expect(output).toContain('How would you like to register assistants?');
 
 			// Should contain all choice labels
-			expect(output).toContain('Claude Subagents');
-			expect(output).toContain('Claude Skills');
+			expect(output).toContain('Agent Entries');
+			expect(output).toContain('Agent Skills');
 			expect(output).toContain('Manual Configuration');
 
 			// Should contain instructions
@@ -39,7 +40,7 @@ describe('Configuration UI', () => {
 			const output = renderModeSelectionUI(state);
 
 			expect(output).toBeTruthy();
-			expect(output).toContain('Claude Subagents');
+			expect(output).toContain('Agent Entries');
 		});
 
 		it('should render with skills selected', () => {
@@ -49,7 +50,7 @@ describe('Configuration UI', () => {
 			const output = renderModeSelectionUI(state);
 
 			expect(output).toBeTruthy();
-			expect(output).toContain('Claude Skills');
+			expect(output).toContain('Agent Skills');
 		});
 
 		it('should render with manual selected', () => {
@@ -68,8 +69,8 @@ describe('Configuration UI', () => {
 			};
 			const output = renderModeSelectionUI(state);
 
-			expect(output).toContain('Register all as Claude agents (@slug)');
-			expect(output).toContain('Register all as Claude skills (/slug)');
+			expect(output).toContain('Register as agent entries where supported');
+			expect(output).toContain('Register all as skills (/slug)');
 			expect(output).toContain('Choose individually for each assistant');
 		});
 
@@ -106,8 +107,8 @@ describe('Configuration UI', () => {
 			// All outputs should have similar structure
 			outputs.forEach((output) => {
 				expect(output).toContain('Configure Registration');
-				expect(output).toContain('Claude Subagents');
-				expect(output).toContain('Claude Skills');
+				expect(output).toContain('Agent Entries');
+				expect(output).toContain('Agent Skills');
 				expect(output).toContain('Manual Configuration');
 			});
 
@@ -136,6 +137,18 @@ describe('Configuration UI', () => {
 
 			// Should contain cursor indicator
 			expect(output).toContain('›');
+		});
+
+		it('should align choice rows with stable cursor and radio gutters', () => {
+			const state: ModeSelectionState = {
+				selectedChoice: CONFIGURATION_CHOICE.SUBAGENTS,
+			};
+			const output = renderModeSelectionUI(state);
+			const visibleOutput = stripAnsi(output);
+
+			expect(visibleOutput).toContain('› ● Agent Entries');
+			expect(visibleOutput).toContain('  ○ Agent Skills');
+			expect(visibleOutput).toContain('  ○ Manual Configuration');
 		});
 	});
 });

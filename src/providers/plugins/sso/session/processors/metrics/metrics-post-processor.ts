@@ -35,17 +35,18 @@ export function postProcessMetric(
   // 1. Truncate repository path
   sanitized.attributes.repository = truncateProjectPath(sanitized.attributes.repository);
 
-  // 2. Filter and sanitize errors
-  if (sanitized.attributes.had_errors && sanitized.attributes.errors) {
-    sanitized.attributes.errors = filterAndSanitizeErrors(
-      sanitized.attributes.errors,
-      agentConfig
-    );
-
-    // If all errors were filtered, update had_errors flag
-    if (Object.keys(sanitized.attributes.errors).length === 0) {
+  // 2. Filter error_tools based on agent exclusion list
+  if (sanitized.attributes.had_errors) {
+    const attrs = sanitized.attributes as any;
+    if (attrs.error_tools?.length) {
+      attrs.error_tools = filterErrorTools(attrs.error_tools, agentConfig);
+    }
+    // If all tools were filtered, clear messages too — correlation is lost, so we cannot
+    // determine which messages came from excluded tools; intent of exclusion is no reporting.
+    if (!attrs.error_tools?.length) {
+      delete attrs.error_tools;
+      delete attrs.error_messages;
       sanitized.attributes.had_errors = false;
-      delete sanitized.attributes.errors;
     }
   }
 
@@ -105,38 +106,29 @@ export function truncateProjectPath(fullPath: string): string {
 }
 
 /**
- * Filter and sanitize errors based on agent configuration
- * Removes errors from excluded tools and sanitizes remaining errors
- *
- * @param errors - Map of tool names to error message arrays
- * @param agentConfig - Optional agent-specific configuration (overrides global defaults)
+ * Filter error_tools list based on agent exclusion config.
+ * Per-tool→message correlation is intentionally absent in v2 schema,
+ * so only the tools list is filtered; error_messages are kept as-is.
  */
-export function filterAndSanitizeErrors(
-  errors: Record<string, string[]>,
+export function filterErrorTools(
+  errorTools: string[],
   agentConfig?: AgentMetricsConfig
-): Record<string, string[]> {
-  // Get excluded tools from agent config or fall back to global defaults
-  const excludedTools = agentConfig?.excludeErrorsFromTools
+): string[] {
+  const excludedTools: string[] = agentConfig?.excludeErrorsFromTools
     || (METRICS_CONFIG as any).excludeErrorsFromTools
     || [];
 
-  logger.debug(`[post-processor] Filtering errors, excluded tools: [${excludedTools.join(', ')}]`);
+  if (excludedTools.length === 0) return errorTools;
 
-  const filtered: Record<string, string[]> = {};
+  logger.debug(`[post-processor] Filtering error_tools, excluded: [${excludedTools.join(', ')}]`);
 
-  for (const [toolName, errorMessages] of Object.entries(errors)) {
-    // Skip errors from excluded tools
-    if (excludedTools.includes(toolName)) {
-      logger.debug(`[post-processor] Excluding errors from tool: ${toolName}`);
-      continue;
+  return errorTools.filter(tool => {
+    if (excludedTools.includes(tool)) {
+      logger.debug(`[post-processor] Excluding tool from error_tools: ${tool}`);
+      return false;
     }
-
-    // Sanitize error messages
-    const sanitizedMessages = errorMessages.map(sanitizeError);
-    filtered[toolName] = sanitizedMessages;
-  }
-
-  return filtered;
+    return true;
+  });
 }
 
 /**

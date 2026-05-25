@@ -10,7 +10,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.3%2B-blue.svg)](https://www.typescriptlang.org/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-> **Unified AI Coding Assistant CLI** - Manage Claude Code, Google Gemini, OpenCode, and custom AI agents from one powerful command-line interface. Multi-provider support (OpenAI, Azure OpenAI, AWS Bedrock, LiteLLM, Ollama, Enterprise SSO, JWT Bearer Auth). Built-in LangGraph agent with file operations, command execution, and planning tools. Cross-platform support for Windows, Linux, and macOS.
+> **Unified AI Coding Assistant CLI** - Manage Claude Code, OpenAI Codex, Google Gemini, OpenCode, and custom AI agents from one powerful command-line interface. Multi-provider support (OpenAI, Azure OpenAI, AWS Bedrock, LiteLLM, Ollama, Enterprise SSO, JWT Bearer Auth). Built-in LangGraph agent with file operations, command execution, and planning tools. Cross-platform support for Windows, Linux, and macOS.
 
 ---
 
@@ -22,7 +22,7 @@
 
 CodeMie CLI is the all-in-one AI coding assistant for developers.
 
-- ✨ **One CLI, Multiple AI Agents** - Switch between Claude Code, Gemini, OpenCode, and built-in agent.
+- ✨ **One CLI, Multiple AI Agents** - Switch between Claude Code, OpenAI Codex, Gemini, OpenCode, and built-in agent.
 - 🔄 **Multi-Provider Support** - OpenAI, Azure OpenAI, AWS Bedrock, LiteLLM, Ollama, Enterprise SSO, and JWT Bearer Auth.
 - 🚀 **Built-in Agent** - A powerful LangGraph-based assistant with file operations, command execution, and planning tools.
 - 🖥️ **Cross-Platform** - Full support for Windows, Linux, and macOS with platform-specific optimizations.
@@ -45,9 +45,11 @@ Install CodeMie using the instructions for your shell, then run:
 codemie setup
 codemie doctor
 codemie install claude --supported
+codemie install codex --supported
 codemie-claude "Review my API code"
-codemie-code "Analyze this codebase"
+codemie-codex "Refactor this service"
 codemie --task "Generate unit tests"
+codemie skills find pdf                    # discover agent skills (EPAM internal + skills.sh)
 claude mcp add my-server -- codemie-mcp-proxy "https://mcp-server.example.com/sse"
 ```
 
@@ -142,7 +144,7 @@ npm install @codemieai/code
 npx @codemieai/code --help
 ```
 
-**Note:** Agent shortcuts (`codemie-claude`, `codemie-code`, `codemie-opencode`, etc.) require global installation.
+**Note:** Agent shortcuts (`codemie-claude`, `codemie-codex`, `codemie-code`, `codemie-opencode`, etc.) require global installation.
 
 ### Installation Troubleshooting
 
@@ -195,10 +197,11 @@ codemie-code "Help me refactor this component"
 
 ### External Agents
 
-You can also install and use external agents like Claude Code and Gemini.
+You can also install and use external agents like Claude Code, OpenAI Codex, Gemini, and OpenCode.
 
 **Available Agents:**
 - **Claude Code** (`codemie-claude`) - Anthropic's official CLI with advanced code understanding
+- **OpenAI Codex** (`codemie-codex`) - OpenAI's coding agent CLI with CodeMie-managed model/provider configuration
 - **Claude Code ACP** (`codemie-claude-acp`) - Claude Code for IDE integration via ACP protocol (Zed, JetBrains, Emacs)
 - **Gemini CLI** (`codemie-gemini`) - Google's Gemini for coding tasks
 - **OpenCode** (`codemie-opencode`) - Open-source AI coding assistant with session analytics
@@ -209,6 +212,10 @@ codemie install claude --supported
 
 # Use the agent
 codemie-claude "Review my API code"
+
+# Install Codex
+codemie install codex --supported
+codemie-codex "Refactor this authentication flow"
 
 # Install Gemini
 codemie install gemini
@@ -257,17 +264,22 @@ codemie install claude-acp
 
 **Version Management:**
 
-CodeMie manages agent versions to ensure compatibility. For Claude Code:
+CodeMie manages agent versions to ensure compatibility. For example, with Claude Code or OpenAI Codex:
 
 ```bash
 # Install latest supported version (recommended)
 codemie install claude --supported
 
+# Install latest supported Codex version (recommended)
+codemie install codex --supported
+
 # Install specific version
 codemie install claude 2.1.22
+codemie install codex 0.129.0
 
 # Install latest available version
 codemie install claude
+codemie install codex
 ```
 
 Auto-updates are automatically disabled to maintain version control. CodeMie notifies you when running a different version than supported.
@@ -352,6 +364,33 @@ codemie skill sync      # Sync skills to Claude Code
 codemie skill reload    # Clear skill cache
 ```
 
+### Manage skills.sh and EPAM Skills (`codemie skills`)
+
+`codemie skills` is a SSO-gated wrapper around the upstream [skills.sh](https://skills.sh) CLI. It lets you discover, install, update, and remove agent skills from any compatible catalog while keeping CodeMie's authentication, telemetry, and EPAM-internal catalog support in one place.
+
+```bash
+# Discover skills (two-section results: EPAM Internal first, public skills.sh second)
+codemie skills find pdf
+codemie skills find pdf --json
+codemie skills find pdf --limit 25
+
+# Install / update / remove skills via the upstream skills CLI
+codemie skills add anthropics/skills --skill pdf --agent claude-code -y
+codemie skills update                      # update everything in the current scope
+codemie skills remove pdf -y               # remove a specific skill
+
+# List installed skills (use --global for user-scope)
+codemie skills list
+codemie skills list --global --json
+```
+
+Notes:
+
+- **EPAM Internal catalog is opt-in.** Until your team configures the internal endpoint, `codemie skills find` shows the friendly placeholder for the internal section and returns public results from skills.sh. Enable the internal catalog by exporting `CODEMIE_SKILLS_SEARCH_URL` or by adding `skillsSearchUrl` to your CodeMie profile (`~/.codemie/codemie-cli.config.json`).
+- **Authentication.** Every `codemie skills *` subcommand requires an active CodeMie SSO session. Run `codemie setup` or `codemie profile login` first.
+- **Telemetry.** A single lifecycle event is recorded per invocation (`completed` or `failed`). The raw query string is never sent.
+- **Pass-through.** `codemie skills find` (no query) hands off to the upstream `skills find` interactive prompt, so the existing UX still works while the two-section view becomes the default for direct queries.
+
 ### Claude Code Built-in Commands
 
 When using Claude Code (`codemie-claude`), you get access to powerful built-in commands for project documentation:
@@ -409,9 +448,22 @@ codemie analytics        # View usage analytics (sessions, tokens, costs, tools)
 codemie workflow <cmd>   # Manage CI/CD workflows
 codemie doctor           # Health check and diagnostics
 codemie mcp-proxy <url>  # Stdio-to-HTTP MCP proxy with OAuth
+codemie codebase ui      # Start and open Codebase Memory graph UI
 ```
 
 For a full command reference, see the [Commands Documentation](docs/COMMANDS.md).
+
+## Codebase Memory MCP
+
+CodeMie can install and orchestrate `codebase-memory-mcp` with its graph visualization UI:
+
+```bash
+codemie install codebase-memory
+codemie-code init codebase-memory
+codemie codebase ui
+```
+
+Use `codemie codebase start|stop|status` to manage the UI process, or `codemie codebase open` to open the URL only.
 
 ## Connect Claude Desktop via CodeMie Proxy
 
@@ -423,29 +475,17 @@ Use Claude Desktop 3P through CodeMie proxy routing to capture `claude-desktop` 
 - a valid CodeMie SSO profile
 - Claude Desktop 3P installed
 
-### 1. Select the active CodeMie profile
-
-```bash
-codemie profile switch codemie-prod
-```
-
-### 2. Connect Claude Desktop
+### 1. Connect Claude Desktop
 
 ```bash
 codemie proxy connect desktop
 ```
 
-By default this uses your current active CodeMie profile. Override it for one run with:
-
-```bash
-codemie proxy connect desktop --profile codemie-new
-```
-
-### 3. Restart Claude Desktop
+### 2. Restart Claude Desktop
 
 Quit and reopen Claude Desktop after the proxy configuration is written.
 
-### 4. Inspect and troubleshoot
+### 3. Inspect and troubleshoot
 
 ```bash
 codemie proxy status

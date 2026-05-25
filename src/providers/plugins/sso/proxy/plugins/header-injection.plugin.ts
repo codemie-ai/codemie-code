@@ -32,6 +32,12 @@ class HeaderInjectionInterceptor implements ProxyInterceptor {
     context.headers['X-CodeMie-Request-ID'] = context.requestId;
     context.headers['X-CodeMie-Session-ID'] = context.sessionId;
 
+    // LiteLLM can use these headers for Responses API session affinity when
+    // its router is configured with session-aware pre-call checks.
+    if (this.context.config.clientType === 'codemie-codex') {
+      context.headers['x-litellm-session-id'] = context.sessionId;
+    }
+
     // Add CLI version header
     const cliVersion = this.context.config.version || '0.0.0';
     context.headers['X-CodeMie-CLI'] = `codemie-cli/${cliVersion}`;

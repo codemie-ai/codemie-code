@@ -6,6 +6,7 @@ import chalk from 'chalk';
 import type { ModeSelectionState, ConfigurationChoice } from './types.js';
 import { CONFIGURATION_CHOICE, CONFIGURATION_CHOICE_LABELS, CONFIGURATION_CHOICE_DESCRIPTIONS, UI_TEXT } from './constants.js';
 import { COLOR } from '../constants.js';
+import { buildSingleChoiceRow } from '@/cli/commands/shared/selection/ui.js';
 
 /**
  * Build top line (purple separator)
@@ -40,22 +41,15 @@ function buildChoiceOption(
 	const label = CONFIGURATION_CHOICE_LABELS[choice];
 	const description = CONFIGURATION_CHOICE_DESCRIPTIONS[choice];
 
-	// Radio button indicator
-	const radio = isSelected
-		? chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b)('●')
-		: '○';
-
-	// Cursor indicator
-	const cursor = isCursor
-		? chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b)('› ')
-		: '  ';
-
-	// Label formatting
-	const formattedLabel = isCursor
-		? chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b).bold(label)
-		: chalk.white(label);
-
-	return `${cursor}${radio} ${formattedLabel}\n  ${chalk.dim(description)}`;
+	return buildSingleChoiceRow({
+		label,
+		isCursor,
+		isSelected,
+		description,
+		formatLabel: (value, cursorActive) => cursorActive
+			? chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b).bold(value)
+			: chalk.white(value),
+	});
 }
 
 /**

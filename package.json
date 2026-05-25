@@ -1,6 +1,6 @@
 {
   "name": "@codemieai/code",
-  "version": "0.0.58",
+  "version": "0.2.1",
   "description": "Unified AI coding assistant CLI - Manage Claude Code, Gemini & custom agents. Multi-provider support (OpenAI, Azure, LiteLLM, SSO). Built-in LangGraph agent with file operations & git integration.",
   "type": "module",
   "main": "dist/index.js",
@@ -12,6 +12,7 @@
     "codemie-claude-acp": "./bin/codemie-claude-acp.js",
     "codemie-gemini": "./bin/codemie-gemini.js",
     "codemie-opencode": "./bin/codemie-opencode.js",
+    "codemie-codex": "./bin/codemie-codex.js",
     "codemie-mcp-proxy": "./bin/codemie-mcp-proxy.js",
     "proxy-daemon": "./bin/proxy-daemon.js"
   },
@@ -121,7 +122,7 @@
     "@modelcontextprotocol/server": "^2.0.0-alpha.2",
     "chalk": "^5.3.0",
     "cli-table3": "^0.6.5",
-    "codemie-sdk": "^0.1.417",
+    "codemie-sdk": "^0.1.446",
     "commander": "^11.1.0",
     "cors": "^2.8.5",
     "dedent": "^1.7.1",
@@ -136,6 +137,7 @@
     "minimatch": "^10.1.1",
     "open": "^10.2.0",
     "ora": "^7.0.1",
+    "skills": "^1.5.3",
     "strip-ansi": "^7.1.2",
     "yaml": "^2.8.3",
     "zod": "^4.1.12"

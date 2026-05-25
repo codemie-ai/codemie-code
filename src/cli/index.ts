@@ -26,14 +26,17 @@ import { createLogCommand } from './commands/log/index.js';
 import { createHookCommand } from './commands/hook.js';
 import { createSoundCommand } from './commands/sound.js';
 import { createSkillCommand } from './commands/skill.js';
+import { createSkillsCommand } from './commands/skills/index.js';
 import { createPluginCommand } from './commands/plugin.js';
 import { createOpencodeMetricsCommand } from './commands/opencode-metrics.js';
 import { createTestMetricsCommand } from './commands/test-metrics.js';
 import { createModelsCommand } from './commands/models.js';
 import { createAssistantsCommand } from './commands/assistants/index.js';
+import { createSdkCommand } from './commands/sdk/index.js';
 import { createMcpCommand } from './commands/mcp/index.js';
 import { createMcpProxyCommand } from './commands/mcp-proxy.js';
 import { createProxyCommand } from './commands/proxy/index.js';
+import { createCodebaseCommand } from './commands/codebase/index.js';
 import { FirstTimeExperience } from './first-time.js';
 import { getDirname } from '../utils/paths.js';
 
@@ -61,6 +64,7 @@ Claude Desktop 3P:
   codemie proxy connect desktop           Connect Claude Desktop through CodeMie proxy
   codemie proxy inspect desktop           Inspect Desktop proxy state, sessions, and sync
   codemie proxy stop                      Stop the local proxy daemon
+  codemie codebase ui                     Start and open Codebase Memory graph UI
 
 Profile selection:
   Uses the active CodeMie profile by default.
@@ -84,13 +88,16 @@ program.addCommand(createLogCommand());
 program.addCommand(createHookCommand());
 program.addCommand(createSoundCommand());
 program.addCommand(createSkillCommand());
+program.addCommand(createSkillsCommand());
 program.addCommand(createPluginCommand());
 program.addCommand(createOpencodeMetricsCommand());
 program.addCommand(createTestMetricsCommand());
 program.addCommand(createModelsCommand());
+program.addCommand(createSdkCommand());
 program.addCommand(createMcpCommand());
 program.addCommand(createMcpProxyCommand());
 program.addCommand(createProxyCommand());
+program.addCommand(createCodebaseCommand());
 
 // Check for --task option before parsing commands
 const taskIndex = process.argv.indexOf('--task');

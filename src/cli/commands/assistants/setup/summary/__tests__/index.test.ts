@@ -217,7 +217,7 @@ describe('Summary Display - summary/index.ts', () => {
 			displayCurrentlyRegistered(config);
 
 			expect(consoleLogSpy).toHaveBeenCalledWith(
-				expect.stringContaining('@agent-assistant in code or claude')
+				expect.stringContaining('@agent-assistant in Claude Code')
 			);
 		});
 
@@ -239,10 +239,7 @@ describe('Summary Display - summary/index.ts', () => {
 			displayCurrentlyRegistered(config);
 
 			expect(consoleLogSpy).toHaveBeenCalledWith(
-				expect.stringContaining('/skill-assistant in claude')
-			);
-			expect(consoleLogSpy).toHaveBeenCalledWith(
-				expect.stringContaining('@skill-assistant in code')
+				expect.stringContaining('@skill-assistant in Claude Code')
 			);
 		});
 
@@ -264,7 +261,7 @@ describe('Summary Display - summary/index.ts', () => {
 			displayCurrentlyRegistered(config);
 
 			expect(consoleLogSpy).toHaveBeenCalledWith(
-				expect.stringContaining('@no-mode in code or claude')
+				expect.stringContaining('@no-mode in Claude Code')
 			);
 		});
 

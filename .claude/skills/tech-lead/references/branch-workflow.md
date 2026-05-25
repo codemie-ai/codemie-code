@@ -1,152 +1,84 @@
 # Git Branch Workflow
 
-## Important: Branch and Worktree Creation
+## Purpose
 
-**Do NOT create branches or worktrees manually.** The `superpowers:using-git-worktrees` skill handles all branch and worktree setup. Invoke it with the determined branch name (Phase 1 Step 3 in `tech-lead`). All work documented below assumes you are already inside the worktree.
+This guide defines the branch and PR workflow for the CodeMie Code TypeScript CLI repository.
 
-## Branch Naming Convention
+## Branch Naming
 
-### Standard Format
-
-**Jira ticket:** Use the ticket ID exactly as it appears — `EPMCDME-XXXXX`. No prefixes, no suffixes, exact case.
-
-**Free-form task:** Use `feature/descriptive-name` or `task/descriptive-name` in kebab-case. Confirm with user before proceeding.
-
-**Rules:**
-- Jira tickets: uppercase EPMCDME, exact ID, nothing else
-- Free-form: `feature/` or `task/` prefix, kebab-case description
-- Never mix tickets — one branch per ticket
-
-## Making Commits
-
-Follow Conventional Commits format:
+Use a descriptive branch name:
 
 ```bash
-git add path/to/changed/files
-git commit -m "feat(scope): description"
+feat/add-provider-command
+fix/sso-config-validation
+docs/update-skills-guide
 ```
 
-**For Jira tickets, reference the ticket:**
-```bash
-git commit -m "feat(agents): add logging to user endpoint
+For Jira-backed work, include the ticket when it helps traceability:
 
-EPMCDME-10500"
+```bash
+feat/EPMCDME-12345-provider-command
+fix/EPMCDME-12345-sso-validation
 ```
 
-**Commit types:** `feat`, `fix`, `refactor`, `test`, `docs`, `chore`
+## Branch Setup
 
-## Keeping Branch Updated
-
-Regularly rebase onto main to avoid drift:
+Start from the latest `main` unless the user explicitly asks otherwise:
 
 ```bash
-# Rebase onto latest main (preferred — clean history)
 git fetch origin
-git rebase origin/main
-
-# If conflicts arise, resolve then continue:
-# 1. Fix conflicting files
-# 2. git add <resolved-files>
-# 3. git rebase --continue
-
-# Push rebased branch
-git push --force-with-lease origin <branch-name>
+git checkout main
+git pull origin main
+git checkout -b <type>/<description>
+git push -u origin <type>/<description>
 ```
 
-## Pushing Changes
+If the working tree is dirty, stop and ask the user whether to commit, stash, or keep the current branch as-is.
+
+## Commit Format
+
+Use conventional commits:
 
 ```bash
-# Subsequent pushes
-git push
-
-# After rebase (requires force push)
-git push --force-with-lease origin <branch-name>
+git commit -m "feat(agents): add provider setup flow"
+git commit -m "fix(cli): validate profile arguments"
+git commit -m "docs(skills): update product-owner workflow"
 ```
 
-## Pre-Merge Checklist
+Common scopes: `cli`, `agents`, `providers`, `config`, `workflows`, `utils`, `skills`, `deps`.
 
-Before creating a merge request:
+## Validation
+
+Follow repository policy: only run tests when the user explicitly asks. Common checks:
 
 ```bash
-# 1. Ensure all changes committed
-git status
-# Should show: "nothing to commit, working tree clean"
-
-# 2. Sync with latest main
-git fetch origin
-git rebase origin/main
-
-# 3. Run linting
+npm run license-check
 npm run lint
-
-# 4. Run tests (only if user explicitly requested)
-npm test
-
-# 5. Verify no debug code
-git diff origin/main --name-only | xargs grep -l "TODO\|FIXME\|console.log\|debugger" || true
-
-# 6. Push final changes
-git push --force-with-lease origin <branch-name>
+npm run typecheck
+npm run build
+npm run validate:secrets
 ```
 
-## Creating Merge Request
-
-After implementation is complete:
+If tests are requested:
 
 ```bash
-gh pr create --title "<type>(scope): description" --body "$(cat <<'EOF'
-## Summary
-- <change 1>
-- <change 2>
-- <change 3>
-
-## Test Plan
-- [ ] Unit tests pass
-- [ ] Manual testing completed
-- [ ] Linting passes
-
-## Related
-- Jira: EPMCDME-XXXXX
-
-🤖 Generated with Claude Code
-EOF
-)"
+npm test
+npm run test:unit
+npm run test:integration
+npm run test:coverage
 ```
 
-## Branch Cleanup
+## Pull Request
+
+Use the `codemie-pr` skill for commit, push, and GitHub PR creation. It reads `.github/PULL_REQUEST_TEMPLATE.md` and avoids duplicate PRs for the current branch.
+
+## Cleanup
 
 After merge:
 
 ```bash
-# Switch back to main
 git checkout main
-
-# Pull merged changes
 git pull origin main
-
-# Delete local branch
 git branch -d <branch-name>
-
-# Delete remote branch (usually auto-deleted)
-git push origin --delete <branch-name>
-
-# Prune deleted remote branches
 git fetch --prune
 ```
-
-## Best Practices
-
-### Do's
-✅ Use `superpowers:using-git-worktrees` to create branches and worktrees
-✅ Keep branch focused on single ticket
-✅ Commit frequently with clear Conventional Commit messages
-✅ Sync with main regularly via rebase
-✅ Run linting before pushing
-✅ Clean up branches after merge
-
-### Don'ts
-❌ Don't create branches manually with `git checkout -b`
-❌ Don't work directly on main
-❌ Don't mix multiple tickets in one branch
-❌ Don't force push without `--force-with-lease`
-❌ Don't leave branches unmerged for weeks

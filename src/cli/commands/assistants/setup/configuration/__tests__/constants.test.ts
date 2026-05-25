@@ -28,8 +28,8 @@ describe('Configuration Constants', () => {
 
 	describe('CONFIGURATION_CHOICE_LABELS', () => {
 		it('should have labels for all choices', () => {
-			expect(CONFIGURATION_CHOICE_LABELS.subagents).toBe('Claude Subagents');
-			expect(CONFIGURATION_CHOICE_LABELS.skills).toBe('Claude Skills');
+			expect(CONFIGURATION_CHOICE_LABELS.subagents).toBe('Agent Entries');
+			expect(CONFIGURATION_CHOICE_LABELS.skills).toBe('Agent Skills');
 			expect(CONFIGURATION_CHOICE_LABELS.manual).toBe('Manual Configuration');
 		});
 
@@ -47,8 +47,8 @@ describe('Configuration Constants', () => {
 
 	describe('CONFIGURATION_CHOICE_DESCRIPTIONS', () => {
 		it('should have descriptions for all choices', () => {
-			expect(CONFIGURATION_CHOICE_DESCRIPTIONS.subagents).toBe('Register all as Claude agents (@slug)');
-			expect(CONFIGURATION_CHOICE_DESCRIPTIONS.skills).toBe('Register all as Claude skills (/slug)');
+			expect(CONFIGURATION_CHOICE_DESCRIPTIONS.subagents).toBe('Register as agent entries where supported');
+			expect(CONFIGURATION_CHOICE_DESCRIPTIONS.skills).toBe('Register all as skills (/slug)');
 			expect(CONFIGURATION_CHOICE_DESCRIPTIONS.manual).toBe('Choose individually for each assistant');
 		});
 

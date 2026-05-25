@@ -3,6 +3,82 @@ import type { BasePanelState, BaseSelectionState } from './types.js';
 import { BOX, SYMBOL, SHARED_TEXT, PAGINATION_CONTROL, type PaginationControl } from './constants.js';
 import { COLOR } from '../constants.js';
 
+type LabelFormatter = (label: string, isCursor: boolean) => string;
+
+export interface SelectionRowOptions {
+  label: string;
+  isCursor: boolean;
+  isSelected: boolean;
+  metadata?: string;
+  formatLabel?: LabelFormatter;
+}
+
+export interface SingleChoiceRowOptions {
+  label: string;
+  isCursor: boolean;
+  isSelected: boolean;
+  description?: string;
+  formatLabel?: LabelFormatter;
+  formatSelectedMarker?: (marker: string) => string;
+  formatUnselectedMarker?: (marker: string) => string;
+}
+
+function purple(text: string): string {
+  return chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b)(text);
+}
+
+function defaultFormatLabel(label: string, isCursor: boolean): string {
+  return isCursor
+    ? chalk.rgb(COLOR.PURPLE.r, COLOR.PURPLE.g, COLOR.PURPLE.b).bold(label)
+    : label;
+}
+
+export function buildCursorPrefix(isCursor: boolean): string {
+  return isCursor
+    ? purple(SYMBOL.CURSOR_INDICATOR)
+    : '  ';
+}
+
+export function buildSelectionDetailLine(text: string): string {
+  return chalk.dim(`    ${text}`);
+}
+
+export function buildSelectionRow({
+  label,
+  isCursor,
+  isSelected,
+  metadata = '',
+  formatLabel = defaultFormatLabel,
+}: SelectionRowOptions): string {
+  const marker = isSelected
+    ? purple(SYMBOL.CIRCLE_FILLED)
+    : SYMBOL.CIRCLE_EMPTY;
+  const formattedLabel = formatLabel(label, isCursor);
+  const suffix = metadata ? ` ${metadata}` : '';
+
+  return `${buildCursorPrefix(isCursor)}${marker} ${formattedLabel}${suffix}`;
+}
+
+export function buildSingleChoiceRow({
+  label,
+  isCursor,
+  isSelected,
+  description,
+  formatLabel = defaultFormatLabel,
+  formatSelectedMarker = purple,
+  formatUnselectedMarker = marker => marker,
+}: SingleChoiceRowOptions): string {
+  const marker = isSelected
+    ? formatSelectedMarker('●')
+    : formatUnselectedMarker('○');
+  const formattedLabel = formatLabel(label, isCursor);
+  const row = `${buildCursorPrefix(isCursor)}${marker} ${formattedLabel}`;
+
+  return description
+    ? `${row}\n${buildSelectionDetailLine(description)}`
+    : row;
+}
+
 export function buildTopLine(): string {
   const width = process.stdout.columns || 80;
   const line = BOX.HORIZONTAL.repeat(width);

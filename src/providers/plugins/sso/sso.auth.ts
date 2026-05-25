@@ -13,6 +13,15 @@ import type { SSOAuthConfig, SSOAuthResult, SSOCredentials } from '../../core/ty
 import { CredentialStore } from '../../../utils/security.js';
 import { ensureApiBase } from '../../core/codemie-auth-helpers.js';
 
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#x27;');
+}
+
 /**
  * Normalize URL to base (protocol + host)
  * E.g., https://host.com/path -> https://host.com
@@ -210,11 +219,30 @@ export class CodeMieSSO {
                 </style>
               </head>
               <body>
-                <h2 class="${result.success ? 'success' : 'error'}">
-                  ${result.success ? '✅ Authentication Successful' : '❌ Authentication Failed'}
-                </h2>
+                ${result.success ? `
+                <h2 class="success">✅ Authentication Successful</h2>
+                <p id="msg">Authentication complete. This window will close in <span id="countdown">3</span> seconds.</p>
+                <script>
+                  let n = 3;
+                  const el = document.getElementById('countdown');
+                  const t = setInterval(function() {
+                    n--;
+                    if (n <= 0) {
+                      clearInterval(t);
+                      window.close();
+                      setTimeout(function() {
+                        const msg = document.getElementById('msg');
+                        if (msg) msg.textContent = 'Authentication complete. You can close this tab.';
+                      }, 300);
+                      return;
+                    }
+                    if (el) el.textContent = String(n);
+                  }, 1000);
+                </script>` : `
+                <h2 class="error">❌ Authentication Failed</h2>
                 <p>You can close this window and return to your terminal.</p>
-                ${result.error ? `<p class="error">Error: ${result.error}</p>` : ''}
+                ${result.error ? `<p class="error">Error: ${escapeHtml(result.error)}</p>` : ''}`
+                }
               </body>
             </html>
           `);
@@ -235,7 +263,7 @@ export class CodeMieSSO {
               </head>
               <body>
                 <h2>❌ Authentication Failed</h2>
-                <p>Error: ${error.message}</p>
+                <p>Error: ${escapeHtml(error.message)}</p>
                 <p>You can close this window and return to your terminal.</p>
               </body>
             </html>

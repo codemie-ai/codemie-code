@@ -23,6 +23,7 @@ export interface CodemieAssistant {
   project?: string;
   registeredAt: string;
   registrationMode?: 'agent' | 'skill';
+  agentTargets?: Array<'claude' | 'codex' | 'gemini'>;
 }
 
 /**
@@ -35,6 +36,7 @@ export interface CodemieSkill {
   description: string;
   project: string;
   registeredAt: string;
+  agentTargets?: Array<'claude' | 'codex' | 'gemini'>;
 }
 
 /**
@@ -112,6 +114,12 @@ export interface ProviderProfile {
 
   // Skills configuration
   codemieSkills?: CodemieSkill[];
+
+  // Skills search — internal catalog endpoint used by `codemie skills find`.
+  // Overridden by the CODEMIE_SKILLS_SEARCH_URL env var. When unset, the
+  // `find` command shows a friendly placeholder for the internal section
+  // and does not make an internal HTTP call.
+  skillsSearchUrl?: string;
 
   // Claude Code-specific settings
   claudeAutocompactPct?: number; // Auto-compact threshold percentage (sets CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, default: 70)

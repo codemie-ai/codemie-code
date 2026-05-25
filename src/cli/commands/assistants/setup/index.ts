@@ -17,11 +17,13 @@ import { displaySummary } from '@/cli/commands/assistants/setup/summary/index.js
 import { ACTION_TYPE } from '@/cli/commands/assistants/setup/constants.js';
 import { enableVerboseLogging, handleSetupError } from '@/cli/commands/shared/helpers.js';
 import { promptStorageScope } from '@/cli/commands/shared/prompts/storage-scope.js';
+import { resolveAgentSetupTargets, type AgentSetupTarget, type TargetAgent } from '@/cli/commands/shared/agent-targets.js';
 
 export interface SetupCommandOptions {
   profile?: string;
   project?: string;
   allProjects?: boolean;
+  agent?: string;
   verbose?: boolean;
 }
 
@@ -31,7 +33,7 @@ interface ApplyChangesResult {
   unregistered: CodemieAssistant[];
 }
 
-export function createAssistantsSetupCommand(): Command {
+export function createAssistantsSetupCommand(hostAgent?: TargetAgent): Command {
   const command = new Command('setup');
 
   command
@@ -39,6 +41,7 @@ export function createAssistantsSetupCommand(): Command {
     .option('--profile <name>', MESSAGES.SETUP.OPTION_PROFILE)
     .option('--project <project>', MESSAGES.SETUP.OPTION_PROJECT)
     .option('--all-projects', MESSAGES.SETUP.OPTION_ALL_PROJECTS)
+    .option('--agent <agents>', 'Target agent(s), comma-separated: claude, codex, gemini')
     .option('-v, --verbose', MESSAGES.SHARED.OPTION_VERBOSE)
     .action(async (options: SetupCommandOptions) => {
       if (options.verbose) {
@@ -46,7 +49,7 @@ export function createAssistantsSetupCommand(): Command {
       }
 
       try {
-        await setupAssistants(options);
+        await setupAssistants(options, hostAgent);
       } catch (error: unknown) {
         handleSetupError(error, 'setup assistants');
       }
@@ -55,19 +58,14 @@ export function createAssistantsSetupCommand(): Command {
   return command;
 }
 
-async function setupAssistants(options: SetupCommandOptions): Promise<void> {
+async function setupAssistants(options: SetupCommandOptions, hostAgent?: TargetAgent): Promise<void> {
   const profileName = options.profile || await ConfigLoader.getActiveProfileName() || 'default';
   const workingDir = process.cwd();
   logger.debug('Setting up assistants', { profileName, options });
 
-  const storageScope = await promptStorageScope({
-    title: MESSAGES.SETUP.PROMPT_STORAGE_SCOPE,
-    localNote: MESSAGES.SETUP.STORAGE_LOCAL_NOTE,
-  });
-
   const config = await ConfigLoader.load(workingDir, { name: profileName });
   const client = await getAuthenticatedClient(config);
-  const registeredAssistants = await ConfigLoader.loadAssistantsByScope(storageScope, workingDir, profileName);
+  const registeredAssistants = config.codemieAssistants || [];
   config.codemieAssistants = registeredAssistants;
 
   const { selectedIds, action } = await promptAssistantSelection(config, options, client);
@@ -130,13 +128,20 @@ async function setupAssistants(options: SetupCommandOptions): Promise<void> {
     }
   }
 
+  const storageScope = await promptStorageScope({
+    title: MESSAGES.SETUP.PROMPT_STORAGE_SCOPE,
+    localNote: MESSAGES.SETUP.STORAGE_LOCAL_NOTE,
+  });
+  const target = await resolveAgentSetupTargets(options.agent, hostAgent);
+
   const { newRegistrations, registered, unregistered } = await applyChanges(
     selectedIds,
     selectedAssistants,
     registeredAssistants,
     registrationModes,
     storageScope,
-    workingDir
+    workingDir,
+    target
   );
 
   config.codemieAssistants = newRegistrations;
@@ -165,7 +170,8 @@ async function applyChanges(
   registeredAssistants: CodemieAssistant[],
   registrationModes: Map<string, RegistrationMode>,
   scope: 'global' | 'local' = 'global',
-  workingDir?: string
+  workingDir?: string,
+  target: AgentSetupTarget = ['claude']
 ): Promise<ApplyChangesResult> {
   const { toRegister, toUnregister } = determineChanges(selectedIds, allAssistants, registeredAssistants);
   const selectedSet = new Set(selectedIds);
@@ -177,7 +183,7 @@ async function applyChanges(
   }
 
   for (const assistant of [...toUnregister, ...toReregister]) {
-    await unregisterAssistant(assistant, scope, workingDir);
+    await unregisterAssistant(assistant, scope, workingDir, target);
   }
 
   const newRegistrations: CodemieAssistant[] = [];
@@ -188,7 +194,7 @@ async function applyChanges(
     if (!fullAssistant) continue;
 
     const mode = registrationModes.get(fullAssistant.id) || REGISTRATION_MODE.AGENT;
-    const registered = await registerAssistant(fullAssistant, mode, scope, workingDir);
+    const registered = await registerAssistant(fullAssistant, mode, scope, workingDir, target);
     if (registered) {
       newRegistrations.push(registered);
     }

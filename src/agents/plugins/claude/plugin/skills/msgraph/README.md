@@ -151,8 +151,11 @@ The script requests these Microsoft Graph scopes on first login:
 | `Mail.Send` | Sending emails |
 | `Calendars.Read` / `Calendars.ReadWrite` | Calendar events |
 | `Files.Read` / `Files.ReadWrite` | OneDrive files |
-| `Sites.Read.All` | SharePoint sites |
+| `Sites.Read.All` | SharePoint sites (read) |
+| `Sites.ReadWrite.All` | SharePoint sites (read & write) |
 | `Chat.Read` / `Chat.ReadWrite` | Teams chats |
+| `ChannelMessage.Read.All` | Read Teams channel messages (requires admin consent) |
+| `ChannelMessage.Send` | Send Teams channel messages |
 | `People.Read` | People rankings |
 | `Contacts.Read` | Outlook contacts |
 | `offline_access` | Silent token refresh |

@@ -79,9 +79,9 @@ function createSkillContent(skill: SkillDetail): string {
 		codemie skill run "${skill.id}" "help me with this"
 		\`\`\`
 
-		**With file attachment:**
+		**Maintain conversation context:**
 		\`\`\`bash
-		codemie skill run "${skill.id}" "analyze this code" --file "script.py"
+		codemie skill run "${skill.id}" "follow-up question" --conversation-id <id>
 		\`\`\`
 	`;
 }

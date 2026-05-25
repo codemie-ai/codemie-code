@@ -456,7 +456,7 @@ export interface CodeMieIntegration {
  * CodeMie integrations API response
  */
 export interface CodeMieIntegrationsResponse {
-  integrations?: CodeMieIntegration[];
+  data?: CodeMieIntegration[];
   // Allow for flexible response structure
   [key: string]: any;
 }

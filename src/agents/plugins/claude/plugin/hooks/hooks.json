@@ -12,10 +12,6 @@
           {
             "type": "command",
             "command": "codemie sound SessionStart"
-          },
-          {
-            "type": "command",
-            "command": "~/.codemie/claude-plugin/scripts/bash/rtk-baseline.sh"
           }
         ]
       }
@@ -94,17 +90,6 @@
             "type": "command",
             "command": "codemie hook",
             "timeout": 2
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.codemie/claude-plugin/scripts/bash/rtk-auto-wrapper.sh"
           }
         ]
       }

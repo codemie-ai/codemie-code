@@ -117,10 +117,12 @@ export class ConversationsProcessor implements SessionProcessor {
 
       // Create payload record with status 'pending'
       const payloadRecord = {
+        payloadId: result.lastProcessedMessageUuid,
         timestamp: Date.now(),
         isTurnContinuation: result.isTurnContinuation,
         historyIndices,
         messageCount: result.history.length,
+        lastProcessedMessageUuid: result.lastProcessedMessageUuid,
         payload: {
           conversationId: context.agentSessionId,
           history: result.history

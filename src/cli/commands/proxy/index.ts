@@ -2,7 +2,13 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import { ConfigLoader } from '../../../utils/config.js';
 import { ProviderRegistry } from '../../../providers/index.js';
-import { ConfigurationError } from '../../../utils/errors.js';
+import {
+  ConfigurationError,
+  createErrorContext,
+  formatErrorForUser,
+} from '../../../utils/errors.js';
+import { logger } from '../../../utils/logger.js';
+import { sanitizeLogArgs } from '../../../utils/security.js';
 import {
   checkStatus,
   readState,
@@ -49,12 +55,13 @@ async function resolveDesktopProxyConfig(profileName?: string): Promise<{
     if (explicitProvider?.authType !== 'sso') {
       const available = await listCodeMieProfiles();
       const details = available.length > 0
-        ? `Available CodeMie profiles:\n- ${available.join('\n- ')}`
-        : 'No CodeMie SSO profiles were found. Run: codemie setup';
+        ? `Profiles to try:\n- ${available.join('\n- ')}`
+        : 'No SSO-backed CodeMie profiles were found. Run: codemie setup';
 
       throw new ConfigurationError(
-        `Profile "${profileName}" is not a CodeMie SSO profile.\n` +
-        `Use a CodeMie-backed profile with: codemie proxy connect desktop --profile <name>\n\n` +
+        `Profile "${profileName}" cannot be used for Claude Desktop proxy because it is not SSO-backed.\n\n` +
+        `Next step:\n` +
+        `  codemie proxy connect desktop --profile <name>\n\n` +
         `${details}`
       );
     }
@@ -75,14 +82,19 @@ async function resolveDesktopProxyConfig(profileName?: string): Promise<{
   const available = await listCodeMieProfiles();
   const providerName = activeConfig.provider ?? 'unknown';
   const details = available.length > 0
-    ? `Use: codemie profile switch <codemie-profile>\n` +
-      `Or:  codemie proxy connect desktop --profile <codemie-profile>\n\n` +
-      `Available CodeMie profiles:\n- ${available.join('\n- ')}`
-    : 'Create or switch to a CodeMie SSO profile before using Claude Desktop proxy.';
+    ? `Next step:\n` +
+      `  codemie profile switch <codemie-profile>\n` +
+      `  codemie proxy connect desktop\n\n` +
+      `Or run once with a specific profile:\n` +
+      `  codemie proxy connect desktop --profile <codemie-profile>\n\n` +
+      `Profiles to try:\n- ${available.join('\n- ')}`
+    : `No SSO-backed CodeMie profiles were found.\n\n` +
+      `Next step:\n` +
+      `  codemie setup`;
 
   throw new ConfigurationError(
-    `Claude Desktop proxy requires an SSO-backed CodeMie profile. ` +
-    `Current active profile is "${activeProfileName ?? 'unknown'}" with provider "${providerName}".\n` +
+    `Claude Desktop proxy needs an SSO-backed CodeMie profile.\n` +
+    `Current active profile: "${activeProfileName ?? 'unknown'}" (provider: ${providerName})\n\n` +
     `${details}`
   );
 }
@@ -101,6 +113,19 @@ async function verifySsoCredentials(baseUrl: string, profileName: string): Promi
     console.error(chalk.red(`✗ Failed to verify credentials: ${(err as Error).message}`));
     process.exit(1);
   }
+}
+
+function printProxyError(error: unknown, label: string): never {
+  const context = createErrorContext(error);
+  logger.error(label, error);
+
+  if (error instanceof ConfigurationError) {
+    console.error(chalk.red(`✗ ${error.message}`));
+  } else {
+    console.error(formatErrorForUser(context, { showSystem: false }));
+  }
+
+  process.exit(1);
 }
 
 export function createProxyCommand(): Command {
@@ -139,6 +164,7 @@ export function createProxyCommand(): Command {
         provider: config.provider ?? 'ai-run-sso',
         profile: config.name ?? 'default',
         port: parsePortOption(opts.port, DEFAULT_DAEMON_PORT),
+        project: config.codeMieProject,
         syncApiUrl: config.ssoConfig?.apiUrl,
         syncCodeMieUrl: config.codeMieUrl,
       });
@@ -193,59 +219,130 @@ export function createProxyCommand(): Command {
     .command('desktop')
     .description('Configure Claude Desktop (3P) to use the local proxy')
     .option('--profile <name>', 'Profile whose credentials to use for Claude Desktop proxy')
+    .option('--verbose', 'Show detailed connection info (URLs, config paths) for debugging')
     .action(async (opts) => {
-      let { running, state } = await checkStatus();
+      const verbose: boolean = Boolean(opts.verbose);
+      let startedInThisRun = false;
+      try {
+        let { running, state } = await checkStatus();
 
-      if (running && state?.telemetryMode !== 'claude-desktop') {
-        console.log('Proxy is running without Desktop telemetry — restarting in claude-desktop mode...');
-        await stopDaemon();
-        running = false;
-        state = null;
-      }
+        if (running && state?.telemetryMode !== 'claude-desktop') {
+          console.log('Restarting proxy in Claude Desktop mode...');
+          await stopDaemon();
+          running = false;
+          state = null;
+        }
 
-      if (!running) {
-        console.log('Proxy not running — starting it now...');
-        const { config, profileSource } = await resolveDesktopProxyConfig(opts.profile);
-        if (!config.baseUrl) {
-          console.error(chalk.red('✗ No API URL configured. Run: codemie setup'));
-          process.exit(1);
+        if (!running) {
+          console.log('Starting proxy...');
+          const { config, profileSource } = await resolveDesktopProxyConfig(opts.profile);
+          if (!config.baseUrl) {
+            throw new ConfigurationError('No API URL configured. Run: codemie setup');
+          }
+          const provider = ProviderRegistry.getProvider(config.provider ?? '');
+          if (provider?.authType !== 'sso') {
+            throw new ConfigurationError(
+              `Claude Desktop proxy needs an SSO-backed profile.\n` +
+              `Selected provider: ${config.provider ?? 'unknown'}\n\n` +
+              `Next step:\n` +
+              `  codemie proxy connect desktop --profile <your-ai-run-sso-profile>`
+            );
+          }
+          if (!config.codeMieUrl) {
+            throw new ConfigurationError(
+              'Selected profile is missing CodeMie URL.\n' +
+              'Run: codemie setup or codemie profile login'
+            );
+          }
+          const profileLabel = config.name ?? 'default';
+          if (verbose) {
+            console.log(
+              chalk.cyan(
+                `Using profile: ${profileLabel} ` +
+                `(source: ${profileSource === 'explicit' ? '--profile' : 'active profile'})`
+              )
+            );
+          } else {
+            console.log(chalk.cyan(`Using profile: ${profileLabel}`));
+          }
+          logger.info(
+            '[proxy] Resolved Claude Desktop proxy configuration',
+            ...sanitizeLogArgs({
+              profile: profileLabel,
+              profileSource,
+              provider: config.provider ?? 'ai-run-sso',
+              baseUrl: config.baseUrl,
+              codeMieUrl: config.codeMieUrl,
+              syncApiUrl: config.ssoConfig?.apiUrl,
+            })
+          );
+          await verifySsoCredentials(config.baseUrl, config.name ?? 'default');
+          state = await spawnDaemon({
+            targetUrl: config.baseUrl,
+            provider: config.provider ?? 'ai-run-sso',
+            profile: config.name ?? 'default',
+            port: DEFAULT_DAEMON_PORT,
+            project: config.codeMieProject,
+            telemetryMode: 'claude-desktop',
+            syncApiUrl: config.ssoConfig?.apiUrl,
+            syncCodeMieUrl: config.codeMieUrl,
+          });
+          startedInThisRun = true;
+          if (verbose) {
+            console.log(chalk.green(`✓ Proxy started at ${state.url}`));
+          } else {
+            console.log(chalk.green('✓ Proxy started'));
+          }
+          logger.info(
+            '[proxy] Claude Desktop proxy daemon is ready',
+            ...sanitizeLogArgs({
+              url: state.url,
+              port: state.port,
+              profile: state.profile,
+              telemetryMode: state.telemetryMode,
+              targetUrl: state.targetUrl,
+              clientType: state.clientType,
+              syncApiUrl: state.syncApiUrl,
+              syncCodeMieUrl: state.syncCodeMieUrl,
+              inferenceGatewayApiKey: state.gatewayKey,
+            })
+          );
         }
-        const provider = ProviderRegistry.getProvider(config.provider ?? '');
-        if (provider?.authType !== 'sso') {
-          console.error(chalk.red(`✗ Claude Desktop proxy requires an SSO-backed profile. Selected provider: ${config.provider ?? 'unknown'}`));
-          console.error('  Use: codemie proxy connect desktop --profile <your-ai-run-sso-profile>');
-          process.exit(1);
-        }
-        if (!config.codeMieUrl) {
-          console.error(chalk.red('✗ Selected profile is missing CodeMie URL.'));
-          console.error('  Run: codemie setup or codemie profile login');
-          process.exit(1);
-        }
-        console.log(
-          chalk.cyan(
-            `Using profile: ${config.name ?? 'default'} ` +
-            `(source: ${profileSource === 'explicit' ? '--profile' : 'active profile'})`
-          )
+
+        const configPath = await writeDesktopConfig(state!.url, state!.gatewayKey);
+        logger.info(
+          '[proxy] Claude Desktop proxy configuration written',
+          ...sanitizeLogArgs({
+            configPath,
+            gatewayUrl: state!.url,
+            telemetryMode: state!.telemetryMode,
+            profile: state!.profile,
+            inferenceGatewayApiKey: state!.gatewayKey,
+          })
         );
-        await verifySsoCredentials(config.baseUrl, config.name ?? 'default');
-        state = await spawnDaemon({
-          targetUrl: config.baseUrl,
-          provider: config.provider ?? 'ai-run-sso',
-          profile: config.name ?? 'default',
-          port: DEFAULT_DAEMON_PORT,
-          telemetryMode: 'claude-desktop',
-          syncApiUrl: config.ssoConfig?.apiUrl,
-          syncCodeMieUrl: config.codeMieUrl,
-        });
-        console.log(chalk.green(`✓ Proxy started at ${state.url}`));
+        console.log(chalk.green('✓ Claude Desktop configured'));
+        if (verbose) {
+          console.log(`  Config:  ${configPath}`);
+          console.log(`  Gateway: ${state!.url}`);
+          console.log(chalk.dim('  Telemetry: metrics and conversations will sync as claude-desktop.'));
+        }
+        console.log(chalk.yellow('  Restart Claude Desktop to apply changes.'));
+      } catch (error) {
+        if (startedInThisRun) {
+          try {
+            await stopDaemon();
+            logger.info('[proxy] Claude Desktop proxy startup rolled back after configuration failure');
+          } catch (stopError) {
+            logger.warn(
+              '[proxy] Failed to stop Claude Desktop proxy after configuration failure',
+              ...sanitizeLogArgs({
+                error: stopError instanceof Error ? stopError.message : String(stopError),
+              })
+            );
+          }
+        }
+        printProxyError(error, 'Failed to connect Claude Desktop proxy');
       }
-
-      const configPath = await writeDesktopConfig(state!.url, state!.gatewayKey);
-      console.log(chalk.green('✓ Claude Desktop configured'));
-      console.log(`  Config:  ${configPath}`);
-      console.log(`  Gateway: ${state!.url}`);
-      console.log(chalk.dim('  Telemetry: metrics and conversations will sync as claude-desktop.'));
-      console.log(chalk.yellow('  Restart Claude Desktop to apply changes.'));
     });
 
   const inspect = new Command('inspect');

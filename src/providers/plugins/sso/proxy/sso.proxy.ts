@@ -119,13 +119,12 @@ export class CodeMieProxy {
     // 4. Initialize plugins from registry
     const registry = getPluginRegistry();
     this.interceptors = await registry.initialize(pluginContext);
+    logger.info('[proxy] Initialized proxy interceptors', {
+      interceptors: this.interceptors.map((interceptor) => interceptor.name),
+      interceptorCount: this.interceptors.length,
+    });
 
-    // 5. Call onProxyStart lifecycle hooks
-    await this.runHook('onProxyStart', interceptor =>
-      interceptor.onProxyStart?.()
-    );
-
-    // 6. Find available port
+    // 5. Find available port
     this.actualPort = this.config.port || await this.findAvailablePort();
 
     const bindHost = this.config.host || 'localhost';
@@ -161,7 +160,15 @@ export class CodeMieProxy {
 
         const gatewayUrl = `http://${bindHost}:${this.actualPort}`;
         logger.debug(`Proxy started: ${gatewayUrl}`);
-        resolve({ port: this.actualPort, url: gatewayUrl });
+
+        // Start plugin lifecycles only after the final bound port is known.
+        // Session-sync uses this port so analytics follow the same proxy path
+        // as session lifecycle hooks.
+        this.runHook('onProxyStart', interceptor =>
+          interceptor.onProxyStart?.()
+        )
+          .then(() => resolve({ port: this.actualPort, url: gatewayUrl }))
+          .catch(reject);
       });
     });
   }
@@ -253,6 +260,22 @@ export class CodeMieProxy {
       // 3. Forward request to upstream
       const targetUrl = this.buildTargetUrl(req.url!);
       context.targetUrl = targetUrl.toString();
+
+      logger.info(
+        '[proxy] Forwarding request to upstream',
+        {
+          requestId: context.requestId,
+          url: context.url,
+          targetUrl: context.targetUrl,
+          hasAuthorizationHeader: Boolean(
+            context.headers['authorization'] ?? context.headers['Authorization']
+          ),
+          authorizationHeader: context.headers['authorization'] ?? context.headers['Authorization'],
+          hasCookieHeader: Boolean(context.headers['cookie'] ?? context.headers['Cookie']),
+          headerKeys: Object.keys(context.headers),
+          gatewayKeyValidated: Boolean(context.metadata.gatewayKeyValidated),
+        }
+      );
 
       logger.debug(`[proxy] Forwarding request to upstream for ${context.requestId}`);
       const upstreamResponse = await this.httpClient.forward(targetUrl, {

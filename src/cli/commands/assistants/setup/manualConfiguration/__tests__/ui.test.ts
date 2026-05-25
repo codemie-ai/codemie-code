@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import stripAnsi from 'strip-ansi';
 import { renderUI } from '../ui.js';
 import { REGISTRATION_MODE } from '../constants.js';
 import { ACTION_TYPE } from '../../constants.js';
@@ -222,6 +223,16 @@ describe('Configuration UI', () => {
 			expect(applyOutput).toBeTruthy();
 			expect(cancelOutput).toBeTruthy();
 			expect(noButtonsOutput).toBeTruthy();
+		});
+
+		it('should align assistant rows with stable cursor gutters', () => {
+			const state = createMockState({ cursorIndex: 0 });
+			const output = renderUI(state);
+			const visibleOutput = stripAnsi(output);
+
+			expect(visibleOutput).toContain('› Assistant 1');
+			expect(visibleOutput).toContain('  Assistant 2');
+			expect(visibleOutput).toContain('\n  Mode:');
 		});
 	});
 });

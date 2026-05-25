@@ -118,13 +118,13 @@ export class SSOModelProxy extends BaseModelProxy {
 
     const apiUrl = credentials.apiUrl || codeMieUrl;
 
-    logger.debug(`Fetching integrations from: ${apiUrl}${CODEMIE_ENDPOINTS.USER_SETTINGS_AVAILABLE}`);
+    logger.debug(`Fetching integrations from: ${apiUrl}${CODEMIE_ENDPOINTS.USER_SETTINGS}`);
     if (projectName) {
       logger.debug(`Filtering by project: ${projectName}`);
     }
 
     try {
-      // Fetch all integrations (user-level + project-level) from a single endpoint
+      // Fetch user-level integrations from the SSO settings endpoint
       const allIntegrations = await fetchCodeMieIntegrations(
           apiUrl,
           credentials.cookies

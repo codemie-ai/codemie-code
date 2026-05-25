@@ -60,7 +60,7 @@ describe('Assistants Setup Command', () => {
     });
 
     it('should have exactly 4 options', () => {
-      expect(command.options).toHaveLength(4);
+      expect(command.options).toHaveLength(5);
     });
 
     it('should have profile option with argument', () => {
@@ -95,7 +95,7 @@ describe('Assistants Setup Command', () => {
     it('should have all options as optional', () => {
       // Commander.js options without .requiredOption() are optional by default
       // Options created with .option() don't have mandatory flag set
-      expect(command.options).toHaveLength(4);
+      expect(command.options).toHaveLength(5);
 
       // Verify none are using requiredOption by checking they all use .option()
       // In Commander.js, required options would have mandatory=true

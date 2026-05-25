@@ -22,7 +22,41 @@ codemie self-update              # Update CodeMie CLI itself
 codemie doctor [options]         # Health check and diagnostics
 codemie plugin <command>         # Manage native plugins
 codemie mcp-proxy <url>          # Stdio-to-HTTP MCP proxy with OAuth support
+codemie codebase <command>       # Manage Codebase Memory graph UI
 codemie version                  # Show version information
+```
+
+## Codebase Memory Commands
+
+```bash
+codemie install codebase-memory          # Install codebase-memory-mcp with graph UI
+codemie-<agent> init codebase-memory     # Configure agents, auto-index, and index this repo
+
+codemie codebase start                   # Start the graph UI in the background
+codemie codebase stop                    # Stop the graph UI
+codemie codebase status                  # Show graph UI status
+codemie codebase ui                      # Start if needed and open the graph UI
+codemie codebase open                    # Open the graph UI URL only
+```
+
+`codemie-<agent> init codebase-memory` runs the upstream MCP installer configuration, enables automatic indexing, and indexes the current repository. The graph UI defaults to `http://localhost:9749`.
+
+## Framework Init Commands
+
+```bash
+codemie-<agent> init --list              # List frameworks available for the agent
+codemie-claude init bmad                 # Install BMAD with the SDLC preset (BMM + TEA)
+codemie-claude init bmad --preset minimal # Install BMAD Method only (BMM)
+codemie-claude init bmad --interactive   # Use the upstream BMAD interactive installer
+codemie-claude init bmad --force         # Update an existing BMAD install
+```
+
+BMAD defaults to a non-interactive SDLC install using `_bmad-output` for artifacts. Advanced BMAD options are available when needed:
+
+```bash
+codemie-claude init bmad --bmad-channel next
+codemie-claude init bmad --bmad-modules bmm,tea --bmad-tools claude-code
+codemie-claude init bmad --bmad-set bmm.user_skill_level=expert bmm.project_knowledge=research
 ```
 
 ## Proxy Commands
@@ -56,7 +90,6 @@ Behavior:
 Recommended setup:
 
 ```bash
-codemie profile switch codemie-prod
 codemie proxy connect desktop
 ```
 

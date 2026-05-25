@@ -724,6 +724,17 @@ async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: stri
     // Determine working directory
     const workingDirectory = event.cwd || process.cwd();
 
+    // Detect git-derived repository (owner/repo) so the lifecycle metric
+    // matches the session JSON and Pipeline B headers. Without this, the
+    // metric falls back to parent/current path inside sendSessionStart.
+    let remoteRepository: string | undefined;
+    try {
+      const { detectGitRemoteRepo } = await import('../../utils/processes.js');
+      remoteRepository = await detectGitRemoteRepo(workingDirectory);
+    } catch (error) {
+      logger.debug('[hook:SessionStart] Could not detect git remote repository:', error);
+    }
+
     // Detect MCP servers and extensions in parallel (non-blocking)
     let mcpSummary: MCPConfigSummary | undefined;
     let extensionsSummary: ExtensionsScanSummary | undefined;
@@ -811,7 +822,8 @@ async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: stri
         project,
         model,
         startTime: Date.now(),
-        workingDirectory
+        workingDirectory,
+        ...(remoteRepository && { repository: remoteRepository })
       },
       workingDirectory,
       status,
@@ -1050,7 +1062,8 @@ async function sendSessionEndMetrics(event: SessionEndEvent, sessionId: string, 
         project,
         model,
         startTime: session.startTime,
-        workingDirectory: session.workingDirectory
+        workingDirectory: session.workingDirectory,
+        ...(session.repository && { repository: session.repository })
       },
       session.workingDirectory,
       status,

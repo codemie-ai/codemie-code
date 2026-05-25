@@ -80,6 +80,7 @@ export class ProfileDisplay {
     console.log('');
     console.log('  ' + chalk.white('• Switch active profile:') + '  ' + chalk.cyan('codemie profile switch'));
     console.log('  ' + chalk.white('• View profile status:') + '    ' + chalk.cyan('codemie profile status'));
+    console.log('  ' + chalk.white('• Refresh profile auth:') + '   ' + chalk.cyan('codemie profile refresh'));
     console.log('  ' + chalk.white('• Create new profile:') + '     ' + chalk.cyan('codemie setup'));
     console.log('  ' + chalk.white('• Remove a profile:') + '       ' + chalk.cyan('codemie profile delete'));
     console.log('  ' + chalk.white('• Explore more:') + '           ' + chalk.cyan('codemie --help'));

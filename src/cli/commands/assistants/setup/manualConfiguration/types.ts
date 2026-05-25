@@ -3,8 +3,8 @@ import type { ACTION_TYPE } from '../constants.js';
 
 /**
  * Registration mode for an assistant
- * - agent: Register as Claude agent only (~/.claude/agents/{slug}.md)
- * - skill: Register as Claude skill only (~/.codemie/skills/{slug}/SKILL.md)
+ * - agent: Register as agent entry where supported, falling back to skill wrappers
+ * - skill: Register as skill only
  */
 export type RegistrationMode = 'agent' | 'skill';
 

@@ -18,7 +18,7 @@ export type { CodeMieUserInfo } from '../../core/codemie-auth-helpers.js';
  */
 export const CODEMIE_ENDPOINTS = {
   MODELS: '/v1/llm_models?include_all=true',
-  USER_SETTINGS_AVAILABLE: '/v1/settings/user/available',
+  USER_SETTINGS: '/v1/settings/user',
   USER: '/v1/user',
   ADMIN_APPLICATIONS: '/v1/admin/applications',
   METRICS: '/v1/metrics',
@@ -236,7 +236,7 @@ export function fetchCodeMieIntegrations(
 export async function fetchCodeMieIntegrations(
   apiUrl: string,
   auth: Record<string, string> | string,
-  endpointPath: string = CODEMIE_ENDPOINTS.USER_SETTINGS_AVAILABLE
+  endpointPath: string = CODEMIE_ENDPOINTS.USER_SETTINGS
 ): Promise<CodeMieIntegration[]> {
   const allIntegrations: CodeMieIntegration[] = [];
   let currentPage = 0;
@@ -335,9 +335,9 @@ async function fetchIntegrationsPage(fullUrl: string, auth: Record<string, strin
   // Try different possible property names and structures
   const possibleArrays = [
     responseData, // Direct array
+    responseData.data,
     responseData.integrations,
     responseData.credentials,
-    responseData.data,
     responseData.items,
     responseData.results,
     responseData.user_integrations,

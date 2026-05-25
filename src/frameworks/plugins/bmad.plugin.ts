@@ -5,7 +5,7 @@
  * Enterprise development methodology with AI agent support
  *
  * Installation: npx-on-demand (no global install needed)
- * Initialization: npx bmad-method@alpha install
+ * Initialization: npx bmad-method install --yes --modules bmm,tea --tools <tool>
  */
 
 import { existsSync } from 'fs';
@@ -15,6 +15,19 @@ import { exec } from '../../utils/processes.js';
 import { logger } from '../../utils/logger.js';
 import { BaseFrameworkAdapter } from '../core/BaseFrameworkAdapter.js';
 import type { FrameworkMetadata, FrameworkInitOptions } from '../core/types.js';
+
+type BmadPreset = 'sdlc' | 'minimal' | 'interactive';
+
+const DEFAULT_OUTPUT_FOLDER = '_bmad-output';
+
+const BMAD_TOOL_MAPPING: Record<string, string> = {
+  claude: 'claude-code',
+  'claude-acp': 'claude-code',
+  codex: 'codex',
+  'codemie-code': 'opencode',
+  gemini: 'gemini',
+  opencode: 'opencode',
+};
 
 /**
  * BMAD Framework Metadata
@@ -27,7 +40,7 @@ export const BmadMetadata: FrameworkMetadata = {
   repoUrl: 'https://github.com/bmad-code-org/BMAD-METHOD',
   requiresInstallation: false, // Uses npx on-demand
   installMethod: 'npx-on-demand',
-  packageName: 'bmad-method@alpha',
+  packageName: 'bmad-method',
   cliCommand: undefined, // No global CLI, uses npx
   isAgentSpecific: false, // Framework-agnostic
   supportedAgents: [], // Empty means all agents
@@ -100,9 +113,10 @@ export class BmadPlugin extends BaseFrameworkAdapter {
   async init(agentName: string, options?: FrameworkInitOptions): Promise<void> {
     const cwd = options?.cwd || process.cwd();
     const force = options?.force ?? false;
+    const initialized = await this.isInitialized(cwd);
 
     // Check if already initialized
-    if (!force && (await this.isInitialized(cwd))) {
+    if (!force && initialized) {
       throw new Error(
         `BMAD already initialized in ${cwd} (.bmad/ or _bmad/ exists). Use --force to re-initialize.`
       );
@@ -111,17 +125,31 @@ export class BmadPlugin extends BaseFrameworkAdapter {
     this.logInitStart();
 
     try {
-      // Run npx bmad-method@alpha install
-      logger.info('Running BMAD installation via npx (this may take a minute)...');
+      let preset = this.getPreset(options);
+      if (preset !== 'interactive' && !this.hasToolSelection(agentName, options)) {
+        logger.warn(
+          `BMAD tool mapping for agent '${agentName}' is unknown. Falling back to interactive install.`
+        );
+        preset = 'interactive';
+      }
+      const packageName = this.getPackageName(options);
+      const args = this.buildInstallArgs(agentName, cwd, preset, options, initialized && force);
+      const interactive = preset === 'interactive';
 
-      await npm.npxRun('bmad-method@alpha', ['install', ...(force ? ['--force'] : [])], {
+      logger.info(
+        interactive
+          ? 'Running BMAD interactive installation via npx (this may take a minute)...'
+          : `Running BMAD ${preset} preset via npx (this may take a minute)...`
+      );
+
+      await npm.npxRun(packageName, args, {
         cwd,
         timeout: 300000, // 5 minutes for npm download + user input
-        interactive: true // Allow user to answer prompts
+        interactive
       });
 
       this.logInitSuccess(cwd);
-      logger.info('Next: Run /workflow-init inside your AI agent to start using BMAD');
+      logger.info('Next: Run bmad-help inside your AI agent to start using BMAD');
     } catch (error) {
       this.logInitError(error);
       throw error;
@@ -149,7 +177,7 @@ export class BmadPlugin extends BaseFrameworkAdapter {
    */
   async getVersion(): Promise<string | null> {
     try {
-      const result = await exec('npx', ['bmad-method@alpha', '--version'], { timeout: 10000 });
+      const result = await exec('npx', ['bmad-method', '--version'], { timeout: 10000 });
       const match = result.stdout.match(/\d+\.\d+\.\d+/);
       return match ? match[0] : null;
     } catch {
@@ -163,5 +191,112 @@ export class BmadPlugin extends BaseFrameworkAdapter {
   getAgentMapping(codemieAgentName: string): string | null {
     // BMAD is framework-agnostic, no specific mapping needed
     return codemieAgentName;
+  }
+
+  private buildInstallArgs(
+    agentName: string,
+    cwd: string,
+    preset: BmadPreset,
+    options: FrameworkInitOptions | undefined,
+    updateExisting: boolean
+  ): string[] {
+    if (preset === 'interactive') {
+      return ['install'];
+    }
+
+    const modules = this.getModules(preset, options);
+    const tools = this.getTools(agentName, options);
+    const setValues = this.getSetValues(options);
+
+    const args = [
+      'install',
+      '--yes',
+      '--directory',
+      cwd,
+      '--modules',
+      modules,
+      '--tools',
+      tools,
+    ];
+
+    if (updateExisting) {
+      args.push('--action', 'update');
+    }
+
+    for (const value of setValues) {
+      args.push('--set', value);
+    }
+
+    return args;
+  }
+
+  private getPreset(options: FrameworkInitOptions | undefined): BmadPreset {
+    const preset = options?.preset;
+    if (preset === 'minimal' || preset === 'interactive' || preset === 'sdlc') {
+      return preset;
+    }
+    return 'sdlc';
+  }
+
+  private getPackageName(options: FrameworkInitOptions | undefined): string {
+    const channel = options?.bmadChannel;
+    if (channel === 'next') {
+      return 'bmad-method@next';
+    }
+    return 'bmad-method';
+  }
+
+  private getModules(preset: BmadPreset, options: FrameworkInitOptions | undefined): string {
+    const modules = this.asString(options?.bmadModules);
+    if (modules) {
+      return modules;
+    }
+
+    return preset === 'minimal' ? 'bmm' : 'bmm,tea';
+  }
+
+  private getTools(agentName: string, options: FrameworkInitOptions | undefined): string {
+    const tools = this.asString(options?.bmadTools);
+    if (tools) {
+      return tools;
+    }
+
+    const mappedTool = BMAD_TOOL_MAPPING[agentName];
+    if (!mappedTool) {
+      throw new Error(
+        `BMAD tool mapping for agent '${agentName}' is unknown. ` +
+        'Pass --bmad-tools <tool-id> or use --interactive to select a tool manually.'
+      );
+    }
+
+    return mappedTool;
+  }
+
+  private hasToolSelection(agentName: string, options: FrameworkInitOptions | undefined): boolean {
+    return Boolean(this.asString(options?.bmadTools) || BMAD_TOOL_MAPPING[agentName]);
+  }
+
+  private getSetValues(options: FrameworkInitOptions | undefined): string[] {
+    const configured = this.asStringArray(options?.bmadSet);
+    if (configured.length > 0) {
+      return configured;
+    }
+    return [`core.output_folder=${DEFAULT_OUTPUT_FOLDER}`];
+  }
+
+  private asString(value: unknown): string | null {
+    return typeof value === 'string' && value.trim() ? value.trim() : null;
+  }
+
+  private asStringArray(value: unknown): string[] {
+    if (Array.isArray(value)) {
+      return value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+    }
+
+    if (typeof value === 'string' && value.trim()) {
+      return [value.trim()];
+    }
+
+    return [];
   }
 }
