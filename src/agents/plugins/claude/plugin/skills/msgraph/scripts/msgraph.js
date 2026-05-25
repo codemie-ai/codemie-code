@@ -124,7 +124,8 @@ function graphDownload(endpoint, token) {
           if (!location) { reject(new Error('Redirect with no Location header')); return; }
           let redirectUrl;
           try { redirectUrl = new URL(location, `https://${u.hostname}`); } catch { reject(new Error(`Invalid redirect URL: ${location}`)); return; }
-          if (redirectUrl.hostname !== u.hostname) { reject(new Error(`Redirect to untrusted host: ${redirectUrl.hostname}`)); return; }
+          const trusted = /(?:^|\.)(?:microsoft\.com|sharepoint\.com|blob\.core\.windows\.net|1drv\.com|onedrive\.live\.com)$/.test(redirectUrl.hostname);
+          if (!trusted) { reject(new Error(`Redirect to untrusted host: ${redirectUrl.hostname}`)); return; }
           fetch(redirectUrl.href, null).then(resolve, reject);
           return;
         }
@@ -695,7 +696,7 @@ async function cmdTeams(args) {
       for (const att of attachments) {
         const name = stripAnsi(att.name || '');
         const ct   = stripAnsi(att.contentType || '');
-        if (att.contentType === 'reference') {
+        if (ct === 'reference') {
           console.log(`  [attachment] ${name || 'file'}: ${stripAnsi(att.contentUrl || att.content || '')}`);
         } else if (ct && ct.startsWith('image/')) {
           console.log(`  [image] ${name || 'image'} (${ct})`);
@@ -719,7 +720,7 @@ async function cmdTeams(args) {
         try {
           const endpoint = `/me/chats/${args.messages}/messages/${m.id}/hostedContents/${contentId}/$value`;
           const buf = await graphDownload(endpoint, token);
-          const contentType = hc.contentType || 'application/octet-stream';
+          const contentType = stripAnsi(hc.contentType || 'application/octet-stream');
           const ext = contentType.includes('png') ? 'png'
             : contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg'
             : contentType.includes('gif') ? 'gif'
