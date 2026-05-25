@@ -46,6 +46,13 @@ export function postProcessMetric(
     if (!attrs.error_tools?.length) {
       delete attrs.error_tools;
       delete attrs.error_messages;
+    }
+
+    if (!attrs.api_errors?.length) {
+      delete attrs.api_errors;
+    }
+
+    if (!attrs.error_tools && !attrs.error_messages && !attrs.api_errors) {
       sanitized.attributes.had_errors = false;
     }
   }

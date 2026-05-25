@@ -136,6 +136,7 @@ function buildSessionAttributes(
   let hadErrors = false;
   const errorToolSet = new Set<string>(); // deduped
   const errorMessages: string[] = [];
+  const apiErrors: string[] = [];
 
   // Aggregate all deltas
   for (const delta of deltas) {
@@ -189,17 +190,24 @@ function buildSessionAttributes(
     if (delta.apiErrorMessage) {
       hadErrors = true;
 
-      if (delta.toolStatus) {
-        for (const [toolName, status] of Object.entries(delta.toolStatus)) {
+      const hasToolErrors = delta.toolStatus &&
+        Object.values(delta.toolStatus).some(status => status.failure > 0);
+
+      if (hasToolErrors) {
+        for (const [toolName, status] of Object.entries(delta.toolStatus ?? {})) {
           if (status.failure > 0) {
             const clean = sanitizeToolNameForError(toolName);
             if (clean) errorToolSet.add(clean);
           }
         }
-      }
 
-      if (errorMessages.length < ERROR_MESSAGES_CAP) {
-        errorMessages.push(sanitizeErrorMessage(delta.apiErrorMessage));
+        if (errorMessages.length < ERROR_MESSAGES_CAP) {
+          errorMessages.push(sanitizeErrorMessage(delta.apiErrorMessage));
+        }
+      } else {
+        if (apiErrors.length < ERROR_MESSAGES_CAP) {
+          apiErrors.push(sanitizeErrorMessage(delta.apiErrorMessage));
+        }
       }
     }
   }
@@ -261,6 +269,7 @@ function buildSessionAttributes(
     const tools = [...errorToolSet].slice(0, ERROR_TOOLS_CAP);
     if (tools.length > 0) attributes.error_tools = tools;
     if (errorMessages.length > 0) attributes.error_messages = errorMessages;
+    if (apiErrors.length > 0) attributes.api_errors = apiErrors;
   }
 
   return attributes;

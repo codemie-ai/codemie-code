@@ -107,6 +107,7 @@ describe('Metrics Post-Processing Integration', () => {
     expect(metric.attributes.had_errors).toBe(false);
     expect((metric.attributes as any).error_tools).toBeUndefined();
     expect((metric.attributes as any).error_messages).toBeUndefined();
+    expect((metric.attributes as any).api_errors).toBeUndefined();
 
     // Check user prompts
     expect(metric.attributes.total_user_prompts).toBe(1);

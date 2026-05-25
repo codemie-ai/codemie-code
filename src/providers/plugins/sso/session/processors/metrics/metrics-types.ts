@@ -33,6 +33,7 @@ export interface SessionLifecycleAttributes extends MetricIdentity {
   had_errors: boolean;
   error_tools?: string[];    // unique tool names that errored (v2, replaces errors dict)
   error_messages?: string[]; // flat list of error messages (v2, replaces errors dict)
+  api_errors?: string[];     // API/infrastructure errors (e.g. model failures, not tool-related)
   schema_version?: number;   // 2 = v2 shape; absent/1 = legacy
 
   // MCP fields (optional, only at session start)
@@ -85,6 +86,7 @@ export interface ToolUsageAttributes extends MetricIdentity {
   had_errors: boolean;
   error_tools?: string[];    // unique tool names that errored (v2, replaces errors dict)
   error_messages?: string[]; // flat list of error messages (v2, replaces errors dict)
+  api_errors?: string[];     // API/infrastructure errors (e.g. model failures, not tool-related)
   schema_version?: number;   // 2 = v2 shape; absent/1 = legacy
 
   // Tool metrics — tool_counts is intentionally not emitted (backend/Elastic pipeline

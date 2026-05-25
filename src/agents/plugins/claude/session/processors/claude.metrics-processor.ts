@@ -303,6 +303,10 @@ export class MetricsProcessor implements SessionProcessor {
 
       const recordId = messages[0].uuid;
 
+      const apiErrorMessage = completedMsg.isApiErrorMessage && completedMsg.message?.content?.[0]?.text
+        ? completedMsg.message.content[0].text
+        : undefined;
+
       const delta: Omit<MetricDelta, 'syncStatus' | 'syncAttempts'> = {
         recordId,
         sessionId,
@@ -311,7 +315,8 @@ export class MetricsProcessor implements SessionProcessor {
         gitBranch: completedMsg.gitBranch,
         ...(Object.keys(tools).length > 0 && { tools }),
         ...(Object.keys(toolStatus).length > 0 && { toolStatus }),
-        ...(completedMsg.message?.model && { models: [completedMsg.message.model] })
+        ...(completedMsg.message?.model && { models: [completedMsg.message.model] }),
+        ...(apiErrorMessage && { apiErrorMessage })
       };
 
       if (fileOperations.length > 0) {
