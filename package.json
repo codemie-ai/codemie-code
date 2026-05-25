@@ -25,6 +25,7 @@
     "LICENSE"
   ],
   "scripts": {
+    "postinstall": "node scripts/postinstall.mjs",
     "build": "tsc && tsc-alias && npm run copy-plugin",
     "copy-plugin": "node scripts/copy-plugins.js",
     "prepare:install-artifacts": "node scripts/prepare-install-artifacts.mjs",
