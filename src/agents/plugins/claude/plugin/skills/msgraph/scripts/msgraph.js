@@ -131,7 +131,7 @@ function graphDownload(endpoint, token) {
         }
         const chunks = [];
         res.on('data', c => chunks.push(c));
-        res.on('end',  () => resolve(Buffer.concat(chunks)));
+        res.on('end',  () => resolve({ buf: Buffer.concat(chunks), contentType: res.headers['content-type'] || '' }));
         res.on('error', reject);
       }).on('error', reject);
     });
@@ -613,7 +613,7 @@ async function cmdSharepoint(args) {
 
   if (args.download) {
     const outPath = args.output || `downloaded_${args.download.slice(0, 8)}`;
-    const content = await graphDownload(`/me/drive/items/${args.download}/content`, token);
+    const { buf: content } = await graphDownload(`/me/drive/items/${args.download}/content`, token);
     fs.writeFileSync(outPath, content);
     console.log(`Downloaded ${content.length} bytes to ${outPath}`);
     return;
@@ -677,8 +677,8 @@ async function cmdTeams(args) {
       console.error('Error: --messages requires a CHAT_ID argument.');
       process.exit(1);
     }
-    // Graph returns HTTP 400 if $select is used on the Teams messages endpoint — pass $top only.
-    const data = await graphGet(`/me/chats/${args.messages}/messages`, token, { $top: limit, $expand: 'hostedContents' });
+    // Graph returns HTTP 400 if $select or $expand is used on the Teams messages endpoint — pass $top only.
+    const data = await graphGet(`/me/chats/${args.messages}/messages`, token, { $top: limit });
     const msgs = data.value || [];
     if (args.json) { console.log(JSON.stringify(msgs, null, 2)); return; }
 
@@ -705,7 +705,16 @@ async function cmdTeams(args) {
         }
       }
 
-      const hostedContents = m.hostedContents || [];
+      // hostedContents is not returned by the list endpoint; extract IDs from <img src> in body HTML
+      let hostedContents = m.hostedContents || [];
+      if (hostedContents.length === 0 && m.body?.content) {
+        const imgRe = /hostedContents\/([^/$"'\s]+)/g;
+        let match;
+        const seen = new Set();
+        while ((match = imgRe.exec(m.body.content)) !== null) {
+          if (!seen.has(match[1])) { seen.add(match[1]); hostedContents.push({ id: match[1] }); }
+        }
+      }
       for (const hc of hostedContents) {
         const contentId = hc['@microsoft.graph.temporaryId'] || hc.id;
         if (!contentId) continue;
@@ -719,8 +728,8 @@ async function cmdTeams(args) {
         }
         try {
           const endpoint = `/me/chats/${args.messages}/messages/${m.id}/hostedContents/${contentId}/$value`;
-          const buf = await graphDownload(endpoint, token);
-          const contentType = stripAnsi(hc.contentType || 'application/octet-stream');
+          const { buf, contentType: rawCt } = await graphDownload(endpoint, token);
+          const contentType = stripAnsi(rawCt || hc.contentType || 'application/octet-stream');
           const ext = contentType.includes('png') ? 'png'
             : contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg'
             : contentType.includes('gif') ? 'gif'
@@ -933,7 +942,7 @@ async function cmdOnedrive(args) {
 
   if (args.download) {
     const outPath = args.output || `download_${args.download.slice(0, 8)}`;
-    const content = await graphDownload(`/me/drive/items/${args.download}/content`, token);
+    const { buf: content } = await graphDownload(`/me/drive/items/${args.download}/content`, token);
     fs.writeFileSync(outPath, content);
     console.log(`Downloaded ${fmtSize(content.length)} to ${outPath}`);
     return;
