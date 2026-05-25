@@ -120,6 +120,11 @@ function graphDownload(endpoint, token) {
       https.get({ hostname: u.hostname, path: u.pathname + u.search, headers }, res => {
         if (res.statusCode === 301 || res.statusCode === 302) {
           res.resume();
+          const redirectUrl = new URL(res.headers.location);
+          if (redirectUrl.hostname !== 'graph.microsoft.com') {
+            reject(new Error(`Redirect to untrusted host: ${redirectUrl.hostname}`));
+            return;
+          }
           fetch(res.headers.location, null).then(resolve, reject);
           return;
         }
@@ -697,6 +702,10 @@ async function cmdTeams(args) {
       for (const hc of hostedContents) {
         const contentId = hc['@microsoft.graph.temporaryId'] || hc.id;
         if (!contentId) continue;
+        if (!/^[\w\-]+$/.test(contentId)) {
+          console.log(`  [inline image] skipped: unsafe contentId`);
+          continue;
+        }
         try {
           const endpoint = `/me/chats/${args.messages}/messages/${m.id}/hostedContents/${contentId}/$value`;
           const buf = await graphDownload(endpoint, token);
@@ -706,7 +715,7 @@ async function cmdTeams(args) {
             : contentType.includes('gif') ? 'gif'
             : contentType.includes('webp') ? 'webp'
             : 'bin';
-          const filename = `${m.id.slice(-8)}_${contentId.slice(-8)}.${ext}`;
+          const filename = `${m.id.slice(-8)}_${contentId.slice(-8)}.${ext}`.replace(/[/\\]/g, '_');
           if (saveDir) {
             const outPath = path.join(saveDir, filename);
             fs.writeFileSync(outPath, buf);
