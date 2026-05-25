@@ -664,7 +664,7 @@ async function cmdTeams(args) {
 
   if (args.messages) {
     // Graph returns HTTP 400 if $select is used on the Teams messages endpoint — pass $top only.
-    const data = await graphGet(`/me/chats/${args.messages}/messages`, token, { $top: limit });
+    const data = await graphGet(`/me/chats/${args.messages}/messages`, token, { $top: limit, $expand: 'hostedContents' });
     const msgs = data.value || [];
     if (args.json) { console.log(JSON.stringify(msgs, null, 2)); return; }
 
@@ -694,8 +694,8 @@ async function cmdTeams(args) {
         const contentId = hc['@microsoft.graph.temporaryId'] || hc.id;
         if (!contentId) continue;
         try {
-          const url = `${GRAPH_BASE}/me/chats/${args.messages}/messages/${m.id}/hostedContents/${contentId}/$value`;
-          const res = await httpsRequest(url, { headers: { Authorization: `Bearer ${token}` } });
+          const endpoint = `/me/chats/${args.messages}/messages/${m.id}/hostedContents/${contentId}/$value`;
+          const buf = await graphDownload(endpoint, token);
           const contentType = hc.contentType || 'application/octet-stream';
           const ext = contentType.includes('png') ? 'png'
             : contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg'
@@ -705,10 +705,10 @@ async function cmdTeams(args) {
           const filename = `${m.id.slice(-8)}_${contentId.slice(-8)}.${ext}`;
           if (saveDir) {
             const outPath = path.join(saveDir, filename);
-            fs.writeFileSync(outPath, Buffer.from(res.body, 'binary'));
+            fs.writeFileSync(outPath, buf);
             console.log(`  [image saved] ${outPath}`);
           } else {
-            console.log(`  [inline image] ${filename} (${contentType}, ${res.body.length} bytes) — use --save-images DIR to save`);
+            console.log(`  [inline image] ${filename} (${contentType}, ${buf.length} bytes) — use --save-images DIR to save`);
           }
         } catch (e) {
           console.log(`  [inline image] could not fetch content: ${e.message}`);
@@ -1205,7 +1205,7 @@ async function cmdOnenote(args) {
 // ── CLI Parser ────────────────────────────────────────────────────────────────
 function parseArgs(argv) {
   const BOOL = new Set(['json','unread','sites','chats','teamsList','contacts',
-    'manager','reports','availability','notebooks','list','messages','vtt','help','force']);
+    'manager','reports','availability','notebooks','list','vtt','help','force']);
   const args = { _: [] };
   let i = 0;
   while (i < argv.length) {
