@@ -663,6 +663,10 @@ async function cmdTeams(args) {
   }
 
   if (args.messages) {
+    if (typeof args.messages !== 'string' || !args.messages) {
+      console.error('Error: --messages requires a CHAT_ID argument.');
+      process.exit(1);
+    }
     // Graph returns HTTP 400 if $select is used on the Teams messages endpoint — pass $top only.
     const data = await graphGet(`/me/chats/${args.messages}/messages`, token, { $top: limit, $expand: 'hostedContents' });
     const msgs = data.value || [];
