@@ -1,5 +1,15 @@
 import { logger } from '../../../utils/logger.js';
 
+async function loadProjectFromConfig(): Promise<string | undefined> {
+  try {
+    const { ConfigLoader } = await import('../../../utils/config.js');
+    const config = await ConfigLoader.load(process.cwd());
+    return config.codeMieProject;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Ensure session metadata file exists for SessionSyncer.
  * Creates a new session file in ~/.codemie/sessions/ if one doesn't already exist.
@@ -25,7 +35,7 @@ export async function ensureSessionFile(
 
     const agentName = env.CODEMIE_AGENT || defaultAgentName;
     const provider = env.CODEMIE_PROVIDER || 'unknown';
-    const project = env.CODEMIE_PROJECT;
+    const project = env.CODEMIE_PROJECT ?? await loadProjectFromConfig();
     const workingDirectory = process.cwd();
 
     let gitBranch: string | undefined;

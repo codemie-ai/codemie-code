@@ -92,6 +92,19 @@ export class DesktopTelemetryRuntime {
     }
   }
 
+  private async resolveProject(workingDirectory: string): Promise<string | undefined> {
+    if (this.config.project) {
+      return this.config.project;
+    }
+    try {
+      const { ConfigLoader } = await import('@/utils/config.js');
+      const config = await ConfigLoader.load(workingDirectory);
+      return config.codeMieProject;
+    } catch {
+      return undefined;
+    }
+  }
+
   private async ensureSession(discovered: LocalTelemetryDiscoveredSession): Promise<Session> {
     const existing = await this.sessionStore.findSessionByExternalId(
       this.config.clientType,
@@ -108,9 +121,10 @@ export class DesktopTelemetryRuntime {
       return existing;
     }
 
-    const [gitBranch, repository] = await Promise.all([
+    const [gitBranch, repository, project] = await Promise.all([
       detectGitBranch(discovered.workingDirectory),
-      detectGitRemoteRepo(discovered.workingDirectory)
+      detectGitRemoteRepo(discovered.workingDirectory),
+      this.resolveProject(discovered.workingDirectory)
     ]);
 
     const session: Session = {
@@ -121,6 +135,7 @@ export class DesktopTelemetryRuntime {
       workingDirectory: discovered.workingDirectory,
       gitBranch: gitBranch || undefined,
       repository: repository || undefined,
+      ...(project && { project }),
       status: 'active',
       activeDurationMs: 0,
       correlation: {
@@ -261,6 +276,7 @@ export class DesktopTelemetryRuntime {
         sessionId: discovered.agentSessionId,
         agentName: this.config.clientType,
         provider: this.config.provider,
+        project: session.project,
         startTime: session.startTime,
         workingDirectory: session.workingDirectory,
         model: discovered.model
@@ -290,6 +306,7 @@ export class DesktopTelemetryRuntime {
         sessionId: session.correlation.agentSessionId || session.sessionId,
         agentName: this.config.clientType,
         provider: this.config.provider,
+        project: session.project,
         startTime: session.startTime,
         workingDirectory: session.workingDirectory
       },

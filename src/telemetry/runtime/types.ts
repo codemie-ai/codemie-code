@@ -19,6 +19,7 @@ export interface DesktopTelemetryRuntimeConfig {
   provider: string;
   version: string;
   profile?: string;
+  project?: string;
   syncApiUrl?: string;
   syncCodeMieUrl?: string;
   pollIntervalMs: number;
