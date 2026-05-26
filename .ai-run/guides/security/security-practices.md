@@ -38,13 +38,13 @@ await store.storeSSOCredentials({
   accessToken: 'token',
   refreshToken: 'refresh',
   expiresAt: Date.now() + 3600000
-}, 'https://api.example.com');
+}, 'https://api.codemie.ai');
 
 // Retrieve credentials
-const creds = await store.retrieveSSOCredentials('https://api.example.com');
+const creds = await store.retrieveSSOCredentials('https://api.codemie.ai');
 
 // Delete credentials
-await store.deleteSSOCredentials('https://api.example.com');
+await store.deleteSSOCredentials('https://api.codemie.ai');
 ```
 
 **Storage Method**:
@@ -86,13 +86,13 @@ const safeValue = sanitizeValue(sensitiveData, 'apiKey');
 **Masking Strategy**:
 ```typescript
 // Long values: Show first/last 4 chars
-'sk-ant-abc...xyz [REDACTED]'
+'sk-ant-abc...xyz REDACTED'
 
 // Short values: Complete redaction
-'[REDACTED]'
+'REDACTED'
 
 // Objects: Recursive sanitization
-{ apiKey: '[REDACTED]', data: { nested: 'value' } }
+{ apiKey: 'REDACTED', data: { nested: 'value' } }
 ```
 
 ---
@@ -102,8 +102,9 @@ const safeValue = sanitizeValue(sensitiveData, 'apiKey');
 ### Path Security
 
 ```typescript
-// Source: src/agents/codemie-code/tools/path-security.test.ts:10-30
-import { isPathWithinDirectory, validatePathDepth } from './utils/paths.js';
+// Source: src/utils/paths.ts:226-230 and src/utils/__tests__/paths.test.ts:126-190
+import path from 'node:path';
+import { isPathWithinDirectory } from './utils/paths.js';
 import { PathSecurityError } from './utils/errors.js';
 
 // Validate path is within working directory
@@ -117,13 +118,7 @@ function validateFilePath(filePath: string, workingDir: string): void {
     );
   }
 
-  // Check depth to prevent deeply nested paths
-  if (!validatePathDepth(resolved, workingDir, 10)) {
-    throw new PathSecurityError(
-      filePath,
-      'Path depth exceeds limit'
-    );
-  }
+  // Apply caller-specific depth or structure checks separately when needed.
 }
 ```
 
@@ -167,23 +162,14 @@ CODEMIE_DEBUG=true                     # Debug logging
 ### Validating Secrets at Startup
 
 ```typescript
-// Source: src/env/config-loader.ts:80-100
-export class ConfigLoader {
-  static async load(workingDir: string): Promise<Config> {
-    // Load from environment
-    const apiKey = process.env.ANTHROPIC_API_KEY
-                || process.env.OPENAI_API_KEY
-                || process.env.GOOGLE_AI_API_KEY;
+// Source: src/utils/config.ts:44-47 and src/utils/config.ts:77-123
+const config = await ConfigLoader.load(process.cwd(), {
+  name: 'work',
+  provider: 'openai'
+});
 
-    if (!apiKey && config.profile.provider.type !== 'sso') {
-      throw new ConfigurationError(
-        'No API key found. Set ANTHROPIC_API_KEY, OPENAI_API_KEY, or GOOGLE_AI_API_KEY'
-      );
-    }
-
-    return config;
-  }
-}
+// ConfigLoader applies environment variables only after global and project config,
+// then lets explicit CLI overrides win.
 ```
 
 ---
@@ -298,6 +284,27 @@ npm run validate:secrets
 
 ---
 
+## Plugin Boundary Security
+
+Security-sensitive behavior is implemented at plugin and hook boundaries so agents stay loosely coupled and integrations remain auditable.
+
+| Boundary | Security Rule | Evidence |
+|---|---|---|
+| Lifecycle hooks | Do not let best-effort analytics failures block agent execution | `src/cli/commands/hook.ts:366`, `src/cli/commands/hook.ts:693` |
+| Proxy plugins | Put request mutation, auth, logging, and blocking behind interceptors | `src/providers/plugins/sso/proxy/plugins/types.ts:18` |
+| MCP auth relay | Reject private, loopback, and link-local targets | `src/providers/plugins/sso/proxy/plugins/mcp-auth.plugin.ts:119` |
+| Request logs | Sanitize headers and encrypted content before logging or forwarding | `src/utils/security.ts:168`, `src/providers/plugins/sso/proxy/plugins/codex-encrypted-content-sanitizer.plugin.ts:26` |
+| Credentials | Use `CredentialStore`; do not store SSO cookies in plugin code | `src/utils/security.ts:288`, `src/providers/plugins/sso/sso.auth.ts:93` |
+
+| Avoid | Prefer |
+|---|---|
+| Adding auth logic directly to a single agent plugin | Auth plugin or provider hook |
+| Logging hook payloads without considering transcript and token content | Sanitized debug logs with context |
+| Rewriting MCP URLs without origin validation | MCP auth plugin origin checks |
+| Sharing credential state across unrelated providers | Per-provider credential lookup and explicit config |
+
+---
+
 ## Security Utilities Reference
 
 | Function | Purpose | Source |
@@ -307,8 +314,8 @@ npm run validate:secrets
 | `sanitizeHeaders()` | Redact HTTP headers | src/utils/security.ts:150 |
 | `sanitizeCookies()` | Redact cookies | src/utils/security.ts:170 |
 | `CredentialStore` | Secure credential storage | src/utils/security.ts:200 |
-| `isPathWithinDirectory()` | Validate path safety | src/utils/paths.ts:40 |
-| `validatePathDepth()` | Check path depth | src/utils/paths.ts:60 |
+| `isPathWithinDirectory()` | Validate path safety | src/utils/paths.ts:226 |
+| `validatePathDepth()` | Check path depth | src/utils/paths.ts:183 |
 
 ---
 
@@ -317,7 +324,7 @@ npm run validate:secrets
 - **Security Utils**: `src/utils/security.ts`
 - **Path Validation**: `src/utils/paths.ts`
 - **Error Classes**: `src/utils/errors.ts` (PathSecurityError)
-- **Config Validation**: `src/env/config-loader.ts`
+- **Config Validation**: `src/utils/config.ts`
 - **OWASP Top 10**: https://owasp.org/www-project-top-ten/
 
 ---
