@@ -21,7 +21,7 @@ import {
   emitFailed,
   startSkillMetric,
 } from './lib/skills-metrics.js';
-import { parseSkillNamesFromSkillsTelemetry } from './lib/skills-sh-telemetry.js';
+import { parseSkillsTelemetry } from './lib/skills-sh-telemetry.js';
 
 interface AddOptions {
   global?: boolean;
@@ -64,7 +64,7 @@ export function createAddCommand(): Command {
       }
 
       const scope = options.global ? 'global' : 'project';
-      const sanitizedSource = sanitizeSource(source);
+      const sanitizedSource = sanitizeSource(resolveGitHubShorthandSource(source));
       const requestedSkillNames = options.skill?.includes('*')
         ? undefined
         : capList(options.skill);
@@ -90,17 +90,19 @@ export function createAddCommand(): Command {
         });
 
         if (result.code === 0) {
-          const metricSkillNames =
-            requestedSkillNames ??
-            parseSkillNamesFromSkillsTelemetry(result.stderr, 'install');
+          const telemetry = parseSkillsTelemetry(result.stderr, 'install');
+          const metricSkillNames = requestedSkillNames ?? telemetry.skillNames;
           const metricSkillCount = metricSkillNames?.length;
+          const effectiveTargetAgents = targetAgents ?? telemetry.agents;
+          const effectiveSelectionMode =
+            selectionMode ?? (telemetry.agents ? 'upstream' : undefined);
           await emitCompleted(metric, {
             scope,
             source: sanitizedSource,
             skill_names: metricSkillNames,
             skill_count: metricSkillCount,
-            target_agents: targetAgents,
-            agent_selection_mode: selectionMode,
+            target_agents: effectiveTargetAgents,
+            agent_selection_mode: effectiveSelectionMode,
           });
           return;
         }
@@ -109,13 +111,15 @@ export function createAddCommand(): Command {
         if (shouldShowGitAccessHelp(source, errorCode)) {
           process.stderr.write(formatGitAccessHelp(sanitizedSource, errorCode));
         }
+        const failedTelemetry = parseSkillsTelemetry(result.stderr, 'install');
         await emitFailed(metric, {
           scope,
           source: sanitizedSource,
-          skill_names: requestedSkillNames,
+          skill_names: requestedSkillNames ?? failedTelemetry.skillNames,
           skill_count: requestedSkillCount,
-          target_agents: targetAgents,
-          agent_selection_mode: selectionMode,
+          target_agents: targetAgents ?? failedTelemetry.agents,
+          agent_selection_mode:
+            selectionMode ?? (failedTelemetry.agents ? 'upstream' : undefined),
           error_code: errorCode,
         });
         process.exit(result.code || 1);
@@ -168,6 +172,23 @@ function shouldShowGitAccessHelp(source: string, errorCode: string): boolean {
     errorCode === 'git_fetch_timeout' ||
     isGitSource(source)
   );
+}
+
+/**
+ * Expand GitHub shorthand `owner/repo` to a canonical HTTPS URL so the
+ * metrics `source` field is unambiguous. Mirrors skills.sh's own shorthand
+ * detection: no colon (excludes URLs), no leading dot or slash (excludes
+ * local paths), matches `owner/repo` pattern.
+ */
+function resolveGitHubShorthandSource(source: string): string {
+  if (!source.includes(':') && !source.startsWith('.') && !source.startsWith('/')) {
+    const match = source.match(/^([^/:@\s]+)\/([^/:@\s]+)/);
+    if (match) {
+      const [, owner, repo] = match;
+      return `https://github.com/${owner}/${repo!.replace(/\.git$/, '')}`;
+    }
+  }
+  return source;
 }
 
 function isGitSource(source: string): boolean {

@@ -22,7 +22,7 @@ describe('Doctor Command', () => {
   beforeAll(() => {
     // Execute once, validate many times
     doctorResult = cli.runSilent('doctor');
-  }, 60000); // 60s timeout for Windows (doctor checks multiple tools)
+  }, 120000); // 120s timeout for slower Windows CI runs (observed ~70s on GitHub Actions)
 
   it('should run system diagnostics', () => {
     // Should include system check header (even if some checks fail)

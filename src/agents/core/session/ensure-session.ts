@@ -28,16 +28,21 @@ export async function ensureSessionFile(
     const project = env.CODEMIE_PROJECT;
     const workingDirectory = process.cwd();
 
-    let gitBranch: string | undefined;
-    let remoteRepository: string | undefined;
-    try {
-      const { detectGitBranch, detectGitRemoteRepo } = await import('../../../utils/processes.js');
-      [gitBranch, remoteRepository] = await Promise.all([
-        detectGitBranch(workingDirectory),
-        detectGitRemoteRepo(workingDirectory),
-      ]);
-    } catch {
-      // Git detection optional
+    // Prefer values already resolved by BaseAgentAdapter (set in env before spawning the agent).
+    // Independent re-detection can diverge from the proxy's CODEMIE_REPOSITORY value, causing
+    // CLI_SESSION_TOTAL and CLI_LLM_USAGE_TOTAL to land in different ES repository buckets.
+    const gitBranch: string | undefined = env.CODEMIE_GIT_BRANCH || undefined;
+    const envRepository = env.CODEMIE_REPOSITORY;
+    let remoteRepository: string | undefined =
+      envRepository && envRepository !== 'unknown' ? envRepository : undefined;
+
+    if (!remoteRepository) {
+      try {
+        const { detectGitRemoteRepo } = await import('../../../utils/processes.js');
+        remoteRepository = await detectGitRemoteRepo(workingDirectory);
+      } catch {
+        // Git detection optional
+      }
     }
 
     // Estimate startTime from grace period (session ended ~2 seconds ago during grace period)

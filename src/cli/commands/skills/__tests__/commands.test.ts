@@ -304,6 +304,138 @@ describe('codemie skills add', () => {
     });
   });
 
+  describe('GitHub shorthand source expansion (Bug 1)', () => {
+    it('expands owner/repo shorthand to canonical GitHub URL in metric source', async () => {
+      await parse(['add', 'owner/repo', '-y']);
+      const [, attrs] = mockEmitCompleted.mock.calls[0]!;
+      expect(attrs.source).toBe('https://github.com/owner/repo');
+    });
+
+    it('strips .git suffix when expanding owner/repo.git shorthand in metric source', async () => {
+      await parse(['add', 'owner/repo.git', '-y']);
+      const [, attrs] = mockEmitCompleted.mock.calls[0]!;
+      expect(attrs.source).toBe('https://github.com/owner/repo');
+    });
+
+    it('does not expand full HTTPS URLs in metric source', async () => {
+      await parse(['add', 'https://gitbud.epam.com/epm/repo', '-y']);
+      const [, attrs] = mockEmitCompleted.mock.calls[0]!;
+      expect(attrs.source).toBe('https://gitbud.epam.com/epm/repo');
+    });
+
+    it('does not expand local path sources in metric source', async () => {
+      await parse(['add', './local/path', '-y']);
+      const [, attrs] = mockEmitCompleted.mock.calls[0]!;
+      expect(attrs.source).toBe('./local/path');
+    });
+
+    it('passes owner/repo shorthand unchanged to upstream args', async () => {
+      const platformSpy = vi.spyOn(os, 'platform').mockReturnValue('linux' as NodeJS.Platform);
+      try {
+        await parse(['add', 'owner/repo', '-y']);
+        const [args] = mockRunSkillsCli.mock.calls[0]!;
+        expect(args[1]).toBe('owner/repo');
+      } finally {
+        platformSpy.mockRestore();
+      }
+    });
+  });
+
+  describe('agents from skills.sh telemetry (Bug 3)', () => {
+    it('uses agents from telemetry as target_agents when wrapper is in upstream mode', async () => {
+      mockRunSkillsCli.mockResolvedValueOnce({
+        code: 0,
+        stdout: '',
+        stderr:
+          'CODEMIE_SKILLS_SH_TELEMETRY {"event":"install","skills":"qa-gates","agents":"claude-code,cursor"}',
+        signal: null,
+      });
+
+      await parse(['add', 'owner/repo', '-y']);
+
+      const [, attrs] = mockEmitCompleted.mock.calls[0]!;
+      expect(attrs.target_agents).toEqual(['claude-code', 'cursor']);
+      expect(attrs.agent_selection_mode).toBe('upstream');
+      expect(attrs.skill_names).toEqual(['qa-gates']);
+    });
+
+    it('prefers wrapper-resolved agents over telemetry agents when wrapper owns the selection', async () => {
+      mkdirSync(path.join(workspace, '.claude'));
+      mockRunSkillsCli.mockResolvedValueOnce({
+        code: 0,
+        stdout: '',
+        stderr:
+          'CODEMIE_SKILLS_SH_TELEMETRY {"event":"install","skills":"foo","agents":"cursor"}',
+        signal: null,
+      });
+
+      await parse(['add', 'owner/repo', '-y']);
+
+      const [, attrs] = mockEmitCompleted.mock.calls[0]!;
+      expect(attrs.target_agents).toEqual(['claude-code']);
+      expect(attrs.agent_selection_mode).toBe('auto_detected');
+    });
+
+    it('leaves target_agents and selection_mode undefined when neither wrapper nor telemetry know agents', async () => {
+      await parse(['add', 'owner/repo', '-y']);
+      const [, attrs] = mockEmitCompleted.mock.calls[0]!;
+      expect(attrs.target_agents).toBeUndefined();
+      expect(attrs.agent_selection_mode).toBeUndefined();
+    });
+  });
+
+  describe('skill names and agents from telemetry on failure (Bug 2)', () => {
+    it('recovers skill names from telemetry when no --skill flag was given and upstream exits non-zero', async () => {
+      mockRunSkillsCli.mockResolvedValueOnce({
+        code: 1,
+        stdout: '',
+        stderr:
+          'CODEMIE_SKILLS_SH_TELEMETRY {"event":"install","skills":"qa-gates","agents":"claude-code"}',
+        signal: null,
+      });
+
+      await expect(parse(['add', 'owner/repo', '-y'])).rejects.toThrow(/__EXIT__:/);
+
+      expect(mockEmitFailed.mock.calls.length).toBeGreaterThanOrEqual(1);
+      const [, attrs] = mockEmitFailed.mock.calls[0]!;
+      expect(attrs.skill_names).toEqual(['qa-gates']);
+    });
+
+    it('recovers agents from telemetry on non-zero upstream exit in upstream mode', async () => {
+      mockRunSkillsCli.mockResolvedValueOnce({
+        code: 1,
+        stdout: '',
+        stderr:
+          'CODEMIE_SKILLS_SH_TELEMETRY {"event":"install","skills":"qa-gates","agents":"claude-code"}',
+        signal: null,
+      });
+
+      await expect(parse(['add', 'owner/repo', '-y'])).rejects.toThrow(/__EXIT__:/);
+
+      expect(mockEmitFailed.mock.calls.length).toBeGreaterThanOrEqual(1);
+      const [, attrs] = mockEmitFailed.mock.calls[0]!;
+      expect(attrs.target_agents).toEqual(['claude-code']);
+      expect(attrs.agent_selection_mode).toBe('upstream');
+    });
+
+    it('uses explicit --skill names over telemetry skill names in failed metric', async () => {
+      mockRunSkillsCli.mockResolvedValueOnce({
+        code: 1,
+        stdout: '',
+        stderr:
+          'CODEMIE_SKILLS_SH_TELEMETRY {"event":"install","skills":"other-skill","agents":"claude-code"}',
+        signal: null,
+      });
+
+      await expect(parse(['add', 'owner/repo', '--skill', 'explicit-skill', '-y'])).rejects.toThrow(
+        /__EXIT__:/
+      );
+
+      const [, attrs] = mockEmitFailed.mock.calls[0]!;
+      expect(attrs.skill_names).toEqual(['explicit-skill']);
+    });
+  });
+
   it('forwards --skill list to upstream args (spec §8.3 fan-out source)', async () => {
     await parse(['add', 'owner/repo', '--skill', 'a', 'b', 'c', '-y']);
     const [args] = mockRunSkillsCli.mock.calls[0]!;
