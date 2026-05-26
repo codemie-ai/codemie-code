@@ -9,8 +9,6 @@ import { registerCodexSkill, unregisterCodexSkill } from '@/cli/commands/skills/
 import { registerGeminiSkill, unregisterGeminiSkill } from '@/cli/commands/skills/setup/generators/gemini-skill-generator.js';
 import { executeWithSpinner, determineChanges as _determineChanges } from '@/cli/commands/shared/helpers.js';
 import {
-  formatAgentInvocation,
-  formatAgentSetupTarget,
   targetsClaude,
   targetsCodex,
   targetsGemini,
