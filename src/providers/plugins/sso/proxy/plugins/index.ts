@@ -28,7 +28,7 @@ export function registerCorePlugins(): void {
   // Register in any order (priority determines execution order)
   registry.register(new MCPAuthPlugin()); // Priority 3 - MCP auth relay routing
   registry.register(new EndpointBlockerPlugin()); // Priority 5 - blocks unwanted endpoints early
-  registry.register(new GatewayKeyPlugin()); // Priority 7 - validates local gateway auth, strips header before upstream
+registry.register(new GatewayKeyPlugin()); // Priority 7 - validates local gateway auth, strips header before upstream
   registry.register(new SSOAuthPlugin());
   registry.register(new JWTAuthPlugin());
   registry.register(new ClaudeRequestNormalizerPlugin()); // Priority 14 - normalizes thinking params for claude models

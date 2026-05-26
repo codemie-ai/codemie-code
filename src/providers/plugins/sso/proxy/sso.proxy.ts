@@ -249,10 +249,12 @@ export class CodeMieProxy {
 
       // 2.5. Check if request was blocked by any interceptor
       if (context.metadata.blocked) {
-        // Request blocked - return 200 OK immediately without forwarding
+        const body = typeof context.metadata.blockedResponseBody === 'string'
+          ? context.metadata.blockedResponseBody
+          : JSON.stringify({ success: true });
         res.statusCode = 200;
         res.setHeader('Content-Type', 'application/json');
-        res.end(JSON.stringify({ success: true }));
+        res.end(body);
         logger.debug(`[proxy] Request blocked: ${context.url}`);
         return;
       }
