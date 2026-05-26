@@ -120,12 +120,18 @@ function graphDownload(endpoint, token) {
       https.get({ hostname: u.hostname, path: u.pathname + u.search, headers }, res => {
         if (res.statusCode === 301 || res.statusCode === 302) {
           res.resume();
-          fetch(res.headers.location, null).then(resolve, reject);
+          const location = res.headers.location;
+          if (!location) { reject(new Error('Redirect with no Location header')); return; }
+          let redirectUrl;
+          try { redirectUrl = new URL(location, `https://${u.hostname}`); } catch { reject(new Error(`Invalid redirect URL: ${location}`)); return; }
+          const trusted = /(?:^|\.)(?:microsoft\.com|sharepoint\.com|blob\.core\.windows\.net|1drv\.com|onedrive\.live\.com)$/.test(redirectUrl.hostname);
+          if (!trusted) { reject(new Error(`Redirect to untrusted host: ${redirectUrl.hostname}`)); return; }
+          fetch(redirectUrl.href, null).then(resolve, reject);
           return;
         }
         const chunks = [];
         res.on('data', c => chunks.push(c));
-        res.on('end',  () => resolve(Buffer.concat(chunks)));
+        res.on('end',  () => resolve({ buf: Buffer.concat(chunks), contentType: res.headers['content-type'] || '' }));
         res.on('error', reject);
       }).on('error', reject);
     });
@@ -359,6 +365,10 @@ function stripHtml(s) {
       .replace(/&gt;/g, '>')
       .replace(/\r?\n\s*\r?\n/g, '\n')
       .trim();
+}
+
+function stripAnsi(s) {
+  return (s || '').replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, '');
 }
 
 function pad(str, len) {
@@ -603,7 +613,7 @@ async function cmdSharepoint(args) {
 
   if (args.download) {
     const outPath = args.output || `downloaded_${args.download.slice(0, 8)}`;
-    const content = await graphDownload(`/me/drive/items/${args.download}/content`, token);
+    const { buf: content } = await graphDownload(`/me/drive/items/${args.download}/content`, token);
     fs.writeFileSync(outPath, content);
     console.log(`Downloaded ${content.length} bytes to ${outPath}`);
     return;
@@ -662,17 +672,81 @@ async function cmdTeams(args) {
     return;
   }
 
-  if (args.messages) {
-    // Graph returns HTTP 400 if $select is used on the Teams messages endpoint — pass $top only.
+  if ('messages' in args) {
+    if (typeof args.messages !== 'string' || !args.messages) {
+      console.error('Error: --messages requires a CHAT_ID argument.');
+      process.exit(1);
+    }
+    // Graph returns HTTP 400 if $select or $expand is used on the Teams messages endpoint — pass $top only.
     const data = await graphGet(`/me/chats/${args.messages}/messages`, token, { $top: limit });
     const msgs = data.value || [];
     if (args.json) { console.log(JSON.stringify(msgs, null, 2)); return; }
+
+    const saveDir = args.saveImages ? path.resolve(args.saveImages) : null;
+    if (saveDir && !fs.existsSync(saveDir)) fs.mkdirSync(saveDir, { recursive: true });
+
     console.log(`\nMessages in chat ${args.messages.slice(0, 20)}...:`);
     console.log('─'.repeat(60));
     for (const m of [...msgs].reverse()) {
       const sender = m.from?.user?.displayName || 'System';
-      const body   = stripHtml(m.body?.content || '').slice(0, 200);
+      const body   = stripHtml(m.body?.content || '').slice(0, 500);
       console.log(`[${fmtDt(m.createdDateTime)}] ${sender}: ${body}`);
+
+      const attachments = m.attachments || [];
+      for (const att of attachments) {
+        const name = stripAnsi(att.name || '');
+        const ct   = stripAnsi(att.contentType || '');
+        if (ct === 'reference') {
+          console.log(`  [attachment] ${name || 'file'}: ${stripAnsi(att.contentUrl || att.content || '')}`);
+        } else if (ct && ct.startsWith('image/')) {
+          console.log(`  [image] ${name || 'image'} (${ct})`);
+        } else if (name) {
+          console.log(`  [attachment] ${name} (${ct || 'unknown type'})`);
+        }
+      }
+
+      // hostedContents is not returned by the list endpoint; extract IDs from <img src> in body HTML
+      let hostedContents = m.hostedContents || [];
+      if (hostedContents.length === 0 && m.body?.content) {
+        const imgRe = /hostedContents\/([^/$"'\s]+)/g;
+        let match;
+        const seen = new Set();
+        while ((match = imgRe.exec(m.body.content)) !== null) {
+          if (!seen.has(match[1])) { seen.add(match[1]); hostedContents.push({ id: match[1] }); }
+        }
+      }
+      for (const hc of hostedContents) {
+        const contentId = hc['@microsoft.graph.temporaryId'] || hc.id;
+        if (!contentId) continue;
+        if (!/^[\w\-+=\/]+$/.test(String(contentId))) {
+          console.log(`  [inline image] skipped: unsafe contentId`);
+          continue;
+        }
+        if (!m.id || !/^[\w\-:@.]+$/.test(String(m.id))) {
+          console.log(`  [inline image] skipped: unsafe message id`);
+          continue;
+        }
+        try {
+          const endpoint = `/me/chats/${args.messages}/messages/${m.id}/hostedContents/${contentId}/$value`;
+          const { buf, contentType: rawCt } = await graphDownload(endpoint, token);
+          const contentType = stripAnsi(rawCt || hc.contentType || 'application/octet-stream');
+          const ext = contentType.includes('png') ? 'png'
+            : contentType.includes('jpeg') || contentType.includes('jpg') ? 'jpg'
+            : contentType.includes('gif') ? 'gif'
+            : contentType.includes('webp') ? 'webp'
+            : 'bin';
+          const filename = `${m.id.slice(-8)}_${contentId.slice(-8)}.${ext}`.replace(/[/\\]/g, '_');
+          if (saveDir) {
+            const outPath = path.join(saveDir, filename);
+            fs.writeFileSync(outPath, buf);
+            console.log(`  [image saved] ${outPath}`);
+          } else {
+            console.log(`  [inline image] ${filename} (${contentType}, ${buf.length} bytes) — use --save-images DIR to save`);
+          }
+        } catch (e) {
+          console.log(`  [inline image] could not fetch content: ${e.message}`);
+        }
+      }
     }
     return;
   }
@@ -868,7 +942,7 @@ async function cmdOnedrive(args) {
 
   if (args.download) {
     const outPath = args.output || `download_${args.download.slice(0, 8)}`;
-    const content = await graphDownload(`/me/drive/items/${args.download}/content`, token);
+    const { buf: content } = await graphDownload(`/me/drive/items/${args.download}/content`, token);
     fs.writeFileSync(outPath, content);
     console.log(`Downloaded ${fmtSize(content.length)} to ${outPath}`);
     return;
@@ -1164,7 +1238,7 @@ async function cmdOnenote(args) {
 // ── CLI Parser ────────────────────────────────────────────────────────────────
 function parseArgs(argv) {
   const BOOL = new Set(['json','unread','sites','chats','teamsList','contacts',
-    'manager','reports','availability','notebooks','list','messages','vtt','help','force']);
+    'manager','reports','availability','notebooks','list','vtt','help','force']);
   const args = { _: [] };
   let i = 0;
   while (i < argv.length) {
@@ -1204,7 +1278,7 @@ Data:
            [--create TITLE --start DT --end DT [--location L] [--timezone TZ]]
            [--availability --start DT --end DT]
   sharepoint [--sites] [--site ID [--path P]] [--download ID [--output FILE]] [--json]
-  teams [--chats] [--messages CHAT_ID] [--send MSG --chat-id ID] [--teams-list]
+  teams [--chats] [--messages CHAT_ID [--save-images DIR]] [--send MSG --chat-id ID] [--teams-list]
         [--lookup-user EMAIL] [--dm EMAIL --send MSG] [--json]
   channels --team-id ID --list
            --team-id ID --channel-id ID --messages [--limit N]
