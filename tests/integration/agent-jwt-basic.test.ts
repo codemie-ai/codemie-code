@@ -20,10 +20,10 @@ const CLAUDE_BIN = join(REPO_ROOT, 'bin', 'codemie-claude.js');
 const INCLUDE_JWT_TESTS = process.env.INCLUDE_JWT_TESTS === 'true';
 
 function cleanEnv(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
-  delete env.CODEMIE_SSO_TOKEN;
-  delete env.CODEMIE_JWT_TOKEN;
-  return env;
+  return {
+    PATH: process.env.PATH,
+    NODE_PATH: process.env.NODE_PATH,
+  };
 }
 
 function getLatestSessionFile(sessionsDir: string): Record<string, unknown> {
