@@ -147,6 +147,9 @@ describe.runIf(INCLUDE_JWT_TESTS)('Interactive session tests', () => {
     let chatResult: ReturnType<typeof spawnSync>;
 
     beforeAll(() => {
+      if (!assistantId) {
+        throw new Error('CI_CODEMIE_ASSISTANT_ID must be set when INCLUDE_JWT_TESTS=true');
+      }
       testHome = mkdtempSync(join(tmpdir(), 'codemie-asst-chat-'));
       writeJwtProfile(testHome, { jwtToken });
       chatResult = spawnSync(

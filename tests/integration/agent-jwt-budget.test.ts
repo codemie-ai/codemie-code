@@ -20,6 +20,7 @@ const REPO_ROOT = resolve(__dirname, '..', '..');
 const CLAUDE_BIN = join(REPO_ROOT, 'bin', 'codemie-claude.js');
 const INCLUDE_JWT_TESTS = process.env.INCLUDE_JWT_TESTS === 'true';
 const PROJECT = process.env.CI_CODEMIE_PROJECT_ALL_BUDGETS ?? '';
+const INCLUDE_BUDGET_TESTS = INCLUDE_JWT_TESTS && !!process.env.CI_CODEMIE_PROJECT_ALL_BUDGETS;
 
 // Minimal env to prevent credential leakage to subprocesses
 function cleanEnv(): NodeJS.ProcessEnv {
@@ -50,7 +51,7 @@ function writeBudgetProfile(codemieHome: string, jwtToken: string): void {
   writeFileSync(join(codemieHome, 'codemie-cli.config.json'), JSON.stringify(config, null, 2), 'utf-8');
 }
 
-describe.runIf(INCLUDE_JWT_TESTS)('Budget / Project tests (TC-027, TC-028)', () => {
+describe.runIf(INCLUDE_BUDGET_TESTS)('Budget / Project tests (TC-027, TC-028)', () => {
   let jwtToken: string;
 
   beforeAll(async () => {
