@@ -16,6 +16,9 @@ describe.runIf(INCLUDE_JWT_TESTS)('Assistants — list (TC-014)', () => {
   let listResult: SpawnSyncReturns<string>;
 
   beforeAll(async () => {
+    if (!process.env.CI_CODEMIE_ASSISTANT_ID) {
+      throw new Error('CI_CODEMIE_ASSISTANT_ID must be set when INCLUDE_JWT_TESTS=true');
+    }
     fakeHome = mkdtempSync(join(tmpdir(), 'codemie-asst-home-'));
     testHome = join(fakeHome, '.codemie');
 
