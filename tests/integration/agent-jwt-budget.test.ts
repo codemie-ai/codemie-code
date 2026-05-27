@@ -108,7 +108,7 @@ describe.runIf(INCLUDE_JWT_TESTS)('Budget / Project tests (TC-027, TC-028)', () 
     afterAll(() => rmSync(testHome, { recursive: true, force: true }));
 
     it('agent exits 0 and writes a session file', () => {
-      expect(agentResult.status).toBe(0);
+      expect(agentResult.status, (agentResult.stdout ?? '') + (agentResult.stderr ?? '')).toBe(0);
       const files = readdirSync(join(testHome, 'sessions')).filter((f) => f.endsWith('.json'));
       expect(files.length).toBeGreaterThan(0);
     });
