@@ -30,7 +30,8 @@ describe.runIf(INCLUDE_JWT_TESTS)('codemie models list (TC-022)', () => {
     expect(listResult.status).toBe(0);
   });
 
-  it('output contains at least one known model name', () => {
-    expect(listResult.stdout + listResult.stderr).toMatch(/claude|gpt|gemini/i);
+  it('output contains the expected model name', () => {
+    const out = listResult.stdout + (listResult.stderr ?? '');
+    expect(out).toMatch(new RegExp(process.env.CI_CODEMIE_MODEL ?? 'claude', 'i'));
   });
 });
