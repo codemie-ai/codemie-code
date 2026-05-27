@@ -1,6 +1,6 @@
 {
   "name": "@codemieai/code",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Unified AI coding assistant CLI - Manage Claude Code, Gemini & custom agents. Multi-provider support (OpenAI, Azure, LiteLLM, SSO). Built-in LangGraph agent with file operations & git integration.",
   "type": "module",
   "main": "dist/index.js",
@@ -25,6 +25,7 @@
     "LICENSE"
   ],
   "scripts": {
+    "postinstall": "node scripts/postinstall.mjs",
     "build": "tsc && tsc-alias && npm run copy-plugin",
     "copy-plugin": "node scripts/copy-plugins.js",
     "prepare:install-artifacts": "node scripts/prepare-install-artifacts.mjs",
@@ -32,6 +33,7 @@
     "test": "vitest",
     "test:unit": "vitest run src",
     "test:integration": "vitest run tests/integration",
+    "test:e2e": "vitest run tests/e2e",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest --watch",
     "test:ui": "vitest --ui",
@@ -45,7 +47,7 @@
     "commitlint:last": "commitlint --from HEAD~1 --to HEAD --verbose",
     "validate:secrets": "node scripts/validate-secrets.js",
     "license-check": "node scripts/license-check.js",
-    "ci": "npm run license-check && npm run lint && npm run build && npm run test:unit && npm run test:integration",
+    "ci": "npm run license-check && npm run lint && npm run build && npm run test:unit && npm run test:integration && npm run test:e2e",
     "ci:full": "npm run commitlint:last && npm run ci",
     "prepare": "husky",
     "prepublishOnly": "npm run build",

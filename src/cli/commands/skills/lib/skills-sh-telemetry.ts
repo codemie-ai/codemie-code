@@ -14,13 +14,20 @@ export const SKILLS_SH_TELEMETRY_MARKER = 'CODEMIE_SKILLS_SH_TELEMETRY';
 interface SkillsTelemetryPayload {
   event?: string;
   skills?: string;
+  agents?: string;
 }
 
-export function parseSkillNamesFromSkillsTelemetry(
+export interface ParsedSkillsTelemetry {
+  skillNames: string[] | undefined;
+  agents: string[] | undefined;
+}
+
+export function parseSkillsTelemetry(
   stderr: string,
   event: string
-): string[] | undefined {
+): ParsedSkillsTelemetry {
   const skillNames: string[] = [];
+  const agentNames: string[] = [];
   const lines = stderr
     .split(/\r?\n/)
     .filter((line) => line.startsWith(`${SKILLS_SH_TELEMETRY_MARKER} `));
@@ -29,10 +36,25 @@ export function parseSkillNamesFromSkillsTelemetry(
     const rawPayload = line.slice(SKILLS_SH_TELEMETRY_MARKER.length + 1);
     try {
       const payload = JSON.parse(rawPayload) as SkillsTelemetryPayload;
-      if (payload.event !== event || !payload.skills) {
+      if (payload.event !== event) {
         continue;
       }
-      skillNames.push(...payload.skills.split(',').map((skill) => skill.trim()));
+      if (payload.skills) {
+        skillNames.push(
+          ...payload.skills
+            .split(',')
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0)
+        );
+      }
+      if (payload.agents) {
+        agentNames.push(
+          ...payload.agents
+            .split(',')
+            .map((a) => a.trim())
+            .filter((a) => a.length > 0)
+        );
+      }
     } catch (error) {
       logger.debug('[skills] Failed to parse skills.sh telemetry payload', {
         error: error instanceof Error ? error.message : String(error),
@@ -40,5 +62,15 @@ export function parseSkillNamesFromSkillsTelemetry(
     }
   }
 
-  return capList(skillNames);
+  return {
+    skillNames: capList(skillNames),
+    agents: capList(agentNames),
+  };
+}
+
+export function parseSkillNamesFromSkillsTelemetry(
+  stderr: string,
+  event: string
+): string[] | undefined {
+  return parseSkillsTelemetry(stderr, event).skillNames;
 }

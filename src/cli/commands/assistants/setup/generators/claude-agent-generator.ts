@@ -11,6 +11,7 @@ import os from 'node:os';
 import dedent from 'dedent';
 import type { Assistant } from 'codemie-sdk';
 import { logger } from '@/utils/logger.js';
+import { StorageScope } from '@/env/types.js';
 
 /**
  * Create Claude subagent metadata for frontmatter
@@ -85,8 +86,8 @@ export function createClaudeSubagentContent(assistant: Assistant): string {
 /**
  * Get subagent file path for a given slug
  */
-function getSubagentFilePath(slug: string, scope: 'global' | 'local' = 'global', workingDir?: string): string {
-  const agentsDir = scope === 'local' && workingDir
+function getSubagentFilePath(slug: string, scope: StorageScope = StorageScope.GLOBAL, workingDir?: string): string {
+  const agentsDir = scope === StorageScope.LOCAL && workingDir
     ? path.join(workingDir, '.claude', 'agents')
     : path.join(os.homedir(), '.claude', 'agents');
   return path.join(agentsDir, `${slug}.md`);
@@ -96,7 +97,7 @@ function getSubagentFilePath(slug: string, scope: 'global' | 'local' = 'global',
  * Register Claude subagent
  * Creates subagent file in ~/.claude/agents/ (global) or {cwd}/.claude/agents/ (local)
  */
-export async function registerClaudeSubagent(assistant: Assistant, scope: 'global' | 'local' = 'global', workingDir?: string): Promise<void> {
+export async function registerClaudeSubagent(assistant: Assistant, scope: StorageScope = StorageScope.GLOBAL, workingDir?: string): Promise<void> {
   const subagentPath = getSubagentFilePath(assistant.slug!, scope, workingDir);
   const claudeAgentsDir = path.dirname(subagentPath);
 
@@ -124,7 +125,7 @@ export async function registerClaudeSubagent(assistant: Assistant, scope: 'globa
  * Unregister Claude subagent
  * Removes subagent file from ~/.claude/agents/ (global) or {cwd}/.claude/agents/ (local)
  */
-export async function unregisterClaudeSubagent(slug: string, scope: 'global' | 'local' = 'global', workingDir?: string): Promise<void> {
+export async function unregisterClaudeSubagent(slug: string, scope: StorageScope = StorageScope.GLOBAL, workingDir?: string): Promise<void> {
   const subagentPath = getSubagentFilePath(slug, scope, workingDir);
 
   try {

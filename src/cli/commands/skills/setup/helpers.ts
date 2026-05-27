@@ -2,13 +2,13 @@ import chalk from 'chalk';
 import type { SkillDetail, SkillListItem } from 'codemie-sdk';
 import type { CodemieSkill } from '@/env/types.js';
 import { logger } from '@/utils/logger.js';
+import { StorageScope } from '@/env/types.js';
 import { registerClaudeSkill, unregisterClaudeSkill } from '@/cli/commands/skills/setup/generators/claude-skill-generator.js';
+import { sanitizeToSlug } from '@/utils/slug.js';
 import { registerCodexSkill, unregisterCodexSkill } from '@/cli/commands/skills/setup/generators/codex-skill-generator.js';
 import { registerGeminiSkill, unregisterGeminiSkill } from '@/cli/commands/skills/setup/generators/gemini-skill-generator.js';
 import { executeWithSpinner, determineChanges as _determineChanges } from '@/cli/commands/shared/helpers.js';
 import {
-  formatAgentInvocation,
-  formatAgentSetupTarget,
   targetsClaude,
   targetsCodex,
   targetsGemini,
@@ -32,7 +32,7 @@ export function determineChanges(
 
 export async function unregisterSkill(
   skill: CodemieSkill,
-  scope: 'global' | 'local' = 'global',
+  scope: StorageScope = StorageScope.GLOBAL,
   workingDir?: string,
   target: AgentSetupTarget = ['claude']
 ): Promise<void> {
@@ -57,14 +57,10 @@ export async function unregisterSkill(
 
 export async function registerSkill(
   skill: SkillDetail,
-  scope: 'global' | 'local' = 'global',
+  scope: StorageScope = StorageScope.GLOBAL,
   workingDir?: string,
   target: AgentSetupTarget = ['claude']
 ): Promise<CodemieSkill | null> {
-  const targetLabel = formatAgentSetupTarget(target);
-  const invocationLabel = target
-    .map(agent => formatAgentInvocation(skill.name.toLowerCase().replace(/[^a-z0-9]+/g, '-'), agent))
-    .join(', ');
 
   const result = await executeWithSpinner(
     `Registering ${chalk.bold(skill.name)}...`,
@@ -81,7 +77,7 @@ export async function registerSkill(
       }
       return slug;
     },
-    `Registered ${chalk.bold(skill.name)} ${chalk.cyan(invocationLabel)} for ${targetLabel}`,
+    `Registered ${chalk.bold(skill.name)} ${chalk.cyan(`/${sanitizeToSlug(skill.name)}`)}`,
     `Failed to register ${skill.name}`,
     (error) => logger.error('Skill registration failed', { error, skillId: skill.id, target })
   );

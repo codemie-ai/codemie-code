@@ -3,13 +3,15 @@ import path from 'path';
 import os from 'os';
 import dedent from 'dedent';
 import { logger } from '@/utils/logger.js';
+import { StorageScope } from '@/env/types.js';
+import { sanitizeToSlug } from '@/utils/slug.js';
 import type { Assistant } from 'codemie-sdk';
 
 /**
  * Get the skills directory path for Claude Code
  */
-function getSkillsDir(scope: 'global' | 'local' = 'global', workingDir?: string): string {
-	if (scope === 'local' && workingDir) {
+function getSkillsDir(scope: StorageScope = StorageScope.GLOBAL, workingDir?: string): string {
+	if (scope === StorageScope.LOCAL && workingDir) {
 		return path.join(workingDir, '.claude', 'skills');
 	}
 	return path.join(os.homedir(), '.claude', 'skills');
@@ -19,7 +21,7 @@ function getSkillsDir(scope: 'global' | 'local' = 'global', workingDir?: string)
  * Create YAML frontmatter for Claude Code skill file
  */
 function createSkillMetadata(assistant: Assistant): string {
-	const slug = assistant.slug || assistant.id.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+	const slug = assistant.slug || sanitizeToSlug(assistant.id) || assistant.id;
 	const baseDescription = assistant.description || assistant.name;
 
 	return dedent`
@@ -86,8 +88,8 @@ function createSkillContent(assistant: Assistant): string {
  * Register an assistant as a Claude Code skill
  * Creates: ~/.claude/skills/{slug}/SKILL.md (global) or {cwd}/.claude/skills/{slug}/SKILL.md (local)
  */
-export async function registerClaudeSkill(assistant: Assistant, scope: 'global' | 'local' = 'global', workingDir?: string): Promise<void> {
-	const slug = assistant.slug || assistant.id.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+export async function registerClaudeSkill(assistant: Assistant, scope: StorageScope = StorageScope.GLOBAL, workingDir?: string): Promise<void> {
+	const slug = assistant.slug || sanitizeToSlug(assistant.id) || assistant.id;
 	const skillsDir = getSkillsDir(scope, workingDir);
 	const skillDir = path.join(skillsDir, slug);
 	const skillFile = path.join(skillDir, 'SKILL.md');
@@ -109,7 +111,7 @@ export async function registerClaudeSkill(assistant: Assistant, scope: 'global' 
  * Unregister a Claude Code skill
  * Removes: ~/.claude/skills/{slug}/ (global) or {cwd}/.claude/skills/{slug}/ (local)
  */
-export async function unregisterClaudeSkill(slug: string, scope: 'global' | 'local' = 'global', workingDir?: string): Promise<void> {
+export async function unregisterClaudeSkill(slug: string, scope: StorageScope = StorageScope.GLOBAL, workingDir?: string): Promise<void> {
 	const skillsDir = getSkillsDir(scope, workingDir);
 	const skillDir = path.join(skillsDir, slug);
 

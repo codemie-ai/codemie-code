@@ -1,9 +1,17 @@
 import { Command } from 'commander';
-import { AgentRegistry } from '../../agents/registry.js';
-import { AgentInstallationError, getErrorMessage } from '../../utils/errors.js';
-import { logger } from '../../utils/logger.js';
-import { restoreCliBinLink } from '../../utils/cli-bin.js';
-import type { AgentInstallationOptions } from '../../agents/core/types.js';
+import { AgentRegistry } from '@/agents/registry.js';
+import { AgentInstallationError, getErrorMessage } from '@/utils/errors.js';
+import { logger } from '@/utils/logger.js';
+import { restoreCliBinLink } from '@/utils/cli-bin.js';
+import type { AgentInstallationOptions } from '@/agents/core/types.js';
+import {
+  STATUSLINE_NAME,
+  STATUSLINE_DISPLAY_NAME,
+  STATUSLINE_DESCRIPTION,
+  installStatusline,
+  isStatuslineInstalled,
+  promptBudgetSelection,
+} from '@/agents/plugins/claude/statusline-installer.js';
 import ora from 'ora';
 import chalk from 'chalk';
 
@@ -68,6 +76,14 @@ export function createInstallCommand(): Command {
               console.log();
             }
           }
+
+          console.log(chalk.bold('✨ Add-ons:\n'));
+          const statuslineStatus = isStatuslineInstalled() ? chalk.green('✓ installed') : chalk.yellow('○ not installed');
+          console.log(chalk.bold(`  ${STATUSLINE_DISPLAY_NAME}`));
+          console.log(`    Command: ${chalk.cyan(`codemie install ${STATUSLINE_NAME}`)}`);
+          console.log(`    Status: ${statuslineStatus}`);
+          console.log(`    ${chalk.white(STATUSLINE_DESCRIPTION)}`);
+          console.log();
 
           console.log(chalk.cyan('💡 Tip:') + ' Run ' + chalk.blueBright('codemie install <name>') + ' to install an agent or framework');
           console.log();
@@ -242,6 +258,40 @@ export function createInstallCommand(): Command {
             console.log();
           } catch (error: unknown) {
             spinner.fail(`Failed to install ${framework.metadata.displayName}`);
+            throw error;
+          }
+          return;
+        }
+
+        if (name === STATUSLINE_NAME) {
+          const alreadyInstalled = isStatuslineInstalled();
+          const spinnerLabel = alreadyInstalled
+            ? `Updating ${STATUSLINE_DISPLAY_NAME}...`
+            : `Installing ${STATUSLINE_DISPLAY_NAME}...`;
+          const spinner = ora(spinnerLabel).start();
+
+          try {
+            const scriptPath = await installStatusline();
+            const successMsg = alreadyInstalled
+              ? `${STATUSLINE_DISPLAY_NAME} updated`
+              : `${STATUSLINE_DISPLAY_NAME} installed`;
+            spinner.succeed(successMsg);
+            console.log();
+            console.log(chalk.cyan('💡 The statusline appears at the bottom of every Claude Code session'));
+            console.log(chalk.white(`   ${STATUSLINE_DESCRIPTION}`));
+            console.log(chalk.gray(`   Script: ${scriptPath}`));
+            console.log();
+
+            const budgetSelected = await promptBudgetSelection();
+            if (budgetSelected) {
+              console.log(chalk.green('✓ Budget selected for tracking'));
+            } else {
+              console.log(chalk.yellow('⚠️  Budget tracking requires authentication. Run: codemie setup'));
+            }
+
+            console.log();
+          } catch (error: unknown) {
+            spinner.fail(`Failed to install ${STATUSLINE_DISPLAY_NAME}`);
             throw error;
           }
           return;

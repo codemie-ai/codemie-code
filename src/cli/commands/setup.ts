@@ -290,6 +290,11 @@ async function handlePluginSetup(
     // Step 4: Build configuration
     const config = setupSteps.buildConfig(credentials, selectedModel);
 
+    const userEmail = credentials.additionalConfig?.userEmail as string | undefined;
+    if (userEmail) {
+      await ConfigLoader.saveUserEmail(userEmail);
+    }
+
     // Merge model tiers into config
     if (modelTiers.haikuModel) config.haikuModel = modelTiers.haikuModel;
     if (modelTiers.sonnetModel) config.sonnetModel = modelTiers.sonnetModel;

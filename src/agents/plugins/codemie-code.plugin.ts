@@ -392,6 +392,13 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
         });
         return ['run', ...otherArgs, taskValue];
       }
+
+      // Bare positional args without a subcommand or --task are treated as a direct message.
+      // Without this, the underlying binary interprets the first arg as a directory to chdir into.
+      if (args.length > 0) {
+        return ['run', ...args];
+      }
+
       return args;
     },
 

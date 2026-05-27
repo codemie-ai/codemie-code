@@ -1,4 +1,5 @@
 import chalk from 'chalk';
+import { StorageScope } from '@/env/types.js';
 import { buildSingleChoiceRow } from '@/cli/commands/shared/selection/ui.js';
 
 export interface StorageScopeOptions {
@@ -9,7 +10,7 @@ export interface StorageScopeOptions {
 export async function promptStorageScope({
   title = 'Where would you like to save configuration?',
   localNote = 'Project-scoped configuration will override global ones for this repository.',
-}: StorageScopeOptions = {}): Promise<'global' | 'local'> {
+}: StorageScopeOptions = {}): Promise<StorageScope> {
   const ANSI = {
     CLEAR_SCREEN: '\x1B[2J\x1B[H',
     HIDE_CURSOR: '\x1B[?25l',
@@ -24,7 +25,7 @@ export async function promptStorageScope({
     CTRL_C: '\x03',
   } as const;
 
-  const choices = ['global', 'local'] as const;
+  const choices = [StorageScope.GLOBAL, StorageScope.LOCAL] as const;
   let selectedIndex = 0;
 
   function renderUI(): string {
@@ -35,7 +36,7 @@ export async function promptStorageScope({
     ];
 
     choices.forEach((choice, i) => {
-      const label = choice === 'global'
+      const label = choice === StorageScope.GLOBAL
         ? `${chalk.cyan('Global')} ${chalk.dim('Global (~/.codemie/) - Available across all projects')}`
         : `${chalk.yellow('Local')} ${chalk.dim('Local (.codemie/) - Only for this project')}`;
       lines.push(`  ${buildSingleChoiceRow({
@@ -74,7 +75,7 @@ export async function promptStorageScope({
       process.stdout.write(ANSI.SHOW_CURSOR + ANSI.CLEAR_SCREEN);
     }
 
-    function stop(choice: 'global' | 'local') {
+    function stop(choice: StorageScope) {
       cleanup();
       resolve(choice);
     }
@@ -102,7 +103,7 @@ export async function promptStorageScope({
           break;
         case KEY.ESC:
         case KEY.CTRL_C:
-          stop('global');
+          stop(StorageScope.GLOBAL);
           break;
       }
     });

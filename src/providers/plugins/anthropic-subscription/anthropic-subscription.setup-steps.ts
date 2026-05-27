@@ -60,6 +60,7 @@ export const AnthropicSubscriptionSetupSteps: ProviderSetupSteps = {
 
     let codeMieUrl: string | undefined;
     let codeMieProject: string | undefined;
+    let userEmail: string | undefined;
 
     if (answers.enableCodeMieAnalytics) {
       codeMieUrl = await promptForCodeMieUrl(
@@ -76,7 +77,7 @@ export const AnthropicSubscriptionSetupSteps: ProviderSetupSteps = {
 
       logger.success('CodeMie authentication successful');
       logger.info('Fetching available projects...');
-      codeMieProject = await selectCodeMieProject(authResult);
+      ({ project: codeMieProject, userEmail } = await selectCodeMieProject(authResult));
       logger.success('Analytics sync enabled for CodeMie platform');
     }
 
@@ -86,7 +87,8 @@ export const AnthropicSubscriptionSetupSteps: ProviderSetupSteps = {
       additionalConfig: {
         authMethod: 'manual',
         codeMieUrl,
-        codeMieProject
+        codeMieProject,
+        userEmail
       }
     };
   },

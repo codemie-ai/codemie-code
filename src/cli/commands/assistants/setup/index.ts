@@ -3,6 +3,7 @@ import chalk from 'chalk';
 import type { Assistant, AssistantBase } from 'codemie-sdk';
 import { logger } from '@/utils/logger.js';
 import { ConfigLoader } from '@/utils/config.js';
+import { StorageScope } from '@/env/types.js';
 import type { CodemieAssistant } from '@/env/types.js';
 import { MESSAGES, ACTIONS } from '@/cli/commands/assistants/constants.js';
 import { getAuthenticatedClient } from '@/utils/auth.js';
@@ -144,24 +145,19 @@ async function setupAssistants(options: SetupCommandOptions, hostAgent?: TargetA
     target
   );
 
-  config.codemieAssistants = newRegistrations;
-
   if (registered.length === 0 && unregistered.length === 0) {
-    displaySummary(registered, unregistered, profileName, config);
+    displaySummary(registered, unregistered, profileName, registeredAssistants);
     return;
   }
 
-  let configLocation: string;
+  const keptAssistants = registeredAssistants.filter(
+    a => selectedIds.includes(a.id) && !newRegistrations.some(n => n.id === a.id)
+  );
+  const allRegistered = [...keptAssistants, ...newRegistrations];
 
-  if (storageScope === 'local') {
-    await ConfigLoader.saveAssistantsToProjectConfig(workingDir, profileName, newRegistrations);
-    configLocation = `${workingDir}/.codemie/codemie-cli.config.json`;
-  } else {
-    await ConfigLoader.saveProfile(profileName, config);
-    configLocation = `global (~/.codemie/codemie-cli.config.json)`;
-  }
+  await ConfigLoader.saveAssistantsToProjectConfig(workingDir, storageScope, allRegistered);
 
-  displaySummary(registered, unregistered, profileName, config, configLocation);
+  displaySummary(registered, unregistered, profileName, allRegistered, ConfigLoader.getConfigLocationLabel(storageScope, workingDir));
 }
 
 async function applyChanges(
@@ -169,7 +165,7 @@ async function applyChanges(
   allAssistants: (Assistant | AssistantBase)[],
   registeredAssistants: CodemieAssistant[],
   registrationModes: Map<string, RegistrationMode>,
-  scope: 'global' | 'local' = 'global',
+  scope: StorageScope = StorageScope.GLOBAL,
   workingDir?: string,
   target: AgentSetupTarget = ['claude']
 ): Promise<ApplyChangesResult> {

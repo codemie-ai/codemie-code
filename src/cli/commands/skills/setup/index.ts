@@ -97,9 +97,15 @@ async function setupSkills(options: { profile?: string; agent?: string }, hostAg
     return;
   }
 
+  const storageScope = await promptStorageScope({
+    title: 'Where would you like to save skills configuration?',
+    localNote: 'Project-scoped skills will override global ones for this repository.',
+  });
+  const target = await resolveAgentSetupTargets(options.agent, hostAgent);
+
   const config = await ConfigLoader.load(workingDir, { name: profileName });
   const client = await getAuthenticatedClient(config);
-  const registeredSkills: CodemieSkill[] = config.codemieSkills || [];
+  const registeredSkills: CodemieSkill[] = await ConfigLoader.loadSkillsByScope(storageScope, workingDir, profileName);
 
   const { selectedIds, action } = await promptSkillSelection(registeredSkills, client);
 
@@ -117,12 +123,6 @@ async function setupSkills(options: { profile?: string; agent?: string }, hostAg
     console.log(chalk.yellow('\nNo changes to apply.\n'));
     return;
   }
-
-  const storageScope = await promptStorageScope({
-    title: 'Where would you like to save skills configuration?',
-    localNote: 'Project-scoped skills will override global ones for this repository.',
-  });
-  const target = await resolveAgentSetupTargets(options.agent, hostAgent);
 
   for (const skill of toUnregister) {
     await unregisterSkill(skill, storageScope, workingDir, target);
@@ -142,16 +142,9 @@ async function setupSkills(options: { profile?: string; agent?: string }, hostAg
     ...newlyRegistered,
   ];
 
-  let configLocation: string;
+  await ConfigLoader.saveSkillsToProjectConfig(workingDir, storageScope, updatedSkills);
 
-  if (storageScope === 'local') {
-    await ConfigLoader.saveSkillsToProjectConfig(workingDir, profileName, updatedSkills);
-    configLocation = `${workingDir}/.codemie/codemie-cli.config.json`;
-  } else {
-    config.codemieSkills = updatedSkills;
-    await ConfigLoader.saveProfile(profileName, config);
-    configLocation = `global (~/.codemie/codemie-cli.config.json)`;
-  }
+  const configLocation = ConfigLoader.getConfigLocationLabel(storageScope, workingDir);
 
   console.log('');
   if (newlyRegistered.length > 0) {

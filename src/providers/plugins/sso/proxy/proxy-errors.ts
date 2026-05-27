@@ -25,8 +25,7 @@ export class ProxyError extends Error {
       type: this.name,
       code: this.code,
       message: this.message,
-      statusCode: this.statusCode,
-      ...this.details
+      statusCode: this.statusCode
     };
   }
 }

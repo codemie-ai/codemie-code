@@ -2,6 +2,7 @@ import chalk from 'chalk';
 import type { Assistant, AssistantBase } from 'codemie-sdk';
 import type { CodemieAssistant } from '@/env/types.js';
 import { logger } from '@/utils/logger.js';
+import { StorageScope } from '@/env/types.js';
 import { MESSAGES } from '@/cli/commands/assistants/constants.js';
 import { registerClaudeSubagent, unregisterClaudeSubagent } from '@/cli/commands/assistants/setup/generators/claude-agent-generator.js';
 import { registerClaudeSkill, unregisterClaudeSkill } from '@/cli/commands/assistants/setup/generators/claude-skill-generator.js';
@@ -36,7 +37,7 @@ export function determineChanges(
 
 export async function unregisterAssistant(
   assistant: CodemieAssistant,
-  scope: 'global' | 'local' = 'global',
+  scope: StorageScope = StorageScope.GLOBAL,
   workingDir?: string,
   target: AgentSetupTarget = ['claude']
 ): Promise<void> {
@@ -65,7 +66,7 @@ export async function unregisterAssistant(
 export async function registerAssistant(
   assistant: Assistant,
   mode: RegistrationMode = REGISTRATION_MODE.AGENT,
-  scope: 'global' | 'local' = 'global',
+  scope: StorageScope = StorageScope.GLOBAL,
   workingDir?: string,
   target: AgentSetupTarget = ['claude']
 ): Promise<CodemieAssistant | null> {
