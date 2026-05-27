@@ -1,7 +1,6 @@
 import chalk from 'chalk';
 import { formatErrorWithExplanation, type ErrorContext } from './errors.js';
 import { logger } from './logger.js';
-import type { CodemieAssistant } from '../env/types.js';
 
 /**
  * Authentication status for display
@@ -20,7 +19,6 @@ export function renderProfileInfo(config: {
   provider?: string;
   model?: string;
   codeMieUrl?: string;
-  codemieAssistants?: CodemieAssistant[];
   authStatus?: AuthStatusDisplay;
   agent?: string;
   cliVersion?: string;
@@ -58,12 +56,6 @@ export function renderProfileInfo(config: {
   if (config.codeMieUrl) {
     outputLines.push(formatRow('CodeMie URL', config.codeMieUrl));
   }
-  if (config.codemieAssistants && config.codemieAssistants.length > 0) {
-    const count = config.codemieAssistants.length;
-    const assistantsText = `${count} assistant${count === 1 ? '' : 's'} registered`;
-    outputLines.push(formatRow('Assistants', assistantsText, chalk.cyan));
-  }
-
   // Auth status inline
   if (config.authStatus) {
     const { authenticated, expiresAt, apiUrl } = config.authStatus;

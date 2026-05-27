@@ -6,6 +6,7 @@
  */
 
 import { ConfigLoader } from '@/utils/config.js';
+import { StorageScope } from '@/env/types.js';
 import { getCodemieClient } from '@/utils/sdk-client.js';
 import { registerClaudeSkill } from '@/cli/commands/skills/setup/generators/claude-skill-generator.js';
 import { logger } from '@/utils/logger.js';
@@ -19,13 +20,13 @@ export async function syncRegisteredSkills(profileName?: string, cwd?: string): 
 	const workingDir = cwd ?? process.cwd();
 	try {
 		const [globalSkills, localSkills] = await Promise.all([
-			ConfigLoader.loadSkillsByScope('global', workingDir, profileName ?? 'default').catch(() => []),
-			ConfigLoader.loadSkillsByScope('local', workingDir, profileName ?? 'default').catch(() => []),
+			ConfigLoader.loadSkillsByScope(StorageScope.GLOBAL, workingDir, profileName ?? 'default').catch(() => []),
+			ConfigLoader.loadSkillsByScope(StorageScope.LOCAL, workingDir, profileName ?? 'default').catch(() => []),
 		]);
 
 		const allSkills = [
-			...globalSkills.map(s => ({ skill: s, scope: 'global' as const })),
-			...localSkills.map(s => ({ skill: s, scope: 'local' as const })),
+			...globalSkills.map(s => ({ skill: s, scope: StorageScope.GLOBAL })),
+			...localSkills.map(s => ({ skill: s, scope: StorageScope.LOCAL })),
 		];
 
 		if (allSkills.length === 0) {
@@ -36,8 +37,8 @@ export async function syncRegisteredSkills(profileName?: string, cwd?: string): 
 
 		for (const { skill, scope } of allSkills) {
 			try {
-				const detail = await (client as any).skills.get(skill.id);
-				await registerClaudeSkill(detail, scope, scope === 'local' ? workingDir : undefined);
+				const detail = await client.skills.get(skill.id);
+				await registerClaudeSkill(detail, scope, scope === StorageScope.LOCAL ? workingDir : undefined);
 				logger.debug(`[skills-sync] Synced skill: ${skill.name} (${scope})`);
 			} catch (error) {
 				logger.debug(`[skills-sync] Failed to sync skill ${skill.name}`, { error });
