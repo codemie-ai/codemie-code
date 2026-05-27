@@ -80,6 +80,7 @@ const config: ProxyConfig = {
   gatewayKey,
   authMethod,
   clientType: telemetryMode === 'claude-desktop' ? 'claude-desktop' : 'codemie-daemon',
+  repository: telemetryMode === 'claude-desktop' ? 'Claude Desktop' : undefined,
   version: readCliVersion(),
   telemetryMode,
   syncApiUrl,
