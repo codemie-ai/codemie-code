@@ -6,6 +6,11 @@ import { join } from 'node:path';
  * Requires CI_CODEMIE_USERNAME and CI_CODEMIE_PASSWORD env vars.
  */
 export async function fetchJwtToken(): Promise<string> {
+  const username = process.env.CI_CODEMIE_USERNAME;
+  const password = process.env.CI_CODEMIE_PASSWORD;
+  if (!username || !password)
+    throw new Error('CI_CODEMIE_USERNAME and CI_CODEMIE_PASSWORD must be set');
+
   const resp = await fetch(
     'https://auth.codemie.lab.epam.com/realms/codemie-prod/protocol/openid-connect/token',
     {
@@ -14,11 +19,12 @@ export async function fetchJwtToken(): Promise<string> {
       body: new URLSearchParams({
         grant_type: 'password',
         client_id: 'codemie-sdk',
-        username: process.env.CI_CODEMIE_USERNAME!,
-        password: process.env.CI_CODEMIE_PASSWORD!,
+        username,
+        password,
       }),
     }
   );
+  if (!resp.ok) throw new Error(`JWT token fetch failed: HTTP ${resp.status} ${resp.statusText}`);
   const data = (await resp.json()) as Record<string, unknown>;
   if (!data.access_token) throw new Error(`JWT token fetch failed: ${JSON.stringify(data)}`);
   return data.access_token as string;

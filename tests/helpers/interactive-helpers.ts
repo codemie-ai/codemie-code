@@ -10,6 +10,7 @@ export function waitForOutput(
   pattern: RegExp,
   timeoutMs: number
 ): Promise<string> {
+  if (!proc.stdout) throw new Error('waitForOutput: process stdout is not piped');
   return new Promise((resolve, reject) => {
     const lines: string[] = [];
     const rl = createInterface({ input: proc.stdout! });
@@ -31,9 +32,7 @@ export function waitForOutput(
     proc.on('close', (code) => {
       clearTimeout(timer);
       rl.close();
-      if (code !== 0) {
-        reject(new Error(`Process exited with code ${code} before matching ${pattern}`));
-      }
+      reject(new Error(`Process exited (code ${code ?? 'null'}) before matching ${pattern}.\nGot:\n${lines.join('\n')}`));
     });
   });
 }
@@ -44,8 +43,8 @@ export function waitForOutput(
  */
 export function cleanKill(proc: ChildProcess): Promise<void> {
   return new Promise((resolve) => {
-    const fallback = setTimeout(() => proc.kill('SIGKILL'), 5000);
+    const fallback = setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* ignore */ } }, 5000);
     proc.on('close', () => { clearTimeout(fallback); resolve(); });
-    proc.kill('SIGTERM');
+    try { proc.kill('SIGTERM'); } catch { /* process already exited */ }
   });
 }
