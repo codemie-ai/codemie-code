@@ -66,6 +66,7 @@ describe('Profile list — two profiles (TC-005)', () => {
 // ─── TC-006: Switch profile ───────────────────────────────────────────────────
 describe('Profile switch (TC-006)', () => {
   let testHome: string;
+  let switchResult: ReturnType<typeof runCLI>;
 
   beforeAll(() => {
     testHome = mkdtempSync(join(tmpdir(), 'codemie-prof-switch-'));
@@ -73,12 +74,12 @@ describe('Profile switch (TC-006)', () => {
       version: 2, activeProfile: 'jwt-autotest',
       profiles: { 'jwt-autotest': fakeProfile('jwt-autotest'), 'jwt-secondary': fakeProfile('jwt-secondary') },
     });
+    switchResult = runCLI(['profile', 'switch', 'jwt-secondary'], testHome);
   });
   afterAll(() => rmSync(testHome, { recursive: true, force: true }));
 
   it('exits 0 when switching to an existing profile', () => {
-    const r = runCLI(['profile', 'switch', 'jwt-secondary'], testHome);
-    expect(r.status).toBe(0);
+    expect(switchResult.status).toBe(0);
   });
 
   it('updates activeProfile in the config file', () => {
@@ -98,6 +99,7 @@ describe('Profile switch (TC-006)', () => {
 // ─── TC-007: Delete inactive profile ─────────────────────────────────────────
 describe('Profile delete inactive (TC-007)', () => {
   let testHome: string;
+  let deleteResult: ReturnType<typeof runCLI>;
 
   beforeAll(() => {
     testHome = mkdtempSync(join(tmpdir(), 'codemie-prof-del-'));
@@ -105,12 +107,12 @@ describe('Profile delete inactive (TC-007)', () => {
       version: 2, activeProfile: 'jwt-autotest',
       profiles: { 'jwt-autotest': fakeProfile('jwt-autotest'), 'jwt-secondary': fakeProfile('jwt-secondary') },
     });
+    deleteResult = runCLI(['profile', 'delete', 'jwt-secondary', '-y'], testHome);
   });
   afterAll(() => rmSync(testHome, { recursive: true, force: true }));
 
   it('exits 0 when deleting an inactive profile', () => {
-    const r = runCLI(['profile', 'delete', 'jwt-secondary', '-y'], testHome);
-    expect(r.status).toBe(0);
+    expect(deleteResult.status).toBe(0);
   });
 
   it('removed profile no longer appears in listing', () => {
@@ -157,6 +159,7 @@ describe('Profile delete active — negative (TC-008)', () => {
 // ─── TC-009: Profile rename ───────────────────────────────────────────────────
 describe('Profile rename (TC-009)', () => {
   let testHome: string;
+  let renameResult: ReturnType<typeof runCLI>;
 
   beforeAll(() => {
     testHome = mkdtempSync(join(tmpdir(), 'codemie-prof-rename-'));
@@ -164,12 +167,12 @@ describe('Profile rename (TC-009)', () => {
       version: 2, activeProfile: 'jwt-autotest',
       profiles: { 'jwt-autotest': fakeProfile('jwt-autotest') },
     });
+    renameResult = runCLI(['profile', 'rename', 'jwt-autotest', 'jwt-renamed'], testHome);
   });
   afterAll(() => rmSync(testHome, { recursive: true, force: true }));
 
   it('exits 0 when renaming to a new name', () => {
-    const r = runCLI(['profile', 'rename', 'jwt-autotest', 'jwt-renamed'], testHome);
-    expect(r.status).toBe(0);
+    expect(renameResult.status).toBe(0);
   });
 
   it('new name appears in profile listing', () => {
