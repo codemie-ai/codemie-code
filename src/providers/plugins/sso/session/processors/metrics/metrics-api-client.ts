@@ -350,7 +350,7 @@ export class MetricsSender {
       llm_model: session.model || 'unknown', // From profile config
       repository,
       session_id: session.sessionId,
-      branch: branch || 'unknown',
+      branch: branch || '',
       ...(session.project && { project: session.project }),
 
       // Session metadata
@@ -489,7 +489,7 @@ export class MetricsSender {
       llm_model: session.model || 'unknown',
       repository,
       session_id: session.sessionId,
-      branch: branch || 'unknown',
+      branch: branch || '',
       ...(session.project && { project: session.project }),
 
       // Session metadata

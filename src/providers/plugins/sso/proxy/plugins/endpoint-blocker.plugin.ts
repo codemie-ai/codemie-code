@@ -13,13 +13,25 @@ import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
 import { ProxyContext } from '../proxy-types.js';
 import { logger } from '../../../../../utils/logger.js';
 
+interface BlockedPattern {
+  pattern: RegExp;
+  responseBody?: string;
+}
+
 /**
  * Blocked endpoint patterns
- * Add patterns here to block specific endpoints
+ * Add patterns here to block specific endpoints.
+ * Optionally set responseBody to return a custom JSON string instead of the default {"success":true}.
  */
-const BLOCKED_PATTERNS = [
-  /^\/api\/event_logging\/batch$/i,  // Block event logging batch endpoint
-  /^\/\/api\/event_logging\/batch$/i // Handle double slash (malformed URL)
+const BLOCKED_PATTERNS: BlockedPattern[] = [
+  { pattern: /^\/api\/event_logging\/batch$/i },
+  { pattern: /^\/\/api\/event_logging\/batch$/i },
+  // Claude for Mac queries these before any LLM traffic, without the gateway key.
+  // Returning {} lets the desktop client start cleanly without requiring auth.
+  { pattern: /^\/managed-settings(?:[/?#]|$)/i, responseBody: '{}' },
+  { pattern: /^\/v1\/managed-settings(?:[/?#]|$)/i, responseBody: '{}' },
+  { pattern: /^\/api\/claude\/managed-settings(?:[/?#]|$)/i, responseBody: '{}' },
+  { pattern: /^\/api\/v1\/managed-settings(?:[/?#]|$)/i, responseBody: '{}' },
 ];
 
 export class EndpointBlockerPlugin implements ProxyPlugin {
@@ -54,15 +66,16 @@ class EndpointBlockerInterceptor implements ProxyInterceptor {
     const url = context.url;
 
     // Check if URL matches any blocked pattern
-    for (const pattern of BLOCKED_PATTERNS) {
+    for (const { pattern, responseBody } of BLOCKED_PATTERNS) {
       if (pattern.test(url)) {
         this.blockedCount++;
         logger.debug(`[${this.name}] Blocking request to: ${url} (matched pattern: ${pattern.toString()})`);
 
-        // Mark this request as blocked in metadata
-        // The proxy will check this flag and return 200 OK without forwarding
         context.metadata.blocked = true;
         context.metadata.blockedReason = `Matched pattern: ${pattern.toString()}`;
+        if (responseBody !== undefined) {
+          context.metadata.blockedResponseBody = responseBody;
+        }
 
         break;
       }

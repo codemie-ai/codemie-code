@@ -63,7 +63,7 @@ export function aggregateDeltas(
   const deltasByBranch = new Map<string, MetricDelta[]>();
 
   for (const delta of deltas) {
-    const branch = delta.gitBranch || 'unknown';
+    const branch = delta.gitBranch || '';
 
     if (!deltasByBranch.has(branch)) {
       deltasByBranch.set(branch, []);

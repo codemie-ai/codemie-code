@@ -68,6 +68,7 @@ export interface ProviderProfile {
   authMethod?: 'manual' | 'sso' | 'jwt' | 'api-key';
   codeMieUrl?: string;
   codeMieProject?: string;  // Selected project/application name
+  userEmail?: string;       // Authenticated user's email
   codeMieIntegration?: CodeMieIntegrationInfo;
   ssoConfig?: {
     apiUrl?: string;
@@ -127,6 +128,9 @@ export interface ProviderProfile {
 
   // Claude Code-specific settings
   claudeAutocompactPct?: number; // Auto-compact threshold percentage (sets CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, default: 70)
+
+  // Statusline budget tracking
+  statuslineBudgetName?: string; // Budget row name selected during statusline install
 }
 
 /**
@@ -164,6 +168,7 @@ export interface MultiProviderConfig {
   activeProfile: string;
   codemieSkills?: CodemieSkill[];
   codemieAssistants?: CodemieAssistant[];
+  userEmail?: string;
   profiles: Record<string, ProviderProfile>;
 }
 

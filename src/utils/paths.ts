@@ -375,14 +375,30 @@ export function getCodemiePath(...paths: string[]): string {
   return path.join(getCodemieHome(), ...paths);
 }
 
+// Matches Claude Desktop sandbox session directories.
+// Real path format observed in logs:
+//   .../local-agent-mode-sessions/<session-uuid>/<uuid>/local_<full-uuid>/outputs
+// The local_ segment always contains a full UUID (8-4-4-4-12 hex groups with dashes).
+// Matching the full UUID format avoids false positives on user directories named local_<8hex>.
+const CLAUDE_DESKTOP_SANDBOX_RE = /\/local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\/|$)/i;
+
 /**
  * Extract parent/repo format from a working directory path.
+ * Returns 'Claude Desktop' for sandbox paths used by Claude Desktop sessions.
  *
  * @example
  * extractRepository('/Users/john/projects/codemie-code')
  * // Returns: 'projects/codemie-code'
+ *
+ * @example
+ * extractRepository('/Users/john/Library/Application Support/Claude-3p/local-agent-mode-sessions/<s>/<u>/local_2d5f3a0f-6a50-4778-ac55-9ffbca0446da/outputs')
+ * // Returns: 'Claude Desktop'
  */
 export function extractRepository(workingDirectory: string): string {
+  if (CLAUDE_DESKTOP_SANDBOX_RE.test(normalizePathSeparators(workingDirectory))) {
+    return 'Claude Desktop';
+  }
+
   const parts = splitPath(workingDirectory);
   const filtered = parts.filter(p => p.length > 0);
 

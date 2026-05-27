@@ -406,6 +406,26 @@ codemie opencode-metrics --discover --verbose
 
 Metrics are automatically extracted at session end and synced to the analytics system. Use `codemie analytics` to view comprehensive usage statistics across all agents.
 
+## Claude Code Statusline
+
+The CodeMie Statusline displays live budget usage, project name, git branch, model, context window percentage, and token counts at the bottom of every Claude Code session.
+
+```bash
+# Install (or update) the statusline
+codemie install statusline
+
+# Remove it
+codemie uninstall statusline
+```
+
+Once installed, the statusline appears automatically in every claude session:
+
+```
+[my-project] $4.21/$50 (8%) | (main) | [claude-sonnet-4-5] | ctx:12% in:45.2k out:3.1k
+```
+
+The script is deployed to `~/.claude/codemie-budget-status.js` and registered as a `statusLine` command in `~/.claude/settings.json`. Budget values are cached for 60 seconds to avoid redundant API calls.
+
 ## Commands
 
 The CodeMie CLI has a rich set of commands for managing agents, configuration, and more.
@@ -413,7 +433,7 @@ The CodeMie CLI has a rich set of commands for managing agents, configuration, a
 ```bash
 codemie setup            # Interactive configuration wizard
 codemie list             # List all available agents
-codemie install <agent>  # Install an agent
+codemie install <name>   # Install an agent or add-on (e.g. statusline)
 codemie update <agent>   # Update installed agents
 codemie self-update      # Update CodeMie CLI itself
 codemie profile          # Manage provider profiles

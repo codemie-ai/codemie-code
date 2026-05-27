@@ -183,7 +183,7 @@ export class MetricsSyncProcessor implements SessionProcessor {
 
       for (const metric of metrics) {
         const branchDeltas = pendingDeltas.filter((delta) =>
-          (delta.gitBranch || 'unknown') === metric.attributes.branch
+          (delta.gitBranch || '') === metric.attributes.branch
         );
 
         try {
