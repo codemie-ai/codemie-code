@@ -18,6 +18,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { fetchJwtToken, writeJwtProfile } from '../../helpers/index.js';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
 const CLI_BIN = path.join(REPO_ROOT, 'bin', 'codemie.js');
@@ -241,5 +242,119 @@ describe.runIf(HAS_LOCAL_SSO)('codemie skills (authenticated upstream spawn)', (
     });
     expect(result.exitCode).toBe(7);
     expect(result.stderr).toContain('CODEMIE_SKILL_EGRESS_BLOCKED');
+  });
+});
+
+const INCLUDE_JWT_TESTS = process.env.INCLUDE_JWT_TESTS === 'true';
+
+describe.runIf(INCLUDE_JWT_TESTS)('codemie skills — JWT lifecycle (TC-012)', () => {
+  let testHome: string;
+  let jwtToken: string;
+  let skillSource: string;
+  let skillName: string;
+
+  beforeAll(async () => {
+    testHome = mkdtempSync(path.join(tmpdir(), 'codemie-skills-jwt-'));
+    jwtToken = await fetchJwtToken();
+    writeJwtProfile(testHome, { jwtToken });
+
+    // Discover first available skill from the marketplace
+    const findResult = spawnSync(process.execPath, [CLI_BIN, 'skills', 'find', '--json', '--limit', '1'], {
+      cwd: workspace,
+      env: { ...process.env, CODEMIE_HOME: testHome, CI: '1' },
+      encoding: 'utf-8',
+      timeout: 30_000,
+    });
+    const found = JSON.parse(findResult.stdout) as Array<{ source: string; name: string }>;
+    if (!found.length) throw new Error('No skills found in marketplace — cannot run TC-012');
+    skillSource = found[0].source;
+    skillName = found[0].name;
+  }, 60_000);
+
+  afterAll(() => {
+    if (testHome) rmSync(testHome, { recursive: true, force: true });
+  });
+
+  it('skills add exits 0 for a valid marketplace source', () => {
+    const r = spawnSync(process.execPath, [CLI_BIN, 'skills', 'add', skillSource, '-a', 'claude-code', '-y'], {
+      cwd: workspace,
+      env: { ...process.env, CODEMIE_HOME: testHome, CI: '1' },
+      encoding: 'utf-8',
+      timeout: 60_000,
+    });
+    expect(r.status).toBe(0);
+  });
+
+  it('skills list shows the installed skill', () => {
+    const r = spawnSync(process.execPath, [CLI_BIN, 'skills', 'list', '-a', 'claude-code'], {
+      cwd: workspace,
+      env: { ...process.env, CODEMIE_HOME: testHome, CI: '1' },
+      encoding: 'utf-8',
+      timeout: 30_000,
+    });
+    expect(r.stdout + r.stderr).toMatch(new RegExp(skillName, 'i'));
+  });
+
+  it('skills remove exits 0', () => {
+    const r = spawnSync(process.execPath, [CLI_BIN, 'skills', 'remove', '-s', skillName, '-a', 'claude-code', '-y'], {
+      cwd: workspace,
+      env: { ...process.env, CODEMIE_HOME: testHome, CI: '1' },
+      encoding: 'utf-8',
+      timeout: 30_000,
+    });
+    expect(r.status).toBe(0);
+  });
+
+  it('skills list no longer shows the removed skill', () => {
+    const r = spawnSync(process.execPath, [CLI_BIN, 'skills', 'list', '-a', 'claude-code'], {
+      cwd: workspace,
+      env: { ...process.env, CODEMIE_HOME: testHome, CI: '1' },
+      encoding: 'utf-8',
+      timeout: 30_000,
+    });
+    expect(r.stdout + r.stderr).not.toMatch(new RegExp(skillName, 'i'));
+  });
+});
+
+describe.runIf(INCLUDE_JWT_TESTS)('codemie skills add — invalid source (TC-013)', () => {
+  let testHome: string;
+
+  beforeAll(async () => {
+    testHome = mkdtempSync(path.join(tmpdir(), 'codemie-skills-invalid-'));
+    const token = await fetchJwtToken();
+    writeJwtProfile(testHome, { jwtToken: token });
+  }, 30_000);
+
+  afterAll(() => {
+    if (testHome) rmSync(testHome, { recursive: true, force: true });
+  });
+
+  it('exits non-zero for a nonexistent skill source', () => {
+    const r = spawnSync(
+      process.execPath,
+      [CLI_BIN, 'skills', 'add', 'nonexistent-owner/nonexistent-repo-xyz-99999', '-y'],
+      {
+        cwd: workspace,
+        env: { ...process.env, CODEMIE_HOME: testHome, CI: '1' },
+        encoding: 'utf-8',
+        timeout: 30_000,
+      }
+    );
+    expect(r.status).not.toBe(0);
+  });
+
+  it('shows an error message about not found or invalid source', () => {
+    const r = spawnSync(
+      process.execPath,
+      [CLI_BIN, 'skills', 'add', 'nonexistent-owner/nonexistent-repo-xyz-99999', '-y'],
+      {
+        cwd: workspace,
+        env: { ...process.env, CODEMIE_HOME: testHome, CI: '1' },
+        encoding: 'utf-8',
+        timeout: 30_000,
+      }
+    );
+    const out = r.stdout + r.stderr;
+    expect(out).toMatch(/not found|invalid|error|failed/i);
   });
 });
