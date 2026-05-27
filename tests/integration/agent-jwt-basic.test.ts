@@ -21,8 +21,8 @@ const INCLUDE_JWT_TESTS = process.env.INCLUDE_JWT_TESTS === 'true';
 
 function cleanEnv(): NodeJS.ProcessEnv {
   return {
-    PATH: process.env.PATH,
-    NODE_PATH: process.env.NODE_PATH,
+    PATH: process.env.PATH ?? '',
+    NODE_PATH: process.env.NODE_PATH ?? '',
   };
 }
 
@@ -115,7 +115,7 @@ describe.runIf(INCLUDE_JWT_TESTS)('Agent — JWT basic (TC-016..TC-019, TC-031)'
     });
 
     it('shows an auth/unauthorized error message', () => {
-      expect(result.stdout + result.stderr).toMatch(/auth|unauthorized|401|invalid|token/i);
+      expect((result.stdout ?? '') + (result.stderr ?? '')).toMatch(/auth|unauthorized|401|invalid|token/i);
     });
   });
 
@@ -139,7 +139,7 @@ describe.runIf(INCLUDE_JWT_TESTS)('Agent — JWT basic (TC-016..TC-019, TC-031)'
     });
 
     it('shows a setup/configuration error message', () => {
-      expect(result.stdout + result.stderr).toMatch(/no profile|not configured|setup|profile/i);
+      expect((result.stdout ?? '') + (result.stderr ?? '')).toMatch(/no profile|not configured|setup|profile/i);
     });
   });
 
@@ -163,7 +163,7 @@ describe.runIf(INCLUDE_JWT_TESTS)('Agent — JWT basic (TC-016..TC-019, TC-031)'
     });
 
     it('output mentions install, binary, or health', () => {
-      expect(result.stdout + result.stderr).toMatch(/install|binary|health/i);
+      expect((result.stdout ?? '') + (result.stderr ?? '')).toMatch(/install|binary|health/i);
     });
   });
 });
