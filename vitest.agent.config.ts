@@ -14,9 +14,7 @@ export default defineConfig({
       NODE_ENV: 'test',
     },
     pool: 'threads',
-    poolOptions: {
-      threads: { maxThreads: 4, minThreads: 1 },
-    },
+    maxWorkers: 4,
     isolate: true,
   },
 });
