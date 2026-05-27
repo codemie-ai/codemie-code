@@ -24,6 +24,7 @@ export interface DesktopTelemetryRuntimeConfig {
   syncCodeMieUrl?: string;
   pollIntervalMs: number;
   inactivityTimeoutMs: number;
+  onRepositoryResolved?: (repository: string | undefined) => void;
 }
 
 export interface LocalTelemetryAdapter {

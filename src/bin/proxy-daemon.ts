@@ -80,7 +80,6 @@ const config: ProxyConfig = {
   gatewayKey,
   authMethod,
   clientType: telemetryMode === 'claude-desktop' ? 'claude-desktop' : 'codemie-daemon',
-  repository: telemetryMode === 'claude-desktop' ? 'Claude Desktop' : undefined,
   version: readCliVersion(),
   telemetryMode,
   syncApiUrl,
@@ -121,7 +120,10 @@ try {
         syncApiUrl: config.syncApiUrl,
         syncCodeMieUrl: config.syncCodeMieUrl,
         pollIntervalMs: config.telemetryPollIntervalMs ?? 10000,
-        inactivityTimeoutMs: config.telemetryInactivityTimeoutMs ?? 300000
+        inactivityTimeoutMs: config.telemetryInactivityTimeoutMs ?? 300000,
+        onRepositoryResolved: (repository) => {
+          config.repository = repository ?? 'Default';
+        }
       }
     );
     await telemetryRuntime.start();

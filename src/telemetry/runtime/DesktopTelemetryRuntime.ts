@@ -92,19 +92,6 @@ export class DesktopTelemetryRuntime {
     }
   }
 
-  private async resolveProject(workingDirectory: string): Promise<string | undefined> {
-    if (this.config.project) {
-      return this.config.project;
-    }
-    try {
-      const { ConfigLoader } = await import('@/utils/config.js');
-      const config = await ConfigLoader.load(workingDirectory);
-      return config.codeMieProject;
-    } catch {
-      return undefined;
-    }
-  }
-
   private async ensureSession(discovered: LocalTelemetryDiscoveredSession): Promise<Session> {
     const existing = await this.sessionStore.findSessionByExternalId(
       this.config.clientType,
@@ -121,11 +108,12 @@ export class DesktopTelemetryRuntime {
       return existing;
     }
 
-    const [gitBranch, repository, project] = await Promise.all([
+    const [gitBranch, repository] = await Promise.all([
       detectGitBranch(discovered.workingDirectory),
-      detectGitRemoteRepo(discovered.workingDirectory),
-      this.resolveProject(discovered.workingDirectory)
+      detectGitRemoteRepo(discovered.workingDirectory)
     ]);
+
+    this.config.onRepositoryResolved?.(repository || undefined);
 
     const session: Session = {
       sessionId: randomUUID(),
@@ -135,7 +123,7 @@ export class DesktopTelemetryRuntime {
       workingDirectory: discovered.workingDirectory,
       gitBranch: gitBranch || undefined,
       repository: repository || undefined,
-      ...(project && { project }),
+      ...(this.config.project && { project: this.config.project }),
       status: 'active',
       activeDurationMs: 0,
       correlation: {
