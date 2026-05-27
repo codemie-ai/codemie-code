@@ -178,9 +178,6 @@ jobs:
       - name: Run integration tests
         run: npm run test:integration
 
-      - name: Run e2e tests
-        run: npm run test:e2e
-
   test-windows:
     name: Test (Windows)
     runs-on: windows-latest

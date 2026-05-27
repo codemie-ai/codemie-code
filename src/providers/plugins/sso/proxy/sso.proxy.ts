@@ -287,46 +287,10 @@ export class CodeMieProxy {
       });
       logger.debug(`[proxy] Received upstream response object for ${context.requestId}`);
 
-      // Expose upstream status code to onResponseHeaders plugins before hook chain runs
-      context.metadata.upstreamStatusCode = upstreamResponse.statusCode || 0;
-
       // 4. Run onResponseHeaders hooks (BEFORE streaming)
       await this.runHook('onResponseHeaders', interceptor =>
         interceptor.onResponseHeaders?.(context, upstreamResponse.headers)
       );
-
-      // 4.5. Handle session expiry: attempt SSO re-auth and retry the original request
-      if (context.metadata.sessionExpired) {
-        upstreamResponse.resume(); // drain and discard the 401 body
-        const reauthed = await this.attemptSSOReauth();
-
-        if (reauthed) {
-          const { CodeMieSSO } = await import('../sso.auth.js');
-          const sso = new CodeMieSSO();
-          const freshCreds = await sso.getStoredCredentials(this.config.targetApiUrl);
-
-          if (freshCreds && freshCreds.cookies) {
-            context.headers['cookie'] = Object.entries(freshCreds.cookies)
-              .map(([k, v]) => `${k}=${v}`)
-              .join('; ');
-          }
-
-          const retryResponse = await this.httpClient.forward(targetUrl, {
-            method: req.method!,
-            headers: context.headers,
-            body: context.requestBody || undefined
-          });
-
-          const retryMetadata = await this.streamResponse(context, retryResponse, res, startTime);
-          await this.runHook('onResponseComplete', interceptor =>
-            interceptor.onResponseComplete?.(context, retryMetadata)
-          );
-          return;
-        }
-
-        this.sendSessionExpiredResponse(res, context);
-        return;
-      }
 
       // 5. Stream response to client
       logger.debug(`[proxy] Starting response streaming for ${context.requestId}`);
@@ -679,64 +643,5 @@ export class CodeMieProxy {
     } catch {
       return null;
     }
-  }
-
-  /**
-   * Attempt SSO re-authentication when session has expired mid-session.
-   * Returns true if re-auth succeeded, false otherwise.
-   */
-  private async attemptSSOReauth(): Promise<boolean> {
-    if (this.config.authMethod === 'jwt') {
-      return false;
-    }
-
-    const codeMieUrl = this.config.profileConfig?.codeMieUrl || this.config.targetApiUrl;
-
-    try {
-      logger.warn('[proxy] Session expired mid-session — opening browser for re-authentication');
-      process.stderr.write(
-        '\n⚠️  Session expired. Opening browser for re-authentication...\n'
-      );
-
-      const { CodeMieSSO } = await import('../sso.auth.js');
-      const sso = new CodeMieSSO();
-      const result = await sso.authenticate({ codeMieUrl, timeout: 120000 });
-
-      if (result.success) {
-        process.stderr.write('✅ Re-authentication successful — retrying your request.\n\n');
-        logger.info('[proxy] SSO re-authentication succeeded — retrying original request');
-        return true;
-      }
-
-      logger.warn('[proxy] SSO re-authentication failed', { error: result.error });
-      return false;
-    } catch (error) {
-      logger.error('[proxy] SSO re-authentication threw an error', error);
-      return false;
-    }
-  }
-
-  /**
-   * Send a well-formed Anthropic authentication_error JSON response when
-   * session expiry re-auth is not possible or has failed.
-   */
-  private sendSessionExpiredResponse(res: ServerResponse, context: ProxyContext): void {
-    const body = JSON.stringify({
-      type: 'error',
-      error: {
-        type: 'authentication_error',
-        message: 'Your session has expired. To re-authenticate, run: codemie profile login',
-      },
-    });
-
-    res.statusCode = 401;
-    res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Content-Length', String(Buffer.byteLength(body)));
-    res.end(body);
-
-    logger.warn(
-      '[proxy] Sent session-expired error response to client. Run: codemie profile login',
-      { requestId: context.requestId }
-    );
   }
 }
