@@ -92,11 +92,17 @@ describe.runIf(INCLUDE_JWT_TESTS)('Doctor Command — JWT profile (TC-003)', () 
   const CLI_BIN = join(REPO_ROOT, 'bin', 'codemie.js');
 
   let testHome: string;
+  let doctorResult: ReturnType<typeof spawnSync>;
 
   beforeAll(async () => {
     testHome = mkdtempSync(join(tmpdir(), 'codemie-jwt-doctor-'));
     const token = await fetchJwtToken();
     writeJwtProfile(testHome, { profileName: 'jwt-autotest', jwtToken: token });
+    doctorResult = spawnSync(process.execPath, [CLI_BIN, 'doctor'], {
+      env: { ...process.env, CODEMIE_HOME: testHome, CI: '1' },
+      encoding: 'utf-8',
+      timeout: 120_000,
+    });
   }, 30_000);
 
   afterAll(() => {
@@ -104,21 +110,11 @@ describe.runIf(INCLUDE_JWT_TESTS)('Doctor Command — JWT profile (TC-003)', () 
   });
 
   it('should show JWT profile name in doctor output', () => {
-    const result = spawnSync(process.execPath, [CLI_BIN, 'doctor'], {
-      env: { ...process.env, CODEMIE_HOME: testHome, CI: '1' },
-      encoding: 'utf-8',
-      timeout: 120_000,
-    });
-    const combined = result.stdout + (result.stderr ?? '');
+    const combined = doctorResult.stdout + (doctorResult.stderr ?? '');
     expect(combined).toMatch(/jwt-autotest/i);
   });
 
   it('should not crash with JWT profile', () => {
-    const result = spawnSync(process.execPath, [CLI_BIN, 'doctor'], {
-      env: { ...process.env, CODEMIE_HOME: testHome, CI: '1' },
-      encoding: 'utf-8',
-      timeout: 120_000,
-    });
-    expect(result.status === 0 || result.status === 1).toBe(true);
+    expect(doctorResult.status === 0 || doctorResult.status === 1).toBe(true);
   });
 });
