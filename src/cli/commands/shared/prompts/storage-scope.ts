@@ -62,7 +62,7 @@ export async function promptStorageScope({
   }
 
   if (!process.stdin.isTTY || typeof process.stdin.setRawMode !== 'function') {
-    return Promise.resolve('global' as const);
+    return Promise.resolve(StorageScope.GLOBAL);
   }
 
   return new Promise((resolve) => {

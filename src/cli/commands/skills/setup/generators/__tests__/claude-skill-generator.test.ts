@@ -61,7 +61,7 @@ describe('Skills Claude Skill Generator', () => {
 			await registerClaudeSkill(mockSkill);
 
 			// Assert
-			const expectedPath = path.join(mockHomeDir, '.claude', 'skills', 'my-test-skill', 'SKILL.md');
+			const expectedPath = path.join(mockHomeDir, '.claude', 'skills', 'my-test-skill-global', 'SKILL.md');
 			expect(fs.writeFile).toHaveBeenCalledWith(expectedPath, expect.any(String), 'utf-8');
 		});
 
@@ -81,7 +81,7 @@ describe('Skills Claude Skill Generator', () => {
 			await registerClaudeSkill(mockSkill, 'local', workingDir);
 
 			// Assert
-			const expectedPath = path.join(workingDir, '.claude', 'skills', 'my-test-skill', 'SKILL.md');
+			const expectedPath = path.join(workingDir, '.claude', 'skills', 'my-test-skill-local', 'SKILL.md');
 			expect(fs.writeFile).toHaveBeenCalledWith(expectedPath, expect.any(String), 'utf-8');
 		});
 	});
@@ -91,8 +91,8 @@ describe('Skills Claude Skill Generator', () => {
 			// Act
 			await registerClaudeSkill(mockSkill);
 
-			// Assert: slug derived from name "My Test Skill" → "my-test-skill"
-			const expectedPath = path.join(mockHomeDir, '.claude', 'skills', 'my-test-skill', 'SKILL.md');
+			// Assert: slug derived from name "My Test Skill" → "my-test-skill-global"
+			const expectedPath = path.join(mockHomeDir, '.claude', 'skills', 'my-test-skill-global', 'SKILL.md');
 			expect(fs.writeFile).toHaveBeenCalledWith(expectedPath, expect.any(String), 'utf-8');
 		});
 
@@ -104,7 +104,7 @@ describe('Skills Claude Skill Generator', () => {
 			await registerClaudeSkill(specialSkill);
 
 			// Assert
-			const expectedPath = path.join(mockHomeDir, '.claude', 'skills', 'code-review-analysis', 'SKILL.md');
+			const expectedPath = path.join(mockHomeDir, '.claude', 'skills', 'code-review-analysis-global', 'SKILL.md');
 			expect(fs.writeFile).toHaveBeenCalledWith(expectedPath, expect.any(String), 'utf-8');
 		});
 
@@ -115,8 +115,8 @@ describe('Skills Claude Skill Generator', () => {
 			// Act
 			await registerClaudeSkill(noNameSkill);
 
-			// Assert: falls back to id "skill-abc-123"
-			const expectedPath = path.join(mockHomeDir, '.claude', 'skills', 'skill-abc-123', 'SKILL.md');
+			// Assert: falls back to id "skill-abc-123-global"
+			const expectedPath = path.join(mockHomeDir, '.claude', 'skills', 'skill-abc-123-global', 'SKILL.md');
 			expect(fs.writeFile).toHaveBeenCalledWith(expectedPath, expect.any(String), 'utf-8');
 		});
 	});
