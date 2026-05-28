@@ -22,13 +22,14 @@ const ENCRYPTION_KEY = (() => {
 function decrypt(text) {
   const parts = text.split(':');
   if (parts.length === 3) {
+    // GCM format: nonce:authTag:ciphertext (written by CLI >= 0.3.2)
     const iv = Buffer.from(parts[0], 'hex');
     const authTag = Buffer.from(parts[1], 'hex');
     const d = crypto.createDecipheriv('aes-256-gcm', ENCRYPTION_KEY, iv);
     d.setAuthTag(authTag);
     return d.update(parts[2], 'hex', 'utf8') + d.final('utf8');
   }
-  // Legacy CBC format: iv:encrypted (backward compat for existing stored credentials)
+  // Legacy CBC format: iv:ciphertext (written by CLI < 0.3.2)
   const iv = Buffer.from(parts[0], 'hex');
   const d = crypto.createDecipheriv('aes-256-cbc', ENCRYPTION_KEY, iv);
   return d.update(parts[1], 'hex', 'utf8') + d.final('utf8');
