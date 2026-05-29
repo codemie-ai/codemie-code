@@ -202,7 +202,7 @@ export class ConfigLoader {
         }
         const availableProfiles = Object.keys(rawConfig.profiles);
         if (availableProfiles.length === 0) {
-          throw new Error('No profiles configured. Run: codemie setup');
+          throw new Error(`No profiles configured. Run: ${chalk.cyan('codemie setup')}`);
         }
         throw new Error(
           `Profile "${profile}" not found. Available profiles: ${availableProfiles.join(', ')}`

@@ -296,7 +296,7 @@ export class AgentCLI {
       // Show user-friendly error message in console first
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.error(chalk.red(`\n✗ Failed to run ${this.adapter.displayName}\n`));
-      console.error(chalk.white(errorMessage));
+      console.error(errorMessage);
       console.error('');
 
       // Log detailed error for debugging
