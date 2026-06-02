@@ -18,7 +18,6 @@ vi.mock('@/utils/config.js', () => ({
 
 vi.mock('@/utils/auth.js', () => ({
   getAuthenticatedClient: vi.fn(),
-  promptReauthentication: vi.fn(),
   handleAuthError: vi.fn(),
 }));
 
@@ -173,6 +172,14 @@ describe('skill run command', () => {
       await invokeRun(['skill-abc-123', 'hello']);
 
       expect(consoleLogSpy).toHaveBeenCalledWith('');
+    });
+
+    it('should serialize response.generated as JSON when it is an object', async () => {
+      mockClient.assistants.askVirtual.mockResolvedValue({ generated: { answer: 42 }, success: true });
+
+      await invokeRun(['skill-abc-123', 'hello']);
+
+      expect(consoleLogSpy).toHaveBeenCalledWith('{"answer":42}');
     });
 
     it('should pass conversation_id option to askVirtual when provided', async () => {

@@ -8,6 +8,7 @@ import { ConfigLoader } from '@/utils/config.js';
 import { createErrorContext, formatErrorForUser } from '@/utils/errors.js';
 import { getAuthenticatedClient, handleAuthError } from '@/utils/auth.js';
 import { loadConversationHistory } from '@/cli/commands/assistants/chat/historyLoader.js';
+import type { ProviderProfile } from '@/env/types.js';
 import type { SkillDetail, VirtualAssistantChatParams } from 'codemie-sdk';
 import { NotFoundError } from 'codemie-sdk';
 
@@ -343,7 +344,15 @@ function createRunCommand(): Command {
     .option('-v, --verbose', 'Enable verbose debug output')
     .option('--conversation-id <id>', 'Conversation ID for context continuity')
     .action(async (skillId: string, message: string | undefined, options: RunCommandOptions) => {
-      const config = await ConfigLoader.load();
+      let config: ProviderProfile;
+      try {
+        config = await ConfigLoader.load();
+      } catch (error: unknown) {
+        const context = createErrorContext(error);
+        console.error(formatErrorForUser(context));
+        process.exit(1);
+        return;
+      }
       try {
         const client = await getAuthenticatedClient(config);
 
