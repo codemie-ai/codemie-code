@@ -70,7 +70,6 @@ export class AgentCLI {
     this.program
       .name(programName)
       .description(`CodeMie ${this.adapter.displayName} - ${this.adapter.description}`)
-      .version(this.version)
       .option('-s, --silent', 'Enable silent mode')
       .option('--status', 'Enable status bar (shows model, context usage, git branch, and cost)')
       .option('--profile <name>', 'Use specific provider profile')
@@ -170,11 +169,11 @@ export class AgentCLI {
         process.exit(1);
       }
 
-      // Auto-enable silent mode in non-interactive mode (--task flag present)
-      // or when only printing the generated config (--print-config).
-      // This suppresses welcome/goodbye messages and interactive prompts.
-      const isNonInteractiveMode = !!options.task;
-      const shouldBeSilent = options.silent || isNonInteractiveMode || !!options.printConfig;
+      // Auto-enable silent mode in non-interactive mode:
+      //   - --task flag is present (explicit single-task invocation)
+      //   - stdout is not a TTY (piped, redirected, or CI environment)
+      const isNonInteractiveMode = !!options.task || !process.stdout.isTTY;
+      const shouldBeSilent = options.silent || isNonInteractiveMode;
 
       // Apply silent mode from CLI flag or auto-detected non-interactive mode
       if (shouldBeSilent) {
@@ -761,6 +760,21 @@ export class AgentCLI {
    * Run the CLI
    */
   async run(argv: string[]): Promise<void> {
+    // Intercept --version / -V before Commander handles it.
+    // We delegate to the downstream agent binary so the user sees the actual
+    // installed agent version rather than the CodeMie wrapper version.
+    const args = argv.slice(2); // strip node + script
+    if (args.includes('--version') || args.includes('-V')) {
+      const agentVersion = await this.adapter.getVersion();
+      if (agentVersion !== null) {
+        console.log(agentVersion);
+      } else {
+        // Fallback: print CodeMie wrapper version when agent version is unavailable
+        console.log(this.version);
+      }
+      process.exit(0);
+    }
+
     await this.program.parseAsync(argv);
   }
 }
