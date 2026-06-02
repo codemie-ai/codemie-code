@@ -560,7 +560,6 @@ export class ConversationsProcessor implements SessionProcessor {
 
     return this.isConversationSplitter(msg) ||
            this.isSystemMessage(msg) ||
-           Boolean(msg.isMeta) ||
            this.isSyntheticUserPrompt(msg, messagesByUuid) ||
            this.isToolResult(msg);
   }

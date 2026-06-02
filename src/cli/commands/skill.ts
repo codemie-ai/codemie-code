@@ -6,10 +6,10 @@ import { logger } from '../../utils/logger.js';
 import type { Skill } from '../../skills/index.js';
 import { ConfigLoader } from '@/utils/config.js';
 import { createErrorContext, formatErrorForUser } from '@/utils/errors.js';
-import { getAuthenticatedClient, promptReauthentication } from '@/utils/auth.js';
+import { getAuthenticatedClient, handleAuthError } from '@/utils/auth.js';
 import { loadConversationHistory } from '@/cli/commands/assistants/chat/historyLoader.js';
 import type { SkillDetail, VirtualAssistantChatParams } from 'codemie-sdk';
-import { NotFoundError, ApiError } from 'codemie-sdk';
+import { NotFoundError } from 'codemie-sdk';
 
 interface RunCommandOptions {
   verbose?: boolean;
@@ -343,8 +343,8 @@ function createRunCommand(): Command {
     .option('-v, --verbose', 'Enable verbose debug output')
     .option('--conversation-id <id>', 'Conversation ID for context continuity')
     .action(async (skillId: string, message: string | undefined, options: RunCommandOptions) => {
+      const config = await ConfigLoader.load();
       try {
-        const config = await ConfigLoader.load();
         const client = await getAuthenticatedClient(config);
 
         if (message === undefined) {
@@ -366,10 +366,7 @@ function createRunCommand(): Command {
             console.error(`Skill not found: ${skillId}`);
             process.exit(1);
           }
-          if (error instanceof ApiError && (error.statusCode === 401 || error.statusCode === 403)) {
-            await promptReauthentication(config);
-            process.exit(1);
-          }
+          if (await handleAuthError(error, config)) process.exit(1);
           const context = createErrorContext(error);
           console.error(formatErrorForUser(context));
           process.exit(1);
@@ -386,13 +383,10 @@ function createRunCommand(): Command {
           history,
         });
 
-        console.log(response.generated ?? '');
+        const generated = response.generated;
+        console.log(generated == null ? '' : typeof generated === 'string' ? generated : JSON.stringify(generated));
       } catch (error: unknown) {
-        if (error instanceof ApiError && (error.statusCode === 401 || error.statusCode === 403)) {
-          const config = await ConfigLoader.load();
-          await promptReauthentication(config);
-          process.exit(1);
-        }
+        if (await handleAuthError(error, config)) process.exit(1);
         const context = createErrorContext(error);
         logger.error('Failed to run skill', context);
         console.error(formatErrorForUser(context));

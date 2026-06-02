@@ -6,7 +6,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { SkillDetail } from 'codemie-sdk';
 import { NotFoundError, ApiError } from 'codemie-sdk';
 import { ConfigLoader } from '../../../utils/config.js';
-import { getAuthenticatedClient, promptReauthentication } from '../../../utils/auth.js';
+import { getAuthenticatedClient, handleAuthError } from '../../../utils/auth.js';
 import { formatErrorForUser } from '../../../utils/errors.js';
 import { createSkillCommand } from '../skill.js';
 
@@ -19,6 +19,7 @@ vi.mock('@/utils/config.js', () => ({
 vi.mock('@/utils/auth.js', () => ({
   getAuthenticatedClient: vi.fn(),
   promptReauthentication: vi.fn(),
+  handleAuthError: vi.fn(),
 }));
 
 vi.mock('@/utils/errors.js', () => ({
@@ -94,7 +95,7 @@ describe('skill run command', () => {
 
     vi.mocked(ConfigLoader.load).mockResolvedValue(mockConfig as any);
     vi.mocked(getAuthenticatedClient).mockResolvedValue(mockClient as any);
-    vi.mocked(promptReauthentication).mockResolvedValue(false);
+    vi.mocked(handleAuthError).mockResolvedValue(false);
 
     // Throw on process.exit so code after exit() never runs (mirrors real behaviour)
     processExitSpy = vi.spyOn(process, 'exit').mockImplementation(((code?: number) => {
@@ -218,32 +219,35 @@ describe('skill run command', () => {
   });
 
   describe('authentication errors on skills.get', () => {
-    it('should call promptReauthentication and exit 1 on 401', async () => {
+    it('should call handleAuthError and exit 1 on 401', async () => {
       mockClient.skills.get.mockRejectedValue(new ApiError('Unauthorized', 401));
+      vi.mocked(handleAuthError).mockResolvedValue(true);
 
       await invokeRun(['skill-abc-123', 'hello']);
 
-      expect(promptReauthentication).toHaveBeenCalledWith(mockConfig);
+      expect(handleAuthError).toHaveBeenCalledWith(expect.any(ApiError), mockConfig);
       expect(processExitSpy).toHaveBeenCalledWith(1);
     });
 
-    it('should call promptReauthentication and exit 1 on 403', async () => {
+    it('should call handleAuthError and exit 1 on 403', async () => {
       mockClient.skills.get.mockRejectedValue(new ApiError('Forbidden', 403));
+      vi.mocked(handleAuthError).mockResolvedValue(true);
 
       await invokeRun(['skill-abc-123', 'hello']);
 
-      expect(promptReauthentication).toHaveBeenCalledWith(mockConfig);
+      expect(handleAuthError).toHaveBeenCalledWith(expect.any(ApiError), mockConfig);
       expect(processExitSpy).toHaveBeenCalledWith(1);
     });
   });
 
   describe('authentication errors on askVirtual', () => {
-    it('should call promptReauthentication and exit 1 on 401', async () => {
+    it('should call handleAuthError and exit 1 on 401', async () => {
       mockClient.assistants.askVirtual.mockRejectedValue(new ApiError('Unauthorized', 401));
+      vi.mocked(handleAuthError).mockResolvedValue(true);
 
       await invokeRun(['skill-abc-123', 'hello']);
 
-      expect(promptReauthentication).toHaveBeenCalled();
+      expect(handleAuthError).toHaveBeenCalled();
       expect(processExitSpy).toHaveBeenCalledWith(1);
     });
   });

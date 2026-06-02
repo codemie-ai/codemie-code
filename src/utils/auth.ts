@@ -4,6 +4,7 @@
 
 import chalk from 'chalk';
 import type { CodeMieClient } from 'codemie-sdk';
+import { ApiError } from 'codemie-sdk';
 import { getCodemieClient } from '@/utils/sdk-client.js';
 import { ConfigurationError } from '@/utils/errors.js';
 import type { ProviderProfile } from '@/env/types.js';
@@ -30,6 +31,17 @@ export async function getAuthenticatedClient(config: ProviderProfile): Promise<C
     }
     throw error;
   }
+}
+
+/**
+ * Handle auth errors (401/403) — prompt re-authentication and return true if handled.
+ */
+export async function handleAuthError(error: unknown, config: ProviderProfile): Promise<boolean> {
+  if (error instanceof ApiError && (error.statusCode === 401 || error.statusCode === 403)) {
+    await promptReauthentication(config);
+    return true;
+  }
+  return false;
 }
 
 /**
