@@ -121,7 +121,6 @@ export class DesktopTelemetryRuntime {
         .catch(() => undefined)
     ]);
 
-    this.config.onRepositoryResolved?.(repository || undefined);
     this.config.sessionRepositoryMap?.set(
       discovered.externalSessionId,
       repository || 'Default'

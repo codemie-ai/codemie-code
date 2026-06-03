@@ -23,8 +23,6 @@ export interface DesktopTelemetryRuntimeConfig {
   syncCodeMieUrl?: string;
   pollIntervalMs: number;
   inactivityTimeoutMs: number;
-  project?: string;
-  onRepositoryResolved?: (repository: string | undefined) => void;
   sessionRepositoryMap?: Map<string, string>;
 }
 
