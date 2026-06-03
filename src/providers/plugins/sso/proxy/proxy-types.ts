@@ -34,6 +34,8 @@ export interface ProxyConfig {
   telemetryMode?: 'none' | 'claude-desktop';
   telemetryPollIntervalMs?: number;
   telemetryInactivityTimeoutMs?: number;
+  sessionRepositoryMap?: Map<string, string>;
+  triggerPoll?: () => Promise<void>;
 }
 
 /**

@@ -68,10 +68,30 @@ class HeaderInjectionInterceptor implements ProxyInterceptor {
       context.headers['X-CodeMie-Client'] = config.clientType;
     }
 
-    // Add repository, branch and project headers
-    if (config.repository) {
-      context.headers['X-CodeMie-Repository'] = config.repository;
+    // Per-request repository resolution for Desktop mode.
+    // Claude Desktop sends x-claude-code-session-id with a plain UUID (no local_ prefix).
+    // The shared map is keyed by externalSessionId = local_<uuid>, so prepend 'local_'.
+    // Await-poll once (max 1.5s) when the session is not yet in the map.
+    if (config.sessionRepositoryMap) {
+      const claudeSessionId = context.headers['x-claude-code-session-id'];
+      const externalSessionId = claudeSessionId ? `local_${claudeSessionId}` : undefined;
+      if (externalSessionId && !config.sessionRepositoryMap.has(externalSessionId)) {
+        await Promise.race([
+          config.triggerPoll?.() ?? Promise.resolve(),
+          new Promise<void>(resolve => setTimeout(resolve, 1500))
+        ]);
+      }
+      const resolvedRepository = externalSessionId
+        ? (config.sessionRepositoryMap.get(externalSessionId) ?? config.repository ?? 'Default')
+        : (config.repository ?? 'Default');
+      context.headers['X-CodeMie-Repository'] = resolvedRepository;
+    } else {
+      // Non-Desktop mode: use static config values
+      if (config.repository) {
+        context.headers['X-CodeMie-Repository'] = config.repository;
+      }
     }
+
     if (config.branch) {
       context.headers['X-CodeMie-Branch'] = config.branch;
     }
