@@ -396,7 +396,7 @@ const CLAUDE_DESKTOP_SANDBOX_RE = /\/local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[
  */
 export function extractRepository(workingDirectory: string): string {
   if (CLAUDE_DESKTOP_SANDBOX_RE.test(normalizePathSeparators(workingDirectory))) {
-    return 'Claude Desktop';
+    return 'Default';
   }
 
   const parts = splitPath(workingDirectory);

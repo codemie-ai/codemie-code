@@ -274,30 +274,30 @@ describe('Path Utilities - Cross-Platform', () => {
       });
     });
 
-    describe('Claude Desktop sandbox paths — return Claude Desktop', () => {
+    describe('Claude Desktop sandbox paths — return Default', () => {
       it('should detect real Desktop sandbox path observed in logs', () => {
         const path = '/Users/mykola/Library/Application Support/Claude-3p/local-agent-mode-sessions/759182a5-1458-46d1-92e3-d6b6bc1262bd/00000000-0000-4000-8000-000000000001/local_2d5f3a0f-6a50-4778-ac55-9ffbca0446da/outputs';
-        expect(extractRepository(path)).toBe('Claude Desktop');
+        expect(extractRepository(path)).toBe('Default');
       });
 
       it('should detect sandbox path with different UUID', () => {
         const path = '/Users/alice/Library/Application Support/Claude-3p/local-agent-mode-sessions/abc/def/local_7fb4c6a0-a7b9-4121-960c-035d0e4830ff/outputs';
-        expect(extractRepository(path)).toBe('Claude Desktop');
+        expect(extractRepository(path)).toBe('Default');
       });
 
       it('should detect sandbox path ending at the local_<uuid> directory itself', () => {
         const path = '/some/path/local_74f67be8-ddc7-44c4-a911-1d6cd034ec9d';
-        expect(extractRepository(path)).toBe('Claude Desktop');
+        expect(extractRepository(path)).toBe('Default');
       });
 
       it('should detect sandbox path with a project subfolder inside outputs', () => {
         const path = '/Users/alice/Library/Application Support/Claude-3p/local-agent-mode-sessions/s/u/local_95002bb5-744b-4b94-b87b-711c0ebf7a47/outputs/my-project';
-        expect(extractRepository(path)).toBe('Claude Desktop');
+        expect(extractRepository(path)).toBe('Default');
       });
 
       it('should be case-insensitive for hex digits', () => {
         const path = '/some/path/local_2D5F3A0F-6A50-4778-AC55-9FFBCA0446DA/outputs';
-        expect(extractRepository(path)).toBe('Claude Desktop');
+        expect(extractRepository(path)).toBe('Default');
       });
     });
 
