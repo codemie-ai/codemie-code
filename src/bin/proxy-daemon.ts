@@ -124,9 +124,6 @@ try {
         pollIntervalMs: config.telemetryPollIntervalMs ?? 10000,
         inactivityTimeoutMs: config.telemetryInactivityTimeoutMs ?? 300000,
         sessionRepositoryMap,
-        onRepositoryResolved: (repository) => {
-          config.repository = repository ?? 'Default';
-        }
       }
     );
 
