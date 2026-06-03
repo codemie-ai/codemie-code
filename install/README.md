@@ -2,11 +2,15 @@
 
 This directory contains source files for the lightweight CodeMie bootstrap installers.
 
-The first supported distribution model is hosted scripts:
+Two distribution models are supported:
 
-- Windows PowerShell: `install/windows/install.ps1`
-- Windows CMD: `install/windows/install.cmd`
-- macOS/Linux/WSL: `install/macos/install.sh`
+1. **Hosted scripts** — run directly from GitHub raw URLs or mirror to Artifactory:
+   - Windows PowerShell: `install/windows/install.ps1`
+   - Windows CMD: `install/windows/install.cmd`
+   - macOS/Linux/WSL: `install/macos/install.sh`
+
+2. **Windows Installation Wizard** — a self-contained GUI installer:
+   - `install/windows/CodemieWizard.exe`
 
 The scripts can be run directly from GitHub raw URLs or mirrored to Artifactory later. They do not require a Windows-built `.exe`.
 
@@ -61,6 +65,58 @@ Known limitation: `install/windows/install.cmd` forwards arguments to PowerShell
 ## macOS/Linux Defaults
 
 macOS, Linux, and WSL prefer npm global installation when global npm is user-writable. If global npm is not writable, the script configures a user-local npm prefix.
+
+## Windows Installation Wizard
+
+`install/windows/CodemieWizard.exe` is a self-contained Windows desktop GUI application that installs and configures the CodeMie Claude Code CLI end-to-end. It requires no terminal knowledge and bundles all dependencies.
+
+### Running the Wizard
+
+Double-click `CodemieWizard.exe`. No command-line arguments are supported — the wizard is a pure GUI application.
+
+The wizard walks through the following steps in order:
+
+| Step | What it does |
+|------|-------------|
+| PowerShell execution policy | Sets `RemoteSigned` scope for the current user |
+| Git for Windows | Detects an existing install or silently downloads and installs v2.47.0-64-bit |
+| Node.js + npm | Detects an existing install or silently downloads and installs Node.js LTS v20.18.0 |
+| CodeMie CLI | Installs `@codemieai/code` globally via `npm install -g` |
+| CodeMie setup | Opens a visible terminal window and runs `codemie setup` interactively |
+| Claude engine | Opens a visible terminal window and runs `codemie install claude --supported` |
+| Validation | Runs `codemie doctor` to confirm everything is working |
+
+Each step that requires a download shows a progress animation and an inline **Approve** / **Ignore** button before proceeding.
+
+### Unattended Mode
+
+Check the **Unattended mode** checkbox in the left sidebar before clicking Install. All approval gates auto-approve, so the wizard runs without prompts. The two interactive terminal steps (`codemie setup` and `codemie install claude`) still open a visible console window because they require user input.
+
+### Default Paths
+
+Tools are installed to their standard system locations:
+
+```text
+Git:    C:\Program Files\Git\cmd\git.exe
+Node:   C:\Program Files\nodejs\node.exe
+```
+
+npm global binaries are added to the current user's `PATH`:
+
+```text
+%USERPROFILE%\AppData\Local\CodeMie\npm-prefix
+%USERPROFILE%\AppData\Roaming\npm
+```
+
+### Log File
+
+All wizard output is written to:
+
+```text
+%TEMP%\codemie_wizard.log
+```
+
+The log persists across runs. Each line is prefixed with an ISO-8601 timestamp and a tag: `[OUT]` stdout, `[ERR]` stderr, `[INF]` info, `[OK]` success, `[CMD]` command.
 
 ## Release Artifacts
 
