@@ -108,6 +108,9 @@ try {
   const { port: actualPort, url } = await proxy.start();
 
   if (config.telemetryMode === 'claude-desktop') {
+    const sessionRepositoryMap = new Map<string, string>();
+    config.sessionRepositoryMap = sessionRepositoryMap;
+
     telemetryRuntime = new DesktopTelemetryRuntime(
       new ClaudeDesktopTelemetryAdapter(),
       {
@@ -119,9 +122,15 @@ try {
         syncApiUrl: config.syncApiUrl,
         syncCodeMieUrl: config.syncCodeMieUrl,
         pollIntervalMs: config.telemetryPollIntervalMs ?? 10000,
-        inactivityTimeoutMs: config.telemetryInactivityTimeoutMs ?? 300000
+        inactivityTimeoutMs: config.telemetryInactivityTimeoutMs ?? 300000,
+        sessionRepositoryMap,
+        onRepositoryResolved: (repository) => {
+          config.repository = repository ?? 'Default';
+        }
       }
     );
+
+    config.triggerPoll = () => telemetryRuntime!.triggerPoll();
     await telemetryRuntime.start();
   }
 
