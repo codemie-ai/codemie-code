@@ -20,10 +20,18 @@ const ENCRYPTION_KEY = (() => {
 })();
 
 function decrypt(text) {
-  const [ivHex, encHex] = text.split(':');
-  const iv = Buffer.from(ivHex, 'hex');
+  const parts = text.split(':');
+  if (parts.length === 3) {
+    const iv = Buffer.from(parts[0], 'hex');
+    const authTag = Buffer.from(parts[1], 'hex');
+    const d = crypto.createDecipheriv('aes-256-gcm', ENCRYPTION_KEY, iv);
+    d.setAuthTag(authTag);
+    return d.update(parts[2], 'hex', 'utf8') + d.final('utf8');
+  }
+  // Legacy CBC format: iv:encrypted (backward compat for existing stored credentials)
+  const iv = Buffer.from(parts[0], 'hex');
   const d = crypto.createDecipheriv('aes-256-cbc', ENCRYPTION_KEY, iv);
-  return d.update(encHex, 'hex', 'utf8') + d.final('utf8');
+  return d.update(parts[1], 'hex', 'utf8') + d.final('utf8');
 }
 
 function urlHash(rawUrl) {
