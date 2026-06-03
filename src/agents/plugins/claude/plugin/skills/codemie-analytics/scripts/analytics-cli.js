@@ -125,16 +125,20 @@ function getAESKey() {
 }
 
 function decrypt(text) {
-  const colonIndex = text.indexOf(':');
-  if (colonIndex === -1) return null;
-  const ivHex = text.slice(0, colonIndex);
-  const encryptedHex = text.slice(colonIndex + 1);
-  const iv = Buffer.from(ivHex, 'hex');
+  const parts = text.split(':');
+  if (parts.length < 2) return null;
   const key = getAESKey();
+  if (parts.length === 3) {
+    const iv = Buffer.from(parts[0], 'hex');
+    const authTag = Buffer.from(parts[1], 'hex');
+    const decipher = createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(authTag);
+    return decipher.update(parts[2], 'hex', 'utf8') + decipher.final('utf8');
+  }
+  // Legacy CBC format: iv:encrypted (backward compat for existing stored credentials)
+  const iv = Buffer.from(parts[0], 'hex');
   const decipher = createDecipheriv('aes-256-cbc', key, iv);
-  let decrypted = decipher.update(encryptedHex, 'hex', 'utf8');
-  decrypted += decipher.final('utf8');
-  return decrypted;
+  return decipher.update(parts[1], 'hex', 'utf8') + decipher.final('utf8');
 }
 
 function readEncryptedFile(filePath) {
