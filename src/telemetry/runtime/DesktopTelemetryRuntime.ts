@@ -122,10 +122,12 @@ export class DesktopTelemetryRuntime {
         .catch(() => undefined)
     ]);
 
-    this.config.sessionRepositoryMap?.set(
-      discovered.agentSessionId,
-      repository || 'Default'
-    );
+    if (!discovered.agentSessionId.startsWith('local_')) {
+      this.config.sessionRepositoryMap?.set(
+        discovered.agentSessionId,
+        repository || 'Default'
+      );
+    }
 
     const session: Session = {
       sessionId: randomUUID(),

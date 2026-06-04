@@ -6,7 +6,7 @@
  * KISS: Straightforward header injection
  */
 
-import { readdir, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
@@ -17,6 +17,7 @@ import {
   getClaudeDesktopLocalSessionsRoot,
   getClaudeDesktopCodeSessionsRoot,
 } from '../../../../../telemetry/clients/claude-desktop/claude-desktop.paths.js';
+import { walk } from '../../../../../telemetry/clients/claude-desktop/claude-desktop.discovery.js';
 import { extractRepository } from '../../../../../utils/paths.js';
 
 export class HeaderInjectionPlugin implements ProxyPlugin {
@@ -126,7 +127,7 @@ async function findWorkingDirForSession(cliSessionId: string): Promise<string | 
 
   for (const root of roots) {
     if (!existsSync(root)) continue;
-    const files = await walkSessionFiles(root);
+    const files = await walk(root);
     for (const file of files) {
       try {
         const json = JSON.parse(await readFile(file, 'utf-8')) as Record<string, unknown>;
@@ -157,16 +158,3 @@ async function readGitRemoteLocal(dir: string): Promise<string | null> {
   }
 }
 
-async function walkSessionFiles(root: string): Promise<string[]> {
-  const files: string[] = [];
-  const entries = await readdir(root, { withFileTypes: true });
-  for (const entry of entries) {
-    const full = join(root, entry.name);
-    if (entry.isDirectory()) {
-      files.push(...await walkSessionFiles(full));
-    } else if (entry.isFile() && entry.name.startsWith('local_') && entry.name.endsWith('.json')) {
-      files.push(full);
-    }
-  }
-  return files;
-}

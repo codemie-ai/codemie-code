@@ -92,7 +92,7 @@ async function resolveClaudeTranscriptPath(metadata: DesktopMetadata): Promise<s
   return null;
 }
 
-async function walk(root: string): Promise<string[]> {
+export async function walk(root: string): Promise<string[]> {
   const files: string[] = [];
   const entries = await readdir(root, { withFileTypes: true });
 
