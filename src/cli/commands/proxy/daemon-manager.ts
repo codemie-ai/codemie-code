@@ -19,6 +19,13 @@ export interface DaemonState {
   syncApiUrl?: string;
   syncCodeMieUrl?: string;
   startedAt: string;
+  // Health tracking (written by the daemon's watcher; all optional and
+  // backward-compatible — absent means "unknown / assume ok").
+  health?: 'ok' | 'unhealthy';
+  healthReason?: string;
+  lastHealthyAt?: string;
+  lastRecoveryAt?: string;
+  recoveryAttempts?: number;
 }
 
 const DEFAULT_STATE_FILE = join(getCodemieHome(), 'proxy-daemon.json');
@@ -142,21 +149,36 @@ export async function stopDaemon(): Promise<void> {
   const state = await readState(stateFile);
   if (!state) return;
 
-  if (isProcessAlive(state.pid)) {
-    process.kill(state.pid, 'SIGTERM');
-    for (let i = 0; i < 50; i++) {
-      await new Promise<void>(r => setTimeout(r, 100));
-      if (!isProcessAlive(state.pid)) {
-        await clearState(stateFile);
-        return;
-      }
-    }
-
-    throw new ToolExecutionError(
-      'proxy-daemon',
-      `Daemon pid ${state.pid} did not stop within 5 seconds`
-    );
+  if (!isProcessAlive(state.pid)) {
+    await clearState(stateFile);
+    return;
   }
 
+  // 1. Graceful: SIGTERM, wait up to 5s.
+  process.kill(state.pid, 'SIGTERM');
+  for (let i = 0; i < 50; i++) {
+    await new Promise<void>(r => setTimeout(r, 100));
+    if (!isProcessAlive(state.pid)) {
+      await clearState(stateFile);
+      return;
+    }
+  }
+
+  // 2. Escalate: SIGKILL so a wedged daemon can never block the next connect.
+  logger.warn(
+    '[daemon-manager] Daemon ignored SIGTERM; escalating to SIGKILL',
+    ...sanitizeLogArgs({ pid: state.pid })
+  );
+  try {
+    process.kill(state.pid, 'SIGKILL');
+  } catch {
+    // Already gone between the check and the signal — fine.
+  }
+  for (let i = 0; i < 20; i++) {
+    await new Promise<void>(r => setTimeout(r, 100));
+    if (!isProcessAlive(state.pid)) break;
+  }
+
+  // 3. Always clear state — the SIGKILL'd process won't run its own cleanup.
   await clearState(stateFile);
 }

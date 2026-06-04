@@ -34,6 +34,12 @@ export interface ProxyConfig {
   telemetryMode?: 'none' | 'claude-desktop';
   telemetryPollIntervalMs?: number;
   telemetryInactivityTimeoutMs?: number;
+  /**
+   * When true, the server retries the SAME configured port on EADDRINUSE
+   * (with short backoff) instead of falling back to a random port. Used by
+   * the daemon's in-process restart so Claude Desktop's fixed URL keeps working.
+   */
+  pinnedPort?: boolean;
 }
 
 /**

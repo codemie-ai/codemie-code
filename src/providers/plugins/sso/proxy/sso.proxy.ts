@@ -44,6 +44,7 @@ export class CodeMieProxy {
   private httpClient: ProxyHTTPClient;
   private interceptors: ProxyInterceptor[] = [];
   private actualPort: number = 0;
+  private startedAt: string = '';
 
   constructor(private config: ProxyConfig) {
     // Initialize HTTP client with streaming support
@@ -139,11 +140,28 @@ export class CodeMieProxy {
         });
       });
 
+      let eaddrinuseRetries = 0;
+      const maxEaddrinuseRetries = 5;
       this.server.on('error', (error: any) => {
         if (error.code === 'EADDRINUSE') {
-          // Try a different random port
-          this.actualPort = 0; // Let system assign
-          this.server?.listen(this.actualPort, bindHost);
+          if (this.config.pinnedPort) {
+            // Recovery path: the daemon must reclaim the SAME port so Claude
+            // Desktop's fixed gateway URL keeps working. Retry with backoff
+            // instead of silently moving to a random port.
+            if (eaddrinuseRetries >= maxEaddrinuseRetries) {
+              this.server?.close();
+              reject(new NetworkError(
+                `Port ${this.actualPort} still in use after ${maxEaddrinuseRetries} retries`
+              ));
+              return;
+            }
+            eaddrinuseRetries++;
+            setTimeout(() => this.server?.listen(this.actualPort, bindHost), 200);
+          } else {
+            // Initial-bind path: a random fallback port is acceptable.
+            this.actualPort = 0; // Let system assign
+            this.server?.listen(this.actualPort, bindHost);
+          }
         } else {
           reject(error);
         }
@@ -157,6 +175,7 @@ export class CodeMieProxy {
 
         // Propagate actual port to config so plugins (e.g., MCP auth) get the real port
         this.config.port = this.actualPort;
+        this.startedAt = new Date().toISOString();
 
         const gatewayUrl = `http://${bindHost}:${this.actualPort}`;
         logger.debug(`Proxy started: ${gatewayUrl}`);
@@ -185,6 +204,11 @@ export class CodeMieProxy {
     // 2. Stop server
     if (this.server) {
       await new Promise<void>((resolve) => {
+        // Force-drain keep-alive sockets (e.g. Claude Desktop's persistent
+        // connection) first; otherwise server.close() does not invoke its
+        // callback until those connections idle out, which would hang the
+        // daemon's in-process restart indefinitely.
+        this.server!.closeAllConnections?.();
         this.server!.close(() => {
           logger.debug('[CodeMieProxy] Stopped');
           resolve();
@@ -214,6 +238,20 @@ export class CodeMieProxy {
     res: ServerResponse
   ): Promise<void> {
     const startTime = Date.now();
+
+    // Liveness probe — answered before auth and before any plugin hook.
+    // No upstream call, no token required. Used by `proxy status`, `connect`,
+    // and the in-daemon ProxyWatcher to detect a dead socket.
+    if (req.method === 'GET' && (req.url === '/health' || req.url === '/healthz')) {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({
+        status: 'ok',
+        port: this.actualPort,
+        startedAt: this.startedAt,
+      }));
+      return;
+    }
 
     try {
       // 1. Build context

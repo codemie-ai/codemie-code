@@ -15,6 +15,7 @@ import { ClaudeDesktopTelemetryAdapter } from '../telemetry/clients/claude-deskt
 import { DesktopTelemetryRuntime } from '../telemetry/runtime/DesktopTelemetryRuntime.js';
 import { getDirname } from '../utils/paths.js';
 import { logger } from '../utils/logger.js';
+import { ProxyWatcher } from '../cli/commands/proxy/watcher.js';
 
 function readCliVersion(): string {
   try {
@@ -86,19 +87,42 @@ const config: ProxyConfig = {
   syncCodeMieUrl,
 };
 
-const proxy = new CodeMieProxy(config);
+let proxy = new CodeMieProxy(config);
 let telemetryRuntime: DesktopTelemetryRuntime | undefined;
+let watcher: ProxyWatcher | undefined;
+let currentState: Record<string, unknown> = {};
 
-async function writeStateAtomic(state: object): Promise<void> {
+async function persistState(patch: Record<string, unknown>): Promise<void> {
+  currentState = { ...currentState, ...patch };
   const tmp = stateFile + '.tmp';
-  await writeFile(tmp, JSON.stringify(state, null, 2), 'utf-8');
+  await writeFile(tmp, JSON.stringify(currentState, null, 2), 'utf-8');
   await rename(tmp, stateFile!);
 }
 
 async function cleanup(): Promise<void> {
+  watcher?.stop();
   try { await telemetryRuntime?.stop(); } catch { /* ignore */ }
   try { await proxy.stop(); } catch { /* ignore */ }
   try { await unlink(stateFile!); } catch { /* ignore */ }
+}
+
+async function restartProxy(): Promise<void> {
+  try {
+    await proxy.stop();
+  } catch (error) {
+    logger.warn(`[proxy-daemon] proxy.stop() during restart failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  // Pin to the port we already bound so Claude Desktop's URL stays valid.
+  config.pinnedPort = true;
+  proxy = new CodeMieProxy(config);
+  const { url } = await proxy.start();
+  await persistState({
+    url,
+    health: 'ok',
+    healthReason: undefined,
+    lastHealthyAt: new Date().toISOString(),
+    lastRecoveryAt: new Date().toISOString(),
+  });
 }
 
 process.on('SIGTERM', async () => { await cleanup(); process.exit(0); });
@@ -106,6 +130,12 @@ process.on('SIGINT',  async () => { await cleanup(); process.exit(0); });
 
 try {
   const { port: actualPort, url } = await proxy.start();
+
+  // Pin future restarts to the port we actually bound. The initial bind may
+  // have fallen back to a random port if 4001 was busy; recovery must reuse
+  // whatever URL was written to the Desktop config.
+  config.port = actualPort;
+  config.pinnedPort = true;
 
   if (config.telemetryMode === 'claude-desktop') {
     telemetryRuntime = new DesktopTelemetryRuntime(
@@ -125,7 +155,8 @@ try {
     await telemetryRuntime.start();
   }
 
-  await writeStateAtomic({
+  const nowIso = new Date().toISOString();
+  await persistState({
     pid: process.pid,
     port: actualPort,
     url,
@@ -138,8 +169,31 @@ try {
     telemetryMode,
     syncApiUrl: config.syncApiUrl,
     syncCodeMieUrl: config.syncCodeMieUrl,
-    startedAt: new Date().toISOString(),
+    startedAt: nowIso,
+    health: 'ok',
+    lastHealthyAt: nowIso,
   });
+
+  // Background self-healing watcher: deep-checks every 30s, restarts in-process
+  // on the same pinned port, gives up (records unhealthy) after 3 failures or
+  // on an unrecoverable expired session.
+  watcher = new ProxyWatcher(
+    { port: actualPort, gatewayKey, intervalMs: 30000, maxRestartAttempts: 3 },
+    {
+      restart: restartProxy,
+      onHealthy: async () => {
+        await persistState({
+          health: 'ok',
+          healthReason: undefined,
+          lastHealthyAt: new Date().toISOString(),
+        });
+      },
+      onGiveUp: async (reason) => {
+        await persistState({ health: 'unhealthy', healthReason: reason });
+      },
+    }
+  );
+  watcher.start();
 
   logger.debug(`[proxy-daemon] Started on ${url} (profile: ${profile})`);
 } catch (error) {
