@@ -15,6 +15,7 @@ interface DesktopMetadata {
   cwd?: string;
   originCwd?: string;
   worktreePath?: string;
+  userSelectedFolders?: string[];
   createdAt: number;
   lastActivityAt: number;
   model?: string;
@@ -153,6 +154,7 @@ export async function discoverClaudeDesktopSessions(
           || companionMetadata?.worktreePath
           || metadata.originCwd
           || metadata.worktreePath
+          || metadata.userSelectedFolders?.[0]
           || metadata.cwd
           || transcriptDir,
         createdAt: metadata.createdAt,

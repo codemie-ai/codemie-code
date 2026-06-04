@@ -6,10 +6,18 @@
  * KISS: Straightforward header injection
  */
 
+import { readdir, readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+import { existsSync } from 'node:fs';
 import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
 import { ProxyContext } from '../proxy-types.js';
 import { ProviderRegistry } from '../../../../core/registry.js';
 import { logger } from '../../../../../utils/logger.js';
+import {
+  getClaudeDesktopLocalSessionsRoot,
+  getClaudeDesktopCodeSessionsRoot,
+} from '../../../../../telemetry/clients/claude-desktop/claude-desktop.paths.js';
+import { extractRepository } from '../../../../../utils/paths.js';
 
 export class HeaderInjectionPlugin implements ProxyPlugin {
   id = '@codemie/proxy-headers';
@@ -69,21 +77,28 @@ class HeaderInjectionInterceptor implements ProxyInterceptor {
     }
 
     // Per-request repository resolution for Desktop mode.
-    // Claude Desktop sends x-claude-code-session-id with a plain UUID (no local_ prefix).
-    // The shared map is keyed by externalSessionId = local_<uuid>, so prepend 'local_'.
-    // Await-poll once (max 1.5s) when the session is not yet in the map.
+    // Claude Desktop sends x-claude-code-session-id = cliSessionId (plain UUID, no local_ prefix).
+    // The shared map is keyed by agentSessionId = cliSessionId, so look up directly.
+    // On unknown session: targeted scan of Desktop session files → .git/config read → cache result.
+    // If session file not on disk yet (first message race condition) → Default, not cached.
     if (config.sessionRepositoryMap) {
-      const claudeSessionId = context.headers['x-claude-code-session-id'];
-      const externalSessionId = claudeSessionId ? `local_${claudeSessionId}` : undefined;
-      if (externalSessionId && !config.sessionRepositoryMap.has(externalSessionId)) {
-        await Promise.race([
-          config.triggerPoll?.() ?? Promise.resolve(),
-          new Promise<void>(resolve => setTimeout(resolve, 1500))
-        ]);
+      const cliSessionId = context.headers['x-claude-code-session-id'];
+
+      if (cliSessionId && !config.sessionRepositoryMap.has(cliSessionId)) {
+        const workingDir = await findWorkingDirForSession(cliSessionId).catch(() => null);
+        if (workingDir) {
+          const repository = (await readGitRemoteLocal(workingDir)) ?? extractRepository(workingDir);
+          config.sessionRepositoryMap.set(cliSessionId, repository);
+          logger.debug('[header-injection] Resolved repository via targeted lookup', {
+            cliSessionId, workingDir, repository,
+          });
+        }
       }
-      const resolvedRepository = externalSessionId
-        ? (config.sessionRepositoryMap.get(externalSessionId) ?? config.repository ?? 'Default')
+
+      const resolvedRepository = cliSessionId
+        ? (config.sessionRepositoryMap.get(cliSessionId) ?? config.repository ?? 'Default')
         : (config.repository ?? 'Default');
+
       context.headers['X-CodeMie-Repository'] = resolvedRepository;
     } else {
       // Non-Desktop mode: use static config values
@@ -101,4 +116,57 @@ class HeaderInjectionInterceptor implements ProxyInterceptor {
 
     logger.debug(`[${this.name}] Injected CodeMie headers`);
   }
+}
+
+async function findWorkingDirForSession(cliSessionId: string): Promise<string | null> {
+  const roots = [
+    getClaudeDesktopLocalSessionsRoot(),
+    getClaudeDesktopCodeSessionsRoot(),
+  ];
+
+  for (const root of roots) {
+    if (!existsSync(root)) continue;
+    const files = await walkSessionFiles(root);
+    for (const file of files) {
+      try {
+        const json = JSON.parse(await readFile(file, 'utf-8')) as Record<string, unknown>;
+        if (json['cliSessionId'] !== cliSessionId) continue;
+        const folders = json['userSelectedFolders'] as string[] | undefined;
+        const workingDir =
+          (json['originCwd'] as string | undefined)
+          ?? (json['worktreePath'] as string | undefined)
+          ?? folders?.[0]
+          ?? (json['cwd'] as string | undefined);
+        return workingDir ?? null;
+      } catch { /* skip unreadable files */ }
+    }
+  }
+
+  return null;
+}
+
+async function readGitRemoteLocal(dir: string): Promise<string | null> {
+  try {
+    const gitConfig = await readFile(join(dir, '.git', 'config'), 'utf-8');
+    const match = gitConfig.match(/\[remote "origin"\][^[]*url\s*=\s*(.+)/);
+    if (!match) return null;
+    const repo = extractRepository(match[1].trim());
+    return repo.endsWith('.git') ? repo.slice(0, -4) : repo;
+  } catch {
+    return null;
+  }
+}
+
+async function walkSessionFiles(root: string): Promise<string[]> {
+  const files: string[] = [];
+  const entries = await readdir(root, { withFileTypes: true });
+  for (const entry of entries) {
+    const full = join(root, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...await walkSessionFiles(full));
+    } else if (entry.isFile() && entry.name.startsWith('local_') && entry.name.endsWith('.json')) {
+      files.push(full);
+    }
+  }
+  return files;
 }

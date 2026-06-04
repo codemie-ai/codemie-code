@@ -58,6 +58,7 @@ export class DesktopTelemetryRuntime {
     await this.poll();
   }
 
+
   private async poll(): Promise<void> {
     if (this.isPolling) {
       return;
@@ -122,7 +123,7 @@ export class DesktopTelemetryRuntime {
     ]);
 
     this.config.sessionRepositoryMap?.set(
-      discovered.externalSessionId,
+      discovered.agentSessionId,
       repository || 'Default'
     );
 
