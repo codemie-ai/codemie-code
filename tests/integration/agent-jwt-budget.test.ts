@@ -4,17 +4,17 @@
  * Run with: npm run test:integration:agent
  * Requires: INCLUDE_JWT_TESTS=true, CI_CODEMIE_* env vars, CI_CODEMIE_PROJECT_ALL_BUDGETS
  *
- * TC-027: CodeMie API returns ≥3 integrations for the all-budget project;
+ * TC-027: Precondition — project has 3 budgets configured (environment guard);
  *         written profile config does NOT contain litellmApiKey.
  * TC-028: Agent completes `--task 'Say READY'` with exit 0 and writes a session file.
  */
 
+import '../setup/load-test-env.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readdirSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { fetchJwtToken } from '../helpers/index.js';
+import { fetchJwtToken, getTempDir } from '../helpers/index.js';
 
 const REPO_ROOT = resolve(__dirname, '..', '..');
 const CLAUDE_BIN = join(REPO_ROOT, 'bin', 'codemie-claude.js');
@@ -22,11 +22,15 @@ const INCLUDE_JWT_TESTS = process.env.INCLUDE_JWT_TESTS === 'true';
 const PROJECT = process.env.CI_CODEMIE_PROJECT_ALL_BUDGETS ?? '';
 const INCLUDE_BUDGET_TESTS = INCLUDE_JWT_TESTS && !!process.env.CI_CODEMIE_PROJECT_ALL_BUDGETS;
 
-// Minimal env to prevent credential leakage to subprocesses
 function cleanEnv(): NodeJS.ProcessEnv {
+  const pick = (...keys: string[]): NodeJS.ProcessEnv =>
+    Object.fromEntries(keys.flatMap((k) => (process.env[k] !== undefined ? [[k, process.env[k]]] : [])));
   return {
     PATH: process.env.PATH ?? '',
     NODE_PATH: process.env.NODE_PATH ?? '',
+    ...pick('SystemRoot', 'SYSTEMROOT', 'PATHEXT', 'TEMP', 'TMP', 'WINDIR', 'COMSPEC',
+            'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA'),
+    ...pick('HOME', 'USER', 'LANG', 'LC_ALL', 'SHELL'),
   };
 }
 
@@ -58,21 +62,27 @@ describe.runIf(INCLUDE_BUDGET_TESTS)('Budget / Project tests (TC-027, TC-028)', 
     jwtToken = await fetchJwtToken();
   }, 30_000);
 
-  // ── TC-027: Project with all 3 budgets ──────────────────────────────────────
-  describe('TC-027 — all-budget project: API returns 3 integrations, no litellmApiKey in profile', () => {
+  // ── TC-027: Profile written for all-budget project does not contain litellmApiKey ──
+  describe('TC-027 — all-budget project: written profile does not contain litellmApiKey', () => {
     let testHome: string;
-    let integrations: unknown[];
     let profileCfg: Record<string, unknown>;
 
     beforeAll(async () => {
-      testHome = mkdtempSync(join(tmpdir(), 'codemie-budget-'));
+      testHome = mkdtempSync(join(getTempDir(),'codemie-budget-'));
       writeBudgetProfile(testHome, jwtToken);
 
-      const resp = await fetch(
-        `${process.env.CI_CODEMIE_API_DOMAIN}/api/integrations?project=${encodeURIComponent(PROJECT)}`,
-        { headers: { Authorization: `Bearer ${jwtToken}` } }
-      );
-      integrations = (await resp.json()) as unknown[];
+      // Precondition: verify the test project has budgets configured
+      const apiBase = (process.env.CI_CODEMIE_API_DOMAIN ?? '').replace(/\/$/, '');
+      const url = `${apiBase}/v1/admin/project-budgets?project_name=${encodeURIComponent(PROJECT)}&page=0&per_page=100`;
+      const resp = await fetch(url, { headers: { Authorization: `Bearer ${jwtToken}` } });
+      const body = (await resp.json()) as Record<string, unknown>;
+      const budgets = Array.isArray(body.items) ? body.items as unknown[] : [];
+      if (budgets.length < 3) {
+        throw new Error(
+          `Precondition failed: project "${PROJECT}" must have = 3 budgets configured. ` +
+          `Got ${budgets.length}. Check CI_CODEMIE_PROJECT_ALL_BUDGETS points to the correct project.`
+        );
+      }
 
       const cfgRaw = readFileSync(join(testHome, 'codemie-cli.config.json'), 'utf-8');
       profileCfg = (
@@ -81,10 +91,6 @@ describe.runIf(INCLUDE_BUDGET_TESTS)('Budget / Project tests (TC-027, TC-028)', 
     }, 30_000);
 
     afterAll(() => rmSync(testHome, { recursive: true, force: true }));
-
-    it('CodeMie API returns at least 3 integrations for the all-budget project', () => {
-      expect(integrations.length).toBeGreaterThanOrEqual(3);
-    });
 
     it('written profile config does not contain litellmApiKey', () => {
       expect(profileCfg.litellmApiKey).toBeUndefined();
@@ -97,7 +103,7 @@ describe.runIf(INCLUDE_BUDGET_TESTS)('Budget / Project tests (TC-027, TC-028)', 
     let agentResult: ReturnType<typeof spawnSync>;
 
     beforeAll(() => {
-      testHome = mkdtempSync(join(tmpdir(), 'codemie-budget-task-'));
+      testHome = mkdtempSync(join(getTempDir(),'codemie-budget-task-'));
       writeBudgetProfile(testHome, jwtToken);
       agentResult = spawnSync(
         process.execPath,

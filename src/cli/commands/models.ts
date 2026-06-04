@@ -5,7 +5,7 @@ import { ProviderRegistry } from '../../providers/core/registry.js';
 import { logger } from '../../utils/logger.js';
 import type { ModelInfo } from '../../providers/core/types.js';
 
-const UNSUPPORTED_PROVIDERS = new Set(['openai', 'bearer-auth', 'openai-compatible']);
+const UNSUPPORTED_PROVIDERS = new Set(['openai', 'openai-compatible']);
 
 function formatTable(models: ModelInfo[]): void {
   const ID_WIDTH = 40;

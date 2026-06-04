@@ -99,6 +99,7 @@ describe.runIf(INCLUDE_JWT_TESTS)('Doctor Command — JWT profile (TC-003)', () 
     const token = await fetchJwtToken();
     writeJwtProfile(testHome, { profileName: 'jwt-autotest', jwtToken: token });
     doctorResult = spawnSync(process.execPath, [CLI_BIN, 'doctor'], {
+      cwd: testHome,
       env: { ...process.env, CODEMIE_HOME: testHome, CI: '1' },
       encoding: 'utf-8',
       timeout: 120_000,

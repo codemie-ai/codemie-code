@@ -22,7 +22,7 @@ function fakeProfile(name: string) {
   return { name, provider: 'bearer-auth', authMethod: 'jwt', codeMieUrl: 'https://test.example.com', baseUrl: 'https://test.example.com/api', model: 'test-model' };
 }
 
-function runCLI(args: string[], codemieHome: string) {
+function runCLI(args: string[], codemieHome: string, extraEnv: Record<string, string> = {}) {
   return spawnSync(process.execPath, [CLI_BIN, ...args], {
     env: {
       ...process.env,
@@ -33,6 +33,7 @@ function runCLI(args: string[], codemieHome: string) {
       // CODEMIE_DEBUG surfaces logger.error() messages to stderr so
       // negative-path tests can assert on error text
       CODEMIE_DEBUG: 'true',
+      ...extraEnv,
     },
     // Run from codemieHome so there is no local .codemie/ config in cwd;
     // this ensures all profile operations target the global (CODEMIE_HOME) config
@@ -262,11 +263,12 @@ describe('Profile rename — to existing name (TC-033)', () => {
 // ─── TC-004: Create profile via config write — JWT-gated ─────────────────────
 describe.runIf(INCLUDE_JWT_TESTS)('Profile create via config (TC-004)', () => {
   let testHome: string;
+  let jwtToken: string;
 
   beforeAll(async () => {
     testHome = mkdtempSync(join(tmpdir(), 'codemie-prof-jwt-'));
-    const token = await fetchJwtToken();
-    writeJwtProfile(testHome, { jwtToken: token });
+    jwtToken = await fetchJwtToken();
+    writeJwtProfile(testHome, { jwtToken });
   }, 30_000);
   afterAll(() => rmSync(testHome, { recursive: true, force: true }));
 
@@ -276,7 +278,7 @@ describe.runIf(INCLUDE_JWT_TESTS)('Profile create via config (TC-004)', () => {
   });
 
   it('profile status shows provider and profile name', () => {
-    const r = runCLI(['profile', 'status'], testHome);
+    const r = runCLI(['profile', 'status'], testHome, { CODEMIE_JWT_TOKEN: jwtToken });
     const out = r.stdout + r.stderr;
     expect(out).toMatch(/jwt-autotest/);
     expect(out).toMatch(/bearer-auth|jwt/i);

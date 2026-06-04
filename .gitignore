@@ -46,6 +46,9 @@ skills-lock.json
 .codemie/claude-templates/templates
 .codemie/claude.extension.json
 
+# SDLC Factory local run journals
+.ai-run/runs/
+
 # Claude Code local memory
 CLAUDE.local.md
 **/CLAUDE.local.md

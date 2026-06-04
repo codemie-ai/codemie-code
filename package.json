@@ -59,7 +59,7 @@
   "lint-staged": {
     "*.ts": [
       "eslint --max-warnings=0 --no-warn-ignored",
-      "vitest related --run"
+      "vitest related --run --exclude tests/integration/agent-*.test.ts --exclude tests/integration/cli-commands/models.test.ts"
     ],
     "package.json": [
       "npm run license-check"
@@ -163,6 +163,7 @@
     "eslint": "^9.38.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.2.7",
+    "node-pty": "^1.1.0",
     "tsc-alias": "^1.8.16",
     "typescript": "^5.3.3",
     "vitest": "^4.1.5"

@@ -8,19 +8,18 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import ora from 'ora';
 import inquirer from 'inquirer';
+import { AssistantService, type CodeMieClient, type AuthConfig, type FileToUpload } from 'codemie-sdk';
 import { logger } from '@/utils/logger.js';
 import { ConfigLoader } from '@/utils/config.js';
 import { StorageScope } from '@/env/types.js';
 import { createErrorContext, formatErrorForUser } from '@/utils/errors.js';
 import { getAuthenticatedClient, promptReauthentication } from '@/utils/auth.js';
 import type { CodemieAssistant, ProviderProfile } from '@/env/types.js';
-import type { CodeMieClient } from 'codemie-sdk';
 import { ROLES, MESSAGES, type HistoryMessage } from '../constants.js';
 import { loadConversationHistory } from './historyLoader.js';
 import { isExitCommand, enableVerboseMode } from './utils.js';
 import type { ChatCommandOptions, SingleMessageOptions } from './types.js';
 import { detectFileUploadsFromSession, readFilesFromPaths, type DetectedFile } from './claudeUploadsDetector.js';
-import type { FileToUpload } from 'codemie-sdk';
 
 /** Assistant label color */
 const ASSISTANT_LABEL_COLOR = [177, 185, 249] as const;
@@ -41,6 +40,7 @@ export function createAssistantsChatCommand(): Command {
     .option('-f, --file <path>', 'File path to upload (can be used multiple times)', (value: string, previous: string[]) => {
       return previous ? [...previous, value] : [value];
     }, [] as string[])
+    .option('--jwt-token <token>', 'JWT bearer token for authentication (bypasses SSO)')
     .action(async (
       assistantId: string | undefined,
       message: string | undefined,
@@ -78,7 +78,20 @@ async function chatWithAssistant(
     ConfigLoader.loadAssistantsByScope(StorageScope.LOCAL, workingDir).catch(() => [] as CodemieAssistant[]),
   ]);
   const registeredAssistants = [...globalAssistants, ...localAssistants];
-  const client = await getAuthenticatedClient(config);
+
+  const jwtToken = options.jwtToken ?? process.env.CODEMIE_JWT_TOKEN;
+  let client: CodeMieClient;
+  if (jwtToken) {
+    const token = jwtToken;
+    const authCfg: AuthConfig = {
+      apiDomain: config.baseUrl ?? '',
+      tokenGetter: async () => token,
+      verifySSL: process.env.CODEMIE_INSECURE !== '1',
+    };
+    client = { assistants: new AssistantService(authCfg) } as unknown as CodeMieClient;
+  } else {
+    client = await getAuthenticatedClient(config);
+  }
 
   const conversationId = options.conversationId || process.env.CODEMIE_SESSION_ID;
 

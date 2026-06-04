@@ -100,6 +100,20 @@ Primary guide locations:
 - Security: `.codemie/guides/security/security-practices.md`
 - Project config: `.codemie/guides/usage/project-config.md`
 
+<!-- sdlc-factory-imports:start -->
+## SDLC Factory Guides
+
+These guides are generated and maintained by SDLC Factory. Load them before any implementation task.
+
+| Guide | Path | Purpose |
+|---|---|---|
+| Project context | `.ai-run/guides/project.md` | Jira key, GitHub remote, ticket and MR adapters |
+| Git workflow | `.ai-run/guides/standards/git-workflow.md` | Branch naming, commit format, merge strategy |
+| Quality gates | `.ai-run/guides/quality-gates.md` | Lint, typecheck, build, test commands in order |
+| QA strategy | `.ai-run/guides/testing/qa-strategy.md` | Test frameworks, types, conventions |
+| QA health | `.ai-run/guides/testing/qa-health.md` | Coverage state, risky untested areas |
+<!-- sdlc-factory-imports:end -->
+
 ### Task Classifier
 
 | Keywords | Complexity | P0 Guide | P1 Guide |

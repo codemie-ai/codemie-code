@@ -115,3 +115,16 @@ export class TempWorkspace {
 export function createTempWorkspace(prefix?: string): TempWorkspace {
   return new TempWorkspace(prefix);
 }
+
+/**
+ * Returns a temp directory base path free of Windows 8.3 short names.
+ * os.tmpdir() returns e.g. C:\Users\MAKSYM~1\AppData\Local\Temp on Windows,
+ * which confuses path comparisons inside the agent. LOCALAPPDATA always
+ * contains the full username, so we derive Temp from it instead.
+ */
+export function getTempDir(): string {
+  if (process.platform === 'win32' && process.env.LOCALAPPDATA) {
+    return join(process.env.LOCALAPPDATA, 'Temp');
+  }
+  return tmpdir();
+}

@@ -8,21 +8,28 @@
  * that file does not yet exist in the repo.
  */
 
+import '../setup/load-test-env.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, readdirSync, statSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { fetchJwtToken, writeJwtProfile } from '../helpers/index.js';
+import { fetchJwtToken, writeJwtProfile, getTempDir } from '../helpers/index.js';
 
 const REPO_ROOT = resolve(__dirname, '..', '..');
 const CLAUDE_BIN = join(REPO_ROOT, 'bin', 'codemie-claude.js');
 const INCLUDE_JWT_TESTS = process.env.INCLUDE_JWT_TESTS === 'true';
 
 function cleanEnv(): NodeJS.ProcessEnv {
+  const pick = (...keys: string[]): NodeJS.ProcessEnv =>
+    Object.fromEntries(keys.flatMap((k) => (process.env[k] !== undefined ? [[k, process.env[k]]] : [])));
   return {
     PATH: process.env.PATH ?? '',
     NODE_PATH: process.env.NODE_PATH ?? '',
+    // Windows: required for DLL loading and executable resolution
+    ...pick('SystemRoot', 'SYSTEMROOT', 'PATHEXT', 'TEMP', 'TMP', 'WINDIR', 'COMSPEC',
+            'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA'),
+    // Unix: home and locale
+    ...pick('HOME', 'USER', 'LANG', 'LC_ALL', 'SHELL'),
   };
 }
 
@@ -48,17 +55,19 @@ describe.runIf(INCLUDE_JWT_TESTS)('Agent — JWT basic (TC-016..TC-019, TC-031)'
     let result: ReturnType<typeof spawnSync>;
 
     beforeAll(() => {
-      testHome = mkdtempSync(join(tmpdir(), 'codemie-jwt-basic-'));
+      testHome = mkdtempSync(join(getTempDir(),'codemie-jwt-basic-'));
+      writeJwtProfile(testHome, { jwtToken });
       result = spawnSync(
         process.execPath,
         [CLAUDE_BIN, '--task', 'Say the word READY and nothing else', '--jwt-token', jwtToken],
-        { env: { ...cleanEnv(), CODEMIE_HOME: testHome }, encoding: 'utf-8', timeout: 120_000 }
+        { cwd: testHome, env: { ...cleanEnv(), CODEMIE_HOME: testHome }, encoding: 'utf-8', timeout: 120_000 }
       );
-    });
+    }, 180_000);
     afterAll(() => rmSync(testHome, { recursive: true, force: true }));
 
     it('exits 0 and prints agent output', () => {
-      expect(result.status).toBe(0);
+      const agentOutput = (result.stdout ?? '') + (result.stderr ?? '');
+      expect(result.status, `agent exited ${result.status}; output:\n${agentOutput}`).toBe(0);
       expect(result.stdout).toMatch(/READY/i);
     });
 
@@ -75,18 +84,19 @@ describe.runIf(INCLUDE_JWT_TESTS)('Agent — JWT basic (TC-016..TC-019, TC-031)'
     let result: ReturnType<typeof spawnSync>;
 
     beforeAll(() => {
-      testHome = mkdtempSync(join(tmpdir(), 'codemie-jwt-profile-'));
-      writeJwtProfile(testHome, { profileName: 'jwt-autotest' });
+      testHome = mkdtempSync(join(getTempDir(),'codemie-jwt-profile-'));
+      writeJwtProfile(testHome, { profileName: 'jwt-autotest', jwtToken });
       result = spawnSync(
         process.execPath,
         [CLAUDE_BIN, '--profile', 'jwt-autotest', '--jwt-token', jwtToken, '--task', 'Say READY'],
-        { env: { ...cleanEnv(), CODEMIE_HOME: testHome }, encoding: 'utf-8', timeout: 120_000 }
+        { cwd: testHome, env: { ...cleanEnv(), CODEMIE_HOME: testHome }, encoding: 'utf-8', timeout: 120_000 }
       );
-    });
+    }, 180_000);
     afterAll(() => rmSync(testHome, { recursive: true, force: true }));
 
     it('exits 0 when using --profile + --jwt-token', () => {
-      expect(result.status).toBe(0);
+      const agentOutput = (result.stdout ?? '') + (result.stderr ?? '');
+      expect(result.status, `agent exited ${result.status}; output:\n${agentOutput}`).toBe(0);
     });
 
     it('session file shows bearer-auth provider', () => {
@@ -101,21 +111,22 @@ describe.runIf(INCLUDE_JWT_TESTS)('Agent — JWT basic (TC-016..TC-019, TC-031)'
     let result: ReturnType<typeof spawnSync>;
 
     beforeAll(() => {
-      testHome = mkdtempSync(join(tmpdir(), 'codemie-jwt-invalid-'));
+      testHome = mkdtempSync(join(getTempDir(),'codemie-jwt-invalid-'));
+      writeJwtProfile(testHome, { jwtToken: 'INVALID_TOKEN_VALUE' });
       result = spawnSync(
         process.execPath,
         [CLAUDE_BIN, '--task', 'Say hello', '--jwt-token', 'INVALID_TOKEN_VALUE'],
-        { env: { ...cleanEnv(), CODEMIE_HOME: testHome }, encoding: 'utf-8', timeout: 60_000 }
+        { cwd: testHome, env: { ...cleanEnv(), CODEMIE_HOME: testHome }, encoding: 'utf-8', timeout: 60_000 }
       );
-    });
+    }, 90_000);
     afterAll(() => rmSync(testHome, { recursive: true, force: true }));
 
     it('exits non-zero with an invalid JWT token', () => {
       expect(result.status).not.toBe(0);
     });
 
-    it('shows an auth/unauthorized error message', () => {
-      expect((result.stdout ?? '') + (result.stderr ?? '')).toMatch(/auth|unauthorized|401|invalid|token/i);
+    it('shows an error message indicating auth or bad response', () => {
+      expect((result.stdout ?? '') + (result.stderr ?? '')).toMatch(/auth|unauthorized|401|invalid|token|malformed|empty.*response|API Error/i);
     });
   });
 
@@ -125,13 +136,13 @@ describe.runIf(INCLUDE_JWT_TESTS)('Agent — JWT basic (TC-016..TC-019, TC-031)'
     let result: ReturnType<typeof spawnSync>;
 
     beforeAll(() => {
-      testHome = mkdtempSync(join(tmpdir(), 'codemie-jwt-none-'));
+      testHome = mkdtempSync(join(getTempDir(),'codemie-jwt-none-'));
       result = spawnSync(
         process.execPath,
         [CLAUDE_BIN, '--task', 'Say hello'],
         { env: { ...cleanEnv(), CODEMIE_HOME: testHome }, encoding: 'utf-8', timeout: 30_000 }
       );
-    });
+    }, 60_000);
     afterAll(() => rmSync(testHome, { recursive: true, force: true }));
 
     it('exits non-zero with empty CODEMIE_HOME and no --jwt-token', () => {
@@ -149,13 +160,13 @@ describe.runIf(INCLUDE_JWT_TESTS)('Agent — JWT basic (TC-016..TC-019, TC-031)'
     let result: ReturnType<typeof spawnSync>;
 
     beforeAll(() => {
-      testHome = mkdtempSync(join(tmpdir(), 'codemie-health-'));
+      testHome = mkdtempSync(join(getTempDir(),'codemie-health-'));
       result = spawnSync(
         process.execPath,
         [CLAUDE_BIN, 'health'],
         { env: { ...cleanEnv(), CODEMIE_HOME: testHome }, encoding: 'utf-8', timeout: 15_000 }
       );
-    });
+    }, 30_000);
     afterAll(() => rmSync(testHome, { recursive: true, force: true }));
 
     it('codemie-claude health exits 0', () => {

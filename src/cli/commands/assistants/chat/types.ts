@@ -12,6 +12,7 @@ export interface ChatCommandOptions {
   conversationId?: string;
   loadHistory?: boolean;
   file?: string[];
+  jwtToken?: string;
 }
 
 /**
