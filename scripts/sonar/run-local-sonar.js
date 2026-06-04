@@ -173,6 +173,11 @@ function resolveScannerCommand() {
 function sonarRequestJson(sonarHostUrl, sonarToken, endpoint, searchParams = {}) {
     return new Promise((resolve, reject) => {
         const requestUrl = new URL(endpoint, sonarHostUrl);
+        if (requestUrl.protocol !== 'https:') {
+            reject(new Error(`Refusing to send credentials over insecure protocol "${requestUrl.protocol}". Configure sonarQubeUri with https://.`));
+            return;
+        }
+
         for (const [key, value] of Object.entries(searchParams)) {
             if (value !== undefined && value !== null && value !== '') {
                 requestUrl.searchParams.set(key, String(value));
