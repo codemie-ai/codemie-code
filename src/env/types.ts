@@ -81,7 +81,7 @@ export interface ProviderProfile {
     tokenEnvVar?: string;
     expiresAt?: number;
   };
-  // Auth server fields (required by SDK when using external_token)
+  // Keycloak / SSO auth fields (required by SDK for SSO; not used with jwt_token)
   authServerUrl?: string;   // e.g. https://auth.codemie.lab.epam.com
   authRealm?: string;       // e.g. codemie-prod
 

@@ -3,6 +3,7 @@
  */
 
 import { CredentialStore } from '../../../../utils/security.js';
+import { resolveJwtTokenEnvVar } from '../../../../providers/plugins/jwt/jwt.utils.js';
 import { ConfigLoader } from '../../../../utils/config.js';
 import { HealthCheck, HealthCheckResult, HealthCheckDetail, ProgressCallback } from '../types.js';
 
@@ -29,7 +30,7 @@ export class JWTAuthCheck implements HealthCheck {
 
       // Check 1: JWT token available (env var or credential store)
       onProgress?.('Checking JWT token presence');
-      const tokenEnvVar = config.jwtConfig?.tokenEnvVar || 'CODEMIE_JWT_TOKEN';
+      const tokenEnvVar = resolveJwtTokenEnvVar(config);
       const envToken = process.env[tokenEnvVar];
 
       if (!envToken) {

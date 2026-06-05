@@ -11,6 +11,7 @@ import type { ProviderTemplate } from '../../core/types.js';
 import type { AgentConfig } from '../../../agents/core/types.js';
 import { registerProvider } from '../../core/index.js';
 import { DEFAULT_CODEMIE_BASE_URL } from '../../core/codemie-auth-helpers.js';
+import { resolveJwtToken } from '../jwt/jwt.utils.js';
 
 export const SSOTemplate = registerProvider<ProviderTemplate>({
   name: 'ai-run-sso',
@@ -43,8 +44,7 @@ export const SSOTemplate = registerProvider<ProviderTemplate>({
 
     // Export JWT token when auth method is JWT
     if (config.authMethod === 'jwt') {
-      const tokenEnvVar = config.jwtConfig?.tokenEnvVar || 'CODEMIE_JWT_TOKEN';
-      const token = process.env[tokenEnvVar] || config.jwtConfig?.token;
+      const token = resolveJwtToken(config);
       if (token) env.CODEMIE_JWT_TOKEN = token;
     }
 

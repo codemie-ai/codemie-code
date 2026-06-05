@@ -11,12 +11,14 @@ import type {
   ProviderSetupSteps,
   ProviderCredentials,
   AuthValidationResult
-} from '../../core/types.js';
-import type { CodeMieConfigOptions } from '../../../env/types.js';
+} from '@/providers/core/types.js';
+import { ProviderName, AuthMethod } from '@/providers/core/types.js';
+import { JWT_TOKEN_DEFAULT_ENV_VAR, resolveJwtToken, resolveJwtTokenEnvVar } from '@/providers/plugins/jwt/jwt.utils.js';
+import type { CodeMieConfigOptions } from '@/env/types.js';
 import { ensureApiBase } from '../../core/codemie-auth-helpers.js';
 
 export const JWTBearerSetupSteps: ProviderSetupSteps = {
-  name: 'bearer-auth',
+  name: ProviderName.BEARER_AUTH,
 
   async getCredentials(_isUpdate?: boolean): Promise<ProviderCredentials> {
     console.log(chalk.cyan('\n🔐 JWT Bearer Authorization Setup\n'));
@@ -63,7 +65,7 @@ export const JWTBearerSetupSteps: ProviderSetupSteps = {
       }
     ]);
 
-    let tokenEnvVar = 'CODEMIE_JWT_TOKEN';
+    let tokenEnvVar = JWT_TOKEN_DEFAULT_ENV_VAR;
 
     if (tokenConfigAnswers.customEnvVar) {
       const envVarAnswers = await inquirer.prompt([
@@ -71,7 +73,7 @@ export const JWTBearerSetupSteps: ProviderSetupSteps = {
           type: 'input',
           name: 'envVar',
           message: 'Environment variable name:',
-          default: 'CODEMIE_JWT_TOKEN',
+          default: JWT_TOKEN_DEFAULT_ENV_VAR,
           validate: (input: string) => {
             if (!input.trim()) return 'Variable name is required';
             if (!/^[A-Z_][A-Z0-9_]*$/.test(input)) {
@@ -99,7 +101,7 @@ export const JWTBearerSetupSteps: ProviderSetupSteps = {
       baseUrl,  // Full API URL with suffix
       additionalConfig: {
         codeMieUrl,  // User's input (base URL)
-        authMethod: 'jwt',
+        authMethod: AuthMethod.JWT,
         jwtConfig: {
           tokenEnvVar
           // Note: No apiUrl needed - baseUrl is used for credential storage
@@ -130,24 +132,23 @@ export const JWTBearerSetupSteps: ProviderSetupSteps = {
       | undefined;
 
     return {
-      provider: 'bearer-auth',
+      provider: ProviderName.BEARER_AUTH,
       codeMieUrl: credentials.additionalConfig?.codeMieUrl as string | undefined,  // Base URL (user input)
       baseUrl: credentials.baseUrl,  // Full API URL with suffix
       model: selectedModel,
-      authMethod: 'jwt',
+      authMethod: AuthMethod.JWT,
       jwtConfig
     };
   },
 
   async validateAuth(config: CodeMieConfigOptions): Promise<AuthValidationResult> {
     // Check if JWT token is available at runtime
-    const tokenEnvVar = config.jwtConfig?.tokenEnvVar || 'CODEMIE_JWT_TOKEN';
-    const token = process.env[tokenEnvVar] || config.jwtConfig?.token;
+    const token = resolveJwtToken(config);
 
     if (!token) {
       return {
         valid: false,
-        error: `JWT token not found in ${tokenEnvVar} environment variable`
+        error: `JWT token not found in ${resolveJwtTokenEnvVar(config)} environment variable`
       };
     }
 

@@ -8,17 +8,19 @@
  * Auto-registers on import via registerProvider().
  */
 
-import type { ProviderTemplate } from '../../core/types.js';
-import type { AgentConfig } from '../../../agents/core/types.js';
-import { registerProvider } from '../../core/index.js';
+import type { ProviderTemplate } from '@/providers/core/types.js';
+import { ProviderName, AuthMethod } from '@/providers/core/types.js';
+import { resolveJwtToken } from '@/providers/plugins/jwt/jwt.utils.js';
+import type { AgentConfig } from '@/agents/core/types.js';
+import { registerProvider } from '@/providers/core/index.js';
 
 export const JWTTemplate = registerProvider<ProviderTemplate>({
-  name: 'bearer-auth',
+  name: ProviderName.BEARER_AUTH,
   displayName: 'Bearer Authorization',
   description: 'JWT token authentication - Provide token via CLI or environment variable',
   defaultBaseUrl: 'https://codemie.lab.epam.com',
   requiresAuth: true,
-  authType: 'jwt',
+  authType: AuthMethod.JWT,
   priority: 1, // Show after CodeMie SSO
   hidden: true, // Not shown in interactive setup - used only for script/auto-configuration
   defaultProfileName: 'jwt-bearer',
@@ -86,11 +88,10 @@ export const JWTTemplate = registerProvider<ProviderTemplate>({
     }
 
     // Set auth method to JWT
-    env.CODEMIE_AUTH_METHOD = 'jwt';
+    env.CODEMIE_AUTH_METHOD = AuthMethod.JWT;
 
     // Export JWT token if available (from env var or config)
-    const tokenEnvVar = config.jwtConfig?.tokenEnvVar || 'CODEMIE_JWT_TOKEN';
-    const token = process.env[tokenEnvVar] || config.jwtConfig?.token;
+    const token = resolveJwtToken(config);
     if (token) {
       env.CODEMIE_JWT_TOKEN = token;
     }
