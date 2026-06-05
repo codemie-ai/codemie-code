@@ -40,11 +40,12 @@ export async function syncPluginSkills(): Promise<void> {
     const entries = await fs.readdir(skillsSourceDir, { withFileTypes: true });
     const claudeSkillsDir = path.join(os.homedir(), '.claude', 'skills');
 
+    const resolvedBase = path.resolve(skillsSourceDir);
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
 
       const resolvedSkillDir = path.resolve(skillsSourceDir, entry.name);
-      if (!resolvedSkillDir.startsWith(skillsSourceDir + path.sep)) continue;
+      if (!resolvedSkillDir.startsWith(resolvedBase + path.sep)) continue;
 
       const sourceMd = path.join(resolvedSkillDir, 'SKILL.md');
       try {
