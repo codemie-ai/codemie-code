@@ -41,6 +41,10 @@ vi.mock('../../../../cli/commands/skills/setup/sync.js', () => ({
   syncRegisteredSkills: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock('../../../../cli/commands/skills/setup/sync-plugin.js', () => ({
+  syncPluginSkills: vi.fn().mockResolvedValue(undefined),
+}));
+
 describe('proxy connect desktop', () => {
   let consoleLogSpy: ReturnType<typeof vi.spyOn>;
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
@@ -101,12 +105,13 @@ describe('proxy connect desktop', () => {
     );
   });
 
-  it('calls syncRegisteredSkills with the active profile name when starting the daemon', async () => {
+  it('calls syncRegisteredSkills and syncPluginSkills when starting the daemon', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { ProviderRegistry } = await import('../../../../providers/index.js');
     const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
     const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
     const { syncRegisteredSkills } = await import('../../../../cli/commands/skills/setup/sync.js');
+    const { syncPluginSkills } = await import('../../../../cli/commands/skills/setup/sync-plugin.js');
     const { writeDesktopConfig } = await import('../connectors/desktop.js');
     const { createProxyCommand } = await import('../index.js');
 
@@ -138,6 +143,7 @@ describe('proxy connect desktop', () => {
     await command.parseAsync(['connect', 'desktop', '--profile', 'test-profile'], { from: 'user' });
 
     expect(syncRegisteredSkills).toHaveBeenCalledWith('test-profile', process.cwd());
+    expect(syncPluginSkills).toHaveBeenCalledOnce();
   });
 });
 
@@ -162,11 +168,12 @@ describe('proxy start', () => {
     exitSpy.mockRestore();
   });
 
-  it('calls syncRegisteredSkills with the active profile name after credentials are verified', async () => {
+  it('calls syncRegisteredSkills and syncPluginSkills after credentials are verified', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
     const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
     const { syncRegisteredSkills } = await import('../../../../cli/commands/skills/setup/sync.js');
+    const { syncPluginSkills } = await import('../../../../cli/commands/skills/setup/sync-plugin.js');
     const { createProxyCommand } = await import('../index.js');
 
     vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
@@ -189,5 +196,6 @@ describe('proxy start', () => {
     await command.parseAsync(['start'], { from: 'user' });
 
     expect(syncRegisteredSkills).toHaveBeenCalledWith('test-profile', process.cwd());
+    expect(syncPluginSkills).toHaveBeenCalledOnce();
   });
 });

@@ -10,6 +10,7 @@ import {
 import { logger } from '../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../utils/security.js';
 import { syncRegisteredSkills } from '../skills/setup/sync.js';
+import { syncPluginSkills } from '../skills/setup/sync-plugin.js';
 import {
   checkStatus,
   readState,
@@ -160,6 +161,7 @@ export function createProxyCommand(): Command {
       await verifySsoCredentials(config.baseUrl, config.name ?? 'default');
 
       syncRegisteredSkills(config.name ?? 'default', process.cwd()).catch(() => {});
+      syncPluginSkills().catch(() => {});
 
       console.log('Starting proxy daemon...');
       const daemonState = await spawnDaemon({
@@ -281,6 +283,7 @@ export function createProxyCommand(): Command {
           );
           await verifySsoCredentials(config.baseUrl, config.name ?? 'default');
           syncRegisteredSkills(config.name ?? 'default', process.cwd()).catch(() => {});
+          syncPluginSkills().catch(() => {});
           state = await spawnDaemon({
             targetUrl: config.baseUrl,
             provider: config.provider ?? 'ai-run-sso',
