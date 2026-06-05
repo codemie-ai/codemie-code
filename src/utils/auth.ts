@@ -27,8 +27,13 @@ export async function getAuthenticatedClient(config: ProviderProfile): Promise<C
         'Provide it via the environment variable or set it in your profile configuration.'
       );
     }
+    if (!config.baseUrl) {
+      throw new ConfigurationError(
+        'baseUrl is required for JWT authentication. Set it in your profile configuration.'
+      );
+    }
     return new CodeMieClient({
-      codemie_api_domain: config.baseUrl ?? '',
+      codemie_api_domain: config.baseUrl,
       jwt_token: token,
       verify_ssl: process.env.CODEMIE_INSECURE !== '1',
     });
