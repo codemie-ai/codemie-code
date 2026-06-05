@@ -10,8 +10,8 @@
 
 import type { ProviderTemplate } from '@/providers/core/types.js';
 import { ProviderName, AuthMethod } from '@/providers/core/types.js';
+import { defaultAgentHooks } from '@/providers/core/default-agent-hooks.js';
 import { resolveJwtToken } from '@/providers/plugins/jwt/jwt.utils.js';
-import type { AgentConfig } from '@/agents/core/types.js';
 import { registerProvider } from '@/providers/core/index.js';
 
 export const JWTTemplate = registerProvider<ProviderTemplate>({
@@ -37,46 +37,7 @@ export const JWTTemplate = registerProvider<ProviderTemplate>({
     tokenSource: 'runtime' // Token provided at runtime, not during setup
   },
 
-  // Agent lifecycle hooks — install extension and inject --plugin-dir (mirrors SSO template)
-  agentHooks: {
-    '*': {
-      async beforeRun(env: NodeJS.ProcessEnv, config: AgentConfig): Promise<NodeJS.ProcessEnv> {
-        const agentName = config.agent;
-        if (!agentName) return env;
-
-        const { AgentRegistry } = await import('../../../agents/registry.js');
-        const agent = AgentRegistry.getAgent(agentName);
-        if (!agent) return env;
-
-        const installer = (agent as any).getExtensionInstaller?.();
-        if (!installer) return env;
-
-        try {
-          const result = await installer.install();
-          env[`CODEMIE_${agentName.toUpperCase()}_EXTENSION_DIR`] = result.targetPath;
-          if (!result.success) {
-            const { logger } = await import('../../../utils/logger.js');
-            logger.warn(`[${agentName}] Extension installation returned failure: ${result.error || 'unknown error'}`);
-          }
-        } catch (error) {
-          const { logger } = await import('../../../utils/logger.js');
-          const errorMsg = error instanceof Error ? error.message : String(error);
-          logger.warn(`[${agentName}] Extension installation failed: ${errorMsg}`);
-        }
-
-        return env;
-      }
-    },
-
-    'claude': {
-      enrichArgs(args: string[], _config: AgentConfig): string[] {
-        const pluginDir = process.env.CODEMIE_CLAUDE_EXTENSION_DIR;
-        if (!pluginDir) return args;
-        if (args.some(arg => arg === '--plugin-dir')) return args;
-        return ['--plugin-dir', pluginDir, ...args];
-      }
-    }
-  },
+  agentHooks: defaultAgentHooks,
 
   // Environment Variable Export
   exportEnvVars: (config) => {
