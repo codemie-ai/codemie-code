@@ -37,6 +37,10 @@ vi.mock('../../../../providers/plugins/sso/sso.auth.js', () => ({
   CodeMieSSO: vi.fn(),
 }));
 
+vi.mock('../../../../cli/commands/skills/setup/sync.js', () => ({
+  syncRegisteredSkills: vi.fn().mockResolvedValue(undefined),
+}));
+
 describe('proxy connect desktop', () => {
   let consoleLogSpy: ReturnType<typeof vi.spyOn>;
   let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
@@ -95,5 +99,95 @@ describe('proxy connect desktop', () => {
     expect(consoleErrorSpy).toHaveBeenCalledWith(
       '  Run: codemie profile login --url https://codemie.lab.epam.com/code-assistant-api'
     );
+  });
+
+  it('calls syncRegisteredSkills with the active profile name when starting the daemon', async () => {
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    const { ProviderRegistry } = await import('../../../../providers/index.js');
+    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
+    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { syncRegisteredSkills } = await import('../../../../cli/commands/skills/setup/sync.js');
+    const { writeDesktopConfig } = await import('../connectors/desktop.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(ConfigLoader.load).mockResolvedValue({
+      name: 'test-profile',
+      provider: 'ai-run-sso',
+      baseUrl: 'https://example.com/api',
+      codeMieUrl: 'https://example.com',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+    vi.mocked(ProviderRegistry.getProvider).mockReturnValue({
+      name: 'ai-run-sso',
+      authType: 'sso',
+    } as ReturnType<typeof ProviderRegistry.getProvider>);
+    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
+      return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
+    } as unknown as typeof CodeMieSSO);
+    vi.mocked(spawnDaemon).mockResolvedValue({
+      url: 'http://localhost:4001',
+      profile: 'test-profile',
+      port: 4001,
+      gatewayKey: 'gk',
+      startedAt: new Date().toISOString(),
+      telemetryMode: 'claude-desktop',
+    } as Awaited<ReturnType<typeof spawnDaemon>>);
+    vi.mocked(writeDesktopConfig).mockResolvedValue('/path/to/config');
+
+    const command = createProxyCommand();
+    await command.parseAsync(['connect', 'desktop', '--profile', 'test-profile'], { from: 'user' });
+
+    expect(syncRegisteredSkills).toHaveBeenCalledWith('test-profile', process.cwd());
+  });
+});
+
+describe('proxy start', () => {
+  let consoleLogSpy: ReturnType<typeof vi.spyOn>;
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+  let exitSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    exitSpy = vi.spyOn(process, 'exit').mockImplementation((code?: string | number | null | undefined) => {
+      throw new Error(`process.exit:${code}`);
+    });
+  });
+
+  afterEach(() => {
+    consoleLogSpy.mockRestore();
+    consoleErrorSpy.mockRestore();
+    exitSpy.mockRestore();
+  });
+
+  it('calls syncRegisteredSkills with the active profile name after credentials are verified', async () => {
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
+    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { syncRegisteredSkills } = await import('../../../../cli/commands/skills/setup/sync.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(ConfigLoader.load).mockResolvedValue({
+      name: 'test-profile',
+      provider: 'ai-run-sso',
+      baseUrl: 'https://example.com/api',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
+      return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
+    } as unknown as typeof CodeMieSSO);
+    vi.mocked(spawnDaemon).mockResolvedValue({
+      url: 'http://localhost:4001',
+      profile: 'test-profile',
+      port: 4001,
+      startedAt: new Date().toISOString(),
+    } as Awaited<ReturnType<typeof spawnDaemon>>);
+
+    const command = createProxyCommand();
+    await command.parseAsync(['start'], { from: 'user' });
+
+    expect(syncRegisteredSkills).toHaveBeenCalledWith('test-profile', process.cwd());
   });
 });
