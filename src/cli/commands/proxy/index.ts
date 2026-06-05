@@ -160,8 +160,11 @@ export function createProxyCommand(): Command {
 
       await verifySsoCredentials(config.baseUrl, config.name ?? 'default');
 
-      syncRegisteredSkills(config.name ?? 'default', process.cwd()).catch(() => {});
-      syncPluginSkills().catch(() => {});
+      const cwd = process.cwd();
+      await Promise.allSettled([
+        syncRegisteredSkills(config.name ?? 'default', cwd),
+        syncPluginSkills(),
+      ]);
 
       console.log('Starting proxy daemon...');
       const daemonState = await spawnDaemon({
@@ -282,8 +285,11 @@ export function createProxyCommand(): Command {
             })
           );
           await verifySsoCredentials(config.baseUrl, config.name ?? 'default');
-          syncRegisteredSkills(config.name ?? 'default', process.cwd()).catch(() => {});
-          syncPluginSkills().catch(() => {});
+          const cwd = process.cwd();
+          await Promise.allSettled([
+            syncRegisteredSkills(config.name ?? 'default', cwd),
+            syncPluginSkills(),
+          ]);
           state = await spawnDaemon({
             targetUrl: config.baseUrl,
             provider: config.provider ?? 'ai-run-sso',

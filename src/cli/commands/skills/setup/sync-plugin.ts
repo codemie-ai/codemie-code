@@ -43,7 +43,10 @@ export async function syncPluginSkills(): Promise<void> {
     for (const entry of entries) {
       if (!entry.isDirectory()) continue;
 
-      const sourceMd = path.join(skillsSourceDir, entry.name, 'SKILL.md');
+      const resolvedSkillDir = path.resolve(skillsSourceDir, entry.name);
+      if (!resolvedSkillDir.startsWith(skillsSourceDir + path.sep)) continue;
+
+      const sourceMd = path.join(resolvedSkillDir, 'SKILL.md');
       try {
         let content = await fs.readFile(sourceMd, 'utf-8');
         content = content.replaceAll('${CLAUDE_PLUGIN_ROOT}', pluginRoot);
