@@ -3,22 +3,7 @@
  */
 
 import chalk from 'chalk';
-import {
-  type CodeMieClient,
-  type AuthConfig,
-  AnalyticsService,
-  AssistantService,
-  ConversationService,
-  DatasourceService,
-  FileService,
-  IntegrationService,
-  LLMService,
-  SkillService,
-  TaskService,
-  UserService,
-  CategoryService,
-  WorkflowService,
-} from 'codemie-sdk';
+import { CodeMieClient } from 'codemie-sdk';
 import { getCodemieClient } from '@/utils/sdk-client.js';
 import { ConfigurationError } from '@/utils/errors.js';
 import type { ProviderProfile } from '@/env/types.js';
@@ -42,25 +27,11 @@ export async function getAuthenticatedClient(config: ProviderProfile): Promise<C
         'Provide it via the environment variable or set it in your profile configuration.'
       );
     }
-    const authCfg: AuthConfig = {
-      apiDomain: config.baseUrl ?? '',
-      tokenGetter: async () => token,
-      verifySSL: process.env.CODEMIE_INSECURE !== '1',
-    };
-    return {
-      analytics: new AnalyticsService(authCfg),
-      assistants: new AssistantService(authCfg),
-      conversations: new ConversationService(authCfg),
-      datasources: new DatasourceService(authCfg),
-      files: new FileService(authCfg),
-      integrations: new IntegrationService(authCfg),
-      llms: new LLMService(authCfg),
-      skills: new SkillService(authCfg),
-      tasks: new TaskService(authCfg),
-      users: new UserService(authCfg),
-      categories: new CategoryService(authCfg),
-      workflows: new WorkflowService(authCfg),
-    } as unknown as CodeMieClient;
+    return new CodeMieClient({
+      codemie_api_domain: config.baseUrl ?? '',
+      jwt_token: token,
+      verify_ssl: process.env.CODEMIE_INSECURE !== '1',
+    });
   }
 
   try {
@@ -69,7 +40,6 @@ export async function getAuthenticatedClient(config: ProviderProfile): Promise<C
     if (error instanceof ConfigurationError && error.message.includes('SSO authentication required')) {
       const reauthed = await promptReauthentication(config);
       if (reauthed) {
-        // Retry getting client after successful re-authentication
         return await getCodemieClient();
       }
     }
