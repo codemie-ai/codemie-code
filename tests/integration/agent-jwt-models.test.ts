@@ -105,17 +105,18 @@ describe.runIf(INCLUDE_JWT_TESTS)('Agent — model selection (TC-020, TC-021)', 
       );
       sonnetMetrics = getLatestMetricsRecord(join(testHome, 'sessions'));
 
-      // Run haiku profile task (reuse testHome, overwrite config)
-      writeModelProfile(testHome, 'profile-haiku', 'claude-haiku-4-5-20251001');
+      // Run haiku profile task (separate testHome so mtime ordering is unambiguous)
+      const haikuHome = mkdtempSync(join(getTempDir(), 'codemie-model-haiku-'));
+      writeModelProfile(haikuHome, 'profile-haiku', 'claude-haiku-4-5-20251001');
       spawnSync(
         process.execPath,
         [CLAUDE_BIN, '--profile', 'profile-haiku', '--jwt-token', jwtToken, '--task', 'Say READY'],
-        { cwd: testHome, env: { ...cleanEnv(), CODEMIE_HOME: testHome }, encoding: 'utf-8', timeout: 120_000 }
+        { cwd: haikuHome, env: { ...cleanEnv(), CODEMIE_HOME: haikuHome }, encoding: 'utf-8', timeout: 120_000 }
       );
-      haikuMetrics = getLatestMetricsRecord(join(testHome, 'sessions'));
+      haikuMetrics = getLatestMetricsRecord(join(haikuHome, 'sessions'));
     }, 300_000);
 
-    // afterAll(() => rmSync(testHome, { recursive: true, force: true }));
+    afterAll(() => rmSync(testHome, { recursive: true, force: true }));
 
     it('metrics models array contains sonnet for claude-sonnet-4-6 profile', () => {
       const models = (sonnetMetrics.models as string[]) ?? [];

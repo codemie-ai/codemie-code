@@ -87,14 +87,14 @@ describe.runIf(INCLUDE_JWT_TESTS)('Interactive session tests', () => {
       try {
         // Step 1: Assistants picker — search by name, select, then Continue.
         await setupProc.waitFor(/\d+ assistants total/, 60_000);
-        await new Promise((r) => setTimeout(r, 500));
+        await new Promise((r) => setTimeout(r, 1_500));   // wait for UI to finish rendering
         setupProc.write('\x1B[A');                        // Arrow Up → focus search box
-        await new Promise((r) => setTimeout(r, 200));
+        await new Promise((r) => setTimeout(r, 300));
         for (const char of assistantName) {
           setupProc.write(char);
-          await new Promise((r) => setTimeout(r, 50));
+          await new Promise((r) => setTimeout(r, 150));   // slow enough to avoid PTY buffer drops
         }
-        await new Promise((r) => setTimeout(r, 1_500));  // Debounce + fetch
+        await new Promise((r) => setTimeout(r, 4_000));  // Debounce + search API response
         setupProc.write('\x1B[B');                        // Arrow Down → focus first result
         await new Promise((r) => setTimeout(r, 300));
         setupProc.write(' ');                             // Space to select
@@ -104,19 +104,19 @@ describe.runIf(INCLUDE_JWT_TESTS)('Interactive session tests', () => {
         setupProc.write('\r');                            // Enter to confirm Continue
 
         // Step 2: Mode selection — arrow down once to "Agent Skills", then Enter.
-        await setupProc.waitFor(/Configure Registration|How would you like to register/, 15_000);
+        await setupProc.waitFor(/Configure Registration|How would you like to register/, 45_000);
         await new Promise((r) => setTimeout(r, 300));
         setupProc.write('\x1B[B');                        // Arrow Down → Agent Skills
         await new Promise((r) => setTimeout(r, 200));
         setupProc.write('\r');                            // Enter to confirm
 
         // Step 3: Storage scope — keep Global default.
-        await setupProc.waitFor(/Where would you like to save/, 15_000);
+        await setupProc.waitFor(/Where would you like to save/, 30_000);
         await new Promise((r) => setTimeout(r, 200));
         setupProc.write('\r');                            // Enter to accept Global
 
         // Step 4: Target Agents — arrow down twice to reach Continue, then Enter.
-        await setupProc.waitFor(/Target Agents/, 15_000);
+        await setupProc.waitFor(/Target Agents/, 30_000);
         await new Promise((r) => setTimeout(r, 300));
         setupProc.write('\x1B[B');                        // Arrow Down #1
         await new Promise((r) => setTimeout(r, 200));
@@ -129,7 +129,7 @@ describe.runIf(INCLUDE_JWT_TESTS)('Interactive session tests', () => {
       } finally {
         await setupProc.exit(15_000);
       }
-    }, 120_000);
+    }, 180_000);
 
     afterAll(async () => {
       await new Promise((r) => setTimeout(r, 500));
@@ -259,10 +259,10 @@ describe.runIf(INCLUDE_JWT_TESTS)('Interactive session tests', () => {
         await new Promise((r) => setTimeout(r, 1_000));
         // Switch model in-session via slash command — readline IS ready at this point.
         proc.writeLine('/model claude-haiku-4-5-20251001');
-        // Wait 5 s for /model to be processed.  Do NOT use waitFor(/haiku/) here because
+        // Wait for /model to be processed.  Do NOT use waitFor(/haiku/) here because
         // the PTY echoes the input line back (writeLine sends \r\n = proper line) and
         // that echo would match /haiku/ before any Claude Code processing happens.
-        await new Promise((r) => setTimeout(r, 5_000));
+        await new Promise((r) => setTimeout(r, 8_000));
         // Send a message so haiku is actually used and recorded in metrics.
         const pongCursor = proc.lines().length;
         proc.writeLine('Say PONG and nothing else');
@@ -270,7 +270,7 @@ describe.runIf(INCLUDE_JWT_TESTS)('Interactive session tests', () => {
         // waitFor scans allLines from startFromLine, so historical output cannot cause
         // a false-positive match.  The lookbehind still excludes the echoed input line
         // "Say PONG and nothing else" (PONG preceded by "Say ").
-        await proc.waitFor(/(?<![Ss]ay )PONG/i, 90_000, pongCursor).catch((err: unknown) => {
+        await proc.waitFor(/(?<![Ss]ay )PONG/i, 150_000, pongCursor).catch((err: unknown) => {
           // Dump PTY lines so they survive a vitest native crash on Windows.
           try {
             writeFileSync(join(testHome, 'pty-debug.txt'), proc.lines().join('\n'));

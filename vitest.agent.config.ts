@@ -13,8 +13,7 @@ export default defineConfig({
       FORCE_COLOR: '1',
       NODE_ENV: 'test',
     },
-    pool: 'threads',
-    maxWorkers: 4,
+    maxWorkers: parseInt(process.env.CI_AGENT_MAX_WORKERS ?? '2', 10),
     isolate: true,
   },
 });
