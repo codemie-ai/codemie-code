@@ -8,6 +8,7 @@
  */
 
 import type { ProviderTemplate } from '../../core/types.js';
+import { AuthMethod } from '../../core/types.js';
 import { registerProvider } from '../../core/index.js';
 import { defaultAgentHooks } from '../../core/default-agent-hooks.js';
 import { DEFAULT_CODEMIE_BASE_URL } from '../../core/codemie-auth-helpers.js';
@@ -43,7 +44,7 @@ export const SSOTemplate = registerProvider<ProviderTemplate>({
     if (config.authMethod) env.CODEMIE_AUTH_METHOD = config.authMethod;
 
     // Export JWT token when auth method is JWT
-    if (config.authMethod === 'jwt') {
+    if (config.authMethod === AuthMethod.JWT) {
       const token = resolveJwtToken(config);
       if (token) env.CODEMIE_JWT_TOKEN = token;
     }

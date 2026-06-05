@@ -14,6 +14,7 @@ import { ConfigLoader } from '@/utils/config.js';
 import { StorageScope } from '@/env/types.js';
 import { createErrorContext, formatErrorForUser } from '@/utils/errors.js';
 import { getAuthenticatedClient, promptReauthentication } from '@/utils/auth.js';
+import { AuthMethod } from '@/providers/core/types.js';
 import type { CodemieAssistant, ProviderProfile } from '@/env/types.js';
 import { ROLES, MESSAGES, type HistoryMessage } from '../constants.js';
 import { loadConversationHistory } from './historyLoader.js';
@@ -81,7 +82,7 @@ async function chatWithAssistant(
 
   const jwtToken = options.jwtToken ?? process.env.CODEMIE_JWT_TOKEN;
   if (jwtToken) {
-    config.authMethod = 'jwt';
+    config.authMethod = AuthMethod.JWT;
     config.jwtConfig = { ...config.jwtConfig, token: jwtToken };
   }
   const client: CodeMieClient = await getAuthenticatedClient(config);

@@ -4,6 +4,7 @@
 
 import { CredentialStore } from '../../../../utils/security.js';
 import { resolveJwtTokenEnvVar } from '../../../../providers/plugins/jwt/jwt.utils.js';
+import { AuthMethod } from '../../../../providers/core/types.js';
 import { ConfigLoader } from '../../../../utils/config.js';
 import { HealthCheck, HealthCheckResult, HealthCheckDetail, ProgressCallback } from '../types.js';
 
@@ -20,7 +21,7 @@ export class JWTAuthCheck implements HealthCheck {
       const config = await ConfigLoader.load();
 
       // Only check if profile uses JWT auth
-      if (config.authMethod !== 'jwt') {
+      if (config.authMethod !== AuthMethod.JWT) {
         details.push({
           status: 'info',
           message: 'Not using JWT authentication (skipped)'

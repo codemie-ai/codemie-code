@@ -7,6 +7,7 @@ import { CodeMieClient } from 'codemie-sdk';
 import { getCodemieClient } from '@/utils/sdk-client.js';
 import { ConfigurationError } from '@/utils/errors.js';
 import { resolveJwtToken, resolveJwtTokenEnvVar } from '@/providers/plugins/jwt/jwt.utils.js';
+import { AuthMethod } from '@/providers/core/types.js';
 import type { ProviderProfile } from '@/env/types.js';
 import { ProviderRegistry } from '@/providers/core/registry.js';
 import { handleAuthValidationFailure } from '@/providers/core/auth-validation.js';
@@ -19,7 +20,7 @@ import { handleAuthValidationFailure } from '@/providers/core/auth-validation.js
  * @throws ConfigurationError if authentication fails and user declines re-auth
  */
 export async function getAuthenticatedClient(config: ProviderProfile): Promise<CodeMieClient> {
-  if (config.authMethod === 'jwt') {
+  if (config.authMethod === AuthMethod.JWT) {
     const token = resolveJwtToken(config);
     if (!token) {
       throw new ConfigurationError(

@@ -5,6 +5,7 @@ import chalk from 'chalk';
 import { AgentAdapter } from './types.js';
 import { ConfigLoader, CodeMieConfigOptions } from '../../utils/config.js';
 import { ensureApiBase, DEFAULT_CODEMIE_BASE_URL } from '../../providers/core/codemie-auth-helpers.js';
+import { AuthMethod, ProviderName } from '../../providers/core/types.js';
 import { JWTTemplate } from '../../providers/plugins/jwt/jwt.template.js';
 import { logger } from '../../utils/logger.js';
 import { getDirname } from '../../utils/paths.js';
@@ -184,14 +185,14 @@ export class AgentCLI {
       // JWT token from CLI overrides everything
       if (options.jwtToken) {
         process.env.CODEMIE_JWT_TOKEN = options.jwtToken as string;
-        process.env.CODEMIE_AUTH_METHOD = 'jwt';
+        process.env.CODEMIE_AUTH_METHOD = AuthMethod.JWT;
 
         const hasNoConfig = !options.provider
           && !(await ConfigLoader.hasGlobalConfig())
           && !(await ConfigLoader.hasLocalConfig(process.cwd()));
 
         if (hasNoConfig) {
-          config.provider = 'bearer-auth';
+          config.provider = ProviderName.BEARER_AUTH;
           if (!config.model) {
             config.model = JWTTemplate.recommendedModels?.[0];
           }
@@ -201,7 +202,7 @@ export class AgentCLI {
             ? ensureApiBase(config.codeMieUrl)
             : ensureApiBase(DEFAULT_CODEMIE_BASE_URL);
         }
-        config.authMethod = 'jwt';
+        config.authMethod = AuthMethod.JWT;
       }
 
       // Validate essential configuration
@@ -216,7 +217,7 @@ export class AgentCLI {
 
       // Skip apiKey validation for SSO and JWT authentication methods
       const authMethod = config.authMethod;
-      const usesAlternativeAuth = authMethod === 'sso' || authMethod === 'jwt';
+      const usesAlternativeAuth = authMethod === AuthMethod.SSO || authMethod === AuthMethod.JWT;
 
       if (requiresAuth && !config.apiKey && !usesAlternativeAuth) {
         missingFields.push('apiKey');
@@ -265,7 +266,7 @@ export class AgentCLI {
       // which gets spread after process.env in BaseAgentAdapter.run(), erasing the
       // 'jwt' value we set in process.env above and causing the proxy to use the SSO path.
       if (options.jwtToken) {
-        providerEnv.CODEMIE_AUTH_METHOD = 'jwt';
+        providerEnv.CODEMIE_AUTH_METHOD = AuthMethod.JWT;
         providerEnv.CODEMIE_JWT_TOKEN = options.jwtToken as string;
       }
 
