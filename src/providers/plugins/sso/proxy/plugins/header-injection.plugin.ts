@@ -251,10 +251,12 @@ async function findWorkingDirViaProcess(pid: number): Promise<string | null> {
   if (process.platform !== 'darwin') return null;
   try {
     const { stdout } = await execAsync(`ps -p ${pid} -o args=`, { timeout: 2000 });
-    // Greedy match up to the next -- flag or end of line — supports paths with spaces.
-    const match = stdout.match(/--add-dir\s+(.+)(?=\s+--|$)/);
+    // Lazy match stops at the first subsequent -- flag, supporting paths with spaces.
+    const match = stdout.match(/--add-dir\s+(.+?)(?=\s+--|$)/);
     const dir = match?.[1]?.trim();
-    return dir || null;
+    // Reject relative paths — Desktop renderer uses --add-dir for plugin loading (not absolute).
+    if (!dir || !dir.startsWith('/')) return null;
+    return dir;
   } catch {
     return null;
   }
@@ -303,10 +305,11 @@ async function findWorkingDirForDesktopDirectRequest(connectingPid: number): Pro
       visited.add(cur);
       const proc = processes.get(cur);
       if (proc?.args.includes('--add-dir')) {
-        // Greedy match up to the next -- flag or end of line — supports paths with spaces.
-        const m = proc.args.match(/--add-dir\s+(.+)(?=\s+--|$)/);
+        // Lazy match stops at the first subsequent -- flag, supporting paths with spaces.
+        const m = proc.args.match(/--add-dir\s+(.+?)(?=\s+--|$)/);
         const dir = m?.[1]?.trim();
-        if (dir) return dir;
+        // Reject relative paths — Desktop renderer uses --add-dir for plugin loading.
+        if (dir?.startsWith('/')) return dir;
       }
       for (const child of (children.get(cur) ?? [])) {
         if (!visited.has(child)) queue.push(child);
