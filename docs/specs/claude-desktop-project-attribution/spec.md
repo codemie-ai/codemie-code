@@ -397,16 +397,31 @@ Expected result: the session shows up in CLI Insights with the `project` field p
 
 ## Analytics Endpoints to Verify
 
-Two frontend API endpoints to check after each test scenario (Mykola Nehrych local dev user_id: `ab908f16-8ff5-4d9f-9b6c-c8df18acf1b4`):
+API base: `http://localhost:8080` (backend). `localhost:5173` proxies to the same backend — use either.
+
+**Authentication (required before calling analytics endpoints):**
+
+```bash
+TOKEN=$(curl -s -X POST "http://localhost:8080/v1/local-auth/login" \
+  -H "Content-Type: application/json" \
+  -d '{"email":"mykola_nehrych@epam.com","password":"Qwerty123"}' \
+  | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))")
+```
+
+Two endpoints to check after each test scenario (user_id: `ab908f16-8ff5-4d9f-9b6c-c8df18acf1b4`):
 
 **1. User summary (sessions + cost):**
-```
-http://localhost:5173/api/v1/analytics/cli-insights-users?time_period=last_hour&users=ab908f16-8ff5-4d9f-9b6c-c8df18acf1b4&page=0&per_page=10
+```bash
+curl -s "http://localhost:8080/v1/analytics/cli-insights-users?time_period=last_hour&users=ab908f16-8ff5-4d9f-9b6c-c8df18acf1b4&page=0&per_page=10" \
+  -H "Authorization: Bearer $TOKEN" \
+  | python3 -c "import sys,json; [print(r) for r in json.load(sys.stdin)['data']['rows']]"
 ```
 
 **2. Repository breakdown:**
-```
-http://localhost:5173/api/v1/analytics/cli-insights-user-repositories?user_name=Mykola+Nehrych&time_period=last_hour&users=ab908f16-8ff5-4d9f-9b6c-c8df18acf1b4
+```bash
+curl -s "http://localhost:8080/v1/analytics/cli-insights-user-repositories?user_name=Mykola+Nehrych&time_period=last_hour&users=ab908f16-8ff5-4d9f-9b6c-c8df18acf1b4" \
+  -H "Authorization: Bearer $TOKEN" \
+  | python3 -c "import sys,json; [print(r) for r in json.load(sys.stdin)['data']['rows']]"
 ```
 
 **What to check:**
