@@ -35,6 +35,7 @@ export interface ProxyConfig {
   telemetryPollIntervalMs?: number;
   telemetryInactivityTimeoutMs?: number;
   sessionRepositoryMap?: Map<string, string>;
+  lastDesktopRepo?: { repo: string; ts: number };
   triggerPoll?: () => Promise<void>;
 }
 
