@@ -384,7 +384,7 @@ const CLAUDE_DESKTOP_SANDBOX_RE = /\/local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[
 
 /**
  * Extract parent/repo format from a working directory path.
- * Returns 'Claude Desktop' for sandbox paths used by Claude Desktop sessions.
+ * Returns 'Default' for sandbox paths used by Claude Desktop sessions.
  *
  * @example
  * extractRepository('/Users/john/projects/codemie-code')
@@ -392,11 +392,11 @@ const CLAUDE_DESKTOP_SANDBOX_RE = /\/local_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[
  *
  * @example
  * extractRepository('/Users/john/Library/Application Support/Claude-3p/local-agent-mode-sessions/<s>/<u>/local_2d5f3a0f-6a50-4778-ac55-9ffbca0446da/outputs')
- * // Returns: 'Claude Desktop'
+ * // Returns: 'Default'
  */
 export function extractRepository(workingDirectory: string): string {
   if (CLAUDE_DESKTOP_SANDBOX_RE.test(normalizePathSeparators(workingDirectory))) {
-    return 'Claude Desktop';
+    return 'Default';
   }
 
   const parts = splitPath(workingDirectory);

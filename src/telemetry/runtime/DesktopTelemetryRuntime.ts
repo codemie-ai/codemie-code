@@ -13,6 +13,7 @@ import type {
 import { setRuntimeCheckpoint } from '@/telemetry/runtime/checkpoints.js';
 import { logger } from '@/utils/logger.js';
 import { detectGitBranch, detectGitRemoteRepo } from '@/utils/processes.js';
+import { ConfigLoader } from '@/utils/config.js';
 
 interface TrackedSession {
   codemieSessionId: string;
@@ -52,6 +53,11 @@ export class DesktopTelemetryRuntime {
       await this.finalizeSession(tracked.codemieSessionId, 'desktop-daemon-stop');
     }
   }
+
+  async triggerPoll(): Promise<void> {
+    await this.poll();
+  }
+
 
   private async poll(): Promise<void> {
     if (this.isPolling) {
@@ -108,10 +114,20 @@ export class DesktopTelemetryRuntime {
       return existing;
     }
 
-    const [gitBranch, repository] = await Promise.all([
+    const [gitBranch, repository, project] = await Promise.all([
       detectGitBranch(discovered.workingDirectory),
-      detectGitRemoteRepo(discovered.workingDirectory)
+      detectGitRemoteRepo(discovered.workingDirectory),
+      ConfigLoader.load(discovered.workingDirectory)
+        .then(c => c.codeMieProject ?? undefined)
+        .catch(() => undefined)
     ]);
+
+    if (!discovered.agentSessionId.startsWith('local_')) {
+      this.config.sessionRepositoryMap?.set(
+        discovered.agentSessionId,
+        repository || 'Default'
+      );
+    }
 
     const session: Session = {
       sessionId: randomUUID(),
@@ -121,6 +137,7 @@ export class DesktopTelemetryRuntime {
       workingDirectory: discovered.workingDirectory,
       gitBranch: gitBranch || undefined,
       repository: repository || undefined,
+      project: project || undefined,
       status: 'active',
       activeDurationMs: 0,
       correlation: {
@@ -261,6 +278,8 @@ export class DesktopTelemetryRuntime {
         sessionId: discovered.agentSessionId,
         agentName: this.config.clientType,
         provider: this.config.provider,
+        project: session.project,
+        repository: session.repository,
         startTime: session.startTime,
         workingDirectory: session.workingDirectory,
         model: discovered.model
@@ -290,6 +309,8 @@ export class DesktopTelemetryRuntime {
         sessionId: session.correlation.agentSessionId || session.sessionId,
         agentName: this.config.clientType,
         provider: this.config.provider,
+        project: session.project,
+        repository: session.repository,
         startTime: session.startTime,
         workingDirectory: session.workingDirectory
       },

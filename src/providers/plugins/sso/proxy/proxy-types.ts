@@ -34,6 +34,9 @@ export interface ProxyConfig {
   telemetryMode?: 'none' | 'claude-desktop';
   telemetryPollIntervalMs?: number;
   telemetryInactivityTimeoutMs?: number;
+  sessionRepositoryMap?: Map<string, string>;
+  lastDesktopRepo?: { repo: string; ts: number };
+  triggerPoll?: () => Promise<void>;
 }
 
 /**
@@ -52,6 +55,7 @@ export interface ProxyContext {
   requestBody: Buffer | null; // Changed to Buffer to preserve byte integrity
   requestStartTime: number;
   targetUrl?: string;
+  remotePort?: number;        // TCP source port of the connecting client (used for process CWD lookup)
   metadata: Record<string, unknown>;
 }
 

@@ -349,6 +349,7 @@ export class CodeMieProxy {
       headers: forwardHeaders,
       requestBody,
       requestStartTime: Date.now(),
+      remotePort: req.socket?.remotePort,
       metadata: {}
     };
   }
