@@ -9,6 +9,10 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
+import { exec as execCb } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execAsync = promisify(execCb);
 import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
 import { ProxyContext } from '../proxy-types.js';
 import { ProviderRegistry } from '../../../../core/registry.js';
@@ -80,19 +84,72 @@ class HeaderInjectionInterceptor implements ProxyInterceptor {
     // Per-request repository resolution for Desktop mode.
     // Claude Desktop sends x-claude-code-session-id = cliSessionId (plain UUID, no local_ prefix).
     // The shared map is keyed by agentSessionId = cliSessionId, so look up directly.
-    // On unknown session: targeted scan of Desktop session files → .git/config read → cache result.
-    // If session file not on disk yet (first message race condition) → Default, not cached.
+    //
+    // Lookup chain for unknown session (runs in order, stops on first success):
+    //   1. Process CWD lookup (Fix 4) — uses TCP remotePort → lsof → PID → CWD; works on first message
+    //      before session file exists on disk. macOS only (~50ms).
+    //   2. Session file scan (Fix 3) — targeted scan of Desktop session files for matching cliSessionId;
+    //      succeeds from message 2 onward when file is on disk.
+    //   3. Default — not cached; next request retries from step 1.
     if (config.sessionRepositoryMap) {
       const cliSessionId = context.headers['x-claude-code-session-id'];
 
       if (cliSessionId && !config.sessionRepositoryMap.has(cliSessionId)) {
-        const workingDir = await findWorkingDirForSession(cliSessionId).catch(() => null);
+        let workingDir: string | null = null;
+
+        // Fix 4: subprocess lookup — finds the claude process via its TCP connection.
+        // Works for subprocess requests (x-claude-code-session-id present, process has --add-dir).
+        if (context.remotePort && config.port) {
+          workingDir = await findWorkingDirViaProcess(context.remotePort, config.port).catch(() => null);
+          if (workingDir) {
+            logger.debug('[header-injection] Resolved working dir via process lookup', {
+              cliSessionId, remotePort: context.remotePort, workingDir,
+            });
+          }
+        }
+
+        // Fix 3: session file scan (works from message 2 onward when session file exists on disk)
+        if (!workingDir) {
+          workingDir = await findWorkingDirForSession(cliSessionId).catch(() => null);
+          if (workingDir) {
+            logger.debug('[header-injection] Resolved working dir via session file scan', {
+              cliSessionId, workingDir,
+            });
+          }
+        }
+
+        // Fix 4B: process tree descent — for Desktop orchestrator requests whose connecting
+        // process is the Desktop renderer (no --add-dir). Desktop spawns the claude subprocess
+        // before sending its orchestrator call, so the subprocess is already in ps.
+        // Also covers the second+ orchestrator (after subprocess exits) via __last_desktop_repo__.
+        if (!workingDir && context.remotePort &&
+            context.requestBody && context.requestBody.length > 1000) {
+          workingDir = await findWorkingDirForDesktopDirectRequest(context.remotePort).catch(() => null);
+          if (workingDir) {
+            logger.debug('[header-injection] Resolved working dir via process tree descent', {
+              cliSessionId, remotePort: context.remotePort, workingDir,
+            });
+          }
+        }
+
         if (workingDir) {
           const repository = (await readGitRemoteLocal(workingDir)) ?? extractRepository(workingDir);
           config.sessionRepositoryMap.set(cliSessionId, repository);
+          config.sessionRepositoryMap.set('__last_desktop_repo__', repository);
           logger.debug('[header-injection] Resolved repository via targeted lookup', {
             cliSessionId, workingDir, repository,
           });
+        } else {
+          // Last resort: reuse the most recently resolved Desktop repo (set by Fix 4 of a
+          // concurrent subprocess request). This covers the case where the subprocess has
+          // already exited and process tree descent returns null.
+          const lastRepo = config.sessionRepositoryMap.get('__last_desktop_repo__');
+          if (lastRepo) {
+            config.sessionRepositoryMap.set(cliSessionId, lastRepo);
+            logger.debug('[header-injection] Used cached last Desktop repo for orchestrator', {
+              cliSessionId, lastRepo,
+            });
+          }
         }
       }
 
@@ -156,5 +213,127 @@ async function readGitRemoteLocal(dir: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+// Resolves the working directory for a Desktop-direct request (no x-claude-code-session-id).
+// Desktop spawns the claude subprocess before sending its own orchestrator LLM call, so the
+// subprocess with --add-dir is already running in ps when the request arrives.
+// Strategy: find the Desktop renderer PID via remotePort, walk up to the Claude app root,
+// then BFS-descend through all descendants to find a subprocess with --add-dir.
+// macOS only. Returns null on any failure.
+async function findWorkingDirForDesktopDirectRequest(remotePort: number): Promise<string | null> {
+  if (process.platform !== 'darwin') return null;
+
+  try {
+    const [psResult, lsofResult] = await Promise.all([
+      execAsync('ps -axww -o pid,ppid,args', { timeout: 2000 }),
+      execAsync(`lsof -n -P -i 4TCP@127.0.0.1:${remotePort} 2>/dev/null`, { timeout: 2000 }),
+    ]);
+
+    // Build process map and children index in one pass
+    const processes = new Map<number, { ppid: number; args: string }>();
+    const children = new Map<number, number[]>();
+    for (const line of psResult.stdout.split('\n').slice(1)) {
+      const m = line.trim().match(/^(\d+)\s+(\d+)\s+(.*)/);
+      if (!m) continue;
+      const pid = parseInt(m[1], 10);
+      const ppid = parseInt(m[2], 10);
+      if (isNaN(pid) || isNaN(ppid)) continue;
+      processes.set(pid, { ppid, args: m[3].trim() });
+      if (!children.has(ppid)) children.set(ppid, []);
+      children.get(ppid)!.push(pid);
+    }
+
+    // Find Desktop renderer PID from remotePort (same lsof approach as Fix 4)
+    const ownPid = process.pid;
+    let desktopPid: number | null = null;
+    for (const line of lsofResult.stdout.split('\n')) {
+      const parts = line.trim().split(/\s+/);
+      if (parts.length < 2 || parts[1] === 'PID') continue;
+      const pid = parseInt(parts[1], 10);
+      if (!pid || pid === ownPid) continue;
+      if (line.includes(`127.0.0.1:${remotePort}->`)) {
+        desktopPid = pid;
+        break;
+      }
+    }
+    if (!desktopPid) return null;
+
+    // Walk up from Desktop renderer to find the Claude app root
+    let claudeRootPid = desktopPid;
+    let pid = desktopPid;
+    for (let depth = 0; depth < 10; depth++) {
+      const proc = processes.get(pid);
+      if (!proc || proc.ppid <= 1) break;
+      if (/Claude\.app/.test(proc.args)) claudeRootPid = pid;
+      pid = proc.ppid;
+    }
+
+    // BFS down from Claude root to find the first subprocess with --add-dir
+    const queue = [claudeRootPid];
+    const visited = new Set<number>();
+    while (queue.length > 0) {
+      const cur = queue.shift()!;
+      if (visited.has(cur)) continue;
+      visited.add(cur);
+      const proc = processes.get(cur);
+      if (proc?.args.includes('--add-dir')) {
+        const m = proc.args.match(/--add-dir\s+(.+?)(?=\s+--|$)/);
+        const dir = m?.[1]?.trim();
+        if (dir) return dir;
+      }
+      for (const child of (children.get(cur) ?? [])) {
+        if (!visited.has(child)) queue.push(child);
+      }
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// Resolves the working directory of the process that owns the TCP connection to the proxy.
+// Uses lsof to find the PID from the client's source port, then reads --add-dir from
+// the process command line (Desktop passes --add-dir <userFolder> when spawning claude).
+// macOS only. Returns null on any failure so callers can fall through to file-based lookup.
+async function findWorkingDirViaProcess(remotePort: number, _proxyPort: number): Promise<string | null> {
+  if (process.platform !== 'darwin') return null;
+
+  // Find the PID that has a TCP connection from remotePort to the proxy port.
+  // lsof output: "<COMMAND> <PID> <USER> <FD> ... TCP 127.0.0.1:<remotePort>->127.0.0.1:<proxyPort>"
+  const { stdout: connOut } = await execAsync(
+    `lsof -n -P -i 4TCP@127.0.0.1:${remotePort} 2>/dev/null`,
+    { timeout: 2000 }
+  );
+
+  const ownPid = process.pid;
+  let targetPid: string | null = null;
+
+  for (const line of connOut.split('\n')) {
+    const parts = line.trim().split(/\s+/);
+    if (parts.length < 2) continue;
+    const pid = parts[1];
+    if (!pid || pid === 'PID' || Number(pid) === ownPid) continue;
+    if (line.includes(`127.0.0.1:${remotePort}->`)) {
+      targetPid = pid;
+      break;
+    }
+  }
+
+  if (!targetPid) return null;
+
+  // Read the process command line and parse --add-dir <path>.
+  // Desktop passes --add-dir <userProjectFolder> when spawning claude for a session.
+  const { stdout: argsOut } = await execAsync(
+    `ps -p ${targetPid} -o args=`,
+    { timeout: 2000 }
+  );
+
+  // --add-dir is followed by the user's project folder, then another -- flag or end of line.
+  // Use a greedy match up to the next -- argument to support paths with spaces.
+  const addDirMatch = argsOut.match(/--add-dir\s+(.+?)(?=\s+--|$)/);
+  const dir = addDirMatch?.[1]?.trim();
+  return dir || null;
 }
 

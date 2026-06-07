@@ -54,6 +54,7 @@ export interface ProxyContext {
   requestBody: Buffer | null; // Changed to Buffer to preserve byte integrity
   requestStartTime: number;
   targetUrl?: string;
+  remotePort?: number;        // TCP source port of the connecting client (used for process CWD lookup)
   metadata: Record<string, unknown>;
 }
 

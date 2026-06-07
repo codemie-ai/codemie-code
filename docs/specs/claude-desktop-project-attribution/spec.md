@@ -453,43 +453,84 @@ http://localhost:5173/api/v1/analytics/cli-insights-user-repositories?user_name=
 
 | # | Setup | Expected `X-CodeMie-Repository` header | Note |
 |---|---|---|---|
-| 15 | Open folder, **send first message** | `'Default'` | **permanent limitation** — session file does not exist yet (see below) |
-| 15b | Open folder, **send second message** in same session | correct git remote | targeted lookup finds session file, caches result |
-| 16 | Switch to new folder, send first message | `'Default'` | same permanent limitation as #15 |
-| 16b | Switch to new folder, send second message | correct git remote | targeted lookup finds new session file, caches result |
-| 17 | Send second message in same session | correct git remote | already cached from 15b/16b lookup, no scan needed |
+| 15 | Open folder, **send first message** | correct git remote | Fix 4 fires for subprocess request; Fix 4B (process tree descent) fires for the orchestrator request — both correct before forwarding |
+| 16 | Switch to new folder, send first message | correct git remote | same Fix 4 + Fix 4B path; each new session triggers fresh lookup |
+| 17 | Send second+ message in same session | correct git remote | already cached from #15; no lookup needed |
 | 18 | Switch back to previously opened folder, send message | correct git remote | session already cached from first discovery |
+| 19 | **Ping** (95-byte, no `x-claude-code-session-id`) | `'Default'` | Acceptable — no session ID → falls through to `config.repository ?? 'Default'`; request has no real LLM cost |
+| 20 | **Orchestrator** (28 KB, Desktop's own `x-claude-code-session-id`) | correct git remote | Fix 4 → null (Desktop renderer has no `--add-dir`); Fix 3 → null (session file not on disk yet); **Fix 4B** → process tree descent finds subprocess → correct repo |
+| 21 | **Second+ orchestrator** in same session (subprocess has already exited) | correct git remote | Fix 4B → process tree → null (subprocess gone); **`__last_desktop_repo__` fallback** → repo cached by subprocess's Fix 4 earlier in same session |
 
-**IMPORTANT FOR TESTING:** Send at least 2 messages per scenario. The first message **always** gets `'Default'` — this is a permanent limitation (see "Why first message cannot be fixed" below). The second message is guaranteed to have correct repository attribution regardless of timing:
-- sent within poll interval (< 10s) → targeted lookup fires, finds session file on disk, caches result
-- sent after poll interval (> 10s) → poll already populated the map
+**IMPORTANT FOR TESTING:** Every message (including the first) is expected to have correct repository attribution. Per user turn Desktop sends two request types, both with their own `x-claude-code-session-id`:
+- **Subprocess** requests (~179 KB) → Fix 4 (TCP port → subprocess PID → `--add-dir`)
+- **Orchestrator** requests (~28 KB) → Fix 4B (process tree descent from Desktop renderer) + `__last_desktop_repo__` fallback
 
-**Verified 2026-06-04:** two messages sent 7s apart (within poll window) — msg 1 → `Default`, msg 2 → `epm-cdme/codemie-ui` via targeted lookup. `"Resolved repository via targeted lookup"` confirmed in proxy logs.
+Send at least 2 messages to verify the `__last_desktop_repo__` fallback path (second orchestrator after subprocess exits).
 
-### Why first message cannot be fixed
+**Key discovery (2026-06-07):** The Desktop orchestrator (28 KB, `?beta=true`) DOES send `x-claude-code-session-id` — it's Desktop's own UUID, different from the subprocess's UUID. The 95-byte ping is the only truly "sessionless" request.
+
+**Verified 2026-06-04 (pre-Fix 4):** two messages sent 7s apart — msg 1 → `Default`, msg 2 → `epm-cdme/codemie-ui` via targeted lookup. Fix 4 + Fix 4B eliminate all `Default` attributions.
+
+### Why the first message WAS limited (and how Fix 4 solves it)
 
 Claude Desktop writes the session file **after receiving the LLM response**, not before sending the request. This was verified by comparing `birthtime` and `mtime` of session files — both timestamps are identical, meaning the file is created and written atomically in a single operation, only after the response arrives.
 
-The sequence for a new conversation:
+The sequence for a new conversation **before Fix 4**:
 
 ```
 1. User sends message in Desktop
-2. Desktop sends LLM request to proxy  ← session file does not exist on disk yet
-3. Proxy processes request              ← targeted lookup scans disk, finds nothing → 'Default'
-4. LLM returns response to proxy
-5. Proxy returns response to Desktop
-6. Desktop writes session file          ← file appears here, too late
-7. User sends second message
-8. Proxy targeted lookup → finds file → resolves repo → caches → correct repo
+2. Desktop spawns claude process (CWD = user's project folder)
+3. claude connects TCP → proxy :4001
+4. Desktop sends LLM request to proxy  ← session file does not exist on disk yet
+5. Proxy processes request              ← targeted lookup scans disk, finds nothing → 'Default'
+6. LLM returns response to proxy
+7. Proxy returns response to Desktop
+8. Desktop writes session file          ← file appears here, too late
+9. User sends second message
+10. Proxy targeted lookup → finds file → resolves repo → caches → correct repo
 ```
 
-Every alternative was investigated and ruled out:
-- **Retry loop during request** — useless, file cannot appear until after the response is returned
-- **fs.watch on sessions directory** — same result as targeted lookup; file appears after response, second message gets correct repo in both approaches, watcher adds lifecycle complexity for no user-visible gain
-- **Desktop preferences / app state files** — `~/Library/Application Support/Claude/` contains only window geometry (`window-state.json`), empty preferences, and `git-worktrees.json` (empty). No file records the currently open folder before the session starts.
-- **Process inspection / lsof** — unreliable and not portable
+**Fix 4 breaks the dependency on the session file** by using the TCP connection itself:
 
-**This is a known limitation accepted by design.** Scenario #15 in the test table documents it as expected behavior. The fix (targeted lookup) covers message 2 onward.
+```
+1. User sends message in Desktop
+2. Desktop spawns claude process (CWD = user's project folder)
+3. claude connects TCP → proxy :4001  (remotePort = ephemeral port, e.g. :52254)
+4. Desktop sends LLM request to proxy
+5. Proxy reads req.socket.remotePort → runs lsof → finds claude PID → reads CWD (~50ms)
+6. Proxy resolves repo from CWD → caches in sessionRepositoryMap → forwards with correct header
+7. LLM returns response
+```
+
+The TCP connection exists in the kernel's table from step 3. By the time the HTTP request reaches `onRequest` in step 5, `lsof` can see the connection and its owning PID immediately.
+
+**Alternatives investigated before Fix 4 was found:**
+- **Retry loop during request** — useless, session file cannot appear until after the response is returned
+- **fs.watch on sessions directory** — same timing problem as targeted lookup alone; file appears after response
+- **Desktop preferences / app state files** — investigated extensively (Preferences, IndexedDB `expandedIds`, Local Storage `cowork-read-state`, `LSS-sidebar-selected-mode`, `ccd-session-store`, `dframe-store`, IndexedDB `store:chat-draft:cowork-new-task`). None contain the active folder before the first request for a new conversation.
+- **`spaces.json`** — lists all spaces with folder paths but has no "currently active" indicator; Desktop holds active space in React memory state only.
+
+**`lsof` reliability on macOS:** measured at ~25ms per call. Claude Desktop is macOS-only. Process CWD is stable — Claude Code sets it to the project folder at spawn and does not change it. Two `lsof` calls total (~50ms) run before forwarding to the upstream LLM API.
+
+**Note on `lsof` command name:** the Claude Code binary appears as its version string (e.g. `2.1.165`) in `lsof` output, not as `claude`. The lookup uses TCP port matching (`-i 4TCP@127.0.0.1:<remotePort>`), not process name — so version changes don't affect it.
+
+**Fallback chain (all requests with `x-claude-code-session-id`):**
+
+```
+1. sessionRepositoryMap.has(cliSessionId)      → cached hit, skip all lookups
+2. findWorkingDirViaProcess(remotePort)         → Fix 4: TCP port → subprocess PID → --add-dir (~50ms)
+3. findWorkingDirForSession(cliSessionId)       → Fix 3: session file scan (fallback, from msg 2 onward)
+4. findWorkingDirForDesktopDirectRequest(port)  → Fix 4B: process tree descent; for orchestrator
+                                                   requests whose connecting process is the Desktop
+                                                   renderer (no --add-dir); body > 1 KB gate (~100ms)
+5. sessionRepositoryMap.get('__last_desktop_repo__')
+                                                → last repo resolved by Fix 4 in this proxy session;
+                                                   covers subsequent orchestrator calls after subprocess exits
+6. 'Default', cached under cliSessionId        → all lookups failed; cached to avoid retry overhead
+```
+
+**Requests without `x-claude-code-session-id`** (95-byte ping only):
+- Falls through directly to `config.repository ?? 'Default'` — no lookup, no cost
 
 ### Use cases covered by the targeted lookup fix
 
@@ -730,6 +771,67 @@ Files to create/modify:
 - `src/telemetry/clients/claude-desktop/claude-desktop.discovery.ts` — export `findSessionWorkingDir(cliSessionId: string): Promise<string | null>`
 - `src/utils/processes.ts` — add `readGitRemoteLocal(dir: string): Promise<string | null>`
 - `src/providers/plugins/sso/proxy/plugins/header-injection.plugin.ts` — replace `debugLogSessionFileState` with production targeted lookup; cache only on success; no timeout guard needed (file read is ~2-5ms, and on first message the file simply won't be there)
+
+### Fix 4B — Orchestrator requests: process tree descent + last-repo fallback
+
+Handles the **Desktop Electron app's own LLM calls** — the orchestrator/hostloop requests (`?beta=true`, ~28 KB) that Desktop sends directly (not via the subprocess). These DO carry `x-claude-code-session-id`, but it is Desktop's **own** UUID — different from the subprocess's UUID.
+
+**Why Fix 4 fails for orchestrator requests:**
+
+Fix 4 reads `--add-dir` from the process that owns the TCP connection (via remotePort). For subprocess requests, that process IS the `claude` subprocess (which has `--add-dir`). For orchestrator requests, the connecting process is the **Desktop Electron renderer** — it has no `--add-dir` in its args. Fix 4 returns null.
+
+Fix 3 also fails because the session file for the orchestrator's `cliSessionId` doesn't exist on disk at request time.
+
+**Key discovery (2026-06-07):** the orchestrator and subprocess use *different* `x-claude-code-session-id` values. The orchestrator has its own UUID; the subprocess has its own. Both are present in every user turn.
+
+**Mechanism — Fix 4B (process tree descent):**
+1. Runs inside the `cliSessionId` block, after Fix 4 and Fix 3 both return null, when `requestBody.length > 1000`
+2. `lsof -n -P -i 4TCP@127.0.0.1:<remotePort>` → Desktop renderer PID
+3. `ps -axww -o pid,ppid,args` (one snapshot, run in parallel with lsof)
+4. Walk **up** from renderer PID through ancestors until a path matches `/Claude.app/`
+5. BFS **down** from the Claude app root through all descendants
+6. Find any descendant with `--add-dir` → extract path → resolve repository
+7. Cache under `sessionRepositoryMap[cliSessionId]` AND `__last_desktop_repo__`
+
+**Mechanism — `__last_desktop_repo__` fallback:**
+Covers the case where the subprocess has already exited (second+ orchestrator in the same multi-turn session). Every time Fix 4 or Fix 4B successfully resolves a repository, it also writes to `sessionRepositoryMap['__last_desktop_repo__']`. Subsequent orchestrator calls whose Fix 4B returns null (subprocess gone) check this key and cache the result under their own `cliSessionId`.
+
+**Files to modify:**
+- `src/providers/plugins/sso/proxy/plugins/header-injection.plugin.ts` — add `findWorkingDirForDesktopDirectRequest(remotePort)` function; add Fix 4B block and `__last_desktop_repo__` fallback inside the existing `cliSessionId` block after Fix 3
+
+### Fix 4 — First-message fix: process CWD lookup via TCP connection
+
+Runs **before** Fix 3 (targeted file scan) on every unknown `cliSessionId`. Resolves the working directory directly from the running `claude` process without needing any session file on disk.
+
+**Mechanism:**
+1. `req.socket.remotePort` — TCP source port of the connecting Claude Code process (available on first byte of the HTTP request)
+2. `lsof -n -P -i 4TCP@127.0.0.1:<remotePort>` — find which PID owns that connection; filter out `process.pid` (proxy itself)
+3. `lsof -p <pid> -F n -a -d cwd` — get CWD of that process (~50ms total for both calls)
+4. Resolve repository via `readGitRemoteLocal(cwd)` + `extractRepository(cwd)` fallback
+5. Cache in `sessionRepositoryMap[cliSessionId]`
+
+**macOS-only:** Claude Desktop runs on macOS only; `lsof` is always available. No fallback to other platforms needed.
+
+**Files to modify:**
+- `src/providers/plugins/sso/proxy/proxy-types.ts` — add `remotePort?: number` to `ProxyContext`
+- `src/providers/plugins/sso/proxy/sso.proxy.ts` `buildContext()` — add `remotePort: req.socket?.remotePort`
+- `src/providers/plugins/sso/proxy/plugins/header-injection.plugin.ts` — add `findWorkingDirViaProcess(remotePort, proxyPort)` function; call it first; fall through to Fix 3 on failure
+
+**Lookup order in `onRequest` (all requests with `x-claude-code-session-id`):**
+```
+1. sessionRepositoryMap.has(cliSessionId)                → cached hit, skip
+2. findWorkingDirViaProcess(remotePort)                   → Fix 4: subprocess TCP → --add-dir (~50ms)
+3. findWorkingDirForSession(cliSessionId)                 → Fix 3: session file scan
+4. findWorkingDirForDesktopDirectRequest(remotePort)      → Fix 4B: process tree descent (~100ms)
+                                                             (only if body > 1 KB)
+5. sessionRepositoryMap.get('__last_desktop_repo__')      → fallback: last repo from Fix 4/4B
+6. 'Default', cached under cliSessionId                   → all lookups failed
+```
+
+**Requests without `x-claude-code-session-id`** (95-byte ping):
+```
+→ config.repository ?? 'Default'   (no lookup at all)
+```
 
 ## Planned Diff (new approach)
 
