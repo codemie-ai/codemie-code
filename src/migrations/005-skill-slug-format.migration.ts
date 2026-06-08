@@ -18,24 +18,27 @@ class SkillSlugFormatMigration implements Migration {
     const workingDir = process.cwd();
     let migrated = false;
 
-    const globalConfig = await ConfigLoader.loadMultiProviderConfig();
+    const hasGlobal = await ConfigLoader.hasGlobalConfig();
+    if (hasGlobal) {
+      const globalConfig = await ConfigLoader.loadMultiProviderConfig();
 
-    const hasProfileLevelSkills = Object.values(globalConfig.profiles).some(
-      p => (p as any).codemieSkills?.length > 0
-    );
-    if (hasProfileLevelSkills && !globalConfig.codemieSkills?.length) {
-      throw new ConfigurationError(
-        '005-skill-slug-format migration requires migration 004 (move-skills-to-top-level) to have run first. ' +
-        'Skills are still stored inside profiles rather than at the top-level config.'
+      const hasProfileLevelSkills = Object.values(globalConfig.profiles).some(
+        p => (p as any).codemieSkills?.length > 0
       );
-    }
+      if (hasProfileLevelSkills && !globalConfig.codemieSkills?.length) {
+        throw new ConfigurationError(
+          '005-skill-slug-format migration requires migration 004 (move-skills-to-top-level) to have run first. ' +
+          'Skills are still stored inside profiles rather than at the top-level config.'
+        );
+      }
 
-    const globalSkillsDir = path.join(os.homedir(), '.claude', 'skills');
-    const { config: migratedGlobal, changed: globalChanged } =
-      await this.migrateSkillSlugs(globalConfig, StorageScope.GLOBAL, globalSkillsDir);
-    if (globalChanged) {
-      await ConfigLoader.saveMultiProviderConfig(migratedGlobal);
-      migrated = true;
+      const globalSkillsDir = path.join(os.homedir(), '.claude', 'skills');
+      const { config: migratedGlobal, changed: globalChanged } =
+        await this.migrateSkillSlugs(globalConfig, StorageScope.GLOBAL, globalSkillsDir);
+      if (globalChanged) {
+        await ConfigLoader.saveMultiProviderConfig(migratedGlobal);
+        migrated = true;
+      }
     }
 
     const hasLocal = await ConfigLoader.hasProjectConfig(workingDir);
