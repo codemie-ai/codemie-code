@@ -306,6 +306,7 @@ describe.runIf(INCLUDE_JWT_TESTS)('Interactive session tests', () => {
   // and returns a number in the range 1-10.
   describe('TC-025 — skill slash command in running session', () => {
     let testHome: string;
+    const skillName = process.env.CI_CODEMIE_SKILL_NAME ?? 'random-generator';
 
     beforeAll(async () => {
       testHome = mkdtempSync(join(getTempDir(), 'codemie-interactive-skill-'));
@@ -348,7 +349,7 @@ describe.runIf(INCLUDE_JWT_TESTS)('Interactive session tests', () => {
         setupProc.write('\x1B[A');                       // Arrow Up → focus search box
         await new Promise((r) => setTimeout(r, 200));
         // Type letter-by-letter — the search field processes one keypress at a time
-        for (const char of 'random-generator') {
+        for (const char of skillName) {
           setupProc.write(char);
           await new Promise((r) => setTimeout(r, 50));
         }
@@ -387,7 +388,7 @@ describe.runIf(INCLUDE_JWT_TESTS)('Interactive session tests', () => {
         await proc.waitFor(/Model\s*[│|]/i, 60_000);
         await proc.waitFor(/╰─/, 60_000);
         await new Promise((r) => setTimeout(r, 1_000));
-        proc.writeLine('/random-generator hi');
+        proc.writeLine(`/${skillName} hi`);
         await proc.waitFor(/\b([1-9]|10)\b/, 90_000).catch((err: unknown) => {
           try {
             writeFileSync(join(testHome, 'pty-debug.txt'), proc.lines().join('\n'));
