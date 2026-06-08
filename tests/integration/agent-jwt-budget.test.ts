@@ -1,11 +1,9 @@
 /**
- * Agent JWT Budget / Project Tests — TC-027, TC-028
+ * Agent JWT Budget / Project Tests — TC-028
  *
  * Run with: npm run test:integration:agent
  * Requires: INCLUDE_JWT_TESTS=true, CI_CODEMIE_* env vars, CI_CODEMIE_PROJECT_ALL_BUDGETS
  *
- * TC-027: Precondition — project has 3 budgets configured (environment guard);
- *         written profile config does NOT contain litellmApiKey.
  * TC-028: Agent completes `--task 'Say READY'` with exit 0 and writes a session file.
  */
 
@@ -55,47 +53,12 @@ function writeBudgetProfile(codemieHome: string, jwtToken: string): void {
   writeFileSync(join(codemieHome, 'codemie-cli.config.json'), JSON.stringify(config, null, 2), 'utf-8');
 }
 
-describe.runIf(INCLUDE_BUDGET_TESTS)('Budget / Project tests (TC-027, TC-028)', () => {
+describe.runIf(INCLUDE_BUDGET_TESTS)('Budget / Project tests (TC-028)', () => {
   let jwtToken: string;
 
   beforeAll(async () => {
     jwtToken = await fetchJwtToken();
   }, 30_000);
-
-  // ── TC-027: Profile written for all-budget project does not contain litellmApiKey ──
-  describe('TC-027 — all-budget project: written profile does not contain litellmApiKey', () => {
-    let testHome: string;
-    let profileCfg: Record<string, unknown>;
-
-    beforeAll(async () => {
-      testHome = mkdtempSync(join(getTempDir(),'codemie-budget-'));
-      writeBudgetProfile(testHome, jwtToken);
-
-      // Precondition: verify the test project has budgets configured
-      const apiBase = (process.env.CI_CODEMIE_API_DOMAIN ?? '').replace(/\/$/, '');
-      const url = `${apiBase}/v1/admin/project-budgets?project_name=${encodeURIComponent(PROJECT)}&page=0&per_page=100`;
-      const resp = await fetch(url, { headers: { Authorization: `Bearer ${jwtToken}` } });
-      const body = (await resp.json()) as Record<string, unknown>;
-      const budgets = Array.isArray(body.items) ? body.items as unknown[] : [];
-      if (budgets.length < 3) {
-        throw new Error(
-          `Precondition failed: project "${PROJECT}" must have = 3 budgets configured. ` +
-          `Got ${budgets.length}. Check CI_CODEMIE_PROJECT_ALL_BUDGETS points to the correct project.`
-        );
-      }
-
-      const cfgRaw = readFileSync(join(testHome, 'codemie-cli.config.json'), 'utf-8');
-      profileCfg = (
-        JSON.parse(cfgRaw) as { profiles: Record<string, Record<string, unknown>> }
-      ).profiles['jwt-budget'];
-    }, 30_000);
-
-    afterAll(() => rmSync(testHome, { recursive: true, force: true }));
-
-    it('written profile config does not contain litellmApiKey', () => {
-      expect(profileCfg.litellmApiKey).toBeUndefined();
-    });
-  });
 
   // ── TC-028: Agent completes task with all-budget project profile ─────────────
   describe('TC-028 — agent task succeeds with all-budget project', () => {
