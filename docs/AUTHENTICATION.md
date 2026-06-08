@@ -115,30 +115,14 @@ AI/Run CodeMie SSO provides enterprise-grade features:
 
 ## JWT Bearer Authorization
 
-For environments with external token management systems, CI/CD pipelines, or testing scenarios, CodeMie CLI supports JWT Bearer Authorization. This method provides tokens at runtime rather than during setup.
-
-### Initial Setup
-
-JWT setup only requires the API URL - tokens are provided later:
-
-```bash
-codemie setup
-# Select: Bearer Authorization
-```
-
-**The wizard will:**
-1. Prompt for the CodeMie base URL (e.g., `https://codemie.lab.epam.com`)
-2. Optionally ask for a custom environment variable name (default: `CODEMIE_JWT_TOKEN`)
-3. Save the configuration without requiring a token
-4. Display instructions for providing tokens at runtime
+For environments with external token management systems, CI/CD pipelines, or testing scenarios, CodeMie CLI supports JWT Bearer Authorization. This method provides tokens at runtime.
 
 ### Providing JWT Tokens
 
-Tokens can be provided in three ways, resolved in this priority order:
+Tokens can be provided in two ways, resolved in this priority order:
 
 1. `--jwt-token <token>` CLI flag (highest priority)
 2. `CODEMIE_JWT_TOKEN` environment variable
-3. Credential store (saved by `codemie setup`)
 
 **Environment Variable (Recommended for persistent use):**
 ```bash
@@ -164,13 +148,6 @@ codemie-claude \
   --jwt-token "<YOUR_JWT_TOKEN>" \
   --base-url "https://codemie.lab.epam.com" \
   "analyze this code"
-```
-
-**Custom Environment Variable:**
-```bash
-# If you configured a custom env var name during setup
-export MY_CUSTOM_TOKEN="<YOUR_JWT_TOKEN>"
-codemie-claude "analyze this code"
 ```
 
 ### JWT Token Management
@@ -240,7 +217,7 @@ codemie-claude --task "run a quick code review"
 
 | Feature | JWT Bearer Auth | CodeMie SSO |
 |---------|----------------|-------------|
-| **Setup** | URL only | Browser-based flow |
+| **Setup** | None required | Browser-based flow |
 | **Token Source** | Runtime (CLI/env) | Stored in keychain |
 | **Best For** | CI/CD, external auth | Interactive development |
 | **Token Refresh** | Manual (obtain new token) | Automatic |
@@ -252,9 +229,6 @@ codemie-claude --task "run a quick code review"
 ```bash
 # Check environment variable
 echo $CODEMIE_JWT_TOKEN
-
-# Verify variable name matches config
-codemie profile status
 
 # Provide via CLI instead
 codemie-claude --jwt-token "your-token" "your prompt"
@@ -274,15 +248,6 @@ codemie doctor
 # JWT must have 3 parts (header.payload.signature)
 # Check token structure
 echo $CODEMIE_JWT_TOKEN | awk -F. '{print NF}'  # Should output: 3
-```
-
-**Configuration issues:**
-```bash
-# Reset and reconfigure
-codemie setup  # Choose Bearer Authorization again
-
-# Or manually edit config
-cat ~/.codemie/codemie-cli.config.json
 ```
 
 ## MCP Server Authentication
