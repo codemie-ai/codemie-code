@@ -141,8 +141,10 @@ class HeaderInjectionInterceptor implements ProxyInterceptor {
           const repository = (await readGitRemoteLocal(workingDir)) ?? extractRepository(workingDir);
           config.sessionRepositoryMap.set(cliSessionId, repository);
           config.lastDesktopRepo = { repo: repository, ts: Date.now() };
+          const branch = await readGitBranchLocal(workingDir);
+          if (branch) context.headers['X-CodeMie-Branch'] = branch;
           logger.debug('[header-injection] Resolved repository via targeted lookup', {
-            cliSessionId, workingDir, repository,
+            cliSessionId, workingDir, repository, branch,
           });
         } else {
           // Last resort: reuse the most recently resolved Desktop repo. The 30 s TTL ensures
@@ -215,6 +217,18 @@ async function readGitRemoteLocal(dir: string): Promise<string | null> {
     if (!match) return null;
     const repo = extractRepository(match[1].trim());
     return repo.endsWith('.git') ? repo.slice(0, -4) : repo;
+  } catch {
+    return null;
+  }
+}
+
+// Reads .git/HEAD to get the current branch name. Not cached — branch can change
+// within a session when user switches branches in the Desktop Code tab.
+async function readGitBranchLocal(dir: string): Promise<string | null> {
+  try {
+    const head = (await readFile(join(dir, '.git', 'HEAD'), 'utf-8')).trim();
+    const match = head.match(/^ref: refs\/heads\/(.+)$/);
+    return match?.[1] ?? null;
   } catch {
     return null;
   }
