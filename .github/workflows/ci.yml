@@ -151,6 +151,20 @@ jobs:
     name: Test (Ubuntu)
     runs-on: ubuntu-latest
     needs: [build]
+    env:
+      INCLUDE_JWT_TESTS: ${{ vars.INCLUDE_JWT_TESTS }}
+      CI_CODEMIE_URL: ${{ vars.CI_CODEMIE_URL }}
+      CI_CODEMIE_API_DOMAIN: ${{ vars.CI_CODEMIE_API_DOMAIN }}
+      CI_CODEMIE_USERNAME: ${{ vars.CI_CODEMIE_USERNAME }}
+      CI_CODEMIE_PASSWORD: ${{ vars.CI_CODEMIE_PASSWORD }}
+      CI_CODEMIE_AUTH_URL: ${{ vars.CI_CODEMIE_AUTH_URL }}
+      CI_CODEMIE_AUTH_CLIENT_ID: ${{ vars.CI_CODEMIE_AUTH_CLIENT_ID }}
+      CI_CODEMIE_MODEL: ${{ vars.CI_CODEMIE_MODEL }}
+      CI_CODEMIE_ASSISTANT_ID: ${{ vars.CI_CODEMIE_ASSISTANT_ID }}
+      CI_CODEMIE_ASSISTANT_NAME: ${{ vars.CI_CODEMIE_ASSISTANT_NAME }}
+      CI_CODEMIE_PROJECT_ALL_BUDGETS: ${{ vars.CI_CODEMIE_PROJECT_ALL_BUDGETS }}
+      CI_CODEMIE_SKILL_NAME: ${{ vars.CI_CODEMIE_SKILL_NAME }}
+      CI_AGENT_MAX_WORKERS: ${{ vars.CI_AGENT_MAX_WORKERS }}
 
     steps:
       - name: Checkout code
@@ -182,6 +196,20 @@ jobs:
     name: Test (Windows)
     runs-on: windows-latest
     needs: [build]
+    env:
+      INCLUDE_JWT_TESTS: ${{ vars.INCLUDE_JWT_TESTS }}
+      CI_CODEMIE_URL: ${{ vars.CI_CODEMIE_URL }}
+      CI_CODEMIE_API_DOMAIN: ${{ vars.CI_CODEMIE_API_DOMAIN }}
+      CI_CODEMIE_USERNAME: ${{ vars.CI_CODEMIE_USERNAME }}
+      CI_CODEMIE_PASSWORD: ${{ vars.CI_CODEMIE_PASSWORD }}
+      CI_CODEMIE_AUTH_URL: ${{ vars.CI_CODEMIE_AUTH_URL }}
+      CI_CODEMIE_AUTH_CLIENT_ID: ${{ vars.CI_CODEMIE_AUTH_CLIENT_ID }}
+      CI_CODEMIE_MODEL: ${{ vars.CI_CODEMIE_MODEL }}
+      CI_CODEMIE_ASSISTANT_ID: ${{ vars.CI_CODEMIE_ASSISTANT_ID }}
+      CI_CODEMIE_ASSISTANT_NAME: ${{ vars.CI_CODEMIE_ASSISTANT_NAME }}
+      CI_CODEMIE_PROJECT_ALL_BUDGETS: ${{ vars.CI_CODEMIE_PROJECT_ALL_BUDGETS }}
+      CI_CODEMIE_SKILL_NAME: ${{ vars.CI_CODEMIE_SKILL_NAME }}
+      CI_AGENT_MAX_WORKERS: ${{ vars.CI_AGENT_MAX_WORKERS }}
 
     steps:
       - name: Checkout code
