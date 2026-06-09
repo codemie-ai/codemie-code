@@ -44,10 +44,12 @@ const SCOPES     = [
   'ChannelMessage.Read.All', 'ChannelMessage.Send',
   'OnlineMeetingTranscript.Read.All', 'OnlineMeetings.Read',
   'People.Read', 'Contacts.Read', 'offline_access',
-  'Notes.Read', 'Notes.ReadWrite',
+  'Notes.Read', 'Notes.ReadWrite', 'OnlineMeetingAiInsight.Read.All', 'Tasks.ReadWrite',
+  'Group.Read.All',
 ].join(' ');
 const CACHE_FILE  = path.join(os.homedir(), '.ms_graph_token_cache.json');
 const GRAPH_BASE  = 'https://graph.microsoft.com/v1.0';
+const GRAPH_BETA  = 'https://graph.microsoft.com/beta';
 const TIMEOUT_MS  = 5 * 60 * 1000;
 
 // ── HTTP Helpers ──────────────────────────────────────────────────────────────
@@ -109,6 +111,21 @@ async function graphPost(endpoint, token, body) {
       'Content-Length': Buffer.byteLength(bodyStr),
     },
   }, bodyStr);
+  return res.body ? JSON.parse(res.body) : {};
+}
+
+async function graphPatch(endpoint, token, body, extraHeaders = {}) {
+  const bodyStr = JSON.stringify(body);
+  const res = await httpsRequest(`${GRAPH_BASE}${endpoint}`, {
+    method:  'PATCH',
+    headers: {
+      Authorization:    `Bearer ${token}`,
+      'Content-Type':   'application/json',
+      'Content-Length': Buffer.byteLength(bodyStr),
+      ...extraHeaders,
+    },
+  }, bodyStr);
+  // Planner PATCH returns 204 with an empty body unless Prefer: return=representation is sent.
   return res.body ? JSON.parse(res.body) : {};
 }
 
@@ -340,6 +357,15 @@ function fmtDt(iso) {
   if (!iso) return 'N/A';
   try { return new Date(iso).toISOString().slice(0, 16).replace('T', ' '); }
   catch { return (iso || '').slice(0, 16).replace('T', ' '); }
+}
+
+// Formats a Graph dateTimeTimeZone object ({ dateTime, timeZone }). To Do returns a
+// zone-less dateTime, so a UTC value would otherwise be parsed as local time by fmtDt.
+function fmtDtTz(dtz) {
+  if (!dtz?.dateTime) return 'N/A';
+  let s = dtz.dateTime;
+  if (!/[zZ]|[+-]\d{2}:\d{2}$/.test(s) && (dtz.timeZone || '').toUpperCase() === 'UTC') s += 'Z';
+  return fmtDt(s);
 }
 
 function fmtSize(n) {
@@ -750,8 +776,134 @@ async function cmdChannels(args) {
   console.log('         --team-id ID --channel-id ID --send MSG');
 }
 
+// ── Meeting AI Insights (Copilot recap) ────────────────────────────────────────
+// Lives in the Microsoft 365 Copilot API namespace and is keyed by user object ID
+// (not /me). The aiInsights navigation is documented under beta, so try v1.0 first
+// and fall back to beta on 404. Requires a Microsoft 365 Copilot license.
+async function getAiInsights(token, oid, meetingId, insightId) {
+  const suffix = insightId ? `/${insightId}` : '';
+  const ep     = `/copilot/users/${oid}/onlineMeetings/${meetingId}/aiInsights${suffix}`;
+  const headers = { Authorization: `Bearer ${token}` };
+  try {
+    const res = await httpsRequest(`${GRAPH_BASE}${ep}`, { headers });
+    return JSON.parse(res.body);
+  } catch (err) {
+    if (err.statusCode === 404) {
+      const res = await httpsRequest(`${GRAPH_BETA}${ep}`, { headers });
+      return JSON.parse(res.body);
+    }
+    throw err;
+  }
+}
+
+async function printMeetingInsights(token, oid, meetingId, args) {
+  let list;
+  try {
+    list = await getAiInsights(token, oid, meetingId);
+  } catch (err) {
+    if (err.statusCode === 403) {
+      console.error('AI insights require a Microsoft 365 Copilot license (and transcription/recording enabled for the meeting).');
+      return;
+    }
+    if (err.statusCode === 404) {
+      console.log('No AI insights available for this meeting (none generated yet, or unsupported meeting type).');
+      return;
+    }
+    throw err;
+  }
+
+  const insights = list.value || [];
+  if (!insights.length) {
+    console.log('No AI insights yet. Insights generate after the meeting ends and can take up to 4 hours.');
+    return;
+  }
+
+  const full = [];
+  for (const ins of insights) {
+    try { full.push(await getAiInsights(token, oid, meetingId, ins.id)); }
+    catch { full.push(ins); }
+  }
+
+  if (args.json) { console.log(JSON.stringify(full, null, 2)); return; }
+
+  for (const ai of full) {
+    console.log(`\n${'═'.repeat(60)}`);
+    console.log(`AI Insight ${ai.id || ''}  (${fmtDt(ai.createdDateTime)})`);
+
+    const notes = ai.meetingNotes || [];
+    if (notes.length) {
+      console.log('\nMeeting Notes:');
+      for (const n of notes) {
+        console.log(`  • ${n.title || ''}`);
+        if (n.text) console.log(`    ${n.text}`);
+        for (const sp of n.subpoints || []) {
+          console.log(`      – ${sp.title || ''}`);
+          if (sp.text) console.log(`        ${sp.text}`);
+        }
+      }
+    }
+
+    const items = ai.actionItems || [];
+    if (items.length) {
+      console.log('\nAction Items:');
+      for (const it of items)
+        console.log(`  ☐ ${it.title || ''}${it.ownerDisplayName ? `  (owner: ${it.ownerDisplayName})` : ''}`);
+    }
+
+    const mentions = ai.viewpoint?.mentionEvents || [];
+    if (mentions.length) {
+      console.log('\nMentions:');
+      for (const m of mentions)
+        console.log(`  @ ${fmtDt(m.eventDateTime)} ${m.speaker?.user?.displayName || ''}: ${(m.transcriptUtterance || '').slice(0, 200)}`);
+    }
+  }
+}
+
+async function cmdTranscriptsInsights(args, token) {
+  const me  = await graphGet('/me', token, { $select: 'id' });
+  const oid = me.id;
+
+  // Direct meeting ID short-circuits resolution.
+  if (args.meeting) {
+    await printMeetingInsights(token, oid, args.meeting, args);
+    return;
+  }
+
+  // Otherwise resolve online meetings via the calendar (same approach as --subject).
+  const startDate = args.start || new Date(Date.now() - 7 * 86400 * 1000).toISOString().slice(0, 10);
+  const endDate   = args.end || startDate;
+  const data = await graphGet('/me/calendarView', token, {
+    startDateTime: startDate + 'T00:00:00Z',
+    endDateTime:   endDate + 'T23:59:59Z',
+    $select:  'subject,start,isOnlineMeeting,onlineMeeting',
+    $top:     50,
+    $orderby: 'start/dateTime',
+  });
+  let events = (data.value || []).filter(e => e.isOnlineMeeting && e.onlineMeeting?.joinUrl);
+  if (args.subject) {
+    const kw = args.subject.toLowerCase();
+    events = events.filter(e => (e.subject || '').toLowerCase().includes(kw));
+  }
+  if (!events.length) { console.log('No matching online meetings found in range.'); return; }
+
+  for (const e of events) {
+    let meetingId = null;
+    try {
+      const om = await graphGet('/me/onlineMeetings', token, { $filter: `joinWebUrl eq '${e.onlineMeeting.joinUrl}'` });
+      meetingId = (om.value || [])[0]?.id || null;
+    } catch (err) {
+      console.log(`Could not resolve meeting ID for "${e.subject}": ${err.message}`);
+    }
+    if (!meetingId) continue;
+    console.log(`\nMeeting: ${e.subject}  (${fmtDt(e.start?.dateTime)})  — ${meetingId}`);
+    await printMeetingInsights(token, oid, meetingId, args);
+  }
+}
+
 async function cmdTranscripts(args) {
   const token = await getValidToken();
+
+  if (args.insights) return cmdTranscriptsInsights(args, token);
 
   if (args.list || (!args.meeting && !args.download)) {
     const startDate = args.start || new Date(Date.now() - 7 * 86400 * 1000).toISOString().slice(0, 10);
@@ -1161,10 +1313,179 @@ async function cmdOnenote(args) {
   console.log('         --create TITLE --section SECTION_ID [--body CONTENT]');
 }
 
+async function cmdPlanner(args) {
+  const token = await getValidToken();
+  const limit = parseInt(args.limit) || 20;
+
+  // Plans shared with me (single call; plans live in M365 groups → needs Group.Read.All).
+  // Planner rejects OData params ($top/$select/$filter return HTTP 400) — fetch all, slice client-side.
+  if (args.plans) {
+    const data  = await graphGet('/me/planner/plans', token);
+    const plans = (data.value || []).slice(0, limit);
+    if (args.json) { console.log(JSON.stringify(plans, null, 2)); return; }
+    if (!plans.length) { console.log('No plans found.'); return; }
+    console.log(`\n${'Plan ID'.padEnd(30)}  Title`);
+    console.log('─'.repeat(70));
+    for (const p of plans)
+      console.log(`${(p.id || '').padEnd(30)}  ${p.title || '(untitled)'}`);
+    return;
+  }
+
+  // Tasks assigned to me (returns planId/bucketId only — no names). No OData params on Planner.
+  if (args.myTasks) {
+    const data  = await graphGet('/me/planner/tasks', token);
+    const tasks = (data.value || []).slice(0, limit);
+    if (args.json) { console.log(JSON.stringify(tasks, null, 2)); return; }
+    if (!tasks.length) { console.log('No tasks assigned to you.'); return; }
+    console.log(`\n${'Task ID'.padEnd(30)}  ${'%'.padEnd(4)}  ${'Due'.padEnd(16)}  Title`);
+    console.log('─'.repeat(80));
+    for (const t of tasks) {
+      const due = t.dueDateTime ? fmtDt(t.dueDateTime) : '';
+      console.log(`${(t.id || '').padEnd(30)}  ${String(t.percentComplete ?? 0).padEnd(4)}  ${pad(due, 16)}  ${t.title || '(untitled)'}`);
+    }
+    return;
+  }
+
+  // Buckets (columns) in a plan.
+  if (args.planId && args.buckets) {
+    const data    = await graphGet(`/planner/plans/${args.planId}/buckets`, token);
+    const buckets = data.value || [];
+    if (args.json) { console.log(JSON.stringify(buckets, null, 2)); return; }
+    if (!buckets.length) { console.log('No buckets found.'); return; }
+    console.log(`\n${'Bucket ID'.padEnd(30)}  Name`);
+    console.log('─'.repeat(70));
+    for (const b of buckets)
+      console.log(`${(b.id || '').padEnd(30)}  ${b.name || '(unnamed)'}`);
+    return;
+  }
+
+  // Create a task in a plan.
+  if (args.planId && typeof args.create === 'string') {
+    const payload = { planId: args.planId, title: args.create };
+    if (args.bucketId) payload.bucketId = args.bucketId;
+    if (args.due)      payload.dueDateTime = `${args.due}T00:00:00Z`;
+    if (args.assign) {
+      payload.assignments = {
+        [args.assign]: { '@odata.type': '#microsoft.graph.plannerAssignment', orderHint: ' !' },
+      };
+    }
+    const task = await graphPost('/planner/tasks', token, payload);
+    console.log(`Task created: ${task.title || args.create}`);
+    console.log(`ID: ${task.id}`);
+    return;
+  }
+
+  // Tasks in a plan. No OData params on Planner.
+  if (args.planId && args.tasks) {
+    const data  = await graphGet(`/planner/plans/${args.planId}/tasks`, token);
+    const tasks = (data.value || []).slice(0, limit);
+    if (args.json) { console.log(JSON.stringify(tasks, null, 2)); return; }
+    if (!tasks.length) { console.log('No tasks in this plan.'); return; }
+    console.log(`\n${'Task ID'.padEnd(30)}  ${'%'.padEnd(4)}  ${'Due'.padEnd(16)}  Title`);
+    console.log('─'.repeat(80));
+    for (const t of tasks) {
+      const due = t.dueDateTime ? fmtDt(t.dueDateTime) : '';
+      console.log(`${(t.id || '').padEnd(30)}  ${String(t.percentComplete ?? 0).padEnd(4)}  ${pad(due, 16)}  ${t.title || '(untitled)'}`);
+    }
+    return;
+  }
+
+  // Mark a task complete: read its etag, then PATCH percentComplete to 100.
+  if (typeof args.complete === 'string') {
+    const task = await graphGet(`/planner/tasks/${args.complete}`, token);
+    const etag = task['@odata.etag'];
+    if (!etag) { console.error('Could not read the task etag; cannot update.'); process.exit(1); }
+    await graphPatch(`/planner/tasks/${args.complete}`, token, { percentComplete: 100 }, { 'If-Match': etag });
+    console.log(`Task marked complete: ${task.title || args.complete}`);
+    return;
+  }
+
+  // Single task detail (+ description/checklist from /details).
+  if (args.taskId) {
+    const task    = await graphGet(`/planner/tasks/${args.taskId}`, token);
+    let   details = {};
+    try { details = await graphGet(`/planner/tasks/${args.taskId}/details`, token); } catch {}
+    if (args.json) { console.log(JSON.stringify({ ...task, details }, null, 2)); return; }
+    console.log(`Title      : ${task.title || '(untitled)'}`);
+    console.log(`% Complete : ${task.percentComplete ?? 0}`);
+    console.log(`Due        : ${task.dueDateTime ? fmtDt(task.dueDateTime) : 'N/A'}`);
+    console.log(`Bucket ID  : ${task.bucketId || 'N/A'}`);
+    console.log(`Plan ID    : ${task.planId || 'N/A'}`);
+    if (details.description) console.log(`\nDescription:\n${details.description}`);
+    return;
+  }
+
+  console.log('Planner: --plans | --my-tasks');
+  console.log('         --plan-id ID --tasks | --plan-id ID --buckets');
+  console.log('         --plan-id ID --create "TITLE" [--bucket-id ID] [--due YYYY-MM-DD] [--assign USER_ID]');
+  console.log('         --task-id ID | --complete TASK_ID');
+}
+
+async function cmdTodo(args) {
+  const token = await getValidToken();
+  const limit = parseInt(args.limit) || 20;
+
+  if (args.lists) {
+    const data  = await graphGet('/me/todo/lists', token, { $top: limit });
+    const lists = data.value || [];
+    if (args.json) { console.log(JSON.stringify(lists, null, 2)); return; }
+    if (!lists.length) { console.log('No task lists found.'); return; }
+    console.log(`\n${'List ID'.padEnd(50)}  Name`);
+    console.log('─'.repeat(80));
+    for (const l of lists)
+      console.log(`${(l.id || '').padEnd(50)}  ${l.displayName || '(unnamed)'}`);
+    return;
+  }
+
+  if (!args.listId) {
+    console.log('To Do: --lists');
+    console.log('       --list-id ID --tasks');
+    console.log('       --list-id ID --create "TITLE" [--body TEXT] [--due YYYY-MM-DD]');
+    console.log('       --list-id ID --complete TASK_ID');
+    return;
+  }
+
+  // Create a task in a list.
+  if (typeof args.create === 'string') {
+    const payload = { title: args.create };
+    if (args.body) payload.body = { content: args.body, contentType: 'text' };
+    if (args.due)  payload.dueDateTime = { dateTime: `${args.due}T00:00:00.000000`, timeZone: 'UTC' };
+    const task = await graphPost(`/me/todo/lists/${args.listId}/tasks`, token, payload);
+    console.log(`Task created: ${task.title || args.create}`);
+    console.log(`ID: ${task.id}`);
+    return;
+  }
+
+  // Mark a task complete (To Do needs no etag).
+  if (typeof args.complete === 'string') {
+    await graphPatch(`/me/todo/lists/${args.listId}/tasks/${args.complete}`, token, { status: 'completed' });
+    console.log(`Task marked complete: ${args.complete}`);
+    return;
+  }
+
+  // Tasks in a list.
+  if (args.tasks) {
+    const data  = await graphGet(`/me/todo/lists/${args.listId}/tasks`, token, { $top: limit });
+    const tasks = data.value || [];
+    if (args.json) { console.log(JSON.stringify(tasks, null, 2)); return; }
+    if (!tasks.length) { console.log('No tasks in this list.'); return; }
+    console.log(`\n${'Task ID'.padEnd(50)}  ${'Status'.padEnd(12)}  Title`);
+    console.log('─'.repeat(80));
+    for (const t of tasks) {
+      const due = t.dueDateTime?.dateTime ? `  (due ${fmtDtTz(t.dueDateTime)})` : '';
+      console.log(`${(t.id || '').padEnd(50)}  ${(t.status || '').padEnd(12)}  ${t.title || '(untitled)'}${due}`);
+    }
+    return;
+  }
+
+  console.log('To Do: --list-id ID --tasks | --create "TITLE" | --complete TASK_ID');
+}
+
 // ── CLI Parser ────────────────────────────────────────────────────────────────
 function parseArgs(argv) {
   const BOOL = new Set(['json','unread','sites','chats','teamsList','contacts',
-    'manager','reports','availability','notebooks','list','messages','vtt','help','force']);
+    'manager','reports','availability','notebooks','list','messages','vtt','help','force',
+    'plans','buckets','tasks','myTasks','lists','insights']);
   const args = { _: [] };
   let i = 0;
   while (i < argv.length) {
@@ -1216,8 +1537,16 @@ Data:
   onenote [--notebooks] [--sections NOTEBOOK_ID] [--pages SECTION_ID]
           [--read PAGE_ID] [--search QUERY] [--limit N] [--json]
           [--create TITLE --section SECTION_ID [--body CONTENT]]
+  planner [--plans] [--my-tasks]
+          [--plan-id ID --tasks] [--plan-id ID --buckets]
+          [--plan-id ID --create "TITLE" [--bucket-id ID] [--due YYYY-MM-DD] [--assign USER_ID]]
+          [--task-id ID] [--complete TASK_ID] [--json]
+  todo [--lists] [--list-id ID --tasks]
+       [--list-id ID --create "TITLE" [--body TEXT] [--due YYYY-MM-DD]]
+       [--list-id ID --complete TASK_ID] [--json]
   transcripts [--start YYYY-MM-DD] [--end YYYY-MM-DD] [--subject KEYWORD]
               [--meeting ID] [--transcript ID] [--output FILE] [--vtt]
+              [--insights]   (AI meeting recap — requires Microsoft 365 Copilot)
 
 Add --json to any command for machine-readable output.
 `);
@@ -1245,6 +1574,8 @@ async function main() {
     people:      () => cmdPeople(args),
     org:         () => cmdOrg(args),
     onenote:     () => cmdOnenote(args),
+    planner:     () => cmdPlanner(args),
+    todo:        () => cmdTodo(args),
     transcripts: () => cmdTranscripts(args),
     claims:      () => cmdClaims(args),
     help:        () => { printHelp(); process.exit(0); },
