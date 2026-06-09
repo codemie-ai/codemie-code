@@ -44,7 +44,7 @@ const SCOPES     = [
   'ChannelMessage.Read.All', 'ChannelMessage.Send',
   'OnlineMeetingTranscript.Read.All', 'OnlineMeetings.Read',
   'People.Read', 'Contacts.Read', 'offline_access',
-  'Notes.Read', 'Notes.ReadWrite',
+  'Notes.Read', 'Notes.ReadWrite', 'OnlineMeetingAiInsight.Read.All',
 ].join(' ');
 const CACHE_FILE  = path.join(os.homedir(), '.ms_graph_token_cache.json');
 const GRAPH_BASE  = 'https://graph.microsoft.com/v1.0';
