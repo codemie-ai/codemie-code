@@ -2,14 +2,15 @@
 name: msgraph
 description: >
   Work with Microsoft 365 services via the Graph API — emails, calendar events, SharePoint sites
-  (read and write), Teams chats and channel messages, OneDrive files, OneNote notebooks, contacts,
-  and org chart. Use this skill whenever the user asks about their emails, inbox, unread messages,
-  meetings, calendar, Teams messages or chats, channel messages, SharePoint documents, OneDrive
-  files, OneNote notes or notebooks, colleagues, manager, direct reports, or any
-  personal/organizational Microsoft data. Invoke proactively any time the user mentions Outlook,
-  Teams, SharePoint, OneDrive, OneNote, or wants to interact with their Microsoft 365 account.
-  The skill uses a local Node.js CLI (msgraph.js) that handles authentication, token caching,
-  and all API calls.
+  (read and write), Teams chats and channel messages, OneDrive files, OneNote notebooks, Planner
+  task boards, Microsoft To Do task lists, AI meeting insights (Copilot recap), contacts, and org
+  chart. Use this skill whenever the user asks about their emails, inbox, unread messages, meetings,
+  calendar, Teams messages or chats, channel messages, SharePoint documents, OneDrive files, OneNote
+  notes or notebooks, Planner plans or tasks, "my tasks", to-do lists, action items, meeting
+  summaries, colleagues, manager, direct reports, or any personal/organizational Microsoft data.
+  Invoke proactively any time the user mentions Outlook, Teams, SharePoint, OneDrive, OneNote,
+  Planner, Microsoft To Do, or wants to interact with their Microsoft 365 account. The skill uses a
+  local Node.js CLI (msgraph.js) that handles authentication, token caching, and all API calls.
 ---
 
 # Microsoft Graph API Skill
@@ -199,6 +200,61 @@ node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js onenote --create "M
 node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js onenote --notebooks --json
 ```
 
+### Planner
+
+Team/group task boards. Plans live inside Microsoft 365 groups, so `--plans` needs the
+`Group.Read.All` scope. Updates use optimistic concurrency under the hood (etag handling is
+automatic).
+
+```bash
+# List all plans shared with you (one call)
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js planner --plans
+
+# Tasks assigned to you across all plans (the usual starting point)
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js planner --my-tasks
+
+# List tasks in a specific plan (use ID from --plans)
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js planner --plan-id PLAN_ID --tasks
+
+# List buckets (columns) in a plan
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js planner --plan-id PLAN_ID --buckets
+
+# Show one task's details (description, % complete, due date)
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js planner --task-id TASK_ID
+
+# Create a task in a plan (bucket, due date and assignee are optional)
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js planner --plan-id PLAN_ID \
+  --create "Write release notes" --bucket-id BUCKET_ID --due 2026-06-20 --assign USER_AAD_ID
+
+# Mark a task complete (reads the etag, then sets it to 100%)
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js planner --complete TASK_ID
+
+# Machine-readable JSON output (on any read command)
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js planner --my-tasks --json
+```
+
+> `--my-tasks` returns only `planId`/`bucketId` (no names). To turn an ID into a readable
+> plan name, run `planner --plans`. Use `people --search NAME` to get a user's AAD ID for `--assign`.
+
+### To Do
+
+Personal Microsoft To Do task lists (simpler than Planner — flat lists of tasks).
+
+```bash
+# List your task lists
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js todo --lists
+
+# List tasks in a list (use ID from --lists)
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js todo --list-id LIST_ID --tasks
+
+# Create a task
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js todo --list-id LIST_ID \
+  --create "Renew certificate" --body "Before it expires" --due 2026-06-15
+
+# Mark a task complete
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js todo --list-id LIST_ID --complete TASK_ID
+```
+
 ### Channels
 
 ```bash
@@ -235,7 +291,17 @@ node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js transcripts --meeti
 
 # Download as VTT (timestamped captions format)
 node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js transcripts --meeting MEETING_ID --transcript TRANSCRIPT_ID --vtt --output meeting.vtt
+
+# AI meeting recap (Copilot-generated notes, action items, mentions) for a known meeting
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js transcripts --meeting MEETING_ID --insights
+
+# AI recap by date + subject (resolves the meeting for you)
+node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js transcripts --start 2026-06-09 --subject "planning" --insights
 ```
+
+> **AI Insights require a Microsoft 365 Copilot license.** Insights are generated only after a
+> meeting ends (with transcription/recording on) and can take up to 4 hours to appear. A `403`
+> means the Copilot license is missing; an empty result means insights aren't ready yet.
 
 ### People & Contacts
 
@@ -295,6 +361,27 @@ node ${CLAUDE_PLUGIN_ROOT}/skills/msgraph/scripts/msgraph.js people --contacts
 
 ### "Who's my manager?" / "Who reports to me?"
 - Run `org --manager` or `org --reports`
+
+### "What are my tasks?" / "What's on my Planner?"
+1. Run `planner --my-tasks` → tasks assigned to you across all plans
+2. Run `planner --plans` to map any `planId` in the output to a readable plan name
+3. Drill in with `planner --plan-id PLAN_ID --tasks` if the user wants a specific board
+4. Also check `todo --lists` then `todo --list-id LIST_ID --tasks` for personal To Do items
+
+### "Add a task to Planner" / "Create a to-do"
+1. Planner: run `planner --plans` (then `--buckets` if a column is needed) to get IDs, then
+   `planner --plan-id PLAN_ID --create "TITLE"` (add `--due`, `--assign`, `--bucket-id` as needed)
+2. To Do: run `todo --lists`, then `todo --list-id LIST_ID --create "TITLE"`
+
+### "Mark that task done"
+- Planner: `planner --complete TASK_ID`  ·  To Do: `todo --list-id LIST_ID --complete TASK_ID`
+
+### "Summarize yesterday's meeting" / "What were the action items?"
+1. Run `transcripts --start YYYY-MM-DD --subject "keyword" --insights` (resolves the meeting and
+   prints Copilot notes, action items, and mentions)
+2. Or, with a known meeting ID: `transcripts --meeting MEETING_ID --insights`
+3. If you get a `403`, tell the user a Microsoft 365 Copilot license is required; if empty, insights
+   may not be ready yet (up to 4 hours after the meeting ends)
 
 ---
 
