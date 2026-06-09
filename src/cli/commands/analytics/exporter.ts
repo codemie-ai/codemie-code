@@ -3,6 +3,7 @@
  */
 
 import { writeFileSync } from 'fs';
+import { join } from 'path';
 import type { RootAnalytics } from './types.js';
 import chalk from 'chalk';
 
@@ -92,7 +93,6 @@ export class AnalyticsExporter {
    */
   static getDefaultOutputPath(format: 'json' | 'csv', cwd: string): string {
     const timestamp = new Date().toISOString().split('T')[0];
-    const filename = `codemie-analytics-${timestamp}.${format}`;
-    return `${cwd}/${filename}`;
+    return join(cwd, `codemie-analytics-${timestamp}.${format}`);
   }
 }

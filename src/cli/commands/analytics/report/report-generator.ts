@@ -4,8 +4,8 @@
  * external data files — the result opens anywhere.
  */
 
-import { readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { getDirname } from '../../../../utils/paths.js';
 import type { ReportPayload } from './types.js';
 
@@ -45,6 +45,7 @@ export function generateReport(payload: ReportPayload, outputPath: string): void
   const chartJs = readFileSync(join(HERE, 'assets', 'chart.umd.js'), 'utf-8');
   const clientJs = readFileSync(join(HERE, 'client', 'app.js'), 'utf-8');
   const html = renderReportHtml({ template, css, chartJs, clientJs, payload });
+  mkdirSync(dirname(outputPath), { recursive: true });
   writeFileSync(outputPath, html, 'utf-8');
 }
 
@@ -55,17 +56,18 @@ export function generateReport(payload: ReportPayload, outputPath: string): void
  * only and must NOT be applied to a .json file on disk.
  */
 export function generateReportJson(payload: ReportPayload, outputPath: string): void {
+  mkdirSync(dirname(outputPath), { recursive: true });
   writeFileSync(outputPath, JSON.stringify(payload, null, 2), 'utf-8');
 }
 
 export function getDefaultReportPath(cwd: string): string {
   const date = new Date().toISOString().split('T')[0];
-  return `${cwd}/codemie-analytics-${date}.html`;
+  return join(cwd, `codemie-analytics-${date}.html`);
 }
 
 export function getDefaultReportJsonPath(cwd: string): string {
   const date = new Date().toISOString().split('T')[0];
   // `.report.json` (not `.json`) so the default never collides with `--export json`,
   // which writes the cost-less analytics tree to `codemie-analytics-<date>.json`.
-  return `${cwd}/codemie-analytics-${date}.report.json`;
+  return join(cwd, `codemie-analytics-${date}.report.json`);
 }
