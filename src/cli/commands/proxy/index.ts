@@ -341,6 +341,7 @@ export function createProxyCommand(): Command {
             telemetryMode: 'claude-desktop',
             syncApiUrl: config.ssoConfig?.apiUrl,
             syncCodeMieUrl: config.codeMieUrl,
+            apiKey: config.apiKey !== 'sso-provided' ? config.apiKey : undefined,
           });
           startedInThisRun = true;
           if (verbose) {
