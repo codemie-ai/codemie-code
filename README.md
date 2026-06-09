@@ -439,6 +439,7 @@ codemie self-update      # Update CodeMie CLI itself
 codemie profile          # Manage provider profiles
 codemie analytics        # View usage analytics (sessions, tokens, costs, tools)
 codemie analytics --report --open   # Self-contained HTML dashboard (7 views, cost, date range, light/dark, no server)
+codemie analytics --report --report-format json  # Same priced report data as JSON (--report-format html | json | both)
 codemie workflow <cmd>   # Manage CI/CD workflows
 codemie doctor           # Health check and diagnostics
 codemie mcp-proxy <url>  # Stdio-to-HTTP MCP proxy with OAuth

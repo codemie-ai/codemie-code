@@ -30,6 +30,7 @@ export function createAnalyticsCommand(): Command {
     .option('--report', 'Generate a self-contained HTML dashboard')
     .option('--open', 'Open the generated HTML report in the default browser')
     .option('--report-output <path>', 'HTML report output path (default: ./codemie-analytics-YYYY-MM-DD.html)')
+    .option('--report-format <format>', 'Report serialization: html, json, or both (default: html)')
     .option('--no-scan-native', 'Skip native agent-log discovery (use only CodeMie-tracked sessions)')
     .action(async (options: AnalyticsOptions) => {
       try {
@@ -63,7 +64,12 @@ export function createAnalyticsCommand(): Command {
         // A report needs cost, and cost must be computed BEFORE aggregation so that zero-delta
         // sessions which still carry cost (empty metrics file but real usage in a correlated
         // agent log) are retained instead of dropped as "empty". Price first, then aggregate.
-        const wantReport = Boolean(options.report || options.reportOutput || options.open);
+        const wantReport = Boolean(options.report || options.reportOutput || options.open || options.reportFormat);
+        const reportFormat = (options.reportFormat ?? 'html').toLowerCase();
+        if (wantReport && reportFormat !== 'html' && reportFormat !== 'json' && reportFormat !== 'both') {
+          console.log(chalk.red('\n✗ Invalid report format. Use "html", "json", or "both".'));
+          return;
+        }
         let costResult: { index: SessionCostIndex; summary: CostSummary } | undefined;
         let keepSessionIds: Set<string> | undefined;
         if (wantReport) {
@@ -108,10 +114,11 @@ export function createAnalyticsCommand(): Command {
           }
         }
 
-        // Generate HTML dashboard if requested (--report-output and --open imply --report)
+        // Generate the report if requested (--report-output and --open imply --report)
         if (wantReport && costResult) {
           const { buildPayload } = await import('./report/payload-builder.js');
-          const { generateReport, getDefaultReportPath } = await import('./report/report-generator.js');
+          const { generateReport, generateReportJson, getDefaultReportPath, getDefaultReportJsonPath } =
+            await import('./report/report-generator.js');
 
           const { index: costIndex, summary } = costResult;
           const payload = buildPayload(analytics, costIndex, summary, {
@@ -120,9 +127,31 @@ export function createAnalyticsCommand(): Command {
             generatedAt: new Date().toISOString()
           });
 
-          const reportPath = options.reportOutput || getDefaultReportPath(process.cwd());
-          generateReport(payload, reportPath);
-          console.log(chalk.green(`\n✓ HTML report written to: ${reportPath}`));
+          const cwd = process.cwd();
+          let htmlPath: string | undefined;
+          let jsonPath: string | undefined;
+
+          if (reportFormat === 'both') {
+            // Derive a shared base (strip a trailing .html/.json from --report-output, if any)
+            // so the two artifacts are siblings and never collide, whatever extension was passed.
+            const base = options.reportOutput?.replace(/\.(html|json)$/i, '');
+            htmlPath = base ? `${base}.html` : getDefaultReportPath(cwd);
+            jsonPath = base ? `${base}.json` : getDefaultReportJsonPath(cwd);
+          } else if (reportFormat === 'html') {
+            htmlPath = options.reportOutput || getDefaultReportPath(cwd);
+          } else {
+            jsonPath = options.reportOutput || getDefaultReportJsonPath(cwd);
+          }
+
+          if (htmlPath) {
+            generateReport(payload, htmlPath);
+            console.log(chalk.green(`\n✓ HTML report written to: ${htmlPath}`));
+          }
+          if (jsonPath) {
+            generateReportJson(payload, jsonPath);
+            console.log(chalk.green(`\n✓ JSON report written to: ${jsonPath}`));
+          }
+
           const { sessions: totalReportSessions, pricedSessions } = payload.meta.totals;
           if (pricedSessions < totalReportSessions) {
             console.log(
@@ -133,8 +162,12 @@ export function createAnalyticsCommand(): Command {
           }
 
           if (options.open) {
-            const { openUrlInBrowser } = await import('../../../utils/browser.js');
-            await openUrlInBrowser(reportPath);
+            if (htmlPath) {
+              const { openUrlInBrowser } = await import('../../../utils/browser.js');
+              await openUrlInBrowser(htmlPath);
+            } else {
+              console.log(chalk.dim('  --open ignored: no HTML produced (use --report-format html or both).'));
+            }
           }
         }
 

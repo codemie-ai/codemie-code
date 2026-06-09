@@ -220,6 +220,8 @@ export interface AnalyticsOptions {
   report?: boolean;
   open?: boolean;
   reportOutput?: string;
+  /** Report serialization selector (default 'html'). 'json' writes the cost-enriched payload; 'both' writes html + json. */
+  reportFormat?: 'html' | 'json' | 'both';
   /** When false (via --no-scan-native), skip native-log discovery and use tracked sessions only. */
   scanNative?: boolean;
 }

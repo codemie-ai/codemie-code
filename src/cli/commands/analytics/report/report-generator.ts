@@ -48,7 +48,24 @@ export function generateReport(payload: ReportPayload, outputPath: string): void
   writeFileSync(outputPath, html, 'utf-8');
 }
 
+/**
+ * Writes the report payload as a standalone JSON file — the exact cost-enriched
+ * dataset embedded in the HTML report ({ meta, sessions }). Plain JSON.stringify:
+ * the `<` escaping used by renderReportHtml is defense for inline-<script> embedding
+ * only and must NOT be applied to a .json file on disk.
+ */
+export function generateReportJson(payload: ReportPayload, outputPath: string): void {
+  writeFileSync(outputPath, JSON.stringify(payload, null, 2), 'utf-8');
+}
+
 export function getDefaultReportPath(cwd: string): string {
   const date = new Date().toISOString().split('T')[0];
   return `${cwd}/codemie-analytics-${date}.html`;
+}
+
+export function getDefaultReportJsonPath(cwd: string): string {
+  const date = new Date().toISOString().split('T')[0];
+  // `.report.json` (not `.json`) so the default never collides with `--export json`,
+  // which writes the cost-less analytics tree to `codemie-analytics-<date>.json`.
+  return `${cwd}/codemie-analytics-${date}.report.json`;
 }

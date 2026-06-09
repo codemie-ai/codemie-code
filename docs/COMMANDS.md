@@ -373,6 +373,8 @@ codemie analytics --no-scan-native              # Only CodeMie-tracked sessions 
 codemie analytics --report                      # Write codemie-analytics-YYYY-MM-DD.html
 codemie analytics --report --open               # Write and open in the default browser
 codemie analytics --last 30d --report-output ./team.html   # Custom path (implies --report)
+codemie analytics --report --report-format json # Write the dashboard data as codemie-analytics-YYYY-MM-DD.report.json
+codemie analytics --report --report-format both # Write both .html and .report.json (shared stem)
 
 # View specific session
 codemie analytics --session abc-123-def         # Single session details
@@ -384,6 +386,18 @@ codemie analytics --session abc-123-def         # Single session details
 system — open it anywhere, **fully offline** (the design-system CSS, the client app, and
 the Chart.js library are all inlined; no server and no CDN required). It composes with
 every filter (`--project`, `--agent`, `--last`, etc.) and with `--export`.
+
+**Structured export (`--report-format`).** The report can be serialized as `html`
+(default), `json`, or `both`. `--report-format json` writes the exact cost-enriched
+dataset the dashboard renders — flat per-session records plus the meta totals,
+per-agent coverage, and per-model cost — as a `.json` file you can pipe into other
+tools. With `both` and a `--report-output foo.html`, the JSON is written alongside as
+`foo.json` (a shared stem is derived, so `--report-output foo`, `foo.html`, or `foo.json`
+all yield `foo.html` + `foo.json`). This is distinct from `--export json`, which writes
+the raw, **cost-less** project→branch→session analytics tree; use `--report-format json`
+when you want the priced report data. Their default filenames differ on purpose — the
+report writes `codemie-analytics-<date>.report.json` while `--export json` writes
+`codemie-analytics-<date>.json` — so running both in one command never overwrites either.
 
 The dashboard has seven client-side views with instant in-browser filtering:
 **Overview, Agents · Compare, Projects, Tools & Models, Activity** (weekday × hour
