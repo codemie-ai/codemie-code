@@ -107,6 +107,12 @@ export interface RawSessionData {
   startEvent?: SessionStartEvent;
   endEvent?: SessionEndEvent;
   deltas: MetricDelta[];
+  /**
+   * Native agent log path, set for sessions discovered directly from agent logs
+   * (not tracked by CodeMie). When present, the cost enricher prices from this path
+   * instead of the ~/.codemie/sessions correlation file.
+   */
+  agentSessionFile?: string;
 }
 
 /**
@@ -235,6 +241,14 @@ export class MetricsDataLoader {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Public filter check — apply the same criteria to externally-sourced sessions
+   * (e.g. native-discovered ones) so all surfaces filter consistently.
+   */
+  public sessionMatchesFilter(sessionData: RawSessionData, filter?: AnalyticsFilter): boolean {
+    return this.matchesFilter(sessionData, filter);
   }
 
   /**

@@ -15,7 +15,7 @@ import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../.
 import type { ParsedSession } from '../../../../core/session/BaseSessionAdapter.js';
 import { logger } from '../../../../../utils/logger.js';
 import type { MetricDelta } from '../../../../core/metrics/types.js';
-import { extractFormat, detectLanguage } from '../../../../../utils/file-operations.js';
+import { extractClaudeFileOperation } from '../claude-file-operation.js';
 
 export class MetricsProcessor implements SessionProcessor {
   readonly name = 'metrics';
@@ -291,7 +291,7 @@ export class MetricsProcessor implements SessionProcessor {
 
                 // Extract file operations
                 const toolUseResult = toolUseResultMap.get(block.id);
-                const fileOp = this.extractFileOperation(toolName, block.input, toolUseResult);
+                const fileOp = extractClaudeFileOperation(toolName, block.input, toolUseResult);
                 if (fileOp) {
                   fileOperations.push(fileOp);
                 }
@@ -365,62 +365,4 @@ export class MetricsProcessor implements SessionProcessor {
     return this.isToolResultMessage(parent);
   }
 
-  /**
-   * Extract file operation from tool call (simplified version of legacy logic)
-   */
-  private extractFileOperation(
-    toolName: string,
-    input: any,
-    toolUseResult?: any
-  ): { type: string; path?: string; format?: string; language?: string; pattern?: string; linesAdded?: number; linesRemoved?: number } | undefined {
-    const typeMap: Record<string, string> = {
-      'Read': 'read',
-      'Write': 'write',
-      'Edit': 'edit',
-      'Grep': 'grep',
-      'Glob': 'glob'
-    };
-
-    const type = typeMap[toolName];
-    if (!type) return undefined;
-
-    const fileOp: any = { type };
-
-    const filePath = toolUseResult?.filePath || toolUseResult?.file?.filePath || input?.file_path || input?.path;
-
-    if (filePath) {
-      fileOp.path = filePath;
-      fileOp.format = extractFormat(filePath);
-      fileOp.language = detectLanguage(filePath);
-    } else if (input?.pattern) {
-      fileOp.pattern = input.pattern;
-    }
-
-    if (toolName === 'Write') {
-      const content = toolUseResult?.content || toolUseResult?.file?.content || input?.content;
-      if (content) {
-        const lines = content.split('\n');
-        fileOp.linesAdded = lines.length;
-      }
-    } else if (toolName === 'Edit' && toolUseResult?.structuredPatch) {
-      let added = 0;
-      let removed = 0;
-
-      for (const patch of toolUseResult.structuredPatch) {
-        if (Array.isArray(patch.lines)) {
-          for (const line of patch.lines) {
-            if (typeof line === 'string') {
-              if (line.startsWith('+')) added++;
-              else if (line.startsWith('-')) removed++;
-            }
-          }
-        }
-      }
-
-      if (added > 0) fileOp.linesAdded = added;
-      if (removed > 0) fileOp.linesRemoved = removed;
-    }
-
-    return fileOp;
-  }
 }

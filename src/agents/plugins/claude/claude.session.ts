@@ -6,9 +6,11 @@
  */
 
 import { join, dirname, basename } from 'path';
+import { homedir } from 'os';
 import { existsSync } from 'fs';
-import { readdir } from 'fs/promises';
+import { readdir, stat } from 'fs/promises';
 import type { SessionAdapter, ParsedSession, AggregatedResult } from '../../core/session/BaseSessionAdapter.js';
+import type { SessionDiscoveryOptions, SessionDescriptor } from '../../core/session/discovery-types.js';
 import type { SessionProcessor, ProcessingContext } from '../../core/session/BaseProcessor.js';
 import type { ClaudeMessage, ContentItem } from './claude-message-types.js';
 import type { AgentMetadata } from '../../core/types.js';
@@ -16,6 +18,16 @@ import { readJSONL } from '../../core/session/utils/jsonl-reader.js';
 import { logger } from '../../../utils/logger.js';
 import { MetricsProcessor } from './session/processors/claude.metrics-processor.js';
 import { ConversationsProcessor } from './session/processors/claude.conversations-processor.js';
+import { extractClaudeFileOperation, type ClaudeFileOperation } from './session/claude-file-operation.js';
+
+/**
+ * Best-effort decode of a Claude Code project directory name back to a filesystem path.
+ * Claude encodes the cwd by replacing every '/' with '-'; the encoding is lossy when the
+ * original path contains '-', so this is only a hint (exact cwd is read from session messages).
+ */
+function decodeClaudeProjectDir(encoded: string): string {
+  return '/' + encoded.replace(/^-+/, '').replace(/-/g, '/');
+}
 
 /**
  * Claude session adapter implementation.
@@ -50,6 +62,94 @@ export class ClaudeSessionAdapter implements SessionAdapter {
     this.registerProcessor(new ConversationsProcessor());
 
     logger.debug(`[claude-adapter] Initialized ${this.processors.length} processors`);
+  }
+
+  /**
+   * Resolve the Claude Code projects directory (e.g. ~/.claude/projects).
+   */
+  private getProjectsDir(): string | null {
+    const home = this.metadata.dataPaths?.home;
+    if (!home) {
+      return null;
+    }
+    return join(homedir(), home, 'projects');
+  }
+
+  /**
+   * Discover native Claude Code sessions under ~/.claude/projects/<encoded-cwd>/<uuid>.jsonl.
+   *
+   * Each project directory name is the cwd with path separators replaced by '-'. That encoding
+   * is lossy (paths containing '-' are ambiguous), so the returned `projectPath` is a best-effort
+   * hint — callers that need the exact cwd should read it from the parsed session messages.
+   */
+  async discoverSessions(options?: SessionDiscoveryOptions): Promise<SessionDescriptor[]> {
+    const projectsDir = this.getProjectsDir();
+    if (!projectsDir || !existsSync(projectsDir)) {
+      logger.debug('[claude-discovery] projects directory not found (Claude Code not run yet)');
+      return [];
+    }
+
+    const maxAgeMs = (options?.maxAgeDays ?? 30) * 24 * 60 * 60 * 1000;
+    const cutoffMs = Date.now() - maxAgeMs;
+
+    let projectDirs: string[];
+    try {
+      projectDirs = await readdir(projectsDir);
+    } catch {
+      return [];
+    }
+
+    const results: SessionDescriptor[] = [];
+    await Promise.all(
+      projectDirs.map(async (encoded) => {
+        const dirPath = join(projectsDir, encoded);
+        let files: string[];
+        try {
+          files = await readdir(dirPath);
+        } catch {
+          return; // not a directory / unreadable
+        }
+        await Promise.all(
+          files.map(async (file) => {
+            if (!file.endsWith('.jsonl')) {
+              return;
+            }
+            const filePath = join(dirPath, file);
+            try {
+              const st = await stat(filePath);
+              if (!st.isFile()) {
+                return;
+              }
+              const mtime = st.mtime.getTime();
+              if (mtime < cutoffMs) {
+                return; // older than the window
+              }
+              results.push({
+                sessionId: basename(file, '.jsonl'),
+                filePath,
+                projectPath: decodeClaudeProjectDir(encoded),
+                createdAt: mtime,
+                updatedAt: mtime,
+                agentName: 'claude',
+              });
+            } catch {
+              // skip unreadable file
+            }
+          })
+        );
+      })
+    );
+
+    let out = results;
+    if (options?.cwd) {
+      const want = options.cwd.replace(/\/+$/, '');
+      out = out.filter((r) => (r.projectPath ?? '').replace(/\/+$/, '') === want);
+    }
+    out.sort((a, b) => b.createdAt - a.createdAt); // newest first
+    if (options?.limit && options.limit > 0) {
+      out = out.slice(0, options.limit);
+    }
+    return out;
   }
 
   /**
@@ -169,70 +269,58 @@ export class ClaudeSessionAdapter implements SessionAdapter {
   private extractMetrics(messages: ClaudeMessage[]) {
     const toolCounts: Record<string, number> = {};
     const toolStatus: Record<string, { success: number; failure: number }> = {};
-    const fileOperations: Array<{
-      type: 'write' | 'edit' | 'delete';
-      path: string;
-      linesAdded?: number;
-      linesRemoved?: number;
-    }> = [];
+    const fileOperations: ClaudeFileOperation[] = [];
 
-    // Build tool results map (tool_use_id → isError) for status tracking
+    // tool_use_id → isError, and tool_use_id → the rich toolUseResult carried on the user
+    // message that holds the matching tool_result (this is where file paths + diffs live).
     const toolResultsMap = new Map<string, boolean>();
+    const toolUseResultMap = new Map<string, unknown>();
 
-    // First pass: collect tool results
     for (const msg of messages) {
       if (msg.message?.content && Array.isArray(msg.message.content)) {
         for (const item of msg.message.content as ContentItem[]) {
-          // Map tool_use_id to error status
           if (item.type === 'tool_result' && item.tool_use_id) {
-            const isError = (item as any).is_error === true || item.isError === true;
+            const isError = (item as { is_error?: boolean }).is_error === true || item.isError === true;
             toolResultsMap.set(item.tool_use_id, isError);
+            if (msg.toolUseResult) {
+              toolUseResultMap.set(item.tool_use_id, msg.toolUseResult);
+            }
           }
         }
       }
     }
 
-    // Second pass: aggregate metrics
+    // Aggregate tools, status, and file operations from the assistant tool_use blocks.
     for (const msg of messages) {
-      // Extract tool usage and status
-      if (msg.message?.content && Array.isArray(msg.message.content)) {
-        for (const item of msg.message.content as ContentItem[]) {
-          if (item.type === 'tool_use' && item.name && item.id) {
-            // Count tool usage
-            toolCounts[item.name] = (toolCounts[item.name] || 0) + 1;
-
-            // Initialize status tracking
-            if (!toolStatus[item.name]) {
-              toolStatus[item.name] = { success: 0, failure: 0 };
-            }
-
-            // Track success/failure based on result
-            const hasResult = toolResultsMap.has(item.id);
-            if (hasResult) {
-              const isError = toolResultsMap.get(item.id);
-              if (isError) {
-                toolStatus[item.name].failure++;
-              } else {
-                toolStatus[item.name].success++;
-              }
-            }
-          }
-        }
+      if (!(msg.message?.content && Array.isArray(msg.message.content))) {
+        continue;
       }
+      for (const item of msg.message.content as ContentItem[]) {
+        if (item.type !== 'tool_use' || !item.name || !item.id) {
+          continue;
+        }
+        toolCounts[item.name] = (toolCounts[item.name] || 0) + 1;
+        if (!toolStatus[item.name]) {
+          toolStatus[item.name] = { success: 0, failure: 0 };
+        }
 
-      // Extract file operations from tool results
-      if (msg.toolUseResult?.type) {
-        const toolType = msg.toolUseResult.type.toLowerCase();
-        const filePath = msg.toolUseResult.file?.filePath;
-
-        if (filePath) {
-          if (toolType === 'write') {
-            fileOperations.push({ type: 'write', path: filePath });
-          } else if (toolType === 'edit') {
-            fileOperations.push({ type: 'edit', path: filePath });
-          } else if (toolType === 'delete') {
-            fileOperations.push({ type: 'delete', path: filePath });
-          }
+        if (!toolResultsMap.has(item.id)) {
+          continue; // unresolved tool — no status / file op yet
+        }
+        if (toolResultsMap.get(item.id)) {
+          toolStatus[item.name].failure++;
+          continue;
+        }
+        toolStatus[item.name].success++;
+        // Use the shared extractor so re-parsed sessions get the same file ops + line counts
+        // (linesAdded/linesRemoved) as live-tracked ones.
+        const fileOp = extractClaudeFileOperation(
+          item.name,
+          (item as { input?: unknown }).input,
+          toolUseResultMap.get(item.id)
+        );
+        if (fileOp) {
+          fileOperations.push(fileOp);
         }
       }
     }

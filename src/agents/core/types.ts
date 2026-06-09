@@ -2,6 +2,8 @@
  * Core types for the plugin-based agent architecture
  */
 
+import type { SessionAdapter } from './session/BaseSessionAdapter.js';
+
 /**
  * Post-install hint - simple text lines shown after installation
  * Used to show custom setup instructions (e.g., IDE configuration)
@@ -618,6 +620,17 @@ export interface AgentAdapter {
    * @returns BaseExtensionInstaller instance or undefined
    */
   getExtensionInstaller?(): BaseExtensionInstaller | undefined;
+
+  /**
+   * Get the session adapter for this agent (optional)
+   * Returns the parser for the agent's native session logs, used by analytics cost
+   * enrichment and native-session discovery.
+   *
+   * Agents that persist session transcripts implement this; others may omit it.
+   *
+   * @returns SessionAdapter instance or undefined
+   */
+  getSessionAdapter?(): SessionAdapter;
 
   /**
    * Get MCP configuration summary for this agent

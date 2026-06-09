@@ -20,6 +20,8 @@ export interface ModelStats {
   model: string;
   calls: number;
   percentage: number;
+  tokens?: import('./cost/types.js').TokenUsage;
+  costUSD?: number;
 }
 
 /**
@@ -68,6 +70,8 @@ export interface SessionAnalytics {
   agentName: string;
   provider: string;
   workingDirectory: string;
+  /** The branch the session did the most work on (modal of its deltas' gitBranch). */
+  primaryBranch: string;
   startTime: number;
   endTime: number;
   duration: number;
@@ -98,6 +102,10 @@ export interface SessionAnalytics {
 
   // Format breakdown (from FileOperation.format)
   formats: LanguageStats[];
+
+  // Token usage and cost (optional; populated only for the HTML report path)
+  tokens?: import('./cost/types.js').TokenUsage;
+  costUSD?: number;
 }
 
 /**
@@ -209,4 +217,9 @@ export interface AnalyticsOptions {
   verbose?: boolean;
   export?: 'json' | 'csv';
   output?: string;
+  report?: boolean;
+  open?: boolean;
+  reportOutput?: string;
+  /** When false (via --no-scan-native), skip native-log discovery and use tracked sessions only. */
+  scanNative?: boolean;
 }

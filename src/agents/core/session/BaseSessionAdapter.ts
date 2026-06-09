@@ -47,8 +47,11 @@ export interface ParsedSession {
     tools?: Record<string, number>;
     toolStatus?: Record<string, { success: number; failure: number }>;
     fileOperations?: Array<{
-      type: 'write' | 'edit' | 'delete';
-      path: string;
+      type: string;
+      path?: string;
+      format?: string;
+      language?: string;
+      pattern?: string;
       linesAdded?: number;
       linesRemoved?: number;
     }>;

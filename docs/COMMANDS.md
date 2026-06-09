@@ -11,7 +11,7 @@ codemie setup                    # Interactive configuration wizard
 codemie setup skills             # Manage CodeMie platform skills (register/unregister)
 codemie setup assistants         # Manage CodeMie assistants as Claude subagents or skills
 codemie profile <command>        # Manage provider profiles
-codemie analytics [options]      # View usage analytics
+codemie analytics [options]      # View usage analytics (add --report for an HTML dashboard)
 codemie log [options]            # View and manage debug logs and sessions
 codemie workflow <command>       # Manage CI/CD workflows
 codemie list [options]           # List all available agents
@@ -367,10 +367,57 @@ codemie analytics --last 7d                     # Last 7 days
 codemie analytics --verbose                     # Detailed session breakdown
 codemie analytics --export json                 # Export to JSON
 codemie analytics --export csv -o report.csv    # Export to CSV
+codemie analytics --no-scan-native              # Only CodeMie-tracked sessions (skip native logs)
+
+# HTML dashboard (self-contained, no server)
+codemie analytics --report                      # Write codemie-analytics-YYYY-MM-DD.html
+codemie analytics --report --open               # Write and open in the default browser
+codemie analytics --last 30d --report-output ./team.html   # Custom path (implies --report)
 
 # View specific session
 codemie analytics --session abc-123-def         # Single session details
 ```
+
+### HTML Dashboard (`--report`)
+
+`--report` generates a single self-contained HTML file styled with the CodeMie design
+system — open it anywhere, **fully offline** (the design-system CSS, the client app, and
+the Chart.js library are all inlined; no server and no CDN required). It composes with
+every filter (`--project`, `--agent`, `--last`, etc.) and with `--export`.
+
+The dashboard has seven client-side views with instant in-browser filtering:
+**Overview, Agents · Compare, Projects, Tools & Models, Activity** (weekday × hour
+heatmap), **Cost,** and **Sessions**. Filters: a range segment (**Today / 7d / 30d /
+90d / All**), a **custom from–to date range** (applies on change and overrides the
+preset), per-agent toggles, and a project selector. A **light/dark theme switch** sits
+in the bottom-left and persists your choice (defaults to dark).
+
+**Cost estimation** is computed at report time: for each session the native agent log
+(Claude, Claude Desktop, Gemini, …) is re-parsed for token usage and priced against
+`src/cli/commands/analytics/cost/pricing.json`. Claude Desktop (the native Anthropic
+subscription app, local-agent mode) is included — its `audit.jsonl` carries an
+authoritative per-model usage rollup that is matched against the pricing table. The
+Cost view shows a **Coverage by agent** table (sessions priced / native-log found per
+tool), so unpriced tools are explicit. Sessions whose native log is absent, or whose
+agent has no usage reader yet (codex/opencode degrade gracefully), are shown as
+"priced N of M" and never silently counted as `$0`.
+
+**Native session discovery (on by default).** `codemie analytics` (terminal and `--report`)
+scans native agent logs (`~/.claude/projects/**`) directly, so sessions from the plain
+`claude` command — your Anthropic subscription, not `codemie-claude` — are included even
+though CodeMie never tracked them. Logs already correlated to a tracked session are deduped
+by path. Pass `--no-scan-native` to use only CodeMie-tracked sessions.
+
+**De-duplicated cost.** Claude Code replays prior turns into resumed/forked/compacted session
+files, so the same API response appears in multiple logs. Cost de-duplicates by
+`(message.id, requestId)` across all sessions (the earliest session owns a shared response),
+counting each response once — without this the figure inflates ~2–3×. On a subscription you
+don't pay per token, so the figure is labeled **"Est. cost (API-equivalent)"** — the metered
+API value of your usage, not dollars billed.
+
+> **Refreshing prices:** `cost/pricing.json` is a vendored table (`{ "<model>":
+> { input, output, cacheRead, cacheWrite } }`, USD per 1M tokens). When new models ship,
+> add or update entries there — unpriced models are surfaced in the Cost view's banner.
 
 **Analytics Features:**
 - Hierarchical aggregation: Root → Projects → Branches → Sessions

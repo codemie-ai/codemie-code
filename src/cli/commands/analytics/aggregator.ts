@@ -26,40 +26,67 @@ export class AnalyticsAggregator {
   /**
    * Process raw sessions into root analytics
    */
-  static aggregate(rawSessions: RawSessionData[], normalizeModels = true): RootAnalytics {
+  static aggregate(
+    rawSessions: RawSessionData[],
+    normalizeModels = true,
+    keepSessionIds?: Set<string>
+  ): RootAnalytics {
     this.shouldNormalizeModels = normalizeModels;
 
+    // An analytics "session" is one that did measurable work. Sessions that were started but
+    // recorded no deltas (no turns/tools/files) are noise — exclude them up front so they never
+    // inflate the headline count or add an empty branch bucket. EXCEPTION: a zero-delta session
+    // that still carries cost (its metrics file is empty but a correlated agent log has real
+    // token usage) did real work — keepSessionIds lets the caller retain those so their cost is
+    // not silently dropped from the report.
+    const activeSessions = rawSessions.filter(
+      raw => (raw.deltas && raw.deltas.length > 0) || keepSessionIds?.has(raw.sessionId)
+    );
+
     // Build session analytics first
-    const sessions = rawSessions
+    const sessions = activeSessions
       .map(raw => this.buildSessionAnalytics(raw))
       .filter((s): s is SessionAnalytics => s !== null);
 
-    // Group deltas by project → branch across ALL sessions
-    // Key: project → branch, Value: deltas from all sessions on that branch
+    // Group deltas by project → branch across ALL sessions, tracking which sessions
+    // contributed to each branch. We key the contributing set on the session's own id
+    // (the same id buildSessionAnalytics produces) rather than delta.sessionId so the
+    // branch → session join is reliable.
     const projectBranchDeltas = new Map<string, Map<string, MetricDelta[]>>();
+    const projectBranchSessions = new Map<string, Map<string, Set<string>>>();
+
+    const ensureBranch = (projectPath: string, branchName: string): void => {
+      if (!projectBranchDeltas.has(projectPath)) {
+        projectBranchDeltas.set(projectPath, new Map());
+        projectBranchSessions.set(projectPath, new Map());
+      }
+      const branchMap = projectBranchDeltas.get(projectPath)!;
+      const sessionMap = projectBranchSessions.get(projectPath)!;
+      if (!branchMap.has(branchName)) {
+        branchMap.set(branchName, []);
+        sessionMap.set(branchName, new Set());
+      }
+    };
 
     // Collect all deltas grouped by project and branch
-    for (const raw of rawSessions) {
+    for (const raw of activeSessions) {
       if (!raw.startEvent) continue;
       const projectPath = raw.startEvent.data.workingDirectory || 'Unknown';
+
+      // A kept-but-deltaless session (zero metrics, real cost) still needs a home so it is
+      // counted and its cost surfaces. It has no branch, so it sits under Unknown.
+      if (raw.deltas.length === 0) {
+        ensureBranch(projectPath, 'Unknown');
+        projectBranchSessions.get(projectPath)!.get('Unknown')!.add(raw.sessionId);
+        continue;
+      }
 
       // Group deltas from this session by branch
       for (const delta of raw.deltas) {
         const branchName = delta.gitBranch || 'Unknown';
-
-        // Get or create project map
-        if (!projectBranchDeltas.has(projectPath)) {
-          projectBranchDeltas.set(projectPath, new Map());
-        }
-
-        const branchMap = projectBranchDeltas.get(projectPath)!;
-
-        // Get or create branch deltas array
-        if (!branchMap.has(branchName)) {
-          branchMap.set(branchName, []);
-        }
-
-        branchMap.get(branchName)!.push(delta);
+        ensureBranch(projectPath, branchName);
+        projectBranchDeltas.get(projectPath)!.get(branchName)!.push(delta);
+        projectBranchSessions.get(projectPath)!.get(branchName)!.add(raw.sessionId);
       }
     }
 
@@ -93,17 +120,22 @@ export class AnalyticsAggregator {
 
       const project = projectsMap.get(projectPath)!;
 
+      const sessionMap = projectBranchSessions.get(projectPath)!;
+
       // Create branch analytics from aggregated deltas
       for (const [branchName, deltas] of branchMap) {
-        // Find which sessions contributed to this branch
+        // Only the sessions that actually contributed to THIS branch — not every session
+        // in the project. (Filtering by project alone put every session under every branch,
+        // collapsing the whole project onto branch[0] downstream.)
+        const branchSessionIds = sessionMap.get(branchName)!;
         const contributingSessions = sessions.filter(session =>
-          session.workingDirectory === projectPath
+          session.workingDirectory === projectPath && branchSessionIds.has(session.sessionId)
         );
 
         const branch: BranchAnalytics = {
           branchName,
-          sessions: contributingSessions, // Sessions that contributed deltas to this branch
-          totalSessions: new Set(deltas.map(d => d.sessionId)).size, // Count unique sessions
+          sessions: contributingSessions, // Sessions that contributed to this branch
+          totalSessions: branchSessionIds.size, // Count unique sessions on this branch
           totalDuration: 0, // Will be calculated from sessions
           totalTurns: deltas.length,
           totalFileOperations: 0,
@@ -170,6 +202,22 @@ export class AnalyticsAggregator {
 
     if (!startEvent) {
       return null;
+    }
+
+    // Dominant branch: where this session did the most work. Used as the single branch
+    // label on the flat report record so multi-branch sessions are attributed to the
+    // branch they actually worked on (not whichever one iterates first downstream).
+    const branchCounts = new Map<string, number>();
+    let primaryBranch = 'Unknown';
+    let primaryBranchN = 0;
+    for (const delta of deltas) {
+      const b = delta.gitBranch || 'Unknown';
+      const n = (branchCounts.get(b) ?? 0) + 1;
+      branchCounts.set(b, n);
+      if (n > primaryBranchN) {
+        primaryBranchN = n;
+        primaryBranch = b;
+      }
     }
 
     // Build model distribution from MetricDelta.models
@@ -331,14 +379,25 @@ export class AnalyticsAggregator {
     const failedToolCalls = tools.reduce((sum, t) => sum + t.failureCount, 0);
     const toolSuccessRate = totalToolCalls > 0 ? (successfulToolCalls / totalToolCalls) * 100 : 0;
 
+    // When the session has no end event (never marked completed), fall back to the timestamp
+    // of its last recorded activity — NOT Date.now(), which would inflate duration to the time
+    // since the session started (weeks/months for stale, never-completed sessions).
+    const deltaTimestamps = deltas
+      .map(d => (typeof d.timestamp === 'number' ? d.timestamp : Date.parse(String(d.timestamp))))
+      .filter((t): t is number => Number.isFinite(t));
+    const lastActivity = deltaTimestamps.length ? Math.max(...deltaTimestamps) : startEvent.data.startTime;
+    const endTime = endEvent?.data.endTime ?? lastActivity;
+    const duration = endEvent?.data.duration ?? Math.max(0, endTime - startEvent.data.startTime);
+
     return {
       sessionId: raw.sessionId,
       agentName: startEvent.agentName,
       provider: startEvent.data.provider,
       workingDirectory: startEvent.data.workingDirectory,
+      primaryBranch,
       startTime: startEvent.data.startTime,
-      endTime: endEvent?.data.endTime || Date.now(),
-      duration: endEvent?.data.duration || (Date.now() - startEvent.data.startTime),
+      endTime,
+      duration,
       totalTurns: deltas.length,
       totalFileOperations,
       totalLinesAdded,
@@ -571,8 +630,18 @@ export class AnalyticsAggregator {
    * Aggregate project statistics from branches
    */
   private static aggregateProject(project: ProjectAnalytics): void {
-    project.totalSessions = project.branches.reduce((sum, b) => sum + b.totalSessions, 0);
-    project.totalDuration = project.branches.reduce((sum, b) => sum + b.totalDuration, 0);
+    // Sessions and duration are session-level, so a session that touched multiple branches
+    // must be counted ONCE for the project (summing per-branch would double-count it).
+    // Turns / tools / lines are delta-level and partitioned across branches, so summing is correct.
+    const uniqueSessions = new Map<string, SessionAnalytics>();
+    for (const b of project.branches) {
+      for (const s of b.sessions) {
+        uniqueSessions.set(s.sessionId, s);
+      }
+    }
+    const sessions = Array.from(uniqueSessions.values());
+    project.totalSessions = sessions.length;
+    project.totalDuration = sessions.reduce((sum, s) => sum + s.duration, 0);
     project.totalTurns = project.branches.reduce((sum, b) => sum + b.totalTurns, 0);
     project.totalFileOperations = project.branches.reduce((sum, b) => sum + b.totalFileOperations, 0);
     project.totalLinesAdded = project.branches.reduce((sum, b) => sum + b.totalLinesAdded, 0);

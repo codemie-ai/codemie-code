@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CodeMie Analytics</title>
+  <style>
+    /* __CODEMIE_CSS__ */
+
+    /* ===== report-specific layout ===== */
+    html, body { height: 100%; }
+
+    /* CodeMie-style ambient brand gradient layered over the solid page background.
+       Per-theme: a deeper purple→blue wash in dark, a soft tint in light. */
+    :root, :root.dark {
+      --report-page-bg:
+        radial-gradient(118% 88% at 100% 0%, rgba(132, 83, 210, 0.16), transparent 58%),
+        radial-gradient(100% 72% at 0% 100%, rgba(0, 120, 194, 0.12), transparent 55%),
+        var(--color-bg-page);
+    }
+    :root.light, .light {
+      --report-page-bg:
+        radial-gradient(118% 88% at 100% 0%, rgba(132, 83, 210, 0.14), transparent 60%),
+        radial-gradient(100% 72% at 0% 100%, rgba(0, 122, 255, 0.13), transparent 58%),
+        var(--color-bg-page);
+    }
+    body { margin: 0; padding: 0; overflow: hidden; background: var(--report-page-bg); background-attachment: fixed; }
+    .shell { display: flex; height: 100vh; background: transparent; }
+
+    /* sidebar — frosted over the gradient so the rail stays distinct without a hard fill */
+    .side { width: 232px; flex-shrink: 0; background: var(--color-bg-card); background: color-mix(in srgb, var(--color-bg-card) 82%, transparent); backdrop-filter: blur(8px); border-right: 1px solid var(--color-border-structural); display: flex; flex-direction: column; padding: 16px 12px; overflow-y: auto; }
+    .side .brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 14px; }
+    .side .logo { width: 30px; height: 30px; border-radius: 9px; background: linear-gradient(135deg, #2297F6, #7C5CFC); display: flex; align-items: center; justify-content: center; font-weight: 700; color: #fff; font-size: 15px; }
+    .nav-group { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--color-text-muted); font-weight: 600; margin: 14px 8px 6px; }
+    .nav-i { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; color: var(--color-text-muted); font-size: 13.5px; cursor: pointer; user-select: none; }
+    .nav-i:hover { background: var(--color-bg-tertiary); color: var(--color-text-primary); }
+    .nav-i.active { background: var(--color-bg-tertiary); color: var(--color-text-primary); font-weight: 600; }
+    .nav-i .ic { width: 16px; text-align: center; opacity: .85; }
+    .nav-i .lock { margin-left: auto; }
+    .side-foot { margin-top: auto; font-size: 11px; color: var(--color-text-muted); padding: 10px 8px 4px; line-height: 1.5; }
+
+    /* main + topbar */
+    .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; background: transparent; }
+    .topbar { min-height: 52px; border-bottom: 1px solid var(--color-border-structural); display: flex; align-items: center; gap: 10px; padding: 10px 22px; flex-wrap: wrap; background: var(--color-bg-page); background: color-mix(in srgb, var(--color-bg-page) 70%, transparent); backdrop-filter: blur(8px); }
+    .scroll { flex: 1; overflow-y: auto; padding: 22px; background: transparent; }
+    .fl-label { font-size: 11px; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: .04em; }
+    .seg { display: inline-flex; border: 1px solid var(--color-border-structural); border-radius: 8px; overflow: hidden; }
+    .seg button { background: transparent; border: none; color: var(--color-text-muted); padding: 5px 11px; font-size: 12.5px; cursor: pointer; font-family: inherit; }
+    .seg button.on { background: var(--color-bg-tertiary); color: var(--color-text-primary); font-weight: 600; }
+    .chip-tog { border: 1px solid var(--color-border-structural); border-radius: 999px; padding: 4px 11px; font-size: 12.5px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; color: var(--color-text-primary); user-select: none; }
+    .chip-tog .dot { width: 9px; height: 9px; border-radius: 50%; }
+    .chip-tog.off { opacity: .4; }
+    .live { margin-left: auto; font-size: 11px; color: var(--color-success); display: flex; align-items: center; gap: 6px; }
+    .live::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--color-success); }
+
+    /* KPIs */
+    .kpi-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin: 4px 0 16px; }
+    @media (max-width: 1100px) { .kpi-grid { grid-template-columns: repeat(3, 1fr); } }
+    .kpi { background: var(--color-bg-card); border: 1px solid var(--color-border-structural); border-radius: 12px; padding: 15px; }
+    .kpi-label { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--color-text-muted); font-weight: 600; }
+    .kpi-value { font-size: 24px; font-weight: 700; color: var(--color-text-primary); margin-top: 6px; line-height: 1.1; }
+    .kpi-sub { font-size: 12px; color: var(--color-text-muted); margin-top: 4px; }
+    .kpi.soon { opacity: .6; }
+
+    /* grids + charts */
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .grid-32 { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; }
+    @media (max-width: 1000px) { .grid-2, .grid-32 { grid-template-columns: 1fr; } }
+    .chart-box { position: relative; height: 250px; }
+    .mb16 { margin-bottom: 16px; }
+    .bar-row { display: flex; align-items: center; gap: 10px; margin: 7px 0; font-size: 13px; }
+    .bar-row .nm { width: 110px; color: var(--color-text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bar-track { flex: 1; background: var(--color-bg-tertiary); border-radius: 6px; height: 18px; overflow: hidden; }
+    .bar-fill { height: 100%; border-radius: 6px; }
+    .bar-row .vl { width: 80px; text-align: right; color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
+
+    /* agent compare cards */
+    .agent-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-bottom: 18px; }
+    .acard { background: var(--color-bg-card); border: 1px solid var(--color-border-structural); border-radius: 12px; padding: 16px; border-top: 3px solid var(--ac, #2297F6); }
+    .acard h3 { margin: 0 0 2px; font-size: 15px; display: flex; align-items: center; gap: 8px; text-transform: capitalize; }
+    .acard .pill { width: 10px; height: 10px; border-radius: 50%; background: var(--ac, #2297F6); }
+    .acard .mini { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 12px; }
+    .acard .mini .l { font-size: 10.5px; color: var(--color-text-muted); text-transform: uppercase; }
+    .acard .mini .v { font-size: 18px; font-weight: 700; color: var(--color-text-primary); }
+
+    /* heatmap */
+    .heatmap { display: grid; grid-template-columns: auto repeat(24, 1fr); gap: 3px; font-size: 9px; max-width: 760px; }
+    .heat-cell { aspect-ratio: 1; border-radius: 3px; background: var(--color-bg-tertiary); }
+    .heat-lbl { color: var(--color-text-muted); font-size: 10px; display: flex; align-items: center; }
+    .heat-hr { color: var(--color-text-muted); text-align: center; }
+
+    .view-title { margin: 0 0 4px; }
+    .view-sub { margin: 0 0 18px; font-size: 13px; color: var(--color-text-muted); }
+    .empty { color: var(--color-text-muted); padding: 40px; text-align: center; }
+    .search-input { width: 280px; }
+    .clickable { cursor: pointer; }
+    .drill { background: var(--color-bg-secondary); }
+
+    /* date range picker */
+    .date-range { display: inline-flex; align-items: center; gap: 6px; }
+    .date-input { background: var(--color-bg-input, var(--color-bg-card)); border: 1px solid var(--color-border-structural); color: var(--color-text-primary); border-radius: 7px; padding: 4px 8px; font-size: 12.5px; font-family: inherit; height: 30px; color-scheme: dark; }
+    :root.light .date-input, .light .date-input { color-scheme: light; }
+    .date-sep { color: var(--color-text-muted); font-size: 12px; }
+    .date-clear { background: transparent; border: 1px solid var(--color-border-structural); color: var(--color-text-muted); border-radius: 7px; height: 30px; width: 28px; cursor: pointer; font-size: 11px; line-height: 1; }
+    .date-clear:hover { color: var(--color-text-primary); background: var(--color-bg-tertiary); }
+
+    /* coverage table (Cost view) */
+    .cov-ok { color: var(--color-success); }
+    .cov-warn { color: var(--color-warning, #F5A534); }
+
+    /* theme switch — bottom-left, gradient track per design-system tokens */
+    .theme-switch { display: flex; align-items: center; gap: 8px; margin: 8px 4px 2px; padding: 8px 10px; border-radius: 10px; cursor: pointer; user-select: none; color: var(--color-text-muted); font-size: 12.5px; outline: none; }
+    .theme-switch:hover { background: var(--color-bg-tertiary); color: var(--color-text-primary); }
+    .theme-switch:focus-visible { box-shadow: 0 0 0 2px var(--color-border-focus, #2297F6); }
+    .theme-switch .ts-track { position: relative; width: 40px; height: 22px; border-radius: 999px; flex-shrink: 0; background: var(--gradient-switch-off, linear-gradient(to right, #BBB, #666)); transition: background var(--transition-base, 200ms ease); }
+    .theme-switch .ts-thumb { position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.45); transition: transform var(--transition-base, 200ms ease); }
+    .theme-switch .ts-icon { font-size: 13px; opacity: .55; }
+    .theme-switch .ts-text { min-width: 34px; }
+    /* dark = default: moon active, thumb left, "off" gradient */
+    .theme-switch .ts-moon { opacity: 1; }
+    /* light theme: thumb slides right, sun active, "on" gradient */
+    .light .theme-switch .ts-track { background: var(--gradient-switch-on, linear-gradient(to right, #007AFF, #007AFF)); }
+    .light .theme-switch .ts-thumb { transform: translateX(18px); }
+    .light .theme-switch .ts-moon { opacity: .55; }
+    .light .theme-switch .ts-sun { opacity: 1; }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <aside class="side">
+      <div class="brand"><div class="logo">C</div><div style="font-weight:700;font-size:15px;">Analytics</div></div>
+      <div class="nav-group">Insights</div>
+      <div class="nav-i" data-view="overview"><span class="ic">▢</span>Overview</div>
+      <div class="nav-i" data-view="agents"><span class="ic">⊞</span>Agents · Compare</div>
+      <div class="nav-i" data-view="projects"><span class="ic">▤</span>Projects</div>
+      <div class="nav-i" data-view="toolsmodels"><span class="ic">⚙</span>Tools &amp; Models</div>
+      <div class="nav-i" data-view="activity"><span class="ic">▦</span>Activity</div>
+      <div class="nav-group">Spend</div>
+      <div class="nav-i" data-view="cost"><span class="ic">$</span>Cost</div>
+      <div class="nav-group">Raw</div>
+      <div class="nav-i" data-view="sessions"><span class="ic">≣</span>Sessions</div>
+      <div class="side-foot" id="side-foot"></div>
+      <div class="theme-switch" id="theme-switch" role="button" tabindex="0" aria-label="Toggle light and dark theme" title="Toggle light / dark theme">
+        <span class="ts-track"><span class="ts-thumb"></span></span>
+        <span class="ts-icon ts-moon">☾</span>
+        <span class="ts-text">Dark</span>
+        <span class="ts-icon ts-sun">☀</span>
+      </div>
+    </aside>
+
+    <div class="main">
+      <div class="topbar">
+        <span class="fl-label">Range</span>
+        <div class="seg" id="range-seg">
+          <button data-range="today">Today</button>
+          <button data-range="7d">7d</button>
+          <button data-range="30d">30d</button>
+          <button data-range="90d">90d</button>
+          <button data-range="all" class="on">All</button>
+        </div>
+        <span class="fl-label" style="margin-left:8px;">Dates</span>
+        <div class="date-range">
+          <input type="date" id="date-from" class="date-input" aria-label="From date" />
+          <span class="date-sep">→</span>
+          <input type="date" id="date-to" class="date-input" aria-label="To date" />
+          <button id="date-clear" class="date-clear" title="Clear date range" type="button">✕</button>
+        </div>
+        <span class="fl-label" style="margin-left:8px;">Agents</span>
+        <span id="agent-chips" style="display:inline-flex;gap:6px;flex-wrap:wrap;"></span>
+        <select class="select" id="project-select" style="height:30px;font-size:12.5px;margin-left:8px;max-width:230px;"></select>
+        <span class="live">filtering client-side · instant</span>
+      </div>
+      <div class="scroll" id="view-root"></div>
+    </div>
+  </div>
+
+  <script>window.__ANALYTICS__ = /*__ANALYTICS_DATA__*/ null;</script>
+  <script>/* __CHARTJS__ */</script>
+  <script>/* __CLIENT_APP__ */</script>
+</body>
+</html>
