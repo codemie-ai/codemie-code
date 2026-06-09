@@ -21,6 +21,7 @@ export interface DesktopTelemetryRuntimeConfig {
   profile?: string;
   syncApiUrl?: string;
   syncCodeMieUrl?: string;
+  apiKey?: string;
   pollIntervalMs: number;
   inactivityTimeoutMs: number;
 }

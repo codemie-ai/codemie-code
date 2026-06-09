@@ -82,6 +82,7 @@ export interface SpawnOptions {
   telemetryMode?: 'none' | 'claude-desktop';
   syncApiUrl?: string;
   syncCodeMieUrl?: string;
+  apiKey?: string;
 }
 
 export async function spawnDaemon(opts: SpawnOptions): Promise<DaemonState> {
@@ -104,6 +105,7 @@ export async function spawnDaemon(opts: SpawnOptions): Promise<DaemonState> {
     ...(opts.telemetryMode ? ['--telemetry-mode', opts.telemetryMode] : []),
     ...(opts.syncApiUrl ? ['--sync-api-url', opts.syncApiUrl] : []),
     ...(opts.syncCodeMieUrl ? ['--sync-codemie-url', opts.syncCodeMieUrl] : []),
+    ...(opts.apiKey ? ['--api-key', opts.apiKey] : []),
   ];
 
   logger.debug(

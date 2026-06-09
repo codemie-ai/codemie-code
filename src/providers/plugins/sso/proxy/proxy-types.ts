@@ -30,6 +30,7 @@ export interface ProxyConfig {
   project?: string;              // CodeMie project name for header injection
   syncApiUrl?: string;           // Optional CodeMie API URL for analytics/session sync
   syncCodeMieUrl?: string;       // Optional CodeMie org URL for credential lookup
+  apiKey?: string;               // Optional API key for local dev auth (user-id header)
   gatewayKey?: string;           // Static bearer key for gateway/daemon mode
   telemetryMode?: 'none' | 'claude-desktop';
   telemetryPollIntervalMs?: number;

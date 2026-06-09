@@ -39,6 +39,7 @@ const { values } = parseArgs({
     'telemetry-mode': { type: 'string' },
     'sync-api-url': { type: 'string' },
     'sync-codemie-url': { type: 'string' },
+    'api-key': { type: 'string' },
   },
   strict: false,
 });
@@ -66,6 +67,7 @@ const authMethod = ((values['auth-method'] as string | undefined) ?? 'sso') as '
 const telemetryMode = ((values['telemetry-mode'] as string | undefined) ?? 'none') as 'none' | 'claude-desktop';
 const syncApiUrl = values['sync-api-url'] as string | undefined;
 const syncCodeMieUrl = values['sync-codemie-url'] as string | undefined;
+const apiKey = values['api-key'] as string | undefined;
 
 const config: ProxyConfig = {
   targetApiUrl: targetUrl,
@@ -84,6 +86,7 @@ const config: ProxyConfig = {
   telemetryMode,
   syncApiUrl,
   syncCodeMieUrl,
+  apiKey,
 };
 
 const proxy = new CodeMieProxy(config);
@@ -118,6 +121,7 @@ try {
         profile: config.profile,
         syncApiUrl: config.syncApiUrl,
         syncCodeMieUrl: config.syncCodeMieUrl,
+        apiKey: config.apiKey,
         pollIntervalMs: config.telemetryPollIntervalMs ?? 10000,
         inactivityTimeoutMs: config.telemetryInactivityTimeoutMs ?? 300000
       }

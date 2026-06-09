@@ -229,6 +229,7 @@ export class DesktopTelemetryRuntime {
     return {
       apiBaseUrl: this.config.syncApiUrl || this.config.targetApiUrl,
       cookies,
+      apiKey: this.config.apiKey,
       clientType: this.config.clientType,
       version: this.config.version,
       dryRun: false,
