@@ -27,8 +27,29 @@
     body { margin: 0; padding: 0; overflow: hidden; background: var(--report-page-bg); background-attachment: fixed; }
     .shell { display: flex; height: 100vh; background: transparent; }
 
-    /* sidebar — frosted over the gradient so the rail stays distinct without a hard fill */
-    .side { width: 232px; flex-shrink: 0; background: var(--color-bg-card); background: color-mix(in srgb, var(--color-bg-card) 82%, transparent); backdrop-filter: blur(8px); border-right: 1px solid var(--color-border-structural); display: flex; flex-direction: column; padding: 16px 12px; overflow-y: auto; }
+    /* sidebar — frosted over the gradient so the rail stays distinct without a hard fill.
+       A CodeMie-brand radial glow (purple→blue) is anchored at the bottom-left corner, as
+       in the product chrome. Layered as a fixed background (background-attachment: scroll is
+       the default for a scroll container, so the glow stays pinned to the corner, not the
+       scrolled content). The first `background:` is the no-color-mix fallback. */
+    .side {
+      position: relative;
+      width: 232px; flex-shrink: 0;
+      background: var(--color-bg-card);
+      background:
+        radial-gradient(135% 80% at -10% 116%, rgba(132, 83, 210, 0.34) 0%, rgba(34, 151, 246, 0.12) 44%, transparent 72%),
+        color-mix(in srgb, var(--color-bg-card) 82%, transparent);
+      backdrop-filter: blur(8px);
+      border-right: 1px solid var(--color-border-structural);
+      display: flex; flex-direction: column;
+      padding: 16px 12px; overflow-y: auto;
+    }
+    :root.light .side, .light .side {
+      background: var(--color-bg-card);
+      background:
+        radial-gradient(135% 80% at -10% 116%, rgba(132, 83, 210, 0.18) 0%, rgba(34, 151, 246, 0.09) 46%, transparent 74%),
+        color-mix(in srgb, var(--color-bg-card) 90%, transparent);
+    }
     .side .brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px 14px; }
     .side .logo { width: 30px; height: 30px; border-radius: 9px; background: linear-gradient(135deg, #2297F6, #7C5CFC); display: flex; align-items: center; justify-content: center; font-weight: 700; color: #fff; font-size: 15px; }
     .nav-group { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--color-text-muted); font-weight: 600; margin: 14px 8px 6px; }
@@ -61,6 +82,13 @@
     .kpi-value { font-size: 24px; font-weight: 700; color: var(--color-text-primary); margin-top: 6px; line-height: 1.1; }
     .kpi-sub { font-size: 12px; color: var(--color-text-muted); margin-top: 4px; }
     .kpi.soon { opacity: .6; }
+    /* token-usage KPI row on Overview — input / output / cache write / cache read / total */
+    .kpi-section-label { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--color-text-muted); font-weight: 600; margin: 4px 2px 8px; }
+    .kpi-grid-tokens { grid-template-columns: repeat(5, 1fr); margin-top: 0; margin-bottom: 18px; }
+    @media (max-width: 1100px) { .kpi-grid-tokens { grid-template-columns: repeat(2, 1fr); } }
+    /* a hairline brand accent so the token tiles read as a related group */
+    .kpi-grid-tokens .kpi { border-top: 2px solid color-mix(in srgb, #7C5CFC 55%, var(--color-border-structural)); }
+    .kpi-value.muted { color: var(--color-text-muted); }
 
     /* grids + charts */
     .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
@@ -95,6 +123,14 @@
     .search-input { width: 280px; }
     .clickable { cursor: pointer; }
     .drill { background: var(--color-bg-secondary); }
+
+    /* table alignment — the design-system `.table thead tr th` (text-align:left, higher
+       specificity) was overriding `.td-number` on numeric <th>, so numeric headers stayed
+       left-aligned while their cells right-aligned. These higher-specificity rules re-align
+       each header with its column values so headers line up over the content. */
+    .table thead tr th.td-number { text-align: right; }
+    .table thead tr th:not(.td-number) { text-align: left; }
+    .table tbody tr td:not(.td-number) { text-align: left; }
 
     /* date range picker */
     .date-range { display: inline-flex; align-items: center; gap: 6px; }

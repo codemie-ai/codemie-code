@@ -195,6 +195,33 @@
     });
     host.appendChild(grid);
 
+    // token-usage summary — input / output / cache write / cache read / total.
+    // "cache write" = cacheCreation (tokens written to the prompt cache),
+    // "cache read"  = cacheRead     (tokens served from the prompt cache).
+    var tIn = sum(fs, function (s) { return s.tokens ? s.tokens.input : 0; });
+    var tOut = sum(fs, function (s) { return s.tokens ? s.tokens.output : 0; });
+    var tcWrite = sum(fs, function (s) { return s.tokens ? s.tokens.cacheCreation : 0; });
+    var tcRead = sum(fs, function (s) { return s.tokens ? s.tokens.cacheRead : 0; });
+    var tTotal = sum(fs, function (s) { return s.tokens ? s.tokens.total : 0; });
+    var tkv = function (v) { return tTotal > 0 ? fmtTokens(v) : '—'; };
+    var tokenKpis = [
+      ['Input tokens', tkv(tIn), 'prompts sent to the model'],
+      ['Output tokens', tkv(tOut), 'completions generated'],
+      ['Cache write', tkv(tcWrite), 'tokens written to cache'],
+      ['Cache read', tkv(tcRead), 'tokens served from cache'],
+      ['Total tokens', tkv(tTotal), priced < DATA.meta.totals.sessions ? ('priced ' + priced + '/' + DATA.meta.totals.sessions + ' sessions') : 'across sessions in view']
+    ];
+    host.appendChild(el('div', 'kpi-section-label', 'Token usage'));
+    var tgrid = el('div', 'kpi-grid kpi-grid-tokens');
+    tokenKpis.forEach(function (k) {
+      var c = el('div', 'kpi');
+      c.appendChild(el('div', 'kpi-label', k[0]));
+      c.appendChild(el('div', 'kpi-value' + (tTotal > 0 ? '' : ' muted'), k[1]));
+      if (k[2]) c.appendChild(el('div', 'kpi-sub', k[2]));
+      tgrid.appendChild(c);
+    });
+    host.appendChild(tgrid);
+
     var row = el('div', 'grid-32 mb16');
     var trend = card('Net lines over time');
     row.appendChild(trend);
@@ -279,12 +306,16 @@
     });
 
     var detail = card('Per-agent detail');
+    // Agent + Top model are categorical (left); the rest are numeric (right). Passing an
+    // explicit mask keeps the text "Top model" column left-aligned instead of being treated
+    // as numeric by the default "everything but column 0" rule.
     detail._body.innerHTML = tableHTML(['Agent', 'Sessions', 'Turns', 'Files', 'Net lines', 'Top model', 'Tool success', 'Cost'],
       agentList.map(function (a) {
         var ss = byAgent.get(a);
         var topModel = topOf(ss.flatMap(function (s) { return s.models; }));
         return ['<span class="tag tag-sm" style="text-transform:capitalize">' + esc(a) + '</span>', fmtNum(ss.length), tdNum(sum(ss, function (s) { return s.turns; })), tdNum(sum(ss, function (s) { return s.fileOps; })), tdNum(sum(ss, function (s) { return s.netLines; })), '<span class="tag tag-sm">' + esc(topModel || '—') + '</span>', tdNum(successRate(ss) + '%'), tdNum(fmtUSD(sum(ss, function (s) { return s.costUSD; })))];
-      }));
+      }),
+      [false, true, true, true, true, false, true, true]);
     host.appendChild(detail);
   };
 
