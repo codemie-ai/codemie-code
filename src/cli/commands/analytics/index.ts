@@ -117,8 +117,13 @@ export function createAnalyticsCommand(): Command {
         // Generate the report if requested (--report-output and --open imply --report)
         if (wantReport && costResult) {
           const { buildPayload } = await import('./report/payload-builder.js');
-          const { generateReport, generateReportJson, getDefaultReportPath, getDefaultReportJsonPath } =
-            await import('./report/report-generator.js');
+          const {
+            generateReport,
+            generateReportJson,
+            getDefaultReportPath,
+            getDefaultReportJsonPath,
+            writeReportWithFallback
+          } = await import('./report/report-generator.js');
 
           const { index: costIndex, summary } = costResult;
           const payload = buildPayload(analytics, costIndex, summary, {
@@ -130,6 +135,10 @@ export function createAnalyticsCommand(): Command {
           const cwd = process.cwd();
           let htmlPath: string | undefined;
           let jsonPath: string | undefined;
+          // Default (cwd-derived) paths may relocate when cwd is unwritable (drive root,
+          // read-only volume); an explicit --report-output is honored as-is, errors included.
+          let htmlIsDefault = false;
+          let jsonIsDefault = false;
 
           if (reportFormat === 'both') {
             // Derive a shared base (strip a trailing .html/.json from --report-output, if any)
@@ -137,18 +146,33 @@ export function createAnalyticsCommand(): Command {
             const base = options.reportOutput?.replace(/\.(html|json)$/i, '');
             htmlPath = base ? `${base}.html` : getDefaultReportPath(cwd);
             jsonPath = base ? `${base}.json` : getDefaultReportJsonPath(cwd);
+            htmlIsDefault = jsonIsDefault = !base;
           } else if (reportFormat === 'html') {
             htmlPath = options.reportOutput || getDefaultReportPath(cwd);
+            htmlIsDefault = !options.reportOutput;
           } else {
             jsonPath = options.reportOutput || getDefaultReportJsonPath(cwd);
+            jsonIsDefault = !options.reportOutput;
           }
 
           if (htmlPath) {
-            generateReport(payload, htmlPath);
+            const result = writeReportWithFallback((p) => generateReport(payload, p), htmlPath, htmlIsDefault);
+            htmlPath = result.path; // keep --open and the success line pointed at the real file
+            if (result.relocatedFrom) {
+              console.log(
+                chalk.yellow(`\n! ${result.relocatedFrom} is not writable (drive root or read-only volume); using a writable location instead.`)
+              );
+            }
             console.log(chalk.green(`\n✓ HTML report written to: ${htmlPath}`));
           }
           if (jsonPath) {
-            generateReportJson(payload, jsonPath);
+            const result = writeReportWithFallback((p) => generateReportJson(payload, p), jsonPath, jsonIsDefault);
+            jsonPath = result.path;
+            if (result.relocatedFrom) {
+              console.log(
+                chalk.yellow(`\n! ${result.relocatedFrom} is not writable (drive root or read-only volume); using a writable location instead.`)
+              );
+            }
             console.log(chalk.green(`\n✓ JSON report written to: ${jsonPath}`));
           }
 

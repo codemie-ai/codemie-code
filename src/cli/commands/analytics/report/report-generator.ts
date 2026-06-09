@@ -5,7 +5,8 @@
  */
 
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { homedir, tmpdir } from 'node:os';
+import { basename, dirname, join } from 'node:path';
 import { getDirname } from '../../../../utils/paths.js';
 import type { ReportPayload } from './types.js';
 
@@ -70,4 +71,54 @@ export function getDefaultReportJsonPath(cwd: string): string {
   // `.report.json` (not `.json`) so the default never collides with `--export json`,
   // which writes the cost-less analytics tree to `codemie-analytics-<date>.json`.
   return join(cwd, `codemie-analytics-${date}.report.json`);
+}
+
+/**
+ * Permission / read-only fs errors that a *different output directory* can resolve.
+ * Seen when the report defaults to a cwd that is a drive root (Windows `D:\`) or a
+ * read-only / write-protected volume (removable, network, BitLocker-locked, etc.).
+ */
+export function isUnwritableLocationError(err: unknown): boolean {
+  const code = (err as NodeJS.ErrnoException | null)?.code;
+  return code === 'EPERM' || code === 'EACCES' || code === 'EROFS';
+}
+
+/** Result of {@link writeReportWithFallback}: where the file actually landed. */
+export interface ReportWriteResult {
+  /** The path the report was finally written to. */
+  path: string;
+  /** Set only when the preferred path was unwritable and we relocated. */
+  relocatedFrom?: string;
+}
+
+/**
+ * Writes a report via `write(path)`. If the preferred location is unwritable
+ * (drive root, read-only volume) AND `allowFallback` is true, retries the same
+ * filename under the user's home dir, then the OS temp dir, and reports where it
+ * landed. With `allowFallback` false (an explicit `--report-output`) or for any
+ * non-permission error, the original error propagates unchanged.
+ */
+export function writeReportWithFallback(
+  write: (path: string) => void,
+  preferredPath: string,
+  allowFallback: boolean
+): ReportWriteResult {
+  try {
+    write(preferredPath);
+    return { path: preferredPath };
+  } catch (err) {
+    if (!allowFallback || !isUnwritableLocationError(err)) throw err;
+    const name = basename(preferredPath);
+    for (const dir of [homedir(), tmpdir()]) {
+      const candidate = join(dir, name);
+      if (candidate === preferredPath) continue;
+      try {
+        write(candidate);
+        return { path: candidate, relocatedFrom: preferredPath };
+      } catch (inner) {
+        if (!isUnwritableLocationError(inner)) throw inner;
+      }
+    }
+    throw err;
+  }
 }
