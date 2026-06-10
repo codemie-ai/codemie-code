@@ -7,6 +7,7 @@
   "types": "dist/index.d.ts",
   "bin": {
     "codemie": "./bin/codemie.js",
+    "code": "./bin/codemie.js",
     "codemie-code": "./bin/agent-executor.js",
     "codemie-claude": "./bin/codemie-claude.js",
     "codemie-claude-acp": "./bin/codemie-claude-acp.js",
