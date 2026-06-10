@@ -29,7 +29,7 @@ export const CODEMIE_ASSISTANT_ID =
 export const CONVERSATIONS_API_PATH = 'v1/conversations';
 
 /** Default folder name for imported conversations */
-export const DEFAULT_CONVERSATION_FOLDER = 'Claude Imports';
+export const DEFAULT_CONVERSATION_FOLDER = 'Claude Desktop';
 
 // ============================================================================
 // HTTP Status Codes
