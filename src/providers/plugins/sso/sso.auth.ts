@@ -120,7 +120,7 @@ export class CodeMieSSO {
         const credentials: SSOCredentials = {
           cookies: result.cookies,
           apiUrl: result.apiUrl,
-          expiresAt: Date.now() + (24 * 60 * 60 * 1000) // 24 hours
+          expiresAt: deriveExpiresAt(result.cookies),
         };
 
         const store = CredentialStore.getInstance();
