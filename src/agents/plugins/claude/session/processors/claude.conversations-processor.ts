@@ -336,6 +336,20 @@ export class ConversationsProcessor implements SessionProcessor {
         sessionFilePath
       );
 
+      // Skip an incomplete turn — a new user message whose assistant reply hasn't been
+      // recorded yet. Emitting it now would advance the history index for a user-only
+      // turn; once the assistant arrives the same turn is re-emitted under the next
+      // index, leaving a duplicate user message in the stored history. Leave the sync
+      // state untouched so the complete turn is emitted once on a later pass.
+      if (!history.some((h: any) => h.role === 'Assistant')) {
+        return {
+          history: [],
+          isTurnContinuation: false,
+          lastProcessedMessageUuid: syncState.lastSyncedMessageUuid || '',
+          currentHistoryIndex: syncState.lastSyncedHistoryIndex
+        };
+      }
+
       for (let i = turnEndIndex - 1; i >= firstUserIndex; i--) {
         if (messages[i].uuid) {
           lastProcessedMessageUuid = messages[i].uuid;
