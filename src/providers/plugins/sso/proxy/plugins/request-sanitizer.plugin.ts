@@ -72,7 +72,7 @@ class RequestSanitizerInterceptor implements ProxyInterceptor {
 
       // Responses API (/v1/responses) supports reasoningSummary and must not have it stripped.
       // Chat Completions (/v1/chat/completions) and any other path use the restricted set.
-      const isResponsesApi = context.url?.includes('/v1/responses') || context.url === '/responses';
+      const isResponsesApi = context.url === '/v1/responses';
       const paramsToStrip = isResponsesApi ? [] : CHAT_COMPLETIONS_UNSUPPORTED_PARAMS;
 
       const stripped: string[] = [];

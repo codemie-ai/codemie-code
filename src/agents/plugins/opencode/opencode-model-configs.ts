@@ -89,6 +89,44 @@ export function isResponsesApiModel(id: string): boolean {
   return RESPONSES_API_MODEL_PATTERNS.some(p => p.test(id));
 }
 
+// ── Shared base configs for model families ───────────────────────────────────
+
+/** Shared fields for gpt-5.4 and gpt-5.4-2026-03-05 (only id/name/displayName differ) */
+const GPT_5_4_BASE = {
+  family: 'gpt-5',
+  tool_call: true,
+  reasoning: true,
+  attachment: true,
+  temperature: false,
+  structured_output: true,
+  modalities: { input: ['text', 'image'], output: ['text'] },
+  knowledge: '2025-08-31',
+  release_date: '2026-03-05',
+  last_updated: '2026-03-05',
+  open_weights: false,
+  use_responses_api: true,
+  cost: { input: 1.75, output: 14, cache_read: 0.175 },
+  limit: { context: 400000, output: 128000 }
+} satisfies Partial<OpenCodeModelConfig>;
+
+/** Shared fields for gpt-5.5 and gpt-5.5-2026-04-24 (only id/name/displayName differ) */
+const GPT_5_5_BASE = {
+  family: 'gpt-5',
+  tool_call: true,
+  reasoning: true,
+  attachment: true,
+  temperature: false,
+  structured_output: true,
+  modalities: { input: ['text', 'image'], output: ['text'] },
+  knowledge: '2025-11-30',
+  release_date: '2026-04-24',
+  last_updated: '2026-04-24',
+  open_weights: false,
+  use_responses_api: true,
+  cost: { input: 1.75, output: 14, cache_read: 0.175 },
+  limit: { context: 400000, output: 128000 }
+} satisfies Partial<OpenCodeModelConfig>;
+
 export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
   'gpt-5-2-2025-12-11': {
     id: 'gpt-5-2-2025-12-11',
@@ -264,123 +302,31 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
   },
 
   'gpt-5.4': {
+    ...GPT_5_4_BASE,
     id: 'gpt-5.4',
     name: 'GPT-5.4',
     displayName: 'GPT-5.4',
-    family: 'gpt-5',
-    tool_call: true,
-    reasoning: true,
-    attachment: true,
-    temperature: false,
-    structured_output: true,
-    modalities: {
-      input: ['text', 'image'],
-      output: ['text']
-    },
-    knowledge: '2025-08-31',
-    release_date: '2026-03-05',
-    last_updated: '2026-03-05',
-    open_weights: false,
-    use_responses_api: true,
-    cost: {
-      input: 1.75,
-      output: 14,
-      cache_read: 0.175
-    },
-    limit: {
-      context: 400000,
-      output: 128000
-    }
   },
 
   'gpt-5.4-2026-03-05': {
+    ...GPT_5_4_BASE,
     id: 'gpt-5.4-2026-03-05',
     name: 'GPT-5.4 (Mar 2026)',
     displayName: 'GPT-5.4 (Mar 2026)',
-    family: 'gpt-5',
-    tool_call: true,
-    reasoning: true,
-    attachment: true,
-    temperature: false,
-    structured_output: true,
-    modalities: {
-      input: ['text', 'image'],
-      output: ['text']
-    },
-    knowledge: '2025-08-31',
-    release_date: '2026-03-05',
-    last_updated: '2026-03-05',
-    open_weights: false,
-    use_responses_api: true,
-    cost: {
-      input: 1.75,
-      output: 14,
-      cache_read: 0.175
-    },
-    limit: {
-      context: 400000,
-      output: 128000
-    }
   },
 
   'gpt-5.5': {
+    ...GPT_5_5_BASE,
     id: 'gpt-5.5',
     name: 'GPT-5.5',
     displayName: 'GPT-5.5',
-    family: 'gpt-5',
-    tool_call: true,
-    reasoning: true,
-    attachment: true,
-    temperature: false,
-    structured_output: true,
-    modalities: {
-      input: ['text', 'image'],
-      output: ['text']
-    },
-    knowledge: '2025-11-30',
-    release_date: '2026-04-24',
-    last_updated: '2026-04-24',
-    open_weights: false,
-    use_responses_api: true,
-    cost: {
-      input: 1.75,
-      output: 14,
-      cache_read: 0.175
-    },
-    limit: {
-      context: 400000,
-      output: 128000
-    }
   },
 
   'gpt-5.5-2026-04-24': {
+    ...GPT_5_5_BASE,
     id: 'gpt-5.5-2026-04-24',
     name: 'GPT-5.5 (Apr 2026)',
     displayName: 'GPT-5.5 (Apr 2026)',
-    family: 'gpt-5',
-    tool_call: true,
-    reasoning: true,
-    attachment: true,
-    temperature: false,
-    structured_output: true,
-    modalities: {
-      input: ['text', 'image'],
-      output: ['text']
-    },
-    knowledge: '2025-11-30',
-    release_date: '2026-04-24',
-    last_updated: '2026-04-24',
-    open_weights: false,
-    use_responses_api: true,
-    cost: {
-      input: 1.75,
-      output: 14,
-      cache_read: 0.175
-    },
-    limit: {
-      context: 400000,
-      output: 128000
-    }
   },
 
   // ── Claude Models ──────────────────────────────────────────────────
