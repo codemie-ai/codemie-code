@@ -4,6 +4,7 @@ import { existsSync } from 'fs';
 import { logger } from '../../utils/logger.js';
 import { getModelConfig, getChatCompletionsModelConfigs, getResponsesApiModelConfigs } from './opencode/opencode-model-configs.js';
 import { fetchDynamicModelConfigs } from './opencode/opencode-dynamic-models.js';
+import { AzureOpenAIModelProxy } from '../../providers/plugins/azure-openai/azure-openai.models.js';
 import { BaseAgentAdapter } from '../core/BaseAgentAdapter.js';
 import type { SessionAdapter } from '../core/session/BaseSessionAdapter.js';
 import type { BaseExtensionInstaller } from '../core/extension/BaseExtensionInstaller.js';
@@ -12,6 +13,7 @@ import { OpenCodeSessionAdapter } from './opencode/opencode.session.js';
 import { resolveCodemieOpenCodeBinary, getPlatformPackage } from './codemie-code-binary.js';
 import { getHooksPluginFileUrl, cleanupHooksPlugin } from './codemie-code-hooks/index.js';
 import { getReasoningSanitizerPluginUrl, cleanupReasoningSanitizerPlugin } from './reasoning-sanitizer/index.js';
+import { getAzureDialSanitizerPluginUrl, cleanupAzureDialSanitizerPlugin } from './azure-dial-sanitizer/index.js';
 import { getCodemieHome } from '../../utils/paths.js';
 import type { HookProcessingConfig } from '../../cli/commands/hook.js';
 import { toBedrockModelId } from '../../providers/plugins/bedrock/bedrock.utils.js';
@@ -31,8 +33,16 @@ const OPENCODE_SUBCOMMANDS = ['run', 'chat', 'config', 'init', 'help', 'version'
 function determineActiveProvider(provider: string | undefined): string {
   if (provider === 'ollama') return 'ollama';
   if (provider === 'bedrock') return 'amazon-bedrock';
+  if (provider === 'azure-openai') return 'azure-openai';
   if (provider === 'litellm') return 'litellm';
   return 'codemie-proxy';
+}
+
+function resolveAzureOpenAIBaseUrl(env: NodeJS.ProcessEnv): string | undefined {
+  // CODEMIE_AZURE_OPENAI_BASE_URL is the canonical Azure endpoint var, exported by
+  // AzureOpenAITemplate.exportEnvVars.  CODEMIE_BASE_URL is a reliable fallback
+  // because ConfigLoader always populates it from config.baseUrl for every provider.
+  return env.CODEMIE_AZURE_OPENAI_BASE_URL || env.CODEMIE_BASE_URL;
 }
 
 /**
@@ -73,16 +83,80 @@ function resolveOllamaBaseUrl(baseUrl: string, provider: string | undefined): st
 }
 
 /**
+ * Build Azure OpenAI provider entries for OpenCode config.
+ *
+ * Architecture note: EPAM DIAL (and standard Azure OpenAI) require the deployment
+ * name in the URL path:
+ *   /openai/deployments/{deployment}/chat/completions?api-version={ver}
+ *
+ * @ai-sdk/openai-compatible does not support per-model URL routing — it uses
+ * a single baseURL for the entire provider. To support multiple deployments we
+ * register one named provider per deployment (azure-openai-{id}) with its own
+ * baseURL that includes the deployment path. The active model is set to the
+ * provider entry that matches the selected deployment.
+ */
+function buildAzureOpenAIProviders(
+  baseUrl: string,
+  apiKey: string,
+  apiVersion: string | undefined,
+  azureModels: Record<string, unknown>,
+  timeout: number
+): {
+  providers: Record<string, unknown>;
+  enabledProviders: string[];
+  activeProviderForModel: (modelId: string) => string;
+} {
+  const providers: Record<string, unknown> = {};
+  const enabledProviders: string[] = [];
+  const cleanBase = baseUrl.replace(/\/$/, '');
+
+  // Register one provider entry per deployment so each gets the correct URL.
+  for (const modelId of Object.keys(azureModels)) {
+    // Provider key must be safe for OpenCode config (no dots or colons).
+    const providerKey = `azure-dial-${modelId.replace(/[^a-zA-Z0-9_-]/g, '-')}`;
+    const deploymentUrl = `${cleanBase}/openai/deployments/${encodeURIComponent(modelId)}/`;
+    providers[providerKey] = {
+      npm: '@ai-sdk/openai-compatible',
+      name: `Azure OpenAI (${modelId})`,
+      options: {
+        baseURL: deploymentUrl,
+        // IMPORTANT: Do NOT put key in apiKey — sdk would send Authorization: Bearer.
+        // DIAL requires `api-key` header (Azure standard).
+        apiKey: '',
+        headers: {
+          'api-key': apiKey,
+          ...(apiVersion ? { 'api-version': apiVersion } : {})
+        },
+        timeout,
+      },
+      // Each provider exposes exactly this one model.
+      models: { [modelId]: azureModels[modelId] }
+    };
+    enabledProviders.push(providerKey);
+  }
+
+  return {
+    providers,
+    enabledProviders,
+    activeProviderForModel: (modelId: string) =>
+      `azure-dial-${modelId.replace(/[^a-zA-Z0-9_-]/g, '-')}`
+  };
+}
+
+
+/**
  * Build the OpenCode config object that gets passed to the whitelabel binary.
  *
- * Models are split into two groups:
- * - chatModels: routed via codemie-proxy/litellm (Chat Completions API)
- * - responsesApiModels: routed via OpenCode's built-in openai CUSTOM_LOADER (Responses API)
+ * Azure OpenAI uses per-deployment providers (see buildAzureOpenAIProviders).
+ * All other providers use a single codemie-proxy/litellm/ollama entry.
  */
 function buildOpenCodeConfig(params: {
   proxyBaseUrl: string | undefined;
   litellmBaseUrl: string | undefined;
   litellmApiKey: string | undefined;
+  azureProviders: Record<string, unknown> | undefined;
+  azureEnabledProviders: string[];
+  azureActiveProvider: string | undefined;
   ollamaBaseUrl: string;
   activeProvider: string;
   modelId: string;
@@ -93,8 +167,11 @@ function buildOpenCodeConfig(params: {
   responsesApiBaseUrl: string | undefined;
 }): Record<string, unknown> {
   const hasResponsesApiModels = Object.keys(params.responsesApiModels).length > 0;
+  // Base set of known providers; Azure per-deployment providers are added dynamically.
+  const baseEnabledProviders = ['codemie-proxy', 'openai', 'ollama', 'amazon-bedrock', 'litellm'];
+  const enabledProviders = [...baseEnabledProviders, ...params.azureEnabledProviders];
   return {
-    enabled_providers: ['codemie-proxy', 'openai', 'ollama', 'amazon-bedrock', 'litellm'],
+    enabled_providers: enabledProviders,
     share: 'disabled',
     provider: {
       ...(params.proxyBaseUrl && {
@@ -110,13 +187,11 @@ function buildOpenCodeConfig(params: {
           models: params.chatModels
         }
       }),
-      // OpenCode's built-in openai CUSTOM_LOADER — uses @ai-sdk/openai sdk.responses()
-      // which calls POST /v1/responses instead of /v1/chat/completions
+      // Per-deployment Azure providers (each has its own URL with the deployment path).
+      ...(params.azureProviders ?? {}),
       ...(params.responsesApiBaseUrl && hasResponsesApiModels && {
         openai: {
           name: 'CodeMie SSO',
-          // whitelist: suppress the built-in openai model list (GPT-4, GPT-4o, etc.)
-          // OpenCode merges user models with models.dev — whitelist restricts to ours only
           whitelist: Object.keys(params.responsesApiModels),
           options: {
             baseURL: `${params.responsesApiBaseUrl}/`,
@@ -149,7 +224,11 @@ function buildOpenCodeConfig(params: {
         }
       }
     },
-    model: `${params.activeProvider}/${params.modelId}`
+    // For Azure: use the per-deployment provider key as the active provider.
+    // E.g. "azure-dial-anthropic-claude-sonnet-4-6/anthropic.claude-sonnet-4-6"
+    model: params.azureActiveProvider
+      ? `${params.azureActiveProvider}/${params.modelId}`
+      : `${params.activeProvider}/${params.modelId}`
   };
 }
 
@@ -208,7 +287,7 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
     model: []
   },
 
-  supportedProviders: ['litellm', 'ai-run-sso', 'ollama', 'bedrock', 'bearer-auth'],
+  supportedProviders: ['litellm', 'ai-run-sso', 'ollama', 'bedrock', 'bearer-auth', 'azure-openai'],
 
   ssoConfig: { enabled: true, clientType: 'codemie-code' },
 
@@ -238,7 +317,9 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
         // ensureSessionFile handles its own errors internally
         await ensureSessionFile(sessionId, env, BUILTIN_AGENT_NAME);
       }
-
+    
+      // Resolve the effective provider name.
+      // CODEMIE_PROVIDER is set by ConfigLoader.exportProviderEnvVars from config.provider.
       const provider = env.CODEMIE_PROVIDER;
       const baseUrl = env.CODEMIE_BASE_URL;
 
@@ -258,10 +339,7 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
         env.CODEMIE_URL,
         env.CODEMIE_JWT_TOKEN,
       );
-
-      // Model selection priority: env var > config > default
-      // Use dynamic catalogue first, then fall back to static getModelConfig for unknown IDs.
-      const selectedModel = env.CODEMIE_MODEL || config?.model || 'gpt-5-2-2025-12-11';
+      const selectedModel = env.CODEMIE_MODEL || config?.model || 'gpt-4.1';
       const modelConfig = allModels[selectedModel] ?? getModelConfig(selectedModel);
       const { providerOptions } = modelConfig;
       const chatModels = getChatCompletionsModelConfigs(allModels);
@@ -269,29 +347,81 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
 
       const isBedrock = provider === 'bedrock';
       const isLiteLLM = provider === 'litellm';
-      const proxyBaseUrl = provider !== 'ollama' && !isBedrock && !isLiteLLM ? baseUrl : undefined;
+      const isAzureOpenAI = provider === 'azure-openai';
+      const proxyBaseUrl = provider !== 'ollama' && !isBedrock && !isLiteLLM && !isAzureOpenAI ? baseUrl : undefined;
       const ollamaBaseUrl = resolveOllamaBaseUrl(baseUrl, provider);
       const activeProvider = determineActiveProvider(provider);
       const timeout = providerOptions?.timeout ?? parseInt(env.CODEMIE_TIMEOUT || '600') * 1000;
       const modelId = isBedrock
         ? toBedrockModelId(modelConfig.id, env.AWS_REGION || env.CODEMIE_AWS_REGION)
         : modelConfig.id;
-
-      // Responses API base URL: use proxyBaseUrl for SSO/bearer-auth, or baseUrl for LiteLLM.
-      // Always set regardless of selected model — fixes model-switching bug where switching
-      // from a Claude model to a GPT model mid-session would miss the CUSTOM_LOADER.
+      
       const responsesApiBaseUrl = proxyBaseUrl || (isLiteLLM ? baseUrl : undefined);
       if (responsesApiBaseUrl && Object.keys(responsesApiModels).length > 0) {
         env.OPENAI_API_KEY = 'proxy-handled';
         logger.debug('[codemie-code] Enabling openai CUSTOM_LOADER for Responses API models');
       }
-
+      
+      // For Azure OpenAI: build per-deployment providers using buildAzureOpenAIProviders.
+      // Each deployment gets its own named provider entry with the correct URL.
+      let azureProvidersResult: ReturnType<typeof buildAzureOpenAIProviders> | undefined;
+      if (isAzureOpenAI) {
+        const azureEndpoint = resolveAzureOpenAIBaseUrl(env);
+        const azureApiVersion = env.CODEMIE_AZURE_OPENAI_API_VERSION || env.AZURE_OPENAI_API_VERSION;
+        const azureApiKey = env.CODEMIE_API_KEY || '';
+        if (azureEndpoint) {
+          // Start with the selected model as fallback
+          const initialAzureModels: Record<string, unknown> = {};
+          const cfg = getModelConfig(modelId);
+          const { displayName: _dn, providerOptions: _po, use_responses_api: _ra, ...opencodeCfg } = cfg as any;
+          initialAzureModels[modelId] = opencodeCfg;
+      
+          // Try to fetch all deployments from DIAL/Azure for a full model list
+          try {
+            const proxy = new AzureOpenAIModelProxy(azureEndpoint, azureApiKey, azureApiVersion);
+            const deployments = await proxy.fetchDeploymentInfos({
+              provider: 'azure-openai',
+              baseUrl: azureEndpoint,
+              apiKey: azureApiKey,
+              model: modelId,
+              azureApiVersion,
+            } as any);
+            for (const d of deployments) {
+              const dcfg = getModelConfig(d.id);
+              const { displayName: _ddn, providerOptions: _dpo, use_responses_api: _dra, ...dOpencodeCfg } = dcfg as any;
+              initialAzureModels[d.id] = dOpencodeCfg;
+            }
+            logger.debug(`[codemie-code] Loaded ${deployments.length} Azure deployments for per-deployment providers`);
+          } catch (err) {
+            logger.debug(`[codemie-code] Azure deployments fetch failed (using selected model only): ${err instanceof Error ? err.message : String(err)}`);
+          }
+      
+          azureProvidersResult = buildAzureOpenAIProviders(
+            azureEndpoint,
+            azureApiKey,
+            azureApiVersion,
+            initialAzureModels,
+            timeout
+          );
+          logger.debug(`[codemie-code] Azure: active provider = ${azureProvidersResult.activeProviderForModel(modelId)}`);
+        }
+      }
+      
       const openCodeConfig = buildOpenCodeConfig({
         proxyBaseUrl,
         litellmBaseUrl: isLiteLLM ? baseUrl : undefined,
         litellmApiKey: isLiteLLM ? env.CODEMIE_API_KEY : undefined,
-        ollamaBaseUrl, activeProvider, modelId, timeout, providerOptions,
-        chatModels, responsesApiModels, responsesApiBaseUrl
+        azureProviders: azureProvidersResult?.providers,
+        azureEnabledProviders: azureProvidersResult?.enabledProviders ?? [],
+        azureActiveProvider: azureProvidersResult?.activeProviderForModel(modelId),
+        ollamaBaseUrl,
+        activeProvider,
+        modelId,
+        timeout,
+        providerOptions,
+        chatModels,
+        responsesApiModels,
+        responsesApiBaseUrl,
       });
 
       // --- Hooks injection ---
@@ -347,6 +477,15 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
       const sanitizerPluginUrl = getReasoningSanitizerPluginUrl();
       plugins.push(sanitizerPluginUrl);
       logger.debug(`[codemie-code] Injected reasoning-sanitizer plugin: ${sanitizerPluginUrl}`);
+      
+      // Inject Azure/DIAL sanitizer for all azure-dial-* providers.
+      // Strips cache_control from messages, thinking and reasoning params
+      // which DIAL/Azure OpenAI do not support (would return HTTP 400).
+      if (isAzureOpenAI) {
+        const azureDialSanitizerUrl = getAzureDialSanitizerPluginUrl();
+        plugins.push(azureDialSanitizerUrl);
+        logger.debug(`[codemie-code] Injected azure-dial-sanitizer plugin: ${azureDialSanitizerUrl}`);
+      }
 
       // --- Storage path configuration ---
       // Configure storage path for OpenCode sessions
@@ -453,6 +592,7 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
         delete process.env.OPENCODE_STORAGE_PATH;
         cleanupHooksPlugin();
         cleanupReasoningSanitizerPlugin();
+        cleanupAzureDialSanitizerPlugin();
       }
     }
   }

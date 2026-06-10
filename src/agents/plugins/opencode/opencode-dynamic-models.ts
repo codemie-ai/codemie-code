@@ -48,15 +48,19 @@ function isResponsesApiModel(id: string): boolean {
 // ── Family detection ─────────────────────────────────────────────────────────
 
 function detectFamily(id: string): string {
-  if (id.startsWith('claude')) return 'claude-4';
-  if (id.startsWith('gemini')) return 'gemini-2';
-  if (id.startsWith('gpt-4')) return 'gpt-4';
-  if (id.startsWith('gpt-5')) return 'gpt-5';
-  if (/^o[134]-/.test(id) || id === 'o1') return 'openai-reasoning';
-  if (id.startsWith('qwen')) return 'qwen3';
-  if (id.startsWith('deepseek')) return 'deepseek';
+  // Support vendor-prefixed model names (e.g. "anthropic.claude-...", "meta.llama-...").
+  const bare = id.includes('.') ? id.split('.').slice(1).join('.') : id;
+  if (bare.startsWith('claude') || id.startsWith('claude')) return 'claude-4';
+  if (bare.startsWith('gemini') || id.startsWith('gemini')) return 'gemini-2';
+  if (bare.startsWith('gpt-4') || id.startsWith('gpt-4')) return 'gpt-4';
+  if (bare.startsWith('gpt-5') || id.startsWith('gpt-5')) return 'gpt-5';
+  if (/^o[134]-/.test(bare) || bare === 'o1' || /^o[134]-/.test(id) || id === 'o1') return 'openai-reasoning';
+  if (bare.startsWith('qwen') || id.startsWith('qwen')) return 'qwen3';
+  if (bare.startsWith('deepseek') || id.startsWith('deepseek')) return 'deepseek';
+  if (bare.startsWith('llama') || id.startsWith('llama') || id.startsWith('meta.llama')) return 'llama';
+  if (bare.startsWith('mistral') || id.startsWith('mistral')) return 'mistral';
   if (id.startsWith('moonshotai') || id.startsWith('kimi')) return 'kimi';
-  return id.split('-')[0] || id;
+  return id.split('.').pop()?.split('-')[0] || id.split('-')[0] || id;
 }
 
 // ── Token-limit heuristics ───────────────────────────────────────────────────
@@ -65,7 +69,7 @@ function detectFamily(id: string): string {
 // We derive reasonable defaults from the model family.
 
 function detectLimits(id: string, family: string): { context: number; output: number } {
-  if (family === 'claude-4' || id.startsWith('claude')) return { context: 200000, output: 64000 };
+  if (family === 'claude-4' || id.startsWith('claude') || id.includes('.claude')) return { context: 200000, output: 64000 };
   if (family === 'gemini-2' || id.startsWith('gemini')) return { context: 1048576, output: 65536 };
   if (id.startsWith('gpt-4.1')) return { context: 1048576, output: 32768 };
   if (id.startsWith('gpt-4o')) return { context: 128000, output: 16384 };

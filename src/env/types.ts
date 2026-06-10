@@ -51,6 +51,7 @@ export interface ProviderProfile {
   name?: string;  // Optional - set during save
   provider?: string;
   baseUrl?: string;
+  azureOpenAIBaseUrl?: string;
   apiKey?: string;
   model?: string;
 
@@ -90,6 +91,10 @@ export interface ProviderProfile {
   // Token configuration (for Claude Code with Bedrock)
   maxOutputTokens?: number;
   maxThinkingTokens?: number;
+
+  // Azure OpenAI-specific fields
+  azureApiVersion?: string;
+  azureDeployment?: string;
 
   // Metrics configuration
   metrics?: {

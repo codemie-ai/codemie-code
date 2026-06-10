@@ -506,6 +506,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       // Display ASCII logo with configuration
       console.log(
         renderProfileInfo({
+          title: 'Profile',
           profile: profileName,
           provider,
           model,
