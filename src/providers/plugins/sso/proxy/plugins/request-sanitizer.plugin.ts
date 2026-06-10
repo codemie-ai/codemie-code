@@ -10,6 +10,11 @@
  * as reasoning models and inject `reasoningSummary`, `reasoning` (object), etc.
  * LiteLLM/Azure rejects these with: "Unknown parameter: 'reasoningSummary'"
  *
+ * IMPORTANT: `reasoningSummary` must NOT be stripped for Responses API requests
+ * (/v1/responses). It is a valid and required parameter there — without it the
+ * model returns no reasoning output, making the `/thinking` toggle a no-op for
+ * GPT-5.4 and other Responses API models.
+ *
  * Scope: Only enabled for codemie-code and codemie-opencode agents (which use
  * AI SDKs that inject these params). Other agents (claude, gemini) handle their
  * own request formatting and don't need this sanitization.
@@ -20,15 +25,25 @@ import { ProxyContext } from '../proxy-types.js';
 import { logger } from '../../../../../utils/logger.js';
 
 /**
- * Parameters to strip from request bodies before forwarding to upstream.
- * These are injected by AI SDKs for "reasoning models" but may not be
- * supported by all LLM proxies (LiteLLM, Azure OpenAI, etc.)
+ * Parameters to strip only for Chat Completions requests (/v1/chat/completions).
+ * These are injected by AI SDKs for "reasoning models" but are rejected by
+ * LiteLLM/Azure when sent to the Chat Completions endpoint.
+ *
+ * NOTE: These params are intentionally NOT stripped for Responses API requests
+ * (/v1/responses), where `reasoningSummary: "auto"` is required to receive
+ * reasoning output in the response stream (needed for the `/thinking` feature).
  */
-const UNSUPPORTED_PARAMS = [
+const CHAT_COMPLETIONS_UNSUPPORTED_PARAMS = [
   'reasoningSummary',    // @ai-sdk/openai-compatible injects this for reasoning models
   'reasoning_summary',   // Snake-case variant
   'reasoning',           // Full reasoning object from OpenAI Responses API
 ];
+
+/**
+ * Parameters that are always unsupported regardless of API path.
+ * Currently empty — extend here if future params need universal stripping.
+ */
+const ALWAYS_UNSUPPORTED_PARAMS: string[] = [];
 
 /** Agents that use AI SDKs which inject unsupported reasoning params */
 const ALLOWED_AGENTS = ['codemie-code', 'codemie-opencode'];
@@ -61,8 +76,15 @@ class RequestSanitizerInterceptor implements ProxyInterceptor {
       const bodyStr = context.requestBody.toString('utf-8');
       const body = JSON.parse(bodyStr);
 
+      // Responses API (/v1/responses) supports reasoningSummary and must not have it stripped.
+      // Chat Completions (/v1/chat/completions) and any other path use the restricted set.
+      const isResponsesApi = context.url?.includes('/v1/responses') || context.url === '/responses';
+      const paramsToStrip = isResponsesApi
+        ? ALWAYS_UNSUPPORTED_PARAMS
+        : CHAT_COMPLETIONS_UNSUPPORTED_PARAMS;
+
       const stripped: string[] = [];
-      for (const param of UNSUPPORTED_PARAMS) {
+      for (const param of paramsToStrip) {
         if (param in body) {
           delete body[param];
           stripped.push(param);

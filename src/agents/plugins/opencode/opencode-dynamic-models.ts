@@ -27,7 +27,7 @@ import { logger } from '../../../utils/logger.js';
 // (POST /v1/responses) instead of Chat Completions (POST /v1/chat/completions).
 //
 // Naming conventions observed in CodeMie deployments:
-//   Responses API  →  gpt-5-2-*, gpt-5.2-*, gpt-5.x-codex-*, gpt-5-x-codex-*
+//   Responses API  →  gpt-5-2-*, gpt-5.2-*, gpt-5.4*, gpt-5-4-*, gpt-5.x-codex-*, gpt-5-x-codex-*
 //   Chat Completions → gpt-4*, gpt-5-<year>-*, o1/o3/o4*, gemini-*, claude-*, …
 //
 // Update this list whenever new Responses-API-only models are deployed.
@@ -35,6 +35,8 @@ import { logger } from '../../../utils/logger.js';
 const RESPONSES_API_MODEL_PATTERNS: RegExp[] = [
   /^gpt-5-2-/,        // gpt-5-2-2025-12-11 (and future gpt-5-2-YYYY-* variants)
   /^gpt-5\.2-/,       // gpt-5.2-chat
+  /^gpt-5\.4/,        // gpt-5.4, gpt-5.4-2026-03-05, future gpt-5.4-* variants
+  /^gpt-5-4-/,        // hyphenated variant: gpt-5-4-2026-03-05
   /^gpt-5-1-codex/,   // gpt-5-1-codex-2025-11-13
   /^gpt-5\.1-codex/,  // gpt-5.1-codex, gpt-5.1-codex-mini, gpt-5.1-codex-max
   /^gpt-5-3-codex/,   // hyphenated variant of gpt-5.3-codex

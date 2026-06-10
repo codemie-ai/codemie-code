@@ -272,6 +272,7 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
       const proxyBaseUrl = provider !== 'ollama' && !isBedrock && !isLiteLLM ? baseUrl : undefined;
       const ollamaBaseUrl = resolveOllamaBaseUrl(baseUrl, provider);
       const activeProvider = determineActiveProvider(provider);
+      const effectiveProvider = modelConfig.use_responses_api ? 'openai' : activeProvider;
       const timeout = providerOptions?.timeout ?? parseInt(env.CODEMIE_TIMEOUT || '600') * 1000;
       const modelId = isBedrock
         ? toBedrockModelId(modelConfig.id, env.AWS_REGION || env.CODEMIE_AWS_REGION)
@@ -290,7 +291,7 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
         proxyBaseUrl,
         litellmBaseUrl: isLiteLLM ? baseUrl : undefined,
         litellmApiKey: isLiteLLM ? env.CODEMIE_API_KEY : undefined,
-        ollamaBaseUrl, activeProvider, modelId, timeout, providerOptions,
+        ollamaBaseUrl, activeProvider: effectiveProvider, modelId, timeout, providerOptions,
         chatModels, responsesApiModels, responsesApiBaseUrl
       });
 
