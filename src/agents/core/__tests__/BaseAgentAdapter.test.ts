@@ -16,12 +16,13 @@ vi.mock('../../../providers/core/registry.js', () => {
   };
   return {
     ProviderRegistry: {
-      registerProvider:    vi.fn((t: any) => t),
-      registerSetupSteps:  vi.fn(),
-      registerHealthCheck: vi.fn(),
-      registerModelProxy:  vi.fn(),
-      getProvider:         vi.fn((name: string) => providers[name]),
-      getProviderNames:    vi.fn(() => Object.keys(providers)),
+      registerProvider:      vi.fn((t: any) => t),
+      registerSetupSteps:    vi.fn(),
+      registerHealthCheck:   vi.fn(),
+      registerModelProxy:    vi.fn(),
+      registerProviderSetup: vi.fn((t: any) => t),
+      getProvider:           vi.fn((name: string) => providers[name]),
+      getProviderNames:      vi.fn(() => Object.keys(providers)),
     },
   };
 });

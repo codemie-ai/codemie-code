@@ -597,6 +597,9 @@ export function getResponsesApiModelConfigs(
  * Family-specific defaults for unknown model variants.
  * Used by getModelConfig() when an exact match isn't found but
  * the model ID prefix matches a known family.
+ *
+ * Keys are matched against both the full model ID and the part after the
+ * first dot (to handle vendor-prefixed names like "anthropic.claude-…").
  */
 const MODEL_FAMILY_DEFAULTS: Record<string, Partial<OpenCodeModelConfig>> = {
   'claude': {
@@ -632,6 +635,22 @@ const MODEL_FAMILY_DEFAULTS: Record<string, Partial<OpenCodeModelConfig>> = {
     temperature: true,
     modalities: { input: ['text'], output: ['text'] },
     limit: { context: 262000, output: 65536 }
+  },
+  'llama': {
+    family: 'llama',
+    reasoning: true,
+    attachment: false,
+    temperature: true,
+    modalities: { input: ['text'], output: ['text'] },
+    limit: { context: 128000, output: 8192 }
+  },
+  'mistral': {
+    family: 'mistral',
+    reasoning: true,
+    attachment: false,
+    temperature: true,
+    modalities: { input: ['text'], output: ['text'] },
+    limit: { context: 32000, output: 8192 }
   }
 };
 
@@ -655,14 +674,27 @@ export function getModelConfig(modelId: string): OpenCodeModelConfig {
     return config;
   }
 
-  // Detect model family from prefix for smarter defaults
+  // Strip vendor prefix (e.g. "anthropic.claude-..." → "claude-...") and
+  // try the catalogue again so that Azure-style deployment names resolve to
+  // the correct static config when one exists.
+  const bareName = modelId.includes('.') ? modelId.split('.').slice(1).join('.') : modelId;
+  const bareConfig = bareName !== modelId ? OPENCODE_MODEL_CONFIGS[bareName] : undefined;
+  if (bareConfig) {
+    // Return the static config but with the original (Azure) deployment id
+    // so OpenCode routes it to the right provider entry.
+    return { ...bareConfig, id: modelId, name: bareConfig.name, displayName: bareConfig.displayName ?? modelId };
+  }
+
+  // Detect model family from prefix for smarter defaults.
+  // Check both the full id and the bare name (after stripping vendor prefix).
   const familyPrefix = Object.keys(MODEL_FAMILY_DEFAULTS).find(
-    prefix => modelId.startsWith(prefix)
+    prefix => modelId.startsWith(prefix) || bareName.startsWith(prefix)
   );
   const familyDefaults = familyPrefix ? MODEL_FAMILY_DEFAULTS[familyPrefix] : {};
 
   // Extract family from model ID (e.g., "gpt-4o" -> "gpt-4", "claude-4-5-sonnet" -> "claude-4")
   const family = familyDefaults.family
+    || bareName.split('-').slice(0, 2).join('-')
     || modelId.split('-').slice(0, 2).join('-')
     || modelId;
 
