@@ -39,12 +39,6 @@ const CHAT_COMPLETIONS_UNSUPPORTED_PARAMS = [
   'reasoning',           // Full reasoning object from OpenAI Responses API
 ];
 
-/**
- * Parameters that are always unsupported regardless of API path.
- * Currently empty — extend here if future params need universal stripping.
- */
-const ALWAYS_UNSUPPORTED_PARAMS: string[] = [];
-
 /** Agents that use AI SDKs which inject unsupported reasoning params */
 const ALLOWED_AGENTS = ['codemie-code', 'codemie-opencode'];
 
@@ -79,9 +73,7 @@ class RequestSanitizerInterceptor implements ProxyInterceptor {
       // Responses API (/v1/responses) supports reasoningSummary and must not have it stripped.
       // Chat Completions (/v1/chat/completions) and any other path use the restricted set.
       const isResponsesApi = context.url?.includes('/v1/responses') || context.url === '/responses';
-      const paramsToStrip = isResponsesApi
-        ? ALWAYS_UNSUPPORTED_PARAMS
-        : CHAT_COMPLETIONS_UNSUPPORTED_PARAMS;
+      const paramsToStrip = isResponsesApi ? [] : CHAT_COMPLETIONS_UNSUPPORTED_PARAMS;
 
       const stripped: string[] = [];
       for (const param of paramsToStrip) {
