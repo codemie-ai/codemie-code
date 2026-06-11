@@ -4,7 +4,7 @@
  */
 
 import type { TokenUsage, ModelCost, AgentCoverage } from '../cost/types.js';
-import type { ToolStats } from '../types.js';
+import type { ToolStats, NamedInvocationStats } from '../types.js';
 
 /** One flat record per session — the client aggregates everything from these. */
 export interface ReportSessionRecord {
@@ -13,6 +13,7 @@ export interface ReportSessionRecord {
   provider: string;
   project: string;
   branch: string;
+  title: string; // first user prompt, cleaned of command/system XML; '' when none captured
   startTime: number; // unix ms
   durationMs: number;
   turns: number;
@@ -21,14 +22,21 @@ export interface ReportSessionRecord {
   linesRemoved: number;
   linesModified: number;
   netLines: number;
+  filesChanged: number; // distinct paths written or edited (excludes reads)
+  filesWritten: number; // distinct paths written
+  filesEdited: number; // distinct paths edited
   toolCallsTotal: number;
   toolCallsSuccess: number;
   toolCallsFailure: number;
   models: string[];
   languages: string[];
   tools: ToolStats[];
+  skillInvocations: NamedInvocationStats[];
+  agentInvocations: NamedInvocationStats[];
+  commandInvocations: NamedInvocationStats[];
   tokens: TokenUsage;
   costUSD: number;
+  cacheReadCostUSD: number; // USD attributable to cache reads (subset of costUSD)
   perModelCost: ModelCost[];
 }
 
@@ -46,6 +54,7 @@ export interface ReportMeta {
     toolCallsTotal: number;
     toolSuccessRate: number;
     totalCostUSD: number;
+    cacheReadCostUSD: number;
     pricedSessions: number;
   };
   unpricedModels: string[];

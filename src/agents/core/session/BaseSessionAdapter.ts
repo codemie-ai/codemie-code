@@ -55,6 +55,10 @@ export interface ParsedSession {
       linesAdded?: number;
       linesRemoved?: number;
     }>;
+    // Named invocation breakdowns (skill names, agent subtypes, slash commands)
+    skillInvocations?: Record<string, number>;
+    agentInvocations?: Record<string, number>;
+    commandInvocations?: Record<string, number>;
   };
 }
 

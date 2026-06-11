@@ -12,7 +12,7 @@ import { readFile } from 'node:fs/promises';
 import type { RawSessionData } from '../data-loader.js';
 import type { ParsedSession, SessionAdapter } from '../../../../agents/core/session/BaseSessionAdapter.js';
 import type { SessionCost, SessionCostIndex, CostSummary, ModelCost, TokenUsage } from './types.js';
-import { emptyUsage, addUsage, costForUsage } from './cost-calculator.js';
+import { emptyUsage, addUsage, costBreakdown } from './cost-calculator.js';
 import { lookupPrice } from './pricing.js';
 import { gatherUsageDeduped } from './usage-readers.js';
 import { normalizeModelName } from '../model-normalizer.js';
@@ -107,24 +107,27 @@ function priceUsage(
   const unpriced: string[] = [];
   let sessionTokens = emptyUsage();
   let sessionCost = 0;
+  let cacheReadCostUSD = 0;
 
   for (const [rawModel, usage] of usageByModel) {
     const model = normalizeModelName(rawModel);
     const price = lookupPrice(model);
-    const costUSD = price ? costForUsage(usage, price) : 0;
+    const breakdown = price ? costBreakdown(usage, price) : null;
+    const costUSD = breakdown ? breakdown.total : 0;
     if (!price) {
       unpriced.push(model);
     }
     perModel.push({ model, tokens: usage, costUSD, unpriced: !price });
     sessionTokens = addUsage(sessionTokens, usage);
     sessionCost += costUSD;
+    cacheReadCostUSD += breakdown ? breakdown.cacheRead : 0;
   }
 
   // "priced" means the agent's usage reader actually yielded model usage. A parsed log
   // for an agent with no reader (codex/opencode → empty map) is hadLog=true but priced=false,
   // so the coverage view shows "no token reader" instead of a misleading "✓ full" at $0.
   return {
-    cost: { sessionId, tokens: sessionTokens, costUSD: sessionCost, perModel, priced: perModel.length > 0, hadLog },
+    cost: { sessionId, tokens: sessionTokens, costUSD: sessionCost, cacheReadCostUSD, perModel, priced: perModel.length > 0, hadLog },
     unpriced,
   };
 }

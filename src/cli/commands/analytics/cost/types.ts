@@ -27,6 +27,7 @@ export interface SessionCost {
   sessionId: string;
   tokens: TokenUsage; // summed across models
   costUSD: number; // summed across models
+  cacheReadCostUSD?: number; // USD attributable to cache reads (subset of costUSD); 0 when unpriced
   perModel: ModelCost[];
   priced: boolean; // true if the native log was found & parsed
   hadLog: boolean; // true if a native log path was located (priced<hadLog ⇒ parse/reader gap)

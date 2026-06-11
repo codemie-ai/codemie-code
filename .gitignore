@@ -75,3 +75,4 @@ MCP directories
 /.agents/skills/bmad*
 docs/superpowers
 .codemie
+.claude/telemetry

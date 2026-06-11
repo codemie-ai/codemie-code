@@ -19,13 +19,25 @@ export function addUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
   };
 }
 
+/** USD cost split by token component. Components sum to {@link costForUsage}. */
+export interface CostBreakdown {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheCreation: number;
+  total: number;
+}
+
+/** Per-component USD; price is per 1,000,000 tokens. */
+export function costBreakdown(usage: TokenUsage, price: ModelPrice): CostBreakdown {
+  const input = (usage.input * price.input) / 1_000_000;
+  const output = (usage.output * price.output) / 1_000_000;
+  const cacheRead = (usage.cacheRead * price.cacheRead) / 1_000_000;
+  const cacheCreation = (usage.cacheCreation * price.cacheCreation) / 1_000_000;
+  return { input, output, cacheRead, cacheCreation, total: input + output + cacheRead + cacheCreation };
+}
+
 /** USD; price is per 1,000,000 tokens. */
 export function costForUsage(usage: TokenUsage, price: ModelPrice): number {
-  return (
-    (usage.input * price.input +
-      usage.output * price.output +
-      usage.cacheRead * price.cacheRead +
-      usage.cacheCreation * price.cacheCreation) /
-    1_000_000
-  );
+  return costBreakdown(usage, price).total;
 }

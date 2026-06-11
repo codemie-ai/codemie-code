@@ -101,6 +101,27 @@ describe('enrichCosts', () => {
     expect(summary.totalCostUSD).toBeCloseTo(4.5, 6); // each unique response counted once (not 7.5)
   });
 
+  it('breaks out cache-read cost per session', async () => {
+    const deps: EnricherDeps = {
+      ...baseDeps,
+      parseNative: async () =>
+        ({
+          sessionId: 's1', agentName: 'claude', metadata: {},
+          messages: [{ message: { model: 'claude-sonnet-4-5', usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 1_000_000 } } }],
+        }) as never,
+    };
+    const { index } = await enrichCosts(raw, deps);
+    const c = index.get('s1')!;
+    expect(c.cacheReadCostUSD).toBeGreaterThan(0);
+    // only cache reads present, so cache-read cost == total cost
+    expect(c.cacheReadCostUSD).toBeCloseTo(c.costUSD, 6);
+  });
+
+  it('cacheReadCostUSD is 0 for an unpriced session', async () => {
+    const { index } = await enrichCosts(raw, { ...baseDeps, loadAgentSessionFile: async () => null });
+    expect(index.get('s1')!.cacheReadCostUSD).toBe(0);
+  });
+
   it('records unpriced models without throwing', async () => {
     const deps: EnricherDeps = {
       ...baseDeps,

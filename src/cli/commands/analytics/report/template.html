@@ -56,7 +56,8 @@
     .nav-i { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 8px; color: var(--color-text-muted); font-size: 13.5px; cursor: pointer; user-select: none; }
     .nav-i:hover { background: var(--color-bg-tertiary); color: var(--color-text-primary); }
     .nav-i.active { background: var(--color-bg-tertiary); color: var(--color-text-primary); font-weight: 600; }
-    .nav-i .ic { width: 16px; text-align: center; opacity: .85; }
+    .nav-i .ic { width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; opacity: .85; flex-shrink: 0; }
+    .nav-i .ic svg { width: 15px; height: 15px; display: block; }
     .nav-i .lock { margin-left: auto; }
     .side-foot { margin-top: auto; font-size: 11px; color: var(--color-text-muted); padding: 10px 8px 4px; line-height: 1.5; }
 
@@ -166,15 +167,16 @@
     <aside class="side">
       <div class="brand"><div class="logo">C</div><div style="font-weight:700;font-size:15px;">Analytics</div></div>
       <div class="nav-group">Insights</div>
-      <div class="nav-i" data-view="overview"><span class="ic">▢</span>Overview</div>
-      <div class="nav-i" data-view="agents"><span class="ic">⊞</span>Agents · Compare</div>
-      <div class="nav-i" data-view="projects"><span class="ic">▤</span>Projects</div>
-      <div class="nav-i" data-view="toolsmodels"><span class="ic">⚙</span>Tools &amp; Models</div>
-      <div class="nav-i" data-view="activity"><span class="ic">▦</span>Activity</div>
+      <div class="nav-i" data-view="overview"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></span>Overview</div>
+      <div class="nav-i" data-view="agents"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="20" x2="6" y2="14"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="18" y1="20" x2="18" y2="10"/></svg></span>Agents · Compare</div>
+      <div class="nav-i" data-view="projects"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg></span>Projects</div>
+      <div class="nav-i" data-view="toolsmodels"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg></span>Tools &amp; Models</div>
+      <div class="nav-i" data-view="activity"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></span>Activity</div>
+      <div class="nav-i" data-view="efficiency"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>Efficiency</div>
       <div class="nav-group">Spend</div>
-      <div class="nav-i" data-view="cost"><span class="ic">$</span>Cost</div>
+      <div class="nav-i" data-view="cost"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></span>Cost</div>
       <div class="nav-group">Raw</div>
-      <div class="nav-i" data-view="sessions"><span class="ic">≣</span>Sessions</div>
+      <div class="nav-i" data-view="sessions"><span class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></span>Sessions</div>
       <div class="side-foot" id="side-foot"></div>
       <div class="theme-switch" id="theme-switch" role="button" tabindex="0" aria-label="Toggle light and dark theme" title="Toggle light / dark theme">
         <span class="ts-track"><span class="ts-thumb"></span></span>

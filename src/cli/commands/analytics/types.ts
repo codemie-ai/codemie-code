@@ -37,6 +37,17 @@ export interface ToolStats {
 }
 
 /**
+ * Named invocation statistics — skill names, agent subtypes, or slash commands.
+ * successCount equals totalCalls because MetricDelta does not track per-name failures.
+ */
+export interface NamedInvocationStats {
+  name: string;
+  totalCalls: number;
+  successCount: number;
+  failureCount: number;
+}
+
+/**
  * Language/Format statistics
  */
 export interface LanguageStats {
@@ -70,6 +81,8 @@ export interface SessionAnalytics {
   agentName: string;
   provider: string;
   workingDirectory: string;
+  /** Human-readable session title — the first user prompt, with command/system XML stripped. Empty when no prompt was captured. */
+  title: string;
   /** The branch the session did the most work on (modal of its deltas' gitBranch). */
   primaryBranch: string;
   startTime: number;
@@ -83,6 +96,12 @@ export interface SessionAnalytics {
   totalLinesRemoved: number;
   totalLinesModified: number;
   netLinesChanged: number;
+
+  // Change-metric breakdown (distinct paths by op type; read/glob/grep excluded)
+  filesChanged: number;  // distinct paths with a write OR edit op
+  filesWritten: number;  // distinct paths with a write op
+  filesEdited: number;   // distinct paths with an edit op
+
   totalToolCalls: number;
   successfulToolCalls: number;
   failedToolCalls: number;
@@ -102,6 +121,11 @@ export interface SessionAnalytics {
 
   // Format breakdown (from FileOperation.format)
   formats: LanguageStats[];
+
+  // Named invocation breakdowns (from MetricDelta.skillInvocations / agentInvocations / commandInvocations)
+  skillInvocations: NamedInvocationStats[];
+  agentInvocations: NamedInvocationStats[];
+  commandInvocations: NamedInvocationStats[];
 
   // Token usage and cost (optional; populated only for the HTML report path)
   tokens?: import('./cost/types.js').TokenUsage;

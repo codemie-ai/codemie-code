@@ -19,6 +19,7 @@ import { logger } from '../../../utils/logger.js';
 import { MetricsProcessor } from './session/processors/claude.metrics-processor.js';
 import { ConversationsProcessor } from './session/processors/claude.conversations-processor.js';
 import { extractClaudeFileOperation, type ClaudeFileOperation } from './session/claude-file-operation.js';
+import { extractNamedInvocations } from './session/claude-named-invocations.js';
 
 /**
  * Best-effort decode of a Claude Code project directory name back to a filesystem path.
@@ -325,10 +326,17 @@ export class ClaudeSessionAdapter implements SessionAdapter {
       }
     }
 
+    // Named invocations (skill/agent/command names) via the shared extractor, so re-parsed
+    // native sessions surface the same data the live MetricsProcessor records.
+    const named = extractNamedInvocations(messages);
+
     return {
       tools: toolCounts,
       toolStatus,
-      fileOperations
+      fileOperations,
+      ...(Object.keys(named.skillInvocations).length > 0 && { skillInvocations: named.skillInvocations }),
+      ...(Object.keys(named.agentInvocations).length > 0 && { agentInvocations: named.agentInvocations }),
+      ...(Object.keys(named.commandInvocations).length > 0 && { commandInvocations: named.commandInvocations })
     };
   }
 

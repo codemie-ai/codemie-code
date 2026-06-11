@@ -59,6 +59,11 @@ export interface MetricDelta {
     };
   };
 
+  // Named invocation breakdowns (populated only when names are available)
+  skillInvocations?: Record<string, number>;   // skill name → call count  (e.g. "codemie:msgraph": 3)
+  agentInvocations?: Record<string, number>;   // subagent_type → count    (e.g. "Explore": 2)
+  commandInvocations?: Record<string, number>; // slash command name → count (e.g. "tech-lead": 1)
+
   // File operations in this turn
   fileOperations?: {
     type: 'read' | 'write' | 'edit' | 'delete' | 'glob' | 'grep';
