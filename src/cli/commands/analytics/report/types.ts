@@ -3,7 +3,7 @@
  * report. The client app reads only this and computes every view from it.
  */
 
-import type { TokenUsage, ModelCost, AgentCoverage } from '../cost/types.js';
+import type { TokenUsage, ModelCost, AgentCoverage, CostSeriesPoint, DispatchEvent } from '../cost/types.js';
 import type { ToolStats, NamedInvocationStats } from '../types.js';
 
 /** One flat record per session — the client aggregates everything from these. */
@@ -38,6 +38,8 @@ export interface ReportSessionRecord {
   costUSD: number;
   cacheReadCostUSD: number; // USD attributable to cache reads (subset of costUSD)
   perModelCost: ModelCost[];
+  costSeries?: CostSeriesPoint[]; // per-turn cumulative cost/token growth; absent when no per-turn data
+  dispatches?: DispatchEvent[]; // timed top-level agent/skill/command invocations; absent when none
 }
 
 export interface ReportMeta {

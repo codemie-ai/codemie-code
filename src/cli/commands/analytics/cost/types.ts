@@ -22,12 +22,35 @@ export interface ModelCost {
   unpriced: boolean; // true when no pricing entry matched
 }
 
+/** One cumulative point in a session's token & cost growth series. */
+export interface CostSeriesPoint {
+  t: number; // epoch ms when all records are timed, else the 1-based turn ordinal
+  cost: number; // cumulative USD up to and including this turn
+  tokens: number; // cumulative total tokens up to and including this turn
+}
+
+/** Max points kept per session series — downsample guard so the embedded payload stays small. */
+export const MAX_SERIES_POINTS = 40;
+
+/** One dispatched invocation (agent/skill/command) on a session's activity timeline. */
+export interface DispatchEvent {
+  kind: 'agent' | 'skill' | 'command';
+  name: string;
+  start: number; // epoch ms of the tool_use / command
+  durationMs: number; // tool_result − tool_use; 0 for skills/commands/unmatched
+}
+
+/** Max dispatch events kept per session — payload guard for very long runs. */
+export const MAX_DISPATCHES = 60;
+
 /** Cost result for a single session. */
 export interface SessionCost {
   sessionId: string;
   tokens: TokenUsage; // summed across models
   costUSD: number; // summed across models
   cacheReadCostUSD?: number; // USD attributable to cache reads (subset of costUSD); 0 when unpriced
+  costSeries?: CostSeriesPoint[]; // per-turn cumulative cost/token growth; absent when no per-turn data
+  dispatches?: DispatchEvent[]; // top-level agent/skill/command invocations with timing; absent when none
   perModel: ModelCost[];
   priced: boolean; // true if the native log was found & parsed
   hadLog: boolean; // true if a native log path was located (priced<hadLog ⇒ parse/reader gap)

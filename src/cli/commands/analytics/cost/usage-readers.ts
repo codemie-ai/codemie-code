@@ -29,6 +29,7 @@ function messagesOf(parsed: ParsedSession): unknown[] {
 
 interface ClaudeRawMessage {
   requestId?: string;
+  timestamp?: string; // top-level ISO timestamp on the native JSONL line
   message?: {
     id?: string;
     model?: string;
@@ -45,6 +46,8 @@ interface ClaudeRawMessage {
 export interface UsageRecord {
   /** `${message.id}::${requestId}` — null when neither is present (cannot dedupe ⇒ always counted). */
   key: string | null;
+  /** Message epoch ms (for per-turn series); null when absent/unparseable. */
+  ts: number | null;
   model: string;
   usage: TokenUsage;
 }
@@ -72,8 +75,11 @@ export function extractClaudeUsageRecords(parsed: ParsedSession): UsageRecord[] 
     const id = raw.message?.id;
     const reqId = raw.requestId;
     const key = id || reqId ? `${id ?? ''}::${reqId ?? ''}` : null;
+    const parsedTs = raw.timestamp ? Date.parse(raw.timestamp) : NaN;
+    const ts = Number.isFinite(parsedTs) ? parsedTs : null;
     records.push({
       key,
+      ts,
       model,
       usage: { input, output, cacheRead, cacheCreation, total: input + output + cacheRead + cacheCreation },
     });
@@ -222,4 +228,41 @@ export function gatherUsageDeduped(agentName: string, parsed: ParsedSession, see
     return out;
   }
   return new Map(); // codex/opencode/etc — no usage reader yet
+}
+
+/**
+ * Ordered, deduped per-message Claude usage records (for a per-session time-series).
+ * Mirrors {@link gatherUsageDeduped}'s dedup (skips keys already in `seen`, mutates `seen`)
+ * but preserves message order instead of summing. Returns [] when there is no per-message
+ * order to series-ize: an authoritative SDK `modelUsage` rollup, or a non-Claude agent.
+ * MUST be called at most once per session against a shared `seen` set (it consumes keys).
+ */
+export function gatherDedupedUsageRecords(agentName: string, parsed: ParsedSession, seen: Set<string>): UsageRecord[] {
+  const a = agentName.toLowerCase();
+  if (a !== 'claude' && a !== 'claude-acp' && a !== 'claude-desktop') {
+    return []; // gemini/codex/etc — no per-turn series in v1
+  }
+  if (readClaudeSdkResult(parsed)) {
+    return []; // authoritative rollup carries no per-message order
+  }
+  const out: UsageRecord[] = [];
+  for (const r of extractClaudeUsageRecords(parsed)) {
+    if (r.key !== null) {
+      if (seen.has(r.key)) {
+        continue; // duplicate API response replayed into another session file
+      }
+      seen.add(r.key);
+    }
+    out.push(r);
+  }
+  return out;
+}
+
+/** Sum ordered usage records into a per-model {@link UsageMap} (equivalent to the summed dedup path). */
+export function sumUsageRecords(records: UsageRecord[]): UsageMap {
+  const out: UsageMap = new Map();
+  for (const r of records) {
+    accumulate(out, r.model, r.usage);
+  }
+  return out;
 }

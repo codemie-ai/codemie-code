@@ -231,4 +231,31 @@ describe('buildPayload', () => {
     expect(s.agentInvocations).toEqual(agentInvocations);
     expect(s.commandInvocations).toEqual(commandInvocations);
   });
+
+  it('maps costSeries from the SessionCost when present', () => {
+    const idx: SessionCostIndex = new Map([
+      ['s1', { sessionId: 's1', tokens: { input: 0, output: 0, cacheRead: 0, cacheCreation: 0, total: 250 }, costUSD: 1, perModel: [], priced: true, hadLog: true, costSeries: [{ t: 1, cost: 0.5, tokens: 100 }, { t: 2, cost: 1, tokens: 250 }] }],
+    ]);
+    const payload = buildPayload(root, idx, summary, { rangeLabel: 'all', projectFilter: 'all', generatedAt: '2026-06-08T00:00:00Z' });
+    expect(payload.sessions[0].costSeries).toEqual([{ t: 1, cost: 0.5, tokens: 100 }, { t: 2, cost: 1, tokens: 250 }]);
+  });
+
+  it('omits costSeries when the SessionCost has none', () => {
+    const payload = buildPayload(root, costIndex, summary, { rangeLabel: 'all', projectFilter: 'all', generatedAt: '2026-06-08T00:00:00Z' });
+    expect(payload.sessions[0].costSeries).toBeUndefined();
+  });
+
+  it('maps dispatches from the SessionCost when present, omits when absent', () => {
+    const dispatches = [{ kind: 'agent' as const, name: 'tech-analyst', start: 1000, durationMs: 150000 }];
+    const idx: SessionCostIndex = new Map([
+      ['s1', { sessionId: 's1', tokens: emptyTokens(), costUSD: 1, perModel: [], priced: true, hadLog: true, dispatches }],
+    ]);
+    expect(buildPayload(root, idx, summary, ctxAll).sessions[0].dispatches).toEqual(dispatches);
+    expect(buildPayload(root, costIndex, summary, ctxAll).sessions[0].dispatches).toBeUndefined();
+  });
 });
+
+function emptyTokens() {
+  return { input: 0, output: 0, cacheRead: 0, cacheCreation: 0, total: 0 };
+}
+const ctxAll = { rangeLabel: 'all', projectFilter: 'all', generatedAt: '2026-06-08T00:00:00Z' };

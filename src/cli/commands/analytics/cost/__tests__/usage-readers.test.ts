@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { readUsageByModel } from '../usage-readers.js';
+import { readUsageByModel, extractClaudeUsageRecords, gatherDedupedUsageRecords, sumUsageRecords } from '../usage-readers.js';
 
 const claudeParsed = {
   sessionId: 's1',
@@ -109,5 +109,52 @@ describe('readUsageByModel', () => {
 
   it('returns empty for an unsupported agent', () => {
     expect(readUsageByModel('mystery', claudeParsed).size).toBe(0);
+  });
+});
+
+describe('extractClaudeUsageRecords — timestamps', () => {
+  function parsed(messages: unknown[]): never {
+    return { sessionId: 's', agentName: 'claude', metadata: {}, messages, metrics: {} } as never;
+  }
+  it('captures the message timestamp as epoch ms', () => {
+    const recs = extractClaudeUsageRecords(parsed([
+      { timestamp: '2026-06-08T10:00:00Z', message: { id: 'm1', model: 'claude-sonnet-4-6', usage: { input_tokens: 10, output_tokens: 5 } } },
+    ]));
+    expect(recs).toHaveLength(1);
+    expect(recs[0].ts).toBe(Date.parse('2026-06-08T10:00:00Z'));
+  });
+  it('sets ts null when the timestamp is missing/unparseable', () => {
+    const recs = extractClaudeUsageRecords(parsed([
+      { message: { id: 'm2', model: 'claude-sonnet-4-6', usage: { input_tokens: 1, output_tokens: 1 } } },
+      { timestamp: 'not-a-date', message: { id: 'm3', model: 'claude-sonnet-4-6', usage: { input_tokens: 1, output_tokens: 1 } } },
+    ]));
+    expect(recs[0].ts).toBeNull();
+    expect(recs[1].ts).toBeNull();
+  });
+});
+
+describe('gatherDedupedUsageRecords + sumUsageRecords', () => {
+  function claude(messages: unknown[]): never {
+    return { sessionId: 's', agentName: 'claude', metadata: {}, messages, metrics: {} } as never;
+  }
+  const m = (id: string, ts: string, inp: number) => ({ timestamp: ts, requestId: 'r-' + id, message: { id, model: 'claude-sonnet-4-6', usage: { input_tokens: inp, output_tokens: 0 } } });
+
+  it('returns ordered records and dedupes by key across the shared seen set', () => {
+    const seen = new Set<string>();
+    const a = gatherDedupedUsageRecords('claude', claude([m('m1', '2026-06-08T10:00:00Z', 10), m('m2', '2026-06-08T10:01:00Z', 20)]), seen);
+    expect(a.map((r) => r.usage.input)).toEqual([10, 20]);
+    // a resumed log replays m2 — already seen ⇒ only the new m3 survives
+    const b = gatherDedupedUsageRecords('claude', claude([m('m2', '2026-06-08T10:01:00Z', 20), m('m3', '2026-06-08T10:02:00Z', 30)]), seen);
+    expect(b.map((r) => r.usage.input)).toEqual([30]);
+  });
+
+  it('returns [] for a non-Claude agent', () => {
+    expect(gatherDedupedUsageRecords('codex', claude([m('m1', '2026-06-08T10:00:00Z', 10)]), new Set())).toEqual([]);
+  });
+
+  it('sumUsageRecords reproduces per-model totals', () => {
+    const recs = gatherDedupedUsageRecords('claude', claude([m('m1', '2026-06-08T10:00:00Z', 10), m('m2', '2026-06-08T10:01:00Z', 20)]), new Set());
+    const map = sumUsageRecords(recs);
+    expect(map.get('claude-sonnet-4-6')!.input).toBe(30);
   });
 });

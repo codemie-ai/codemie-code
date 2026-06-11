@@ -79,6 +79,8 @@ export function buildPayload(
           costUSD: cost?.costUSD ?? 0,
           cacheReadCostUSD: cost?.cacheReadCostUSD ?? 0,
           perModelCost: cost?.perModel ?? [],
+          ...(cost?.costSeries && cost.costSeries.length ? { costSeries: cost.costSeries } : {}),
+          ...(cost?.dispatches && cost.dispatches.length ? { dispatches: cost.dispatches } : {}),
           skillInvocations: s.skillInvocations ?? [],
           agentInvocations: s.agentInvocations ?? [],
           commandInvocations: s.commandInvocations ?? [],

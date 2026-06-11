@@ -14,6 +14,9 @@
     return;
   }
 
+  // sessionId -> record, for the session-detail modal (rows carry data-session).
+  var SESSION_BY_ID = (function () { var m = {}; (DATA.sessions || []).forEach(function (s) { m[s.sessionId] = s; }); return m; })();
+
   // ---- palette ------------------------------------------------------------
   var PALETTE = ['#7C5CFC', '#2297F6', '#F5A534', '#06B6D4', '#259F4C', '#F9303C', '#C084FC', '#E879A6'];
   var AGENT_COLORS = { claude: '#7C5CFC', 'claude-acp': '#9D7BFF', 'claude-desktop': '#B79DFF', gemini: '#F5A534', codex: '#06B6D4', opencode: '#259F4C', 'codemie-code': '#2297F6' };
@@ -51,6 +54,8 @@
   // Human-readable session label: the cleaned first-prompt title, falling back to a short id.
   function sessTitle(s) { return (s && s.title && s.title.trim()) ? s.title.trim() : ('#' + String((s && s.sessionId) || '').slice(0, 8)); }
   function truncStr(s, n) { s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n - 1) + '…' : s; }
+  // First n whitespace-delimited words (the "starting message" preview), '…' when truncated.
+  function firstWords(s, n) { s = String(s == null ? '' : s).trim(); var w = s.split(/\s+/); return w.length > n ? w.slice(0, n).join(' ') + '…' : s; }
 
   // ---- aggregation helpers ------------------------------------------------
   function sum(arr, f) { var t = 0; for (var i = 0; i < arr.length; i++) t += f(arr[i]) || 0; return t; }
@@ -588,7 +593,12 @@
           '<span class="tag tag-sm">' + esc((s.models && s.models[0]) || '—') + '</span>',
           fmtTokens(Math.round(x.ctx)), fmtTokens(s.tokens ? s.tokens.cacheRead : 0), fmtUSD(s.costUSD), (Math.round(x.bloat * 10) / 10) + '%'];
       }),
-      [false, false, false, true, true, true, true]) + '</div>';
+      [false, false, false, true, true, true, true],
+      bloated.map(function (x) { return 'class="clickable" data-session="' + esc(x.s.sessionId) + '"'; })) + '</div>';
+    bloatCard._body.addEventListener('click', function (ev) {
+      var tr = ev.target.closest('tr[data-session]'); if (!tr) return;
+      openSessionModal(SESSION_BY_ID[tr.getAttribute('data-session')]);
+    });
     row1.appendChild(bloatCard);
     host.appendChild(row1);
 
@@ -766,6 +776,12 @@
     bar.appendChild(input); host.appendChild(bar);
     var c = card('All sessions'); c._body.style.paddingTop = '0';
     var holder = el('div', 'table-wrapper'); c._body.appendChild(holder); host.appendChild(c);
+    // Delegated row → modal. Attached ONCE on the persistent holder (draw() re-sets innerHTML
+    // on every keystroke, so a listener inside draw would stack and fire N times).
+    holder.addEventListener('click', function (ev) {
+      var tr = ev.target.closest('tr[data-session]'); if (!tr) return;
+      openSessionModal(SESSION_BY_ID[tr.getAttribute('data-session')]);
+    });
 
     function draw(q) {
       var list = fs.slice().sort(function (a, b) { return b.startTime - a.startTime; });
@@ -773,33 +789,220 @@
         var ql = q.toLowerCase();
         list = list.filter(function (s) { return (s.sessionId + ' ' + s.agentName + ' ' + s.project + ' ' + s.branch).toLowerCase().indexOf(ql) >= 0; });
       }
+      var shown = list.slice(0, 300);
       holder.innerHTML = tableHTML(
         ['Date', 'Agent', 'Project', 'Branch', 'Turns', 'Net lines', 'Input', 'Output', 'Cached', 'Cost'],
-        list.slice(0, 300).map(function (s) {
+        shown.map(function (s) {
           return [new Date(s.startTime).toISOString().slice(0, 16).replace('T', ' '),
             '<span class="tag tag-sm" style="text-transform:capitalize">' + esc(s.agentName) + '</span>',
             '<span title="' + esc(s.project) + '">' + esc(shortPath(s.project)) + '</span>', esc(s.branch || '—'),
             fmtNum(s.turns), fmtNum(s.netLines), fmtTokens(tkIn(s)), fmtTokens(tkOut(s)), fmtTokens(tkCached(s)), fmtUSD(s.costUSD)];
         }),
-        [false, false, false, false, true, true, true, true, true, true]);
+        [false, false, false, false, true, true, true, true, true, true],
+        shown.map(function (s) { return 'class="clickable" data-session="' + esc(s.sessionId) + '"'; }));
       if (list.length > 300) holder.appendChild(el('p', 'text-muted', '<span style="font-size:12px">Showing first 300 of ' + list.length + '.</span>'));
     }
     input.addEventListener('input', function () { draw(input.value.trim()); });
     draw('');
   };
 
+  // ---- session-detail modal ----------------------------------------------
+  var modalChart = null; // owned by the modal; NOT in the global charts[] (decoupled from destroyCharts()).
+  var modalEsc = null;
+  function closeSessionModal() {
+    if (modalChart) { try { modalChart.destroy(); } catch (e) {} modalChart = null; }
+    if (modalEsc) { document.removeEventListener('keydown', modalEsc); modalEsc = null; }
+    var ov = document.getElementById('session-modal'); if (ov && ov.parentNode) ov.parentNode.removeChild(ov);
+  }
+  var MODAL_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function fmtWhen(ms) { var d = new Date(ms); return MODAL_MONTHS[d.getMonth()] + ' ' + d.getDate() + ', ' + String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0'); }
+  function hashStr(s) { var h = 0; s = String(s); for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return Math.abs(h); }
+  // Lighter, borderless stat grid (label + value), replacing the heavy box-in-box KPI cards.
+  function statsEl(items) { // items: [label, value(html-safe), sub]
+    var g = el('div', 'modal-stats');
+    items.forEach(function (k) {
+      var c = el('div', 'mstat');
+      c.appendChild(el('div', 'mlabel', esc(k[0])));
+      c.appendChild(el('div', 'mval', k[1])); // value is formatter output (fmt*), not user text
+      if (k[2]) c.appendChild(el('div', 'msub', esc(k[2])));
+      g.appendChild(c);
+    });
+    return g;
+  }
+  function sumCalls(list) { return (list || []).reduce(function (a, n) { return a + (n.totalCalls || 0); }, 0); }
+  // Name→count list for a dispatch kind, derived from the timed native-log dispatches (the timeline's
+  // source) so counts/chips stay consistent with it; falls back to the tracked named-invocation
+  // counts when this session has no dispatch data (e.g. older/tracked-only sessions).
+  function dispatchCounts(s, kind) {
+    var disp = (s.dispatches || []).filter(function (d) { return d.kind === kind; });
+    if (disp.length) {
+      var m = {};
+      disp.forEach(function (d) { m[d.name] = (m[d.name] || 0) + 1; });
+      return Object.keys(m).map(function (n) { return { name: n, totalCalls: m[n] }; });
+    }
+    return kind === 'agent' ? (s.agentInvocations || []) : kind === 'skill' ? (s.skillInvocations || []) : (s.commandInvocations || []);
+  }
+  function chipsEl(title, list) { // list: NamedInvocationStats[]
+    var sec = el('div', 'dispatch-col');
+    sec.appendChild(el('h4', null, esc(title) + ' (' + (list ? list.length : 0) + ')'));
+    if (!list || !list.length) { sec.appendChild(el('div', 'text-muted', '<span style="font-size:12px">none</span>')); return sec; }
+    var wrap = el('div', 'modal-chips');
+    list.slice().sort(function (a, b) { return b.totalCalls - a.totalCalls; }).forEach(function (n) {
+      wrap.appendChild(el('span', 'chip', esc(n.name) + '<b>×' + fmtNum(n.totalCalls) + '</b>'));
+    });
+    sec.appendChild(wrap); return sec;
+  }
+  // One timeline row: label + track with a positioned bar + a right-aligned duration. All text esc()'d.
+  function tlRow(label, color, leftPct, wPct, durText, barText, strong) {
+    var row = el('div', 'tl-row');
+    row.appendChild(el('div', 'tl-label' + (strong ? ' tl-label-strong' : ''), esc(label)));
+    var track = el('div', 'tl-track');
+    var bar = el('div', 'tl-bar');
+    bar.style.left = leftPct + '%'; bar.style.width = wPct + '%'; bar.style.background = color;
+    if (barText) bar.innerHTML = '<span class="tl-bar-text">' + esc(barText) + '</span>'; // only wide (session) bar
+    bar.title = label + ' · ' + durText; // .title property = safe (not parsed as HTML)
+    track.appendChild(bar); row.appendChild(track);
+    row.appendChild(el('div', 'tl-dur', esc(durText)));
+    return row;
+  }
+  // Gantt of top-level agent dispatches: session span on top, each dispatch positioned by start.
+  function timelineEl(s) {
+    var agents = (s.dispatches || []).filter(function (d) { return d.kind === 'agent'; });
+    var start = s.startTime;
+    var end = start + (s.durationMs || 0);
+    (s.dispatches || []).forEach(function (d) { var e = d.start + (d.durationMs || 0); if (e > end) end = e; });
+    var span = Math.max(1, end - start);
+    var wrap = el('div', 'timeline');
+    wrap.appendChild(tlRow('session', '#259F4C', 0, 100, fmtDuration(s.durationMs || 0), fmtUSD(s.costUSD), true));
+    var occ = {};
+    agents.forEach(function (d) {
+      var total = agents.filter(function (x) { return x.name === d.name; }).length;
+      occ[d.name] = (occ[d.name] || 0) + 1;
+      var label = d.name + (total > 1 ? ' #' + occ[d.name] : '');
+      var leftPct = ((d.start - start) / span) * 100;
+      var wPct = Math.max(((d.durationMs || 0) / span) * 100, 1.5);
+      if (leftPct + wPct > 100) leftPct = Math.max(0, 100 - wPct);
+      wrap.appendChild(tlRow(label, PALETTE[hashStr(d.name) % PALETTE.length], leftPct, wPct, fmtDuration(d.durationMs || 0), '', false));
+    });
+    return wrap;
+  }
+  function openSessionModal(s) {
+    if (!s) return;
+    closeSessionModal();
+    var ov = el('div', 'modal-overlay'); ov.id = 'session-modal';
+    var modal = el('div', 'modal');
+
+    // header — every interpolation through esc(); title is arbitrary user text (XSS vector).
+    var head = el('div', 'modal-head');
+    var htxt = el('div');
+    htxt.appendChild(el('div', 'modal-title', esc(truncStr(firstWords(sessTitle(s), 10), 120))));
+    var metaBits = [s.agentName, (s.models && s.models[0]) || null, shortPath(s.project), s.branch].filter(Boolean);
+    htxt.appendChild(el('div', 'modal-meta', metaBits.map(function (b) { return esc(b); }).join('  ·  ')));
+    head.appendChild(htxt);
+    var close = el('button', 'modal-close', '✕'); close.setAttribute('aria-label', 'Close'); close.addEventListener('click', closeSessionModal);
+    head.appendChild(close);
+    modal.appendChild(head);
+
+    var body = el('div', 'modal-body');
+
+    // Cost & Time / Token Usage / Activity — light borderless stats, equal-height cards.
+    var t = s.tokens || { input: 0, output: 0, cacheRead: 0, cacheCreation: 0, total: 0 };
+    var grid3 = el('div', 'grid-3');
+    var costCard = card('Cost & Time'); costCard._body.appendChild(statsEl([
+      ['Cost', fmtUSD(s.costUSD), 'API-equivalent'],
+      ['Cache-read', s.cacheReadCostUSD ? fmtUSD(s.cacheReadCostUSD) : '—', ''],
+      ['Duration', fmtDuration(s.durationMs || 0), ''],
+      ['Started', '<span class="mval-sm">' + esc(fmtWhen(s.startTime)) + '</span>', '']
+    ]));
+    var tokCard = card('Token usage'); tokCard._body.appendChild(statsEl([
+      ['Input', fmtTokens(t.input), ''], ['Output', fmtTokens(t.output), ''],
+      ['Cache read', fmtTokens(t.cacheRead), ''], ['Cache create', fmtTokens(t.cacheCreation), ''],
+      ['Total', fmtTokens(t.total), '']
+    ]));
+    var actCard = card('Activity'); actCard._body.appendChild(statsEl([
+      ['Turns / API', fmtNum(s.turns), ''],
+      ['Tool calls', fmtNum(s.toolCallsTotal), (s.toolCallsTotal ? Math.round((s.toolCallsSuccess / s.toolCallsTotal) * 100) + '% ok' : '')],
+      ['Agents', fmtNum(sumCalls(dispatchCounts(s, 'agent'))), ''],
+      ['Skills', fmtNum(sumCalls(dispatchCounts(s, 'skill'))), ''],
+      ['Commands', fmtNum(sumCalls(dispatchCounts(s, 'command'))), '']
+    ]));
+    grid3.appendChild(costCard); grid3.appendChild(tokCard); grid3.appendChild(actCard);
+    body.appendChild(grid3);
+
+    // Code changes
+    var ccCard = card('Code changes'); ccCard._body.appendChild(statsEl([
+      ['Files changed', fmtNum(s.filesChanged || 0), 'written or edited'],
+      ['Lines added', '+' + fmtNum(s.linesAdded || 0), ''],
+      ['Lines removed', '−' + fmtNum(s.linesRemoved || 0), ''],
+      ['Net lines', ((s.netLines || 0) >= 0 ? '+' : '') + fmtNum(s.netLines || 0), '']
+    ]));
+    body.appendChild(ccCard);
+
+    // Token & cost growth chart (backfilled per-turn series; honest fallback when absent)
+    var growth = card('Token & cost growth', 'cumulative per turn — from the native log');
+    var series = s.costSeries || [];
+    if (series.length >= 2 && window.Chart) {
+      var useTs = series[0].t > 1e12; // epoch ms vs turn ordinal
+      var t0 = series[0].t;
+      var labels = series.map(function (p) { return useTs ? fmtDuration(Math.max(0, p.t - t0)) : ('turn ' + p.t); });
+      var cv = canvasIn(growth._body, 220);
+      modalChart = new Chart(cv, {
+        type: 'line',
+        data: { labels: labels, datasets: [
+          { label: 'Cost ($)', data: series.map(function (p) { return Math.round(p.cost * 10000) / 10000; }), borderColor: '#7C5CFC', backgroundColor: 'rgba(124,92,252,0.12)', fill: true, yAxisID: 'y', tension: 0.25, pointRadius: 0 },
+          { label: 'Tokens', data: series.map(function (p) { return p.tokens; }), borderColor: '#F5A534', backgroundColor: 'transparent', fill: false, yAxisID: 'y1', tension: 0.25, pointRadius: 0 }
+        ] },
+        options: { interaction: { mode: 'index', intersect: false }, plugins: { legend: { display: true } },
+          scales: { x: { grid: { display: false }, ticks: { maxTicksLimit: 8 } },
+            y: { position: 'left', grid: { color: GRID }, ticks: { callback: function (v) { return fmtUSD(v); } } },
+            y1: { position: 'right', grid: { display: false }, ticks: { callback: function (v) { return fmtTokens(v); } } } } }
+      });
+    } else {
+      growth._body.appendChild(el('div', 'empty', 'Per-turn data not available for this session.'));
+    }
+    body.appendChild(growth);
+
+    // Timeline — Gantt of top-level agent dispatches with durations (per-agent cost is not captured).
+    var hasAgents = (s.dispatches || []).some(function (d) { return d.kind === 'agent'; });
+    var tlCard = card('Timeline', hasAgents ? 'agent dispatches over the session · durations (per-agent cost is not captured)' : '');
+    if (hasAgents) {
+      tlCard._body.appendChild(timelineEl(s));
+    } else {
+      tlCard._body.appendChild(el('div', 'empty', 'No sub-agent dispatches recorded for this session.'));
+    }
+    body.appendChild(tlCard);
+
+    // Skills & commands — invoked names + counts.
+    var scCard = card('Skills & commands', 'invoked by name');
+    var cols = el('div', 'dispatch-cols');
+    cols.appendChild(chipsEl('Skills', dispatchCounts(s, 'skill')));
+    cols.appendChild(chipsEl('Commands', dispatchCounts(s, 'command')));
+    scCard._body.appendChild(cols);
+    body.appendChild(scCard);
+
+    modal.appendChild(body);
+    ov.appendChild(modal);
+    ov.addEventListener('click', function (ev) { if (ev.target === ov) closeSessionModal(); });
+    modalEsc = function (ev) { if (ev.key === 'Escape') closeSessionModal(); };
+    document.addEventListener('keydown', modalEsc);
+    document.body.appendChild(ov);
+  }
+
   // ---- table + misc helpers ----------------------------------------------
   function tdNum(v) { return '<span class="td-number">' + (typeof v === 'number' ? fmtNum(v) : v) + '</span>'; }
   // numericCols: optional boolean[] marking right-aligned numeric columns. Default = every
   // column except the first (back-compat). Text columns (agent, project, branch, status) must
   // be left-aligned, so callers with interleaved/leading text pass an explicit mask.
-  function tableHTML(headers, rows, numericCols) {
+  function tableHTML(headers, rows, numericCols, rowAttrs) {
     var isNum = numericCols || headers.map(function (_, i) { return i > 0; });
     var h = '<table class="table"><thead><tr>';
     headers.forEach(function (x, i) { h += '<th' + (isNum[i] ? ' class="td-number"' : '') + '>' + esc(x) + '</th>'; });
     h += '</tr></thead><tbody>';
     if (!rows.length) h += '<tr><td colspan="' + headers.length + '" class="text-muted">No data</td></tr>';
-    rows.forEach(function (r) { h += '<tr>' + r.map(function (cell, i) { return '<td' + (isNum[i] ? ' class="td-number"' : '') + '>' + cell + '</td>'; }).join('') + '</tr>'; });
+    rows.forEach(function (r, ri) {
+      var attrs = rowAttrs && rowAttrs[ri] ? ' ' + rowAttrs[ri] : '';
+      h += '<tr' + attrs + '>' + r.map(function (cell, i) { return '<td' + (isNum[i] ? ' class="td-number"' : '') + '>' + cell + '</td>'; }).join('') + '</tr>';
+    });
     return h + '</tbody></table>';
   }
   // tokens shorthand: cached = cacheRead + cacheCreation (the prompt-cache reuse + writes)
@@ -816,6 +1019,7 @@
   }
 
   function render() {
+    closeSessionModal();
     applyChartTheme();
     destroyCharts();
     root.innerHTML = '';
