@@ -93,7 +93,14 @@ describe('MetricsProcessor — named invocation extraction', () => {
   });
 
   afterEach(() => {
-    rmSync(tempHome, { recursive: true, force: true });
+    // Windows deletes files asynchronously, so a recursive rmSync can hit ENOTEMPTY/EBUSY right
+    // after removing children (force only suppresses ENOENT). Retry, and treat cleanup as
+    // best-effort — the OS reclaims the temp dir and a teardown failure must not fail the suite.
+    try {
+      rmSync(tempHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    } catch {
+      /* ignore temp-dir cleanup races */
+    }
     if (originalCodemieHome !== undefined) {
       process.env.CODEMIE_HOME = originalCodemieHome;
     } else {
