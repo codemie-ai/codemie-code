@@ -82,3 +82,4 @@ docs/superpowers
 .superpowers/
 .playwright-mcp/
 codemie-analytics-*.html
+.worktrees/
