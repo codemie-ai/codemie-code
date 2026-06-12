@@ -29,7 +29,7 @@ function messagesOf(parsed: ParsedSession): unknown[] {
 
 /**
  * The session's message arrays: main transcript first, then each sub-agent transcript
- * (Task/Agent dispatches the adapter parsed into `parsed.subagents`). Sub-agent token
+ * (transcripts of Task/Agent dispatches that the adapter parsed into `parsed.subagents`). Sub-agent token
  * usage belongs to the owning session — readers that skip these undercount sessions
  * that dispatch agents. Non-array `messages` entries are skipped with the same
  * defensive posture as {@link messagesOf}.
@@ -74,6 +74,8 @@ export interface UsageRecord {
  * across the main transcript AND every sub-agent transcript in `parsed.subagents`.
  * Claude Code replays prior turns into resumed/forked session files, so the SAME API
  * response (same message.id + requestId) appears in multiple logs — callers dedupe by `key`.
+ * Records are returned in chronological order when every record is timed; otherwise in
+ * concatenation order (main transcript first, then sub-agent files in discovery order).
  */
 export function extractClaudeUsageRecords(parsed: ParsedSession): UsageRecord[] {
   const records: UsageRecord[] = [];
@@ -103,6 +105,14 @@ export function extractClaudeUsageRecords(parsed: ParsedSession): UsageRecord[] 
         usage: { input, output, cacheRead, cacheCreation, total: input + output + cacheRead + cacheCreation },
       });
     }
+  }
+  // Main and sub-agent records interleave in real time. Sort chronologically when every
+  // record is timed — the same condition buildCostSeries uses for its real time axis — so
+  // the cumulative cost/token series stays monotonic in time. Single-file sessions are
+  // already in order (stable sort ⇒ no-op); any untimed record ⇒ keep concatenation order,
+  // matching the series' ordinal-axis fallback.
+  if (records.length > 1 && records.every((r) => r.ts !== null)) {
+    records.sort((a, b) => (a.ts as number) - (b.ts as number));
   }
   return records;
 }
@@ -253,7 +263,7 @@ export function gatherUsageDeduped(agentName: string, parsed: ParsedSession, see
 /**
  * Ordered, deduped per-message Claude usage records (for a per-session time-series).
  * Mirrors {@link gatherUsageDeduped}'s dedup (skips keys already in `seen`, mutates `seen`)
- * but preserves message order instead of summing. Returns [] when there is no per-message
+ * but preserves chronological record order instead of summing. Returns [] when there is no per-message
  * order to series-ize: an authoritative SDK `modelUsage` rollup, or a non-Claude agent.
  * MUST be called at most once per session against a shared `seen` set (it consumes keys).
  */

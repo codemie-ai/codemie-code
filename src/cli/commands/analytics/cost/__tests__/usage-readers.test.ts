@@ -218,4 +218,24 @@ describe('extractClaudeUsageRecords — sub-agent transcripts', () => {
     expect(recs).toHaveLength(1);
     expect(recs[0].usage.input).toBe(100);
   });
+
+  it('sorts merged records chronologically when every record is timed', () => {
+    const p = parsed(
+      [
+        msg('m1', 'claude-sonnet-4-6', 1, '2026-06-08T10:00:00Z'),
+        msg('m2', 'claude-sonnet-4-6', 2, '2026-06-08T10:04:00Z'),
+      ],
+      [{ agentId: 'a1', filePath: '/fake/agent-a1.jsonl', messages: [msg('s1', 'claude-sonnet-4-6', 3, '2026-06-08T10:02:00Z')] }]
+    );
+    // sub-agent record (10:02) lands between the two main records
+    expect(extractClaudeUsageRecords(p).map((r) => r.usage.input)).toEqual([1, 3, 2]);
+  });
+
+  it('keeps concatenation order (main first) when any record lacks a timestamp', () => {
+    const p = parsed(
+      [msg('m1', 'claude-sonnet-4-6', 1, '2026-06-08T10:04:00Z')],
+      [{ agentId: 'a1', filePath: '/fake/agent-a1.jsonl', messages: [msg('s1', 'claude-sonnet-4-6', 2)] }] // untimed
+    );
+    expect(extractClaudeUsageRecords(p).map((r) => r.usage.input)).toEqual([1, 2]);
+  });
 });
