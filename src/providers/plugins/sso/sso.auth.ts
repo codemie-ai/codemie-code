@@ -36,6 +36,30 @@ function normalizeToBase(url: string): string {
 }
 
 /**
+ * Derive credential expiresAt from codemie_access_token JWT exp claim.
+ * Falls back to 24h when the cookie is absent or the JWT cannot be decoded.
+ */
+export function deriveExpiresAt(cookies: Record<string, string>): number {
+  const DEFAULT_TTL = 24 * 60 * 60 * 1000;
+  if (cookies.codemie_access_token) {
+    try {
+      const parts = cookies.codemie_access_token.split('.');
+      if (parts.length === 3) {
+        const payload = JSON.parse(
+          Buffer.from(parts[1], 'base64').toString('utf8'),
+        );
+        if (payload.exp && typeof payload.exp === 'number') {
+          return payload.exp * 1000;
+        }
+      }
+    } catch {
+      // malformed JWT — fall through to default
+    }
+  }
+  return Date.now() + DEFAULT_TTL;
+}
+
+/**
  * CodeMie SSO Authentication
  *
  * Provides browser-based SSO authentication for CodeMie provider
@@ -96,7 +120,7 @@ export class CodeMieSSO {
         const credentials: SSOCredentials = {
           cookies: result.cookies,
           apiUrl: result.apiUrl,
-          expiresAt: Date.now() + (24 * 60 * 60 * 1000) // 24 hours
+          expiresAt: deriveExpiresAt(result.cookies),
         };
 
         const store = CredentialStore.getInstance();
