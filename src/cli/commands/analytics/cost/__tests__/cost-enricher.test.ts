@@ -166,6 +166,58 @@ describe('enrichCosts', () => {
     const { index } = await enrichCosts(raw, baseDeps); // baseDeps = exactly one usage message
     expect(index.get('s1')!.costSeries).toBeUndefined();
   });
+
+  it('folds sub-agent usage into the session total; series endpoint equals it', async () => {
+    const deps: EnricherDeps = {
+      ...baseDeps,
+      parseNative: async () =>
+        ({
+          sessionId: 's1', agentName: 'claude', metadata: {},
+          messages: [
+            { timestamp: '2026-06-08T10:00:00Z', requestId: 'r1', message: { id: 'm1', model: 'claude-sonnet-4-5', usage: { input_tokens: 1_000_000, output_tokens: 0 } } },
+            { timestamp: '2026-06-08T10:06:00Z', requestId: 'r2', message: { id: 'm2', model: 'claude-sonnet-4-5', usage: { input_tokens: 500_000, output_tokens: 0 } } },
+          ],
+          subagents: [{
+            agentId: 'a1', filePath: '/fake/s1/subagents/agent-a1.jsonl',
+            messages: [
+              { timestamp: '2026-06-08T10:03:00Z', requestId: 'r3', message: { id: 'sub1', model: 'claude-sonnet-4-5', usage: { input_tokens: 2_000_000, output_tokens: 0 } } },
+            ],
+          }],
+        }) as never,
+    };
+    const { index } = await enrichCosts(raw, deps);
+    const c = index.get('s1')!;
+    expect(c.tokens.input).toBe(3_500_000); // 1.5M main + 2M sub-agent
+    expect(c.costUSD).toBeCloseTo(10.5, 6); // 3.5M input @ $3/1M sonnet-4-5
+    const series = c.costSeries!;
+    expect(series[series.length - 1].cost).toBeCloseTo(c.costUSD, 6); // endpoint invariant
+    expect(series[series.length - 1].tokens).toBe(c.tokens.total);
+    const axis = series.map((p) => p.t);
+    expect([...axis].sort((a, b) => a - b)).toEqual(axis); // sub-agent record interleaved in time order
+  });
+
+  it('sub-agent records join the cross-session dedup (replayed response counted once)', async () => {
+    const shared = { timestamp: '2026-06-08T10:00:00Z', requestId: 'req-1', message: { id: 'msg-1', model: 'claude-sonnet-4-5', usage: { input_tokens: 1_000_000, output_tokens: 0 } } };
+    const raws = [
+      { sessionId: 'A', startEvent: { agentName: 'claude', data: { startTime: 1000 } }, deltas: [] },
+      { sessionId: 'B', startEvent: { agentName: 'claude', data: { startTime: 2000 } }, deltas: [] },
+    ] as never[];
+    const deps: EnricherDeps = {
+      resolveAgentName: () => 'claude',
+      loadAgentSessionFile: async () => '/fake/log.jsonl',
+      parseNative: async (_agent, _file, sid) =>
+        sid === 'A'
+          ? ({
+              sessionId: 'A', agentName: 'claude', metadata: {}, messages: [],
+              subagents: [{ agentId: 'a1', filePath: '/fake/agent-a1.jsonl', messages: [shared] }],
+            } as never)
+          : ({ sessionId: 'B', agentName: 'claude', metadata: {}, messages: [shared] } as never),
+    };
+    const { index, summary } = await enrichCosts(raws, deps);
+    expect(index.get('A')!.costUSD).toBeCloseTo(3, 6); // earliest session owns it — via its sub-agent
+    expect(index.get('B')!.costUSD).toBe(0); // replay deduped
+    expect(summary.totalCostUSD).toBeCloseTo(3, 6);
+  });
 });
 
 describe('buildCostSeries', () => {
