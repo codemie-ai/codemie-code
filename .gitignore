@@ -76,3 +76,9 @@ MCP directories
 docs/superpowers
 .codemie
 .claude/telemetry
+
+# local runtime / tooling artifacts (never part of a PR)
+.ai-run/
+.superpowers/
+.playwright-mcp/
+codemie-analytics-*.html

@@ -123,7 +123,49 @@
     .empty { color: var(--color-text-muted); padding: 40px; text-align: center; }
     .search-input { width: 280px; }
     .clickable { cursor: pointer; }
+    .btn-open { background: var(--color-bg-btn-primary, #20222e); color: var(--color-primary, #7C5CFC); border: none; border-radius: 4px; padding: 2px 8px; font-size: 11px; cursor: pointer; white-space: nowrap; }
+    .btn-open:hover { background: var(--color-bg-btn-primary-h, #262941); }
+    .proj-link { color: var(--color-primary, #7C5CFC); cursor: pointer; text-decoration: underline; text-underline-offset: 2px; }
     .drill { background: var(--color-bg-secondary); }
+    /* back affordance shown in the session modal when reached from the project sessions list */
+    .modal-back { background: transparent; border: none; color: var(--color-primary, #7C5CFC); cursor: pointer; font-size: 12px; padding: 0; margin: 0 0 6px; }
+    .modal-back:hover { text-decoration: underline; }
+    /* project sessions modal table — let the Session column absorb width and wrap, while the
+       metric columns size to their content. Prevents the table from forcing horizontal scroll. */
+    .proj-sessions .table td:not(:first-child), .proj-sessions .table th:not(:first-child) { white-space: nowrap; width: 1%; }
+    .proj-sessions .table td:first-child { white-space: normal; word-break: break-word; }
+
+    /* session-detail modal */
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.62); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: var(--z-modal, 50); padding: 24px; }
+    .modal { background: var(--color-bg-card); border: 1px solid var(--color-border-structural); border-radius: var(--radius-xl, 12px); box-shadow: var(--shadow-lg); width: 100%; max-width: 880px; max-height: 88vh; display: flex; flex-direction: column; overflow: hidden; }
+    .modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--color-border-structural); }
+    .modal-title { font-size: 15px; font-weight: 700; color: var(--color-text-primary); margin: 0 0 3px; }
+    .modal-meta { font-size: 12px; color: var(--color-text-muted); text-transform: capitalize; }
+    .modal-close { background: transparent; border: 1px solid var(--color-border-structural); color: var(--color-text-muted); border-radius: 8px; height: 30px; width: 30px; cursor: pointer; font-size: 12px; flex-shrink: 0; }
+    .modal-close:hover { color: var(--color-text-primary); background: var(--color-bg-tertiary); }
+    .modal-body { padding: 18px 20px; overflow-y: auto; }
+    .modal-body .card { margin-bottom: 14px; }
+    /* light, borderless stat grid (replaces the heavy box-in-box KPIs) */
+    .modal-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(96px, 1fr)); gap: 14px 16px; }
+    .mstat .mlabel { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--color-text-muted); margin-bottom: 3px; white-space: nowrap; }
+    .mstat .mval { font-size: 18px; font-weight: 700; color: var(--color-text-primary); white-space: nowrap; line-height: 1.2; }
+    .mstat .mval-sm { font-size: 13px; font-weight: 600; }
+    .mstat .msub { font-size: 11px; color: var(--color-text-muted); margin-top: 2px; }
+    .modal-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+    .modal-chips .chip { background: var(--color-bg-tertiary); border-radius: 999px; padding: 3px 10px; font-size: 12px; color: var(--color-text-primary); }
+    .modal-chips .chip b { color: var(--color-text-muted); font-weight: 600; margin-left: 3px; }
+    .dispatch-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 18px; }
+    .dispatch-col h4 { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--color-text-muted); margin: 0 0 8px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; align-items: stretch; }
+    /* dispatch timeline (Gantt) */
+    .timeline { display: flex; flex-direction: column; gap: 6px; }
+    .tl-row { display: flex; align-items: center; gap: 12px; }
+    .tl-label { width: 168px; flex-shrink: 0; font-size: 12px; color: var(--color-text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tl-label-strong { font-weight: 700; }
+    .tl-track { position: relative; flex: 1; height: 22px; background: var(--color-bg-tertiary); border-radius: 5px; overflow: hidden; }
+    .tl-bar { position: absolute; top: 0; height: 100%; min-width: 3px; border-radius: 5px; display: flex; align-items: center; padding: 0 8px; box-sizing: border-box; }
+    .tl-bar-text { font-size: 10.5px; color: #fff; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+    .tl-dur { width: 58px; flex-shrink: 0; text-align: right; font-size: 11px; color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
 
     /* session-detail modal */
     .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.62); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: var(--z-modal, 50); padding: 24px; }

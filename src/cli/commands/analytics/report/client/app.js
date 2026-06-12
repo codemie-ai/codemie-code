@@ -284,7 +284,13 @@
       };
     }).sort(function (a, b) { return b.sessions - a.sessions; }).slice(0, 8);
     pc._body.innerHTML = tableHTML(['Project', 'Sessions', 'Files', 'Lines +', 'Lines −', 'Net lines'],
-      rows.map(function (r) { return ['<span title="' + esc(r.p) + '">' + esc(shortPath(r.p)) + '</span>', fmtNum(r.sessions), tdNum(r.files), tdNum('+' + fmtNum(r.added)), tdNum('−' + fmtNum(r.removed)), tdNum(r.net)]; }));
+      rows.map(function (r) { return ['<span class="proj-link" data-proj-open="' + esc(r.p) + '" title="' + esc(r.p) + '">' + esc(shortPath(r.p)) + '</span>', fmtNum(r.sessions), tdNum(r.files), tdNum('+' + fmtNum(r.added)), tdNum('−' + fmtNum(r.removed)), tdNum(r.net)]; }));
+    pc._body.addEventListener('click', function (ev) {
+      var span = ev.target.closest('[data-proj-open]');
+      if (!span) return;
+      var path = span.getAttribute('data-proj-open');
+      openProjectModal(path, proj.get(path) || []);
+    });
     host.appendChild(pc);
   };
 
@@ -369,7 +375,7 @@
         + '<td class="td-number">−' + fmtNum(sum(ss, function (s) { return s.linesRemoved; })) + '</td>';
     };
     rows.forEach(function (r, i) {
-      html += '<tr class="clickable" data-proj="' + i + '"><td>▸ ' + esc(shortPath(r.p)) + '</td><td class="td-number">' + fmtNum(r.ss.length) + '</td><td class="td-number">' + fmtNum(sum(r.ss, function (s) { return s.turns; })) + '</td>' + crudCells(r.ss) + '<td class="td-number">' + fmtNum(sum(r.ss, function (s) { return s.netLines; })) + '</td><td class="td-number">' + successRate(r.ss) + '%</td><td class="td-number">' + fmtUSD(sum(r.ss, function (s) { return s.costUSD; })) + '</td></tr>';
+      html += '<tr class="clickable" data-proj="' + i + '" data-proj-path="' + esc(r.p) + '"><td>▸ <span class="proj-link" data-proj-open="' + esc(r.p) + '">' + esc(shortPath(r.p)) + '</span></td><td class="td-number">' + fmtNum(r.ss.length) + '</td><td class="td-number">' + fmtNum(sum(r.ss, function (s) { return s.turns; })) + '</td>' + crudCells(r.ss) + '<td class="td-number">' + fmtNum(sum(r.ss, function (s) { return s.netLines; })) + '</td><td class="td-number">' + successRate(r.ss) + '%</td><td class="td-number">' + fmtUSD(sum(r.ss, function (s) { return s.costUSD; })) + '</td></tr>';
       // branch sub-rows (hidden)
       var byBranch = groupBy(r.ss, function (s) { return s.branch || '(none)'; });
       byBranch.forEach(function (bss, b) {
@@ -379,6 +385,12 @@
     html += '</tbody></table>';
     wrap.innerHTML = html;
     wrap.addEventListener('click', function (ev) {
+      var open = ev.target.closest('[data-proj-open]');
+      if (open) {
+        var path = open.getAttribute('data-proj-open');
+        openProjectModal(path, byProj.get(path) || []);
+        return;
+      }
       var tr = ev.target.closest('tr[data-proj]');
       if (!tr) return;
       var id = tr.getAttribute('data-proj');
@@ -886,7 +898,7 @@
     });
     return wrap;
   }
-  function openSessionModal(s) {
+  function openSessionModal(s, onBack) {
     if (!s) return;
     closeSessionModal();
     var ov = el('div', 'modal-overlay'); ov.id = 'session-modal';
@@ -895,6 +907,14 @@
     // header — every interpolation through esc(); title is arbitrary user text (XSS vector).
     var head = el('div', 'modal-head');
     var htxt = el('div');
+    // onBack (optional): when this modal was reached from another modal (e.g. the project
+    // sessions list), render a Back affordance that returns there instead of just closing.
+    if (onBack) {
+      var back = el('button', 'modal-back', '← Back');
+      back.setAttribute('aria-label', 'Back to project');
+      back.addEventListener('click', function () { closeSessionModal(); onBack(); });
+      htxt.appendChild(back);
+    }
     htxt.appendChild(el('div', 'modal-title', esc(truncStr(firstWords(sessTitle(s), 10), 120))));
     var metaBits = [s.agentName, (s.models && s.models[0]) || null, shortPath(s.project), s.branch].filter(Boolean);
     htxt.appendChild(el('div', 'modal-meta', metaBits.map(function (b) { return esc(b); }).join('  ·  ')));
@@ -985,6 +1005,71 @@
     ov.addEventListener('click', function (ev) { if (ev.target === ov) closeSessionModal(); });
     modalEsc = function (ev) { if (ev.key === 'Escape') closeSessionModal(); };
     document.addEventListener('keydown', modalEsc);
+    document.body.appendChild(ov);
+  }
+
+  // ---- project-sessions modal --------------------------------------------
+  var projModalEsc = null;
+  function closeProjectModal() {
+    if (projModalEsc) { document.removeEventListener('keydown', projModalEsc); projModalEsc = null; }
+    var ov = document.getElementById('project-modal'); if (ov && ov.parentNode) ov.parentNode.removeChild(ov);
+  }
+  function openProjectModal(projectPath, sessions) {
+    closeProjectModal();
+    var sorted = sessions.slice().sort(function (a, b) { return b.startTime - a.startTime; });
+    var ov = el('div', 'modal-overlay'); ov.id = 'project-modal';
+    var modal = el('div', 'modal');
+
+    var head = el('div', 'modal-head');
+    var htxt = el('div');
+    htxt.appendChild(el('div', 'modal-title', esc(shortPath(projectPath))));
+    htxt.appendChild(el('div', 'modal-meta', esc(projectPath)));
+    head.appendChild(htxt);
+    var close = el('button', 'modal-close', '✕'); close.setAttribute('aria-label', 'Close'); close.addEventListener('click', closeProjectModal);
+    head.appendChild(close);
+    modal.appendChild(head);
+
+    var body = el('div', 'modal-body');
+    var totalCost = sum(sessions, function (s) { return s.costUSD || 0; });
+    var totalTurns = sum(sessions, function (s) { return s.turns || 0; });
+    var netLines = sum(sessions, function (s) { return s.netLines || 0; });
+    body.appendChild(statsEl([
+      ['Sessions', fmtNum(sessions.length)],
+      ['Total cost', fmtUSD(totalCost)],
+      ['Turns', fmtNum(totalTurns)],
+      ['Net lines', (netLines >= 0 ? '+' : '') + fmtNum(netLines)]
+    ]));
+
+    var tbl = el('div', 'table-wrapper proj-sessions');
+    tbl.innerHTML = tableHTML(
+      ['Session', 'Date', 'Turns', 'Cost', ''],
+      sorted.map(function (s) {
+        return [
+          // Truncate to a short preview (~12 words / 100 chars): keeps the table compact and
+          // avoids exposing the full first-prompt text in the project list.
+          esc(truncStr(firstWords(sessTitle(s), 12), 100)),
+          esc(fmtWhen(s.startTime)),
+          fmtNum(s.turns || 0),
+          fmtUSD(s.costUSD || 0),
+          '<button class="btn-open" data-open-session="' + esc(s.sessionId) + '">Open ↗</button>'
+        ];
+      }),
+      [false, false, true, true, false]
+    );
+    tbl.addEventListener('click', function (ev) {
+      var btn = ev.target.closest('[data-open-session]');
+      if (!btn) return;
+      var sid = btn.getAttribute('data-open-session');
+      closeProjectModal();
+      // Pass an onBack closure so the session modal can return to this project list.
+      openSessionModal(SESSION_BY_ID[sid], function () { openProjectModal(projectPath, sessions); });
+    });
+    body.appendChild(tbl);
+    modal.appendChild(body);
+    ov.appendChild(modal);
+    ov.addEventListener('click', function (ev) { if (ev.target === ov) closeProjectModal(); });
+    projModalEsc = function (ev) { if (ev.key === 'Escape') closeProjectModal(); };
+    document.addEventListener('keydown', projModalEsc);
     document.body.appendChild(ov);
   }
 
