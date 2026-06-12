@@ -66,7 +66,12 @@ npx @codemieai/code install claude --supported
 
 ### Native Bootstrap Installers
 
-For Windows and macOS, use the CodeMie bootstrap installers instead of installing directly with npm. The bootstrap installers are plain scripts stored in this public GitHub repo, so they do not require a Windows-built `.exe` or a private Artifactory mirror.
+For Windows and macOS, CodeMie ships two installer options:
+
+- **GUI installers** — a signed `.dmg` (macOS) and a `.exe` wizard (Windows) that guide you through installation with no terminal required. Download from the [macOS install folder](https://github.com/codemie-ai/codemie-code/tree/main/install/macos) or [Windows install folder](https://github.com/codemie-ai/codemie-code/tree/main/install/windows) and run the file.
+- **Script installers** — plain shell/PowerShell scripts stored in this repo that install via npm. Prefer these for CI, headless machines, or when the GUI installer is unavailable.
+
+The script installers are plain scripts stored in this public GitHub repo, so they do not require a Windows-built `.exe` or a private Artifactory mirror.
 
 The bootstrap path is recommended for non-technical users and managed enterprise machines because it:
 
