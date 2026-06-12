@@ -95,7 +95,6 @@ export const OpenCodePluginMetadata: AgentMetadata = {
       // - bedrock: uses OpenCode's built-in amazon-bedrock provider (AWS env vars set by provider hook)
       // - all others: route through codemie-proxy (SSO/proxy)
       const activeProvider = provider === 'ollama' ? 'ollama' : (isBedrock ? 'amazon-bedrock' : 'codemie-proxy');
-      const effectiveProvider = modelConfig.use_responses_api ? 'openai' : activeProvider;
       const timeout = providerOptions?.timeout ?? parseInt(env.CODEMIE_TIMEOUT || '600') * 1000;
 
       // Always enable openai CUSTOM_LOADER when Responses API models exist.
@@ -150,7 +149,7 @@ export const OpenCodePluginMetadata: AgentMetadata = {
             }
           }
         },
-        model: `${effectiveProvider}/${isBedrock ? toBedrockModelId(modelConfig.id, env.AWS_REGION || env.CODEMIE_AWS_REGION) : modelConfig.id}`
+        model: `${activeProvider}/${isBedrock ? toBedrockModelId(modelConfig.id, env.AWS_REGION || env.CODEMIE_AWS_REGION) : modelConfig.id}`
       };
 
       // --- Hooks injection ---

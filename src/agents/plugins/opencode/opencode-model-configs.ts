@@ -54,79 +54,6 @@ export interface OpenCodeModelConfig {
   };
 }
 
-// ── Responses-API detection ──────────────────────────────────────────────────
-//
-// Single source of truth for which model IDs require OpenAI Responses API
-// (POST /v1/responses) instead of Chat Completions (POST /v1/chat/completions).
-//
-// Used by:
-//  - convertApiModelToOpenCodeConfig() in opencode-dynamic-models.ts (dynamic catalogue)
-//  - getModelConfig() below (unknown-model fallback)
-//
-// Update this list whenever new Responses-API-only models are deployed.
-// Naming conventions:
-//   Responses API  → gpt-5-2-*, gpt-5.2-*, gpt-5.4*, gpt-5-4-*, gpt-5.5*, gpt-5-5-*, gpt-5.x-codex-*, ...
-//   Chat Completions → gpt-4*, gpt-5-<year>-*, o1/o3/o4*, gemini-*, claude-*, …
-
-export const RESPONSES_API_MODEL_PATTERNS: RegExp[] = [
-  /^gpt-5-2-/,        // gpt-5-2-2025-12-11 (and future gpt-5-2-YYYY-* variants)
-  /^gpt-5\.2-/,       // gpt-5.2-chat
-  /^gpt-5\.4/,        // gpt-5.4, gpt-5.4-2026-03-05, future gpt-5.4-* variants
-  /^gpt-5-4-/,        // hyphenated variant: gpt-5-4-2026-03-05
-  /^gpt-5\.5/,        // gpt-5.5, gpt-5.5-2026-04-24, future gpt-5.5-* variants
-  /^gpt-5-5-/,        // hyphenated variant: gpt-5-5-2026-04-24
-  /^gpt-5-1-codex/,   // gpt-5-1-codex-2025-11-13
-  /^gpt-5\.1-codex/,  // gpt-5.1-codex, gpt-5.1-codex-mini, gpt-5.1-codex-max
-  /^gpt-5-3-codex/,   // hyphenated variant of gpt-5.3-codex
-  /^gpt-5\.3-codex/,  // gpt-5.3-codex-2026-02-24
-];
-
-/**
- * Returns true if the model ID requires the OpenAI Responses API.
- * Used both for dynamic model catalogue classification and for unknown-model fallback.
- */
-export function isResponsesApiModel(id: string): boolean {
-  return RESPONSES_API_MODEL_PATTERNS.some(p => p.test(id));
-}
-
-// ── Shared base configs for model families ───────────────────────────────────
-
-/** Shared fields for gpt-5.4 and gpt-5.4-2026-03-05 (only id/name/displayName differ) */
-const GPT_5_4_BASE = {
-  family: 'gpt-5',
-  tool_call: true,
-  reasoning: true,
-  attachment: true,
-  temperature: false,
-  structured_output: true,
-  modalities: { input: ['text', 'image'], output: ['text'] },
-  knowledge: '2025-08-31',
-  release_date: '2026-03-05',
-  last_updated: '2026-03-05',
-  open_weights: false,
-  use_responses_api: true,
-  cost: { input: 1.75, output: 14, cache_read: 0.175 },
-  limit: { context: 400000, output: 128000 }
-} satisfies Partial<OpenCodeModelConfig>;
-
-/** Shared fields for gpt-5.5 and gpt-5.5-2026-04-24 (only id/name/displayName differ) */
-const GPT_5_5_BASE = {
-  family: 'gpt-5',
-  tool_call: true,
-  reasoning: true,
-  attachment: true,
-  temperature: false,
-  structured_output: true,
-  modalities: { input: ['text', 'image'], output: ['text'] },
-  knowledge: '2025-11-30',
-  release_date: '2026-04-24',
-  last_updated: '2026-04-24',
-  open_weights: false,
-  use_responses_api: true,
-  cost: { input: 1.75, output: 14, cache_read: 0.175 },
-  limit: { context: 400000, output: 128000 }
-} satisfies Partial<OpenCodeModelConfig>;
-
 export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
   'gpt-5-2-2025-12-11': {
     id: 'gpt-5-2-2025-12-11',
@@ -299,34 +226,6 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
       context: 272000,
       output: 128000
     }
-  },
-
-  'gpt-5.4': {
-    ...GPT_5_4_BASE,
-    id: 'gpt-5.4',
-    name: 'GPT-5.4',
-    displayName: 'GPT-5.4',
-  },
-
-  'gpt-5.4-2026-03-05': {
-    ...GPT_5_4_BASE,
-    id: 'gpt-5.4-2026-03-05',
-    name: 'GPT-5.4 (Mar 2026)',
-    displayName: 'GPT-5.4 (Mar 2026)',
-  },
-
-  'gpt-5.5': {
-    ...GPT_5_5_BASE,
-    id: 'gpt-5.5',
-    name: 'GPT-5.5',
-    displayName: 'GPT-5.5',
-  },
-
-  'gpt-5.5-2026-04-24': {
-    ...GPT_5_5_BASE,
-    id: 'gpt-5.5-2026-04-24',
-    name: 'GPT-5.5 (Apr 2026)',
-    displayName: 'GPT-5.5 (Apr 2026)',
   },
 
   // ── Claude Models ──────────────────────────────────────────────────
@@ -749,7 +648,6 @@ export function getModelConfig(modelId: string): OpenCodeModelConfig {
     attachment: familyDefaults.attachment ?? false,
     temperature: familyDefaults.temperature ?? true,
     structured_output: familyDefaults.structured_output,
-    ...(isResponsesApiModel(modelId) && { use_responses_api: true }),
     modalities: familyDefaults.modalities ?? { input: ['text'], output: ['text'] },
     knowledge: today,
     release_date: today,
