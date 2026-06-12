@@ -27,6 +27,23 @@ function messagesOf(parsed: ParsedSession): unknown[] {
   return Array.isArray(parsed.messages) ? parsed.messages : [];
 }
 
+/**
+ * The session's message arrays: main transcript first, then each sub-agent transcript
+ * (Task/Agent dispatches the adapter parsed into `parsed.subagents`). Sub-agent token
+ * usage belongs to the owning session — readers that skip these undercount sessions
+ * that dispatch agents. Non-array `messages` entries are skipped with the same
+ * defensive posture as {@link messagesOf}.
+ */
+function allMessageArrays(parsed: ParsedSession): unknown[][] {
+  const arrays: unknown[][] = [messagesOf(parsed)];
+  for (const sub of parsed.subagents ?? []) {
+    if (Array.isArray(sub.messages)) {
+      arrays.push(sub.messages);
+    }
+  }
+  return arrays;
+}
+
 interface ClaudeRawMessage {
   requestId?: string;
   timestamp?: string; // top-level ISO timestamp on the native JSONL line
@@ -53,36 +70,39 @@ export interface UsageRecord {
 }
 
 /**
- * Extract one {@link UsageRecord} per Claude assistant message (skipping `<synthetic>`).
+ * Extract one {@link UsageRecord} per Claude assistant message (skipping `<synthetic>`),
+ * across the main transcript AND every sub-agent transcript in `parsed.subagents`.
  * Claude Code replays prior turns into resumed/forked session files, so the SAME API
  * response (same message.id + requestId) appears in multiple logs — callers dedupe by `key`.
  */
 export function extractClaudeUsageRecords(parsed: ParsedSession): UsageRecord[] {
   const records: UsageRecord[] = [];
-  for (const raw of messagesOf(parsed) as ClaudeRawMessage[]) {
-    const usage = raw.message?.usage;
-    if (!usage) {
-      continue;
+  for (const messages of allMessageArrays(parsed)) {
+    for (const raw of messages as ClaudeRawMessage[]) {
+      const usage = raw.message?.usage;
+      if (!usage) {
+        continue;
+      }
+      const model = raw.message?.model ?? 'unknown';
+      if (model === '<synthetic>') {
+        continue; // synthetic system messages — not a billable model
+      }
+      const input = usage.input_tokens ?? 0;
+      const output = usage.output_tokens ?? 0;
+      const cacheRead = usage.cache_read_input_tokens ?? 0;
+      const cacheCreation = usage.cache_creation_input_tokens ?? 0;
+      const id = raw.message?.id;
+      const reqId = raw.requestId;
+      const key = id || reqId ? `${id ?? ''}::${reqId ?? ''}` : null;
+      const parsedTs = raw.timestamp ? Date.parse(raw.timestamp) : NaN;
+      const ts = Number.isFinite(parsedTs) ? parsedTs : null;
+      records.push({
+        key,
+        ts,
+        model,
+        usage: { input, output, cacheRead, cacheCreation, total: input + output + cacheRead + cacheCreation },
+      });
     }
-    const model = raw.message?.model ?? 'unknown';
-    if (model === '<synthetic>') {
-      continue; // synthetic system messages — not a billable model
-    }
-    const input = usage.input_tokens ?? 0;
-    const output = usage.output_tokens ?? 0;
-    const cacheRead = usage.cache_read_input_tokens ?? 0;
-    const cacheCreation = usage.cache_creation_input_tokens ?? 0;
-    const id = raw.message?.id;
-    const reqId = raw.requestId;
-    const key = id || reqId ? `${id ?? ''}::${reqId ?? ''}` : null;
-    const parsedTs = raw.timestamp ? Date.parse(raw.timestamp) : NaN;
-    const ts = Number.isFinite(parsedTs) ? parsedTs : null;
-    records.push({
-      key,
-      ts,
-      model,
-      usage: { input, output, cacheRead, cacheCreation, total: input + output + cacheRead + cacheCreation },
-    });
   }
   return records;
 }
