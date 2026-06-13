@@ -41,6 +41,7 @@ module.exports = {
         'deps', // Dependencies
         'tests', // Test infrastructure
         'skills', // Skills system
+        'kimi', // Kimi agent integration
       ],
     ],
     // Scope is completely optional (no warning)
