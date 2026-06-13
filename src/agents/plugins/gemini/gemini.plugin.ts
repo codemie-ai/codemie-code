@@ -117,7 +117,7 @@ const metadata = {
       'AfterAgent': 'Stop',             // Gemini's AfterAgent = Claude's Stop
       'BeforeAgent': 'UserPromptSubmit', // Gemini's BeforeAgent = Claude's UserPromptSubmit
       'Notification': 'PermissionRequest'  // Gemini's Notification = Claude's PermissionRequest
-    }
+    } as const
   }
 };
 

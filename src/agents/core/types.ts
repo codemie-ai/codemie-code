@@ -293,6 +293,13 @@ export interface AgentMetadata {
    * Defines where to find agents/commands/skills/hooks/rules for this agent
    */
   extensionsConfig?: AgentExtensionsConfig;
+
+  // === Hook Configuration ===
+  /**
+   * Hook event name mapping for agents whose native hook names differ
+   * from the internal names used by the hook router.
+   */
+  hookConfig?: AgentHookConfig;
 }
 
 /**
@@ -522,6 +529,39 @@ export interface HookTransformer {
    * Agent name for this transformer
    */
   readonly agentName: string;
+}
+
+/**
+ * Internal hook event names recognized by the hook router.
+ * These are the canonical event names used by CodeMie CLI hook handlers.
+ */
+export type InternalHookEventName =
+  | 'SessionStart'
+  | 'SessionEnd'
+  | 'PermissionRequest'
+  | 'Stop'
+  | 'UserPromptSubmit'
+  | 'SubagentStop'
+  | 'PreCompact';
+
+/**
+ * Agent-specific hook configuration.
+ */
+export interface AgentHookConfig {
+  /**
+   * Maps agent-native hook event names to internal hook event names.
+   * Keys are event names emitted by the agent; values are names used by the hook router.
+   *
+   * Valid internal values: SessionStart, SessionEnd, PermissionRequest, Stop,
+   * UserPromptSubmit, SubagentStop, PreCompact.
+   *
+   * @example
+   * eventNameMapping: {
+   *   'session_start': 'SessionStart',
+   *   'session_end': 'SessionEnd'
+   * }
+   */
+  eventNameMapping?: Record<string, InternalHookEventName>;
 }
 
 /**
