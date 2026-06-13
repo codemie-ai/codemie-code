@@ -12,11 +12,11 @@
 
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
-import { homedir } from 'os';
 import { access } from 'fs/promises';
 import { constants } from 'fs';
 import { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
 import type { AgentMetadata } from '../../core/types.js';
+import { getKimiUserSkillsDir } from './kimi.paths.js';
 
 /**
  * Kimi Extension Installer
@@ -42,10 +42,10 @@ export class KimiExtensionInstaller extends BaseExtensionInstaller {
 
   /**
    * Get the target installation directory
-   * @returns ~/.kimi-code/skills/codemie-kimi
+   * @returns ${KIMI_CODE_HOME:-~/.kimi-code}/skills/codemie-kimi
    */
   getTargetPath(): string {
-    return join(homedir(), '.kimi-code', 'skills', 'codemie-kimi');
+    return join(getKimiUserSkillsDir(), 'codemie-kimi');
   }
 
   /**

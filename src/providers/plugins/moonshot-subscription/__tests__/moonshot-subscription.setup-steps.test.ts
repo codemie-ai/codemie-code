@@ -23,11 +23,14 @@ vi.mock('../../../../utils/logger.js', () => ({
   logger: { info: vi.fn(), success: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-vi.mock('../../core/registry.js', () => ({
-  ProviderRegistry: { registerSetupSteps: vi.fn() },
+vi.mock('../../../core/registry.js', () => ({
+  ProviderRegistry: {
+    registerProvider: vi.fn((template) => template),
+    registerSetupSteps: vi.fn(),
+  },
 }));
 
-vi.mock('@/providers/core/codemie-auth-helpers.js', () => ({
+vi.mock('../../../core/codemie-auth-helpers.js', () => ({
   DEFAULT_CODEMIE_BASE_URL: 'https://codemie.example.com',
   authenticateWithCodeMie: mockAuthenticateWithCodeMie,
   promptForCodeMieUrl: mockPromptForCodeMieUrl,

@@ -5,9 +5,9 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { homedir } from 'os';
 import { join, isAbsolute } from 'path';
 import type { AgentMetadata } from '../../core/types.js';
+import { getKimiUserSkillsDir } from '../kimi.paths.js';
 
 // Mock fs before any imports, preserving real fs constants
 vi.mock('fs', async () => {
@@ -37,17 +37,19 @@ const mockMetadata: AgentMetadata = {
 };
 
 describe('KimiExtensionInstaller', () => {
-  const expectedTargetPath = join(homedir(), '.kimi-code', 'skills', 'codemie-kimi');
+  const expectedTargetPath = (): string => join(getKimiUserSkillsDir(), 'codemie-kimi');
   let installer: KimiExtensionInstaller;
 
   beforeEach(() => {
     vi.clearAllMocks();
     vi.resetAllMocks();
+    delete process.env.KIMI_CODE_HOME;
     installer = new KimiExtensionInstaller(mockMetadata);
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+    delete process.env.KIMI_CODE_HOME;
   });
 
   describe('getTargetPath', () => {
@@ -58,6 +60,12 @@ describe('KimiExtensionInstaller', () => {
 
     it('should return absolute path', () => {
       expect(isAbsolute(installer.getTargetPath())).toBe(true);
+    });
+
+    it('should respect KIMI_CODE_HOME environment variable', () => {
+      process.env.KIMI_CODE_HOME = '/tmp/kimi-test-home';
+      const targetPath = installer.getTargetPath();
+      expect(targetPath).toBe('/tmp/kimi-test-home/skills/codemie-kimi');
     });
   });
 
@@ -108,7 +116,7 @@ describe('KimiExtensionInstaller', () => {
       expect(result.action).toBe('already_exists');
       expect(result.sourceVersion).toBe(mockVersion);
       expect(result.installedVersion).toBe(mockVersion);
-      expect(result.targetPath).toBe(expectedTargetPath);
+      expect(result.targetPath).toBe(expectedTargetPath());
       expect(fsp.cp).not.toHaveBeenCalled();
     });
 
@@ -135,7 +143,7 @@ describe('KimiExtensionInstaller', () => {
       expect(result.success).toBe(true);
       expect(result.action).toBe('copied');
       expect(result.sourceVersion).toBe(mockVersion);
-      expect(result.targetPath).toBe(expectedTargetPath);
+      expect(result.targetPath).toBe(expectedTargetPath());
       expect(fsp.cp).toHaveBeenCalled();
     });
 
@@ -167,7 +175,7 @@ describe('KimiExtensionInstaller', () => {
       expect(result.action).toBe('updated');
       expect(result.installedVersion).toBe(oldVersion);
       expect(result.sourceVersion).toBe(newVersion);
-      expect(result.targetPath).toBe(expectedTargetPath);
+      expect(result.targetPath).toBe(expectedTargetPath());
       expect(fsp.cp).toHaveBeenCalled();
     });
   });
