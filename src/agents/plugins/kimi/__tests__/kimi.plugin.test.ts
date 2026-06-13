@@ -81,6 +81,30 @@ describe('KimiPlugin', () => {
       }
     });
 
+    it('throws when installing supported version on Node.js < 22.19.0', async () => {
+      const originalVersion = process.version;
+      Object.defineProperty(process, 'version', {
+        value: 'v22.18.0',
+        configurable: true,
+      });
+
+      try {
+        const plugin = new KimiPlugin();
+
+        const promise = plugin.installVersion('supported');
+        await expect(promise).rejects.toThrow(AgentInstallationError);
+        await expect(promise).rejects.toThrow('Node.js >= 22.19.0');
+
+        const { installNativeAgent } = await import('../../../../utils/native-installer.js');
+        expect(installNativeAgent).not.toHaveBeenCalled();
+      } finally {
+        Object.defineProperty(process, 'version', {
+          value: originalVersion,
+          configurable: true,
+        });
+      }
+    });
+
     it('does not throw when installing npm version on Node.js >= 22.19.0', async () => {
       const originalVersion = process.version;
       Object.defineProperty(process, 'version', {
@@ -124,6 +148,32 @@ describe('KimiPlugin', () => {
       );
     });
 
+    it('installs stable version natively', async () => {
+      const plugin = new KimiPlugin();
+
+      await expect(plugin.installVersion('stable')).resolves.toBeUndefined();
+
+      const { installNativeAgent } = await import('../../../../utils/native-installer.js');
+      expect(installNativeAgent).toHaveBeenCalledTimes(1);
+      expect(installNativeAgent).toHaveBeenCalledWith(
+        'kimi',
+        KimiPluginMetadata.installerUrls,
+        undefined,
+        expect.any(Object),
+      );
+    });
+
+    it('throws for invalid version', async () => {
+      const plugin = new KimiPlugin();
+
+      const promise = plugin.installVersion('not-a-version');
+      await expect(promise).rejects.toThrow(AgentInstallationError);
+      await expect(promise).rejects.toThrow("Invalid version format: 'not-a-version'");
+
+      const { installNativeAgent } = await import('../../../../utils/native-installer.js');
+      expect(installNativeAgent).not.toHaveBeenCalled();
+    });
+
     it('passes explicit semantic version through to native installer', async () => {
       const plugin = new KimiPlugin();
 
@@ -142,6 +192,13 @@ describe('KimiPlugin', () => {
 });
 
 describe('KimiAcpPlugin', () => {
+  it('metadata uses ACP-specific SSO client type', () => {
+    expect(KimiAcpPluginMetadata.ssoConfig).toEqual({
+      enabled: true,
+      clientType: 'codemie-kimi-acp',
+    });
+  });
+
   it('metadata name is kimi-acp and lifecycle enriches args', () => {
     expect(KimiAcpPluginMetadata.name).toBe('kimi-acp');
     expect(KimiAcpPluginMetadata.lifecycle?.enrichArgs?.(['--task', 'x'], {} as never)).toEqual([

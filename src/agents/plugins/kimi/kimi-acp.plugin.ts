@@ -8,6 +8,7 @@ export const KimiAcpPluginMetadata: AgentMetadata = {
   description: 'Kimi Code CLI ACP mode for IDE integration',
   silentMode: true,
   flagMappings: {},
+  ssoConfig: { enabled: true, clientType: 'codemie-kimi-acp' },
   lifecycle: {
     enrichArgs: (args) => ['acp', ...args],
   },
