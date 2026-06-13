@@ -25,6 +25,11 @@ const copyConfigs = [
     dest: join(rootDir, 'dist/agents/plugins/gemini/extension')
   },
   {
+    name: 'Kimi extension',
+    src: join(rootDir, 'src/agents/plugins/kimi/extension'),
+    dest: join(rootDir, 'dist/agents/plugins/kimi/extension')
+  },
+  {
     name: 'Top-level assets',
     src: join(rootDir, 'assets'),
     dest: join(rootDir, 'dist/assets')
