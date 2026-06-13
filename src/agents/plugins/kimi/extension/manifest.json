@@ -3,9 +3,6 @@
   "displayName": "CodeMie",
   "description": "Event-driven observability for Kimi CLI. Captures session events and syncs metrics/conversations to CodeMie platform.",
   "version": "0.1.0",
-  "author": {
-    "name": "AI/Run CodeMie",
-    "email": "support@codemieai.com"
-  },
-  "homepage": "https://codemie.lab.epam.com"
+  "author": "AI/Run Team",
+  "homepage": "https://github.com/codemie-ai/codemie-code#readme"
 }
