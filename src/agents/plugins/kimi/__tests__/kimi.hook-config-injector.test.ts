@@ -1,12 +1,21 @@
-import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'fs';
+import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
+import {
+  mkdtempSync,
+  rmSync,
+  existsSync,
+  readFileSync,
+  writeFileSync,
+  chmodSync,
+} from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
   HookInjectionResult,
   KimiHookConfigInjector,
+  MANAGED_MARKER,
 } from '../kimi.hook-config-injector.js';
 import { getKimiConfigPath } from '../kimi.paths.js';
+import { ConfigurationError } from '../../../../utils/errors.js';
 
 describe('KimiHookConfigInjector', () => {
   let originalHome: string | undefined;
@@ -21,6 +30,7 @@ describe('KimiHookConfigInjector', () => {
   });
 
   afterEach(() => {
+    chmodSync(tempDir, 0o755);
     rmSync(tempDir, { recursive: true, force: true });
     if (originalHome === undefined) {
       delete process.env.KIMI_CODE_HOME;
@@ -40,7 +50,7 @@ describe('KimiHookConfigInjector', () => {
     expect(existsSync(configPath)).toBe(true);
 
     const content = readFileSync(configPath, 'utf-8');
-    expect(content).toContain('# CodeMie-managed hooks - do not edit manually');
+    expect(content).toContain(MANAGED_MARKER);
     expect(content).toContain('event = "SessionStart"');
     expect(content).toContain('event = "SessionEnd"');
     expect(content).toContain('event = "UserPromptSubmit"');
@@ -88,7 +98,90 @@ describe('KimiHookConfigInjector', () => {
     expect(readFileSync(configPath, 'utf-8')).toContain('event = "SessionStart"');
     expect(readFileSync(configPath, 'utf-8')).toContain('key = "value"');
 
-    await injector.restore();
+    const restoreResult = await injector.restore();
+    expect(restoreResult.success).toBe(true);
+    expect(restoreResult.created).toBe(false);
     expect(readFileSync(configPath, 'utf-8')).toBe(originalContent);
+  });
+
+  it('does not overwrite an existing backup on subsequent injections', async () => {
+    const configPath = getKimiConfigPath();
+    const backupPath = `${configPath}.codemie-backup`;
+    const originalContent = '[existing]\nkey = "value"\n';
+
+    writeFileSync(configPath, originalContent, 'utf-8');
+    const firstResult = await injector.inject();
+    expect(firstResult.success).toBe(true);
+    expect(firstResult.created).toBe(false);
+    expect(readFileSync(backupPath, 'utf-8')).toBe(originalContent);
+
+    // Simulate a later manual edit and re-inject; the original backup must stay intact.
+    writeFileSync(configPath, '[existing]\nkey = "updated"\n', 'utf-8');
+    const secondResult = await injector.inject();
+    expect(secondResult.success).toBe(true);
+    expect(secondResult.created).toBe(false);
+
+    expect(readFileSync(backupPath, 'utf-8')).toBe(originalContent);
+  });
+
+  it('returns failure when @iarna/toml cannot be loaded', async () => {
+    vi.spyOn(
+      injector as unknown as { loadTomlModule: () => Promise<typeof import('@iarna/toml')> },
+      'loadTomlModule'
+    ).mockRejectedValue(new ConfigurationError('Module not found'));
+
+    const result = await injector.inject();
+
+    expect(result.success).toBe(false);
+    expect(result.created).toBe(false);
+    expect(result.error).toContain('Module not found');
+  });
+
+  it('returns failure when existing config contains invalid TOML', async () => {
+    const configPath = getKimiConfigPath();
+    writeFileSync(configPath, 'this is not valid toml [[[', 'utf-8');
+
+    const result = await injector.inject();
+
+    expect(result.success).toBe(false);
+    expect(result.created).toBe(false);
+    expect(result.error).toBeTruthy();
+  });
+
+  it('returns failure when config cannot be written', async () => {
+    chmodSync(tempDir, 0o555);
+
+    const result = await injector.inject();
+
+    expect(result.success).toBe(false);
+    expect(result.created).toBe(false);
+    expect(result.error).toBeTruthy();
+  });
+
+  it('returns success from restore when no backup exists', async () => {
+    const result = await injector.restore();
+
+    expect(result.success).toBe(true);
+    expect(result.created).toBe(false);
+    expect(result.configPath).toBe(getKimiConfigPath());
+  });
+
+  it('returns failure from restore when backup cannot be copied', async () => {
+    const configPath = getKimiConfigPath();
+    const backupPath = `${configPath}.codemie-backup`;
+    writeFileSync(configPath, '[existing]\nkey = "value"\n', 'utf-8');
+    const injectResult = await injector.inject();
+    expect(injectResult.success).toBe(true);
+
+    chmodSync(backupPath, 0o000);
+    try {
+      const result = await injector.restore();
+
+      expect(result.success).toBe(false);
+      expect(result.created).toBe(false);
+      expect(result.error).toBeTruthy();
+    } finally {
+      chmodSync(backupPath, 0o644);
+    }
   });
 });

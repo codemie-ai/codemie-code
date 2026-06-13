@@ -35,8 +35,12 @@ const MANAGED_EVENTS: Array<{ event: string; timeout: number }> = [
   { event: 'PreCompact', timeout: 5 },
 ];
 
-const MANAGED_MARKER = '# CodeMie-managed hooks - do not edit manually';
+export const MANAGED_MARKER = '# CodeMie-managed hooks - do not edit manually';
 const COMMAND = 'codemie hook';
+
+type TomlMap = { [key: string]: TomlValue };
+type TomlArray = string[] | number[] | boolean[] | Date[] | TomlMap[];
+type TomlValue = string | number | boolean | Date | TomlArray | TomlArray[] | TomlMap;
 
 interface KimiHooksConfig {
   hooks?: Array<Record<string, unknown>>;
@@ -57,11 +61,12 @@ export class KimiHookConfigInjector {
       const toml = await this.loadTomlModule();
       const configExists = existsSync(configPath);
       let created = false;
+      let existingContent: string | undefined;
 
       if (!configExists) {
         created = true;
       } else {
-        const existingContent = readFileSync(configPath, 'utf-8');
+        existingContent = readFileSync(configPath, 'utf-8');
         if (existingContent.includes(MANAGED_MARKER)) {
           logger.info('Kimi config already contains CodeMie-managed hooks; skipping injection.', {
             configPath,
@@ -72,9 +77,10 @@ export class KimiHookConfigInjector {
         this.backupConfig(configPath);
       }
 
-      const parsedConfig: KimiHooksConfig = configExists
-        ? (toml.parse(readFileSync(configPath, 'utf-8')) as KimiHooksConfig)
-        : {};
+      const parsedConfig: KimiHooksConfig =
+        existingContent !== undefined
+          ? (toml.parse(existingContent) as KimiHooksConfig)
+          : {};
 
       if (!Array.isArray(parsedConfig.hooks)) {
         parsedConfig.hooks = [];
@@ -88,9 +94,7 @@ export class KimiHookConfigInjector {
         });
       }
 
-      // @iarna/toml does not export its internal JsonMap type, so we assert the
-      // parsed object which is known to contain only TOML-compatible values.
-      const serialized = toml.stringify(parsedConfig as unknown as Record<string, never>);
+      const serialized = toml.stringify(parsedConfig as unknown as TomlMap);
       const contentWithMarker = `${MANAGED_MARKER}\n${serialized}`;
 
       writeFileSync(configPath, contentWithMarker, 'utf-8');
@@ -112,17 +116,24 @@ export class KimiHookConfigInjector {
   /**
    * Restore the original config from its CodeMie backup, if one exists.
    */
-  async restore(): Promise<void> {
+  async restore(): Promise<HookInjectionResult> {
     const configPath = getKimiConfigPath();
     const backupPath = `${configPath}.codemie-backup`;
 
     if (!existsSync(backupPath)) {
       logger.info('No Kimi config backup found; nothing to restore.', { configPath });
-      return;
+      return { success: true, created: false, configPath };
     }
 
-    copyFileSync(backupPath, configPath);
-    logger.info('Restored Kimi config from CodeMie backup.', { configPath, backupPath });
+    try {
+      copyFileSync(backupPath, configPath);
+      logger.info('Restored Kimi config from CodeMie backup.', { configPath, backupPath });
+      return { success: true, created: false, configPath };
+    } catch (error) {
+      const message = getErrorMessage(error);
+      logger.error('Failed to restore Kimi config from CodeMie backup.', error);
+      return { success: false, created: false, configPath, error: message };
+    }
   }
 
   private async loadTomlModule(): Promise<typeof import('@iarna/toml')> {
@@ -137,6 +148,13 @@ export class KimiHookConfigInjector {
 
   private backupConfig(configPath: string): void {
     const backupPath = `${configPath}.codemie-backup`;
+    if (existsSync(backupPath)) {
+      logger.debug('Kimi config backup already exists; skipping backup creation.', {
+        configPath,
+        backupPath,
+      });
+      return;
+    }
     copyFileSync(configPath, backupPath);
   }
 }
