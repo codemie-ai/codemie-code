@@ -230,6 +230,7 @@ Avoid calling low-level process APIs directly when the shared wrapper exists.
 |---|---|
 | `require()` and `__dirname` | ES modules and `getDirname(import.meta.url)` |
 | Imports without `.js` | Always include `.js` extension |
+| Deep relative imports (`../../..`) | `@/` alias (e.g. `@/env/types.js`) |
 | Writing tests by default | Tests only on explicit request |
 | `child_process.exec` directly | `exec()` from `src/utils/processes.ts` |
 | `console.log()` debug output | `logger.debug()` |

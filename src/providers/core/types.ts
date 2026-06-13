@@ -41,6 +41,28 @@ export interface ModelMetadata {
 export type AuthenticationType = 'api-key' | 'sso' | 'oauth' | 'jwt' | 'none';
 
 /**
+ * Known provider names — use instead of hardcoded strings
+ */
+export const ProviderName = {
+  BEARER_AUTH: 'bearer-auth',
+  AI_RUN_SSO: 'ai-run-sso',
+  LITELLM: 'litellm',
+  BEDROCK: 'bedrock',
+  OLLAMA: 'ollama',
+  ANTHROPIC_SUBSCRIPTION: 'anthropic-subscription',
+} as const;
+
+/**
+ * Auth method values — use instead of hardcoded strings
+ */
+export const AuthMethod = {
+  JWT: 'jwt',
+  SSO: 'sso',
+  MANUAL: 'manual',
+  API_KEY: 'api-key',
+} as const;
+
+/**
  * Provider template - declarative metadata
  *
  * Auto-registers with ProviderRegistry via @registerProvider decorator

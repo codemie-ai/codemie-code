@@ -74,9 +74,9 @@ describe('Assistants Chat Command', () => {
   });
 
   describe('Command Options', () => {
-    it('should have verbose, conversation-id, load-history, and file options', () => {
+    it('should have verbose, conversation-id, load-history, file, and jwt-token options', () => {
       const command = createAssistantsChatCommand();
-      expect(command.options).toHaveLength(4);
+      expect(command.options).toHaveLength(5);
     });
 
     it('should accept --verbose flag', () => {

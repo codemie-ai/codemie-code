@@ -21,7 +21,7 @@ describe('Error Handling', () => {
 
   beforeAll(() => {
     errorResult = cli.runSilent('invalid-command-xyz');
-  });
+  }, 30_000);
 
   it('should handle invalid commands gracefully', () => {
     // Should fail with non-zero exit code

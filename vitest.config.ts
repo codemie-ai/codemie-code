@@ -5,21 +5,15 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['src/**/*.test.ts', 'src/**/*.spec.ts', 'tests/**/*.test.ts'],
-    exclude: ['node_modules', 'dist'],
+    exclude: ['node_modules', 'dist', 'tests/integration/agent-*.test.ts'],
     // Force color output for consistent test behavior (chalk output length varies with/without colors)
     env: {
       FORCE_COLOR: '1',
       NODE_ENV: 'test', // Skip auto-update checks during testing
     },
 
-    // Enable parallel execution with isolated environments
-    pool: 'threads',
-    poolOptions: {
-      threads: {
-        maxThreads: 8,
-        minThreads: 2,
-      },
-    },
+    // Enable parallel execution with isolated environments, serial execution — concurrent agent processes drop session files on low-spec machines   
+    maxWorkers: parseInt(process.env.CI_AGENT_MAX_WORKERS ?? '2', 10),
     // Isolate each test file for safety
     isolate: true,
 

@@ -151,6 +151,16 @@ jobs:
     name: Test (Ubuntu)
     runs-on: ubuntu-latest
     needs: [build]
+    env:
+      CI_IS_LOCAL_RUN: false
+      INCLUDE_JWT_TESTS: ${{ vars.INCLUDE_JWT_TESTS }}
+      CI_CODEMIE_USERNAME: ${{ vars.CI_CODEMIE_USERNAME }}
+      CI_CODEMIE_PASSWORD: ${{ vars.CI_CODEMIE_PASSWORD }}
+      CI_CODEMIE_AUTH_URL: ${{ vars.CI_CODEMIE_AUTH_URL }}
+      CI_CODEMIE_AUTH_CLIENT_ID: ${{ vars.CI_CODEMIE_AUTH_CLIENT_ID }}
+      CI_CODEMIE_MODEL: ${{ vars.CI_CODEMIE_MODEL }}
+      CI_AGENT_MAX_WORKERS: ${{ vars.CI_AGENT_MAX_WORKERS }}
+      CI_CODEMIE_URL: ${{ vars.CI_CODEMIE_URL }}
 
     steps:
       - name: Checkout code
@@ -178,10 +188,23 @@ jobs:
       - name: Run integration tests
         run: npm run test:integration
 
+      - name: Run agent task session test
+        run: npm run test:integration:agent -- tests/integration/agent-task-session.test.ts
+
   test-windows:
     name: Test (Windows)
     runs-on: windows-latest
     needs: [build]
+    env:
+      CI_IS_LOCAL_RUN: false
+      INCLUDE_JWT_TESTS: ${{ vars.INCLUDE_JWT_TESTS }}
+      CI_CODEMIE_USERNAME: ${{ vars.CI_CODEMIE_USERNAME }}
+      CI_CODEMIE_PASSWORD: ${{ vars.CI_CODEMIE_PASSWORD }}
+      CI_CODEMIE_AUTH_URL: ${{ vars.CI_CODEMIE_AUTH_URL }}
+      CI_CODEMIE_AUTH_CLIENT_ID: ${{ vars.CI_CODEMIE_AUTH_CLIENT_ID }}
+      CI_CODEMIE_MODEL: ${{ vars.CI_CODEMIE_MODEL }}
+      CI_AGENT_MAX_WORKERS: ${{ vars.CI_AGENT_MAX_WORKERS }}
+      CI_CODEMIE_URL: ${{ vars.CI_CODEMIE_URL }}
 
     steps:
       - name: Checkout code
@@ -208,3 +231,6 @@ jobs:
 
       - name: Run integration tests
         run: npm run test:integration
+
+      - name: Run agent task session test
+        run: npm run test:integration:agent -- tests/integration/agent-task-session.test.ts

@@ -358,7 +358,8 @@ export function formatErrorForUser(
 
   // Error message (just the message, not the name) - wrapped at 100 chars
   const wrappedError = wrapText(context.error.message, 97, '   '); // 97 to account for "❌ " prefix
-  lines.push(`❌ ${wrappedError[0].trim()}`);
+  const firstLine = wrappedError.length > 0 ? wrappedError[0].trim() : context.error.message || '(unknown error)';
+  lines.push(`❌ ${firstLine}`);
   for (let i = 1; i < wrappedError.length; i++) {
     lines.push(wrappedError[i]);
   }
