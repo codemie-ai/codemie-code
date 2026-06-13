@@ -1273,18 +1273,22 @@ export function createHookCommand(): Command {
           process.exit(2); // Blocking error
         }
 
-        if (!event.transcript_path) {
-          logger.error('[hook] Missing required field: transcript_path');
-          logger.debug(`[hook] Received event: ${JSON.stringify(event)}`);
-          process.exit(2); // Blocking error
-        }
-
         // Initialize logger context using CODEMIE_SESSION_ID from environment
         // This ensures consistent session ID across all hooks
         const { sessionId, agentName } = initializeHookContext();
 
-        // Apply hook transformation if agent provides a transformer
+        // Apply hook transformation if agent provides a transformer.
+        // Some agents (e.g. Kimi) do not emit a transcript_path in their raw
+        // hook payload; the transformer computes it from agent-specific session
+        // layout before we validate the internal event shape.
         const transformedEvent = applyHookTransformation(event, agentName);
+
+        // Validate required fields after transformation so agent-specific
+        // transformers can populate fields such as transcript_path.
+        validateHookEvent(transformedEvent);
+        if (process.exitCode === 2) {
+          return; // Validation failed
+        }
 
         // Normalize event name and log processing info
         normalizeAndLogEvent(transformedEvent, sessionId, agentName);

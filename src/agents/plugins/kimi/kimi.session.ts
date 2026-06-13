@@ -19,7 +19,6 @@ import type { SessionProcessor, ProcessingContext } from '../../core/session/Bas
 import type { AgentMetadata } from '../../core/types.js';
 import { readJSONLTolerant } from '../../core/session/utils/jsonl-reader.js';
 import { logger } from '../../../utils/logger.js';
-import { ToolExecutionError } from '../../../utils/errors.js';
 import { KimiMetricsProcessor } from './session/processors/kimi.metrics-processor.js';
 import type { KimiWireEvent } from './session/types.js';
 
@@ -94,15 +93,87 @@ export class KimiSessionAdapter implements SessionAdapter {
   /**
    * Process a Kimi session file with all registered processors.
    *
-   * Not yet implemented — processors are currently run externally by callers
-   * after `parseSessionFile`. The adapter only registers processors here.
+   * Parses the wire.jsonl file once, runs each registered processor in priority
+   * order, and returns an aggregated result. This is the entry point used by
+   * `codemie hook` during incremental sync.
    */
   async processSession(
-    _filePath: string,
-    _sessionId: string,
-    _context: ProcessingContext
+    filePath: string,
+    sessionId: string,
+    context: ProcessingContext
   ): Promise<AggregatedResult> {
-    throw new ToolExecutionError('processSession', 'Kimi session processing is not implemented yet');
+    try {
+      logger.debug(
+        `[kimi-adapter] Processing session ${sessionId} with ${this.processors.length} processor${this.processors.length !== 1 ? 's' : ''}`
+      );
+
+      const parsedSession = await this.parseSessionFile(filePath, sessionId);
+
+      const processorResults: Record<string, {
+        success: boolean;
+        message?: string;
+        recordsProcessed?: number;
+      }> = {};
+      const failedProcessors: string[] = [];
+      let totalRecords = 0;
+
+      for (const processor of this.processors) {
+        try {
+          if (!processor.shouldProcess(parsedSession)) {
+            logger.debug(`[kimi-adapter] Processor ${processor.name} skipped (shouldProcess returned false)`);
+            continue;
+          }
+
+          logger.debug(`[kimi-adapter] Running processor: ${processor.name}`);
+
+          const result = await processor.process(parsedSession, context);
+
+          processorResults[processor.name] = {
+            success: result.success,
+            message: result.message,
+            recordsProcessed: result.metadata?.recordsProcessed as number | undefined,
+          };
+
+          if (!result.success) {
+            failedProcessors.push(processor.name);
+            logger.warn(`[kimi-adapter] Processor ${processor.name} failed: ${result.message}`);
+          } else {
+            logger.debug(`[kimi-adapter] Processor ${processor.name} succeeded: ${result.message}`);
+          }
+
+          const recordsProcessed = result.metadata?.recordsProcessed as number | undefined;
+          if (typeof recordsProcessed === 'number') {
+            totalRecords += recordsProcessed;
+          }
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+          logger.error(`[kimi-adapter] Processor ${processor.name} threw error:`, error);
+
+          processorResults[processor.name] = {
+            success: false,
+            message: errorMessage,
+          };
+          failedProcessors.push(processor.name);
+        }
+      }
+
+      const result: AggregatedResult = {
+        success: failedProcessors.length === 0,
+        processors: processorResults,
+        totalRecords,
+        failedProcessors,
+      };
+
+      logger.debug(
+        `[kimi-adapter] Processing complete: ${result.success ? 'SUCCESS' : 'FAILED'} ` +
+        `(${totalRecords} records, ${failedProcessors.length} failed processors)`
+      );
+
+      return result;
+    } catch (error) {
+      logger.error(`[kimi-adapter] Session processing failed:`, error);
+      throw error;
+    }
   }
 
   private createMinimalSession(sessionId: string): ParsedSession {
