@@ -58,8 +58,8 @@ export const MoonshotSubscriptionTemplate = registerProvider<ProviderTemplate>({
           const agent = AgentRegistry.getAgent('kimi');
           if (!agent) {
             const { logger } = await import('../../../utils/logger.js');
-            logger.warn('[kimi] Kimi agent not found in registry; skipping hook injection');
-            logger.warn('[kimi] Continuing without hooks - metrics may not be captured');
+            logger.warn('[moonshot-subscription] Kimi agent not found in registry; skipping hook injection');
+            logger.warn('[moonshot-subscription] Continuing without hooks - metrics may not be captured');
             return updated;
           }
 
@@ -68,14 +68,14 @@ export const MoonshotSubscriptionTemplate = registerProvider<ProviderTemplate>({
 
           if (!result.success) {
             const { logger } = await import('../../../utils/logger.js');
-            logger.warn(`[kimi] Hook injection returned failure: ${result.error || 'unknown error'}`);
-            logger.warn('[kimi] Continuing without hooks - metrics may not be captured');
+            logger.warn(`[moonshot-subscription] Hook injection returned failure: ${result.error || 'unknown error'}`);
+            logger.warn('[moonshot-subscription] Continuing without hooks - metrics may not be captured');
           }
         } catch (error) {
           const { logger } = await import('../../../utils/logger.js');
           const errorMsg = error instanceof Error ? error.message : String(error);
-          logger.error(`[kimi] Hook injection threw exception: ${errorMsg}`);
-          logger.warn('[kimi] Continuing without hooks - metrics may not be captured');
+          logger.error(`[moonshot-subscription] Hook injection threw exception: ${errorMsg}`);
+          logger.warn('[moonshot-subscription] Continuing without hooks - metrics may not be captured');
         }
 
         return updated;
