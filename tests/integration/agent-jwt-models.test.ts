@@ -13,36 +13,13 @@
 import '../setup/load-test-env.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import {
-  mkdtempSync,
-  rmSync,
-  readdirSync,
-  readFileSync,
-  mkdirSync,
-  writeFileSync,
-  statSync,
-} from 'node:fs';
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { fetchJwtToken, getTempDir } from '../helpers/index.js';
+import { fetchJwtToken, getTempDir, jwtCleanEnv, getLatestMetricsRecord } from '../helpers/index.js';
 
 const REPO_ROOT = resolve(__dirname, '..', '..');
 const CLAUDE_BIN = join(REPO_ROOT, 'bin', 'codemie-claude.js');
 const INCLUDE_JWT_TESTS = process.env.INCLUDE_JWT_TESTS === 'true';
-
-// Minimal env to prevent credential leakage to subprocesses
-function cleanEnv(): NodeJS.ProcessEnv {
-  const pick = (...keys: string[]): NodeJS.ProcessEnv =>
-    Object.fromEntries(keys.flatMap((k) => (process.env[k] !== undefined ? [[k, process.env[k]]] : [])));
-  return {
-    PATH: process.env.PATH ?? '',
-    NODE_PATH: process.env.NODE_PATH ?? '',
-    // Windows: required for DLL loading and executable resolution
-    ...pick('SystemRoot', 'SYSTEMROOT', 'PATHEXT', 'TEMP', 'TMP', 'WINDIR', 'COMSPEC',
-            'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA'),
-    // Unix: home and locale
-    ...pick('HOME', 'USER', 'LANG', 'LC_ALL', 'SHELL'),
-  };
-}
 
 function writeModelProfile(codemieHome: string, profileName: string, model: string): void {
   const config = {
@@ -54,7 +31,7 @@ function writeModelProfile(codemieHome: string, profileName: string, model: stri
         provider: 'bearer-auth',
         authMethod: 'jwt',
         codeMieUrl: process.env.CI_CODEMIE_URL ?? '',
-        baseUrl: process.env.CI_CODEMIE_API_DOMAIN ?? '',
+        baseUrl: `${(process.env.CI_CODEMIE_URL ?? '').replace(/\/$/, '')}/code-assistant-api`,
         model,
       },
     },
@@ -67,18 +44,6 @@ function writeModelProfile(codemieHome: string, profileName: string, model: stri
   );
 }
 
-function getLatestMetricsRecord(sessionsDir: string): Record<string, unknown> {
-  const files = readdirSync(sessionsDir)
-    .filter((f) => f.endsWith('_metrics.jsonl'))
-    .map((f) => join(sessionsDir, f))
-    .sort((a, b) => {
-      try { return statSync(b).mtimeMs - statSync(a).mtimeMs; } catch { return 0; }
-    });
-  if (!files.length) throw new Error('No metrics files found in ' + sessionsDir);
-  const lines = readFileSync(files[0], 'utf-8').trim().split('\n').filter(Boolean);
-  if (!lines.length) throw new Error('Metrics file is empty: ' + files[0]);
-  return JSON.parse(lines[lines.length - 1]) as Record<string, unknown>;
-}
 
 describe.runIf(INCLUDE_JWT_TESTS)('Agent — model selection (TC-020, TC-021)', () => {
   let jwtToken: string;
@@ -101,7 +66,7 @@ describe.runIf(INCLUDE_JWT_TESTS)('Agent — model selection (TC-020, TC-021)', 
       spawnSync(
         process.execPath,
         [CLAUDE_BIN, '--profile', 'profile-sonnet', '--jwt-token', jwtToken, '--task', 'Say READY'],
-        { cwd: testHome, env: { ...cleanEnv(), CODEMIE_HOME: testHome }, encoding: 'utf-8', timeout: 120_000 }
+        { cwd: testHome, env: { ...jwtCleanEnv(), CODEMIE_HOME: testHome }, encoding: 'utf-8', timeout: 120_000 }
       );
       sonnetMetrics = getLatestMetricsRecord(join(testHome, 'sessions'));
 
@@ -111,7 +76,7 @@ describe.runIf(INCLUDE_JWT_TESTS)('Agent — model selection (TC-020, TC-021)', 
       spawnSync(
         process.execPath,
         [CLAUDE_BIN, '--profile', 'profile-haiku', '--jwt-token', jwtToken, '--task', 'Say READY'],
-        { cwd: haikuHome, env: { ...cleanEnv(), CODEMIE_HOME: haikuHome }, encoding: 'utf-8', timeout: 120_000 }
+        { cwd: haikuHome, env: { ...jwtCleanEnv(), CODEMIE_HOME: haikuHome }, encoding: 'utf-8', timeout: 120_000 }
       );
       haikuMetrics = getLatestMetricsRecord(join(haikuHome, 'sessions'));
     }, 300_000);
@@ -146,7 +111,7 @@ describe.runIf(INCLUDE_JWT_TESTS)('Agent — model selection (TC-020, TC-021)', 
       spawnSync(
         process.execPath,
         [CLAUDE_BIN, '--profile', 'profile-tiers', '--jwt-token', jwtToken, '--task', 'Say READY'],
-        { cwd: testHome, env: { ...cleanEnv(), CODEMIE_HOME: testHome }, encoding: 'utf-8', timeout: 120_000 }
+        { cwd: testHome, env: { ...jwtCleanEnv(), CODEMIE_HOME: testHome }, encoding: 'utf-8', timeout: 120_000 }
       );
       metrics = getLatestMetricsRecord(join(testHome, 'sessions'));
     }, 180_000);

@@ -23,8 +23,9 @@ export async function fetchJwtToken(): Promise<string> {
   if (!username || !password)
     throw new Error('CI_CODEMIE_USERNAME and CI_CODEMIE_PASSWORD must be set (or provide CI_CODEMIE_JWT_TOKEN)');
 
-  const authBase = (process.env.CI_CODEMIE_AUTH_URL?.trim() ?? 'https://auth.codemie.lab.epam.com/').replace(/\/$/, '');
-  const authUrl = `${authBase}/realms/codemie-prod/protocol/openid-connect/token`;
+  const authUrlRaw = process.env.CI_CODEMIE_AUTH_URL?.trim();
+  if (!authUrlRaw) throw new Error('CI_CODEMIE_AUTH_URL must be set in .env.test.local');
+  const authUrl = `${authUrlRaw.replace(/\/$/, '')}/realms/codemie-prod/protocol/openid-connect/token`;
 
   const resp = await fetch(authUrl, {
     method: 'POST',
@@ -43,6 +44,23 @@ export async function fetchJwtToken(): Promise<string> {
   const data = (await resp.json()) as Record<string, unknown>;
   if (!data.access_token) throw new Error(`JWT token fetch failed: no access_token in response: ${JSON.stringify(data)}`);
   return data.access_token as string;
+}
+
+/**
+ * Minimal allowlist environment for JWT agent spawns.
+ * Strips everything except essential PATH and platform OS variables so no
+ * credentials or CODEMIE_* session state leak into the subprocess.
+ */
+export function jwtCleanEnv(): NodeJS.ProcessEnv {
+  const pick = (...keys: string[]): NodeJS.ProcessEnv =>
+    Object.fromEntries(keys.flatMap((k) => (process.env[k] !== undefined ? [[k, process.env[k]]] : [])));
+  return {
+    PATH: process.env.PATH ?? '',
+    NODE_PATH: process.env.NODE_PATH ?? '',
+    ...pick('SystemRoot', 'SYSTEMROOT', 'PATHEXT', 'TEMP', 'TMP', 'WINDIR', 'COMSPEC',
+            'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA'),
+    ...pick('HOME', 'USER', 'LANG', 'LC_ALL', 'SHELL'),
+  };
 }
 
 export interface JwtProfileOverrides {
@@ -65,13 +83,15 @@ export interface JwtProfileOverrides {
  */
 export function writeJwtProfile(codemieHome: string, overrides: JwtProfileOverrides = {}): void {
   const profileName = overrides.profileName ?? 'jwt-autotest';
-  const authBase = (process.env.CI_CODEMIE_AUTH_URL ?? 'https://auth.codemie.lab.epam.com/').replace(/\/$/, '');
+  const authUrlRaw = process.env.CI_CODEMIE_AUTH_URL?.trim();
+  if (!authUrlRaw) throw new Error('CI_CODEMIE_AUTH_URL must be set in .env.test.local');
+  const authBase = authUrlRaw.replace(/\/$/, '');
   const profile: Record<string, string> = {
     name: profileName,
     provider: 'bearer-auth',
     authMethod: 'jwt',
     codeMieUrl: overrides.codeMieUrl ?? process.env.CI_CODEMIE_URL ?? '',
-    baseUrl: overrides.baseUrl ?? process.env.CI_CODEMIE_API_DOMAIN ?? '',
+    baseUrl: overrides.baseUrl ?? `${(process.env.CI_CODEMIE_URL ?? '').replace(/\/$/, '')}/code-assistant-api`,
     model: overrides.model ?? process.env.CI_CODEMIE_MODEL ?? 'claude-sonnet-4-6',
     authServerUrl: overrides.authServerUrl ?? authBase,
     authRealm: overrides.authRealm ?? 'codemie-prod',

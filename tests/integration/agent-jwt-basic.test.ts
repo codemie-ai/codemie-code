@@ -4,8 +4,7 @@
  * Run with: npm run test:integration:agent
  * Requires: INCLUDE_JWT_TESTS=true, CI_CODEMIE_* env vars
  *
- * TC-023 / TC-034 (claude-cli-task.test.ts JWT migration) are deferred —
- * that file does not yet exist in the repo.
+ * TC-023 / TC-034 are covered by agent-task-session.test.ts.
  */
 
 import '../setup/load-test-env.js';
@@ -13,25 +12,11 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, readdirSync, statSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { fetchJwtToken, writeJwtProfile, getTempDir } from '../helpers/index.js';
+import { fetchJwtToken, writeJwtProfile, getTempDir, jwtCleanEnv } from '../helpers/index.js';
 
 const REPO_ROOT = resolve(__dirname, '..', '..');
 const CLAUDE_BIN = join(REPO_ROOT, 'bin', 'codemie-claude.js');
 const INCLUDE_JWT_TESTS = process.env.INCLUDE_JWT_TESTS === 'true';
-
-function cleanEnv(): NodeJS.ProcessEnv {
-  const pick = (...keys: string[]): NodeJS.ProcessEnv =>
-    Object.fromEntries(keys.flatMap((k) => (process.env[k] !== undefined ? [[k, process.env[k]]] : [])));
-  return {
-    PATH: process.env.PATH ?? '',
-    NODE_PATH: process.env.NODE_PATH ?? '',
-    // Windows: required for DLL loading and executable resolution
-    ...pick('SystemRoot', 'SYSTEMROOT', 'PATHEXT', 'TEMP', 'TMP', 'WINDIR', 'COMSPEC',
-            'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA'),
-    // Unix: home and locale
-    ...pick('HOME', 'USER', 'LANG', 'LC_ALL', 'SHELL'),
-  };
-}
 
 function getLatestSessionFile(sessionsDir: string): Record<string, unknown> {
   const files = readdirSync(sessionsDir)
@@ -60,7 +45,7 @@ describe.runIf(INCLUDE_JWT_TESTS)('Agent — JWT basic (TC-016..TC-019, TC-031)'
       result = spawnSync(
         process.execPath,
         [CLAUDE_BIN, '--task', 'Say the word READY and nothing else', '--jwt-token', jwtToken],
-        { cwd: testHome, env: { ...cleanEnv(), CODEMIE_HOME: testHome }, encoding: 'utf-8', timeout: 120_000 }
+        { cwd: testHome, env: { ...jwtCleanEnv(), CODEMIE_HOME: testHome }, encoding: 'utf-8', timeout: 120_000 }
       );
     }, 180_000);
     afterAll(() => rmSync(testHome, { recursive: true, force: true }));
@@ -89,7 +74,7 @@ describe.runIf(INCLUDE_JWT_TESTS)('Agent — JWT basic (TC-016..TC-019, TC-031)'
       result = spawnSync(
         process.execPath,
         [CLAUDE_BIN, '--profile', 'jwt-autotest', '--jwt-token', jwtToken, '--task', 'Say READY'],
-        { cwd: testHome, env: { ...cleanEnv(), CODEMIE_HOME: testHome }, encoding: 'utf-8', timeout: 120_000 }
+        { cwd: testHome, env: { ...jwtCleanEnv(), CODEMIE_HOME: testHome }, encoding: 'utf-8', timeout: 120_000 }
       );
     }, 180_000);
     afterAll(() => rmSync(testHome, { recursive: true, force: true }));
@@ -116,7 +101,7 @@ describe.runIf(INCLUDE_JWT_TESTS)('Agent — JWT basic (TC-016..TC-019, TC-031)'
       result = spawnSync(
         process.execPath,
         [CLAUDE_BIN, '--task', 'Say hello', '--jwt-token', 'INVALID_TOKEN_VALUE'],
-        { cwd: testHome, env: { ...cleanEnv(), CODEMIE_HOME: testHome }, encoding: 'utf-8', timeout: 60_000 }
+        { cwd: testHome, env: { ...jwtCleanEnv(), CODEMIE_HOME: testHome }, encoding: 'utf-8', timeout: 60_000 }
       );
     }, 90_000);
     afterAll(() => rmSync(testHome, { recursive: true, force: true }));
@@ -140,7 +125,7 @@ describe.runIf(INCLUDE_JWT_TESTS)('Agent — JWT basic (TC-016..TC-019, TC-031)'
       result = spawnSync(
         process.execPath,
         [CLAUDE_BIN, '--task', 'Say hello'],
-        { env: { ...cleanEnv(), CODEMIE_HOME: testHome }, encoding: 'utf-8', timeout: 30_000 }
+        { env: { ...jwtCleanEnv(), CODEMIE_HOME: testHome }, encoding: 'utf-8', timeout: 30_000 }
       );
     }, 60_000);
     afterAll(() => rmSync(testHome, { recursive: true, force: true }));
@@ -164,7 +149,7 @@ describe.runIf(INCLUDE_JWT_TESTS)('Agent — JWT basic (TC-016..TC-019, TC-031)'
       result = spawnSync(
         process.execPath,
         [CLAUDE_BIN, 'health'],
-        { env: { ...cleanEnv(), CODEMIE_HOME: testHome }, encoding: 'utf-8', timeout: 15_000 }
+        { env: { ...jwtCleanEnv(), CODEMIE_HOME: testHome }, encoding: 'utf-8', timeout: 15_000 }
       );
     }, 30_000);
     afterAll(() => rmSync(testHome, { recursive: true, force: true }));

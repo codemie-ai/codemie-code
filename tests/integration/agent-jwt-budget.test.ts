@@ -12,25 +12,13 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, readdirSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { fetchJwtToken, getTempDir } from '../helpers/index.js';
+import { fetchJwtToken, getTempDir, jwtCleanEnv } from '../helpers/index.js';
 
 const REPO_ROOT = resolve(__dirname, '..', '..');
 const CLAUDE_BIN = join(REPO_ROOT, 'bin', 'codemie-claude.js');
 const INCLUDE_JWT_TESTS = process.env.INCLUDE_JWT_TESTS === 'true';
 const PROJECT = process.env.CI_CODEMIE_PROJECT_ALL_BUDGETS ?? '';
 const INCLUDE_BUDGET_TESTS = INCLUDE_JWT_TESTS && !!process.env.CI_CODEMIE_PROJECT_ALL_BUDGETS;
-
-function cleanEnv(): NodeJS.ProcessEnv {
-  const pick = (...keys: string[]): NodeJS.ProcessEnv =>
-    Object.fromEntries(keys.flatMap((k) => (process.env[k] !== undefined ? [[k, process.env[k]]] : [])));
-  return {
-    PATH: process.env.PATH ?? '',
-    NODE_PATH: process.env.NODE_PATH ?? '',
-    ...pick('SystemRoot', 'SYSTEMROOT', 'PATHEXT', 'TEMP', 'TMP', 'WINDIR', 'COMSPEC',
-            'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA'),
-    ...pick('HOME', 'USER', 'LANG', 'LC_ALL', 'SHELL'),
-  };
-}
 
 function writeBudgetProfile(codemieHome: string, jwtToken: string): void {
   const config = {
@@ -42,7 +30,7 @@ function writeBudgetProfile(codemieHome: string, jwtToken: string): void {
         provider: 'bearer-auth',
         authMethod: 'jwt',
         codeMieUrl: process.env.CI_CODEMIE_URL ?? '',
-        baseUrl: process.env.CI_CODEMIE_API_DOMAIN ?? '',
+        baseUrl: `${(process.env.CI_CODEMIE_URL ?? '').replace(/\/$/, '')}/code-assistant-api`,
         model: process.env.CI_CODEMIE_MODEL ?? 'claude-sonnet-4-6',
         jwtToken,
         codeMieProject: PROJECT,
@@ -71,7 +59,7 @@ describe.runIf(INCLUDE_BUDGET_TESTS)('Budget / Project tests (TC-028)', () => {
       agentResult = spawnSync(
         process.execPath,
         [CLAUDE_BIN, '--profile', 'jwt-budget', '--jwt-token', jwtToken, '--task', 'Say READY'],
-        { env: { ...cleanEnv(), CODEMIE_HOME: testHome }, encoding: 'utf-8', timeout: 120_000 }
+        { env: { ...jwtCleanEnv(), CODEMIE_HOME: testHome }, encoding: 'utf-8', timeout: 120_000 }
       );
     }, 180_000);
 

@@ -4,7 +4,7 @@
  * Creates temporary directories with helper methods for file operations
  */
 
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync } from 'fs';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, realpathSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
@@ -114,6 +114,17 @@ export class TempWorkspace {
  */
 export function createTempWorkspace(prefix?: string): TempWorkspace {
   return new TempWorkspace(prefix);
+}
+
+/**
+ * Resolve Windows 8.3 short path names to full long paths.
+ * Equivalent to ctypes.windll.kernel32.GetLongPathNameW in Python.
+ * Needed when passing temp dirs as cwd to subprocesses — short paths cause
+ * path comparison mismatches inside the agent on Windows.
+ */
+export function resolveLongPath(p: string): string {
+  if (process.platform !== 'win32') return p;
+  try { return realpathSync.native(p); } catch { return p; }
 }
 
 /**

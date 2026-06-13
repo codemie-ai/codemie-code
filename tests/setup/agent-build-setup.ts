@@ -25,6 +25,12 @@ export async function setup(): Promise<void> {
     console.log('[agent-integration] claude CLI installed.\n');
   }
 
+  // Link the local build to global PATH so `codemie hook` resolves when
+  // Claude fires it via hooks.json during a test session.
+  console.log('[agent-integration] Linking local build to global PATH...');
+  execSync('npm link', { cwd: root, stdio: 'pipe' });
+  console.log('[agent-integration] Linked.');
+
   // Pre-install the Claude CodeMie extension once before parallel tests start.
   // Without this, each parallel test triggers installer.install() simultaneously.
   // When the source version differs from the installed version, every installer

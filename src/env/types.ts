@@ -82,8 +82,8 @@ export interface ProviderProfile {
     expiresAt?: number;
   };
   // Keycloak / SSO auth fields (required by SDK for SSO; not used with jwt_token)
-  authServerUrl?: string;   // e.g. https://auth.codemie.lab.epam.com
-  authRealm?: string;       // e.g. codemie-prod
+  authServerUrl?: string;
+  authRealm?: string;
 
   // AWS Bedrock-specific fields
   awsProfile?: string;

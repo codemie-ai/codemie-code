@@ -5,7 +5,7 @@ export default defineConfig({
     globals: true,
     environment: 'node',
     include: ['src/**/*.test.ts', 'src/**/*.spec.ts', 'tests/**/*.test.ts'],
-    exclude: ['node_modules', 'dist'],
+    exclude: ['node_modules', 'dist', 'tests/integration/agent-*.test.ts'],
     // Force color output for consistent test behavior (chalk output length varies with/without colors)
     env: {
       FORCE_COLOR: '1',
