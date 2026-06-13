@@ -12,8 +12,8 @@ describe('AgentRegistry', () => {
     it('should register all default agents', () => {
       const agentNames = AgentRegistry.getAgentNames();
 
-      // Should have all 6 default agents (codemie-code, claude, claude-acp, gemini, opencode, codex)
-      expect(agentNames).toHaveLength(6);
+      // Should have all 8 default agents (codemie-code, claude, claude-acp, gemini, opencode, codex, kimi, kimi-acp)
+      expect(agentNames).toHaveLength(8);
     });
 
     it('should register built-in agent', () => {
@@ -50,6 +50,20 @@ describe('AgentRegistry', () => {
       expect(agent).toBeDefined();
       expect(agent?.name).toBe('claude-acp');
     });
+
+    it('should register Kimi plugin', () => {
+      const agent = AgentRegistry.getAgent('kimi');
+
+      expect(agent).toBeDefined();
+      expect(agent?.name).toBe('kimi');
+    });
+
+    it('should register Kimi ACP plugin', () => {
+      const agent = AgentRegistry.getAgent('kimi-acp');
+
+      expect(agent).toBeDefined();
+      expect(agent?.name).toBe('kimi-acp');
+    });
   });
 
   describe('Agent Retrieval', () => {
@@ -62,7 +76,7 @@ describe('AgentRegistry', () => {
     it('should return all registered agents', () => {
       const agents = AgentRegistry.getAllAgents();
 
-      expect(agents).toHaveLength(6);
+      expect(agents).toHaveLength(8);
       expect(agents.every((agent) => agent.name)).toBe(true);
     });
 
@@ -75,6 +89,8 @@ describe('AgentRegistry', () => {
       expect(names).toContain('gemini');
       expect(names).toContain('opencode');
       expect(names).toContain('codex');
+      expect(names).toContain('kimi');
+      expect(names).toContain('kimi-acp');
     });
   });
 

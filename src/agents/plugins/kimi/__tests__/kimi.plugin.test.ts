@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { KimiPlugin, KimiPluginMetadata } from '../kimi.plugin.js';
 import { KimiAcpPlugin, KimiAcpPluginMetadata } from '../kimi-acp.plugin.js';
 import { KimiSessionAdapter } from '../kimi.session.js';
@@ -95,6 +95,12 @@ describe('KimiPlugin', () => {
 
         const { installNativeAgent } = await import('../../../../utils/native-installer.js');
         expect(installNativeAgent).toHaveBeenCalledTimes(1);
+        expect(installNativeAgent).toHaveBeenCalledWith(
+          'kimi',
+          KimiPluginMetadata.installerUrls,
+          undefined,
+          expect.any(Object),
+        );
       } finally {
         Object.defineProperty(process, 'version', {
           value: originalVersion,
@@ -107,6 +113,30 @@ describe('KimiPlugin', () => {
       const plugin = new KimiPlugin();
 
       await expect(plugin.installVersion('latest')).resolves.toBeUndefined();
+
+      const { installNativeAgent } = await import('../../../../utils/native-installer.js');
+      expect(installNativeAgent).toHaveBeenCalledTimes(1);
+      expect(installNativeAgent).toHaveBeenCalledWith(
+        'kimi',
+        KimiPluginMetadata.installerUrls,
+        undefined,
+        expect.any(Object),
+      );
+    });
+
+    it('passes explicit semantic version through to native installer', async () => {
+      const plugin = new KimiPlugin();
+
+      await expect(plugin.installVersion('1.2.3')).resolves.toBeUndefined();
+
+      const { installNativeAgent } = await import('../../../../utils/native-installer.js');
+      expect(installNativeAgent).toHaveBeenCalledTimes(1);
+      expect(installNativeAgent).toHaveBeenCalledWith(
+        'kimi',
+        KimiPluginMetadata.installerUrls,
+        '1.2.3',
+        expect.any(Object),
+      );
     });
   });
 });

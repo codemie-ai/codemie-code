@@ -11,6 +11,15 @@ export const KimiAcpPluginMetadata: AgentMetadata = {
   lifecycle: {
     enrichArgs: (args) => ['acp', ...args],
   },
+  postInstallHints: [
+    'Configure in your IDE:',
+    '',
+    'Zed (~/.config/zed/settings.json):',
+    '  "agent_servers": { "kimi": { "command": "codemie run kimi-acp" } }',
+    '',
+    'JetBrains (~/.jetbrains/acp.json):',
+    '  "agent_servers": { "Kimi Code via CodeMie": { "command": "codemie run kimi-acp" } }',
+  ],
 };
 
 export class KimiAcpPlugin extends KimiPlugin {

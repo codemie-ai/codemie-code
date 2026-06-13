@@ -190,33 +190,36 @@ export class KimiPlugin extends BaseAgentAdapter {
         from: 'supported',
         to: resolvedVersion,
       });
-    } else if (version === 'npm') {
+    } else if (version === 'npm' || version === 'latest') {
+      // The 'npm' and 'latest' channels request the latest build. Kimi uses the
+      // native installer, so passing undefined installs the latest version.
       resolvedVersion = undefined;
     }
 
-    const isNpmVersion =
+    // Only known channels and valid semantic versions are accepted. Everything
+    // else falls back to the latest native build with a warning.
+    const isKnownChannel = ['latest', 'stable', 'supported', 'npm'].includes(version ?? '');
+    if (version && !isKnownChannel && !isValidSemanticVersion(version)) {
+      logger.warn(
+        chalk.yellow(
+          `${this.metadata.displayName} does not support installing version ${version}. ` +
+            'Installing the latest version instead.',
+        ),
+      );
+      resolvedVersion = undefined;
+    }
+
+    // npm-channel and explicit semantic-version installs require a recent Node
+    // runtime because the installer internally resolves package metadata.
+    const isNpmBasedChannel =
       version === 'npm' || (version !== undefined && isValidSemanticVersion(version));
     if (
-      isNpmVersion &&
+      isNpmBasedChannel &&
       compareVersions(process.version, KIMI_MINIMUM_NODE_VERSION_FOR_NPM) < 0
     ) {
       throw new AgentInstallationError(
         this.metadata.name,
-        `Kimi npm installs require Node.js >= ${KIMI_MINIMUM_NODE_VERSION_FOR_NPM} (current: ${process.version})`,
-      );
-    }
-
-    if (
-      resolvedVersion &&
-      resolvedVersion !== 'latest' &&
-      resolvedVersion !== 'stable' &&
-      version !== 'supported'
-    ) {
-      logger.warn(
-        chalk.yellow(
-          `${this.metadata.displayName} does not support installing version ${resolvedVersion}. ` +
-            'Installing the latest version instead.',
-        ),
+        `Kimi installs from the npm channel or explicit versions require Node.js >= ${KIMI_MINIMUM_NODE_VERSION_FOR_NPM} (current: ${process.version})`,
       );
     }
 
