@@ -1,0 +1,3 @@
+{"type":"metadata","protocol_version":"1.4","created_at":1781363635367,"app_version":"0.14.2"}
+{"type":"turn.prompt","role":"user","content":"Hello","time":1781368649424}
+{"type":"usage.record","model":"kimi-code/fallback-model","usage":{"inputOther":100,"output":50,"inputCacheRead":0,"inputCacheCreation":0},"usageScope":"turn","time":1781368649431}

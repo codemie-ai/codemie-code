@@ -117,11 +117,10 @@ export class KimiSessionAdapter implements SessionAdapter {
 
       const model = this.extractModel(events);
       const { createdAt, updatedAt } = this.extractTimestamps(events);
-      const metrics = this.extractMetrics(events);
 
       logger.debug(
         `[kimi-adapter] Parsed session ${sessionId}: ${events.length} events, ` +
-        `model=${model ?? 'unknown'}, tools=${Object.keys(metrics.tools ?? {}).length}`
+        `model=${model ?? 'unknown'}`
       );
 
       const metadata = {
@@ -136,7 +135,6 @@ export class KimiSessionAdapter implements SessionAdapter {
         agentName: this.metadata.displayName || 'Kimi Code',
         metadata,
         messages: events,
-        metrics,
       };
     } catch (error) {
       logger.warn(`[kimi-adapter] Failed to parse session file ${filePath}:`, error);
@@ -170,11 +168,6 @@ export class KimiSessionAdapter implements SessionAdapter {
       agentName: this.metadata.displayName || 'Kimi Code',
       metadata,
       messages: [],
-      metrics: {
-        tools: {},
-        toolStatus: {},
-        fileOperations: [],
-      },
     };
   }
 
@@ -223,82 +216,4 @@ export class KimiSessionAdapter implements SessionAdapter {
     return { createdAt, updatedAt };
   }
 
-  private extractMetrics(events: KimiWireEvent[]): NonNullable<ParsedSession['metrics']> {
-    const tools: Record<string, number> = {};
-    const toolStatus: Record<string, { success: number; failure: number }> = {};
-    const fileOperations: Array<{ type: string; path?: string }> = [];
-
-    // First pass: index tool calls by toolCallId so tool results can be matched.
-    const toolCallById = new Map<string, KimiWireEvent & { event: { name: string } }>();
-
-    for (const event of events) {
-      if (
-        event.type === 'context.append_loop_event' &&
-        event.event?.type === 'tool.call' &&
-        typeof event.event.toolCallId === 'string' &&
-        typeof event.event.name === 'string'
-      ) {
-        const toolName = event.event.name;
-        tools[toolName] = (tools[toolName] || 0) + 1;
-
-        if (!toolStatus[toolName]) {
-          toolStatus[toolName] = { success: 0, failure: 0 };
-        }
-
-        toolCallById.set(event.event.toolCallId, event as KimiWireEvent & { event: { name: string } });
-      }
-    }
-
-    // Second pass: match tool results to tool calls and update status.
-    for (const event of events) {
-      if (
-        event.type !== 'context.append_loop_event' ||
-        event.event?.type !== 'tool.result' ||
-        !event.event.result
-      ) {
-        continue;
-      }
-
-      const matchedToolCall =
-        (typeof event.event.toolCallId === 'string' && toolCallById.get(event.event.toolCallId)) ||
-        (typeof event.event.parentUuid === 'string' && toolCallById.get(event.event.parentUuid));
-
-      if (!matchedToolCall) {
-        continue;
-      }
-
-      const toolName = matchedToolCall.event.name;
-      const isError = event.event.result.isError === true;
-
-      if (isError) {
-        toolStatus[toolName].failure++;
-      } else {
-        toolStatus[toolName].success++;
-      }
-    }
-
-    // Third pass: collect file operations from display metadata.
-    for (const event of events) {
-      if (event.type !== 'context.append_loop_event') {
-        continue;
-      }
-
-      const display = event.display;
-      if (!display || display.kind !== 'file_io') {
-        continue;
-      }
-
-      const operation = display.operation;
-      if (operation !== 'read' && operation !== 'write' && operation !== 'edit') {
-        continue;
-      }
-
-      fileOperations.push({
-        type: operation,
-        path: typeof display.path === 'string' ? display.path : undefined,
-      });
-    }
-
-    return { tools, toolStatus, fileOperations };
-  }
 }
