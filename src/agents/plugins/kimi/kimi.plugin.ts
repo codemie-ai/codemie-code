@@ -124,7 +124,7 @@ export class KimiPlugin extends BaseAgentAdapter {
     return false;
   }
 
-  override async install(): Promise<void> {
+  private async installNative(version?: string): Promise<void> {
     if (!this.metadata.installerUrls) {
       throw new AgentInstallationError(
         this.metadata.name,
@@ -136,7 +136,7 @@ export class KimiPlugin extends BaseAgentAdapter {
       const result = await installNativeAgent(
         this.metadata.name,
         this.metadata.installerUrls,
-        undefined,
+        version,
         {
           timeout: 300000,
           verifyCommand: this.metadata.cliCommand || undefined,
@@ -171,6 +171,10 @@ export class KimiPlugin extends BaseAgentAdapter {
     }
   }
 
+  override async install(): Promise<void> {
+    return this.installVersion(undefined);
+  }
+
   override async installVersion(version?: string): Promise<void> {
     let resolvedVersion: string | undefined = version;
 
@@ -186,6 +190,8 @@ export class KimiPlugin extends BaseAgentAdapter {
         from: 'supported',
         to: resolvedVersion,
       });
+    } else if (version === 'npm') {
+      resolvedVersion = undefined;
     }
 
     const isNpmVersion =
@@ -200,7 +206,12 @@ export class KimiPlugin extends BaseAgentAdapter {
       );
     }
 
-    if (resolvedVersion && resolvedVersion !== 'latest' && resolvedVersion !== 'stable') {
+    if (
+      resolvedVersion &&
+      resolvedVersion !== 'latest' &&
+      resolvedVersion !== 'stable' &&
+      version !== 'supported'
+    ) {
       logger.warn(
         chalk.yellow(
           `${this.metadata.displayName} does not support installing version ${resolvedVersion}. ` +
@@ -209,6 +220,6 @@ export class KimiPlugin extends BaseAgentAdapter {
       );
     }
 
-    await this.install();
+    await this.installNative(resolvedVersion);
   }
 }

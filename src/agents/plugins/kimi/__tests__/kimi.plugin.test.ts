@@ -49,6 +49,12 @@ describe('KimiPlugin', () => {
 
       const { installNativeAgent } = await import('../../../../utils/native-installer.js');
       expect(installNativeAgent).toHaveBeenCalledTimes(1);
+      expect(installNativeAgent).toHaveBeenCalledWith(
+        'kimi',
+        KimiPluginMetadata.installerUrls,
+        '1.0.0',
+        expect.any(Object),
+      );
     });
 
     it('throws when installing npm version on Node.js < 22.19.0', async () => {
@@ -61,13 +67,34 @@ describe('KimiPlugin', () => {
       try {
         const plugin = new KimiPlugin();
 
-        await expect(plugin.installVersion('npm')).rejects.toThrow(AgentInstallationError);
-        await expect(plugin.installVersion('npm')).rejects.toThrow(
-          'Node.js >= 22.19.0',
-        );
+        const promise = plugin.installVersion('npm');
+        await expect(promise).rejects.toThrow(AgentInstallationError);
+        await expect(promise).rejects.toThrow('Node.js >= 22.19.0');
 
         const { installNativeAgent } = await import('../../../../utils/native-installer.js');
         expect(installNativeAgent).not.toHaveBeenCalled();
+      } finally {
+        Object.defineProperty(process, 'version', {
+          value: originalVersion,
+          configurable: true,
+        });
+      }
+    });
+
+    it('does not throw when installing npm version on Node.js >= 22.19.0', async () => {
+      const originalVersion = process.version;
+      Object.defineProperty(process, 'version', {
+        value: 'v22.19.0',
+        configurable: true,
+      });
+
+      try {
+        const plugin = new KimiPlugin();
+
+        await expect(plugin.installVersion('npm')).resolves.toBeUndefined();
+
+        const { installNativeAgent } = await import('../../../../utils/native-installer.js');
+        expect(installNativeAgent).toHaveBeenCalledTimes(1);
       } finally {
         Object.defineProperty(process, 'version', {
           value: originalVersion,
