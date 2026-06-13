@@ -11,6 +11,7 @@ import {
   createErrorContext,
   getErrorMessage,
 } from '../../../utils/errors.js';
+import { compareVersions, isValidSemanticVersion } from '../../../utils/version-utils.js';
 import { logger } from '../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../utils/security.js';
 import chalk from 'chalk';
@@ -19,6 +20,7 @@ import { resolveHomeDir } from '../../../utils/paths.js';
 
 const KIMI_SUPPORTED_VERSION = '1.0.0';
 const KIMI_MINIMUM_SUPPORTED_VERSION = '0.9.0';
+const KIMI_MINIMUM_NODE_VERSION_FOR_NPM = '22.19.0';
 
 const KIMI_INSTALLER_URLS = {
   macOS: 'https://code.kimi.com/kimi-code/install.sh',
@@ -43,6 +45,7 @@ export const KimiPluginMetadata: AgentMetadata = {
   ssoConfig: { enabled: true, clientType: 'codemie-kimi' },
   flagMappings: {
     '--task': { type: 'flag', target: '-p' },
+    '--model': { type: 'flag', target: '--model' },
   },
   metricsConfig: {
     excludeErrorsFromTools: ['Bash'],
@@ -183,7 +186,21 @@ export class KimiPlugin extends BaseAgentAdapter {
         from: 'supported',
         to: resolvedVersion,
       });
-    } else if (resolvedVersion && resolvedVersion !== 'latest' && resolvedVersion !== 'stable') {
+    }
+
+    const isNpmVersion =
+      version === 'npm' || (version !== undefined && isValidSemanticVersion(version));
+    if (
+      isNpmVersion &&
+      compareVersions(process.version, KIMI_MINIMUM_NODE_VERSION_FOR_NPM) < 0
+    ) {
+      throw new AgentInstallationError(
+        this.metadata.name,
+        `Kimi npm installs require Node.js >= ${KIMI_MINIMUM_NODE_VERSION_FOR_NPM} (current: ${process.version})`,
+      );
+    }
+
+    if (resolvedVersion && resolvedVersion !== 'latest' && resolvedVersion !== 'stable') {
       logger.warn(
         chalk.yellow(
           `${this.metadata.displayName} does not support installing version ${resolvedVersion}. ` +
