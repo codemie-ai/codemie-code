@@ -10,9 +10,13 @@
  *    metrics with `KimiMetricsProcessor`.
  */
 
+// This script is intentionally not covered by `npm run lint`, which only lints
+// TypeScript files under `src/` and `tests/`.
+
 import { spawnSync } from 'child_process';
 import {
   chmodSync,
+  existsSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
@@ -25,6 +29,15 @@ import { join, resolve } from 'path';
 
 const repoRoot = resolve(fileURLToPath(import.meta.url), '..', '..');
 const distRoot = join(repoRoot, 'dist');
+
+// Pre-flight: ensure the dist build output is present before importing.
+const registryPath = join(distRoot, 'agents', 'registry.js');
+if (!existsSync(registryPath)) {
+  console.error(
+    `Error: Build output not found at ${registryPath}. Run "npm run build" first.`
+  );
+  process.exit(1);
+}
 
 // Load real built implementations from dist/.
 const { KimiPluginMetadata } = await import(
@@ -40,7 +53,8 @@ const { KimiMetricsProcessor } = await import(
   join(distRoot, 'agents/plugins/kimi/session/processors/kimi.metrics-processor.js')
 );
 
-const PACKAGE_VERSION = '0.4.2';
+const packageJsonPath = join(repoRoot, 'package.json');
+const PACKAGE_VERSION = JSON.parse(readFileSync(packageJsonPath, 'utf-8')).version;
 const SESSION_ID = 'verify-session-001';
 
 const sampleWire = `\
@@ -82,6 +96,28 @@ function assert(condition, message) {
 
 let tmpDir;
 
+function cleanup() {
+  if (tmpDir) {
+    try {
+      rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      // Best-effort cleanup; do not mask the original failure.
+    }
+  }
+}
+
+function cleanupAndExit(signal) {
+  cleanup();
+  process.exit(signal === 'SIGINT' ? 130 : 143);
+}
+
+const sigintHandler = () => cleanupAndExit('SIGINT');
+const sigtermHandler = () => cleanupAndExit('SIGTERM');
+process.once('SIGINT', sigintHandler);
+process.once('SIGTERM', sigtermHandler);
+
+const originalKimiCodeHome = process.env.KIMI_CODE_HOME;
+
 try {
   // 1. Prepare isolated temp directory with fake Kimi binary on PATH.
   tmpDir = mkdtempSync(join(tmpdir(), 'codemie-kimi-verify-'));
@@ -94,10 +130,19 @@ try {
   writeFileSync(wirePath, sampleWire, 'utf-8');
 
   const fakeKimiPath = join(fakeBinDir, 'kimi');
+  // The fake binary is an ES module: we provide a local package.json with
+  // "type": "module" so the extension-less file can use ESM syntax.
+  writeFileSync(
+    join(fakeBinDir, 'package.json'),
+    JSON.stringify({ type: 'module' }),
+    'utf-8'
+  );
   const fakeKimiScript = `#!/usr/bin/env node
-const fs = require('fs');
-const path = require('path');
-const home = process.env.KIMI_CODE_HOME || path.join(require('os').homedir(), '.kimi-code');
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+
+const home = process.env.KIMI_CODE_HOME || path.join(os.homedir(), '.kimi-code');
 const wireDir = path.join(home, 'sessions', '${SESSION_ID}', 'agents', 'main');
 const wirePath = path.join(wireDir, 'wire.jsonl');
 const sample = ${JSON.stringify(sampleWire)};
@@ -200,7 +245,12 @@ console.log('kimi 1.0.0');
   console.error('Verification failed:', error instanceof Error ? error.message : String(error));
   process.exitCode = 1;
 } finally {
-  if (tmpDir) {
-    rmSync(tmpDir, { recursive: true, force: true });
+  cleanup();
+  process.off('SIGINT', sigintHandler);
+  process.off('SIGTERM', sigtermHandler);
+  if (originalKimiCodeHome === undefined) {
+    delete process.env.KIMI_CODE_HOME;
+  } else {
+    process.env.KIMI_CODE_HOME = originalKimiCodeHome;
   }
 }
