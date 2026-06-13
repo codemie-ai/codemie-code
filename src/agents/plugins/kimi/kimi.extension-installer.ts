@@ -13,6 +13,8 @@
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { homedir } from 'os';
+import { access } from 'fs/promises';
+import { constants } from 'fs';
 import { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
 import type { AgentMetadata } from '../../core/types.js';
 
@@ -60,5 +62,24 @@ export class KimiExtensionInstaller extends BaseExtensionInstaller {
    */
   protected getCriticalFiles(): string[] {
     return ['manifest.json', 'SKILL.md'];
+  }
+
+  /**
+   * Check if the Kimi extension is already installed and read its version.
+   *
+   * Verifies that the target directory, manifest, and SKILL.md all exist and
+   * are readable. Returns null if any of these checks fail.
+   */
+  protected async getInstalledInfo(): Promise<{ installed: boolean; version: string | null } | null> {
+    try {
+      const targetPath = this.getTargetPath();
+      await access(targetPath, constants.F_OK);
+      await access(join(targetPath, this.getManifestPath()), constants.R_OK);
+      await access(join(targetPath, 'SKILL.md'), constants.R_OK);
+      const version = await this.getVersion(targetPath);
+      return { installed: true, version };
+    } catch {
+      return null;
+    }
   }
 }
