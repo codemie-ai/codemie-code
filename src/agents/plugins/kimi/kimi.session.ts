@@ -21,66 +21,15 @@ import { readJSONLTolerant } from '../../core/session/utils/jsonl-reader.js';
 import { logger } from '../../../utils/logger.js';
 import { ToolExecutionError } from '../../../utils/errors.js';
 import { KimiMetricsProcessor } from './session/processors/kimi.metrics-processor.js';
-
-interface KimiWireEvent {
-  type: string;
-  time?: number;
-  // metadata
-  protocol_version?: string;
-  created_at?: number;
-  app_version?: string;
-  // config.update
-  profileName?: string;
-  systemPrompt?: string;
-  modelAlias?: string;
-  thinkingLevel?: string;
-  // usage.record
-  model?: string;
-  usage?: {
-    inputOther?: number;
-    output?: number;
-    inputCacheRead?: number;
-    inputCacheCreation?: number;
-  };
-  usageScope?: string;
-  // context.append_loop_event
-  event?: {
-    type?: string;
-    uuid?: string;
-    turnId?: string;
-    step?: number;
-    toolCallId?: string;
-    parentUuid?: string;
-    name?: string;
-    args?: Record<string, unknown>;
-    description?: string;
-    result?: {
-      output?: string;
-      isError?: boolean;
-    };
-    usage?: {
-      inputOther?: number;
-      output?: number;
-      inputCacheRead?: number;
-      inputCacheCreation?: number;
-    };
-    finishReason?: string;
-  };
-  display?: {
-    kind?: string;
-    operation?: string;
-    path?: string;
-    content?: string;
-    before?: string;
-    after?: string;
-  };
-}
+import type { KimiWireEvent } from './session/types.js';
 
 export class KimiSessionAdapter implements SessionAdapter {
   readonly agentName = 'kimi';
   private processors: SessionProcessor[] = [];
 
   constructor(private readonly metadata: AgentMetadata) {
+    // Register processors now, but execution is currently orchestrated externally
+    // until processSession is implemented.
     this.initializeProcessors();
   }
 
@@ -145,8 +94,8 @@ export class KimiSessionAdapter implements SessionAdapter {
   /**
    * Process a Kimi session file with all registered processors.
    *
-   * Not yet implemented — Kimi metrics are currently extracted directly
-   * by parseSessionFile for analytics consumption.
+   * Not yet implemented — processors are currently run externally by callers
+   * after `parseSessionFile`. The adapter only registers processors here.
    */
   async processSession(
     _filePath: string,

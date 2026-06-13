@@ -13,40 +13,7 @@
 import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../../../../core/session/BaseProcessor.js';
 import type { ParsedSession } from '../../../../core/session/BaseSessionAdapter.js';
 import { logger } from '../../../../../utils/logger.js';
-
-interface KimiWireEvent {
-  type: string;
-  event?: {
-    type?: string;
-    uuid?: string;
-    turnId?: string;
-    step?: number;
-    toolCallId?: string;
-    parentUuid?: string;
-    name?: string;
-    args?: Record<string, unknown>;
-    description?: string;
-    result?: {
-      output?: string;
-      isError?: boolean;
-    };
-    usage?: {
-      inputOther?: number;
-      output?: number;
-      inputCacheRead?: number;
-      inputCacheCreation?: number;
-    };
-    finishReason?: string;
-  };
-  display?: {
-    kind?: string;
-    operation?: string;
-    path?: string;
-    content?: string;
-    before?: string;
-    after?: string;
-  };
-}
+import type { KimiWireEvent } from '../types.js';
 
 export class KimiMetricsProcessor implements SessionProcessor {
   readonly name = 'kimi-metrics';
@@ -58,6 +25,8 @@ export class KimiMetricsProcessor implements SessionProcessor {
 
   async process(session: ParsedSession, _context: ProcessingContext): Promise<ProcessingResult> {
     try {
+      // Safe cast: shouldProcess has already verified this is a Kimi Code session,
+      // whose messages are parsed from Kimi wire.jsonl events.
       const messages = session.messages as KimiWireEvent[];
       const metrics = this.extractMetrics(messages);
 
