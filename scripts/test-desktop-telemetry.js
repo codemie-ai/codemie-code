@@ -85,7 +85,7 @@ if (args.codemieHome) {
 
 const distRoot = resolve(process.cwd(), 'dist');
 if (!existsSync(distRoot)) {
-  console.error('dist/ is missing. Run: rtk npm run build');
+  console.error('dist/ is missing. Run: npm run build');
   process.exit(1);
 }
 
