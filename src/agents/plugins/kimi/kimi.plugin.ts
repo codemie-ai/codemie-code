@@ -11,15 +11,14 @@ import {
   createErrorContext,
   getErrorMessage,
 } from '../../../utils/errors.js';
-import { compareVersions, isValidSemanticVersion } from '../../../utils/version-utils.js';
+import { isValidSemanticVersion } from '../../../utils/version-utils.js';
 import { logger } from '../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../utils/security.js';
 import { commandExists, exec } from '../../../utils/processes.js';
 import { resolveHomeDir } from '../../../utils/paths.js';
 
-const KIMI_SUPPORTED_VERSION = '1.0.0';
-const KIMI_MINIMUM_SUPPORTED_VERSION = '0.9.0';
-const KIMI_MINIMUM_NODE_VERSION_FOR_NPM = '22.19.0';
+const KIMI_SUPPORTED_VERSION = '0.14.3';
+const KIMI_MINIMUM_SUPPORTED_VERSION = '0.14.0';
 
 const KIMI_INSTALLER_URLS = {
   macOS: 'https://code.kimi.com/kimi-code/install.sh',
@@ -245,21 +244,6 @@ export class KimiPlugin extends BaseAgentAdapter {
           `Invalid version format: '${version}'. Expected semantic version (e.g., '1.0.0'), 'latest', 'stable', 'supported', or 'npm'.`,
         );
       }
-    }
-
-    // npm-channel, supported-channel, and explicit semantic-version installs
-    // require a recent Node runtime because the installer internally resolves
-    // package metadata.
-    const isSemverInstall = resolvedVersion !== undefined && isValidSemanticVersion(resolvedVersion);
-    const isNpmChannel = version === 'npm';
-    if (
-      (isNpmChannel || isSemverInstall) &&
-      compareVersions(process.version, KIMI_MINIMUM_NODE_VERSION_FOR_NPM) < 0
-    ) {
-      throw new AgentInstallationError(
-        this.metadata.name,
-        `Kimi installs from the npm channel, the supported version, or explicit versions require Node.js >= ${KIMI_MINIMUM_NODE_VERSION_FOR_NPM} (current: ${process.version})`,
-      );
     }
 
     await this.installNative(resolvedVersion);
