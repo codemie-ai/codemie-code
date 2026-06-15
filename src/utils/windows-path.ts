@@ -49,8 +49,12 @@ function validateDirectoryPath(directory: string): string | null {
 		}
 
 		// SECURITY: Check for shell metacharacters that could enable command injection
-		// Windows shell special chars: & | < > ^ ( ) " ; , \n \r
-		const dangerousChars = /[&|<>^();,\n\r"]/;
+		// Windows cmd.exe metacharacters: & | < > ^ "
+		// Note: ( ) are valid in Windows directory names (e.g. "Program Files (x86)") and
+		// safe here because callers use exec() with shell:false / array args.
+		// Note: ; is the Windows PATH separator — a directory name containing ; would corrupt
+		// the PATH registry value by splitting into two spurious entries.
+		const dangerousChars = /[&|<>^;,\n\r"]/;
 		if (dangerousChars.test(normalizedPath)) {
 			logger.warn('Directory path contains dangerous shell metacharacters', {
 				directory: normalizedPath

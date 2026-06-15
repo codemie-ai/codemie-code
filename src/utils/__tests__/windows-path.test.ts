@@ -293,7 +293,6 @@ describe('windows-path', () => {
 				'C:\\test > output.txt',
 				'C:\\test < input.txt',
 				'C:\\test ^ test2',
-				'C:\\test (malicious)'
 			];
 
 			for (const path of maliciousPaths) {
@@ -305,6 +304,26 @@ describe('windows-path', () => {
 			}
 
 			expect(execSpy).not.toHaveBeenCalled();
+		});
+
+		it('should accept paths with parentheses in directory names', async () => {
+			execSpy.mockResolvedValueOnce({
+				code: 0,
+				stdout: 'PATH    REG_EXPAND_SZ    C:\\Windows\n',
+				stderr: '',
+			});
+			execSpy.mockResolvedValueOnce({
+				code: 0,
+				stdout: 'SUCCESS: Specified value was saved.\n',
+				stderr: '',
+			});
+
+			const { addToUserPath } = await import('../windows-path.js');
+			const result = await addToUserPath('C:\\Users\\Test(User)\\.local\\bin');
+
+			expect(result.success).toBe(true);
+			expect(result.pathAdded).toBe('C:\\Users\\Test(User)\\.local\\bin');
+			expect(result.alreadyInPath).toBe(false);
 		});
 
 		it('should accept paths with dots and underscores (safe characters)', async () => {
