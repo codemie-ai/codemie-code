@@ -1,6 +1,7 @@
 import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { dirname, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { homedir } from 'node:os';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -16,12 +17,32 @@ export async function setup(): Promise<void> {
   execSync('npm run build', { cwd: root, stdio: 'inherit' });
   console.log('[agent-integration] Build complete.');
 
+  // The native Claude installer places the binary at ~/.local/bin/claude(.exe).
+  // On Windows CI runners this directory is not in PATH by default, so we add it
+  // to process.env.PATH before checking and after installing.
+  const localBin = join(homedir(), '.local', 'bin');
+  const pathSep = process.platform === 'win32' ? ';' : ':';
+  if (!(process.env.PATH ?? '').includes(localBin)) {
+    process.env.PATH = `${localBin}${pathSep}${process.env.PATH ?? ''}`;
+  }
+
   try {
     execSync('claude --version', { stdio: 'pipe' });
     console.log('[agent-integration] claude CLI found.\n');
   } catch {
     console.log('[agent-integration] claude CLI not found — installing via codemie...');
-    execSync(`node ${resolve(root, 'bin/codemie.js')} install claude`, { cwd: root, stdio: 'inherit' });
+    try {
+      // Installer may exit non-zero on Windows when it warns that ~/.local/bin
+      // is not yet in the system PATH — installation itself succeeds.
+      execSync(`node ${resolve(root, 'bin/codemie.js')} install claude`, { cwd: root, stdio: 'inherit' });
+    } catch {
+      // Ignore exit code — verify the binary is actually present below.
+    }
+    // Re-add localBin in case the installer modified PATH during its run.
+    if (!(process.env.PATH ?? '').includes(localBin)) {
+      process.env.PATH = `${localBin}${pathSep}${process.env.PATH ?? ''}`;
+    }
+    execSync('claude --version', { stdio: 'pipe' }); // throws if install genuinely failed
     console.log('[agent-integration] claude CLI installed.\n');
   }
 
