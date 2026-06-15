@@ -139,8 +139,8 @@ export async function discoverClaudeDesktopSessions(
       if (!metadata.sessionId.startsWith('local_')) continue;
       // Skip until the inner Claude session id exists. Until then agentSessionId
       // (the conversation id) falls back to the external `local_<id>`, and an early
-      // poll syncs an empty stub conversation under it — a duplicate of the real
-      // conversation that later syncs under the inner uuid (EPMCDME-12743).
+      // poll syncs an empty stub conversation under it - a duplicate of the real
+      // conversation that later syncs under the inner uuid.
       if (!metadata.cliSessionId) continue;
       if (!transcriptPath || !existsSync(transcriptPath)) continue;
       if (metadata.lastActivityAt < sinceMs && metadata.createdAt < sinceMs) continue;
