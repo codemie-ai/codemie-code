@@ -82,6 +82,10 @@ function resolveOllamaBaseUrl(baseUrl: string, provider: string | undefined): st
   return `${baseUrl.replace(/\/$/, '')}/v1`;
 }
 
+function normalizeOllamaModelId(modelId: string): string {
+  return modelId.replace(/:latest$/, '');
+}
+
 /**
  * Build Azure OpenAI provider entries for OpenCode config.
  *
@@ -168,8 +172,13 @@ function buildOpenCodeConfig(params: {
 }): Record<string, unknown> {
   const hasResponsesApiModels = Object.keys(params.responsesApiModels).length > 0;
   // Base set of known providers; Azure per-deployment providers are added dynamically.
-  const baseEnabledProviders = ['codemie-proxy', 'openai', 'ollama', 'amazon-bedrock', 'litellm'];
-  const enabledProviders = [...baseEnabledProviders, ...params.azureEnabledProviders];
+const baseEnabledProviders = ['codemie-proxy', 'openai', 'ollama', 'amazon-bedrock', 'litellm'];
+let enabledProviders: string[];
+if (params.activeProvider) {
+  enabledProviders = [params.activeProvider, ...params.azureEnabledProviders];
+} else {
+  enabledProviders = [...baseEnabledProviders, ...params.azureEnabledProviders];
+}
   return {
     enabled_providers: enabledProviders,
     share: 'disabled',
@@ -221,7 +230,9 @@ function buildOpenCodeConfig(params: {
           baseURL: `${params.ollamaBaseUrl}/`,
           apiKey: 'ollama',
           timeout: params.timeout,
-        }
+        },
+        // Provide all models so switching in session is possible
+        models: params.chatModels
       }
     },
     // For Azure: use the per-deployment provider key as the active provider.
@@ -332,15 +343,27 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
         return env;
       }
 
+      let profileConfig: any = undefined;
+      if (env.CODEMIE_PROFILE_CONFIG) {
+        try {
+          profileConfig = JSON.parse(env.CODEMIE_PROFILE_CONFIG);
+        } catch {
+          logger.warn('[codemie-code] Failed to parse CODEMIE_PROFILE_CONFIG', { agent: 'codemie-code' });
+        }
+      }
+
       // Fetch live model catalogue from the CodeMie API.
       // Falls back to the static OPENCODE_MODEL_CONFIGS on any error.
       const allModels = await fetchDynamicModelConfigs(
         baseUrl,
         env.CODEMIE_URL,
         env.CODEMIE_JWT_TOKEN,
+        provider,
+        profileConfig,
       );
       const selectedModel = env.CODEMIE_MODEL || config?.model || 'gpt-4.1';
-      const modelConfig = allModels[selectedModel] ?? getModelConfig(selectedModel);
+      const normalizedSelectedModel = provider === 'ollama' ? normalizeOllamaModelId(selectedModel) : selectedModel;
+      const modelConfig = allModels[normalizedSelectedModel] ?? allModels[selectedModel] ?? getModelConfig(normalizedSelectedModel);
       const { providerOptions } = modelConfig;
       const chatModels = getChatCompletionsModelConfigs(allModels);
       const responsesApiModels = getResponsesApiModelConfigs(allModels);
@@ -354,7 +377,9 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
       const timeout = providerOptions?.timeout ?? parseInt(env.CODEMIE_TIMEOUT || '600') * 1000;
       const modelId = isBedrock
         ? toBedrockModelId(modelConfig.id, env.AWS_REGION || env.CODEMIE_AWS_REGION)
-        : modelConfig.id;
+        : provider === 'ollama'
+          ? normalizeOllamaModelId(modelConfig.id)
+          : modelConfig.id;
       
       const responsesApiBaseUrl = proxyBaseUrl || (isLiteLLM ? baseUrl : undefined);
       if (responsesApiBaseUrl && Object.keys(responsesApiModels).length > 0) {

@@ -182,10 +182,13 @@ export const OllamaSetupSteps: ProviderSetupSteps = {
       apiKey: '', // Ollama doesn't use API keys
       model,
       timeout: 300,
-      debug: false
+      debug: false,
+      contextWindow: 32768,
+      maxPhysicalContext: 32768
     };
   }
-};
+}
+
 
 // Auto-register setup steps
 ProviderRegistry.registerSetupSteps('ollama', OllamaSetupSteps);
