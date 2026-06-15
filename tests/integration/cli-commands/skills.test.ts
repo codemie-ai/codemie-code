@@ -193,8 +193,20 @@ describe.runIf(HAS_LOCAL_SSO)('codemie skills (authenticated upstream spawn)', (
     expect(invocation.argv).toContain('bar');
   });
 
-  it('add: injects DO_NOT_TRACK / DISABLE_TELEMETRY / CI / NODE_OPTIONS shim', () => {
+  it('add: clears telemetry gate and injects CI / NODE_OPTIONS shim', () => {
+    // Mutating skills commands intentionally leave DO_NOT_TRACK / DISABLE_TELEMETRY
+    // unset so the upstream can fire its telemetry; the egress guard shim in
+    // NODE_OPTIONS blocks the network request before it leaves the machine.
     runCLI(['add', 'owner/repo', '-a', 'claude-code', '-y']);
+    const [invocation] = readInvocations();
+    expect(invocation.env.DO_NOT_TRACK).toBe('');
+    expect(invocation.env.DISABLE_TELEMETRY).toBe('');
+    expect(invocation.env.CI).toBe('1');
+    expect(invocation.env.NODE_OPTIONS).toMatch(/--require\s+"[^"]+skills-sh-egress-guard\.cjs"/);
+  });
+
+  it('list: injects DO_NOT_TRACK / DISABLE_TELEMETRY / CI / NODE_OPTIONS shim', () => {
+    runCLI(['list', '--json']);
     const [invocation] = readInvocations();
     expect(invocation.env.DO_NOT_TRACK).toBe('1');
     expect(invocation.env.DISABLE_TELEMETRY).toBe('1');
