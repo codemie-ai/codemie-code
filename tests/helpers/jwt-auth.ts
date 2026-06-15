@@ -21,7 +21,7 @@ export async function fetchJwtToken(): Promise<string> {
   const username = process.env.CI_CODEMIE_USERNAME?.trim();
   const password = process.env.CI_CODEMIE_PASSWORD?.trim();
   if (!username || !password)
-    throw new Error('CI_CODEMIE_USERNAME and CI_CODEMIE_PASSWORD must be set (or provide CI_CODEMIE_JWT_TOKEN)');
+    throw new Error('CI_CODEMIE_USERNAME and CI_CODEMIE_PASSWORD');
 
   const authUrlRaw = process.env.CI_CODEMIE_AUTH_URL?.trim();
   if (!authUrlRaw) throw new Error('CI_CODEMIE_AUTH_URL must be set in .env.test.local');
