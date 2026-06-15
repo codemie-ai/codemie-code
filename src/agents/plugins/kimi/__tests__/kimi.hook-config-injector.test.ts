@@ -1,14 +1,10 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
-import {
-  mkdtempSync,
-  rmSync,
-  existsSync,
-  readFileSync,
-  writeFileSync,
-  chmodSync,
-} from 'fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
+
+vi.mock('fs/promises', async () => ({ ...(await vi.importActual('fs/promises')) }));
+const fsp = await import('fs/promises');
 import {
   HookInjectionResult,
   KimiHookConfigInjector,
@@ -30,7 +26,7 @@ describe('KimiHookConfigInjector', () => {
   });
 
   afterEach(() => {
-    chmodSync(tempDir, 0o755);
+    vi.restoreAllMocks();
     rmSync(tempDir, { recursive: true, force: true });
     if (originalHome === undefined) {
       delete process.env.KIMI_CODE_HOME;
@@ -148,8 +144,10 @@ describe('KimiHookConfigInjector', () => {
     expect(result.error).toBeTruthy();
   });
 
-  it.skipIf(process.platform === 'win32')('returns failure when config cannot be written', async () => {
-    chmodSync(tempDir, 0o555);
+  it('returns failure when config cannot be written', async () => {
+    vi.spyOn(fsp, 'writeFile').mockRejectedValueOnce(
+      Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' })
+    );
 
     const result = await injector.inject();
 
@@ -166,22 +164,20 @@ describe('KimiHookConfigInjector', () => {
     expect(result.configPath).toBe(getKimiConfigPath());
   });
 
-  it.skipIf(process.platform === 'win32')('returns failure from restore when backup cannot be copied', async () => {
+  it('returns failure from restore when backup cannot be copied', async () => {
     const configPath = getKimiConfigPath();
-    const backupPath = `${configPath}.codemie-backup`;
     writeFileSync(configPath, '[existing]\nkey = "value"\n', 'utf-8');
     const injectResult = await injector.inject();
     expect(injectResult.success).toBe(true);
 
-    chmodSync(backupPath, 0o000);
-    try {
-      const result = await injector.restore();
+    vi.spyOn(fsp, 'copyFile').mockRejectedValueOnce(
+      Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' })
+    );
 
-      expect(result.success).toBe(false);
-      expect(result.created).toBe(false);
-      expect(result.error).toBeTruthy();
-    } finally {
-      chmodSync(backupPath, 0o644);
-    }
+    const result = await injector.restore();
+
+    expect(result.success).toBe(false);
+    expect(result.created).toBe(false);
+    expect(result.error).toBeTruthy();
   });
 });

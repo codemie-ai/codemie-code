@@ -8,7 +8,7 @@
  * intact.
  */
 
-import { copyFileSync, existsSync, readFileSync, writeFileSync } from 'fs';
+import { access, copyFile, readFile, writeFile } from 'fs/promises';
 import { logger } from '../../../utils/logger.js';
 import { ConfigurationError, getErrorMessage } from '../../../utils/errors.js';
 import { getKimiConfigPath } from './kimi.paths.js';
@@ -59,14 +59,14 @@ export class KimiHookConfigInjector {
 
     try {
       const toml = await this.loadTomlModule();
-      const configExists = existsSync(configPath);
+      const configExists = await access(configPath).then(() => true).catch(() => false);
       let created = false;
       let existingContent: string | undefined;
 
       if (!configExists) {
         created = true;
       } else {
-        existingContent = readFileSync(configPath, 'utf-8');
+        existingContent = await readFile(configPath, 'utf-8');
         if (existingContent.includes(MANAGED_MARKER)) {
           logger.info('Kimi config already contains CodeMie-managed hooks; skipping injection.', {
             configPath,
@@ -74,7 +74,7 @@ export class KimiHookConfigInjector {
           return { success: true, created: false, configPath };
         }
 
-        this.backupConfig(configPath);
+        await this.backupConfig(configPath);
       }
 
       const parsedConfig: KimiHooksConfig =
@@ -97,7 +97,7 @@ export class KimiHookConfigInjector {
       const serialized = toml.stringify(parsedConfig as unknown as TomlMap);
       const contentWithMarker = `${MANAGED_MARKER}\n${serialized}`;
 
-      writeFileSync(configPath, contentWithMarker, 'utf-8');
+      await writeFile(configPath, contentWithMarker, 'utf-8');
 
       if (created) {
         logger.info('Created Kimi config with CodeMie-managed hooks.', { configPath });
@@ -120,13 +120,14 @@ export class KimiHookConfigInjector {
     const configPath = getKimiConfigPath();
     const backupPath = `${configPath}.codemie-backup`;
 
-    if (!existsSync(backupPath)) {
+    const backupExists = await access(backupPath).then(() => true).catch(() => false);
+    if (!backupExists) {
       logger.info('No Kimi config backup found; nothing to restore.', { configPath });
       return { success: true, created: false, configPath };
     }
 
     try {
-      copyFileSync(backupPath, configPath);
+      await copyFile(backupPath, configPath);
       logger.info('Restored Kimi config from CodeMie backup.', { configPath, backupPath });
       return { success: true, created: false, configPath };
     } catch (error) {
@@ -146,15 +147,16 @@ export class KimiHookConfigInjector {
     }
   }
 
-  private backupConfig(configPath: string): void {
+  private async backupConfig(configPath: string): Promise<void> {
     const backupPath = `${configPath}.codemie-backup`;
-    if (existsSync(backupPath)) {
+    const backupExists = await access(backupPath).then(() => true).catch(() => false);
+    if (backupExists) {
       logger.debug('Kimi config backup already exists; skipping backup creation.', {
         configPath,
         backupPath,
       });
       return;
     }
-    copyFileSync(configPath, backupPath);
+    await copyFile(configPath, backupPath);
   }
 }
