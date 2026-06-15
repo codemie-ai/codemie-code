@@ -4,6 +4,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { extractDispatchEvents } from '../dispatch-extractor.js';
+import type { DispatchEventRaw } from '../types.js';
 import { MAX_DISPATCHES } from '../types.js';
 
 function parsed(messages: unknown[]): never {
@@ -31,7 +32,7 @@ describe('extractDispatchEvents', () => {
       agentUse('a1', 'tech-analyst', '2026-06-08T10:00:00Z'),
       result('a1', '2026-06-08T10:02:30Z'),
     ]));
-    expect(ev).toEqual([{ kind: 'agent', name: 'tech-analyst', start: Date.parse('2026-06-08T10:00:00Z'), durationMs: 150000 }]);
+    expect(ev).toEqual([{ kind: 'agent', name: 'tech-analyst', start: Date.parse('2026-06-08T10:00:00Z'), durationMs: 150000, _toolUseId: 'a1' }]);
   });
 
   it('handles Task (standard Claude Code), Skill (0s), and command point events; sorts by start', () => {
@@ -61,7 +62,7 @@ describe('extractDispatchEvents', () => {
 
   it('emits an unmatched dispatch (no tool_result) as a 0-duration marker', () => {
     const ev = extractDispatchEvents(parsed([agentUse('a1', 'orphan', '2026-06-08T10:00:00Z')]));
-    expect(ev).toEqual([{ kind: 'agent', name: 'orphan', start: Date.parse('2026-06-08T10:00:00Z'), durationMs: 0 }]);
+    expect(ev).toEqual([{ kind: 'agent', name: 'orphan', start: Date.parse('2026-06-08T10:00:00Z'), durationMs: 0, _toolUseId: 'a1' }]);
   });
 
   it('caps at MAX_DISPATCHES', () => {
@@ -75,5 +76,18 @@ describe('extractDispatchEvents', () => {
 
   it('returns [] when there are no dispatches', () => {
     expect(extractDispatchEvents(parsed([{ timestamp: '2026-06-08T10:00:00Z', message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }] } }]))).toEqual([]);
+  });
+
+  it('includes _toolUseId for agent dispatches and omits it for skills/commands', () => {
+    const ev = extractDispatchEvents(parsed([
+      agentUse('toolu_abc123', 'tech-analyst', '2026-06-08T10:00:00Z'),
+      result('toolu_abc123', '2026-06-08T10:02:00Z'),
+      skillUse('s1', 'superpowers:brainstorming', '2026-06-08T10:02:30Z'),
+      result('s1', '2026-06-08T10:02:30Z'),
+      commandMsg('sdlc-task', '2026-06-08T10:03:00Z'),
+    ])) as DispatchEventRaw[];
+    expect(ev[0]._toolUseId).toBe('toolu_abc123');  // agent gets toolUseId
+    expect(ev[1]._toolUseId).toBeUndefined();         // skill: no toolUseId
+    expect(ev[2]._toolUseId).toBeUndefined();         // command: no toolUseId
   });
 });

@@ -36,9 +36,18 @@ export const MAX_SERIES_POINTS = 40;
 export interface DispatchEvent {
   kind: 'agent' | 'skill' | 'command';
   name: string;
-  start: number; // epoch ms of the tool_use / command
-  durationMs: number; // tool_result − tool_use; 0 for skills/commands/unmatched
+  start: number;       // epoch ms of the tool_use / command
+  durationMs: number;  // tool_result − tool_use; 0 for skills/commands/unmatched
+  tokens?: TokenUsage; // from subagent transcript; absent when no meta match or unpriced model
+  costUSD?: number;    // priced from tokens; absent when unpriced or no meta match
+  tools?: Array<{ name: string; calls: number }>; // top tool call counts from subagent; max 8
 }
+
+/**
+ * Internal dispatch event used during cost enrichment — carries _toolUseId to join
+ * against parsed.subagents. Stripped before the event is stored in SessionCost.dispatches.
+ */
+export type DispatchEventRaw = DispatchEvent & { _toolUseId?: string };
 
 /** Max dispatch events kept per session — payload guard for very long runs. */
 export const MAX_DISPATCHES = 60;

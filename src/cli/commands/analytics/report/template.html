@@ -163,9 +163,21 @@
     .tl-label { width: 168px; flex-shrink: 0; font-size: 12px; color: var(--color-text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .tl-label-strong { font-weight: 700; }
     .tl-track { position: relative; flex: 1; height: 22px; background: var(--color-bg-tertiary); border-radius: 5px; overflow: hidden; }
-    .tl-bar { position: absolute; top: 0; height: 100%; min-width: 3px; border-radius: 5px; display: flex; align-items: center; padding: 0 8px; box-sizing: border-box; }
+    .tl-bar { position: absolute; top: 0; height: 100%; min-width: 28px; border-radius: 5px; display: flex; align-items: center; padding: 0; box-sizing: border-box; }
+    .tl-bar-has-text { padding: 0 8px; }
     .tl-bar-text { font-size: 10.5px; color: #fff; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
-    .tl-dur { width: 58px; flex-shrink: 0; text-align: right; font-size: 11px; color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
+    .tl-dur { width: 72px; flex-shrink: 0; text-align: right; font-size: 10.5px; color: var(--color-text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    /* timeline split layout: gantt left + side panel right */
+    .tl-container { display: flex; gap: 16px; align-items: flex-start; }
+    .tl-gantt { flex: 1; min-width: 0; }
+    .tl-side { width: 230px; flex-shrink: 0; border-left: 1px solid var(--color-border-structural); padding-left: 14px; min-height: 60px; }
+    .tl-side-empty { font-size: 12px; color: var(--color-text-muted); }
+    .tl-side-name { font-size: 12px; font-weight: 700; color: var(--color-text-primary); margin-bottom: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 6px; }
+    .tl-side-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+    .tl-side-section { margin-top: 8px; }
+    .tl-side-label { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--color-text-muted); margin-bottom: 4px; }
+    .tl-tok-bar { display: flex; gap: 2px; height: 5px; border-radius: 3px; overflow: hidden; margin-bottom: 4px; }
+    .tl-tok-seg { border-radius: 2px; }
 
     /* session-detail modal */
     .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.62); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: var(--z-modal, 50); padding: 24px; }
@@ -195,9 +207,21 @@
     .tl-label { width: 168px; flex-shrink: 0; font-size: 12px; color: var(--color-text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .tl-label-strong { font-weight: 700; }
     .tl-track { position: relative; flex: 1; height: 22px; background: var(--color-bg-tertiary); border-radius: 5px; overflow: hidden; }
-    .tl-bar { position: absolute; top: 0; height: 100%; min-width: 3px; border-radius: 5px; display: flex; align-items: center; padding: 0 8px; box-sizing: border-box; }
+    .tl-bar { position: absolute; top: 0; height: 100%; min-width: 28px; border-radius: 5px; display: flex; align-items: center; padding: 0; box-sizing: border-box; }
+    .tl-bar-has-text { padding: 0 8px; }
     .tl-bar-text { font-size: 10.5px; color: #fff; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
-    .tl-dur { width: 58px; flex-shrink: 0; text-align: right; font-size: 11px; color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
+    .tl-dur { width: 72px; flex-shrink: 0; text-align: right; font-size: 10.5px; color: var(--color-text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+    /* timeline split layout: gantt left + side panel right */
+    .tl-container { display: flex; gap: 16px; align-items: flex-start; }
+    .tl-gantt { flex: 1; min-width: 0; }
+    .tl-side { width: 230px; flex-shrink: 0; border-left: 1px solid var(--color-border-structural); padding-left: 14px; min-height: 60px; }
+    .tl-side-empty { font-size: 12px; color: var(--color-text-muted); }
+    .tl-side-name { font-size: 12px; font-weight: 700; color: var(--color-text-primary); margin-bottom: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 6px; }
+    .tl-side-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+    .tl-side-section { margin-top: 8px; }
+    .tl-side-label { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--color-text-muted); margin-bottom: 4px; }
+    .tl-tok-bar { display: flex; gap: 2px; height: 5px; border-radius: 3px; overflow: hidden; margin-bottom: 4px; }
+    .tl-tok-seg { border-radius: 2px; }
 
     /* table alignment — the design-system `.table thead tr th` (text-align:left, higher
        specificity) was overriding `.td-number` on numeric <th>, so numeric headers stayed

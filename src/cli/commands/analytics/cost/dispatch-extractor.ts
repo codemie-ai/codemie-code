@@ -12,7 +12,7 @@
  */
 
 import type { ParsedSession } from '../../../../agents/core/session/BaseSessionAdapter.js';
-import type { DispatchEvent } from './types.js';
+import type { DispatchEventRaw } from './types.js';
 import { MAX_DISPATCHES } from './types.js';
 
 interface RawBlock {
@@ -20,7 +20,12 @@ interface RawBlock {
   name?: string;
   id?: string;
   tool_use_id?: string;
-  input?: { skill?: unknown; subagent_type?: unknown };
+  input?: {
+    skill?: unknown;
+    subagent_type?: unknown;
+    name?: unknown;
+    description?: unknown;
+  };
   text?: unknown;
 }
 interface RawMsg {
@@ -32,10 +37,10 @@ interface RawMsg {
 const COMMAND_TAG = /<command-name>([^<]+)<\/command-name>/g;
 
 /** Extract timed top-level dispatches (agents/skills) + command point events, sorted by start. */
-export function extractDispatchEvents(parsed: ParsedSession): DispatchEvent[] {
+export function extractDispatchEvents(parsed: ParsedSession): DispatchEventRaw[] {
   const messages = Array.isArray(parsed.messages) ? parsed.messages : [];
-  const pending = new Map<string, { kind: 'agent' | 'skill'; name: string; start: number }>();
-  const events: DispatchEvent[] = [];
+  const pending = new Map<string, { kind: 'agent' | 'skill'; name: string; start: number; toolUseId?: string }>();
+  const events: DispatchEventRaw[] = [];
 
   const scanCommands = (text: string, at: number): void => {
     if (!text.includes('<command-message>')) {
@@ -72,15 +77,17 @@ export function extractDispatchEvents(parsed: ParsedSession): DispatchEvent[] {
 
     for (const b of content as RawBlock[]) {
       if (b?.type === 'tool_use' && ts != null && b.id) {
-        if ((b.name === 'Agent' || b.name === 'Task') && typeof b.input?.subagent_type === 'string') {
-          pending.set(b.id, { kind: 'agent', name: b.input.subagent_type.trim() || 'agent', start: ts });
+        if (b.name === 'Agent' || b.name === 'Task') {
+          const agentName = [b.input?.subagent_type, b.input?.name]
+            .find((value): value is string => typeof value === 'string' && value.trim().length > 0);
+          pending.set(b.id, { kind: 'agent', name: agentName?.trim() ?? 'agent', start: ts, toolUseId: b.id });
         } else if (b.name === 'Skill' && typeof b.input?.skill === 'string') {
           pending.set(b.id, { kind: 'skill', name: b.input.skill.trim() || 'skill', start: ts });
         }
       } else if (b?.type === 'tool_result' && b.tool_use_id && pending.has(b.tool_use_id)) {
         const p = pending.get(b.tool_use_id)!;
         pending.delete(b.tool_use_id);
-        events.push({ kind: p.kind, name: p.name, start: p.start, durationMs: ts != null ? Math.max(0, ts - p.start) : 0 });
+        events.push({ kind: p.kind, name: p.name, start: p.start, durationMs: ts != null ? Math.max(0, ts - p.start) : 0, _toolUseId: p.kind === 'agent' ? p.toolUseId : undefined });
       } else if (isUser && b?.type === 'text' && typeof b.text === 'string' && ts != null) {
         scanCommands(b.text, ts);
       }
@@ -89,7 +96,7 @@ export function extractDispatchEvents(parsed: ParsedSession): DispatchEvent[] {
 
   // Dispatches whose tool_result never appeared (truncated/streaming log) → 0-duration markers.
   for (const p of pending.values()) {
-    events.push({ kind: p.kind, name: p.name, start: p.start, durationMs: 0 });
+    events.push({ kind: p.kind, name: p.name, start: p.start, durationMs: 0, _toolUseId: p.kind === 'agent' ? p.toolUseId : undefined });
   }
 
   events.sort((a, b) => a.start - b.start);

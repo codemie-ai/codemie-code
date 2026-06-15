@@ -220,6 +220,125 @@ describe('enrichCosts', () => {
   });
 });
 
+describe('enrichCosts — dispatch cost attribution', () => {
+  it('attributes cost, tokens, and tools to a dispatch when subagent matches by toolUseId', async () => {
+    const subagentMessages = [
+      {
+        timestamp: '2026-06-08T10:02:00Z',
+        requestId: 'req-sub-1',
+        message: {
+          id: 'msg-sub-1',
+          role: 'assistant',
+          model: 'claude-sonnet-4-5',
+          usage: { input_tokens: 100_000, output_tokens: 500, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+          content: [
+            { type: 'tool_use', id: 'tool-1', name: 'Read', input: {} },
+            { type: 'tool_use', id: 'tool-2', name: 'Bash', input: {} },
+            { type: 'tool_use', id: 'tool-3', name: 'Read', input: {} },
+          ],
+        },
+      },
+    ];
+
+    const deps: EnricherDeps = {
+      resolveAgentName: () => 'claude',
+      loadAgentSessionFile: async () => '/fake/parent.jsonl',
+      parseNative: async () =>
+        ({
+          sessionId: 'parent-1',
+          agentName: 'claude',
+          metadata: {},
+          messages: [
+            {
+              timestamp: '2026-06-08T10:00:00Z',
+              message: {
+                role: 'assistant',
+                content: [{ type: 'tool_use', id: 'toolu_dispatch_1', name: 'Agent', input: { subagent_type: 'tech-analyst' } }],
+              },
+            },
+            {
+              timestamp: '2026-06-08T10:05:00Z',
+              message: {
+                role: 'user',
+                content: [{ type: 'tool_result', tool_use_id: 'toolu_dispatch_1', content: 'done' }],
+              },
+            },
+          ],
+          subagents: [
+            {
+              agentId: 'agent-abc',
+              filePath: '/fake/parent-1/subagents/agent-abc.jsonl',
+              messages: subagentMessages,
+              toolUseId: 'toolu_dispatch_1',
+              agentType: 'tech-analyst',
+            },
+          ],
+        }) as never,
+    };
+
+    const rawSession = [{ sessionId: 'parent-1', startEvent: { agentName: 'claude' }, deltas: [] }] as never[];
+    const { index } = await enrichCosts(rawSession, deps);
+    const cost = index.get('parent-1')!;
+
+    expect(cost.priced).toBe(true);
+    expect(cost.dispatches).toBeDefined();
+    const dispatch = cost.dispatches!.find(d => d.name === 'tech-analyst');
+    expect(dispatch).toBeDefined();
+    expect(dispatch!.costUSD).toBeGreaterThan(0);
+    expect(dispatch!.tokens?.input).toBe(100_000);
+    expect(dispatch!.tokens?.output).toBe(500);
+
+    expect(dispatch!.tools).toBeDefined();
+    const readTool = dispatch!.tools!.find(t => t.name === 'Read');
+    const bashTool = dispatch!.tools!.find(t => t.name === 'Bash');
+    expect(readTool?.calls).toBe(2);
+    expect(bashTool?.calls).toBe(1);
+
+    // _toolUseId must NOT be in the stored dispatch (stripped before storage)
+    expect((dispatch as { _toolUseId?: string })._toolUseId).toBeUndefined();
+  });
+
+  it('leaves dispatch cost undefined when no subagent matches (graceful degradation)', async () => {
+    const deps: EnricherDeps = {
+      resolveAgentName: () => 'claude',
+      loadAgentSessionFile: async () => '/fake/parent.jsonl',
+      parseNative: async () =>
+        ({
+          sessionId: 'parent-2',
+          agentName: 'claude',
+          metadata: {},
+          messages: [
+            {
+              timestamp: '2026-06-08T10:00:00Z',
+              message: {
+                role: 'assistant',
+                content: [{ type: 'tool_use', id: 'toolu_no_meta', name: 'Agent', input: { subagent_type: 'Explore' } }],
+              },
+            },
+            {
+              timestamp: '2026-06-08T10:01:00Z',
+              message: {
+                role: 'user',
+                content: [{ type: 'tool_result', tool_use_id: 'toolu_no_meta', content: 'done' }],
+              },
+            },
+          ],
+          subagents: undefined,
+        }) as never,
+    };
+
+    const rawSession = [{ sessionId: 'parent-2', startEvent: { agentName: 'claude' }, deltas: [] }] as never[];
+    const { index } = await enrichCosts(rawSession, deps);
+    const cost = index.get('parent-2')!;
+
+    const dispatch = cost.dispatches?.find(d => d.name === 'Explore');
+    expect(dispatch).toBeDefined();
+    expect(dispatch!.costUSD).toBeUndefined();
+    expect(dispatch!.tokens).toBeUndefined();
+    expect(dispatch!.tools).toBeUndefined();
+  });
+});
+
 describe('buildCostSeries', () => {
   const rec = (ts: number | null, model: string, input: number): UsageRecord =>
     ({ key: null, ts, model, usage: { input, output: 0, cacheRead: 0, cacheCreation: 0, total: input } });

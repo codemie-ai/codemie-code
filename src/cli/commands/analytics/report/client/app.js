@@ -155,6 +155,93 @@
     return cv;
   }
 
+  var INVOCATION_CHARTS = [
+    { kind: 'skill', title: 'Skills invoked', color: '#7c4fff' },
+    { kind: 'agent', title: 'Agent subtypes', color: '#ff6b6b' },
+    { kind: 'command', title: 'Slash commands', color: '#4a9eff' },
+  ];
+
+  function appendToolsAndModels(host, fs, chartFn) {
+    var toolAgg = new Map();
+    fs.forEach(function (s) {
+      (s.tools || []).forEach(function (t) {
+        var cur = toolAgg.get(t.toolName) || { total: 0, success: 0, failure: 0 };
+        cur.total += t.totalCalls; cur.success += t.successCount; cur.failure += t.failureCount;
+        toolAgg.set(t.toolName, cur);
+      });
+    });
+    var tools = Array.from(toolAgg.entries()).map(function (e) { return { name: e[0], total: e[1].total, success: e[1].success, rate: e[1].total ? Math.round((e[1].success / e[1].total) * 100) : 0 }; })
+      .sort(function (a, b) { return b.total - a.total; });
+    var maxTool = tools.length ? tools[0].total : 1;
+
+    var row = el('div', 'grid-2 mb16');
+    var toolCard = card('Tool usage & success rate');
+    tools.slice(0, 12).forEach(function (t) {
+      var bar = el('div', 'bar-row');
+      var color = t.rate >= 90 ? '#259F4C' : (t.rate >= 70 ? '#F5A534' : '#F9303C');
+      bar.innerHTML = '<span class="nm">' + esc(t.name) + '</span><div class="bar-track"><div class="bar-fill" style="width:' + Math.max(3, (t.total / maxTool) * 100) + '%;background:' + color + '"></div></div><span class="vl">' + fmtNum(t.total) + ' · ' + t.rate + '%</span>';
+      toolCard._body.appendChild(bar);
+    });
+    if (!tools.length) toolCard._body.appendChild(el('div', 'empty', 'No per-tool data.'));
+    row.appendChild(toolCard);
+
+    var modelAgg = new Map();
+    fs.forEach(function (s) { (s.perModelCost || []).forEach(function (m) { modelAgg.set(m.model, (modelAgg.get(m.model) || 0) + (m.tokens ? m.tokens.total : 0)); }); });
+    var modelCard = card('Tokens by model');
+    var mEntries = Array.from(modelAgg.entries()).sort(function (a, b) { return b[1] - a[1]; }).slice(0, 8);
+    if (mEntries.length) {
+      chartFn(canvasIn(modelCard._body), {
+        type: 'bar',
+        data: { labels: mEntries.map(function (e) { return e[0]; }), datasets: [{ data: mEntries.map(function (e) { return e[1]; }), backgroundColor: mEntries.map(function (_, i) { return PALETTE[i % PALETTE.length]; }), borderRadius: 5 }] },
+        options: { indexAxis: 'y', plugins: { legend: { display: false }, tooltip: { callbacks: { label: function (c) { return fmtTokens(c.parsed.x) + ' tokens'; } } } }, scales: { x: { grid: { color: GRID }, ticks: { callback: function (v) { return fmtTokens(v); } } }, y: { grid: { display: false } } } }
+      });
+    } else {
+      modelCard._body.appendChild(el('div', 'empty', 'No token data (sessions unpriced or no native logs).'));
+    }
+    row.appendChild(modelCard);
+    host.appendChild(row);
+  }
+
+  function appendInvocationCharts(host, fs, chartFn) {
+    INVOCATION_CHARTS.forEach(function (def) {
+      var agg = {};
+      fs.forEach(function (s) {
+        dispatchCounts(s, def.kind).forEach(function (x) {
+          agg[x.name] = (agg[x.name] || 0) + x.totalCalls;
+        });
+      });
+      var entries = Object.entries(agg)
+        .sort(function (a, b) { return b[1] - a[1]; })
+        .slice(0, 10);
+
+      var invCard = card(def.title);
+      if (entries.length) {
+        chartFn(canvasIn(invCard._body), {
+          type: 'bar',
+          data: {
+            labels: entries.map(function (e) { return e[0]; }),
+            datasets: [{
+              data: entries.map(function (e) { return e[1]; }),
+              backgroundColor: def.color,
+              borderRadius: 4,
+            }],
+          },
+          options: {
+            indexAxis: 'y',
+            plugins: { legend: { display: false } },
+            scales: {
+              x: { grid: { color: GRID }, ticks: { precision: 0 } },
+              y: { grid: { display: false } },
+            },
+          },
+        });
+      } else {
+        invCard._body.appendChild(el('div', 'empty', 'No data.'));
+      }
+      host.appendChild(invCard);
+    });
+  }
+
   // ---- small DOM builders -------------------------------------------------
   function el(tag, cls, html) { var e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
   function card(title, sub) {
@@ -405,92 +492,8 @@
     host.appendChild(el('h2', 'view-title', 'Tools & Models'));
     host.appendChild(el('p', 'view-sub', 'Tool usage across sessions and model token/cost distribution.'));
     if (!fs.length) { host.appendChild(el('div', 'empty', 'No sessions in view.')); return; }
-
-    // aggregate tools across sessions
-    var toolAgg = new Map();
-    fs.forEach(function (s) {
-      (s.tools || []).forEach(function (t) {
-        var cur = toolAgg.get(t.toolName) || { total: 0, success: 0, failure: 0 };
-        cur.total += t.totalCalls; cur.success += t.successCount; cur.failure += t.failureCount;
-        toolAgg.set(t.toolName, cur);
-      });
-    });
-    var tools = Array.from(toolAgg.entries()).map(function (e) { return { name: e[0], total: e[1].total, success: e[1].success, rate: e[1].total ? Math.round((e[1].success / e[1].total) * 100) : 0 }; })
-      .sort(function (a, b) { return b.total - a.total; });
-    var maxTool = tools.length ? tools[0].total : 1;
-
-    var row = el('div', 'grid-2 mb16');
-    var toolCard = card('Tool usage & success rate');
-    tools.slice(0, 12).forEach(function (t) {
-      var bar = el('div', 'bar-row');
-      var color = t.rate >= 90 ? '#259F4C' : (t.rate >= 70 ? '#F5A534' : '#F9303C');
-      bar.innerHTML = '<span class="nm">' + esc(t.name) + '</span><div class="bar-track"><div class="bar-fill" style="width:' + Math.max(3, (t.total / maxTool) * 100) + '%;background:' + color + '"></div></div><span class="vl">' + fmtNum(t.total) + ' · ' + t.rate + '%</span>';
-      toolCard._body.appendChild(bar);
-    });
-    if (!tools.length) toolCard._body.appendChild(el('div', 'empty', 'No per-tool data.'));
-    row.appendChild(toolCard);
-
-    // models by tokens (from perModelCost)
-    var modelAgg = new Map();
-    fs.forEach(function (s) { (s.perModelCost || []).forEach(function (m) { modelAgg.set(m.model, (modelAgg.get(m.model) || 0) + (m.tokens ? m.tokens.total : 0)); }); });
-    var modelCard = card('Tokens by model');
-    var mEntries = Array.from(modelAgg.entries()).sort(function (a, b) { return b[1] - a[1]; }).slice(0, 8);
-    if (mEntries.length) {
-      makeChart(canvasIn(modelCard._body), {
-        type: 'bar',
-        data: { labels: mEntries.map(function (e) { return e[0]; }), datasets: [{ data: mEntries.map(function (e) { return e[1]; }), backgroundColor: mEntries.map(function (_, i) { return PALETTE[i % PALETTE.length]; }), borderRadius: 5 }] },
-        options: { indexAxis: 'y', plugins: { legend: { display: false }, tooltip: { callbacks: { label: function (c) { return fmtTokens(c.parsed.x) + ' tokens'; } } } }, scales: { x: { grid: { color: GRID }, ticks: { callback: function (v) { return fmtTokens(v); } } }, y: { grid: { display: false } } } }
-      });
-    } else {
-      modelCard._body.appendChild(el('div', 'empty', 'No token data (sessions unpriced or no native logs).'));
-    }
-    row.appendChild(modelCard);
-    host.appendChild(row);
-
-    // ── Named invocation charts ──────────────────────────────────────────────
-    var invocationDefs = [
-      { field: 'skillInvocations',   title: 'Skills invoked',  color: '#7c4fff' },
-      { field: 'agentInvocations',   title: 'Agent subtypes',  color: '#ff6b6b' },
-      { field: 'commandInvocations', title: 'Slash commands',  color: '#4a9eff' },
-    ];
-
-    invocationDefs.forEach(function (def) {
-      var agg = {};
-      fs.forEach(function (s) {
-        (s[def.field] || []).forEach(function (x) {
-          agg[x.name] = (agg[x.name] || 0) + x.totalCalls;
-        });
-      });
-      var entries = Object.entries(agg)
-        .sort(function (a, b) { return b[1] - a[1]; })
-        .slice(0, 10);
-
-      var invCard = card(def.title);
-      if (entries.length) {
-        makeChart(canvasIn(invCard._body), {
-          type: 'bar',
-          data: {
-            labels: entries.map(function (e) { return e[0]; }),
-            datasets: [{
-              data: entries.map(function (e) { return e[1]; }),
-              backgroundColor: def.color,
-              borderRadius: 4,
-            }],
-          },
-          options: {
-            indexAxis: 'y',
-            plugins: { legend: { display: false } },
-            scales: {
-              x: { grid: { color: GRID }, ticks: { precision: 0 } },
-              y: { grid: { display: false } },
-            },
-          },
-        });
-      } else {
-        invCard._body.appendChild(el('div', 'empty', 'No data.'));
-      }
-      host.appendChild(invCard);
-    });
+    appendToolsAndModels(host, fs, makeChart);
+    appendInvocationCharts(host, fs, makeChart);
   };
 
   VIEWS.activity = function (host, fs) {
@@ -819,10 +822,17 @@
   };
 
   // ---- session-detail modal ----------------------------------------------
-  var modalChart = null; // owned by the modal; NOT in the global charts[] (decoupled from destroyCharts()).
+  var modalCharts = []; // owned by the modal; NOT in the global charts[] (decoupled from destroyCharts()).
   var modalEsc = null;
+  function makeModalChart(canvas, config) {
+    if (!window.Chart) return null;
+    var c = new Chart(canvas, config);
+    modalCharts.push(c);
+    return c;
+  }
   function closeSessionModal() {
-    if (modalChart) { try { modalChart.destroy(); } catch (e) {} modalChart = null; }
+    modalCharts.forEach(function (c) { try { c.destroy(); } catch (e) {} });
+    modalCharts = [];
     if (modalEsc) { document.removeEventListener('keydown', modalEsc); modalEsc = null; }
     var ov = document.getElementById('session-modal'); if (ov && ov.parentNode) ov.parentNode.removeChild(ov);
   }
@@ -870,33 +880,139 @@
     row.appendChild(el('div', 'tl-label' + (strong ? ' tl-label-strong' : ''), esc(label)));
     var track = el('div', 'tl-track');
     var bar = el('div', 'tl-bar');
-    bar.style.left = leftPct + '%'; bar.style.width = wPct + '%'; bar.style.background = color;
-    if (barText) bar.innerHTML = '<span class="tl-bar-text">' + esc(barText) + '</span>'; // only wide (session) bar
+    bar.style.left = 'calc(min(' + leftPct + '%, 100% - 28px))'; bar.style.width = wPct + '%'; bar.style.background = color;
+    if (barText) {
+      bar.classList.add('tl-bar-has-text');
+      bar.innerHTML = '<span class="tl-bar-text">' + esc(barText) + '</span>';
+    }
     bar.title = label + ' · ' + durText; // .title property = safe (not parsed as HTML)
     track.appendChild(bar); row.appendChild(track);
     row.appendChild(el('div', 'tl-dur', esc(durText)));
     return row;
   }
-  // Gantt of top-level agent dispatches: session span on top, each dispatch positioned by start.
+  // Precise wall-clock timing for short timeline steps. The general report formatter rounds
+  // sub-minute values up to one minute, which is useful for sessions but misleading here.
+  function fmtTimelineDuration(ms) {
+    ms = Math.max(0, ms || 0);
+    if (ms < 1000) return Math.round(ms) + 'ms';
+    if (ms < 60000) return (Math.round(ms / 100) / 10) + 's';
+    if (ms < 3600000) return Math.floor(ms / 60000) + 'm ' + Math.round((ms % 60000) / 1000) + 's';
+    return Math.floor(ms / 3600000) + 'h ' + Math.round((ms % 3600000) / 60000) + 'm';
+  }
+  // Side panel content for a selected timeline step.
+  function tlDetailEl(d) {
+    var panel = el('div', '');
+    if (!d) {
+      panel.appendChild(el('div', 'tl-side-empty', 'Click a timeline step to see details.'));
+      return panel;
+    }
+    var color = PALETTE[hashStr(d.kind + ':' + d.name) % PALETTE.length];
+    var nameEl = el('div', 'tl-side-name');
+    var dot = el('span', 'tl-side-dot'); dot.style.background = color;
+    nameEl.appendChild(dot);
+    nameEl.appendChild(document.createTextNode(d.kind + ' · ' + d.name));
+    panel.appendChild(nameEl);
+    var hasCost = d.costUSD != null;
+    var hasTok = d.tokens != null;
+    panel.appendChild(statsEl([
+      ['Cost', hasCost ? fmtUSD(d.costUSD) : '—', ''],
+      ['Tokens', hasTok ? fmtTokens(d.tokens.total) : '—', ''],
+      ['Duration', fmtTimelineDuration(d.durationMs), ''],
+    ]));
+    if (hasTok) {
+      var tok = d.tokens;
+      var total = Math.max(tok.total, 1);
+      var barEl = el('div', 'tl-tok-bar');
+      var segs = [
+        { val: tok.input,         color: '#7C5CFC' },
+        { val: tok.output,        color: '#F5A534' },
+        { val: tok.cacheRead,     color: '#259F4C' },
+        { val: tok.cacheCreation, color: '#3B82F6' },
+      ].filter(function(s) { return s.val > 0; });
+      segs.forEach(function(s) {
+        var seg = el('div', 'tl-tok-seg');
+        seg.style.flex = String(s.val / total * 100);
+        seg.style.background = s.color;
+        barEl.appendChild(seg);
+      });
+      var tokSec = el('div', 'tl-side-section');
+      tokSec.appendChild(el('div', 'tl-side-label', 'Token breakdown'));
+      tokSec.appendChild(barEl);
+      tokSec.appendChild(statsEl([
+        ['Input',       fmtTokens(tok.input),         ''],
+        ['Output',      fmtTokens(tok.output),        ''],
+        ['Cache read',  fmtTokens(tok.cacheRead),     ''],
+        ['Cache write', fmtTokens(tok.cacheCreation), ''],
+      ]));
+      panel.appendChild(tokSec);
+    }
+    if (d.tools && d.tools.length) {
+      var toolSec = el('div', 'tl-side-section');
+      toolSec.appendChild(el('div', 'tl-side-label', 'Tools called'));
+      var chips = el('div', 'modal-chips');
+      d.tools.forEach(function(t) {
+        chips.appendChild(el('span', 'chip', esc(t.name) + '<b>\xd7' + fmtNum(t.calls) + '</b>'));
+      });
+      toolSec.appendChild(chips);
+      panel.appendChild(toolSec);
+    }
+    return panel;
+  }
+  // Gantt of top-level agent dispatches: session span on top, each agent bar positioned
+  // by wall-clock start time relative to the session start (proportional scaling).
+  // Skills and commands are excluded — they have no separate transcript or cost to show.
+  // min-width 28px (CSS) keeps short agents visible and clickable without distorting the scale.
   function timelineEl(s) {
-    var agents = (s.dispatches || []).filter(function (d) { return d.kind === 'agent'; });
-    var start = s.startTime;
-    var end = start + (s.durationMs || 0);
-    (s.dispatches || []).forEach(function (d) { var e = d.start + (d.durationMs || 0); if (e > end) end = e; });
-    var span = Math.max(1, end - start);
-    var wrap = el('div', 'timeline');
-    wrap.appendChild(tlRow('session', '#259F4C', 0, 100, fmtDuration(s.durationMs || 0), fmtUSD(s.costUSD), true));
+    var dispatches = (s.dispatches || []).filter(function (d) { return d.kind === 'agent'; }).sort(function (a, b) { return a.start - b.start; });
+    // Scale bars to the agent activity window, not the full session duration.
+    // Agent bars fill the track proportionally relative to each other; absolute
+    // start offset (vs. session start) is shown in the side panel detail view.
+    var actStart = dispatches.length ? dispatches.reduce(function (m, d) { return Math.min(m, d.start); }, Infinity) : s.startTime;
+    var actEnd = dispatches.length ? dispatches.reduce(function (m, d) { return Math.max(m, d.start + (d.durationMs || 0)); }, -Infinity) : s.startTime + s.durationMs;
+    var ganttSpan = Math.max(1, actEnd - actStart);
+
+    var container = el('div', 'tl-container');
+    var gantt = el('div', 'tl-gantt timeline');
+    var sidePane = el('div', 'tl-side');
+
+    var selected = dispatches[0] || null;
+    sidePane.appendChild(tlDetailEl(selected));
+
+    function selectDispatch(d, barEl) {
+      gantt.querySelectorAll('.tl-bar[data-dispatch]').forEach(function(b) {
+        b.style.outline = b === barEl ? '2px solid rgba(255,255,255,0.55)' : 'none';
+      });
+      sidePane.innerHTML = '';
+      sidePane.appendChild(tlDetailEl(d));
+    }
+
+    gantt.appendChild(tlRow('session', '#259F4C', 0, 100, fmtTimelineDuration(s.durationMs), fmtUSD(s.costUSD), true));
+
     var occ = {};
-    agents.forEach(function (d) {
-      var total = agents.filter(function (x) { return x.name === d.name; }).length;
-      occ[d.name] = (occ[d.name] || 0) + 1;
-      var label = d.name + (total > 1 ? ' #' + occ[d.name] : '');
-      var leftPct = ((d.start - start) / span) * 100;
-      var wPct = Math.max(((d.durationMs || 0) / span) * 100, 1.5);
-      if (leftPct + wPct > 100) leftPct = Math.max(0, 100 - wPct);
-      wrap.appendChild(tlRow(label, PALETTE[hashStr(d.name) % PALETTE.length], leftPct, wPct, fmtDuration(d.durationMs || 0), '', false));
+    dispatches.forEach(function (d) {
+      var key = d.kind + ':' + d.name;
+      var total = dispatches.filter(function (x) { return x.kind === d.kind && x.name === d.name; }).length;
+      occ[key] = (occ[key] || 0) + 1;
+      var label = d.kind + ' · ' + d.name + (total > 1 ? ' #' + occ[key] : '');
+      var leftPct = Math.max(0, (d.start - actStart) / ganttSpan * 100);
+      var wPct = (d.durationMs || 0) / ganttSpan * 100;
+      if (leftPct + wPct > 100) wPct = Math.max(0, 100 - leftPct);
+      var barText = d.costUSD != null && wPct >= 8 ? fmtUSD(d.costUSD) : '';
+      var color = PALETTE[hashStr(key) % PALETTE.length];
+      var row = tlRow(label, color, leftPct, wPct, fmtTimelineDuration(d.durationMs), barText, false);
+      var bar = row.querySelector('.tl-bar');
+      if (bar) {
+        bar.setAttribute('data-dispatch', key);
+        if (d === selected) bar.style.outline = '2px solid rgba(255,255,255,0.55)';
+      }
+      row.style.cursor = 'pointer';
+      row.addEventListener('click', function () { selectDispatch(d, bar); });
+      gantt.appendChild(row);
     });
-    return wrap;
+
+    container.appendChild(gantt);
+    container.appendChild(sidePane);
+    return container;
   }
   function openSessionModal(s, onBack) {
     if (!s) return;
@@ -966,7 +1082,7 @@
       var t0 = series[0].t;
       var labels = series.map(function (p) { return useTs ? fmtDuration(Math.max(0, p.t - t0)) : ('turn ' + p.t); });
       var cv = canvasIn(growth._body, 220);
-      modalChart = new Chart(cv, {
+      makeModalChart(cv, {
         type: 'line',
         data: { labels: labels, datasets: [
           { label: 'Cost ($)', data: series.map(function (p) { return Math.round(p.cost * 10000) / 10000; }), borderColor: '#7C5CFC', backgroundColor: 'rgba(124,92,252,0.12)', fill: true, yAxisID: 'y', tension: 0.25, pointRadius: 0 },
@@ -982,23 +1098,20 @@
     }
     body.appendChild(growth);
 
-    // Timeline — Gantt of top-level agent dispatches with durations (per-agent cost is not captured).
-    var hasAgents = (s.dispatches || []).some(function (d) { return d.kind === 'agent'; });
-    var tlCard = card('Timeline', hasAgents ? 'agent dispatches over the session · durations (per-agent cost is not captured)' : '');
-    if (hasAgents) {
+    // Timeline — Gantt of all top-level agent, skill, and command dispatches.
+    var hasDispatches = (s.dispatches || []).length > 0;
+    var hasCostData = (s.dispatches || []).some(function (d) { return d.kind === 'agent' && d.costUSD != null; });
+    var tlSubtitle = hasDispatches ? (hasCostData ? 'click a step for cost, token & timing details · long idle gaps compressed' : 'click a step for timing details · long idle gaps compressed') : '';
+    var tlCard = card('Timeline', tlSubtitle);
+    if (hasDispatches) {
       tlCard._body.appendChild(timelineEl(s));
     } else {
-      tlCard._body.appendChild(el('div', 'empty', 'No sub-agent dispatches recorded for this session.'));
+      tlCard._body.appendChild(el('div', 'empty', 'No agent, skill, or command dispatches recorded for this session.'));
     }
     body.appendChild(tlCard);
 
-    // Skills & commands — invoked names + counts.
-    var scCard = card('Skills & commands', 'invoked by name');
-    var cols = el('div', 'dispatch-cols');
-    cols.appendChild(chipsEl('Skills', dispatchCounts(s, 'skill')));
-    cols.appendChild(chipsEl('Commands', dispatchCounts(s, 'command')));
-    scCard._body.appendChild(cols);
-    body.appendChild(scCard);
+    appendToolsAndModels(body, [s], makeModalChart);
+    appendInvocationCharts(body, [s], makeModalChart);
 
     modal.appendChild(body);
     ov.appendChild(modal);

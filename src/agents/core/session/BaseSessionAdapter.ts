@@ -39,7 +39,9 @@ export interface ParsedSession {
     agentId: string;
     slug?: string;
     filePath: string;
-    messages: unknown[]; // Pre-parsed messages from sub-agent file
+    messages: unknown[];
+    toolUseId?: string;   // from agent-<id>.meta.json — links to parent tool_use.id
+    agentType?: string;   // from agent-<id>.meta.json — the agent type string
   }>;
 
   // Parsed metrics data (optional - for metrics processor)

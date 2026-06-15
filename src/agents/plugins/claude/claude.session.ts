@@ -8,7 +8,7 @@
 import { join, dirname, basename } from 'path';
 import { homedir } from 'os';
 import { existsSync } from 'fs';
-import { readdir, stat } from 'fs/promises';
+import { readdir, readFile, stat } from 'fs/promises';
 import type { SessionAdapter, ParsedSession, AggregatedResult } from '../../core/session/BaseSessionAdapter.js';
 import type { SessionDiscoveryOptions, SessionDescriptor } from '../../core/session/discovery-types.js';
 import type { SessionProcessor, ProcessingContext } from '../../core/session/BaseProcessor.js';
@@ -220,6 +220,8 @@ export class ClaudeSessionAdapter implements SessionAdapter {
         slug?: string;
         filePath: string;
         messages: unknown[];
+        toolUseId?: string;
+        agentType?: string;
       }> = [];
 
       for (const subagentFile of subagentFiles) {
@@ -228,7 +230,9 @@ export class ClaudeSessionAdapter implements SessionAdapter {
           subagents.push({
             agentId: subagentFile.agentId,
             filePath: subagentFile.filePath,
-            messages: subagentMessages
+            messages: subagentMessages,
+            toolUseId: subagentFile.toolUseId,
+            agentType: subagentFile.agentType,
           });
 
           logger.debug(
@@ -348,6 +352,8 @@ export class ClaudeSessionAdapter implements SessionAdapter {
   private async findSubagentFiles(sessionFilePath: string): Promise<Array<{
     agentId: string;
     filePath: string;
+    toolUseId?: string;
+    agentType?: string;
   }>> {
     try {
       const parentDir = dirname(sessionFilePath);
@@ -364,12 +370,26 @@ export class ClaudeSessionAdapter implements SessionAdapter {
 
       // Find all agent-*.jsonl files
       const files = await readdir(subagentsDir);
-      const agentFiles = files
-        .filter(f => f.startsWith('agent-') && f.endsWith('.jsonl'))
-        .map(f => ({
-          agentId: f.replace('agent-', '').replace('.jsonl', ''),
-          filePath: join(subagentsDir, f)
-        }));
+      const agentFiles = await Promise.all(
+        files
+          .filter(f => f.startsWith('agent-') && f.endsWith('.jsonl'))
+          .map(async f => {
+            const agentId = f.replace('agent-', '').replace('.jsonl', '');
+            const filePath = join(subagentsDir, f);
+            let toolUseId: string | undefined;
+            let agentType: string | undefined;
+            try {
+              const metaRaw = JSON.parse(
+                await readFile(join(subagentsDir, f.replace('.jsonl', '.meta.json')), 'utf-8')
+              );
+              if (typeof metaRaw.toolUseId === 'string') toolUseId = metaRaw.toolUseId;
+              if (typeof metaRaw.agentType === 'string') agentType = metaRaw.agentType;
+            } catch {
+              // meta file absent or malformed — proceed without it
+            }
+            return { agentId, filePath, toolUseId, agentType };
+          })
+      );
 
       logger.debug(
         `[claude-adapter] Found ${agentFiles.length} sub-agent file${agentFiles.length !== 1 ? 's' : ''} ` +

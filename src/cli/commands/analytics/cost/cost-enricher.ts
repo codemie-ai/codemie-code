@@ -12,6 +12,7 @@ import { readFile } from 'node:fs/promises';
 import type { RawSessionData } from '../data-loader.js';
 import type { ParsedSession, SessionAdapter } from '../../../../agents/core/session/BaseSessionAdapter.js';
 import type { SessionCost, SessionCostIndex, CostSummary, ModelCost, TokenUsage, CostSeriesPoint } from './types.js';
+import type { DispatchEventRaw } from './types.js';
 import { MAX_SERIES_POINTS } from './types.js';
 import { emptyUsage, addUsage, costBreakdown } from './cost-calculator.js';
 import { lookupPrice } from './pricing.js';
@@ -187,6 +188,70 @@ async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T)
   return out;
 }
 
+/**
+ * Second-pass enrichment: for each agent dispatch that has a matching subagent entry
+ * (linked by toolUseId from the .meta.json), extract usage from the subagent's messages,
+ * price it, and attach costUSD + tokens + tools to the dispatch event in place.
+ *
+ * The per-dispatch cost is an ALLOCATION of already-counted session tokens (subagents are
+ * included in the session total via allMessageArrays). Do NOT add to `seen` here.
+ */
+function enrichDispatchCosts(dispatches: DispatchEventRaw[], parsed: ParsedSession): void {
+  if (!parsed.subagents?.length) return;
+
+  const byToolUseId = new Map<string, { messages: unknown[] }>();
+  for (const sub of parsed.subagents) {
+    if (sub.toolUseId && Array.isArray(sub.messages)) {
+      byToolUseId.set(sub.toolUseId, sub);
+    }
+  }
+  if (!byToolUseId.size) return;
+
+  for (const dispatch of dispatches) {
+    if (dispatch.kind !== 'agent' || !dispatch._toolUseId) continue;
+    const sub = byToolUseId.get(dispatch._toolUseId);
+    if (!sub) continue;
+
+    const subSeen = new Set<string>();
+    const records = gatherDedupedUsageRecords(
+      'claude',
+      { sessionId: '', agentName: 'claude', metadata: {}, messages: sub.messages } as unknown as ParsedSession,
+      subSeen,
+    );
+
+    if (records.length) {
+      const usageByModel = sumUsageRecords(records);
+      let totalCost = 0;
+      let totalTokens = emptyUsage();
+      let priced = false;
+      for (const [rawModel, usage] of usageByModel) {
+        const model = normalizeModelName(rawModel);
+        const price = lookupPrice(model);
+        if (price) { totalCost += costBreakdown(usage, price).total; priced = true; }
+        totalTokens = addUsage(totalTokens, usage);
+      }
+      if (priced) dispatch.costUSD = Math.round(totalCost * 1e8) / 1e8;
+      dispatch.tokens = totalTokens;
+    }
+
+    const toolCounts: Record<string, number> = {};
+    for (const raw of sub.messages as Array<{ message?: { content?: unknown } }>) {
+      const content = raw.message?.content;
+      if (!Array.isArray(content)) continue;
+      for (const b of content as Array<{ type?: string; name?: string }>) {
+        if (b.type === 'tool_use' && b.name) {
+          toolCounts[b.name] = (toolCounts[b.name] || 0) + 1;
+        }
+      }
+    }
+    const tools = Object.entries(toolCounts)
+      .map(([name, calls]) => ({ name, calls }))
+      .sort((a, b) => b.calls - a.calls)
+      .slice(0, 8);
+    if (tools.length) dispatch.tools = tools;
+  }
+}
+
 export async function enrichCosts(
   sessions: RawSessionData[],
   deps: EnricherDeps = realDeps
@@ -236,7 +301,9 @@ export async function enrichCosts(
       try {
         const dispatches = extractDispatchEvents(entry.parsed);
         if (dispatches.length) {
-          cost.dispatches = dispatches;
+          enrichDispatchCosts(dispatches, entry.parsed);
+          // Strip internal _toolUseId before storing in the public cost index
+          cost.dispatches = dispatches.map(({ _toolUseId: _id, ...d }) => d);
         }
       } catch (e) {
         logger.debug(`[cost] dispatch extraction failed for ${entry.sessionId}:`, e);
