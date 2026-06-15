@@ -266,11 +266,11 @@ export class ConversationsProcessor implements SessionProcessor {
         const msg = messages[i];
         if (!msg.uuid) continue;
 
-        // Stop at system messages (e.g., stop hooks)
-        if (msg.type === 'system') {
-          turnEndIndex = i;
-          break;
-        }
+        // A turn ends only at the next real user message. Do NOT break on
+        // `system` records: Claude Desktop (Cowork) interleaves many system
+        // events (init + audit) *inside* a single turn, so breaking here
+        // truncated the turn before the assistant's final answer, leaving the
+        // response empty in CodeMie.
 
         if (msg.type === 'user' && !this.shouldFilterMessage(msg, messagesByUuid) && !this.isToolResult(msg)) {
           turnEndIndex = i;
@@ -314,11 +314,11 @@ export class ConversationsProcessor implements SessionProcessor {
         const msg = messages[i];
         if (!msg.uuid) continue;
 
-        // Stop at system messages (e.g., stop hooks)
-        if (msg.type === 'system') {
-          turnEndIndex = i;
-          break;
-        }
+        // A turn ends only at the next real user message. Do NOT break on
+        // `system` records: Claude Desktop (Cowork) interleaves many system
+        // events (init + audit) *inside* a single turn, so breaking here
+        // truncated the turn before the assistant's final answer, leaving the
+        // response empty in CodeMie.
 
         if (msg.type === 'user' && !this.shouldFilterMessage(msg, messagesByUuid) && !this.isToolResult(msg)) {
           turnEndIndex = i;
@@ -382,7 +382,15 @@ export class ConversationsProcessor implements SessionProcessor {
       return [];
     }
 
-    const userText = this.extractUserMessage(userMessage);
+    const rawUserText = this.extractUserMessage(userMessage);
+    const { fileNames, text: cleanedText } = this.extractUploadedFiles(rawUserText);
+    // Imported files live in Claude Desktop, not CodeMie storage, so we can't emit
+    // them as `file_names` references: the reader expects a base64 storage key and
+    // returns 500 ("expected 3 values") on a plain name. Surface the attached file
+    // names inline in the message instead, and keep file_names empty.
+    const userText = fileNames.length
+      ? [...fileNames.map((name) => `📎 ${name}`), cleanedText].filter(Boolean).join('\n\n')
+      : cleanedText;
 
     history.push({
       role: 'User',
@@ -673,6 +681,32 @@ export class ConversationsProcessor implements SessionProcessor {
     }
 
     return map;
+  }
+
+  /**
+   * Claude Desktop prepends an <uploaded_files> block to the user's text when a
+   * file is attached, e.g.
+   *   <uploaded_files><file><file_path>/abs/Report.docx</file_path>...</file></uploaded_files>
+   *   analyze this file
+   * Pull the attached file names out (-> `file_names`) and strip the wrapper so
+   * the visible message is the real prompt, not raw XML.
+   */
+  private extractUploadedFiles(text: string): { fileNames: string[]; text: string } {
+    if (!text || !text.includes('<uploaded_files>')) {
+      return { fileNames: [], text: text ?? '' };
+    }
+    const fileNames: string[] = [];
+    const blockRegex = /<uploaded_files>[\s\S]*?<\/uploaded_files>/g;
+    const pathRegex = /<file_path>([\s\S]*?)<\/file_path>/g;
+    for (const block of text.match(blockRegex) ?? []) {
+      let match: RegExpExecArray | null;
+      while ((match = pathRegex.exec(block)) !== null) {
+        const fullPath = match[1].trim();
+        const base = fullPath.split(/[\\/]/).pop() || fullPath;
+        if (base) fileNames.push(base);
+      }
+    }
+    return { fileNames, text: text.replace(blockRegex, '').trim() };
   }
 
   private extractUserMessage(msg: any): string {
