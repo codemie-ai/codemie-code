@@ -158,3 +158,84 @@ describe('gatherDedupedUsageRecords + sumUsageRecords', () => {
     expect(map.get('claude-sonnet-4-6')!.input).toBe(30);
   });
 });
+
+describe('extractClaudeUsageRecords — sub-agent transcripts', () => {
+  const msg = (id: string, model: string, input: number, ts?: string) => ({
+    ...(ts && { timestamp: ts }),
+    requestId: 'r-' + id,
+    message: { id, model, usage: { input_tokens: input, output_tokens: 0 } },
+  });
+  function parsed(
+    messages: unknown[],
+    subagents?: Array<{ agentId: string; filePath: string; messages: unknown[] }>
+  ): never {
+    return { sessionId: 's', agentName: 'claude', metadata: {}, messages, ...(subagents && { subagents }), metrics: {} } as never;
+  }
+
+  it('merges records from the main transcript and every sub-agent transcript', () => {
+    const p = parsed(
+      [msg('m1', 'claude-sonnet-4-6', 100)],
+      [
+        { agentId: 'a1', filePath: '/fake/s/subagents/agent-a1.jsonl', messages: [msg('s1', 'claude-sonnet-4-6', 200)] },
+        { agentId: 'a2', filePath: '/fake/s/subagents/agent-a2.jsonl', messages: [msg('s2', 'claude-sonnet-4-6', 300)] },
+      ]
+    );
+    const recs = extractClaudeUsageRecords(p);
+    expect(recs).toHaveLength(3);
+    expect(recs.reduce((n, r) => n + r.usage.input, 0)).toBe(600);
+  });
+
+  it('splits per-model totals when a sub-agent uses a different model', () => {
+    const p = parsed(
+      [msg('m1', 'claude-sonnet-4-6', 100)],
+      [{ agentId: 'a1', filePath: '/fake/agent-a1.jsonl', messages: [msg('s1', 'claude-haiku-4-5', 50)] }]
+    );
+    const map = readUsageByModel('claude', p);
+    expect(map.get('claude-sonnet-4-6')!.input).toBe(100);
+    expect(map.get('claude-haiku-4-5')!.input).toBe(50);
+  });
+
+  it('dedupes a response present in both main and a sub-agent file; unique sub-agent work still counts', () => {
+    const dup = msg('m1', 'claude-sonnet-4-6', 100);
+    const p = parsed(
+      [dup],
+      [{ agentId: 'a1', filePath: '/fake/agent-a1.jsonl', messages: [dup, msg('s1', 'claude-sonnet-4-6', 40)] }]
+    );
+    const recs = gatherDedupedUsageRecords('claude', p, new Set());
+    expect(recs.reduce((n, r) => n + r.usage.input, 0)).toBe(140); // not 240 (dup once), not 100 (sub-agent counted)
+  });
+
+  it('ignores a malformed sub-agent entry (non-array messages) without throwing', () => {
+    const p = parsed(
+      [msg('m1', 'claude-sonnet-4-6', 100)],
+      [{ agentId: 'bad', filePath: '/fake/agent-bad.jsonl', messages: 'corrupt' as never }]
+    );
+    expect(extractClaudeUsageRecords(p)).toHaveLength(1);
+  });
+
+  it('sessions without subagents behave exactly as before (regression guard)', () => {
+    const recs = extractClaudeUsageRecords(parsed([msg('m1', 'claude-sonnet-4-6', 100)]));
+    expect(recs).toHaveLength(1);
+    expect(recs[0].usage.input).toBe(100);
+  });
+
+  it('sorts merged records chronologically when every record is timed', () => {
+    const p = parsed(
+      [
+        msg('m1', 'claude-sonnet-4-6', 1, '2026-06-08T10:00:00Z'),
+        msg('m2', 'claude-sonnet-4-6', 2, '2026-06-08T10:04:00Z'),
+      ],
+      [{ agentId: 'a1', filePath: '/fake/agent-a1.jsonl', messages: [msg('s1', 'claude-sonnet-4-6', 3, '2026-06-08T10:02:00Z')] }]
+    );
+    // sub-agent record (10:02) lands between the two main records
+    expect(extractClaudeUsageRecords(p).map((r) => r.usage.input)).toEqual([1, 3, 2]);
+  });
+
+  it('keeps concatenation order (main first) when any record lacks a timestamp', () => {
+    const p = parsed(
+      [msg('m1', 'claude-sonnet-4-6', 1, '2026-06-08T10:04:00Z')],
+      [{ agentId: 'a1', filePath: '/fake/agent-a1.jsonl', messages: [msg('s1', 'claude-sonnet-4-6', 2)] }] // untimed
+    );
+    expect(extractClaudeUsageRecords(p).map((r) => r.usage.input)).toEqual([1, 2]);
+  });
+});
