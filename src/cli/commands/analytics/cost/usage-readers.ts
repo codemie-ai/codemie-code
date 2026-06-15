@@ -210,6 +210,70 @@ function readGemini(parsed: ParsedSession): UsageMap {
   return out;
 }
 
+interface KimiUsageRecord {
+  type?: string;
+  time?: number;
+  model?: string;
+  usage?: {
+    inputOther?: number;
+    output?: number;
+    inputCacheRead?: number;
+    inputCacheCreation?: number;
+  };
+}
+
+/**
+ * Read Kimi Code usage.record events.
+ * Kimi records one usage event per assistant step with inputOther/output/cache fields.
+ */
+function readKimi(parsed: ParsedSession): UsageMap {
+  const out: UsageMap = new Map();
+  for (const raw of messagesOf(parsed) as KimiUsageRecord[]) {
+    if (raw.type !== 'usage.record' || !raw.usage) {
+      continue;
+    }
+    const model = raw.model ?? 'unknown';
+    const input = raw.usage.inputOther ?? 0;
+    const output = raw.usage.output ?? 0;
+    const cacheRead = raw.usage.inputCacheRead ?? 0;
+    const cacheCreation = raw.usage.inputCacheCreation ?? 0;
+    accumulate(out, model, {
+      input,
+      output,
+      cacheRead,
+      cacheCreation,
+      total: input + output + cacheRead + cacheCreation,
+    });
+  }
+  return out;
+}
+
+/**
+ * Extract ordered, deduped usage records from Kimi wire events for per-turn cost series.
+ * Kimi has no stable message/request id, so records cannot be cross-session deduped;
+ * each record is session-local and keyed by timestamp when available.
+ */
+export function extractKimiUsageRecords(parsed: ParsedSession): UsageRecord[] {
+  const records: UsageRecord[] = [];
+  for (const raw of messagesOf(parsed) as KimiUsageRecord[]) {
+    if (raw.type !== 'usage.record' || !raw.usage) {
+      continue;
+    }
+    const model = raw.model ?? 'unknown';
+    const input = raw.usage.inputOther ?? 0;
+    const output = raw.usage.output ?? 0;
+    const cacheRead = raw.usage.inputCacheRead ?? 0;
+    const cacheCreation = raw.usage.inputCacheCreation ?? 0;
+    records.push({
+      key: null,
+      ts: typeof raw.time === 'number' ? raw.time : null,
+      model,
+      usage: { input, output, cacheRead, cacheCreation, total: input + output + cacheRead + cacheCreation },
+    });
+  }
+  return records;
+}
+
 /**
  * Returns per-model {@link TokenUsage}. An empty map means the agent is
  * unsupported or the session carried no usage data. (Session-local; does NOT
@@ -224,6 +288,8 @@ export function readUsageByModel(agentName: string, parsed: ParsedSession): Usag
       return readClaudeDesktop(parsed);
     case 'gemini':
       return readGemini(parsed);
+    case 'kimi':
+      return readKimi(parsed);
     default:
       return new Map();
   }
@@ -239,6 +305,9 @@ export function gatherUsageDeduped(agentName: string, parsed: ParsedSession, see
   const a = agentName.toLowerCase();
   if (a === 'gemini') {
     return readGemini(parsed);
+  }
+  if (a === 'kimi') {
+    return readKimi(parsed);
   }
   if (a === 'claude' || a === 'claude-acp' || a === 'claude-desktop') {
     const rollup = readClaudeSdkResult(parsed);
@@ -261,14 +330,18 @@ export function gatherUsageDeduped(agentName: string, parsed: ParsedSession, see
 }
 
 /**
- * Ordered, deduped per-message Claude usage records (for a per-session time-series).
+ * Ordered, deduped per-message usage records (for a per-session time-series).
  * Mirrors {@link gatherUsageDeduped}'s dedup (skips keys already in `seen`, mutates `seen`)
  * but preserves chronological record order instead of summing. Returns [] when there is no per-message
- * order to series-ize: an authoritative SDK `modelUsage` rollup, or a non-Claude agent.
+ * order to series-ize: an authoritative SDK `modelUsage` rollup, or a non-supported agent.
  * MUST be called at most once per session against a shared `seen` set (it consumes keys).
  */
 export function gatherDedupedUsageRecords(agentName: string, parsed: ParsedSession, seen: Set<string>): UsageRecord[] {
   const a = agentName.toLowerCase();
+  if (a === 'kimi') {
+    // Kimi records are session-local (no cross-session dedup key), so pass through as-is.
+    return extractKimiUsageRecords(parsed);
+  }
   if (a !== 'claude' && a !== 'claude-acp' && a !== 'claude-desktop') {
     return []; // gemini/codex/etc — no per-turn series in v1
   }

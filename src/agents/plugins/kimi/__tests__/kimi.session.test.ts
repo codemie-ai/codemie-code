@@ -1,8 +1,9 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { KimiSessionAdapter } from '../kimi.session.js';
 import { KimiMetricsProcessor } from '../session/processors/kimi.metrics-processor.js';
+import type { MetricDelta } from '../../../core/metrics/types.js';
 
 vi.mock('../../../utils/logger.js', () => ({
   logger: {
@@ -12,6 +13,20 @@ vi.mock('../../../utils/logger.js', () => ({
     error: vi.fn(),
     success: vi.fn(),
   },
+}));
+
+const { mockAppendDelta, mockReadAll } = vi.hoisted(() => ({
+  mockAppendDelta: vi.fn<(delta: Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>) => Promise<string>>(),
+  mockReadAll: vi.fn<() => Promise<MetricDelta[]>>(),
+}));
+
+vi.mock('../../../../providers/plugins/sso/session/processors/metrics/MetricsWriter.js', () => ({
+  MetricsWriter: vi.fn(function (this: { appendDelta: typeof mockAppendDelta; readAll: typeof mockReadAll; getFilePath: () => string; exists: () => boolean }) {
+    this.appendDelta = mockAppendDelta;
+    this.readAll = mockReadAll;
+    this.getFilePath = vi.fn().mockReturnValue('/tmp/test-metrics.jsonl');
+    this.exists = vi.fn().mockReturnValue(false);
+  }),
 }));
 
 const __filename = fileURLToPath(import.meta.url);
@@ -39,6 +54,12 @@ function createAdapter(): KimiSessionAdapter {
 }
 
 describe('KimiSessionAdapter.parseSessionFile', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockReadAll.mockResolvedValue([]);
+    mockAppendDelta.mockImplementation(async (delta) => delta.recordId);
+  });
+
   it('parses the sample wire.jsonl fixture', async () => {
     const adapter = createAdapter();
     const fixturePath = join(__dirname, 'fixtures', 'sample-wire.jsonl');
@@ -79,8 +100,16 @@ describe('KimiSessionAdapter.parseSessionFile', () => {
     const session = await adapter.parseSessionFile(fixturePath, 'test-session-001');
     await processor.process(session, baseContext);
 
-    expect(session.metrics?.tools?.Read).toBe(1);
-    expect(session.metrics?.tools?.Write).toBe(1);
+    const deltas = mockAppendDelta.mock.calls.map((call) => call[0]);
+    const allTools = deltas.reduce<Record<string, number>>((acc, delta) => {
+      for (const [name, count] of Object.entries(delta.tools ?? {})) {
+        acc[name] = (acc[name] || 0) + count;
+      }
+      return acc;
+    }, {});
+
+    expect(allTools.Read).toBe(1);
+    expect(allTools.Write).toBe(1);
   });
 
   it('tracks successful Read tool results after metrics processing', async () => {
@@ -91,8 +120,18 @@ describe('KimiSessionAdapter.parseSessionFile', () => {
     const session = await adapter.parseSessionFile(fixturePath, 'test-session-001');
     await processor.process(session, baseContext);
 
-    expect(session.metrics?.toolStatus?.Read?.success).toBeGreaterThanOrEqual(1);
-    expect(session.metrics?.toolStatus?.Read?.failure).toBe(0);
+    const deltas = mockAppendDelta.mock.calls.map((call) => call[0]);
+    const allStatus = deltas.reduce<Record<string, { success: number; failure: number }>>((acc, delta) => {
+      for (const [name, status] of Object.entries(delta.toolStatus ?? {})) {
+        if (!acc[name]) acc[name] = { success: 0, failure: 0 };
+        acc[name].success += status.success;
+        acc[name].failure += status.failure;
+      }
+      return acc;
+    }, {});
+
+    expect(allStatus.Read?.success).toBeGreaterThanOrEqual(1);
+    expect(allStatus.Read?.failure).toBe(0);
   });
 
   it('captures file operations from display metadata after metrics processing', async () => {
@@ -103,7 +142,9 @@ describe('KimiSessionAdapter.parseSessionFile', () => {
     const session = await adapter.parseSessionFile(fixturePath, 'test-session-001');
     await processor.process(session, baseContext);
 
-    const fileOps = session.metrics?.fileOperations ?? [];
+    const fileOps = mockAppendDelta.mock.calls
+      .map((call) => call[0])
+      .flatMap((delta) => delta.fileOperations ?? []);
     const readOps = fileOps.filter((op) => op.type === 'read');
     const writeOps = fileOps.filter((op) => op.type === 'write');
 

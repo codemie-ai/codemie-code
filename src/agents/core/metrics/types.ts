@@ -47,7 +47,7 @@ export interface MetricDelta {
   gitBranch?: string;            // Git branch at time of this turn (can change mid-session)
 
   // Tools used in this turn (counts)
-  tools: {
+  tools?: {
     [toolName: string]: number;  // e.g., {"Read": 1, "Edit": 1}
   };
 

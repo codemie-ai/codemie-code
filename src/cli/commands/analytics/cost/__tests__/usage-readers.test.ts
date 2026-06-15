@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { readUsageByModel, extractClaudeUsageRecords, gatherDedupedUsageRecords, sumUsageRecords } from '../usage-readers.js';
+import { readUsageByModel, extractClaudeUsageRecords, gatherDedupedUsageRecords, sumUsageRecords, extractKimiUsageRecords } from '../usage-readers.js';
 
 const claudeParsed = {
   sessionId: 's1',
@@ -109,6 +109,46 @@ describe('readUsageByModel', () => {
 
   it('returns empty for an unsupported agent', () => {
     expect(readUsageByModel('mystery', claudeParsed).size).toBe(0);
+  });
+
+  it('reads Kimi usage.record events', () => {
+    const kimiParsed = {
+      sessionId: 's3',
+      agentName: 'kimi',
+      metadata: {},
+      messages: [
+        { type: 'usage.record', model: 'kimi-code/kimi-for-coding', usage: { inputOther: 5505, output: 235, inputCacheRead: 15616, inputCacheCreation: 0 }, time: 1781517531246 },
+        { type: 'usage.record', model: 'kimi-code/kimi-for-coding', usage: { inputOther: 8797, output: 144, inputCacheRead: 14336, inputCacheCreation: 0 }, time: 1781520494636 },
+        { type: 'context.append_loop_event', event: { type: 'tool.call', name: 'Read' } },
+      ],
+    } as never;
+
+    const m = readUsageByModel('kimi', kimiParsed);
+    const u = m.get('kimi-code/kimi-for-coding')!;
+    expect(u.input).toBe(14302);
+    expect(u.output).toBe(379);
+    expect(u.cacheRead).toBe(29952);
+    expect(u.cacheCreation).toBe(0);
+    expect(u.total).toBe(44633);
+  });
+
+  it('extracts Kimi usage records for per-turn cost series', () => {
+    const kimiParsed = {
+      sessionId: 's3',
+      agentName: 'kimi',
+      metadata: {},
+      messages: [
+        { type: 'usage.record', model: 'kimi-code/kimi-for-coding', usage: { inputOther: 100, output: 50, inputCacheRead: 10, inputCacheCreation: 5 }, time: 1781517531000 },
+        { type: 'usage.record', model: 'kimi-code/kimi-for-coding', usage: { inputOther: 200, output: 80, inputCacheRead: 20, inputCacheCreation: 0 }, time: 1781517532000 },
+      ],
+    } as never;
+
+    const recs = extractKimiUsageRecords(kimiParsed);
+    expect(recs).toHaveLength(2);
+    expect(recs[0].ts).toBe(1781517531000);
+    expect(recs[0].usage.total).toBe(165);
+    expect(recs[1].usage.total).toBe(300);
+    expect(recs[0].key).toBeNull();
   });
 });
 

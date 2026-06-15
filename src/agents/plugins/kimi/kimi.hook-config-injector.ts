@@ -28,7 +28,10 @@ export interface HookInjectionResult {
  */
 const MANAGED_EVENTS: Array<{ event: string; timeout: number }> = [
   { event: 'SessionStart', timeout: 5 },
-  { event: 'SessionEnd', timeout: 10 },
+  // SessionEnd must flush pending metrics to the CodeMie API. On a busy
+  // local/remote server this can take 10-15s, so keep the hook alive long
+  // enough for the sync to complete and session files to be renamed.
+  { event: 'SessionEnd', timeout: 60 },
   { event: 'UserPromptSubmit', timeout: 5 },
   { event: 'Stop', timeout: 5 },
   { event: 'SubagentStop', timeout: 5 },
@@ -67,14 +70,6 @@ export class KimiHookConfigInjector {
         created = true;
       } else {
         existingContent = await readFile(configPath, 'utf-8');
-        if (existingContent.includes(MANAGED_MARKER)) {
-          logger.info('Kimi config already contains CodeMie-managed hooks; skipping injection.', {
-            configPath,
-          });
-          return { success: true, created: false, configPath };
-        }
-
-        await this.backupConfig(configPath);
       }
 
       const parsedConfig: KimiHooksConfig =
@@ -86,12 +81,53 @@ export class KimiHookConfigInjector {
         parsedConfig.hooks = [];
       }
 
+      // If CodeMie-managed hooks are already present, update their timeouts
+      // when they differ instead of appending duplicates.
+      const managedEventTimeouts = new Map(MANAGED_EVENTS.map(e => [e.event, e.timeout]));
+      let updatedExisting = false;
+      for (const hook of parsedConfig.hooks!) {
+        if (
+          typeof hook === 'object' &&
+          hook !== null &&
+          hook.command === COMMAND &&
+          typeof hook.event === 'string' &&
+          managedEventTimeouts.has(hook.event)
+        ) {
+          const expectedTimeout = managedEventTimeouts.get(hook.event)!;
+          if (hook.timeout !== expectedTimeout) {
+            hook.timeout = expectedTimeout;
+            updatedExisting = true;
+          }
+        }
+      }
+
+      if (updatedExisting) {
+        await this.backupConfig(configPath);
+        const serialized = toml.stringify(parsedConfig as unknown as TomlMap);
+        const contentWithMarker = `${MANAGED_MARKER}\n${serialized}`;
+        await writeFile(configPath, contentWithMarker, 'utf-8');
+        logger.info('Updated CodeMie-managed hook timeouts in Kimi config.', { configPath });
+        return { success: true, created: false, configPath };
+      }
+
+      // Already injected and up to date
+      if (existingContent?.includes(MANAGED_MARKER)) {
+        logger.info('Kimi config already contains CodeMie-managed hooks; skipping injection.', {
+          configPath,
+        });
+        return { success: true, created: false, configPath };
+      }
+
       for (const { event, timeout } of MANAGED_EVENTS) {
         parsedConfig.hooks!.push({
           event,
           command: COMMAND,
           timeout,
         });
+      }
+
+      if (!created) {
+        await this.backupConfig(configPath);
       }
 
       const serialized = toml.stringify(parsedConfig as unknown as TomlMap);

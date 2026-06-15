@@ -33,6 +33,8 @@ export interface ProcessingContext {
   agentSessionId?: string;
   /** Path to agent session file */
   agentSessionFile?: string;
+  /** Git branch recorded for the CodeMie session */
+  gitBranch?: string;
 }
 
 /**

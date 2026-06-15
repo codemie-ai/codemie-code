@@ -28,6 +28,7 @@ export interface ParsedSession {
     updatedAt?: string;
     repository?: string;
     branch?: string;
+    gitBranch?: string;
   };
 
   // Raw messages (agent-specific format preserved for conversations processor)
@@ -59,6 +60,8 @@ export interface ParsedSession {
     skillInvocations?: Record<string, number>;
     agentInvocations?: Record<string, number>;
     commandInvocations?: Record<string, number>;
+    // User prompts captured for this session/turn
+    userPrompts?: Array<{ count: number; text: string }>;
   };
 }
 

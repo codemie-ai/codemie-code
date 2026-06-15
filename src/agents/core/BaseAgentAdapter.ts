@@ -481,6 +481,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       ...envOverrides,
       CODEMIE_SESSION_ID: sessionId,
       CODEMIE_AGENT: this.metadata.name,
+      CODEMIE_CLIENT_TYPE: this.metadata.ssoConfig?.clientType || 'codemie-cli',
       CODEMIE_REPOSITORY: sessionRepository,
       ...(sessionBranch && { CODEMIE_GIT_BRANCH: sessionBranch })
     };

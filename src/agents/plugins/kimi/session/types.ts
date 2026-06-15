@@ -9,7 +9,7 @@ export interface KimiUsage {
   inputCacheCreation?: number;
 }
 
-export type KimiDisplayOperation = 'read' | 'write' | 'edit';
+export type KimiDisplayOperation = 'read' | 'write' | 'edit' | 'delete';
 
 export interface KimiWireEventDisplay {
   kind?: string;
@@ -25,6 +25,7 @@ export interface KimiLoopEvent {
   uuid?: string;
   turnId?: string;
   step?: number;
+  stepUuid?: string;
   toolCallId?: string;
   parentUuid?: string;
   name?: string;
@@ -36,6 +37,12 @@ export interface KimiLoopEvent {
   };
   usage?: KimiUsage;
   finishReason?: string;
+  /**
+   * Display metadata for loop events (e.g. file_io for tool calls).
+   * In real wire.jsonl output this is nested inside the event object,
+   * not at the top-level wire event.
+   */
+  display?: KimiWireEventDisplay;
 }
 
 export interface KimiWireEvent {
@@ -54,7 +61,21 @@ export interface KimiWireEvent {
   model?: string;
   usage?: KimiUsage;
   usageScope?: string;
+  // turn.prompt
+  input?: Array<{ type?: string; text?: string }>;
+  origin?: { kind?: string };
+  // context.append_message
+  message?: {
+    role?: string;
+    content?: Array<{ type?: string; text?: string }> | string;
+    toolCalls?: unknown[];
+    origin?: { kind?: string };
+  };
   // context.append_loop_event
   event?: KimiLoopEvent;
+  /**
+   * @deprecated Real Kimi wire.jsonl puts display inside `event.display`.
+   * Keep for backward compatibility with old fixtures/tests only.
+   */
   display?: KimiWireEventDisplay;
 }

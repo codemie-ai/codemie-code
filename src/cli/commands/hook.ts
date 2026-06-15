@@ -388,6 +388,20 @@ async function buildProcessingContext(
   const cliVersion = getConfigValue('CODEMIE_CLI_VERSION', config) || '0.0.0';
   const clientType = getConfigValue('CODEMIE_CLIENT_TYPE', config) || 'codemie-cli';
 
+  // Load the CodeMie session metadata so processors can use gitBranch and other
+  // session-level fields that are not present in the native agent transcript.
+  let gitBranch: string | undefined;
+  try {
+    const { getCodemiePath } = await import('../../utils/paths.js');
+    const { readFile } = await import('node:fs/promises');
+    const sessionMeta = JSON.parse(
+      await readFile(getCodemiePath('sessions', `${sessionId}.json`), 'utf-8')
+    ) as { gitBranch?: string };
+    gitBranch = sessionMeta.gitBranch;
+  } catch {
+    // Session metadata may not exist in all contexts (e.g., tests); proceed without it.
+  }
+
   // Build context with SSO credentials if available
   let cookies = config?.cookies || '';
   let apiKey: string | undefined = config?.apiKey;
@@ -425,7 +439,8 @@ async function buildProcessingContext(
     dryRun: false,
     sessionId,
     agentSessionId,
-    agentSessionFile
+    agentSessionFile,
+    gitBranch,
   };
 }
 

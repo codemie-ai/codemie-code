@@ -54,7 +54,7 @@ describe('KimiHookConfigInjector', () => {
     expect(content).toContain('event = "SubagentStop"');
     expect(content).toContain('event = "PreCompact"');
     expect(content).toContain('command = "codemie hook"');
-    expect(content).toContain('timeout = 10');
+    expect(content).toContain('timeout = 60');
     expect(content).toContain('timeout = 5');
   });
 

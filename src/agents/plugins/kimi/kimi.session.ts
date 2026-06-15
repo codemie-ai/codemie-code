@@ -109,6 +109,14 @@ export class KimiSessionAdapter implements SessionAdapter {
 
       const parsedSession = await this.parseSessionFile(filePath, sessionId);
 
+      // Enrich parsed session with hook-time context that is not in the native transcript.
+      if (context.gitBranch) {
+        parsedSession.metadata = {
+          ...parsedSession.metadata,
+          gitBranch: context.gitBranch,
+        };
+      }
+
       const processorResults: Record<string, {
         success: boolean;
         message?: string;

@@ -25,6 +25,23 @@ describe('lookupPrice', () => {
     expect(sonnet4).not.toBeNull();
   });
 
+  it('returns a price for Kimi models', () => {
+    const forCoding = lookupPrice('kimi-for-coding');
+    expect(forCoding).not.toBeNull();
+    expect(forCoding!.input).toBeGreaterThan(0);
+
+    const k2Dash = lookupPrice('kimi-k2-5');
+    expect(k2Dash).not.toBeNull();
+    expect(k2Dash!.input).toBe(forCoding!.input);
+    expect(k2Dash!.output).toBe(forCoding!.output);
+  });
+
+  it('matches Kimi Code wire-log model names via normalization', () => {
+    const p = lookupPrice('kimi-code/kimi-for-coding');
+    expect(p).not.toBeNull();
+    expect(p!.input).toBeGreaterThan(0);
+  });
+
   it('returns null for an unknown model', () => {
     expect(lookupPrice('totally-made-up-model')).toBeNull();
   });
