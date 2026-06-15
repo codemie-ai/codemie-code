@@ -132,25 +132,268 @@ export function convertApiModelToOpenCodeConfig(model: LlmModel): OpenCodeModelC
   };
 }
 
+// ── Ollama /api/show autodetect ──────────────────────────────────────────────
+
+/**
+ * Subset of the Ollama /api/show response we rely on.
+ * See: https://github.com/ollama/ollama/blob/main/docs/api.md
+ *
+ * Note: `parameters` is a STRING in the real response (e.g. "num_ctx 32768\n..."),
+ * not an object. The authoritative context length lives in `details.context_length`
+ * or in `model_info[<arch>].context_length`.
+ */
+export interface OllamaShowResponse {
+  details?: {
+    parent_model?: string;
+    format?: string;
+    family?: string;
+    families?: string[];
+    parameter_size?: string;
+    quantization_level?: string;
+    context_length?: number;
+    embedding_length?: number;
+  };
+  model_info?: Record<string, { context_length?: number } & Record<string, unknown>>;
+  parameters?: string;
+}
+
+export interface OllamaModelLimits {
+  context: number;
+  output: number;
+}
+
+/**
+ * Per-family default context windows for Ollama models when /api/show
+ * does not (or cannot) report a value. Tuned conservatively: most local
+ * Ollama installs default to 2048/4096 unless `num_ctx` was raised.
+ */
+function getFamilyDefaultContext(modelId: string): number {
+  const id = modelId.toLowerCase();
+  if (id.startsWith('llama3') || id.startsWith('llama-3')) return 128000;
+  if (id.startsWith('llama2') || id.startsWith('llama-2')) return 4096;
+  if (id.startsWith('llama')) return 4096;
+  if (id.startsWith('qwen2.5') || id.startsWith('qwen2-5')) return 32768;
+  if (id.startsWith('qwen3')) return 32768;
+  if (id.startsWith('qwen')) return 32768;
+  if (id.startsWith('gemma2') || id.startsWith('gemma-2')) return 8192;
+  if (id.startsWith('gemma3') || id.startsWith('gemma-3')) return 128000;
+  if (id.startsWith('gemma')) return 8192;
+  if (id.startsWith('codellama')) return 16384;
+  if (id.startsWith('deepseek-coder')) return 16384;
+  if (id.startsWith('deepseek-r1')) return 65536;
+  if (id.startsWith('deepseek')) return 32768;
+  if (id.startsWith('mistral') || id.startsWith('mixtral')) return 32768;
+  if (id.startsWith('phi3') || id.startsWith('phi-3')) return 4096;
+  if (id.startsWith('phi4') || id.startsWith('phi-4')) return 16384;
+  if (id.startsWith('command-r')) return 128000;
+  if (id.startsWith('yi')) return 32768;
+  return 32768;
+}
+
+/**
+ * Per-family default output (max_tokens) limits. Ollama does not advertise
+ * a max output size in /api/show, so we approximate from common defaults.
+ * Returns 4096 as a safe generic fallback.
+ */
+export function getOllamaFamilyOutputLimit(modelId: string): number {
+  const id = modelId.toLowerCase();
+  if (id.startsWith('llama3') || id.startsWith('llama-3')) return 8192;
+  if (id.startsWith('llama2') || id.startsWith('llama-2')) return 4096;
+  if (id.startsWith('llama')) return 4096;
+  if (id.startsWith('qwen')) return 8192;
+  if (id.startsWith('gemma2') || id.startsWith('gemma-2')) return 8192;
+  if (id.startsWith('gemma3') || id.startsWith('gemma-3')) return 8192;
+  if (id.startsWith('gemma')) return 4096;
+  if (id.startsWith('codellama')) return 4096;
+  if (id.startsWith('deepseek-coder')) return 8192;
+  if (id.startsWith('deepseek-r1')) return 8192;
+  if (id.startsWith('deepseek')) return 8192;
+  if (id.startsWith('mistral') || id.startsWith('mixtral')) return 8192;
+  if (id.startsWith('phi3') || id.startsWith('phi-3')) return 4096;
+  if (id.startsWith('phi4') || id.startsWith('phi-4')) return 4096;
+  if (id.startsWith('command-r')) return 4096;
+  if (id.startsWith('yi')) return 4096;
+  return 4096;
+}
+
+/**
+ * Fetch /api/show for a single model and extract its context length.
+ * Returns `undefined` on any failure so the caller can chain fallbacks.
+ *
+ * Cached per-process via {@link ollamaShowCache} so the same model is
+ * only fetched once per discovery run, even when looked up by both
+ * its full tag and its normalized (tag-stripped) name.
+ */
+async function fetchOllamaContextLength(
+  ollamaApiUrl: string,
+  modelName: string,
+): Promise<OllamaShowResponse | undefined> {
+  if (ollamaShowCache.has(modelName)) {
+    return ollamaShowCache.get(modelName);
+  }
+  try {
+    const showResp = await fetch(`${ollamaApiUrl}/api/show`, {
+      method: 'POST',
+      body: JSON.stringify({ name: modelName }),
+    });
+    if (!showResp.ok) {
+      ollamaShowCache.set(modelName, undefined as unknown as OllamaShowResponse);
+      return undefined;
+    }
+    const data = (await showResp.json()) as OllamaShowResponse;
+    ollamaShowCache.set(modelName, data);
+    return data;
+  } catch {
+    logger.debug(`[dynamic-models] [ollama] Failed to fetch /api/show for ${modelName}`);
+    ollamaShowCache.set(modelName, undefined as unknown as OllamaShowResponse);
+    return undefined;
+  }
+}
+
+const ollamaShowCache: Map<string, OllamaShowResponse | undefined> = new Map();
+
+/**
+ * Resolve the effective context window for an Ollama model using a
+ * 5-step fallback chain. The first source that yields a positive
+ * integer wins.
+ */
+function resolveOllamaContext(
+  modelId: string,
+  showData: OllamaShowResponse | undefined,
+  profileConfig: { contextWindow?: number; maxPhysicalContext?: number } | undefined,
+): number {
+  // 1. Explicit profile override (absolute control).
+  if (profileConfig?.contextWindow && profileConfig.contextWindow > 0) {
+    return profileConfig.contextWindow;
+  }
+
+  let resolvedContext = 32768; // Default fallback
+
+  if (showData) {
+    // 2. details.context_length (set when the model was created with an explicit num_ctx).
+    const detailsCtx = showData.details?.context_length;
+    if (detailsCtx && detailsCtx > 0) {
+      resolvedContext = detailsCtx;
+    } else {
+      // 3. model_info[<arch>].context_length. 
+      // Note: Ollama sometimes prefixes keys with the family name (e.g. "gemma4.context_length")
+      // or uses "general.architecture" as the key.
+      const arch = showData.details?.family || (showData.model_info?.['general.architecture'] as string | undefined);
+      if (arch && showData.model_info) {
+        // Try specific family-prefixed key first (e.g. "gemma4.context_length")
+        const familyKey = `${arch}.context_length`;
+        const familyVal = showData.model_info[familyKey];
+        if (familyVal && typeof familyVal === 'number' && familyVal > 0) {
+          resolvedContext = familyVal;
+        } else {
+          // Fallback to architecture-based entry
+          const archEntry = showData.model_info[arch];
+          const archCtx = archEntry?.context_length;
+          if (archCtx && archCtx > 0) {
+            resolvedContext = archCtx;
+          }
+        }
+      }
+
+      // Special case: check all keys for anything ending in ".context_length"
+      if (resolvedContext === 32768 && showData.model_info) {
+        for (const key of Object.keys(showData.model_info)) {
+          if (key.endsWith('.context_length')) {
+            const val = showData.model_info[key];
+            if (typeof val === 'number' && val > 0) {
+              resolvedContext = val;
+              break;
+            }
+          }
+        }
+      }
+    }
+  } else {
+    // 4. Family-based heuristic.
+    const familyCtx = getFamilyDefaultContext(modelId);
+    if (familyCtx > 0) {
+      resolvedContext = familyCtx;
+    }
+  }
+
+  // 5. Physical RAM Limit (maxPhysicalContext).
+  // We use the minimum of the model's support and the physical limit to avoid OOM.
+  if (profileConfig?.maxPhysicalContext && profileConfig.maxPhysicalContext > 0) {
+    resolvedContext = Math.min(resolvedContext, profileConfig.maxPhysicalContext);
+  }
+
+  return resolvedContext;
+}
+
 // ── Main export ──────────────────────────────────────────────────────────────
 
 /**
- * Fetch the live model catalogue from the CodeMie API and convert it to
- * OpenCodeModelConfig format.
+ * Fetch the dynamic model catalogue for any provider. Supports Ollama dynamic discovery.
  *
- * @param baseUrl    - CODEMIE_BASE_URL (authenticated proxy endpoint)
- * @param codeMieUrl - CODEMIE_URL (CodeMie org URL used for SSO credential lookup)
- * @param jwtToken   - CODEMIE_JWT_TOKEN (optional Bearer token, preferred over SSO)
+ * @param baseUrl          - Provider base URL (Ollama: http://localhost:11434, ...)
+ * @param codeMieUrl       - CODEMIE_URL (for SSO providers)
+ * @param jwtToken         - JWT token if available
+ * @param providerOverride - Provider name override (e.g. "ollama")
+ * @param profileConfig    - Profile config (used for `contextWindow` override on Ollama)
  * @returns Map of modelId → OpenCodeModelConfig (dynamic) or OPENCODE_MODEL_CONFIGS (fallback)
  */
 export async function fetchDynamicModelConfigs(
   baseUrl: string,
   codeMieUrl: string | undefined,
   jwtToken?: string,
+  providerOverride?: string,
+  profileConfig?: { contextWindow?: number; maxPhysicalContext?: number } & Record<string, unknown>,
 ): Promise<Record<string, OpenCodeModelConfig>> {
-  try {
-    let rawModels: LlmModel[];
+  // === Dynamic Ollama discovery ===
+  if ((providerOverride && providerOverride === 'ollama') || (baseUrl && /11434/.test(baseUrl))) {
+    try {
+      const ollamaApiUrl = baseUrl.replace(/\/v1\/?$/, '').replace(/\/$/, '');
+      const resp = await fetch(`${ollamaApiUrl}/api/tags`);
+      const data = await resp.json();
+      const ollamaModels: Record<string, OpenCodeModelConfig> = {};
+      for (const { name } of (Array.isArray((data as any).models) ? (data as any).models : [])) {
+        const exactId = name;
+        const normalizedId = name.replace(/:.*$/, ''); // "qwen3.6:latest" -> "qwen3.6"
 
+        // Fetch /api/show once and reuse the cached result for both
+        // the tag-suffixed and the normalized (tag-stripped) lookups.
+        const showData = await fetchOllamaContextLength(ollamaApiUrl, exactId);
+        const context = resolveOllamaContext(normalizedId, showData, profileConfig);
+        const output = getOllamaFamilyOutputLimit(normalizedId);
+
+        const config: OpenCodeModelConfig = {
+          id: normalizedId,
+          name: normalizedId,
+          family: normalizedId.split('.')[0],
+          displayName: normalizedId,
+          tool_call: true,
+          reasoning: true,
+          attachment: false,
+          temperature: true,
+          structured_output: false,
+          use_responses_api: false,
+          modalities: { input: ['text'], output: ['text'] },
+          knowledge: new Date().toISOString().split('T')[0],
+          release_date: new Date().toISOString().split('T')[0],
+          last_updated: new Date().toISOString().split('T')[0],
+          open_weights: true,
+          cost: { input: 0, output: 0 },
+          limit: { context, output }
+        };
+        ollamaModels[normalizedId] = config;
+        ollamaModels[exactId] = { ...config, id: exactId, name: exactId, displayName: exactId };
+      }
+      logger.debug(`[dynamic-models] [ollama] Loaded ${Object.keys(ollamaModels).length} models from /api/tags`);
+      if (Object.keys(ollamaModels).length > 0) return ollamaModels;
+    } catch (err) {
+      logger.debug(`[dynamic-models] [ollama] Dynamic model fetch failed, falling back.`, { error: err instanceof Error ? err.message : String(err) });
+    }
+    // Continue to fallback model loading logic below...
+  }
+
+  let rawModels: LlmModel[];
+
+  try {
     if (jwtToken) {
       rawModels = await fetchCodeMieLlmModels(baseUrl, jwtToken);
       logger.debug('[dynamic-models] Fetched model list via JWT auth');

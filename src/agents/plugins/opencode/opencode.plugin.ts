@@ -70,18 +70,30 @@ export const OpenCodePluginMetadata: AgentMetadata = {
         return env;
       }
 
+      let profileConfig: any = undefined;
+      if (env.CODEMIE_PROFILE_CONFIG) {
+        try {
+          profileConfig = JSON.parse(env.CODEMIE_PROFILE_CONFIG);
+        } catch {
+          logger.warn('[opencode] Failed to parse CODEMIE_PROFILE_CONFIG', { agent: 'opencode' });
+        }
+      }
+
       // Fetch live model catalogue from the CodeMie API.
       // Falls back to the static OPENCODE_MODEL_CONFIGS on any error.
       const allModels = await fetchDynamicModelConfigs(
         baseUrl,
         env.CODEMIE_URL,
         env.CODEMIE_JWT_TOKEN,
+        provider,
+        profileConfig,
       );
 
       // Model selection priority: env var > config > default
       // Use dynamic catalogue first, then fall back to static getModelConfig for unknown IDs.
       const selectedModel = env.CODEMIE_MODEL || config?.model || 'gpt-5-2-2025-12-11';
-      const modelConfig = allModels[selectedModel] ?? getModelConfig(selectedModel);
+      const normalizedSelectedModel = provider === 'ollama' ? selectedModel.replace(/:latest$/, '') : selectedModel;
+      const modelConfig = allModels[normalizedSelectedModel] ?? allModels[selectedModel] ?? getModelConfig(normalizedSelectedModel);
 
       const { providerOptions } = modelConfig;
 
@@ -105,7 +117,9 @@ export const OpenCodePluginMetadata: AgentMetadata = {
       const timeout = providerOptions?.timeout ?? parseInt(env.CODEMIE_TIMEOUT || '600') * 1000;
       const modelId = isBedrock
         ? toBedrockModelId(modelConfig.id, env.AWS_REGION || env.CODEMIE_AWS_REGION)
-        : modelConfig.id;
+        : provider === 'ollama'
+          ? modelConfig.id.replace(/:latest$/, '')
+          : modelConfig.id;
 
       // Always enable openai CUSTOM_LOADER when Responses API models exist.
       // This fixes model-switching: if user starts with Claude and switches to GPT,

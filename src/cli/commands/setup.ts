@@ -308,11 +308,26 @@ async function handlePluginSetup(
     if (modelTiers.sonnetModel) config.sonnetModel = modelTiers.sonnetModel;
     if (modelTiers.opusModel) config.opusModel = modelTiers.opusModel;
 
+    // --- FIX: Handle Profile Updates ---
+    if (isUpdate && profileName) {
+      const workingDir = process.cwd();
+      const currentProfile = await ConfigLoader.getProfile(profileName, workingDir);
+      if (currentProfile) {
+        // Merge new setup config into the existing profile
+        Object.assign(currentProfile, config);
+        // Update the config object to be the merged result for the save step
+        Object.assign(config, currentProfile);
+        config.name = profileName;
+      }
+    }
+    // ---------------------------------
+
     // Step 5: Ask for profile name (if creating new)
     let finalProfileName = profileName;
     if (!isUpdate && profileName === null) {
       finalProfileName = await promptForProfileName(providerName);
     }
+
 
     // Step 6: Save profile
     logger.debug('[setup] saving profile');

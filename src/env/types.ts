@@ -91,6 +91,9 @@ export interface ProviderProfile {
   // Token configuration (for Claude Code with Bedrock)
   maxOutputTokens?: number;
   maxThinkingTokens?: number;
+  contextWindow?: number;
+  maxPhysicalContext?: number;
+
 
   // Azure OpenAI-specific fields
   azureApiVersion?: string;
