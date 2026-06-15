@@ -38,9 +38,9 @@ describe('kimi paths', () => {
     process.env.KIMI_CODE_HOME = '/custom/kimi/home';
 
     expect(getKimiCodeHome()).toBe('/custom/kimi/home');
-    expect(getKimiConfigPath()).toBe('/custom/kimi/home/config.toml');
-    expect(getKimiSessionsDir()).toBe('/custom/kimi/home/sessions');
-    expect(getKimiUserSkillsDir()).toBe('/custom/kimi/home/skills');
+    expect(getKimiConfigPath()).toBe(path.join('/custom/kimi/home', 'config.toml'));
+    expect(getKimiSessionsDir()).toBe(path.join('/custom/kimi/home', 'sessions'));
+    expect(getKimiUserSkillsDir()).toBe(path.join('/custom/kimi/home', 'skills'));
   });
 
   it('computes session directory from cwd and session id', () => {

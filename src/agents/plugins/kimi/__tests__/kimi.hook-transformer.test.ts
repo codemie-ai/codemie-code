@@ -20,7 +20,7 @@ describe('KimiHookTransformer', () => {
     expect(event.session_id).toBe('session-123');
     expect(event.cwd).toBe('/Users/alice/projects/my-app');
     expect(event.transcript_path).toBe(getKimiMainWirePath('/Users/alice/projects/my-app', 'session-123'));
-    expect(event.transcript_path).toMatch(/agents\/main\/wire\.jsonl$/);
+    expect(event.transcript_path).toMatch(/agents[/\\]main[/\\]wire\.jsonl$/);
     expect(event.permission_mode).toBe('default');
     expect(event.source).toBe('startup');
   });
@@ -38,7 +38,7 @@ describe('KimiHookTransformer', () => {
     expect(event.hook_event_name).toBe('Stop');
     expect(event.session_id).toBe('session-stop-456');
     expect(event.cwd).toBe('/Users/bob/workspace');
-    expect(event.transcript_path).toMatch(/agents\/main\/wire\.jsonl$/);
+    expect(event.transcript_path).toMatch(/agents[/\\]main[/\\]wire\.jsonl$/);
     expect(event.stop_hook_active).toBe(true);
     expect(event.permission_mode).toBe('default');
   });

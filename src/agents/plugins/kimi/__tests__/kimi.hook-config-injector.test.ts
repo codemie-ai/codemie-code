@@ -148,7 +148,7 @@ describe('KimiHookConfigInjector', () => {
     expect(result.error).toBeTruthy();
   });
 
-  it('returns failure when config cannot be written', async () => {
+  it.skipIf(process.platform === 'win32')('returns failure when config cannot be written', async () => {
     chmodSync(tempDir, 0o555);
 
     const result = await injector.inject();
@@ -166,7 +166,7 @@ describe('KimiHookConfigInjector', () => {
     expect(result.configPath).toBe(getKimiConfigPath());
   });
 
-  it('returns failure from restore when backup cannot be copied', async () => {
+  it.skipIf(process.platform === 'win32')('returns failure from restore when backup cannot be copied', async () => {
     const configPath = getKimiConfigPath();
     const backupPath = `${configPath}.codemie-backup`;
     writeFileSync(configPath, '[existing]\nkey = "value"\n', 'utf-8');

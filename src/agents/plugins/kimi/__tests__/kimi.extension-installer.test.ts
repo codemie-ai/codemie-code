@@ -65,7 +65,7 @@ describe('KimiExtensionInstaller', () => {
     it('should respect KIMI_CODE_HOME environment variable', () => {
       process.env.KIMI_CODE_HOME = '/tmp/kimi-test-home';
       const targetPath = installer.getTargetPath();
-      expect(targetPath).toBe('/tmp/kimi-test-home/skills/codemie-kimi');
+      expect(targetPath).toBe(join('/tmp/kimi-test-home', 'skills', 'codemie-kimi'));
     });
   });
 
