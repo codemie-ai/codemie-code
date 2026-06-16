@@ -1,10 +1,11 @@
-import type { AgentMetadata, HookTransformer } from '../../core/types.js';
+import type { AgentConfig, AgentMetadata, HookTransformer } from '../../core/types.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
 import { KimiSessionAdapter } from './kimi.session.js';
 import { KimiExtensionInstaller } from './kimi.extension-installer.js';
 import { KimiHookTransformer } from './kimi.hook-transformer.js';
+import { assertExplicitKimiModelAllowed, resolveKimiModel } from './kimi.models.js';
 import { installNativeAgent } from '../../../utils/native-installer.js';
 import {
   AgentInstallationError,
@@ -17,8 +18,9 @@ import { sanitizeLogArgs } from '../../../utils/security.js';
 import { commandExists, exec } from '../../../utils/processes.js';
 import { resolveHomeDir } from '../../../utils/paths.js';
 
-const KIMI_SUPPORTED_VERSION = '0.14.3';
+const KIMI_SUPPORTED_VERSION = '0.15.0';
 const KIMI_MINIMUM_SUPPORTED_VERSION = '0.14.0';
+const KIMI_NATIVE_BINARY_PATH = '.kimi-code/bin/kimi';
 
 const KIMI_INSTALLER_URLS = {
   macOS: 'https://code.kimi.com/kimi-code/install.sh',
@@ -35,15 +37,38 @@ export const KimiPluginMetadata: AgentMetadata = {
   supportedVersion: KIMI_SUPPORTED_VERSION,
   minimumSupportedVersion: KIMI_MINIMUM_SUPPORTED_VERSION,
   installerUrls: KIMI_INSTALLER_URLS,
-  dataPaths: { home: '.kimi-code' },
-  envMapping: {},
-  supportedProviders: ['moonshot-subscription'],
+  dataPaths: {
+    home: '.kimi-code',
+    binary: KIMI_NATIVE_BINARY_PATH,
+  },
+  envMapping: {
+    baseUrl: ['KIMI_MODEL_BASE_URL'],
+    apiKey: ['KIMI_MODEL_API_KEY'],
+    model: ['KIMI_MODEL_NAME'],
+  },
+  supportedProviders: ['moonshot-subscription', 'ai-run-sso'],
   blockedModelPatterns: [],
-  recommendedModels: ['kimi-for-coding', 'kimi-k2'],
+  recommendedModels: ['kimi-k2.6', 'kimi-for-coding', 'kimi-k2'],
   ssoConfig: { enabled: true, clientType: 'codemie-kimi' },
   flagMappings: {
     '--task': { type: 'flag', target: '-p' },
     '--model': { type: 'flag', target: '--model' },
+  },
+  lifecycle: {
+    enrichArgs(args: string[], _config: AgentConfig): string[] {
+      const explicitModel = getExplicitModelArg(args);
+      if (!explicitModel) {
+        return args;
+      }
+
+      const availableModels = (process.env.CODEMIE_KIMI_AVAILABLE_MODELS || '')
+        .split(',')
+        .map(model => model.trim())
+        .filter(Boolean);
+
+      assertExplicitKimiModelAllowed(explicitModel, availableModels);
+      return args;
+    },
   },
   metricsConfig: {
     excludeErrorsFromTools: ['Bash'],
@@ -107,7 +132,7 @@ export class KimiPlugin extends BaseAgentAdapter {
     }
 
     if (process.platform !== 'win32') {
-      const fullPath = resolveHomeDir('.local/bin/kimi');
+      const fullPath = resolveHomeDir(KIMI_NATIVE_BINARY_PATH);
       try {
         const result = await exec(fullPath, ['--version']);
         return result.code === 0;
@@ -139,7 +164,7 @@ export class KimiPlugin extends BaseAgentAdapter {
           timeout: 300000,
           verifyCommand: this.metadata.cliCommand || undefined,
           verifyPath:
-            process.platform === 'win32' ? undefined : resolveHomeDir('.local/bin/kimi'),
+            process.platform === 'win32' ? undefined : resolveHomeDir(KIMI_NATIVE_BINARY_PATH),
           installFlags: ['--force'],
         },
       );
@@ -190,9 +215,9 @@ export class KimiPlugin extends BaseAgentAdapter {
       return match ? match[1] : output.trim() || null;
     };
 
-    // Try full path first on Unix systems (native installer places binary at ~/.local/bin/kimi)
+    // Try full path first on Unix systems (native installer places binary at ~/.kimi-code/bin/kimi)
     if (process.platform !== 'win32') {
-      const fullPath = resolveHomeDir('.local/bin/kimi');
+      const fullPath = resolveHomeDir(KIMI_NATIVE_BINARY_PATH);
       try {
         const result = await exec(fullPath, ['--version']);
         return parseVersion(result.stdout);
@@ -248,4 +273,30 @@ export class KimiPlugin extends BaseAgentAdapter {
 
     await this.installNative(resolvedVersion);
   }
+
+  protected override async setupProxy(env: NodeJS.ProcessEnv): Promise<void> {
+    if (env.CODEMIE_PROVIDER === 'ai-run-sso' || env.CODEMIE_AUTH_METHOD === 'jwt') {
+      // Resolve before BaseAgentAdapter builds the proxy config because CODEMIE_MODEL
+      // is part of the proxy startup contract.
+      const resolution = await resolveKimiModel(env);
+      env.CODEMIE_MODEL = resolution.selectedModel;
+      env.CODEMIE_KIMI_AVAILABLE_MODELS = resolution.availableModels.join(',');
+    }
+
+    await super.setupProxy(env);
+  }
+}
+
+function getExplicitModelArg(args: string[]): string | undefined {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '-m' || arg === '--model') {
+      return args[i + 1];
+    }
+    if (arg.startsWith('--model=')) {
+      return arg.slice('--model='.length);
+    }
+  }
+
+  return undefined;
 }
