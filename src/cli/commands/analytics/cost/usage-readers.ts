@@ -171,6 +171,8 @@ function readClaudeSdkResult(parsed: ParsedSession): UsageMap | null {
         output,
         cacheRead,
         cacheCreation,
+        // SDK modelUsage rollup carries no TTL breakdown, so any 1h-TTL writes here
+        // fall back to the 5m rate in costBreakdown (a conservative under-estimate).
         cacheCreation1h: 0,
         total: input + output + cacheRead + cacheCreation,
       });

@@ -444,7 +444,7 @@
     "output": 15,
     "cacheRead": 0.3,
     "cacheWrite": 0.3,
-    "cacheWrite1h": 6.0
+    "cacheWrite1h": 0.5
   },
   "claude-opus-4-20250514": {
     "input": 15,
