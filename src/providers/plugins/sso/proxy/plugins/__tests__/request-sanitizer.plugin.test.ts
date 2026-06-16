@@ -27,14 +27,18 @@ function createPluginContext(clientType?: string): PluginContext {
 }
 
 /** Helper: create a ProxyContext with JSON body */
-function createProxyContext(body: Record<string, unknown> | null, contentType = 'application/json'): ProxyContext {
+function createProxyContext(
+  body: Record<string, unknown> | null,
+  contentType = 'application/json',
+  url = '/v1/chat/completions',
+): ProxyContext {
   const requestBody = body ? Buffer.from(JSON.stringify(body), 'utf-8') : null;
   return {
     requestId: 'test-req',
     sessionId: 'test-session',
     agentName: 'test-agent',
     method: 'POST',
-    url: '/v1/chat/completions',
+    url,
     headers: {
       'content-type': contentType,
       ...(requestBody && { 'content-length': String(requestBody.length) }),
@@ -315,6 +319,97 @@ describe('RequestSanitizerPlugin', () => {
       const context = createProxyContext({});
 
       await expect(interceptor.onRequest!(context)).resolves.toBeUndefined();
+    });
+  });
+
+  describe('Responses API path — preserve effort, strip summary', () => {
+    let interceptor: ProxyInterceptor;
+
+    beforeEach(async () => {
+      interceptor = await plugin.createInterceptor(createPluginContext('codemie-code'));
+    });
+
+    it('preserves reasoning.effort on /v1/responses', async () => {
+      const context = createProxyContext(
+        { model: 'gpt-5.5-2026-04-24', reasoning: { effort: 'medium', summary: 'auto' } },
+        'application/json',
+        '/v1/responses',
+      );
+
+      await interceptor.onRequest!(context);
+
+      const body = JSON.parse(context.requestBody!.toString('utf-8'));
+      expect(body.reasoning).toBeDefined();
+      expect(body.reasoning.effort).toBe('medium');
+    });
+
+    it('strips reasoning.summary on /v1/responses', async () => {
+      const context = createProxyContext(
+        { model: 'gpt-5.5-2026-04-24', reasoning: { effort: 'medium', summary: 'auto' } },
+        'application/json',
+        '/v1/responses',
+      );
+
+      await interceptor.onRequest!(context);
+
+      const body = JSON.parse(context.requestBody!.toString('utf-8'));
+      expect(body.reasoning.summary).toBeUndefined();
+    });
+
+    it('strips top-level reasoningSummary on /v1/responses', async () => {
+      const context = createProxyContext(
+        { model: 'gpt-5.5-2026-04-24', reasoning: { effort: 'medium' }, reasoningSummary: 'auto' },
+        'application/json',
+        '/v1/responses',
+      );
+
+      await interceptor.onRequest!(context);
+
+      const body = JSON.parse(context.requestBody!.toString('utf-8'));
+      expect(body.reasoningSummary).toBeUndefined();
+      expect(body.reasoning.effort).toBe('medium');
+    });
+
+    it('strips top-level reasoning_summary on /v1/responses', async () => {
+      const context = createProxyContext(
+        { model: 'gpt-5.5-2026-04-24', reasoning: { effort: 'high' }, reasoning_summary: 'detailed' },
+        'application/json',
+        '/v1/responses',
+      );
+
+      await interceptor.onRequest!(context);
+
+      const body = JSON.parse(context.requestBody!.toString('utf-8'));
+      expect(body.reasoning_summary).toBeUndefined();
+      expect(body.reasoning.effort).toBe('high');
+    });
+
+    it('passes through non-object reasoning on /v1/responses without deleting it', async () => {
+      const context = createProxyContext(
+        { model: 'gpt-5.5-2026-04-24', reasoning: 'auto' },
+        'application/json',
+        '/v1/responses',
+      );
+
+      await interceptor.onRequest!(context);
+
+      const body = JSON.parse(context.requestBody!.toString('utf-8'));
+      // Non-object reasoning is anomalous on /v1/responses; pass through unchanged
+      expect(body.reasoning).toBe('auto');
+    });
+
+    it('updates content-length after stripping on /v1/responses', async () => {
+      const context = createProxyContext(
+        { model: 'gpt-5.5-2026-04-24', reasoning: { effort: 'medium', summary: 'auto' }, reasoningSummary: 'auto' },
+        'application/json',
+        '/v1/responses',
+      );
+      const originalLength = Number(context.headers['content-length']);
+
+      await interceptor.onRequest!(context);
+
+      expect(Number(context.headers['content-length'])).toBeLessThan(originalLength);
+      expect(Number(context.headers['content-length'])).toBe(context.requestBody!.length);
     });
   });
 });
