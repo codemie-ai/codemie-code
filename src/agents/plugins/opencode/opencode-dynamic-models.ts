@@ -74,7 +74,7 @@ function detectLimits(id: string, family: string): { context: number; output: nu
   if (family === 'gemini-2' || id.startsWith('gemini')) return { context: 1048576, output: 65536 };
   if (id.startsWith('gpt-4.1')) return { context: 1048576, output: 32768 };
   if (id.startsWith('gpt-4o')) return { context: 128000, output: 16384 };
-  if (id.startsWith('gpt-5.5') || id.startsWith('gpt-5-5')) return { context: 1050000, output: 128000 };
+  if (id.startsWith('gpt-5.5') || id.startsWith('gpt-5-5')) return { context: 1050000, output: 128000 }; // Azure-published window for gpt-5.5
   if (id.startsWith('gpt-5')) return { context: 400000, output: 128000 };
   if (/^o[134]-/.test(id) || id === 'o1') return { context: 200000, output: 100000 };
   if (id.startsWith('qwen') || id.startsWith('moonshotai') || id.startsWith('kimi')) return { context: 262144, output: 131072 };
