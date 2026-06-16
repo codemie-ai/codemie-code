@@ -249,6 +249,7 @@ function readKimi(parsed: ParsedSession): UsageMap {
       output,
       cacheRead,
       cacheCreation,
+      cacheCreation1h: 0,
       total: input + output + cacheRead + cacheCreation,
     });
   }
@@ -275,7 +276,7 @@ export function extractKimiUsageRecords(parsed: ParsedSession): UsageRecord[] {
       key: null,
       ts: typeof raw.time === 'number' ? raw.time : null,
       model,
-      usage: { input, output, cacheRead, cacheCreation, total: input + output + cacheRead + cacheCreation },
+      usage: { input, output, cacheRead, cacheCreation, cacheCreation1h: 0, total: input + output + cacheRead + cacheCreation },
     });
   }
   return records;
