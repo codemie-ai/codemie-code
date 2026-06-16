@@ -34,7 +34,10 @@ export function costBreakdown(usage: TokenUsage, price: ModelPrice): CostBreakdo
   const input = (usage.input * price.input) / 1_000_000;
   const output = (usage.output * price.output) / 1_000_000;
   const cacheRead = (usage.cacheRead * price.cacheRead) / 1_000_000;
-  const cacheCreation = (usage.cacheCreation * price.cacheCreation) / 1_000_000;
+  const cc1h = usage.cacheCreation1h;
+  const cc5m = usage.cacheCreation - cc1h;
+  const rate1h = price.cacheWrite1h ?? price.cacheCreation * 1.6;
+  const cacheCreation = (cc1h * rate1h + cc5m * price.cacheCreation) / 1_000_000;
   return { input, output, cacheRead, cacheCreation, total: input + output + cacheRead + cacheCreation };
 }
 
