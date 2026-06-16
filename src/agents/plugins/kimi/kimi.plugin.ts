@@ -20,8 +20,8 @@ import { sanitizeLogArgs } from '../../../utils/security.js';
 import { commandExists, exec, getCommandPath } from '../../../utils/processes.js';
 import { resolveHomeDir } from '../../../utils/paths.js';
 
-const KIMI_SUPPORTED_VERSION = '0.15.0';
-const KIMI_MINIMUM_SUPPORTED_VERSION = '0.14.0';
+const KIMI_SUPPORTED_VERSION = '0.16.0';
+const KIMI_MINIMUM_SUPPORTED_VERSION = '0.15.0';
 const KIMI_NATIVE_BINARY_PATH = '.kimi-code/bin/kimi';
 
 const KIMI_INSTALLER_URLS = {
@@ -179,7 +179,6 @@ export class KimiPlugin extends BaseAgentAdapter {
           verifyCommand: this.metadata.cliCommand || undefined,
           verifyPath:
             process.platform === 'win32' ? undefined : resolveHomeDir(KIMI_NATIVE_BINARY_PATH),
-          installFlags: ['--force'],
         },
       );
 
