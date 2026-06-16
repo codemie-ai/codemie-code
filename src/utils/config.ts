@@ -733,11 +733,16 @@ export class ConfigLoader {
     const configDir = path.join(workingDir, '.codemie');
     await fs.mkdir(configDir, { recursive: true });
 
-    // Create multi-provider config structure
+    // Load existing local config to preserve other profiles and settings
+    const existingConfig = (await this.loadLocalMultiProviderConfig(workingDir).catch(() => ({
+      version: 2 as const,
+      activeProfile: 'default',
+      profiles: {}
+    }))) as MultiProviderConfig;
+
     const profileName = overrides?.profileName || 'default';
     const profile: Partial<CodeMieConfigOptions> = {};
 
-    // Add overrides if provided
     if (overrides?.codeMieProject) {
       profile.codeMieProject = overrides.codeMieProject;
     }
@@ -745,7 +750,6 @@ export class ConfigLoader {
       profile.codeMieIntegration = overrides.codeMieIntegration;
     }
 
-    // Add any other overrides
     for (const [key, value] of Object.entries(overrides || {})) {
       if (key !== 'profileName' && key !== 'codeMieProject' && key !== 'codeMieIntegration' && value !== undefined) {
         (profile as any)[key] = value;
@@ -753,9 +757,10 @@ export class ConfigLoader {
     }
 
     const config: MultiProviderConfig = {
-      version: 2,
+      ...existingConfig,
       activeProfile: profileName,
       profiles: {
+        ...existingConfig.profiles,
         [profileName]: profile as any
       }
     };

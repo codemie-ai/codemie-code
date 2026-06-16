@@ -53,6 +53,7 @@ export function createSetupCommand(): Command {
 
 async function runSetupWizard(force?: boolean): Promise<void> {
   // Show ecosystem introduction
+  logger.debug('[setup] starting setup wizard');
   FirstTimeExperience.showEcosystemIntro();
 
   // Check if config already exists (both global and local)
@@ -221,6 +222,7 @@ async function runSetupWizard(force?: boolean): Promise<void> {
 
   // Use plugin-based setup flow
   await handlePluginSetup(provider, setupSteps, profileName, isUpdate, storageLocation);
+  logger.debug(`[setup] handlePluginSetup completed for ${provider}`);
 }
 
 /**
@@ -253,8 +255,9 @@ async function handlePluginSetup(
     try {
       models = await setupSteps.fetchModels(credentials);
       modelsSpinner.succeed(chalk.green(`Found ${models.length} available models`));
-    } catch {
+    } catch (error) {
       modelsSpinner.warn(chalk.yellow('Could not fetch models - will use manual entry'));
+      console.error(chalk.red('Failed to fetch models'), error);
       models = [];
     }
 
@@ -264,11 +267,15 @@ async function handlePluginSetup(
       ? await setupSteps.selectModel(credentials, models, providerTemplate)
       : undefined;
 
+    logger.debug(`[setup] selectModel result: ${preselectedModel ?? 'none'}`);
+
     if (preselectedModel) {
       selectedModel = preselectedModel;
       logger.success(`Model selected automatically: ${selectedModel}`);
     } else {
+      logger.debug('[setup] falling back to manual model selection');
       selectedModel = await promptForModelSelection(models, providerTemplate);
+      logger.debug(`[setup] manual model selected: ${selectedModel}`);
     }
 
     // Step 3.5: Install model if provider supports it (e.g., Ollama)
@@ -288,6 +295,7 @@ async function handlePluginSetup(
     }
 
     // Step 4: Build configuration
+    logger.debug('[setup] building final configuration');
     const config = setupSteps.buildConfig(credentials, selectedModel);
 
     const userEmail = credentials.additionalConfig?.userEmail as string | undefined;
@@ -300,13 +308,29 @@ async function handlePluginSetup(
     if (modelTiers.sonnetModel) config.sonnetModel = modelTiers.sonnetModel;
     if (modelTiers.opusModel) config.opusModel = modelTiers.opusModel;
 
+    // --- FIX: Handle Profile Updates ---
+    if (isUpdate && profileName) {
+      const workingDir = process.cwd();
+      const currentProfile = await ConfigLoader.getProfile(profileName, workingDir);
+      if (currentProfile) {
+        // Merge new setup config into the existing profile
+        Object.assign(currentProfile, config);
+        // Update the config object to be the merged result for the save step
+        Object.assign(config, currentProfile);
+        config.name = profileName;
+      }
+    }
+    // ---------------------------------
+
     // Step 5: Ask for profile name (if creating new)
     let finalProfileName = profileName;
     if (!isUpdate && profileName === null) {
       finalProfileName = await promptForProfileName(providerName);
     }
 
+
     // Step 6: Save profile
+    logger.debug('[setup] saving profile');
     const saveSpinner = ora('Saving profile...').start();
 
     try {
@@ -373,6 +397,7 @@ async function handlePluginSetup(
       }
 
       // Display success
+      logger.debug('[setup] setup completed successfully');
       displaySetupSuccess(finalProfileName!, providerName, selectedModel);
 
       // Show next steps based on storage location
@@ -397,6 +422,7 @@ async function handlePluginSetup(
   } catch (error: unknown) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     const providerTemplate = ProviderRegistry.getProvider(providerName);
+    logger.error(`[setup] plugin setup failed for provider ${providerName}: ${errorMessage}`);
     displaySetupError(new Error(errorMessage), providerTemplate?.setupInstructions);
     throw error;
   }
@@ -455,6 +481,7 @@ async function promptForModelSelection(
   models: string[],
   providerTemplate?: any
 ): Promise<string> {
+  logger.debug(`[setup] promptForModelSelection: models=${models.length}`);
   if (models.length === 0) {
     const { manualModel } = await inquirer.prompt([
       {
@@ -465,6 +492,7 @@ async function promptForModelSelection(
         validate: (input: string) => input.trim() !== '' || 'Model name is required'
       }
     ]);
+    logger.debug(`[setup] manual model input accepted: ${manualModel}`);
     return manualModel ? manualModel.trim() : manualModel;
   }
 
@@ -484,6 +512,8 @@ async function promptForModelSelection(
     }
   ]);
 
+  logger.debug(`[setup] model list selection accepted: ${selectedModel}`);
+
   if (selectedModel === 'custom') {
     const { customModel } = await inquirer.prompt([
       {
@@ -493,6 +523,7 @@ async function promptForModelSelection(
         validate: (input: string) => input.trim() !== '' || 'Model is required'
       }
     ]);
+    logger.debug(`[setup] custom model input accepted: ${customModel}`);
     return customModel ? customModel.trim() : customModel;
   }
 

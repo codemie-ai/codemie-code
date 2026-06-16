@@ -52,7 +52,13 @@ export const OpenCodePluginMetadata: AgentMetadata = {
         }
       }
 
-      const provider = env.CODEMIE_PROVIDER;
+      function normalizeProvider(provider: string | undefined, baseUrl: string | undefined): string | undefined {
+        if (provider === 'azure-openai') return 'azure-openai';
+        if (provider === 'bedrock' && baseUrl && /openai\.azure\.com/i.test(baseUrl)) return 'azure-openai';
+        return provider;
+      }
+
+      const provider = normalizeProvider(env.CODEMIE_PROVIDER, env.CODEMIE_BASE_URL);
       const baseUrl = env.CODEMIE_BASE_URL;
 
       if (!baseUrl) {
@@ -64,18 +70,30 @@ export const OpenCodePluginMetadata: AgentMetadata = {
         return env;
       }
 
+      let profileConfig: any = undefined;
+      if (env.CODEMIE_PROFILE_CONFIG) {
+        try {
+          profileConfig = JSON.parse(env.CODEMIE_PROFILE_CONFIG);
+        } catch {
+          logger.warn('[opencode] Failed to parse CODEMIE_PROFILE_CONFIG', { agent: 'opencode' });
+        }
+      }
+
       // Fetch live model catalogue from the CodeMie API.
       // Falls back to the static OPENCODE_MODEL_CONFIGS on any error.
       const allModels = await fetchDynamicModelConfigs(
         baseUrl,
         env.CODEMIE_URL,
         env.CODEMIE_JWT_TOKEN,
+        provider,
+        profileConfig,
       );
 
       // Model selection priority: env var > config > default
       // Use dynamic catalogue first, then fall back to static getModelConfig for unknown IDs.
       const selectedModel = env.CODEMIE_MODEL || config?.model || 'gpt-5-2-2025-12-11';
-      const modelConfig = allModels[selectedModel] ?? getModelConfig(selectedModel);
+      const normalizedSelectedModel = provider === 'ollama' ? selectedModel.replace(/:latest$/, '') : selectedModel;
+      const modelConfig = allModels[normalizedSelectedModel] ?? allModels[selectedModel] ?? getModelConfig(normalizedSelectedModel);
 
       const { providerOptions } = modelConfig;
 
@@ -85,7 +103,8 @@ export const OpenCodePluginMetadata: AgentMetadata = {
 
       // Determine URLs based on provider type
       const isBedrock = provider === 'bedrock';
-      const proxyBaseUrl = provider !== 'ollama' && !isBedrock ? baseUrl : undefined;
+      const isProxy = provider !== 'ollama' && !isBedrock && provider !== 'azure-openai';
+      const proxyBaseUrl = isProxy ? baseUrl : undefined;
       const ollamaBaseUrl = provider === 'ollama'
         ? (baseUrl.endsWith('/v1') || baseUrl.includes('/v1/') ? baseUrl : `${baseUrl.replace(/\/$/, '')}/v1`)
         : 'http://localhost:11434/v1';
@@ -94,8 +113,13 @@ export const OpenCodePluginMetadata: AgentMetadata = {
       // - ollama: uses ollama provider directly
       // - bedrock: uses OpenCode's built-in amazon-bedrock provider (AWS env vars set by provider hook)
       // - all others: route through codemie-proxy (SSO/proxy)
-      const activeProvider = provider === 'ollama' ? 'ollama' : (isBedrock ? 'amazon-bedrock' : 'codemie-proxy');
+      const activeProvider = provider === 'ollama' ? 'ollama' : (isBedrock ? 'amazon-bedrock' : provider === 'azure-openai' ? 'azure-openai' : 'codemie-proxy');
       const timeout = providerOptions?.timeout ?? parseInt(env.CODEMIE_TIMEOUT || '600') * 1000;
+      const modelId = isBedrock
+        ? toBedrockModelId(modelConfig.id, env.AWS_REGION || env.CODEMIE_AWS_REGION)
+        : provider === 'ollama'
+          ? modelConfig.id.replace(/:latest$/, '')
+          : modelConfig.id;
 
       // Always enable openai CUSTOM_LOADER when Responses API models exist.
       // This fixes model-switching: if user starts with Claude and switches to GPT,
@@ -149,7 +173,7 @@ export const OpenCodePluginMetadata: AgentMetadata = {
             }
           }
         },
-        model: `${activeProvider}/${isBedrock ? toBedrockModelId(modelConfig.id, env.AWS_REGION || env.CODEMIE_AWS_REGION) : modelConfig.id}`
+        model: `${activeProvider}/${modelId}`
       };
 
       // --- Hooks injection ---

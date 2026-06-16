@@ -24,6 +24,7 @@ export function renderProfileInfo(config: {
   cliVersion?: string;
   sessionId?: string;
   isActive?: boolean;
+  title?: string;
 }): string {
   // Build complete output with logo and info
   const outputLines: string[] = [];
@@ -34,6 +35,11 @@ export function renderProfileInfo(config: {
     const colorFn = valueColor || chalk.white;
     return chalk.cyan(label.padEnd(13) + '│ ') + colorFn(value);
   };
+
+  if (config.title) {
+    outputLines.push(chalk.bold.cyan(config.title));
+    outputLines.push('');
+  }
 
   // Configuration details
   if (config.cliVersion) {

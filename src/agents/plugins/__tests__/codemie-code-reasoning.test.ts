@@ -79,6 +79,16 @@ vi.mock('../reasoning-sanitizer/index.js', () => ({
   cleanupReasoningSanitizerPlugin: mockCleanupReasoningSanitizer,
 }));
 
+// Mock azure-dial-sanitizer
+const { mockGetAzureDialSanitizerPluginUrl, mockCleanupAzureDialSanitizer } = vi.hoisted(() => ({
+  mockGetAzureDialSanitizerPluginUrl: vi.fn(() => 'file:///mock/azure-dial-sanitizer.ts'),
+  mockCleanupAzureDialSanitizer: vi.fn(),
+}));
+vi.mock('../azure-dial-sanitizer/index.js', () => ({
+  getAzureDialSanitizerPluginUrl: mockGetAzureDialSanitizerPluginUrl,
+  cleanupAzureDialSanitizerPlugin: mockCleanupAzureDialSanitizer,
+}));
+
 // Mock OpenCodeSessionAdapter
 const { mockDiscoverSessions } = vi.hoisted(() => ({
   mockDiscoverSessions: vi.fn(),
@@ -105,6 +115,14 @@ vi.mock('../opencode/opencode-model-configs.js', () => ({
 // Mock dynamic model fetcher so tests don't make real API calls
 vi.mock('../opencode/opencode-dynamic-models.js', () => ({
   fetchDynamicModelConfigs: vi.fn(() => Promise.resolve({})),
+}));
+
+// Mock AzureOpenAIModelProxy so azure-openai provider path doesn't make real requests
+vi.mock('../../../providers/plugins/azure-openai/azure-openai.models.js', () => ({
+  AzureOpenAIModelProxy: vi.fn().mockImplementation(() => ({
+    fetchDeploymentInfos: vi.fn(() => Promise.resolve([])),
+    fetchModels: vi.fn(() => Promise.resolve([])),
+  })),
 }));
 
 // Mock fs
@@ -242,6 +260,19 @@ describe('CodeMie Code Plugin — Reasoning Sanitization Integration', () => {
       expect(config.plugin).toContain('file:///mock/hooks-plugin.js');
       expect(config.plugin).toContain('file:///mock/reasoning-sanitizer.ts');
     });
+
+    it('injects azure-dial-sanitizer plugin for azure-openai provider', async () => {
+      const env = createEnv({
+        CODEMIE_PROVIDER: 'azure-openai',
+        CODEMIE_API_KEY: 'azure-key',
+        CODEMIE_AZURE_OPENAI_BASE_URL: 'https://dial.example.com',
+      });
+      await beforeRun(env, {} as any);
+
+      const config = parseConfig(env);
+      expect(config.plugin).toContain('file:///mock/azure-dial-sanitizer.ts');
+      expect(mockGetAzureDialSanitizerPluginUrl).toHaveBeenCalled();
+    });
   });
 
   describe('Cleanup — onSessionEnd', () => {
@@ -276,6 +307,7 @@ describe('CodeMie Code Plugin — Reasoning Sanitization Integration', () => {
 
       expect(mockCleanupHooksPlugin).toHaveBeenCalled();
       expect(mockCleanupReasoningSanitizer).toHaveBeenCalled();
+      expect(mockCleanupAzureDialSanitizer).toHaveBeenCalled();
     });
   });
 });

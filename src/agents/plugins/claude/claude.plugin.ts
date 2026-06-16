@@ -84,7 +84,7 @@ export const ClaudePluginMetadata: AgentMetadata = {
     opusModel: ['ANTHROPIC_DEFAULT_OPUS_MODEL'],
   },
 
-  supportedProviders: ['litellm', 'ai-run-sso', 'bedrock', 'bearer-auth', 'anthropic-subscription'],
+  supportedProviders: ['litellm', 'ai-run-sso', 'bedrock', 'bearer-auth', 'anthropic-subscription', 'azure-openai'],
   blockedModelPatterns: [],
   recommendedModels: ['claude-sonnet-4-6', 'claude-4-opus', 'gpt-4.1'],
 

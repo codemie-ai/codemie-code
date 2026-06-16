@@ -6,7 +6,7 @@
  */
 
 import chalk from 'chalk';
-import type { ProviderTemplate } from '../core/types.js';
+import type { ProviderTemplate, ModelInfo } from '../core/types.js';
 
 /**
  * Format provider choice for inquirer
@@ -18,6 +18,10 @@ import type { ProviderTemplate } from '../core/types.js';
  * - Capability hints (dimmed)
  */
 export function formatProviderChoice(template: ProviderTemplate): string {
+  // For Azure OpenAI EPAM DIAL — brief remark
+  if (template.name === 'azure-openai' && template.displayName.toLowerCase().includes('dial')) {
+    return `${template.displayName} - ${template.description} — features limited`;
+  }
   return `${template.displayName} - ${template.description}`;
 }
 
@@ -111,6 +115,15 @@ export function formatModelChoice(
 ): { name: string; value: string } {
   const metadata = template?.modelMetadata?.[modelId];
 
+  // Note for models via DIAL (Azure OpenAI) — reasoning/thinking disabled
+  let featureNote = '';
+  if (
+    template?.name === 'azure-openai' && template?.displayName?.toLowerCase().includes('dial') &&
+    (!modelId.toLowerCase().includes('gpt') && !modelId.toLowerCase().includes('openai'))
+  ) {
+    featureNote = ' [no reasoning]';
+  }
+
   // Check if model is recommended (with partial matching support)
   const isRecommended =
     metadata?.popular ||
@@ -119,11 +132,11 @@ export function formatModelChoice(
 
   // If no metadata and not recommended, return plain format
   if (!metadata && !isRecommended) {
-    return { name: modelId, value: modelId };
+    return { name: modelId + featureNote, value: modelId };
   }
 
   const popularBadge = isRecommended ? chalk.yellow('⭐ ') : '';
-  const mainLine = `${popularBadge}${chalk.white.bold(metadata?.name || modelId)}`;
+  const mainLine = `${popularBadge}${chalk.white.bold(metadata?.name || modelId)}${featureNote}`;
 
   const details: string[] = [];
   if (metadata?.description) {
@@ -177,12 +190,18 @@ function isRecommendedModel(modelId: string, recommendedPattern: string): boolea
  * 2. Alphabetically by model ID
  */
 export function getAllModelChoices(
-  models: string[],
+  models: string[] | ModelInfo[],
   template?: ProviderTemplate
 ): Array<{ name: string; value: string }> {
-  // Sort models using common rules
-  const sortedModels = [...models].sort((a, b) => {
-    // Check if models are recommended (with partial matching)
+  const normalizedModels = models.map(model => typeof model === 'string' ? model : model.id);
+  const infoMap = new Map<string, ModelInfo>();
+  for (const model of models) {
+    if (typeof model !== 'string') {
+      infoMap.set(model.id, model);
+    }
+  }
+
+  const sortedModels = [...normalizedModels].sort((a, b) => {
     const aRecommended = template?.recommendedModels?.some(pattern =>
       isRecommendedModel(a, pattern)
     ) || false;
@@ -190,15 +209,22 @@ export function getAllModelChoices(
       isRecommendedModel(b, pattern)
     ) || false;
 
-    // Recommended models first
     if (aRecommended && !bRecommended) return -1;
     if (!aRecommended && bRecommended) return 1;
 
-    // Then sort alphabetically
     return a.localeCompare(b);
   });
 
-  return sortedModels.map(model => formatModelChoice(model, template));
+  return sortedModels.map(model => {
+    const metadata = infoMap.get(model);
+    if (metadata?.description) {
+      return {
+        name: `${model}\n   ${chalk.dim(metadata.description)}`,
+        value: model
+      };
+    }
+    return formatModelChoice(model, template);
+  });
 }
 
 /**

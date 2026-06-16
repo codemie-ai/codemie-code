@@ -29,7 +29,8 @@ export function createDoctorCommand(): Command {
   command
     .description('Check system health and configuration')
     .option('-v, --verbose', 'Enable verbose debug output with detailed API logs')
-    .action(async (options: { verbose?: boolean }) => {
+    .option('--test-dial', 'Run DIAL/Azure OpenAI integration test on all models (only for DIAL provider)')
+    .action(async (options: { verbose?: boolean, testDial?: boolean }) => {
       // Enable debug mode if verbose flag is set
       if (options.verbose) {
         process.env.CODEMIE_DEBUG = 'true';
@@ -41,6 +42,20 @@ export function createDoctorCommand(): Command {
         }
       }
 
+      // DIAL integration test if the corresponding flag is selected
+      if (options.testDial) {
+        const { ConfigLoader } = await import('../../../utils/config.js');
+        const { runDialIntegrationTest } = await import('../../../utils/dial-model-integrity.js');
+        const config = await ConfigLoader.load();
+        if (!config.provider || (config.provider !== 'azure-openai' && !config.provider.toLowerCase().includes('dial'))) {
+          console.log('\n⚠ dial integration test: active profile provider не DIAL/azure-openai. Выберите профиль DIAL через codemie profile switch или setup.\n');
+          process.exit(1);
+        }
+         console.log(chalk.bold('\n🔍 CodeMie Code Health Check\n'));
+         console.log('Running integration test on all DIAL models...\n');
+         const ok = await runDialIntegrationTest(config);
+         process.exit(ok ? 0 : 1);
+      }
       // Log system information for debugging
       logger.debug('=== CodeMie Doctor - System Information ===');
       logger.debug(`Platform: ${os.platform()}`);
