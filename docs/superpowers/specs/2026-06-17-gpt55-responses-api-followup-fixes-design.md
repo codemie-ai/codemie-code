@@ -86,12 +86,12 @@ if (isResponsesApi) {
     if ('summary' in body.reasoning) {
       delete (body.reasoning as Record<string, unknown>).summary;
       stripped.push('reasoning.summary');
+      // Note: if 'summary' was the only key (reasoning: { summary }), reasoning becomes {}.
+      // This is non-occurring in practice — the openai provider always sets effort alongside
+      // summary (transform.ts:1152+). The empty object is harmless; we skip an extra delete
+      // because the re-serialize tail already fires via 'reasoning.summary' in stripped.
     }
     // body.reasoning.effort is intentionally preserved
-    // Prune if empty after stripping (defensive, non-occurring in practice)
-    if (Object.keys(body.reasoning as object).length === 0) {
-      delete body.reasoning;
-    }
   } else if ('reasoning' in body) {
     // Non-object reasoning on /v1/responses — not produced by any known code path.
     // Pass through unchanged; let the upstream surface the anomaly rather than
@@ -210,10 +210,16 @@ complexity is out of scope for this NIT — left for a follow-up if full accurac
 | File | Change |
 |---|---|
 | `src/providers/plugins/sso/proxy/plugins/request-sanitizer.plugin.ts` | F1: path-aware sanitizer |
+| `src/providers/plugins/sso/proxy/plugins/__tests__/request-sanitizer.plugin.test.ts` | F1: add /responses test case |
 | `src/providers/plugins/sso/proxy/plugins/codex-encrypted-content-sanitizer.plugin.ts` | F2: widen ALLOWED_AGENTS |
 | `src/agents/plugins/opencode/opencode-model-configs.ts` | F4: gpt-5.5 context limit |
 | `src/agents/plugins/opencode/opencode-dynamic-models.ts` | F4: detectLimits gpt-5.5 branch |
-| `src/__tests__/…request-sanitizer…test.ts` (or sibling) | F1: add /responses test case |
+
+## Plugin composition note
+
+`RequestSanitizerPlugin` (priority 15) runs before `CodexEncryptedContentSanitizerPlugin`
+(priority 16). They touch disjoint fields (`reasoning.*` vs `encrypted_content` / `include`),
+so execution order has no effect on correctness here.
 
 ---
 
@@ -223,7 +229,13 @@ complexity is out of scope for this NIT — left for a follow-up if full accurac
    → `reasoning.effort` preserved, `reasoning.summary` absent, `reasoningSummary` absent.
 2. POST to `/v1/chat/completions` with `{ reasoning: 'auto', reasoningSummary: 'x', reasoning_summary: 'y' }`:  
    → all three keys absent (existing behavior unchanged).
-3. `codemie-code` and `codemie-opencode` pass through `CodexEncryptedContentSanitizerPlugin` without throwing; `codemie-codex` behavior unchanged.
+3. For `codemie-code`: a body containing an encrypted reasoning item (e.g. `{ type: 'reasoning', encrypted_content: 'abc' }` in the `input` array, or `include: ['reasoning.encrypted_content']`) → the item is removed and `removedCount > 0`. `codemie-codex` behavior unchanged. `codemie-opencode` receives the same functional treatment as `codemie-code`.
 4. `gpt-5.5-2026-04-24` static config: `limit.context === 1050000`.
-5. `detectLimits('gpt-5.5-2026-04-24', 'gpt-5')` returns `{ context: 1050000, output: 128000 }`.
-6. `detectLimits('gpt-5.2-latest', 'gpt-5')` still returns `{ context: 400000, output: 128000 }` (regression check).
+5. `convertApiModelToOpenCodeConfig(makeLlmModel('gpt-5.5-2026-04-24')).limit.context === 1050000`  
+   (`detectLimits` is module-private; assert via the public `convertApiModelToOpenCodeConfig` API, following the pattern in `opencode-gpt55-routing.test.ts`).
+6. `convertApiModelToOpenCodeConfig(makeLlmModel('gpt-5.2-latest')).limit.context === 400000` (regression — generic gpt-5* branch still applies).
+
+## Scope boundary
+
+- **F3 intentionally excluded.** Finding F3 from the review doc ("codemie bypasses OpenCode's `@ai-sdk/azure` `gpt-5.5` guard") is informational only — no action required.
+- **Issue C (picker propagation) is out of scope for unit tests.** AC #1 above proves that `reasoning.effort` present in the request body survives the proxy unchanged. It does not prove that the OpenCode picker value (low/high/medium) reaches the body — that path is OpenCode-internal (`transform.ts:1154` hardcodes `"medium"` as default; model variants override it). Confirming the picker works end-to-end requires a manual/e2e capture after F1 lands.
