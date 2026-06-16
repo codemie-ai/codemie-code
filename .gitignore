@@ -76,3 +76,4 @@ output/playwright
 docs/superpowers/runs/
 docs/superpowers/tasks/*/.state.json
 .superpowers
+/.rtk/

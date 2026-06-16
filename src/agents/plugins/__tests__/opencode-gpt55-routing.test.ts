@@ -99,4 +99,25 @@ describe('GPT-5.5 / GPT-5.4 → Responses API routing', () => {
   it('static config gpt-5.5-2026-04-24 supports tool_call', () => {
     expect(OPENCODE_MODEL_CONFIGS['gpt-5.5-2026-04-24']!.tool_call).toBe(true);
   });
+
+  // ── Context limits ──────────────────────────────────────────────────────────
+
+  it('dynamic gpt-5.5-2026-04-24 reports context limit of 1050000', () => {
+    const config = convertApiModelToOpenCodeConfig(makeLlmModel('gpt-5.5-2026-04-24'));
+    expect(config.limit.context).toBe(1050000);
+  });
+
+  it('dynamic gpt-5-5-2026-04-24 (hyphenated) reports context limit of 1050000', () => {
+    const config = convertApiModelToOpenCodeConfig(makeLlmModel('gpt-5-5-2026-04-24'));
+    expect(config.limit.context).toBe(1050000);
+  });
+
+  it('dynamic gpt-5.2-latest still reports context limit of 400000 (regression)', () => {
+    const config = convertApiModelToOpenCodeConfig(makeLlmModel('gpt-5.2-latest'));
+    expect(config.limit.context).toBe(400000);
+  });
+
+  it('static config gpt-5.5-2026-04-24 reports context limit of 1050000', () => {
+    expect(OPENCODE_MODEL_CONFIGS['gpt-5.5-2026-04-24']!.limit.context).toBe(1050000);
+  });
 });
