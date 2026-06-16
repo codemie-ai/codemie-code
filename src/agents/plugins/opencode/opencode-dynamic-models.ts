@@ -39,6 +39,10 @@ const RESPONSES_API_MODEL_PATTERNS: RegExp[] = [
   /^gpt-5\.1-codex/,  // gpt-5.1-codex, gpt-5.1-codex-mini, gpt-5.1-codex-max
   /^gpt-5-3-codex/,   // hyphenated variant of gpt-5.3-codex
   /^gpt-5\.3-codex/,  // gpt-5.3-codex-2026-02-24
+  /^gpt-5\.4-/,       // gpt-5.4-* — Azure requires /v1/responses for tools + reasoning_effort
+  /^gpt-5-4-/,        // hyphenated variant of gpt-5.4-*
+  /^gpt-5\.5-/,       // gpt-5.5-2026-04-24 — same Azure restriction as gpt-5.4
+  /^gpt-5-5-/,        // hyphenated variant of gpt-5.5-*
 ];
 
 function isResponsesApiModel(id: string): boolean {
