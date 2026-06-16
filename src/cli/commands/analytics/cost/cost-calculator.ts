@@ -6,7 +6,7 @@ import type { TokenUsage } from './types.js';
 import type { ModelPrice } from './pricing.js';
 
 export function emptyUsage(): TokenUsage {
-  return { input: 0, output: 0, cacheRead: 0, cacheCreation: 0, total: 0 };
+  return { input: 0, output: 0, cacheRead: 0, cacheCreation: 0, cacheCreation1h: 0, total: 0 };
 }
 
 export function addUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
@@ -15,6 +15,7 @@ export function addUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
     output: a.output + b.output,
     cacheRead: a.cacheRead + b.cacheRead,
     cacheCreation: a.cacheCreation + b.cacheCreation,
+    cacheCreation1h: a.cacheCreation1h + b.cacheCreation1h,
     total: a.total + b.total,
   };
 }

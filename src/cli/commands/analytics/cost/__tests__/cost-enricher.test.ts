@@ -341,7 +341,7 @@ describe('enrichCosts — dispatch cost attribution', () => {
 
 describe('buildCostSeries', () => {
   const rec = (ts: number | null, model: string, input: number): UsageRecord =>
-    ({ key: null, ts, model, usage: { input, output: 0, cacheRead: 0, cacheCreation: 0, total: input } });
+    ({ key: null, ts, model, usage: { input, output: 0, cacheRead: 0, cacheCreation: 0, cacheCreation1h: 0, total: input } });
 
   it('emits a cumulative series; final point equals the summed tokens', () => {
     const s = buildCostSeries([rec(1000, 'claude-sonnet-4-6', 10), rec(2000, 'claude-sonnet-4-6', 20)]);

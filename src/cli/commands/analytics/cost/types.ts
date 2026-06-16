@@ -10,7 +10,8 @@ export interface TokenUsage {
   input: number;
   output: number;
   cacheRead: number;
-  cacheCreation: number;
+  cacheCreation: number;    // aggregate (5m + 1h) — for display and total
+  cacheCreation1h: number;  // 1h-TTL subset; 0 when absent in transcript
   total: number;
 }
 
