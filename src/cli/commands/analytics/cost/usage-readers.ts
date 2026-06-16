@@ -55,6 +55,10 @@ interface ClaudeRawMessage {
       output_tokens?: number;
       cache_read_input_tokens?: number;
       cache_creation_input_tokens?: number;
+      cache_creation?: {
+        ephemeral_1h_input_tokens?: number;
+        ephemeral_5m_input_tokens?: number;
+      };
     };
   };
 }
@@ -93,6 +97,7 @@ export function extractClaudeUsageRecords(parsed: ParsedSession): UsageRecord[] 
       const output = usage.output_tokens ?? 0;
       const cacheRead = usage.cache_read_input_tokens ?? 0;
       const cacheCreation = usage.cache_creation_input_tokens ?? 0;
+      const cacheCreation1h = usage.cache_creation?.ephemeral_1h_input_tokens ?? 0;
       const id = raw.message?.id;
       const reqId = raw.requestId;
       const key = id || reqId ? `${id ?? ''}::${reqId ?? ''}` : null;
@@ -102,7 +107,7 @@ export function extractClaudeUsageRecords(parsed: ParsedSession): UsageRecord[] 
         key,
         ts,
         model,
-        usage: { input, output, cacheRead, cacheCreation, cacheCreation1h: 0, total: input + output + cacheRead + cacheCreation },
+        usage: { input, output, cacheRead, cacheCreation, cacheCreation1h, total: input + output + cacheRead + cacheCreation },
       });
     }
   }
