@@ -83,4 +83,5 @@ docs/superpowers
 .playwright-mcp/
 codemie-analytics-*.html
 .worktrees/
-.worktrees/
+.playwright-cli/
+output/playwright

@@ -145,7 +145,7 @@ Clicking a session anywhere in the report opens a detail overlay with:
 - **Activity** — turns, tool calls and success rate, agent/skill/command invocation counts
 - **Code changes** — files changed, lines added/removed, net
 - **Token & cost growth chart** — cumulative cost and token usage per turn (from the native log; shown when data is available)
-- **Dispatch timeline** — Gantt-style view of agent invocations within the session, positioned by start time relative to the session span
+- **Dispatch timeline** — Interactive Gantt of agent dispatches. Bars are proportionally scaled to the agent activity window; click any bar to open a detail panel on the right showing that agent's estimated cost, token breakdown (input / output / cache read / cache write), wall-clock duration, start offset from session start, and top tool call counts. Skills and slash commands are shown in the chip lists below the Gantt, not as bars.
 - **Skills / Agent subtypes / Slash commands** — chip lists of what was invoked and how many times
 
 ---
