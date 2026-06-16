@@ -27,7 +27,8 @@ import { logger } from '../../../utils/logger.js';
 // (POST /v1/responses) instead of Chat Completions (POST /v1/chat/completions).
 //
 // Naming conventions observed in CodeMie deployments:
-//   Responses API  →  gpt-5-2-*, gpt-5.2-*, gpt-5.x-codex-*, gpt-5-x-codex-*
+//   Responses API  →  gpt-5-2-*, gpt-5.2-*, gpt-5.x-codex-*, gpt-5-x-codex-*,
+//                     gpt-5.4-*, gpt-5-4-*, gpt-5.5-*, gpt-5-5-*
 //   Chat Completions → gpt-4*, gpt-5-<year>-*, o1/o3/o4*, gemini-*, claude-*, …
 //
 // Update this list whenever new Responses-API-only models are deployed.
