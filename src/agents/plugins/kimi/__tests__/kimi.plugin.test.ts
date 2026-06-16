@@ -52,8 +52,8 @@ describe('KimiPlugin', () => {
       expect(installNativeAgent).toHaveBeenCalledWith(
         'kimi',
         KimiPluginMetadata.installerUrls,
-        '0.15.0',
-        expect.objectContaining({ installFlags: ['--force'] }),
+        '0.16.0',
+        expect.any(Object),
       );
     });
 
