@@ -79,16 +79,31 @@ export class ConfigLoader {
       ignorePatterns: ['node_modules', '.git', 'dist', 'build']
     };
 
-    const profileName = await this.resolveProfileName(workingDir, cliOverrides?.name);
+    const selectedProfileName = await this.resolveProfileName(workingDir, cliOverrides?.name);
+
+    // Determine which local profile to overlay. The local activeProfile represents the
+    // team's project defaults for this repository. When a different global profile is
+    // selected via --profile, those project defaults should still apply unless the
+    // repository explicitly defines an override for the selected profile name.
+    const localProfileName = await this.resolveLocalProfileName(workingDir, selectedProfileName);
 
     // 4. Global config (~/.codemie/codemie-cli.config.json)
-    // Load from the locally active profile name when local config points at a global profile.
-    const globalConfig = await this.loadGlobalConfigProfile(profileName);
+    const globalConfig = await this.loadGlobalConfigProfile(selectedProfileName);
     Object.assign(config, this.removeUndefined(globalConfig));
 
     // 3. Project-local config (.codemie/codemie-cli.config.json)
-    const localConfig = await this.loadLocalConfigProfile(workingDir, profileName);
-    Object.assign(config, this.removeUndefined(localConfig));
+    const localConfig = await this.loadLocalConfigProfile(workingDir, localProfileName);
+
+    // When an explicit --profile selects a global profile different from the team's local
+    // default, keep only project-level local fields. This prevents the selected provider,
+    // model, and credentials from being silently replaced by the local team's defaults.
+    const applyProjectOnly =
+      cliOverrides?.name && localProfileName && cliOverrides.name !== localProfileName;
+    const effectiveLocalConfig = applyProjectOnly
+      ? this.filterProjectFields(localConfig)
+      : localConfig;
+
+    Object.assign(config, this.removeUndefined(effectiveLocalConfig));
 
     // 2. Environment variables (load .env first if in project)
     const envPath = path.join(workingDir, '.env');
@@ -283,6 +298,78 @@ export class ConfigLoader {
     }
 
     return undefined;
+  }
+
+  /**
+   * Decide which local profile should be overlaid on top of the selected global profile.
+   *
+   * Priority:
+   * 1. A local profile whose name matches the selected global profile (explicit local override).
+   * 2. The repository's local activeProfile, if it points to an existing local profile
+   *    (team project defaults).
+   * 3. The only local profile defined in the repository (team default when activeProfile
+   *    references a global-only profile).
+   * 4. The selected global profile name (backward compatibility for single-profile local configs).
+   */
+  private static async resolveLocalProfileName(
+    workingDir: string,
+    selectedProfileName?: string
+  ): Promise<string | undefined> {
+    const localConfigPath = path.join(workingDir, this.LOCAL_CONFIG);
+    const localConfig = await this.loadJsonConfig(localConfigPath);
+
+    if (!isMultiProviderConfig(localConfig)) {
+      return selectedProfileName;
+    }
+
+    const localProfileNames = Object.keys(localConfig.profiles);
+
+    // If the selected global profile has a local counterpart, use it.
+    if (selectedProfileName && localConfig.profiles[selectedProfileName]) {
+      return selectedProfileName;
+    }
+
+    // Otherwise apply the team's local active profile as the project overlay.
+    if (localConfig.activeProfile && localConfig.profiles[localConfig.activeProfile]) {
+      return localConfig.activeProfile;
+    }
+
+    // If the repository defines exactly one local profile, treat it as the team default
+    // even when activeProfile references a global-only profile.
+    if (localProfileNames.length === 1) {
+      return localProfileNames[0];
+    }
+
+    // Fallback: keep the original 2-level lookup behavior.
+    return selectedProfileName;
+  }
+
+  /**
+   * Fields that belong to the repository/project context rather than to the provider
+   * identity. When a user explicitly selects a different global provider profile via
+   * --profile, these fields should still be supplied by the team's local profile so the
+   * repository context is not lost.
+   */
+  private static readonly PROJECT_FIELDS: (keyof CodeMieConfigOptions)[] = [
+    'codeMieProject',
+    'codeMieIntegration',
+    'codeMieUrl'
+  ];
+
+  /**
+   * Keep only project-level fields from a local profile. Used when the selected global
+   * profile differs from the team's local default profile.
+   */
+  private static filterProjectFields(
+    config: Partial<CodeMieConfigOptions>
+  ): Partial<CodeMieConfigOptions> {
+    const result: Partial<CodeMieConfigOptions> = {};
+    for (const field of this.PROJECT_FIELDS) {
+      if ((config as any)[field] !== undefined) {
+        (result as any)[field] = (config as any)[field];
+      }
+    }
+    return result;
   }
 
   /**
@@ -1064,7 +1151,15 @@ export class ConfigLoader {
       source: 'default' | 'global' | 'project' | 'env' | 'cli';
     };
 
-    const profileName = await this.resolveProfileName(workingDir, cliOverrides?.name);
+    const selectedProfileName = await this.resolveProfileName(workingDir, cliOverrides?.name);
+    const localProfileName = await this.resolveLocalProfileName(workingDir, selectedProfileName);
+
+    const applyProjectOnly =
+      cliOverrides?.name && localProfileName && cliOverrides.name !== localProfileName;
+    const localConfig = await this.loadLocalConfigProfile(workingDir, localProfileName);
+    const effectiveLocalConfig = applyProjectOnly
+      ? this.filterProjectFields(localConfig)
+      : localConfig;
 
     const configs: ConfigLayer[] = [
       {
@@ -1075,11 +1170,11 @@ export class ConfigLoader {
         source: 'default'
       },
       {
-        data: await this.loadGlobalConfigProfile(profileName),
+        data: await this.loadGlobalConfigProfile(selectedProfileName),
         source: 'global'
       },
       {
-        data: await this.loadLocalConfigProfile(workingDir, profileName),
+        data: effectiveLocalConfig,
         source: 'project'
       },
       {

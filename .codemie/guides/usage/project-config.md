@@ -306,6 +306,61 @@ codemie profile switch default
 
 **Result**: Team members automatically use the correct project/integration.
 
+### Use Case 4: Team Project Profile with Personal Provider Profile
+
+**Scenario**: A repository commits a team profile that pins the CodeMie project,
+but individual team members prefer different global provider profiles (for
+example, one uses Kimi, another uses Anthropic).
+
+**Solution**:
+
+1. **Repository** (`.codemie/`):
+   ```json
+   {
+     "version": 2,
+     "activeProfile": "team",
+     "profiles": {
+       "team": {
+         "codeMieProject": "team-project",
+         "codeMieIntegration": {
+           "id": "team-integration-123",
+           "alias": "team-name"
+         }
+       }
+     }
+   }
+   ```
+
+2. **Global config** (`~/.codemie/`):
+   ```json
+   {
+     "version": 2,
+     "activeProfile": "kimi",
+     "profiles": {
+       "kimi": {
+         "provider": "moonshot-subscription",
+         "model": "kimi-for-coding"
+       },
+       "anthropic": {
+         "provider": "anthropic-subscription",
+         "model": "claude-sonnet-4-6"
+       }
+     }
+   }
+   ```
+
+3. **Run with a personal provider profile**:
+   ```bash
+   codemie-kimi --profile kimi
+   codemie-claude --profile anthropic
+   ```
+
+**Result**:
+- The selected global profile supplies provider, model, and credentials.
+- The repository's local team profile still supplies `codeMieProject`,
+  `codeMieIntegration`, and `codeMieUrl`.
+- Team members can use their preferred provider without losing project context.
+
 ---
 
 ## Configuration Management
@@ -371,6 +426,14 @@ codemie profile delete old-profile
    - Loads the global profile as a base
    - Overlays the local profile on top (if it exists)
    - You get the merged result with local overrides
+
+   **Using `--profile` with a team local profile**: When a repository defines a
+   local team profile (for example, to share `codeMieProject` across the team),
+   running an agent with `--profile <global-profile>` selects the global provider
+   profile but still preserves the repository's project context. The selected
+   global profile supplies provider, model, and credentials; the local team
+   profile supplies project fields (`codeMieProject`, `codeMieIntegration`,
+   `codeMieUrl`).
 
 3. **Active Profile**: Can reference either a local or global profile
    - Set via `codemie profile switch <name>`
