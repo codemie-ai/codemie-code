@@ -253,7 +253,7 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
       cache_read: 0.375
     },
     limit: {
-      context: 400000,
+      context: 1050000,
       output: 128000
     }
   },
