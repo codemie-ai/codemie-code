@@ -1,20 +1,27 @@
 /**
- * Codex Encrypted Content Sanitizer
+ * Encrypted Content Sanitizer
  * Priority: 16 (after generic request sanitizer, before header injection)
  *
  * LiteLLM/Azure can reject Responses API follow-up requests when encrypted
  * reasoning content is load-balanced to a different deployment/API key than
  * the one that created it. Server-side encrypted_content_affinity is the
- * correct fix. This client-side sanitizer is a defensive fallback for Codex:
+ * correct fix. This client-side sanitizer is a defensive fallback:
  * it removes encrypted reasoning state so the session can continue instead of
  * failing with invalid_encrypted_content.
+ *
+ * Scope: codemie-codex, codemie-code, codemie-opencode. Widened from codex-only
+ * to cover all Responses-API sessions — affects gpt-5.2, gpt-5.3-codex, gpt-5.5,
+ * and any other Responses-path models. Tradeoff: drops cross-turn reasoning
+ * continuity (encrypted state stripped) to avoid hard invalid_encrypted_content
+ * failures — the same tradeoff already accepted for Codex. If server-side
+ * encrypted_content_affinity becomes available, this client strip becomes redundant.
  */
 
 import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
 import { ProxyContext } from '../proxy-types.js';
 import { logger } from '../../../../../utils/logger.js';
 
-const ALLOWED_AGENT = 'codemie-codex';
+const ALLOWED_AGENTS = ['codemie-codex', 'codemie-code', 'codemie-opencode'];
 const ENCRYPTED_CONTENT_INCLUDE = 'reasoning.encrypted_content';
 
 interface SanitizeResult {
@@ -31,16 +38,18 @@ export class CodexEncryptedContentSanitizerPlugin implements ProxyPlugin {
 
   async createInterceptor(context: PluginContext): Promise<ProxyInterceptor> {
     const clientType = context.config.clientType;
-    if (clientType !== ALLOWED_AGENT) {
+    if (!clientType || !ALLOWED_AGENTS.includes(clientType)) {
       throw new Error(`Plugin disabled for agent: ${clientType}`);
     }
 
-    return new CodexEncryptedContentSanitizerInterceptor();
+    return new CodexEncryptedContentSanitizerInterceptor(clientType);
   }
 }
 
 class CodexEncryptedContentSanitizerInterceptor implements ProxyInterceptor {
   name = 'codex-encrypted-content-sanitizer';
+
+  constructor(private readonly clientType: string) {}
 
   async onRequest(context: ProxyContext): Promise<void> {
     if (!context.requestBody || !context.headers['content-type']?.includes('application/json')) {
@@ -60,7 +69,7 @@ class CodexEncryptedContentSanitizerInterceptor implements ProxyInterceptor {
       context.headers['content-length'] = String(context.requestBody.length);
 
       logger.debug(
-        `[${this.name}] Removed encrypted reasoning content from Codex request: ${sanitized.removedCount} item(s)`
+        `[${this.name}] Removed encrypted reasoning content from ${this.clientType} request: ${sanitized.removedCount} item(s)`
       );
     } catch {
       // Not valid JSON or unexpected structure — pass through unchanged.
