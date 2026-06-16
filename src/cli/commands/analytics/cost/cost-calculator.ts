@@ -35,8 +35,8 @@ export function costBreakdown(usage: TokenUsage, price: ModelPrice): CostBreakdo
   const output = (usage.output * price.output) / 1_000_000;
   const cacheRead = (usage.cacheRead * price.cacheRead) / 1_000_000;
   const cc1h = usage.cacheCreation1h;
-  const cc5m = usage.cacheCreation - cc1h;
-  const rate1h = price.cacheWrite1h ?? price.cacheCreation * 1.6;
+  const cc5m = Math.max(0, usage.cacheCreation - cc1h);
+  const rate1h = price.cacheWrite1h ?? price.cacheCreation * 1.6; // 2.0 / 1.25 = Anthropic 1h-to-5m ratio
   const cacheCreation = (cc1h * rate1h + cc5m * price.cacheCreation) / 1_000_000;
   return { input, output, cacheRead, cacheCreation, total: input + output + cacheRead + cacheCreation };
 }
