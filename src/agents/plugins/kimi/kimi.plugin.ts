@@ -2,6 +2,8 @@ import type { AgentConfig, AgentMetadata, HookTransformer } from '../../core/typ
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
+import { existsSync } from 'fs';
+import { rm } from 'fs/promises';
 import { KimiSessionAdapter } from './kimi.session.js';
 import { KimiExtensionInstaller } from './kimi.extension-installer.js';
 import { KimiHookTransformer } from './kimi.hook-transformer.js';
@@ -15,7 +17,7 @@ import {
 import { isValidSemanticVersion } from '../../../utils/version-utils.js';
 import { logger } from '../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../utils/security.js';
-import { commandExists, exec } from '../../../utils/processes.js';
+import { commandExists, exec, getCommandPath } from '../../../utils/processes.js';
 import { resolveHomeDir } from '../../../utils/paths.js';
 
 const KIMI_SUPPORTED_VERSION = '0.15.0';
@@ -132,7 +134,19 @@ export class KimiPlugin extends BaseAgentAdapter {
     }
 
     if (process.platform !== 'win32') {
-      const fullPath = resolveHomeDir(KIMI_NATIVE_BINARY_PATH);
+      // Native installer location
+      const nativePath = resolveHomeDir(KIMI_NATIVE_BINARY_PATH);
+      try {
+        const result = await exec(nativePath, ['--version']);
+        if (result.code === 0) {
+          return true;
+        }
+      } catch {
+        // Native path check failed, fall through
+      }
+
+      // Legacy / npm location
+      const fullPath = resolveHomeDir('.local/bin/kimi');
       try {
         const result = await exec(fullPath, ['--version']);
         return result.code === 0;
@@ -199,6 +213,65 @@ export class KimiPlugin extends BaseAgentAdapter {
   }
 
   /**
+   * Uninstall Kimi Code native binary and npm wrapper package.
+   *
+   * The native installer places the binary at ~/.kimi-code/bin/kimi, while the
+   * inherited base uninstall only removes the npm package wrapper. We remove
+   * both so that subsequent installs don't incorrectly report Kimi as already
+   * installed.
+   */
+  override async uninstall(): Promise<void> {
+    const isWindows = process.platform === 'win32';
+    const binaryName = isWindows ? 'kimi.exe' : 'kimi';
+    const possibleBinaries = new Set<string>();
+
+    // Known native install locations
+    possibleBinaries.add(resolveHomeDir(`.kimi-code/bin/${binaryName}`));
+    possibleBinaries.add(resolveHomeDir(`.local/bin/${binaryName}`));
+
+    // Also remove any binary found on PATH that belongs to the user
+    const pathBinary = await getCommandPath('kimi');
+    if (pathBinary) {
+      possibleBinaries.add(pathBinary);
+    }
+
+    for (const binaryPath of possibleBinaries) {
+      try {
+        if (existsSync(binaryPath)) {
+          await rm(binaryPath, { force: true });
+          logger.debug(`[kimi-plugin] Removed binary: ${binaryPath}`);
+        }
+      } catch (error) {
+        logger.warn(
+          `[kimi-plugin] Could not remove binary ${binaryPath}`,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }
+
+    // Remove the native install directory if it is now empty
+    const installDir = resolveHomeDir('.kimi-code');
+    try {
+      if (existsSync(installDir)) {
+        const { readdir } = await import('fs/promises');
+        const entries = await readdir(installDir);
+        if (entries.length === 0) {
+          await rm(installDir, { recursive: true, force: true });
+          logger.debug(`[kimi-plugin] Removed empty install directory: ${installDir}`);
+        }
+      }
+    } catch (error) {
+      logger.warn(
+        `[kimi-plugin] Could not remove install directory ${installDir}`,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+
+    // Remove npm wrapper package if present
+    await super.uninstall();
+  }
+
+  /**
    * Get Kimi version by parsing 'kimi --version' output.
    * Extracts the first semantic version found in the output.
    *
@@ -215,9 +288,19 @@ export class KimiPlugin extends BaseAgentAdapter {
       return match ? match[1] : output.trim() || null;
     };
 
-    // Try full path first on Unix systems (native installer places binary at ~/.kimi-code/bin/kimi)
+    // Try native installer full path first on Unix systems
+    // (native installer places binary at ~/.kimi-code/bin/kimi)
     if (process.platform !== 'win32') {
-      const fullPath = resolveHomeDir(KIMI_NATIVE_BINARY_PATH);
+      const nativePath = resolveHomeDir(KIMI_NATIVE_BINARY_PATH);
+      try {
+        const result = await exec(nativePath, ['--version']);
+        return parseVersion(result.stdout);
+      } catch {
+        // Native path check failed, fall through to legacy path
+      }
+
+      // Legacy / npm location
+      const fullPath = resolveHomeDir('.local/bin/kimi');
       try {
         const result = await exec(fullPath, ['--version']);
         return parseVersion(result.stdout);
