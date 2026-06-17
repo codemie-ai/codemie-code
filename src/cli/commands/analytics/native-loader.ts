@@ -22,6 +22,7 @@ import type { SessionDescriptor } from '../../../agents/core/session/discovery-t
 import { AgentRegistry } from '../../../agents/registry.js';
 import { getCodemiePath } from '../../../utils/paths.js';
 import { logger } from '../../../utils/logger.js';
+import { splitByClear } from '../../../agents/plugins/claude/session/claude-clear-boundary.js';
 
 /** Agents whose native logs we discover + synthesize. (claude is the gap users hit.) */
 const NATIVE_AGENTS = ['claude'] as const;
@@ -188,18 +189,14 @@ function modal(values: string[]): string | undefined {
   return best;
 }
 
-/**
- * Synthesize a {@link RawSessionData} from a parsed native session. Turns map to assistant
- * messages (the aggregator derives totalTurns from deltas.length), and all per-session metrics
- * (tools / file ops / models) are carried on a single delta — the aggregator sums across deltas,
- * so one metrics-bearing delta plus empty placeholders is equivalent to per-turn deltas.
- */
-export function synthesizeRawSession(
+function buildSegmentData(
   agentName: string,
+  sessionId: string,
   descriptor: SessionDescriptor,
-  parsed: ParsedSession
+  parsed: ParsedSession,
+  messages: RawMessage[],
+  carryMetrics: boolean
 ): RawSessionData {
-  const messages = (parsed.messages ?? []) as RawMessage[];
   const timestamps = messages.map((m) => toMs(m.timestamp)).filter((n): n is number => n != null);
   const startTime = timestamps.length ? Math.min(...timestamps) : descriptor.createdAt;
   const endTime = timestamps.length ? Math.max(...timestamps) : descriptor.updatedAt ?? descriptor.createdAt;
@@ -212,33 +209,31 @@ export function synthesizeRawSession(
   const openingPrompt = firstUserText(messages);
 
   const metricsDelta: MetricDelta = {
-    recordId: `${descriptor.sessionId}-native`,
-    sessionId: descriptor.sessionId,
-    agentSessionId: descriptor.sessionId,
+    recordId: `${sessionId}-native`,
+    sessionId,
+    agentSessionId: sessionId,
     timestamp: startTime,
     gitBranch: branch,
-    tools: parsed.metrics?.tools ?? {},
-    toolStatus: parsed.metrics?.toolStatus,
-    fileOperations: parsed.metrics?.fileOperations as MetricDelta['fileOperations'],
+    tools: carryMetrics ? (parsed.metrics?.tools ?? {}) : {},
+    ...(carryMetrics && parsed.metrics?.toolStatus && { toolStatus: parsed.metrics.toolStatus }),
+    ...(carryMetrics && parsed.metrics?.fileOperations && {
+      fileOperations: parsed.metrics.fileOperations as MetricDelta['fileOperations'],
+    }),
     models,
-    // Named invocations are extracted at parse time (claude.session.ts extractMetrics); carry
-    // them through so native (untracked) sessions populate the skill/agent/command charts.
-    ...(parsed.metrics?.skillInvocations && { skillInvocations: parsed.metrics.skillInvocations }),
-    ...(parsed.metrics?.agentInvocations && { agentInvocations: parsed.metrics.agentInvocations }),
-    ...(parsed.metrics?.commandInvocations && { commandInvocations: parsed.metrics.commandInvocations }),
-    // Opening prompt → drives the session title in the report (aggregator strips command/system XML).
+    ...(carryMetrics && parsed.metrics?.skillInvocations && { skillInvocations: parsed.metrics.skillInvocations }),
+    ...(carryMetrics && parsed.metrics?.agentInvocations && { agentInvocations: parsed.metrics.agentInvocations }),
+    ...(carryMetrics && parsed.metrics?.commandInvocations && { commandInvocations: parsed.metrics.commandInvocations }),
     ...(openingPrompt && { userPrompts: [{ count: 1, text: openingPrompt }] }),
     syncStatus: 'synced',
     syncAttempts: 0,
   };
 
-  // Pad to `turns` deltas so the aggregator's totalTurns (= deltas.length) is correct.
   const deltas: MetricDelta[] = [metricsDelta];
   for (let i = 1; i < turns; i++) {
     deltas.push({
-      recordId: `${descriptor.sessionId}-native-${i}`,
-      sessionId: descriptor.sessionId,
-      agentSessionId: descriptor.sessionId,
+      recordId: `${sessionId}-native-${i}`,
+      sessionId,
+      agentSessionId: sessionId,
       timestamp: startTime,
       gitBranch: branch,
       tools: {},
@@ -248,28 +243,58 @@ export function synthesizeRawSession(
   }
 
   return {
-    sessionId: descriptor.sessionId,
-    agentSessionFile: descriptor.filePath, // lets the cost enricher price native (untracked) sessions
+    sessionId,
+    agentSessionFile: descriptor.filePath,
     startEvent: {
-      recordId: descriptor.sessionId,
+      recordId: sessionId,
       type: 'session_start',
       timestamp: startTime,
-      codeMieSessionId: descriptor.sessionId,
+      codeMieSessionId: sessionId,
       agentName,
       syncStatus: 'synced',
       data: { provider: 'native', workingDirectory: cwd, startTime },
     },
     endEvent: {
-      recordId: `${descriptor.sessionId}-end`,
+      recordId: `${sessionId}-end`,
       type: 'session_end',
       timestamp: endTime,
-      codeMieSessionId: descriptor.sessionId,
+      codeMieSessionId: sessionId,
       agentName,
       syncStatus: 'synced',
       data: { endTime, duration: Math.max(0, endTime - startTime), totalTurns: turns },
     },
     deltas,
   };
+}
+
+/**
+ * Synthesize one or more {@link RawSessionData} from a parsed native session. Each /clear boundary
+ * in the transcript produces a separate logical session so the Session Depth widget counts segments
+ * independently instead of summing all turns. Returns a single-element array when there is no /clear
+ * (backward-compatible).
+ */
+export function synthesizeRawSession(
+  agentName: string,
+  descriptor: SessionDescriptor,
+  parsed: ParsedSession
+): RawSessionData[] {
+  const allMessages = (parsed.messages ?? []) as RawMessage[];
+  const segments = splitByClear(allMessages) as RawMessage[][];
+
+  if (segments.length === 1) {
+    return [buildSegmentData(agentName, descriptor.sessionId, descriptor, parsed, segments[0], true)];
+  }
+
+  return segments.map((seg, n) =>
+    buildSegmentData(
+      agentName,
+      `${descriptor.sessionId}-seg-${n}`,
+      descriptor,
+      parsed,
+      seg,
+      n === 0
+    )
+  );
 }
 
 /** Number of days from a filter's fromDate to now (for the discovery window), or a wide default. */
@@ -302,7 +327,7 @@ export async function loadNativeSessions(
     if (!parsed) {
       continue;
     }
-    out.push(synthesizeRawSession(agentName, descriptor, parsed));
+    out.push(...synthesizeRawSession(agentName, descriptor, parsed));
   }
   return out;
 }
