@@ -17,6 +17,7 @@ import { logger } from '../../../../../utils/logger.js';
 import type { MetricDelta } from '../../../../core/metrics/types.js';
 import { extractClaudeFileOperation } from '../claude-file-operation.js';
 import { extractNamedInvocations } from '../claude-named-invocations.js';
+import { splitByClear } from '../claude-clear-boundary.js';
 
 export class MetricsProcessor implements SessionProcessor {
   readonly name = 'metrics';
@@ -156,10 +157,15 @@ export class MetricsProcessor implements SessionProcessor {
     processedIds: Set<string>,
     attachedUserPrompts: Set<string>
   ): Array<Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>> {
+    // Scope to the sub-conversation after the last /clear. Pre-clear messages already
+    // belong to the completed sub-session whose files handleSessionEnd renamed on /clear.
+    const segments = splitByClear(messages);
+    const msgs = segments[segments.length - 1] as any[];
+
     const deltas: Array<Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>> = [];
     const messagesByUuid = new Map<string, any>();
 
-    for (const msg of messages) {
+    for (const msg of msgs) {
       if (msg.uuid) {
         messagesByUuid.set(msg.uuid, msg);
       }
@@ -167,7 +173,7 @@ export class MetricsProcessor implements SessionProcessor {
 
     // Build tool results map with full content
     const toolResultsMap = new Map<string, { isError: boolean; content: any }>();
-    for (const msg of messages) {
+    for (const msg of msgs) {
       if (msg.message?.content && Array.isArray(msg.message.content)) {
         for (const item of msg.message.content) {
           if (item.type === 'tool_result' && item.tool_use_id) {
@@ -182,7 +188,7 @@ export class MetricsProcessor implements SessionProcessor {
 
     // Build tool use result map (tool_use_id → toolUseResult from USER message)
     const toolUseResultMap = new Map<string, any>();
-    for (const msg of messages) {
+    for (const msg of msgs) {
       if (msg.type === 'user' && msg.toolUseResult) {
         // Find the tool_result content item to get tool_use_id
         if (msg.message?.content && Array.isArray(msg.message.content)) {
@@ -197,7 +203,7 @@ export class MetricsProcessor implements SessionProcessor {
 
     // Build user prompts map: uuid → text content
     const userPromptsMap = new Map<string, string>();
-    for (const msg of messages) {
+    for (const msg of msgs) {
       if (
         msg.message?.role === 'user' &&
         msg.uuid &&
@@ -225,14 +231,14 @@ export class MetricsProcessor implements SessionProcessor {
     // Named invocations (skill/agent/command names) are session-wide: skills/agents come from
     // tool_use input and commands from user-message XML. We extract once via the shared helper
     // and attach to the first delta (the aggregator sums across deltas, so totals are unchanged).
-    const sessionNamed = extractNamedInvocations(messages);
+    const sessionNamed = extractNamedInvocations(msgs);
 
     // Group messages by message.id to handle streaming chunks
     // Claude streaming creates multiple JSONL entries (thinking, text, tool_use)
     // for the same API response, each with the same message.id and usage
     const messageGroups = new Map<string, any[]>();
 
-    for (const msg of messages) {
+    for (const msg of msgs) {
       if (msg.message?.role === 'assistant' && msg.message?.id) {
         const messageId = msg.message.id;
         if (!messageGroups.has(messageId)) {
