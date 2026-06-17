@@ -185,12 +185,12 @@ jobs:
         env:
           CI_CODEMIE_USERNAME: ${{ secrets.CI_CODEMIE_USERNAME }}
           CI_CODEMIE_PASSWORD: ${{ secrets.CI_CODEMIE_PASSWORD }}
-          CI_AGENT_MAX_WORKERS: ${{ secrets.CI_AGENT_MAX_WORKERS }}
-          CI_CODEMIE_AUTH_CLIENT_ID: ${{ secrets.CI_CODEMIE_AUTH_CLIENT_ID }}
-          CI_CODEMIE_AUTH_URL: ${{ secrets.CI_CODEMIE_AUTH_URL }}
-          CI_CODEMIE_MODEL: ${{ secrets.CI_CODEMIE_MODEL }}
-          CI_CODEMIE_URL: ${{ secrets.CI_CODEMIE_URL }}
-          CI_IS_LOCAL_RUN: ${{ secrets.CI_IS_LOCAL_RUN }}
+          CI_AGENT_MAX_WORKERS: ${{ vars.CI_AGENT_MAX_WORKERS }}
+          CI_CODEMIE_AUTH_CLIENT_ID: ${{ vars.CI_CODEMIE_AUTH_CLIENT_ID }}
+          CI_CODEMIE_AUTH_URL: ${{ vars.CI_CODEMIE_AUTH_URL }}
+          CI_CODEMIE_MODEL: ${{ vars.CI_CODEMIE_MODEL }}
+          CI_CODEMIE_URL: ${{ vars.CI_CODEMIE_URL }}
+          CI_IS_LOCAL_RUN: ${{ vars.CI_IS_LOCAL_RUN }}
         run: npm run test:integration
 
   test-windows:
@@ -228,10 +228,10 @@ jobs:
         env:
           CI_CODEMIE_USERNAME: ${{ secrets.CI_CODEMIE_USERNAME }}
           CI_CODEMIE_PASSWORD: ${{ secrets.CI_CODEMIE_PASSWORD }}
-          CI_AGENT_MAX_WORKERS: ${{ secrets.CI_AGENT_MAX_WORKERS }}
-          CI_CODEMIE_AUTH_CLIENT_ID: ${{ secrets.CI_CODEMIE_AUTH_CLIENT_ID }}
-          CI_CODEMIE_AUTH_URL: ${{ secrets.CI_CODEMIE_AUTH_URL }}
-          CI_CODEMIE_MODEL: ${{ secrets.CI_CODEMIE_MODEL }}
-          CI_CODEMIE_URL: ${{ secrets.CI_CODEMIE_URL }}
-          CI_IS_LOCAL_RUN: ${{ secrets.CI_IS_LOCAL_RUN }}
+          CI_AGENT_MAX_WORKERS: ${{ vars.CI_AGENT_MAX_WORKERS }}
+          CI_CODEMIE_AUTH_CLIENT_ID: ${{ vars.CI_CODEMIE_AUTH_CLIENT_ID }}
+          CI_CODEMIE_AUTH_URL: ${{ vars.CI_CODEMIE_AUTH_URL }}
+          CI_CODEMIE_MODEL: ${{ vars.CI_CODEMIE_MODEL }}
+          CI_CODEMIE_URL: ${{ vars.CI_CODEMIE_URL }}
+          CI_IS_LOCAL_RUN: ${{ vars.CI_IS_LOCAL_RUN }}
         run: npm run test:integration
