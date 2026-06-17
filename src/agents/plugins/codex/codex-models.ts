@@ -289,12 +289,17 @@ export async function resolveCodexModel(env: NodeJS.ProcessEnv): Promise<CodexMo
     );
   }
 
-  const selectedModel = rankedModels[0].id;
+  const rankedIds = rankedModels.map(entry => entry.id);
+  const selectedModel =
+    isCodexCompatibleModelName(currentModel) && rankedIds.includes(currentModel)
+      ? currentModel
+      : rankedModels[0].id;
   const catalogPath = await writeCatalogFile(buildCodexCatalog(rankedModels));
 
-  if (currentModel && currentModel !== selectedModel) {
+  if (isCodexCompatibleModelName(currentModel) && currentModel !== selectedModel) {
+    console.error(`[codemie-codex] Requested model "${currentModel}" is not available; using ${selectedModel} instead.`);
     logger.info(
-      `[codex-models] Using ${selectedModel} for Codex instead of profile model ${currentModel}`
+      `[codex-models] Using ${selectedModel} for Codex instead of requested model ${currentModel}`
     );
   }
 
