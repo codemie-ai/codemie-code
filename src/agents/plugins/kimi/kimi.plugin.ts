@@ -55,6 +55,18 @@ export const KimiPluginMetadata: AgentMetadata = {
   flagMappings: {
     '--task': { type: 'flag', target: '-p' },
     '--model': { type: 'flag', target: '--model' },
+    '--resume': { type: 'flag', target: '-S' },
+  },
+
+  reasoningEffort: {
+    strategy: 'env',
+    envVars: {
+      KIMI_MODEL_THINKING_MODE: 'on',
+      KIMI_MODEL_THINKING_EFFORT: '%s',
+      KIMI_MODEL_CAPABILITIES: 'thinking',
+      KIMI_MODEL_DEFAULT_THINKING: 'true',
+    },
+    supportedLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
   },
   lifecycle: {
     enrichArgs(args: string[], _config: AgentConfig): string[] {
