@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { enrichCosts, buildCostSeries, type EnricherDeps } from '../cost-enricher.js';
+import { enrichCosts, buildCostSeries, realDeps, type EnricherDeps } from '../cost-enricher.js';
 import { MAX_SERIES_POINTS } from '../types.js';
 import type { UsageRecord } from '../usage-readers.js';
 
@@ -339,9 +339,46 @@ describe('enrichCosts — dispatch cost attribution', () => {
   });
 });
 
+describe('acceptance: TTL-aware pricing against real transcripts', () => {
+  const BASE = `${process.env.HOME}/.claude/projects/${process.cwd().replace(/[/_]/g, '-')}`;
+
+  // Skip in CI — real transcripts are only available locally.
+  const itLocal = process.env.CI ? it.skip : it;
+
+  function sessionEntry(sessionId: string, filePath: string, agentName = 'claude', startTime = 1) {
+    return {
+      sessionId,
+      agentSessionFile: filePath,
+      startEvent: { agentName, data: { startTime } },
+      deltas: [],
+    };
+  }
+
+  itLocal('session 6e8bfbe2: TTL-aware pricing yields the correct total', async () => {
+    const sessions = [
+      sessionEntry('6e8bfbe2-7a9a-4b1d-800b-ae72ee6dec9d', `${BASE}/6e8bfbe2-7a9a-4b1d-800b-ae72ee6dec9d.jsonl`),
+      sessionEntry('agent-a66f1ecadbe8beed6', `${BASE}/6e8bfbe2-7a9a-4b1d-800b-ae72ee6dec9d/subagents/agent-a66f1ecadbe8beed6.jsonl`, 'claude', 2),
+    ];
+    const { index } = await enrichCosts(sessions, realDeps);
+    const total = [...index.values()].reduce((s, c) => s + c.costUSD, 0);
+    expect(total).toBeCloseTo(4.88435635, 3);
+  });
+
+  itLocal('session d3128339: TTL-aware pricing yields the correct total', async () => {
+    const sessions = [
+      sessionEntry('d3128339-ed05-41d5-98b0-2a89932b4d3b', `${BASE}/d3128339-ed05-41d5-98b0-2a89932b4d3b.jsonl`),
+      sessionEntry('agent-a0444580f67c6ec00', `${BASE}/d3128339-ed05-41d5-98b0-2a89932b4d3b/subagents/agent-a0444580f67c6ec00.jsonl`, 'claude', 2),
+      sessionEntry('agent-a2b09a8c62ba62d84', `${BASE}/d3128339-ed05-41d5-98b0-2a89932b4d3b/subagents/agent-a2b09a8c62ba62d84.jsonl`, 'claude', 3),
+    ];
+    const { index } = await enrichCosts(sessions, realDeps);
+    const total = [...index.values()].reduce((s, c) => s + c.costUSD, 0);
+    expect(total).toBeCloseTo(1.27628500, 3);
+  });
+});
+
 describe('buildCostSeries', () => {
   const rec = (ts: number | null, model: string, input: number): UsageRecord =>
-    ({ key: null, ts, model, usage: { input, output: 0, cacheRead: 0, cacheCreation: 0, total: input } });
+    ({ key: null, ts, model, usage: { input, output: 0, cacheRead: 0, cacheCreation: 0, cacheCreation1h: 0, total: input } });
 
   it('emits a cumulative series; final point equals the summed tokens', () => {
     const s = buildCostSeries([rec(1000, 'claude-sonnet-4-6', 10), rec(2000, 'claude-sonnet-4-6', 20)]);

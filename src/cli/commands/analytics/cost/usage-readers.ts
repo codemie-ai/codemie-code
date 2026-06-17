@@ -55,6 +55,10 @@ interface ClaudeRawMessage {
       output_tokens?: number;
       cache_read_input_tokens?: number;
       cache_creation_input_tokens?: number;
+      cache_creation?: {
+        ephemeral_1h_input_tokens?: number;
+        ephemeral_5m_input_tokens?: number;
+      };
     };
   };
 }
@@ -93,6 +97,7 @@ export function extractClaudeUsageRecords(parsed: ParsedSession): UsageRecord[] 
       const output = usage.output_tokens ?? 0;
       const cacheRead = usage.cache_read_input_tokens ?? 0;
       const cacheCreation = usage.cache_creation_input_tokens ?? 0;
+      const cacheCreation1h = usage.cache_creation?.ephemeral_1h_input_tokens ?? 0;
       const id = raw.message?.id;
       const reqId = raw.requestId;
       const key = id || reqId ? `${id ?? ''}::${reqId ?? ''}` : null;
@@ -102,7 +107,7 @@ export function extractClaudeUsageRecords(parsed: ParsedSession): UsageRecord[] 
         key,
         ts,
         model,
-        usage: { input, output, cacheRead, cacheCreation, total: input + output + cacheRead + cacheCreation },
+        usage: { input, output, cacheRead, cacheCreation, cacheCreation1h, total: input + output + cacheRead + cacheCreation },
       });
     }
   }
@@ -166,6 +171,9 @@ function readClaudeSdkResult(parsed: ParsedSession): UsageMap | null {
         output,
         cacheRead,
         cacheCreation,
+        // SDK modelUsage rollup carries no TTL breakdown, so any 1h-TTL writes here
+        // fall back to the 5m rate in costBreakdown (a conservative under-estimate).
+        cacheCreation1h: 0,
         total: input + output + cacheRead + cacheCreation,
       });
     }
@@ -204,6 +212,7 @@ function readGemini(parsed: ParsedSession): UsageMap {
       output,
       cacheRead,
       cacheCreation: 0,
+      cacheCreation1h: 0,
       total: t.total ?? input + output + cacheRead,
     });
   }
@@ -242,6 +251,7 @@ function readKimi(parsed: ParsedSession): UsageMap {
       output,
       cacheRead,
       cacheCreation,
+      cacheCreation1h: 0,
       total: input + output + cacheRead + cacheCreation,
     });
   }
@@ -268,7 +278,7 @@ export function extractKimiUsageRecords(parsed: ParsedSession): UsageRecord[] {
       key: null,
       ts: typeof raw.time === 'number' ? raw.time : null,
       model,
-      usage: { input, output, cacheRead, cacheCreation, total: input + output + cacheRead + cacheCreation },
+      usage: { input, output, cacheRead, cacheCreation, cacheCreation1h: 0, total: input + output + cacheRead + cacheCreation },
     });
   }
   return records;

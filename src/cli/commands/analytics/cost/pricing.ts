@@ -18,6 +18,7 @@ export interface ModelPrice {
   output: number;
   cacheRead: number;
   cacheCreation: number;
+  cacheWrite1h?: number;
 }
 
 interface RawPrice {
@@ -25,6 +26,7 @@ interface RawPrice {
   output?: number;
   cacheRead?: number;
   cacheWrite?: number;
+  cacheWrite1h?: number;
 }
 
 const HERE = getDirname(import.meta.url);
@@ -46,6 +48,7 @@ function table(): Record<string, ModelPrice> {
       output: p.output ?? 0,
       cacheRead: p.cacheRead ?? 0,
       cacheCreation: p.cacheWrite ?? 0,
+      cacheWrite1h: p.cacheWrite1h,
     };
   }
   TABLE = built;
