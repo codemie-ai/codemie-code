@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { BaseAgentAdapter } from '../BaseAgentAdapter.js';
 import type { AgentMetadata } from '../types.js';
+import { logger } from '../../../utils/logger.js';
 
 // Provide a minimal ProviderRegistry stub so shouldUseProxy can look up authType
 // without needing real provider templates to be registered.
@@ -426,6 +427,30 @@ describe('BaseAgentAdapter', () => {
       await adapter.run([], { CODEMIE_REASONING_EFFORT: 'high' });
 
       expect(mockApplyReasoningEffort).not.toHaveBeenCalled();
+    });
+
+    it('logs a warning when CODEMIE_REASONING_EFFORT is set but metadata.reasoningEffort is absent', async () => {
+      const noEffortMetadata: AgentMetadata = {
+        ...effortMetadata,
+        reasoningEffort: undefined,
+      };
+      const adapter = new RunPipelineAdapter(noEffortMetadata);
+
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        // Should complete without throwing (warn-and-continue path, spec §6.4)
+        await expect(adapter.run([], { CODEMIE_REASONING_EFFORT: 'high' })).resolves.toBeUndefined();
+
+        // logger.warn must have been called with a message mentioning the agent is not supported
+        expect(logger.warn).toHaveBeenCalledWith(
+          expect.stringContaining('not supported'),
+        );
+
+        // console.error (yellow chalk warning) must also have been called
+        expect(consoleErrorSpy).toHaveBeenCalled();
+      } finally {
+        consoleErrorSpy.mockRestore();
+      }
     });
   });
 });
