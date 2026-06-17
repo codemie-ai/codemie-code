@@ -5,6 +5,8 @@ on:
     branches: [ 'main' ]
   pull_request:
     branches: [ '**' ]
+  pull_request_target:
+    branches: [ '**' ]
   workflow_call:
 
 jobs:
@@ -12,7 +14,7 @@ jobs:
   validate-commits:
     name: Validate Commits & PR
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'pull_request_target'
 
     steps:
       - name: Checkout code
@@ -92,12 +94,13 @@ jobs:
     name: Secrets Detection
     runs-on: ubuntu-latest
     # Run in parallel with validate-commits
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'pull_request_target'
 
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
       - name: Run Gitleaks
@@ -119,6 +122,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
@@ -151,10 +156,13 @@ jobs:
     name: Test (Ubuntu)
     runs-on: ubuntu-latest
     needs: [build]
+    environment: integration
 
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
@@ -176,16 +184,22 @@ jobs:
         run: npm run test:unit
 
       - name: Run integration tests
+        env:
+          CI_CODEMIE_USERNAME: ${{ secrets.CI_CODEMIE_USERNAME }}
+          CI_CODEMIE_PASSWORD: ${{ secrets.CI_CODEMIE_PASSWORD }}
         run: npm run test:integration
 
   test-windows:
     name: Test (Windows)
     runs-on: windows-latest
     needs: [build]
+    environment: integration
 
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Setup Node.js
         uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6.3.0
@@ -207,4 +221,7 @@ jobs:
         run: npm run test:unit
 
       - name: Run integration tests
+        env:
+          CI_CODEMIE_USERNAME: ${{ secrets.CI_CODEMIE_USERNAME }}
+          CI_CODEMIE_PASSWORD: ${{ secrets.CI_CODEMIE_PASSWORD }}
         run: npm run test:integration
