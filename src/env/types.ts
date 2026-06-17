@@ -3,6 +3,7 @@
  */
 
 import type { HooksConfiguration } from '../hooks/types.js';
+import type { CanonicalReasoningEffort } from '../agents/core/types.js';
 
 export enum StorageScope {
   GLOBAL = 'global',
@@ -53,6 +54,8 @@ export interface ProviderProfile {
   baseUrl?: string;
   apiKey?: string;
   model?: string;
+  /** Reasoning/thinking effort level. Persisted profile default; CLI flag overrides. */
+  reasoningEffort?: CanonicalReasoningEffort;
 
   // Claude model tier configuration (maps to ANTHROPIC_DEFAULT_*_MODEL)
   haikuModel?: string;

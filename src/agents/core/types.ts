@@ -44,6 +44,47 @@ export interface FlagMappings {
   [sourceFlag: string]: FlagMapping;
 }
 
+// ============================================================================
+// Reasoning / thinking effort
+// ============================================================================
+
+export type CanonicalReasoningEffort =
+  | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+export type ReasoningEffortStrategy = 'cli-flag' | 'cli-config' | 'env';
+
+/**
+ * Declarative config for how an agent receives the reasoning effort level.
+ * Lives in AgentMetadata.reasoningEffort.
+ */
+export interface ReasoningEffortConfig {
+  strategy: ReasoningEffortStrategy;
+  /** Canonical levels this agent accepts (used for clamping). */
+  supportedLevels: CanonicalReasoningEffort[];
+  /**
+   * Optional level mapper. Identity default — clamping handles all current agents.
+   * Escape hatch for a future provider that renames levels.
+   */
+  mapLevel?: (level: CanonicalReasoningEffort) => string | null;
+  /**
+   * Where to place the injected flag/config relative to existing args.
+   * Applies to cli-flag and cli-config; ignored by env. Default: 'append'.
+   */
+  placement?: 'prepend' | 'append';
+  // cli-flag strategy (claude: --effort, opencode: --variant)
+  flag?: string;
+  // cli-config strategy (codex: --config model_reasoning_effort="<level>")
+  configFlag?: string;  // default '--config'
+  configKey?: string;   // e.g. 'model_reasoning_effort'
+  // env strategy (kimi: KIMI_MODEL_THINKING_*)
+  envVars?: Record<string, string>;  // '%s' replaced by the mapped level
+  /**
+   * Native flag/key names whose presence in pass-through args suppresses injection.
+   * Strategy-aware: exact-or-= match for cli-flag, substring for cli-config, N/A for env.
+   */
+  userOverrideFlags?: string[];
+}
+
 /**
  * Provider-specific lifecycle hooks
  * Allows agents to customize behavior per provider
@@ -243,6 +284,9 @@ export interface AgentMetadata {
   // === Runtime Behavior ===
   /** Declarative mapping for multiple CLI flags */
   flagMappings?: FlagMappings;
+
+  /** Declarative reasoning-effort injection config. Omit for agents that do not support effort control. */
+  reasoningEffort?: ReasoningEffortConfig;
 
   /**
    * Silent mode - skip welcome/goodbye messages in console
