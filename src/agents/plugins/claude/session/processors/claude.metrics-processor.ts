@@ -16,6 +16,7 @@ import type { ParsedSession } from '../../../../core/session/BaseSessionAdapter.
 import { logger } from '../../../../../utils/logger.js';
 import type { MetricDelta } from '../../../../core/metrics/types.js';
 import { extractClaudeFileOperation } from '../claude-file-operation.js';
+import { extractNamedInvocations } from '../claude-named-invocations.js';
 
 export class MetricsProcessor implements SessionProcessor {
   readonly name = 'metrics';
@@ -221,6 +222,11 @@ export class MetricsProcessor implements SessionProcessor {
       }
     }
 
+    // Named invocations (skill/agent/command names) are session-wide: skills/agents come from
+    // tool_use input and commands from user-message XML. We extract once via the shared helper
+    // and attach to the first delta (the aggregator sums across deltas, so totals are unchanged).
+    const sessionNamed = extractNamedInvocations(messages);
+
     // Group messages by message.id to handle streaming chunks
     // Claude streaming creates multiple JSONL entries (thinking, text, tool_use)
     // for the same API response, each with the same message.id and usage
@@ -316,7 +322,11 @@ export class MetricsProcessor implements SessionProcessor {
         ...(Object.keys(tools).length > 0 && { tools }),
         ...(Object.keys(toolStatus).length > 0 && { toolStatus }),
         ...(completedMsg.message?.model && { models: [completedMsg.message.model] }),
-        ...(apiErrorMessage && { apiErrorMessage })
+        ...(apiErrorMessage && { apiErrorMessage }),
+        // Named invocations are session-wide — attach all three to the first delta only.
+        ...(deltas.length === 0 && Object.keys(sessionNamed.skillInvocations).length > 0 && { skillInvocations: sessionNamed.skillInvocations }),
+        ...(deltas.length === 0 && Object.keys(sessionNamed.agentInvocations).length > 0 && { agentInvocations: sessionNamed.agentInvocations }),
+        ...(deltas.length === 0 && Object.keys(sessionNamed.commandInvocations).length > 0 && { commandInvocations: sessionNamed.commandInvocations })
       };
 
       if (fileOperations.length > 0) {

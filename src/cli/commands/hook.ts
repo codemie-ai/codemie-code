@@ -388,6 +388,20 @@ async function buildProcessingContext(
   const cliVersion = getConfigValue('CODEMIE_CLI_VERSION', config) || '0.0.0';
   const clientType = getConfigValue('CODEMIE_CLIENT_TYPE', config) || 'codemie-cli';
 
+  // Load the CodeMie session metadata so processors can use gitBranch and other
+  // session-level fields that are not present in the native agent transcript.
+  let gitBranch: string | undefined;
+  try {
+    const { getCodemiePath } = await import('../../utils/paths.js');
+    const { readFile } = await import('node:fs/promises');
+    const sessionMeta = JSON.parse(
+      await readFile(getCodemiePath('sessions', `${sessionId}.json`), 'utf-8')
+    ) as { gitBranch?: string };
+    gitBranch = sessionMeta.gitBranch;
+  } catch {
+    // Session metadata may not exist in all contexts (e.g., tests); proceed without it.
+  }
+
   // Build context with SSO credentials if available
   let cookies = config?.cookies || '';
   let apiKey: string | undefined = config?.apiKey;
@@ -425,7 +439,8 @@ async function buildProcessingContext(
     dryRun: false,
     sessionId,
     agentSessionId,
-    agentSessionFile
+    agentSessionFile,
+    gitBranch,
   };
 }
 
@@ -1273,18 +1288,22 @@ export function createHookCommand(): Command {
           process.exit(2); // Blocking error
         }
 
-        if (!event.transcript_path) {
-          logger.error('[hook] Missing required field: transcript_path');
-          logger.debug(`[hook] Received event: ${JSON.stringify(event)}`);
-          process.exit(2); // Blocking error
-        }
-
         // Initialize logger context using CODEMIE_SESSION_ID from environment
         // This ensures consistent session ID across all hooks
         const { sessionId, agentName } = initializeHookContext();
 
-        // Apply hook transformation if agent provides a transformer
+        // Apply hook transformation if agent provides a transformer.
+        // Some agents (e.g. Kimi) do not emit a transcript_path in their raw
+        // hook payload; the transformer computes it from agent-specific session
+        // layout before we validate the internal event shape.
         const transformedEvent = applyHookTransformation(event, agentName);
+
+        // Validate required fields after transformation so agent-specific
+        // transformers can populate fields such as transcript_path.
+        validateHookEvent(transformedEvent);
+        if (process.exitCode === 2) {
+          return; // Validation failed
+        }
 
         // Normalize event name and log processing info
         normalizeAndLogEvent(transformedEvent, sessionId, agentName);

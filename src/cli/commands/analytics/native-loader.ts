@@ -123,7 +123,38 @@ interface RawMessage {
   timestamp?: string | number;
   cwd?: string;
   gitBranch?: string;
-  message?: { role?: string; model?: string };
+  message?: { role?: string; model?: string; content?: unknown };
+}
+
+/**
+ * The first genuine user prompt text in a native transcript — the session's opening message.
+ * Skips messages whose content is a tool_result (role 'user' but not a real prompt) and returns
+ * the first string/text-block content found, so the aggregator can derive a session title.
+ */
+function firstUserText(messages: RawMessage[]): string | undefined {
+  for (const m of messages) {
+    const role = m.message?.role ?? m.type;
+    if (role !== 'user') {
+      continue;
+    }
+    const content = m.message?.content;
+    if (typeof content === 'string') {
+      if (content.trim()) {
+        return content;
+      }
+      continue;
+    }
+    if (Array.isArray(content)) {
+      const block = content.find(
+        (b): b is { type: string; text: string } =>
+          !!b && typeof b === 'object' && (b as { type?: string }).type === 'text' && typeof (b as { text?: unknown }).text === 'string'
+      );
+      if (block && block.text.trim()) {
+        return block.text;
+      }
+    }
+  }
+  return undefined;
 }
 
 function toMs(ts: string | number | undefined): number | null {
@@ -178,6 +209,7 @@ export function synthesizeRawSession(
   const assistantMsgs = messages.filter(isAssistant);
   const turns = Math.max(assistantMsgs.length, 1);
   const models = assistantMsgs.map((m) => m.message?.model).filter((m): m is string => !!m);
+  const openingPrompt = firstUserText(messages);
 
   const metricsDelta: MetricDelta = {
     recordId: `${descriptor.sessionId}-native`,
@@ -189,6 +221,13 @@ export function synthesizeRawSession(
     toolStatus: parsed.metrics?.toolStatus,
     fileOperations: parsed.metrics?.fileOperations as MetricDelta['fileOperations'],
     models,
+    // Named invocations are extracted at parse time (claude.session.ts extractMetrics); carry
+    // them through so native (untracked) sessions populate the skill/agent/command charts.
+    ...(parsed.metrics?.skillInvocations && { skillInvocations: parsed.metrics.skillInvocations }),
+    ...(parsed.metrics?.agentInvocations && { agentInvocations: parsed.metrics.agentInvocations }),
+    ...(parsed.metrics?.commandInvocations && { commandInvocations: parsed.metrics.commandInvocations }),
+    // Opening prompt → drives the session title in the report (aggregator strips command/system XML).
+    ...(openingPrompt && { userPrompts: [{ count: 1, text: openingPrompt }] }),
     syncStatus: 'synced',
     syncAttempts: 0,
   };

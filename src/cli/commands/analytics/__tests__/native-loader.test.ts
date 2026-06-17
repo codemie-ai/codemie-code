@@ -53,12 +53,73 @@ describe('synthesizeRawSession', () => {
     expect(raw.endEvent!.data.endTime).toBe(Date.parse('2026-06-08T10:05:00Z'));
   });
 
+  it('carries named invocations (skill/agent/command) from parsed.metrics onto the first delta', () => {
+    const withNames = {
+      ...parsed,
+      metrics: {
+        ...parsed.metrics,
+        skillInvocations: { 'codemie:msgraph': 2 },
+        agentInvocations: { Explore: 1 },
+        commandInvocations: { analytics: 3 },
+      },
+    } as never;
+    const raw = synthesizeRawSession('claude', descriptor, withNames);
+    expect(raw.deltas[0].skillInvocations).toEqual({ 'codemie:msgraph': 2 });
+    expect(raw.deltas[0].agentInvocations).toEqual({ Explore: 1 });
+    expect(raw.deltas[0].commandInvocations).toEqual({ analytics: 3 });
+  });
+
+  it('omits named-invocation fields when parsed.metrics has none', () => {
+    const raw = synthesizeRawSession('claude', descriptor, parsed);
+    expect(raw.deltas[0].skillInvocations).toBeUndefined();
+    expect(raw.deltas[0].agentInvocations).toBeUndefined();
+    expect(raw.deltas[0].commandInvocations).toBeUndefined();
+  });
+
   it('falls back to descriptor when messages lack cwd/timestamps', () => {
     const bare = { sessionId: 'b', agentName: 'claude', metadata: {}, messages: [], metrics: {} } as never;
     const raw = synthesizeRawSession('claude', { ...descriptor, sessionId: 'b' }, bare);
     expect(raw.startEvent!.data.workingDirectory).toBe('/decoded/hint');
     expect(raw.startEvent!.data.startTime).toBe(1000); // descriptor.createdAt
     expect(raw.deltas).toHaveLength(1); // turns floored at 1
+  });
+});
+
+describe('synthesizeRawSession — opening prompt (native session-title source)', () => {
+  function parsedWith(messages: unknown[]): never {
+    return { sessionId: 'op', agentName: 'claude', metadata: {}, messages, metrics: { tools: {} } } as never;
+  }
+  const desc = { ...descriptor, sessionId: 'op' };
+  const assistant = { type: 'assistant', timestamp: '2026-06-08T10:00:00Z', message: { role: 'assistant', model: 'claude-sonnet-4-6' } };
+
+  it('captures the first string-content user message as the opening prompt', () => {
+    const raw = synthesizeRawSession('claude', desc, parsedWith([
+      { type: 'user', message: { role: 'user', content: 'add a dark mode toggle' } },
+      assistant,
+    ]));
+    expect(raw.deltas[0].userPrompts).toEqual([{ count: 1, text: 'add a dark mode toggle' }]);
+  });
+
+  it('captures the first text block from an array-content user message', () => {
+    const raw = synthesizeRawSession('claude', desc, parsedWith([
+      { type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'fix the failing build' }] } },
+      assistant,
+    ]));
+    expect(raw.deltas[0].userPrompts).toEqual([{ count: 1, text: 'fix the failing build' }]);
+  });
+
+  it('skips a tool_result user message and uses the next real user prompt', () => {
+    const raw = synthesizeRawSession('claude', desc, parsedWith([
+      { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'cmd output' }] } },
+      assistant,
+      { type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'now refactor the enricher' }] } },
+    ]));
+    expect(raw.deltas[0].userPrompts).toEqual([{ count: 1, text: 'now refactor the enricher' }]);
+  });
+
+  it('omits userPrompts when there is no user text (assistant-only / empty messages)', () => {
+    const raw = synthesizeRawSession('claude', desc, parsedWith([assistant]));
+    expect(raw.deltas[0].userPrompts).toBeUndefined();
   });
 });
 

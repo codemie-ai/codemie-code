@@ -198,14 +198,24 @@ describe.runIf(HAS_LOCAL_SSO)('codemie skills (authenticated upstream spawn)', (
     expect(invocation.argv).toContain('bar');
   });
 
-  it('add: injects DO_NOT_TRACK / DISABLE_TELEMETRY / CI / NODE_OPTIONS shim', () => {
+  it('add: clears telemetry gate and injects CI / NODE_OPTIONS shim', () => {
+    // Mutating skills commands intentionally leave DO_NOT_TRACK / DISABLE_TELEMETRY
+    // unset so the upstream can fire its telemetry; the egress guard shim in
+    // NODE_OPTIONS blocks the network request before it leaves the machine.
     runCLI(['add', 'owner/repo', '-a', 'claude-code', '-y']);
     const [invocation] = readInvocations();
-    // For 'add', runSkillsCli intentionally sets DO_NOT_TRACK='' and DISABLE_TELEMETRY=''
-    // to reopen the upstream telemetry gate so the egress shim can capture the payload.
     expect(invocation.env.DO_NOT_TRACK).toBe('');
     expect(invocation.env.DISABLE_TELEMETRY).toBe('');
-    // CI is only injected for non-interactive runs; interactive add omits it.
+    expect(invocation.env.CI).toBe('1');
+    expect(invocation.env.NODE_OPTIONS).toMatch(/--require\s+"[^"]+skills-sh-egress-guard\.cjs"/);
+  });
+
+  it('list: injects DO_NOT_TRACK / DISABLE_TELEMETRY / CI / NODE_OPTIONS shim', () => {
+    runCLI(['list', '--json']);
+    const [invocation] = readInvocations();
+    expect(invocation.env.DO_NOT_TRACK).toBe('1');
+    expect(invocation.env.DISABLE_TELEMETRY).toBe('1');
+    expect(invocation.env.CI).toBe('1');
     expect(invocation.env.NODE_OPTIONS).toMatch(/--require\s+"[^"]+skills-sh-egress-guard\.cjs"/);
   });
 
@@ -231,17 +241,14 @@ describe.runIf(HAS_LOCAL_SSO)('codemie skills (authenticated upstream spawn)', (
     expect(invocation.argv).toEqual(['list', '--json']);
   });
 
-  // The egress shim loaded via NODE_OPTIONS=--require causes an access
-  // violation on Windows (exit 0xC0000005) when the stub calls process.exit()
-  // with a non-zero code, so skip these two on win32.
-  it.skipIf(platform() === 'win32')('propagates upstream non-zero exit codes (not collapsed to 1)', () => {
+  it('propagates upstream non-zero exit codes (not collapsed to 1)', () => {
     const result = runCLI(['add', 'owner/repo', '-a', 'claude-code', '-y'], {
       STUB_EXIT_CODE: '7',
     });
     expect(result.exitCode).toBe(7);
   });
 
-  it.skipIf(platform() === 'win32')('classifies CODEMIE_SKILL_EGRESS_BLOCKED stderr as egress_blocked exit code', () => {
+  it('classifies CODEMIE_SKILL_EGRESS_BLOCKED stderr as egress_blocked exit code', () => {
     // The stub writes the egress marker to stderr and exits with code 7.
     // The wrapper must preserve the upstream exit code (per the runSkillsCli
     // refactor that bypasses the project's `exec()` interactive-mode reject).

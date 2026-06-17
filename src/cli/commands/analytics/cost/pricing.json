@@ -7,6 +7,7 @@
       "Google": "ai.google.dev/gemini-api/docs/pricing",
       "xAI": "docs.x.ai/developers/models",
       "DeepSeek": "api-docs.deepseek.com/quick_start/pricing",
+      "Moonshot": "platform.moonshot.cn/docs/pricing",
       "Z.ai": "docs.z.ai/guides/overview/pricing",
       "Zen": "opencode.ai/docs/zen/"
     },
@@ -16,7 +17,7 @@
       "cacheRead": "cache hit price (Anthropic: 0.1x input, OpenAI: varies, Google: ~0.1x input)",
       "cacheWrite": "cache write price (Anthropic: 1.25x input, OpenAI: ~same as input)"
     },
-    "note": "codemie: added claude 4-7/4-8 tier estimates 2026-06-08"
+    "note": "codemie: added claude 4-7/4-8 tier estimates 2026-06-08; added kimi-for-coding alias and normalized kimi-k2-5 key 2026-06-15"
   },
   "claude-opus-4-6": {
     "input": 5,
@@ -918,7 +919,13 @@
     "cacheRead": 0.1,
     "cacheWrite": 0
   },
-  "kimi-k2.5": {
+  "kimi-k2-5": {
+    "input": 0.6,
+    "output": 3,
+    "cacheRead": 0.1,
+    "cacheWrite": 0
+  },
+  "kimi-for-coding": {
     "input": 0.6,
     "output": 3,
     "cacheRead": 0.1,

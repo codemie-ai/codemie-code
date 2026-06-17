@@ -14,7 +14,7 @@ Canonical instruction file for AI agents working in the CodeMie Code repository.
 Before searching the codebase for patterns or implementation details:
 
 1. Identify the task type and likely guides.
-2. Load the relevant P0 guides from `.codemie/guides/`.
+2. Load the relevant P0 guides from `.ai-run/guides/`.
 3. Search the codebase only after confirming the guides do not already answer the question.
 
 Why this is mandatory:
@@ -61,6 +61,17 @@ Do not proactively commit, push, branch, or suggest git operations.
 - Use bash/Linux-compatible shell commands only.
 - Do not rely on PowerShell or `cmd.exe` syntax.
 
+### Critical Rules (at a glance)
+
+<!-- ai-run-init:critical-rules start -->
+| Rule | Trigger | Action |
+|---|---|---|
+| Check Guides First | ANY task | Match keywords → category → load P0 guide before searching the codebase |
+| Tests on explicit request only | "write tests" / "run tests" / "create unit tests" | Otherwise do not write, run, or suggest tests |
+| Git ops on explicit request only | "commit" / "push" / "create branch" / "create PR" | Load `.ai-run/guides/standards/git-workflow.md`; defer to `codemie-pr` skill for PR work |
+| Shell | ANY shell command | bash/Linux syntax only |
+<!-- ai-run-init:critical-rules end -->
+
 ## Working Sequence
 
 Use this sequence for every task:
@@ -89,31 +100,40 @@ Ask the user when:
 
 ## Guide Map
 
-Primary guide locations:
-
-- Architecture: `.codemie/guides/architecture/architecture.md`
-- Development practices: `.codemie/guides/development/development-practices.md`
-- Code quality: `.codemie/guides/standards/code-quality.md`
-- Testing: `.codemie/guides/testing/testing-patterns.md`
-- Git workflow: `.codemie/guides/standards/git-workflow.md`
-- External integrations: `.codemie/guides/integration/external-integrations.md`
-- Security: `.codemie/guides/security/security-practices.md`
-- Project config: `.codemie/guides/usage/project-config.md`
+<!-- ai-run-init:guide-imports start -->
+| Category | Guide Path | Purpose |
+|---|---|---|
+| Architecture | `.ai-run/guides/architecture/architecture.md` | Plugin-based 5-layer architecture, layer responsibilities, dependency flow |
+| Development practices | `.ai-run/guides/development/development-practices.md` | Error handling, logging, processes, async patterns |
+| Code quality | `.ai-run/guides/standards/code-quality.md` | TypeScript style, naming, type-safety conventions |
+| Git workflow | `.ai-run/guides/standards/git-workflow.md` | Branching, Conventional Commits, PRs, Squash-and-Merge |
+| Testing | `.ai-run/guides/testing/testing-patterns.md` | Vitest patterns, dynamic-import mocking |
+| Security | `.ai-run/guides/security/security-practices.md` | Credentials, sanitization, path validation |
+| External integrations | `.ai-run/guides/integration/external-integrations.md` | Provider plugins, SSO, LiteLLM, Bedrock, Kimi, ACP |
+| Exposed API | `.ai-run/guides/integration/exposed-api.md` | CLI surface, MCP proxy endpoints, plugin contracts |
+| Project config | `.ai-run/guides/usage/project-config.md` | Profiles, ConfigLoader, env vars, paths |
+| Project context | `.ai-run/guides/project.md` | Tracker (Jira EPM-CDME / brianna), MR (GitHub / codemie-pr) |
+| Quality gates | `.ai-run/guides/quality-gates.md` | lint, typecheck, build, test, license, secrets |
+<!-- ai-run-init:guide-imports end -->
 
 ### Task Classifier
 
-| Keywords | Complexity | P0 Guide | P1 Guide |
-|---|---|---|---|
-| `plugin`, `registry`, `agent`, `adapter` | Medium-High | architecture | integrations |
-| `architecture`, `layer`, `structure`, `pattern` | Medium | architecture | development practices |
-| `test`, `vitest`, `mock`, `coverage` | Medium | testing | development practices |
-| `error`, `exception`, `validation` | Medium | development practices | security |
-| `security`, `sanitize`, `credential` | High | security | development practices |
-| `provider`, `sso`, `bedrock`, `litellm`, `langgraph` | Medium-High | integrations | architecture |
-| `cli`, `command`, `commander` | Medium | architecture | development practices |
-| `workflow`, `ci/cd`, `github`, `gitlab` | Medium | git workflow | - |
-| `lint`, `eslint`, `format`, `code quality` | Simple | code quality | - |
-| `commit`, `branch`, `pr`, `git` | Simple | git workflow | - |
+<!-- ai-run-init:task-classifier start -->
+| Keywords | P0 Guide | P1 Guide |
+|---|---|---|
+| `plugin`, `registry`, `agent`, `adapter` | architecture | external-integrations |
+| `architecture`, `layer`, `structure`, `pattern` | architecture | development-practices |
+| `test`, `vitest`, `mock`, `coverage` | testing-patterns | development-practices |
+| `error`, `exception`, `validation` | development-practices | security-practices |
+| `security`, `sanitize`, `credential` | security-practices | development-practices |
+| `provider`, `sso`, `bedrock`, `litellm`, `langgraph`, `kimi` | external-integrations | architecture |
+| `cli`, `command`, `commander` | architecture | development-practices |
+| `workflow`, `ci/cd`, `github`, `gitlab` | git-workflow | quality-gates |
+| `lint`, `eslint`, `format`, `code quality` | code-quality | quality-gates |
+| `commit`, `branch`, `pr`, `git` | git-workflow | project |
+| `config`, `profile`, `env`, `setup` | project-config | project |
+| `ticket`, `EPMCDME`, `jira`, `story` | project | git-workflow |
+<!-- ai-run-init:task-classifier end -->
 
 Complexity guidance:
 
@@ -136,93 +156,7 @@ Before delivery, verify:
 
 ## Pattern Reference
 
-### Architecture
-
-Core layers:
-
-- CLI: `src/cli/commands/`
-- Registry: plugin discovery and routing
-- Plugin: concrete agent/provider implementations
-- Core: base classes and contracts
-- Utils: shared foundations like errors, logging, security, and processes
-
-Required flow:
-
-- `CLI -> Registry -> Plugin -> Core -> Utils`
-
-Do not bypass layers by making the CLI call implementation details directly.
-
-### Error Handling
-
-Use the typed error classes in `src/utils/errors.ts` instead of generic `Error`.
-
-Common classes:
-
-- `ConfigurationError`
-- `AgentNotFoundError`
-- `AgentInstallationError`
-- `ToolExecutionError`
-- `PathSecurityError`
-- `NpmError`
-- `CodeMieError`
-
-Always include useful context when handling failures. Use `createErrorContext()` and `formatErrorForUser()` from `src/utils/errors.js` where appropriate.
-
-### Logging
-
-- Use `logger.debug()` for internal details.
-- Use `logger.info()` or `logger.success()` as appropriate.
-- Do not use `console.log()` for debug logging.
-- Do not log secrets, tokens, or raw sensitive payloads.
-- Include session and agent context when relevant.
-
-Session context is expected at startup:
-
-- `logger.setSessionId(sessionId)`
-- `logger.setAgentName('claude')`
-- `logger.setProfileName('work')`
-
-### Security
-
-- Never hardcode credentials.
-- Use environment variables or `CredentialStore`.
-- Validate file paths with the security utilities.
-- Sanitize values before logging with `sanitizeValue()` and `sanitizeLogArgs()`.
-
-Utilities live in `src/utils/security.js`.
-
-### Project Configuration
-
-Config priority:
-
-1. CLI arguments
-2. Environment variables
-3. Project config
-4. Global config
-5. Defaults
-
-Config files:
-
-- Global: `~/.codemie/codemie-cli.config.json`
-- Local: `.codemie/codemie-cli.config.json`
-
-Important behavior:
-
-- Local config does not isolate from global config.
-- Profile lookup is two-level: global base plus local overrides.
-- Use `ConfigLoader` helpers instead of custom config logic.
-
-### Process Utilities
-
-Use the utilities in `src/utils/processes.ts`:
-
-- `exec(command, args, options)`
-- `commandExists(command)`
-- `installGlobal(packageName)`
-- `npxRun(command, args)`
-- `detectGitBranch(cwd)`
-
-Avoid calling low-level process APIs directly when the shared wrapper exists.
+Detailed patterns for architecture, error handling, logging, security, project configuration, and process utilities live in the generated guides. Use the **Task Classifier** above to map your task to the right P0 guide and load it before searching the codebase.
 
 ## Common Pitfalls
 
@@ -242,29 +176,20 @@ Avoid calling low-level process APIs directly when the shared wrapper exists.
 
 ## Development Commands
 
-Common commands:
-
-| Task | Command | Notes |
-|---|---|---|
-| Setup | `npm install` | Install dependencies |
-| Build | `npm run build` | Compile TypeScript |
-| Dev watch | `npm run dev` | Watch mode |
-| Lint | `npm run lint` | Zero warnings required |
-| Lint fix | `npm run lint:fix` | Auto-fix lint issues |
-| Test | `npm test` | Only if user requested |
-| Unit tests | `npm run test:unit` | Only if user requested |
-| Integration tests | `npm run test:integration` | Only if user requested |
-| CI pipeline | `npm run ci` | Full pipeline |
-| Doctor | `codemie doctor` | Health check |
-| Link global | `npm link` | Local CLI testing |
-
-Build and link flow:
-
-```bash
-npm run build && npm link
-codemie doctor
-codemie-code health
-```
+<!-- ai-run-init:commands start -->
+| Need | Source Guide | Source Evidence | Notes |
+|---|---|---|---|
+| Setup | `.ai-run/guides/quality-gates.md` | `package.json:scripts` | Run `npm install`; verify Node ≥ 20 |
+| Build / typecheck | `.ai-run/guides/quality-gates.md` | `package.json:scripts.build`, `scripts.typecheck` | Stops at first failure |
+| Lint / format | `.ai-run/guides/quality-gates.md` | `package.json:scripts.lint`, `scripts.lint:fix` | Zero-warning policy |
+| Unit / integration tests | `.ai-run/guides/quality-gates.md` | `package.json:scripts.test*` | Only on explicit user request |
+| Pre-commit | `.ai-run/guides/quality-gates.md` | `.husky/pre-commit`, `package.json:scripts.check:pre-commit` | Runs automatically; do not `--no-verify` |
+| Full CI | `.ai-run/guides/quality-gates.md` | `package.json:scripts.ci`, `scripts.ci:full` | Required before merge |
+| Commit message | `.ai-run/guides/standards/git-workflow.md` | `commitlint.config.cjs`, `.husky/commit-msg` | Conventional Commits enforced |
+| PR creation | `.ai-run/guides/standards/git-workflow.md` | `.claude/skills/codemie-pr/SKILL.md` | Invoke the `codemie-pr` skill |
+| Ticket lookup / create | `.ai-run/guides/project.md` | `.codemie/codemie-cli.config.json`, BriAnnA assistant | Invoke the `brianna` skill |
+| Doctor | (no guide needed) | `codemie doctor`, `codemie-code health` | Health diagnostics |
+<!-- ai-run-init:commands end -->
 
 Project defaults:
 
@@ -275,98 +200,23 @@ Project defaults:
 
 ## Project Context
 
-### Stack
-
-- TypeScript `5.3+`
-- Node.js `20.0.0+`
-- LangGraph `1.0.2+`
-- LangChain `1.0.4+`
-- Vitest `4.0.10+`
-- ESLint `9.38.0+`
-- Commander.js `11.1.0+`
-- Inquirer `9.2.12+`
-
-### Core Areas
-
-- `src/cli/commands/`: CLI commands
-- `src/agents/`: plugin-based agent system
-- `src/providers/`: provider integrations
-- `src/analytics/`: usage and metrics
-- `src/workflows/`: CI/CD workflow templates
-- `src/utils/`: shared utilities
-- `src/env/`: configuration and profile management
-
-### Architecture Summary
-
-The codebase follows a plugin-based 5-layer architecture:
-
-- CLI layer
-- Registry layer
-- Plugin layer
-- Core layer
-- Utils layer
-
-Key design goals:
-
-- separation of concerns,
-- dependency inversion,
-- extension through plugins,
-- testability by layer.
+See `package.json` for exact dependency versions and `.ai-run/guides/architecture/architecture.md` for the plugin-based 5-layer architecture, layer responsibilities, and `src/` directory roles.
 
 ## Coding Standards
 
-### TypeScript
-
-- Use ES modules everywhere.
-- Use `async`/`await` for async flows.
-- Prefer `interface` for object shapes.
-- Use generics where they improve safety and reuse.
-- Use optional chaining and nullish coalescing when appropriate.
-- Prefer destructuring for clear parameter and return handling.
-
-### Type Safety
-
-- All exported functions must have explicit return types.
-- Avoid `any`; use `unknown` when the type is truly unknown.
-- `any` is allowed only when justified.
-- Respect strict TypeScript settings.
-- Prefix intentionally unused variables with `_`.
-
-### Async and Concurrency
-
-- Use `try`/`catch` around async operations that need context.
-- Use `Promise.all()` for safe parallel operations.
-- Avoid sequential `await` in loops unless ordering matters.
-- Avoid blocking synchronous file operations in async CLI flows.
+ES modules, async/await, `interface` for shapes, explicit return types on exports, no `any`. Full conventions live in `.ai-run/guides/development/development-practices.md` and `.ai-run/guides/standards/code-quality.md`.
 
 ## Detailed Policies
 
 ### Testing Policy
 
 - Only work on tests if the user explicitly asks.
-- Testing uses Vitest.
-- Dynamic imports are often required for mocking setups.
-
-Useful commands:
-
-- `npm test`
-- `npm run test:unit`
-- `npm run test:integration`
-- `npm run test:watch`
-- `npm run test:coverage`
+- See `.ai-run/guides/testing/testing-patterns.md` for Vitest conventions and `.ai-run/guides/quality-gates.md` for test commands.
 
 ### Git Policy
 
 - Only perform git operations on explicit user request.
-- Before any git operation, load and follow `.codemie/guides/standards/git-workflow.md`.
-- Branch format: `<type>/<description>`
-- Commit format: Conventional Commits like `feat:`, `fix:`, `refactor:`, `test:`, `docs:`, `chore:`
-
-### Environment Policy
-
-- No activation step is required.
-- Verify Node.js with `node --version`.
-- If commands are missing, inspect Node.js installation and `PATH`.
+- Before any git operation, load and follow `.ai-run/guides/standards/git-workflow.md`; defer to the `codemie-pr` skill for PR work.
 
 ## Troubleshooting
 
@@ -384,35 +234,9 @@ Useful commands:
 | Permission denied on global install | Permissions issue | Use a user-local Node.js setup or elevated install |
 | Agent not found after install | Registry or installation issue | Check `~/.codemie/agents/` and run `codemie doctor` |
 
-### Diagnostic Commands
+### Diagnostic
 
-- `node --version`
-- `npm --version`
-- `npm list -g --depth=0`
-- `codemie doctor`
-- `ls -la dist/`
-- `cat tsconfig.json`
-
-### Recovery
-
-If commands fail:
-
-1. Verify Node.js version.
-2. Reinstall dependencies with `npm install`.
-3. Rebuild with `npm run build`.
-4. Re-link with `npm link`.
-
-If the build fails:
-
-1. Check TypeScript errors.
-2. Verify `.js` import extensions.
-3. Rebuild after fixing errors.
-
-If the correct pattern is unclear:
-
-1. Search `.codemie/guides/`.
-2. Re-check the quick references in this file.
-3. Ask the user if ambiguity remains.
+Run `codemie doctor` and `codemie-code health`. If the correct pattern is unclear: search `.ai-run/guides/`, re-check the Guide Map and Task Classifier above, then ask the user.
 
 ## Remember
 
@@ -420,137 +244,3 @@ If the correct pattern is unclear:
 - Keep confidence and policy gates explicit.
 - Follow the project architecture rather than inventing local shortcuts.
 - Deliver complete, secure, production-ready changes without placeholders.
-
-<!-- rtk-instructions v2 -->
-# RTK (Rust Token Killer) - Token-Optimized Commands
-
-## Golden Rule
-
-**Always prefix commands with `rtk`**. If RTK has a dedicated filter, it uses it. If not, it passes through unchanged. This means RTK is always safe to use.
-
-**Important**: Even in command chains with `&&`, use `rtk`:
-```bash
-# Wrong
-git add . && git commit -m "msg" && git push
-
-# Correct
-rtk git add . && rtk git commit -m "msg" && rtk git push
-```
-
-## RTK Commands by Workflow
-
-### Build & Compile (80-90% savings)
-```bash
-rtk cargo build
-rtk cargo check
-rtk cargo clippy
-rtk tsc
-rtk lint
-rtk prettier --check
-rtk next build
-```
-
-### Test (90-99% savings)
-```bash
-rtk cargo test
-rtk vitest run
-rtk playwright test
-rtk test <cmd>
-```
-
-### Git (59-80% savings)
-```bash
-rtk git status
-rtk git log
-rtk git diff
-rtk git show
-rtk git add
-rtk git commit
-rtk git push
-rtk git pull
-rtk git branch
-rtk git fetch
-rtk git stash
-rtk git worktree
-```
-
-Note: Git passthrough works for all subcommands, even those not explicitly listed.
-
-### GitHub (26-87% savings)
-```bash
-rtk gh pr view <num>
-rtk gh pr checks
-rtk gh run list
-rtk gh issue list
-rtk gh api
-```
-
-### JavaScript/TypeScript Tooling (70-90% savings)
-```bash
-rtk pnpm list
-rtk pnpm outdated
-rtk pnpm install
-rtk npm run <script>
-rtk npx <cmd>
-rtk prisma
-```
-
-### Files & Search (60-75% savings)
-```bash
-rtk ls <path>
-rtk read <file>
-rtk grep <pattern>
-rtk find <pattern>
-```
-
-### Analysis & Debug (70-90% savings)
-```bash
-rtk err <cmd>
-rtk log <file>
-rtk json <file>
-rtk deps
-rtk env
-rtk summary <cmd>
-rtk diff
-```
-
-### Infrastructure (85% savings)
-```bash
-rtk docker ps
-rtk docker images
-rtk docker logs <c>
-rtk kubectl get
-rtk kubectl logs
-```
-
-### Network (65-70% savings)
-```bash
-rtk curl <url>
-rtk wget <url>
-```
-
-### Meta Commands
-```bash
-rtk gain
-rtk gain --history
-rtk discover
-rtk proxy <cmd>
-rtk init
-rtk init --global
-```
-
-## Token Savings Overview
-
-| Category | Commands | Typical Savings |
-|---|---|---|
-| Tests | `vitest`, `playwright`, `cargo test` | 90-99% |
-| Build | `next`, `tsc`, `lint`, `prettier` | 70-87% |
-| Git | `status`, `log`, `diff`, `add`, `commit` | 59-80% |
-| GitHub | `gh pr`, `gh run`, `gh issue` | 26-87% |
-| Package Managers | `pnpm`, `npm`, `npx` | 70-90% |
-| Files | `ls`, `read`, `grep`, `find` | 60-75% |
-| Infrastructure | `docker`, `kubectl` | 85% |
-| Network | `curl`, `wget` | 65-70% |
-
-Overall average: **60-90% token reduction** on common development operations.
-<!-- /rtk-instructions -->

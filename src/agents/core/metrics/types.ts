@@ -47,7 +47,7 @@ export interface MetricDelta {
   gitBranch?: string;            // Git branch at time of this turn (can change mid-session)
 
   // Tools used in this turn (counts)
-  tools: {
+  tools?: {
     [toolName: string]: number;  // e.g., {"Read": 1, "Edit": 1}
   };
 
@@ -58,6 +58,11 @@ export interface MetricDelta {
       failure: number;
     };
   };
+
+  // Named invocation breakdowns (populated only when names are available)
+  skillInvocations?: Record<string, number>;   // skill name → call count  (e.g. "codemie:msgraph": 3)
+  agentInvocations?: Record<string, number>;   // subagent_type → count    (e.g. "Explore": 2)
+  commandInvocations?: Record<string, number>; // slash command name → count (e.g. "tech-lead": 1)
 
   // File operations in this turn
   fileOperations?: {

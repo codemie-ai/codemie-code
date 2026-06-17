@@ -10,7 +10,7 @@ Two distribution models are supported:
    - macOS/Linux/WSL: `install/macos/install.sh`
 
 2. **Windows Installation Wizard** — a self-contained GUI installer:
-   - `install/windows/CodemieWizard.exe`
+   - `install/windows/CodeMie Connect_2.0.1_x64-setup.exe`
 
 The scripts can be run directly from GitHub raw URLs or mirrored to Artifactory later. They do not require a Windows-built `.exe`.
 
@@ -68,11 +68,11 @@ macOS, Linux, and WSL prefer npm global installation when global npm is user-wri
 
 ## Windows Installation Wizard
 
-`install/windows/CodemieWizard.exe` is a self-contained Windows desktop GUI application that installs and configures the CodeMie Claude Code CLI end-to-end. It requires no terminal knowledge and bundles all dependencies.
+`install/windows/CodeMie Connect_2.0.1_x64-setup.exe` is a self-contained Windows desktop GUI application that installs and configures the CodeMie Claude Code CLI end-to-end. It requires no terminal knowledge and bundles all dependencies.
 
 ### Running the Wizard
 
-Double-click `CodemieWizard.exe`. No command-line arguments are supported — the wizard is a pure GUI application.
+Double-click `CodeMie Connect_2.0.1_x64-setup.exe`. No command-line arguments are supported — the wizard is a pure GUI application.
 
 The wizard walks through the following steps in order:
 

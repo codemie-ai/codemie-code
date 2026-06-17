@@ -22,6 +22,9 @@ function session(over: Record<string, unknown> = {}): Record<string, unknown> {
     totalLinesRemoved: 2,
     totalLinesModified: 0,
     netLinesChanged: 10,
+    filesChanged: 2,
+    filesWritten: 1,
+    filesEdited: 1,
     totalToolCalls: 4,
     successfulToolCalls: 4,
     failedToolCalls: 0,
@@ -31,6 +34,9 @@ function session(over: Record<string, unknown> = {}): Record<string, unknown> {
     files: [],
     languages: [{ language: 'typescript', filesCreated: 1, filesModified: 0, linesAdded: 12, linesRemoved: 0, percentage: 100 }],
     formats: [],
+    skillInvocations: [],
+    agentInvocations: [],
+    commandInvocations: [],
     ...over,
   };
 }
@@ -184,4 +190,72 @@ describe('buildPayload', () => {
     expect(payload.sessions[0].costUSD).toBe(0);
     expect(payload.sessions[0].tokens.total).toBe(0);
   });
+
+  it('maps change metrics and cache-read cost onto the record and meta totals', () => {
+    const withChanges = {
+      ...root,
+      projects: [{
+        projectPath: '/repo/app',
+        branches: [{ branchName: 'main', sessions: [session({ filesChanged: 3, filesWritten: 1, filesEdited: 2, title: 'refactor the cost pipeline' })] }],
+      }],
+    } as unknown as RootAnalytics;
+    const idx: SessionCostIndex = new Map([
+      ['s1', { sessionId: 's1', tokens: { input: 100, output: 50, cacheRead: 2000, cacheCreation: 0, total: 2150 }, costUSD: 0.01, cacheReadCostUSD: 0.004, perModel: [], priced: true, hadLog: true }],
+    ]);
+    const payload = buildPayload(withChanges, idx, summary, { rangeLabel: 'all', projectFilter: 'all', generatedAt: '2026-06-08T00:00:00Z' });
+    const s = payload.sessions[0];
+    expect(s.filesChanged).toBe(3);
+    expect(s.filesWritten).toBe(1);
+    expect(s.filesEdited).toBe(2);
+    expect(s.cacheReadCostUSD).toBeCloseTo(0.004, 6);
+    expect(s.title).toBe('refactor the cost pipeline');
+    expect(payload.meta.totals.cacheReadCostUSD).toBeCloseTo(0.004, 6);
+  });
+
+  it('passes skillInvocations, agentInvocations, commandInvocations through to session record', () => {
+    const skillInvocations = [{ name: 'tech-lead', totalCalls: 3, successCount: 3, failureCount: 0 }];
+    const agentInvocations = [{ name: 'Explore', totalCalls: 1, successCount: 1, failureCount: 0 }];
+    const commandInvocations = [{ name: 'analytics', totalCalls: 2, successCount: 2, failureCount: 0 }];
+    const withStats = {
+      ...root,
+      projects: [{
+        projectPath: '/repo/app',
+        branches: [{ branchName: 'main', sessions: [session({ skillInvocations, agentInvocations, commandInvocations })] }],
+      }],
+    } as unknown as RootAnalytics;
+    const payload = buildPayload(withStats, costIndex, summary, {
+      rangeLabel: 'all', projectFilter: 'all', generatedAt: '2026-06-08T00:00:00Z',
+    });
+    const s = payload.sessions[0];
+    expect(s.skillInvocations).toEqual(skillInvocations);
+    expect(s.agentInvocations).toEqual(agentInvocations);
+    expect(s.commandInvocations).toEqual(commandInvocations);
+  });
+
+  it('maps costSeries from the SessionCost when present', () => {
+    const idx: SessionCostIndex = new Map([
+      ['s1', { sessionId: 's1', tokens: { input: 0, output: 0, cacheRead: 0, cacheCreation: 0, total: 250 }, costUSD: 1, perModel: [], priced: true, hadLog: true, costSeries: [{ t: 1, cost: 0.5, tokens: 100 }, { t: 2, cost: 1, tokens: 250 }] }],
+    ]);
+    const payload = buildPayload(root, idx, summary, { rangeLabel: 'all', projectFilter: 'all', generatedAt: '2026-06-08T00:00:00Z' });
+    expect(payload.sessions[0].costSeries).toEqual([{ t: 1, cost: 0.5, tokens: 100 }, { t: 2, cost: 1, tokens: 250 }]);
+  });
+
+  it('omits costSeries when the SessionCost has none', () => {
+    const payload = buildPayload(root, costIndex, summary, { rangeLabel: 'all', projectFilter: 'all', generatedAt: '2026-06-08T00:00:00Z' });
+    expect(payload.sessions[0].costSeries).toBeUndefined();
+  });
+
+  it('maps dispatches from the SessionCost when present, omits when absent', () => {
+    const dispatches = [{ kind: 'agent' as const, name: 'tech-analyst', start: 1000, durationMs: 150000 }];
+    const idx: SessionCostIndex = new Map([
+      ['s1', { sessionId: 's1', tokens: emptyTokens(), costUSD: 1, perModel: [], priced: true, hadLog: true, dispatches }],
+    ]);
+    expect(buildPayload(root, idx, summary, ctxAll).sessions[0].dispatches).toEqual(dispatches);
+    expect(buildPayload(root, costIndex, summary, ctxAll).sessions[0].dispatches).toBeUndefined();
+  });
 });
+
+function emptyTokens() {
+  return { input: 0, output: 0, cacheRead: 0, cacheCreation: 0, total: 0 };
+}
+const ctxAll = { rangeLabel: 'all', projectFilter: 'all', generatedAt: '2026-06-08T00:00:00Z' };

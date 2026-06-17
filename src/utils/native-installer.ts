@@ -118,13 +118,16 @@ function buildInstallerCommand(
 		const versionArg = version ? ` ${version}` : '';
 		const flagsArg = installFlags && installFlags.length > 0 ? ` ${installFlags.join(' ')}` : '';
 		return `curl -fsSL ${url} -o install.cmd && install.cmd${versionArg}${flagsArg} && del install.cmd`;
-	} else {
-		// macOS/Linux shell script command
-		const versionArg = version ? ` -s -- ${version}` : '';
-		const scriptFlags = installFlags && installFlags.length > 0 ? ` ${installFlags.join(' ')}` : '';
-		return `curl -fsSL ${url} | bash${versionArg}${scriptFlags}`;
+		} else {
+			// macOS/Linux shell script command
+			const scriptArgs = [
+				...(version ? [version] : []),
+				...(installFlags || []),
+			];
+			const argsArg = scriptArgs.length > 0 ? ` -s -- ${scriptArgs.join(' ')}` : '';
+			return `curl -fsSL ${url} | bash${argsArg}`;
+		}
 	}
-}
 
 /**
  * Verify installation by running the verify command

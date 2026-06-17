@@ -53,6 +53,7 @@ export function buildPayload(
           sessionId: s.sessionId,
           agentName: s.agentName,
           provider: s.provider,
+          title: s.title ?? '',
           project: project.projectPath,
           // The session's dominant branch — so a session that touched several branches is
           // attributed to where it did the most work, not whichever branch iterates first.
@@ -65,6 +66,9 @@ export function buildPayload(
           linesRemoved: s.totalLinesRemoved,
           linesModified: s.totalLinesModified,
           netLines: s.netLinesChanged,
+          filesChanged: s.filesChanged ?? 0,
+          filesWritten: s.filesWritten ?? 0,
+          filesEdited: s.filesEdited ?? 0,
           toolCallsTotal: s.totalToolCalls,
           toolCallsSuccess: s.successfulToolCalls,
           toolCallsFailure: s.failedToolCalls,
@@ -73,7 +77,13 @@ export function buildPayload(
           tools: s.tools,
           tokens: cost?.tokens ?? emptyUsage(),
           costUSD: cost?.costUSD ?? 0,
+          cacheReadCostUSD: cost?.cacheReadCostUSD ?? 0,
           perModelCost: cost?.perModel ?? [],
+          ...(cost?.costSeries && cost.costSeries.length ? { costSeries: cost.costSeries } : {}),
+          ...(cost?.dispatches && cost.dispatches.length ? { dispatches: cost.dispatches } : {}),
+          skillInvocations: s.skillInvocations ?? [],
+          agentInvocations: s.agentInvocations ?? [],
+          commandInvocations: s.commandInvocations ?? [],
         });
       }
     }
@@ -88,6 +98,7 @@ export function buildPayload(
   let toolCallsTotal = 0;
   let toolCallsSuccess = 0;
   let totalCostUSD = 0;
+  let cacheReadCostUSD = 0;
   let pricedSessions = 0;
   for (const r of sessions) {
     durationMs += r.durationMs;
@@ -97,6 +108,7 @@ export function buildPayload(
     toolCallsTotal += r.toolCallsTotal;
     toolCallsSuccess += r.toolCallsSuccess;
     totalCostUSD += r.costUSD;
+    cacheReadCostUSD += r.cacheReadCostUSD;
     if (costIndex.get(r.sessionId)?.priced) {
       pricedSessions += 1;
     }
@@ -116,6 +128,7 @@ export function buildPayload(
       toolCallsTotal,
       toolSuccessRate: toolCallsTotal ? Math.round((toolCallsSuccess / toolCallsTotal) * 1000) / 10 : 0,
       totalCostUSD,
+      cacheReadCostUSD,
       pricedSessions,
     },
     unpricedModels: summary.unpricedModels,

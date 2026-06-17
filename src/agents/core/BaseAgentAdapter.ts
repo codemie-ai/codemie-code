@@ -481,6 +481,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       ...envOverrides,
       CODEMIE_SESSION_ID: sessionId,
       CODEMIE_AGENT: this.metadata.name,
+      CODEMIE_CLIENT_TYPE: this.metadata.ssoConfig?.clientType || 'codemie-cli',
       CODEMIE_REPOSITORY: sessionRepository,
       ...(sessionBranch && { CODEMIE_GIT_BRANCH: sessionBranch })
     };
@@ -670,14 +671,36 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         // On Unix, check common installation paths if command not found in PATH
         // Native installers (e.g., Claude, Gemini) place binaries in ~/.local/bin/
         const { resolveHomeDir } = await import('../../utils/paths.js');
+        const fs = await import('fs');
         const localBinPath = resolveHomeDir(`.local/bin/${this.metadata.cliCommand}`);
         try {
-          const fs = await import('fs');
           await fs.promises.access(localBinPath, fs.constants.X_OK);
           commandPath = localBinPath;
           logger.debug(`Found command at local bin path: ${localBinPath}`);
         } catch {
-          // Not found in ~/.local/bin either, use original command
+          const agentBinPath = this.metadata.dataPaths?.binary
+            ? resolveHomeDir(this.metadata.dataPaths.binary)
+            : undefined;
+
+          if (agentBinPath) {
+            try {
+              await fs.promises.access(agentBinPath, fs.constants.X_OK);
+              commandPath = agentBinPath;
+              logger.debug(`Found command at agent bin path: ${agentBinPath}`);
+            } catch (error) {
+              const code = error && typeof error === 'object' && 'code' in error
+                ? String((error as NodeJS.ErrnoException).code)
+                : undefined;
+
+              if (code === 'EACCES' || code === 'EPERM') {
+                throw new Error(`${this.displayName} binary is not executable: ${agentBinPath}`);
+              }
+
+              logger.debug(`Agent binary path not usable: ${agentBinPath}`, {
+                error: error instanceof Error ? error.message : String(error),
+              });
+            }
+          }
         }
       }
 
@@ -976,11 +999,10 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       }
     }
 
-    // Transform API key (always set, even if empty)
-    if (envMapping.apiKey) {
-      const apiKeyValue = env.CODEMIE_API_KEY || '';
+    // Transform API key
+    if (env.CODEMIE_API_KEY && envMapping.apiKey) {
       for (const envVar of envMapping.apiKey) {
-        env[envVar] = apiKeyValue;
+        env[envVar] = env.CODEMIE_API_KEY;
       }
     }
 

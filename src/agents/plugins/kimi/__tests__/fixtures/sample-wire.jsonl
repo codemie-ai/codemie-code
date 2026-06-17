@@ -1,0 +1,18 @@
+{"type":"metadata","protocol_version":"1.4","created_at":1781363635367,"app_version":"0.14.2"}
+{"type":"config.update","profileName":"agent","systemPrompt":"You are a helpful coding assistant.","modelAlias":"kimi-code/kimi-for-coding","thinkingLevel":"high","time":1781368649422}
+{"type":"tools.set_active_tools","toolNames":["Read","Write","Edit","Bash","Glob"],"time":1781368649423}
+{"type":"turn.prompt","input":[{"type":"text","text":"Please read src/index.ts and then update it."}],"origin":{"kind":"user"},"time":1781368649424}
+{"type":"context.append_loop_event","event":{"type":"step.begin","uuid":"step-001","turnId":"0","step":1},"time":1781368649424}
+{"type":"context.append_loop_event","event":{"type":"tool.call","uuid":"call-read-001","stepUuid":"step-001","turnId":"0","step":1,"toolCallId":"tool_read_001","name":"Read","args":{"path":"/Users/alice/project/src/index.ts"},"description":"Read source file","display":{"kind":"file_io","operation":"read","path":"/Users/alice/project/src/index.ts"}},"time":1781368649425}
+{"type":"context.append_loop_event","event":{"type":"tool.result","stepUuid":"step-001","parentUuid":"call-read-001","toolCallId":"tool_read_001","result":{"output":"export const version = '1.0.0';\n","isError":false}},"time":1781368649426}
+{"type":"context.append_loop_event","event":{"type":"step.end","uuid":"step-001","turnId":"0","step":1},"time":1781368649426}
+{"type":"context.append_loop_event","event":{"type":"step.begin","uuid":"step-002","turnId":"0","step":2},"time":1781368649426}
+{"type":"context.append_loop_event","event":{"type":"tool.call","uuid":"call-write-001","stepUuid":"step-002","turnId":"0","step":2,"toolCallId":"tool_write_001","name":"Write","args":{"path":"/Users/alice/project/src/index.ts","content":"export const version = '1.1.0';\n"},"description":"Write source file","display":{"kind":"file_io","operation":"write","path":"/Users/alice/project/src/index.ts","before":"export const version = '1.0.0';\n","after":"export const version = '1.1.0';\n"}},"time":1781368649427}
+{"type":"context.append_loop_event","event":{"type":"tool.result","stepUuid":"step-002","parentUuid":"call-write-001","toolCallId":"tool_write_001","result":{"output":"File written successfully","isError":false}},"time":1781368649428}
+{"type":"context.append_loop_event","event":{"type":"step.end","uuid":"step-002","turnId":"0","step":2},"time":1781368649428}
+{"type":"context.append_loop_event","event":{"type":"step.begin","uuid":"step-003","turnId":"0","step":3},"time":1781368649429}
+{"type":"context.append_loop_event","event":{"type":"tool.call","uuid":"call-skill-001","stepUuid":"step-003","turnId":"0","step":3,"toolCallId":"tool_skill_001","name":"Skill","args":{"skill":"systematic-debugging"},"description":"Load skill","display":{"kind":"skill_call","skill_name":"systematic-debugging"}},"time":1781368649429}
+{"type":"context.append_loop_event","event":{"type":"tool.result","stepUuid":"step-003","parentUuid":"call-skill-001","toolCallId":"tool_skill_001","result":{"output":"Skill loaded","isError":false}},"time":1781368649430}
+{"type":"context.append_loop_event","event":{"type":"step.end","uuid":"step-003","turnId":"0","step":3},"time":1781368649430}
+{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"Please read src/index.ts and then update it."}],"toolCalls":[],"origin":{"kind":"user"}},"time":1781368649431}
+{"type":"usage.record","model":"kimi-code/kimi-for-coding","usage":{"inputOther":14341,"output":570,"inputCacheRead":14336,"inputCacheCreation":0},"usageScope":"turn","time":1781368649432}

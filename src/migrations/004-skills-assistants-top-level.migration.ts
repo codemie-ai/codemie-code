@@ -11,11 +11,14 @@ class SkillsAssistantsTopLevelMigration implements Migration {
     const workingDir = process.cwd();
     let migrated = false;
 
-    const globalConfig = await ConfigLoader.loadMultiProviderConfig();
-    const migratedGlobal = this.migrate(globalConfig);
-    if (migratedGlobal !== globalConfig) {
-      await ConfigLoader.saveMultiProviderConfig(migratedGlobal);
-      migrated = true;
+    const hasGlobal = await ConfigLoader.hasGlobalConfig();
+    if (hasGlobal) {
+      const globalConfig = await ConfigLoader.loadMultiProviderConfig();
+      const migratedGlobal = this.migrate(globalConfig);
+      if (migratedGlobal !== globalConfig) {
+        await ConfigLoader.saveMultiProviderConfig(migratedGlobal);
+        migrated = true;
+      }
     }
 
     const hasLocal = await ConfigLoader.hasProjectConfig(workingDir);

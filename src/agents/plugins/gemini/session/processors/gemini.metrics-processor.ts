@@ -152,6 +152,10 @@ export class GeminiMetricsProcessor implements SessionProcessor {
             language?: string;
           }> = [];
 
+          if (!delta.tools) {
+            delta.tools = {};
+          }
+
           for (const tool of msg.toolCalls) {
             // Count tool usage (populate directly on delta.tools)
             delta.tools[tool.name] = (delta.tools[tool.name] || 0) + 1;

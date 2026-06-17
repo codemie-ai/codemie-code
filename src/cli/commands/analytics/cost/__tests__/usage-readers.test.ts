@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { readUsageByModel } from '../usage-readers.js';
+import { readUsageByModel, extractClaudeUsageRecords, gatherDedupedUsageRecords, sumUsageRecords, extractKimiUsageRecords } from '../usage-readers.js';
 
 const claudeParsed = {
   sessionId: 's1',
@@ -109,5 +109,173 @@ describe('readUsageByModel', () => {
 
   it('returns empty for an unsupported agent', () => {
     expect(readUsageByModel('mystery', claudeParsed).size).toBe(0);
+  });
+
+  it('reads Kimi usage.record events', () => {
+    const kimiParsed = {
+      sessionId: 's3',
+      agentName: 'kimi',
+      metadata: {},
+      messages: [
+        { type: 'usage.record', model: 'kimi-code/kimi-for-coding', usage: { inputOther: 5505, output: 235, inputCacheRead: 15616, inputCacheCreation: 0 }, time: 1781517531246 },
+        { type: 'usage.record', model: 'kimi-code/kimi-for-coding', usage: { inputOther: 8797, output: 144, inputCacheRead: 14336, inputCacheCreation: 0 }, time: 1781520494636 },
+        { type: 'context.append_loop_event', event: { type: 'tool.call', name: 'Read' } },
+      ],
+    } as never;
+
+    const m = readUsageByModel('kimi', kimiParsed);
+    const u = m.get('kimi-code/kimi-for-coding')!;
+    expect(u.input).toBe(14302);
+    expect(u.output).toBe(379);
+    expect(u.cacheRead).toBe(29952);
+    expect(u.cacheCreation).toBe(0);
+    expect(u.total).toBe(44633);
+  });
+
+  it('extracts Kimi usage records for per-turn cost series', () => {
+    const kimiParsed = {
+      sessionId: 's3',
+      agentName: 'kimi',
+      metadata: {},
+      messages: [
+        { type: 'usage.record', model: 'kimi-code/kimi-for-coding', usage: { inputOther: 100, output: 50, inputCacheRead: 10, inputCacheCreation: 5 }, time: 1781517531000 },
+        { type: 'usage.record', model: 'kimi-code/kimi-for-coding', usage: { inputOther: 200, output: 80, inputCacheRead: 20, inputCacheCreation: 0 }, time: 1781517532000 },
+      ],
+    } as never;
+
+    const recs = extractKimiUsageRecords(kimiParsed);
+    expect(recs).toHaveLength(2);
+    expect(recs[0].ts).toBe(1781517531000);
+    expect(recs[0].usage.total).toBe(165);
+    expect(recs[1].usage.total).toBe(300);
+    expect(recs[0].key).toBeNull();
+  });
+});
+
+describe('extractClaudeUsageRecords — timestamps', () => {
+  function parsed(messages: unknown[]): never {
+    return { sessionId: 's', agentName: 'claude', metadata: {}, messages, metrics: {} } as never;
+  }
+  it('captures the message timestamp as epoch ms', () => {
+    const recs = extractClaudeUsageRecords(parsed([
+      { timestamp: '2026-06-08T10:00:00Z', message: { id: 'm1', model: 'claude-sonnet-4-6', usage: { input_tokens: 10, output_tokens: 5 } } },
+    ]));
+    expect(recs).toHaveLength(1);
+    expect(recs[0].ts).toBe(Date.parse('2026-06-08T10:00:00Z'));
+  });
+  it('sets ts null when the timestamp is missing/unparseable', () => {
+    const recs = extractClaudeUsageRecords(parsed([
+      { message: { id: 'm2', model: 'claude-sonnet-4-6', usage: { input_tokens: 1, output_tokens: 1 } } },
+      { timestamp: 'not-a-date', message: { id: 'm3', model: 'claude-sonnet-4-6', usage: { input_tokens: 1, output_tokens: 1 } } },
+    ]));
+    expect(recs[0].ts).toBeNull();
+    expect(recs[1].ts).toBeNull();
+  });
+});
+
+describe('gatherDedupedUsageRecords + sumUsageRecords', () => {
+  function claude(messages: unknown[]): never {
+    return { sessionId: 's', agentName: 'claude', metadata: {}, messages, metrics: {} } as never;
+  }
+  const m = (id: string, ts: string, inp: number) => ({ timestamp: ts, requestId: 'r-' + id, message: { id, model: 'claude-sonnet-4-6', usage: { input_tokens: inp, output_tokens: 0 } } });
+
+  it('returns ordered records and dedupes by key across the shared seen set', () => {
+    const seen = new Set<string>();
+    const a = gatherDedupedUsageRecords('claude', claude([m('m1', '2026-06-08T10:00:00Z', 10), m('m2', '2026-06-08T10:01:00Z', 20)]), seen);
+    expect(a.map((r) => r.usage.input)).toEqual([10, 20]);
+    // a resumed log replays m2 — already seen ⇒ only the new m3 survives
+    const b = gatherDedupedUsageRecords('claude', claude([m('m2', '2026-06-08T10:01:00Z', 20), m('m3', '2026-06-08T10:02:00Z', 30)]), seen);
+    expect(b.map((r) => r.usage.input)).toEqual([30]);
+  });
+
+  it('returns [] for a non-Claude agent', () => {
+    expect(gatherDedupedUsageRecords('codex', claude([m('m1', '2026-06-08T10:00:00Z', 10)]), new Set())).toEqual([]);
+  });
+
+  it('sumUsageRecords reproduces per-model totals', () => {
+    const recs = gatherDedupedUsageRecords('claude', claude([m('m1', '2026-06-08T10:00:00Z', 10), m('m2', '2026-06-08T10:01:00Z', 20)]), new Set());
+    const map = sumUsageRecords(recs);
+    expect(map.get('claude-sonnet-4-6')!.input).toBe(30);
+  });
+});
+
+describe('extractClaudeUsageRecords — sub-agent transcripts', () => {
+  const msg = (id: string, model: string, input: number, ts?: string) => ({
+    ...(ts && { timestamp: ts }),
+    requestId: 'r-' + id,
+    message: { id, model, usage: { input_tokens: input, output_tokens: 0 } },
+  });
+  function parsed(
+    messages: unknown[],
+    subagents?: Array<{ agentId: string; filePath: string; messages: unknown[] }>
+  ): never {
+    return { sessionId: 's', agentName: 'claude', metadata: {}, messages, ...(subagents && { subagents }), metrics: {} } as never;
+  }
+
+  it('merges records from the main transcript and every sub-agent transcript', () => {
+    const p = parsed(
+      [msg('m1', 'claude-sonnet-4-6', 100)],
+      [
+        { agentId: 'a1', filePath: '/fake/s/subagents/agent-a1.jsonl', messages: [msg('s1', 'claude-sonnet-4-6', 200)] },
+        { agentId: 'a2', filePath: '/fake/s/subagents/agent-a2.jsonl', messages: [msg('s2', 'claude-sonnet-4-6', 300)] },
+      ]
+    );
+    const recs = extractClaudeUsageRecords(p);
+    expect(recs).toHaveLength(3);
+    expect(recs.reduce((n, r) => n + r.usage.input, 0)).toBe(600);
+  });
+
+  it('splits per-model totals when a sub-agent uses a different model', () => {
+    const p = parsed(
+      [msg('m1', 'claude-sonnet-4-6', 100)],
+      [{ agentId: 'a1', filePath: '/fake/agent-a1.jsonl', messages: [msg('s1', 'claude-haiku-4-5', 50)] }]
+    );
+    const map = readUsageByModel('claude', p);
+    expect(map.get('claude-sonnet-4-6')!.input).toBe(100);
+    expect(map.get('claude-haiku-4-5')!.input).toBe(50);
+  });
+
+  it('dedupes a response present in both main and a sub-agent file; unique sub-agent work still counts', () => {
+    const dup = msg('m1', 'claude-sonnet-4-6', 100);
+    const p = parsed(
+      [dup],
+      [{ agentId: 'a1', filePath: '/fake/agent-a1.jsonl', messages: [dup, msg('s1', 'claude-sonnet-4-6', 40)] }]
+    );
+    const recs = gatherDedupedUsageRecords('claude', p, new Set());
+    expect(recs.reduce((n, r) => n + r.usage.input, 0)).toBe(140); // not 240 (dup once), not 100 (sub-agent counted)
+  });
+
+  it('ignores a malformed sub-agent entry (non-array messages) without throwing', () => {
+    const p = parsed(
+      [msg('m1', 'claude-sonnet-4-6', 100)],
+      [{ agentId: 'bad', filePath: '/fake/agent-bad.jsonl', messages: 'corrupt' as never }]
+    );
+    expect(extractClaudeUsageRecords(p)).toHaveLength(1);
+  });
+
+  it('sessions without subagents behave exactly as before (regression guard)', () => {
+    const recs = extractClaudeUsageRecords(parsed([msg('m1', 'claude-sonnet-4-6', 100)]));
+    expect(recs).toHaveLength(1);
+    expect(recs[0].usage.input).toBe(100);
+  });
+
+  it('sorts merged records chronologically when every record is timed', () => {
+    const p = parsed(
+      [
+        msg('m1', 'claude-sonnet-4-6', 1, '2026-06-08T10:00:00Z'),
+        msg('m2', 'claude-sonnet-4-6', 2, '2026-06-08T10:04:00Z'),
+      ],
+      [{ agentId: 'a1', filePath: '/fake/agent-a1.jsonl', messages: [msg('s1', 'claude-sonnet-4-6', 3, '2026-06-08T10:02:00Z')] }]
+    );
+    // sub-agent record (10:02) lands between the two main records
+    expect(extractClaudeUsageRecords(p).map((r) => r.usage.input)).toEqual([1, 3, 2]);
+  });
+
+  it('keeps concatenation order (main first) when any record lacks a timestamp', () => {
+    const p = parsed(
+      [msg('m1', 'claude-sonnet-4-6', 1, '2026-06-08T10:04:00Z')],
+      [{ agentId: 'a1', filePath: '/fake/agent-a1.jsonl', messages: [msg('s1', 'claude-sonnet-4-6', 2)] }] // untimed
+    );
+    expect(extractClaudeUsageRecords(p).map((r) => r.usage.input)).toEqual([1, 2]);
   });
 });

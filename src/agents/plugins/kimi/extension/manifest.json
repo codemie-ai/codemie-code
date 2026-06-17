@@ -1,0 +1,8 @@
+{
+  "name": "codemie-kimi",
+  "displayName": "CodeMie",
+  "description": "Event-driven observability for Kimi CLI. Captures session events and syncs metrics/conversations to CodeMie platform.",
+  "version": "0.1.0",
+  "author": "AI/Run Team",
+  "homepage": "https://github.com/codemie-ai/codemie-code#readme"
+}

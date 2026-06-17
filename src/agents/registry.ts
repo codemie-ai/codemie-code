@@ -4,6 +4,8 @@ import { CodeMieCodePlugin } from './plugins/codemie-code.plugin.js';
 import { GeminiPlugin } from './plugins/gemini/gemini.plugin.js';
 import { OpenCodePlugin } from './plugins/opencode/index.js';
 import { CodexPlugin } from './plugins/codex/index.js';
+import { KimiPlugin } from './plugins/kimi/kimi.plugin.js';
+import { KimiAcpPlugin } from './plugins/kimi/kimi-acp.plugin.js';
 import { AgentAdapter, AgentAnalyticsAdapter } from './core/types.js';
 
 // Re-export for backwards compatibility
@@ -33,6 +35,8 @@ export class AgentRegistry {
     AgentRegistry.registerPlugin(new GeminiPlugin());
     AgentRegistry.registerPlugin(new OpenCodePlugin());
     AgentRegistry.registerPlugin(new CodexPlugin());
+    AgentRegistry.registerPlugin(new KimiPlugin());
+    AgentRegistry.registerPlugin(new KimiAcpPlugin());
 
     AgentRegistry.initialized = true;
   }

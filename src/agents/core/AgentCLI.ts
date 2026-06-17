@@ -16,6 +16,8 @@ import { GeminiPluginMetadata } from '../plugins/gemini/gemini.plugin.js';
 import { OpenCodePluginMetadata } from '../plugins/opencode/opencode.plugin.js';
 import {ClaudeAcpPluginMetadata} from "../plugins/claude/claude-acp.plugin.js";
 import { CodexPluginMetadata } from '../plugins/codex/codex.plugin.js';
+import { KimiPluginMetadata } from '../plugins/kimi/kimi.plugin.js';
+import { KimiAcpPluginMetadata } from '../plugins/kimi/kimi-acp.plugin.js';
 import { createAssistantsSetupCommand } from '../../cli/commands/assistants/setup/index.js';
 import { createSkillsSetupCommand } from '../../cli/commands/skills/setup/index.js';
 import type { TargetAgent } from '../../cli/commands/shared/agent-targets.js';
@@ -462,6 +464,8 @@ export class AgentCLI {
       'opencode': OpenCodePluginMetadata,
       'claude-acp': ClaudeAcpPluginMetadata,
       'codex': CodexPluginMetadata,
+      'kimi': KimiPluginMetadata,
+      'kimi-acp': KimiAcpPluginMetadata,
     };
     return metadataMap[this.adapter.name];
   }
