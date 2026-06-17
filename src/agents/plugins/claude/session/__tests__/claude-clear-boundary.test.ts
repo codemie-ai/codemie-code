@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isClearMessage, splitByClear } from '../claude-clear-boundary.js';
+import { trimByClear } from '../claude-clear-boundary.js';
 
 const xmlClear = {
   type: 'user',
@@ -21,71 +21,35 @@ const normalUser = {
 
 const assistant = { type: 'assistant', message: { role: 'assistant' } };
 
-describe('isClearMessage', () => {
-  it('detects string-content /clear', () => {
-    expect(isClearMessage(xmlClear)).toBe(true);
-  });
-
-  it('detects array text-block /clear', () => {
-    expect(isClearMessage(arrayXmlClear)).toBe(true);
-  });
-
-  it('returns false for a normal user message', () => {
-    expect(isClearMessage(normalUser)).toBe(false);
-  });
-
-  it('returns false for an assistant message', () => {
-    expect(isClearMessage(assistant)).toBe(false);
-  });
-
-  it('returns false for null / non-object', () => {
-    expect(isClearMessage(null)).toBe(false);
-    expect(isClearMessage('string')).toBe(false);
-  });
-});
-
-describe('splitByClear', () => {
-  it('returns one segment when there is no /clear', () => {
+describe('trimByClear', () => {
+  it('returns the original array unchanged when there is no /clear', () => {
     const msgs = [normalUser, assistant];
-    const result = splitByClear(msgs);
-    expect(result).toHaveLength(1);
-    expect(result[0]).toEqual([normalUser, assistant]);
+    expect(trimByClear(msgs)).toEqual([normalUser, assistant]);
   });
 
-  it('splits at a single /clear into two segments (clear itself excluded)', () => {
-    const msgs = [normalUser, assistant, xmlClear, normalUser, assistant];
-    const result = splitByClear(msgs);
-    expect(result).toHaveLength(2);
-    expect(result[0]).toEqual([normalUser, assistant]);
-    expect(result[1]).toEqual([normalUser, assistant]);
+  it('returns messages after the /clear sentinel (sentinel excluded)', () => {
+    // Real-world shape: post-/clear file starts with the sentinel, then new messages
+    const msgs = [xmlClear, normalUser, assistant];
+    expect(trimByClear(msgs)).toEqual([normalUser, assistant]);
   });
 
-  it('splits at two /clears into three segments', () => {
+  it('trims to after the LAST sentinel when multiple are present', () => {
     const a = { type: 'user', message: { role: 'user', content: 'task a' } };
     const b = { type: 'user', message: { role: 'user', content: 'task b' } };
-    const c = { type: 'user', message: { role: 'user', content: 'task c' } };
-    const msgs = [a, assistant, xmlClear, b, assistant, xmlClear, c, assistant];
-    const result = splitByClear(msgs);
-    expect(result).toHaveLength(3);
-    expect(result[0]).toEqual([a, assistant]);
-    expect(result[1]).toEqual([b, assistant]);
-    expect(result[2]).toEqual([c, assistant]);
+    const msgs = [normalUser, assistant, xmlClear, a, assistant, xmlClear, b, assistant];
+    expect(trimByClear(msgs)).toEqual([b, assistant]);
   });
 
-  it('produces an empty last segment when /clear is the final message', () => {
-    const msgs = [normalUser, assistant, xmlClear];
-    const result = splitByClear(msgs);
-    expect(result).toHaveLength(2);
-    expect(result[1]).toEqual([]);
+  it('returns an empty array when /clear is the final message', () => {
+    expect(trimByClear([normalUser, assistant, xmlClear])).toEqual([]);
   });
 
   it('handles array-content /clear the same as string-content', () => {
-    const msgs = [normalUser, assistant, arrayXmlClear, normalUser];
-    const result = splitByClear(msgs);
-    expect(result).toHaveLength(2);
+    const msgs = [arrayXmlClear, normalUser, assistant];
+    expect(trimByClear(msgs)).toEqual([normalUser, assistant]);
   });
 
-  it('returns [[]] for an empty array', () => {
-    expect(splitByClear([])).toEqual([[]]);
+  it('returns an empty array unchanged', () => {
+    expect(trimByClear([])).toEqual([]);
   });
 });

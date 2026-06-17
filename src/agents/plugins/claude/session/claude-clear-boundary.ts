@@ -1,51 +1,35 @@
-/**
- * Returns true when `msg` is the /clear sentinel written by Claude Code.
- *
- * Claude Code encodes slash commands as XML inside the user message content:
- *   string form:  "<command-name>/clear</command-name>"
- *   array form:   [{ type: "text", text: "<command-name>/clear</command-name>" }]
- */
-export function isClearMessage(msg: unknown): boolean {
-  if (!msg || typeof msg !== 'object') return false;
-  const m = msg as Record<string, unknown>;
-  if (m.type !== 'user') return false;
-  const content = (m.message as Record<string, unknown> | undefined)?.content;
-  if (typeof content === 'string') {
-    return content.includes('<command-name>/clear</command-name>');
-  }
-  if (Array.isArray(content)) {
-    return content.some(
-      (b) =>
-        b &&
-        typeof b === 'object' &&
-        (b as Record<string, unknown>).type === 'text' &&
-        typeof (b as Record<string, unknown>).text === 'string' &&
-        ((b as Record<string, unknown>).text as string).includes(
-          '<command-name>/clear</command-name>'
-        )
-    );
-  }
-  return false;
-}
+const CLEAR_MARKER = '<command-name>/clear</command-name>';
 
 /**
- * Splits `messages` at every /clear sentinel into sub-conversation segments.
- * The /clear message itself is excluded from all segments.
+ * Returns `messages` with everything up to and including the last /clear sentinel removed.
  *
- * - No /clear → returns `[[...all messages]]` (one segment, original behaviour).
- * - N /clears → returns N+1 segments (some may be empty if /clear was at the boundary).
+ * Claude Code writes the /clear sentinel into the NEW session file it creates on /clear — not the
+ * old one. So the sentinel is always the first meaningful entry in a post-/clear transcript. This
+ * function strips it (and any metadata before it) so it is never mistaken for a real user prompt.
+ *
+ * - No /clear → returns the original array unchanged.
+ * - /clear present → returns only messages that follow the last sentinel.
  */
-export function splitByClear(messages: unknown[]): unknown[][] {
-  const segments: unknown[][] = [];
-  let current: unknown[] = [];
-  for (const msg of messages) {
-    if (isClearMessage(msg)) {
-      segments.push(current);
-      current = [];
-    } else {
-      current.push(msg);
-    }
+export function trimByClear(messages: unknown[]): unknown[] {
+  let start = 0;
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    if (!m || typeof m !== 'object') continue;
+    const r = m as Record<string, unknown>;
+    if (r.type !== 'user') continue;
+    const content = (r.message as Record<string, unknown> | undefined)?.content;
+    const isClear =
+      (typeof content === 'string' && content.includes(CLEAR_MARKER)) ||
+      (Array.isArray(content) &&
+        content.some(
+          (b) =>
+            b &&
+            typeof b === 'object' &&
+            (b as Record<string, unknown>).type === 'text' &&
+            typeof (b as Record<string, unknown>).text === 'string' &&
+            ((b as Record<string, unknown>).text as string).includes(CLEAR_MARKER)
+        ));
+    if (isClear) start = i + 1;
   }
-  segments.push(current);
-  return segments;
+  return start === 0 ? messages : messages.slice(start);
 }

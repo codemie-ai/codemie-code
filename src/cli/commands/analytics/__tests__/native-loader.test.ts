@@ -32,7 +32,7 @@ const descriptor = {
 
 describe('synthesizeRawSession', () => {
   it('maps a parsed native session into RawSessionData', () => {
-    const [raw] = synthesizeRawSession('claude', descriptor, parsed);
+    const raw = synthesizeRawSession('claude', descriptor, parsed);
     expect(raw.sessionId).toBe('sx');
     expect(raw.agentSessionFile).toBe('/logs/sx.jsonl'); // lets the enricher price it
     // real cwd from messages wins over the lossy decoded descriptor hint
@@ -63,14 +63,14 @@ describe('synthesizeRawSession', () => {
         commandInvocations: { analytics: 3 },
       },
     } as never;
-    const [raw] = synthesizeRawSession('claude', descriptor, withNames);
+    const raw = synthesizeRawSession('claude', descriptor, withNames);
     expect(raw.deltas[0].skillInvocations).toEqual({ 'codemie:msgraph': 2 });
     expect(raw.deltas[0].agentInvocations).toEqual({ Explore: 1 });
     expect(raw.deltas[0].commandInvocations).toEqual({ analytics: 3 });
   });
 
   it('omits named-invocation fields when parsed.metrics has none', () => {
-    const [raw] = synthesizeRawSession('claude', descriptor, parsed);
+    const raw = synthesizeRawSession('claude', descriptor, parsed);
     expect(raw.deltas[0].skillInvocations).toBeUndefined();
     expect(raw.deltas[0].agentInvocations).toBeUndefined();
     expect(raw.deltas[0].commandInvocations).toBeUndefined();
@@ -78,7 +78,7 @@ describe('synthesizeRawSession', () => {
 
   it('falls back to descriptor when messages lack cwd/timestamps', () => {
     const bare = { sessionId: 'b', agentName: 'claude', metadata: {}, messages: [], metrics: {} } as never;
-    const [raw] = synthesizeRawSession('claude', { ...descriptor, sessionId: 'b' }, bare);
+    const raw = synthesizeRawSession('claude', { ...descriptor, sessionId: 'b' }, bare);
     expect(raw.startEvent!.data.workingDirectory).toBe('/decoded/hint');
     expect(raw.startEvent!.data.startTime).toBe(1000); // descriptor.createdAt
     expect(raw.deltas).toHaveLength(1); // turns floored at 1
@@ -93,7 +93,7 @@ describe('synthesizeRawSession — opening prompt (native session-title source)'
   const assistant = { type: 'assistant', timestamp: '2026-06-08T10:00:00Z', message: { role: 'assistant', model: 'claude-sonnet-4-6' } };
 
   it('captures the first string-content user message as the opening prompt', () => {
-    const [raw] = synthesizeRawSession('claude', desc, parsedWith([
+    const raw = synthesizeRawSession('claude', desc, parsedWith([
       { type: 'user', message: { role: 'user', content: 'add a dark mode toggle' } },
       assistant,
     ]));
@@ -101,7 +101,7 @@ describe('synthesizeRawSession — opening prompt (native session-title source)'
   });
 
   it('captures the first text block from an array-content user message', () => {
-    const [raw] = synthesizeRawSession('claude', desc, parsedWith([
+    const raw = synthesizeRawSession('claude', desc, parsedWith([
       { type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'fix the failing build' }] } },
       assistant,
     ]));
@@ -109,7 +109,7 @@ describe('synthesizeRawSession — opening prompt (native session-title source)'
   });
 
   it('skips a tool_result user message and uses the next real user prompt', () => {
-    const [raw] = synthesizeRawSession('claude', desc, parsedWith([
+    const raw = synthesizeRawSession('claude', desc, parsedWith([
       { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: 'cmd output' }] } },
       assistant,
       { type: 'user', message: { role: 'user', content: [{ type: 'text', text: 'now refactor the enricher' }] } },
@@ -118,7 +118,7 @@ describe('synthesizeRawSession — opening prompt (native session-title source)'
   });
 
   it('omits userPrompts when there is no user text (assistant-only / empty messages)', () => {
-    const [raw] = synthesizeRawSession('claude', desc, parsedWith([assistant]));
+    const raw = synthesizeRawSession('claude', desc, parsedWith([assistant]));
     expect(raw.deltas[0].userPrompts).toBeUndefined();
   });
 });
@@ -159,133 +159,23 @@ describe('loadNativeSessions', () => {
   });
 });
 
-describe('synthesizeRawSession — /clear segment splitting', () => {
-  const base = {
-    sessionId: 'clr',
-    agentName: 'claude',
-    metadata: {},
-    metrics: { tools: { Read: 3 }, toolStatus: undefined, fileOperations: [] },
-  };
-
+describe('synthesizeRawSession — /clear sentinel in post-/clear file', () => {
   const desc = { ...descriptor, sessionId: 'clr', filePath: '/logs/clr.jsonl' };
+  const assistant = { type: 'assistant', timestamp: '2026-01-01T10:01:00Z', message: { role: 'assistant', model: 'claude-sonnet-4-6' } };
+  const clearSentinel = { type: 'user', timestamp: '2026-01-01T10:00:00Z', message: { role: 'user', content: '<command-name>/clear</command-name>' } };
 
-  function userMsg(text: string, ts: string) {
-    return { type: 'user', timestamp: ts, message: { role: 'user', content: text }, cwd: '/repo', gitBranch: 'main' };
-  }
-  function assistantMsg(ts: string) {
-    return { type: 'assistant', timestamp: ts, message: { role: 'assistant', model: 'claude-sonnet-4-6' } };
-  }
-  function clearMsg(ts: string) {
-    return { type: 'user', timestamp: ts, message: { role: 'user', content: '<command-name>/clear</command-name>' } };
-  }
-
-  it('returns a single-element array when there is no /clear (backward compat)', () => {
+  it('strips the /clear sentinel so it does not appear as the opening prompt', () => {
     const p = {
-      ...base,
-      messages: [userMsg('task one', '2026-01-01T10:00:00Z'), assistantMsg('2026-01-01T10:01:00Z')],
-    } as never;
-    const result = synthesizeRawSession('claude', desc, p);
-    expect(result).toHaveLength(1);
-    expect(result[0].sessionId).toBe('clr');
-  });
-
-  it('returns two sessions when there is one /clear, each with correct turn count', () => {
-    const p = {
-      ...base,
+      sessionId: 'clr', agentName: 'claude', metadata: {},
+      metrics: { tools: {} },
       messages: [
-        userMsg('task A', '2026-01-01T10:00:00Z'),
-        assistantMsg('2026-01-01T10:01:00Z'),
-        assistantMsg('2026-01-01T10:02:00Z'),
-        clearMsg('2026-01-01T10:03:00Z'),
-        userMsg('task B', '2026-01-01T10:04:00Z'),
-        assistantMsg('2026-01-01T10:05:00Z'),
+        clearSentinel,
+        { type: 'user', timestamp: '2026-01-01T10:01:00Z', message: { role: 'user', content: 'actual prompt' } },
+        assistant,
       ],
     } as never;
-    const result = synthesizeRawSession('claude', desc, p);
-    expect(result).toHaveLength(2);
-    // first segment: 2 assistant messages → 2 deltas
-    expect(result[0].deltas).toHaveLength(2);
-    expect(result[0].endEvent!.data.totalTurns).toBe(2);
-    // second segment: 1 assistant message → 1 delta
-    expect(result[1].deltas).toHaveLength(1);
-    expect(result[1].endEvent!.data.totalTurns).toBe(1);
-  });
-
-  it('assigns -seg-N session IDs when there are multiple segments', () => {
-    const p = {
-      ...base,
-      messages: [
-        userMsg('seg 0', '2026-01-01T10:00:00Z'),
-        assistantMsg('2026-01-01T10:01:00Z'),
-        clearMsg('2026-01-01T10:02:00Z'),
-        userMsg('seg 1', '2026-01-01T10:03:00Z'),
-        assistantMsg('2026-01-01T10:04:00Z'),
-      ],
-    } as never;
-    const result = synthesizeRawSession('claude', desc, p);
-    expect(result[0].sessionId).toBe('clr-seg-0');
-    expect(result[1].sessionId).toBe('clr-seg-1');
-  });
-
-  it('each segment uses timestamps from its own messages', () => {
-    const p = {
-      ...base,
-      messages: [
-        userMsg('before', '2026-01-01T08:00:00Z'),
-        assistantMsg('2026-01-01T08:01:00Z'),
-        clearMsg('2026-01-01T09:00:00Z'),
-        userMsg('after', '2026-01-01T10:00:00Z'),
-        assistantMsg('2026-01-01T10:05:00Z'),
-      ],
-    } as never;
-    const result = synthesizeRawSession('claude', desc, p);
-    expect(result[0].startEvent!.data.startTime).toBe(Date.parse('2026-01-01T08:00:00Z'));
-    expect(result[0].endEvent!.data.endTime).toBe(Date.parse('2026-01-01T08:01:00Z'));
-    expect(result[1].startEvent!.data.startTime).toBe(Date.parse('2026-01-01T10:00:00Z'));
-    expect(result[1].endEvent!.data.endTime).toBe(Date.parse('2026-01-01T10:05:00Z'));
-  });
-
-  it('each segment has its own opening prompt', () => {
-    const p = {
-      ...base,
-      messages: [
-        userMsg('prompt before clear', '2026-01-01T08:00:00Z'),
-        assistantMsg('2026-01-01T08:01:00Z'),
-        clearMsg('2026-01-01T09:00:00Z'),
-        userMsg('prompt after clear', '2026-01-01T10:00:00Z'),
-        assistantMsg('2026-01-01T10:01:00Z'),
-      ],
-    } as never;
-    const result = synthesizeRawSession('claude', desc, p);
-    expect(result[0].deltas[0].userPrompts?.[0].text).toBe('prompt before clear');
-    expect(result[1].deltas[0].userPrompts?.[0].text).toBe('prompt after clear');
-  });
-
-  it('loadNativeSessions flattens multi-segment sessions into the output array', async () => {
-    const deps: NativeLoaderDeps = {
-      trackedLogPaths: () => new Set(),
-      discover: async () => [
-        { agentName: 'claude', descriptor: { sessionId: 'multi', filePath: '/logs/multi.jsonl', createdAt: 1, agentName: 'claude' } },
-      ],
-      parse: async (_agent, _filePath, sessionId) =>
-        ({
-          sessionId,
-          agentName: 'claude',
-          metadata: {},
-          messages: [
-            { type: 'user', timestamp: '2026-01-01T08:00:00Z', message: { role: 'user', content: 'seg 0' } },
-            { type: 'assistant', timestamp: '2026-01-01T08:01:00Z', message: { role: 'assistant', model: 'claude-sonnet-4-6' } },
-            { type: 'user', timestamp: '2026-01-01T09:00:00Z', message: { role: 'user', content: '<command-name>/clear</command-name>' } },
-            { type: 'user', timestamp: '2026-01-01T10:00:00Z', message: { role: 'user', content: 'seg 1' } },
-            { type: 'assistant', timestamp: '2026-01-01T10:01:00Z', message: { role: 'assistant', model: 'claude-sonnet-4-6' } },
-          ],
-          metrics: { tools: {} },
-        }) as never,
-      realPath: (p) => p,
-    };
-    const out = await loadNativeSessions(undefined, deps);
-    expect(out).toHaveLength(2);
-    expect(out[0].sessionId).toBe('multi-seg-0');
-    expect(out[1].sessionId).toBe('multi-seg-1');
+    const raw = synthesizeRawSession('claude', desc, p);
+    expect(raw.sessionId).toBe('clr');
+    expect(raw.deltas[0].userPrompts?.[0].text).toBe('actual prompt');
   });
 });

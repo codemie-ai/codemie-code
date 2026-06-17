@@ -1,5 +1,6 @@
 /**
- * Verifies that MetricsProcessor only processes messages from the last /clear segment.
+ * Verifies that MetricsProcessor strips the /clear sentinel written by Claude Code into
+ * the new session file on /clear, so it is never counted as a user prompt or processed turn.
  * Uses the same temp-home harness as claude.metrics-processor-names.test.ts.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -53,7 +54,7 @@ function makeClearMsg() {
   };
 }
 
-describe('MetricsProcessor — /clear boundary', () => {
+describe('MetricsProcessor — /clear sentinel stripping', () => {
   let tempHome: string;
   let originalCodemieHome: string | undefined;
 
@@ -120,52 +121,33 @@ describe('MetricsProcessor — /clear boundary', () => {
     expect(deltas).toHaveLength(2);
   });
 
-  it('only produces deltas for assistant messages after the last /clear', async () => {
-    // 2 turns before /clear, 1 turn after — should see 1 delta (not 3)
+  it('strips the /clear sentinel and does not count it as a prompt', async () => {
+    // Real-world shape: post-/clear file has the sentinel as its first user message
     const msgs = [
-      makeUserMsg('u1', 'pre-clear prompt one'),
-      makeAssistantMsg('a1'),
-      makeUserMsg('u2', 'pre-clear prompt two'),
-      makeAssistantMsg('a2'),
       makeClearMsg(),
-      makeUserMsg('u3', 'post-clear prompt'),
-      makeAssistantMsg('a3'),
+      makeUserMsg('u1', 'post-clear prompt'),
+      makeAssistantMsg('a1'),
     ];
     const deltas = await runProcessor(msgs);
     expect(deltas).toHaveLength(1);
-    expect(deltas[0].recordId).toBe('a3');
-  });
-
-  it('attaches only post-clear user prompts to the first delta', async () => {
-    const msgs = [
-      makeUserMsg('u1', 'pre-clear prompt'),
-      makeAssistantMsg('a1'),
-      makeClearMsg(),
-      makeUserMsg('u2', 'post-clear prompt'),
-      makeAssistantMsg('a2'),
-    ];
-    const deltas = await runProcessor(msgs);
-    expect(deltas).toHaveLength(1);
+    expect(deltas[0].recordId).toBe('a1');
     const promptTexts = (deltas[0].userPrompts as Array<{ text: string }> | undefined)?.map(
       (p) => p.text
     );
     expect(promptTexts).toEqual(['post-clear prompt']);
   });
 
-  it('handles multiple /clears — only the last segment counts', async () => {
+  it('strips up to the last sentinel when the file somehow contains more than one', async () => {
     const msgs = [
-      makeUserMsg('u1', 'segment 1'),
+      makeClearMsg(),
+      makeUserMsg('u1', 'middle prompt'),
       makeAssistantMsg('a1'),
       makeClearMsg(),
-      makeUserMsg('u2', 'segment 2'),
+      makeUserMsg('u2', 'final prompt'),
       makeAssistantMsg('a2'),
-      makeAssistantMsg('a3'),
-      makeClearMsg(),
-      makeUserMsg('u3', 'segment 3'),
-      makeAssistantMsg('a4'),
     ];
     const deltas = await runProcessor(msgs);
     expect(deltas).toHaveLength(1);
-    expect(deltas[0].recordId).toBe('a4');
+    expect(deltas[0].recordId).toBe('a2');
   });
 });

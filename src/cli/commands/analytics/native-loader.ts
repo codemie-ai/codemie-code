@@ -22,7 +22,7 @@ import type { SessionDescriptor } from '../../../agents/core/session/discovery-t
 import { AgentRegistry } from '../../../agents/registry.js';
 import { getCodemiePath } from '../../../utils/paths.js';
 import { logger } from '../../../utils/logger.js';
-import { splitByClear } from '../../../agents/plugins/claude/session/claude-clear-boundary.js';
+import { trimByClear } from '../../../agents/plugins/claude/session/claude-clear-boundary.js';
 
 /** Agents whose native logs we discover + synthesize. (claude is the gap users hit.) */
 const NATIVE_AGENTS = ['claude'] as const;
@@ -268,33 +268,19 @@ function buildSegmentData(
 }
 
 /**
- * Synthesize one or more {@link RawSessionData} from a parsed native session. Each /clear boundary
- * in the transcript produces a separate logical session so the Session Depth widget counts segments
- * independently instead of summing all turns. Returns a single-element array when there is no /clear
- * (backward-compatible).
+ * Synthesize a {@link RawSessionData} from a parsed native session.
+ *
+ * A post-/clear file starts with the /clear sentinel as its first user message (Claude Code writes
+ * it there). We strip it — and anything before it — by keeping only the last splitByClear segment,
+ * so the /clear command is never mistaken for the session's opening prompt.
  */
 export function synthesizeRawSession(
   agentName: string,
   descriptor: SessionDescriptor,
   parsed: ParsedSession
-): RawSessionData[] {
-  const allMessages = (parsed.messages ?? []) as RawMessage[];
-  const segments = splitByClear(allMessages) as RawMessage[][];
-
-  if (segments.length === 1) {
-    return [buildSegmentData(agentName, descriptor.sessionId, descriptor, parsed, segments[0], true)];
-  }
-
-  return segments.map((seg, n) =>
-    buildSegmentData(
-      agentName,
-      `${descriptor.sessionId}-seg-${n}`,
-      descriptor,
-      parsed,
-      seg,
-      n === 0
-    )
-  );
+): RawSessionData {
+  const messages = trimByClear((parsed.messages ?? []) as RawMessage[]) as RawMessage[];
+  return buildSegmentData(agentName, descriptor.sessionId, descriptor, parsed, messages, true);
 }
 
 /** Number of days from a filter's fromDate to now (for the discovery window), or a wide default. */
@@ -327,7 +313,7 @@ export async function loadNativeSessions(
     if (!parsed) {
       continue;
     }
-    out.push(...synthesizeRawSession(agentName, descriptor, parsed));
+    out.push(synthesizeRawSession(agentName, descriptor, parsed));
   }
   return out;
 }
