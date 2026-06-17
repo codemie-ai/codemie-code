@@ -21,10 +21,10 @@ export async function fetchJwtToken(): Promise<string> {
   const username = process.env.CI_CODEMIE_USERNAME?.trim();
   const password = process.env.CI_CODEMIE_PASSWORD?.trim();
   if (!username || !password)
-    throw new Error('CI_CODEMIE_USERNAME and CI_CODEMIE_PASSWORD');
+    throw new Error('CI_CODEMIE_USERNAME and CI_CODEMIE_PASSWORD should be set in .env.test.local or env variables');
 
   const authUrlRaw = process.env.CI_CODEMIE_AUTH_URL?.trim();
-  if (!authUrlRaw) throw new Error('CI_CODEMIE_AUTH_URL must be set in .env.test.local');
+  if (!authUrlRaw) throw new Error('CI_CODEMIE_AUTH_URL must be set in .env.test.local or env variables');
   const authUrl = `${authUrlRaw.replace(/\/$/, '')}/realms/codemie-prod/protocol/openid-connect/token`;
 
   const resp = await fetch(authUrl, {
@@ -84,7 +84,7 @@ export interface JwtProfileOverrides {
 export function writeJwtProfile(codemieHome: string, overrides: JwtProfileOverrides = {}): void {
   const profileName = overrides.profileName ?? 'jwt-autotest';
   const authUrlRaw = process.env.CI_CODEMIE_AUTH_URL?.trim();
-  if (!authUrlRaw) throw new Error('CI_CODEMIE_AUTH_URL must be set in .env.test.local');
+  if (!authUrlRaw) throw new Error('CI_CODEMIE_AUTH_URL must be set in .env.test.local or env variables');
   const authBase = authUrlRaw.replace(/\/$/, '');
   const profile: Record<string, string> = {
     name: profileName,
