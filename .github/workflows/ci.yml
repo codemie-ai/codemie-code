@@ -193,6 +193,7 @@ jobs:
           CI_CODEMIE_MODEL: ${{ vars.CI_CODEMIE_MODEL }}
           CI_CODEMIE_URL: ${{ vars.CI_CODEMIE_URL }}
           CI_IS_LOCAL_RUN: ${{ vars.CI_IS_LOCAL_RUN }}
+          CI_AGENT_MAX_WORKERS: ${{ vars.CI_AGENT_MAX_WORKERS }}
         run: npm run test:integration:agent -- tests/integration/agent-task-session.test.ts
 
   test-windows:
@@ -238,4 +239,5 @@ jobs:
           CI_CODEMIE_MODEL: ${{ vars.CI_CODEMIE_MODEL }}
           CI_CODEMIE_URL: ${{ vars.CI_CODEMIE_URL }}
           CI_IS_LOCAL_RUN: ${{ vars.CI_IS_LOCAL_RUN }}
+          CI_AGENT_MAX_WORKERS: ${{ vars.CI_AGENT_MAX_WORKERS }}
         run: npm run test:integration:agent -- tests/integration/agent-task-session.test.ts
