@@ -93,8 +93,8 @@ jobs:
   secrets-detection:
     name: Secrets Detection
     runs-on: ubuntu-latest
-    # Run in parallel with validate-commits
-    if: github.event_name == 'pull_request' || github.event_name == 'pull_request_target'
+    # Run in parallel with validate-commits (pull_request_target not supported by gitleaks-action)
+    if: github.event_name == 'pull_request'
 
     steps:
       - name: Checkout code
