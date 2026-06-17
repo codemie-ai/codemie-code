@@ -5,8 +5,6 @@ on:
     branches: [ 'main' ]
   pull_request:
     branches: [ '**' ]
-  pull_request_target:
-    branches: [ '**' ]
   workflow_call:
 
 jobs:
@@ -14,7 +12,7 @@ jobs:
   validate-commits:
     name: Validate Commits & PR
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' || github.event_name == 'pull_request_target'
+    if: github.event_name == 'pull_request'
 
     steps:
       - name: Checkout code
@@ -187,6 +185,12 @@ jobs:
         env:
           CI_CODEMIE_USERNAME: ${{ secrets.CI_CODEMIE_USERNAME }}
           CI_CODEMIE_PASSWORD: ${{ secrets.CI_CODEMIE_PASSWORD }}
+          CI_AGENT_MAX_WORKERS: ${{ secrets.CI_AGENT_MAX_WORKERS }}
+          CI_CODEMIE_AUTH_CLIENT_ID: ${{ secrets.CI_CODEMIE_AUTH_CLIENT_ID }}
+          CI_CODEMIE_AUTH_URL: ${{ secrets.CI_CODEMIE_AUTH_URL }}
+          CI_CODEMIE_MODEL: ${{ secrets.CI_CODEMIE_MODEL }}
+          CI_CODEMIE_URL: ${{ secrets.CI_CODEMIE_URL }}
+          CI_IS_LOCAL_RUN: ${{ secrets.CI_IS_LOCAL_RUN }}
         run: npm run test:integration
 
   test-windows:
@@ -224,4 +228,10 @@ jobs:
         env:
           CI_CODEMIE_USERNAME: ${{ secrets.CI_CODEMIE_USERNAME }}
           CI_CODEMIE_PASSWORD: ${{ secrets.CI_CODEMIE_PASSWORD }}
+          CI_AGENT_MAX_WORKERS: ${{ secrets.CI_AGENT_MAX_WORKERS }}
+          CI_CODEMIE_AUTH_CLIENT_ID: ${{ secrets.CI_CODEMIE_AUTH_CLIENT_ID }}
+          CI_CODEMIE_AUTH_URL: ${{ secrets.CI_CODEMIE_AUTH_URL }}
+          CI_CODEMIE_MODEL: ${{ secrets.CI_CODEMIE_MODEL }}
+          CI_CODEMIE_URL: ${{ secrets.CI_CODEMIE_URL }}
+          CI_IS_LOCAL_RUN: ${{ secrets.CI_IS_LOCAL_RUN }}
         run: npm run test:integration
