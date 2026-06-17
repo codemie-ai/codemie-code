@@ -75,6 +75,8 @@ export class AgentCLI {
       .option('--timeout <seconds>', 'Override timeout (in seconds)', parseInt)
       .option('--jwt-token <token>', 'JWT token for authentication (overrides config)')
       .option('--task <prompt>', 'Execute a single task (agent-specific flag mapping)')
+      .option('--reasoning-effort <level>', 'Reasoning/thinking effort: minimal|low|medium|high|xhigh|max')
+      .option('--resume <session-id>', 'Resume an existing session by ID')
       .allowUnknownOption()
       .argument('[args...]', `Arguments to pass to ${this.adapter.displayName}`)
       .action(async (args, options) => {
@@ -180,7 +182,8 @@ export class AgentCLI {
         model: options.model as string | undefined,
         apiKey: options.apiKey as string | undefined,
         baseUrl: options.baseUrl as string | undefined,
-        timeout: options.timeout as number | undefined
+        timeout: options.timeout as number | undefined,
+        reasoningEffort: options.reasoningEffort as import('./types.js').CanonicalReasoningEffort | undefined,
       });
 
       // JWT token from CLI overrides everything
@@ -204,6 +207,25 @@ export class AgentCLI {
             : ensureApiBase(DEFAULT_CODEMIE_BASE_URL);
         }
         config.authMethod = 'jwt';
+      }
+
+      // Validate --reasoning-effort (catches both CLI flag and profile defaults)
+      if (config.reasoningEffort) {
+        const { normalizeReasoningEffort } = await import('./reasoning-effort.js');
+        const normalized = normalizeReasoningEffort(config.reasoningEffort);
+        if (!normalized) {
+          console.error(chalk.red(`\n✗ Invalid --reasoning-effort '${config.reasoningEffort}'`));
+          console.error(chalk.white('  Valid values: minimal, low, medium, high, xhigh, max\n'));
+          logger.error(`Invalid --reasoning-effort value '${config.reasoningEffort}'`);
+          process.exit(1);
+        }
+        config.reasoningEffort = normalized;
+      }
+
+      // Validate --resume (must have a non-empty value when specified)
+      if (options.resume !== undefined && !options.resume) {
+        console.error(chalk.red('\n✗ --resume requires a session id\n'));
+        process.exit(1);
       }
 
       // Validate essential configuration
@@ -430,7 +452,7 @@ export class AgentCLI {
   ): string[] {
     const agentArgs = [...args];
     // Config-only options (not passed to agent, handled by CodeMie CLI)
-    const configOnlyOptions = ['profile', 'provider', 'apiKey', 'baseUrl', 'timeout', 'model', 'silent', 'status', 'jwtToken'];
+    const configOnlyOptions = ['profile', 'provider', 'apiKey', 'baseUrl', 'timeout', 'model', 'silent', 'status', 'jwtToken', 'reasoningEffort'];
 
     for (const [key, value] of Object.entries(options)) {
       // Skip config-only options (handled by CodeMie CLI layer)

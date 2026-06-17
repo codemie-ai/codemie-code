@@ -1345,6 +1345,7 @@ export class ConfigLoader {
     env.CODEMIE_API_KEY = apiKeyValue;
 
     if (config.model) env.CODEMIE_MODEL = config.model;
+    if (config.reasoningEffort) env.CODEMIE_REASONING_EFFORT = config.reasoningEffort;
     if (config.haikuModel) env.CODEMIE_HAIKU_MODEL = config.haikuModel;
     if (config.sonnetModel) env.CODEMIE_SONNET_MODEL = config.sonnetModel;
     if (config.opusModel) env.CODEMIE_OPUS_MODEL = config.opusModel;
