@@ -141,6 +141,15 @@ export const CodexPluginMetadata: AgentMetadata = {
     clientType: 'codemie-codex',
   },
 
+  reasoningEffort: {
+    strategy: 'cli-config',
+    configFlag: '--config',
+    configKey: 'model_reasoning_effort',
+    placement: 'prepend',
+    supportedLevels: ['minimal', 'low', 'medium', 'high', 'xhigh'],
+    userOverrideFlags: ['model_reasoning_effort'],
+  },
+
   lifecycle: {
     /**
      * Keep CodeMie-managed Codex state separate from native Codex state.
@@ -240,17 +249,28 @@ export const CodexPluginMetadata: AgentMetadata = {
     enrichArgs(args: string[], config: AgentConfig) {
       let enriched = args;
 
-      // 1. Transform --task <value> → exec <value> (non-interactive subcommand)
+      // 1. Handle --resume and --task to build the correct subcommand.
+      const resumeIdx = enriched.indexOf('--resume');
+      const resumeId = resumeIdx !== -1 && resumeIdx < enriched.length - 1
+        ? enriched[resumeIdx + 1]
+        : undefined;
+
+      // Strip --resume <id> pair before subcommand construction
+      if (resumeId) {
+        enriched = [...enriched.slice(0, resumeIdx), ...enriched.slice(resumeIdx + 2)];
+      }
+
       const taskIndex = enriched.indexOf('--task');
       if (taskIndex !== -1 && taskIndex < enriched.length - 1) {
         const taskValue = enriched[taskIndex + 1];
-        enriched = [
-          'exec',
-          ...enriched.slice(0, taskIndex),
-          ...enriched.slice(taskIndex + 2),
-          taskValue,
-        ];
+        const rest = [...enriched.slice(0, taskIndex), ...enriched.slice(taskIndex + 2)];
+        const head = resumeId ? ['exec', 'resume', resumeId] : ['exec'];
+        enriched = [...head, ...rest, taskValue];
+      } else if (resumeId) {
+        // Interactive resume: no --task present → top-level codex resume <id>
+        enriched = ['resume', resumeId, ...enriched];
       }
+      // else: no --task, no --resume → existing interactive behavior (unchanged)
 
       // 2. Inject model via --model when not already overridden.
       const explicitModel = getExplicitModelArg(enriched);
