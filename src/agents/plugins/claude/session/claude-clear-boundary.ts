@@ -1,14 +1,4 @@
 /**
- * Utilities for detecting /clear command boundaries in Claude session transcripts.
- *
- * /clear does not create a new session file — it appends a sentinel user message to the
- * existing JSONL transcript. Claude Code fires a real SessionEnd (reason: "clear") + a
- * new SessionStart, so the hook layer correctly splits the session files. The remaining
- * bug is that MetricsProcessor and native-loader receive the full flat transcript and
- * must themselves ignore messages that already belong to a completed sub-session.
- */
-
-/**
  * Returns true when `msg` is the /clear sentinel written by Claude Code.
  *
  * Claude Code encodes slash commands as XML inside the user message content:

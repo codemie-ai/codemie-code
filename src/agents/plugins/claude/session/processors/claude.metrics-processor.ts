@@ -157,8 +157,6 @@ export class MetricsProcessor implements SessionProcessor {
     processedIds: Set<string>,
     attachedUserPrompts: Set<string>
   ): Array<Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>> {
-    // Scope to the sub-conversation after the last /clear. Pre-clear messages already
-    // belong to the completed sub-session whose files handleSessionEnd renamed on /clear.
     const segments = splitByClear(messages);
     const msgs = segments[segments.length - 1] as any[];
 
@@ -201,10 +199,6 @@ export class MetricsProcessor implements SessionProcessor {
       }
     }
 
-    // Build user prompts map: only include user messages AFTER the last already-processed
-    // assistant turn. On the first Stop invocation processedIds is empty so all user messages
-    // are included. On subsequent invocations only NEW user messages are included, preventing
-    // the 1+2+...+N cumulative re-attachment that inflates total_user_prompts at the backend.
     let lastProcessedMsgIndex = -1;
     for (let i = 0; i < msgs.length; i++) {
       const msg = msgs[i];
