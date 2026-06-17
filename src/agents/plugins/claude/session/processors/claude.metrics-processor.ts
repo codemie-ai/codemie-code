@@ -201,9 +201,21 @@ export class MetricsProcessor implements SessionProcessor {
       }
     }
 
-    // Build user prompts map: uuid → text content
+    // Build user prompts map: only include user messages AFTER the last already-processed
+    // assistant turn. On the first Stop invocation processedIds is empty so all user messages
+    // are included. On subsequent invocations only NEW user messages are included, preventing
+    // the 1+2+...+N cumulative re-attachment that inflates total_user_prompts at the backend.
+    let lastProcessedMsgIndex = -1;
+    for (let i = 0; i < msgs.length; i++) {
+      const msg = msgs[i];
+      if (msg.message?.role === 'assistant' && msg.message?.id && processedIds.has(msg.message.id)) {
+        lastProcessedMsgIndex = i;
+      }
+    }
+
     const userPromptsMap = new Map<string, string>();
-    for (const msg of msgs) {
+    for (let i = lastProcessedMsgIndex + 1; i < msgs.length; i++) {
+      const msg = msgs[i];
       if (
         msg.message?.role === 'user' &&
         msg.uuid &&
