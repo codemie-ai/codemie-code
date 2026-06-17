@@ -130,7 +130,7 @@ export interface ProviderProfile {
   skillsSearchUrl?: string;
 
   // Claude Code-specific settings
-  claudeAutocompactPct?: number; // Auto-compact threshold percentage (sets CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, default: 70)
+  claudeAutocompactPct?: number; // Auto-compact threshold percentage (sets CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, default: 85)
 
   // Statusline budget tracking
   statuslineBudgetName?: string; // Budget row name selected during statusline install
