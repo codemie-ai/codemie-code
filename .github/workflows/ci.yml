@@ -3,6 +3,8 @@ name: CI
 on:
   push:
     branches: [ 'main' ]
+  pull_request:
+    branches: [ '**' ]
   pull_request_target:
     branches: [ '**' ]
   workflow_call:
@@ -12,7 +14,7 @@ jobs:
   validate-commits:
     name: Validate Commits & PR
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request_target'
+    if: github.event_name == 'pull_request' || github.event_name == 'pull_request_target'
 
     steps:
       - name: Checkout code
@@ -92,7 +94,7 @@ jobs:
     name: Secrets Detection
     runs-on: ubuntu-latest
     # Run in parallel with validate-commits
-    if: github.event_name == 'pull_request_target'
+    if: github.event_name == 'pull_request' || github.event_name == 'pull_request_target'
 
     steps:
       - name: Checkout code
