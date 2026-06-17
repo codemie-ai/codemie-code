@@ -98,6 +98,18 @@ export const ClaudePluginMetadata: AgentMetadata = {
       type: 'flag',
       target: '-p',
     },
+    '--resume': {
+      type: 'flag',
+      target: '-r',
+    },
+  },
+
+  reasoningEffort: {
+    strategy: 'cli-flag',
+    flag: '--effort',
+    placement: 'append',
+    supportedLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+    userOverrideFlags: ['--effort'],
   },
 
   // Metrics configuration: exclude Bash tool errors from API metrics
