@@ -158,10 +158,28 @@ export class ClaudeSessionAdapter implements SessionAdapter {
    * Extracts both raw messages (for conversations) and metrics (for metrics processor).
    * CRITICAL: Discovers and parses ALL sub-agent files to avoid duplicate file reading.
    */
+  /**
+   * Collapse records that repeat the same `uuid`, keeping the LAST occurrence.
+   * Claude Desktop (3p) re-writes the user message after session init/status
+   * events; the later copy sits right before the assistant reply and is the real
+   * turn-start. Keeping it (and dropping the earlier echo) lets turn-splitting
+   * pair user+assistant correctly. Messages without a uuid are kept; this is a
+   * no-op for well-formed transcripts (each uuid appears once).
+   */
+  private dedupeByUuid(messages: ClaudeMessage[]): ClaudeMessage[] {
+    const lastIndex = new Map<string, number>();
+    messages.forEach((message, index) => {
+      if (message.uuid) lastIndex.set(message.uuid, index);
+    });
+    return messages.filter(
+      (message, index) => !message.uuid || lastIndex.get(message.uuid) === index
+    );
+  }
+
   async parseSessionFile(filePath: string, sessionId: string): Promise<ParsedSession> {
     try {
-      // Read main session JSONL file
-      const messages = await readJSONL<ClaudeMessage>(filePath);
+      // Read main session JSONL file (collapse any duplicate-uuid records)
+      const messages = this.dedupeByUuid(await readJSONL<ClaudeMessage>(filePath));
 
       // Handle empty files gracefully (new sessions, in-progress, corrupted files)
       if (messages.length === 0) {
@@ -226,7 +244,9 @@ export class ClaudeSessionAdapter implements SessionAdapter {
 
       for (const subagentFile of subagentFiles) {
         try {
-          const subagentMessages = await readJSONL<ClaudeMessage>(subagentFile.filePath);
+          const subagentMessages = this.dedupeByUuid(
+            await readJSONL<ClaudeMessage>(subagentFile.filePath)
+          );
           subagents.push({
             agentId: subagentFile.agentId,
             filePath: subagentFile.filePath,

@@ -665,7 +665,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       const { getCommandPath } = await import('../../utils/processes.js');
       const resolvedPath = await getCommandPath(this.metadata.cliCommand);
       if (resolvedPath) {
-        commandPath = isWindows && resolvedPath.includes(' ') ? `"${resolvedPath}"` : resolvedPath;
+        commandPath = isWindows && /[ ()&|<>^%[\]{}]/.test(resolvedPath) ? `"${resolvedPath}"` : resolvedPath;
         logger.debug(`Resolved command path: ${resolvedPath}`);
       } else if (!isWindows) {
         // On Unix, check common installation paths if command not found in PATH
@@ -712,7 +712,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       if (isWindows && transformedArgs.length > 0) {
         // Quote arguments containing spaces or special characters
         const quotedArgs = transformedArgs.map(arg =>
-          arg.includes(' ') || arg.includes('"') ? `"${arg.replace(/"/g, '\\"')}"` : arg
+          /[ "()&|<>^%[\]{}]/.test(arg) ? `"${arg.replace(/"/g, '\\"')}"` : arg
         );
         finalCommand = `${commandPath} ${quotedArgs.join(' ')}`;
         finalArgs = [];

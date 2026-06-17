@@ -62,7 +62,7 @@ export async function exec(
       // On Windows CMD, & | < > ^ % are metacharacters and must be quoted.
       const needsQuoting = (arg: string) =>
         arg.includes(' ') || arg.includes('"') ||
-        (isWindows && /[&|<>^%]/.test(arg));
+        (isWindows && /[&|<>^%()[\]{}]/.test(arg));
       const quotedArgs = args.map(arg =>
         needsQuoting(arg) ? `"${arg.replace(/"/g, '\\"')}"` : arg
       );
