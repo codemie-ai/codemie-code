@@ -60,6 +60,27 @@ function normalizeMessage(event: DesktopAuditEvent, metadata: DesktopMetadata): 
   };
 }
 
+/**
+ * Cowork writes its transcript as `audit.jsonl`, which also ends with `.jsonl` and so takes the
+ * raw Claude Code parsing branch (parseSessionFile preserves records verbatim). Its records carry
+ * the wall-clock time in `_audit_timestamp` and leave `timestamp` empty (assistant records always
+ * do). Backfill `timestamp` from `_audit_timestamp` so the conversations processor can compute
+ * message date and response_time — otherwise the chat view renders broken metadata like
+ * "Processed in: s /". Lives here (the Claude Desktop layer) rather than in ClaudeSessionAdapter
+ * because `_audit_timestamp` is a Cowork audit-log artifact; real Claude Code sessions never carry
+ * it, so this is a no-op for them.
+ */
+function backfillTimestampsFromAuditLog(messages: ClaudeMessage[]): void {
+  for (const message of messages) {
+    if (!message.timestamp) {
+      const auditTimestamp = (message as { _audit_timestamp?: string })._audit_timestamp;
+      if (auditTimestamp) {
+        message.timestamp = auditTimestamp;
+      }
+    }
+  }
+}
+
 export async function parseClaudeDesktopSession(
   discovered: LocalTelemetryDiscoveredSession,
   codemieSessionId: string
@@ -69,6 +90,8 @@ export async function parseClaudeDesktopSession(
       discovered.transcriptPath,
       codemieSessionId
     );
+
+    backfillTimestampsFromAuditLog(parsed.messages as ClaudeMessage[]);
 
     return {
       ...parsed,
