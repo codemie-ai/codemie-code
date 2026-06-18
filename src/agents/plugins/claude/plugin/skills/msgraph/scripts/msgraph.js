@@ -71,6 +71,7 @@ function httpsRequest(urlStr, options = {}, body = null) {
           err.statusCode   = res.statusCode;
           err.responseBody = text;
           err.responseUrl  = urlStr;
+          err.headers      = res.headers;
           return reject(err);
         }
         resolve({ status: res.statusCode, body: text, headers: res.headers });
@@ -97,8 +98,20 @@ async function oauthPost(urlStr, params) {
 async function graphGet(endpoint, token, params = {}) {
   const qs  = new URLSearchParams(params).toString();
   const url = `${GRAPH_BASE}${endpoint}${qs ? '?' + qs : ''}`;
-  const res = await httpsRequest(url, { headers: { Authorization: `Bearer ${token}` } });
-  return JSON.parse(res.body);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await httpsRequest(url, { headers: { Authorization: `Bearer ${token}` } });
+      return JSON.parse(res.body);
+    } catch (e) {
+      if (e.statusCode === 429 && attempt < 2) {
+        const ra = parseInt(e.headers?.['retry-after'] || '', 10);
+        const waitS = Number.isFinite(ra) && ra > 0 ? Math.min(60, ra) : Math.min(30, 2 ** attempt * 2);
+        await new Promise(r => setTimeout(r, waitS * 1000));
+        continue;
+      }
+      throw e;
+    }
+  }
 }
 
 async function graphPost(endpoint, token, body) {
@@ -486,9 +499,32 @@ async function cmdEmails(args) {
   }
 
   const limit  = parseInt(args.limit) || 10;
+
+  if (args.conversation) {
+    // Graph rejects $orderby with $filter on conversationId ("InefficientFilter").
+    // Pull more rows than asked and sort client-side.
+    const cv = await graphGet('/me/messages', token, {
+      $filter: `conversationId eq '${args.conversation}'`,
+      $top:    Math.max(limit, 25),
+      $select: 'id,subject,from,sentDateTime,receivedDateTime,isRead,bodyPreview,conversationId',
+    });
+    let msgs = cv.value || [];
+    msgs.sort((a, b) => (b.sentDateTime || b.receivedDateTime || '').localeCompare(a.sentDateTime || a.receivedDateTime || ''));
+    msgs = msgs.slice(0, limit);
+    if (args.json) { console.log(JSON.stringify(msgs, null, 2)); return; }
+    if (!msgs.length) { console.log('No messages in this conversation.'); return; }
+    console.log(`\n${'Sent'.padEnd(16)}  ${'From'.padEnd(28)}  Subject`);
+    console.log('─'.repeat(80));
+    for (const m of msgs) {
+      const from = (m.from?.emailAddress?.name || '').slice(0, 28).padEnd(28);
+      console.log(`${fmtDt(m.sentDateTime || m.receivedDateTime).padEnd(16)}  ${from}  ${(m.subject || '(no subject)').slice(0, 40)}`);
+    }
+    return;
+  }
+
   const params = {
     $top:     limit,
-    $select:  'id,subject,from,receivedDateTime,isRead,hasAttachments,importance',
+    $select:  'id,subject,from,receivedDateTime,isRead,hasAttachments,importance,bodyPreview,conversationId',
     $orderby: 'receivedDateTime desc',
   };
   if (args.search) { params.$search = `"${args.search}"`; delete params.$orderby; }
@@ -643,13 +679,18 @@ async function cmdTeams(args) {
   const limit = parseInt(args.limit) || 20;
 
   if (args.chats) {
-    const data  = await graphGet('/me/chats', token, { $top: limit, $select: 'id,topic,chatType,lastUpdatedDateTime' });
+    // $expand=lastMessagePreview returns the true last-message timestamp + body.
+    // Graph's `lastUpdatedDateTime` on the chat is frequently stale (months/years
+    // behind), so callers that need recency MUST read lastMessagePreview.
+    const data  = await graphGet('/me/chats', token, { $top: limit, $expand: 'lastMessagePreview' });
     const chats = data.value || [];
     if (args.json) { console.log(JSON.stringify(chats, null, 2)); return; }
-    console.log(`\n${'Chat ID'.padEnd(50)}  ${'Type'.padEnd(10)}  Topic`);
+    console.log(`\n${'Chat ID'.padEnd(50)}  ${'Type'.padEnd(10)}  Last msg            Topic`);
     console.log('─'.repeat(80));
-    for (const c of chats)
-      console.log(`${(c.id || '').padEnd(50)}  ${(c.chatType || '').padEnd(10)}  ${c.topic || '(direct message)'}`);
+    for (const c of chats) {
+      const last = c.lastMessagePreview?.createdDateTime || c.lastUpdatedDateTime || '';
+      console.log(`${(c.id || '').padEnd(50)}  ${(c.chatType || '').padEnd(10)}  ${fmtDt(last).padEnd(18)}  ${c.topic || '(direct message)'}`);
+    }
     return;
   }
 
@@ -690,10 +731,24 @@ async function cmdTeams(args) {
 
   if (args.messages) {
     // Graph returns HTTP 400 if $select is used on the Teams messages endpoint — pass $top only.
-    const data = await graphGet(`/me/chats/${args.messages}/messages`, token, { $top: limit });
-    const msgs = data.value || [];
+    // `--max N` paginates via @odata.nextLink up to N messages total (capped per page at 50 by Graph).
+    const max = args.max ? parseInt(args.max, 10) : null;
+    const perPage = max ? Math.min(50, max) : limit;
+    let next = `/me/chats/${args.messages}/messages?$top=${perPage}`;
+    const msgs = [];
+    while (next) {
+      const data = await graphGet(next.replace(GRAPH_BASE, '').replace('https://graph.microsoft.com/v1.0', ''), token, {});
+      for (const m of (data.value || [])) {
+        msgs.push(m);
+        if (max && msgs.length >= max) break;
+      }
+      if (max && msgs.length >= max) break;
+      const nl = data['@odata.nextLink'];
+      if (!nl || !max) break; // no pagination unless --max set
+      next = nl;
+    }
     if (args.json) { console.log(JSON.stringify(msgs, null, 2)); return; }
-    console.log(`\nMessages in chat ${args.messages.slice(0, 20)}...:`);
+    console.log(`\nMessages in chat ${args.messages.slice(0, 20)}... (${msgs.length}):`);
     console.log('─'.repeat(60));
     for (const m of [...msgs].reverse()) {
       const sender = m.from?.user?.displayName || 'System';
@@ -710,10 +765,20 @@ async function cmdTeams(args) {
   }
 
   if (args.teamsList) {
-    const data  = await graphGet('/me/joinedTeams', token, { $select: 'id,displayName,description' });
-    const teams = data.value || [];
+    // Prefer /me/joinedTeams (needs Team.ReadBasic.All). Fall back to /me/memberOf
+    // filtered client-side to groups that are also teams (uses Group.Read.All,
+    // which the default scope set already includes).
+    let teams;
+    try {
+      const data = await graphGet('/me/joinedTeams', token, { $select: 'id,displayName,description' });
+      teams = data.value || [];
+    } catch (e) {
+      if (!/403|Forbidden/.test(e.message)) throw e;
+      const data = await graphGet('/me/memberOf', token, { $select: 'id,displayName,description,resourceProvisioningOptions', $top: 200 });
+      teams = (data.value || []).filter(g => Array.isArray(g.resourceProvisioningOptions) && g.resourceProvisioningOptions.includes('Team'));
+    }
     if (args.json) { console.log(JSON.stringify(teams, null, 2)); return; }
-    for (const t of teams) console.log(`${t.id.slice(0, 36)}  ${t.displayName}`);
+    for (const t of teams) console.log(`${(t.id || '').slice(0, 36)}  ${t.displayName}`);
     return;
   }
 
@@ -728,13 +793,13 @@ async function cmdChannels(args) {
   if (!args.teamId) {
     console.error('Error: --team-id TEAM_ID is required');
     console.log('channels --team-id ID --list');
-    console.log('         --team-id ID --channel-id ID --messages [--limit N]');
+    console.log('         --team-id ID --channel-id ID --messages [--limit N] [--expand-replies]');
     console.log('         --team-id ID --channel-id ID --send MSG');
     process.exit(1);
   }
 
   if (args.list) {
-    const data     = await graphGet(`/teams/${args.teamId}/channels`, token, { $select: 'id,displayName,description' });
+    const data     = await graphGet(`/teams/${args.teamId}/channels`, token, { $select: 'id,displayName,description,membershipType' });
     const channels = data.value || [];
     if (args.json) { console.log(JSON.stringify(channels, null, 2)); return; }
     console.log(`\n${'ID'.padEnd(50)}  Name`);
@@ -744,13 +809,53 @@ async function cmdChannels(args) {
     return;
   }
 
+  if (args.members) {
+    // Use the groups endpoint (teamId == groupId) so we don't need Team.ReadBasic.All;
+    // pages through every member of the underlying M365 group.
+    const members = [];
+    let next = `/groups/${args.teamId}/members/microsoft.graph.user`;
+    let params = { $select: 'id,displayName,userPrincipalName,mail', $top: 100 };
+    while (next) {
+      const page = await graphGet(next, token, params);
+      for (const m of page.value || []) members.push(m);
+      const nl = page['@odata.nextLink'];
+      if (!nl) break;
+      // Strip the base + use as endpoint; reuse no extra params (link contains them).
+      next = nl.replace('https://graph.microsoft.com/v1.0', '');
+      params = {};
+    }
+    if (args.json) { console.log(JSON.stringify(members, null, 2)); return; }
+    console.log(`\nTeam members (${members.length}):`);
+    console.log('─'.repeat(60));
+    for (const m of members)
+      console.log(`${(m.displayName || 'N/A').padEnd(34)}  ${m.userPrincipalName || m.mail || ''}`);
+    return;
+  }
+
   if (!args.channelId) {
     console.error('Error: --channel-id CHANNEL_ID is required');
     process.exit(1);
   }
 
+  if (args.replies) {
+    // --replies MSG_ID  →  replies to a specific channel message
+    const data = await graphGet(`/teams/${args.teamId}/channels/${args.channelId}/messages/${args.replies}/replies`, token, { $top: limit });
+    const reps = data.value || [];
+    if (args.json) { console.log(JSON.stringify(reps, null, 2)); return; }
+    console.log(`\nReplies to message ${args.replies.slice(0, 20)}...:`);
+    console.log('─'.repeat(60));
+    for (const r of [...reps].sort((a, b) => (a.createdDateTime || '').localeCompare(b.createdDateTime || ''))) {
+      const rs = r.from?.user?.displayName || 'System';
+      const rb = stripHtml(r.body?.content || '').slice(0, 200);
+      console.log(`[${fmtDt(r.createdDateTime)}] ${rs}: ${rb}`);
+    }
+    return;
+  }
+
   if (args.messages) {
-    const data = await graphGet(`/teams/${args.teamId}/channels/${args.channelId}/messages`, token, { $top: limit });
+    const params = { $top: limit };
+    if (args.expandReplies) params.$expand = 'replies';
+    const data = await graphGet(`/teams/${args.teamId}/channels/${args.channelId}/messages`, token, params);
     const msgs = data.value || [];
     if (args.json) { console.log(JSON.stringify(msgs, null, 2)); return; }
     console.log(`\nMessages in channel ${args.channelId.slice(0, 30)}...:`);
@@ -759,6 +864,14 @@ async function cmdChannels(args) {
       const sender = m.from?.user?.displayName || 'System';
       const body   = stripHtml(m.body?.content || '').slice(0, 200);
       console.log(`[${fmtDt(m.createdDateTime)}] ${sender}: ${body}`);
+      if (args.expandReplies && Array.isArray(m.replies) && m.replies.length) {
+        const replies = [...m.replies].sort((a, b) => (a.createdDateTime || '').localeCompare(b.createdDateTime || ''));
+        for (const r of replies) {
+          const rs = r.from?.user?.displayName || 'System';
+          const rb = stripHtml(r.body?.content || '').slice(0, 160);
+          console.log(`    └─ [${fmtDt(r.createdDateTime)}] ${rs}: ${rb}`);
+        }
+      }
     }
     return;
   }
@@ -773,6 +886,7 @@ async function cmdChannels(args) {
 
   console.log('channels --team-id ID --list');
   console.log('         --team-id ID --channel-id ID --messages [--limit N]');
+  console.log('         --team-id ID --channel-id ID --replies MSG_ID [--limit N]');
   console.log('         --team-id ID --channel-id ID --send MSG');
 }
 
@@ -1484,8 +1598,8 @@ async function cmdTodo(args) {
 // ── CLI Parser ────────────────────────────────────────────────────────────────
 function parseArgs(argv) {
   const BOOL = new Set(['json','unread','sites','chats','teamsList','contacts',
-    'manager','reports','availability','notebooks','list','messages','vtt','help','force',
-    'plans','buckets','tasks','myTasks','lists','insights']);
+    'manager','reports','availability','notebooks','list','vtt','help','force',
+    'plans','buckets','tasks','myTasks','lists','insights','expandReplies','members']);
   const args = { _: [] };
   let i = 0;
   while (i < argv.length) {
@@ -1520,7 +1634,7 @@ Auth:
 Data:
   me [--json]                          Your profile
   emails [--limit N] [--unread] [--search Q] [--folder NAME]
-         [--read ID] [--send TO --subject S --body B] [--json]
+         [--read ID] [--conversation CONV_ID] [--send TO --subject S --body B] [--json]
   calendar [--limit N] [--json]
            [--create TITLE --start DT --end DT [--location L] [--timezone TZ]]
            [--availability --start DT --end DT]
@@ -1528,7 +1642,9 @@ Data:
   teams [--chats] [--messages CHAT_ID] [--send MSG --chat-id ID] [--teams-list]
         [--lookup-user EMAIL] [--dm EMAIL --send MSG] [--json]
   channels --team-id ID --list
-           --team-id ID --channel-id ID --messages [--limit N]
+           --team-id ID --members
+           --team-id ID --channel-id ID --messages [--limit N] [--expand-replies]
+           --team-id ID --channel-id ID --replies MSG_ID [--limit N]
            --team-id ID --channel-id ID --send MSG [--json]
   onedrive [--path P] [--upload FILE [--dest PATH]] [--download ID [--output FILE]]
            [--info ID] [--json]
