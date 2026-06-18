@@ -98,8 +98,20 @@ async function oauthPost(urlStr, params) {
 async function graphGet(endpoint, token, params = {}) {
   const qs  = new URLSearchParams(params).toString();
   const url = `${GRAPH_BASE}${endpoint}${qs ? '?' + qs : ''}`;
-  const res = await httpsRequest(url, { headers: { Authorization: `Bearer ${token}` } });
-  return JSON.parse(res.body);
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await httpsRequest(url, { headers: { Authorization: `Bearer ${token}` } });
+      return JSON.parse(res.body);
+    } catch (e) {
+      if (e.statusCode === 429 && attempt < 2) {
+        const ra = parseInt(e.headers?.['retry-after'] || '', 10);
+        const waitS = Number.isFinite(ra) && ra > 0 ? Math.min(60, ra) : Math.min(30, 2 ** attempt * 2);
+        await new Promise(r => setTimeout(r, waitS * 1000));
+        continue;
+      }
+      throw e;
+    }
+  }
 }
 
 async function graphPost(endpoint, token, body) {
