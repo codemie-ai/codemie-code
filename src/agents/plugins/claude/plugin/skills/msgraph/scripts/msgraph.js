@@ -731,10 +731,24 @@ async function cmdTeams(args) {
 
   if (args.messages) {
     // Graph returns HTTP 400 if $select is used on the Teams messages endpoint — pass $top only.
-    const data = await graphGet(`/me/chats/${args.messages}/messages`, token, { $top: limit });
-    const msgs = data.value || [];
+    // `--max N` paginates via @odata.nextLink up to N messages total (capped per page at 50 by Graph).
+    const max = args.max ? parseInt(args.max, 10) : null;
+    const perPage = max ? Math.min(50, max) : limit;
+    let next = `/me/chats/${args.messages}/messages?$top=${perPage}`;
+    const msgs = [];
+    while (next) {
+      const data = await graphGet(next.replace(GRAPH_BASE, '').replace('https://graph.microsoft.com/v1.0', ''), token, {});
+      for (const m of (data.value || [])) {
+        msgs.push(m);
+        if (max && msgs.length >= max) break;
+      }
+      if (max && msgs.length >= max) break;
+      const nl = data['@odata.nextLink'];
+      if (!nl || !max) break; // no pagination unless --max set
+      next = nl;
+    }
     if (args.json) { console.log(JSON.stringify(msgs, null, 2)); return; }
-    console.log(`\nMessages in chat ${args.messages.slice(0, 20)}...:`);
+    console.log(`\nMessages in chat ${args.messages.slice(0, 20)}... (${msgs.length}):`);
     console.log('─'.repeat(60));
     for (const m of [...msgs].reverse()) {
       const sender = m.from?.user?.displayName || 'System';
