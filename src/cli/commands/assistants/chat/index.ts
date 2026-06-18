@@ -17,6 +17,7 @@ import type { CodemieAssistant, ProviderProfile } from '@/env/types.js';
 import type { CodeMieClient } from 'codemie-sdk';
 import { ROLES, MESSAGES, type HistoryMessage } from '../constants.js';
 import { loadConversationHistory } from './historyLoader.js';
+import { appendConversationTurn } from './historyPersister.js';
 import { isExitCommand, enableVerboseMode } from './utils.js';
 import type { ChatCommandOptions, SingleMessageOptions } from './types.js';
 import { detectFileUploadsFromSession, readFilesFromPaths, type DetectedFile } from './claudeUploadsDetector.js';
@@ -81,6 +82,7 @@ async function chatWithAssistant(
   const client = await getAuthenticatedClient(config);
 
   const conversationId = options.conversationId || process.env.CODEMIE_SESSION_ID;
+  const isExplicitConversationId = !!options.conversationId;
 
   // Collect files from session and CLI paths
   let detectedFiles: DetectedFile[] = [];
@@ -106,11 +108,12 @@ async function chatWithAssistant(
       config,
       conversationId,
       options.loadHistory,
-      detectedFiles
+      detectedFiles,
+      isExplicitConversationId
     );
   } else {
     const assistant = await promptAssistantSelection(registeredAssistants);
-    await interactiveChat(client, assistant, config, conversationId, options.loadHistory, detectedFiles);
+    await interactiveChat(client, assistant, config, conversationId, options.loadHistory, detectedFiles, isExplicitConversationId);
   }
 }
 
@@ -180,7 +183,8 @@ async function interactiveChat(
   config: ProviderProfile,
   conversationId?: string,
   loadHistory: boolean = true,
-  detectedFiles: DetectedFile[] = []
+  detectedFiles: DetectedFile[] = [],
+  isExplicitConversationId: boolean = false
 ): Promise<void> {
   const history: HistoryMessage[] = loadHistory
     ? await loadConversationHistory(conversationId, config)
@@ -221,6 +225,7 @@ async function interactiveChat(
       const response = await sendMessageWithHistory(client, assistant, message, history, conversationId, pendingFiles);
       spinner.stop();
 
+      const fileNamesForTurn = pendingFiles.map(f => f.fileName);
       pendingFiles = [];
 
       console.log(
@@ -233,6 +238,10 @@ async function interactiveChat(
         { role: ROLES.USER, message },
         { role: ROLES.ASSISTANT, message: response }
       );
+
+      if (isExplicitConversationId && conversationId) {
+        await appendConversationTurn(conversationId, message, response, fileNamesForTurn);
+      }
     } catch (error) {
       spinner.fail(chalk.red(MESSAGES.CHAT.ERROR_SEND_FAILED));
       await handleChatError(error, config);
@@ -252,7 +261,8 @@ async function sendSingleMessage(
   config: ProviderProfile,
   conversationId?: string,
   loadHistory: boolean = true,
-  detectedFiles: DetectedFile[] = []
+  detectedFiles: DetectedFile[] = [],
+  isExplicitConversationId: boolean = false
 ): Promise<void> {
   try {
     const history = loadHistory ? await loadConversationHistory(conversationId, config) : [];
@@ -272,6 +282,15 @@ async function sendSingleMessage(
       console.log('\n' + chalk.bold.cyan(`${assistant.name}:`));
       console.log(response || MESSAGES.CHAT.FALLBACK_NO_RESPONSE);
       console.log('');
+    }
+
+    if (isExplicitConversationId && conversationId && response) {
+      await appendConversationTurn(
+        conversationId,
+        message,
+        response,
+        detectedFiles.map(f => f.fileName)
+      );
     }
   } catch (error) {
     await handleChatError(error, config);

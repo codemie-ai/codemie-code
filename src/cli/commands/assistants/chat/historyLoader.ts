@@ -14,6 +14,7 @@ import {
 } from '@/providers/plugins/sso/session/processors/conversations/types.js';
 import type { HistoryMessage } from '../constants.js';
 import type { ProviderProfile } from '@/env/types.js';
+import { isValidConversationId } from './conversationIdSafety.js';
 
 /** Default max conversation turns to load (gets doubled: 10 turns = 20 messages = 10 user + 10 AI) */
 const DEFAULT_MAX_HISTORY_MESSAGES = 10;
@@ -36,6 +37,13 @@ export async function loadConversationHistory(
   config?: ProviderProfile
 ): Promise<HistoryMessage[]> {
   if (!conversationId) return [];
+
+  if (!isValidConversationId(conversationId)) {
+    logger.error('Refusing to load conversation history: invalid conversation id', {
+      conversationId
+    });
+    return [];
+  }
 
   try {
     const filePath = getSessionConversationPath(conversationId);
