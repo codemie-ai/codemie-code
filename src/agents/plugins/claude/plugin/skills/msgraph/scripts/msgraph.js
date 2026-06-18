@@ -837,8 +837,25 @@ async function cmdChannels(args) {
     process.exit(1);
   }
 
+  if (args.replies) {
+    // --replies MSG_ID  →  replies to a specific channel message
+    const data = await graphGet(`/teams/${args.teamId}/channels/${args.channelId}/messages/${args.replies}/replies`, token, { $top: limit });
+    const reps = data.value || [];
+    if (args.json) { console.log(JSON.stringify(reps, null, 2)); return; }
+    console.log(`\nReplies to message ${args.replies.slice(0, 20)}...:`);
+    console.log('─'.repeat(60));
+    for (const r of [...reps].sort((a, b) => (a.createdDateTime || '').localeCompare(b.createdDateTime || ''))) {
+      const rs = r.from?.user?.displayName || 'System';
+      const rb = stripHtml(r.body?.content || '').slice(0, 200);
+      console.log(`[${fmtDt(r.createdDateTime)}] ${rs}: ${rb}`);
+    }
+    return;
+  }
+
   if (args.messages) {
-    const data = await graphGet(`/teams/${args.teamId}/channels/${args.channelId}/messages`, token, { $top: limit });
+    const params = { $top: limit };
+    if (args.expandReplies) params.$expand = 'replies';
+    const data = await graphGet(`/teams/${args.teamId}/channels/${args.channelId}/messages`, token, params);
     const msgs = data.value || [];
     if (args.json) { console.log(JSON.stringify(msgs, null, 2)); return; }
     console.log(`\nMessages in channel ${args.channelId.slice(0, 30)}...:`);
@@ -847,6 +864,14 @@ async function cmdChannels(args) {
       const sender = m.from?.user?.displayName || 'System';
       const body   = stripHtml(m.body?.content || '').slice(0, 200);
       console.log(`[${fmtDt(m.createdDateTime)}] ${sender}: ${body}`);
+      if (args.expandReplies && Array.isArray(m.replies) && m.replies.length) {
+        const replies = [...m.replies].sort((a, b) => (a.createdDateTime || '').localeCompare(b.createdDateTime || ''));
+        for (const r of replies) {
+          const rs = r.from?.user?.displayName || 'System';
+          const rb = stripHtml(r.body?.content || '').slice(0, 160);
+          console.log(`    └─ [${fmtDt(r.createdDateTime)}] ${rs}: ${rb}`);
+        }
+      }
     }
     return;
   }
@@ -861,6 +886,7 @@ async function cmdChannels(args) {
 
   console.log('channels --team-id ID --list');
   console.log('         --team-id ID --channel-id ID --messages [--limit N]');
+  console.log('         --team-id ID --channel-id ID --replies MSG_ID [--limit N]');
   console.log('         --team-id ID --channel-id ID --send MSG');
 }
 
