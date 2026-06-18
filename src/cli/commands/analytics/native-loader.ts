@@ -189,14 +189,21 @@ function modal(values: string[]): string | undefined {
   return best;
 }
 
-function buildSegmentData(
+/**
+ * Synthesize a {@link RawSessionData} from a parsed native session. Turns map to assistant
+ * messages (the aggregator derives totalTurns from deltas.length), and all per-session metrics
+ * (tools / file ops / models) are carried on a single delta — the aggregator sums across deltas,
+ * so one metrics-bearing delta plus empty placeholders is equivalent to per-turn deltas.
+ *
+ * A post-/clear file starts with the /clear sentinel as its first user message; trimByClear strips
+ * it so it is never mistaken for the session's opening prompt.
+ */
+export function synthesizeRawSession(
   agentName: string,
-  sessionId: string,
   descriptor: SessionDescriptor,
-  parsed: ParsedSession,
-  messages: RawMessage[],
-  carryMetrics: boolean
+  parsed: ParsedSession
 ): RawSessionData {
+  const messages = trimByClear((parsed.messages ?? []) as RawMessage[]) as RawMessage[];
   const timestamps = messages.map((m) => toMs(m.timestamp)).filter((n): n is number => n != null);
   const startTime = timestamps.length ? Math.min(...timestamps) : descriptor.createdAt;
   const endTime = timestamps.length ? Math.max(...timestamps) : descriptor.updatedAt ?? descriptor.createdAt;
@@ -209,31 +216,33 @@ function buildSegmentData(
   const openingPrompt = firstUserText(messages);
 
   const metricsDelta: MetricDelta = {
-    recordId: `${sessionId}-native`,
-    sessionId,
-    agentSessionId: sessionId,
+    recordId: `${descriptor.sessionId}-native`,
+    sessionId: descriptor.sessionId,
+    agentSessionId: descriptor.sessionId,
     timestamp: startTime,
     gitBranch: branch,
-    tools: carryMetrics ? (parsed.metrics?.tools ?? {}) : {},
-    ...(carryMetrics && parsed.metrics?.toolStatus && { toolStatus: parsed.metrics.toolStatus }),
-    ...(carryMetrics && parsed.metrics?.fileOperations && {
-      fileOperations: parsed.metrics.fileOperations as MetricDelta['fileOperations'],
-    }),
+    tools: parsed.metrics?.tools ?? {},
+    toolStatus: parsed.metrics?.toolStatus,
+    fileOperations: parsed.metrics?.fileOperations as MetricDelta['fileOperations'],
     models,
-    ...(carryMetrics && parsed.metrics?.skillInvocations && { skillInvocations: parsed.metrics.skillInvocations }),
-    ...(carryMetrics && parsed.metrics?.agentInvocations && { agentInvocations: parsed.metrics.agentInvocations }),
-    ...(carryMetrics && parsed.metrics?.commandInvocations && { commandInvocations: parsed.metrics.commandInvocations }),
+    // Named invocations are extracted at parse time (claude.session.ts extractMetrics); carry
+    // them through so native (untracked) sessions populate the skill/agent/command charts.
+    ...(parsed.metrics?.skillInvocations && { skillInvocations: parsed.metrics.skillInvocations }),
+    ...(parsed.metrics?.agentInvocations && { agentInvocations: parsed.metrics.agentInvocations }),
+    ...(parsed.metrics?.commandInvocations && { commandInvocations: parsed.metrics.commandInvocations }),
+    // Opening prompt → drives the session title in the report (aggregator strips command/system XML).
     ...(openingPrompt && { userPrompts: [{ count: 1, text: openingPrompt }] }),
     syncStatus: 'synced',
     syncAttempts: 0,
   };
 
+  // Pad to `turns` deltas so the aggregator's totalTurns (= deltas.length) is correct.
   const deltas: MetricDelta[] = [metricsDelta];
   for (let i = 1; i < turns; i++) {
     deltas.push({
-      recordId: `${sessionId}-native-${i}`,
-      sessionId,
-      agentSessionId: sessionId,
+      recordId: `${descriptor.sessionId}-native-${i}`,
+      sessionId: descriptor.sessionId,
+      agentSessionId: descriptor.sessionId,
       timestamp: startTime,
       gitBranch: branch,
       tools: {},
@@ -243,44 +252,28 @@ function buildSegmentData(
   }
 
   return {
-    sessionId,
-    agentSessionFile: descriptor.filePath,
+    sessionId: descriptor.sessionId,
+    agentSessionFile: descriptor.filePath, // lets the cost enricher price native (untracked) sessions
     startEvent: {
-      recordId: sessionId,
+      recordId: descriptor.sessionId,
       type: 'session_start',
       timestamp: startTime,
-      codeMieSessionId: sessionId,
+      codeMieSessionId: descriptor.sessionId,
       agentName,
       syncStatus: 'synced',
       data: { provider: 'native', workingDirectory: cwd, startTime },
     },
     endEvent: {
-      recordId: `${sessionId}-end`,
+      recordId: `${descriptor.sessionId}-end`,
       type: 'session_end',
       timestamp: endTime,
-      codeMieSessionId: sessionId,
+      codeMieSessionId: descriptor.sessionId,
       agentName,
       syncStatus: 'synced',
       data: { endTime, duration: Math.max(0, endTime - startTime), totalTurns: turns },
     },
     deltas,
   };
-}
-
-/**
- * Synthesize a {@link RawSessionData} from a parsed native session.
- *
- * A post-/clear file starts with the /clear sentinel as its first user message (Claude Code writes
- * it there). We strip it — and anything before it — by keeping only the last splitByClear segment,
- * so the /clear command is never mistaken for the session's opening prompt.
- */
-export function synthesizeRawSession(
-  agentName: string,
-  descriptor: SessionDescriptor,
-  parsed: ParsedSession
-): RawSessionData {
-  const messages = trimByClear((parsed.messages ?? []) as RawMessage[]) as RawMessage[];
-  return buildSegmentData(agentName, descriptor.sessionId, descriptor, parsed, messages, true);
 }
 
 /** Number of days from a filter's fromDate to now (for the discovery window), or a wide default. */
