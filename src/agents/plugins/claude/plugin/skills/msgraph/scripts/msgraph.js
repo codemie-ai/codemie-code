@@ -71,6 +71,7 @@ function httpsRequest(urlStr, options = {}, body = null) {
           err.statusCode   = res.statusCode;
           err.responseBody = text;
           err.responseUrl  = urlStr;
+          err.headers      = res.headers;
           return reject(err);
         }
         resolve({ status: res.statusCode, body: text, headers: res.headers });
