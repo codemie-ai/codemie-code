@@ -499,9 +499,32 @@ async function cmdEmails(args) {
   }
 
   const limit  = parseInt(args.limit) || 10;
+
+  if (args.conversation) {
+    // Graph rejects $orderby with $filter on conversationId ("InefficientFilter").
+    // Pull more rows than asked and sort client-side.
+    const cv = await graphGet('/me/messages', token, {
+      $filter: `conversationId eq '${args.conversation}'`,
+      $top:    Math.max(limit, 25),
+      $select: 'id,subject,from,sentDateTime,receivedDateTime,isRead,bodyPreview,conversationId',
+    });
+    let msgs = cv.value || [];
+    msgs.sort((a, b) => (b.sentDateTime || b.receivedDateTime || '').localeCompare(a.sentDateTime || a.receivedDateTime || ''));
+    msgs = msgs.slice(0, limit);
+    if (args.json) { console.log(JSON.stringify(msgs, null, 2)); return; }
+    if (!msgs.length) { console.log('No messages in this conversation.'); return; }
+    console.log(`\n${'Sent'.padEnd(16)}  ${'From'.padEnd(28)}  Subject`);
+    console.log('─'.repeat(80));
+    for (const m of msgs) {
+      const from = (m.from?.emailAddress?.name || '').slice(0, 28).padEnd(28);
+      console.log(`${fmtDt(m.sentDateTime || m.receivedDateTime).padEnd(16)}  ${from}  ${(m.subject || '(no subject)').slice(0, 40)}`);
+    }
+    return;
+  }
+
   const params = {
     $top:     limit,
-    $select:  'id,subject,from,receivedDateTime,isRead,hasAttachments,importance',
+    $select:  'id,subject,from,receivedDateTime,isRead,hasAttachments,importance,bodyPreview,conversationId',
     $orderby: 'receivedDateTime desc',
   };
   if (args.search) { params.$search = `"${args.search}"`; delete params.$orderby; }
