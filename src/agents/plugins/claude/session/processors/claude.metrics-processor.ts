@@ -17,7 +17,7 @@ import { logger } from '../../../../../utils/logger.js';
 import type { MetricDelta } from '../../../../core/metrics/types.js';
 import { extractClaudeFileOperation } from '../claude-file-operation.js';
 import { extractNamedInvocations } from '../claude-named-invocations.js';
-import { trimByClear } from '../claude-clear-boundary.js';
+import { stripClear } from '../strip-clear.js';
 
 export class MetricsProcessor implements SessionProcessor {
   readonly name = 'metrics';
@@ -157,7 +157,7 @@ export class MetricsProcessor implements SessionProcessor {
     processedIds: Set<string>,
     attachedUserPrompts: Set<string>
   ): Array<Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>> {
-    const messages = trimByClear(rawMessages) as any[];
+    const messages = stripClear(rawMessages) as any[];
 
     const deltas: Array<Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>> = [];
     const messagesByUuid = new Map<string, any>();

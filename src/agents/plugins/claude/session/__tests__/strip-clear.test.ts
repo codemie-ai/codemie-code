@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { trimByClear } from '../claude-clear-boundary.js';
+import { stripClear } from '../strip-clear.js';
 
 const xmlClear = {
   type: 'user',
@@ -21,35 +21,35 @@ const normalUser = {
 
 const assistant = { type: 'assistant', message: { role: 'assistant' } };
 
-describe('trimByClear', () => {
+describe('stripClear', () => {
   it('returns the original array unchanged when there is no /clear', () => {
     const msgs = [normalUser, assistant];
-    expect(trimByClear(msgs)).toEqual([normalUser, assistant]);
+    expect(stripClear(msgs)).toEqual([normalUser, assistant]);
   });
 
   it('returns messages after the /clear sentinel (sentinel excluded)', () => {
     // Real-world shape: post-/clear file starts with the sentinel, then new messages
     const msgs = [xmlClear, normalUser, assistant];
-    expect(trimByClear(msgs)).toEqual([normalUser, assistant]);
+    expect(stripClear(msgs)).toEqual([normalUser, assistant]);
   });
 
   it('trims to after the LAST sentinel when multiple are present', () => {
     const a = { type: 'user', message: { role: 'user', content: 'task a' } };
     const b = { type: 'user', message: { role: 'user', content: 'task b' } };
     const msgs = [normalUser, assistant, xmlClear, a, assistant, xmlClear, b, assistant];
-    expect(trimByClear(msgs)).toEqual([b, assistant]);
+    expect(stripClear(msgs)).toEqual([b, assistant]);
   });
 
   it('returns an empty array when /clear is the final message', () => {
-    expect(trimByClear([normalUser, assistant, xmlClear])).toEqual([]);
+    expect(stripClear([normalUser, assistant, xmlClear])).toEqual([]);
   });
 
   it('handles array-content /clear the same as string-content', () => {
     const msgs = [arrayXmlClear, normalUser, assistant];
-    expect(trimByClear(msgs)).toEqual([normalUser, assistant]);
+    expect(stripClear(msgs)).toEqual([normalUser, assistant]);
   });
 
   it('returns an empty array unchanged', () => {
-    expect(trimByClear([])).toEqual([]);
+    expect(stripClear([])).toEqual([]);
   });
 });

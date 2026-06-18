@@ -10,7 +10,7 @@ const CLEAR_MARKER = '<command-name>/clear</command-name>';
  * - No /clear → returns the original array unchanged.
  * - /clear present → returns only messages that follow the last sentinel.
  */
-export function trimByClear(messages: unknown[]): unknown[] {
+export function stripClear(messages: unknown[]): unknown[] {
   let start = 0;
   for (let i = 0; i < messages.length; i++) {
     const m = messages[i];
