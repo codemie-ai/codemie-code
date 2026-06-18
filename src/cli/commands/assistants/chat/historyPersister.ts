@@ -21,6 +21,7 @@ import {
   type ConversationPayloadRecord,
   CONVERSATION_SYNC_STATUS,
 } from '@/providers/plugins/sso/session/processors/conversations/types.js';
+import { isValidConversationId } from './conversationIdSafety.js';
 
 /**
  * Append one user→assistant turn pair to the conversation JSONL file.
@@ -34,6 +35,13 @@ export async function appendConversationTurn(
   assistantResponse: string,
   fileNames: string[] = []
 ): Promise<void> {
+  if (!isValidConversationId(conversationId)) {
+    logger.error('Refusing to persist conversation turn: invalid conversation id', {
+      conversationId,
+    });
+    return;
+  }
+
   try {
     const filePath = getSessionConversationPath(conversationId);
     await mkdir(dirname(filePath), { recursive: true });
