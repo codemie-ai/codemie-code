@@ -793,19 +793,42 @@ async function cmdChannels(args) {
   if (!args.teamId) {
     console.error('Error: --team-id TEAM_ID is required');
     console.log('channels --team-id ID --list');
-    console.log('         --team-id ID --channel-id ID --messages [--limit N]');
+    console.log('         --team-id ID --channel-id ID --messages [--limit N] [--expand-replies]');
     console.log('         --team-id ID --channel-id ID --send MSG');
     process.exit(1);
   }
 
   if (args.list) {
-    const data     = await graphGet(`/teams/${args.teamId}/channels`, token, { $select: 'id,displayName,description' });
+    const data     = await graphGet(`/teams/${args.teamId}/channels`, token, { $select: 'id,displayName,description,membershipType' });
     const channels = data.value || [];
     if (args.json) { console.log(JSON.stringify(channels, null, 2)); return; }
     console.log(`\n${'ID'.padEnd(50)}  Name`);
     console.log('─'.repeat(80));
     for (const c of channels)
       console.log(`${(c.id || '').padEnd(50)}  ${c.displayName || 'N/A'}`);
+    return;
+  }
+
+  if (args.members) {
+    // Use the groups endpoint (teamId == groupId) so we don't need Team.ReadBasic.All;
+    // pages through every member of the underlying M365 group.
+    const members = [];
+    let next = `/groups/${args.teamId}/members/microsoft.graph.user`;
+    let params = { $select: 'id,displayName,userPrincipalName,mail', $top: 100 };
+    while (next) {
+      const page = await graphGet(next, token, params);
+      for (const m of page.value || []) members.push(m);
+      const nl = page['@odata.nextLink'];
+      if (!nl) break;
+      // Strip the base + use as endpoint; reuse no extra params (link contains them).
+      next = nl.replace('https://graph.microsoft.com/v1.0', '');
+      params = {};
+    }
+    if (args.json) { console.log(JSON.stringify(members, null, 2)); return; }
+    console.log(`\nTeam members (${members.length}):`);
+    console.log('─'.repeat(60));
+    for (const m of members)
+      console.log(`${(m.displayName || 'N/A').padEnd(34)}  ${m.userPrincipalName || m.mail || ''}`);
     return;
   }
 
