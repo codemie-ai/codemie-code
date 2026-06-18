@@ -1598,8 +1598,8 @@ async function cmdTodo(args) {
 // ── CLI Parser ────────────────────────────────────────────────────────────────
 function parseArgs(argv) {
   const BOOL = new Set(['json','unread','sites','chats','teamsList','contacts',
-    'manager','reports','availability','notebooks','list','messages','vtt','help','force',
-    'plans','buckets','tasks','myTasks','lists','insights']);
+    'manager','reports','availability','notebooks','list','vtt','help','force',
+    'plans','buckets','tasks','myTasks','lists','insights','expandReplies','members']);
   const args = { _: [] };
   let i = 0;
   while (i < argv.length) {
@@ -1634,7 +1634,7 @@ Auth:
 Data:
   me [--json]                          Your profile
   emails [--limit N] [--unread] [--search Q] [--folder NAME]
-         [--read ID] [--send TO --subject S --body B] [--json]
+         [--read ID] [--conversation CONV_ID] [--send TO --subject S --body B] [--json]
   calendar [--limit N] [--json]
            [--create TITLE --start DT --end DT [--location L] [--timezone TZ]]
            [--availability --start DT --end DT]
@@ -1642,7 +1642,9 @@ Data:
   teams [--chats] [--messages CHAT_ID] [--send MSG --chat-id ID] [--teams-list]
         [--lookup-user EMAIL] [--dm EMAIL --send MSG] [--json]
   channels --team-id ID --list
-           --team-id ID --channel-id ID --messages [--limit N]
+           --team-id ID --members
+           --team-id ID --channel-id ID --messages [--limit N] [--expand-replies]
+           --team-id ID --channel-id ID --replies MSG_ID [--limit N]
            --team-id ID --channel-id ID --send MSG [--json]
   onedrive [--path P] [--upload FILE [--dest PATH]] [--download ID [--output FILE]]
            [--info ID] [--json]
