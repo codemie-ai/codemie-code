@@ -180,12 +180,12 @@ describe('Claude Agent Generator', () => {
       expect(content).toContain('codemie assistants chat "asst-123"'); // Command
     });
 
-    it('should include correct command with assistant ID', () => {
+    it('should include correct command with assistant ID and conversation id flag', () => {
       // Act
       const content = createClaudeSubagentContent(mockAssistant);
 
       // Assert
-      expect(content).toContain('codemie assistants chat "asst-123" "message"');
+      expect(content).toContain('codemie assistants chat "asst-123" --conversation-id "<workflow-id>" "message"');
     });
 
     it('should include example section', () => {
@@ -197,13 +197,15 @@ describe('Claude Agent Generator', () => {
       expect(content).toContain('**Simple message:**');
     });
 
-    it('should reference assistant name in instructions', () => {
+    it('should instruct callers to mint and reuse a workflow id', () => {
       // Act
       const content = createClaudeSubagentContent(mockAssistant);
 
       // Assert
       expect(content).toContain('## Instructions');
-      expect(content).toContain('Extract the user\'s message from the conversation context');
+      expect(content).toContain('Mint a workflow id once at the start of every task');
+      expect(content).toContain('--conversation-id');
+      expect(content).toContain('CODEMIE_SESSION_ID');
       expect(content).toContain('**File attachments are automatically detected**');
     });
 
