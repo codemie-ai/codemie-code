@@ -765,10 +765,20 @@ async function cmdTeams(args) {
   }
 
   if (args.teamsList) {
-    const data  = await graphGet('/me/joinedTeams', token, { $select: 'id,displayName,description' });
-    const teams = data.value || [];
+    // Prefer /me/joinedTeams (needs Team.ReadBasic.All). Fall back to /me/memberOf
+    // filtered client-side to groups that are also teams (uses Group.Read.All,
+    // which the default scope set already includes).
+    let teams;
+    try {
+      const data = await graphGet('/me/joinedTeams', token, { $select: 'id,displayName,description' });
+      teams = data.value || [];
+    } catch (e) {
+      if (!/403|Forbidden/.test(e.message)) throw e;
+      const data = await graphGet('/me/memberOf', token, { $select: 'id,displayName,description,resourceProvisioningOptions', $top: 200 });
+      teams = (data.value || []).filter(g => Array.isArray(g.resourceProvisioningOptions) && g.resourceProvisioningOptions.includes('Team'));
+    }
     if (args.json) { console.log(JSON.stringify(teams, null, 2)); return; }
-    for (const t of teams) console.log(`${t.id.slice(0, 36)}  ${t.displayName}`);
+    for (const t of teams) console.log(`${(t.id || '').slice(0, 36)}  ${t.displayName}`);
     return;
   }
 
