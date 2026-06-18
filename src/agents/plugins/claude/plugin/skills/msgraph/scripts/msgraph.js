@@ -679,13 +679,18 @@ async function cmdTeams(args) {
   const limit = parseInt(args.limit) || 20;
 
   if (args.chats) {
-    const data  = await graphGet('/me/chats', token, { $top: limit, $select: 'id,topic,chatType,lastUpdatedDateTime' });
+    // $expand=lastMessagePreview returns the true last-message timestamp + body.
+    // Graph's `lastUpdatedDateTime` on the chat is frequently stale (months/years
+    // behind), so callers that need recency MUST read lastMessagePreview.
+    const data  = await graphGet('/me/chats', token, { $top: limit, $expand: 'lastMessagePreview' });
     const chats = data.value || [];
     if (args.json) { console.log(JSON.stringify(chats, null, 2)); return; }
-    console.log(`\n${'Chat ID'.padEnd(50)}  ${'Type'.padEnd(10)}  Topic`);
+    console.log(`\n${'Chat ID'.padEnd(50)}  ${'Type'.padEnd(10)}  Last msg            Topic`);
     console.log('─'.repeat(80));
-    for (const c of chats)
-      console.log(`${(c.id || '').padEnd(50)}  ${(c.chatType || '').padEnd(10)}  ${c.topic || '(direct message)'}`);
+    for (const c of chats) {
+      const last = c.lastMessagePreview?.createdDateTime || c.lastUpdatedDateTime || '';
+      console.log(`${(c.id || '').padEnd(50)}  ${(c.chatType || '').padEnd(10)}  ${fmtDt(last).padEnd(18)}  ${c.topic || '(direct message)'}`);
+    }
     return;
   }
 
