@@ -112,7 +112,7 @@ Ask the user when:
 | External integrations | `.ai-run/guides/integration/external-integrations.md` | Provider plugins, SSO, LiteLLM, Bedrock, Kimi, ACP |
 | Exposed API | `.ai-run/guides/integration/exposed-api.md` | CLI surface, MCP proxy endpoints, plugin contracts |
 | Project config | `.ai-run/guides/usage/project-config.md` | Profiles, ConfigLoader, env vars, paths |
-| Project context | `.ai-run/guides/project.md` | Tracker (Jira EPM-CDME / brianna), MR (GitHub / codemie-pr) |
+| Project context | `.ai-run/guides/project.md` | Tracker (Jira EPM-CDME / codemie-jira-assistant), MR (GitHub / codemie-pr) |
 | Quality gates | `.ai-run/guides/quality-gates.md` | lint, typecheck, build, test, license, secrets |
 <!-- ai-run-init:guide-imports end -->
 
@@ -186,7 +186,7 @@ Detailed patterns for architecture, error handling, logging, security, project c
 | Full CI | `.ai-run/guides/quality-gates.md` | `package.json:scripts.ci`, `scripts.ci:full` | Required before merge |
 | Commit message | `.ai-run/guides/standards/git-workflow.md` | `commitlint.config.cjs`, `.husky/commit-msg` | Conventional Commits enforced |
 | PR creation | `.ai-run/guides/standards/git-workflow.md` | `.claude/skills/codemie-pr/SKILL.md` | Invoke the `codemie-pr` skill |
-| Ticket lookup / create | `.ai-run/guides/project.md` | `.codemie/codemie-cli.config.json`, BriAnnA assistant | Invoke the `brianna` skill |
+| Ticket lookup / create | `.ai-run/guides/project.md` | `.codemie/codemie-cli.config.json`, codemie-jira-assistant | Invoke the `codemie-jira-assistant` skill |
 | Doctor | (no guide needed) | `codemie doctor`, `codemie-code health` | Health diagnostics |
 <!-- ai-run-init:commands end -->
 
