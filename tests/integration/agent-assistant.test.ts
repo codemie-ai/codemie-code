@@ -19,7 +19,7 @@
 import '../setup/load-test-env.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -228,12 +228,7 @@ describe('Assistant management tests', () => {
         await proc.waitFor(/╰─/, 60_000);
         await new Promise((r) => setTimeout(r, 1_000));
         proc.writeLine(`/${ASSISTANT_SLUG} hi`);
-        await proc.waitFor(/\b([1-9]|10)\b/, 90_000).catch((err: unknown) => {
-          try {
-            writeFileSync(join(testHome, 'pty-debug.txt'), proc.lines().join('\n'));
-          } catch { /* best-effort */ }
-          throw err;
-        });
+        await proc.waitFor(/\b([1-9]|10)\b/, 90_000);
       } finally {
         proc.writeLine('/exit');
         await proc.exit(90_000);
