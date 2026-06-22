@@ -1,5 +1,5 @@
 /**
- * Agent Interactive Session Tests — TC-024
+ * Model switch tests — TC-024
  *
  * Run with: npm run test:integration:agent
  *
@@ -35,7 +35,7 @@ const CLAUDE_BIN = join(REPO_ROOT, 'bin', 'codemie-claude.js');
 
 const CI_IS_LOCAL_RUN = getTestEnvFlagOrDefault('CI_IS_LOCAL_RUN', true);
 
-describe('Interactive session tests', () => {
+describe('Model switch tests', () => {
   let jwtToken: string;
   let originalActiveProfile: string | undefined;
 
@@ -61,7 +61,7 @@ describe('Interactive session tests', () => {
     let testHome: string;
 
     beforeAll(() => {
-      testHome = mkdtempSync(join(getTempDir(), 'codemie-interactive-model-'));
+      testHome = mkdtempSync(join(getTempDir(), 'codemie-model-switch-'));
       if (!CI_IS_LOCAL_RUN) {
         writeJwtProfile(testHome, { jwtToken });
       } else {
