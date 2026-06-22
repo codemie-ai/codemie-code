@@ -1,291 +1,294 @@
-# CLI Integration Tests — Implementation Design
+# CLI Integration Test Design
 
-**Date:** 2026-05-27
-**Source spec:** docs/specs/2026-05-19-cli-integration-tests-design.md
-**Run:** docs/superpowers/runs/20260527-1352-main/
-
----
-
-## Goal
-
-Implement integration test cases (TC-001 – TC-034, excluding TC-027) for the `@codemieai/code` CLI, covering CLI management commands, JWT-authenticated agent sessions, interactive stdin/stdout session control, and budget/project configuration. TC-027 was removed — the original self-referential config-write pattern had no meaningful assertion, and a `codemie setup` wizard replacement is deferred (bearer-auth provider is hidden from the interactive wizard).
+**Last updated:** 2026-06-22
+**Branch:** `test/cli-integration-tests`
 
 ---
 
-## Architecture
+## Overview
 
-### Test tiers
+Integration tests for the `codemie-claude` CLI binary. Tests are end-to-end: they spawn the compiled binary as a child process (or PTY), drive it with real environment variables, and assert on exit codes, stdout, and session/metrics artefacts written to `CODEMIE_HOME`.
 
-| Tier | Files | Auth | Binary | Vitest config |
-|---|---|---|---|---|
-| CLI management | `tests/integration/cli-commands/` | none / JWT | no | default |
-| Agent session | `tests/integration/agent-jwt-*.test.ts` | JWT | yes | `vitest.agent.config.ts` |
-| Interactive session | `tests/integration/agent-interactive-session.test.ts` | JWT | yes | `vitest.agent.config.ts` |
-| Budget / project | `tests/integration/agent-jwt-budget.test.ts` | JWT | yes | `vitest.agent.config.ts` |
+Tests are split into two Vitest configurations:
 
-### Gating
+| Config | Includes | GlobalSetup |
+|---|---|---|
+| `vitest.agent.config.ts` | `tests/integration/agent-*.test.ts` | `tests/setup/agent-build-setup.ts` (build + SSO auth) |
+| `vitest.config.ts` | `tests/**/*.test.ts` incl. `cli-commands/` | none |
 
-```typescript
-const INCLUDE_JWT_TESTS = process.env.INCLUDE_JWT_TESTS === 'true';
-describe.runIf(INCLUDE_JWT_TESTS)('suite name', () => { ... });
+CLI-commands tests (`cli-commands/*.test.ts`) exercise commands that need no network auth (health, help, version, doctor, etc.).  
+Agent tests (`agent-*.test.ts`) exercise commands that require authentication and make real network calls.
+
+---
+
+## Auth Model
+
+### `CI_IS_LOCAL_RUN` dual-mode
+
+Tests gate on the `CI_IS_LOCAL_RUN` flag (read via `getTestEnvFlagOrDefault('CI_IS_LOCAL_RUN', true)`):
+
+| Value | Mode | Auth mechanism |
+|---|---|---|
+| `true` (default) | SSO / local dev | Existing `sso-autotest` profile in `~/.codemie` |
+| `false` | JWT / CI pipeline | Bearer token fetched from `CI_CODEMIE_AUTH_URL` |
+
+This replaces the old `INCLUDE_JWT_TESTS=true` gate that ran JWT tests only. Tests that can exercise both modes are now **dual-mode** and run in every environment. Tests that are logically specific to the JWT mechanism are marked **JWT-only** and wrapped in `describe.runIf(!CI_IS_LOCAL_RUN)`.
+
+### JWT-only describe convention
+
+```ts
+describe.runIf(!CI_IS_LOCAL_RUN)(
+  'TC-NNN — description [JWT-only, skipped when CI_IS_LOCAL_RUN=true]',
+  () => { ... },
+);
 ```
 
-All JWT-gated suites are skipped by default. Set `INCLUDE_JWT_TESTS=true` in CI to enable.
+The skip reason is embedded in the describe name so it appears in test output when the suite is skipped.
+
+---
+
+## Environment Variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `CI_IS_LOCAL_RUN` | optional | `true` = SSO mode (default), `false` = JWT mode |
+| `CI_CODEMIE_URL` | both modes | CodeMie frontend URL (API base derived as `CI_CODEMIE_URL/code-assistant-api`) |
+| `CI_CODEMIE_MODEL` | optional | Model override (default: `claude-sonnet-4-6`) |
+| `CI_CODEMIE_USERNAME` | JWT mode | Username for token fetch |
+| `CI_CODEMIE_PASSWORD` | JWT mode | Password for token fetch |
+| `CI_CODEMIE_AUTH_URL` | JWT mode | Keycloak/auth server base URL |
+| `CI_AGENT_MAX_WORKERS` | optional | `maxWorkers` for agent test runner (default: 2) |
+| `DEFAULT_TIMEOUT` | optional | Command timeout in seconds (default: 60) |
+| `CODEMIE_HOME` | set per-test | Isolated temp dir; overrides `~/.codemie` for the test run |
+
+Local dev: set these in `.env.test.local` at the repo root (gitignored).
+
+---
+
+## Directory Layout
+
+```
+tests/
+  helpers/
+    index.ts              # Re-exports all helpers
+    cli-runner.ts         # CLIRunner, createCLIRunner, createAgentRunner
+    jwt-auth.ts           # fetchJwtToken, writeJwtProfile, jwtCleanEnv
+    sso-auth.ts           # writeSsoProfile, ssoCleanEnv, copySsoCredentials,
+                          # setupSsoAutotestProfile, teardownSsoAutotestProfile
+    pty-session.ts        # spawnPty, PtySession
+    metrics.ts            # getLatestMetricsRecord
+    temp-workspace.ts     # TempWorkspace, createTempWorkspace, getTempDir, resolveLongPath
+    interactive-helpers.ts # waitForOutput, cleanKill (legacy; prefer spawnPty)
+    test-env.ts           # getTestEnvFlag, getTestEnvFlagOrDefault
+    session-poll.ts       # pollForSession
+  setup/
+    agent-build-setup.ts  # Vitest globalSetup: npm run build + SSO credential auth
+    load-test-env.ts      # Imports .env.test.local at the top of each test file
+  integration/
+    agent-task.test.ts          # TC-016 dual-mode
+    agent-task-session.test.ts  # Session/metrics artefact validation
+    agent-model.test.ts         # TC-020, TC-021, TC-024
+    agent-skills.test.ts        # TC-025
+    agent-assistant.test.ts     # TC-014, TC-015, TC-026
+    agent-jwt-token.test.ts     # TC-017, TC-027  [JWT-only]
+    agent-jwt-budget.test.ts    # TC-028
+    agent-negative.test.ts      # TC-018 [JWT-only], TC-019 [dual-mode]
+    agent-shortcuts.test.ts     # Slash command smoke tests
+    cli-commands/
+      health.test.ts     # TC-031
+      doctor.test.ts
+      help.test.ts
+      version.test.ts
+      list.test.ts
+      models.test.ts
+      profile.test.ts
+      skills.test.ts
+      workflow.test.ts
+      error-handling.test.ts
+```
 
 ---
 
 ## Helper Layer
 
-### `tests/helpers/jwt-auth.ts` (new)
+### JWT helpers (`helpers/jwt-auth.ts`)
 
-```typescript
-// Fetch a JWT token via Keycloak password grant
-export async function fetchJwtToken(): Promise<string>
+| Helper | Purpose |
+|---|---|
+| `fetchJwtToken()` | Fetches bearer token from auth server using `CI_CODEMIE_*` env vars |
+| `writeJwtProfile(home, { jwtToken })` | Writes a `bearer-auth` profile config to `<home>/codemie-cli.config.json` |
+| `jwtCleanEnv()` | Returns a minimal env object (no `CODEMIE_HOME`, no inherited profile) for JWT runs |
 
-// Write a bearer-auth profile to ${codemieHome}/codemie-cli.config.json
-export function writeJwtProfile(
-  codemieHome: string,
-  overrides?: Partial<{
-    profileName: string;
-    model: string;
-    codeMieUrl: string;
-    baseUrl: string;
-    jwtToken: string;
-    codeMieProject: string;
-  }>
-): void
+### SSO helpers (`helpers/sso-auth.ts`)
+
+| Helper | Purpose |
+|---|---|
+| `writeSsoProfile(home)` | Writes an `ai-run-sso` profile config to `<home>/codemie-cli.config.json` |
+| `ssoCleanEnv()` | Returns a minimal env object for SSO runs (strips inherited auth env vars) |
+| `copySsoCredentials(home)` | Copies SSO credential files from `~/.codemie` into the test's isolated `home` |
+| `setupSsoAutotestProfile()` | Sets `sso-autotest` as the active profile in `~/.codemie`; returns the original active profile name |
+| `teardownSsoAutotestProfile(original)` | Restores the original active profile after the test |
+
+### PTY helper (`helpers/pty-session.ts`)
+
+| Helper | Purpose |
+|---|---|
+| `spawnPty(args, env, cwd)` → `PtySession` | Spawns `codemie-claude` in a node-pty PTY; returns `{ send(text), waitFor(pattern), close() }` |
+
+Used by interactive tests (TC-024, TC-025) that need to drive a running session with slash commands.
+
+### Metrics helper (`helpers/metrics.ts`)
+
+| Helper | Purpose |
+|---|---|
+| `getLatestMetricsRecord(sessionsDir)` | Reads `_metrics.jsonl` in `sessionsDir` and returns the latest record as a parsed object |
+
+### Other helpers
+
+| Helper | File | Purpose |
+|---|---|---|
+| `getTempDir()` | `temp-workspace.ts` | Returns system temp dir, platform-aware |
+| `resolveLongPath(p)` | `temp-workspace.ts` | Resolves Windows long path prefix |
+| `getTestEnvFlagOrDefault(name, def)` | `test-env.ts` | Reads an env flag as boolean with fallback |
+| `pollForSession(dir, opts)` | `session-poll.ts` | Polls for session file creation with timeout |
+
+---
+
+## TC Map
+
+| TC | File | Mode | Description |
+|---|---|---|---|
+| TC-014 | `agent-assistant.test.ts` | dual | Setup assistants wizard registers assistant as skill |
+| TC-015 | `agent-assistant.test.ts` | dual | Assistants chat with invalid ID returns error |
+| TC-016 | `agent-task.test.ts` | dual | `--task` exits 0 and agent response appears in stdout |
+| TC-017 | `agent-jwt-token.test.ts` | JWT-only | `--profile` + `--jwt-token` overrides active SSO profile; session records `bearer-auth` |
+| TC-018 | `agent-negative.test.ts` | JWT-only | Invalid JWT token exits non-zero with auth error |
+| TC-019 | `agent-negative.test.ts` | dual | No profile and no token exits non-zero with config error |
+| TC-020 | `agent-model.test.ts` | dual | Session records model configured in profile |
+| TC-021 | `agent-model.test.ts` | dual | Metrics records configured model in models array |
+| TC-024 | `agent-model.test.ts` | dual | In-session `/model` slash command records new model in metrics (PTY) |
+| TC-025 | `agent-skills.test.ts` | dual | Skill slash command invocation inside running session (PTY) |
+| TC-026 | `agent-assistant.test.ts` | dual | Assistants chat non-interactive (random number round-trip) |
+| TC-027 | `agent-jwt-token.test.ts` | JWT-only | `--jwt-token` with no profile (empty CODEMIE_HOME) exits 0 and prints agent response |
+| TC-028 | `agent-jwt-budget.test.ts` | JWT-only | Agent task succeeds with all-budget project profile |
+| TC-031 | `cli-commands/health.test.ts` | none | `codemie-claude health` exits 0 and output mentions install/binary/health |
+
+---
+
+## Gating Patterns
+
+### Dual-mode test (runs in both SSO and JWT)
+
+```ts
+const CI_IS_LOCAL_RUN = getTestEnvFlagOrDefault('CI_IS_LOCAL_RUN', true);
+
+beforeAll(async () => {
+  if (!CI_IS_LOCAL_RUN) {
+    jwtToken = await fetchJwtToken();
+  } else {
+    originalActiveProfile = setupSsoAutotestProfile();
+  }
+}, 30_000);
+
+afterAll(() => {
+  if (CI_IS_LOCAL_RUN) teardownSsoAutotestProfile(originalActiveProfile);
+});
+
+// Inner beforeAll (per-describe):
+beforeAll(() => {
+  testHome = mkdtempSync(join(getTempDir(), 'codemie-test-'));
+  if (!CI_IS_LOCAL_RUN) {
+    writeJwtProfile(testHome, { jwtToken });
+  } else {
+    writeSsoProfile(testHome);
+    copySsoCredentials(testHome);
+  }
+  result = spawnSync(
+    process.execPath,
+    CI_IS_LOCAL_RUN
+      ? [CLAUDE_BIN, '--task', 'Say READY']
+      : [CLAUDE_BIN, '--task', 'Say READY', '--jwt-token', jwtToken],
+    {
+      env: { ...(CI_IS_LOCAL_RUN ? ssoCleanEnv() : jwtCleanEnv()), CODEMIE_HOME: testHome },
+      encoding: 'utf-8',
+      timeout: 120_000,
+    },
+  );
+}, 180_000);
 ```
 
-`writeJwtProfile` produces:
+### JWT-only test
+
+```ts
+describe.runIf(!CI_IS_LOCAL_RUN)(
+  'TC-NNN — description [JWT-only, skipped when CI_IS_LOCAL_RUN=true]',
+  () => {
+    let jwtToken: string;
+    beforeAll(async () => { jwtToken = await fetchJwtToken(); }, 30_000);
+    // ... tests using jwtToken
+  },
+);
+```
+
+### Interactive PTY test (dual-mode)
+
+```ts
+// TC-024, TC-025 — interactive sessions driven via node-pty
+const session = await spawnPty(
+  [CLAUDE_BIN, ...(CI_IS_LOCAL_RUN ? [] : ['--jwt-token', jwtToken])],
+  { ...(CI_IS_LOCAL_RUN ? ssoCleanEnv() : jwtCleanEnv()), CODEMIE_HOME: testHome },
+  testHome,
+);
+await session.waitFor(/\$/);          // prompt
+session.send('/model claude-haiku-4-5\n');
+await session.waitFor(/switched|model/i);
+await session.close();
+```
+
+---
+
+## Global Setup (`tests/setup/agent-build-setup.ts`)
+
+Runs once per agent test session (`vitest.agent.config.ts` → `globalSetup`):
+
+1. Loads `.env.test.local`.
+2. Runs `npm run build` to produce `dist/`.
+3. Ensures `~/.local/bin` is in `PATH` (needed on some Windows CI runners).
+4. Installs or skips the native `claude` binary.
+5. If `CI_IS_LOCAL_RUN=true`, authenticates the `sso-autotest` profile so SSO credentials are valid for the test session.
+
+---
+
+## Multi-profile Override Pattern (TC-017)
+
+TC-017 exercises the `--profile` + `--jwt-token` runtime override. The test writes a two-profile config where the **active** profile is SSO and the **non-active** profile is `bearer-auth`. Running with `--profile profile-jwt-override --jwt-token <token>` must:
+
+1. Select the non-active profile (not the active SSO one).
+2. Use the supplied token for auth.
+
+The observable proof is the `provider` field in the session file. Because `--jwt-token` does **not** mutate the config's `provider` key, the session will record `bearer-auth` only if the non-active JWT profile was actually selected. If the active SSO profile were used instead, `provider` would be `ai-run-sso`.
+
+Config shape written by `writeTwoProfileConfig(testHome)`:
+
 ```json
 {
   "version": 2,
-  "activeProfile": "jwt-autotest",
+  "activeProfile": "profile-sso-active",
   "profiles": {
-    "jwt-autotest": {
-      "name": "jwt-autotest",
-      "provider": "bearer-auth",
-      "authMethod": "jwt",
-      "codeMieUrl": "<CI_CODEMIE_URL>",
-      "baseUrl": "<CI_CODEMIE_API_DOMAIN>",
-      "model": "<CI_CODEMIE_MODEL>"
-    }
+    "profile-sso-active":  { "provider": "ai-run-sso",   "authMethod": "sso" },
+    "profile-jwt-override": { "provider": "bearer-auth", "authMethod": "jwt" }
   }
 }
 ```
 
-Config is written to `${codemieHome}/codemie-cli.config.json` — matching `getCodemiePath()` which resolves `CODEMIE_HOME` as the base directory.
-
-### `tests/helpers/interactive-helpers.ts` (new)
-
-Used only by `agent-interactive-session.test.ts`.
-
-```typescript
-// Resolves when stdout matches pattern; rejects on timeout or process exit with error
-export function waitForOutput(
-  proc: ChildProcess,
-  pattern: RegExp,
-  timeoutMs: number
-): Promise<string>
-
-// Sends SIGTERM and waits for the process to exit cleanly
-export function cleanKill(proc: ChildProcess): Promise<void>
-```
-
-`waitForOutput` wraps stdout in a `readline` interface and polls line-by-line.
-
-### `tests/helpers/index.ts` (extend)
-
-Add re-exports for `fetchJwtToken`, `writeJwtProfile`, `waitForOutput`, `cleanKill`.
+Assertion: `session.provider` matches `/bearer-auth/i`.
 
 ---
 
-## Session-Scoped Build Fixture
+## Conventions
 
-Agent session tests require a pre-built `dist/`. A Vitest `globalSetup` runs `npm run build` once per test session — equivalent to a pytest `scope="session"` fixture.
-
-### `tests/setup/agent-build-setup.ts` (new)
-
-```typescript
-import { execSync } from 'node:child_process';
-import { resolve } from 'node:path';
-
-export async function setup() {
-  const root = resolve(import.meta.dirname, '../..');
-  console.log('[agent-integration] Building dist/...');
-  execSync('npm run build', { cwd: root, stdio: 'inherit' });
-}
-```
-
-Runs once regardless of how many agent test files are in the session.
-
----
-
-## Vitest Configuration
-
-### `vitest.agent.config.ts` (new)
-
-Dedicated config for agent integration tests only:
-
-```typescript
-import { defineConfig } from 'vitest/config';
-
-export default defineConfig({
-  test: {
-    include: ['tests/integration/agent-*.test.ts'],
-    globalSetup: ['tests/setup/agent-build-setup.ts'],
-    testTimeout: 180_000,   // 3 min — real agent calls over network
-    hookTimeout: 300_000,   // 5 min — covers build + token fetch in beforeAll
-    reporters: ['verbose'],
-    env: { NODE_ENV: 'test' },
-  },
-});
-```
-
-### `package.json` scripts (additions)
-
-```json
-"test:integration:agent": "vitest run --config vitest.agent.config.ts",
-"test:integration:cli":   "vitest run tests/integration/cli-commands/"
-```
-
-The existing `test:integration` script is unchanged.
-
----
-
-## File Layout
-
-```
-tests/
-  helpers/
-    jwt-auth.ts                    NEW
-    interactive-helpers.ts         NEW
-    index.ts                       EXTEND (re-exports)
-
-  setup/
-    agent-build-setup.ts           NEW
-
-  integration/
-    cli-commands/
-      doctor.test.ts               EXTEND — TC-002 (--verbose), TC-003 (JWT profile)
-      profile.test.ts              EXTEND — TC-004..TC-010, TC-032, TC-033
-      skills.test.ts               EXTEND — TC-012 (JWT lifecycle), TC-013 (invalid source)
-      assistants.test.ts           NEW    — TC-014, TC-015
-      models.test.ts               NEW    — TC-022
-
-    agent-jwt-basic.test.ts        NEW    — TC-016..TC-019, TC-031
-    agent-jwt-models.test.ts       NEW    — TC-020, TC-021
-    agent-jwt-budget.test.ts       NEW    — TC-028
-    agent-interactive-session.test.ts NEW — TC-024..TC-026
-
-vitest.agent.config.ts             NEW
-```
-
-**`claude-cli-task.test.ts`** — skipped. TC-023 / TC-034 are deferred; a comment in `agent-jwt-basic.test.ts` records the deferral.
-
----
-
-## Test Patterns
-
-### CLI management tests
-
-Use `spawnSync` directly (mirrors `skills.test.ts`):
-
-```typescript
-const result = spawnSync(process.execPath, [CLI_BIN, 'profile', 'switch', 'jwt-secondary'], {
-  cwd: workspace,
-  env: { ...process.env, CODEMIE_HOME: testHome, CI: '1' },
-  encoding: 'utf-8',
-  timeout: 30_000,
-});
-expect(result.status).toBe(0);
-```
-
-### Agent session tests
-
-`cleanEnv()` is a local inline helper in each agent test file that returns `{ PATH: process.env.PATH, NODE_PATH: process.env.NODE_PATH }` — a minimal env that prevents leaking real credentials from the developer's shell into subprocesses.
-
-```typescript
-const CLAUDE_BIN = path.resolve(__dirname, '../../bin/codemie-claude.js');
-
-beforeAll(async () => {
-  jwtToken = await fetchJwtToken();
-  // dist/ is guaranteed by vitest.agent.config.ts globalSetup
-});
-
-const result = spawnSync(process.execPath, [CLAUDE_BIN, '--task', 'Say READY', '--jwt-token', jwtToken], {
-  cwd: tmpWorkspace,
-  env: { ...cleanEnv(), CODEMIE_HOME: testHome },
-  encoding: 'utf-8',
-  timeout: 120_000,
-});
-```
-
-### Interactive session tests
-
-```typescript
-const proc = spawn(process.execPath, [CLAUDE_BIN, '--jwt-token', jwtToken], {
-  env: { ...cleanEnv(), CODEMIE_HOME: testHome },
-  stdio: ['pipe', 'pipe', 'pipe'],
-});
-
-await waitForOutput(proc, />\s*$|Human:/i, 30_000);
-proc.stdin!.write('/model claude-haiku-4-5-20251001\n');
-await waitForOutput(proc, /claude-haiku/i, 30_000);
-proc.stdin!.write('Say CONFIRMED\n');
-await waitForOutput(proc, /CONFIRMED/i, 60_000);
-await cleanKill(proc);
-```
-
-### Skills lifecycle test (TC-012)
-
-No `CI_CODEMIE_SKILL_SOURCE` env var needed. The `beforeAll` fetches the first available skill from the CodeMie marketplace API using the JWT token, then uses that source for `skills add` / `skills remove`:
-
-```typescript
-// In beforeAll — discover a skill source dynamically
-const resp = await fetch(`${process.env.CI_CODEMIE_API_DOMAIN}/api/skills`, {
-  headers: { Authorization: `Bearer ${jwtToken}` },
-});
-const skills = await resp.json();
-skillSource = skills[0].source; // e.g. "owner/repo"
-skillName   = skills[0].name;
-```
-
-TC-013 (invalid source) uses the hardcoded string `'nonexistent-owner/nonexistent-repo-xyz'` — no discovery needed.
-
-## Environment Variables
-
-Required for JWT-gated tests (`INCLUDE_JWT_TESTS=true`):
-
-| Variable | Purpose |
-|---|---|
-| `CI_CODEMIE_USERNAME` | Service-account email |
-| `CI_CODEMIE_PASSWORD` | Service-account password |
-| `CI_CODEMIE_URL` | CodeMie frontend URL |
-| `CI_CODEMIE_API_DOMAIN` | CodeMie API base URL |
-| `CI_CODEMIE_PROJECT_ALL_BUDGETS` | Project name with all 3 budget types |
-| `CI_CODEMIE_MODEL` | Default model (e.g. `claude-sonnet-4-6`) |
-| `CI_CODEMIE_ASSISTANT_ID` | Known assistant ID for the test account |
-| `INCLUDE_JWT_TESTS` | Set to `"true"` to enable JWT suites |
-
----
-
-## Test Case Map
-
-| TC | File | Type |
-|---|---|---|
-| TC-001 | `doctor.test.ts` | existing (verify coverage) |
-| TC-002 | `doctor.test.ts` | extend |
-| TC-003 | `doctor.test.ts` | extend (JWT-gated) |
-| TC-004..TC-010, TC-032, TC-033 | `profile.test.ts` | extend |
-| TC-011 | `skills.test.ts` | existing (verify coverage) |
-| TC-012..TC-013 | `skills.test.ts` | extend (JWT-gated) |
-| TC-014..TC-015 | `assistants.test.ts` | new (JWT-gated) |
-| TC-016..TC-019, TC-031 | `agent-jwt-basic.test.ts` | new (JWT-gated) |
-| TC-020..TC-021 | `agent-jwt-models.test.ts` | new (JWT-gated) |
-| TC-022 | `models.test.ts` | new (JWT-gated) |
-| TC-023, TC-034 | `claude-cli-task.test.ts` | deferred |
-| TC-024..TC-026 | `agent-interactive-session.test.ts` | new (JWT-gated) |
-| TC-028 | `agent-jwt-budget.test.ts` | new (JWT-gated) |
-| TC-029 | `version.test.ts` | existing (verify coverage) |
-| TC-030 | `list.test.ts` | existing (verify coverage) |
+- Every test writes to an isolated `mkdtempSync(...)` temp dir, set as `CODEMIE_HOME`.
+- `afterAll` always `rmSync(testHome, { recursive: true, force: true })`.
+- `spawnSync` is used for non-interactive `--task` invocations; `spawnPty` for interactive sessions.
+- `testTimeout: 180_000` and `hookTimeout: 300_000` in `vitest.agent.config.ts`.
+- TC numbers appear in the `describe` name so they are visible in test output.
