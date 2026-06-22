@@ -1,9 +1,10 @@
 /**
- * Agent JWT Basic Tests — TC-016..TC-019
+ * Agent JWT Basic Tests — TC-017..TC-019
  *
  * Run with: npm run test:integration:agent
  * Requires: INCLUDE_JWT_TESTS=true, CI_CODEMIE_* env vars
  *
+ * TC-016 is covered by agent-task.test.ts (dual-mode).
  * TC-023 / TC-034 are covered by agent-task-session.test.ts.
  * TC-031 is covered by cli-commands/health.test.ts.
  */
@@ -28,41 +29,12 @@ function getLatestSessionFile(sessionsDir: string): Record<string, unknown> {
   return JSON.parse(readFileSync(files[0], 'utf-8'));
 }
 
-describe.runIf(INCLUDE_JWT_TESTS)('Agent — JWT basic (TC-016..TC-019)', () => {
+describe.runIf(INCLUDE_JWT_TESTS)('Agent — JWT basic (TC-017..TC-019)', () => {
   let jwtToken: string;
 
   beforeAll(async () => {
     jwtToken = await fetchJwtToken();
   }, 30_000);
-
-  // ── TC-016: Agent runs successfully with JWT token ──────────────────────────
-  describe('TC-016 — agent runs with JWT token', () => {
-    let testHome: string;
-    let result: ReturnType<typeof spawnSync>;
-
-    beforeAll(() => {
-      testHome = mkdtempSync(join(getTempDir(),'codemie-jwt-basic-'));
-      writeJwtProfile(testHome, { jwtToken });
-      result = spawnSync(
-        process.execPath,
-        [CLAUDE_BIN, '--task', 'Say the word READY and nothing else', '--jwt-token', jwtToken],
-        { cwd: testHome, env: { ...jwtCleanEnv(), CODEMIE_HOME: testHome }, encoding: 'utf-8', timeout: 120_000 }
-      );
-    }, 180_000);
-    afterAll(() => rmSync(testHome, { recursive: true, force: true }));
-
-    it('exits 0 and prints agent output', () => {
-      const agentOutput = (result.stdout ?? '') + (result.stderr ?? '');
-      expect(result.status, `agent exited ${result.status}; output:\n${agentOutput}`).toBe(0);
-      expect(result.stdout).toMatch(/READY/i);
-    });
-
-    it('writes a session file to CODEMIE_HOME/sessions/', () => {
-      const sessionsDir = join(testHome, 'sessions');
-      const files = readdirSync(sessionsDir).filter((f) => f.endsWith('.json'));
-      expect(files.length).toBeGreaterThan(0);
-    });
-  });
 
   // ── TC-017: Agent with profile + JWT override ───────────────────────────────
   describe('TC-017 — agent with profile and JWT token override', () => {
