@@ -108,14 +108,14 @@ describe('Claude Skill Generator', () => {
 			);
 		});
 
-		it('should include correct command with assistant ID', async () => {
+		it('should include correct command with assistant ID and conversation id flag', async () => {
 			// Act
 			await registerClaudeSkill(mockAssistant);
 
 			// Assert
 			expect(fs.writeFile).toHaveBeenCalledWith(
 				expect.any(String),
-				expect.stringContaining('codemie assistants chat "asst-123" "message"'),
+				expect.stringContaining('codemie assistants chat "asst-123" --conversation-id "<workflow-id>" "message"'),
 				'utf-8'
 			);
 		});
@@ -381,14 +381,16 @@ describe('Claude Skill Generator', () => {
 			expect(content).toContain('```');
 		});
 
-		it('should reference assistant name in instructions', async () => {
+		it('should instruct callers to mint and reuse a workflow id', async () => {
 			// Act
 			await registerClaudeSkill(mockAssistant);
 
 			// Assert
 			const callArgs = vi.mocked(fs.writeFile).mock.calls[0];
 			const content = callArgs[1] as string;
-			expect(content).toContain('Extract the user\'s message from the conversation context');
+			expect(content).toContain('Mint a workflow id once at the start of every task');
+			expect(content).toContain('--conversation-id');
+			expect(content).toContain('CODEMIE_SESSION_ID');
 		});
 	});
 

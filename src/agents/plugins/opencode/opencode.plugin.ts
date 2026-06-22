@@ -34,6 +34,21 @@ export const OpenCodePluginMetadata: AgentMetadata = {
   supportedProviders: ['litellm', 'ai-run-sso', 'ollama', 'bedrock', 'bearer-auth'],
   ssoConfig: { enabled: true, clientType: 'codemie-opencode' },
 
+  flagMappings: {
+    '--resume': {
+      type: 'flag',
+      target: '-s',
+    },
+  },
+
+  reasoningEffort: {
+    strategy: 'cli-flag',
+    flag: '--variant',
+    placement: 'append',
+    supportedLevels: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+    userOverrideFlags: ['--variant'],
+  },
+
   lifecycle: {
     // NOTE: beforeRun signature is (env, config) per AgentLifecycle interface
     // Claude plugin only uses (env), but interface supports both

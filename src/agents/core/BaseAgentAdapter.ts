@@ -551,6 +551,23 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       transformedArgs = enrichedArgs;
     }
 
+    // Central reasoning-effort injection (Approach A).
+    // Runs after enrichArgs and transformFlags so args are in their final form.
+    if (this.metadata.reasoningEffort && env.CODEMIE_REASONING_EFFORT) {
+      const { applyReasoningEffort } = await import('./reasoning-effort.js');
+      transformedArgs = applyReasoningEffort(
+        transformedArgs,
+        env,
+        this.metadata.reasoningEffort,
+        env.CODEMIE_REASONING_EFFORT,
+        this.metadata.name,
+      ).args;
+    } else if (env.CODEMIE_REASONING_EFFORT) {
+      // Agent declared no reasoningEffort block — warn and continue (spec §6.4).
+      logger.warn(`[${this.metadata.name}] --reasoning-effort is set but not supported; ignoring`);
+      console.error(chalk.yellow(`⚠  --reasoning-effort is not supported for ${this.displayName}; ignoring.`));
+    }
+
     // Log configuration (CODEMIE_* + transformed agent-specific vars)
     logger.debug('=== Agent Configuration ===');
     const codemieVars = Object.keys(env)

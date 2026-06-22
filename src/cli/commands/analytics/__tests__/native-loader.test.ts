@@ -158,3 +158,24 @@ describe('loadNativeSessions', () => {
     expect(await loadNativeSessions(undefined, deps)).toEqual([]);
   });
 });
+
+describe('synthesizeRawSession — /clear sentinel in post-/clear file', () => {
+  const desc = { ...descriptor, sessionId: 'clr', filePath: '/logs/clr.jsonl' };
+  const assistant = { type: 'assistant', timestamp: '2026-01-01T10:01:00Z', message: { role: 'assistant', model: 'claude-sonnet-4-6' } };
+  const clearSentinel = { type: 'user', timestamp: '2026-01-01T10:00:00Z', message: { role: 'user', content: '<command-name>/clear</command-name>' } };
+
+  it('strips the /clear sentinel so it does not appear as the opening prompt', () => {
+    const p = {
+      sessionId: 'clr', agentName: 'claude', metadata: {},
+      metrics: { tools: {} },
+      messages: [
+        clearSentinel,
+        { type: 'user', timestamp: '2026-01-01T10:01:00Z', message: { role: 'user', content: 'actual prompt' } },
+        assistant,
+      ],
+    } as never;
+    const raw = synthesizeRawSession('claude', desc, p);
+    expect(raw.sessionId).toBe('clr');
+    expect(raw.deltas[0].userPrompts?.[0].text).toBe('actual prompt');
+  });
+});

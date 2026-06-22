@@ -1,6 +1,7 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { BaseAgentAdapter } from '../BaseAgentAdapter.js';
 import type { AgentMetadata } from '../types.js';
+import { logger } from '../../../utils/logger.js';
 
 // Provide a minimal ProviderRegistry stub so shouldUseProxy can look up authType
 // without needing real provider templates to be registered.
@@ -24,6 +25,91 @@ vi.mock('../../../providers/core/registry.js', () => {
     },
   };
 });
+
+// --- Mocks required for the run() pipeline ---
+
+const mockApplyReasoningEffort = vi.fn((args: string[]) => ({ args }));
+vi.mock('../reasoning-effort.js', () => ({
+  applyReasoningEffort: (...callArgs: any[]) => mockApplyReasoningEffort(callArgs[0]),
+}));
+
+vi.mock('../../../utils/logger.js', () => ({
+  logger: {
+    debug: vi.fn(),
+    warn: vi.fn(),
+    info: vi.fn(),
+    error: vi.fn(),
+    success: vi.fn(),
+    setSessionId: vi.fn(),
+    setAgentName: vi.fn(),
+    setProfileName: vi.fn(),
+  },
+}));
+
+vi.mock('../../../utils/processes.js', () => ({
+  detectGitBranch:    vi.fn(() => Promise.resolve(null)),
+  detectGitRemoteRepo: vi.fn(() => Promise.resolve(null)),
+  exec:               vi.fn(),
+  installGlobal:      vi.fn(),
+  uninstallGlobal:    vi.fn(),
+  getCommandPath:     vi.fn(() => Promise.resolve(null)),
+}));
+
+vi.mock('../../../utils/profile.js', () => ({
+  renderProfileInfo: vi.fn(() => ''),
+}));
+
+vi.mock('../../../utils/goodbye-messages.js', () => ({
+  getRandomWelcomeMessage: vi.fn(() => 'Welcome'),
+  getRandomGoodbyeMessage: vi.fn(() => 'Goodbye'),
+}));
+
+vi.mock('../../../cli/commands/skills/setup/sync.js', () => ({
+  syncRegisteredSkills: vi.fn(() => Promise.resolve()),
+}));
+
+vi.mock('../lifecycle-helpers.js', () => ({
+  executeOnSessionStart: vi.fn(() => Promise.resolve()),
+  executeBeforeRun:      vi.fn((_adapter: any, _lifecycle: any, _name: any, env: any) => Promise.resolve(env)),
+  executeEnrichArgs:     vi.fn((_lifecycle: any, _name: any, args: any) => Promise.resolve(args)),
+  executeOnSessionEnd:   vi.fn(() => Promise.resolve()),
+  executeAfterRun:       vi.fn(() => Promise.resolve()),
+}));
+
+vi.mock('../flag-transform.js', () => ({
+  transformFlags: vi.fn((_args: any, _mappings: any) => _args),
+}));
+
+// Spy-able spawn that immediately resolves with exit code 0 via the 'exit' event
+const mockSpawnedProcess = {
+  kill: vi.fn(),
+  on: vi.fn((event: string, cb: (code: number) => void) => {
+    if (event === 'exit') setImmediate(() => cb(0));
+  }),
+};
+vi.mock('child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('child_process')>();
+  return {
+    ...actual,
+    spawn: vi.fn(() => mockSpawnedProcess),
+  };
+});
+
+// Stub CodeMieProxy so setupProxy doesn't try to start a real proxy server
+vi.mock('../../../providers/plugins/sso/index.js', () => ({
+  CodeMieProxy: vi.fn().mockImplementation(() => ({
+    start: vi.fn(() => Promise.resolve()),
+    stop:  vi.fn(() => Promise.resolve()),
+  })),
+}));
+
+vi.mock('../../../utils/mcp-config.js', () => ({
+  getMCPConfigSummary: vi.fn(() => Promise.resolve(null)),
+}));
+
+vi.mock('../../../utils/extensions-scan.js', () => ({
+  getExtensionsScanSummary: vi.fn(() => Promise.resolve(null)),
+}));
 
 /**
  * Test adapter that extends BaseAgentAdapter
@@ -276,6 +362,95 @@ describe('BaseAgentAdapter', () => {
         CODEMIE_AUTH_METHOD: 'api-key',
       });
       expect(config.authMethod).toBeUndefined();
+    });
+  });
+
+  describe('reasoning effort injection', () => {
+    // A minimal adapter that delegates to BaseAgentAdapter.run() so the injection
+    // code path is exercised. It uses isBuiltIn=false + cliCommand so the spawn
+    // path (where transformedArgs is consumed) is taken. spawn itself is mocked.
+    class RunPipelineAdapter extends BaseAgentAdapter {
+      // Expose metadata for assertions
+      getMetadata(): AgentMetadata { return this.metadata; }
+    }
+
+    const effortMetadata: AgentMetadata = {
+      name: 'effort-agent',
+      displayName: 'Effort Agent',
+      description: 'Agent with reasoningEffort config',
+      npmPackage: null,
+      cliCommand: 'effort-agent-bin',
+      envMapping: {},
+      supportedProviders: ['anthropic-subscription'],
+      silentMode: true,
+      reasoningEffort: {
+        strategy: 'cli-flag',
+        flag: '--effort',
+        supportedLevels: ['low', 'medium', 'high'],
+      },
+    };
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      // Default: applyReasoningEffort passes args through unchanged
+      mockApplyReasoningEffort.mockImplementation((args: string[]) => ({ args }));
+      // Clean up any CODEMIE_REASONING_EFFORT that leaked into process.env from a
+      // previous test (BaseAgentAdapter.run() calls Object.assign(process.env, env))
+      delete process.env['CODEMIE_REASONING_EFFORT'];
+    });
+
+    it('calls applyReasoningEffort when metadata.reasoningEffort is defined and CODEMIE_REASONING_EFFORT is set', async () => {
+      const adapter = new RunPipelineAdapter(effortMetadata);
+
+      await adapter.run([], { CODEMIE_REASONING_EFFORT: 'high' });
+
+      expect(mockApplyReasoningEffort).toHaveBeenCalledOnce();
+      // First positional arg to the mock is the args array
+      expect(mockApplyReasoningEffort).toHaveBeenCalledWith(expect.any(Array));
+    });
+
+    it('does not call applyReasoningEffort when CODEMIE_REASONING_EFFORT is absent', async () => {
+      const adapter = new RunPipelineAdapter(effortMetadata);
+
+      await adapter.run([], {});
+
+      expect(mockApplyReasoningEffort).not.toHaveBeenCalled();
+    });
+
+    it('does not call applyReasoningEffort when metadata.reasoningEffort is not declared', async () => {
+      const noEffortMetadata: AgentMetadata = {
+        ...effortMetadata,
+        reasoningEffort: undefined,
+      };
+      const adapter = new RunPipelineAdapter(noEffortMetadata);
+
+      await adapter.run([], { CODEMIE_REASONING_EFFORT: 'high' });
+
+      expect(mockApplyReasoningEffort).not.toHaveBeenCalled();
+    });
+
+    it('logs a warning when CODEMIE_REASONING_EFFORT is set but metadata.reasoningEffort is absent', async () => {
+      const noEffortMetadata: AgentMetadata = {
+        ...effortMetadata,
+        reasoningEffort: undefined,
+      };
+      const adapter = new RunPipelineAdapter(noEffortMetadata);
+
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        // Should complete without throwing (warn-and-continue path, spec §6.4)
+        await expect(adapter.run([], { CODEMIE_REASONING_EFFORT: 'high' })).resolves.toBeUndefined();
+
+        // logger.warn must have been called with a message mentioning the agent is not supported
+        expect(logger.warn).toHaveBeenCalledWith(
+          expect.stringContaining('not supported'),
+        );
+
+        // console.error (yellow chalk warning) must also have been called
+        expect(consoleErrorSpy).toHaveBeenCalled();
+      } finally {
+        consoleErrorSpy.mockRestore();
+      }
     });
   });
 });

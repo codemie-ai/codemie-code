@@ -279,3 +279,78 @@ describe('extractClaudeUsageRecords — sub-agent transcripts', () => {
     expect(extractClaudeUsageRecords(p).map((r) => r.usage.input)).toEqual([1, 2]);
   });
 });
+
+describe('extractClaudeUsageRecords — cacheCreation1h', () => {
+  function parsed(messages: unknown[]): never {
+    return { sessionId: 's', agentName: 'claude', metadata: {}, messages, metrics: {} } as never;
+  }
+
+  it('reads cacheCreation1h from cache_creation.ephemeral_1h_input_tokens', () => {
+    const recs = extractClaudeUsageRecords(
+      parsed([
+        {
+          requestId: 'r1',
+          message: {
+            id: 'm1',
+            model: 'claude-sonnet-4-6',
+            usage: {
+              input_tokens: 100,
+              output_tokens: 50,
+              cache_creation_input_tokens: 9275,
+              cache_creation: { ephemeral_1h_input_tokens: 9275, ephemeral_5m_input_tokens: 0 },
+            },
+          },
+        },
+      ])
+    );
+    expect(recs).toHaveLength(1);
+    expect(recs[0].usage.cacheCreation1h).toBe(9275);
+  });
+
+  it('sets cacheCreation1h to 0 when cache_creation is absent', () => {
+    const recs = extractClaudeUsageRecords(
+      parsed([
+        {
+          requestId: 'r2',
+          message: {
+            id: 'm2',
+            model: 'claude-sonnet-4-6',
+            usage: { input_tokens: 100, output_tokens: 50 },
+          },
+        },
+      ])
+    );
+    expect(recs).toHaveLength(1);
+    expect(recs[0].usage.cacheCreation1h).toBe(0);
+  });
+
+  it('accumulates cacheCreation1h across two messages (one 1h, one 5m)', () => {
+    const recs = extractClaudeUsageRecords(
+      parsed([
+        {
+          requestId: 'r3',
+          message: {
+            id: 'm3',
+            model: 'claude-sonnet-4-6',
+            usage: {
+              input_tokens: 100,
+              output_tokens: 50,
+              cache_creation: { ephemeral_1h_input_tokens: 5000, ephemeral_5m_input_tokens: 2000 },
+            },
+          },
+        },
+        {
+          requestId: 'r4',
+          message: {
+            id: 'm4',
+            model: 'claude-sonnet-4-6',
+            usage: { input_tokens: 200, output_tokens: 80 },
+          },
+        },
+      ])
+    );
+    expect(recs).toHaveLength(2);
+    const total1h = recs.reduce((sum, r) => sum + r.usage.cacheCreation1h, 0);
+    expect(total1h).toBe(5000);
+  });
+});

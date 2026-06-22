@@ -27,7 +27,8 @@ import { logger } from '../../../utils/logger.js';
 // (POST /v1/responses) instead of Chat Completions (POST /v1/chat/completions).
 //
 // Naming conventions observed in CodeMie deployments:
-//   Responses API  →  gpt-5-2-*, gpt-5.2-*, gpt-5.x-codex-*, gpt-5-x-codex-*
+//   Responses API  →  gpt-5-2-*, gpt-5.2-*, gpt-5.x-codex-*, gpt-5-x-codex-*,
+//                     gpt-5.4-*, gpt-5-4-*, gpt-5.5-*, gpt-5-5-*
 //   Chat Completions → gpt-4*, gpt-5-<year>-*, o1/o3/o4*, gemini-*, claude-*, …
 //
 // Update this list whenever new Responses-API-only models are deployed.
@@ -39,6 +40,10 @@ const RESPONSES_API_MODEL_PATTERNS: RegExp[] = [
   /^gpt-5\.1-codex/,  // gpt-5.1-codex, gpt-5.1-codex-mini, gpt-5.1-codex-max
   /^gpt-5-3-codex/,   // hyphenated variant of gpt-5.3-codex
   /^gpt-5\.3-codex/,  // gpt-5.3-codex-2026-02-24
+  /^gpt-5\.4-/,       // gpt-5.4-* — Azure requires /v1/responses for tools + reasoning_effort
+  /^gpt-5-4-/,        // hyphenated variant of gpt-5.4-*
+  /^gpt-5\.5-/,       // gpt-5.5-2026-04-24 — same Azure restriction as gpt-5.4
+  /^gpt-5-5-/,        // hyphenated variant of gpt-5.5-*
 ];
 
 function isResponsesApiModel(id: string): boolean {
@@ -69,6 +74,7 @@ function detectLimits(id: string, family: string): { context: number; output: nu
   if (family === 'gemini-2' || id.startsWith('gemini')) return { context: 1048576, output: 65536 };
   if (id.startsWith('gpt-4.1')) return { context: 1048576, output: 32768 };
   if (id.startsWith('gpt-4o')) return { context: 128000, output: 16384 };
+  if (id.startsWith('gpt-5.5') || id.startsWith('gpt-5-5')) return { context: 1050000, output: 128000 }; // Azure-published window for gpt-5.5
   if (id.startsWith('gpt-5')) return { context: 400000, output: 128000 };
   if (/^o[134]-/.test(id) || id === 'o1') return { context: 200000, output: 100000 };
   if (id.startsWith('qwen') || id.startsWith('moonshotai') || id.startsWith('kimi')) return { context: 262144, output: 131072 };

@@ -3,6 +3,7 @@
  */
 
 import type { HooksConfiguration } from '../hooks/types.js';
+import type { CanonicalReasoningEffort } from '../agents/core/types.js';
 
 export enum StorageScope {
   GLOBAL = 'global',
@@ -53,6 +54,8 @@ export interface ProviderProfile {
   baseUrl?: string;
   apiKey?: string;
   model?: string;
+  /** Reasoning/thinking effort level. Persisted profile default; CLI flag overrides. */
+  reasoningEffort?: CanonicalReasoningEffort;
 
   // Claude model tier configuration (maps to ANTHROPIC_DEFAULT_*_MODEL)
   haikuModel?: string;
@@ -130,7 +133,7 @@ export interface ProviderProfile {
   skillsSearchUrl?: string;
 
   // Claude Code-specific settings
-  claudeAutocompactPct?: number; // Auto-compact threshold percentage (sets CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, default: 70)
+  claudeAutocompactPct?: number; // Auto-compact threshold percentage (sets CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, default: 85)
 
   // Statusline budget tracking
   statuslineBudgetName?: string; // Budget row name selected during statusline install

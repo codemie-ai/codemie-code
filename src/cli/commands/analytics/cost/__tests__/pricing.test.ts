@@ -45,4 +45,22 @@ describe('lookupPrice', () => {
   it('returns null for an unknown model', () => {
     expect(lookupPrice('totally-made-up-model')).toBeNull();
   });
+
+  it('claude-opus-4-8 has cacheWrite1h of 10.0', () => {
+    const p = lookupPrice('claude-opus-4-8');
+    expect(p).not.toBeNull();
+    expect(p!.cacheWrite1h).toBeCloseTo(10.0, 6);
+  });
+
+  it('claude-haiku-4-5 has cacheWrite1h of 2.0', () => {
+    const p = lookupPrice('claude-haiku-4-5');
+    expect(p).not.toBeNull();
+    expect(p!.cacheWrite1h).toBeCloseTo(2.0, 6);
+  });
+
+  it('non-Anthropic model (gpt-5) has no cacheWrite1h', () => {
+    const p = lookupPrice('gpt-5');
+    expect(p).not.toBeNull();
+    expect(p!.cacheWrite1h).toBeUndefined();
+  });
 });

@@ -157,6 +157,8 @@ All agent shortcuts support these options:
 --timeout <seconds>      # Override timeout (in seconds)
 -s, --silent             # Enable silent mode
 --task <prompt>          # Run a single task in headless (non-interactive) mode and exit
+--reasoning-effort <level> # Reasoning/thinking effort: minimal|low|medium|high|xhigh|max (see below)
+--resume <session-id>    # Resume a previous agent session by id (see below)
 --jwt-token <token>      # JWT token for authentication (overrides config and CODEMIE_JWT_TOKEN)
 ```
 
@@ -212,6 +214,17 @@ codemie-claude --task "Implement task 1" --silent --dangerously-skip-permissions
 
 The `--task` flag runs a single prompt non-interactively: the agent executes the task, prints the result, and exits. No user interaction is required. This is the primary way to use CodeMie agents in CI/CD pipelines and automated scripts.
 
+Two further options tune a headless run and work the same way across agents:
+
+- `--reasoning-effort <level>` — how much the model "thinks" before answering (see **Reasoning Effort** below).
+- `--resume <session-id>` — continue a previous session instead of starting fresh (see **Resuming a Session** below).
+
+The full headless signature is:
+
+```bash
+codemie-<agent> --model <model> --reasoning-effort <effort> [--resume <session-id>] --task "task prompt here"
+```
+
 ### How It Works
 
 Each agent maps `--task` to its own non-interactive mechanism:
@@ -219,6 +232,7 @@ Each agent maps `--task` to its own non-interactive mechanism:
 | Agent | Underlying flag/command | Behaviour |
 |-------|------------------------|-----------|
 | `codemie-claude` | `-p <prompt>` (print mode) | Runs prompt, prints output, exits |
+| `codemie-codex` | `codex exec <prompt>` | Runs task via `exec` subcommand, exits |
 | `codemie-gemini` | `-p <prompt>` | Runs prompt, prints output, exits |
 | `codemie-opencode` | `opencode run <prompt>` | Runs task via `run` subcommand, exits |
 
@@ -241,6 +255,64 @@ codemie-opencode --task "Review the code in src/ for security issues"
 codemie-claude --profile work --task "Fix the failing tests"
 codemie-gemini --model gemini-2.5-flash --task "Generate a changelog for this release"
 ```
+
+### Reasoning Effort (`--reasoning-effort`)
+
+`--reasoning-effort <level>` controls how much reasoning/thinking budget the model spends on the task. CodeMie accepts one canonical vocabulary and translates it to each agent's native mechanism:
+
+```text
+minimal  <  low  <  medium  <  high  <  xhigh  <  max
+```
+
+A level outside an agent's supported range is **clamped to the nearest supported level** (and noted on stderr). Agents that have no reasoning control emit a warning on stderr and run the task without it.
+
+| Agent | Native mechanism | Supported levels | Out-of-range handling |
+|-------|------------------|------------------|-----------------------|
+| `codemie-claude` | `--effort <level>` | low, medium, high, xhigh, max | `minimal` → `low` |
+| `codemie-codex` | `--config model_reasoning_effort=<level>` | minimal, low, medium, high, xhigh | `max` → `xhigh` |
+| `codemie-opencode` | `--variant <level>` | minimal … max (provider-specific) | passed through |
+| `codemie-gemini` | — (not supported) | — | flag ignored, warns on stderr |
+
+```bash
+# Low effort for a quick lookup
+codemie-claude --reasoning-effort low --task "List the exported functions in src/index.ts"
+
+# Highest effort for a hard problem (codex caps at xhigh → clamped, noted on stderr)
+codemie-codex --reasoning-effort max --task "Diagnose the race condition in session sync"
+
+# Combine with a model override
+codemie-opencode --model claude-sonnet-4-6 --reasoning-effort high --task "Refactor the auth module"
+```
+
+If you pass an agent's native flag yourself (e.g. Claude's `--effort`), CodeMie leaves it untouched and does not inject `--reasoning-effort`.
+
+### Resuming a Session (`--resume`)
+
+`--resume <session-id>` continues a previous agent session instead of starting a new one, preserving the earlier conversation context. Combine it with `--task` to send the next instruction headlessly:
+
+```bash
+codemie-<agent> --resume <session-id> --task "Now add tests for the change you just made"
+```
+
+Each agent maps `--resume` to its native resume mechanism (headless forms shown):
+
+| Agent | `--resume <id> --task <prompt>` runs |
+|-------|--------------------------------------|
+| `codemie-claude` | `claude -r <id> -p <prompt>` |
+| `codemie-codex` | `codex exec resume <id> <prompt>` |
+| `codemie-opencode` | `opencode run <prompt> -s <id>` |
+
+Omit `--task` to resume in interactive mode instead.
+
+**Finding a session id:**
+
+| Agent | Where to find it |
+|-------|------------------|
+| `codemie-claude` | the session filename in `~/.claude/projects/<project>/<id>.jsonl` |
+| `codemie-codex` | the `<id>` in the rollout filename under `~/.codex/codemie/home/sessions/YYYY/MM/DD/rollout-*-<id>.jsonl` |
+| `codemie-opencode` | the `id` field from `opencode session list --format json` (e.g. `ses_…`) |
+
+An unknown or expired session id is passed straight through to the underlying CLI, which reports the error and exits with a non-zero status.
 
 ### Capturing Output
 

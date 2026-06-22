@@ -22,6 +22,7 @@ import type { SessionDescriptor } from '../../../agents/core/session/discovery-t
 import { AgentRegistry } from '../../../agents/registry.js';
 import { getCodemiePath } from '../../../utils/paths.js';
 import { logger } from '../../../utils/logger.js';
+import { stripClear } from '../../../agents/plugins/claude/session/strip-clear.js';
 
 /** Agents whose native logs we discover + synthesize. (claude is the gap users hit.) */
 const NATIVE_AGENTS = ['claude'] as const;
@@ -193,13 +194,16 @@ function modal(values: string[]): string | undefined {
  * messages (the aggregator derives totalTurns from deltas.length), and all per-session metrics
  * (tools / file ops / models) are carried on a single delta — the aggregator sums across deltas,
  * so one metrics-bearing delta plus empty placeholders is equivalent to per-turn deltas.
+ *
+ * A post-/clear file starts with the /clear sentinel as its first user message; stripClear strips
+ * it so it is never mistaken for the session's opening prompt.
  */
 export function synthesizeRawSession(
   agentName: string,
   descriptor: SessionDescriptor,
   parsed: ParsedSession
 ): RawSessionData {
-  const messages = (parsed.messages ?? []) as RawMessage[];
+  const messages = stripClear((parsed.messages ?? []) as RawMessage[]) as RawMessage[];
   const timestamps = messages.map((m) => toMs(m.timestamp)).filter((n): n is number => n != null);
   const startTime = timestamps.length ? Math.min(...timestamps) : descriptor.createdAt;
   const endTime = timestamps.length ? Math.max(...timestamps) : descriptor.updatedAt ?? descriptor.createdAt;

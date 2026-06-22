@@ -228,6 +228,36 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
     }
   },
 
+  'gpt-5.5-2026-04-24': {
+    id: 'gpt-5.5-2026-04-24',
+    name: 'GPT-5.5 (Apr 2026)',
+    displayName: 'GPT-5.5 (Apr 2026)',
+    family: 'gpt-5',
+    tool_call: true,
+    reasoning: true,
+    attachment: true,
+    temperature: false,
+    structured_output: true,
+    use_responses_api: true,
+    modalities: {
+      input: ['text', 'image'],
+      output: ['text']
+    },
+    knowledge: '2025-08-31',
+    release_date: '2026-04-24',
+    last_updated: '2026-04-24',
+    open_weights: false,
+    cost: {
+      input: 3.75,
+      output: 15,
+      cache_read: 0.375
+    },
+    limit: {
+      context: 1050000,
+      output: 128000
+    }
+  },
+
   // ── Claude Models ──────────────────────────────────────────────────
   'claude-4-5-sonnet': {
     id: 'claude-4-5-sonnet',

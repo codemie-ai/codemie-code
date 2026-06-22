@@ -98,6 +98,18 @@ export const ClaudePluginMetadata: AgentMetadata = {
       type: 'flag',
       target: '-p',
     },
+    '--resume': {
+      type: 'flag',
+      target: '-r',
+    },
+  },
+
+  reasoningEffort: {
+    strategy: 'cli-flag',
+    flag: '--effort',
+    placement: 'append',
+    supportedLevels: ['low', 'medium', 'high', 'xhigh', 'max'],
+    userOverrideFlags: ['--effort'],
   },
 
   // Metrics configuration: exclude Bash tool errors from API metrics
@@ -168,7 +180,7 @@ export const ClaudePluginMetadata: AgentMetadata = {
       }
 
       if (!env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE) {
-        let autocompactPct = 80;
+        let autocompactPct = 85;
         if (env.CODEMIE_PROFILE_CONFIG) {
           try {
             const profileConfig = JSON.parse(env.CODEMIE_PROFILE_CONFIG);
