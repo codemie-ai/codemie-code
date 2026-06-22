@@ -1,5 +1,5 @@
 /**
- * Model tests — TC-020, TC-021, TC-024
+ * Model tests — TC-020, TC-021, TC-022, TC-024
  *
  * Run with: npm run test:integration:agent
  *
@@ -9,6 +9,7 @@
  *
  * TC-020: Session uses the model configured in the profile (sonnet and haiku variants).
  * TC-021: Metrics records the configured model in the models array.
+ * TC-022: codemie models list returns the configured model in its output.
  * TC-024: In-session model switch via /model slash command records new model in metrics.
  */
 
@@ -35,6 +36,7 @@ import {
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const CLAUDE_BIN = join(REPO_ROOT, 'bin', 'codemie-claude.js');
+const CLI_BIN = join(REPO_ROOT, 'bin', 'codemie.js');
 
 const CI_IS_LOCAL_RUN = getTestEnvFlagOrDefault('CI_IS_LOCAL_RUN', true);
 
@@ -180,6 +182,54 @@ describe('Model tests', () => {
         models.some((m) => /sonnet/i.test(m)),
         `Expected models to contain the configured sonnet model, got: ${JSON.stringify(models)}`,
       ).toBe(true);
+    });
+  });
+
+  // ── TC-022: codemie models list returns available models ──────────────────
+  // Calls the codemie CLI (not codemie-claude) with real auth. Verifies that
+  // the models list command contacts the provider and returns at least the
+  // configured model name.
+  describe('TC-022 — codemie models list returns available models', () => {
+    let testHome: string;
+    let listResult: ReturnType<typeof spawnSync>;
+
+    beforeAll(() => {
+      testHome = mkdtempSync(join(getTempDir(), 'codemie-models-'));
+      if (!CI_IS_LOCAL_RUN) {
+        writeJwtProfile(testHome, { jwtToken });
+      } else {
+        writeSsoProfile(testHome);
+        copySsoCredentials(testHome);
+      }
+      listResult = spawnSync(
+        process.execPath,
+        [CLI_BIN, 'models', 'list'],
+        {
+          cwd: testHome,
+          env: {
+            ...(CI_IS_LOCAL_RUN ? ssoCleanEnv() : jwtCleanEnv()),
+            CODEMIE_HOME: testHome,
+            ...(CI_IS_LOCAL_RUN ? {} : { CODEMIE_JWT_TOKEN: jwtToken }),
+            CI: '1',
+          },
+          encoding: 'utf-8',
+          timeout: 30_000,
+        },
+      );
+    }, 60_000);
+
+    afterAll(() => rmSync(testHome, { recursive: true, force: true }));
+
+    it('exits 0', () => {
+      expect(
+        listResult.status,
+        `stdout: ${listResult.stdout ?? ''}\nstderr: ${listResult.stderr ?? ''}`,
+      ).toBe(0);
+    });
+
+    it('output contains the expected model name', () => {
+      const out = (listResult.stdout ?? '') + (listResult.stderr ?? '');
+      expect(out).toMatch(new RegExp(process.env.CI_CODEMIE_MODEL ?? 'claude', 'i'));
     });
   });
 

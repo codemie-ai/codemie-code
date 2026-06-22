@@ -87,7 +87,7 @@ tests/
   integration/
     agent-task.test.ts          # TC-016 dual-mode
     agent-task-session.test.ts  # Session/metrics artefact validation
-    agent-model.test.ts         # TC-020, TC-021, TC-024
+    agent-model.test.ts         # TC-020, TC-021, TC-022, TC-024
     agent-skills.test.ts        # TC-025
     agent-assistant.test.ts     # TC-014, TC-015, TC-026
     agent-jwt-token.test.ts     # TC-017, TC-027  [JWT-only]
@@ -99,7 +99,6 @@ tests/
       help.test.ts
       version.test.ts
       list.test.ts
-      models.test.ts
       profile.test.ts
       skills.test.ts
       workflow.test.ts
@@ -165,6 +164,7 @@ Used by interactive tests (TC-024, TC-025) that need to drive a running session 
 | TC-019 | `agent-negative.test.ts` | dual | No profile and no token exits non-zero with config error |
 | TC-020 | `agent-model.test.ts` | dual | Session records model configured in profile |
 | TC-021 | `agent-model.test.ts` | dual | Metrics records configured model in models array |
+| TC-022 | `agent-model.test.ts` | dual | `codemie models list` returns the configured model name |
 | TC-024 | `agent-model.test.ts` | dual | In-session `/model` slash command records new model in metrics (PTY) |
 | TC-025 | `agent-skills.test.ts` | dual | Skill slash command invocation inside running session (PTY) |
 | TC-026 | `agent-assistant.test.ts` | dual | Assistants chat non-interactive (random number round-trip) |
