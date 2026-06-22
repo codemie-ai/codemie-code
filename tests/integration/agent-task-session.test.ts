@@ -24,10 +24,8 @@ import {
   mkdtempSync,
   rmSync,
   existsSync,
-  mkdirSync,
   readFileSync,
   readdirSync,
-  writeFileSync,
 } from 'fs';
 import { homedir, tmpdir } from 'os';
 import { join, dirname, resolve } from 'path';
@@ -40,7 +38,7 @@ import {
   UserMessageSchema,
   AssistantMessageSchema,
 } from './models/index.js';
-import { fetchJwtToken, writeJwtProfile, getTempDir, jwtCleanEnv, resolveLongPath, getTestEnvFlagOrDefault, pollForSession } from '../helpers/index.js';
+import { fetchJwtToken, writeJwtProfile, getTempDir, jwtCleanEnv, resolveLongPath, getTestEnvFlagOrDefault, pollForSession, ssoCleanEnv, setupSsoAutotestProfile, teardownSsoAutotestProfile } from '../helpers/index.js';
 import { validateSchema } from './models/index.js';
 
 // Timeout from environment (seconds → milliseconds)
@@ -48,25 +46,6 @@ const CLI_TIMEOUT_MS = parseInt(process.env.DEFAULT_TIMEOUT ?? '60', 10) * 1000;
 
 // Setup hooks (installs) can take much longer than individual commands
 const SETUP_TIMEOUT_MS = CLI_TIMEOUT_MS * 5;
-
-/**
- * Build a clean environment for subprocesses by stripping all CODEMIE_* vars
- * inherited from the outer session (e.g. CODEMIE_SESSION_ID, CODEMIE_PROVIDER,
- * CODEMIE_BASE_URL, CODEMIE_API_KEY, CODEMIE_PROFILE_CONFIG, …).
- * Without this, the spawned codemie-claude inherits the parent session's
- * context and ignores the config file the test wrote to the codemie home dir.
- *
- * CODEMIE_HOME is intentionally NOT preserved so subprocesses default to the
- * real ~/.codemie directory, ensuring session files are written there.
- */
-function cleanEnv(): NodeJS.ProcessEnv {
-  return Object.fromEntries(
-    Object.entries(process.env).filter(
-      ([key]) => !key.startsWith('CODEMIE_'),
-    ),
-  ) as NodeJS.ProcessEnv;
-}
-
 
 // Repo root is 2 levels up from tests/integration/
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -79,7 +58,6 @@ const CI_IS_LOCAL_RUN = getTestEnvFlagOrDefault('CI_IS_LOCAL_RUN', true);
 
 describe('agent task execution and session artifact validation', () => {
   const getConfigDir = (): string => join(homedir(), '.codemie');
-  const getConfigFilePath = (): string => join(getConfigDir(), 'codemie-cli.config.json');
 
   let originalActiveProfile: string | undefined;
   let jwtToken: string;
@@ -92,66 +70,15 @@ describe('agent task execution and session artifact validation', () => {
       jwtHome  = mkdtempSync(join(getTempDir(), 'codemie-task-jwt-'));
       writeJwtProfile(jwtHome, { jwtToken });
     } else {
-      const configDir = getConfigDir();
-      const configFilePath = getConfigFilePath();
-
-      if (existsSync(configFilePath)) {
-        try {
-          const existingConfig = JSON.parse(readFileSync(configFilePath, 'utf-8'));
-          originalActiveProfile = existingConfig.activeProfile;
-        } catch {
-          // ignore parse errors
-        }
-      }
-
-      mkdirSync(configDir, { recursive: true });
-
-      let config: Record<string, unknown> = {
-        version: 2,
-        activeProfile: 'sso-autotest',
-        profiles: {},
-      };
-
-      if (existsSync(configFilePath)) {
-        try {
-          config = JSON.parse(readFileSync(configFilePath, 'utf-8'));
-        } catch {
-          // use defaults on parse error
-        }
-      }
-
-      (config.profiles as Record<string, unknown>)['sso-autotest'] = {
-        name: 'sso-autotest',
-        provider: 'ai-run-sso',
-        authMethod: 'sso',
-        codeMieUrl: process.env.CI_CODEMIE_URL ?? '',
-        baseUrl: `${(process.env.CI_CODEMIE_URL ?? '').replace(/\/$/, '')}/code-assistant-api`,
-        apiKey: 'sso-authenticated',
-        model: process.env.CODEMIE_MODEL ?? 'claude-sonnet-4-6',
-        timeout: 300,
-        debug: false,
-      };
-      config.activeProfile = 'sso-autotest';
-
-      writeFileSync(configFilePath, JSON.stringify(config, null, 2));
+      originalActiveProfile = setupSsoAutotestProfile();
     }
-
   }, SETUP_TIMEOUT_MS);
 
   afterAll(() => {
     if (!CI_IS_LOCAL_RUN) {
       if (jwtHome) rmSync(jwtHome, { recursive: true, force: true });
     } else {
-      const configFilePath = getConfigFilePath();
-      if (originalActiveProfile !== undefined && existsSync(configFilePath)) {
-        try {
-          const currentConfig = JSON.parse(readFileSync(configFilePath, 'utf-8'));
-          currentConfig.activeProfile = originalActiveProfile;
-          writeFileSync(configFilePath, JSON.stringify(currentConfig, null, 2));
-        } catch {
-          // ignore restore errors
-        }
-      }
+      teardownSsoAutotestProfile(originalActiveProfile);
     }
   });
 
@@ -191,7 +118,7 @@ describe('agent task execution and session artifact validation', () => {
             `Create java file with helloworld app that prints: ${testUuid}`,
             '--permission-mode', 'acceptEdits',
           ],
-          { env: cleanEnv(), cwd: tempTestDir, input: 'Y\n',
+          { env: ssoCleanEnv(), cwd: tempTestDir, input: 'Y\n',
             encoding: 'utf-8', timeout: CLI_TIMEOUT_MS },
         )
       : spawnSync(

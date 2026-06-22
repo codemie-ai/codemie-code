@@ -3,7 +3,7 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     // Picks up all agent-*.test.ts files (agent-jwt-basic, agent-jwt-models,
-    // agent-jwt-budget, agent-interactive-session)
+    // agent-jwt-budget, agent-interactive-session, agent-assistant)
     include: ['tests/integration/agent-*.test.ts'],
     globalSetup: ['tests/setup/agent-build-setup.ts'],
     testTimeout: 180_000,  // 3 min — real agent calls over the network
@@ -15,5 +15,10 @@ export default defineConfig({
     },
     maxWorkers: parseInt(process.env.CI_AGENT_MAX_WORKERS ?? '2', 10),
     isolate: true,
+  },
+  resolve: {
+    alias: {
+      '@': '/src',
+    },
   },
 });

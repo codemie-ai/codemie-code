@@ -2,8 +2,13 @@ import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
+import { config as loadEnv } from 'dotenv';
+import { setupSsoAutotestProfile, teardownSsoAutotestProfile } from '../helpers/sso-auth.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const root = resolve(__dirname, '../..');
+
+let originalSsoProfile: string | undefined;
 
 /**
  * Vitest globalSetup — runs once per test session before any test file.
@@ -11,7 +16,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
  * Ensures dist/ exists and the claude CLI is installed before agent tests run.
  */
 export async function setup(): Promise<void> {
-  const root = resolve(__dirname, '../..');
+  loadEnv({ path: resolve(root, '.env.test.local'), override: true });
 
   console.log('\n[agent-integration] Building dist/ (runs once per session)...');
   execSync('npm run build', { cwd: root, stdio: 'inherit' });
@@ -52,6 +57,25 @@ export async function setup(): Promise<void> {
   execSync('npm link', { cwd: root, stdio: 'pipe' });
   console.log('[agent-integration] Linked.');
 
+  // For SSO (local dev) runs: authenticate once so ~/.codemie/credentials/ is
+  // populated before any test subprocess tries to read credentials from there.
+  // JWT (CI) runs skip this — each test fetches a fresh JWT token itself.
+  const isLocalRun = (process.env.CI_IS_LOCAL_RUN ?? 'true') !== 'false';
+  if (isLocalRun) {
+    console.log('[agent-integration] SSO mode — authenticating via getCodemieClient...');
+    try {
+      originalSsoProfile = setupSsoAutotestProfile();
+      const { getCodemieClient } = await import(
+        resolve(root, 'dist/utils/sdk-client.js')
+      ) as { getCodemieClient: (force?: boolean) => Promise<unknown> };
+      await getCodemieClient(true);
+      console.log('[agent-integration] SSO authentication complete.\n');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn(`[agent-integration] SSO auth warning (non-fatal): ${msg}\n`);
+    }
+  }
+
   // Pre-install the Claude CodeMie extension once before parallel tests start.
   // Without this, each parallel test triggers installer.install() simultaneously.
   // When the source version differs from the installed version, every installer
@@ -72,4 +96,12 @@ export async function setup(): Promise<void> {
     const msg = e instanceof Error ? e.message : String(e);
     console.warn(`[agent-integration] Claude extension pre-install warning (non-fatal): ${msg}\n`);
   }
+}
+
+/**
+ * Vitest globalTeardown — runs once after all test files complete.
+ * Restores the user's original active SSO profile if it was changed during setup().
+ */
+export async function teardown(): Promise<void> {
+  teardownSsoAutotestProfile(originalSsoProfile);
 }
