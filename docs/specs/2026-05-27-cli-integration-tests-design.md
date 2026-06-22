@@ -95,7 +95,6 @@ tests/
     agent-negative.test.ts      # TC-018 [JWT-only], TC-019 [dual-mode]
     agent-shortcuts.test.ts     # Slash command smoke tests
     cli-commands/
-      health.test.ts     # TC-031
       doctor.test.ts
       help.test.ts
       version.test.ts
@@ -171,7 +170,6 @@ Used by interactive tests (TC-024, TC-025) that need to drive a running session 
 | TC-026 | `agent-assistant.test.ts` | dual | Assistants chat non-interactive (random number round-trip) |
 | TC-027 | `agent-jwt-token.test.ts` | JWT-only | `--jwt-token` with no profile (empty CODEMIE_HOME) exits 0 and prints agent response |
 | TC-028 | `agent-jwt-budget.test.ts` | JWT-only | Agent task succeeds with all-budget project profile |
-| TC-031 | `cli-commands/health.test.ts` | none | `codemie-claude health` exits 0 and output mentions install/binary/health |
 
 ---
 
