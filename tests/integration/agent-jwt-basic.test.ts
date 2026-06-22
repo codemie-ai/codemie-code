@@ -1,10 +1,11 @@
 /**
- * Agent JWT Basic Tests — TC-017..TC-019
+ * Agent JWT Basic Tests — TC-017
  *
  * Run with: npm run test:integration:agent
  * Requires: INCLUDE_JWT_TESTS=true, CI_CODEMIE_* env vars
  *
  * TC-016 is covered by agent-task.test.ts (dual-mode).
+ * TC-018 / TC-019 are covered by agent-negative.test.ts.
  * TC-023 / TC-034 are covered by agent-task-session.test.ts.
  * TC-031 is covered by cli-commands/health.test.ts.
  */
@@ -29,7 +30,7 @@ function getLatestSessionFile(sessionsDir: string): Record<string, unknown> {
   return JSON.parse(readFileSync(files[0], 'utf-8'));
 }
 
-describe.runIf(INCLUDE_JWT_TESTS)('Agent — JWT basic (TC-017..TC-019)', () => {
+describe.runIf(INCLUDE_JWT_TESTS)('Agent — JWT basic (TC-017)', () => {
   let jwtToken: string;
 
   beforeAll(async () => {
@@ -60,55 +61,6 @@ describe.runIf(INCLUDE_JWT_TESTS)('Agent — JWT basic (TC-017..TC-019)', () => 
     it('session file shows bearer-auth provider', () => {
       const session = getLatestSessionFile(join(testHome, 'sessions'));
       expect(String(session.provider ?? session.providerName ?? '')).toMatch(/bearer-auth/i);
-    });
-  });
-
-  // ── TC-018: Invalid JWT token (negative) ────────────────────────────────────
-  describe('TC-018 — invalid JWT token (negative)', () => {
-    let testHome: string;
-    let result: ReturnType<typeof spawnSync>;
-
-    beforeAll(() => {
-      testHome = mkdtempSync(join(getTempDir(),'codemie-jwt-invalid-'));
-      writeJwtProfile(testHome, { jwtToken: 'INVALID_TOKEN_VALUE' });
-      result = spawnSync(
-        process.execPath,
-        [CLAUDE_BIN, '--task', 'Say hello', '--jwt-token', 'INVALID_TOKEN_VALUE'],
-        { cwd: testHome, env: { ...jwtCleanEnv(), CODEMIE_HOME: testHome }, encoding: 'utf-8', timeout: 60_000 }
-      );
-    }, 90_000);
-    afterAll(() => rmSync(testHome, { recursive: true, force: true }));
-
-    it('exits non-zero with an invalid JWT token', () => {
-      expect(result.status).not.toBe(0);
-    });
-
-    it('shows an error message indicating auth or bad response', () => {
-      expect((result.stdout ?? '') + (result.stderr ?? '')).toMatch(/auth|unauthorized|401|invalid|token|malformed|empty.*response|API Error/i);
-    });
-  });
-
-  // ── TC-019: No profile, no JWT (negative) ───────────────────────────────────
-  describe('TC-019 — no profile and no JWT (negative)', () => {
-    let testHome: string;
-    let result: ReturnType<typeof spawnSync>;
-
-    beforeAll(() => {
-      testHome = mkdtempSync(join(getTempDir(),'codemie-jwt-none-'));
-      result = spawnSync(
-        process.execPath,
-        [CLAUDE_BIN, '--task', 'Say hello'],
-        { env: { ...jwtCleanEnv(), CODEMIE_HOME: testHome }, encoding: 'utf-8', timeout: 30_000 }
-      );
-    }, 60_000);
-    afterAll(() => rmSync(testHome, { recursive: true, force: true }));
-
-    it('exits non-zero with empty CODEMIE_HOME and no --jwt-token', () => {
-      expect(result.status).not.toBe(0);
-    });
-
-    it('shows a setup/configuration error message', () => {
-      expect((result.stdout ?? '') + (result.stderr ?? '')).toMatch(/no profile|not configured|setup|profile/i);
     });
   });
 
