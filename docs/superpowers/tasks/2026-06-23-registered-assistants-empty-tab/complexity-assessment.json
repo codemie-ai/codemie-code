@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "task": "Fix registered assistants tab showing empty by surfacing codemieAssistants (and codemieSkills) from the MultiProviderConfig top level through ConfigLoader.load().",
+  "generated": "2026-06-23T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 1, "label": "XS" },
+    "technical_risk":       { "score": 1, "label": "XS" },
+    "file_change_estimate": { "score": 1, "label": "XS" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 7,
+  "size": "XS",
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "ConfigLoader (src/utils/config.ts) is a core shared utility used across the entire codebase; even though only two return statements change, the scope red flag bumps this from XS to S."
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "Root cause is fully identified: loadGlobalConfigProfile line 228 and loadLocalConfigProfile line 255 need codemieAssistants and codemieSkills added to their return spreads. Zero ambiguity."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from XS (1) to S (2): touches core shared utility ConfigLoader (src/utils/config.ts) used across the entire codebase"
+  ],
+  "split_recommendation": null
+}
