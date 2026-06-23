@@ -73,16 +73,35 @@ export interface UsageRecord {
   usage: TokenUsage;
 }
 
+function usageWeight(usage: TokenUsage): number {
+  return usage.input + usage.output + usage.cacheRead + usage.cacheCreation;
+}
+
+function isMoreCompleteUsageRecord(candidate: UsageRecord, current: UsageRecord): boolean {
+  const candidateWeight = usageWeight(candidate.usage);
+  const currentWeight = usageWeight(current.usage);
+  if (candidateWeight !== currentWeight) {
+    return candidateWeight > currentWeight;
+  }
+  if (candidate.ts !== null && current.ts !== null && candidate.ts !== current.ts) {
+    return candidate.ts > current.ts;
+  }
+  return false;
+}
+
 /**
  * Extract one {@link UsageRecord} per Claude assistant message (skipping `<synthetic>`),
  * across the main transcript AND every sub-agent transcript in `parsed.subagents`.
  * Claude Code replays prior turns into resumed/forked session files, so the SAME API
  * response (same message.id + requestId) appears in multiple logs — callers dedupe by `key`.
+ * Claude Code can also write progressive JSONL rows for a streaming response before the
+ * final usage arrives; keep the most complete same-key row so partial chunks do not win.
  * Records are returned in chronological order when every record is timed; otherwise in
  * concatenation order (main transcript first, then sub-agent files in discovery order).
  */
 export function extractClaudeUsageRecords(parsed: ParsedSession): UsageRecord[] {
   const records: UsageRecord[] = [];
+  const keyedRecords = new Map<string, UsageRecord>();
   for (const messages of allMessageArrays(parsed)) {
     for (const raw of messages as ClaudeRawMessage[]) {
       const usage = raw.message?.usage;
@@ -103,12 +122,27 @@ export function extractClaudeUsageRecords(parsed: ParsedSession): UsageRecord[] 
       const key = id || reqId ? `${id ?? ''}::${reqId ?? ''}` : null;
       const parsedTs = raw.timestamp ? Date.parse(raw.timestamp) : NaN;
       const ts = Number.isFinite(parsedTs) ? parsedTs : null;
-      records.push({
+      const record: UsageRecord = {
         key,
         ts,
         model,
         usage: { input, output, cacheRead, cacheCreation, cacheCreation1h, total: input + output + cacheRead + cacheCreation },
-      });
+      };
+      if (key !== null) {
+        const current = keyedRecords.get(key);
+        if (!current) {
+          keyedRecords.set(key, record);
+          records.push(record);
+        } else if (isMoreCompleteUsageRecord(record, current)) {
+          const index = records.indexOf(current);
+          if (index !== -1) {
+            records[index] = record;
+          }
+          keyedRecords.set(key, record);
+        }
+      } else {
+        records.push(record);
+      }
     }
   }
   // Main and sub-agent records interleave in real time. Sort chronologically when every

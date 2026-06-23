@@ -249,3 +249,11 @@ export interface AnalyticsOptions {
   /** When false (via --no-scan-native), skip native-log discovery and use tracked sessions only. */
   scanNative?: boolean;
 }
+
+/** Options for the `analytics otel` subcommand: the shared base plus OTEL-specific flags. */
+export interface OtelCommandOptions extends AnalyticsOptions {
+  /** Path to the flattened OTEL events file (required). */
+  file: string;
+  /** Scope OTEL analytics to one user (matches native user.email or user.id). */
+  user?: string;
+}
