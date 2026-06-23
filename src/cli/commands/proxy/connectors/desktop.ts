@@ -58,8 +58,8 @@ export const DEFAULT_MANAGED_MCP_SERVERS =
 
 /**
  * Fetch the model list from the gateway's SSO-backed `/v1/llm_models?include_all=true`
- * endpoint and return the IDs of usable Claude-family models (excludes `-vertex`
- * aliases since the gateway already picks the right backend for the canonical names).
+ * endpoint and return the IDs of all Claude-family models, including `-vertex` aliases.
+ * Preference between canonical and vertex variants is handled by {@link selectPreferredClaudeModels}.
  */
 export async function fetchClaudeModels(proxyUrl: string, gatewayKey: string): Promise<string[]> {
   const endpoint = new URL('/v1/llm_models?include_all=true', proxyUrl).toString();
@@ -102,8 +102,7 @@ export async function fetchClaudeModels(proxyUrl: string, gatewayKey: string): P
         .map((m) => m.id)
         .filter((id): id is string => typeof id === 'string');
     const claudeIds = ids
-      .filter((id) => /^claude-/i.test(id))
-      .filter((id) => !/-vertex$/i.test(id));
+      .filter((id) => /^claude-/i.test(id));
     logger.info(
       '[proxy] Gateway model discovery completed',
       ...sanitizeLogArgs({

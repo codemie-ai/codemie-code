@@ -71,7 +71,7 @@ describe('fetchClaudeModels', () => {
   beforeEach(() => { originalFetch = globalThis.fetch; });
   afterEach(() => { globalThis.fetch = originalFetch; });
 
-  it('returns Claude family ids and excludes vertex / non-claude entries', async () => {
+  it('returns all Claude family ids (canonical and vertex) and excludes non-Claude entries', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => [
@@ -96,6 +96,7 @@ describe('fetchClaudeModels', () => {
       'claude-opus-4-6-20260205',
       'claude-opus-4-7',
       'claude-haiku-4-5-20251001',
+      'claude-opus-4-6-vertex',
     ]);
   });
 
@@ -106,6 +107,23 @@ describe('fetchClaudeModels', () => {
     await fetchClaudeModels('http://127.0.0.1:4001', 'my-key');
     const [, init] = fetchSpy.mock.calls[0];
     expect(init.headers.Authorization).toBe('Bearer my-key');
+  });
+
+  it('includes vertex-suffix Claude models when no canonical models are available', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { base_name: 'claude-sonnet-4-5-vertex' },
+        { base_name: 'claude-sonnet-4-6-vertex' },
+        { base_name: 'gemini-2.5-pro' },
+      ],
+    }) as any;
+
+    const models = await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy');
+    expect(models).toEqual([
+      'claude-sonnet-4-5-vertex',
+      'claude-sonnet-4-6-vertex',
+    ]);
   });
 
   it('throws when fetch fails', async () => {
