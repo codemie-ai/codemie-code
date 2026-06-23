@@ -94,7 +94,6 @@ tests/
     agent-skills.test.ts        # TC-025
     agent-assistant.test.ts     # TC-014, TC-015, TC-026
     agent-jwt-token.test.ts     # TC-017, TC-027  [JWT-only]
-    agent-jwt-budget.test.ts    # TC-028
     agent-negative.test.ts      # TC-018 [JWT-only], TC-019 [dual-mode]
     agent-shortcuts.test.ts     # Slash command smoke tests
     cli-commands/
@@ -172,7 +171,6 @@ Used by interactive tests (TC-024, TC-025) that need to drive a running session 
 | TC-025 | `agent-skills.test.ts` | dual | Skill slash command invocation inside running session (PTY) |
 | TC-026 | `agent-assistant.test.ts` | dual | Assistants chat non-interactive (random number round-trip) |
 | TC-027 | `agent-jwt-token.test.ts` | JWT-only | `--jwt-token` with no profile (empty CODEMIE_HOME) exits 0 and prints agent response |
-| TC-028 | `agent-jwt-budget.test.ts` | JWT-only | Agent task succeeds with all-budget project profile |
 
 ---
 

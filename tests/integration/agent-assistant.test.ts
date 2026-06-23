@@ -64,7 +64,7 @@ function registerAssistantInConfig(codemieHome: string, id: string, name: string
   writeFileSync(join(agentDir, `${slug}.md`), `# ${name}\n`, 'utf-8');
 }
 
-describe('Assistant management tests', () => {
+describe.runIf(process.env.SSO_AVAILABLE !== 'false')('Assistant management tests', () => {
   let jwtToken: string;
   let jwtHome: string;
   let sdkClient: CodeMieClient;

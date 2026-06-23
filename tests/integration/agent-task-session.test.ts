@@ -56,7 +56,7 @@ const CLAUDE_BIN = join(repoRoot, 'bin', 'codemie-claude.js');
 // true (default) = SSO mode (local dev); false = JWT mode (CI pipeline)
 const CI_IS_LOCAL_RUN = getTestEnvFlagOrDefault('CI_IS_LOCAL_RUN', true);
 
-describe('agent task execution and session artifact validation', () => {
+describe.runIf(process.env.SSO_AVAILABLE !== 'false')('agent task execution and session artifact validation', () => {
   const getConfigDir = (): string => join(homedir(), '.codemie');
 
   let originalActiveProfile: string | undefined;

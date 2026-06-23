@@ -36,7 +36,7 @@ const CLAUDE_BIN = join(REPO_ROOT, 'bin', 'codemie-claude.js');
 
 const CI_IS_LOCAL_RUN = getTestEnvFlagOrDefault('CI_IS_LOCAL_RUN', true);
 
-describe('Task output tests', () => {
+describe.runIf(process.env.SSO_AVAILABLE !== 'false')('Task output tests', () => {
   let jwtToken: string;
   let originalActiveProfile: string | undefined;
 

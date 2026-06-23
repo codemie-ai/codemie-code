@@ -52,7 +52,7 @@ const SKILL_CONTENT = [
   'Your entire response must be exactly the number — no words, punctuation, or explanation.',
 ].join('\n');
 
-describe('Skill tests', () => {
+describe.runIf(process.env.SSO_AVAILABLE !== 'false')('Skill tests', () => {
   let jwtToken: string;
   let jwtHome: string;
   let sdkClient: CodeMieClient;

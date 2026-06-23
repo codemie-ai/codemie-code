@@ -75,7 +75,7 @@ function writeProfileWithModel(codemieHome: string, profileName: string, model: 
   );
 }
 
-describe('Model tests', () => {
+describe.runIf(process.env.SSO_AVAILABLE !== 'false')('Model tests', () => {
   let jwtToken: string;
   let originalActiveProfile: string | undefined;
 

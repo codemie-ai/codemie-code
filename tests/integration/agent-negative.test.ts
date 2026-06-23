@@ -32,7 +32,7 @@ const CLAUDE_BIN = join(REPO_ROOT, 'bin', 'codemie-claude.js');
 
 const CI_IS_LOCAL_RUN = getTestEnvFlagOrDefault('CI_IS_LOCAL_RUN', true);
 
-describe('Agent negative cases', () => {
+describe.runIf(process.env.SSO_AVAILABLE !== 'false')('Agent negative cases', () => {
   // ── TC-018: Invalid JWT token ───────────────────────────────────────────────
   // Hardcoded invalid token — no fetchJwtToken() needed. JWT-only because the
   // --jwt-token flag and bearer-auth profile are JWT-specific concepts.

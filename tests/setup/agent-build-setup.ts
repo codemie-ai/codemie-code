@@ -1,4 +1,5 @@
 import { execSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
@@ -7,6 +8,20 @@ import { setupSsoAutotestProfile, teardownSsoAutotestProfile } from '../helpers/
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '../..');
+
+function getActiveProfileProvider(): string | undefined {
+  const configPath = join(homedir(), '.codemie', 'codemie-cli.config.json');
+  if (!existsSync(configPath)) return undefined;
+  try {
+    const config = JSON.parse(readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
+    const active = config.activeProfile as string | undefined;
+    if (!active) return undefined;
+    const profiles = config.profiles as Record<string, Record<string, unknown>> | undefined;
+    return profiles?.[active]?.provider as string | undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 let originalSsoProfile: string | undefined;
 
@@ -66,6 +81,16 @@ export async function setup(): Promise<void> {
   // JWT (CI) runs skip this — each test fetches a fresh JWT token itself.
   const isLocalRun = (process.env.CI_IS_LOCAL_RUN ?? 'true') !== 'false';
   if (isLocalRun) {
+    const activeProvider = getActiveProfileProvider();
+    if (activeProvider !== 'ai-run-sso') {
+      console.log(
+        `[agent-integration] Active profile provider is "${activeProvider ?? 'none'}" — not CodeMie SSO.`,
+      );
+      console.log('[agent-integration] Agent SSO tests will be skipped.');
+      console.log('[agent-integration] Use npm run test:run for unit + CLI tests without credentials.\n');
+      process.env.SSO_AVAILABLE = 'false';
+      return;
+    }
     console.log('[agent-integration] SSO mode — validating credentials...');
     originalSsoProfile = setupSsoAutotestProfile();
     try {

@@ -11,7 +11,7 @@ import { statSync, readFileSync } from 'fs';
 import { resolve } from 'path';
 import { setupTestIsolation } from '../helpers/test-isolation.js';
 
-describe('Agent Shortcuts - Integration', () => {
+describe.runIf(process.env.SSO_AVAILABLE !== 'false')('Agent Shortcuts - Integration', () => {
   // Setup isolated CODEMIE_HOME for this test suite
   setupTestIsolation();
 
