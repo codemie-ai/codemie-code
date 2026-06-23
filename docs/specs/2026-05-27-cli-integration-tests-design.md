@@ -11,10 +11,13 @@ Integration tests for the `codemie-claude` CLI binary. Tests are end-to-end: the
 
 Tests are split into two Vitest configurations:
 
-| Config | Includes | GlobalSetup |
+| Project | Includes | GlobalSetup |
 |---|---|---|
-| `vitest.agent.config.ts` | `tests/integration/agent-*.test.ts` | `tests/setup/agent-build-setup.ts` (build + SSO auth) |
-| `vitest.config.ts` | `tests/**/*.test.ts` incl. `cli-commands/` | none |
+| `unit` | `src/**/*.test.ts` | none |
+| `cli` | `tests/integration/**/*.test.ts` (excl. `agent-*`) | none |
+| `agent` | `tests/integration/agent-*.test.ts` | `tests/setup/agent-build-setup.ts` (build + SSO auth) |
+
+All three projects are defined in a single `vitest.config.ts` using `defineWorkspace`.
 
 CLI-commands tests (`cli-commands/*.test.ts`) exercise commands that need no network auth (health, help, version, doctor, etc.).  
 Agent tests (`agent-*.test.ts`) exercise commands that require authentication and make real network calls.
@@ -247,7 +250,7 @@ await session.close();
 
 ## Global Setup (`tests/setup/agent-build-setup.ts`)
 
-Runs once per agent test session (`vitest.agent.config.ts` → `globalSetup`):
+Runs once per agent test session (`vitest.config.ts` agent project → `globalSetup`):
 
 1. Loads `.env.test.local`.
 2. Runs `npm run build` to produce `dist/`.
@@ -288,5 +291,5 @@ Assertion: `session.provider` matches `/bearer-auth/i`.
 - Every test writes to an isolated `mkdtempSync(...)` temp dir, set as `CODEMIE_HOME`.
 - `afterAll` always `rmSync(testHome, { recursive: true, force: true })`.
 - `spawnSync` is used for non-interactive `--task` invocations; `spawnPty` for interactive sessions.
-- `testTimeout: 180_000` and `hookTimeout: 300_000` in `vitest.agent.config.ts`.
+- `testTimeout: 180_000` and `hookTimeout: 300_000` in the `agent` project of `vitest.config.ts`.
 - TC numbers appear in the `describe` name so they are visible in test output.

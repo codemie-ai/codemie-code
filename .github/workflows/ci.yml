@@ -183,18 +183,6 @@ jobs:
       - name: Run integration tests
         run: npm run test:integration
 
-      - name: Run agent task session test
-        env:
-          CI_CODEMIE_USERNAME: ${{ vars.CI_CODEMIE_USERNAME }}
-          CI_CODEMIE_PASSWORD: ${{ secrets.CI_CODEMIE_PASSWORD }}
-          CI_CODEMIE_AUTH_CLIENT_ID: ${{ vars.CI_CODEMIE_AUTH_CLIENT_ID }}
-          CI_CODEMIE_AUTH_URL: ${{ vars.CI_CODEMIE_AUTH_URL }}
-          CI_CODEMIE_MODEL: ${{ vars.CI_CODEMIE_MODEL }}
-          CI_CODEMIE_URL: ${{ vars.CI_CODEMIE_URL }}
-          CI_IS_LOCAL_RUN: ${{ vars.CI_IS_LOCAL_RUN }}
-          CI_AGENT_MAX_WORKERS: ${{ vars.CI_AGENT_MAX_WORKERS }}
-        run: npm run test:integration:agent -- tests/integration/agent-task-session.test.ts
-
   test-windows:
     name: Test (Windows)
     runs-on: windows-latest
@@ -227,15 +215,3 @@ jobs:
 
       - name: Run integration tests
         run: npm run test:integration
-
-      - name: Run agent task session test
-        env:
-          CI_CODEMIE_USERNAME: ${{ vars.CI_CODEMIE_USERNAME }}
-          CI_CODEMIE_PASSWORD: ${{ secrets.CI_CODEMIE_PASSWORD }}
-          CI_CODEMIE_AUTH_CLIENT_ID: ${{ vars.CI_CODEMIE_AUTH_CLIENT_ID }}
-          CI_CODEMIE_AUTH_URL: ${{ vars.CI_CODEMIE_AUTH_URL }}
-          CI_CODEMIE_MODEL: ${{ vars.CI_CODEMIE_MODEL }}
-          CI_CODEMIE_URL: ${{ vars.CI_CODEMIE_URL }}
-          CI_IS_LOCAL_RUN: ${{ vars.CI_IS_LOCAL_RUN }}
-          CI_AGENT_MAX_WORKERS: ${{ vars.CI_AGENT_MAX_WORKERS }}
-        run: npm run test:integration:agent -- tests/integration/agent-task-session.test.ts

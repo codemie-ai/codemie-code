@@ -3,7 +3,7 @@
  *
  * Migrated from: codemie-sdk/test-harness/.../test_codemie_cli_claude.py
  *
- * Run with: vitest run --config vitest.agent.config.ts
+ * Run with: npm run test:integration:agent
  *
  * Auth mode (CI_IS_LOCAL_RUN in .env.test.local):
  *   true  (default) — SSO mode; uses developer's sso-autotest profile in ~/.codemie

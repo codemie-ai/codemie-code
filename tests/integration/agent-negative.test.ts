@@ -16,7 +16,7 @@
 import '../setup/load-test-env.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -80,10 +80,21 @@ describe('Agent negative cases', () => {
 
     beforeAll(() => {
       testHome = mkdtempSync(join(getTempDir(), 'codemie-no-config-'));
+      // Write a config with no profiles so ConfigLoader finds a real file in
+      // testHome and does not fall back to ~/.codemie (which has the
+      // sso-autotest profile from globalSetup). Without this, the CLI would
+      // attempt SSO re-auth via inquirer and crash without a TTY.
+      mkdirSync(testHome, { recursive: true });
+      writeFileSync(
+        join(testHome, 'codemie-cli.config.json'),
+        JSON.stringify({ version: 2, profiles: {} }),
+        'utf-8',
+      );
       result = spawnSync(
         process.execPath,
         [CLAUDE_BIN, '--task', 'Say hello'],
         {
+          cwd: testHome,
           env: { ...(CI_IS_LOCAL_RUN ? ssoCleanEnv() : jwtCleanEnv()), CODEMIE_HOME: testHome },
           encoding: 'utf-8',
           timeout: 30_000,

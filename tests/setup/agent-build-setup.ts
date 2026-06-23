@@ -18,6 +18,9 @@ let originalSsoProfile: string | undefined;
 export async function setup(): Promise<void> {
   loadEnv({ path: resolve(root, '.env.test.local'), override: true });
 
+  // Default to the public prod instance when no .env.test.local is present.
+  process.env.CI_CODEMIE_URL ??= 'https://codemie.lab.epam.com';
+
   console.log('\n[agent-integration] Building dist/ (runs once per session)...');
   execSync('npm run build', { cwd: root, stdio: 'inherit' });
   console.log('[agent-integration] Build complete.');
@@ -57,22 +60,29 @@ export async function setup(): Promise<void> {
   execSync('npm link', { cwd: root, stdio: 'pipe' });
   console.log('[agent-integration] Linked.');
 
-  // For SSO (local dev) runs: authenticate once so ~/.codemie/credentials/ is
-  // populated before any test subprocess tries to read credentials from there.
+  // For SSO (local dev) runs: validate credentials before any test subprocess
+  // tries to use them. If credentials are missing or expired, launch the
+  // browser SSO flow immediately (no "Re-authenticate now?" prompt).
   // JWT (CI) runs skip this — each test fetches a fresh JWT token itself.
   const isLocalRun = (process.env.CI_IS_LOCAL_RUN ?? 'true') !== 'false';
   if (isLocalRun) {
-    console.log('[agent-integration] SSO mode — authenticating via getCodemieClient...');
+    console.log('[agent-integration] SSO mode — validating credentials...');
+    originalSsoProfile = setupSsoAutotestProfile();
     try {
-      originalSsoProfile = setupSsoAutotestProfile();
       const { getCodemieClient } = await import(
         resolve(root, 'dist/utils/sdk-client.js')
-      ) as { getCodemieClient: (force?: boolean) => Promise<unknown> };
+      ) as { getCodemieClient: (quiet: boolean) => Promise<unknown> };
       await getCodemieClient(true);
-      console.log('[agent-integration] SSO authentication complete.\n');
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      console.warn(`[agent-integration] SSO auth warning (non-fatal): ${msg}\n`);
+      console.log('[agent-integration] SSO credentials valid.\n');
+    } catch {
+      // Credentials missing or expired — launch browser SSO login directly.
+      // Using stdio: 'inherit' so the user sees and can complete the flow.
+      console.log('[agent-integration] SSO credentials missing or expired — launching login...\n');
+      const codemieUrl = process.env.CI_CODEMIE_URL ?? '';
+      execSync(
+        `node ${resolve(root, 'bin/codemie.js')} profile login --url ${codemieUrl}`,
+        { cwd: root, stdio: 'inherit' },
+      );
     }
   }
 
