@@ -484,8 +484,48 @@ describe('ConfigLoader - Project-Level Configuration', () => {
 
       const config = await ConfigLoader.load(workingDir);
 
+      // local config was applied (model override)
+      expect(config.model).toBe('gpt-4o-mini');
+      // global codemieAssistants survive the local overlay
       expect(config.codemieAssistants).toHaveLength(1);
       expect(config.codemieAssistants![0].slug).toBe('brianna');
+    });
+
+    it('local config without codemieSkills does not overwrite global values', async () => {
+      const workingDir = path.join(TEST_DIR, 'project');
+      const globalConfig: MultiProviderConfig = {
+        version: 2,
+        activeProfile: 'default',
+        codemieSkills: [
+          {
+            id: 'sk-1',
+            name: 'My Skill',
+            slug: 'my-skill',
+            description: 'A test skill',
+            registeredAt: '2026-06-23T00:00:00.000Z',
+          } as CodemieSkill,
+        ],
+        profiles: {
+          default: { provider: 'openai', model: 'gpt-4o', apiKey: 'global-key' },
+        },
+      };
+      const localConfig: MultiProviderConfig = {
+        version: 2,
+        activeProfile: 'default',
+        profiles: {
+          default: { provider: 'openai', model: 'gpt-4o-mini' },
+        },
+      };
+      await fs.writeFile(GLOBAL_CONFIG_PATH, JSON.stringify(globalConfig));
+      await fs.writeFile(LOCAL_CONFIG_PATH, JSON.stringify(localConfig));
+
+      const config = await ConfigLoader.load(workingDir);
+
+      // local config was applied (model override)
+      expect(config.model).toBe('gpt-4o-mini');
+      // global codemieSkills survive the local overlay
+      expect(config.codemieSkills).toHaveLength(1);
+      expect(config.codemieSkills![0].slug).toBe('my-skill');
     });
   });
 });

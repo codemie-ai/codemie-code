@@ -99,6 +99,10 @@ export class ConfigLoader {
     // model, and credentials from being silently replaced by the local team's defaults.
     const applyProjectOnly =
       cliOverrides?.name && localProfileName && cliOverrides.name !== localProfileName;
+    // filterProjectFields keeps only PROJECT_FIELDS (codeMieProject, codeMieIntegration, codeMieUrl).
+    // codemieAssistants/codemieSkills are intentionally excluded: when --profile selects a
+    // different global profile, local-registered assistants belong to the default profile context,
+    // not the explicitly selected one.
     const effectiveLocalConfig = applyProjectOnly
       ? this.filterProjectFields(localConfig)
       : localConfig;
