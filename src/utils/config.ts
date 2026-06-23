@@ -99,6 +99,10 @@ export class ConfigLoader {
     // model, and credentials from being silently replaced by the local team's defaults.
     const applyProjectOnly =
       cliOverrides?.name && localProfileName && cliOverrides.name !== localProfileName;
+    // filterProjectFields keeps only PROJECT_FIELDS (codeMieProject, codeMieIntegration, codeMieUrl).
+    // codemieAssistants/codemieSkills are intentionally excluded: when --profile selects a
+    // different global profile, local-registered assistants belong to the default profile context,
+    // not the explicitly selected one.
     const effectiveLocalConfig = applyProjectOnly
       ? this.filterProjectFields(localConfig)
       : localConfig;
@@ -224,8 +228,13 @@ export class ConfigLoader {
         );
       }
 
-      // Return profile with name included
-      return { ...rawConfig.profiles[profile], name: profile };
+      // codemieAssistants and codemieSkills live at MultiProviderConfig root (not inside a profile)
+      return {
+        ...rawConfig.profiles[profile],
+        name: profile,
+        codemieAssistants: rawConfig.codemieAssistants,
+        codemieSkills: rawConfig.codemieSkills,
+      };
     }
 
     // Legacy single-provider config
@@ -252,8 +261,15 @@ export class ConfigLoader {
       const profile = profileName || rawConfig.activeProfile;
 
       // If profile exists in local config, return it as an override
+      // codemieAssistants and codemieSkills live at MultiProviderConfig root; removeUndefined()
+      // in load() strips undefined before Object.assign, so missing fields won't overwrite global.
       if (profile && rawConfig.profiles[profile]) {
-        return { ...rawConfig.profiles[profile], name: profile };
+        return {
+          ...rawConfig.profiles[profile],
+          name: profile,
+          codemieAssistants: rawConfig.codemieAssistants,
+          codemieSkills: rawConfig.codemieSkills,
+        };
       }
 
       // Otherwise return empty (no local override)

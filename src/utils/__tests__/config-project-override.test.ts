@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { promises as fs } from 'fs';
 import * as path from 'path';
 import { ConfigLoader } from '../config.js';
-import type { MultiProviderConfig, CodeMieIntegrationInfo } from '../../env/types.js';
+import type { MultiProviderConfig, CodeMieIntegrationInfo, CodemieAssistant, CodemieSkill } from '../../env/types.js';
 import * as paths from '../paths.js';
 
 // Test utilities
@@ -384,6 +384,148 @@ describe('ConfigLoader - Project-Level Configuration', () => {
       expect(result.config).toBeDefined();
       expect(result.hasLocalConfig).toBe(true);
       expect(result.sources).toBeDefined();
+    });
+  });
+
+  describe('top-level fields (codemieAssistants / codemieSkills)', () => {
+    let originalGlobalConfig: string;
+
+    beforeEach(() => {
+      // GLOBAL_CONFIG is computed at class-load time; override it to point at the test file
+      originalGlobalConfig = (ConfigLoader as any).GLOBAL_CONFIG;
+      (ConfigLoader as any).GLOBAL_CONFIG = GLOBAL_CONFIG_PATH;
+      (ConfigLoader as any).multiProviderCache = null;
+    });
+
+    afterEach(() => {
+      (ConfigLoader as any).GLOBAL_CONFIG = originalGlobalConfig;
+      (ConfigLoader as any).multiProviderCache = null;
+    });
+
+    it('load() returns codemieAssistants from global MultiProviderConfig root', async () => {
+      const workingDir = path.join(TEST_DIR, 'project');
+      const globalConfig: MultiProviderConfig = {
+        version: 2,
+        activeProfile: 'default',
+        codemieAssistants: [
+          {
+            id: 'ast-1',
+            name: 'Brianna',
+            slug: 'brianna',
+            description: 'Jira assistant',
+            registeredAt: '2026-06-23T00:00:00.000Z',
+          } as CodemieAssistant,
+        ],
+        profiles: {
+          default: { provider: 'openai', model: 'gpt-4o', apiKey: 'test-key' },
+        },
+      };
+      await fs.writeFile(GLOBAL_CONFIG_PATH, JSON.stringify(globalConfig));
+
+      const config = await ConfigLoader.load(workingDir);
+
+      expect(config.codemieAssistants).toHaveLength(1);
+      expect(config.codemieAssistants![0].slug).toBe('brianna');
+    });
+
+    it('load() returns codemieSkills from global MultiProviderConfig root', async () => {
+      const workingDir = path.join(TEST_DIR, 'project');
+      const globalConfig: MultiProviderConfig = {
+        version: 2,
+        activeProfile: 'default',
+        codemieSkills: [
+          {
+            id: 'sk-1',
+            name: 'My Skill',
+            slug: 'my-skill',
+            description: 'A test skill',
+            registeredAt: '2026-06-23T00:00:00.000Z',
+          } as CodemieSkill,
+        ],
+        profiles: {
+          default: { provider: 'openai', model: 'gpt-4o', apiKey: 'test-key' },
+        },
+      };
+      await fs.writeFile(GLOBAL_CONFIG_PATH, JSON.stringify(globalConfig));
+
+      const config = await ConfigLoader.load(workingDir);
+
+      expect(config.codemieSkills).toHaveLength(1);
+      expect(config.codemieSkills![0].slug).toBe('my-skill');
+    });
+
+    it('local config without codemieAssistants does not overwrite global values', async () => {
+      const workingDir = path.join(TEST_DIR, 'project');
+      const globalConfig: MultiProviderConfig = {
+        version: 2,
+        activeProfile: 'default',
+        codemieAssistants: [
+          {
+            id: 'ast-1',
+            name: 'Brianna',
+            slug: 'brianna',
+            description: 'Jira assistant',
+            registeredAt: '2026-06-23T00:00:00.000Z',
+          } as CodemieAssistant,
+        ],
+        profiles: {
+          default: { provider: 'openai', model: 'gpt-4o', apiKey: 'global-key' },
+        },
+      };
+      const localConfig: MultiProviderConfig = {
+        version: 2,
+        activeProfile: 'default',
+        profiles: {
+          default: { provider: 'openai', model: 'gpt-4o-mini' },
+        },
+      };
+      await fs.writeFile(GLOBAL_CONFIG_PATH, JSON.stringify(globalConfig));
+      await fs.writeFile(LOCAL_CONFIG_PATH, JSON.stringify(localConfig));
+
+      const config = await ConfigLoader.load(workingDir);
+
+      // local config was applied (model override)
+      expect(config.model).toBe('gpt-4o-mini');
+      // global codemieAssistants survive the local overlay
+      expect(config.codemieAssistants).toHaveLength(1);
+      expect(config.codemieAssistants![0].slug).toBe('brianna');
+    });
+
+    it('local config without codemieSkills does not overwrite global values', async () => {
+      const workingDir = path.join(TEST_DIR, 'project');
+      const globalConfig: MultiProviderConfig = {
+        version: 2,
+        activeProfile: 'default',
+        codemieSkills: [
+          {
+            id: 'sk-1',
+            name: 'My Skill',
+            slug: 'my-skill',
+            description: 'A test skill',
+            registeredAt: '2026-06-23T00:00:00.000Z',
+          } as CodemieSkill,
+        ],
+        profiles: {
+          default: { provider: 'openai', model: 'gpt-4o', apiKey: 'global-key' },
+        },
+      };
+      const localConfig: MultiProviderConfig = {
+        version: 2,
+        activeProfile: 'default',
+        profiles: {
+          default: { provider: 'openai', model: 'gpt-4o-mini' },
+        },
+      };
+      await fs.writeFile(GLOBAL_CONFIG_PATH, JSON.stringify(globalConfig));
+      await fs.writeFile(LOCAL_CONFIG_PATH, JSON.stringify(localConfig));
+
+      const config = await ConfigLoader.load(workingDir);
+
+      // local config was applied (model override)
+      expect(config.model).toBe('gpt-4o-mini');
+      // global codemieSkills survive the local overlay
+      expect(config.codemieSkills).toHaveLength(1);
+      expect(config.codemieSkills![0].slug).toBe('my-skill');
     });
   });
 });
