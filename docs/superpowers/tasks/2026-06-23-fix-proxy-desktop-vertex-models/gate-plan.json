@@ -1,0 +1,10 @@
+{
+  "schema": 1,
+  "runner": "npm",
+  "gates": [
+    {"id": "lint", "command": "eslint changed files", "available": true},
+    {"id": "typecheck", "command": "npm run typecheck", "available": true},
+    {"id": "unit", "command": "npm run test -- desktop.test.ts", "available": true}
+  ],
+  "detected_at": "2026-06-23T12:25:00.000Z"
+}

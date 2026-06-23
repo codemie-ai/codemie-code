@@ -58,8 +58,9 @@ export const DEFAULT_MANAGED_MCP_SERVERS =
 
 /**
  * Fetch the model list from the gateway's SSO-backed `/v1/llm_models?include_all=true`
- * endpoint and return the IDs of usable Claude-family models (excludes `-vertex`
- * aliases since the gateway already picks the right backend for the canonical names).
+ * endpoint and return the IDs of usable Claude-family models. When both canonical
+ * and `-vertex` registrations exist, canonical IDs are preferred. When only vertex
+ * registrations exist, those IDs are returned so vertex-only tenants can connect.
  */
 export async function fetchClaudeModels(proxyUrl: string, gatewayKey: string): Promise<string[]> {
   const endpoint = new URL('/v1/llm_models?include_all=true', proxyUrl).toString();
@@ -101,9 +102,9 @@ export async function fetchClaudeModels(proxyUrl: string, gatewayKey: string): P
       : (json.data ?? [])
         .map((m) => m.id)
         .filter((id): id is string => typeof id === 'string');
-    const claudeIds = ids
-      .filter((id) => /^claude-/i.test(id))
-      .filter((id) => !/-vertex$/i.test(id));
+    const allClaudeIds = ids.filter((id) => /^claude-/i.test(id));
+    const nonVertexClaudeIds = allClaudeIds.filter((id) => !/-vertex$/i.test(id));
+    const claudeIds = nonVertexClaudeIds.length > 0 ? nonVertexClaudeIds : allClaudeIds;
     logger.info(
       '[proxy] Gateway model discovery completed',
       ...sanitizeLogArgs({
@@ -111,6 +112,7 @@ export async function fetchClaudeModels(proxyUrl: string, gatewayKey: string): P
         totalModelCount: ids.length,
         totalClaudeModelCount: claudeIds.length,
         availableClaudeModels: claudeIds,
+        usedVertexFallback: nonVertexClaudeIds.length === 0 && allClaudeIds.length > 0,
       })
     );
     return claudeIds;
@@ -136,7 +138,8 @@ export async function fetchClaudeModels(proxyUrl: string, gatewayKey: string): P
 /**
  * Resolve each entry in {@link PREFERRED_CLAUDE_MODELS} against the gateway's
  * model discovery response. For each preferred name, prefer the exact ID; fall
- * back to the dated variant `<preferred>-YYYYMMDD` (latest if multiple).
+ * back to the dated variant `<preferred>-YYYYMMDD` (latest if multiple); then
+ * fall back to `<preferred>-vertex` when only Vertex registrations exist.
  * Entries with no available match are dropped silently.
  *
  * Preserves the order of {@link PREFERRED_CLAUDE_MODELS}.
@@ -158,7 +161,14 @@ export function selectPreferredClaudeModels(
       .filter((id) => /^\d{6,10}$/.test(id.slice(datePrefix.length)))
       .sort()
       .pop();
-    if (dated) resolved.push(dated);
+    if (dated) {
+      resolved.push(dated);
+      continue;
+    }
+    const vertexId = `${name}-vertex`;
+    if (availableSet.has(vertexId)) {
+      resolved.push(vertexId);
+    }
   }
   const missingPreferredModels = preferred.filter((name) => {
     if (resolved.includes(name)) return false;
