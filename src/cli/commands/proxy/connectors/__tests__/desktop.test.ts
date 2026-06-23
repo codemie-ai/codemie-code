@@ -175,6 +175,35 @@ describe('selectPreferredClaudeModels', () => {
       ['claude-opus-4-6']
     )).toEqual(['claude-opus-4-6-20260205']);
   });
+
+  it('falls back to vertex variant when no canonical or dated match exists', () => {
+    expect(selectPreferredClaudeModels(
+      ['claude-sonnet-4-6-vertex', 'claude-haiku-4-5-vertex', 'claude-opus-4-6-vertex'],
+      ['claude-sonnet-4-6', 'claude-haiku-4-5']
+    )).toEqual([
+      'claude-sonnet-4-6-vertex',
+      'claude-haiku-4-5-vertex',
+    ]);
+  });
+
+  it('prefers canonical over vertex when both are available — no duplication', () => {
+    expect(selectPreferredClaudeModels(
+      ['claude-sonnet-4-6', 'claude-sonnet-4-6-vertex', 'claude-opus-4-7'],
+      ['claude-sonnet-4-6', 'claude-opus-4-7']
+    )).toEqual([
+      'claude-sonnet-4-6',
+      'claude-opus-4-7',
+    ]);
+  });
+
+  it('handles a vertex-only gateway (full PREFERRED_CLAUDE_MODELS fallback)', () => {
+    const vertexOnly = [
+      'claude-sonnet-4-5-vertex',
+      'claude-sonnet-4-6-vertex',
+    ];
+    const result = selectPreferredClaudeModels(vertexOnly);
+    expect(result).toEqual(['claude-sonnet-4-6-vertex']);
+  });
 });
 
 describe('writeDesktopConfig', () => {

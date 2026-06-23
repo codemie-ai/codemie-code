@@ -134,8 +134,12 @@ export async function fetchClaudeModels(proxyUrl: string, gatewayKey: string): P
 
 /**
  * Resolve each entry in {@link PREFERRED_CLAUDE_MODELS} against the gateway's
- * model discovery response. For each preferred name, prefer the exact ID; fall
- * back to the dated variant `<preferred>-YYYYMMDD` (latest if multiple).
+ * model discovery response. Resolution is tried in order:
+ * 1. Exact match (`claude-sonnet-4-6`)
+ * 2. Dated variant (`claude-sonnet-4-6-YYYYMMDD`, latest wins when multiple exist)
+ * 3. Vertex alias (`claude-sonnet-4-6-vertex`)
+ *
+ * Canonical matches are always preferred over vertex aliases.
  * Entries with no available match are dropped silently.
  *
  * Preserves the order of {@link PREFERRED_CLAUDE_MODELS}.
@@ -157,7 +161,14 @@ export function selectPreferredClaudeModels(
       .filter((id) => /^\d{6,10}$/.test(id.slice(datePrefix.length)))
       .sort()
       .pop();
-    if (dated) resolved.push(dated);
+    if (dated) {
+      resolved.push(dated);
+      continue;
+    }
+    const vertexVariant = `${name}-vertex`;
+    if (availableSet.has(vertexVariant)) {
+      resolved.push(vertexVariant);
+    }
   }
   const missingPreferredModels = preferred.filter((name) => {
     if (resolved.includes(name)) return false;
