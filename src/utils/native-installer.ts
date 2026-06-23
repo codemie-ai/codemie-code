@@ -198,6 +198,32 @@ async function verifyInstallation(
 }
 
 /**
+ * Detect Windows PowerShell execution policy error in command output
+ */
+function isExecutionPolicyError(output: string): boolean {
+	return /cannot be loaded because running scripts is disabled/i.test(output) ||
+		/PSSecurityException|UnauthorizedAccess/i.test(output);
+}
+
+/**
+ * Auto-fix Windows PowerShell execution policy for the current user.
+ * Uses RemoteSigned scope — does not require admin rights.
+ * Returns true if the fix was applied successfully.
+ */
+async function fixWindowsExecutionPolicy(): Promise<boolean> {
+	try {
+		const result = await exec(
+			'powershell',
+			['-Command', 'Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force'],
+			{ timeout: 15000 }
+		);
+		return result.code === 0;
+	} catch {
+		return false;
+	}
+}
+
+/**
  * Detect if installer output contains HTML instead of expected script output
  * This occurs when the installer URL returns an HTML page (e.g., region block,
  * maintenance page) instead of the actual installer script. Bash then fails
@@ -254,6 +280,7 @@ export async function installNativeAgent(
 ): Promise<NativeInstallResult> {
 	const platform = detectPlatform();
 	const timeout = options?.timeout || 300000; // 5 minute default timeout
+	const env = options?.env;
 
 	logger.debug('Starting native agent installation', {
 		agentName,
@@ -272,11 +299,26 @@ export async function installNativeAgent(
 		});
 
 		// Execute installer
-		const result = await exec(command, [], {
+		let result = await exec(command, [], {
 			timeout,
-			env: options?.env,
+			env,
 			shell: true, // Required for piped commands (curl | bash)
 		});
+
+		// Windows-specific: auto-fix PowerShell execution policy and retry once
+		if (result.code !== 0 && platform === 'windows') {
+			const combinedOutput = `${result.stderr || ''} ${result.stdout || ''}`;
+			if (isExecutionPolicyError(combinedOutput)) {
+				logger.info('PowerShell execution policy is blocking installation. Attempting auto-fix...');
+				const fixed = await fixWindowsExecutionPolicy();
+				if (fixed) {
+					logger.info('Execution policy updated. Retrying installation...');
+					result = await exec(command, [], { timeout, env, shell: true });
+				} else {
+					logger.warn('Could not update execution policy automatically. Manual fix required.');
+				}
+			}
+		}
 
 		// Check if installation succeeded
 		if (result.code !== 0) {
@@ -289,6 +331,14 @@ export async function installNativeAgent(
 				throw new AgentInstallationError(
 					agentName,
 					detectHtmlErrorMessage(combinedOutput)
+				);
+			}
+
+			// Execution policy error still present after attempted fix
+			if (platform === 'windows' && isExecutionPolicyError(combinedOutput)) {
+				throw new AgentInstallationError(
+					agentName,
+					'PowerShell execution policy is blocking the installer. Run this in PowerShell and retry: Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser'
 				);
 			}
 
