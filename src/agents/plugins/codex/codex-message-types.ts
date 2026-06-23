@@ -40,6 +40,7 @@ export interface CodexSessionMeta {
 /** turn_context record — may appear multiple times; last value wins for model extraction */
 export interface CodexTurnContext {
   cwd: string;
+  turn_id?: string;
   approval_policy?: string;
   sandbox_policy?: string;
   model?: string;           // Actual model string passed to the API (primary model source)
@@ -58,10 +59,37 @@ export interface CodexResponseItem {
   output?: string;          // function_call_output: tool output
 }
 
-/** event_msg record — user messages and other session events */
+/** event_msg record — user messages, token metering, task lifecycle, collaboration */
 export interface CodexEventMsg {
-  type: 'user_message' | string;
+  type:
+    | 'user_message'
+    | 'token_count'
+    | 'task_started'
+    | 'task_complete'
+    | 'agent_message'
+    | 'collab_agent_spawn_end'
+    | 'collab_waiting_end'
+    | string;
   message?: string;
+  turn_id?: string;
+  call_id?: string;
+  new_thread_id?: string;
+  new_agent_role?: string;
+  new_agent_nickname?: string;
+  info?: {
+    total_token_usage?: CodexTokenUsageBlock;
+    last_token_usage?: CodexTokenUsageBlock;
+    model_context_window?: number;
+  } | null;
+  agent_statuses?: Array<{ thread_id?: string; agent_role?: string }>;
+}
+
+export interface CodexTokenUsageBlock {
+  input_tokens?: number;
+  cached_input_tokens?: number;
+  output_tokens?: number;
+  reasoning_output_tokens?: number;
+  total_tokens?: number;
 }
 
 /**

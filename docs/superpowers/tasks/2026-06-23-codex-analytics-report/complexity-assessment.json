@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "task": "Add full Codex analytics parity to codemie analytics --report, matching Claude Code coverage for native discovery, token/cost pricing, per-turn cost series, dispatch timeline, and invocation charts.",
+  "generated": "2026-06-23T12:00:00.000Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 19,
+  "size": "M",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Seven coordinated components across native-loader, four cost-pipeline modules, and three Codex plugin files; mirrors Claude parity but spans the full analytics ingestion and enrichment path." },
+    { "dimension": "file_change_estimate", "reason": "Estimated 8–12 production files plus 1 new module (codex-named-invocations), 4–6 test files, and 2–3 JSONL fixtures across cli/commands/analytics, cost/, and agents/plugins/codex/." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L to XL: touches core shared analytics utilities (usage-readers, dispatch-extractor, cost-enricher, native-loader)"
+  ],
+  "split_recommendation": null
+}

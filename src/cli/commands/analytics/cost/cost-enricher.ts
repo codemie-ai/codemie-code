@@ -16,13 +16,14 @@ import type { DispatchEventRaw } from './types.js';
 import { MAX_SERIES_POINTS } from './types.js';
 import { emptyUsage, addUsage, costBreakdown } from './cost-calculator.js';
 import { lookupPrice } from './pricing.js';
-import { gatherUsageDeduped, gatherDedupedUsageRecords, sumUsageRecords, type UsageRecord } from './usage-readers.js';
+import { gatherUsageDeduped, gatherDedupedUsageRecords, sumUsageRecords, readCodexSubagentUsage, type UsageRecord } from './usage-readers.js';
 import { extractDispatchEvents } from './dispatch-extractor.js';
 import { normalizeModelName } from '../model-normalizer.js';
 import { getCodemiePath } from '../../../../utils/paths.js';
 import { AgentRegistry } from '../../../../agents/registry.js';
 import { ClaudeSessionAdapter } from '../../../../agents/plugins/claude/claude.session.js';
 import { ClaudePluginMetadata } from '../../../../agents/plugins/claude/claude.plugin.js';
+import { isCodexFamilyAgent } from './codex-agent.js';
 import { logger } from '../../../../utils/logger.js';
 
 export interface EnricherDeps {
@@ -41,6 +42,9 @@ export interface EnricherDeps {
  * resolves through the registry.
  */
 function resolveSessionAdapter(agentName: string): SessionAdapter | null {
+  if (isCodexFamilyAgent(agentName)) {
+    return AgentRegistry.getAgent('codex')?.getSessionAdapter?.() ?? null;
+  }
   const fromRegistry = AgentRegistry.getAgent(agentName)?.getSessionAdapter?.();
   if (fromRegistry) {
     return fromRegistry;
@@ -196,7 +200,7 @@ async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T)
  * The per-dispatch cost is an ALLOCATION of already-counted session tokens (subagents are
  * included in the session total via allMessageArrays). Do NOT add to `seen` here.
  */
-function enrichDispatchCosts(dispatches: DispatchEventRaw[], parsed: ParsedSession): void {
+function enrichDispatchCosts(dispatches: DispatchEventRaw[], parsed: ParsedSession, agentName: string): void {
   if (!parsed.subagents?.length) return;
 
   const byToolUseId = new Map<string, { messages: unknown[] }>();
@@ -213,9 +217,10 @@ function enrichDispatchCosts(dispatches: DispatchEventRaw[], parsed: ParsedSessi
     if (!sub) continue;
 
     const subSeen = new Set<string>();
+    const usageAgent = isCodexFamilyAgent(agentName) ? 'codex' : 'claude';
     const records = gatherDedupedUsageRecords(
-      'claude',
-      { sessionId: '', agentName: 'claude', metadata: {}, messages: sub.messages } as unknown as ParsedSession,
+      usageAgent,
+      { sessionId: '', agentName: usageAgent, metadata: {}, messages: sub.messages } as unknown as ParsedSession,
       subSeen,
     );
 
@@ -235,12 +240,22 @@ function enrichDispatchCosts(dispatches: DispatchEventRaw[], parsed: ParsedSessi
     }
 
     const toolCounts: Record<string, number> = {};
-    for (const raw of sub.messages as Array<{ message?: { content?: unknown } }>) {
-      const content = raw.message?.content;
-      if (!Array.isArray(content)) continue;
-      for (const b of content as Array<{ type?: string; name?: string }>) {
-        if (b.type === 'tool_use' && b.name) {
-          toolCounts[b.name] = (toolCounts[b.name] || 0) + 1;
+    const agentKey = agentName.toLowerCase();
+    if (isCodexFamilyAgent(agentKey)) {
+      for (const raw of sub.messages as Array<{ type?: string; payload?: { type?: string; name?: string } }>) {
+        if (raw.type === 'response_item' && raw.payload?.type === 'function_call' && raw.payload.name) {
+          const name = raw.payload.name.toLowerCase();
+          toolCounts[name] = (toolCounts[name] || 0) + 1;
+        }
+      }
+    } else {
+      for (const raw of sub.messages as Array<{ message?: { content?: unknown } }>) {
+        const content = raw.message?.content;
+        if (!Array.isArray(content)) continue;
+        for (const b of content as Array<{ type?: string; name?: string }>) {
+          if (b.type === 'tool_use' && b.name) {
+            toolCounts[b.name] = (toolCounts[b.name] || 0) + 1;
+          }
         }
       }
     }
@@ -283,6 +298,14 @@ export async function enrichCosts(
       if (records.length) {
         usageByModel = sumUsageRecords(records);
         series = buildCostSeries(records);
+        // Codex sub-agent rollouts are linked to the parent but their tokens are NOT in the
+        // parent's per-turn records (parent transcript only). Fold them into the session total
+        // here so sub-agent spend is counted; the per-turn series stays parent-only by design.
+        if (entry.parsed && isCodexFamilyAgent(entry.agentName)) {
+          for (const [model, usage] of readCodexSubagentUsage(entry.parsed)) {
+            usageByModel.set(model, usageByModel.has(model) ? addUsage(usageByModel.get(model)!, usage) : usage);
+          }
+        }
       } else {
         usageByModel = entry.parsed ? gatherUsageDeduped(entry.agentName, entry.parsed, seen) : new Map<string, TokenUsage>();
       }
@@ -299,9 +322,9 @@ export async function enrichCosts(
     }
     if (entry.parsed) {
       try {
-        const dispatches = extractDispatchEvents(entry.parsed);
+        const dispatches = extractDispatchEvents(entry.parsed, entry.agentName);
         if (dispatches.length) {
-          enrichDispatchCosts(dispatches, entry.parsed);
+          enrichDispatchCosts(dispatches, entry.parsed, entry.agentName);
           // Strip internal _toolUseId before storing in the public cost index
           cost.dispatches = dispatches.map(({ _toolUseId: _id, ...d }) => d);
         }

@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { existsSync } from 'node:fs';
 import { enrichCosts, buildCostSeries, realDeps, type EnricherDeps } from '../cost-enricher.js';
 import { MAX_SERIES_POINTS } from '../types.js';
 import type { UsageRecord } from '../usage-readers.js';
@@ -62,20 +63,95 @@ describe('enrichCosts', () => {
     expect(index.get('s3')).toMatchObject({ priced: false, hadLog: false });
   });
 
-  it('marks a parsed session unpriced when the agent has no usage reader', async () => {
-    // codex/opencode parse fine but have no usage reader → empty usage map. Such a session
-    // must be hadLog=true, priced=false (so coverage shows "no token reader", not "✓ full $0").
+  it('prices a codex session from token_count events', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const lines = readFileSync(join(process.cwd(), 'tests/integration/session/fixtures/codex/turn-1.jsonl'), 'utf-8')
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l));
     const deps: EnricherDeps = {
       ...baseDeps,
       resolveAgentName: () => 'codex',
       parseNative: async () =>
-        ({ sessionId: 's1', agentName: 'codex', metadata: {}, messages: [{ message: { content: 'no usage' } }] } as never),
+        ({ sessionId: 's1', agentName: 'codex', metadata: { model: 'o4-mini' }, messages: lines, metrics: {} } as never),
+    };
+    const { index, summary } = await enrichCosts(raw, deps);
+    const c = index.get('s1')!;
+    expect(c.priced).toBe(true);
+    expect(c.tokens.total).toBe(1036);
+    expect(c.costUSD).toBeGreaterThan(0);
+    expect(summary.pricedSessions).toBe(1);
+  });
+
+  it('folds codex sub-agent usage into the session total exactly once', async () => {
+    // Parent transcript: one token_count turn (per-turn records → parent total 1036). Linked
+    // sub-agent rollout: its own token_count total of 500. The session total must be 1036 + 500 —
+    // the child counted ONCE: neither dropped (the original undercount) nor double-counted.
+    const tokenCount = (input: number, output: number, total: number) => ({
+      type: 'event_msg',
+      payload: {
+        type: 'token_count',
+        info: {
+          total_token_usage: { input_tokens: input, cached_input_tokens: 0, output_tokens: output, total_tokens: total },
+          last_token_usage: { input_tokens: input, cached_input_tokens: 0, output_tokens: output, total_tokens: total },
+        },
+      },
+    });
+    const parent = {
+      sessionId: 's1',
+      agentName: 'codex',
+      metadata: { model: 'o4-mini' },
+      messages: [
+        { timestamp: '2026-06-08T10:00:00Z', type: 'turn_context', payload: { model: 'o4-mini' } },
+        { timestamp: '2026-06-08T10:00:01Z', ...tokenCount(1000, 36, 1036) },
+      ],
+      subagents: [{ agentId: 'child', filePath: '/child.jsonl', messages: [tokenCount(500, 0, 500)] }],
+      metrics: {},
+    };
+    const deps: EnricherDeps = {
+      ...baseDeps,
+      resolveAgentName: () => 'codex',
+      parseNative: async () => parent as never,
+    };
+    const { index, summary } = await enrichCosts(raw, deps);
+    const c = index.get('s1')!;
+    expect(c.tokens.total).toBe(1536); // 1036 parent + 500 sub-agent, counted once
+    expect(c.tokens.input).toBe(1500); // 1000 parent + 500 sub-agent
+    expect(c.priced).toBe(true);
+    expect(summary.pricedSessions).toBe(1);
+  });
+
+  it('marks a parsed codex session unpriced when token_count has no usage data', async () => {
+    const deps: EnricherDeps = {
+      ...baseDeps,
+      resolveAgentName: () => 'codex',
+      parseNative: async () =>
+        ({ sessionId: 's1', agentName: 'codex', metadata: {}, messages: [{ type: 'event_msg', payload: { type: 'user_message', message: 'hi' } }], metrics: {} } as never),
     };
     const { index, summary } = await enrichCosts(raw, deps);
     expect(index.get('s1')!.hadLog).toBe(true);
     expect(index.get('s1')!.priced).toBe(false);
     expect(index.get('s1')!.costUSD).toBe(0);
     expect(summary.pricedSessions).toBe(0);
+  });
+
+  it('prices codemie-codex sessions with the codex usage reader', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { join } = await import('node:path');
+    const lines = readFileSync(join(process.cwd(), 'tests/integration/session/fixtures/codex/turn-1.jsonl'), 'utf-8')
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l));
+    const deps: EnricherDeps = {
+      ...baseDeps,
+      resolveAgentName: () => 'codemie-codex',
+      parseNative: async () =>
+        ({ sessionId: 's1', agentName: 'codemie-codex', metadata: { model: 'o4-mini' }, messages: lines, metrics: {} } as never),
+    };
+    const { index } = await enrichCosts(raw, deps);
+    expect(index.get('s1')!.priced).toBe(true);
+    expect(index.get('s1')!.costUSD).toBeGreaterThan(0);
   });
 
   it('dedupes the same API response across resumed sessions (counts once, earliest owns it)', async () => {
@@ -342,8 +418,12 @@ describe('enrichCosts — dispatch cost attribution', () => {
 describe('acceptance: TTL-aware pricing against real transcripts', () => {
   const BASE = `${process.env.HOME}/.claude/projects/${process.cwd().replace(/[/_]/g, '-')}`;
 
-  // Skip in CI — real transcripts are only available locally.
+  // Skip in CI or when local Claude transcripts are not present.
   const itLocal = process.env.CI ? it.skip : it;
+
+  function hasTranscripts(paths: string[]): boolean {
+    return paths.every((p) => existsSync(p));
+  }
 
   function sessionEntry(sessionId: string, filePath: string, agentName = 'claude', startTime = 1) {
     return {
@@ -359,6 +439,9 @@ describe('acceptance: TTL-aware pricing against real transcripts', () => {
       sessionEntry('6e8bfbe2-7a9a-4b1d-800b-ae72ee6dec9d', `${BASE}/6e8bfbe2-7a9a-4b1d-800b-ae72ee6dec9d.jsonl`),
       sessionEntry('agent-a66f1ecadbe8beed6', `${BASE}/6e8bfbe2-7a9a-4b1d-800b-ae72ee6dec9d/subagents/agent-a66f1ecadbe8beed6.jsonl`, 'claude', 2),
     ];
+    if (!hasTranscripts(sessions.map((s) => s.agentSessionFile))) {
+      return;
+    }
     const { index } = await enrichCosts(sessions, realDeps);
     const total = [...index.values()].reduce((s, c) => s + c.costUSD, 0);
     expect(total).toBeCloseTo(4.88435635, 3);
@@ -370,6 +453,9 @@ describe('acceptance: TTL-aware pricing against real transcripts', () => {
       sessionEntry('agent-a0444580f67c6ec00', `${BASE}/d3128339-ed05-41d5-98b0-2a89932b4d3b/subagents/agent-a0444580f67c6ec00.jsonl`, 'claude', 2),
       sessionEntry('agent-a2b09a8c62ba62d84', `${BASE}/d3128339-ed05-41d5-98b0-2a89932b4d3b/subagents/agent-a2b09a8c62ba62d84.jsonl`, 'claude', 3),
     ];
+    if (!hasTranscripts(sessions.map((s) => s.agentSessionFile))) {
+      return;
+    }
     const { index } = await enrichCosts(sessions, realDeps);
     const total = [...index.values()].reduce((s, c) => s + c.costUSD, 0);
     expect(total).toBeCloseTo(1.27628500, 3);

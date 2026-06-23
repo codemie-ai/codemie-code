@@ -10,6 +10,7 @@
 import type { ParsedSession } from '../../../../agents/core/session/BaseSessionAdapter.js';
 import type { TokenUsage } from './types.js';
 import { emptyUsage, addUsage } from './cost-calculator.js';
+import { isCodexFamilyAgent } from './codex-agent.js';
 
 /** model -> usage */
 type UsageMap = Map<string, TokenUsage>;
@@ -219,6 +220,132 @@ function readGemini(parsed: ParsedSession): UsageMap {
   return out;
 }
 
+interface CodexRolloutLine {
+  timestamp?: string;
+  type?: string;
+  payload?: {
+    type?: string;
+    model?: string;
+    turn_id?: string;
+    info?: {
+      total_token_usage?: CodexTokenBlock;
+      last_token_usage?: CodexTokenBlock;
+    } | null;
+  };
+}
+
+interface CodexTokenBlock {
+  input_tokens?: number;
+  cached_input_tokens?: number;
+  output_tokens?: number;
+  reasoning_output_tokens?: number;
+  total_tokens?: number;
+}
+
+function codexBlockToUsage(block: CodexTokenBlock): TokenUsage {
+  const cacheRead = block.cached_input_tokens ?? 0;
+  // Codex/OpenAI `input_tokens` is the FULL prompt count and already INCLUDES cached tokens
+  // (unlike Anthropic, where input and cache-read are disjoint fields). Subtract so the cached
+  // portion is priced once — at the cache-read rate — instead of also at the full input rate,
+  // since costBreakdown sums `input + cacheRead`. See cost-calculator.costBreakdown.
+  const input = Math.max(0, (block.input_tokens ?? 0) - cacheRead);
+  const output = block.output_tokens ?? 0;
+  const total = block.total_tokens ?? input + output + cacheRead;
+  return { input, output, cacheRead, cacheCreation: 0, cacheCreation1h: 0, total };
+}
+
+function codexLines(parsed: ParsedSession): CodexRolloutLine[] {
+  return messagesOf(parsed) as CodexRolloutLine[];
+}
+
+function codexDefaultModel(parsed: ParsedSession): string {
+  const meta = parsed.metadata as { model?: string } | undefined;
+  return meta?.model?.trim() || 'unknown';
+}
+
+/**
+ * Per-turn usage from Codex `token_count` events (`last_token_usage`), correlated with the
+ * most recent `turn_context.model`. Sub-agent rollouts attached to `parsed.subagents` are
+ * included in the session total but not in the per-turn series (parent transcript only).
+ */
+export function extractCodexUsageRecords(parsed: ParsedSession): UsageRecord[] {
+  const records: UsageRecord[] = [];
+  let currentModel = codexDefaultModel(parsed);
+  let turnIndex = 0;
+
+  for (const raw of codexLines(parsed)) {
+    if (raw.type === 'turn_context' && raw.payload?.model?.trim()) {
+      currentModel = raw.payload.model.trim();
+    }
+    if (raw.type !== 'event_msg' || raw.payload?.type !== 'token_count' || !raw.payload.info?.last_token_usage) {
+      continue;
+    }
+    const ts = raw.timestamp ? Date.parse(raw.timestamp) : NaN;
+    const turnId = raw.payload.turn_id ?? `turn-${turnIndex}`;
+    turnIndex += 1;
+    records.push({
+      key: `${parsed.sessionId}::${turnId}`,
+      ts: Number.isFinite(ts) ? ts : null,
+      model: currentModel,
+      usage: codexBlockToUsage(raw.payload.info.last_token_usage),
+    });
+  }
+  return records;
+}
+
+/** Session total from the final authoritative `total_token_usage` on the main transcript. */
+function readCodex(parsed: ParsedSession): UsageMap {
+  const out: UsageMap = new Map();
+  let currentModel = codexDefaultModel(parsed);
+  let lastTotal: CodexTokenBlock | undefined;
+
+  for (const raw of codexLines(parsed)) {
+    if (raw.type === 'turn_context' && raw.payload?.model?.trim()) {
+      currentModel = raw.payload.model.trim();
+    }
+    if (raw.type === 'event_msg' && raw.payload?.type === 'token_count' && raw.payload.info?.total_token_usage) {
+      lastTotal = raw.payload.info.total_token_usage;
+    }
+  }
+
+  if (lastTotal) {
+    accumulate(out, currentModel, codexBlockToUsage(lastTotal));
+  }
+
+  for (const sub of parsed.subagents ?? []) {
+    if (!Array.isArray(sub.messages)) {
+      continue;
+    }
+    const subParsed = { ...parsed, messages: sub.messages, subagents: undefined } as ParsedSession;
+    const subMap = readCodex(subParsed);
+    for (const [model, usage] of subMap) {
+      accumulate(out, model, usage);
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Sub-agent-only session usage for Codex. The parent transcript total is already carried by the
+ * per-turn records ({@link extractCodexUsageRecords}); this returns just the linked child rollouts
+ * so callers on the per-turn path can fold sub-agent spend into the session/run total without
+ * touching the parent-only series.
+ */
+export function readCodexSubagentUsage(parsed: ParsedSession): UsageMap {
+  const out: UsageMap = new Map();
+  for (const sub of parsed.subagents ?? []) {
+    if (!Array.isArray(sub.messages)) {
+      continue;
+    }
+    const subParsed = { ...parsed, messages: sub.messages, subagents: undefined } as ParsedSession;
+    for (const [model, usage] of readCodex(subParsed)) {
+      accumulate(out, model, usage);
+    }
+  }
+  return out;
+}
+
 interface KimiUsageRecord {
   type?: string;
   time?: number;
@@ -301,6 +428,9 @@ export function readUsageByModel(agentName: string, parsed: ParsedSession): Usag
     case 'kimi':
       return readKimi(parsed);
     default:
+      if (isCodexFamilyAgent(agentName)) {
+        return readCodex(parsed);
+      }
       return new Map();
   }
 }
@@ -318,6 +448,9 @@ export function gatherUsageDeduped(agentName: string, parsed: ParsedSession, see
   }
   if (a === 'kimi') {
     return readKimi(parsed);
+  }
+  if (isCodexFamilyAgent(a)) {
+    return readCodex(parsed);
   }
   if (a === 'claude' || a === 'claude-acp' || a === 'claude-desktop') {
     const rollup = readClaudeSdkResult(parsed);
@@ -352,8 +485,21 @@ export function gatherDedupedUsageRecords(agentName: string, parsed: ParsedSessi
     // Kimi records are session-local (no cross-session dedup key), so pass through as-is.
     return extractKimiUsageRecords(parsed);
   }
+  if (isCodexFamilyAgent(a)) {
+    const out: UsageRecord[] = [];
+    for (const r of extractCodexUsageRecords(parsed)) {
+      if (r.key !== null) {
+        if (seen.has(r.key)) {
+          continue;
+        }
+        seen.add(r.key);
+      }
+      out.push(r);
+    }
+    return out;
+  }
   if (a !== 'claude' && a !== 'claude-acp' && a !== 'claude-desktop') {
-    return []; // gemini/codex/etc — no per-turn series in v1
+    return []; // gemini/opencode/etc — no per-turn series
   }
   if (readClaudeSdkResult(parsed)) {
     return []; // authoritative rollup carries no per-message order

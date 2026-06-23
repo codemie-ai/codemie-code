@@ -16,11 +16,52 @@ import { homedir } from 'os';
 import { join } from 'path';
 import { existsSync } from 'fs';
 
+/** Label used when discovering rollouts under the native Codex home. */
+export type CodexDiscoveryAgentName = 'codex' | 'codemie-codex';
+
+export interface CodexDiscoveryRoot {
+  sessionsPath: string;
+  agentName: CodexDiscoveryAgentName;
+}
+
 /**
  * Returns the Codex home directory.
  */
 export function getCodexHomePath(): string {
   return process.env.CODEX_HOME || join(homedir(), '.codex');
+}
+
+/**
+ * Session roots scanned for analytics native discovery.
+ * Native `codex` uses ~/.codex/sessions; `codemie-codex` isolates state under ~/.codex/codemie/home.
+ */
+export function getCodexDiscoverySessionRoots(): CodexDiscoveryRoot[] {
+  const nativeHome = join(homedir(), '.codex');
+  const candidates: CodexDiscoveryRoot[] = [
+    { sessionsPath: join(nativeHome, 'sessions'), agentName: 'codex' },
+    { sessionsPath: join(nativeHome, 'codemie', 'home', 'sessions'), agentName: 'codemie-codex' },
+  ];
+
+  const codexHome = process.env.CODEX_HOME;
+  if (codexHome) {
+    const envSessions = join(codexHome, 'sessions');
+    if (!candidates.some((c) => c.sessionsPath === envSessions)) {
+      const agentName: CodexDiscoveryAgentName =
+        codexHome.includes(`${join('.codex', 'codemie', 'home')}`) ? 'codemie-codex' : 'codex';
+      candidates.push({ sessionsPath: envSessions, agentName });
+    }
+  }
+
+  const seen = new Set<string>();
+  const out: CodexDiscoveryRoot[] = [];
+  for (const root of candidates) {
+    if (seen.has(root.sessionsPath) || !existsSync(root.sessionsPath)) {
+      continue;
+    }
+    seen.add(root.sessionsPath);
+    out.push(root);
+  }
+  return out;
 }
 
 /**

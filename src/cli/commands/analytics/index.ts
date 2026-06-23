@@ -41,7 +41,7 @@ export function createAnalyticsCommand(): Command {
         const loader = new MetricsDataLoader();
         const rawSessions = loader.loadSessions(filter);
 
-        // Discover native agent logs (plain `claude` etc. — not tracked by CodeMie) and merge,
+        // Discover native agent logs (plain `claude`, `codex`, etc. — not tracked by CodeMie) and merge,
         // so the analytics reflect ALL usage. Deduped against tracked logs inside the loader.
         if (options.scanNative !== false) {
           try {
