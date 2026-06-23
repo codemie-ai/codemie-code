@@ -122,6 +122,7 @@ export interface ProviderProfile {
 
   // In-memory assistants/skills state (not persisted here; stored at MultiProviderConfig level)
   codemieAssistants?: CodemieAssistant[];
+  codemieSkills?: CodemieSkill[];
 
   // Skills search — internal catalog endpoint used by `codemie skills find`.
   // Overridden by the CODEMIE_SKILLS_SEARCH_URL env var. When unset, the

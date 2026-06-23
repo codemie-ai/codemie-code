@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
+import { existsSync } from 'fs';
 import { enrichCosts, buildCostSeries, realDeps, type EnricherDeps } from '../cost-enricher.js';
 import { MAX_SERIES_POINTS } from '../types.js';
 import type { UsageRecord } from '../usage-readers.js';
@@ -342,8 +343,9 @@ describe('enrichCosts — dispatch cost attribution', () => {
 describe('acceptance: TTL-aware pricing against real transcripts', () => {
   const BASE = `${process.env.HOME}/.claude/projects/${process.cwd().replace(/[/_]/g, '-')}`;
 
-  // Skip in CI — real transcripts are only available locally.
-  const itLocal = process.env.CI ? it.skip : it;
+  // Skip in CI or when the required session files are absent from this machine.
+  const itSession = (primaryFile: string) =>
+    (process.env.CI || !existsSync(`${BASE}/${primaryFile}`)) ? it.skip : it;
 
   function sessionEntry(sessionId: string, filePath: string, agentName = 'claude', startTime = 1) {
     return {
@@ -354,7 +356,7 @@ describe('acceptance: TTL-aware pricing against real transcripts', () => {
     };
   }
 
-  itLocal('session 6e8bfbe2: TTL-aware pricing yields the correct total', async () => {
+  itSession('6e8bfbe2-7a9a-4b1d-800b-ae72ee6dec9d.jsonl')('session 6e8bfbe2: TTL-aware pricing yields the correct total', async () => {
     const sessions = [
       sessionEntry('6e8bfbe2-7a9a-4b1d-800b-ae72ee6dec9d', `${BASE}/6e8bfbe2-7a9a-4b1d-800b-ae72ee6dec9d.jsonl`),
       sessionEntry('agent-a66f1ecadbe8beed6', `${BASE}/6e8bfbe2-7a9a-4b1d-800b-ae72ee6dec9d/subagents/agent-a66f1ecadbe8beed6.jsonl`, 'claude', 2),
@@ -364,7 +366,7 @@ describe('acceptance: TTL-aware pricing against real transcripts', () => {
     expect(total).toBeCloseTo(4.88435635, 3);
   });
 
-  itLocal('session d3128339: TTL-aware pricing yields the correct total', async () => {
+  itSession('d3128339-ed05-41d5-98b0-2a89932b4d3b.jsonl')('session d3128339: TTL-aware pricing yields the correct total', async () => {
     const sessions = [
       sessionEntry('d3128339-ed05-41d5-98b0-2a89932b4d3b', `${BASE}/d3128339-ed05-41d5-98b0-2a89932b4d3b.jsonl`),
       sessionEntry('agent-a0444580f67c6ec00', `${BASE}/d3128339-ed05-41d5-98b0-2a89932b4d3b/subagents/agent-a0444580f67c6ec00.jsonl`, 'claude', 2),

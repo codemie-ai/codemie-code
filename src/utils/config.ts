@@ -224,8 +224,13 @@ export class ConfigLoader {
         );
       }
 
-      // Return profile with name included
-      return { ...rawConfig.profiles[profile], name: profile };
+      // codemieAssistants and codemieSkills live at MultiProviderConfig root (not inside a profile)
+      return {
+        ...rawConfig.profiles[profile],
+        name: profile,
+        codemieAssistants: rawConfig.codemieAssistants,
+        codemieSkills: rawConfig.codemieSkills,
+      };
     }
 
     // Legacy single-provider config
@@ -252,8 +257,15 @@ export class ConfigLoader {
       const profile = profileName || rawConfig.activeProfile;
 
       // If profile exists in local config, return it as an override
+      // codemieAssistants and codemieSkills live at MultiProviderConfig root; removeUndefined()
+      // in load() strips undefined before Object.assign, so missing fields won't overwrite global.
       if (profile && rawConfig.profiles[profile]) {
-        return { ...rawConfig.profiles[profile], name: profile };
+        return {
+          ...rawConfig.profiles[profile],
+          name: profile,
+          codemieAssistants: rawConfig.codemieAssistants,
+          codemieSkills: rawConfig.codemieSkills,
+        };
       }
 
       // Otherwise return empty (no local override)
