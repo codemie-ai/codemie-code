@@ -11,7 +11,7 @@
       "model": "claude-sonnet-4-6",
       "haikuModel": "claude-haiku-4-5-20251001",
       "sonnetModel": "claude-sonnet-4-6",
-      "opusModel": "claude-opus-4-6-20260205",
+      "opusModel": "claude-opus-4-8",
       "name": "epm-cdme"
     }
   },
