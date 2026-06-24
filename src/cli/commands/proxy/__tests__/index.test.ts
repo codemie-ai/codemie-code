@@ -27,6 +27,12 @@ vi.mock('../daemon-manager.js', () => ({
 
 vi.mock('../connectors/desktop.js', () => ({
   writeDesktopConfig: vi.fn(),
+  getDesktopBaseDir: vi.fn().mockReturnValue('/mock/desktop/base'),
+  mapCanonicalToDesktop: vi.fn().mockReturnValue([]),
+}));
+
+vi.mock('../connectors/managed-mcp-remote.js', () => ({
+  fetchManagedMcpServers: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock('../inspect-desktop.js', () => ({
