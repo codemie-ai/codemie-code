@@ -179,3 +179,76 @@ describe('synthesizeRawSession — /clear sentinel in post-/clear file', () => {
     expect(raw.deltas[0].userPrompts?.[0].text).toBe('actual prompt');
   });
 });
+
+describe('synthesizeCodexRawSession', () => {
+  it('derives turns from task_complete and carries codex metrics', () => {
+    const desc = { sessionId: 'cx', filePath: '/rollout.jsonl', createdAt: 1000, updatedAt: 2000, agentName: 'codex' };
+    const p = {
+      sessionId: 'cx',
+      agentName: 'codex',
+      metadata: { projectPath: '/repo', branch: 'main', model: 'gpt-5.4' },
+      messages: [
+        { timestamp: '2026-06-08T10:00:00Z', type: 'event_msg', payload: { type: 'user_message', message: 'fix the bug' } },
+        { timestamp: '2026-06-08T10:00:30Z', type: 'event_msg', payload: { type: 'task_complete' } },
+        { timestamp: '2026-06-08T10:01:00Z', type: 'event_msg', payload: { type: 'task_complete' } },
+      ],
+      metrics: {
+        tools: { exec_command: 2 },
+        toolStatus: { exec_command: { success: 2, failure: 0 } },
+        skillInvocations: { brainstorming: 1 },
+      },
+    } as never;
+    const raw = synthesizeRawSession('codex', desc, p);
+    expect(raw.deltas).toHaveLength(2);
+    expect(raw.deltas[0].userPrompts?.[0].text).toBe('fix the bug');
+    expect(raw.deltas[0].skillInvocations).toEqual({ brainstorming: 1 });
+    expect(raw.agentSessionFile).toBe('/rollout.jsonl');
+  });
+
+  it('routes codemie-codex through the codex synthesizer', () => {
+    const desc = { sessionId: 'cmx', filePath: '/rollout.jsonl', createdAt: 1000, updatedAt: 2000, agentName: 'codemie-codex' };
+    const p = {
+      sessionId: 'cmx',
+      agentName: 'codemie-codex',
+      metadata: { projectPath: '/repo' },
+      messages: [{ timestamp: '2026-06-08T10:00:00Z', type: 'event_msg', payload: { type: 'task_complete' } }],
+      metrics: { skillInvocations: { qa: 1 } },
+    } as never;
+    const raw = synthesizeRawSession('codemie-codex', desc, p);
+    expect(raw.startEvent.agentName).toBe('codemie-codex');
+    expect(raw.deltas[0].skillInvocations).toEqual({ qa: 1 });
+  });
+});
+
+describe('loadNativeSessions codex child dedup', () => {
+  it('skips native child rollout files referenced by wait_agent targets', async () => {
+    const parentMessages = [
+      {
+        type: 'response_item',
+        payload: {
+          type: 'function_call',
+          name: 'wait_agent',
+          arguments: '{"targets":["child-uuid"]}',
+        },
+      },
+    ];
+    const deps: NativeLoaderDeps = {
+      trackedLogPaths: () => new Set(),
+      discover: async () => ([
+        { agentName: 'codex', descriptor: { sessionId: 'parent-uuid', filePath: '/logs/parent.jsonl', createdAt: 1, agentName: 'codex' } },
+        { agentName: 'codex', descriptor: { sessionId: 'child-uuid', filePath: '/logs/child.jsonl', createdAt: 2, agentName: 'codex' } },
+      ]),
+      parse: async (_agent, filePath) =>
+        ({
+          sessionId: filePath.includes('parent') ? 'parent-uuid' : 'child-uuid',
+          agentName: 'codex',
+          metadata: {},
+          messages: filePath.includes('parent') ? parentMessages : [{ type: 'event_msg', payload: { type: 'task_complete' } }],
+          metrics: { tools: {} },
+        } as never),
+      realPath: (p) => p,
+    };
+    const out = await loadNativeSessions(undefined, deps);
+    expect(out.map((s) => s.sessionId)).toEqual(['parent-uuid']);
+  });
+});

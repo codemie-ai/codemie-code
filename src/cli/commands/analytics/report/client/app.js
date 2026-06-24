@@ -19,7 +19,7 @@
 
   // ---- palette ------------------------------------------------------------
   var PALETTE = ['#7C5CFC', '#2297F6', '#F5A534', '#06B6D4', '#259F4C', '#F9303C', '#C084FC', '#E879A6'];
-  var AGENT_COLORS = { claude: '#7C5CFC', 'claude-acp': '#9D7BFF', 'claude-desktop': '#B79DFF', gemini: '#F5A534', codex: '#06B6D4', opencode: '#259F4C', 'codemie-code': '#2297F6' };
+  var AGENT_COLORS = { claude: '#7C5CFC', 'claude-acp': '#9D7BFF', 'claude-desktop': '#B79DFF', gemini: '#F5A534', codex: '#06B6D4', 'codemie-codex': '#06B6D4', opencode: '#259F4C', 'codemie-code': '#2297F6' };
   var seenAgentColor = {};
   var colorCursor = 0;
   function colorFor(agent) {
@@ -958,12 +958,13 @@
     }
     return panel;
   }
-  // Gantt of top-level agent dispatches: session span on top, each agent bar positioned
-  // by wall-clock start time relative to the session start (proportional scaling).
-  // Skills and commands are excluded — they have no separate transcript or cost to show.
-  // min-width 28px (CSS) keeps short agents visible and clickable without distorting the scale.
+  // Gantt of agent/skill/command dispatches: session span on top, each step bar positioned
+  // by wall-clock start time relative to the activity window (proportional scaling).
+  // min-width 28px (CSS) plus a floor on % width keeps short steps visible and clickable.
   function timelineEl(s) {
-    var dispatches = (s.dispatches || []).filter(function (d) { return d.kind === 'agent'; }).sort(function (a, b) { return a.start - b.start; });
+    var dispatches = (s.dispatches || []).filter(function (d) {
+      return d.kind === 'agent' || d.kind === 'skill' || d.kind === 'command';
+    }).sort(function (a, b) { return a.start - b.start; });
     // Scale bars to the agent activity window, not the full session duration.
     // Agent bars fill the track proportionally relative to each other; absolute
     // start offset (vs. session start) is shown in the side panel detail view.
@@ -995,7 +996,7 @@
       occ[key] = (occ[key] || 0) + 1;
       var label = d.kind + ' · ' + d.name + (total > 1 ? ' #' + occ[key] : '');
       var leftPct = Math.max(0, (d.start - actStart) / ganttSpan * 100);
-      var wPct = (d.durationMs || 0) / ganttSpan * 100;
+      var wPct = Math.max(0.8, (d.durationMs || 0) / ganttSpan * 100);
       if (leftPct + wPct > 100) wPct = Math.max(0, 100 - leftPct);
       var barText = d.costUSD != null && wPct >= 8 ? fmtUSD(d.costUSD) : '';
       var color = PALETTE[hashStr(key) % PALETTE.length];
@@ -1100,7 +1101,7 @@
 
     // Timeline — Gantt of all top-level agent, skill, and command dispatches.
     var hasDispatches = (s.dispatches || []).length > 0;
-    var hasCostData = (s.dispatches || []).some(function (d) { return d.kind === 'agent' && d.costUSD != null; });
+    var hasCostData = (s.dispatches || []).some(function (d) { return d.costUSD != null; });
     var tlSubtitle = hasDispatches ? (hasCostData ? 'click a step for cost, token & timing details · long idle gaps compressed' : 'click a step for timing details · long idle gaps compressed') : '';
     var tlCard = card('Timeline', tlSubtitle);
     if (hasDispatches) {

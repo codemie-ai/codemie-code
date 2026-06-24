@@ -1,0 +1,12 @@
+{"timestamp":"2026-05-12T10:00:00.000Z","type":"session_meta","payload":{"id":"spawn-test-uuid","timestamp":"2026-05-12T09:59:55.000Z","cwd":"/home/user/project","cli_version":"0.129.0","model_provider":"openai","git":{"branch":"main"}}}
+{"timestamp":"2026-05-12T10:00:00.001Z","type":"event_msg","payload":{"type":"task_started","turn_id":"turn-1"}}
+{"timestamp":"2026-05-12T10:00:00.002Z","type":"turn_context","payload":{"turn_id":"turn-1","cwd":"/home/user/project","model":"gpt-5.4"}}
+{"timestamp":"2026-05-12T10:00:01.000Z","type":"event_msg","payload":{"type":"user_message","message":"run a review"}}
+{"timestamp":"2026-05-12T10:00:02.000Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"sed -n '1,50p' /home/user/.codex/plugins/cache/superpowers/skills/brainstorming/SKILL.md\"}","call_id":"call_skill1"}}
+{"timestamp":"2026-05-12T10:00:02.100Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_skill1","output":"ok"}}
+{"timestamp":"2026-05-12T10:00:03.000Z","type":"response_item","payload":{"type":"function_call","name":"spawn_agent","arguments":"{\"agent_type\":\"explorer\",\"message\":\"review code\"}","call_id":"call_spawn1"}}
+{"timestamp":"2026-05-12T10:00:03.050Z","type":"event_msg","payload":{"type":"collab_agent_spawn_end","call_id":"call_spawn1","new_thread_id":"child-thread-uuid","new_agent_role":"explorer"}}
+{"timestamp":"2026-05-12T10:00:03.100Z","type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":5000,"cached_input_tokens":1000,"output_tokens":200,"total_tokens":5200},"last_token_usage":{"input_tokens":5000,"cached_input_tokens":1000,"output_tokens":200,"total_tokens":5200}}}}
+{"timestamp":"2026-05-12T10:00:10.000Z","type":"response_item","payload":{"type":"function_call","name":"wait_agent","arguments":"{\"targets\":[\"child-thread-uuid\"]}","call_id":"call_wait1"}}
+{"timestamp":"2026-05-12T10:00:20.000Z","type":"event_msg","payload":{"type":"collab_waiting_end","call_id":"call_wait1","agent_statuses":[{"thread_id":"child-thread-uuid","agent_role":"explorer"}]}}
+{"timestamp":"2026-05-12T10:00:20.100Z","type":"event_msg","payload":{"type":"task_complete","turn_id":"turn-1"}}

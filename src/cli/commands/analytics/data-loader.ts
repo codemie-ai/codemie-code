@@ -8,6 +8,7 @@ import { join } from 'path';
 import type { MetricDelta } from '../../../agents/core/metrics/types.js';
 import type { AnalyticsFilter } from './types.js';
 import { getCodemiePath } from '../../../utils/paths.js';
+import { agentMatchesAnalyticsFilter } from './cost/codex-agent.js';
 
 /**
  * Session start event (special record type)
@@ -265,7 +266,7 @@ export class MetricsDataLoader {
     }
 
     // Filter by agent name
-    if (filter.agentName && startEvent.agentName !== filter.agentName) {
+    if (filter.agentName && !agentMatchesAnalyticsFilter(startEvent.agentName, filter.agentName)) {
       return false;
     }
 
