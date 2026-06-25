@@ -1,3 +1,5 @@
+import { HTTPClient } from '@/providers/core/base/http-client.js';
+import { buildAuthHeaders } from '@/providers/core/codemie-auth-helpers.js';
 import { CodeMieSSO } from '@/providers/plugins/sso/sso.auth.js';
 import { logger } from '@/utils/logger.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
@@ -48,7 +50,8 @@ function pickCanonicalFields(e: CanonicalMcpEntry): CanonicalMcpEntry {
  * Returns `null` on any failure (missing creds, network error, non-2xx, bad
  * body) so callers can distinguish a transient outage from an authoritative
  * empty catalog. Returns `[]` only when the backend responded successfully with
- * an empty list. Auth mirrors the SDK's cookie scheme.
+ * an empty list. Routes through the shared {@link HTTPClient} + buildAuthHeaders
+ * like every other CodeMie request (e.g. fetchCodeMieUserInfo).
  */
 export async function fetchManagedMcpServers(
   client: string,
@@ -62,23 +65,33 @@ export async function fetchManagedMcpServers(
       logger.warn('[proxy] Managed MCP fetch skipped: no SSO credentials');
       return null;
     }
-    const cookie = Object.entries(creds.cookies)
-      .map(([key, value]) => `${key}=${value}`)
-      .join(';');
     // Preserve any base path on the API URL (e.g. `/code-assistant-api`): build
     // from the full apiUrl, not a root-absolute path which would drop it.
     const endpoint = new URL(`${creds.apiUrl.replace(/\/+$/, '')}/v1/mcp/managed-servers`);
     endpoint.searchParams.set('client', client);
 
-    const response = await fetch(endpoint, { headers: { cookie } });
-    if (!response.ok) {
+    // Go through the shared HTTPClient like fetchCodeMieUserInfo: enterprise
+    // on-prem CodeMie deployments commonly use self-signed certs (so we need
+    // rejectUnauthorized: false), it bounds the request with a timeout, and
+    // buildAuthHeaders attaches the cookie plus the standard CLI-identifying
+    // headers every other CodeMie request sends. A raw fetch would reject those
+    // certs and could hang.
+    const httpClient = new HTTPClient({
+      timeout: 10000,
+      maxRetries: 3,
+      rejectUnauthorized: false,
+    });
+    const response = await httpClient.getRaw(endpoint.toString(), buildAuthHeaders(creds.cookies));
+
+    const status = response.statusCode ?? 0;
+    if (status < 200 || status >= 300) {
       logger.warn(
         '[proxy] Managed MCP fetch failed',
-        ...sanitizeLogArgs({ status: response.status, statusText: response.statusText }),
+        ...sanitizeLogArgs({ status, statusText: response.statusMessage }),
       );
       return null;
     }
-    const json = (await response.json()) as unknown;
+    const json = response.data ? (JSON.parse(response.data) as unknown) : null;
     // A non-array body is a contract violation → treat as failure (null), so the
     // caller does not mistake it for an authoritative "empty catalog".
     if (!Array.isArray(json)) return null;

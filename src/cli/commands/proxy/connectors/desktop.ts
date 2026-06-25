@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -308,7 +308,13 @@ async function writeManagedMcpState(statePath: string, managedNames: string[]): 
   if (!existsSync(dir)) {
     await mkdir(dir, { recursive: true });
   }
-  await writeFile(statePath, JSON.stringify({ managedNames }, null, 2), 'utf-8');
+  // Atomic write (tmp + rename), mirroring daemon-manager.writeState. A crash
+  // mid-write must never leave a truncated marker: readManagedMcpState would
+  // parse-fail and fall back to [], silently orphaning every previously-managed
+  // entry (it would no longer match by name and be preserved as a user entry).
+  const tmp = `${statePath}.tmp`;
+  await writeFile(tmp, JSON.stringify({ managedNames }, null, 2), 'utf-8');
+  await rename(tmp, statePath);
 }
 
 export interface DesktopGatewayConfig {
@@ -445,12 +451,17 @@ export async function writeDesktopConfig(
     previouslyManagedNames,
   );
 
-  // Persist the managed-name marker BEFORE writing the Desktop config, but only on
-  // a successful fetch. Sidecar-first protects the add path (a crash can only
-  // over-record, a harmless no-op next run); a crash mid revoke leaves a narrow,
-  // self-correcting window. On a failed fetch we keep the prior marker intact.
+  // Marker write-ahead (successful fetch only): record the UNION of previously-
+  // and newly-managed names BEFORE writing the config. If we crash between this
+  // write and the config write, the next run still sees every name we might have
+  // left in the config and can revoke it — so neither an add nor a revoke can
+  // orphan an entry. The marker is narrowed to the exact managed set AFTER the
+  // config is durable (see below), which releases revoked names so a user can
+  // later reclaim them. On a failed fetch we leave the prior marker untouched so
+  // a later successful run can still revoke.
   if (orgFetchSucceeded) {
-    await writeManagedMcpState(managedStatePath, managedNames);
+    const unionNames = [...new Set([...previouslyManagedNames, ...managedNames])];
+    await writeManagedMcpState(managedStatePath, unionNames);
   }
 
   logger.info(
@@ -497,6 +508,13 @@ export async function writeDesktopConfig(
       finalConfigKeys: Object.keys(merged),
     })
   );
+
+  // Narrow the marker to exactly what we just wrote, now that the config is
+  // durable (see the write-ahead union above). This releases names dropped from
+  // the managed set so they no longer count as owned on the next run.
+  if (orgFetchSucceeded) {
+    await writeManagedMcpState(managedStatePath, managedNames);
+  }
 
   const entries = meta.entries ?? [];
   if (!entries.find((e) => e.id === configId)) {
