@@ -22,10 +22,12 @@ function isValidCanonicalEntry(value: unknown): value is CanonicalMcpEntry {
   if (typeof e.name !== 'string' || !VALID_NAME.test(e.name)) return false;
   if (typeof e.transport !== 'string' || !CANONICAL_TRANSPORTS.has(e.transport)) return false;
   if (typeof e.url !== 'string') return false;
-  if (e.auth !== undefined && (typeof e.auth !== 'string' || !CANONICAL_AUTH.has(e.auth))) return false;
-  if (e.description !== undefined && typeof e.description !== 'string') return false;
+  // Optional fields: the backend (FastAPI response_model) serializes unset
+  // optionals as `null`, so treat null the same as undefined ("absent").
+  if (e.auth !== undefined && e.auth !== null && (typeof e.auth !== 'string' || !CANONICAL_AUTH.has(e.auth))) return false;
+  if (e.description !== undefined && e.description !== null && typeof e.description !== 'string') return false;
   if (
-    e.clients !== undefined &&
+    e.clients !== undefined && e.clients !== null &&
     (!Array.isArray(e.clients) || !e.clients.every((c) => typeof c === 'string'))
   ) return false;
   return true;
@@ -33,9 +35,9 @@ function isValidCanonicalEntry(value: unknown): value is CanonicalMcpEntry {
 
 function pickCanonicalFields(e: CanonicalMcpEntry): CanonicalMcpEntry {
   const out: CanonicalMcpEntry = { name: e.name, transport: e.transport };
-  if (e.url !== undefined) out.url = e.url;
-  if (e.auth !== undefined) out.auth = e.auth;
-  if (e.description !== undefined) out.description = e.description;
+  if (e.url !== undefined && e.url !== null) out.url = e.url;
+  if (e.auth !== undefined && e.auth !== null) out.auth = e.auth;
+  if (e.description !== undefined && e.description !== null) out.description = e.description;
   if (Array.isArray(e.clients)) out.clients = e.clients;
   return out;
 }
@@ -63,7 +65,9 @@ export async function fetchManagedMcpServers(
     const cookie = Object.entries(creds.cookies)
       .map(([key, value]) => `${key}=${value}`)
       .join(';');
-    const endpoint = new URL('/v1/mcp/managed-servers', creds.apiUrl);
+    // Preserve any base path on the API URL (e.g. `/code-assistant-api`): build
+    // from the full apiUrl, not a root-absolute path which would drop it.
+    const endpoint = new URL(`${creds.apiUrl.replace(/\/+$/, '')}/v1/mcp/managed-servers`);
     endpoint.searchParams.set('client', client);
 
     const response = await fetch(endpoint, { headers: { cookie } });

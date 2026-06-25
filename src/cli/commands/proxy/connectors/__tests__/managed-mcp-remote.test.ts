@@ -42,6 +42,39 @@ describe('fetchManagedMcpServers', () => {
     expect((init.headers as Record<string, string>).cookie).toBe('codemie_access_token=abc;sid=xyz');
   });
 
+  it('accepts entries whose optional fields are null (backend serialization)', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        {
+          name: 'onehub_core',
+          transport: 'http',
+          url: 'https://mcp.example.com/mcp/onehub_core',
+          auth: 'oauth',
+          description: null,
+          clients: null,
+        },
+      ],
+    }) as any;
+    const result = await fetchManagedMcpServers('claude-desktop', 'https://codemie.test');
+    expect(result).toEqual([
+      { name: 'onehub_core', transport: 'http', url: 'https://mcp.example.com/mcp/onehub_core', auth: 'oauth' },
+    ]);
+  });
+
+  it('preserves a base path on the API URL (e.g. /code-assistant-api)', async () => {
+    (CodeMieSSO.prototype.getStoredCredentials as any).mockResolvedValue({
+      apiUrl: 'https://codemie.example.com/code-assistant-api',
+      cookies: { codemie_access_token: 'abc' },
+    });
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => [] });
+    globalThis.fetch = fetchMock as any;
+    await fetchManagedMcpServers('claude-desktop', 'https://codemie.example.com');
+    expect(String(fetchMock.mock.calls[0][0])).toBe(
+      'https://codemie.example.com/code-assistant-api/v1/mcp/managed-servers?client=claude-desktop',
+    );
+  });
+
   it('returns null when credentials are missing', async () => {
     (CodeMieSSO.prototype.getStoredCredentials as any).mockResolvedValue(null);
     globalThis.fetch = vi.fn() as any;
