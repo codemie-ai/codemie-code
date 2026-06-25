@@ -292,32 +292,32 @@ describe('writeDesktopConfig', () => {
 
   it('writes org MCP servers and persists managed-state for revocation', async () => {
     const org = [
-      { name: 'radar', url: 'https://mcp.epam.com/mcp/radar', transport: 'http' as const, oauth: true },
+      { name: 'sample', url: 'https://mcp.example.com/mcp/sample', transport: 'http' as const, oauth: true },
     ];
     const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
 
     const written = JSON.parse(await readFile(configPath, 'utf-8'));
     const servers = JSON.parse(written.managedMcpServers);
-    expect(servers.some((s: any) => s.name === 'radar')).toBe(true);
+    expect(servers.some((s: any) => s.name === 'sample')).toBe(true);
     expect(servers.some((s: any) => s.name === 'Notion')).toBe(true);
 
     const state = JSON.parse(await readFile(statePath, 'utf-8'));
-    expect(state.managedNames).toContain('radar');
+    expect(state.managedNames).toContain('sample');
     expect(state.managedNames).toContain('Notion');
   });
 
   it('revokes a managed server removed from the org list on the next run', async () => {
     const org = [
-      { name: 'radar', url: 'https://mcp.epam.com/mcp/radar', transport: 'http' as const, oauth: true },
+      { name: 'sample', url: 'https://mcp.example.com/mcp/sample', transport: 'http' as const, oauth: true },
     ];
     await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
     const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
 
     const written = JSON.parse(await readFile(configPath, 'utf-8'));
     const servers = JSON.parse(written.managedMcpServers);
-    expect(servers.some((s: any) => s.name === 'radar')).toBe(false);
+    expect(servers.some((s: any) => s.name === 'sample')).toBe(false);
     const state = JSON.parse(await readFile(statePath, 'utf-8'));
-    expect(state.managedNames).not.toContain('radar');
+    expect(state.managedNames).not.toContain('sample');
   });
 
   it('exposes a default managed-state path under the codemie home', () => {
@@ -328,29 +328,29 @@ describe('writeDesktopConfig', () => {
     await mkdir(join(statePath, '..'), { recursive: true });
     await writeFile(statePath, 'not-json{{{', 'utf-8');
     const org = [
-      { name: 'radar', url: 'https://mcp.epam.com/mcp/radar', transport: 'http' as const, oauth: true },
+      { name: 'sample', url: 'https://mcp.example.com/mcp/sample', transport: 'http' as const, oauth: true },
     ];
     const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
     const written = JSON.parse(await readFile(configPath, 'utf-8'));
     const servers = JSON.parse(written.managedMcpServers);
-    expect(servers.some((s: any) => s.name === 'radar')).toBe(true);
+    expect(servers.some((s: any) => s.name === 'sample')).toBe(true);
     // corrupt prior state is ignored (treated as []), so the run succeeds and rewrites valid state
     const state = JSON.parse(await readFile(statePath, 'utf-8'));
-    expect(state.managedNames).toContain('radar');
+    expect(state.managedNames).toContain('sample');
   });
 
   it('preserves existing org entries and leaves marker state untouched when the fetch failed (null)', async () => {
     const org = [
-      { name: 'radar', url: 'https://mcp.epam.com/mcp/radar', transport: 'http' as const, oauth: true },
+      { name: 'sample', url: 'https://mcp.example.com/mcp/sample', transport: 'http' as const, oauth: true },
     ];
-    // Run 1: successful fetch persists radar + records it in the sidecar.
+    // Run 1: successful fetch persists sample + records it in the sidecar.
     await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
     const stateBefore = await readFile(statePath, 'utf-8');
-    // Run 2: fetch FAILED (null) — radar must survive, sidecar must be unchanged.
+    // Run 2: fetch FAILED (null) — sample must survive, sidecar must be unchanged.
     const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, null, statePath);
     const written = JSON.parse(await readFile(configPath, 'utf-8'));
     const servers = JSON.parse(written.managedMcpServers);
-    expect(servers.some((s: any) => s.name === 'radar')).toBe(true);
+    expect(servers.some((s: any) => s.name === 'sample')).toBe(true);
     const stateAfter = await readFile(statePath, 'utf-8');
     expect(stateAfter).toBe(stateBefore);
   });
@@ -369,11 +369,11 @@ describe('writeDesktopConfig', () => {
 describe('mapCanonicalToDesktop', () => {
   it('maps remote oauth/none entries and sets the oauth boolean', () => {
     const result = mapCanonicalToDesktop([
-      { name: 'radar', transport: 'http', url: 'https://mcp.epam.com/mcp/radar', auth: 'oauth' },
+      { name: 'sample', transport: 'http', url: 'https://mcp.example.com/mcp/sample', auth: 'oauth' },
       { name: 'plain', transport: 'sse', url: 'https://x/sse', auth: 'none' },
     ]);
     expect(result).toEqual([
-      { name: 'radar', url: 'https://mcp.epam.com/mcp/radar', transport: 'http', oauth: true },
+      { name: 'sample', url: 'https://mcp.example.com/mcp/sample', transport: 'http', oauth: true },
       { name: 'plain', url: 'https://x/sse', transport: 'sse', oauth: false },
     ]);
   });
@@ -414,49 +414,49 @@ describe('getDesktopConfigPath', () => {
 
 describe('reconcileManagedMcpServers', () => {
   const managed = [
-    { name: 'radar', url: 'https://mcp.epam.com/mcp/radar', transport: 'http' as const, oauth: true },
+    { name: 'sample', url: 'https://mcp.example.com/mcp/sample', transport: 'http' as const, oauth: true },
   ];
 
   it('adds managed entries and preserves unrelated user entries', () => {
     const existing = [{ name: 'mine', url: 'https://mine', transport: 'http', oauth: true }];
     const { servers, managedNames } = reconcileManagedMcpServers(existing, managed, []);
-    expect(managedNames).toEqual(['radar']);
+    expect(managedNames).toEqual(['sample']);
     expect(servers).toEqual([
-      { name: 'radar', url: 'https://mcp.epam.com/mcp/radar', transport: 'http', oauth: true },
+      { name: 'sample', url: 'https://mcp.example.com/mcp/sample', transport: 'http', oauth: true },
       { name: 'mine', url: 'https://mine', transport: 'http', oauth: true },
     ]);
   });
 
   it('supersedes a colliding user entry (by name or url)', () => {
     const existing = [
-      { name: 'radar', url: 'https://old-radar', transport: 'http', oauth: true, source: 'user' },
+      { name: 'sample', url: 'https://old-sample', transport: 'http', oauth: true, source: 'user' },
     ];
     const { servers } = reconcileManagedMcpServers(existing, managed, []);
     expect(servers).toEqual([
-      { name: 'radar', url: 'https://mcp.epam.com/mcp/radar', transport: 'http', oauth: true },
+      { name: 'sample', url: 'https://mcp.example.com/mcp/sample', transport: 'http', oauth: true },
     ]);
   });
 
   it('supersedes a user entry that collides only by url (non-colliding name)', () => {
     const existing = [
-      { name: 'radar-legacy', url: 'https://mcp.epam.com/mcp/radar', transport: 'http', oauth: true },
+      { name: 'sample-legacy', url: 'https://mcp.example.com/mcp/sample', transport: 'http', oauth: true },
       { name: 'mine', url: 'https://mine', transport: 'http', oauth: true },
     ];
     const { servers } = reconcileManagedMcpServers(existing, managed, []);
-    // radar-legacy is dropped via the URL-collision branch (its name does not
-    // collide with the managed set); the managed radar replaces it; mine stays.
+    // sample-legacy is dropped via the URL-collision branch (its name does not
+    // collide with the managed set); the managed sample replaces it; mine stays.
     expect(servers).toEqual([
-      { name: 'radar', url: 'https://mcp.epam.com/mcp/radar', transport: 'http', oauth: true },
+      { name: 'sample', url: 'https://mcp.example.com/mcp/sample', transport: 'http', oauth: true },
       { name: 'mine', url: 'https://mine', transport: 'http', oauth: true },
     ]);
   });
 
   it('revokes a previously-managed entry that is no longer managed', () => {
     const existing = [
-      { name: 'radar', url: 'https://mcp.epam.com/mcp/radar', transport: 'http', oauth: true, source: 'user' },
+      { name: 'sample', url: 'https://mcp.example.com/mcp/sample', transport: 'http', oauth: true, source: 'user' },
       { name: 'mine', url: 'https://mine', transport: 'http', oauth: true },
     ];
-    const { servers, managedNames } = reconcileManagedMcpServers(existing, [], ['radar']);
+    const { servers, managedNames } = reconcileManagedMcpServers(existing, [], ['sample']);
     expect(managedNames).toEqual([]);
     expect(servers).toEqual([{ name: 'mine', url: 'https://mine', transport: 'http', oauth: true }]);
   });
@@ -468,10 +468,10 @@ describe('reconcileManagedMcpServers', () => {
   });
 
   it('drops a nameless entry whose url collides with a managed entry', () => {
-    const existing = [{ url: 'https://mcp.epam.com/mcp/radar', transport: 'http' }];
+    const existing = [{ url: 'https://mcp.example.com/mcp/sample', transport: 'http' }];
     const { servers } = reconcileManagedMcpServers(existing, managed, []);
     expect(servers).toEqual([
-      { name: 'radar', url: 'https://mcp.epam.com/mcp/radar', transport: 'http', oauth: true },
+      { name: 'sample', url: 'https://mcp.example.com/mcp/sample', transport: 'http', oauth: true },
     ]);
   });
 
@@ -479,7 +479,7 @@ describe('reconcileManagedMcpServers', () => {
     const existing = [{ url: 'https://something-else', transport: 'http' }];
     const { servers } = reconcileManagedMcpServers(existing, managed, []);
     expect(servers).toEqual([
-      { name: 'radar', url: 'https://mcp.epam.com/mcp/radar', transport: 'http', oauth: true },
+      { name: 'sample', url: 'https://mcp.example.com/mcp/sample', transport: 'http', oauth: true },
       { url: 'https://something-else', transport: 'http' },
     ]);
   });

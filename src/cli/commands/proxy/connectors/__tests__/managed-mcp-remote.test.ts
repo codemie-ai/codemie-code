@@ -25,7 +25,7 @@ describe('fetchManagedMcpServers', () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => [
-        { name: 'radar', transport: 'http', url: 'https://mcp.epam.com/mcp/radar', auth: 'oauth' },
+        { name: 'sample', transport: 'http', url: 'https://mcp.example.com/mcp/sample', auth: 'oauth' },
         { name: 'bad name', transport: 'http', url: 'https://x' },
         { name: 'noturl', transport: 'http' },
       ],
@@ -35,7 +35,7 @@ describe('fetchManagedMcpServers', () => {
     const result = await fetchManagedMcpServers('claude-desktop', 'https://codemie.test');
 
     expect(result).toEqual([
-      { name: 'radar', transport: 'http', url: 'https://mcp.epam.com/mcp/radar', auth: 'oauth' },
+      { name: 'sample', transport: 'http', url: 'https://mcp.example.com/mcp/sample', auth: 'oauth' },
     ]);
     const [calledUrl, init] = fetchMock.mock.calls[0];
     expect(String(calledUrl)).toBe('https://api.codemie.test/v1/mcp/managed-servers?client=claude-desktop');
