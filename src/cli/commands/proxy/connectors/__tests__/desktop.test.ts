@@ -16,6 +16,7 @@ import {
   getManagedMcpStatePath,
   mapCanonicalToDesktop,
   reconcileManagedMcpServers,
+  selectDesktopClaudeModels,
   selectPreferredClaudeModels,
   writeDesktopConfig,
 } from '../desktop.js';
@@ -200,6 +201,54 @@ describe('selectPreferredClaudeModels', () => {
   });
 });
 
+describe('selectDesktopClaudeModels', () => {
+  it('exposes only Opus 4.8 when the gateway serves it', () => {
+    const result = selectDesktopClaudeModels([
+      'claude-sonnet-4-6',
+      'claude-opus-4-8',
+      'claude-opus-4-7',
+      'claude-opus-4-6-20260205',
+      'claude-haiku-4-5-20251001',
+    ]);
+    expect(result).toEqual([
+      'claude-sonnet-4-6',
+      'claude-opus-4-8',
+      'claude-haiku-4-5-20251001',
+    ]);
+  });
+
+  it('falls back to the highest available opus when 4.8 is absent', () => {
+    const result = selectDesktopClaudeModels([
+      'claude-sonnet-4-6',
+      'claude-opus-4-7',
+      'claude-opus-4-6-20260205',
+      'claude-haiku-4-5-20251001',
+    ]);
+    expect(result).toEqual([
+      'claude-sonnet-4-6',
+      'claude-opus-4-7',
+      'claude-haiku-4-5-20251001',
+    ]);
+  });
+
+  it('uses the next opus down when only 4.6 is available', () => {
+    expect(selectDesktopClaudeModels(['claude-opus-4-6-20260205']))
+      .toEqual(['claude-opus-4-6-20260205']);
+  });
+
+  it('keeps a single dated Opus 4.8 over older canonical opus ids', () => {
+    expect(selectDesktopClaudeModels([
+      'claude-opus-4-8-20260601',
+      'claude-opus-4-7',
+    ])).toEqual(['claude-opus-4-8-20260601']);
+  });
+
+  it('returns no opus entry when the gateway serves none', () => {
+    expect(selectDesktopClaudeModels(['claude-sonnet-4-6', 'claude-haiku-4-5-20251001']))
+      .toEqual(['claude-sonnet-4-6', 'claude-haiku-4-5-20251001']);
+  });
+});
+
 describe('writeDesktopConfig', () => {
   let baseDir: string;
   let libDir: string;
@@ -274,13 +323,12 @@ describe('writeDesktopConfig', () => {
     expect(config.inferenceGatewayBaseUrl).toBe('http://localhost:4001');
   });
 
-  it('populates inferenceModels with the curated preferred Claude set', async () => {
+  it('populates inferenceModels with the curated preferred Claude set (single opus)', async () => {
     const written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
     const config = JSON.parse(await readFile(written, 'utf-8'));
     expect(JSON.parse(config.inferenceModels)).toEqual([
       { name: 'claude-sonnet-4-6' },
       { name: 'claude-opus-4-7' },
-      { name: 'claude-opus-4-6-20260205' },
       { name: 'claude-haiku-4-5-20251001' },
     ]);
   });
@@ -298,7 +346,6 @@ describe('writeDesktopConfig', () => {
     expect(JSON.parse(config.inferenceModels)).toEqual([
       { name: 'claude-sonnet-4-6' },
       { name: 'claude-opus-4-7' },
-      { name: 'claude-opus-4-6-20260205' },
       { name: 'claude-haiku-4-5-20251001' },
     ]);
   });

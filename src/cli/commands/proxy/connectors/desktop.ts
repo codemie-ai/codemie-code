@@ -45,9 +45,14 @@ interface CodeMieLlmModel {
  * an exact ID or as `<entry>-<YYYYMMDD>` (the dated variant). The actual
  * resolved ID is what gets written to the Desktop config so the gateway
  * receives a model name it has registered.
+ *
+ * The opus entries are listed in descending preference (`4-8 → 4-7 → 4-6`):
+ * {@link selectDesktopClaudeModels} collapses them to the single highest-priority
+ * opus the gateway actually serves, so Desktop never shows more than one Opus.
  */
 export const PREFERRED_CLAUDE_MODELS = [
   'claude-sonnet-4-6',
+  'claude-opus-4-8',
   'claude-opus-4-7',
   'claude-opus-4-6',
   'claude-haiku-4-5',
@@ -186,6 +191,30 @@ export function selectPreferredClaudeModels(
     })
   );
   return resolved;
+}
+
+/**
+ * Build the exact model set Claude Desktop should be offered.
+ *
+ * Resolves the curated preferred list via {@link selectPreferredClaudeModels},
+ * then collapses the opus family to a single entry: the first (highest-priority)
+ * opus that resolved. With opus ids ordered `4-8 → 4-7 → 4-6` in
+ * {@link PREFERRED_CLAUDE_MODELS}, this exposes Opus 4.8 when the gateway serves
+ * it and otherwise falls back to the next-best available opus. Non-opus models
+ * are passed through untouched and order is preserved.
+ */
+export function selectDesktopClaudeModels(
+  available: string[],
+  preferred: readonly string[] = PREFERRED_CLAUDE_MODELS
+): string[] {
+  const resolved = selectPreferredClaudeModels(available, preferred);
+  let opusKept = false;
+  return resolved.filter((id) => {
+    if (!/^claude-opus-/i.test(id)) return true;
+    if (opusKept) return false;
+    opusKept = true;
+    return true;
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -424,14 +453,15 @@ export async function writeDesktopConfig(
   }
 
   // Discover available Claude models from the gateway and curate down to the
-  // preferred set so the user doesn't have to type them manually in the GUI.
+  // preferred set (a single opus, preferring 4.8) so the user doesn't have to
+  // type them manually in the GUI.
   const discoveredModels = await fetchClaudeModels(proxyUrl, gatewayKey);
   if (discoveredModels.length === 0) {
     throw new ConfigurationError(
       `Local proxy did not expose any Claude models from ${new URL('/v1/llm_models?include_all=true', proxyUrl).toString()}.`
     );
   }
-  const resolvedModels = selectPreferredClaudeModels(discoveredModels);
+  const resolvedModels = selectDesktopClaudeModels(discoveredModels);
   if (resolvedModels.length === 0) {
     throw new ConfigurationError(
       'Local proxy discovered Claude models, but none matched the preferred CodeMie desktop set.'
