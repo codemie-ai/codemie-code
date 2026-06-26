@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "task": "Add Qwen3 model detection to Bedrock 4xx diagnostic warning in the SSO proxy.",
+  "generated": "2026-06-24T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 1, "label": "XS" },
+    "requirements_clarity": { "score": 1, "label": "XS" },
+    "technical_risk":       { "score": 1, "label": "XS" },
+    "file_change_estimate": { "score": 1, "label": "XS" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 6,
+  "size": "XS",
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Single private method (logBedrockUpstreamError) in sso.proxy.ts touched; no layer boundaries crossed and no architectural impact."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Change is inside a try/catch diagnostic path explicitly annotated 'never throws'; zero security, performance, or rollback risk."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

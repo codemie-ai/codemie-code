@@ -17,7 +17,8 @@ import {
   spawnDaemon,
   stopDaemon,
 } from './daemon-manager.js';
-import { writeDesktopConfig } from './connectors/desktop.js';
+import { writeDesktopConfig, getDesktopBaseDir, mapCanonicalToDesktop } from './connectors/desktop.js';
+import { fetchManagedMcpServers } from './connectors/managed-mcp-remote.js';
 import { checkProxyHealth } from './health-check.js';
 import { printDesktopInspection } from './inspect-desktop.js';
 
@@ -364,7 +365,26 @@ export function createProxyCommand(): Command {
           );
         }
 
-        const configPath = await writeDesktopConfig(state!.url, state!.gatewayKey);
+        const canonical = state!.syncCodeMieUrl
+          ? await fetchManagedMcpServers('claude-desktop', state!.syncCodeMieUrl)
+          : null;
+        const orgMcpServers = canonical ? mapCanonicalToDesktop(canonical) : null;
+        logger.info(
+          '[proxy] Resolved managed MCP servers for Claude Desktop',
+          ...sanitizeLogArgs({
+            codeMieUrl: state!.syncCodeMieUrl,
+            fetchSucceeded: canonical !== null,
+            canonicalCount: canonical?.length ?? 0,
+            mappedCount: orgMcpServers?.length ?? 0,
+            mappedNames: orgMcpServers?.map((s) => s.name) ?? [],
+          })
+        );
+        const configPath = await writeDesktopConfig(
+          state!.url,
+          state!.gatewayKey,
+          getDesktopBaseDir(),
+          orgMcpServers
+        );
         logger.info(
           '[proxy] Claude Desktop proxy configuration written',
           ...sanitizeLogArgs({
