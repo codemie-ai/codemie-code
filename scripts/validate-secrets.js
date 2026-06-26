@@ -3,7 +3,7 @@
  * Cross-platform secrets detection using Gitleaks
  * Works on Windows, macOS, and Linux
  *
- * This script runs Gitleaks in a Docker container for local validation.
+ * Supports Docker, Podman, and Apple Containers.
  * CI uses the official gitleaks-action@v2 for better GitHub integration.
  * Both share the same .gitleaks.toml configuration.
  *
@@ -12,7 +12,7 @@
  * BMAD installs under _bmad/ and .claude/skills/) out of pre-commit checks.
  */
 
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import { platform } from 'os';
 import { resolve } from 'path';
 import { existsSync } from 'fs';
@@ -20,9 +20,41 @@ import { existsSync } from 'fs';
 const isWindows = platform() === 'win32';
 const projectPath = resolve(process.cwd());
 
-// Check if .gitleaks.toml exists
 const configPath = resolve(projectPath, '.gitleaks.toml');
 const hasConfig = existsSync(configPath);
+
+function commandExists(cmd) {
+  const result = spawnSync(isWindows ? 'where' : 'which', [cmd], { stdio: 'ignore', shell: false });
+  return result.status === 0;
+}
+
+function daemonRunning(engine) {
+  const result = spawnSync(engine, ['info'], { stdio: 'ignore', shell: false });
+  return result.status === 0;
+}
+
+function appleContainersRunning() {
+  if (isWindows || !commandExists('container')) return false;
+  const result = spawnSync('container', ['system', 'status'], { shell: false });
+  const output = (result.stdout?.toString() ?? '') + (result.stderr?.toString() ?? '');
+  return output.includes('container-apiserver') && /running/i.test(output);
+}
+
+function detectEngine() {
+  for (const engine of ['docker', 'podman']) {
+    if (commandExists(engine) && daemonRunning(engine)) return engine;
+  }
+  if (appleContainersRunning()) return 'container';
+  return null;
+}
+
+const engine = detectEngine();
+
+if (!engine) {
+  console.error('No running container engine found (Docker, Podman, or Apple Containers)');
+  console.error('Start your container engine to enable local secrets scanning');
+  process.exit(1);
+}
 
 const args = [
   'run',
@@ -33,19 +65,18 @@ const args = [
   'protect',
   '--staged',
   '--source=/path',
-  '--verbose'
+  '--verbose',
 ];
 
-// Add config file if it exists
 if (hasConfig) {
   args.push('--config=/path/.gitleaks.toml');
 }
 
 console.log('Running Gitleaks secrets detection...');
 
-const gitleaks = spawn('docker', args, {
+const gitleaks = spawn(engine, args, {
   stdio: 'inherit',
-  shell: isWindows
+  shell: isWindows,
 });
 
 gitleaks.on('close', (code) => {
