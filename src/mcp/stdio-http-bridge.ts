@@ -17,7 +17,7 @@ import {
   StreamableHTTPClientTransport,
   UnauthorizedError,
 } from '@modelcontextprotocol/client';
-import { StdioServerTransport } from '@modelcontextprotocol/server';
+import type { StdioServerTransport } from '@modelcontextprotocol/server';
 import type { JSONRPCMessage } from '@modelcontextprotocol/client';
 import { logger } from '../utils/logger.js';
 import { proxyLog } from './proxy-logger.js';
@@ -84,8 +84,37 @@ export interface BridgeOptions {
   serverUrl: string;
 }
 
+/**
+ * Resolve the `StdioServerTransport` class across MCP SDK layouts.
+ *
+ * `@modelcontextprotocol/server` 2.0.0-alpha.2 exposes `StdioServerTransport`
+ * on the package root, while alpha.3+ moved it to the `./stdio` subpath and
+ * dropped it from the root. A stale global install (e.g. an earlier caret-ranged
+ * release that resolved alpha.3) can leave a user on either version, so resolve
+ * the class at runtime: prefer the root export and fall back to the subpath when
+ * the root no longer carries it. This keeps the bridge working regardless of
+ * which alpha resolved into the user's tree and avoids the load-time
+ * "does not provide an export named 'StdioServerTransport'" crash.
+ */
+async function loadStdioServerTransport(): Promise<new () => StdioServerTransport> {
+  const root = (await import('@modelcontextprotocol/server')) as {
+    StdioServerTransport?: new () => StdioServerTransport;
+  };
+  if (root.StdioServerTransport) {
+    return root.StdioServerTransport;
+  }
+
+  // Non-literal specifier so TypeScript does not resolve the subpath against the
+  // alpha.2 types installed at build time (alpha.2 has no `./stdio` export).
+  const stdioSubpath = '@modelcontextprotocol/server/stdio';
+  const stdio = (await import(stdioSubpath)) as {
+    StdioServerTransport: new () => StdioServerTransport;
+  };
+  return stdio.StdioServerTransport;
+}
+
 export class StdioHttpBridge {
-  private stdioTransport: StdioServerTransport;
+  private stdioTransport!: StdioServerTransport;
   private httpTransport: StreamableHTTPClientTransport | null = null;
   private oauthProvider: McpOAuthProvider;
   private serverUrl: URL;
@@ -98,7 +127,6 @@ export class StdioHttpBridge {
   constructor(options: BridgeOptions) {
     this.serverUrl = new URL(options.serverUrl);
     this.oauthProvider = new McpOAuthProvider();
-    this.stdioTransport = new StdioServerTransport();
     log(`[mcp-proxy] Bridge created for ${this.serverUrl}`);
   }
 
@@ -107,6 +135,9 @@ export class StdioHttpBridge {
    * HTTP connection is deferred until the first message arrives.
    */
   async start(): Promise<void> {
+    const StdioTransport = await loadStdioServerTransport();
+    this.stdioTransport = new StdioTransport();
+
     this.stdioTransport.onmessage = (message: JSONRPCMessage) => {
       this.handleStdioMessage(message);
     };
@@ -337,7 +368,7 @@ export class StdioHttpBridge {
     }
 
     try {
-      await this.stdioTransport.close();
+      await this.stdioTransport?.close();
     } catch (error) {
       log(`[mcp-proxy] Error closing stdio transport: ${(error as Error).message}`);
     }
