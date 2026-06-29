@@ -23,21 +23,28 @@ const projectPath = resolve(process.cwd());
 const configPath = resolve(projectPath, '.gitleaks.toml');
 const hasConfig = existsSync(configPath);
 
+function resolveCommand(cmd) {
+  const command = isWindows ? 'where' : 'which';
+  const result = spawnSync(command, [cmd], { stdio: 'pipe', shell: false });
+  if (result.status !== 0) return null;
+  return result.stdout.toString().trim().split('\n')[0].trim();
+}
+
 function commandExists(cmd) {
-  const result = spawnSync(isWindows ? 'where' : 'which', [cmd], { stdio: 'ignore', shell: false });
-  return result.status === 0;
+  return resolveCommand(cmd) !== null;
 }
 
 function daemonRunning(engine) {
-  const result = spawnSync(engine, ['info'], { stdio: 'ignore', shell: false });
-  return result.status === 0;
+  const bin = resolveCommand(engine);
+  if (!bin) return false;
+  return spawnSync(bin, ['info'], { stdio: 'ignore', shell: false }).status === 0;
 }
 
 function appleContainersRunning() {
-  if (isWindows || !commandExists('container')) return false;
-  const result = spawnSync('container', ['system', 'status'], { shell: false });
-  const output = (result.stdout?.toString() ?? '') + (result.stderr?.toString() ?? '');
-  return output.includes('container-apiserver') && /running/i.test(output);
+  if (platform() !== 'darwin') return false;
+  const bin = resolveCommand('container');
+  if (!bin) return false;
+  return spawnSync(bin, ['system', 'status'], { stdio: 'ignore', shell: false }).status === 0;
 }
 
 function detectEngine() {
@@ -51,10 +58,12 @@ function detectEngine() {
 const engine = detectEngine();
 
 if (!engine) {
-  console.error('No running container engine found (Docker, Podman, or Apple Containers)');
-  console.error('Start your container engine to enable local secrets scanning');
+  console.log('No container engine found - skipping secrets detection');
+  console.log('Install Docker, Podman, or Apple Containers to enable local secrets scanning');
   process.exit(1);
 }
+
+const engineBin = resolveCommand(engine);
 
 const args = [
   'run',
@@ -74,7 +83,7 @@ if (hasConfig) {
 
 console.log('Running Gitleaks secrets detection...');
 
-const gitleaks = spawn(engine, args, {
+const gitleaks = spawn(engineBin, args, {
   stdio: 'inherit',
   shell: isWindows,
 });
