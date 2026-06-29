@@ -65,28 +65,43 @@ if (!engine) {
 
 const engineBin = resolveCommand(engine);
 
-const args = [
-  'run',
-  '--rm',
-  '-v',
-  `${projectPath}:/path`,
-  'ghcr.io/gitleaks/gitleaks:v8.30.1',
-  'protect',
-  '--staged',
-  '--source=/path',
-  '--verbose',
-];
+// Produce the staged diff on the host so gitleaks doesn't need git access
+// inside the container — required for Apple Containers which cannot run git
+// against the host .git index through a bind mount.
+const diffResult = spawnSync('git', ['diff', '--staged'], { stdio: 'pipe' });
+if (diffResult.error) {
+  console.error('Failed to get staged diff:', diffResult.error.message);
+  process.exit(1);
+}
+
+const stagedDiff = diffResult.stdout;
+
+if (!stagedDiff || stagedDiff.length === 0) {
+  console.log('No staged changes to scan');
+  process.exit(0);
+}
+
+const args = ['run', '--rm', '-i'];
 
 if (hasConfig) {
-  args.push('--config=/path/.gitleaks.toml');
+  args.push('-v', `${projectPath}/.gitleaks.toml:/gitleaks.toml`);
+}
+
+args.push('ghcr.io/gitleaks/gitleaks:v8.30.1', 'detect', '--pipe', '--verbose');
+
+if (hasConfig) {
+  args.push('--config=/gitleaks.toml');
 }
 
 console.log('Running Gitleaks secrets detection...');
 
 const gitleaks = spawn(engineBin, args, {
-  stdio: 'inherit',
+  stdio: ['pipe', 'inherit', 'inherit'],
   shell: isWindows,
 });
+
+gitleaks.stdin.write(stagedDiff);
+gitleaks.stdin.end();
 
 gitleaks.on('close', (code) => {
   process.exit(code);
