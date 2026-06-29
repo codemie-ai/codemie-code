@@ -387,3 +387,51 @@ describe('ConfigLoader - Project-Level Configuration', () => {
     });
   });
 });
+
+describe('ConfigLoader - cross-env URL gate', () => {
+  describe('shouldPreserveProjectContext', () => {
+    // Helper is private — access via index signature cast for unit testing.
+    // This is the established pattern when a Vitest suite needs to reach a
+    // class-private static. No production code reads it this way.
+    const gate = (l: string | undefined, g: string | undefined): boolean =>
+      (ConfigLoader as unknown as {
+        shouldPreserveProjectContext: (l?: string, g?: string) => boolean;
+      }).shouldPreserveProjectContext(l, g);
+
+    it('preserves when both URLs are equal', () => {
+      expect(gate('https://prod.example.com', 'https://prod.example.com')).toBe(true);
+    });
+
+    it('preserves when URLs differ only by trailing slash', () => {
+      expect(gate('https://prod.example.com/', 'https://prod.example.com')).toBe(true);
+    });
+
+    it('preserves when URLs differ only by case', () => {
+      expect(gate('https://PROD.example.com', 'https://prod.example.com')).toBe(true);
+    });
+
+    it('drops when URLs differ on host', () => {
+      expect(gate('https://prod.example.com', 'https://preview.example.com')).toBe(false);
+    });
+
+    it('preserves when local URL is undefined', () => {
+      expect(gate(undefined, 'https://preview.example.com')).toBe(true);
+    });
+
+    it('preserves when global URL is undefined', () => {
+      expect(gate('https://prod.example.com', undefined)).toBe(true);
+    });
+
+    it('preserves when both URLs are undefined', () => {
+      expect(gate(undefined, undefined)).toBe(true);
+    });
+
+    it('preserves when local URL is empty string', () => {
+      expect(gate('', 'https://preview.example.com')).toBe(true);
+    });
+
+    it('preserves when global URL is empty string', () => {
+      expect(gate('https://prod.example.com', '')).toBe(true);
+    });
+  });
+});

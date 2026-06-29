@@ -357,6 +357,28 @@ export class ConfigLoader {
   ];
 
   /**
+   * Returns true when the local team profile's project context (codeMieProject,
+   * codeMieIntegration, codeMieUrl) is safe to compose with the selected global
+   * profile. The composition is only safe when both profiles target the same
+   * CodeMie environment — otherwise the local project/integration IDs reference
+   * the wrong env's database rows and the URL is outright wrong.
+   *
+   * The gate is conservative: it only blocks composition when both URLs are
+   * explicitly set and normalized-differ. A missing URL on either side is
+   * treated as "no signal of conflict" and composition proceeds. This matches
+   * the common case where a local profile sets only `codeMieProject` and relies
+   * on the global profile for the URL.
+   */
+  private static shouldPreserveProjectContext(
+    localUrl: string | undefined,
+    globalUrl: string | undefined
+  ): boolean {
+    if (!localUrl || !globalUrl) return true;
+    const normalize = (u: string): string => u.replace(/\/+$/, '').toLowerCase();
+    return normalize(localUrl) === normalize(globalUrl);
+  }
+
+  /**
    * Keep only project-level fields from a local profile. Used when the selected global
    * profile differs from the team's local default profile.
    */
