@@ -99,9 +99,19 @@ export class ConfigLoader {
     // model, and credentials from being silently replaced by the local team's defaults.
     const applyProjectOnly =
       cliOverrides?.name && localProfileName && cliOverrides.name !== localProfileName;
-    const effectiveLocalConfig = applyProjectOnly
+    // When applying project-only composition, gate it on URL equality. If the
+    // selected global profile targets a different CodeMie env than the local
+    // team profile, the team's project/integration/URL all reference the wrong
+    // env's records — drop the project-context bundle and let the global
+    // profile supply everything.
+    const preserveProjectContext =
+      applyProjectOnly &&
+      this.shouldPreserveProjectContext(localConfig.codeMieUrl, globalConfig.codeMieUrl);
+    const effectiveLocalConfig = preserveProjectContext
       ? this.filterProjectFields(localConfig)
-      : localConfig;
+      : applyProjectOnly
+        ? {}
+        : localConfig;
 
     Object.assign(config, this.removeUndefined(effectiveLocalConfig));
 

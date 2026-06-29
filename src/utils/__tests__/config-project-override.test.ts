@@ -434,4 +434,150 @@ describe('ConfigLoader - cross-env URL gate', () => {
       expect(gate('https://prod.example.com', '')).toBe(true);
     });
   });
+
+  describe('load with --profile cross-env', () => {
+    // ConfigLoader.GLOBAL_CONFIG and .GLOBAL_CONFIG_DIR are static class fields
+    // evaluated at module load time, so vi.spyOn(paths, ...) in beforeEach is
+    // too late to redirect them. Save the originals and override the statics
+    // directly per-test to point at the temp dir.
+    const ORIGINAL_GLOBAL_CONFIG = (ConfigLoader as unknown as { GLOBAL_CONFIG: string }).GLOBAL_CONFIG;
+    const ORIGINAL_GLOBAL_CONFIG_DIR = (ConfigLoader as unknown as { GLOBAL_CONFIG_DIR: string }).GLOBAL_CONFIG_DIR;
+
+    beforeEach(async () => {
+      await fs.mkdir(path.join(TEST_DIR, '.codemie'), { recursive: true });
+      await fs.mkdir(path.join(TEST_DIR, 'project', '.codemie'), { recursive: true });
+
+      vi.spyOn(paths, 'getCodemieHome').mockReturnValue(GLOBAL_CONFIG_DIR);
+      vi.spyOn(paths, 'getCodemiePath').mockImplementation((subpath: string) => {
+        return path.join(GLOBAL_CONFIG_DIR, subpath);
+      });
+      (ConfigLoader as unknown as { GLOBAL_CONFIG: string }).GLOBAL_CONFIG = GLOBAL_CONFIG_PATH;
+      (ConfigLoader as unknown as { GLOBAL_CONFIG_DIR: string }).GLOBAL_CONFIG_DIR = GLOBAL_CONFIG_DIR;
+
+      delete process.env.CODEMIE_PROVIDER;
+      delete process.env.CODEMIE_MODEL;
+      delete process.env.CODEMIE_BASE_URL;
+      delete process.env.CODEMIE_API_KEY;
+      delete process.env.CODEMIE_TIMEOUT;
+      delete process.env.CODEMIE_DEBUG;
+      delete process.env.CODEMIE_PROFILE_CONFIG;
+      delete process.env.CODEMIE_INTEGRATION_ID;
+      delete process.env.CODEMIE_PROJECT;
+      delete process.env.CODEMIE_URL;
+    });
+
+    afterEach(async () => {
+      await fs.rm(TEST_DIR, { recursive: true, force: true });
+      vi.restoreAllMocks();
+      (ConfigLoader as unknown as { GLOBAL_CONFIG: string }).GLOBAL_CONFIG = ORIGINAL_GLOBAL_CONFIG;
+      (ConfigLoader as unknown as { GLOBAL_CONFIG_DIR: string }).GLOBAL_CONFIG_DIR = ORIGINAL_GLOBAL_CONFIG_DIR;
+    });
+
+    async function writeGlobal(
+      activeProfile: string,
+      profiles: Record<string, Partial<MultiProviderConfig['profiles'][string]>>
+    ) {
+      const config: MultiProviderConfig = {
+        version: 2,
+        activeProfile,
+        profiles: profiles as MultiProviderConfig['profiles']
+      };
+      await fs.writeFile(GLOBAL_CONFIG_PATH, JSON.stringify(config, null, 2));
+    }
+
+    async function writeLocal(
+      activeProfile: string,
+      profiles: Record<string, Partial<MultiProviderConfig['profiles'][string]>>
+    ) {
+      const config: MultiProviderConfig = {
+        version: 2,
+        activeProfile,
+        profiles: profiles as MultiProviderConfig['profiles']
+      };
+      await fs.writeFile(LOCAL_CONFIG_PATH, JSON.stringify(config, null, 2));
+    }
+
+    it('drops project context when --profile targets a different CodeMie URL', async () => {
+      await writeGlobal('preview', {
+        preview: {
+          provider: 'ai-run-sso',
+          codeMieUrl: 'https://preview.example.com',
+          baseUrl: 'https://preview.example.com/code-assistant-api',
+          model: 'claude-sonnet-4-6',
+          name: 'preview'
+        }
+      });
+      await writeLocal('team-prod', {
+        'team-prod': {
+          provider: 'ai-run-sso',
+          codeMieUrl: 'https://prod.example.com',
+          codeMieProject: 'prod-proj',
+          codeMieIntegration: 'prod-int' as unknown as CodeMieIntegrationInfo,
+          baseUrl: 'https://prod.example.com/code-assistant-api',
+          model: 'claude-sonnet-4-6',
+          name: 'team-prod'
+        }
+      });
+
+      const cfg = await ConfigLoader.load(path.join(TEST_DIR, 'project'), { name: 'preview' });
+
+      expect(cfg.codeMieUrl).toBe('https://preview.example.com');
+      expect(cfg.codeMieProject).toBeUndefined();
+      expect(cfg.codeMieIntegration).toBeUndefined();
+    });
+
+    it('preserves project context when --profile targets the same CodeMie URL', async () => {
+      await writeGlobal('personal-anthropic', {
+        'personal-anthropic': {
+          provider: 'anthropic-subscription',
+          codeMieUrl: 'https://prod.example.com',
+          baseUrl: 'https://api.anthropic.com',
+          model: 'claude-sonnet-4-6',
+          name: 'personal-anthropic'
+        }
+      });
+      await writeLocal('team-prod', {
+        'team-prod': {
+          provider: 'ai-run-sso',
+          codeMieUrl: 'https://prod.example.com',
+          codeMieProject: 'prod-proj',
+          codeMieIntegration: 'prod-int' as unknown as CodeMieIntegrationInfo,
+          baseUrl: 'https://prod.example.com/code-assistant-api',
+          model: 'claude-sonnet-4-6',
+          name: 'team-prod'
+        }
+      });
+
+      const cfg = await ConfigLoader.load(path.join(TEST_DIR, 'project'), { name: 'personal-anthropic' });
+
+      expect(cfg.codeMieUrl).toBe('https://prod.example.com');
+      expect(cfg.codeMieProject).toBe('prod-proj');
+      expect(cfg.codeMieIntegration).toBe('prod-int');
+    });
+
+    it('preserves local codeMieProject when local profile has no codeMieUrl', async () => {
+      await writeGlobal('preview', {
+        preview: {
+          provider: 'ai-run-sso',
+          codeMieUrl: 'https://preview.example.com',
+          baseUrl: 'https://preview.example.com/code-assistant-api',
+          model: 'claude-sonnet-4-6',
+          name: 'preview'
+        }
+      });
+      await writeLocal('team-default', {
+        'team-default': {
+          provider: 'ai-run-sso',
+          codeMieProject: 'shared-proj',
+          model: 'claude-sonnet-4-6',
+          name: 'team-default'
+        }
+      });
+
+      const cfg = await ConfigLoader.load(path.join(TEST_DIR, 'project'), { name: 'preview' });
+
+      expect(cfg.codeMieUrl).toBe('https://preview.example.com');
+      expect(cfg.codeMieProject).toBe('shared-proj');
+    });
+  });
 });
