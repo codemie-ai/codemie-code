@@ -137,6 +137,8 @@ codemie-kimi   --profile kimi       # uses global kimi profile + local project f
 codemie-claude --profile anthropic  # uses global anthropic profile + local project fields
 ```
 
+> **URL precondition.** Project-context preservation (`codeMieProject`, `codeMieIntegration`, `codeMieUrl`) applies only when the selected global profile and the local team profile target the same `codeMieUrl` (compared after stripping trailing slashes and lower-casing). When the URLs differ, the user is switching CodeMie environments and the team's project/integration IDs would reference the wrong env's records — so the local project context is dropped and the selected global profile supplies everything. This is enforced in `ConfigLoader.load()` and `ConfigLoader.loadWithSources()`.
+
 ### CI/CD overrides
 
 ```bash
