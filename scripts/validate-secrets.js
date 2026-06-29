@@ -3,7 +3,7 @@
  * Cross-platform secrets detection using Gitleaks
  * Works on Windows, macOS, and Linux
  *
- * This script runs Gitleaks in a Docker container for local validation.
+ * Supports Docker, Podman, and Apple Containers.
  * CI uses the official gitleaks-action@v2 for better GitHub integration.
  * Both share the same .gitleaks.toml configuration.
  *
@@ -12,7 +12,7 @@
  * BMAD installs under _bmad/ and .claude/skills/) out of pre-commit checks.
  */
 
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import { platform } from 'os';
 import { resolve } from 'path';
 import { existsSync } from 'fs';
@@ -20,33 +20,88 @@ import { existsSync } from 'fs';
 const isWindows = platform() === 'win32';
 const projectPath = resolve(process.cwd());
 
-// Check if .gitleaks.toml exists
 const configPath = resolve(projectPath, '.gitleaks.toml');
 const hasConfig = existsSync(configPath);
 
-const args = [
-  'run',
-  '--rm',
-  '-v',
-  `${projectPath}:/path`,
-  'ghcr.io/gitleaks/gitleaks:v8.30.1',
-  'protect',
-  '--staged',
-  '--source=/path',
-  '--verbose'
-];
+function resolveCommand(cmd) {
+  const command = isWindows ? 'where' : 'which';
+  const result = spawnSync(command, [cmd], { stdio: 'pipe', shell: false });
+  if (result.status !== 0) return null;
+  return result.stdout.toString().trim().split('\n')[0].trim();
+}
 
-// Add config file if it exists
+function commandExists(cmd) {
+  return resolveCommand(cmd) !== null;
+}
+
+function daemonRunning(engine) {
+  const bin = resolveCommand(engine);
+  if (!bin) return false;
+  return spawnSync(bin, ['info'], { stdio: 'ignore', shell: false }).status === 0;
+}
+
+function appleContainersRunning() {
+  if (platform() !== 'darwin') return false;
+  const bin = resolveCommand('container');
+  if (!bin) return false;
+  return spawnSync(bin, ['system', 'status'], { stdio: 'ignore', shell: false }).status === 0;
+}
+
+function detectEngine() {
+  for (const engine of ['docker', 'podman']) {
+    if (commandExists(engine) && daemonRunning(engine)) return engine;
+  }
+  if (appleContainersRunning()) return 'container';
+  return null;
+}
+
+const engine = detectEngine();
+
+if (!engine) {
+  console.log('No container engine found - skipping secrets detection');
+  console.log('Install Docker, Podman, or Apple Containers to enable local secrets scanning');
+  process.exit(1);
+}
+
+const engineBin = resolveCommand(engine);
+
+// Produce the staged diff on the host so gitleaks doesn't need git access
+// inside the container — required for Apple Containers which cannot run git
+// against the host .git index through a bind mount.
+const diffResult = spawnSync('git', ['diff', '--staged'], { stdio: 'pipe' });
+if (diffResult.error) {
+  console.error('Failed to get staged diff:', diffResult.error.message);
+  process.exit(1);
+}
+
+const stagedDiff = diffResult.stdout;
+
+if (!stagedDiff || stagedDiff.length === 0) {
+  console.log('No staged changes to scan');
+  process.exit(0);
+}
+
+const args = ['run', '--rm', '-i'];
+
 if (hasConfig) {
-  args.push('--config=/path/.gitleaks.toml');
+  args.push('-v', `${projectPath}/.gitleaks.toml:/gitleaks.toml`);
+}
+
+args.push('ghcr.io/gitleaks/gitleaks:v8.30.1', 'detect', '--pipe', '--verbose');
+
+if (hasConfig) {
+  args.push('--config=/gitleaks.toml');
 }
 
 console.log('Running Gitleaks secrets detection...');
 
-const gitleaks = spawn('docker', args, {
-  stdio: 'inherit',
-  shell: isWindows
+const gitleaks = spawn(engineBin, args, {
+  stdio: ['pipe', 'inherit', 'inherit'],
+  shell: isWindows,
 });
+
+gitleaks.stdin.write(stagedDiff);
+gitleaks.stdin.end();
 
 gitleaks.on('close', (code) => {
   process.exit(code);
