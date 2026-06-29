@@ -1186,12 +1186,21 @@ export class ConfigLoader {
     const selectedProfileName = await this.resolveProfileName(workingDir, cliOverrides?.name);
     const localProfileName = await this.resolveLocalProfileName(workingDir, selectedProfileName);
 
+    // Hoisted: global config must be loaded BEFORE the URL-equality gate
+    // decision below.
+    const globalConfig = await this.loadGlobalConfigProfile(selectedProfileName);
+    const localConfig = await this.loadLocalConfigProfile(workingDir, localProfileName);
+
     const applyProjectOnly =
       cliOverrides?.name && localProfileName && cliOverrides.name !== localProfileName;
-    const localConfig = await this.loadLocalConfigProfile(workingDir, localProfileName);
-    const effectiveLocalConfig = applyProjectOnly
+    const preserveProjectContext =
+      applyProjectOnly &&
+      this.shouldPreserveProjectContext(localConfig.codeMieUrl, globalConfig.codeMieUrl);
+    const effectiveLocalConfig = preserveProjectContext
       ? this.filterProjectFields(localConfig)
-      : localConfig;
+      : applyProjectOnly
+        ? {}
+        : localConfig;
 
     const configs: ConfigLayer[] = [
       {
@@ -1202,7 +1211,7 @@ export class ConfigLoader {
         source: 'default'
       },
       {
-        data: await this.loadGlobalConfigProfile(selectedProfileName),
+        data: globalConfig,
         source: 'global'
       },
       {

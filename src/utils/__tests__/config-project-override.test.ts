@@ -579,5 +579,36 @@ describe('ConfigLoader - cross-env URL gate', () => {
       expect(cfg.codeMieUrl).toBe('https://preview.example.com');
       expect(cfg.codeMieProject).toBe('shared-proj');
     });
+
+    it('loadWithSources reports codeMieUrl source as "global" when URLs differ', async () => {
+      await writeGlobal('preview', {
+        preview: {
+          provider: 'ai-run-sso',
+          codeMieUrl: 'https://preview.example.com',
+          baseUrl: 'https://preview.example.com/code-assistant-api',
+          model: 'claude-sonnet-4-6',
+          name: 'preview'
+        }
+      });
+      await writeLocal('team-prod', {
+        'team-prod': {
+          provider: 'ai-run-sso',
+          codeMieUrl: 'https://prod.example.com',
+          codeMieProject: 'prod-proj',
+          baseUrl: 'https://prod.example.com/code-assistant-api',
+          model: 'claude-sonnet-4-6',
+          name: 'team-prod'
+        }
+      });
+
+      const { config: merged, sources } = await ConfigLoader.loadWithSources(
+        path.join(TEST_DIR, 'project'),
+        { name: 'preview' }
+      );
+
+      expect(merged.codeMieUrl).toBe('https://preview.example.com');
+      expect(sources['codeMieUrl']?.source).toBe('global');
+      expect(sources['codeMieProject']).toBeUndefined();
+    });
   });
 });
