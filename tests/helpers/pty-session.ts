@@ -59,6 +59,18 @@ export function spawnPty(
         }
       }
     }
+    // Also check the incomplete current line (input prompts never emit a trailing \n
+    // while waiting for user input, so they never appear in allLines).
+    const trimmedTail = tail.replace(/\r/g, '').trim();
+    if (trimmedTail.length > 0) {
+      for (let i = waiters.length - 1; i >= 0; i--) {
+        if (waiters[i].pattern.test(trimmedTail)) {
+          const w = waiters.splice(i, 1)[0];
+          clearTimeout(w.timer);
+          w.resolve(trimmedTail);
+        }
+      }
+    }
   });
 
   return {
@@ -73,6 +85,11 @@ export function spawnPty(
     waitFor(pattern: RegExp, timeoutMs: number, startFromLine = 0): Promise<string> {
       for (let i = startFromLine; i < allLines.length; i++) {
         if (pattern.test(allLines[i])) return Promise.resolve(allLines[i]);
+      }
+      // Check the incomplete current line — input prompts sit here waiting for input.
+      const trimmedTail = tail.replace(/\r/g, '').trim();
+      if (trimmedTail.length > 0 && pattern.test(trimmedTail)) {
+        return Promise.resolve(trimmedTail);
       }
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => {

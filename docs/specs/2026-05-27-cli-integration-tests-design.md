@@ -95,6 +95,7 @@ tests/
     agent-assistant.test.ts     # TC-014, TC-015, TC-026
     agent-jwt-token.test.ts     # TC-017, TC-027  [JWT-only]
     agent-negative.test.ts      # TC-018 [JWT-only], TC-019 [dual-mode]
+    agent-setup.test.ts         # TC-029 [SSO-only]
     agent-shortcuts.test.ts     # Slash command smoke tests
     cli-commands/
       doctor.test.ts
@@ -104,6 +105,7 @@ tests/
       profile.test.ts
       skills.test.ts
       workflow.test.ts
+      self-update.test.ts
       error-handling.test.ts
 ```
 
@@ -171,6 +173,8 @@ Used by interactive tests (TC-024, TC-025) that need to drive a running session 
 | TC-025 | `agent-skills.test.ts` | dual | Skill slash command invocation inside running session (PTY) |
 | TC-026 | `agent-assistant.test.ts` | dual | Assistants chat non-interactive (random number round-trip) |
 | TC-027 | `agent-jwt-token.test.ts` | JWT-only | `--jwt-token` with no profile (empty CODEMIE_HOME) exits 0 and prints agent response |
+| TC-029 | `agent-setup.test.ts` | SSO-only | Setup wizard creates SSO profile; config has correct provider, URL, project, model |
+| TC-030 | `cli-commands/self-update.test.ts` | no-auth | `self-update --check` exits 0 and outputs current version from package.json |
 
 ---
 
