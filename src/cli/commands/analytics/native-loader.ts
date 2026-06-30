@@ -2,7 +2,7 @@
  * Native session discovery for analytics.
  *
  * The metrics loader only sees sessions CodeMie tracked into ~/.codemie/sessions/.
- * Plain `claude` usage (the Anthropic subscription, not `codemie-claude`) is never
+ * Plain `claude` / `codex` usage (not via `codemie-claude` / `codemie-codex`) is never
  * tracked, so it is invisible to the report. This module discovers those native agent
  * logs directly (via SessionAdapter.discoverSessions) and synthesizes the same
  * {@link RawSessionData} shape the loader produces, so the whole downstream pipeline
@@ -22,9 +22,13 @@ import type { SessionDescriptor } from '../../../agents/core/session/discovery-t
 import { AgentRegistry } from '../../../agents/registry.js';
 import { getCodemiePath } from '../../../utils/paths.js';
 import { logger } from '../../../utils/logger.js';
+import { stripClear } from '../../../agents/plugins/claude/session/strip-clear.js';
+import { isCodexFamilyAgent } from './cost/codex-agent.js';
+import { firstCodexUserText } from '../../../agents/plugins/codex/session/codex-user-prompt.js';
+import { collectCodexChildThreadIds } from '../../../agents/plugins/codex/session/codex-collab-links.js';
 
-/** Agents whose native logs we discover + synthesize. (claude is the gap users hit.) */
-const NATIVE_AGENTS = ['claude'] as const;
+/** Agents whose native logs we discover + synthesize. */
+const NATIVE_AGENTS = ['claude', 'codex'] as const;
 
 /** A discovered native session paired with its agent. */
 export interface DiscoveredNative {
@@ -95,7 +99,7 @@ export const realNativeDeps: NativeLoaderDeps = {
       try {
         const descriptors = await adapter.discoverSessions({ maxAgeDays });
         for (const descriptor of descriptors) {
-          found.push({ agentName, descriptor });
+          found.push({ agentName: descriptor.agentName ?? agentName, descriptor });
         }
       } catch (e) {
         logger.debug(`[native] discovery failed for ${agentName}:`, e);
@@ -189,17 +193,125 @@ function modal(values: string[]): string | undefined {
 }
 
 /**
+ * Codex child rollout thread IDs referenced by parent collab_agent_spawn_end events.
+ * Those files are discovered separately; skip them as top-level native sessions to avoid double counting.
+ */
+export { collectCodexChildThreadIds } from '../../../agents/plugins/codex/session/codex-collab-links.js';
+
+interface CodexRolloutLine {
+  timestamp?: string;
+  type?: string;
+  payload?: {
+    type?: string;
+    message?: string;
+    role?: string;
+    content?: unknown;
+  };
+}
+
+function countCodexTurns(records: CodexRolloutLine[]): number {
+  const completes = records.filter((r) => r.type === 'event_msg' && r.payload?.type === 'task_complete').length;
+  return Math.max(completes, 1);
+}
+
+function codexTimestamps(records: CodexRolloutLine[]): number[] {
+  return records
+    .map((r) => (r.timestamp ? Date.parse(r.timestamp) : NaN))
+    .filter((n): n is number => Number.isFinite(n));
+}
+
+/** Synthesize {@link RawSessionData} from a parsed Codex rollout (non-Claude JSONL shape). */
+export function synthesizeCodexRawSession(
+  agentName: string,
+  descriptor: SessionDescriptor,
+  parsed: ParsedSession
+): RawSessionData {
+  const records = (parsed.messages ?? []) as CodexRolloutLine[];
+  const timestamps = codexTimestamps(records);
+  const startTime = timestamps.length ? Math.min(...timestamps) : descriptor.createdAt;
+  const endTime = timestamps.length ? Math.max(...timestamps) : descriptor.updatedAt ?? descriptor.createdAt;
+  const meta = parsed.metadata as { projectPath?: string; branch?: string; model?: string } | undefined;
+  const cwd = meta?.projectPath ?? descriptor.projectPath ?? 'Unknown';
+  const branch = meta?.branch;
+  const turns = countCodexTurns(records);
+  const openingPrompt = firstCodexUserText(records);
+  const models = meta?.model ? [meta.model] : [];
+
+  const metricsDelta: MetricDelta = {
+    recordId: `${descriptor.sessionId}-native`,
+    sessionId: descriptor.sessionId,
+    agentSessionId: descriptor.sessionId,
+    timestamp: startTime,
+    gitBranch: branch,
+    tools: parsed.metrics?.tools ?? {},
+    toolStatus: parsed.metrics?.toolStatus,
+    fileOperations: parsed.metrics?.fileOperations as MetricDelta['fileOperations'],
+    models,
+    ...(parsed.metrics?.skillInvocations && { skillInvocations: parsed.metrics.skillInvocations }),
+    ...(parsed.metrics?.agentInvocations && { agentInvocations: parsed.metrics.agentInvocations }),
+    ...(parsed.metrics?.commandInvocations && { commandInvocations: parsed.metrics.commandInvocations }),
+    ...(openingPrompt && { userPrompts: [{ count: 1, text: openingPrompt }] }),
+    syncStatus: 'synced',
+    syncAttempts: 0,
+  };
+
+  const deltas: MetricDelta[] = [metricsDelta];
+  for (let i = 1; i < turns; i++) {
+    deltas.push({
+      recordId: `${descriptor.sessionId}-native-${i}`,
+      sessionId: descriptor.sessionId,
+      agentSessionId: descriptor.sessionId,
+      timestamp: startTime,
+      gitBranch: branch,
+      tools: {},
+      syncStatus: 'synced',
+      syncAttempts: 0,
+    });
+  }
+
+  return {
+    sessionId: descriptor.sessionId,
+    agentSessionFile: descriptor.filePath,
+    startEvent: {
+      recordId: descriptor.sessionId,
+      type: 'session_start',
+      timestamp: startTime,
+      codeMieSessionId: descriptor.sessionId,
+      agentName,
+      syncStatus: 'synced',
+      data: { provider: 'native', workingDirectory: cwd, startTime },
+    },
+    endEvent: {
+      recordId: `${descriptor.sessionId}-end`,
+      type: 'session_end',
+      timestamp: endTime,
+      codeMieSessionId: descriptor.sessionId,
+      agentName,
+      syncStatus: 'synced',
+      data: { endTime, duration: Math.max(0, endTime - startTime), totalTurns: turns },
+    },
+    deltas,
+  };
+}
+
+/**
  * Synthesize a {@link RawSessionData} from a parsed native session. Turns map to assistant
  * messages (the aggregator derives totalTurns from deltas.length), and all per-session metrics
  * (tools / file ops / models) are carried on a single delta — the aggregator sums across deltas,
  * so one metrics-bearing delta plus empty placeholders is equivalent to per-turn deltas.
+ *
+ * A post-/clear file starts with the /clear sentinel as its first user message; stripClear strips
+ * it so it is never mistaken for the session's opening prompt.
  */
 export function synthesizeRawSession(
   agentName: string,
   descriptor: SessionDescriptor,
   parsed: ParsedSession
 ): RawSessionData {
-  const messages = (parsed.messages ?? []) as RawMessage[];
+  if (isCodexFamilyAgent(agentName)) {
+    return synthesizeCodexRawSession(agentName, descriptor, parsed);
+  }
+  const messages = stripClear((parsed.messages ?? []) as RawMessage[]) as RawMessage[];
   const timestamps = messages.map((m) => toMs(m.timestamp)).filter((n): n is number => n != null);
   const startTime = timestamps.length ? Math.min(...timestamps) : descriptor.createdAt;
   const endTime = timestamps.length ? Math.max(...timestamps) : descriptor.updatedAt ?? descriptor.createdAt;
@@ -293,12 +405,36 @@ export async function loadNativeSessions(
   const tracked = deps.trackedLogPaths();
   const discovered = await deps.discover(windowDays(filter));
 
+  // Parse each Codex session ONCE (cached for reuse below) and collect the child thread IDs each
+  // parent references via spawn/wait collaboration events, so those sub-agent rollouts are not
+  // double-counted as standalone sessions (they are counted inside their parent — see
+  // readCodexSubagentUsage in the cost enricher).
+  const codexParsed = new Map<string, ParsedSession | null>();
+  const codexChildThreads = new Set<string>();
+  for (const { agentName, descriptor } of discovered) {
+    if (!isCodexFamilyAgent(agentName)) {
+      continue;
+    }
+    const parsed = await deps.parse('codex', descriptor.filePath, descriptor.sessionId);
+    codexParsed.set(descriptor.filePath, parsed);
+    if (parsed?.messages) {
+      for (const id of collectCodexChildThreadIds(parsed.messages)) {
+        codexChildThreads.add(id);
+      }
+    }
+  }
+
   const out: RawSessionData[] = [];
   for (const { agentName, descriptor } of discovered) {
+    if (isCodexFamilyAgent(agentName) && codexChildThreads.has(descriptor.sessionId)) {
+      continue; // linked sub-agent rollout — already counted inside its parent
+    }
     if (tracked.has(deps.realPath(descriptor.filePath))) {
       continue; // already tracked by CodeMie — avoid double counting
     }
-    const parsed = await deps.parse(agentName, descriptor.filePath, descriptor.sessionId);
+    const parsed = isCodexFamilyAgent(agentName)
+      ? codexParsed.get(descriptor.filePath) ?? null
+      : await deps.parse(agentName, descriptor.filePath, descriptor.sessionId);
     if (!parsed) {
       continue;
     }

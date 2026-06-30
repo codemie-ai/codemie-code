@@ -158,3 +158,97 @@ describe('loadNativeSessions', () => {
     expect(await loadNativeSessions(undefined, deps)).toEqual([]);
   });
 });
+
+describe('synthesizeRawSession — /clear sentinel in post-/clear file', () => {
+  const desc = { ...descriptor, sessionId: 'clr', filePath: '/logs/clr.jsonl' };
+  const assistant = { type: 'assistant', timestamp: '2026-01-01T10:01:00Z', message: { role: 'assistant', model: 'claude-sonnet-4-6' } };
+  const clearSentinel = { type: 'user', timestamp: '2026-01-01T10:00:00Z', message: { role: 'user', content: '<command-name>/clear</command-name>' } };
+
+  it('strips the /clear sentinel so it does not appear as the opening prompt', () => {
+    const p = {
+      sessionId: 'clr', agentName: 'claude', metadata: {},
+      metrics: { tools: {} },
+      messages: [
+        clearSentinel,
+        { type: 'user', timestamp: '2026-01-01T10:01:00Z', message: { role: 'user', content: 'actual prompt' } },
+        assistant,
+      ],
+    } as never;
+    const raw = synthesizeRawSession('claude', desc, p);
+    expect(raw.sessionId).toBe('clr');
+    expect(raw.deltas[0].userPrompts?.[0].text).toBe('actual prompt');
+  });
+});
+
+describe('synthesizeCodexRawSession', () => {
+  it('derives turns from task_complete and carries codex metrics', () => {
+    const desc = { sessionId: 'cx', filePath: '/rollout.jsonl', createdAt: 1000, updatedAt: 2000, agentName: 'codex' };
+    const p = {
+      sessionId: 'cx',
+      agentName: 'codex',
+      metadata: { projectPath: '/repo', branch: 'main', model: 'gpt-5.4' },
+      messages: [
+        { timestamp: '2026-06-08T10:00:00Z', type: 'event_msg', payload: { type: 'user_message', message: 'fix the bug' } },
+        { timestamp: '2026-06-08T10:00:30Z', type: 'event_msg', payload: { type: 'task_complete' } },
+        { timestamp: '2026-06-08T10:01:00Z', type: 'event_msg', payload: { type: 'task_complete' } },
+      ],
+      metrics: {
+        tools: { exec_command: 2 },
+        toolStatus: { exec_command: { success: 2, failure: 0 } },
+        skillInvocations: { brainstorming: 1 },
+      },
+    } as never;
+    const raw = synthesizeRawSession('codex', desc, p);
+    expect(raw.deltas).toHaveLength(2);
+    expect(raw.deltas[0].userPrompts?.[0].text).toBe('fix the bug');
+    expect(raw.deltas[0].skillInvocations).toEqual({ brainstorming: 1 });
+    expect(raw.agentSessionFile).toBe('/rollout.jsonl');
+  });
+
+  it('routes codemie-codex through the codex synthesizer', () => {
+    const desc = { sessionId: 'cmx', filePath: '/rollout.jsonl', createdAt: 1000, updatedAt: 2000, agentName: 'codemie-codex' };
+    const p = {
+      sessionId: 'cmx',
+      agentName: 'codemie-codex',
+      metadata: { projectPath: '/repo' },
+      messages: [{ timestamp: '2026-06-08T10:00:00Z', type: 'event_msg', payload: { type: 'task_complete' } }],
+      metrics: { skillInvocations: { qa: 1 } },
+    } as never;
+    const raw = synthesizeRawSession('codemie-codex', desc, p);
+    expect(raw.startEvent.agentName).toBe('codemie-codex');
+    expect(raw.deltas[0].skillInvocations).toEqual({ qa: 1 });
+  });
+});
+
+describe('loadNativeSessions codex child dedup', () => {
+  it('skips native child rollout files referenced by wait_agent targets', async () => {
+    const parentMessages = [
+      {
+        type: 'response_item',
+        payload: {
+          type: 'function_call',
+          name: 'wait_agent',
+          arguments: '{"targets":["child-uuid"]}',
+        },
+      },
+    ];
+    const deps: NativeLoaderDeps = {
+      trackedLogPaths: () => new Set(),
+      discover: async () => ([
+        { agentName: 'codex', descriptor: { sessionId: 'parent-uuid', filePath: '/logs/parent.jsonl', createdAt: 1, agentName: 'codex' } },
+        { agentName: 'codex', descriptor: { sessionId: 'child-uuid', filePath: '/logs/child.jsonl', createdAt: 2, agentName: 'codex' } },
+      ]),
+      parse: async (_agent, filePath) =>
+        ({
+          sessionId: filePath.includes('parent') ? 'parent-uuid' : 'child-uuid',
+          agentName: 'codex',
+          metadata: {},
+          messages: filePath.includes('parent') ? parentMessages : [{ type: 'event_msg', payload: { type: 'task_complete' } }],
+          metrics: { tools: {} },
+        } as never),
+      realPath: (p) => p,
+    };
+    const out = await loadNativeSessions(undefined, deps);
+    expect(out.map((s) => s.sessionId)).toEqual(['parent-uuid']);
+  });
+});

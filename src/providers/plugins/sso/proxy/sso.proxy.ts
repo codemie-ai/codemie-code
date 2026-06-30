@@ -343,6 +343,11 @@ export class CodeMieProxy {
         bytesSent: metadata.bytesSent
       });
 
+      // Diagnostic: warn on Bedrock 4xx to surface modify_params misconfiguration
+      if (metadata.statusCode >= 400) {
+        this.logBedrockUpstreamError(context, metadata.statusCode);
+      }
+
       // 6. Run onResponseComplete hooks (AFTER streaming)
       logger.debug(`[proxy] Running onResponseComplete hooks for ${context.requestId}`);
       await this.runHook('onResponseComplete', interceptor =>
@@ -640,6 +645,31 @@ export class CodeMieProxy {
       logger.debug(`[proxy] Operational error: ${proxyError.message}`);
     } else {
       logger.error('[proxy] Error:', proxyError);
+    }
+  }
+
+  /**
+   * Emit a structured warn when a Bedrock request returns 4xx.
+   * Helps admins diagnose UnsupportedParamsError caused by missing
+   * litellm_settings.modify_params: true in the LiteLLM proxy config.
+   */
+  private logBedrockUpstreamError(context: ProxyContext, statusCode: number): void {
+    try {
+      const body = JSON.parse(context.requestBody?.toString() ?? '{}');
+      const model = typeof body.model === 'string' ? body.model : undefined;
+      if (
+        model &&
+        (model.startsWith('bedrock/') || model.includes('amazon') || model.includes('qwen'))
+      ) {
+        logger.warn(
+          `[proxy] Upstream returned ${statusCode} for Bedrock model "${model}". ` +
+          `If cause is UnsupportedParamsError, ensure litellm_settings.modify_params: true ` +
+          `is configured and the LiteLLM proxy has been restarted.`,
+          { requestId: context.requestId, model, statusCode }
+        );
+      }
+    } catch {
+      // diagnostic only — never throws
     }
   }
 

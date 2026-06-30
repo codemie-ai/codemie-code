@@ -13,6 +13,10 @@ import {
   fetchClaudeModels,
   getDesktopBaseDir,
   getDesktopConfigPath,
+  getManagedMcpStatePath,
+  mapCanonicalToDesktop,
+  reconcileManagedMcpServers,
+  selectDesktopClaudeModels,
   selectPreferredClaudeModels,
   writeDesktopConfig,
 } from '../desktop.js';
@@ -119,6 +123,37 @@ describe('fetchClaudeModels', () => {
     await expect(fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy'))
       .rejects.toThrow('Local proxy model discovery failed');
   });
+
+  it('returns vertex Claude ids when the catalog is vertex-only', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { base_name: 'gemini-2.5-flash' },
+        { base_name: 'claude-sonnet-4-5-vertex' },
+        { base_name: 'claude-sonnet-4-6-vertex' },
+      ],
+    }) as any;
+
+    const models = await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy');
+    expect(models).toEqual([
+      'claude-sonnet-4-5-vertex',
+      'claude-sonnet-4-6-vertex',
+    ]);
+  });
+
+  it('prefers non-vertex Claude ids when both canonical and vertex entries exist', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { base_name: 'claude-sonnet-4-6' },
+        { base_name: 'claude-sonnet-4-6-vertex' },
+        { base_name: 'claude-opus-4-6-vertex' },
+      ],
+    }) as any;
+
+    const models = await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy');
+    expect(models).toEqual(['claude-sonnet-4-6']);
+  });
 });
 
 describe('selectPreferredClaudeModels', () => {
@@ -157,18 +192,75 @@ describe('selectPreferredClaudeModels', () => {
       ['claude-opus-4-6']
     )).toEqual(['claude-opus-4-6-20260205']);
   });
+
+  it('falls back to the vertex suffix when canonical and dated variants are absent', () => {
+    expect(selectPreferredClaudeModels(
+      ['claude-sonnet-4-5-vertex', 'claude-sonnet-4-6-vertex'],
+      ['claude-sonnet-4-6']
+    )).toEqual(['claude-sonnet-4-6-vertex']);
+  });
+});
+
+describe('selectDesktopClaudeModels', () => {
+  it('exposes only Opus 4.8 when the gateway serves it', () => {
+    const result = selectDesktopClaudeModels([
+      'claude-sonnet-4-6',
+      'claude-opus-4-8',
+      'claude-opus-4-7',
+      'claude-opus-4-6-20260205',
+      'claude-haiku-4-5-20251001',
+    ]);
+    expect(result).toEqual([
+      'claude-sonnet-4-6',
+      'claude-opus-4-8',
+      'claude-haiku-4-5-20251001',
+    ]);
+  });
+
+  it('falls back to the highest available opus when 4.8 is absent', () => {
+    const result = selectDesktopClaudeModels([
+      'claude-sonnet-4-6',
+      'claude-opus-4-7',
+      'claude-opus-4-6-20260205',
+      'claude-haiku-4-5-20251001',
+    ]);
+    expect(result).toEqual([
+      'claude-sonnet-4-6',
+      'claude-opus-4-7',
+      'claude-haiku-4-5-20251001',
+    ]);
+  });
+
+  it('uses the next opus down when only 4.6 is available', () => {
+    expect(selectDesktopClaudeModels(['claude-opus-4-6-20260205']))
+      .toEqual(['claude-opus-4-6-20260205']);
+  });
+
+  it('keeps a single dated Opus 4.8 over older canonical opus ids', () => {
+    expect(selectDesktopClaudeModels([
+      'claude-opus-4-8-20260601',
+      'claude-opus-4-7',
+    ])).toEqual(['claude-opus-4-8-20260601']);
+  });
+
+  it('returns no opus entry when the gateway serves none', () => {
+    expect(selectDesktopClaudeModels(['claude-sonnet-4-6', 'claude-haiku-4-5-20251001']))
+      .toEqual(['claude-sonnet-4-6', 'claude-haiku-4-5-20251001']);
+  });
 });
 
 describe('writeDesktopConfig', () => {
   let baseDir: string;
   let libDir: string;
   let metaPath: string;
+  let statePath: string;
   let originalFetch: typeof globalThis.fetch;
 
   beforeEach(async () => {
     baseDir = join(tmpdir(), `desktop-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     libDir = join(baseDir, 'configLibrary');
     metaPath = join(libDir, '_meta.json');
+    statePath = join(baseDir, 'managed-state.json');
     await rm(baseDir, { recursive: true, force: true });
     originalFetch = globalThis.fetch;
     // Default: stub fetch to return our model list so writeDesktopConfig can populate inferenceModels.
@@ -181,7 +273,7 @@ describe('writeDesktopConfig', () => {
   afterEach(() => { globalThis.fetch = originalFetch; });
 
   it('creates configLibrary/<UUID>.json + _meta.json when no existing config', async () => {
-    const written = await writeDesktopConfig('http://localhost:4001', 'codemie-proxy', baseDir);
+    const written = await writeDesktopConfig('http://localhost:4001', 'codemie-proxy', baseDir, [], statePath);
     expect(existsSync(libDir)).toBe(true);
     expect(existsSync(metaPath)).toBe(true);
     expect(written.startsWith(libDir)).toBe(true);
@@ -207,7 +299,7 @@ describe('writeDesktopConfig', () => {
       entries: [{ id: existingId, name: 'Default' }],
     }), 'utf-8');
 
-    const written = await writeDesktopConfig('http://localhost:4001', 'codemie-proxy', baseDir);
+    const written = await writeDesktopConfig('http://localhost:4001', 'codemie-proxy', baseDir, [], statePath);
     expect(written).toBe(join(libDir, `${existingId}.json`));
 
     const meta = JSON.parse(await readFile(metaPath, 'utf-8'));
@@ -225,19 +317,18 @@ describe('writeDesktopConfig', () => {
       inferenceGatewayBaseUrl: 'http://stale',
     }), 'utf-8');
 
-    const written = await writeDesktopConfig('http://localhost:4001', 'codemie-proxy', baseDir);
+    const written = await writeDesktopConfig('http://localhost:4001', 'codemie-proxy', baseDir, [], statePath);
     const config = JSON.parse(await readFile(written, 'utf-8'));
     expect(config.someUserPreference).toBe('keep-me');
     expect(config.inferenceGatewayBaseUrl).toBe('http://localhost:4001');
   });
 
-  it('populates inferenceModels with the curated preferred Claude set', async () => {
-    const written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir);
+  it('populates inferenceModels with the curated preferred Claude set (single opus)', async () => {
+    const written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
     const config = JSON.parse(await readFile(written, 'utf-8'));
     expect(JSON.parse(config.inferenceModels)).toEqual([
       { name: 'claude-sonnet-4-6' },
       { name: 'claude-opus-4-7' },
-      { name: 'claude-opus-4-6-20260205' },
       { name: 'claude-haiku-4-5-20251001' },
     ]);
   });
@@ -250,20 +341,37 @@ describe('writeDesktopConfig', () => {
       inferenceModels: [{ name: 'my-custom-model' }, { name: 'claude-sonnet-4-5-20250929' }],
     }), 'utf-8');
 
-    const written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir);
+    const written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
     const config = JSON.parse(await readFile(written, 'utf-8'));
     expect(JSON.parse(config.inferenceModels)).toEqual([
       { name: 'claude-sonnet-4-6' },
       { name: 'claude-opus-4-7' },
-      { name: 'claude-opus-4-6-20260205' },
       { name: 'claude-haiku-4-5-20251001' },
     ]);
   });
 
   it('fails fast when discovery returns nothing', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] }) as any;
-    await expect(writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir))
+    await expect(writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath))
       .rejects.toThrow('Local proxy did not expose any Claude models');
+  });
+
+  it('succeeds with a vertex-only model catalog like a Vertex-only tenant', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { base_name: 'gemini-2.5-flash', deployment_name: 'gemini-2.5-flash' },
+        { base_name: 'gemini-2.5-pro', deployment_name: 'gemini-2.5-pro' },
+        { base_name: 'claude-sonnet-4-5-vertex', deployment_name: 'claude-sonnet-4-5-vertex' },
+        { base_name: 'claude-sonnet-4-6-vertex', deployment_name: 'claude-sonnet-4-6-vertex' },
+      ],
+    }) as any;
+
+    const written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir);
+    const config = JSON.parse(await readFile(written, 'utf-8'));
+    expect(JSON.parse(config.inferenceModels)).toEqual([
+      { name: 'claude-sonnet-4-6-vertex' },
+    ]);
   });
 
   it('overwrites the four inference keys with new values', async () => {
@@ -277,12 +385,110 @@ describe('writeDesktopConfig', () => {
       inferenceGatewayAuthScheme: 'x-api-key',
     }), 'utf-8');
 
-    const written = await writeDesktopConfig('http://localhost:4002', 'new-key', baseDir);
+    const written = await writeDesktopConfig('http://localhost:4002', 'new-key', baseDir, [], statePath);
     const config = JSON.parse(await readFile(written, 'utf-8'));
     expect(config.inferenceProvider).toBe('gateway');
     expect(config.inferenceGatewayBaseUrl).toBe('http://localhost:4002');
     expect(config.inferenceGatewayApiKey).toBe('new-key');
     expect(config.inferenceGatewayAuthScheme).toBe('bearer');
+  });
+
+  it('writes org MCP servers and persists managed-state for revocation', async () => {
+    const org = [
+      { name: 'sample', url: 'https://mcp.example.com/mcp/sample', transport: 'http' as const, oauth: true },
+    ];
+    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+
+    const written = JSON.parse(await readFile(configPath, 'utf-8'));
+    const servers = JSON.parse(written.managedMcpServers);
+    expect(servers.some((s: any) => s.name === 'sample')).toBe(true);
+    expect(servers.some((s: any) => s.name === 'Notion')).toBe(true);
+
+    const state = JSON.parse(await readFile(statePath, 'utf-8'));
+    expect(state.managedNames).toContain('sample');
+    expect(state.managedNames).toContain('Notion');
+  });
+
+  it('revokes a managed server removed from the org list on the next run', async () => {
+    const org = [
+      { name: 'sample', url: 'https://mcp.example.com/mcp/sample', transport: 'http' as const, oauth: true },
+    ];
+    await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
+
+    const written = JSON.parse(await readFile(configPath, 'utf-8'));
+    const servers = JSON.parse(written.managedMcpServers);
+    expect(servers.some((s: any) => s.name === 'sample')).toBe(false);
+    const state = JSON.parse(await readFile(statePath, 'utf-8'));
+    expect(state.managedNames).not.toContain('sample');
+  });
+
+  it('exposes a default managed-state path under the codemie home', () => {
+    expect(getManagedMcpStatePath()).toMatch(/desktop-managed-mcp-state\.json$/);
+  });
+
+  it('treats a corrupt managed-state file as empty and still succeeds', async () => {
+    await mkdir(join(statePath, '..'), { recursive: true });
+    await writeFile(statePath, 'not-json{{{', 'utf-8');
+    const org = [
+      { name: 'sample', url: 'https://mcp.example.com/mcp/sample', transport: 'http' as const, oauth: true },
+    ];
+    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+    const written = JSON.parse(await readFile(configPath, 'utf-8'));
+    const servers = JSON.parse(written.managedMcpServers);
+    expect(servers.some((s: any) => s.name === 'sample')).toBe(true);
+    // corrupt prior state is ignored (treated as []), so the run succeeds and rewrites valid state
+    const state = JSON.parse(await readFile(statePath, 'utf-8'));
+    expect(state.managedNames).toContain('sample');
+  });
+
+  it('preserves existing org entries and leaves marker state untouched when the fetch failed (null)', async () => {
+    const org = [
+      { name: 'sample', url: 'https://mcp.example.com/mcp/sample', transport: 'http' as const, oauth: true },
+    ];
+    // Run 1: successful fetch persists sample + records it in the sidecar.
+    await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+    const stateBefore = await readFile(statePath, 'utf-8');
+    // Run 2: fetch FAILED (null) — sample must survive, sidecar must be unchanged.
+    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, null, statePath);
+    const written = JSON.parse(await readFile(configPath, 'utf-8'));
+    const servers = JSON.parse(written.managedMcpServers);
+    expect(servers.some((s: any) => s.name === 'sample')).toBe(true);
+    const stateAfter = await readFile(statePath, 'utf-8');
+    expect(stateAfter).toBe(stateBefore);
+  });
+
+  it('does not duplicate a public default echoed by the org catalog', async () => {
+    const org = [
+      { name: 'Notion', url: 'https://mcp.notion.com/mcp', transport: 'http' as const, oauth: true },
+    ];
+    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+    const written = JSON.parse(await readFile(configPath, 'utf-8'));
+    const servers = JSON.parse(written.managedMcpServers);
+    expect(servers.filter((s: any) => s.name === 'Notion').length).toBe(1);
+  });
+});
+
+describe('mapCanonicalToDesktop', () => {
+  it('maps remote oauth/none entries and sets the oauth boolean', () => {
+    const result = mapCanonicalToDesktop([
+      { name: 'sample', transport: 'http', url: 'https://mcp.example.com/mcp/sample', auth: 'oauth' },
+      { name: 'plain', transport: 'sse', url: 'https://x/sse', auth: 'none' },
+    ]);
+    expect(result).toEqual([
+      { name: 'sample', url: 'https://mcp.example.com/mcp/sample', transport: 'http', oauth: true },
+      { name: 'plain', url: 'https://x/sse', transport: 'sse', oauth: false },
+    ]);
+  });
+
+  it('drops entries Claude Desktop cannot represent (stdio / missing url / bad name)', () => {
+    const result = mapCanonicalToDesktop([
+      { name: 'local', transport: 'stdio' },
+      { name: 'nourl', transport: 'http' },
+      { name: 'bad name', transport: 'http', url: 'https://x' },
+      { name: 'ok', transport: 'http', url: 'https://ok' },
+    ]);
+    expect(result).toEqual([{ name: 'ok', url: 'https://ok', transport: 'http', oauth: false }]);
   });
 });
 
@@ -306,5 +512,78 @@ describe('getDesktopConfigPath', () => {
     await mkdir(libDir, { recursive: true });
     await writeFile(join(libDir, '_meta.json'), JSON.stringify({ appliedId: 'abc-123', entries: [] }), 'utf-8');
     expect(await getDesktopConfigPath(baseDir)).toBe(join(libDir, 'abc-123.json'));
+  });
+});
+
+describe('reconcileManagedMcpServers', () => {
+  const managed = [
+    { name: 'sample', url: 'https://mcp.example.com/mcp/sample', transport: 'http' as const, oauth: true },
+  ];
+
+  it('adds managed entries and preserves unrelated user entries', () => {
+    const existing = [{ name: 'mine', url: 'https://mine', transport: 'http', oauth: true }];
+    const { servers, managedNames } = reconcileManagedMcpServers(existing, managed, []);
+    expect(managedNames).toEqual(['sample']);
+    expect(servers).toEqual([
+      { name: 'sample', url: 'https://mcp.example.com/mcp/sample', transport: 'http', oauth: true },
+      { name: 'mine', url: 'https://mine', transport: 'http', oauth: true },
+    ]);
+  });
+
+  it('supersedes a colliding user entry (by name or url)', () => {
+    const existing = [
+      { name: 'sample', url: 'https://old-sample', transport: 'http', oauth: true, source: 'user' },
+    ];
+    const { servers } = reconcileManagedMcpServers(existing, managed, []);
+    expect(servers).toEqual([
+      { name: 'sample', url: 'https://mcp.example.com/mcp/sample', transport: 'http', oauth: true },
+    ]);
+  });
+
+  it('supersedes a user entry that collides only by url (non-colliding name)', () => {
+    const existing = [
+      { name: 'sample-legacy', url: 'https://mcp.example.com/mcp/sample', transport: 'http', oauth: true },
+      { name: 'mine', url: 'https://mine', transport: 'http', oauth: true },
+    ];
+    const { servers } = reconcileManagedMcpServers(existing, managed, []);
+    // sample-legacy is dropped via the URL-collision branch (its name does not
+    // collide with the managed set); the managed sample replaces it; mine stays.
+    expect(servers).toEqual([
+      { name: 'sample', url: 'https://mcp.example.com/mcp/sample', transport: 'http', oauth: true },
+      { name: 'mine', url: 'https://mine', transport: 'http', oauth: true },
+    ]);
+  });
+
+  it('revokes a previously-managed entry that is no longer managed', () => {
+    const existing = [
+      { name: 'sample', url: 'https://mcp.example.com/mcp/sample', transport: 'http', oauth: true, source: 'user' },
+      { name: 'mine', url: 'https://mine', transport: 'http', oauth: true },
+    ];
+    const { servers, managedNames } = reconcileManagedMcpServers(existing, [], ['sample']);
+    expect(managedNames).toEqual([]);
+    expect(servers).toEqual([{ name: 'mine', url: 'https://mine', transport: 'http', oauth: true }]);
+  });
+
+  it('drops entries with invalid names', () => {
+    const existing = [{ name: 'bad name', url: 'https://b', transport: 'http' }];
+    const { servers } = reconcileManagedMcpServers(existing, [], []);
+    expect(servers).toEqual([]);
+  });
+
+  it('drops a nameless entry whose url collides with a managed entry', () => {
+    const existing = [{ url: 'https://mcp.example.com/mcp/sample', transport: 'http' }];
+    const { servers } = reconcileManagedMcpServers(existing, managed, []);
+    expect(servers).toEqual([
+      { name: 'sample', url: 'https://mcp.example.com/mcp/sample', transport: 'http', oauth: true },
+    ]);
+  });
+
+  it('keeps a nameless entry whose url does NOT collide with any managed entry', () => {
+    const existing = [{ url: 'https://something-else', transport: 'http' }];
+    const { servers } = reconcileManagedMcpServers(existing, managed, []);
+    expect(servers).toEqual([
+      { name: 'sample', url: 'https://mcp.example.com/mcp/sample', transport: 'http', oauth: true },
+      { url: 'https://something-else', transport: 'http' },
+    ]);
   });
 });

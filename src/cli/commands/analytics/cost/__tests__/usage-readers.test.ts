@@ -3,7 +3,9 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { readUsageByModel, extractClaudeUsageRecords, gatherDedupedUsageRecords, sumUsageRecords, extractKimiUsageRecords } from '../usage-readers.js';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { readUsageByModel, extractClaudeUsageRecords, gatherDedupedUsageRecords, sumUsageRecords, extractKimiUsageRecords, extractCodexUsageRecords } from '../usage-readers.js';
 
 const claudeParsed = {
   sessionId: 's1',
@@ -365,5 +367,44 @@ describe('extractClaudeUsageRecords — cacheCreation1h', () => {
     expect(recs).toHaveLength(2);
     const total1h = recs.reduce((sum, r) => sum + r.usage.cacheCreation1h, 0);
     expect(total1h).toBe(5000);
+  });
+});
+
+describe('extractCodexUsageRecords', () => {
+  function loadCodex(name: string): never {
+    const lines = readFileSync(join(process.cwd(), 'tests/integration/session/fixtures/codex', name), 'utf-8')
+      .trim()
+      .split('\n')
+      .map((l: string) => JSON.parse(l));
+    return { sessionId: 'codex-fixture', agentName: 'codex', metadata: { model: 'o4-mini' }, messages: lines, metrics: {} } as never;
+  }
+
+  it('maps token_count last_token_usage to usage records with cache read', () => {
+    const recs = extractCodexUsageRecords(loadCodex('turn-1.jsonl'));
+    expect(recs.length).toBeGreaterThanOrEqual(1);
+    expect(recs[0].model).toBe('o4-mini');
+    // Codex input_tokens (1024) INCLUDES cached_input_tokens (512); the reader subtracts cache so
+    // the non-cached prompt is priced at the input rate and the cached portion only at cache-read.
+    expect(recs[0].usage.input).toBe(512);
+    expect(recs[0].usage.cacheRead).toBe(512);
+  });
+
+  it('readUsageByModel uses final total_token_usage for codex', () => {
+    const m = readUsageByModel('codex', loadCodex('turn-2.jsonl'));
+    const u = [...m.values()][0];
+    expect(u?.total).toBeGreaterThan(1036);
+  });
+
+  it('readUsageByModel treats codemie-codex like codex', () => {
+    const m = readUsageByModel('codemie-codex', loadCodex('turn-2.jsonl'));
+    const u = [...m.values()][0];
+    expect(u?.total).toBeGreaterThan(1036);
+  });
+
+  it('buildCostSeries works from codex per-turn records', async () => {
+    const { buildCostSeries } = await import('../cost-enricher.js');
+    const recs = extractCodexUsageRecords(loadCodex('turn-2.jsonl'));
+    const series = buildCostSeries(recs);
+    expect(series.length).toBeGreaterThanOrEqual(2);
   });
 });

@@ -1,12 +1,14 @@
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { getClaudeDesktopBaseDir } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
 import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
+import { getCodemiePath } from '@/utils/paths.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import managedMcpServers from './desktop-managed-mcp-servers.json' with { type: 'json' };
+import type { CanonicalMcpEntry } from './managed-mcp-remote.js';
 
 const INFERENCE_KEYS = [
   'inferenceProvider',
@@ -19,7 +21,7 @@ interface InferenceModelEntry {
   name: string;
 }
 
-interface ManagedMcpServerEntry {
+export interface ManagedMcpServerEntry {
   name: string;
   url: string;
   transport?: 'http' | 'sse';
@@ -43,9 +45,14 @@ interface CodeMieLlmModel {
  * an exact ID or as `<entry>-<YYYYMMDD>` (the dated variant). The actual
  * resolved ID is what gets written to the Desktop config so the gateway
  * receives a model name it has registered.
+ *
+ * The opus entries are listed in descending preference (`4-8 → 4-7 → 4-6`):
+ * {@link selectDesktopClaudeModels} collapses them to the single highest-priority
+ * opus the gateway actually serves, so Desktop never shows more than one Opus.
  */
 export const PREFERRED_CLAUDE_MODELS = [
   'claude-sonnet-4-6',
+  'claude-opus-4-8',
   'claude-opus-4-7',
   'claude-opus-4-6',
   'claude-haiku-4-5',
@@ -58,8 +65,9 @@ export const DEFAULT_MANAGED_MCP_SERVERS =
 
 /**
  * Fetch the model list from the gateway's SSO-backed `/v1/llm_models?include_all=true`
- * endpoint and return the IDs of usable Claude-family models (excludes `-vertex`
- * aliases since the gateway already picks the right backend for the canonical names).
+ * endpoint and return the IDs of usable Claude-family models. When both canonical
+ * and `-vertex` registrations exist, canonical IDs are preferred. When only vertex
+ * registrations exist, those IDs are returned so vertex-only tenants can connect.
  */
 export async function fetchClaudeModels(proxyUrl: string, gatewayKey: string): Promise<string[]> {
   const endpoint = new URL('/v1/llm_models?include_all=true', proxyUrl).toString();
@@ -101,9 +109,9 @@ export async function fetchClaudeModels(proxyUrl: string, gatewayKey: string): P
       : (json.data ?? [])
         .map((m) => m.id)
         .filter((id): id is string => typeof id === 'string');
-    const claudeIds = ids
-      .filter((id) => /^claude-/i.test(id))
-      .filter((id) => !/-vertex$/i.test(id));
+    const allClaudeIds = ids.filter((id) => /^claude-/i.test(id));
+    const nonVertexClaudeIds = allClaudeIds.filter((id) => !/-vertex$/i.test(id));
+    const claudeIds = nonVertexClaudeIds.length > 0 ? nonVertexClaudeIds : allClaudeIds;
     logger.info(
       '[proxy] Gateway model discovery completed',
       ...sanitizeLogArgs({
@@ -111,6 +119,7 @@ export async function fetchClaudeModels(proxyUrl: string, gatewayKey: string): P
         totalModelCount: ids.length,
         totalClaudeModelCount: claudeIds.length,
         availableClaudeModels: claudeIds,
+        usedVertexFallback: nonVertexClaudeIds.length === 0 && allClaudeIds.length > 0,
       })
     );
     return claudeIds;
@@ -136,7 +145,8 @@ export async function fetchClaudeModels(proxyUrl: string, gatewayKey: string): P
 /**
  * Resolve each entry in {@link PREFERRED_CLAUDE_MODELS} against the gateway's
  * model discovery response. For each preferred name, prefer the exact ID; fall
- * back to the dated variant `<preferred>-YYYYMMDD` (latest if multiple).
+ * back to the dated variant `<preferred>-YYYYMMDD` (latest if multiple); then
+ * fall back to `<preferred>-vertex` when only Vertex registrations exist.
  * Entries with no available match are dropped silently.
  *
  * Preserves the order of {@link PREFERRED_CLAUDE_MODELS}.
@@ -158,7 +168,14 @@ export function selectPreferredClaudeModels(
       .filter((id) => /^\d{6,10}$/.test(id.slice(datePrefix.length)))
       .sort()
       .pop();
-    if (dated) resolved.push(dated);
+    if (dated) {
+      resolved.push(dated);
+      continue;
+    }
+    const vertexId = `${name}-vertex`;
+    if (availableSet.has(vertexId)) {
+      resolved.push(vertexId);
+    }
   }
   const missingPreferredModels = preferred.filter((name) => {
     if (resolved.includes(name)) return false;
@@ -174,6 +191,30 @@ export function selectPreferredClaudeModels(
     })
   );
   return resolved;
+}
+
+/**
+ * Build the exact model set Claude Desktop should be offered.
+ *
+ * Resolves the curated preferred list via {@link selectPreferredClaudeModels},
+ * then collapses the opus family to a single entry: the first (highest-priority)
+ * opus that resolved. With opus ids ordered `4-8 → 4-7 → 4-6` in
+ * {@link PREFERRED_CLAUDE_MODELS}, this exposes Opus 4.8 when the gateway serves
+ * it and otherwise falls back to the next-best available opus. Non-opus models
+ * are passed through untouched and order is preserved.
+ */
+export function selectDesktopClaudeModels(
+  available: string[],
+  preferred: readonly string[] = PREFERRED_CLAUDE_MODELS
+): string[] {
+  const resolved = selectPreferredClaudeModels(available, preferred);
+  let opusKept = false;
+  return resolved.filter((id) => {
+    if (!/^claude-opus-/i.test(id)) return true;
+    if (opusKept) return false;
+    opusKept = true;
+    return true;
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -206,22 +247,113 @@ function isValidMcpServerName(name: string): boolean {
   return /^[a-zA-Z0-9_-]+$/.test(name);
 }
 
-export function mergeManagedMcpServers(existingServers: unknown): unknown[] {
-  const defaultUrls = new Set(DEFAULT_MANAGED_MCP_SERVERS.map((s) => s.url));
-  const defaultNames = new Set(DEFAULT_MANAGED_MCP_SERVERS.map((s) => s.name.toLowerCase()));
+const DESKTOP_SUPPORTED_TRANSPORTS = new Set(['http', 'sse']);
 
-  // Remove existing entries that are invalid (spaces in name) or superseded by a default entry with the same URL
+/**
+ * Map client-neutral canonical entries to Claude Desktop's managedMcpServers
+ * shape. Drops entries Desktop cannot represent (non-http/sse transports,
+ * missing URL, or invalid name).
+ */
+export function mapCanonicalToDesktop(entries: CanonicalMcpEntry[]): ManagedMcpServerEntry[] {
+  const result: ManagedMcpServerEntry[] = [];
+  for (const entry of entries) {
+    if (!DESKTOP_SUPPORTED_TRANSPORTS.has(entry.transport)) continue;
+    if (!entry.url || !isValidMcpServerName(entry.name)) continue;
+    result.push({
+      name: entry.name,
+      url: entry.url,
+      transport: entry.transport as 'http' | 'sse',
+      oauth: entry.auth === 'oauth',
+    });
+  }
+  return result;
+}
+
+export interface ReconcileResult {
+  servers: unknown[];
+  managedNames: string[];
+}
+
+/**
+ * Reconcile the managed MCP set into an existing managedMcpServers array.
+ *
+ * - `managed`: the entries CodeMie owns this run (public defaults + fetched
+ *   internal), already in Desktop shape.
+ * - `previouslyManagedNames`: names CodeMie wrote on the prior run. Required so
+ *   that an entry removed from the managed set is dropped even though Claude
+ *   Desktop re-stamps entries it persists (we cannot rely on a custom marker
+ *   field surviving Desktop's rewrite).
+ *
+ * Genuine user-added entries (never managed by us) are preserved.
+ * Managed entries appear first in the returned array; user entries follow.
+ */
+export function reconcileManagedMcpServers(
+  existingServers: unknown,
+  managed: ManagedMcpServerEntry[],
+  previouslyManagedNames: string[] = [],
+): ReconcileResult {
+  const managedNames = managed.map((s) => s.name);
+  const ownedLower = new Set(
+    [...previouslyManagedNames, ...managedNames].map((n) => n.toLowerCase()),
+  );
+  // URL comparison is intentionally case-sensitive; managed entries come from
+  // controlled sources (DEFAULT_MANAGED_MCP_SERVERS or the backend catalog) and
+  // are matched verbatim.
+  const managedUrls = new Set(managed.map((s) => s.url));
+
   const filtered = parseJsonArray(existingServers).filter((server) => {
     const name = getManagedMcpServerName(server);
-    if (!name) return true;
-    if (!isValidMcpServerName(name)) return false;
-    if (defaultNames.has(name.toLowerCase())) return false;
     const url = isRecord(server) && typeof server.url === 'string' ? server.url : undefined;
-    if (url && defaultUrls.has(url)) return false;
+    if (!name) {
+      // Still drop nameless entries that point at a managed URL, so a managed
+      // endpoint can never be double-registered under an anonymous entry.
+      return !(url && managedUrls.has(url));
+    }
+    if (!isValidMcpServerName(name)) return false;
+    if (ownedLower.has(name.toLowerCase())) return false;
+    if (url && managedUrls.has(url)) return false;
     return true;
   });
 
-  return [...filtered, ...DEFAULT_MANAGED_MCP_SERVERS.map((s) => ({ ...s }))];
+  return {
+    servers: [...managed.map((s) => ({ ...s })), ...filtered],
+    managedNames,
+  };
+}
+
+interface ManagedMcpState {
+  managedNames: string[];
+}
+
+/** Default location of the CLI-owned managed-MCP marker state. */
+export function getManagedMcpStatePath(): string {
+  return getCodemiePath('proxy', 'desktop-managed-mcp-state.json');
+}
+
+async function readManagedMcpState(statePath: string): Promise<string[]> {
+  if (!existsSync(statePath)) return [];
+  try {
+    const parsed = JSON.parse(await readFile(statePath, 'utf-8')) as ManagedMcpState;
+    return Array.isArray(parsed.managedNames)
+      ? parsed.managedNames.filter((n): n is string => typeof n === 'string')
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+async function writeManagedMcpState(statePath: string, managedNames: string[]): Promise<void> {
+  const dir = join(statePath, '..');
+  if (!existsSync(dir)) {
+    await mkdir(dir, { recursive: true });
+  }
+  // Atomic write (tmp + rename), mirroring daemon-manager.writeState. A crash
+  // mid-write must never leave a truncated marker: readManagedMcpState would
+  // parse-fail and fall back to [], silently orphaning every previously-managed
+  // entry (it would no longer match by name and be preserved as a user entry).
+  const tmp = `${statePath}.tmp`;
+  await writeFile(tmp, JSON.stringify({ managedNames }, null, 2), 'utf-8');
+  await rename(tmp, statePath);
 }
 
 export interface DesktopGatewayConfig {
@@ -289,7 +421,9 @@ export async function getDesktopConfigPath(baseDir: string = getDesktopBaseDir()
 export async function writeDesktopConfig(
   proxyUrl: string,
   gatewayKey: string,
-  baseDir: string = getDesktopBaseDir()
+  baseDir: string = getDesktopBaseDir(),
+  orgMcpServers: ManagedMcpServerEntry[] | null = null,
+  managedStatePath: string = getManagedMcpStatePath()
 ): Promise<string> {
   const libDir = join(baseDir, 'configLibrary');
   if (!existsSync(libDir)) {
@@ -319,21 +453,56 @@ export async function writeDesktopConfig(
   }
 
   // Discover available Claude models from the gateway and curate down to the
-  // preferred set so the user doesn't have to type them manually in the GUI.
+  // preferred set (a single opus, preferring 4.8) so the user doesn't have to
+  // type them manually in the GUI.
   const discoveredModels = await fetchClaudeModels(proxyUrl, gatewayKey);
   if (discoveredModels.length === 0) {
     throw new ConfigurationError(
       `Local proxy did not expose any Claude models from ${new URL('/v1/llm_models?include_all=true', proxyUrl).toString()}.`
     );
   }
-  const resolvedModels = selectPreferredClaudeModels(discoveredModels);
+  const resolvedModels = selectDesktopClaudeModels(discoveredModels);
   if (resolvedModels.length === 0) {
     throw new ConfigurationError(
       'Local proxy discovered Claude models, but none matched the preferred CodeMie desktop set.'
     );
   }
   const inferenceModels: InferenceModelEntry[] = resolvedModels.map((name) => ({ name }));
-  const managedMcpServers = mergeManagedMcpServers(existing.managedMcpServers);
+  // `orgMcpServers === null` means the catalog fetch FAILED (or was skipped for a
+  // missing CodeMie URL) — distinct from a successful fetch that returned []. On
+  // failure we must NOT revoke previously-managed org entries (a transient backend
+  // outage would otherwise strip the user's internal MCPs) and must leave the
+  // marker state untouched so a later successful run can still revoke.
+  const orgFetchSucceeded = orgMcpServers !== null;
+
+  // Dedup the org catalog against bundled public defaults so an entry the backend
+  // echoes (same name or URL) is not written twice.
+  const defaultNameSet = new Set(DEFAULT_MANAGED_MCP_SERVERS.map((s) => s.name.toLowerCase()));
+  const defaultUrlSet = new Set(DEFAULT_MANAGED_MCP_SERVERS.map((s) => s.url));
+  const orgDeduped = (orgMcpServers ?? []).filter(
+    (s) => !defaultNameSet.has(s.name.toLowerCase()) && !defaultUrlSet.has(s.url),
+  );
+
+  const managedSet = [...DEFAULT_MANAGED_MCP_SERVERS.map((s) => ({ ...s })), ...orgDeduped];
+  const previouslyManagedNames = orgFetchSucceeded ? await readManagedMcpState(managedStatePath) : [];
+  const { servers: managedMcpServers, managedNames } = reconcileManagedMcpServers(
+    existing.managedMcpServers,
+    managedSet,
+    previouslyManagedNames,
+  );
+
+  // Marker write-ahead (successful fetch only): record the UNION of previously-
+  // and newly-managed names BEFORE writing the config. If we crash between this
+  // write and the config write, the next run still sees every name we might have
+  // left in the config and can revoke it — so neither an add nor a revoke can
+  // orphan an entry. The marker is narrowed to the exact managed set AFTER the
+  // config is durable (see below), which releases revoked names so a user can
+  // later reclaim them. On a failed fetch we leave the prior marker untouched so
+  // a later successful run can still revoke.
+  if (orgFetchSucceeded) {
+    const unionNames = [...new Set([...previouslyManagedNames, ...managedNames])];
+    await writeManagedMcpState(managedStatePath, unionNames);
+  }
 
   logger.info(
     '[proxy] Preparing Claude Desktop config payload',
@@ -379,6 +548,13 @@ export async function writeDesktopConfig(
       finalConfigKeys: Object.keys(merged),
     })
   );
+
+  // Narrow the marker to exactly what we just wrote, now that the config is
+  // durable (see the write-ahead union above). This releases names dropped from
+  // the managed set so they no longer count as owned on the next run.
+  if (orgFetchSucceeded) {
+    await writeManagedMcpState(managedStatePath, managedNames);
+  }
 
   const entries = meta.entries ?? [];
   if (!entries.find((e) => e.id === configId)) {

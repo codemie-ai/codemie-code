@@ -14,6 +14,8 @@
 import type { ParsedSession } from '../../../../agents/core/session/BaseSessionAdapter.js';
 import type { DispatchEventRaw } from './types.js';
 import { MAX_DISPATCHES } from './types.js';
+import { extractCodexDispatchEvents } from '../../../../agents/plugins/codex/session/codex-dispatch-extractor.js';
+import { isCodexFamilyAgent } from './codex-agent.js';
 
 interface RawBlock {
   type?: string;
@@ -37,7 +39,11 @@ interface RawMsg {
 const COMMAND_TAG = /<command-name>([^<]+)<\/command-name>/g;
 
 /** Extract timed top-level dispatches (agents/skills) + command point events, sorted by start. */
-export function extractDispatchEvents(parsed: ParsedSession): DispatchEventRaw[] {
+export function extractDispatchEvents(parsed: ParsedSession, agentName?: string): DispatchEventRaw[] {
+  const agent = (agentName ?? parsed.agentName ?? '').toLowerCase();
+  if (isCodexFamilyAgent(agent)) {
+    return extractCodexDispatchEvents(parsed);
+  }
   const messages = Array.isArray(parsed.messages) ? parsed.messages : [];
   const pending = new Map<string, { kind: 'agent' | 'skill'; name: string; start: number; toolUseId?: string }>();
   const events: DispatchEventRaw[] = [];

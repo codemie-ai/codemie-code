@@ -18,9 +18,9 @@
 ## Ticket Adapter
 
 **Status**: configured
-**Adapter**: Invoke the `brianna` skill via the Skill tool.
-**Lookup**: Invoke the `brianna` skill with the ticket key and a request for summary, description, acceptance criteria, and links.
-**Create**: Invoke the `brianna` skill with the complete ticket payload or approved story file as the argument.
+**Adapter**: Invoke the `codemie-jira-assistant` skill via the Skill tool.
+**Lookup**: Invoke the `codemie-jira-assistant` skill with the ticket key and a request for summary, description, acceptance criteria, and links.
+**Create**: Invoke the `codemie-jira-assistant` skill with the complete ticket payload or approved story file as the argument.
 **Output**: Ticket key and URL returned by the skill.
 
 ## Source Control And Review

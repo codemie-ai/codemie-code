@@ -22,7 +22,7 @@
 
 import { readdir, stat } from 'fs/promises';
 import { existsSync } from 'fs';
-import { join } from 'path';
+import { join, dirname } from 'path';
 import type {
   SessionAdapter,
   ParsedSession,
@@ -37,13 +37,15 @@ import type {
   CodexSessionMeta,
   CodexTurnContext,
 } from './codex-message-types.js';
-import { getCodexSessionsPath } from './codex.paths.js';
+import { getCodexDiscoverySessionRoots } from './codex.paths.js';
 import { readCodexJsonlTolerant } from './codex.storage-utils.js';
 import { logger } from '../../../utils/logger.js';
 import { ConfigurationError } from '../../../utils/errors.js';
 import { sanitizeLogArgs } from '../../../utils/security.js';
 import { CodexMetricsProcessor } from './session/processors/codex.metrics-processor.js';
 import { CodexConversationsProcessor } from './session/processors/codex.conversations-processor.js';
+import { extractCodexMetrics } from './session/codex-metrics-extractor.js';
+import { extractCodexSpawnLinks } from './session/codex-collab-links.js';
 
 /** Regex to extract UUID from rollout filename: rollout-{ISO8601}-{uuid}.jsonl */
 const ROLLOUT_UUID_REGEX = /rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/;
@@ -109,9 +111,9 @@ export class CodexSessionAdapter implements SessionAdapter {
    * 5. Return sorted by mtime descending (newest first)
    */
   async discoverSessions(options?: SessionDiscoveryOptions): Promise<SessionDescriptor[]> {
-    const sessionsPath = getCodexSessionsPath();
-    if (!sessionsPath) {
-      logger.debug('[codex-discovery] ~/.codex/sessions not found (Codex not run yet)');
+    const roots = getCodexDiscoverySessionRoots();
+    if (!roots.length) {
+      logger.debug('[codex-discovery] no Codex session directories found');
       return [];
     }
 
@@ -120,7 +122,31 @@ export class CodexSessionAdapter implements SessionAdapter {
     const cutoffMs = Date.now() - maxAgeMs;
 
     const results: SessionDescriptor[] = [];
+    const seenPaths = new Set<string>();
 
+    for (const root of roots) {
+      await this.scanSessionsDirectory(root.sessionsPath, root.agentName, cutoffMs, results, seenPaths);
+    }
+
+    results.sort((a, b) => b.createdAt - a.createdAt);
+
+    if (options?.limit && options.limit > 0) {
+      const limited = results.slice(0, options.limit);
+      logger.debug(`[codex-discovery] Found ${results.length} rollout files, returning ${limited.length} (limit: ${options.limit})`);
+      return limited;
+    }
+
+    logger.debug(`[codex-discovery] Found ${results.length} rollout files`);
+    return results;
+  }
+
+  private async scanSessionsDirectory(
+    sessionsPath: string,
+    agentName: SessionDescriptor['agentName'],
+    cutoffMs: number,
+    results: SessionDescriptor[],
+    seenPaths: Set<string>
+  ): Promise<void> {
     try {
       // Level 1: year directories
       const yearDirs = await readdir(sessionsPath);
@@ -184,6 +210,9 @@ export class CodexSessionAdapter implements SessionAdapter {
 
               const sessionUuid = match[1];
               const filePath = join(dayPath, file);
+              if (seenPaths.has(filePath)) {
+                return;
+              }
 
               try {
                 const fileStat = await stat(filePath);
@@ -195,11 +224,12 @@ export class CodexSessionAdapter implements SessionAdapter {
                   return;
                 }
 
+                seenPaths.add(filePath);
                 results.push({
                   sessionId: sessionUuid,
                   filePath,
                   createdAt: mtime,
-                  agentName: 'codex',
+                  agentName,
                 });
               } catch {
                 logger.debug(`[codex-discovery] Could not stat file: ${filePath}`);
@@ -209,22 +239,8 @@ export class CodexSessionAdapter implements SessionAdapter {
         }));
       }));
 
-      // Sort by mtime descending (newest first)
-      results.sort((a, b) => b.createdAt - a.createdAt);
-
-      // Apply limit
-      if (options?.limit && options.limit > 0) {
-        const limited = results.slice(0, options.limit);
-        logger.debug(`[codex-discovery] Found ${results.length} rollout files, returning ${limited.length} (limit: ${options.limit})`);
-        return limited;
-      }
-
-      logger.debug(`[codex-discovery] Found ${results.length} rollout files`);
-      return results;
-
     } catch (error) {
-      logger.error('[codex-discovery] Failed to scan sessions directory:', error);
-      return [];
+      logger.error(`[codex-discovery] Failed to scan sessions directory ${sessionsPath}:`, error);
     }
   }
 
@@ -288,23 +304,67 @@ export class CodexSessionAdapter implements SessionAdapter {
         cliVersion: sessionMeta.cli_version,
       };
 
+      const metrics = extractCodexMetrics(records);
+      const subagents = await this.loadLinkedSubagentRollouts(filePath, records);
+
       return {
         sessionId,
         agentName: 'Codex CLI',
         agentVersion: sessionMeta.cli_version,
         metadata,
         messages: records, // Preserved in full for processors
-        metrics: {
-          tools: {},
-          toolStatus: {},
-          fileOperations: [],
-        },
+        ...(subagents.length > 0 && { subagents }),
+        metrics,
       };
 
     } catch (error) {
       logger.error(`[codex-adapter] Failed to parse rollout file ${filePath}:`, error);
       throw error;
     }
+  }
+
+  /**
+   * Load child rollout files referenced by spawn/wait collaboration so analytics
+   * can price sub-agent dispatches and include child token usage in the session total.
+   */
+  private async loadLinkedSubagentRollouts(
+    parentFilePath: string,
+    records: CodexRolloutRecord[]
+  ): Promise<Array<{ agentId: string; filePath: string; toolUseId?: string; agentType?: string; messages: unknown[] }>> {
+    const dayDir = dirname(parentFilePath);
+    const links = extractCodexSpawnLinks(records);
+    if (!links.length) {
+      return [];
+    }
+
+    let files: string[];
+    try {
+      files = await readdir(dayDir);
+    } catch {
+      return [];
+    }
+
+    const out: Array<{ agentId: string; filePath: string; toolUseId?: string; agentType?: string; messages: unknown[] }> = [];
+    for (const link of links) {
+      const match = files.find((f) => f.includes(link.threadId) && f.endsWith('.jsonl'));
+      if (!match) {
+        continue;
+      }
+      const childPath = join(dayDir, match);
+      try {
+        const childRecords = await readCodexJsonlTolerant<CodexRolloutRecord>(childPath);
+        out.push({
+          agentId: link.threadId,
+          filePath: childPath,
+          toolUseId: link.spawnCallId,
+          agentType: link.agentType,
+          messages: childRecords,
+        });
+      } catch {
+        logger.debug(`[codex-adapter] Could not read child rollout: ${childPath}`);
+      }
+    }
+    return out;
   }
 
   /**

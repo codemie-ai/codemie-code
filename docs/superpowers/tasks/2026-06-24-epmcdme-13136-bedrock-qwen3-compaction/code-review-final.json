@@ -1,0 +1,62 @@
+{
+  "decision": "approve",
+  "confidence": "high",
+  "rationale": "Change 2 (sso.proxy.ts) correctly implements the spec. logBedrockUpstreamError is a defensive private method with try/catch that parses the Buffer request body, matches Bedrock-pattern model names, and emits a structured logger.warn with requestId/model/statusCode and an actionable modify_params hint. TypeScript compiles clean, lint passes, commits follow Conventional Commits format. All lens findings are either by design per spec (intentionally broad warn-level pattern) or minor observability notes (5xx also triggers warn; upstream error body not captured in log). Note: the primary fix (modify_params: true in codemie/litellm_config.yaml) is in a separate repo and was not included in this diff. Two deferred, non-blocking observations: (1) 5xx responses also trigger the modify_params hint — already mitigated by the 'If cause is UnsupportedParamsError' inline qualifier; (2) model string interpolated via template literal in the message — low risk since model is not a credential and the guide's sanitizeLogArgs requirement applies to the structured args (which are sanitized via writeToLogFile).",
+  "findings": [],
+  "business_review": [
+    {
+      "id": "AC-001",
+      "text": "Compaction works for Bedrock Qwen3 480B",
+      "status": "out-of-scope",
+      "notes": "Change 1 (litellm_config.yaml, codemie repo) — not in this diff."
+    },
+    {
+      "id": "AC-002",
+      "text": "Requests include valid tools= or handled via modify_params",
+      "status": "out-of-scope",
+      "notes": "Change 1 — not in this diff."
+    },
+    {
+      "id": "AC-003",
+      "text": "Fix in correct layer — no manual user patching",
+      "status": "out-of-scope",
+      "notes": "Change 1 — not in this diff."
+    },
+    {
+      "id": "AC-004",
+      "text": "Clear actionable error if model can't support compaction",
+      "status": "satisfied",
+      "notes": "Structured logger.warn emits model, requestId, statusCode, and 'If cause is UnsupportedParamsError, ensure litellm_settings.modify_params: true' hint. Broad 4xx trigger is intentional per spec."
+    },
+    {
+      "id": "AC-005",
+      "text": "Regression: compaction still works for other SSO models",
+      "status": "out-of-scope",
+      "notes": "Manual verification required per spec. Code change is guarded to Bedrock-pattern models only."
+    },
+    {
+      "id": "AC-006",
+      "text": "Logs show model group, provider, LiteLLM settings context",
+      "status": "satisfied",
+      "notes": "model (= LiteLLM model group, e.g. qwen.qwen3-coder-480b-a35b-v1), requestId, statusCode, and modify_params hint all logged."
+    }
+  ],
+  "standards_review": [
+    {
+      "standard": "Conventional Commits (git-workflow.md)",
+      "status": "pass",
+      "notes": "Both commits use fix(scope): description format with Refs: EPMCDME-13136 footer."
+    },
+    {
+      "standard": "TypeScript code quality (code-quality.md)",
+      "status": "pass",
+      "notes": "npm run typecheck exits 0; no lint issues in sso.proxy.ts. Private method follows existing patterns."
+    },
+    {
+      "standard": "Security — data sanitization (security-practices.md)",
+      "status": "pass",
+      "notes": "model is not a credential; structured args pass through sanitizeLogArgs via writeToLogFile. Guide targets credential/token leakage, which is not present here."
+    }
+  ],
+  "risk_flags": []
+}

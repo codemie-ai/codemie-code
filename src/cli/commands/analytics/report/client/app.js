@@ -19,7 +19,7 @@
 
   // ---- palette ------------------------------------------------------------
   var PALETTE = ['#7C5CFC', '#2297F6', '#F5A534', '#06B6D4', '#259F4C', '#F9303C', '#C084FC', '#E879A6'];
-  var AGENT_COLORS = { claude: '#7C5CFC', 'claude-acp': '#9D7BFF', 'claude-desktop': '#B79DFF', gemini: '#F5A534', codex: '#06B6D4', opencode: '#259F4C', 'codemie-code': '#2297F6' };
+  var AGENT_COLORS = { claude: '#7C5CFC', 'claude-acp': '#9D7BFF', 'claude-desktop': '#B79DFF', gemini: '#F5A534', codex: '#06B6D4', 'codemie-codex': '#06B6D4', opencode: '#259F4C', 'codemie-code': '#2297F6' };
   var seenAgentColor = {};
   var colorCursor = 0;
   function colorFor(agent) {
