@@ -145,7 +145,7 @@ Clicking a session anywhere in the report opens a detail overlay with:
 - **Activity** — turns, tool calls and success rate, agent/skill/command invocation counts
 - **Code changes** — files changed, lines added/removed, net
 - **Token & cost growth chart** — cumulative cost and token usage per turn (from the native log; shown when data is available)
-- **Dispatch timeline** — Interactive Gantt of agent dispatches. Bars are proportionally scaled to the agent activity window; click any bar to open a detail panel on the right showing that agent's estimated cost, token breakdown (input / output / cache read / cache write), wall-clock duration, start offset from session start, and top tool call counts. Skills and slash commands are shown in the chip lists below the Gantt, not as bars.
+- **Dispatch timeline** — Interactive Gantt of every top-level dispatch. A session bar spans the full activity window across the top, then each agent, skill, and slash-command dispatch is rendered as its own bar positioned by wall-clock start time, so each sits where it actually ran. The window is the union of the tracked session span and the dispatch span, so dispatches from a resumed or compacted session still place correctly. Short skills and zero-duration commands fall back to a minimum bar width so they stay visible as markers. Click any bar to open a detail panel on the right showing that dispatch's estimated cost, token breakdown (input / output / cache read / cache write), wall-clock duration, start offset from session start, and top tool call counts.
 - **Skills / Agent subtypes / Slash commands** — chip lists of what was invoked and how many times
 
 ---
@@ -187,6 +187,20 @@ Pass `--no-scan-native` to disable native-log discovery and use only CodeMie-tra
 
 Cost enrichment requires the native log to read per-turn token data. Sessions where the log has already been rotated or deleted will appear with `—` cost; the **Coverage** section in the Cost view shows exactly which sessions are priced.
 
+### OTEL events file (`analytics otel`)
+
+As an alternative to the local-session sources above, the `analytics otel` subcommand builds the same report from a **flattened OTEL events file** (`otel-events.jsonl`) — for example, telemetry exported from a fleet or CI environment rather than the current machine's history.
+
+```bash
+# Report from an OTEL events file
+codemie analytics otel --file ./otel-events.jsonl --report --open
+
+# Scope to a single user (matches native user.email or user.id)
+codemie analytics otel --file ./otel-events.jsonl --user jane@example.com --report
+```
+
+With this source, **cost is authoritative**: it is read directly from each event's native `cost_usd`, so no native-log enrichment is needed and every session with token data is priced. All the same filter and report flags apply (`--from`/`--to`, `--project`, `--agent`, `--branch`, `--session`, `--report-format`, etc.); the time window and `--user` are applied to the raw events, and the remaining structural filters narrow the session set so a filtered report is never mislabeled.
+
 ---
 
 ## CLI Reference
@@ -217,3 +231,14 @@ Other flags:
 ```
 
 All filter flags work for both the terminal output and the HTML report. The date filters control which sessions are **embedded** in the report; the client-side range presets (Today / 7d / 30d / 90d) then let the report viewer narrow further within that data.
+
+### OTEL source subcommand
+
+```
+codemie analytics otel --file <path> [options]
+
+  --file <path>             Path to the flattened OTEL events file (required)
+  --user <id>               Scope to one user (native user.email or user.id)
+```
+
+All filter, report, and export flags from the base command also apply to `analytics otel`. Cost is read from each event's native `cost_usd`, so `--no-scan-native` is not used by this source.
