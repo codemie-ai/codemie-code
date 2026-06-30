@@ -136,13 +136,15 @@
     .proj-sessions .table td:first-child { white-space: normal; word-break: break-word; }
 
     /* session-detail modal */
-    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.62); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: var(--z-modal, 50); padding: 24px; }
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.72); display: flex; align-items: center; justify-content: center; z-index: var(--z-modal, 50); padding: 24px; }
     .modal { background: var(--color-bg-card); border: 1px solid var(--color-border-structural); border-radius: var(--radius-xl, 12px); box-shadow: var(--shadow-lg); width: 100%; max-width: 880px; max-height: 88vh; display: flex; flex-direction: column; overflow: hidden; }
     .modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--color-border-structural); }
     .modal-title { font-size: 15px; font-weight: 700; color: var(--color-text-primary); margin: 0 0 3px; }
     .modal-meta { font-size: 12px; color: var(--color-text-muted); text-transform: capitalize; }
     .modal-close { background: transparent; border: 1px solid var(--color-border-structural); color: var(--color-text-muted); border-radius: 8px; height: 30px; width: 30px; cursor: pointer; font-size: 12px; flex-shrink: 0; }
     .modal-close:hover { color: var(--color-text-primary); background: var(--color-bg-tertiary); }
+    .modal-export { background: transparent; border: 1px solid var(--color-border-structural); color: var(--color-text-muted); border-radius: 8px; height: 30px; padding: 0 10px; cursor: pointer; font-size: 12px; flex-shrink: 0; white-space: nowrap; font-family: inherit; }
+    .modal-export:hover { color: var(--color-primary, #7C5CFC); background: var(--color-bg-tertiary); border-color: var(--color-primary, #7C5CFC); }
     .modal-body { padding: 18px 20px; overflow-y: auto; }
     .modal-body .card { margin-bottom: 14px; }
     /* light, borderless stat grid (replaces the heavy box-in-box KPIs) */
@@ -180,13 +182,15 @@
     .tl-tok-seg { border-radius: 2px; }
 
     /* session-detail modal */
-    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.62); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; z-index: var(--z-modal, 50); padding: 24px; }
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.72); display: flex; align-items: center; justify-content: center; z-index: var(--z-modal, 50); padding: 24px; }
     .modal { background: var(--color-bg-card); border: 1px solid var(--color-border-structural); border-radius: var(--radius-xl, 12px); box-shadow: var(--shadow-lg); width: 100%; max-width: 880px; max-height: 88vh; display: flex; flex-direction: column; overflow: hidden; }
     .modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 16px 20px; border-bottom: 1px solid var(--color-border-structural); }
     .modal-title { font-size: 15px; font-weight: 700; color: var(--color-text-primary); margin: 0 0 3px; }
     .modal-meta { font-size: 12px; color: var(--color-text-muted); text-transform: capitalize; }
     .modal-close { background: transparent; border: 1px solid var(--color-border-structural); color: var(--color-text-muted); border-radius: 8px; height: 30px; width: 30px; cursor: pointer; font-size: 12px; flex-shrink: 0; }
     .modal-close:hover { color: var(--color-text-primary); background: var(--color-bg-tertiary); }
+    .modal-export { background: transparent; border: 1px solid var(--color-border-structural); color: var(--color-text-muted); border-radius: 8px; height: 30px; padding: 0 10px; cursor: pointer; font-size: 12px; flex-shrink: 0; white-space: nowrap; font-family: inherit; }
+    .modal-export:hover { color: var(--color-primary, #7C5CFC); background: var(--color-bg-tertiary); border-color: var(--color-primary, #7C5CFC); }
     .modal-body { padding: 18px 20px; overflow-y: auto; }
     .modal-body .card { margin-bottom: 14px; }
     /* light, borderless stat grid (replaces the heavy box-in-box KPIs) */

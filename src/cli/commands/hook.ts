@@ -676,6 +676,40 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
     const { SessionStore } = await import('../../agents/core/session/SessionStore.js');
     const sessionStore = new SessionStore();
 
+    // A SessionStart can RE-ENTER an already-tracked LIVE session: `compact` fires SessionStart for
+    // the SAME CODEMIE_SESSION_ID without ending the session, so the primary {id}.json is still on
+    // disk and loadSession returns the live record. Rebuilding it from scratch would reset startTime
+    // to "now" and zero the accumulated activeDurationMs — under-reporting the session's true span
+    // and active time (startTime is also read by the metrics aggregator and sent to the backend).
+    // Preserve the existing record's accumulated state in place; only refresh status and correlation
+    // to the current transcript from fields the event actually provides.
+    //
+    // Guard on a LIVE record (active + no endTime): `clear` (and exit/logout) first fire SessionEnd,
+    // which marks the record completed (endTime set) and renames {id}.json → completed_{id}.json.
+    // Because loadSession transparently falls back to the completed_ file, an unguarded re-entry
+    // would RESURRECT a finished session — inheriting its stale startTime/activeDurationMs and
+    // leaving an `active` record that still carries a past endTime. A post-clear session must start
+    // fresh, so completed records fall through to the fresh-build below. (resume runs in a new CLI
+    // process with a fresh CODEMIE_SESSION_ID, so it never reaches this branch.)
+    const existing = await sessionStore.loadSession(sessionId);
+    if (existing && existing.status === 'active' && existing.endTime === undefined) {
+      existing.status = 'active';
+      if (gitBranch) existing.gitBranch = gitBranch;
+      if (remoteRepository) existing.repository = remoteRepository;
+      existing.correlation = {
+        ...existing.correlation,
+        status: 'matched',
+        ...(event.session_id && { agentSessionId: event.session_id }),
+        ...(event.transcript_path && { agentSessionFile: event.transcript_path }),
+      };
+      await sessionStore.saveSession(existing);
+      logger.info(
+        `[hook:SessionStart] Session re-entered (source=${event.source}): preserved ` +
+        `startTime=${existing.startTime} activeDurationMs=${existing.activeDurationMs}`
+      );
+      return;
+    }
+
     // Create session record with correlation already matched
     const session = {
       sessionId,

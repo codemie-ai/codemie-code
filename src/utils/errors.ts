@@ -40,6 +40,13 @@ export class PathSecurityError extends CodeMieError {
   }
 }
 
+export class AnalyticsSourceError extends CodeMieError {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AnalyticsSourceError';
+  }
+}
+
 /**
  * npm error codes for categorizing failures
  */
