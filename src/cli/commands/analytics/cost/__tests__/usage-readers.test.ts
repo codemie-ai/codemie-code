@@ -199,6 +199,19 @@ describe('gatherDedupedUsageRecords + sumUsageRecords', () => {
     const map = sumUsageRecords(recs);
     expect(map.get('claude-sonnet-4-6')!.input).toBe(30);
   });
+
+  it('keeps the most complete row when Claude writes progressive records for one response', () => {
+    const recs = gatherDedupedUsageRecords(
+      'claude',
+      claude([
+        { timestamp: '2026-06-08T10:00:00Z', requestId: 'req-1', message: { id: 'msg-1', model: 'claude-sonnet-4-6', usage: { input_tokens: 3, output_tokens: 1, cache_read_input_tokens: 20_679, cache_creation_input_tokens: 2_682 } } },
+        { timestamp: '2026-06-08T10:00:01Z', requestId: 'req-1', message: { id: 'msg-1', model: 'claude-sonnet-4-6', usage: { input_tokens: 3, output_tokens: 121, cache_read_input_tokens: 20_679, cache_creation_input_tokens: 2_682 } } },
+      ]),
+      new Set()
+    );
+    expect(recs).toHaveLength(1);
+    expect(recs[0].usage.output).toBe(121);
+  });
 });
 
 describe('extractClaudeUsageRecords — sub-agent transcripts', () => {

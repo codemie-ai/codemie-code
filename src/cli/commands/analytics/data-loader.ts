@@ -14,7 +14,7 @@ import { agentMatchesAnalyticsFilter } from './cost/codex-agent.js';
  * Session start event (special record type)
  * Not part of MetricDelta, but stored in same JSONL file
  */
-interface SessionStartEvent {
+export interface SessionStartEvent {
   recordId: string;
   type: 'session_start';
   timestamp: number;
@@ -31,7 +31,7 @@ interface SessionStartEvent {
 /**
  * Session end event (special record type)
  */
-interface SessionEndEvent {
+export interface SessionEndEvent {
   recordId: string;
   type: 'session_end';
   timestamp: number;

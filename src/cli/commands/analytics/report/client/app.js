@@ -802,18 +802,21 @@
       var list = fs.slice().sort(function (a, b) { return b.startTime - a.startTime; });
       if (q) {
         var ql = q.toLowerCase();
-        list = list.filter(function (s) { return (s.sessionId + ' ' + s.agentName + ' ' + s.project + ' ' + s.branch).toLowerCase().indexOf(ql) >= 0; });
+        list = list.filter(function (s) { return (s.sessionId + ' ' + s.agentName + ' ' + s.project + ' ' + s.branch + ' ' + (s.title || '')).toLowerCase().indexOf(ql) >= 0; });
       }
       var shown = list.slice(0, 300);
       holder.innerHTML = tableHTML(
-        ['Date', 'Agent', 'Project', 'Branch', 'Turns', 'Net lines', 'Input', 'Output', 'Cached', 'Cost'],
+        ['Date', 'Prompt', 'Agent', 'Project', 'Branch', 'Turns', 'Net lines', 'Input', 'Output', 'Cached', 'Cost'],
         shown.map(function (s) {
+          var branchCell = s.branch ? '<span title="' + esc(s.branch) + '" style="max-width:90px;display:inline-block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle">' + esc(s.branch) + '</span>' : '—';
+          var promptCell = '<span title="' + esc(s.title || '') + '" style="max-width:280px;display:inline-block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;color:var(--color-text-muted);font-size:12px">' + esc(truncStr(s.title || '—', 80)) + '</span>';
           return [new Date(s.startTime).toISOString().slice(0, 16).replace('T', ' '),
+            promptCell,
             '<span class="tag tag-sm" style="text-transform:capitalize">' + esc(s.agentName) + '</span>',
-            '<span title="' + esc(s.project) + '">' + esc(shortPath(s.project)) + '</span>', esc(s.branch || '—'),
+            '<span title="' + esc(s.project) + '">' + esc(shortPath(s.project)) + '</span>', branchCell,
             fmtNum(s.turns), fmtNum(s.netLines), fmtTokens(tkIn(s)), fmtTokens(tkOut(s)), fmtTokens(tkCached(s)), fmtUSD(s.costUSD)];
         }),
-        [false, false, false, false, true, true, true, true, true, true],
+        [false, false, false, false, false, true, true, true, true, true, true],
         shown.map(function (s) { return 'class="clickable" data-session="' + esc(s.sessionId) + '"'; }));
       if (list.length > 300) holder.appendChild(el('p', 'text-muted', '<span style="font-size:12px">Showing first 300 of ' + list.length + '.</span>'));
     }
@@ -900,7 +903,7 @@
     return Math.floor(ms / 3600000) + 'h ' + Math.round((ms % 3600000) / 60000) + 'm';
   }
   // Side panel content for a selected timeline step.
-  function tlDetailEl(d) {
+  function tlDetailEl(d, sessionStart) {
     var panel = el('div', '');
     if (!d) {
       panel.appendChild(el('div', 'tl-side-empty', 'Click a timeline step to see details.'));
@@ -914,10 +917,12 @@
     panel.appendChild(nameEl);
     var hasCost = d.costUSD != null;
     var hasTok = d.tokens != null;
+    var startOffset = sessionStart != null && d.start != null ? Math.max(0, d.start - sessionStart) : null;
     panel.appendChild(statsEl([
       ['Cost', hasCost ? fmtUSD(d.costUSD) : '—', ''],
       ['Tokens', hasTok ? fmtTokens(d.tokens.total) : '—', ''],
       ['Duration', fmtTimelineDuration(d.durationMs), ''],
+      ['Started', startOffset != null ? fmtTimelineDuration(startOffset) : '—', 'into session'],
     ]));
     if (hasTok) {
       var tok = d.tokens;
@@ -958,36 +963,45 @@
     }
     return panel;
   }
-  // Gantt of agent/skill/command dispatches: session span on top, each step bar positioned
-  // by wall-clock start time relative to the activity window (proportional scaling).
-  // min-width 28px (CSS) plus a floor on % width keeps short steps visible and clickable.
+  // Gantt of top-level dispatches: session span on top, then every agent/skill/command
+  // dispatch positioned by wall-clock start time across the activity window, so each bar
+  // sits where it actually ran. Short skills and 0ms commands fall back to the CSS
+  // min-width (28px) so they stay visible as markers without distorting the time scale.
   function timelineEl(s) {
-    var dispatches = (s.dispatches || []).filter(function (d) {
-      return d.kind === 'agent' || d.kind === 'skill' || d.kind === 'command';
-    }).sort(function (a, b) { return a.start - b.start; });
-    // Scale bars to the agent activity window, not the full session duration.
-    // Agent bars fill the track proportionally relative to each other; absolute
-    // start offset (vs. session start) is shown in the side panel detail view.
-    var actStart = dispatches.length ? dispatches.reduce(function (m, d) { return Math.min(m, d.start); }, Infinity) : s.startTime;
-    var actEnd = dispatches.length ? dispatches.reduce(function (m, d) { return Math.max(m, d.start + (d.durationMs || 0)); }, -Infinity) : s.startTime + s.durationMs;
-    var ganttSpan = Math.max(1, actEnd - actStart);
+    var dispatches = (s.dispatches || []).slice().sort(function (a, b) { return a.start - b.start; });
+    // Window = union of the tracked session span and the dispatch activity span. Resumed or
+    // compacted sessions can carry transcript dispatches that fall OUTSIDE the tracked
+    // start→end window; scaling to the session window alone would clamp them all to left:0%
+    // (single-column pile-up). The union positions every bar correctly and collapses back to
+    // exactly the session window for the normal case (dispatches fully inside it).
+    var winStart = s.startTime;
+    var winEnd = s.startTime + (s.durationMs || 0);
+    dispatches.forEach(function (d) {
+      if (d.start < winStart) winStart = d.start;
+      var end = d.start + (d.durationMs || 0);
+      if (end > winEnd) winEnd = end;
+    });
+    var ganttSpan = Math.max(1, winEnd - winStart);
 
     var container = el('div', 'tl-container');
     var gantt = el('div', 'tl-gantt timeline');
     var sidePane = el('div', 'tl-side');
 
-    var selected = dispatches[0] || null;
-    sidePane.appendChild(tlDetailEl(selected));
+    var selected = dispatches.filter(function (d) { return d.kind === 'agent'; })[0] || dispatches[0] || null;
+    sidePane.appendChild(tlDetailEl(selected, winStart));
 
     function selectDispatch(d, barEl) {
       gantt.querySelectorAll('.tl-bar[data-dispatch]').forEach(function(b) {
         b.style.outline = b === barEl ? '2px solid rgba(255,255,255,0.55)' : 'none';
       });
       sidePane.innerHTML = '';
-      sidePane.appendChild(tlDetailEl(d));
+      sidePane.appendChild(tlDetailEl(d, winStart));
     }
 
-    gantt.appendChild(tlRow('session', '#259F4C', 0, 100, fmtTimelineDuration(s.durationMs), fmtUSD(s.costUSD), true));
+    // Session bar spans the full window (the activity envelope). Its label shows the envelope
+    // span — equal to the tracked duration in the normal case, but revealing the true span when
+    // the tracked duration under-counts (e.g. dispatches predating a post-compaction window).
+    gantt.appendChild(tlRow('session', '#259F4C', 0, 100, fmtTimelineDuration(ganttSpan), fmtUSD(s.costUSD), true));
 
     var occ = {};
     dispatches.forEach(function (d) {
@@ -995,8 +1009,8 @@
       var total = dispatches.filter(function (x) { return x.kind === d.kind && x.name === d.name; }).length;
       occ[key] = (occ[key] || 0) + 1;
       var label = d.kind + ' · ' + d.name + (total > 1 ? ' #' + occ[key] : '');
-      var leftPct = Math.max(0, (d.start - actStart) / ganttSpan * 100);
-      var wPct = Math.max(0.8, (d.durationMs || 0) / ganttSpan * 100);
+      var leftPct = Math.max(0, (d.start - winStart) / ganttSpan * 100);
+      var wPct = (d.durationMs || 0) / ganttSpan * 100;
       if (leftPct + wPct > 100) wPct = Math.max(0, 100 - leftPct);
       var barText = d.costUSD != null && wPct >= 8 ? fmtUSD(d.costUSD) : '';
       var color = PALETTE[hashStr(key) % PALETTE.length];
@@ -1036,8 +1050,24 @@
     var metaBits = [s.agentName, (s.models && s.models[0]) || null, shortPath(s.project), s.branch].filter(Boolean);
     htxt.appendChild(el('div', 'modal-meta', metaBits.map(function (b) { return esc(b); }).join('  ·  ')));
     head.appendChild(htxt);
+    var headBtns = el('div'); headBtns.style.cssText = 'display:flex;gap:6px;align-items:center;flex-shrink:0;';
+    var exportBtn = el('button', 'modal-export', '↓ JSON');
+    exportBtn.setAttribute('aria-label', 'Export session as JSON');
+    exportBtn.setAttribute('title', 'Export session details as JSON');
+    exportBtn.addEventListener('click', function () {
+      var json = JSON.stringify(s, null, 2);
+      var blob = new Blob([json], { type: 'application/json' });
+      var url = URL.createObjectURL(blob);
+      var a = document.createElement('a');
+      var date = new Date(s.startTime).toISOString().slice(0, 10);
+      a.href = url; a.download = 'session-' + date + '-' + String(s.sessionId).slice(0, 8) + '.json';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    });
+    headBtns.appendChild(exportBtn);
     var close = el('button', 'modal-close', '✕'); close.setAttribute('aria-label', 'Close'); close.addEventListener('click', closeSessionModal);
-    head.appendChild(close);
+    headBtns.appendChild(close);
+    head.appendChild(headBtns);
     modal.appendChild(head);
 
     var body = el('div', 'modal-body');
@@ -1101,8 +1131,8 @@
 
     // Timeline — Gantt of all top-level agent, skill, and command dispatches.
     var hasDispatches = (s.dispatches || []).length > 0;
-    var hasCostData = (s.dispatches || []).some(function (d) { return d.costUSD != null; });
-    var tlSubtitle = hasDispatches ? (hasCostData ? 'click a step for cost, token & timing details · long idle gaps compressed' : 'click a step for timing details · long idle gaps compressed') : '';
+    var hasCostData = (s.dispatches || []).some(function (d) { return d.kind === 'agent' && d.costUSD != null; });
+    var tlSubtitle = hasDispatches ? (hasCostData ? 'click a step for cost, token & timing details · positioned across the session' : 'click a step for timing details · positioned across the session') : '';
     var tlCard = card('Timeline', tlSubtitle);
     if (hasDispatches) {
       tlCard._body.appendChild(timelineEl(s));
