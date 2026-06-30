@@ -19,6 +19,7 @@
 import '../setup/load-test-env.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, dirname, resolve } from 'node:path';
@@ -46,7 +47,9 @@ const CLAUDE_BIN = join(REPO_ROOT, 'bin', 'codemie-claude.js');
 
 const CI_IS_LOCAL_RUN = getTestEnvFlagOrDefault('CI_IS_LOCAL_RUN', true);
 
-const ASSISTANT_NAME = 'AutoAssistantRandomGenerator';
+// Unique per-run suffix so concurrent runs and other users' leftover assistants don't collide.
+const RUN_SUFFIX = randomBytes(3).toString('hex');
+const ASSISTANT_NAME = `AutoAssistantRandomGenerator-${RUN_SUFFIX}`;
 const ASSISTANT_SYSTEM_PROMPT = [
   'You are random generator',
   'You should answer on any user message with single number from 1 to 10',
@@ -93,6 +96,12 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('Assistant management test
     const aboutUser = await sdkClient.users.aboutMe();
     const project = aboutUser.applications[0];
     if (!project) throw new Error('No accessible project found for this user');
+
+    // Remove any same-named assistants left over from interrupted previous runs.
+    const stale = await listAssistants(sdkClient);
+    for (const a of stale.filter((a) => a.name === ASSISTANT_NAME)) {
+      try { await deleteAssistant(sdkClient, a.id!); } catch { /* best-effort */ }
+    }
 
     await createAssistant(sdkClient, {
       name: ASSISTANT_NAME,

@@ -17,6 +17,7 @@
 
 import '../setup/load-test-env.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { randomBytes } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,7 +44,9 @@ const CLI_BIN = join(REPO_ROOT, 'bin', 'codemie.js');
 
 const CI_IS_LOCAL_RUN = getTestEnvFlagOrDefault('CI_IS_LOCAL_RUN', true);
 
-const SKILL_NAME = 'auto-skill-random-gen';
+// Unique per-run suffix so concurrent runs and other users' leftover skills don't collide.
+const RUN_SUFFIX = randomBytes(3).toString('hex');
+const SKILL_NAME = `auto-skill-random-gen-${RUN_SUFFIX}`;
 const SKILL_DESCRIPTION = 'Integration test skill — auto-created and deleted by the test suite. Returns a random number from 1 to 10.';
 const SKILL_CONTENT = [
   '# Random Number Generator',

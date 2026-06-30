@@ -165,7 +165,9 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('agent task execution and 
     ).toBe(true);
 
     // ── Session file verification ────────────────────────────────────────────────
-    const SESSION_POLL_TIMEOUT_MS = 30_000;
+    // Use the same ceiling as the CLI command itself so the poll always
+    // outlasts the session-hook rename that happens after process exit.
+    const SESSION_POLL_TIMEOUT_MS = CLI_TIMEOUT_MS;
 
     const { sessionId, dirContents } = await pollForSession(sessionsDir, testUuid, {
       timeoutMs: SESSION_POLL_TIMEOUT_MS,

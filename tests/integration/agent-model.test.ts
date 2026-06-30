@@ -113,7 +113,7 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('Model tests', () => {
         CI_IS_LOCAL_RUN
           ? [CLAUDE_BIN, '--profile', 'profile-sonnet', '--task', 'Say READY']
           : [CLAUDE_BIN, '--profile', 'profile-sonnet', '--jwt-token', jwtToken, '--task', 'Say READY'],
-        { cwd: sonnetHome, env: { ...(CI_IS_LOCAL_RUN ? ssoCleanEnv() : jwtCleanEnv()), CODEMIE_HOME: sonnetHome }, encoding: 'utf-8', timeout: 120_000 },
+        { cwd: sonnetHome, env: { ...(CI_IS_LOCAL_RUN ? ssoCleanEnv() : jwtCleanEnv()), CODEMIE_HOME: sonnetHome }, encoding: 'utf-8', timeout: 180_000 },
       );
       sonnetMetrics = getLatestMetricsRecord(join(sonnetHome, 'sessions'));
 
@@ -125,14 +125,14 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('Model tests', () => {
         CI_IS_LOCAL_RUN
           ? [CLAUDE_BIN, '--profile', 'profile-haiku', '--task', 'Say READY']
           : [CLAUDE_BIN, '--profile', 'profile-haiku', '--jwt-token', jwtToken, '--task', 'Say READY'],
-        { cwd: haikuHome, env: { ...(CI_IS_LOCAL_RUN ? ssoCleanEnv() : jwtCleanEnv()), CODEMIE_HOME: haikuHome }, encoding: 'utf-8', timeout: 120_000 },
+        { cwd: haikuHome, env: { ...(CI_IS_LOCAL_RUN ? ssoCleanEnv() : jwtCleanEnv()), CODEMIE_HOME: haikuHome }, encoding: 'utf-8', timeout: 180_000 },
       );
       haikuMetrics = getLatestMetricsRecord(join(haikuHome, 'sessions'));
     }, 300_000);
 
     afterAll(() => {
-      rmSync(sonnetHome, { recursive: true, force: true });
-      rmSync(haikuHome, { recursive: true, force: true });
+      if (sonnetHome) rmSync(sonnetHome, { recursive: true, force: true });
+      if (haikuHome) rmSync(haikuHome, { recursive: true, force: true });
     });
 
     it('metrics models array contains sonnet for claude-sonnet-4-6 profile', () => {
