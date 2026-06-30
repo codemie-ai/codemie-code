@@ -47,6 +47,7 @@ export default defineConfig({
           testTimeout: 30_000,
           hookTimeout: 10_000,
           isolate: true,
+          sequence: { groupOrder: 1 },
           env: {
             FORCE_COLOR: '1',
             NODE_ENV: 'test',
@@ -67,6 +68,7 @@ export default defineConfig({
           hookTimeout: 300_000,
           maxWorkers: parseInt(process.env.CI_AGENT_MAX_WORKERS ?? '2', 10),
           isolate: true,
+          sequence: { groupOrder: 2 },
           reporters: ['verbose'],
           env: {
             FORCE_COLOR: '1',
