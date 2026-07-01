@@ -305,6 +305,28 @@ export class AgentCLI {
       // Serialize full profile config for proxy plugins (read once at CLI level)
       providerEnv.CODEMIE_PROFILE_CONFIG = JSON.stringify(config);
 
+      // Resume ownership check — after providerEnv is built so we can extend it
+      if (options.resume) {
+        const resumeId = options.resume as string;
+        const { scanSessionsForClaudeId } = await import('./session/session-ownership.js');
+        const isOwned = scanSessionsForClaudeId(resumeId);
+
+        if (!isOwned) {
+          const confirmed = await this.promptExternalResume(resumeId);
+          const { appendAuditEvent } = await import('./session/session-origin-audit.js');
+
+          if (!confirmed) {
+            appendAuditEvent('resume_blocked', { claudeSessionId: resumeId });
+            console.log(chalk.white(`\nUse 'claude --resume ${resumeId}' to resume without CodeMie tracking.\n`));
+            process.exit(1);
+          }
+
+          Object.assign(providerEnv, buildResumeEnvOverride(true));
+          appendAuditEvent('resume_external_confirmed', { claudeSessionId: resumeId });
+          logger.info(`[AgentCLI] External resume confirmed for session ${resumeId}; conversation sync suppressed`);
+        }
+      }
+
       // Set profile name in logger for log formatting
       logger.setProfileName(config.name || 'default');
 
@@ -546,10 +568,40 @@ export class AgentCLI {
     return true;
   }
 
+  private async promptExternalResume(sessionId: string): Promise<boolean> {
+    if (!process.stdin.isTTY || process.env.CODEMIE_NO_PROMPTS === '1') {
+      console.error(
+        chalk.red(`\n✗ Session ${sessionId} was not created through CodeMie.\n`) +
+        chalk.white(`Non-interactive mode: resume blocked. Use 'claude --resume ${sessionId}'.\n`)
+      );
+      return false;
+    }
+
+    const { createInterface } = await import('node:readline');
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+
+    console.log(chalk.yellow(`\n⚠  Warning: Session ${sessionId} was not created through CodeMie.`));
+    console.log(chalk.white('If you continue:'));
+    console.log(chalk.white('  • Token usage and API metrics WILL be tracked via the CodeMie proxy.'));
+    console.log(chalk.white('  • Conversation transcript will NOT be synced to your CodeMie account history.\n'));
+    console.log(chalk.dim(`To resume without any CodeMie tracking, use: claude --resume ${sessionId}\n`));
+
+    return new Promise<boolean>((resolve) => {
+      rl.question(chalk.yellow('Continue with CodeMie? (y/N): '), (answer) => {
+        rl.close();
+        resolve(answer.trim().toLowerCase() === 'y');
+      });
+    });
+  }
+
   /**
    * Run the CLI
    */
   async run(argv: string[]): Promise<void> {
     await this.program.parseAsync(argv);
   }
+}
+
+export function buildResumeEnvOverride(isExternal: boolean): Record<string, string> {
+  return isExternal ? { CODEMIE_CONV_SYNC_DISABLED: '1' } : {};
 }
