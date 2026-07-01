@@ -305,6 +305,34 @@ export class AgentCLI {
       // Serialize full profile config for proxy plugins (read once at CLI level)
       providerEnv.CODEMIE_PROFILE_CONFIG = JSON.stringify(config);
 
+      // Resume ownership check — after providerEnv is built so we can extend it
+      if (options.resume) {
+        // Strip ANSI escape sequences and control chars before using the value in output.
+        // Claude's own --resume accepts non-UUID identifiers (slugs, ticket IDs, etc.),
+        // so we must not validate the format here.
+         
+        const resumeId = (options.resume as string).replace(/\p{Cc}/gu, '');
+        const { scanSessionsForClaudeId } = await import('./session/session-ownership.js');
+        const isOwned = scanSessionsForClaudeId(resumeId);
+
+        if (!isOwned) {
+          const confirmed = await this.promptExternalResume(resumeId);
+          const { appendAuditEvent } = await import('./session/session-origin-audit.js');
+
+          if (!confirmed) {
+            appendAuditEvent('resume_blocked', { claudeSessionId: resumeId });
+            process.exit(1);
+          }
+
+          // Inject into subprocess env (for lifecycle hook subprocesses that inherit it)
+          // and into the current process env (for same-process consumers such as sso syncProcessor).
+          Object.assign(providerEnv, buildResumeEnvOverride(true));
+          process.env.CODEMIE_CONV_SYNC_DISABLED = '1';
+          appendAuditEvent('resume_external_confirmed', { claudeSessionId: resumeId });
+          logger.info(`[AgentCLI] External resume confirmed for session ${resumeId}; conversation sync suppressed`);
+        }
+      }
+
       // Set profile name in logger for log formatting
       logger.setProfileName(config.name || 'default');
 
@@ -316,6 +344,8 @@ export class AgentCLI {
 
       // Run the agent (welcome message will be shown inside)
       await this.adapter.run(agentArgs, providerEnv);
+      // Clean up the process-level flag set for same-process conversation sync consumers.
+      delete process.env.CODEMIE_CONV_SYNC_DISABLED;
     } catch (error) {
       // Show user-friendly error message in console first
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -546,10 +576,47 @@ export class AgentCLI {
     return true;
   }
 
+  private async promptExternalResume(sessionId: string): Promise<boolean> {
+    if (shouldBlockNonInteractiveResume()) {
+      console.error(
+        chalk.red(`\n✗ Session ${sessionId} was not created through CodeMie.\n`) +
+        chalk.white(`Non-interactive mode: resume blocked.\n`) +
+        chalk.white(`Use 'claude --resume ${sessionId}' to resume without CodeMie tracking.\n`)
+      );
+      return false;
+    }
+
+    const { createInterface } = await import('node:readline');
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+
+    console.log(chalk.yellow(`\n⚠  Warning: Session ${sessionId} was not created through CodeMie.`));
+    console.log(chalk.white('If you continue:'));
+    console.log(chalk.white('  • Token usage and API metrics WILL be tracked via the CodeMie proxy.'));
+    console.log(chalk.white('  • Conversation transcript will NOT be synced to your CodeMie account history.\n'));
+    console.log(chalk.dim(`To resume without any CodeMie tracking, use: claude --resume ${sessionId}\n`));
+
+    try {
+      const answer = await new Promise<string>((resolve) => {
+        rl.question(chalk.yellow('Continue with CodeMie? (y/N): '), resolve);
+      });
+      return answer.trim().toLowerCase() === 'y';
+    } finally {
+      rl.close();
+    }
+  }
+
   /**
    * Run the CLI
    */
   async run(argv: string[]): Promise<void> {
     await this.program.parseAsync(argv);
   }
+}
+
+export function buildResumeEnvOverride(isExternal: boolean): Record<string, string> {
+  return isExternal ? { CODEMIE_CONV_SYNC_DISABLED: '1' } : {};
+}
+
+export function shouldBlockNonInteractiveResume(): boolean {
+  return !process.stdin.isTTY || process.env.CODEMIE_NO_PROMPTS === '1';
 }

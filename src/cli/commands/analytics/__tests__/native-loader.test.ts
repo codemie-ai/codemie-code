@@ -140,6 +140,7 @@ describe('loadNativeSessions', () => {
           metrics: { tools: {} },
         }) as never,
       realPath: (p) => p,
+      hasOwnershipMarker: () => false,
     };
     const out = await loadNativeSessions(undefined, deps);
     expect(out.map((s) => s.sessionId)).toEqual(['fresh']); // tracked one deduped out
@@ -154,6 +155,7 @@ describe('loadNativeSessions', () => {
       ],
       parse: async () => null,
       realPath: (p) => p,
+      hasOwnershipMarker: () => false,
     };
     expect(await loadNativeSessions(undefined, deps)).toEqual([]);
   });
@@ -177,6 +179,47 @@ describe('synthesizeRawSession — /clear sentinel in post-/clear file', () => {
     const raw = synthesizeRawSession('claude', desc, p);
     expect(raw.sessionId).toBe('clr');
     expect(raw.deltas[0].userPrompts?.[0].text).toBe('actual prompt');
+  });
+});
+
+describe('loadNativeSessions — external session labeling', () => {
+  const baseDescriptor = {
+    sessionId: 'ext-1',
+    filePath: '/logs/ext-1.jsonl',
+    createdAt: 1000,
+    updatedAt: 2000,
+    agentName: 'claude',
+  };
+  const parsedSession = {
+    sessionId: 'ext-1',
+    agentName: 'claude',
+    metadata: {},
+    messages: [
+      { type: 'assistant', timestamp: '2026-06-08T10:00:00Z', message: { role: 'assistant', model: 'claude-sonnet-4-6' } },
+    ],
+    metrics: { tools: {} },
+  } as never;
+
+  function makeDeps(hasMarker: boolean): NativeLoaderDeps {
+    return {
+      trackedLogPaths: () => new Set<string>(),
+      discover: async () => [{ agentName: 'claude', descriptor: baseDescriptor }],
+      parse: async () => parsedSession,
+      realPath: (p) => p,
+      hasOwnershipMarker: () => hasMarker,
+    };
+  }
+
+  it('sets provider native-external when marker absent', async () => {
+    const results = await loadNativeSessions(undefined, makeDeps(false));
+    expect(results).toHaveLength(1);
+    expect(results[0].startEvent!.data.provider).toBe('native-external');
+  });
+
+  it('keeps provider native when marker present', async () => {
+    const results = await loadNativeSessions(undefined, makeDeps(true));
+    expect(results).toHaveLength(1);
+    expect(results[0].startEvent!.data.provider).toBe('native');
   });
 });
 
@@ -247,6 +290,7 @@ describe('loadNativeSessions codex child dedup', () => {
           metrics: { tools: {} },
         } as never),
       realPath: (p) => p,
+      hasOwnershipMarker: () => false,
     };
     const out = await loadNativeSessions(undefined, deps);
     expect(out.map((s) => s.sessionId)).toEqual(['parent-uuid']);

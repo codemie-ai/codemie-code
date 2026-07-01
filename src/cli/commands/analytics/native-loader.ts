@@ -12,7 +12,7 @@
  * real path) so they are not double-counted.
  */
 
-import { realpathSync, readdirSync, readFileSync } from 'node:fs';
+import { realpathSync, readdirSync, readFileSync, openSync, readSync, closeSync } from 'node:fs';
 import { join } from 'node:path';
 import type { RawSessionData } from './data-loader.js';
 import type { AnalyticsFilter } from './types.js';
@@ -46,6 +46,8 @@ export interface NativeLoaderDeps {
   parse(agentName: string, filePath: string, sessionId: string): Promise<ParsedSession | null>;
   /** Resolve a path to its real (symlink-free) form for dedup comparison. */
   realPath(p: string): string;
+  /** Returns true when the transcript at filePath contains a codemie_session_start marker (first 10 lines). */
+  hasOwnershipMarker(filePath: string): boolean;
 }
 
 function safeRealPath(p: string): string {
@@ -67,7 +69,7 @@ function readTrackedLogPaths(): Set<string> {
   }
   let files: string[];
   try {
-    files = readdirSync(dir).filter((f) => f.endsWith('.json') && !f.includes('_metrics'));
+    files = readdirSync(dir).filter((f) => f.endsWith('.json') && !f.endsWith('_metrics.json'));
   } catch {
     return out;
   }
@@ -82,6 +84,49 @@ function readTrackedLogPaths(): Set<string> {
       }
     } catch {
       // skip unreadable / malformed metadata
+    }
+  }
+  return out;
+}
+
+/**
+ * Lazy-built ownership index: union of
+ *   (a) agentSessionFile real-paths from correlation records (*.json, non-metrics, non-marker)
+ *   (b) transcriptPath values from sidecar marker files (*-codemie-marker.json)
+ * Cached for the lifetime of the process — analytics runs are short-lived.
+ */
+let ownershipIndexCache: Set<string> | null = null;
+
+function buildOwnershipIndex(): Set<string> {
+  const out = new Set<string>();
+  let dir: string;
+  try {
+    dir = getCodemiePath('sessions');
+  } catch {
+    return out;
+  }
+  let files: string[];
+  try {
+    files = readdirSync(dir).filter((f) => f.endsWith('.json'));
+  } catch {
+    return out;
+  }
+  for (const f of files) {
+    try {
+      if (f.endsWith('-codemie-marker.json')) {
+        const marker = JSON.parse(readFileSync(join(dir, f), 'utf-8')) as {
+          transcriptPath?: string;
+        };
+        if (marker.transcriptPath) out.add(safeRealPath(marker.transcriptPath));
+      } else if (!f.endsWith('_metrics.json')) {
+        const meta = JSON.parse(readFileSync(join(dir, f), 'utf-8')) as {
+          correlation?: { agentSessionFile?: string };
+        };
+        const asf = meta.correlation?.agentSessionFile;
+        if (asf) out.add(safeRealPath(asf));
+      }
+    } catch {
+      // skip unreadable / malformed files
     }
   }
   return out;
@@ -120,6 +165,37 @@ export const realNativeDeps: NativeLoaderDeps = {
     }
   },
   realPath: safeRealPath,
+  hasOwnershipMarker(filePath: string): boolean {
+    // CR-003: index-first check — correlation index + sidecar markers
+    if (!ownershipIndexCache) ownershipIndexCache = buildOwnershipIndex();
+    if (ownershipIndexCache.has(safeRealPath(filePath))) return true;
+
+    // CR-002: bounded transcript scan (4 KB) for legacy sessions without sidecar
+    try {
+      const fd = openSync(filePath, 'r');
+      const buf = Buffer.alloc(4096);
+      let bytesRead: number;
+      try {
+        bytesRead = readSync(fd, buf, 0, 4096, 0);
+      } finally {
+        closeSync(fd);
+      }
+      return buf
+        .subarray(0, bytesRead)
+        .toString('utf-8')
+        .split('\n')
+        .slice(0, 10)
+        .some((line) => {
+          try {
+            return (JSON.parse(line) as { type?: string }).type === 'codemie_session_start';
+          } catch {
+            return false;
+          }
+        });
+    } catch {
+      return false;
+    }
+  },
 };
 
 interface RawMessage {
@@ -438,7 +514,11 @@ export async function loadNativeSessions(
     if (!parsed) {
       continue;
     }
-    out.push(synthesizeRawSession(agentName, descriptor, parsed));
+    const raw = synthesizeRawSession(agentName, descriptor, parsed);
+    if (!deps.hasOwnershipMarker(descriptor.filePath) && raw.startEvent) {
+      raw.startEvent.data.provider = 'native-external';
+    }
+    out.push(raw);
   }
   return out;
 }
