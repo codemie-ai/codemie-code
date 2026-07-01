@@ -159,7 +159,11 @@ export class AnalyticsFormatter {
     console.log(chalk.dim(`      ${'-'.repeat(54)}`));
 
     console.log(chalk.gray(`      Agent:     ${session.agentName}`));
-    console.log(chalk.gray(`      Provider:  ${session.provider}`));
+    const providerLabel =
+      session.provider === 'native-external'
+        ? chalk.yellow('native [external ⚠ not CodeMie-managed]')
+        : session.provider;
+    console.log(chalk.gray(`      Provider:  `) + providerLabel);
     console.log(chalk.gray(`      Duration:  ${this.formatDuration(session.duration)}`));
     console.log(chalk.gray(`      Turns:     ${session.totalTurns}`));
 
