@@ -17,7 +17,14 @@
       "cacheRead": "cache hit price (Anthropic: 0.1x input, OpenAI: varies, Google: ~0.1x input)",
       "cacheWrite": "cache write price (Anthropic: 1.25x input, OpenAI: ~same as input)"
     },
-    "note": "codemie: added claude 4-7/4-8 tier estimates 2026-06-08; added kimi-for-coding alias and normalized kimi-k2-5 key 2026-06-15"
+    "note": "codemie: added claude 4-7/4-8 tier estimates 2026-06-08; added kimi-for-coding alias and normalized kimi-k2-5 key 2026-06-15; added claude-sonnet-5 pinned entry 2026-07-01 (pricing table lookup also has a generic same-tier fallback now, see pricing.ts)"
+  },
+  "claude-sonnet-5": {
+    "input": 3,
+    "output": 15,
+    "cacheRead": 0.3,
+    "cacheWrite": 3.75,
+    "cacheWrite1h": 6.0
   },
   "claude-opus-4-6": {
     "input": 5,
