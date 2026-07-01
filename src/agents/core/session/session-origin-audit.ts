@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { appendFileSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { getCodemiePath } from '../../../utils/paths.js';
@@ -32,18 +32,47 @@ export function appendTranscriptMarker(
   codemieAgent: string,
 ): void {
   if (!transcriptPath) return;
+
+  // CR-006: write a race-condition-free sidecar marker in ~/.codemie/sessions/ instead of
+  // appending to the live Claude transcript (avoids byte-level interleaving on concurrent writes).
   try {
-    const marker =
+    const sessionsDir = getCodemiePath('sessions');
+    mkdirSync(sessionsDir, { recursive: true });
+    writeFileSync(
+      join(sessionsDir, `${codemieSessionId}-codemie-marker.json`),
+      JSON.stringify({
+        transcriptPath,
+        codemieSessionId,
+        codemieAgent,
+        timestamp: new Date().toISOString(),
+      }),
+      'utf-8',
+    );
+    logger.debug(`[session-origin] Sidecar marker written for session ${codemieSessionId}`);
+  } catch (err) {
+    logger.debug(`[session-origin] Failed to write sidecar marker (non-fatal): ${err}`);
+  }
+
+  // CR-007: spec says "skip and emit debug log if transcript not yet present" (non-fatal).
+  if (!existsSync(transcriptPath)) {
+    logger.debug(`[session-origin] Transcript file not yet present, skipping transcript marker write`);
+    return;
+  }
+
+  // Append transcript marker for self-describing backward compat (legacy sessions without sidecar).
+  try {
+    appendFileSync(
+      transcriptPath,
       JSON.stringify({
         type: 'codemie_session_start',
         uuid: randomUUID(),
         codemie_session_id: codemieSessionId,
         codemie_agent: codemieAgent,
         timestamp: new Date().toISOString(),
-      }) + '\n';
-    appendFileSync(transcriptPath, marker);
+      }) + '\n',
+    );
     logger.debug(`[session-origin] Marker written to transcript: ${transcriptPath}`);
   } catch (err) {
-    logger.warn(`[session-origin] Failed to write transcript marker (non-fatal): ${err}`);
+    logger.debug(`[session-origin] Failed to write transcript marker (non-fatal): ${err}`);
   }
 }

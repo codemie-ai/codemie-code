@@ -307,7 +307,11 @@ export class AgentCLI {
 
       // Resume ownership check — after providerEnv is built so we can extend it
       if (options.resume) {
-        const resumeId = options.resume as string;
+        // Strip ANSI escape sequences and control chars before using the value in output.
+        // Claude's own --resume accepts non-UUID identifiers (slugs, ticket IDs, etc.),
+        // so we must not validate the format here.
+         
+        const resumeId = (options.resume as string).replace(/\p{Cc}/gu, '');
         const { scanSessionsForClaudeId } = await import('./session/session-ownership.js');
         const isOwned = scanSessionsForClaudeId(resumeId);
 
@@ -317,11 +321,13 @@ export class AgentCLI {
 
           if (!confirmed) {
             appendAuditEvent('resume_blocked', { claudeSessionId: resumeId });
-            console.log(chalk.white(`\nUse 'claude --resume ${resumeId}' to resume without CodeMie tracking.\n`));
             process.exit(1);
           }
 
+          // Inject into subprocess env (for lifecycle hook subprocesses that inherit it)
+          // and into the current process env (for same-process consumers such as sso syncProcessor).
           Object.assign(providerEnv, buildResumeEnvOverride(true));
+          process.env.CODEMIE_CONV_SYNC_DISABLED = '1';
           appendAuditEvent('resume_external_confirmed', { claudeSessionId: resumeId });
           logger.info(`[AgentCLI] External resume confirmed for session ${resumeId}; conversation sync suppressed`);
         }
@@ -338,6 +344,8 @@ export class AgentCLI {
 
       // Run the agent (welcome message will be shown inside)
       await this.adapter.run(agentArgs, providerEnv);
+      // Clean up the process-level flag set for same-process conversation sync consumers.
+      delete process.env.CODEMIE_CONV_SYNC_DISABLED;
     } catch (error) {
       // Show user-friendly error message in console first
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -572,7 +580,8 @@ export class AgentCLI {
     if (shouldBlockNonInteractiveResume()) {
       console.error(
         chalk.red(`\n✗ Session ${sessionId} was not created through CodeMie.\n`) +
-        chalk.white(`Non-interactive mode: resume blocked. Use 'claude --resume ${sessionId}'.\n`)
+        chalk.white(`Non-interactive mode: resume blocked.\n`) +
+        chalk.white(`Use 'claude --resume ${sessionId}' to resume without CodeMie tracking.\n`)
       );
       return false;
     }
@@ -586,12 +595,14 @@ export class AgentCLI {
     console.log(chalk.white('  • Conversation transcript will NOT be synced to your CodeMie account history.\n'));
     console.log(chalk.dim(`To resume without any CodeMie tracking, use: claude --resume ${sessionId}\n`));
 
-    return new Promise<boolean>((resolve) => {
-      rl.question(chalk.yellow('Continue with CodeMie? (y/N): '), (answer) => {
-        rl.close();
-        resolve(answer.trim().toLowerCase() === 'y');
+    try {
+      const answer = await new Promise<string>((resolve) => {
+        rl.question(chalk.yellow('Continue with CodeMie? (y/N): '), resolve);
       });
-    });
+      return answer.trim().toLowerCase() === 'y';
+    } finally {
+      rl.close();
+    }
   }
 
   /**
