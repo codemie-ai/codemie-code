@@ -1132,7 +1132,7 @@
 
     // Timeline — Gantt of all top-level agent, skill, and command dispatches.
     var hasDispatches = (s.dispatches || []).length > 0;
-    var hasCostData = (s.dispatches || []).some(function (d) { return d.kind === 'agent' && d.costUSD != null; });
+    var hasCostData = (s.dispatches || []).some(function (d) { return d.costUSD != null; });
     var tlSubtitle = hasDispatches ? (hasCostData ? 'click a step for cost, token & timing details · positioned across the session' : 'click a step for timing details · positioned across the session') : '';
     var tlCard = card('Timeline', tlSubtitle);
     if (hasDispatches) {
