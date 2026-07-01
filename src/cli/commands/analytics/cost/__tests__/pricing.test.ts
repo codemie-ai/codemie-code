@@ -63,4 +63,33 @@ describe('lookupPrice', () => {
     expect(p).not.toBeNull();
     expect(p!.cacheWrite1h).toBeUndefined();
   });
+
+  it('returns the pinned sonnet-tier price for claude-sonnet-5 (a version bump ahead of the -4-* entries)', () => {
+    const p = lookupPrice('claude-sonnet-5');
+    expect(p).not.toBeNull();
+    expect(p!.input).toBe(3);
+    expect(p!.output).toBe(15);
+  });
+
+  it('falls back to the latest known price in the same Claude tier for a model newer than any table entry', () => {
+    // No claude-opus-9 entry exists (or ever will, by construction) — this proves the tier
+    // fallback is family-prefix based, not a one-off pinned key for sonnet-5.
+    const p = lookupPrice('claude-opus-9');
+    expect(p).not.toBeNull();
+    expect(p!.input).toBe(5);
+    expect(p!.output).toBe(25);
+  });
+
+  it('tier fallback ignores dated/pinned snapshot keys when picking the "latest" version', () => {
+    // claude-haiku-4-5-20251001 (a dated snapshot) must not be mistaken for a newer version
+    // than claude-haiku-4-6 just because "20251001" numerically exceeds "6".
+    const p = lookupPrice('claude-haiku-9');
+    expect(p).not.toBeNull();
+    expect(p!.input).toBe(1);
+    expect(p!.output).toBe(5);
+  });
+
+  it('still returns null for a non-Claude unknown model (no tier fallback applies)', () => {
+    expect(lookupPrice('totally-made-up-model')).toBeNull();
+  });
 });

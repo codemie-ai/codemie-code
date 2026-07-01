@@ -193,6 +193,38 @@ async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T)
 }
 
 /**
+ * Attribute cost to a `skill` dispatch from the session's OWN already-priced usage records
+ * whose timestamp falls inside the skill's [start, start + durationMs] window. Skills run
+ * inline in the parent transcript (no separate subagent log to pull tokens from), so this is a
+ * re-attribution of tokens already counted in the session total — same "ALLOCATION, don't add
+ * to `seen`" semantics as the agent-dispatch path below. A dispatch with durationMs === 0 (no
+ * matching tool_result found — see dispatch-extractor.ts) has no window to attribute from and is
+ * left as "unknown" (absent costUSD/tokens), not zero.
+ */
+function enrichSkillDispatchCost(dispatch: DispatchEventRaw, sessionRecords: UsageRecord[]): void {
+  if (!dispatch.durationMs) return;
+  const windowEnd = dispatch.start + dispatch.durationMs;
+  const matched = sessionRecords.filter((r) => r.ts != null && r.ts >= dispatch.start && r.ts <= windowEnd);
+  if (!matched.length) return;
+
+  const usageByModel = sumUsageRecords(matched);
+  let totalCost = 0;
+  let totalTokens = emptyUsage();
+  let priced = false;
+  for (const [rawModel, usage] of usageByModel) {
+    const model = normalizeModelName(rawModel);
+    const price = lookupPrice(model);
+    if (price) {
+      totalCost += costBreakdown(usage, price).total;
+      priced = true;
+    }
+    totalTokens = addUsage(totalTokens, usage);
+  }
+  if (priced) dispatch.costUSD = Math.round(totalCost * 1e8) / 1e8;
+  dispatch.tokens = totalTokens;
+}
+
+/**
  * Second-pass enrichment: for each agent dispatch that has a matching subagent entry
  * (linked by toolUseId from the .meta.json), extract usage from the subagent's messages,
  * price it, and attach costUSD + tokens + tools to the dispatch event in place.
@@ -200,18 +232,24 @@ async function mapWithConcurrency<T, R>(items: T[], limit: number, fn: (item: T)
  * The per-dispatch cost is an ALLOCATION of already-counted session tokens (subagents are
  * included in the session total via allMessageArrays). Do NOT add to `seen` here.
  */
-function enrichDispatchCosts(dispatches: DispatchEventRaw[], parsed: ParsedSession, agentName: string): void {
-  if (!parsed.subagents?.length) return;
-
+function enrichDispatchCosts(
+  dispatches: DispatchEventRaw[],
+  parsed: ParsedSession,
+  agentName: string,
+  sessionRecords: UsageRecord[]
+): void {
   const byToolUseId = new Map<string, { messages: unknown[] }>();
-  for (const sub of parsed.subagents) {
+  for (const sub of parsed.subagents ?? []) {
     if (sub.toolUseId && Array.isArray(sub.messages)) {
       byToolUseId.set(sub.toolUseId, sub);
     }
   }
-  if (!byToolUseId.size) return;
 
   for (const dispatch of dispatches) {
+    if (dispatch.kind === 'skill') {
+      enrichSkillDispatchCost(dispatch, sessionRecords);
+      continue;
+    }
     if (dispatch.kind !== 'agent' || !dispatch._toolUseId) continue;
     const sub = byToolUseId.get(dispatch._toolUseId);
     if (!sub) continue;
@@ -288,13 +326,15 @@ export async function enrichCosts(
   for (const entry of ordered) {
     let usageByModel: Map<string, TokenUsage>;
     let series: CostSeriesPoint[] = [];
+    let records: UsageRecord[] = [];
     try {
       // Gather ordered, deduped records ONCE per session (consumes keys in `seen`). When there
       // are records (Claude per-message path) sum them for the map + build the series from the
       // SAME records — so the series endpoint equals the session cost. The summed-gatherer
       // fallback runs only when there are no records (SDK rollup / gemini / no-reader), paths
-      // that never touch `seen`, so there is no double-dedup.
-      const records = entry.parsed ? gatherDedupedUsageRecords(entry.agentName, entry.parsed, seen) : [];
+      // that never touch `seen`, so there is no double-dedup. The same `records` are reused
+      // below to attribute cost to `skill` dispatches within their time window.
+      records = entry.parsed ? gatherDedupedUsageRecords(entry.agentName, entry.parsed, seen) : [];
       if (records.length) {
         usageByModel = sumUsageRecords(records);
         series = buildCostSeries(records);
@@ -315,6 +355,7 @@ export async function enrichCosts(
       logger.debug(`[cost] usage extraction failed for ${entry.sessionId}:`, e);
       usageByModel = new Map<string, TokenUsage>();
       series = [];
+      records = [];
     }
     const { cost, unpriced: u } = priceUsage(entry.sessionId, entry.hadLog, usageByModel);
     if (series.length) {
@@ -324,7 +365,7 @@ export async function enrichCosts(
       try {
         const dispatches = extractDispatchEvents(entry.parsed, entry.agentName);
         if (dispatches.length) {
-          enrichDispatchCosts(dispatches, entry.parsed, entry.agentName);
+          enrichDispatchCosts(dispatches, entry.parsed, entry.agentName, records);
           // Strip internal _toolUseId before storing in the public cost index
           cost.dispatches = dispatches.map(({ _toolUseId: _id, ...d }) => d);
         }

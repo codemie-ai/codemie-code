@@ -210,7 +210,7 @@ function downsampleSeries(pts: Array<{ t: number; cost: number; tokens: number }
 export function buildDispatches(sessionEvents: OtelEvent[]): DispatchEvent[] {
   const agentReqs = sessionEvents
     .filter((e) => isApiRequest(e) && String(attr(e, 'query_source') || '').startsWith('agent:'))
-    .map((e) => ({ ms: Date.parse(e.ts), e, consumed: false }))
+    .map((e) => ({ ms: Date.parse(e.ts), e }))
     .filter((x) => Number.isFinite(x.ms));
 
   const skillReqs = sessionEvents
@@ -223,68 +223,95 @@ export function buildDispatches(sessionEvents: OtelEvent[]): DispatchEvent[] {
     .map((e) => ({ name: String(attr(e, 'skill.name') || '(skill)'), ms: Date.parse(e.ts) }))
     .filter((x) => Number.isFinite(x.ms));
 
-  const out: DispatchEvent[] = [];
+  // Pass 1: collect every agent dispatch window (subagent_completed events) before attributing
+  // any request — attribution needs to compare ALL windows for a given request, not just the
+  // one whose subagent_completed event happens to appear first.
+  interface AgentWindow {
+    e: OtelEvent;
+    start: number;
+    end: number;
+    durationMs: number;
+  }
+  const agentWindows: AgentWindow[] = [];
   for (const e of sessionEvents) {
-    if (e.name === 'subagent_completed') {
-      const end = Date.parse(e.ts);
-      if (!Number.isFinite(end)) continue;
-      const durationMs = num(attr(e, 'duration_ms'));
-      const start = durationMs > 0 ? end - durationMs : end;
+    if (e.name !== 'subagent_completed') continue;
+    const end = Date.parse(e.ts);
+    if (!Number.isFinite(end)) continue;
+    const durationMs = num(attr(e, 'duration_ms'));
+    const start = durationMs > 0 ? end - durationMs : end;
+    agentWindows.push({ e, start, end, durationMs });
+  }
+
+  // Pass 2: attribute each agent:* api_request to the NARROWEST containing window. OTEL carries
+  // no per-invocation id linking a request to a specific subagent run, so when parallel
+  // subagents' [start, end] windows overlap, the tightest containing window is the best
+  // available signal (a wider, unrelated window should not out-compete a precise match). Each
+  // request contributes to at most one window.
+  const claimed = new Map<AgentWindow, { tokens: TokenUsage; costUSD: number; matched: number }>();
+  for (const ar of agentReqs) {
+    let best: AgentWindow | null = null;
+    for (const w of agentWindows) {
+      if (ar.ms < w.start || ar.ms > w.end) continue;
+      if (!best || w.end - w.start < best.end - best.start) best = w;
+    }
+    if (!best) continue;
+    let claim = claimed.get(best);
+    if (!claim) {
+      claim = { tokens: emptyTokens(), costUSD: 0, matched: 0 };
+      claimed.set(best, claim);
+    }
+    addTokens(claim.tokens, ar.e);
+    claim.costUSD += num(attr(ar.e, 'cost_usd'));
+    claim.matched += 1;
+  }
+
+  const out: DispatchEvent[] = [];
+  for (const w of agentWindows) {
+    const claim = claimed.get(w);
+    const d: DispatchEvent = { kind: 'agent', name: String(attr(w.e, 'agent_type') || '(agent)'), start: w.start, durationMs: w.durationMs };
+    if (claim && claim.matched > 0) {
+      d.tokens = claim.tokens;
+      d.costUSD = claim.costUSD;
+    } else {
+      const tt = num(attr(w.e, 'total_tokens'));
+      if (tt > 0) {
+        const t = emptyTokens();
+        t.total = tt;
+        d.tokens = t;
+      }
+    }
+    out.push(d);
+  }
+
+  // Skill windows are non-overlapping by construction (a skill's window ends at the next
+  // activation of the SAME skill), so the original name+window matching is unaffected by the
+  // parallel-agent fix above and is kept as-is.
+  for (const e of sessionEvents) {
+    if (e.name !== 'skill_activated') continue;
+    const start = Date.parse(e.ts);
+    if (!Number.isFinite(start)) continue;
+    const name = String(attr(e, 'skill.name') || '(skill)');
+    const nextSame = skillStarts
+      .filter((s) => s.name === name && s.ms > start)
+      .reduce((min, s) => Math.min(min, s.ms), Infinity);
+    const matched = skillReqs.filter((r) => r.name === name && r.ms >= start && r.ms < nextSame);
+    const d: DispatchEvent = { kind: 'skill', name, start, durationMs: 0 };
+    if (matched.length) {
       const tokens = emptyTokens();
       let costUSD = 0;
-      let matched = 0;
-      for (const ar of agentReqs) {
-        // Attribute each subagent api_request to at most ONE dispatch. Parallel subagents complete
-        // with overlapping [end − duration, end] windows; without consuming a matched request, the
-        // same agent:* api_request would be counted by every overlapping window — double-counting a
-        // dispatch's cost/tokens. Earlier-processed (≈ earlier-completing) dispatches claim first.
-        if (ar.consumed) continue;
-        if (ar.ms >= start && ar.ms <= end) {
-          addTokens(tokens, ar.e);
-          costUSD += num(attr(ar.e, 'cost_usd'));
-          ar.consumed = true;
-          matched += 1;
-        }
+      let lastEnd = start;
+      for (const { ms, e: req } of matched) {
+        addTokens(tokens, req);
+        costUSD += num(attr(req, 'cost_usd'));
+        lastEnd = Math.max(lastEnd, ms + num(attr(req, 'duration_ms')));
       }
-      const d: DispatchEvent = { kind: 'agent', name: String(attr(e, 'agent_type') || '(agent)'), start, durationMs };
-      if (matched > 0) {
-        d.tokens = tokens;
-        d.costUSD = costUSD;
-      } else {
-        const tt = num(attr(e, 'total_tokens'));
-        if (tt > 0) {
-          const t = emptyTokens();
-          t.total = tt;
-          d.tokens = t;
-        }
-      }
-      out.push(d);
-    } else if (e.name === 'skill_activated') {
-      const start = Date.parse(e.ts);
-      if (!Number.isFinite(start)) continue;
-      const name = String(attr(e, 'skill.name') || '(skill)');
-      // Window ends at the next activation of the SAME skill (else open-ended).
-      const nextSame = skillStarts
-        .filter((s) => s.name === name && s.ms > start)
-        .reduce((min, s) => Math.min(min, s.ms), Infinity);
-      const matched = skillReqs.filter((r) => r.name === name && r.ms >= start && r.ms < nextSame);
-      const d: DispatchEvent = { kind: 'skill', name, start, durationMs: 0 };
-      if (matched.length) {
-        const tokens = emptyTokens();
-        let costUSD = 0;
-        let lastEnd = start;
-        for (const { ms, e: req } of matched) {
-          addTokens(tokens, req);
-          costUSD += num(attr(req, 'cost_usd'));
-          lastEnd = Math.max(lastEnd, ms + num(attr(req, 'duration_ms')));
-        }
-        d.durationMs = Math.max(0, lastEnd - start);
-        d.tokens = tokens;
-        d.costUSD = costUSD;
-      }
-      out.push(d);
+      d.durationMs = Math.max(0, lastEnd - start);
+      d.tokens = tokens;
+      d.costUSD = costUSD;
     }
+    out.push(d);
   }
+
   out.sort((a, b) => a.start - b.start);
   return out.slice(0, MAX_DISPATCHES);
 }
