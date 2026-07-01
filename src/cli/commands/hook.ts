@@ -703,6 +703,17 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
         ...(event.transcript_path && { agentSessionFile: event.transcript_path }),
       };
       await sessionStore.saveSession(existing);
+      const { appendTranscriptMarker: writeMarker, appendAuditEvent: writeAudit } = await import(
+        '../../agents/core/session/session-origin-audit.js'
+      );
+      if (event.transcript_path) {
+        writeMarker(event.transcript_path, sessionId, agentName);
+        writeAudit('transcript_marker_written', {
+          codemieSessionId: sessionId,
+          claudeSessionId: event.session_id,
+          transcriptPath: event.transcript_path,
+        });
+      }
       logger.info(
         `[hook:SessionStart] Session re-entered (source=${event.source}): preserved ` +
         `startTime=${existing.startTime} activeDurationMs=${existing.activeDurationMs}`
@@ -732,6 +743,22 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
 
     // Save session
     await sessionStore.saveSession(session);
+
+    const { appendTranscriptMarker, appendAuditEvent } = await import(
+      '../../agents/core/session/session-origin-audit.js'
+    );
+    if (session.correlation.agentSessionFile) {
+      appendTranscriptMarker(
+        session.correlation.agentSessionFile,
+        sessionId,
+        agentName,
+      );
+      appendAuditEvent('transcript_marker_written', {
+        codemieSessionId: sessionId,
+        claudeSessionId: event.session_id,
+        transcriptPath: session.correlation.agentSessionFile,
+      });
+    }
 
     logger.info(
       `[hook:SessionStart] Session created: id=${sessionId} agent=${agentName} ` +
