@@ -28,8 +28,6 @@ import {
   spawnPty,
   jwtCleanEnv,
   ssoCleanEnv,
-  setupSsoAutotestProfile,
-  teardownSsoAutotestProfile,
   getLatestMetricsRecord,
   getTestEnvFlagOrDefault,
 } from '../helpers/index.js';
@@ -77,21 +75,17 @@ function writeProfileWithModel(codemieHome: string, profileName: string, model: 
 
 describe.runIf(process.env.SSO_AVAILABLE !== 'false')('Model tests', () => {
   let jwtToken: string;
-  let originalActiveProfile: string | undefined;
 
+  // SSO mode: the sso-autotest profile is configured once by the global setup
+  // (agent-build-setup.ts) before any test files start. No per-file setup is
+  // needed here — calling setupSsoAutotestProfile() again would write to
+  // ~/.codemie/codemie-cli.config.json concurrently with other test workers
+  // that use ~/.codemie directly, creating a race condition.
   beforeAll(async () => {
     if (!CI_IS_LOCAL_RUN) {
       jwtToken = await fetchJwtToken();
-    } else {
-      originalActiveProfile = setupSsoAutotestProfile();
     }
   }, 30_000);
-
-  afterAll(() => {
-    if (CI_IS_LOCAL_RUN) {
-      teardownSsoAutotestProfile(originalActiveProfile);
-    }
-  });
 
   // ── TC-020: Profile model selection ───────────────────────────────────────────
   // Runs two --task sessions back-to-back, each with a different model profile,
