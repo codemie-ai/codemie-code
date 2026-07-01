@@ -569,7 +569,7 @@ export class AgentCLI {
   }
 
   private async promptExternalResume(sessionId: string): Promise<boolean> {
-    if (!process.stdin.isTTY || process.env.CODEMIE_NO_PROMPTS === '1') {
+    if (shouldBlockNonInteractiveResume()) {
       console.error(
         chalk.red(`\n✗ Session ${sessionId} was not created through CodeMie.\n`) +
         chalk.white(`Non-interactive mode: resume blocked. Use 'claude --resume ${sessionId}'.\n`)
@@ -604,4 +604,8 @@ export class AgentCLI {
 
 export function buildResumeEnvOverride(isExternal: boolean): Record<string, string> {
   return isExternal ? { CODEMIE_CONV_SYNC_DISABLED: '1' } : {};
+}
+
+export function shouldBlockNonInteractiveResume(): boolean {
+  return !process.stdin.isTTY || process.env.CODEMIE_NO_PROMPTS === '1';
 }

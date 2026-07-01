@@ -45,4 +45,9 @@ describe('scanSessionsForClaudeId', () => {
     writeFileSync(join(TMP, 'session1_metrics.json'), JSON.stringify({ correlation: { agentSessionId: 'claude-abc-123' } }));
     expect(scanSessionsForClaudeId('claude-abc-123', TMP)).toBe(false);
   });
+
+  it('does not skip a session file whose name contains _metrics but does not end with _metrics.json', () => {
+    writeFileSync(join(TMP, 'my_metrics_session.json'), JSON.stringify({ correlation: { agentSessionId: 'claude-abc-123' } }));
+    expect(scanSessionsForClaudeId('claude-abc-123', TMP)).toBe(true);
+  });
 });

@@ -11,7 +11,7 @@ export function scanSessionsForClaudeId(
   let files: string[];
   try {
     files = readdirSync(dir).filter(
-      (f) => f.endsWith('.json') && !f.includes('_metrics'),
+      (f) => f.endsWith('.json') && !f.endsWith('_metrics.json'),
     );
   } catch {
     return false;
