@@ -812,7 +812,7 @@
           var promptCell = '<span title="' + esc(s.title || '') + '" style="max-width:280px;display:inline-block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;color:var(--color-text-muted);font-size:12px">' + esc(truncStr(s.title || '—', 80)) + '</span>';
           return [new Date(s.startTime).toISOString().slice(0, 16).replace('T', ' '),
             promptCell,
-            '<span class="tag tag-sm" style="text-transform:capitalize">' + esc(s.agentName) + '</span>',
+            '<span class="tag tag-sm" style="text-transform:capitalize">' + esc(s.agentName) + '</span>' + (s.provider === 'native-external' ? ' <span title="Not managed by CodeMie" style="background:#92400e;color:#fef3c7;font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;white-space:nowrap;vertical-align:middle">⚠ ext</span>' : ''),
             '<span title="' + esc(s.project) + '">' + esc(shortPath(s.project)) + '</span>', branchCell,
             fmtNum(s.turns), fmtNum(s.netLines), fmtTokens(tkIn(s)), fmtTokens(tkOut(s)), fmtTokens(tkCached(s)), fmtUSD(s.costUSD)];
         }),
@@ -1048,7 +1048,11 @@
     }
     htxt.appendChild(el('div', 'modal-title', esc(truncStr(firstWords(sessTitle(s), 10), 120))));
     var metaBits = [s.agentName, (s.models && s.models[0]) || null, shortPath(s.project), s.branch].filter(Boolean);
-    htxt.appendChild(el('div', 'modal-meta', metaBits.map(function (b) { return esc(b); }).join('  ·  ')));
+    var metaHtml = metaBits.map(function (b) { return esc(b); }).join('  ·  ');
+    if (s.provider === 'native-external') {
+      metaHtml += '  <span style="background:#92400e;color:#fef3c7;font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px;letter-spacing:.04em;text-transform:uppercase;vertical-align:middle;white-space:nowrap">⚠ external — not CodeMie-managed</span>';
+    }
+    htxt.appendChild(el('div', 'modal-meta', metaHtml));
     head.appendChild(htxt);
     var headBtns = el('div'); headBtns.style.cssText = 'display:flex;gap:6px;align-items:center;flex-shrink:0;';
     var exportBtn = el('button', 'modal-export', '↓ JSON');
