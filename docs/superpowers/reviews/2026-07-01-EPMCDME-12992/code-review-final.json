@@ -1,0 +1,139 @@
+{
+  "gate_id": "code-review.final",
+  "run_id": "docs/superpowers/reviews/2026-07-01-EPMCDME-12992",
+  "decision": "request-changes",
+  "confidence": "medium",
+  "rationale": "7 findings (1 critical, 6 major). Critical: CODEMIE_CONV_SYNC_DISABLED guard missing in gemini, codex, and opencode conversation processors — users are explicitly told transcript will not sync but it still does for non-Claude agent sessions, directly violating the stated consent contract. Major issues: hasOwnershipMarker reads entire transcript file into memory (OOM risk); dual-signal index-first ownership check absent leaving latent false-external labeling for re-entered sessions; resumeId passed to chalk/console/logger without UUID validation enabling ANSI injection that can hide the security warning; readline not closed before process.exit(1) leaving terminal in broken state; appendFileSync races with Claude's live transcript writes risking JSONL corruption; appendTranscriptMarker logs at warn instead of debug for missing transcript file (spec deviation + log noise). Standards review: commit format pass, code quality pass, security partial (CR-004). Acceptance: AC1/AC3/AC4/AC6/AC7/AC8 pass; AC2/AC5 partial (dual-signal architecture deviation). 0 deferred findings (excluded from output); 3 dismissed: TOCTOU false-negative race (very low probability, acceptable), CODEMIE_CONV_SYNC_DISABLED process-scope concern (env var is set on subprocess env only, not parent), non-interactive double-output UX inconsistency (low severity, no security impact).",
+  "risk_flags": ["security"],
+  "findings": [
+    {
+      "id": "CR-001",
+      "title": "CODEMIE_CONV_SYNC_DISABLED guard missing in gemini, codex, and opencode conversation processors",
+      "file": "src/agents/plugins/gemini/session/processors/gemini.conversations-processor.ts:34",
+      "severity": "critical",
+      "triage": "patch",
+      "problem": "The CODEMIE_CONV_SYNC_DISABLED=1 guard is present only in claude.conversations-processor.ts (shouldProcess) and sso/syncProcessor.ts (processConversations). The equivalent processors for gemini (gemini.conversations-processor.ts:34), codex (codex.conversations-processor.ts:79), and opencode (opencode.conversations-processor.ts:54) do not check this env var and will return shouldProcess()=true and sync conversation transcripts for any session type when CODEMIE_CONV_SYNC_DISABLED=1 is set.",
+      "impact": "Critical data leakage and consent violation: when a user confirms resuming an external (non-CodeMie-owned) session via codemie-gemini, codemie-codex, or codemie-opencode, they are explicitly told 'Conversation transcript will NOT be synced to your CodeMie account history.' That promise is false — the conversation data is synced. The security fix is complete only for Claude sessions; the other three agent types are unprotected.",
+      "recommendation": "Add the same guard at the top of shouldProcess() in every agent-type conversation processor: `if (process.env.CODEMIE_CONV_SYNC_DISABLED === '1') return false;`. Files to update: src/agents/plugins/gemini/session/processors/gemini.conversations-processor.ts, src/agents/plugins/codex/session/processors/codex.conversations-processor.ts, src/agents/plugins/opencode/session/processors/opencode.conversations-processor.ts. Search for all SessionProcessor implementations that handle conversation data to ensure complete coverage."
+    },
+    {
+      "id": "CR-002",
+      "title": "hasOwnershipMarker reads entire transcript file into memory before slicing to 10 lines",
+      "file": "src/cli/commands/analytics/native-loader.ts:127",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "readFileSync(filePath, 'utf-8') in hasOwnershipMarker reads the complete file before calling .split('\\n').slice(0, 10). Long Claude sessions produce transcript files of tens of MB. When codemie analytics runs with a large session history (default window is 3650 days), every discovered native transcript is fully loaded into memory before the first 10 lines are examined.",
+      "impact": "The codemie analytics command can exhaust available memory or become extremely slow when there are many large transcript files, causing OOM crashes or multi-second latency per session. A user with a year of sessions could trigger this on every analytics run.",
+      "recommendation": "Read only the first ~4 KB by streaming: open the file with fs.openSync and read(fd, buf, 0, 4096, 0), then split the buffer on newlines and scan those. Alternatively use createReadStream with highWaterMark: 4096 and destroy the stream after 10 newlines are seen. This caps per-file memory to 4 KB regardless of file size."
+    },
+    {
+      "id": "CR-003",
+      "title": "Dual-signal ownership check not implemented — index-first path missing, latent false-external labeling for re-entered sessions",
+      "file": "src/cli/commands/analytics/native-loader.ts:461",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "The approved spec defines a two-stage ownership resolution: (1) build a CodeMieSessionIndex from ~/.codemie/sessions/*.json keyed by agentSessionFile real-path and check it first; (2) fall back to transcript-line scan only when not in the index. The implementation uses only the transcript-line scan (hasOwnershipMarker). For re-entered CodeMie sessions, the ownership marker is appended beyond line 10 of an existing transcript (prior content precedes the re-entry marker), so they can be falsely labeled native-external if the index-based dedup ever misses them. Currently the dedup step (readTrackedLogPaths excludes indexed sessions from discovery) provides implicit coverage, but this is fragile: symlink normalization differences or any future code path change that allows an indexed session to reach hasOwnershipMarker() will produce a false positive label.",
+      "impact": "Latent correctness defect: CodeMie-owned re-entered sessions could be labeled native-external in analytics, falsely presenting a data-leakage warning to users. Also a direct deviation from the approved dual-signal spec design.",
+      "recommendation": "Add an index-first check before calling hasOwnershipMarker(): build a Set<string> of real-path'd agentSessionFile values from ~/.codemie/sessions/*.json, and if descriptor.filePath (after realPath normalization) is in that set, assign provider='native' directly and skip the transcript scan. This matches spec Section 2's stated 'In index → origin: codemie' branch and removes the latent false-positive path."
+    },
+    {
+      "id": "CR-004",
+      "title": "resumeId used in terminal output without UUID validation — ANSI escape injection can hide security warning",
+      "file": "src/agents/core/AgentCLI.ts:311",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "The resumeId value from options.resume is passed directly to chalk.yellow(), chalk.red(), chalk.white(), chalk.dim(), console.log(), and logger.info() without validating that it matches UUID format. A crafted --resume argument containing ANSI escape sequences (e.g., \\x1b[2J to clear the screen or OSC sequences to rewrite the terminal title line) is rendered verbatim by chalk, potentially erasing or replacing the warning message that informs the user about tracking implications.",
+      "impact": "An attacker controlling the --resume argument (via malicious shell script, CI injection, or a crafted README one-liner) can suppress or distort the external-resume warning that is the primary user-consent mechanism of this security feature, defeating its purpose.",
+      "recommendation": "Validate resumeId against expected UUID format before any display or audit use: `const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i; if (!UUID_RE.test(resumeId)) { console.error('Invalid session ID: expected UUID format'); process.exit(1); }` Add this check immediately after `const resumeId = options.resume as string;`."
+    },
+    {
+      "id": "CR-005",
+      "title": "readline interface not closed before process.exit(1) — terminal left in broken state; non-interactive path emits duplicate messages",
+      "file": "src/agents/core/AgentCLI.ts:319",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "Two issues in promptExternalResume: (1) If an exception occurs during the readline promise setup (e.g., stdin closed unexpectedly), the rl interface is created but never closed, leaving the terminal's raw-mode flag set. (2) In non-interactive mode, promptExternalResume() calls console.error() with one message and returns false; then the caller's !confirmed branch also calls console.log() with a different message (line 320). The user sees two separate messages to two different streams — inconsistent with interactive mode which shows only the console.log message.",
+      "impact": "Terminal can be left in a broken state requiring `reset` after an unexpected error. Non-interactive mode (CI/scripted) emits two conflicting messages to stdout and stderr, breaking log parsing and potentially confusing users.",
+      "recommendation": "Wrap the readline interaction in try/finally to ensure rl.close() always runs. For non-interactive output consistency: consolidate both output paths into promptExternalResume() — the non-interactive branch should emit the 'Use claude --resume' suggestion and the caller's console.log should be removed, so both paths produce identical user-facing output."
+    },
+    {
+      "id": "CR-006",
+      "title": "appendTranscriptMarker uses appendFileSync on actively-written Claude transcript — concurrent write risk",
+      "file": "src/agents/core/session/session-origin-audit.ts:43",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "appendTranscriptMarker uses appendFileSync to write to the Claude Code JSONL transcript file, which is being actively written by the Claude Code process during the session. O_APPEND writes from two processes are atomically safe only up to PIPE_BUF (~4 KB) on POSIX; no advisory file lock is held. If Claude is mid-write on a large streaming event when the SessionStart hook fires, byte-level interleaving can produce a malformed JSONL line immediately after the write boundary.",
+      "impact": "Malformed JSONL lines in the transcript break the hasOwnershipMarker scan (the JSON.parse call throws, the marker is missed, and the session is labeled native-external) and can break downstream analytics session parsing, causing data loss or incorrect session reconstruction.",
+      "recommendation": "Use a separate sidecar file for the ownership marker instead of appending to the live Claude transcript — e.g., write the marker to `{codemieSessionId}-codemie-marker.json` in ~/.codemie/sessions/ alongside the existing session record. This completely avoids write contention. The hasOwnershipMarker function in native-loader should then check for this sidecar by building the correlation index, aligning with the spec's intended dual-signal approach (CR-003)."
+    },
+    {
+      "id": "CR-007",
+      "title": "appendTranscriptMarker logs at warn instead of debug for missing transcript file — spec deviation and log noise",
+      "file": "src/agents/core/session/session-origin-audit.ts:47",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "The spec states: 'If the transcript file does not exist at SessionStart time, the write is skipped and a debug log is emitted (non-fatal).' The implementation catches ENOENT from appendFileSync and logs at warn level (logger.warn). There is no pre-flight existsSync() check — the write is always attempted and the warn fires whenever Claude hasn't yet created the transcript file, which is expected for new sessions where Claude writes the file after the SessionStart hook fires.",
+      "impact": "Operators see warn-level log noise on every new CodeMie session startup. Warn-level messages are treated as actionable alerts in most log aggregation systems, creating false operational alerts that obscure real warnings.",
+      "recommendation": "Add `if (!existsSync(transcriptPath)) { logger.debug('[session-origin] Transcript file not yet present, skipping marker write'); return; }` before the appendFileSync call. This matches the spec's stated behavior and reduces log noise to the debug level where it belongs."
+    }
+  ],
+  "business_review": [
+    {
+      "criterion": "AC1 — No external session ingestion: sync suppressed on confirmed external resume",
+      "status": "pass",
+      "notes": "CODEMIE_CONV_SYNC_DISABLED=1 injected via buildResumeEnvOverride(true) into subprocess env. claude.conversations-processor.ts shouldProcess() and sso/syncProcessor.ts processConversations() both guard it. Metrics/session sync unaffected by design."
+    },
+    {
+      "criterion": "AC2 — Analytics shows only CodeMie sessions: external labeled, not hidden",
+      "status": "partial",
+      "notes": "provider='native-external' label and chalk.yellow formatter rendering correct. However the spec's dual-signal index-first architecture is absent — only transcript scan used for origin classification (see CR-003)."
+    },
+    {
+      "criterion": "AC3 — Resume validates origin: ownership check + warn + confirm flow",
+      "status": "pass",
+      "notes": "Full flow in AgentCLI.handleRun(): scanSessionsForClaudeId() check → promptExternalResume() warning + y/N prompt → audit events on block or confirm. Warning text matches spec exactly. Non-interactive guard (shouldBlockNonInteractiveResume) correctly blocks on !isTTY || CODEMIE_NO_PROMPTS=1."
+    },
+    {
+      "criterion": "AC4 — Non-CodeMie sessions blocked from sync: CODEMIE_CONV_SYNC_DISABLED + processor guard",
+      "status": "partial",
+      "notes": "Guard present in claude processor and SSO syncProcessor only. Gemini, codex, opencode processors missing the guard (CR-001) — conversation transcripts still sync for those agent types on confirmed external resume."
+    },
+    {
+      "criterion": "AC5 — .claude/projects parsing restricted: index + marker dual-signal filter",
+      "status": "partial",
+      "notes": "Transcript marker scan (first 10 lines) implemented and correct for new sessions. CodeMieSessionIndex-first check from spec Section 2 not implemented as a distinct origin-classification step (see CR-003). Dedup provides implicit coverage currently."
+    },
+    {
+      "criterion": "AC6 — Audit logging: append-only log with all events",
+      "status": "pass",
+      "notes": "All three event types present (transcript_marker_written, resume_blocked, resume_external_confirmed). Non-fatal try/catch. Uses getCodemiePath('logs') for default path. Both SessionStart paths (new + re-entry) emit the marker and audit event."
+    },
+    {
+      "criterion": "AC7 — Regression tests: coverage for all new behavior",
+      "status": "pass",
+      "notes": "4 new test files: session-ownership.test.ts (7 cases), session-origin-audit.test.ts (5 cases), AgentCLI-resume.test.ts (4 cases), syncProcessor-guard.test.ts (1 case). native-loader.test.ts extended with external labeling coverage. Unit coverage of all new components is solid."
+    },
+    {
+      "criterion": "AC8 — Security: no data leakage on confirmed external resume (for Claude sessions)",
+      "status": "pass",
+      "notes": "For Claude sessions specifically: consent flow explicit, tracking consequences disclosed before confirmation, conv sync suppressed, metrics/proxy tracking by design. No credentials logged. Note: AC4 partial — non-Claude session types still leak (CR-001)."
+    }
+  ],
+  "standards_review": [
+    {
+      "standard": "commit-format",
+      "status": "pass",
+      "notes": "All 8 commits follow Conventional Commits type(scope): description. Scopes (agents, cli, analytics, providers) match the project's allowed scope list. fix() used correctly for the post-review fixes commit."
+    },
+    {
+      "standard": "code-quality",
+      "status": "pass",
+      "notes": "ES modules with .js imports throughout. async/await used. Explicit return types on all exports. No `any` in production code. `as never` in tests is standard Vitest type-narrowing pattern. getCodemiePath() used for all ~/.codemie paths. Dynamic imports (import('./session/...')) follow the project async-import pattern."
+    },
+    {
+      "standard": "security",
+      "status": "partial",
+      "notes": "ANSI injection via unvalidated resumeId raised as CR-004. No secrets or credentials logged. appendFileSync to user-supplied transcript_path is mitigated by non-fatal catch but the concurrency risk is raised as CR-006. The consent model is explicit and correct for Claude sessions."
+    }
+  ]
+}

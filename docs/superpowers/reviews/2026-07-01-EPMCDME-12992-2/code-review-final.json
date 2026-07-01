@@ -1,0 +1,62 @@
+{
+  "gate_id": "code-review.final",
+  "decision": "request-changes",
+  "confidence": "low",
+  "rationale": "One of three review lenses ran (blind). Edge-case and acceptance lenses failed with a model access error (Bedrock 403), so coverage is partial and confidence is forced to low. CR-R-001 is a critical regression: the UUID_RE guard added at AgentCLI.ts:311-315 hard-exits for any non-UUID resume value — this directly blocks the user's stated requirement that 'codemie-claude --resume epmcdme-12992' must work. Two major findings (CR-R-002, CR-R-003) are also actionable. Three additional items were deferred (no_rotation, cache_lifetime, test_pollution) and are not blocking.",
+  "risk_flags": ["breaking-change"],
+  "business_review": [],
+  "standards_review": [
+    {
+      "standard": "commit-format",
+      "status": "pass",
+      "notes": "Conventional Commits format followed. Scopes used (agents, providers, analytics, cli) are in the allowed list."
+    },
+    {
+      "standard": "code-quality",
+      "status": "pass",
+      "notes": "ES modules, async/await, .js extensions, no require(), no console.log debug output, no generic Error throws, getCodemiePath() used for ~/.codemie paths."
+    },
+    {
+      "standard": "security",
+      "status": "partial",
+      "notes": "Ownership trust boundary relies entirely on user-writable ~/.codemie/sessions/ files with no integrity check — an attacker could plant a correlation file to bypass the external-resume warning. Acceptable for a local-file trust model, but worth documenting. The resumeId is used in chalk output without sanitizing ANSI escape sequences; removing UUID_RE (CR-R-001 fix) reintroduces the ANSI injection vector — the fix must include a display sanitizer."
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-R-001",
+      "severity": "critical",
+      "triage": "patch",
+      "title": "UUID_RE regex hard-rejects slug-based resume values",
+      "file": "src/agents/core/AgentCLI.ts:311-315",
+      "problem": "A strict UUID regex was added to guard against ANSI injection in the resumeId display path. It calls process.exit(1) for any non-UUID value with 'Invalid session ID: expected UUID format.' The user explicitly requires 'codemie-claude --resume epmcdme-12992' (ticket slug) to work. Claude's own --resume flag accepts identifiers beyond UUIDs. This is a hard breaking regression introduced by the prior CR-004 ANSI injection fix.",
+      "impact": "Any non-UUID resume identifier (slug like 'epmcdme-12992', ticket ID, custom handle) is silently hard-rejected before reaching the ownership check or prompt. The entire slug-based resume flow is dead.",
+      "recommendation": "Remove the UUID_RE block. Sanitize resumeId for safe display only: const safeId = resumeId.replace(/[\\x00-\\x1F\\x7F-\\x9F]/g, ''); and use safeId in chalk/console output instead of resumeId. The ownership check (scanSessionsForClaudeId) already provides semantic validation; additional format restrictions belong in the underlying adapter, not here."
+    },
+    {
+      "id": "CR-R-002",
+      "severity": "major",
+      "triage": "patch",
+      "title": "_metrics filter inconsistency between buildOwnershipIndex and scanSessionsForClaudeId",
+      "file": "src/cli/commands/analytics/native-loader.ts:72,121",
+      "problem": "readTrackedLogPaths() (line 72) and buildOwnershipIndex() (line 121) filter with !f.includes('_metrics'), which excludes any filename containing the substring '_metrics' anywhere. session-ownership.ts:14 correctly uses !f.endsWith('_metrics.json'). A legitimate session file named e.g. 'abc_metrics_detail.json' would be excluded from the index in native-loader but processed in session-ownership.",
+      "impact": "Silent inconsistency: sessions that buildOwnershipIndex skips are not marked as CodeMie-owned in analytics, causing them to appear as 'native-external' even when they are owned. The probability is low (unlikely filenames), but the divergence is a latent correctness bug.",
+      "recommendation": "Standardize on !f.endsWith('_metrics.json') everywhere. Update both filter expressions in native-loader.ts to match session-ownership.ts."
+    },
+    {
+      "id": "CR-R-003",
+      "severity": "major",
+      "triage": "patch",
+      "title": "CODEMIE_CONV_SYNC_DISABLED injected into subprocess env but read from process.env — scope gap for same-process consumers",
+      "file": "src/agents/core/AgentCLI.ts:328",
+      "problem": "Object.assign(providerEnv, buildResumeEnvOverride(true)) adds CODEMIE_CONV_SYNC_DISABLED to the object passed to adapter.run(). All five conversation processors and the sso syncProcessor read process.env.CODEMIE_CONV_SYNC_DISABLED. If any of these run in the parent AgentCLI process (not the spawned subprocess that inherits providerEnv), the suppression silently never activates. The sso syncProcessor in src/providers/plugins/sso/ is the primary concern — its execution context may differ from the claude/codex/gemini agent-executor subprocess.",
+      "impact": "External session transcripts could be silently synced to the user's CodeMie account history even when the user was explicitly told 'conversation transcript will NOT be synced.' Data privacy violation against the feature's stated contract.",
+      "recommendation": "Verify that every processor that checks CODEMIE_CONV_SYNC_DISABLED runs within the subprocess context that receives providerEnv. If the sso syncProcessor or any other processor runs in the parent process, also set process.env.CODEMIE_CONV_SYNC_DISABLED = '1' for the duration of the adapter.run() call (with cleanup in a finally block). Add a code comment documenting which process context is expected."
+    }
+  ],
+  "deferred": [
+    "ownershipIndexCache never invalidated (acceptable for short-lived CLI analytics runs)",
+    "audit log has no rotation/size cap (acceptable for log volume in practice)",
+    "appendTranscriptMarker test writes sidecar to real ~/.codemie/sessions/ (no sessionsDir override param in the function signature)"
+  ]
+}
