@@ -46,6 +46,8 @@ export interface NativeLoaderDeps {
   parse(agentName: string, filePath: string, sessionId: string): Promise<ParsedSession | null>;
   /** Resolve a path to its real (symlink-free) form for dedup comparison. */
   realPath(p: string): string;
+  /** Returns true when the transcript at filePath contains a codemie_session_start marker (first 10 lines). */
+  hasOwnershipMarker(filePath: string): boolean;
 }
 
 function safeRealPath(p: string): string {
@@ -120,6 +122,23 @@ export const realNativeDeps: NativeLoaderDeps = {
     }
   },
   realPath: safeRealPath,
+  hasOwnershipMarker(filePath: string): boolean {
+    try {
+      const content = readFileSync(filePath, 'utf-8');
+      return content
+        .split('\n')
+        .slice(0, 10)
+        .some((line) => {
+          try {
+            return (JSON.parse(line) as { type?: string }).type === 'codemie_session_start';
+          } catch {
+            return false;
+          }
+        });
+    } catch {
+      return false;
+    }
+  },
 };
 
 interface RawMessage {
@@ -438,7 +457,11 @@ export async function loadNativeSessions(
     if (!parsed) {
       continue;
     }
-    out.push(synthesizeRawSession(agentName, descriptor, parsed));
+    const raw = synthesizeRawSession(agentName, descriptor, parsed);
+    if (!deps.hasOwnershipMarker(descriptor.filePath) && raw.startEvent) {
+      raw.startEvent.data.provider = 'native-external';
+    }
+    out.push(raw);
   }
   return out;
 }
