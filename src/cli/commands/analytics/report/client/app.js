@@ -802,21 +802,22 @@
       var list = fs.slice().sort(function (a, b) { return b.startTime - a.startTime; });
       if (q) {
         var ql = q.toLowerCase();
-        list = list.filter(function (s) { return (s.sessionId + ' ' + s.agentName + ' ' + s.project + ' ' + s.branch + ' ' + (s.title || '')).toLowerCase().indexOf(ql) >= 0; });
+        list = list.filter(function (s) { return (s.sessionId + ' ' + s.agentName + ' ' + s.project + ' ' + s.branch + ' ' + (s.title || '') + ' ' + (s.sessionSource || '')).toLowerCase().indexOf(ql) >= 0; });
       }
       var shown = list.slice(0, 300);
       holder.innerHTML = tableHTML(
-        ['Date', 'Prompt', 'Agent', 'Project', 'Branch', 'Turns', 'Net lines', 'Input', 'Output', 'Cached', 'Cost'],
+        ['Date', 'Prompt', 'Agent', 'Project', 'Branch', 'Source', 'Turns', 'Net lines', 'Input', 'Output', 'Cached', 'Cost'],
         shown.map(function (s) {
           var branchCell = s.branch ? '<span title="' + esc(s.branch) + '" style="max-width:90px;display:inline-block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle">' + esc(s.branch) + '</span>' : '—';
           var promptCell = '<span title="' + esc(s.title || '') + '" style="max-width:280px;display:inline-block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;color:var(--color-text-muted);font-size:12px">' + esc(truncStr(s.title || '—', 80)) + '</span>';
+          var sourceCell = '<span class="tag tag-sm">' + esc(s.sessionSource || 'Pure chat') + '</span>';
           return [new Date(s.startTime).toISOString().slice(0, 16).replace('T', ' '),
             promptCell,
             '<span class="tag tag-sm" style="text-transform:capitalize">' + esc(s.agentName) + '</span>',
-            '<span title="' + esc(s.project) + '">' + esc(shortPath(s.project)) + '</span>', branchCell,
+            '<span title="' + esc(s.project) + '">' + esc(shortPath(s.project)) + '</span>', branchCell, sourceCell,
             fmtNum(s.turns), fmtNum(s.netLines), fmtTokens(tkIn(s)), fmtTokens(tkOut(s)), fmtTokens(tkCached(s)), fmtUSD(s.costUSD)];
         }),
-        [false, false, false, false, false, true, true, true, true, true, true],
+        [false, false, false, false, false, false, true, true, true, true, true, true],
         shown.map(function (s) { return 'class="clickable" data-session="' + esc(s.sessionId) + '"'; }));
       if (list.length > 300) holder.appendChild(el('p', 'text-muted', '<span style="font-size:12px">Showing first 300 of ' + list.length + '.</span>'));
     }
