@@ -64,6 +64,7 @@ if (!engine) {
 }
 
 const engineBin = resolveCommand(engine);
+const quotedEngineBin = engineBin.includes(' ') ? `"${engineBin}"` : engineBin;
 
 // Produce the staged diff on the host so gitleaks doesn't need git access
 // inside the container — required for Apple Containers which cannot run git
@@ -95,7 +96,7 @@ if (hasConfig) {
 
 console.log('Running Gitleaks secrets detection...');
 
-const gitleaks = spawn(engineBin, args, {
+const gitleaks = spawn(quotedEngineBin, args, {
   stdio: ['pipe', 'inherit', 'inherit'],
   shell: isWindows,
 });

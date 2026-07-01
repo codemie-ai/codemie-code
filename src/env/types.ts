@@ -84,6 +84,9 @@ export interface ProviderProfile {
     tokenEnvVar?: string;
     expiresAt?: number;
   };
+  // Keycloak / SSO auth fields (required by SDK for SSO; not used with jwt_token)
+  authServerUrl?: string;
+  authRealm?: string;
 
   // AWS Bedrock-specific fields
   awsProfile?: string;

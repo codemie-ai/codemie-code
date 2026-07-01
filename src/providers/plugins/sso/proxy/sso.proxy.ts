@@ -26,6 +26,7 @@ import { createServer, Server, IncomingMessage, ServerResponse } from 'http';
 import { randomUUID } from 'crypto';
 import { URL } from 'url';
 import { ProviderRegistry } from '../../../core/registry.js';
+import { AuthMethod } from '../../../core/types.js';
 import type { JWTCredentials, SSOCredentials } from '../../../core/types.js';
 import { logger } from '../../../../utils/logger.js';
 import { ProxyHTTPClient } from './proxy-http-client.js';
@@ -59,13 +60,13 @@ export class CodeMieProxy {
    */
   async start(): Promise<{ port: number; url: string }> {
     // 1. Detect auth method from config
-    const authMethod = this.config.authMethod || 'sso';  // Default: SSO for backward compat
+    const authMethod = this.config.authMethod || AuthMethod.SSO;  // Default: SSO for backward compat
 
     // 2. Load credentials based on auth method
     let credentials: SSOCredentials | JWTCredentials | null = null;
     let syncCredentials: SSOCredentials | JWTCredentials | null = null;
 
-    if (authMethod === 'jwt') {
+    if (authMethod === AuthMethod.JWT) {
       // JWT path: token from CLI arg, env var, or credential store
       const token = this.config.jwtToken
         || process.env.CODEMIE_JWT_TOKEN

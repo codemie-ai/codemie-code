@@ -3,9 +3,11 @@
  */
 
 import chalk from 'chalk';
-import type { CodeMieClient } from 'codemie-sdk';
+import { CodeMieClient } from 'codemie-sdk';
 import { getCodemieClient } from '@/utils/sdk-client.js';
 import { ConfigurationError } from '@/utils/errors.js';
+import { resolveJwtToken, resolveJwtTokenEnvVar } from '@/providers/plugins/jwt/jwt.utils.js';
+import { AuthMethod } from '@/providers/core/types.js';
 import type { ProviderProfile } from '@/env/types.js';
 import { ProviderRegistry } from '@/providers/core/registry.js';
 import { handleAuthValidationFailure } from '@/providers/core/auth-validation.js';
@@ -18,13 +20,32 @@ import { handleAuthValidationFailure } from '@/providers/core/auth-validation.js
  * @throws ConfigurationError if authentication fails and user declines re-auth
  */
 export async function getAuthenticatedClient(config: ProviderProfile): Promise<CodeMieClient> {
+  if (config.authMethod === AuthMethod.JWT) {
+    const token = resolveJwtToken(config);
+    if (!token) {
+      throw new ConfigurationError(
+        `JWT token not found in ${resolveJwtTokenEnvVar(config)} environment variable. ` +
+        'Provide it via the environment variable or set it in your profile configuration.'
+      );
+    }
+    if (!config.baseUrl) {
+      throw new ConfigurationError(
+        'baseUrl is required for JWT authentication. Set it in your profile configuration.'
+      );
+    }
+    return new CodeMieClient({
+      codemie_api_domain: config.baseUrl,
+      jwt_token: token,
+      verify_ssl: process.env.CODEMIE_INSECURE !== '1',
+    });
+  }
+
   try {
     return await getCodemieClient();
   } catch (error) {
     if (error instanceof ConfigurationError && error.message.includes('SSO authentication required')) {
       const reauthed = await promptReauthentication(config);
       if (reauthed) {
-        // Retry getting client after successful re-authentication
         return await getCodemieClient();
       }
     }

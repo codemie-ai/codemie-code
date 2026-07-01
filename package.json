@@ -34,17 +34,20 @@
     "prepare:install-artifacts": "node scripts/prepare-install-artifacts.mjs",
     "dev": "tsc --watch",
     "test": "vitest",
-    "test:unit": "vitest run src",
-    "test:integration": "vitest run tests/integration",
-    "test:coverage": "vitest run --coverage",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project cli",
+    "test:integration:cli": "vitest run --project cli",
+    "test:integration:agent": "vitest run --project agent",
+    "test:run": "vitest run --project unit --project cli",
+    "test:all": "vitest run --project unit && vitest run --project cli && vitest run --project agent",
+    "test:coverage": "vitest run --project unit --coverage",
     "test:watch": "vitest --watch",
     "test:ui": "vitest --ui",
-    "test:run": "vitest run",
     "typecheck": "tsc --noEmit",
     "format": "npm run lint:fix",
     "check:pre-commit": "npm run typecheck && npm run lint",
-    "lint": "eslint '{src,tests}/**/*.ts' --max-warnings=0",
-    "lint:fix": "eslint '{src,tests}/**/*.ts' --fix",
+    "lint": "eslint {src,tests}/**/*.ts --max-warnings=0",
+    "lint:fix": "eslint {src,tests}/**/*.ts --fix",
     "commitlint": "commitlint --edit",
     "commitlint:last": "commitlint --from HEAD~1 --to HEAD --verbose",
     "validate:secrets": "node scripts/validate-secrets.js",
@@ -58,7 +61,7 @@
   "lint-staged": {
     "*.ts": [
       "eslint --max-warnings=0 --no-warn-ignored",
-      "vitest related --run"
+      "vitest related --run --exclude tests/integration/agent-*.test.ts --exclude tests/integration/cli-commands/models.test.ts"
     ],
     "package.json": [
       "npm run license-check"
@@ -127,7 +130,7 @@
     "@modelcontextprotocol/server": "2.0.0-alpha.2",
     "chalk": "^5.3.0",
     "cli-table3": "^0.6.5",
-    "codemie-sdk": "^0.1.428",
+    "codemie-sdk": "^0.1.462",
     "commander": "^11.1.0",
     "cors": "^2.8.5",
     "dedent": "^1.7.1",
@@ -163,6 +166,7 @@
     "eslint": "^9.38.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.2.7",
+    "node-pty": "^1.1.0",
     "tsc-alias": "^1.8.16",
     "typescript": "^5.3.3",
     "vitest": "^4.1.5"

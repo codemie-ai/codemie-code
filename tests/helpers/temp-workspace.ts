@@ -4,7 +4,7 @@
  * Creates temporary directories with helper methods for file operations
  */
 
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync } from 'fs';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync, realpathSync } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
@@ -114,4 +114,28 @@ export class TempWorkspace {
  */
 export function createTempWorkspace(prefix?: string): TempWorkspace {
   return new TempWorkspace(prefix);
+}
+
+/**
+ * Resolve Windows 8.3 short path names to full long paths.
+ * Equivalent to ctypes.windll.kernel32.GetLongPathNameW in Python.
+ * Needed when passing temp dirs as cwd to subprocesses — short paths cause
+ * path comparison mismatches inside the agent on Windows.
+ */
+export function resolveLongPath(p: string): string {
+  if (process.platform !== 'win32') return p;
+  try { return realpathSync.native(p); } catch { return p; }
+}
+
+/**
+ * Returns a temp directory base path free of Windows 8.3 short names.
+ * os.tmpdir() returns e.g. C:\Users\MAKSYM~1\AppData\Local\Temp on Windows,
+ * which confuses path comparisons inside the agent. LOCALAPPDATA always
+ * contains the full username, so we derive Temp from it instead.
+ */
+export function getTempDir(): string {
+  if (process.platform === 'win32' && process.env.LOCALAPPDATA) {
+    return join(process.env.LOCALAPPDATA, 'Temp');
+  }
+  return tmpdir();
 }

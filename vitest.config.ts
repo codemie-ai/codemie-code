@@ -1,47 +1,84 @@
-import { defineConfig } from 'vitest/config';
+import { defineConfig, defineProject } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    globals: true,
-    environment: 'node',
-    include: ['src/**/*.test.ts', 'src/**/*.spec.ts', 'tests/**/*.test.ts'],
-    exclude: ['node_modules', 'dist'],
-    // Force color output for consistent test behavior (chalk output length varies with/without colors)
-    env: {
-      FORCE_COLOR: '1',
-      NODE_ENV: 'test', // Skip auto-update checks during testing
-    },
+    projects: [
+      // ── Unit tests (src/) ────────────────────────────────────────────────
+      defineProject({
+        test: {
+          name: 'unit',
+          include: ['src/**/*.test.ts', 'src/**/*.spec.ts'],
+          globals: true,
+          environment: 'node',
+          testTimeout: 30_000,
+          hookTimeout: 10_000,
+          isolate: true,
+          env: {
+            FORCE_COLOR: '1',
+            NODE_ENV: 'test',
+          },
+          coverage: {
+            provider: 'v8',
+            reporter: ['text', 'json', 'html'],
+            exclude: [
+              'node_modules/',
+              'dist/',
+              '**/*.test.ts',
+              '**/*.spec.ts',
+              '**/types.ts',
+              'bin/',
+              'tests/',
+            ],
+          },
+        },
+        resolve: {
+          alias: { '@': '/src' },
+        },
+      }),
 
-    // Enable parallel execution with isolated environments
-    pool: 'threads',
-    poolOptions: {
-      threads: {
-        maxThreads: 8,
-        minThreads: 2,
-      },
-    },
-    // Isolate each test file for safety
-    isolate: true,
+      // ── CLI integration tests (no network auth) ──────────────────────────
+      defineProject({
+        test: {
+          name: 'cli',
+          include: ['tests/integration/**/*.test.ts'],
+          exclude: ['tests/integration/agent-*.test.ts'],
+          globals: true,
+          environment: 'node',
+          testTimeout: 30_000,
+          hookTimeout: 10_000,
+          isolate: true,
+          sequence: { groupOrder: 1 },
+          env: {
+            FORCE_COLOR: '1',
+            NODE_ENV: 'test',
+          },
+        },
+        resolve: {
+          alias: { '@': '/src' },
+        },
+      }),
 
-    coverage: {
-      provider: 'v8',
-      reporter: ['text', 'json', 'html'],
-      exclude: [
-        'node_modules/',
-        'dist/',
-        '**/*.test.ts',
-        '**/*.spec.ts',
-        '**/types.ts',
-        'bin/',
-        'tests/',
-      ],
-    },
-    testTimeout: 30000,
-    hookTimeout: 10000,
-  },
-  resolve: {
-    alias: {
-      '@': '/src',
-    },
+      // ── Agent integration tests (real network, SSO/JWT auth) ─────────────
+      defineProject({
+        test: {
+          name: 'agent',
+          include: ['tests/integration/agent-*.test.ts'],
+          globalSetup: ['tests/setup/agent-build-setup.ts'],
+          testTimeout: 180_000,
+          hookTimeout: 300_000,
+          maxWorkers: parseInt(process.env.CI_AGENT_MAX_WORKERS ?? '2', 10),
+          isolate: true,
+          sequence: { groupOrder: 2 },
+          reporters: ['verbose'],
+          env: {
+            FORCE_COLOR: '1',
+            NODE_ENV: 'test',
+          },
+        },
+        resolve: {
+          alias: { '@': '/src' },
+        },
+      }),
+    ],
   },
 });

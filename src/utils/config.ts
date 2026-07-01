@@ -900,7 +900,7 @@ export class ConfigLoader {
   ): Promise<CodemieAssistant[]> {
     const config = await this.loadConfigByScope(scope, workingDir);
     const assistants = config.codemieAssistants ?? [];
-    const baseDir = scope === StorageScope.GLOBAL ? os.homedir() : workingDir;
+    const baseDir = scope === StorageScope.GLOBAL ? (process.env.CODEMIE_HOME ?? os.homedir()) : workingDir;
 
     // One fs.access per assistant — acceptable for small lists (<20) but may add
     // measurable latency on agent startup if the list grows large.

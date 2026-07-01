@@ -67,7 +67,7 @@ describe('Chat Command Structure', () => {
     });
 
     it('should have all expected options', () => {
-      expect(command.options).toHaveLength(4);
+      expect(command.options).toHaveLength(5);
     });
   });
 
