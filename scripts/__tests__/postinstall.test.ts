@@ -1,8 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { execSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
 
 vi.mock('node:child_process', () => ({
 	execSync: vi.fn(),
+}));
+
+vi.mock('node:fs', () => ({
+	existsSync: vi.fn(),
+	readFileSync: vi.fn(),
+	appendFileSync: vi.fn(),
 }));
 
 describe('postinstall', () => {
@@ -61,6 +68,85 @@ describe('postinstall', () => {
 			const result = getShimDir('/usr/local', 'darwin');
 
 			expect(result).toBe('/usr/local/bin');
+		});
+	});
+
+	describe('isInPath', () => {
+		const originalPath = process.env.PATH;
+
+		afterEach(() => {
+			process.env.PATH = originalPath;
+		});
+
+		it('detects a directory using ";" on win32', async () => {
+			process.env.PATH = 'C:\\Windows;C:\\Users\\Test\\AppData\\Roaming\\npm;C:\\Windows\\System32';
+
+			const { isInPath } = await import('../postinstall.mjs');
+			expect(isInPath('C:\\Users\\Test\\AppData\\Roaming\\npm', ';')).toBe(true);
+			expect(isInPath('C:\\Nonexistent', ';')).toBe(false);
+		});
+
+		it('detects a directory using ":" on unix', async () => {
+			process.env.PATH = '/usr/local/bin:/usr/local/lib/node/bin:/usr/bin';
+
+			const { isInPath } = await import('../postinstall.mjs');
+			expect(isInPath('/usr/local/lib/node/bin', ':')).toBe(true);
+			expect(isInPath('/nonexistent', ':')).toBe(false);
+		});
+	});
+
+	describe('getShellRcFile', () => {
+		const originalShell = process.env.SHELL;
+
+		afterEach(() => {
+			process.env.SHELL = originalShell;
+		});
+
+		it('returns .zshrc when SHELL contains zsh', async () => {
+			process.env.SHELL = '/bin/zsh';
+
+			const { getShellRcFile } = await import('../postinstall.mjs');
+			expect(getShellRcFile()).toMatch(/\.zshrc$/);
+		});
+
+		it('returns .bash_profile when it exists and SHELL contains bash', async () => {
+			process.env.SHELL = '/bin/bash';
+			vi.mocked(existsSync).mockReturnValue(true);
+
+			const { getShellRcFile } = await import('../postinstall.mjs');
+			expect(getShellRcFile()).toMatch(/\.bash_profile$/);
+		});
+
+		it('returns .bashrc when .bash_profile does not exist and SHELL contains bash', async () => {
+			process.env.SHELL = '/bin/bash';
+			vi.mocked(existsSync).mockReturnValue(false);
+
+			const { getShellRcFile } = await import('../postinstall.mjs');
+			expect(getShellRcFile()).toMatch(/\.bashrc$/);
+		});
+
+		it('returns null when SHELL is unset (Windows)', async () => {
+			delete process.env.SHELL;
+
+			const { getShellRcFile } = await import('../postinstall.mjs');
+			expect(getShellRcFile()).toBeNull();
+		});
+	});
+
+	describe('alreadyInRcFile', () => {
+		it('returns false when the rc file does not exist', async () => {
+			vi.mocked(existsSync).mockReturnValue(false);
+
+			const { alreadyInRcFile } = await import('../postinstall.mjs');
+			expect(alreadyInRcFile('/home/user/.bashrc', '/usr/local/bin')).toBe(false);
+		});
+
+		it('returns true when the rc file already contains the dir', async () => {
+			vi.mocked(existsSync).mockReturnValue(true);
+			vi.mocked(readFileSync).mockReturnValue('export PATH="/usr/local/bin:$PATH"\n');
+
+			const { alreadyInRcFile } = await import('../postinstall.mjs');
+			expect(alreadyInRcFile('/home/user/.bashrc', '/usr/local/bin')).toBe(true);
 		});
 	});
 });

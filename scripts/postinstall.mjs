@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { execSync } from 'node:child_process';
-import { platform } from 'node:os';
-import { posix as pathPosix } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { homedir, platform } from 'node:os';
+import { join, delimiter, posix as pathPosix } from 'node:path';
 
 export function getNpmPrefix() {
 	try {
@@ -19,4 +20,27 @@ export function getShimDir(prefix, plat = platform()) {
 	// OS this script itself is running on, matching how src/utils/windows-path.ts
 	// uses path.win32 explicitly for its own platform-specific branch.
 	return plat === 'win32' ? prefix : pathPosix.join(prefix, 'bin');
+}
+
+export function isInPath(dir, sep = delimiter) {
+	// sep defaults to the real path.delimiter for actual use; the parameter exists
+	// so both the ';' (win32) and ':' (posix) branches are deterministically
+	// testable regardless of which OS this script itself runs on.
+	return (process.env.PATH ?? '').split(sep).includes(dir);
+}
+
+export function getShellRcFile() {
+	const shell = process.env.SHELL ?? '';
+	const home = homedir();
+	if (shell.includes('zsh')) return join(home, '.zshrc');
+	if (shell.includes('bash')) {
+		const bashProfile = join(home, '.bash_profile');
+		return existsSync(bashProfile) ? bashProfile : join(home, '.bashrc');
+	}
+	return null;
+}
+
+export function alreadyInRcFile(rcFile, dir) {
+	if (!existsSync(rcFile)) return false;
+	return readFileSync(rcFile, 'utf8').includes(dir);
 }
