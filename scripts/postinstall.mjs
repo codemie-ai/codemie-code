@@ -2,7 +2,10 @@
 import { execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
-import { join, delimiter, posix as pathPosix } from 'node:path';
+import { join, delimiter, dirname, posix as pathPosix } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 export function getNpmPrefix() {
 	try {
@@ -43,4 +46,14 @@ export function getShellRcFile() {
 export function alreadyInRcFile(rcFile, dir) {
 	if (!existsSync(rcFile)) return false;
 	return readFileSync(rcFile, 'utf8').includes(dir);
+}
+
+export function getExpectedShimNames() {
+	const packageJsonPath = join(__dirname, '..', 'package.json');
+	const pkg = JSON.parse(readFileSync(packageJsonPath, 'utf8'));
+	return Object.keys(pkg.bin ?? {});
+}
+
+export function findMissingShims(dir, names) {
+	return names.filter((name) => !existsSync(join(dir, `${name}.cmd`)));
 }

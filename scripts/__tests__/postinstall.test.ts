@@ -149,4 +149,35 @@ describe('postinstall', () => {
 			expect(alreadyInRcFile('/home/user/.bashrc', '/usr/local/bin')).toBe(true);
 		});
 	});
+
+	describe('getExpectedShimNames', () => {
+		it('returns the keys of package.json bin field', async () => {
+			vi.mocked(readFileSync).mockReturnValue(
+				JSON.stringify({ bin: { codemie: './bin/codemie.js', 'codemie-claude': './bin/codemie-claude.js' } })
+			);
+
+			const { getExpectedShimNames } = await import('../postinstall.mjs');
+			expect(getExpectedShimNames()).toEqual(['codemie', 'codemie-claude']);
+		});
+	});
+
+	describe('findMissingShims', () => {
+		it('returns names whose .cmd file does not exist in dir', async () => {
+			vi.mocked(existsSync).mockImplementation((p) => !String(p).includes('codemie-claude.cmd'));
+
+			const { findMissingShims } = await import('../postinstall.mjs');
+			const result = findMissingShims('C:\\npm', ['codemie', 'codemie-claude']);
+
+			expect(result).toEqual(['codemie-claude']);
+		});
+
+		it('returns an empty array when all shims exist', async () => {
+			vi.mocked(existsSync).mockReturnValue(true);
+
+			const { findMissingShims } = await import('../postinstall.mjs');
+			const result = findMissingShims('C:\\npm', ['codemie', 'codemie-claude']);
+
+			expect(result).toEqual([]);
+		});
+	});
 });
