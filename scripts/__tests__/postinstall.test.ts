@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { execSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, appendFileSync } from 'node:fs';
 import { isInUserPath, addToUserPath } from '../../dist/utils/windows-path.js';
 
 vi.mock('node:child_process', () => ({
@@ -259,6 +259,57 @@ describe('postinstall', () => {
 
 			expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('codemie'));
 			expect(process.exitCode).toBeFalsy();
+		});
+	});
+
+	describe('runUnix', () => {
+		beforeEach(() => {
+			vi.mocked(execSync).mockReturnValue('/usr/local\n' as unknown as Buffer);
+			process.env.PATH = '/usr/bin:/bin';
+			process.env.SHELL = '/bin/bash';
+		});
+
+		it('does nothing if npm prefix cannot be determined', async () => {
+			vi.mocked(execSync).mockImplementation(() => {
+				throw new Error('npm not found');
+			});
+
+			const { runUnix } = await import('../postinstall.mjs');
+			runUnix('linux');
+
+			expect(appendFileSync).not.toHaveBeenCalled();
+		});
+
+		it('is a no-op when the shim dir is already in PATH', async () => {
+			process.env.PATH = '/usr/local/bin:/usr/bin:/bin';
+
+			const { runUnix } = await import('../postinstall.mjs');
+			runUnix('linux');
+
+			expect(appendFileSync).not.toHaveBeenCalled();
+		});
+
+		it('is a no-op when the rc file already contains the dir', async () => {
+			vi.mocked(existsSync).mockReturnValue(true);
+			vi.mocked(readFileSync).mockReturnValue('export PATH="/usr/local/bin:$PATH"\n');
+
+			const { runUnix } = await import('../postinstall.mjs');
+			runUnix('linux');
+
+			expect(appendFileSync).not.toHaveBeenCalled();
+		});
+
+		it('appends to the rc file when the dir is missing from PATH and not already recorded', async () => {
+			vi.mocked(existsSync).mockReturnValue(true);
+			vi.mocked(readFileSync).mockReturnValue('# existing rc contents\n');
+
+			const { runUnix } = await import('../postinstall.mjs');
+			runUnix('linux');
+
+			expect(appendFileSync).toHaveBeenCalledWith(
+				expect.stringContaining('.bash_profile'),
+				expect.stringContaining('/usr/local/bin')
+			);
 		});
 	});
 });

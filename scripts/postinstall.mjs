@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, appendFileSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
 import { join, delimiter, dirname, posix as pathPosix } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -83,4 +83,25 @@ export async function runWindows() {
 	console.error(`  Add manually: setx PATH "%PATH%;${dir}"`);
 	console.error(`  (or via System Properties > Environment Variables)\n`);
 	process.exitCode = 1;
+}
+
+export function runUnix(plat = platform()) {
+	const prefix = getNpmPrefix();
+	if (!prefix) return;
+
+	const npmBin = getShimDir(prefix, plat);
+	if (isInPath(npmBin, plat === 'win32' ? ';' : ':')) return;
+
+	const rcFile = getShellRcFile();
+	if (!rcFile) {
+		console.log(`\n⚠️  Add to PATH manually:\n   export PATH="${npmBin}:$PATH"\n`);
+		return;
+	}
+
+	if (alreadyInRcFile(rcFile, npmBin)) return;
+
+	appendFileSync(rcFile, `\n# Added by @codemieai/code\nexport PATH="${npmBin}:$PATH"\n`);
+
+	console.log(`\n✓ Added ${npmBin} to PATH in ${rcFile}`);
+	console.log(`  Run: source ${rcFile}\n`);
 }
