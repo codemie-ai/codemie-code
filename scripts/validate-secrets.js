@@ -104,7 +104,6 @@ console.log('Running Gitleaks secrets detection...');
 
 const gitleaks = spawn(spawnBin, args, {
   stdio: ['pipe', 'inherit', 'inherit'],
-  shell: isWindows,
 });
 
 gitleaks.stdin.write(stagedDiff);
