@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
+import { isInUserPath, addToUserPath } from '../../dist/utils/windows-path.js';
 
 vi.mock('node:child_process', () => ({
 	execSync: vi.fn(),
@@ -10,6 +11,11 @@ vi.mock('node:fs', () => ({
 	existsSync: vi.fn(),
 	readFileSync: vi.fn(),
 	appendFileSync: vi.fn(),
+}));
+
+vi.mock('../../dist/utils/windows-path.js', () => ({
+	isInUserPath: vi.fn(),
+	addToUserPath: vi.fn(),
 }));
 
 describe('postinstall', () => {
@@ -178,6 +184,81 @@ describe('postinstall', () => {
 			const result = findMissingShims('C:\\npm', ['codemie', 'codemie-claude']);
 
 			expect(result).toEqual([]);
+		});
+	});
+
+	describe('runWindows', () => {
+		beforeEach(() => {
+			vi.mocked(execSync).mockReturnValue('C:\\Users\\Test\\AppData\\Roaming\\npm\n' as unknown as Buffer);
+			vi.mocked(existsSync).mockReturnValue(true); // all shims present by default
+		});
+
+		it('does nothing if npm prefix cannot be determined', async () => {
+			vi.mocked(execSync).mockImplementation(() => {
+				throw new Error('npm not found');
+			});
+
+			const { runWindows } = await import('../postinstall.mjs');
+			await runWindows();
+
+			expect(isInUserPath).not.toHaveBeenCalled();
+			expect(process.exitCode).toBeFalsy();
+		});
+
+		it('is a no-op when the shim dir is already in PATH', async () => {
+			vi.mocked(isInUserPath).mockResolvedValue(true);
+
+			const { runWindows } = await import('../postinstall.mjs');
+			await runWindows();
+
+			expect(addToUserPath).not.toHaveBeenCalled();
+			expect(process.exitCode).toBeFalsy();
+		});
+
+		it('adds the shim dir to PATH when missing, and does not set a failing exit code', async () => {
+			vi.mocked(isInUserPath).mockResolvedValue(false);
+			vi.mocked(addToUserPath).mockResolvedValue({
+				success: true,
+				pathAdded: 'C:\\Users\\Test\\AppData\\Roaming\\npm',
+				requiresRestart: true,
+				alreadyInPath: false,
+			});
+
+			const { runWindows } = await import('../postinstall.mjs');
+			await runWindows();
+
+			expect(addToUserPath).toHaveBeenCalledWith('C:\\Users\\Test\\AppData\\Roaming\\npm');
+			expect(process.exitCode).toBeFalsy();
+		});
+
+		it('sets exitCode 1 and prints manual instructions when addToUserPath fails', async () => {
+			vi.mocked(isInUserPath).mockResolvedValue(false);
+			vi.mocked(addToUserPath).mockResolvedValue({
+				success: false,
+				error: 'setx failed: access denied',
+				requiresRestart: false,
+				alreadyInPath: false,
+			});
+			const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+			const { runWindows } = await import('../postinstall.mjs');
+			await runWindows();
+
+			expect(process.exitCode).toBe(1);
+			expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('setx failed: access denied'));
+		});
+
+		it('warns but does not fail when expected shim files are missing', async () => {
+			vi.mocked(existsSync).mockReturnValue(false); // no shims found
+			vi.mocked(isInUserPath).mockResolvedValue(true);
+			vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ bin: { codemie: './bin/codemie.js' } }));
+			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+			const { runWindows } = await import('../postinstall.mjs');
+			await runWindows();
+
+			expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('codemie'));
+			expect(process.exitCode).toBeFalsy();
 		});
 	});
 });

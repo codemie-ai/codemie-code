@@ -57,3 +57,30 @@ export function getExpectedShimNames() {
 export function findMissingShims(dir, names) {
 	return names.filter((name) => !existsSync(join(dir, `${name}.cmd`)));
 }
+
+export async function runWindows() {
+	const prefix = getNpmPrefix();
+	if (!prefix) return;
+
+	const dir = getShimDir(prefix, 'win32');
+
+	const missing = findMissingShims(dir, getExpectedShimNames());
+	if (missing.length > 0) {
+		console.warn(`\n⚠️  Expected CodeMie command shims not found in ${dir}: ${missing.join(', ')}\n`);
+	}
+
+	const { isInUserPath, addToUserPath } = await import('../dist/utils/windows-path.js');
+
+	if (await isInUserPath(dir)) return;
+
+	const result = await addToUserPath(dir);
+	if (result.success) {
+		console.log(`\n✓ Added ${dir} to PATH\n  Open a new terminal to use codemie\n`);
+		return;
+	}
+
+	console.error(`\n✗ Could not update PATH automatically: ${result.error}`);
+	console.error(`  Add manually: setx PATH "%PATH%;${dir}"`);
+	console.error(`  (or via System Properties > Environment Variables)\n`);
+	process.exitCode = 1;
+}
