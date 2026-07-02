@@ -24,6 +24,17 @@ describe('postinstall', () => {
 
 	beforeEach(() => {
 		vi.mocked(execSync).mockReset();
+		vi.mocked(isInUserPath).mockClear();
+		vi.mocked(addToUserPath).mockClear();
+		vi.mocked(appendFileSync).mockClear();
+		vi.mocked(existsSync).mockReset();
+		// Default to a valid package.json shape so any test that doesn't care about
+		// getExpectedShimNames() specifically (e.g. runWindows/run tests focused on
+		// PATH persistence) doesn't trip JSON.parse on a leftover rc-file-shaped
+		// mock value from an earlier test. Tests that need a different return
+		// value (rc-file contents, custom bin fields) override it in their own body.
+		vi.mocked(readFileSync).mockReset();
+		vi.mocked(readFileSync).mockReturnValue(JSON.stringify({ bin: { codemie: './bin/codemie.js' } }));
 	});
 
 	afterEach(() => {
@@ -310,6 +321,43 @@ describe('postinstall', () => {
 				expect.stringContaining('.bash_profile'),
 				expect.stringContaining('/usr/local/bin')
 			);
+		});
+	});
+
+	describe('run', () => {
+		it('dispatches to the windows PATH mechanism (registry) on win32, not the rc-file mechanism', async () => {
+			Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+			vi.mocked(execSync).mockReturnValue('C:\\Users\\Test\\AppData\\Roaming\\npm\n' as unknown as Buffer);
+			vi.mocked(existsSync).mockReturnValue(true);
+			vi.mocked(isInUserPath).mockResolvedValue(false);
+			vi.mocked(addToUserPath).mockResolvedValue({
+				success: true,
+				pathAdded: 'C:\\Users\\Test\\AppData\\Roaming\\npm',
+				requiresRestart: true,
+				alreadyInPath: false,
+			});
+
+			const { run } = await import('../postinstall.mjs');
+			await run();
+
+			expect(addToUserPath).toHaveBeenCalled();
+			expect(appendFileSync).not.toHaveBeenCalled();
+		});
+
+		it('dispatches to the rc-file mechanism on non-win32 platforms, not the windows PATH mechanism', async () => {
+			Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+			vi.mocked(execSync).mockReturnValue('/usr/local\n' as unknown as Buffer);
+			process.env.PATH = '/usr/bin:/bin';
+			process.env.SHELL = '/bin/bash';
+			vi.mocked(existsSync).mockReturnValue(true);
+			vi.mocked(readFileSync).mockReturnValue('# existing rc contents\n');
+
+			const { run } = await import('../postinstall.mjs');
+			await run();
+
+			expect(appendFileSync).toHaveBeenCalled();
+			expect(isInUserPath).not.toHaveBeenCalled();
+			expect(addToUserPath).not.toHaveBeenCalled();
 		});
 	});
 });

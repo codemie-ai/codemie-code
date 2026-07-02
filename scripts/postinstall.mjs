@@ -105,3 +105,16 @@ export function runUnix(plat = platform()) {
 	console.log(`\n✓ Added ${npmBin} to PATH in ${rcFile}`);
 	console.log(`  Run: source ${rcFile}\n`);
 }
+
+export async function run() {
+	if (platform() === 'win32') {
+		await runWindows();
+	} else {
+		runUnix();
+	}
+}
+
+const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
+if (isMain) {
+	await run();
+}
