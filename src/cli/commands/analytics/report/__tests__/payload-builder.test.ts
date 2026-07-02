@@ -232,6 +232,25 @@ describe('buildPayload', () => {
     expect(s.commandInvocations).toEqual(commandInvocations);
   });
 
+  it('classifies sessionSource from invocation names, defaulting to Pure chat', () => {
+    const withCommand = {
+      ...root,
+      projects: [{
+        projectPath: '/repo/app',
+        branches: [{ branchName: 'main', sessions: [session({ commandInvocations: [{ name: 'sdlc-light', totalCalls: 1, successCount: 1, failureCount: 0 }] })] }],
+      }],
+    } as unknown as RootAnalytics;
+    const payload = buildPayload(withCommand, costIndex, summary, {
+      rangeLabel: 'all', projectFilter: 'all', generatedAt: '2026-06-08T00:00:00Z',
+    });
+    expect(payload.sessions[0].sessionSource).toBe('CodeMie AI Factory');
+
+    const bare = buildPayload(root, costIndex, summary, {
+      rangeLabel: 'all', projectFilter: 'all', generatedAt: '2026-06-08T00:00:00Z',
+    });
+    expect(bare.sessions[0].sessionSource).toBe('Pure chat');
+  });
+
   it('maps costSeries from the SessionCost when present', () => {
     const idx: SessionCostIndex = new Map([
       ['s1', { sessionId: 's1', tokens: { input: 0, output: 0, cacheRead: 0, cacheCreation: 0, total: 250 }, costUSD: 1, perModel: [], priced: true, hadLog: true, costSeries: [{ t: 1, cost: 0.5, tokens: 100 }, { t: 2, cost: 1, tokens: 250 }] }],

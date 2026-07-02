@@ -8,6 +8,7 @@ import type { RootAnalytics } from '../types.js';
 import type { SessionCostIndex, CostSummary, AgentCoverage } from '../cost/types.js';
 import { emptyUsage } from '../cost/cost-calculator.js';
 import type { ReportPayload, ReportSessionRecord, ReportMeta } from './types.js';
+import { detectSessionSource } from './session-source-detector.js';
 
 export interface PayloadContext {
   rangeLabel: string;
@@ -40,6 +41,9 @@ export function buildPayload(
         seen.add(s.sessionId);
         const cost = costIndex.get(s.sessionId);
         agents.add(s.agentName);
+        const skillInvocations = s.skillInvocations ?? [];
+        const agentInvocations = s.agentInvocations ?? [];
+        const commandInvocations = s.commandInvocations ?? [];
         const cov = coverageMap.get(s.agentName) ?? { agentName: s.agentName, total: 0, priced: 0, withLog: 0 };
         cov.total += 1;
         if (cost?.hadLog) {
@@ -81,9 +85,10 @@ export function buildPayload(
           perModelCost: cost?.perModel ?? [],
           ...(cost?.costSeries && cost.costSeries.length ? { costSeries: cost.costSeries } : {}),
           ...(cost?.dispatches && cost.dispatches.length ? { dispatches: cost.dispatches } : {}),
-          skillInvocations: s.skillInvocations ?? [],
-          agentInvocations: s.agentInvocations ?? [],
-          commandInvocations: s.commandInvocations ?? [],
+          skillInvocations,
+          agentInvocations,
+          commandInvocations,
+          sessionSource: detectSessionSource({ skillInvocations, agentInvocations, commandInvocations }),
         });
       }
     }

@@ -114,6 +114,8 @@ A ranked table of the most bloated sessions and the dead-session list are both c
 
 Estimated API-equivalent spend (token usage × model pricing). If you use Claude on a subscription, you don't pay per token — this view shows the equivalent metered-API value for benchmarking against alternatives or tracking consumption trends.
 
+> **Why this reads lower than the terminal's live cost.** Cost here is counted **per API response**: each response's token usage is priced exactly once, matching how the provider bills and how Claude Code's own telemetry (`cost.usage`) records it. A single response is written to the native log across several lines (e.g. a `thinking` line and a `tool_use` line, each repeating the same usage), and the live statusline in the terminal sums those lines — so it over-counts multi-part responses and shows a higher number. For sessions heavy on extended thinking plus tool use, expect the report total to sit noticeably below the live statusline; the report figure is the authoritative, de-duplicated one.
+
 Key elements:
 
 - **Coverage banner** — tells you how many sessions were successfully priced and which agents have full, partial, or missing token data
@@ -145,7 +147,7 @@ Clicking a session anywhere in the report opens a detail overlay with:
 - **Activity** — turns, tool calls and success rate, agent/skill/command invocation counts
 - **Code changes** — files changed, lines added/removed, net
 - **Token & cost growth chart** — cumulative cost and token usage per turn (from the native log; shown when data is available)
-- **Dispatch timeline** — Interactive Gantt of every top-level dispatch. A session bar spans the full activity window across the top, then each agent, skill, and slash-command dispatch is rendered as its own bar positioned by wall-clock start time, so each sits where it actually ran. The window is the union of the tracked session span and the dispatch span, so dispatches from a resumed or compacted session still place correctly. Short skills and zero-duration commands fall back to a minimum bar width so they stay visible as markers. Click any bar to open a detail panel on the right showing that dispatch's estimated cost, token breakdown (input / output / cache read / cache write), wall-clock duration, start offset from session start, and top tool call counts.
+- **Dispatch timeline** — Interactive Gantt of every top-level dispatch. A session bar spans the full activity window across the top, then each agent, skill, and slash-command dispatch is rendered as its own bar positioned by wall-clock start time, so each sits where it actually ran. The window is the union of the tracked session span and the dispatch span, so dispatches from a resumed or compacted session still place correctly. Short skills and zero-duration commands fall back to a minimum bar width so they stay visible as markers. Click any bar to open a detail panel on the right showing wall-clock duration, start offset from session start, top tool call counts, and — for agent and skill dispatches where usage can be attributed to their time window — estimated cost and token breakdown (input / output / cache read / cache write). Slash-command dispatches are point events with no window to attribute usage from, so they show timing only, never a cost.
 - **Skills / Agent subtypes / Slash commands** — chip lists of what was invoked and how many times
 
 ---
