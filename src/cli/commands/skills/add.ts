@@ -83,6 +83,7 @@ export function createAddCommand(): Command {
         const result = await runSkillsCli(args, {
           cwd,
           timeoutMs: ADD_GIT_TIMEOUT_MS,
+          interactive,
           env: {
             GIT_TERMINAL_PROMPT: '0',
             GCM_INTERACTIVE: 'never',
@@ -105,6 +106,10 @@ export function createAddCommand(): Command {
             agent_selection_mode: effectiveSelectionMode,
           });
           return;
+        }
+
+        if (!interactive && result.stderr) {
+          process.stderr.write(result.stderr);
         }
 
         const errorCode = classifySkillError({ result });
