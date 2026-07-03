@@ -69,11 +69,31 @@ export async function runWindows() {
 		console.warn(`\n⚠️  Expected CodeMie command shims not found in ${dir}: ${missing.join(', ')}\n`);
 	}
 
-	const { isInUserPath, addToUserPath } = await import('../dist/utils/windows-path.js');
+	let isInUserPath, addToUserPath;
+	try {
+		({ isInUserPath, addToUserPath } = await import('../dist/utils/windows-path.js'));
+	} catch (error) {
+		console.warn(`\n⚠️  Could not load the windows-path PATH helper (dist/ may not be built yet): ${error.message}\n`);
+		return;
+	}
 
-	if (await isInUserPath(dir)) return;
+	let alreadyInPath;
+	try {
+		alreadyInPath = await isInUserPath(dir);
+	} catch (error) {
+		console.warn(`\n⚠️  Could not check the windows-path PATH helper: ${error.message}\n`);
+		return;
+	}
+	if (alreadyInPath) return;
 
-	const result = await addToUserPath(dir);
+	let result;
+	try {
+		result = await addToUserPath(dir);
+	} catch (error) {
+		console.warn(`\n⚠️  Could not use the windows-path PATH helper: ${error.message}\n`);
+		return;
+	}
+
 	if (result.success) {
 		console.log(`\n✓ Added ${dir} to PATH\n  Open a new terminal to use codemie\n`);
 		return;

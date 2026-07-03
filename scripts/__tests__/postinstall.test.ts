@@ -271,6 +271,18 @@ describe('postinstall', () => {
 			expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('codemie'));
 			expect(process.exitCode).toBeFalsy();
 		});
+
+		it('degrades gracefully (no throw, exit 0) when the windows-path helper cannot be loaded or used', async () => {
+			vi.mocked(isInUserPath).mockRejectedValue(new Error("Cannot find module '../dist/utils/windows-path.js'"));
+			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+			const { runWindows } = await import('../postinstall.mjs');
+
+			await expect(runWindows()).resolves.toBeUndefined();
+			expect(addToUserPath).not.toHaveBeenCalled();
+			expect(process.exitCode).toBeFalsy();
+			expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('windows-path'));
+		});
 	});
 
 	describe('runUnix', () => {
