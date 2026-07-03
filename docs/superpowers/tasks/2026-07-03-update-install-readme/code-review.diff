@@ -1,0 +1,116 @@
+diff --git a/install/README.md b/install/README.md
+index 3b0daa3..55af67e 100644
+--- a/install/README.md
++++ b/install/README.md
+@@ -1,6 +1,11 @@
+ # CodeMie Bootstrap Installers
+ 
+-This directory contains source files for the lightweight CodeMie bootstrap installers.
++This directory contains source files for the CodeMie installers:
++
++- **GUI installers** — a signed `.dmg` (macOS, Apple Silicon) and a `.exe` wizard (Windows) that install and configure CodeMie with no terminal required.
++- **Script installers** — plain shell/PowerShell bootstrap scripts that install via npm. Prefer these for CI, headless machines, or when a GUI installer is unavailable.
++
++## Distribution Models
+ 
+ Two distribution models are supported:
+ 
+@@ -9,12 +14,13 @@ Two distribution models are supported:
+    - Windows CMD: `install/windows/install.cmd`
+    - macOS/Linux/WSL: `install/macos/install.sh`
+ 
+-2. **Windows Installation Wizard** — a self-contained GUI installer:
+-   - `install/windows/CodeMie Connect_2.0.1_x64-setup.exe`
++2. **GUI installers** — self-contained desktop applications:
++   - macOS: `install/macos/CodeMie Connect_2.0.1_aarch64_signed.dmg`
++   - Windows: `install/windows/CodeMie Connect_2.0.1_x64-setup.exe`
+ 
+-The scripts can be run directly from GitHub raw URLs or mirrored to Artifactory later. They do not require a Windows-built `.exe`.
++The scripts can be run directly from GitHub raw URLs or mirrored to Artifactory later. They do not require a GUI installer.
+ 
+-Set `CODEMIE_INSTALL_URL` only when you want to override the public GitHub raw location, for example with an enterprise Artifactory mirror. If it is unset, `install/windows/install.cmd` downloads the PowerShell installer from this public repository.
++Set `CODEMIE_INSTALL_URL` only when you want to override the public GitHub raw location, for example with an enterprise Artifactory mirror. If it is unset, `install/windows/install.cmd` downloads the PowerShell installer from this public repository. `CODEMIE_INSTALL_URL` points at the **directory** containing `install.ps1`, not the file itself.
+ 
+ Channel selection is not implemented in the bootstrap scripts yet. Install the default npm package version, or pass an explicit version with PowerShell `-Version` or shell `CODEMIE_PACKAGE_VERSION`.
+ 
+@@ -48,11 +54,40 @@ https://raw.githubusercontent.com/codemie-ai/codemie-code/main/install/windows/i
+ https://raw.githubusercontent.com/codemie-ai/codemie-code/main/install/macos/install.sh
+ ```
+ 
+-For reproducible installs, replace `main` with a release tag such as `v0.0.57`.
++For reproducible installs, replace `main` with a release tag such as `v0.8.0`.
++
++## Script Options
++
++### Windows PowerShell (`install/windows/install.ps1`)
++
++| Parameter | Default | Values / Purpose |
++|---|---|---|
++| `-Mode` | `portable` | `portable` = npm prefix under `-InstallRoot` with shim `.cmd` files in `bin/` and a user PATH update; `npm-global` = plain `npm install -g` into the existing npm prefix |
++| `-Version` | *(empty)* | Pin `@codemieai/code` to a specific version |
++| `-RegistryUrl` | `https://registry.npmjs.org/` | npm registry used for resolution and install |
++| `-ScopeRegistryUrl` | *(empty)* | Sets the `@codemieai:registry` npm scope to an enterprise registry |
++| `-InstallRoot` | `%LOCALAPPDATA%\CodeMie` | Portable install root (`-Mode portable` only) |
++| `-DryRun` | *(switch)* | Print every action without executing it |
++
++### macOS / Linux / WSL (`install/macos/install.sh`)
++
++| Env var | Default | Values / Purpose |
++|---|---|---|
++| `CODEMIE_INSTALL_MODE` | `auto` | `auto` = `npm-global` if the npm prefix is user-writable, otherwise `user-prefix`; `npm-global` = plain global install; `user-prefix` = install under `CODEMIE_NPM_PREFIX` |
++| `CODEMIE_NPM_PREFIX` | `$HOME/.codemie/npm-prefix` | npm prefix used when `INSTALL_MODE` resolves to `user-prefix` |
++| `CODEMIE_PACKAGE_VERSION` | *(empty)* | Pin `@codemieai/code` to a specific version |
++| `CODEMIE_REGISTRY_URL` | `https://registry.npmjs.org/` | npm registry used for resolution and install |
++| `CODEMIE_SCOPE_REGISTRY_URL` | *(empty)* | Sets the `@codemieai:registry` npm scope to an enterprise registry |
++
++Pin a version on macOS/Linux/WSL:
++
++```bash
++curl -fsSL https://raw.githubusercontent.com/codemie-ai/codemie-code/main/install/macos/install.sh | env CODEMIE_PACKAGE_VERSION=0.8.0 bash
++```
+ 
+ ## Windows Defaults
+ 
+-Windows installs into the current user's local profile by default:
++Windows installs into the current user's local profile by default (`-Mode portable`):
+ 
+ ```text
+ %LOCALAPPDATA%\CodeMie
+@@ -64,7 +99,7 @@ Known limitation: `install/windows/install.cmd` forwards arguments to PowerShell
+ 
+ ## macOS/Linux Defaults
+ 
+-macOS, Linux, and WSL prefer npm global installation when global npm is user-writable. If global npm is not writable, the script configures a user-local npm prefix.
++macOS, Linux, and WSL use `CODEMIE_INSTALL_MODE=auto` by default: npm global installation when global npm is user-writable. If global npm is not writable, the script configures a user-local npm prefix (`$HOME/.codemie/npm-prefix`).
+ 
+ ## Windows Installation Wizard
+ 
+@@ -118,6 +153,28 @@ All wizard output is written to:
+ 
+ The log persists across runs. Each line is prefixed with an ISO-8601 timestamp and a tag: `[OUT]` stdout, `[ERR]` stderr, `[INF]` info, `[OK]` success, `[CMD]` command.
+ 
++## macOS Installation Wizard
++
++`install/macos/CodeMie Connect_2.0.1_aarch64_signed.dmg` is a signed macOS desktop GUI application for **Apple Silicon (aarch64)** Macs. It installs and configures the CodeMie CLI and Claude engine end-to-end with no terminal required. (An Intel x86_64 build is not shipped.)
++
++The wizard is built from a separate repository (`codemie-claude-installer-mac`); the `.dmg` committed here is the distributed artifact.
++
++### Running the Wizard
++
++Download `CodeMie Connect_2.0.1_aarch64_signed.dmg` from the [macOS install folder](https://github.com/codemie-ai/codemie-code/tree/main/install/macos), open it, and run the app. The wizard walks the user through installing prerequisites (Xcode Command Line Tools, Node.js, Git), the CodeMie CLI, an interactive `codemie setup`, the Claude engine via `codemie install claude`, and a final `codemie doctor` validation.
++
++### Log File
++
++Wizard output is written to:
++
++```text
++~/Library/Logs/CodeMie/
++```
++
++The log persists across runs.
++
++> The wizard version (`2.0.1` in the filename) is independent of the `@codemieai/code` npm package version.
++
+ ## Release Artifacts
+ 
+ Run this command to prepare publishable artifacts:

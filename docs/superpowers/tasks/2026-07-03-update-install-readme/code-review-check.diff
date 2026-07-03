@@ -1,0 +1,28 @@
+diff --git a/install/README.md b/install/README.md
+index 55af67e..cf9b698 100644
+--- a/install/README.md
++++ b/install/README.md
+@@ -74,7 +74,7 @@ For reproducible installs, replace `main` with a release tag such as `v0.8.0`.
+ | Env var | Default | Values / Purpose |
+ |---|---|---|
+ | `CODEMIE_INSTALL_MODE` | `auto` | `auto` = `npm-global` if the npm prefix is user-writable, otherwise `user-prefix`; `npm-global` = plain global install; `user-prefix` = install under `CODEMIE_NPM_PREFIX` |
+-| `CODEMIE_NPM_PREFIX` | `$HOME/.codemie/npm-prefix` | npm prefix used when `INSTALL_MODE` resolves to `user-prefix` |
++| `CODEMIE_NPM_PREFIX` | `$HOME/.codemie/npm-prefix` | npm prefix used when `CODEMIE_INSTALL_MODE` resolves to `user-prefix` |
+ | `CODEMIE_PACKAGE_VERSION` | *(empty)* | Pin `@codemieai/code` to a specific version |
+ | `CODEMIE_REGISTRY_URL` | `https://registry.npmjs.org/` | npm registry used for resolution and install |
+ | `CODEMIE_SCOPE_REGISTRY_URL` | *(empty)* | Sets the `@codemieai:registry` npm scope to an enterprise registry |
+@@ -165,13 +165,7 @@ Download `CodeMie Connect_2.0.1_aarch64_signed.dmg` from the [macOS install fold
+ 
+ ### Log File
+ 
+-Wizard output is written to:
+-
+-```text
+-~/Library/Logs/CodeMie/
+-```
+-
+-The log persists across runs.
++Wizard output is written to `~/Library/Logs/CodeMie/wizard.log` (per the macOS installer plan; the wizard source lives in a separate repository). The log persists across runs.
+ 
+ > The wizard version (`2.0.1` in the filename) is independent of the `@codemieai/code` npm package version.
+ 

@@ -1,0 +1,24 @@
+{
+  "decision": "approve",
+  "rationale": "Check round re-verified both blocking findings against the fix-up diff. CR-001 resolved: CODEMIE_NPM_PREFIX row now reads 'CODEMIE_INSTALL_MODE resolves to user-prefix' — matches the documented env var. CR-002 resolved: macOS log path softened to attribution framing with the plan doc's file path (~/Library/Logs/CodeMie/wizard.log), no longer stated as unverifiable certainty. Fix-up diff is 2+/8- on the same single file, introduces no new high-risk issue (docs-only, no security/API/runtime surface). business_review and standards_review carried forward unchanged from the final round.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {"criterion": "1. macOS .dmg in intro + distribution list + new wizard section", "status": "pass"},
+    {"criterion": "2. Full PowerShell install.ps1 parameter table", "status": "pass"},
+    {"criterion": "3. Full install.sh env-var table", "status": "pass"},
+    {"criterion": "4. Refresh stale tag v0.0.57 -> v0.8.0", "status": "pass"},
+    {"criterion": "5. Name Windows portable vs macOS auto modes", "status": "pass"},
+    {"criterion": "6. Keep Windows wizard / Release Artifacts / Defaults verbatim", "status": "partial", "notes": "Wizard + Release Artifacts byte-identical; Defaults prose edited to satisfy criterion 5 — resolved by design"}
+  ],
+  "standards_review": [
+    {"check": "commit-format", "status": "pass", "notes": "docs(cli): ... matches Conventional Commits; scope 'cli' in allowed enum"},
+    {"check": "code-quality", "status": "na", "notes": "docs-only change, no code"},
+    {"check": "security", "status": "na", "notes": "docs-only, no credentials/paths/injection surface"}
+  ],
+  "findings": [],
+  "finding_status": [
+    {"id": "CR-001", "status": "resolved", "evidence": "fix-up diff line: '+| CODEMIE_NPM_PREFIX | $HOME/.codemie/npm-prefix | npm prefix used when CODEMIE_INSTALL_MODE resolves to user-prefix |'"},
+    {"id": "CR-002", "status": "resolved", "evidence": "fix-up diff replaces the over-certain directory path with 'Wizard output is written to ~/Library/Logs/CodeMie/wizard.log (per the macOS installer plan; the wizard source lives in a separate repository).'"}
+  ]
+}
