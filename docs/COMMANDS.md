@@ -22,6 +22,7 @@ codemie self-update              # Update CodeMie CLI itself
 codemie doctor [options]         # Health check and diagnostics
 codemie plugin <command>         # Manage native plugins
 codemie mcp-proxy <url>          # Stdio-to-HTTP MCP proxy with OAuth support
+codemie mcp-auth-proxy <start|stop|status>  # OAuth-rewriting proxy daemon for remote MCP servers (client_name/scope/resource overrides; config: ~/.codemie/mcp-auth-proxy.json)
 codemie codebase <command>       # Manage Codebase Memory graph UI
 codemie version                  # Show version information
 ```
