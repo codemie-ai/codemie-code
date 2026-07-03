@@ -6,7 +6,7 @@ describe('exportProviderEnvVars — reasoningEffort', () => {
     const env = ConfigLoader.exportProviderEnvVars({
       provider: 'openai',
       baseUrl: 'https://example.com',
-      apiKey: 'test-key',
+      apiKey: '',
       model: 'gpt-4o',
       reasoningEffort: 'high',
     });
@@ -17,7 +17,7 @@ describe('exportProviderEnvVars — reasoningEffort', () => {
     const env = ConfigLoader.exportProviderEnvVars({
       provider: 'openai',
       baseUrl: 'https://example.com',
-      apiKey: 'test-key',
+      apiKey: '',
       model: 'gpt-4o',
     });
     expect(env.CODEMIE_REASONING_EFFORT).toBeUndefined();
