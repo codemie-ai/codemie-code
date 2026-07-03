@@ -35,6 +35,7 @@ import { createAssistantsCommand } from './commands/assistants/index.js';
 import { createSdkCommand } from './commands/sdk/index.js';
 import { createMcpCommand } from './commands/mcp/index.js';
 import { createMcpProxyCommand } from './commands/mcp-proxy.js';
+import { createMcpAuthProxyCommand } from './commands/mcp-auth-proxy.js';
 import { createProxyCommand } from './commands/proxy/index.js';
 import { createCodebaseCommand } from './commands/codebase/index.js';
 import { FirstTimeExperience } from './first-time.js';
@@ -96,6 +97,7 @@ program.addCommand(createModelsCommand());
 program.addCommand(createSdkCommand());
 program.addCommand(createMcpCommand());
 program.addCommand(createMcpProxyCommand());
+program.addCommand(createMcpAuthProxyCommand());
 program.addCommand(createProxyCommand());
 program.addCommand(createCodebaseCommand());
 
