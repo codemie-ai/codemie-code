@@ -44,11 +44,15 @@ No registry/plugin surface. Existing `codemie mcp-proxy` stdio bridge is untouch
 | `src/bin/mcp-auth-proxy-daemon.ts` | new | Thin detached entry: `parseArgs` (`--config`, `--port`, `--state-file`) → `runAuthProxyDaemon`. Start failure → stderr + `exit(1)`. Mirrors `src/bin/proxy-daemon.ts` minus watcher. |
 | `bin/mcp-auth-proxy-daemon.js` | new | Git-tracked ESM wrapper importing `../dist/bin/mcp-auth-proxy-daemon.js` (D4). |
 | `src/cli/commands/mcp-auth-proxy.ts` | new | `createMcpAuthProxyCommand()` — `new Command('mcp-auth-proxy')` with `start [--config <path>] [--port <n>] [--foreground]`, `stop`, `status`, mirroring `src/cli/commands/proxy/index.ts` (port parse helper → `ConfigurationError`; `chalk` output). `start`: validate config first (fail fast with key path), then detached `spawnDetached(process.execPath, [wrapper, ...args])` + 5 s state/pid poll (`ToolExecutionError` on timeout), or `--foreground` → `runAuthProxyDaemon` in-process; on success print per-route `claude mcp add --scope local --transport http <id> http://127.0.0.1:<port>/<id>` lines. `status`: read state, pid liveness, `GET /healthz`, print per-route upstream + add-command; clear stale state. `stop`: SIGTERM + poll, SIGKILL escalation, clear state. |
+| `src/mcp/auth-proxy/upstream-client.ts` | new | `UpstreamClient` — outbound HTTP for the module: keep-alive agents honoring `HTTP(S)_PROXY` env (D3), `begin(url, opts)` returning `{request, response}` for streaming pass-through with abort propagation, buffered `fetchJson(url)` (5 s timeout, 256 KB cap) for metadata discovery. TLS verification ON (`rejectUnauthorized: true`) — this client relays OAuth traffic. Keeps `server.ts` focused (file split per design-for-isolation). |
 | `src/cli/index.ts` | edit | Import + `program.addCommand(createMcpAuthProxyCommand())` next to `createMcpProxyCommand()` (line ~98). |
-| `package.json` | edit | Optional `bin` entry `"codemie-mcp-auth-proxy-daemon": "bin/mcp-auth-proxy-daemon.js"` for consistency; `files` already ships `bin/` + `dist/`. No build changes (tsc compiles `src/**/*`). |
 | `docs/COMMANDS.md` | edit | Document the new command surface (repo review checklist: public docs updated when behavior changes). |
 
-Every new `src/**/*.ts` file carries the Apache-2.0 license header (license gate).
+`package.json` needs **no change**: `files` already ships `bin/` + `dist/`, tsc compiles all of
+`src/**/*`, and the existing `proxy-daemon` exposes no npm `bin` entry — the new daemon mirrors
+that (spawned by file path only). The `license-check` gate validates **dependency** licenses
+(`npx license-checker`); no new dependencies are added and repo source files carry no license
+headers, so no header/license work is needed.
 
 ### Rewrite function signatures (the unit-test core)
 
