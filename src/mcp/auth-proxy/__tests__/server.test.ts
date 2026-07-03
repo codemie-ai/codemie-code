@@ -4,6 +4,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import http from 'node:http';
+import net from 'node:net';
 import type { AddressInfo } from 'node:net';
 import { McpAuthProxy } from '../server.js';
 import type { AuthProxyConfig, JsonObject } from '../types.js';
@@ -302,6 +303,43 @@ describe('McpAuthProxy', () => {
     });
     expect(res.status).toBe(413);
     expect(await res.json()).toEqual({ error: 'payload_too_large' });
+  });
+
+  it('answers 400 to a malformed request-target and keeps serving afterwards', async () => {
+    const port = Number(new URL(proxyOrigin).port);
+    const statusLine = await new Promise<string>((resolve, reject) => {
+      const socket = net.connect({ host: '127.0.0.1', port }, () => {
+        socket.write('GET http://[ HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n');
+      });
+      let data = '';
+      socket.setTimeout(3000, () => {
+        socket.destroy();
+        reject(new Error('proxy sent no response to the malformed request-target'));
+      });
+      socket.on('data', (chunk) => {
+        data += chunk.toString('utf-8');
+      });
+      socket.on('end', () => resolve(data.split('\r\n')[0]));
+      socket.on('error', reject);
+    });
+    expect(statusLine).toBe('HTTP/1.1 400 Bad Request');
+
+    // The daemon must survive the malformed request and keep serving other routes.
+    const res = await fetch(`${proxyOrigin}/.well-known/oauth-protected-resource/radar`);
+    expect(res.status).toBe(200);
+  });
+
+  it('404s prototype-inherited route ids instead of treating them as routes', async () => {
+    const cases = [
+      { path: '/constructor', method: 'GET' },
+      { path: '/as/constructor/token', method: 'POST' },
+      { path: '/.well-known/oauth-protected-resource/toString', method: 'GET' },
+    ];
+    for (const { path, method } of cases) {
+      const res = await fetch(`${proxyOrigin}${path}`, { method });
+      expect(res.status, `${method} ${path}`).toBe(404);
+      expect(await res.json()).toEqual({ error: 'unknown_route' });
+    }
   });
 
   it('404s unknown routes and the root PRM alias when multiple routes exist', async () => {

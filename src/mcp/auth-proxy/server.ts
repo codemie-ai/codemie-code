@@ -48,6 +48,7 @@ const HOP_BY_HOP_HEADERS = new Set([
 ]);
 
 class BodyTooLargeError extends Error {}
+class InvalidRequestTargetError extends Error {}
 
 function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
   const payload = Buffer.from(JSON.stringify(body), 'utf-8');
@@ -174,22 +175,35 @@ export class McpAuthProxy {
     this.client.close();
   }
 
+  /** Own-property route lookup — prototype-inherited keys ('constructor', …) are not routes. */
+  private getRoute(id: string): RouteConfig | undefined {
+    return Object.hasOwn(this.config.servers, id) ? this.config.servers[id] : undefined;
+  }
+
   private ctx(routeId: string): RewriteContext {
     return {
       proxyOrigin: this.origin,
       routeId,
-      scopes: this.config.servers[routeId]?.scopes,
+      scopes: this.getRoute(routeId)?.scopes,
     };
   }
 
   private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const startedAt = Date.now();
-    const url = new URL(req.url ?? '/', this.origin);
-    const segments = url.pathname.split('/').filter((segment) => segment.length > 0);
     let kind = 'unknown';
     let routeId = '';
 
     try {
+      // Parse inside the try: a request-target WHATWG URL rejects (e.g. absolute-form
+      // "http://[") must yield a 400, not an unhandled rejection that kills the daemon.
+      let url: URL;
+      try {
+        url = new URL(req.url ?? '/', this.origin);
+      } catch {
+        throw new InvalidRequestTargetError();
+      }
+      const segments = url.pathname.split('/').filter((segment) => segment.length > 0);
+
       if (req.method === 'GET' && url.pathname === '/healthz') {
         kind = 'healthz';
         this.serveHealth(res);
@@ -198,7 +212,7 @@ export class McpAuthProxy {
       } else if (segments[0] === 'as' && segments.length >= 2) {
         routeId = segments[1];
         kind = await this.handleOAuth(req, res, url, segments);
-      } else if (segments.length >= 1 && this.config.servers[segments[0]] !== undefined) {
+      } else if (segments.length >= 1 && this.getRoute(segments[0]) !== undefined) {
         routeId = segments[0];
         kind = 'mcp';
         await this.passThrough(req, res, url, routeId);
@@ -263,7 +277,7 @@ export class McpAuthProxy {
   }
 
   private async servePrm(res: http.ServerResponse, routeId: string): Promise<void> {
-    const route = this.config.servers[routeId];
+    const route = this.getRoute(routeId);
     if (!route) {
       sendJson(res, 404, { error: 'unknown_route' });
       return;
@@ -275,7 +289,7 @@ export class McpAuthProxy {
   }
 
   private async serveAsMetadata(res: http.ServerResponse, routeId: string): Promise<void> {
-    const route = this.config.servers[routeId];
+    const route = this.getRoute(routeId);
     if (!route) {
       sendJson(res, 404, { error: 'unknown_route' });
       return;
@@ -298,7 +312,7 @@ export class McpAuthProxy {
     segments: string[]
   ): Promise<string> {
     const routeId = segments[1];
-    const route = this.config.servers[routeId];
+    const route = this.getRoute(routeId);
     if (!route) {
       sendJson(res, 404, { error: 'unknown_route' });
       return 'unknown';
@@ -473,7 +487,11 @@ export class McpAuthProxy {
     url: URL,
     routeId: string
   ): Promise<void> {
-    const route = this.config.servers[routeId];
+    const route = this.getRoute(routeId);
+    if (route === undefined) {
+      sendJson(res, 404, { error: 'unknown_route' });
+      return;
+    }
     const target = new URL(route.upstreamUrl);
     target.pathname = target.pathname.replace(/\/+$/, '') + url.pathname.slice(`/${routeId}`.length);
     target.search = url.search;
@@ -506,7 +524,7 @@ export class McpAuthProxy {
       if (challengeText !== undefined) {
         const match = /resource_metadata\s*=\s*"([^"]+)"/i.exec(challengeText);
         if (match) {
-          this.metadata.notePrmUrl(routeId, match[1]);
+          this.metadata.notePrmUrl(routeId, match[1], route.upstreamUrl);
         }
       }
       const { value, rewrote } = rewriteChallengeHeader(challengeText, this.ctx(routeId));
@@ -538,6 +556,10 @@ export class McpAuthProxy {
   private handleError(res: http.ServerResponse, routeId: string, error: unknown): void {
     if (res.headersSent) {
       res.destroy();
+      return;
+    }
+    if (error instanceof InvalidRequestTargetError) {
+      sendJson(res, 400, { error: 'invalid_request' });
       return;
     }
     if (error instanceof MetadataDiscoveryError || isUpstreamNetworkError(error)) {

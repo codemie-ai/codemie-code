@@ -42,10 +42,20 @@ export class MetadataCache {
 
   constructor(private readonly fetchJson: FetchJson) {}
 
-  /** R2: remember a resource_metadata URL observed on a live upstream 401. */
-  notePrmUrl(routeId: string, url: string): void {
+  /**
+   * R2: remember a resource_metadata URL observed on a live upstream 401.
+   * SSRF guard: only https hints on the configured upstream's host are accepted —
+   * anything else is ignored and discovery falls back to the well-known probes.
+   */
+  notePrmUrl(routeId: string, url: string, upstreamUrl: string): void {
     try {
-      new URL(url);
+      const hint = new URL(url);
+      if (hint.protocol !== 'https:' || hint.host !== new URL(upstreamUrl).host) {
+        logger.debug(
+          `[mcp-auth-proxy] Route "${routeId}": ignoring resource_metadata hint on host "${hint.host}" — not https on the upstream host`
+        );
+        return;
+      }
       this.prmUrlHints.set(routeId, url);
     } catch {
       // Malformed hint — ignore.

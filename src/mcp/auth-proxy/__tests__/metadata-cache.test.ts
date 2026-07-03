@@ -97,9 +97,23 @@ describe('MetadataCache', () => {
     const hinted = 'https://mcp.example.com/custom/prm-location';
     const { calls, fetchJson } = fakeFetcher({ ...HAPPY_DOCS, [hinted]: PRM });
     const cache = new MetadataCache(fetchJson);
-    cache.notePrmUrl('radar', hinted);
+    cache.notePrmUrl('radar', hinted, route.upstreamUrl);
     await cache.getMetadata('radar', route);
     expect(calls[0]).toBe(hinted);
+  });
+
+  it('ignores 401 PRM hints that are not https on the configured upstream host', async () => {
+    const rejectedHints = [
+      'http://mcp.example.com/custom/prm-location', // right host, wrong scheme
+      'https://evil.example/custom/prm-location', // https, wrong host
+    ];
+    for (const hinted of rejectedHints) {
+      const { calls, fetchJson } = fakeFetcher({ ...HAPPY_DOCS, [hinted]: PRM });
+      const cache = new MetadataCache(fetchJson);
+      cache.notePrmUrl('radar', hinted, route.upstreamUrl);
+      await cache.getMetadata('radar', route);
+      expect(calls[0], hinted).toBe(PRM_PATH_URL);
+    }
   });
 
   it('caches positive results for the TTL and refreshes after expiry', async () => {
