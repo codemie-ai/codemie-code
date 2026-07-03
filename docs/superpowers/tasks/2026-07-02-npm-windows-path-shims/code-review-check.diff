@@ -1,0 +1,113 @@
+diff --git a/.codemie/codemie-cli.config.json b/.codemie/codemie-cli.config.json
+index deed353..5f38325 100644
+--- a/.codemie/codemie-cli.config.json
++++ b/.codemie/codemie-cli.config.json
+@@ -10,9 +10,21 @@
+       "baseUrl": "https://codemie.lab.epam.com/code-assistant-api",
+       "model": "claude-sonnet-4-6",
+       "haikuModel": "claude-haiku-4-5-20251001",
+-      "sonnetModel": "claude-sonnet-4-6",
++      "sonnetModel": "claude-sonnet-5",
+       "opusModel": "claude-opus-4-8",
+       "name": "epm-cdme"
++    },
++    "sonnet5preview": {
++      "codeMieProject": "codemie",
++      "provider": "ai-run-sso",
++      "codeMieUrl": "https://codemie-preview.lab.epam.com/",
++      "apiKey": "sso-provided",
++      "baseUrl": "https://codemie-preview.lab.epam.com/code-assistant-api",
++      "model": "claude-sonnet-5",
++      "haikuModel": "claude-haiku-4-5-20251001",
++      "sonnetModel": "claude-sonnet-5",
++      "opusModel": "claude-opus-4-8",
++      "name": "sonnet5preview"
+     }
+   },
+   "codemieAssistants": [
+@@ -52,5 +64,6 @@
+         "claude"
+       ]
+     }
+-  ]
++  ],
++  "codemieSkills": []
+ }
+\ No newline at end of file
+diff --git a/package.json b/package.json
+index 6cca35f..7c20aa9 100644
+--- a/package.json
++++ b/package.json
+@@ -43,8 +43,8 @@
+     "typecheck": "tsc --noEmit",
+     "format": "npm run lint:fix",
+     "check:pre-commit": "npm run typecheck && npm run lint",
+-    "lint": "eslint '{src,tests}/**/*.ts' --max-warnings=0",
+-    "lint:fix": "eslint '{src,tests}/**/*.ts' --fix",
++    "lint": "eslint src/**/*.ts tests/**/*.ts --max-warnings=0",
++    "lint:fix": "eslint src/**/*.ts tests/**/*.ts --fix",
+     "commitlint": "commitlint --edit",
+     "commitlint:last": "commitlint --from HEAD~1 --to HEAD --verbose",
+     "validate:secrets": "node scripts/validate-secrets.js",
+diff --git a/scripts/__tests__/postinstall.test.ts b/scripts/__tests__/postinstall.test.ts
+index 933aeea..cfb43a0 100644
+--- a/scripts/__tests__/postinstall.test.ts
++++ b/scripts/__tests__/postinstall.test.ts
+@@ -271,6 +271,18 @@ describe('postinstall', () => {
+ 			expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('codemie'));
+ 			expect(process.exitCode).toBeFalsy();
+ 		});
++
++		it('degrades gracefully (no throw, exit 0) when the windows-path helper cannot be loaded or used', async () => {
++			vi.mocked(isInUserPath).mockRejectedValue(new Error("Cannot find module '../dist/utils/windows-path.js'"));
++			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
++
++			const { runWindows } = await import('../postinstall.mjs');
++
++			await expect(runWindows()).resolves.toBeUndefined();
++			expect(addToUserPath).not.toHaveBeenCalled();
++			expect(process.exitCode).toBeFalsy();
++			expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('windows-path'));
++		});
+ 	});
+ 
+ 	describe('runUnix', () => {
+diff --git a/scripts/postinstall.mjs b/scripts/postinstall.mjs
+index 163c549..a23b51e 100644
+--- a/scripts/postinstall.mjs
++++ b/scripts/postinstall.mjs
+@@ -69,11 +69,31 @@ export async function runWindows() {
+ 		console.warn(`\n⚠️  Expected CodeMie command shims not found in ${dir}: ${missing.join(', ')}\n`);
+ 	}
+ 
+-	const { isInUserPath, addToUserPath } = await import('../dist/utils/windows-path.js');
++	let isInUserPath, addToUserPath;
++	try {
++		({ isInUserPath, addToUserPath } = await import('../dist/utils/windows-path.js'));
++	} catch (error) {
++		console.warn(`\n⚠️  Could not load the windows-path PATH helper (dist/ may not be built yet): ${error.message}\n`);
++		return;
++	}
++
++	let alreadyInPath;
++	try {
++		alreadyInPath = await isInUserPath(dir);
++	} catch (error) {
++		console.warn(`\n⚠️  Could not check the windows-path PATH helper: ${error.message}\n`);
++		return;
++	}
++	if (alreadyInPath) return;
+ 
+-	if (await isInUserPath(dir)) return;
++	let result;
++	try {
++		result = await addToUserPath(dir);
++	} catch (error) {
++		console.warn(`\n⚠️  Could not use the windows-path PATH helper: ${error.message}\n`);
++		return;
++	}
+ 
+-	const result = await addToUserPath(dir);
+ 	if (result.success) {
+ 		console.log(`\n✓ Added ${dir} to PATH\n  Open a new terminal to use codemie\n`);
+ 		return;

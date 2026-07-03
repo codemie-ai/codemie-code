@@ -1,0 +1,34 @@
+{
+  "decision": "request-changes",
+  "rationale": "Blind and edge-case lenses independently flagged the same critical bug: runWindows()'s unguarded `await import('../dist/utils/windows-path.js')` throws uncaught if dist/ is absent. Confirmed against .github/workflows/ci.yml: the windows-latest job runs `npm ci` (which triggers postinstall) at lines 212-213, before 'Download build artifacts' populates dist/ at lines 216-220 — so this will crash the Windows CI 'Install dependencies' step, and will do the same for any Windows contributor's fresh `npm install` before `npm run build`. The test suite fully mocks the dist import (vi.mock('../../dist/utils/windows-path.js', ...)), so this failure mode has zero coverage. This also contradicts the spec's own stated exit policy, which intends only addToUserPath failure to be non-graceful — a missing dist/ was never considered a failure mode in the design. Acceptance lens found zero blocking findings against the approved spec/plan otherwise (all 10 required test cases present, all exported functions and the exit-policy table match exactly). Two other findings (runUnix's untested plat='win32' interaction; validate-secrets.js's shell:true removal for non-.exe engine binaries) are deferred as non-blocking maintainability notes, not confirmed regressions. One finding (unused isWindows variable) was a false positive from the blind lens's lack of full-file context — isWindows is still used in resolveCommand(). Test-assertion-depth gaps on 3 test cases (console.log/error content not spied in every case) are non-blocking per the acceptance lens — the underlying behavior is correct.",
+  "confidence": "high",
+  "risk_flags": ["breaking-change"],
+  "business_review": [
+    {"criterion": "getNpmPrefix/getShimDir/isInPath/getShellRcFile/alreadyInRcFile/getExpectedShimNames/findMissingShims/runWindows/runUnix/run all exported with spec'd signatures", "status": "pass", "notes": "Confirmed by acceptance lens against live file."},
+    {"criterion": "Direct-execution guard prevents side effects on import", "status": "pass", "notes": "isMain check via fileURLToPath(import.meta.url) === process.argv[1]."},
+    {"criterion": "Windows flow steps 1-7 implemented in order", "status": "pass", "notes": "prefix -> dir -> missing-shim warn -> dynamic import -> isInUserPath no-op -> addToUserPath success/failure handling, matches spec exactly."},
+    {"criterion": "Unix flow unchanged except delimiter fix", "status": "pass", "notes": "Same logic, isInPath now takes explicit sep derived from plat."},
+    {"criterion": "Exit policy table (only addToUserPath failure exits 1)", "status": "partial", "notes": "Table is correctly implemented for the failure modes the spec anticipated, but the spec did not anticipate a missing dist/utils/windows-path.js as a failure mode, and the current unguarded import crashes rather than degrading to exit 0 like the other non-actionable failures. This is the CR-001 gap."},
+    {"criterion": "Reuse windows-path.ts via dist/, no duplicated PATH logic", "status": "pass", "notes": "windows-path.ts untouched, only dynamically imported."},
+    {"criterion": "10 required test cases present", "status": "pass", "notes": "All 10 present; 3 have shallower assertions than ideal but exercise correct code paths (non-blocking)."},
+    {"criterion": "vitest.config.ts includes scripts/**/*.test.ts", "status": "pass", "notes": "Confirmed."},
+    {"criterion": "Out-of-scope items absent (isolated prefix redirect, hook executor fix, install.cmd fix, install.ps1/native-installer changes)", "status": "pass", "notes": "git diff confirms zero changes to those files."}
+  ],
+  "standards_review": [
+    {"standard": "git-workflow.md: Conventional Commits format + allowed scopes", "status": "pass", "notes": "All 8 commits use valid type(scope): subject format with scopes from the allowed list (cli, deps)."},
+    {"standard": "code-quality.md: naming, .js import extensions, function size, comments explain why", "status": "pass", "notes": "console.log/warn/error usage (vs logger.debug) is a justified exception — this is a standalone lifecycle script outside src/ producing user-facing install output, not application debug logging, matching the pre-existing convention in the same file before this diff."},
+    {"standard": "security-practices.md: no hardcoded secrets, path validation, no injection", "status": "pass", "notes": "No secrets introduced. getExpectedShimNames() builds its path from __dirname (not user input). runWindows/runUnix pass a directory derived from trusted local `npm config get prefix` output into addToUserPath(), which already validates it (validateDirectoryPath rejects metacharacters, requires absolute path) before touching the registry — no new unvalidated exec/registry calls introduced by this diff."}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "critical",
+      "triage": "patch",
+      "title": "Unguarded dynamic import of dist/utils/windows-path.js crashes postinstall (and Windows CI) when dist/ doesn't exist yet",
+      "file": "scripts/postinstall.mjs",
+      "problem": "runWindows() does `const { isInUserPath, addToUserPath } = await import('../dist/utils/windows-path.js');` with no try/catch. This module only exists after `npm run build`. On the windows-latest CI job (.github/workflows/ci.yml lines 212-220), `npm ci` runs at the 'Install dependencies' step — which triggers this postinstall script — before the 'Download build artifacts' step populates dist/. The unguarded import throws ERR_MODULE_NOT_FOUND, which propagates uncaught through runWindows() -> run() at module top level, crashing the npm ci process itself. The same failure hits any Windows contributor doing a fresh `npm install` before ever running `npm run build` (dist/ is gitignored).",
+      "impact": "Breaks the Windows CI job's dependency-install step entirely (not just a degraded warning), and breaks a fresh Windows clone's first `npm install`. This is a regression from the pre-existing script, which never touched dist/ and never threw uncaught. It also contradicts the spec's own intent that only addToUserPath failure should be non-graceful — everything else should degrade to a warning and exit 0.",
+      "recommendation": "Wrap the dynamic import (and the isInUserPath/addToUserPath calls that depend on it) in try/catch inside runWindows(). On failure, console.warn a message noting the PATH helper could not be loaded and return without setting process.exitCode — the same non-fatal degradation already used for a missing npm prefix or missing shim files."
+    }
+  ]
+}
