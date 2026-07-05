@@ -9,5 +9,5 @@ export { writeSsoProfile, ssoCleanEnv, copySsoCredentials, setupSsoAutotestProfi
 export { waitForOutput, cleanKill } from './interactive-helpers.js';
 export { spawnPty, type PtySession } from './pty-session.js';
 export { getLatestMetricsRecord } from './metrics.js';
-export { getTestEnvFlag, getTestEnvFlagOrDefault } from './test-env.js';
+export { getTestEnvFlag, getTestEnvFlagOrDefault, stripNodeModulesBin } from './test-env.js';
 export { pollForSession, type SessionPollOptions, type SessionPollResult } from './session-poll.js';
