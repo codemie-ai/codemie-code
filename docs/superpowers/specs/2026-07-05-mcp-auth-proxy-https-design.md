@@ -63,9 +63,11 @@ src/cli/commands/mcp-auth-proxy.ts start --tls; trust [--uninstall]; https-aware
 
 ### certs.ts — certificate lifecycle (new)
 
-Dependency: **`@peculiar/x509`** (v2, MIT, pure TS/JS, WebCrypto-based — wired
-to `node:crypto` `webcrypto`; verified current 2026-07-05). node:crypto alone
-cannot create/sign X.509 certificates.
+Dependency: **`@peculiar/x509@^1.14.3`** (MIT, pure TS/JS, WebCrypto-based —
+wired to `node:crypto` `webcrypto`; full CA→leaf flow verified live
+2026-07-05). Pinned to v1: v2.0.0 fails at import with an undeclared
+`reflect-metadata` requirement; v1.14.3 declares it and works out of the box.
+node:crypto alone cannot create/sign X.509 certificates.
 
 Layout (all under `getCodemiePath('mcp-auth-proxy-tls')`):
 
