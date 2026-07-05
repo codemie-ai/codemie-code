@@ -224,12 +224,16 @@ export function createMcpAuthProxyCommand(): Command {
         return;
       }
       // Graceful first (works on Windows and POSIX): ask the daemon to run its
-      // own proxy.stop() + exit via the loopback control endpoint.
-      await requestShutdown(state.port);
-      for (let i = 0; i < 50; i++) {
-        await new Promise<void>((r) => setTimeout(r, 100));
-        if (!isProcessAlive(state.pid)) {
-          break;
+      // own proxy.stop() + exit via the loopback control endpoint. Only wait for
+      // a self-exit when it acked — a wedged/unreachable daemon returns false
+      // immediately, so skip straight to the signal fallback instead of polling.
+      const acked = await requestShutdown(state.port);
+      if (acked) {
+        for (let i = 0; i < 50; i++) {
+          await new Promise<void>((r) => setTimeout(r, 100));
+          if (!isProcessAlive(state.pid)) {
+            break;
+          }
         }
       }
 
