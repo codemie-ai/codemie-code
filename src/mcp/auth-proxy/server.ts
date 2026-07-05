@@ -10,6 +10,7 @@
  * field NAMES only — never headers, bodies, or query strings on OAuth routes.
  */
 import http from 'node:http';
+import https from 'node:https';
 import type { Socket } from 'node:net';
 import { pipeline } from 'node:stream/promises';
 import { ConfigurationError } from '../../utils/errors.js';
@@ -33,6 +34,12 @@ import type { AuthProxyConfig, JsonObject, RewriteContext, RouteConfig } from '.
 export const BIND_HOST = '127.0.0.1';
 
 const OAUTH_BODY_LIMIT_BYTES = 64 * 1024;
+
+/** PEM key + cert for the loopback listener; presence switches the server to HTTPS. */
+export interface ServerTlsMaterial {
+  keyPem: string;
+  certPem: string;
+}
 
 /** Hop-by-hop headers (RFC 9110 §7.6.1) — never forwarded in either direction. */
 const HOP_BY_HOP_HEADERS = new Set([
@@ -107,7 +114,7 @@ function isUpstreamNetworkError(error: unknown): boolean {
 }
 
 export class McpAuthProxy {
-  private server?: http.Server;
+  private server?: http.Server | https.Server;
   private port: number;
   private readonly sockets = new Set<Socket>();
   private readonly client: UpstreamClient;
@@ -115,7 +122,8 @@ export class McpAuthProxy {
 
   constructor(
     private readonly config: AuthProxyConfig,
-    private readonly onShutdownRequested?: () => void
+    private readonly onShutdownRequested?: () => void,
+    private readonly tls?: ServerTlsMaterial
   ) {
     this.port = config.port;
     this.client = new UpstreamClient();
@@ -123,16 +131,19 @@ export class McpAuthProxy {
   }
 
   get origin(): string {
-    return `http://${BIND_HOST}:${this.port}`;
+    return `${this.tls ? 'https' : 'http'}://${BIND_HOST}:${this.port}`;
   }
 
   async start(): Promise<{ port: number; url: string }> {
     if (this.server) {
       throw new ConfigurationError('mcp-auth-proxy server is already running');
     }
-    const server = http.createServer((req, res) => {
+    const handler = (req: http.IncomingMessage, res: http.ServerResponse): void => {
       void this.handleRequest(req, res);
-    });
+    };
+    const server = this.tls
+      ? https.createServer({ key: this.tls.keyPem, cert: this.tls.certPem }, handler)
+      : http.createServer(handler);
     server.on('connection', (socket) => {
       this.sockets.add(socket);
       socket.on('close', () => this.sockets.delete(socket));

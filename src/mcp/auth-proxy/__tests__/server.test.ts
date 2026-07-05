@@ -4,9 +4,14 @@
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import http from 'node:http';
+import https from 'node:https';
 import net from 'node:net';
 import type { AddressInfo } from 'node:net';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { McpAuthProxy } from '../server.js';
+import { ensureAuthProxyCerts } from '../certs.js';
 import type { AuthProxyConfig, JsonObject } from '../types.js';
 
 interface FakeUpstream {
@@ -400,6 +405,61 @@ describe('McpAuthProxy single-route alias', () => {
     } finally {
       await solo.stop();
       await new Promise<void>((resolve) => upstream.server.close(() => resolve()));
+    }
+  });
+});
+
+describe('tls listener', () => {
+  let tlsDir: string;
+
+  beforeAll(async () => {
+    tlsDir = await mkdtemp(join(tmpdir(), 'codemie-tls-server-'));
+  });
+
+  afterAll(async () => {
+    await rm(tlsDir, { recursive: true, force: true });
+  });
+
+  it('serves https with an https:// origin when TLS material is provided', async () => {
+    const material = await ensureAuthProxyCerts(tlsDir);
+    const proxy = new McpAuthProxy(
+      { port: 0, tls: true, servers: { radar: { upstreamUrl: 'https://mcp.example.com/radar' } } },
+      undefined,
+      { keyPem: material.keyPem, certPem: material.certPem }
+    );
+    const { port, url } = await proxy.start();
+    try {
+      expect(url).toBe(`https://127.0.0.1:${port}`);
+      expect(proxy.origin.startsWith('https://')).toBe(true);
+
+      const body = await new Promise<string>((resolve, reject) => {
+        const req = https.get(
+          { host: '127.0.0.1', port, path: '/healthz', ca: material.caCertPem },
+          (res) => {
+            const chunks: Buffer[] = [];
+            res.on('data', (chunk: Buffer) => chunks.push(chunk));
+            res.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
+          }
+        );
+        req.on('error', reject);
+      });
+      expect(JSON.parse(body).status).toBe('ok');
+    } finally {
+      await proxy.stop();
+    }
+  });
+
+  it('keeps a plain http origin without TLS material', async () => {
+    const proxy = new McpAuthProxy({
+      port: 0,
+      tls: false,
+      servers: { radar: { upstreamUrl: 'https://mcp.example.com/radar' } },
+    });
+    const { url } = await proxy.start();
+    try {
+      expect(url.startsWith('http://127.0.0.1:')).toBe(true);
+    } finally {
+      await proxy.stop();
     }
   });
 });
