@@ -22,7 +22,7 @@ codemie self-update              # Update CodeMie CLI itself
 codemie doctor [options]         # Health check and diagnostics
 codemie plugin <command>         # Manage native plugins
 codemie mcp-proxy <url>          # Stdio-to-HTTP MCP proxy with OAuth support
-codemie mcp-auth-proxy <start|stop|status>  # OAuth-rewriting proxy daemon for remote MCP servers (client_name/scope/resource overrides; config: ~/.codemie/mcp-auth-proxy.json)
+codemie mcp-auth-proxy <start|stop|status|trust>  # OAuth-rewriting proxy daemon for remote MCP servers (client_name/scope/resource overrides; config: ~/.codemie/mcp-auth-proxy.json)
 codemie codebase <command>       # Manage Codebase Memory graph UI
 codemie version                  # Show version information
 ```
@@ -138,6 +138,42 @@ CodeMie cannot forcibly log you out from Claude Desktop. It can only write the C
 --help                   # Display help for command
 --version                # Output the version number
 ```
+
+## MCP Auth Proxy Commands
+
+```bash
+codemie mcp-auth-proxy start              # Start the proxy daemon (detached by default)
+codemie mcp-auth-proxy start --tls        # Serve HTTPS with the locally-generated CodeMie CA
+codemie mcp-auth-proxy status             # Show daemon status and per-route health
+codemie mcp-auth-proxy stop               # Stop the daemon and remove its state file
+codemie mcp-auth-proxy trust              # Install the CodeMie CA in the OS user trust store
+codemie mcp-auth-proxy trust --uninstall  # Remove the CodeMie CA from the trust store
+```
+
+`start` options:
+
+- `--config <path>` — config file path (default: `~/.codemie/mcp-auth-proxy.json`)
+- `--port <port>` — override the configured listen port
+- `--foreground` — run in the foreground (debugging; `CODEMIE_DEBUG=true` for verbose logs)
+- `--tls` — serve the loopback listener over HTTPS using a locally-generated CA + leaf certificate (ECDSA P-256; CA stored under `~/.codemie/mcp-auth-proxy-tls/`). Config-file equivalent: `"tls": true` at the root of `mcp-auth-proxy.json`. Default is plain HTTP.
+
+### `codemie mcp-auth-proxy trust`
+
+Installs the locally-generated CA into the OS **user** trust store so browsers and Claude Desktop accept the proxy's HTTPS certificate:
+
+- Windows: `certutil -addstore -user Root`
+- macOS: login keychain via `security add-trusted-cert`
+- Linux: NSS user DB (`~/.pki/nssdb`, requires the libnss3-tools `certutil`; this is what Chromium/Electron read)
+
+Prints the CA path, subject CN, SHA-256 fingerprint, and validity. On unsupported systems or missing tools it prints manual instructions and exits non-zero. `--uninstall` removes only the CodeMie CA (matched by its exact subject CN).
+
+### HTTPS / Claude Desktop
+
+Claude Desktop refuses to open non-`https` OAuth authorize URLs. With TLS enabled the proxy advertises its OAuth endpoints as `https://127.0.0.1:<port>/...`, so the Desktop authorize flow works once the CA is trusted (`codemie mcp-auth-proxy trust`).
+
+- With TLS enabled, the printed `claude mcp add` hints use `https://` URLs, and `start` warns that routes previously registered with `http://` URLs must be re-registered.
+- `status` / `stop` are protocol-aware: they read the daemon state's `tls` flag and pin the local CA for control-plane requests (no certificate-check bypass).
+- Node-based clients (e.g. Claude Code CLI) do not read the OS trust store — for TLS routes set `NODE_EXTRA_CA_CERTS=~/.codemie/mcp-auth-proxy-tls/ca.crt`, or keep the default plain-HTTP mode.
 
 ## Agent Shortcuts
 
