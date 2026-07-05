@@ -86,6 +86,33 @@ function fetchHealth(port: number): Promise<{ status: string; routes: HealthzRou
   });
 }
 
+/**
+ * Ask the daemon to shut itself down gracefully via the loopback control
+ * endpoint. Cross-platform graceful stop (Windows has no POSIX signals, so a
+ * signal there is a hard kill that skips the daemon's cleanup). Resolves true
+ * if the daemon acknowledged (2xx), false on any error/timeout — the caller
+ * then falls back to OS signals.
+ */
+function requestShutdown(port: number): Promise<boolean> {
+  return new Promise((resolveShutdown) => {
+    const request = http.request(
+      { host: '127.0.0.1', port, path: '/shutdown', method: 'POST', timeout: 2000 },
+      (res) => {
+        res.resume(); // drain the 202 body so the socket can close
+        resolveShutdown(
+          res.statusCode !== undefined && res.statusCode >= 200 && res.statusCode < 300
+        );
+      }
+    );
+    request.on('error', () => resolveShutdown(false));
+    request.on('timeout', () => {
+      request.destroy();
+      resolveShutdown(false);
+    });
+    request.end();
+  });
+}
+
 export function createMcpAuthProxyCommand(): Command {
   const command = new Command('mcp-auth-proxy');
   command.description(
@@ -196,11 +223,30 @@ export function createMcpAuthProxyCommand(): Command {
         console.log(chalk.yellow('mcp-auth-proxy is not running'));
         return;
       }
-      process.kill(state.pid, 'SIGTERM');
+      // Graceful first (works on Windows and POSIX): ask the daemon to run its
+      // own proxy.stop() + exit via the loopback control endpoint.
+      await requestShutdown(state.port);
       for (let i = 0; i < 50; i++) {
         await new Promise<void>((r) => setTimeout(r, 100));
         if (!isProcessAlive(state.pid)) {
           break;
+        }
+      }
+
+      // Fallback only if it did not exit: SIGTERM (POSIX graceful / Windows hard
+      // kill), then SIGKILL. Skipped entirely when the daemon already shut down.
+      if (isProcessAlive(state.pid)) {
+        logger.warn('[mcp-auth-proxy] Graceful shutdown timed out; sending SIGTERM');
+        try {
+          process.kill(state.pid, 'SIGTERM');
+        } catch {
+          // Already gone between the check and the signal — fine.
+        }
+        for (let i = 0; i < 50; i++) {
+          await new Promise<void>((r) => setTimeout(r, 100));
+          if (!isProcessAlive(state.pid)) {
+            break;
+          }
         }
       }
       if (isProcessAlive(state.pid)) {
@@ -208,7 +254,7 @@ export function createMcpAuthProxyCommand(): Command {
         try {
           process.kill(state.pid, 'SIGKILL');
         } catch {
-          // Already gone between the check and the signal — fine.
+          // Already gone — fine.
         }
       }
       await clearAuthProxyState();
