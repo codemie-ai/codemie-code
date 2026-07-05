@@ -7,14 +7,18 @@
  * holds no session state, so a crash only needs a manual restart.
  */
 import { logger } from '../../utils/logger.js';
+import { ensureAuthProxyCerts } from './certs.js';
 import { getDefaultStatePath, loadAuthProxyConfig } from './config.js';
 import { McpAuthProxy } from './server.js';
+import type { ServerTlsMaterial } from './server.js';
 import { clearAuthProxyState, writeAuthProxyState } from './state.js';
 
 export interface RunDaemonOptions {
   configPath?: string;
   port?: number;
   stateFile?: string;
+  /** Force TLS on regardless of the config file (CLI --tls / daemon --tls). */
+  tls?: boolean;
 }
 
 export interface RunningDaemon {
@@ -32,6 +36,13 @@ export async function runAuthProxyDaemon(options: RunDaemonOptions = {}): Promis
   }
   const stateFile = options.stateFile ?? getDefaultStatePath();
 
+  const tlsEnabled = options.tls === true || config.tls;
+  let tlsMaterial: ServerTlsMaterial | undefined;
+  if (tlsEnabled) {
+    const material = await ensureAuthProxyCerts();
+    tlsMaterial = { keyPem: material.keyPem, certPem: material.certPem };
+  }
+
   const routes = Object.keys(config.servers);
 
   // One idempotent graceful path shared by the /shutdown endpoint and POSIX
@@ -47,11 +58,11 @@ export async function runAuthProxyDaemon(options: RunDaemonOptions = {}): Promis
     void stop().then(() => process.exit(0));
   }
 
-  const proxy = new McpAuthProxy(config, gracefulShutdown);
+  const proxy = new McpAuthProxy(config, gracefulShutdown, tlsMaterial);
   const { port, url } = await proxy.start();
 
   await writeAuthProxyState(
-    { pid: process.pid, port, routes, startedAt: new Date().toISOString() },
+    { pid: process.pid, port, routes, startedAt: new Date().toISOString(), tls: tlsEnabled },
     stateFile
   );
 

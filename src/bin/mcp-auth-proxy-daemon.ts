@@ -12,6 +12,7 @@ const { values } = parseArgs({
     config: { type: 'string' },
     port: { type: 'string' },
     'state-file': { type: 'string' },
+    tls: { type: 'boolean' },
   },
   strict: false,
 });
@@ -28,6 +29,7 @@ try {
     configPath: values.config as string | undefined,
     port,
     stateFile: values['state-file'] as string | undefined,
+    tls: values.tls === true,
   });
 } catch (error) {
   process.stderr.write(`[mcp-auth-proxy-daemon] Failed to start: ${(error as Error).message}\n`);
