@@ -14,9 +14,10 @@ export const AUTH_PROXY_CONFIG_FILE = 'mcp-auth-proxy.json';
 export const AUTH_PROXY_STATE_FILE = 'mcp-auth-proxy.state.json';
 
 const ROUTE_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
-// `as` + `.well-known` are reserved by the route map; `healthz` by the health endpoint
-// (design D6 — a route named "healthz" would shadow GET /healthz).
-const RESERVED_ROUTE_IDS = new Set(['as', '.well-known', 'healthz']);
+// `as` + `.well-known` are reserved by the route map; `healthz` by the health
+// endpoint and `shutdown` by the graceful-shutdown control endpoint (design D6 —
+// a route named "healthz"/"shutdown" would shadow GET /healthz / POST /shutdown).
+const RESERVED_ROUTE_IDS = new Set(['as', '.well-known', 'healthz', 'shutdown']);
 
 export function getDefaultConfigPath(): string {
   return getCodemiePath(AUTH_PROXY_CONFIG_FILE);

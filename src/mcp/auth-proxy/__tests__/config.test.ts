@@ -57,7 +57,7 @@ describe('validateAuthProxyConfig', () => {
     ).toThrow(/servers\./);
   });
 
-  it.each(['as', 'healthz'])('rejects reserved route id %j', (id) => {
+  it.each(['as', 'healthz', 'shutdown'])('rejects reserved route id %j', (id) => {
     expect(() =>
       validateAuthProxyConfig({ servers: { [id]: { upstreamUrl: 'https://x.example' } } })
     ).toThrow(/reserved/);
