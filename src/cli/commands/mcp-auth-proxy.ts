@@ -7,7 +7,8 @@
  */
 import { Command } from 'commander';
 import chalk from 'chalk';
-import http from 'node:http';
+import { readFile } from 'node:fs/promises';
+import { platform } from 'node:os';
 import { join, resolve } from 'node:path';
 import {
   ConfigurationError,
@@ -17,7 +18,7 @@ import {
 } from '../../utils/errors.js';
 import { getDirname } from '../../utils/paths.js';
 import { logger } from '../../utils/logger.js';
-import { spawnDetached } from '../../utils/processes.js';
+import { exec, spawnDetached } from '../../utils/processes.js';
 import {
   getDefaultConfigPath,
   getDefaultStatePath,
@@ -29,7 +30,11 @@ import {
   isProcessAlive,
   readAuthProxyState,
 } from '../../mcp/auth-proxy/state.js';
-import type { RouteStatus } from '../../mcp/auth-proxy/types.js';
+import { fetchHealth, requestShutdown } from '../../mcp/auth-proxy/client.js';
+import type { DaemonEndpoint } from '../../mcp/auth-proxy/client.js';
+import { ensureAuthProxyCerts, getAuthProxyTlsPaths } from '../../mcp/auth-proxy/certs.js';
+import { applyTrust } from '../../mcp/auth-proxy/trust.js';
+import type { AuthProxyDaemonState } from '../../mcp/auth-proxy/types.js';
 
 function parsePortOption(value: string | undefined): number | undefined {
   if (!value) {
@@ -52,65 +57,46 @@ function printError(error: unknown, label: string): never {
   process.exit(1);
 }
 
-function printAddCommands(port: number, routes: string[]): void {
+function printAddCommands(port: number, routes: string[], tls: boolean): void {
+  const protocol = tls ? 'https' : 'http';
   console.log(chalk.bold('\nAdd to Claude Code:'));
   for (const id of routes) {
-    console.log(`  claude mcp add --scope local --transport http ${id} http://127.0.0.1:${port}/${id}`);
+    console.log(
+      `  claude mcp add --scope local --transport http ${id} ${protocol}://127.0.0.1:${port}/${id}`
+    );
   }
 }
 
-interface HealthzRoute {
-  id: string;
-  upstreamUrl: string;
-  status: RouteStatus;
+function printTlsHints(): void {
+  console.log(
+    chalk.yellow(
+      '\n⚠ TLS is enabled: routes previously registered with http:// URLs must be re-registered with the https:// URLs above.'
+    )
+  );
+  console.log(
+    chalk.gray(
+      'If the browser or Claude Desktop rejects the certificate, run: codemie mcp-auth-proxy trust\n' +
+        'Node-based clients (e.g. Claude Code CLI) do not read the OS trust store — set NODE_EXTRA_CA_CERTS=' +
+        getAuthProxyTlsPaths().caCert
+    )
+  );
 }
 
-function fetchHealth(port: number): Promise<{ status: string; routes: HealthzRoute[] }> {
-  return new Promise((resolveHealth, rejectHealth) => {
-    const request = http.get(
-      { host: '127.0.0.1', port, path: '/healthz', timeout: 2000 },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on('data', (chunk: Buffer) => chunks.push(chunk));
-        res.on('end', () => {
-          try {
-            resolveHealth(JSON.parse(Buffer.concat(chunks).toString('utf-8')));
-          } catch (error) {
-            rejectHealth(error as Error);
-          }
-        });
-      }
-    );
-    request.on('error', rejectHealth);
-    request.on('timeout', () => request.destroy(new Error('healthz timed out')));
-  });
-}
-
-/**
- * Ask the daemon to shut itself down gracefully via the loopback control
- * endpoint. Cross-platform graceful stop (Windows has no POSIX signals, so a
- * signal there is a hard kill that skips the daemon's cleanup). Resolves true
- * if the daemon acknowledged (2xx), false on any error/timeout — the caller
- * then falls back to OS signals.
- */
-function requestShutdown(port: number): Promise<boolean> {
-  return new Promise((resolveShutdown) => {
-    const request = http.request(
-      { host: '127.0.0.1', port, path: '/shutdown', method: 'POST', timeout: 2000 },
-      (res) => {
-        res.resume(); // drain the 202 body so the socket can close
-        resolveShutdown(
-          res.statusCode !== undefined && res.statusCode >= 200 && res.statusCode < 300
-        );
-      }
-    );
-    request.on('error', () => resolveShutdown(false));
-    request.on('timeout', () => {
-      request.destroy();
-      resolveShutdown(false);
-    });
-    request.end();
-  });
+/** Builds the control-plane endpoint from daemon state, loading the CA for TLS daemons. */
+async function daemonEndpoint(state: AuthProxyDaemonState): Promise<DaemonEndpoint> {
+  if (state.tls !== true) {
+    return { port: state.port, tls: false };
+  }
+  try {
+    return {
+      port: state.port,
+      tls: true,
+      caPem: await readFile(getAuthProxyTlsPaths().caCert, 'utf-8'),
+    };
+  } catch {
+    // CA file missing — request will fail TLS verification and callers fall back.
+    return { port: state.port, tls: true };
+  }
 }
 
 export function createMcpAuthProxyCommand(): Command {
@@ -125,7 +111,8 @@ export function createMcpAuthProxyCommand(): Command {
     .option('--config <path>', 'Config file path (default: <codemie-home>/mcp-auth-proxy.json)')
     .option('--port <port>', 'Override the configured listen port')
     .option('--foreground', 'Run in the foreground (debugging; CODEMIE_DEBUG=true for verbose logs)')
-    .action(async (opts: { config?: string; port?: string; foreground?: boolean }) => {
+    .option('--tls', 'Serve HTTPS with the locally-generated CodeMie CA (see the trust subcommand)')
+    .action(async (opts: { config?: string; port?: string; foreground?: boolean; tls?: boolean }) => {
       try {
         const existing = await readAuthProxyState();
         if (existing && isProcessAlive(existing.pid)) {
@@ -134,7 +121,7 @@ export function createMcpAuthProxyCommand(): Command {
               `✓ mcp-auth-proxy already running on http://127.0.0.1:${existing.port} (pid ${existing.pid})`
             )
           );
-          printAddCommands(existing.port, existing.routes);
+          printAddCommands(existing.port, existing.routes, existing.tls === true);
           return;
         }
         await clearAuthProxyState();
@@ -143,11 +130,22 @@ export function createMcpAuthProxyCommand(): Command {
         const config = await loadAuthProxyConfig(configPath); // fail fast with the offending key path
         const port = parsePortOption(opts.port) ?? config.port;
         const routes = Object.keys(config.servers);
+        const tls = opts.tls === true || config.tls;
+        if (tls) {
+          await ensureAuthProxyCerts(); // fail fast on cert problems before spawning
+        }
 
         if (opts.foreground) {
-          await runAuthProxyDaemon({ configPath, port });
-          console.log(chalk.green(`✓ mcp-auth-proxy running (foreground) on http://127.0.0.1:${port}`));
-          printAddCommands(port, routes);
+          await runAuthProxyDaemon({ configPath, port, tls: opts.tls === true });
+          console.log(
+            chalk.green(
+              `✓ mcp-auth-proxy running (foreground) on ${tls ? 'https' : 'http'}://127.0.0.1:${port}`
+            )
+          );
+          printAddCommands(port, routes, tls);
+          if (tls) {
+            printTlsHints();
+          }
           console.log(chalk.gray('Press Ctrl+C to stop.'));
           return;
         }
@@ -159,6 +157,7 @@ export function createMcpAuthProxyCommand(): Command {
           '--config', configPath,
           '--port', String(port),
           '--state-file', getDefaultStatePath(),
+          ...(opts.tls === true ? ['--tls'] : []),
         ]);
 
         for (let i = 0; i < 50; i++) {
@@ -166,9 +165,14 @@ export function createMcpAuthProxyCommand(): Command {
           const state = await readAuthProxyState();
           if (state && isProcessAlive(state.pid)) {
             console.log(
-              chalk.green(`✓ mcp-auth-proxy started on http://127.0.0.1:${state.port} (pid ${state.pid})`)
+              chalk.green(
+                `✓ mcp-auth-proxy started on ${state.tls === true ? 'https' : 'http'}://127.0.0.1:${state.port} (pid ${state.pid})`
+              )
             );
-            printAddCommands(state.port, state.routes);
+            printAddCommands(state.port, state.routes, state.tls === true);
+            if (state.tls === true) {
+              printTlsHints();
+            }
             return;
           }
         }
@@ -193,19 +197,20 @@ export function createMcpAuthProxyCommand(): Command {
         console.log(chalk.yellow('mcp-auth-proxy is not running'));
         return;
       }
+      const protocol = state.tls === true ? 'https' : 'http';
       console.log(
         chalk.green(
-          `✓ mcp-auth-proxy running on http://127.0.0.1:${state.port} (pid ${state.pid}, started ${state.startedAt})`
+          `✓ mcp-auth-proxy running on ${protocol}://127.0.0.1:${state.port} (pid ${state.pid}, started ${state.startedAt})`
         )
       );
       try {
-        const health = await fetchHealth(state.port);
+        const health = await fetchHealth(await daemonEndpoint(state));
         for (const route of health.routes) {
           const marker =
             route.status === 'degraded' ? chalk.red('✗ degraded') : chalk.green(`✓ ${route.status}`);
           console.log(`  ${route.id}: ${marker} → ${route.upstreamUrl}`);
           console.log(
-            `    claude mcp add --scope local --transport http ${route.id} http://127.0.0.1:${state.port}/${route.id}`
+            `    claude mcp add --scope local --transport http ${route.id} ${protocol}://127.0.0.1:${state.port}/${route.id}`
           );
         }
       } catch {
@@ -227,7 +232,7 @@ export function createMcpAuthProxyCommand(): Command {
       // own proxy.stop() + exit via the loopback control endpoint. Only wait for
       // a self-exit when it acked — a wedged/unreachable daemon returns false
       // immediately, so skip straight to the signal fallback instead of polling.
-      const acked = await requestShutdown(state.port);
+      const acked = await requestShutdown(await daemonEndpoint(state));
       if (acked) {
         for (let i = 0; i < 50; i++) {
           await new Promise<void>((r) => setTimeout(r, 100));
@@ -263,6 +268,48 @@ export function createMcpAuthProxyCommand(): Command {
       }
       await clearAuthProxyState();
       console.log(chalk.green('✓ mcp-auth-proxy stopped'));
+    });
+
+  command
+    .command('trust')
+    .description('Install (or remove) the locally-generated CA in the OS user trust store')
+    .option('--uninstall', 'Remove the CodeMie CA from the trust store instead of installing it')
+    .action(async (opts: { uninstall?: boolean }) => {
+      try {
+        const material = await ensureAuthProxyCerts();
+        const action = opts.uninstall === true ? 'uninstall' : 'install';
+        const result = await applyTrust(action, {
+          platform: platform(),
+          exec: (cmd, args) => exec(cmd, args),
+          caPath: material.paths.caCert,
+          caCommonName: material.caCommonName,
+        });
+
+        const { X509Certificate } = await import('node:crypto');
+        const ca = new X509Certificate(material.caCertPem);
+        console.log(`CA certificate : ${material.paths.caCert}`);
+        console.log(`Subject CN     : ${material.caCommonName}`);
+        console.log(`SHA-256        : ${ca.fingerprint256}`);
+        console.log(`Valid until    : ${ca.validTo}`);
+
+        if (result.ok) {
+          console.log(
+            chalk.green(
+              action === 'install'
+                ? '✓ CA installed in the user trust store'
+                : '✓ CA removed from the user trust store'
+            )
+          );
+        } else {
+          console.log(chalk.yellow(`Automated ${action} was not possible on this system.`));
+          if (result.manual !== undefined) {
+            console.log(result.manual);
+          }
+          process.exitCode = 1;
+        }
+      } catch (error) {
+        printError(error, '[mcp-auth-proxy] trust failed');
+      }
     });
 
   return command;
