@@ -92,6 +92,24 @@ describe('validateAuthProxyConfig', () => {
   });
 });
 
+describe('tls flag', () => {
+  it('defaults tls to false when absent', () => {
+    const config = validateAuthProxyConfig({ servers: validServers });
+    expect(config.tls).toBe(false);
+  });
+
+  it('accepts tls: true', () => {
+    const config = validateAuthProxyConfig({ tls: true, servers: validServers });
+    expect(config.tls).toBe(true);
+  });
+
+  it('rejects non-boolean tls', () => {
+    expect(() => validateAuthProxyConfig({ tls: 'yes', servers: validServers })).toThrow(
+      /"tls" must be a boolean/
+    );
+  });
+});
+
 describe('loadAuthProxyConfig', () => {
   it('throws ConfigurationError for a missing config file', async () => {
     const missing = join(tmpdir(), `mcp-auth-proxy-missing-${process.pid}.json`);

@@ -18,6 +18,8 @@ export interface RouteConfig {
 
 export interface AuthProxyConfig {
   port: number;
+  /** Serve the loopback listener over HTTPS with the locally-generated CA (default false). */
+  tls: boolean;
   servers: Record<string, RouteConfig>;
 }
 
@@ -26,6 +28,8 @@ export interface AuthProxyDaemonState {
   port: number;
   routes: string[];
   startedAt: string;
+  /** True when the daemon listener speaks HTTPS (absent in pre-TLS state files = false). */
+  tls?: boolean;
 }
 
 export type RouteStatus = 'ok' | 'degraded' | 'unknown';

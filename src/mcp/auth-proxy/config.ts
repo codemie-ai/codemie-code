@@ -71,6 +71,14 @@ export function validateAuthProxyConfig(parsed: unknown): AuthProxyConfig {
     port = root.port;
   }
 
+  let tls = false;
+  if (root.tls !== undefined) {
+    if (typeof root.tls !== 'boolean') {
+      throw new ConfigurationError('mcp-auth-proxy config: "tls" must be a boolean');
+    }
+    tls = root.tls;
+  }
+
   if (typeof root.servers !== 'object' || root.servers === null || Array.isArray(root.servers)) {
     throw new ConfigurationError(
       'mcp-auth-proxy config: "servers" must be an object mapping route ids to server configs'
@@ -95,7 +103,7 @@ export function validateAuthProxyConfig(parsed: unknown): AuthProxyConfig {
     servers[id] = validateRoute(value, `servers.${id}`);
   }
 
-  return { port, servers };
+  return { port, tls, servers };
 }
 
 function validateRoute(value: unknown, keyPath: string): RouteConfig {

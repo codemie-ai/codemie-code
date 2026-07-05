@@ -115,6 +115,7 @@ describe('McpAuthProxy', () => {
     upstream = await createFakeUpstream();
     const config: AuthProxyConfig = {
       port: 0,
+      tls: false,
       servers: {
         radar: {
           upstreamUrl: `${upstream.origin}/mcp/radar`,
@@ -345,7 +346,7 @@ describe('McpAuthProxy', () => {
   it('POST /shutdown → 202 and fires the shutdown callback once; GET /shutdown → 405', async () => {
     const onShutdown = vi.fn();
     const controllable = new McpAuthProxy(
-      { port: 0, servers: { radar: { upstreamUrl: `${upstream.origin}/mcp/radar` } } },
+      { port: 0, tls: false, servers: { radar: { upstreamUrl: `${upstream.origin}/mcp/radar` } } },
       onShutdown
     );
     const { url } = await controllable.start();
@@ -387,6 +388,7 @@ describe('McpAuthProxy single-route alias', () => {
     const upstream = await createFakeUpstream();
     const config: AuthProxyConfig = {
       port: 0,
+      tls: false,
       servers: { radar: { upstreamUrl: `${upstream.origin}/mcp/radar` } },
     };
     const solo = new McpAuthProxy(config);
