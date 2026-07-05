@@ -62,3 +62,11 @@ export function getTestEnvFlagOrDefault(name: string, defaultValue: boolean): bo
   if (envVal !== undefined) return envVal === 'true';
   return defaultValue;
 }
+
+/**
+ * Strip node_modules/.bin entries from a PATH string so locally-installed
+ * package shims don't shadow globally-linked binaries in spawned subprocesses.
+ */
+export function stripNodeModulesBin(path: string): string {
+  return path.split(':').filter(dir => !dir.includes('node_modules/.bin')).join(':');
+}

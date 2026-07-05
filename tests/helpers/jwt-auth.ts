@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { stripNodeModulesBin } from './test-env.js';
 
 // Slug used for the test assistant agent file
 const CI_ASSISTANT_SLUG = 'ci-assistant';
@@ -50,12 +51,16 @@ export async function fetchJwtToken(): Promise<string> {
  * Minimal allowlist environment for JWT agent spawns.
  * Strips everything except essential PATH and platform OS variables so no
  * credentials or CODEMIE_* session state leak into the subprocess.
+ *
+ * Strips node_modules/.bin entries from PATH so locally-installed package
+ * shims don't shadow the globally npm-linked `codemie` binary.
  */
 export function jwtCleanEnv(): NodeJS.ProcessEnv {
+  const cleanPath = stripNodeModulesBin(process.env.PATH ?? '');
   const pick = (...keys: string[]): NodeJS.ProcessEnv =>
     Object.fromEntries(keys.flatMap((k) => (process.env[k] !== undefined ? [[k, process.env[k]]] : [])));
   return {
-    PATH: process.env.PATH ?? '',
+    PATH: cleanPath,
     NODE_PATH: process.env.NODE_PATH ?? '',
     ...pick('SystemRoot', 'SYSTEMROOT', 'PATHEXT', 'TEMP', 'TMP', 'WINDIR', 'COMSPEC',
             'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH', 'APPDATA', 'LOCALAPPDATA'),

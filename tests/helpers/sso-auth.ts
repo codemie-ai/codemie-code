@@ -1,6 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { stripNodeModulesBin } from './test-env.js';
 
 const SSO_PROFILE_NAME = 'sso-autotest';
 
@@ -42,11 +43,17 @@ export function writeSsoProfile(codemieHome: string): void {
  * Strip CODEMIE_* vars from the process environment for SSO subprocess spawns.
  * Uses a denylist (vs jwtCleanEnv's allowlist) to preserve HOME, proxy settings,
  * and other vars that the OS keychain and network calls depend on.
+ *
+ * Also strips node_modules/.bin entries from PATH so locally-installed package
+ * shims (e.g. @codemieai/codemie-opencode's `codemie` bin) don't shadow the
+ * globally npm-linked `codemie` binary that provides the `hook` subcommand.
  */
 export function ssoCleanEnv(): NodeJS.ProcessEnv {
-  return Object.fromEntries(
+  const env = Object.fromEntries(
     Object.entries(process.env).filter(([key]) => !key.startsWith('CODEMIE_')),
   ) as NodeJS.ProcessEnv;
+  if (env.PATH) env.PATH = stripNodeModulesBin(env.PATH);
+  return env;
 }
 
 /**
