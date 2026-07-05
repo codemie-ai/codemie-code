@@ -2,7 +2,7 @@
  * mcp-auth-proxy daemon state file tests
  * @group unit
  */
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { existsSync } from 'node:fs';
@@ -56,5 +56,25 @@ describe('auth proxy state file', () => {
   it('isProcessAlive: true for this process, false for a dead pid', () => {
     expect(isProcessAlive(process.pid)).toBe(true);
     expect(isProcessAlive(2 ** 30)).toBe(false);
+  });
+
+  it('isProcessAlive: EPERM means the process exists (Windows), ESRCH means dead', () => {
+    const killSpy = vi.spyOn(process, 'kill');
+
+    killSpy.mockImplementationOnce(() => {
+      const err = new Error('operation not permitted') as NodeJS.ErrnoException;
+      err.code = 'EPERM';
+      throw err;
+    });
+    expect(isProcessAlive(424242)).toBe(true);
+
+    killSpy.mockImplementationOnce(() => {
+      const err = new Error('no such process') as NodeJS.ErrnoException;
+      err.code = 'ESRCH';
+      throw err;
+    });
+    expect(isProcessAlive(424242)).toBe(false);
+
+    killSpy.mockRestore();
   });
 });

@@ -46,7 +46,10 @@ export function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    // EPERM: the process exists but this user cannot signal it (common on
+    // Windows) — that still means "alive". Only a genuine "no such process"
+    // (ESRCH) means dead.
+    return (error as NodeJS.ErrnoException).code === 'EPERM';
   }
 }
