@@ -1,0 +1,24 @@
+{
+  "gate_id": "code-review.final",
+  "mode": "hitl",
+  "reviewed_base": "9c6eecd",
+  "reviewed_head": "8911c8a",
+  "verdict": "approve",
+  "confidence": "high",
+  "summary": "The Windows graceful-shutdown changeset is correct and does not regress POSIX behavior. The endpoint reliably acks before exit, gracefulShutdown is properly idempotent across the endpoint and signal paths, there is no TDZ/use-before-init hazard at runtime, and the isProcessAlive/windowsHide changes are sound. Only one minor, non-blocking latency observation was found; the /shutdown DoS surface is an accepted tradeoff under the loopback-only single-user threat model.",
+  "findings": [
+    {
+      "id": "CR-W-001",
+      "severity": "low",
+      "file": "src/cli/commands/mcp-auth-proxy.ts",
+      "line": 228,
+      "title": "requestShutdown boolean result is discarded; wedged daemon incurs a redundant 5s poll before SIGTERM",
+      "detail": "`await requestShutdown(state.port)` ignores the returned boolean. When the daemon process is alive but its HTTP server is unresponsive/not listening, requestShutdown returns false immediately (ECONNREFUSED), yet the code still runs the full 50x100ms graceful poll (~5s) before escalating to SIGTERM, adding ~5s to the wedged-daemon stop path. Functionally correct; just slower than necessary in that edge case.",
+      "recommendation": "Branch on the boolean: only run the graceful poll when requestShutdown acked (true); on false, go straight to the signal fallback.",
+      "verified": true,
+      "resolution": "applied"
+    }
+  ],
+  "human_decision": "approve",
+  "human_note": "Approved. Applied the low-sev CR-W-001 polish inline (uses the boolean, speeds the wedged-daemon path) as a follow-up commit; happy path unchanged. No second review round required for an approve + reviewer-suggested low-sev polish."
+}

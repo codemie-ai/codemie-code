@@ -1,0 +1,384 @@
+diff --git a/src/cli/commands/mcp-auth-proxy.ts b/src/cli/commands/mcp-auth-proxy.ts
+index ce6bd02..ed6aade 100644
+--- a/src/cli/commands/mcp-auth-proxy.ts
++++ b/src/cli/commands/mcp-auth-proxy.ts
+@@ -86,6 +86,33 @@ function fetchHealth(port: number): Promise<{ status: string; routes: HealthzRou
+   });
+ }
+ 
++/**
++ * Ask the daemon to shut itself down gracefully via the loopback control
++ * endpoint. Cross-platform graceful stop (Windows has no POSIX signals, so a
++ * signal there is a hard kill that skips the daemon's cleanup). Resolves true
++ * if the daemon acknowledged (2xx), false on any error/timeout — the caller
++ * then falls back to OS signals.
++ */
++function requestShutdown(port: number): Promise<boolean> {
++  return new Promise((resolveShutdown) => {
++    const request = http.request(
++      { host: '127.0.0.1', port, path: '/shutdown', method: 'POST', timeout: 2000 },
++      (res) => {
++        res.resume(); // drain the 202 body so the socket can close
++        resolveShutdown(
++          res.statusCode !== undefined && res.statusCode >= 200 && res.statusCode < 300
++        );
++      }
++    );
++    request.on('error', () => resolveShutdown(false));
++    request.on('timeout', () => {
++      request.destroy();
++      resolveShutdown(false);
++    });
++    request.end();
++  });
++}
++
+ export function createMcpAuthProxyCommand(): Command {
+   const command = new Command('mcp-auth-proxy');
+   command.description(
+@@ -196,19 +223,38 @@ export function createMcpAuthProxyCommand(): Command {
+         console.log(chalk.yellow('mcp-auth-proxy is not running'));
+         return;
+       }
+-      process.kill(state.pid, 'SIGTERM');
++      // Graceful first (works on Windows and POSIX): ask the daemon to run its
++      // own proxy.stop() + exit via the loopback control endpoint.
++      await requestShutdown(state.port);
+       for (let i = 0; i < 50; i++) {
+         await new Promise<void>((r) => setTimeout(r, 100));
+         if (!isProcessAlive(state.pid)) {
+           break;
+         }
+       }
++
++      // Fallback only if it did not exit: SIGTERM (POSIX graceful / Windows hard
++      // kill), then SIGKILL. Skipped entirely when the daemon already shut down.
++      if (isProcessAlive(state.pid)) {
++        logger.warn('[mcp-auth-proxy] Graceful shutdown timed out; sending SIGTERM');
++        try {
++          process.kill(state.pid, 'SIGTERM');
++        } catch {
++          // Already gone between the check and the signal — fine.
++        }
++        for (let i = 0; i < 50; i++) {
++          await new Promise<void>((r) => setTimeout(r, 100));
++          if (!isProcessAlive(state.pid)) {
++            break;
++          }
++        }
++      }
+       if (isProcessAlive(state.pid)) {
+         logger.warn('[mcp-auth-proxy] Daemon ignored SIGTERM; escalating to SIGKILL');
+         try {
+           process.kill(state.pid, 'SIGKILL');
+         } catch {
+-          // Already gone between the check and the signal — fine.
++          // Already gone — fine.
+         }
+       }
+       await clearAuthProxyState();
+diff --git a/src/mcp/auth-proxy/__tests__/config.test.ts b/src/mcp/auth-proxy/__tests__/config.test.ts
+index a2cc40e..e0bf124 100644
+--- a/src/mcp/auth-proxy/__tests__/config.test.ts
++++ b/src/mcp/auth-proxy/__tests__/config.test.ts
+@@ -57,7 +57,7 @@ describe('validateAuthProxyConfig', () => {
+     ).toThrow(/servers\./);
+   });
+ 
+-  it.each(['as', 'healthz'])('rejects reserved route id %j', (id) => {
++  it.each(['as', 'healthz', 'shutdown'])('rejects reserved route id %j', (id) => {
+     expect(() =>
+       validateAuthProxyConfig({ servers: { [id]: { upstreamUrl: 'https://x.example' } } })
+     ).toThrow(/reserved/);
+diff --git a/src/mcp/auth-proxy/__tests__/server.test.ts b/src/mcp/auth-proxy/__tests__/server.test.ts
+index 1da6e45..4a21013 100644
+--- a/src/mcp/auth-proxy/__tests__/server.test.ts
++++ b/src/mcp/auth-proxy/__tests__/server.test.ts
+@@ -2,7 +2,7 @@
+  * mcp-auth-proxy server tests — real HTTP against a local fake upstream (MCP RS + AS).
+  * @group unit
+  */
+-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
++import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+ import http from 'node:http';
+ import net from 'node:net';
+ import type { AddressInfo } from 'node:net';
+@@ -342,6 +342,36 @@ describe('McpAuthProxy', () => {
+     }
+   });
+ 
++  it('POST /shutdown → 202 and fires the shutdown callback once; GET /shutdown → 405', async () => {
++    const onShutdown = vi.fn();
++    const controllable = new McpAuthProxy(
++      { port: 0, servers: { radar: { upstreamUrl: `${upstream.origin}/mcp/radar` } } },
++      onShutdown
++    );
++    const { url } = await controllable.start();
++    try {
++      const wrongMethod = await fetch(`${url}/shutdown`, { method: 'GET' });
++      expect(wrongMethod.status).toBe(405);
++      expect(onShutdown).not.toHaveBeenCalled();
++
++      const res = await fetch(`${url}/shutdown`, { method: 'POST' });
++      expect(res.status).toBe(202);
++      expect((await res.json()) as JsonObject).toEqual({ status: 'shutting_down' });
++      await vi.waitFor(() => expect(onShutdown).toHaveBeenCalledTimes(1));
++    } finally {
++      await controllable.stop();
++    }
++  });
++
++  it('intercepts /shutdown before route lookup without disturbing normal routes', async () => {
++    const res = await fetch(`${proxyOrigin}/radar`, {
++      method: 'POST',
++      headers: { 'content-type': 'application/json', authorization: 'Bearer tok-abc' },
++      body: '{}',
++    });
++    expect(res.status).toBe(200);
++  });
++
+   it('404s unknown routes and the root PRM alias when multiple routes exist', async () => {
+     const unknown = await fetch(`${proxyOrigin}/nope`);
+     expect(unknown.status).toBe(404);
+diff --git a/src/mcp/auth-proxy/__tests__/state.test.ts b/src/mcp/auth-proxy/__tests__/state.test.ts
+index 039cff6..0361762 100644
+--- a/src/mcp/auth-proxy/__tests__/state.test.ts
++++ b/src/mcp/auth-proxy/__tests__/state.test.ts
+@@ -2,7 +2,7 @@
+  * mcp-auth-proxy daemon state file tests
+  * @group unit
+  */
+-import { describe, it, expect, afterEach } from 'vitest';
++import { describe, it, expect, afterEach, vi } from 'vitest';
+ import { tmpdir } from 'node:os';
+ import { join } from 'node:path';
+ import { existsSync } from 'node:fs';
+@@ -57,4 +57,24 @@ describe('auth proxy state file', () => {
+     expect(isProcessAlive(process.pid)).toBe(true);
+     expect(isProcessAlive(2 ** 30)).toBe(false);
+   });
++
++  it('isProcessAlive: EPERM means the process exists (Windows), ESRCH means dead', () => {
++    const killSpy = vi.spyOn(process, 'kill');
++
++    killSpy.mockImplementationOnce(() => {
++      const err = new Error('operation not permitted') as NodeJS.ErrnoException;
++      err.code = 'EPERM';
++      throw err;
++    });
++    expect(isProcessAlive(424242)).toBe(true);
++
++    killSpy.mockImplementationOnce(() => {
++      const err = new Error('no such process') as NodeJS.ErrnoException;
++      err.code = 'ESRCH';
++      throw err;
++    });
++    expect(isProcessAlive(424242)).toBe(false);
++
++    killSpy.mockRestore();
++  });
+ });
+diff --git a/src/mcp/auth-proxy/config.ts b/src/mcp/auth-proxy/config.ts
+index 2d9f0ad..f82ffd8 100644
+--- a/src/mcp/auth-proxy/config.ts
++++ b/src/mcp/auth-proxy/config.ts
+@@ -14,9 +14,10 @@ export const AUTH_PROXY_CONFIG_FILE = 'mcp-auth-proxy.json';
+ export const AUTH_PROXY_STATE_FILE = 'mcp-auth-proxy.state.json';
+ 
+ const ROUTE_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+-// `as` + `.well-known` are reserved by the route map; `healthz` by the health endpoint
+-// (design D6 — a route named "healthz" would shadow GET /healthz).
+-const RESERVED_ROUTE_IDS = new Set(['as', '.well-known', 'healthz']);
++// `as` + `.well-known` are reserved by the route map; `healthz` by the health
++// endpoint and `shutdown` by the graceful-shutdown control endpoint (design D6 —
++// a route named "healthz"/"shutdown" would shadow GET /healthz / POST /shutdown).
++const RESERVED_ROUTE_IDS = new Set(['as', '.well-known', 'healthz', 'shutdown']);
+ 
+ export function getDefaultConfigPath(): string {
+   return getCodemiePath(AUTH_PROXY_CONFIG_FILE);
+diff --git a/src/mcp/auth-proxy/runtime.ts b/src/mcp/auth-proxy/runtime.ts
+index c24dbf3..b4b207a 100644
+--- a/src/mcp/auth-proxy/runtime.ts
++++ b/src/mcp/auth-proxy/runtime.ts
+@@ -32,16 +32,30 @@ export async function runAuthProxyDaemon(options: RunDaemonOptions = {}): Promis
+   }
+   const stateFile = options.stateFile ?? getDefaultStatePath();
+ 
+-  const proxy = new McpAuthProxy(config);
+-  const { port, url } = await proxy.start();
+   const routes = Object.keys(config.servers);
+ 
++  // One idempotent graceful path shared by the /shutdown endpoint and POSIX
++  // signals: stop the server (drains SSE), clear state, exit. On Windows the
++  // endpoint is the only path that runs this — a signal there is a hard kill,
++  // so this must be reachable over HTTP, not just via SIGTERM/SIGINT.
++  let shuttingDown = false;
++  function gracefulShutdown(): void {
++    if (shuttingDown) {
++      return;
++    }
++    shuttingDown = true;
++    void stop().then(() => process.exit(0));
++  }
++
++  const proxy = new McpAuthProxy(config, gracefulShutdown);
++  const { port, url } = await proxy.start();
++
+   await writeAuthProxyState(
+     { pid: process.pid, port, routes, startedAt: new Date().toISOString() },
+     stateFile
+   );
+ 
+-  const stop = async (): Promise<void> => {
++  async function stop(): Promise<void> {
+     try {
+       await proxy.stop();
+     } catch {
+@@ -52,12 +66,10 @@ export async function runAuthProxyDaemon(options: RunDaemonOptions = {}): Promis
+     } catch {
+       // Best-effort cleanup
+     }
+-  };
+-  const onSignal = (): void => {
+-    void stop().then(() => process.exit(0));
+-  };
+-  process.on('SIGTERM', onSignal);
+-  process.on('SIGINT', onSignal);
++  }
++
++  process.on('SIGTERM', gracefulShutdown);
++  process.on('SIGINT', gracefulShutdown);
+ 
+   logger.debug(`[mcp-auth-proxy] Daemon running at ${url} (routes: ${routes.join(', ')})`);
+   return { proxy, port, url, routes, stop };
+diff --git a/src/mcp/auth-proxy/server.ts b/src/mcp/auth-proxy/server.ts
+index 5d2703f..155a112 100644
+--- a/src/mcp/auth-proxy/server.ts
++++ b/src/mcp/auth-proxy/server.ts
+@@ -113,7 +113,10 @@ export class McpAuthProxy {
+   private readonly client: UpstreamClient;
+   private readonly metadata: MetadataCache;
+ 
+-  constructor(private readonly config: AuthProxyConfig) {
++  constructor(
++    private readonly config: AuthProxyConfig,
++    private readonly onShutdownRequested?: () => void
++  ) {
+     this.port = config.port;
+     this.client = new UpstreamClient();
+     this.metadata = new MetadataCache((url) => this.client.fetchJson(url));
+@@ -207,6 +210,9 @@ export class McpAuthProxy {
+       if (req.method === 'GET' && url.pathname === '/healthz') {
+         kind = 'healthz';
+         this.serveHealth(res);
++      } else if (url.pathname === '/shutdown') {
++        kind = 'shutdown';
++        this.handleShutdown(req, res);
+       } else if (segments[0] === '.well-known') {
+         [kind, routeId] = await this.handleWellKnown(req, res, segments);
+       } else if (segments[0] === 'as' && segments.length >= 2) {
+@@ -544,6 +550,21 @@ export class McpAuthProxy {
+ 
+   // ── Health + errors ───────────────────────────────────────────────────────
+ 
++  /**
++   * Graceful-shutdown control endpoint (loopback-only, like the whole server).
++   * POST → ack 202, then run the daemon's own cleanup AFTER the response has
++   * flushed so the caller (CLI stop) reliably receives the ack. Cross-platform:
++   * this is how Windows shuts down gracefully, since it has no POSIX signals.
++   */
++  private handleShutdown(req: http.IncomingMessage, res: http.ServerResponse): void {
++    if (req.method !== 'POST') {
++      sendJson(res, 405, { error: 'method_not_allowed' });
++      return;
++    }
++    res.on('finish', () => this.onShutdownRequested?.());
++    sendJson(res, 202, { status: 'shutting_down' });
++  }
++
+   private serveHealth(res: http.ServerResponse): void {
+     const routes = Object.entries(this.config.servers).map(([id, route]) => ({
+       id,
+diff --git a/src/mcp/auth-proxy/state.ts b/src/mcp/auth-proxy/state.ts
+index efcc43b..9824b12 100644
+--- a/src/mcp/auth-proxy/state.ts
++++ b/src/mcp/auth-proxy/state.ts
+@@ -46,7 +46,10 @@ export function isProcessAlive(pid: number): boolean {
+   try {
+     process.kill(pid, 0);
+     return true;
+-  } catch {
+-    return false;
++  } catch (error) {
++    // EPERM: the process exists but this user cannot signal it (common on
++    // Windows) — that still means "alive". Only a genuine "no such process"
++    // (ESRCH) means dead.
++    return (error as NodeJS.ErrnoException).code === 'EPERM';
+   }
+ }
+diff --git a/src/utils/__tests__/spawn-detached.test.ts b/src/utils/__tests__/spawn-detached.test.ts
+new file mode 100644
+index 0000000..294359d
+--- /dev/null
++++ b/src/utils/__tests__/spawn-detached.test.ts
+@@ -0,0 +1,46 @@
++/**
++ * processes.ts — spawnDetached platform-conditional options.
++ * Isolated file: mocks node:child_process file-wide, so it must not share a
++ * module scope with the npm-utility suite in processes.test.ts.
++ * @group unit
++ */
++import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
++import os from 'node:os';
++
++vi.mock('node:child_process', () => ({
++  spawn: vi.fn(() => ({ unref: vi.fn(), pid: 4242 })),
++  exec: vi.fn(),
++}));
++
++import { spawn } from 'node:child_process';
++import { spawnDetached } from '../processes.js';
++
++describe('spawnDetached', () => {
++  beforeEach(() => {
++    vi.mocked(spawn).mockClear();
++  });
++  afterEach(() => {
++    vi.restoreAllMocks();
++  });
++
++  it('hides the console window on Windows (windowsHide: true)', () => {
++    vi.spyOn(os, 'platform').mockReturnValue('win32');
++    const pid = spawnDetached('node', ['daemon.js']);
++    expect(pid).toBe(4242);
++    expect(spawn).toHaveBeenCalledWith(
++      'node',
++      ['daemon.js'],
++      expect.objectContaining({ detached: true, stdio: 'ignore', windowsHide: true })
++    );
++  });
++
++  it('does not hide the console window off Windows (windowsHide: false)', () => {
++    vi.spyOn(os, 'platform').mockReturnValue('linux');
++    spawnDetached('node', ['daemon.js']);
++    expect(spawn).toHaveBeenCalledWith(
++      'node',
++      ['daemon.js'],
++      expect.objectContaining({ windowsHide: false })
++    );
++  });
++});
+diff --git a/src/utils/processes.ts b/src/utils/processes.ts
+index 41fc1fd..c51f780 100644
+--- a/src/utils/processes.ts
++++ b/src/utils/processes.ts
+@@ -117,6 +117,9 @@ export function spawnDetached(
+     env: options.env,
+     detached: true,
+     stdio: options.stdio ?? 'ignore',
++    // Detached background daemons must never flash a console window on Windows
++    // (matches the exec.ts / BaseAgentAdapter idiom for attached spawns).
++    windowsHide: os.platform() === 'win32',
+   });
+   child.unref();
+   return child.pid ?? -1;

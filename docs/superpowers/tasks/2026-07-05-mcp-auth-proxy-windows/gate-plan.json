@@ -1,0 +1,17 @@
+{
+  "task": "mcp-auth-proxy-windows",
+  "branch": "feat/mcp-auth-proxy",
+  "reviewed_range": "9c6eecd..HEAD",
+  "ui": false,
+  "feature_verification": "skipped (no user-visible surface)",
+  "gates": [
+    { "id": "license-check", "command": "npm run license-check", "status": "passed" },
+    { "id": "lint", "command": "eslint '{src,tests}/**/*.ts' --max-warnings=0", "status": "passed" },
+    { "id": "typecheck", "command": "tsc --noEmit", "status": "passed" },
+    { "id": "build", "command": "tsc && tsc-alias && npm run copy-plugin", "status": "passed" },
+    { "id": "unit", "command": "vitest run src", "status": "passed", "detail": "2278 passed, 1 skipped" },
+    { "id": "integration", "command": "vitest run tests/integration", "status": "passed", "detail": "220 passed, 1 skipped" },
+    { "id": "commitlint", "command": "commitlint on 9c6eecd..HEAD", "status": "passed", "detail": "7/7" }
+  ],
+  "overall": "passed"
+}

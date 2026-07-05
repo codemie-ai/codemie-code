@@ -1,0 +1,77 @@
+{
+  "task": "Make `codemie mcp-auth-proxy` shut down correctly on Windows via a loopback POST /shutdown control endpoint, plus windowsHide on detached spawn and EPERM-as-alive in the liveness check.",
+  "generated": "2026-07-05",
+  "dimensions": {
+    "component_scope": {
+      "score": 3,
+      "label": "M",
+      "affected": "CLI mcp-auth-proxy stop/start command, McpAuthProxy HTTP server (handleShutdown + constructor callback), daemon runtime (gracefulShutdown wiring), config validator (reserved 'shutdown' route id), spawnDetached process helper, isProcessAlive state helper",
+      "layers": "CLI, Service (daemon HTTP server + runtime), Utils"
+    },
+    "requirements_clarity": {
+      "score": 2,
+      "label": "S",
+      "status": "Clear",
+      "gaps": "Windows-specific behavior (hard-kill on SIGTERM, EPERM from signal-0, windowsHide) is not verifiable on the Linux dev platform and relies on documented Node/OS semantics"
+    },
+    "technical_risk": {
+      "score": 3,
+      "label": "M",
+      "risk_factors": "Cross-platform process control (Windows has no POSIX signals and hard-kills on SIGTERM, skipping handlers); a loopback control endpoint added to a proxy that relays bearer tokens; graceful-shutdown ordering (ack must flush via res.on('finish') before cleanup, SSE sockets must be drained); Windows paths untestable on the Linux dev box",
+      "mitigation": "Additive and reversible; /shutdown is loopback-only, guarded by a reserved route id and a POST method check; CLI retains SIGTERM->SIGKILL fallback when the daemon does not ack; +6 TDD tests cover the endpoint (202/405 + callback), EPERM liveness, and windowsHide"
+    },
+    "file_change_estimate": {
+      "score": 4,
+      "label": "L",
+      "modified_files": 9,
+      "modified_file_list": [
+        "src/cli/commands/mcp-auth-proxy.ts",
+        "src/mcp/auth-proxy/config.ts",
+        "src/mcp/auth-proxy/runtime.ts",
+        "src/mcp/auth-proxy/server.ts",
+        "src/mcp/auth-proxy/state.ts",
+        "src/utils/processes.ts",
+        "src/mcp/auth-proxy/__tests__/config.test.ts",
+        "src/mcp/auth-proxy/__tests__/server.test.ts",
+        "src/mcp/auth-proxy/__tests__/state.test.ts"
+      ],
+      "new_files": 1,
+      "new_file_list": [
+        "src/utils/__tests__/spawn-detached.test.ts"
+      ],
+      "affected_dirs": [
+        "src/cli/commands",
+        "src/mcp/auth-proxy",
+        "src/mcp/auth-proxy/__tests__",
+        "src/utils",
+        "src/utils/__tests__"
+      ]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 3,
+      "label": "M",
+      "layers_changed": ["CLI", "Service", "Utils"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 16,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 10,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "file_change_estimate", "reason": "10 files changed (9 modified + 1 new isolated test) spanning three subsystems — CLI command, mcp/auth-proxy daemon, and utils — lands in the 7-10 band (L), even though each edit is small and additive (210 insertions / 24 deletions)." },
+    { "dimension": "component_scope", "reason": "The graceful-shutdown feature threads one callback through CLI stop -> server handleShutdown -> runtime gracefulShutdown, coordinated across three components, plus two independent one-line fixes (windowsHide, EPERM); breadth is moderate but the coordination pattern is clear." },
+    { "dimension": "technical_risk", "reason": "Cross-platform process lifecycle control that cannot be exercised on the Linux dev platform, adding an unauthenticated (loopback-only) control endpoint to a bearer-token-relaying proxy; mitigated by reserved-id guarding, a SIGTERM->SIGKILL fallback, and +6 TDD tests." },
+    { "dimension": "affected_layers", "reason": "Touches CLI command surface, the daemon Service layer (HTTP server + runtime), and shared Utils (process spawn + state helpers); no DB migration and no new external integration." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}
