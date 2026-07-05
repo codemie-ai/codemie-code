@@ -7,6 +7,7 @@ import { mkdtemp, rm, writeFile, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import https from 'node:https';
+import { logger } from '../../../utils/logger.js';
 
 let home: string;
 
@@ -17,12 +18,16 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.unstubAllEnvs();
+  // The daemon's logger opens a lifetime append stream on <home>/logs/debug-*.log.
+  // Windows cannot unlink an open file, so release the handle before removing the
+  // temp home; otherwise rm retries compound and blow the hook timeout. No-op on
+  // Linux (which deletes open files fine) and when no stream was opened.
+  await logger.close();
   try {
-    await rm(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    await rm(home, { recursive: true, force: true, maxRetries: 2, retryDelay: 50 });
   } catch (error) {
-    // The process-wide logger keeps an append stream open on <home>/logs/debug-*.log
-    // for the whole run; Windows cannot unlink an open file, so removing the temp
-    // home can fail with ENOTEMPTY/EPERM/EBUSY. The OS reaps tmpdir — don't fail the test.
+    // Insurance only: if a handle is somehow still held, don't fail the test —
+    // the OS reaps tmpdir. Fail-fast retries above ensure this never hangs.
     const code = (error as NodeJS.ErrnoException).code ?? '';
     if (!['ENOTEMPTY', 'EPERM', 'EBUSY'].includes(code)) {
       throw error;
