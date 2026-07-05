@@ -133,13 +133,17 @@ async function issueLeaf(ca: CaMaterial): Promise<{ certPem: string; keyPem: str
   const caKey = await importPrivateKey(ca.keyPem);
   const keys = await webcrypto.subtle.generateKey(SIGNING_ALG, true, ['sign', 'verify']);
   const now = Date.now();
+  const notBefore = new Date(now - CLOCK_SKEW_MS);
   const cert = await x509.X509CertificateGenerator.create({
     subject: 'CN=127.0.0.1, O=CodeMie',
     issuer: caCert.subject,
-    notBefore: new Date(now - CLOCK_SKEW_MS),
+    notBefore,
     // Anchor to notBefore so total validity stays within the 825-day cap
-    // despite the clock-skew backdating.
-    notAfter: new Date(now - CLOCK_SKEW_MS + LEAF_VALIDITY_DAYS * DAY_MS),
+    // despite the clock-skew backdating; clamp to the CA expiry so the leaf
+    // never outlives its issuer (chain validation would fail mid-leaf-life).
+    notAfter: new Date(
+      Math.min(notBefore.getTime() + LEAF_VALIDITY_DAYS * DAY_MS, caCert.notAfter.getTime())
+    ),
     signingAlgorithm: SIGNING_ALG,
     publicKey: keys.publicKey,
     signingKey: caKey,
@@ -184,11 +188,76 @@ function leafMatchesProfile(leaf: X509Certificate, ca: X509Certificate): boolean
   );
 }
 
+/** Reads a PKCS#8 key and proves it parses; null = treat as absent and reissue. */
+async function loadPrivateKeyPem(path: string): Promise<string | null> {
+  try {
+    const pem = await readFile(path, 'utf-8');
+    await importPrivateKey(pem);
+    return pem;
+  } catch {
+    return null;
+  }
+}
+
+interface LoadedCa {
+  cert: X509Certificate;
+  keyPem: string;
+}
+
+/** Null when the CA cert is missing/corrupt/expired or its key does not parse. */
+async function loadCa(paths: AuthProxyTlsPaths): Promise<LoadedCa | null> {
+  const cert = await readCertificate(paths.caCert);
+  if (cert === null || !isUsable(cert, 0)) {
+    return null;
+  }
+  const keyPem = await loadPrivateKeyPem(paths.caKey);
+  return keyPem === null ? null : { cert, keyPem };
+}
+
+async function generateAndStoreCa(paths: AuthProxyTlsPaths): Promise<LoadedCa> {
+  const generated = await generateCa();
+  await writeFileAtomic(paths.caKey, generated.keyPem, 0o600);
+  await writeFileAtomic(paths.caCert, generated.certPem, 0o644);
+  logger.warn(
+    '[mcp-auth-proxy] Generated a new local CA — run `codemie mcp-auth-proxy trust` to (re)install it in the OS trust store'
+  );
+  return { cert: new X509Certificate(generated.certPem), keyPem: generated.keyPem };
+}
+
+export interface ExistingCaInfo {
+  caPath: string;
+  caCommonName: string;
+  fingerprint256: string;
+  validTo: string;
+}
+
+/**
+ * Describes the on-disk CA without generating anything — `trust --uninstall`
+ * must never mint new material (a fresh CA has a new dated CN, so uninstall
+ * would remove the wrong trust-store entry). Null when missing/unparseable.
+ */
+export async function readExistingCaInfo(
+  dir: string = getCodemiePath(AUTH_PROXY_TLS_DIR)
+): Promise<ExistingCaInfo | null> {
+  const paths = getAuthProxyTlsPaths(dir);
+  const cert = await readCertificate(paths.caCert);
+  if (cert === null) {
+    return null;
+  }
+  return {
+    caPath: paths.caCert,
+    caCommonName: extractCommonName(cert.subject),
+    fingerprint256: cert.fingerprint256,
+    validTo: cert.validTo,
+  };
+}
+
 /**
  * Idempotently ensures a usable CA + leaf under `dir` and returns the material.
- * Regenerates the CA (and leaf) when the CA is missing/corrupt/expired — and
- * warns that `trust` must be re-run. Reissues only the leaf when it is
- * missing/corrupt/expiring/mismatched.
+ * Regenerates the CA (and leaf) when the CA is missing/corrupt/expired, its key
+ * does not parse, or the cert/key pair mismatches — and warns that `trust` must
+ * be re-run. Reissues only the leaf when it is missing/corrupt/expiring/
+ * mismatched or its key does not parse.
  */
 export async function ensureAuthProxyCerts(
   dir: string = getCodemiePath(AUTH_PROXY_TLS_DIR)
@@ -197,43 +266,23 @@ export async function ensureAuthProxyCerts(
   try {
     await mkdir(dir, { recursive: true });
 
-    let caCert = await readCertificate(paths.caCert);
-    let caKeyPem: string | null = null;
-    if (caCert !== null && isUsable(caCert, 0)) {
-      try {
-        caKeyPem = await readFile(paths.caKey, 'utf-8');
-      } catch {
-        caKeyPem = null;
-      }
-    }
-
-    if (caCert === null || caKeyPem === null) {
-      const generated = await generateCa();
-      await writeFileAtomic(paths.caKey, generated.keyPem, 0o600);
-      await writeFileAtomic(paths.caCert, generated.certPem, 0o644);
-      caCert = new X509Certificate(generated.certPem);
-      caKeyPem = generated.keyPem;
-      logger.warn(
-        '[mcp-auth-proxy] Generated a new local CA — run `codemie mcp-auth-proxy trust` to (re)install it in the OS trust store'
-      );
-    }
+    let ca = (await loadCa(paths)) ?? (await generateAndStoreCa(paths));
 
     const leaf = await readCertificate(paths.serverCert);
-    let leafKeyPem: string | null = null;
     const leafOk =
       leaf !== null &&
       isUsable(leaf, LEAF_RENEWAL_WINDOW_DAYS * DAY_MS) &&
-      leafMatchesProfile(leaf, caCert);
-    if (leafOk) {
-      try {
-        leafKeyPem = await readFile(paths.serverKey, 'utf-8');
-      } catch {
-        leafKeyPem = null;
-      }
-    }
+      leafMatchesProfile(leaf, ca.cert);
+    let leafKeyPem = leafOk ? await loadPrivateKeyPem(paths.serverKey) : null;
 
-    if (!leafOk || leafKeyPem === null) {
-      const issued = await issueLeaf({ certPem: caCert.toString(), keyPem: caKeyPem });
+    if (leafKeyPem === null) {
+      let issued = await issueLeaf({ certPem: ca.cert.toString(), keyPem: ca.keyPem });
+      // Signing succeeds even when ca.key does not match ca.crt (e.g. a crash
+      // between the two writes), so prove the chain and self-heal once.
+      if (!new X509Certificate(issued.certPem).verify(ca.cert.publicKey)) {
+        ca = await generateAndStoreCa(paths);
+        issued = await issueLeaf({ certPem: ca.cert.toString(), keyPem: ca.keyPem });
+      }
       await writeFileAtomic(paths.serverKey, issued.keyPem, 0o600);
       await writeFileAtomic(paths.serverCert, issued.certPem, 0o644);
       leafKeyPem = issued.keyPem;
@@ -246,7 +295,7 @@ export async function ensureAuthProxyCerts(
       keyPem: leafKeyPem,
       certPem: await readFile(paths.serverCert, 'utf-8'),
       caCertPem: await readFile(paths.caCert, 'utf-8'),
-      caCommonName: extractCommonName(caCert.subject),
+      caCommonName: extractCommonName(ca.cert.subject),
       paths,
     };
   } catch (error) {

@@ -32,7 +32,11 @@ import {
 } from '../../mcp/auth-proxy/state.js';
 import { fetchHealth, requestShutdown } from '../../mcp/auth-proxy/client.js';
 import type { DaemonEndpoint } from '../../mcp/auth-proxy/client.js';
-import { ensureAuthProxyCerts, getAuthProxyTlsPaths } from '../../mcp/auth-proxy/certs.js';
+import {
+  ensureAuthProxyCerts,
+  getAuthProxyTlsPaths,
+  readExistingCaInfo,
+} from '../../mcp/auth-proxy/certs.js';
 import { applyTrust } from '../../mcp/auth-proxy/trust.js';
 import type { AuthProxyDaemonState } from '../../mcp/auth-proxy/types.js';
 
@@ -116,12 +120,20 @@ export function createMcpAuthProxyCommand(): Command {
       try {
         const existing = await readAuthProxyState();
         if (existing && isProcessAlive(existing.pid)) {
+          const existingTls = existing.tls === true;
           console.log(
             chalk.green(
-              `✓ mcp-auth-proxy already running on http://127.0.0.1:${existing.port} (pid ${existing.pid})`
+              `✓ mcp-auth-proxy already running on ${existingTls ? 'https' : 'http'}://127.0.0.1:${existing.port} (pid ${existing.pid})`
             )
           );
-          printAddCommands(existing.port, existing.routes, existing.tls === true);
+          if (opts.tls === true && !existingTls) {
+            console.log(
+              chalk.yellow(
+                '⚠ --tls has no effect: the daemon is already running WITHOUT TLS. Restart it to enable TLS: codemie mcp-auth-proxy stop && codemie mcp-auth-proxy start --tls'
+              )
+            );
+          }
+          printAddCommands(existing.port, existing.routes, existingTls);
           return;
         }
         await clearAuthProxyState();
@@ -276,32 +288,52 @@ export function createMcpAuthProxyCommand(): Command {
     .option('--uninstall', 'Remove the CodeMie CA from the trust store instead of installing it')
     .action(async (opts: { uninstall?: boolean }) => {
       try {
-        const material = await ensureAuthProxyCerts();
         const action = opts.uninstall === true ? 'uninstall' : 'install';
+        if (action === 'install') {
+          await ensureAuthProxyCerts();
+        }
+        // Uninstall must never (re)generate material: a fresh CA has a new
+        // dated CN, so uninstalling by it would leave the old CA trusted.
+        const ca = await readExistingCaInfo();
+        if (ca === null) {
+          // Only reachable for uninstall — install just ensured the material.
+          console.log(
+            chalk.yellow(
+              `No local CA found at ${getAuthProxyTlsPaths().caCert} — nothing to uninstall`
+            )
+          );
+          return;
+        }
+
         const result = await applyTrust(action, {
           platform: platform(),
-          exec: (cmd, args) => exec(cmd, args),
-          caPath: material.paths.caCert,
-          caCommonName: material.caCommonName,
+          exec: (cmd, args) => exec(cmd, args, { timeout: 30_000 }),
+          caPath: ca.caPath,
+          caCommonName: ca.caCommonName,
         });
 
-        const { X509Certificate } = await import('node:crypto');
-        const ca = new X509Certificate(material.caCertPem);
-        console.log(`CA certificate : ${material.paths.caCert}`);
-        console.log(`Subject CN     : ${material.caCommonName}`);
+        console.log(`CA certificate : ${ca.caPath}`);
+        console.log(`Subject CN     : ${ca.caCommonName}`);
         console.log(`SHA-256        : ${ca.fingerprint256}`);
         console.log(`Valid until    : ${ca.validTo}`);
 
         if (result.ok) {
-          console.log(
-            chalk.green(
-              action === 'install'
-                ? '✓ CA installed in the user trust store'
-                : '✓ CA removed from the user trust store'
-            )
-          );
+          if (result.notFound === true) {
+            console.log(chalk.gray('CA was not present in the trust store (already removed)'));
+          } else {
+            console.log(
+              chalk.green(
+                action === 'install'
+                  ? '✓ CA installed in the user trust store'
+                  : '✓ CA removed from the user trust store'
+              )
+            );
+          }
         } else {
           console.log(chalk.yellow(`Automated ${action} was not possible on this system.`));
+          if (result.detail !== undefined) {
+            console.log(chalk.gray(result.detail));
+          }
           if (result.manual !== undefined) {
             console.log(result.manual);
           }
