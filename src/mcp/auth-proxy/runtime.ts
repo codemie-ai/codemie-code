@@ -32,16 +32,30 @@ export async function runAuthProxyDaemon(options: RunDaemonOptions = {}): Promis
   }
   const stateFile = options.stateFile ?? getDefaultStatePath();
 
-  const proxy = new McpAuthProxy(config);
-  const { port, url } = await proxy.start();
   const routes = Object.keys(config.servers);
+
+  // One idempotent graceful path shared by the /shutdown endpoint and POSIX
+  // signals: stop the server (drains SSE), clear state, exit. On Windows the
+  // endpoint is the only path that runs this — a signal there is a hard kill,
+  // so this must be reachable over HTTP, not just via SIGTERM/SIGINT.
+  let shuttingDown = false;
+  function gracefulShutdown(): void {
+    if (shuttingDown) {
+      return;
+    }
+    shuttingDown = true;
+    void stop().then(() => process.exit(0));
+  }
+
+  const proxy = new McpAuthProxy(config, gracefulShutdown);
+  const { port, url } = await proxy.start();
 
   await writeAuthProxyState(
     { pid: process.pid, port, routes, startedAt: new Date().toISOString() },
     stateFile
   );
 
-  const stop = async (): Promise<void> => {
+  async function stop(): Promise<void> {
     try {
       await proxy.stop();
     } catch {
@@ -52,12 +66,10 @@ export async function runAuthProxyDaemon(options: RunDaemonOptions = {}): Promis
     } catch {
       // Best-effort cleanup
     }
-  };
-  const onSignal = (): void => {
-    void stop().then(() => process.exit(0));
-  };
-  process.on('SIGTERM', onSignal);
-  process.on('SIGINT', onSignal);
+  }
+
+  process.on('SIGTERM', gracefulShutdown);
+  process.on('SIGINT', gracefulShutdown);
 
   logger.debug(`[mcp-auth-proxy] Daemon running at ${url} (routes: ${routes.join(', ')})`);
   return { proxy, port, url, routes, stop };
