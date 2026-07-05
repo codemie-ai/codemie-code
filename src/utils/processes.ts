@@ -117,6 +117,9 @@ export function spawnDetached(
     env: options.env,
     detached: true,
     stdio: options.stdio ?? 'ignore',
+    // Detached background daemons must never flash a console window on Windows
+    // (matches the exec.ts / BaseAgentAdapter idiom for attached spawns).
+    windowsHide: os.platform() === 'win32',
   });
   child.unref();
   return child.pid ?? -1;
