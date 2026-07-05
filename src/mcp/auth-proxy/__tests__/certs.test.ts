@@ -66,14 +66,19 @@ describe('ensureAuthProxyCerts', () => {
     expect(material.keyPem).toContain('BEGIN PRIVATE KEY');
   });
 
-  it('writes private keys with 0600 permissions', async () => {
-    await ensureAuthProxyCerts(dir);
-    const paths = getAuthProxyTlsPaths(dir);
-    for (const keyFile of [paths.caKey, paths.serverKey]) {
-      const mode = (await stat(keyFile)).mode & 0o777;
-      expect(mode).toBe(0o600);
+  // Windows secures files via ACLs, not POSIX mode bits, so stat().mode never
+  // reflects the requested 0o600 there — the assertion is Unix-only.
+  it.skipIf(process.platform === 'win32')(
+    'writes private keys with 0600 permissions',
+    async () => {
+      await ensureAuthProxyCerts(dir);
+      const paths = getAuthProxyTlsPaths(dir);
+      for (const keyFile of [paths.caKey, paths.serverKey]) {
+        const mode = (await stat(keyFile)).mode & 0o777;
+        expect(mode).toBe(0o600);
+      }
     }
-  });
+  );
 
   it('is idempotent — second call reuses both certificates', async () => {
     const first = await ensureAuthProxyCerts(dir);

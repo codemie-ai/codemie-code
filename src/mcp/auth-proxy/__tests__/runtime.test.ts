@@ -17,7 +17,17 @@ beforeEach(async () => {
 
 afterEach(async () => {
   vi.unstubAllEnvs();
-  await rm(home, { recursive: true, force: true });
+  try {
+    await rm(home, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+  } catch (error) {
+    // The process-wide logger keeps an append stream open on <home>/logs/debug-*.log
+    // for the whole run; Windows cannot unlink an open file, so removing the temp
+    // home can fail with ENOTEMPTY/EPERM/EBUSY. The OS reaps tmpdir — don't fail the test.
+    const code = (error as NodeJS.ErrnoException).code ?? '';
+    if (!['ENOTEMPTY', 'EPERM', 'EBUSY'].includes(code)) {
+      throw error;
+    }
+  }
 });
 
 describe('runAuthProxyDaemon tls', () => {

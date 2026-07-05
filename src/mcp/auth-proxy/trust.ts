@@ -9,7 +9,7 @@
 import { existsSync } from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { join, posix } from 'node:path';
 
 export type TrustAction = 'install' | 'uninstall';
 
@@ -48,7 +48,9 @@ const UNINSTALL_NOT_FOUND_PATTERN =
   /not\s?found|no matching|could not (?:be )?found|unable to find|CRYPT_E_NOT_FOUND|SEC_ERROR_UNRECOGNIZED_OID|SEC_ERROR_BAD_DATABASE|0x80092004/i;
 
 function nssDbDir(): string {
-  return join(homedir(), '.pki', 'nssdb');
+  // POSIX separators always: this path is only ever consumed by Linux `certutil`
+  // (the leaf command runs on Linux), so it must not pick up host backslashes.
+  return posix.join(homedir(), '.pki', 'nssdb');
 }
 
 export function buildTrustCommands(
