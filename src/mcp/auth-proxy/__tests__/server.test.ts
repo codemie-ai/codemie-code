@@ -2,7 +2,7 @@
  * mcp-auth-proxy server tests — real HTTP against a local fake upstream (MCP RS + AS).
  * @group unit
  */
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import http from 'node:http';
 import net from 'node:net';
 import type { AddressInfo } from 'node:net';
@@ -340,6 +340,36 @@ describe('McpAuthProxy', () => {
       expect(res.status, `${method} ${path}`).toBe(404);
       expect(await res.json()).toEqual({ error: 'unknown_route' });
     }
+  });
+
+  it('POST /shutdown → 202 and fires the shutdown callback once; GET /shutdown → 405', async () => {
+    const onShutdown = vi.fn();
+    const controllable = new McpAuthProxy(
+      { port: 0, servers: { radar: { upstreamUrl: `${upstream.origin}/mcp/radar` } } },
+      onShutdown
+    );
+    const { url } = await controllable.start();
+    try {
+      const wrongMethod = await fetch(`${url}/shutdown`, { method: 'GET' });
+      expect(wrongMethod.status).toBe(405);
+      expect(onShutdown).not.toHaveBeenCalled();
+
+      const res = await fetch(`${url}/shutdown`, { method: 'POST' });
+      expect(res.status).toBe(202);
+      expect((await res.json()) as JsonObject).toEqual({ status: 'shutting_down' });
+      await vi.waitFor(() => expect(onShutdown).toHaveBeenCalledTimes(1));
+    } finally {
+      await controllable.stop();
+    }
+  });
+
+  it('intercepts /shutdown before route lookup without disturbing normal routes', async () => {
+    const res = await fetch(`${proxyOrigin}/radar`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer tok-abc' },
+      body: '{}',
+    });
+    expect(res.status).toBe(200);
   });
 
   it('404s unknown routes and the root PRM alias when multiple routes exist', async () => {

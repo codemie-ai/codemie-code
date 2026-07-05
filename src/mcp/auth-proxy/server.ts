@@ -113,7 +113,10 @@ export class McpAuthProxy {
   private readonly client: UpstreamClient;
   private readonly metadata: MetadataCache;
 
-  constructor(private readonly config: AuthProxyConfig) {
+  constructor(
+    private readonly config: AuthProxyConfig,
+    private readonly onShutdownRequested?: () => void
+  ) {
     this.port = config.port;
     this.client = new UpstreamClient();
     this.metadata = new MetadataCache((url) => this.client.fetchJson(url));
@@ -207,6 +210,9 @@ export class McpAuthProxy {
       if (req.method === 'GET' && url.pathname === '/healthz') {
         kind = 'healthz';
         this.serveHealth(res);
+      } else if (url.pathname === '/shutdown') {
+        kind = 'shutdown';
+        this.handleShutdown(req, res);
       } else if (segments[0] === '.well-known') {
         [kind, routeId] = await this.handleWellKnown(req, res, segments);
       } else if (segments[0] === 'as' && segments.length >= 2) {
@@ -543,6 +549,21 @@ export class McpAuthProxy {
   }
 
   // ── Health + errors ───────────────────────────────────────────────────────
+
+  /**
+   * Graceful-shutdown control endpoint (loopback-only, like the whole server).
+   * POST → ack 202, then run the daemon's own cleanup AFTER the response has
+   * flushed so the caller (CLI stop) reliably receives the ack. Cross-platform:
+   * this is how Windows shuts down gracefully, since it has no POSIX signals.
+   */
+  private handleShutdown(req: http.IncomingMessage, res: http.ServerResponse): void {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { error: 'method_not_allowed' });
+      return;
+    }
+    res.on('finish', () => this.onShutdownRequested?.());
+    sendJson(res, 202, { status: 'shutting_down' });
+  }
 
   private serveHealth(res: http.ServerResponse): void {
     const routes = Object.entries(this.config.servers).map(([id, route]) => ({
