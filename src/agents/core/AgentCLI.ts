@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import chalk from 'chalk';
-import { AgentAdapter } from './types.js';
+import type { AgentAdapter, ResumeOwnershipResult } from './types.js';
 import { ConfigLoader, CodeMieConfigOptions } from '../../utils/config.js';
 import { ensureApiBase, DEFAULT_CODEMIE_BASE_URL } from '../../providers/core/codemie-auth-helpers.js';
 import { JWTTemplate } from '../../providers/plugins/jwt/jwt.template.js';
@@ -306,30 +306,74 @@ export class AgentCLI {
       providerEnv.CODEMIE_PROFILE_CONFIG = JSON.stringify(config);
 
       // Resume ownership check — after providerEnv is built so we can extend it
-      if (options.resume) {
-        // Strip ANSI escape sequences and control chars before using the value in output.
-        // Claude's own --resume accepts non-UUID identifiers (slugs, ticket IDs, etc.),
+      //
+      // options.resume only reflects the CodeMie `--resume <id>` flag. Some agents
+      // (e.g. Codex) also accept a native positional `resume <id>` invocation, which
+      // Commander's catch-all [args...] absorbs without populating options.resume.
+      // Ask the adapter to recognize its own native form so the ownership check still
+      // applies to it.
+      let nativeResumeId: string | undefined;
+      if (!options.resume) {
+        try {
+          nativeResumeId = this.adapter.extractNativeResumeId?.(args);
+        } catch (error) {
+          logger.debug('[AgentCLI] Native resume id extraction failed; proceeding without validation', {
+            agent: this.adapter.name,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
+      if (options.resume || nativeResumeId) {
+        // Strip only control characters before using the value in output.
+        // Native resume commands may accept non-UUID identifiers (slugs, ticket IDs, etc.),
         // so we must not validate the format here.
-         
-        const resumeId = (options.resume as string).replace(/\p{Cc}/gu, '');
-        const { scanSessionsForClaudeId } = await import('./session/session-ownership.js');
-        const isOwned = scanSessionsForClaudeId(resumeId);
+        const resumeId = ((options.resume as string | undefined) ?? nativeResumeId ?? '').replace(/\p{Cc}/gu, '');
+        const resolveResumeOwnership = this.adapter.resolveResumeOwnership?.bind(this.adapter);
 
-        if (!isOwned) {
-          const confirmed = await this.promptExternalResume(resumeId);
-          const { appendAuditEvent } = await import('./session/session-origin-audit.js');
+        if (resolveResumeOwnership && resumeId) {
+          let ownership: ResumeOwnershipResult | undefined;
 
-          if (!confirmed) {
-            appendAuditEvent('resume_blocked', { claudeSessionId: resumeId });
-            process.exit(1);
+          try {
+            ownership = await resolveResumeOwnership({
+              resumeId,
+              cwd: process.cwd(),
+              env: process.env,
+            });
+          } catch (error) {
+            logger.debug('[AgentCLI] Resume ownership resolver failed; proceeding without validation', {
+              agent: this.adapter.name,
+              resumeId,
+              error: error instanceof Error ? error.message : String(error),
+            });
           }
 
-          // Inject into subprocess env (for lifecycle hook subprocesses that inherit it)
-          // and into the current process env (for same-process consumers such as sso syncProcessor).
-          Object.assign(providerEnv, buildResumeEnvOverride(true));
-          process.env.CODEMIE_CONV_SYNC_DISABLED = '1';
-          appendAuditEvent('resume_external_confirmed', { claudeSessionId: resumeId });
-          logger.info(`[AgentCLI] External resume confirmed for session ${resumeId}; conversation sync suppressed`);
+          const isExternal = ownership?.supported === true && ownership.owned === false;
+
+          if (isExternal) {
+            const confirmed = await this.promptExternalResume(
+              resumeId,
+              ownership?.fallbackResumeCommand,
+            );
+            const { appendAuditEvent } = await import('./session/session-origin-audit.js');
+            const auditData = {
+              agent: this.adapter.name,
+              resumeId,
+              ...(ownership?.auditData ?? {}),
+            };
+
+            if (!confirmed) {
+              appendAuditEvent('resume_blocked', auditData);
+              process.exit(1);
+            }
+
+            // Inject into subprocess env (for lifecycle hook subprocesses that inherit it)
+            // and into the current process env (for same-process consumers such as sso syncProcessor).
+            Object.assign(providerEnv, buildResumeEnvOverride(true));
+            process.env.CODEMIE_CONV_SYNC_DISABLED = '1';
+            appendAuditEvent('resume_external_confirmed', auditData);
+            logger.info(`[AgentCLI] External resume confirmed for agent ${this.adapter.name}; conversation sync suppressed`);
+          }
         }
       }
 
@@ -576,12 +620,19 @@ export class AgentCLI {
     return true;
   }
 
-  private async promptExternalResume(sessionId: string): Promise<boolean> {
+  private async promptExternalResume(
+    sessionId: string,
+    fallbackResumeCommand?: string,
+  ): Promise<boolean> {
+    const fallbackLine = fallbackResumeCommand
+      ? `Use '${fallbackResumeCommand}' to resume without CodeMie tracking.\n`
+      : 'Resume without CodeMie tracking using the native agent CLI.\n';
+
     if (shouldBlockNonInteractiveResume()) {
       console.error(
         chalk.red(`\n✗ Session ${sessionId} was not created through CodeMie.\n`) +
-        chalk.white(`Non-interactive mode: resume blocked.\n`) +
-        chalk.white(`Use 'claude --resume ${sessionId}' to resume without CodeMie tracking.\n`)
+        chalk.white('Non-interactive mode: resume blocked.\n') +
+        chalk.white(fallbackLine)
       );
       return false;
     }
@@ -593,7 +644,11 @@ export class AgentCLI {
     console.log(chalk.white('If you continue:'));
     console.log(chalk.white('  • Token usage and API metrics WILL be tracked via the CodeMie proxy.'));
     console.log(chalk.white('  • Conversation transcript will NOT be synced to your CodeMie account history.\n'));
-    console.log(chalk.dim(`To resume without any CodeMie tracking, use: claude --resume ${sessionId}\n`));
+    console.log(chalk.dim(
+      fallbackResumeCommand
+        ? `To resume without any CodeMie tracking, use: ${fallbackResumeCommand}\n`
+        : 'To resume without any CodeMie tracking, use the native agent CLI.\n'
+    ));
 
     try {
       const answer = await new Promise<string>((resolve) => {

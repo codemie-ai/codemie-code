@@ -507,6 +507,21 @@ export class CodexPlugin extends BaseAgentAdapter {
     }
   }
 
+  /**
+   * Recognize Codex's native positional `resume <id>` invocation (e.g. as
+   * suggested by Codex's own CLI output) so AgentCLI can apply the same
+   * resume ownership check it applies to the CodeMie `--resume <id>` flag.
+   * `codex resume` with no id opens Codex's own session picker and has no
+   * id to validate, so it is left unrecognized here.
+   */
+  extractNativeResumeId(args: string[]): string | undefined {
+    const [first, second] = args;
+    if (first === 'resume' && second && !second.startsWith('-')) {
+      return second;
+    }
+    return undefined;
+  }
+
   protected override async setupProxy(env: NodeJS.ProcessEnv): Promise<void> {
     if (env.CODEMIE_PROVIDER === 'litellm') {
       if (!isCodexCompatibleModelName(env.CODEMIE_MODEL)) {

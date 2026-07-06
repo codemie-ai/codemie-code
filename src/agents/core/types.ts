@@ -655,6 +655,19 @@ export interface AgentInstallationOptions extends BaseInstallationOptions {
   [key: string]: unknown;
 }
 
+export interface ResumeOwnershipInput {
+  resumeId: string;
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+}
+
+export interface ResumeOwnershipResult {
+  supported: boolean;
+  owned?: boolean;
+  fallbackResumeCommand?: string;
+  auditData?: Record<string, unknown>;
+}
+
 /**
  * Agent adapter interface - implemented by BaseAgentAdapter
  */
@@ -670,6 +683,25 @@ export interface AgentAdapter {
   getVersion(): Promise<string | null>;
   getMetricsConfig(): AgentMetricsConfig | undefined;
   readonly ownedSubcommands?: string[];
+
+  /**
+   * Resolve whether a native resume target belongs to a CodeMie-managed session.
+   * Agents that do not support ownership validation may omit this capability.
+   */
+  resolveResumeOwnership?(
+    input: ResumeOwnershipInput,
+  ): Promise<ResumeOwnershipResult>;
+
+  /**
+   * Detect a resume invocation expressed via the agent's native positional
+   * CLI syntax (e.g. Codex's `codex resume <id>`) rather than the CodeMie
+   * `--resume <id>` flag, and extract the resume id if present. Commander
+   * routes unrecognized positional tokens into the pass-through args array,
+   * so this lets AgentCLI apply the same ownership check to native
+   * invocations. Agents without a native positional resume form may omit
+   * this capability.
+   */
+  extractNativeResumeId?(args: string[]): string | undefined;
 
   /**
    * Additional installation steps that run regardless of agent installation status

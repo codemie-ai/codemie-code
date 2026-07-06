@@ -1,4 +1,8 @@
-import { AgentMetadata } from '../../core/types.js';
+import type {
+  AgentMetadata,
+  ResumeOwnershipInput,
+  ResumeOwnershipResult,
+} from '../../core/types.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import { ClaudeSessionAdapter } from './claude.session.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
@@ -316,6 +320,23 @@ export class ClaudePlugin extends BaseAgentAdapter {
    */
   getSessionAdapter(): SessionAdapter {
     return this.sessionAdapter;
+  }
+
+  async resolveResumeOwnership(
+    input: ResumeOwnershipInput,
+  ): Promise<ResumeOwnershipResult> {
+    const { scanSessionsForClaudeId } = await import('../../core/session/session-ownership.js');
+    const owned = scanSessionsForClaudeId(input.resumeId);
+
+    return {
+      supported: true,
+      owned,
+      fallbackResumeCommand: `claude --resume ${input.resumeId}`,
+      auditData: {
+        nativeAgent: 'claude',
+        nativeResumeId: input.resumeId,
+      },
+    };
   }
 
   /**
