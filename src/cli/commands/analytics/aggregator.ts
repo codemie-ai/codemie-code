@@ -789,7 +789,7 @@ export class AnalyticsAggregator {
       }
       for (const prompt of prompts) {
         const raw = prompt?.text;
-        if (!raw || typeof raw !== 'string') {
+        if (typeof raw !== 'string' || !raw) {
           continue;
         }
         const cleaned = raw

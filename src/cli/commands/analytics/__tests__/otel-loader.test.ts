@@ -109,6 +109,34 @@ describe('buildDispatches', () => {
     expect(agent.tokens?.total).toBe(430); // 100+50+200+80
   });
 
+  it('attributes each request to the narrowest containing window when subagent windows overlap', () => {
+    const ev = (name: string, ts: string, extra: Record<string, unknown>): OtelEvent => ({
+      _type: 'log',
+      ts,
+      name,
+      attrs: { 'session.id': 'S', 'event.name': name, ...extra },
+      resource: {},
+    });
+    const dispatches = buildDispatches([
+      // WIDE window: [10:00:00, 10:02:00] (duration 120000ms).
+      ev('subagent_completed', '2026-06-19T10:02:00.000Z', { agent_type: 'wide-agent', duration_ms: 120000 }),
+      // NARROW window nested inside the wide one: [10:00:20, 10:01:00] (duration 40000ms).
+      ev('subagent_completed', '2026-06-19T10:01:00.000Z', { agent_type: 'narrow-agent', duration_ms: 40000 }),
+      // Falls inside BOTH windows — must go to the NARROW one, not "wide" just because wide's
+      // subagent_completed event happens to be processed after narrow's in this event list.
+      ev('api_request', '2026-06-19T10:00:30.000Z', { query_source: 'agent:narrow-agent', cost_usd: 0.7, input_tokens: 100 }),
+      // Falls ONLY inside the wide window (after narrow's window has already ended).
+      ev('api_request', '2026-06-19T10:01:30.000Z', { query_source: 'agent:wide-agent', cost_usd: 0.3, input_tokens: 50 }),
+    ]);
+
+    const narrow = dispatches.find((d) => d.name === 'narrow-agent')!;
+    const wide = dispatches.find((d) => d.name === 'wide-agent')!;
+    expect(narrow.costUSD).toBeCloseTo(0.7, 6);
+    expect(narrow.tokens?.input).toBe(100);
+    expect(wide.costUSD).toBeCloseTo(0.3, 6);
+    expect(wide.tokens?.input).toBe(50);
+  });
+
   it('attributes real cost + duration to skills via api_request.skill.name', () => {
     const ev = (name: string, ts: string, extra: Record<string, unknown>): OtelEvent => ({
       _type: 'log',

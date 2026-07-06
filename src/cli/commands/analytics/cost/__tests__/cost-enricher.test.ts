@@ -413,6 +413,86 @@ describe('enrichCosts — dispatch cost attribution', () => {
     expect(dispatch!.tokens).toBeUndefined();
     expect(dispatch!.tools).toBeUndefined();
   });
+
+  it('attributes cost to a skill dispatch from the session\'s own usage records in its time window', async () => {
+    const deps: EnricherDeps = {
+      resolveAgentName: () => 'claude',
+      loadAgentSessionFile: async () => '/fake/parent.jsonl',
+      parseNative: async () =>
+        ({
+          sessionId: 'parent-3',
+          agentName: 'claude',
+          metadata: {},
+          messages: [
+            {
+              timestamp: '2026-06-08T10:00:00Z',
+              message: {
+                role: 'assistant',
+                content: [{ type: 'tool_use', id: 'toolu_skill_1', name: 'Skill', input: { skill: 'code-review' } }],
+              },
+            },
+            // Inside the skill's window [10:00:00, 10:00:30] — must be attributed.
+            {
+              timestamp: '2026-06-08T10:00:10Z',
+              requestId: 'req-skill-1',
+              message: { id: 'msg-skill-1', role: 'assistant', model: 'claude-sonnet-4-5', usage: { input_tokens: 200_000, output_tokens: 0 } },
+            },
+            {
+              timestamp: '2026-06-08T10:00:30Z',
+              message: {
+                role: 'user',
+                content: [{ type: 'tool_result', tool_use_id: 'toolu_skill_1', content: 'done' }],
+              },
+            },
+            // Outside the skill's window (after it ends) — must NOT be attributed.
+            {
+              timestamp: '2026-06-08T10:05:00Z',
+              requestId: 'req-after',
+              message: { id: 'msg-after', role: 'assistant', model: 'claude-sonnet-4-5', usage: { input_tokens: 1_000_000, output_tokens: 0 } },
+            },
+          ],
+        }) as never,
+    };
+
+    const rawSession = [{ sessionId: 'parent-3', startEvent: { agentName: 'claude' }, deltas: [] }] as never[];
+    const { index } = await enrichCosts(rawSession, deps);
+    const cost = index.get('parent-3')!;
+
+    const dispatch = cost.dispatches!.find((d) => d.kind === 'skill' && d.name === 'code-review');
+    expect(dispatch).toBeDefined();
+    expect(dispatch!.tokens?.input).toBe(200_000); // only the in-window record, not the 1M after
+    expect(dispatch!.costUSD).toBeCloseTo(0.6, 6); // 200k input @ $3/1M sonnet-4-5
+  });
+
+  it('leaves skill dispatch cost undefined when durationMs is 0 (no window to attribute from)', async () => {
+    const deps: EnricherDeps = {
+      resolveAgentName: () => 'claude',
+      loadAgentSessionFile: async () => '/fake/parent.jsonl',
+      parseNative: async () =>
+        ({
+          sessionId: 'parent-4',
+          agentName: 'claude',
+          metadata: {},
+          messages: [
+            {
+              timestamp: '2026-06-08T10:00:00Z',
+              message: {
+                role: 'assistant',
+                content: [{ type: 'tool_use', id: 'toolu_skill_2', name: 'Skill', input: { skill: 'orphan-skill' } }],
+              },
+            },
+            // No matching tool_result → 0-duration marker (dispatch-extractor.ts line 105).
+          ],
+        }) as never,
+    };
+    const rawSession = [{ sessionId: 'parent-4', startEvent: { agentName: 'claude' }, deltas: [] }] as never[];
+    const { index } = await enrichCosts(rawSession, deps);
+    const cost = index.get('parent-4')!;
+    const dispatch = cost.dispatches!.find((d) => d.kind === 'skill' && d.name === 'orphan-skill');
+    expect(dispatch).toBeDefined();
+    expect(dispatch!.costUSD).toBeUndefined();
+    expect(dispatch!.tokens).toBeUndefined();
+  });
 });
 
 describe('acceptance: TTL-aware pricing against real transcripts', () => {

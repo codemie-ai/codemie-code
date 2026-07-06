@@ -34,6 +34,8 @@ export interface ReportSessionRecord {
   skillInvocations: NamedInvocationStats[];
   agentInvocations: NamedInvocationStats[];
   commandInvocations: NamedInvocationStats[];
+  /** Tooling/framework classified from the invocation names above — see session-source-detector.ts. */
+  sessionSource: string;
   tokens: TokenUsage;
   costUSD: number;
   cacheReadCostUSD: number; // USD attributable to cache reads (subset of costUSD)

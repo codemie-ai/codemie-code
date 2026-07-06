@@ -99,9 +99,19 @@ export class ConfigLoader {
     // model, and credentials from being silently replaced by the local team's defaults.
     const applyProjectOnly =
       cliOverrides?.name && localProfileName && cliOverrides.name !== localProfileName;
-    const effectiveLocalConfig = applyProjectOnly
+    // When applying project-only composition, gate it on URL equality. If the
+    // selected global profile targets a different CodeMie env than the local
+    // team profile, the team's project/integration/URL all reference the wrong
+    // env's records — drop the project-context bundle and let the global
+    // profile supply everything.
+    const preserveProjectContext =
+      applyProjectOnly &&
+      this.shouldPreserveProjectContext(localConfig.codeMieUrl, globalConfig.codeMieUrl);
+    const effectiveLocalConfig = preserveProjectContext
       ? this.filterProjectFields(localConfig)
-      : localConfig;
+      : applyProjectOnly
+        ? {}
+        : localConfig;
 
     Object.assign(config, this.removeUndefined(effectiveLocalConfig));
 
@@ -355,6 +365,28 @@ export class ConfigLoader {
     'codeMieIntegration',
     'codeMieUrl'
   ];
+
+  /**
+   * Returns true when the local team profile's project context (codeMieProject,
+   * codeMieIntegration, codeMieUrl) is safe to compose with the selected global
+   * profile. The composition is only safe when both profiles target the same
+   * CodeMie environment — otherwise the local project/integration IDs reference
+   * the wrong env's database rows and the URL is outright wrong.
+   *
+   * The gate is conservative: it only blocks composition when both URLs are
+   * explicitly set and normalized-differ. A missing URL on either side is
+   * treated as "no signal of conflict" and composition proceeds. This matches
+   * the common case where a local profile sets only `codeMieProject` and relies
+   * on the global profile for the URL.
+   */
+  private static shouldPreserveProjectContext(
+    localUrl: string | undefined,
+    globalUrl: string | undefined
+  ): boolean {
+    if (!localUrl || !globalUrl) return true;
+    const normalize = (u: string): string => u.replace(/\/+$/, '').toLowerCase();
+    return normalize(localUrl) === normalize(globalUrl);
+  }
 
   /**
    * Keep only project-level fields from a local profile. Used when the selected global
@@ -1154,12 +1186,21 @@ export class ConfigLoader {
     const selectedProfileName = await this.resolveProfileName(workingDir, cliOverrides?.name);
     const localProfileName = await this.resolveLocalProfileName(workingDir, selectedProfileName);
 
+    // Hoisted: global config must be loaded BEFORE the URL-equality gate
+    // decision below.
+    const globalConfig = await this.loadGlobalConfigProfile(selectedProfileName);
+    const localConfig = await this.loadLocalConfigProfile(workingDir, localProfileName);
+
     const applyProjectOnly =
       cliOverrides?.name && localProfileName && cliOverrides.name !== localProfileName;
-    const localConfig = await this.loadLocalConfigProfile(workingDir, localProfileName);
-    const effectiveLocalConfig = applyProjectOnly
+    const preserveProjectContext =
+      applyProjectOnly &&
+      this.shouldPreserveProjectContext(localConfig.codeMieUrl, globalConfig.codeMieUrl);
+    const effectiveLocalConfig = preserveProjectContext
       ? this.filterProjectFields(localConfig)
-      : localConfig;
+      : applyProjectOnly
+        ? {}
+        : localConfig;
 
     const configs: ConfigLayer[] = [
       {
@@ -1170,7 +1211,7 @@ export class ConfigLoader {
         source: 'default'
       },
       {
-        data: await this.loadGlobalConfigProfile(selectedProfileName),
+        data: globalConfig,
         source: 'global'
       },
       {
