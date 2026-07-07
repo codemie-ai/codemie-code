@@ -64,7 +64,13 @@ if (!engine) {
 }
 
 const engineBin = resolveCommand(engine);
-const quotedEngineBin = engineBin.includes(' ') ? `"${engineBin}"` : engineBin;
+if (!engineBin) {
+  console.log('Container engine binary not found — skipping secrets detection');
+  process.exit(1);
+}
+// shell:true is used on Windows so paths with spaces must be quoted for the shell.
+// On Linux/Mac shell:false passes the path directly to execve — no quoting needed.
+const spawnBin = isWindows && engineBin.includes(' ') ? `"${engineBin}"` : engineBin;
 
 // Produce the staged diff on the host so gitleaks doesn't need git access
 // inside the container — required for Apple Containers which cannot run git
@@ -96,7 +102,7 @@ if (hasConfig) {
 
 console.log('Running Gitleaks secrets detection...');
 
-const gitleaks = spawn(quotedEngineBin, args, {
+const gitleaks = spawn(spawnBin, args, {
   stdio: ['pipe', 'inherit', 'inherit'],
   shell: isWindows,
 });

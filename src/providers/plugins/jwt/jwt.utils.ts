@@ -19,5 +19,7 @@ export function resolveJwtTokenEnvVar(config: CodeMieConfigOptions): string {
  * Priority: env var named by profile → inline token stored in profile.
  */
 export function resolveJwtToken(config: CodeMieConfigOptions): string | undefined {
-  return process.env[resolveJwtTokenEnvVar(config)] ?? config.jwtConfig?.token;
+  const envToken = process.env[resolveJwtTokenEnvVar(config)];
+  const trimmed = envToken?.trim();
+  return (trimmed && trimmed.length > 0 ? trimmed : undefined) ?? config.jwtConfig?.token;
 }

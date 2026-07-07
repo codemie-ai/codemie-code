@@ -9,6 +9,12 @@
 import type { AgentConfig } from '@/agents/core/types.js';
 import type { ProviderTemplate } from '@/providers/core/types.js';
 
+interface WithExtensionInstaller {
+  getExtensionInstaller?(): {
+    install(): Promise<{ success: boolean; action?: string; targetPath: string; error?: string }>;
+  };
+}
+
 export const defaultAgentHooks: ProviderTemplate['agentHooks'] = {
   '*': {
     async beforeRun(env: NodeJS.ProcessEnv, config: AgentConfig): Promise<NodeJS.ProcessEnv> {
@@ -21,14 +27,14 @@ export const defaultAgentHooks: ProviderTemplate['agentHooks'] = {
       const agent = AgentRegistry.getAgent(agentName);
       if (!agent) return env;
 
-      const installer = (agent as any).getExtensionInstaller?.();
-      if (!installer) return env;
-
       try {
-        const result = await installer.install();
-        env[`CODEMIE_${agentName.toUpperCase()}_EXTENSION_DIR`] = result.targetPath;
+        const installer = (agent as WithExtensionInstaller).getExtensionInstaller?.();
+        if (!installer) return env;
 
-        if (!result.success) {
+        const result = await installer.install();
+        if (result.success) {
+          env[`CODEMIE_${agentName.toUpperCase()}_EXTENSION_DIR`] = result.targetPath;
+        } else {
           const { logger } = await import('@/utils/logger.js');
           logger.warn(`[${agentName}] Extension installation returned failure: ${result.error || 'unknown error'}`);
           logger.warn(`[${agentName}] Continuing without extension - hooks may not be available`);
