@@ -32,6 +32,7 @@ export class GeminiConversationsProcessor implements SessionProcessor {
   readonly priority = 2; // Run after metrics
 
   shouldProcess(session: ParsedSession): boolean {
+    if (process.env.CODEMIE_CONV_SYNC_DISABLED === '1') return false;
     return Boolean(session.messages && session.messages.length > 0);
   }
 

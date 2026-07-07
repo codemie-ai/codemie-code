@@ -43,6 +43,10 @@ export function createSyncProcessor(): SessionProcessor {
    * Process conversations for sync
    */
   async function processConversations(session: ParsedSession, context: ProcessingContext): Promise<ProcessingResult> {
+    if (process.env.CODEMIE_CONV_SYNC_DISABLED === '1') {
+      logger.debug('[conv-sync] Conversation sync disabled for this session (CODEMIE_CONV_SYNC_DISABLED=1)');
+      return { success: true, message: 'Conversation sync disabled for external session resume' };
+    }
     if (isSyncing) {
       return { success: true, message: 'Sync in progress' };
     }

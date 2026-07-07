@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import chalk from 'chalk';
-import { AgentAdapter } from './types.js';
+import type { AgentAdapter, ResumeOwnershipResult } from './types.js';
 import { ConfigLoader, CodeMieConfigOptions } from '../../utils/config.js';
 import { ensureApiBase, DEFAULT_CODEMIE_BASE_URL } from '../../providers/core/codemie-auth-helpers.js';
 import { AuthMethod, ProviderName } from '../../providers/core/types.js';
@@ -306,6 +306,78 @@ export class AgentCLI {
       // Serialize full profile config for proxy plugins (read once at CLI level)
       providerEnv.CODEMIE_PROFILE_CONFIG = JSON.stringify(config);
 
+      // Resume ownership check — after providerEnv is built so we can extend it
+      //
+      // options.resume only reflects the CodeMie `--resume <id>` flag. Some agents
+      // (e.g. Codex) also accept a native positional `resume <id>` invocation, which
+      // Commander's catch-all [args...] absorbs without populating options.resume.
+      // Ask the adapter to recognize its own native form so the ownership check still
+      // applies to it.
+      let nativeResumeId: string | undefined;
+      if (!options.resume) {
+        try {
+          nativeResumeId = this.adapter.extractNativeResumeId?.(args);
+        } catch (error) {
+          logger.debug('[AgentCLI] Native resume id extraction failed; proceeding without validation', {
+            agent: this.adapter.name,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
+      if (options.resume || nativeResumeId) {
+        // Strip only control characters before using the value in output.
+        // Native resume commands may accept non-UUID identifiers (slugs, ticket IDs, etc.),
+        // so we must not validate the format here.
+        const resumeId = ((options.resume as string | undefined) ?? nativeResumeId ?? '').replace(/\p{Cc}/gu, '');
+        const resolveResumeOwnership = this.adapter.resolveResumeOwnership?.bind(this.adapter);
+
+        if (resolveResumeOwnership && resumeId) {
+          let ownership: ResumeOwnershipResult | undefined;
+
+          try {
+            ownership = await resolveResumeOwnership({
+              resumeId,
+              cwd: process.cwd(),
+              env: process.env,
+            });
+          } catch (error) {
+            logger.debug('[AgentCLI] Resume ownership resolver failed; proceeding without validation', {
+              agent: this.adapter.name,
+              resumeId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+
+          const isExternal = ownership?.supported === true && ownership.owned === false;
+
+          if (isExternal) {
+            const confirmed = await this.promptExternalResume(
+              resumeId,
+              ownership?.fallbackResumeCommand,
+            );
+            const { appendAuditEvent } = await import('./session/session-origin-audit.js');
+            const auditData = {
+              agent: this.adapter.name,
+              resumeId,
+              ...(ownership?.auditData ?? {}),
+            };
+
+            if (!confirmed) {
+              appendAuditEvent('resume_blocked', auditData);
+              process.exit(1);
+            }
+
+            // Inject into subprocess env (for lifecycle hook subprocesses that inherit it)
+            // and into the current process env (for same-process consumers such as sso syncProcessor).
+            Object.assign(providerEnv, buildResumeEnvOverride(true));
+            process.env.CODEMIE_CONV_SYNC_DISABLED = '1';
+            appendAuditEvent('resume_external_confirmed', auditData);
+            logger.info(`[AgentCLI] External resume confirmed for agent ${this.adapter.name}; conversation sync suppressed`);
+          }
+        }
+      }
+
       // Set profile name in logger for log formatting
       logger.setProfileName(config.name || 'default');
 
@@ -317,6 +389,8 @@ export class AgentCLI {
 
       // Run the agent (welcome message will be shown inside)
       await this.adapter.run(agentArgs, providerEnv);
+      // Clean up the process-level flag set for same-process conversation sync consumers.
+      delete process.env.CODEMIE_CONV_SYNC_DISABLED;
     } catch (error) {
       // Show user-friendly error message in console first
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -547,10 +621,58 @@ export class AgentCLI {
     return true;
   }
 
+  private async promptExternalResume(
+    sessionId: string,
+    fallbackResumeCommand?: string,
+  ): Promise<boolean> {
+    const fallbackLine = fallbackResumeCommand
+      ? `Use '${fallbackResumeCommand}' to resume without CodeMie tracking.\n`
+      : 'Resume without CodeMie tracking using the native agent CLI.\n';
+
+    if (shouldBlockNonInteractiveResume()) {
+      console.error(
+        chalk.red(`\n✗ Session ${sessionId} was not created through CodeMie.\n`) +
+        chalk.white('Non-interactive mode: resume blocked.\n') +
+        chalk.white(fallbackLine)
+      );
+      return false;
+    }
+
+    const { createInterface } = await import('node:readline');
+    const rl = createInterface({ input: process.stdin, output: process.stdout });
+
+    console.log(chalk.yellow(`\n⚠  Warning: Session ${sessionId} was not created through CodeMie.`));
+    console.log(chalk.white('If you continue:'));
+    console.log(chalk.white('  • Token usage and API metrics WILL be tracked via the CodeMie proxy.'));
+    console.log(chalk.white('  • Conversation transcript will NOT be synced to your CodeMie account history.\n'));
+    console.log(chalk.dim(
+      fallbackResumeCommand
+        ? `To resume without any CodeMie tracking, use: ${fallbackResumeCommand}\n`
+        : 'To resume without any CodeMie tracking, use the native agent CLI.\n'
+    ));
+
+    try {
+      const answer = await new Promise<string>((resolve) => {
+        rl.question(chalk.yellow('Continue with CodeMie? (y/N): '), resolve);
+      });
+      return answer.trim().toLowerCase() === 'y';
+    } finally {
+      rl.close();
+    }
+  }
+
   /**
    * Run the CLI
    */
   async run(argv: string[]): Promise<void> {
     await this.program.parseAsync(argv);
   }
+}
+
+export function buildResumeEnvOverride(isExternal: boolean): Record<string, string> {
+  return isExternal ? { CODEMIE_CONV_SYNC_DISABLED: '1' } : {};
+}
+
+export function shouldBlockNonInteractiveResume(): boolean {
+  return !process.stdin.isTTY || process.env.CODEMIE_NO_PROMPTS === '1';
 }

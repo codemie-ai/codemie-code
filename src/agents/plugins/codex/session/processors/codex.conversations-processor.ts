@@ -77,6 +77,7 @@ export class CodexConversationsProcessor implements SessionProcessor {
   readonly priority = 2;
 
   shouldProcess(session: ParsedSession): boolean {
+    if (process.env.CODEMIE_CONV_SYNC_DISABLED === '1') return false;
     return session.messages.length > 0;
   }
 

@@ -64,7 +64,7 @@ describe('MoonshotSubscriptionTemplate', () => {
 
     it('strips Kimi model env vars and does not mutate the original env when agent is kimi', async () => {
       const env: Record<string, string> = {
-        KIMI_MODEL_API_KEY: 'some-key',
+        KIMI_MODEL_API_KEY: 'placeholder',
         KIMI_MODEL_BASE_URL: 'http://localhost:1234',
         KIMI_MODEL_NAME: 'kimi-for-coding',
         OTHER_VAR: 'keep-me',
@@ -79,14 +79,14 @@ describe('MoonshotSubscriptionTemplate', () => {
       expect(result.OTHER_VAR).toBe('keep-me');
 
       // Must not mutate the caller's object
-      expect(env.KIMI_MODEL_API_KEY).toBe('some-key');
+      expect(env.KIMI_MODEL_API_KEY).toBe('placeholder');
       expect(env.KIMI_MODEL_BASE_URL).toBe('http://localhost:1234');
       expect(env.KIMI_MODEL_NAME).toBe('kimi-for-coding');
     });
 
     it('returns env unchanged for non-kimi agents', async () => {
       const env: Record<string, string> = {
-        KIMI_MODEL_API_KEY: 'some-key',
+        KIMI_MODEL_API_KEY: 'placeholder',
         OTHER_VAR: 'keep-me',
       };
 
@@ -94,7 +94,7 @@ describe('MoonshotSubscriptionTemplate', () => {
       const result = await hook!.beforeRun!(env, { agent: 'claude' });
 
       expect(result).toBe(env); // exact same reference — no copy created
-      expect(result.KIMI_MODEL_API_KEY).toBe('some-key');
+      expect(result.KIMI_MODEL_API_KEY).toBe('placeholder');
     });
 
     it('injects Kimi hooks when agent is kimi', async () => {

@@ -52,6 +52,7 @@ export class OpenCodeConversationsProcessor implements SessionProcessor {
    * Check if session has data to process
    */
   shouldProcess(session: ParsedSession): boolean {
+    if (process.env.CODEMIE_CONV_SYNC_DISABLED === '1') return false;
     return session.messages.length > 0;
   }
 

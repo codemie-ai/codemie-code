@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "runner": "npm",
+  "gates": [
+    {"id": "license-check", "command": "npm run license-check", "available": true},
+    {"id": "lint",          "command": "npm run lint",          "available": true},
+    {"id": "typecheck",     "command": "npm run typecheck",     "available": true},
+    {"id": "build",         "command": "npm run build",         "available": true},
+    {"id": "unit",          "command": "npm run test:unit",     "available": true},
+    {"id": "integration",   "command": "npm run test:integration", "available": true},
+    {"id": "secrets",       "command": "npm run validate:secrets", "available": true},
+    {"id": "commitlint",    "command": "npm run commitlint:last", "available": true},
+    {"id": "ui",            "command": "n/a",                   "available": false}
+  ],
+  "ui_globs": ["\\.(tsx|jsx|css|html|vue|svelte)$", "src/(ui|frontend|components)/"],
+  "detected_at": "2026-07-03T12:00:00Z"
+}
