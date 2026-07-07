@@ -199,11 +199,15 @@ To get the project running locally, follow these steps:
 
 ### Run All Tests
 ```bash
-npm test                # Run tests in watch mode
-npm run test:run        # Run tests once
-npm run test:unit       # Run unit tests only
-npm run test:integration # Run integration tests only
+npm test                        # Run tests in watch mode
+npm run test:run                # Run tests once
+npm run test:unit               # Run unit tests only
+npm run test:integration        # Run integration tests only
+npm run test:integration:agent  # Run agent integration tests only
+npm run test:all                # Run unit + CLI + agent tests in sequence
 ```
+
+> **Note:** Agent integration tests (`test:integration:agent` and the agent stage of `test:all`) only execute if you have a working CodeMie SSO setup. If your active profile provider is not `ai-run-sso`, the agent tests are automatically skipped and a message is printed — no credentials error will occur.
 
 ### Run Validation Checks
 
@@ -249,7 +253,8 @@ Before committing, ensure:
 2. ✅ Code passes ESLint with zero warnings: `npm run lint`
 3. ✅ TypeScript compiles: `npm run build`
 4. ✅ All tests pass: `npm run test:run`
-5. ✅ No secrets exposed: `npm run validate:secrets` (optional, requires Docker)
-6. ✅ Dependencies have approved licenses: `npm run license-check`
+5. ✅ Agent tests pass: `npm run test:integration:agent` or `npm run test:all` (only if CodeMie SSO is configured)
+6. ✅ No secrets exposed: `npm run validate:secrets` (optional, requires Docker)
+7. ✅ Dependencies have approved licenses: `npm run license-check`
 
 **Quick check:** Run `npm run ci` to verify everything passes before pushing.
