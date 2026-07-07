@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "task": "Fix the analytics command's native-loader.ts to exclude (not just label) non-CodeMie-owned native Claude/Codex sessions from output, retire the now-dead formatter.ts display branch, and add regression coverage proving exclusion.",
+  "generated": "2026-07-07",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 14,
+  "size": "S",
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Two components across two layers: native-loader.ts (session discovery/exclusion logic) and formatter.ts (retiring the dead 'native-external' display branch). Pattern is clear — hasOwnershipMarker signal already exists, only the tag-vs-exclude behavior needs to change." },
+    { "dimension": "technical_risk", "reason": "Bumped from S to M by the security/data-exposure red flag: this fix reverses the original PR #403 design decision ('no sessions are hidden, external ones are clearly marked') specifically for analytics output, preventing non-CodeMie-owned session data from leaking into aggregated results. Otherwise low novelty — reuses an already-computed, already-tested ownership signal." },
+    { "dimension": "file_change_estimate", "reason": "Estimated 4-6 files touched: native-loader.ts and formatter.ts (modified), native-loader.test.ts (rewritten to assert exclusion instead of labeling), likely aggregator.test.ts (new 'native-external' fixture case), and probably a new integration test under tests/integration/ per the ticket's explicit call for regression coverage proving analytics 'does not scrape all sessions blindly'. Spans src/cli/commands/analytics/, its __tests__/ folder, and possibly tests/integration/." }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from S to M: security/data-exposure concern — the fix must prevent non-CodeMie-owned session data from being exposed in analytics output, intentionally reversing the prior 'never hide, only label' design decision for the analytics pipeline specifically."
+  ],
+  "split_recommendation": null
+}
