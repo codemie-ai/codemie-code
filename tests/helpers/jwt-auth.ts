@@ -1,4 +1,5 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { stripNodeModulesBin } from './test-env.js';
 
@@ -72,7 +73,6 @@ export interface JwtProfileOverrides {
   profileName?: string;
   model?: string;
   codeMieUrl?: string;
-  baseUrl?: string;
   jwtToken?: string;
   codeMieProject?: string;
   authServerUrl?: string;
@@ -86,17 +86,22 @@ export interface JwtProfileOverrides {
  * The config location matches getCodemiePath() which uses CODEMIE_HOME as the
  * base directory (not ~/.codemie/.codemie).
  */
-export function writeJwtProfile(codemieHome: string, overrides: JwtProfileOverrides = {}): void {
+/**
+ * Returns the path of the agent stub file written to the real home directory
+ * when overrides.assistantId is set (caller must clean it up in afterAll).
+ */
+export function writeJwtProfile(codemieHome: string, overrides: JwtProfileOverrides = {}): string | undefined {
   const profileName = overrides.profileName ?? 'jwt-autotest';
   const authUrlRaw = process.env.CI_CODEMIE_AUTH_URL?.trim();
   if (!authUrlRaw) throw new Error('CI_CODEMIE_AUTH_URL must be set in .env.test.local or env variables');
   const authBase = authUrlRaw.replace(/\/$/, '');
+  const codeMieUrl = (overrides.codeMieUrl ?? process.env.CI_CODEMIE_URL ?? '').replace(/\/$/, '');
   const profile: Record<string, string> = {
     name: profileName,
     provider: 'bearer-auth',
     authMethod: 'jwt',
     codeMieUrl: overrides.codeMieUrl ?? process.env.CI_CODEMIE_URL ?? '',
-    baseUrl: overrides.baseUrl ?? `${(process.env.CI_CODEMIE_URL ?? '').replace(/\/$/, '')}/code-assistant-api`,
+    baseUrl: `${codeMieUrl}/code-assistant-api`,
     model: overrides.model ?? process.env.CI_CODEMIE_MODEL ?? 'claude-sonnet-4-6',
     authServerUrl: overrides.authServerUrl ?? authBase,
     authRealm: overrides.authRealm ?? 'codemie-prod',
@@ -104,14 +109,14 @@ export function writeJwtProfile(codemieHome: string, overrides: JwtProfileOverri
   if (overrides.jwtToken) profile.jwtToken = overrides.jwtToken;
   if (overrides.codeMieProject) profile.codeMieProject = overrides.codeMieProject;
 
-  const config = { version: 2, activeProfile: profileName, profiles: { [profileName]: profile } };
+  const config: Record<string, unknown> = { version: 2, activeProfile: profileName, profiles: { [profileName]: profile } };
   mkdirSync(codemieHome, { recursive: true });
   writeFileSync(join(codemieHome, 'codemie-cli.config.json'), JSON.stringify(config, null, 2), 'utf-8');
 
   if (overrides.assistantId) {
     // Register assistant in the GLOBAL config (codemieHome/codemie-cli.config.json).
-    // loadAssistantsByScope(GLOBAL) uses process.env.CODEMIE_HOME as baseDir for the
-    // agent file-existence check, so the stub lives at <codemieHome>/.claude/agents/<slug>.md.
+    // loadAssistantsByScope(GLOBAL) uses os.homedir() as baseDir for the agent
+    // file-existence check, so the stub must live at ~/.claude/agents/<slug>.md.
     const assistant = {
       id: overrides.assistantId,
       name: 'CI Assistant',
@@ -121,8 +126,11 @@ export function writeJwtProfile(codemieHome: string, overrides: JwtProfileOverri
     config.codemieAssistants = [assistant];
     writeFileSync(join(codemieHome, 'codemie-cli.config.json'), JSON.stringify(config, null, 2), 'utf-8');
 
-    const agentDir = join(codemieHome, '.claude', 'agents');
+    const agentDir = join(homedir(), '.claude', 'agents');
     mkdirSync(agentDir, { recursive: true });
-    writeFileSync(join(agentDir, `${CI_ASSISTANT_SLUG}.md`), `# CI Assistant\n`, 'utf-8');
+    const agentFilePath = join(agentDir, `${CI_ASSISTANT_SLUG}.md`);
+    writeFileSync(agentFilePath, `# CI Assistant\n`, 'utf-8');
+    return agentFilePath;
   }
+  return undefined;
 }

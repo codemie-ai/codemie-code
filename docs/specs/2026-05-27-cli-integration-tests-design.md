@@ -17,7 +17,7 @@ Tests are split into two Vitest configurations:
 | `cli` | `tests/integration/**/*.test.ts` (excl. `agent-*`) | none |
 | `agent` | `tests/integration/agent-*.test.ts` | `tests/setup/agent-build-setup.ts` (build + SSO auth) |
 
-All three projects are defined in a single `vitest.config.ts` using `defineWorkspace`.
+All three projects are defined in a single `vitest.config.ts` using `defineConfig({ test: { projects: [...] } })` with `defineProject`.
 
 CLI-commands tests (`cli-commands/*.test.ts`) exercise commands that need no network auth (health, help, version, doctor, etc.).  
 Agent tests (`agent-*.test.ts`) exercise commands that require authentication and make real network calls.
@@ -135,7 +135,17 @@ tests/
 
 | Helper | Purpose |
 |---|---|
-| `spawnPty(args, env, cwd)` → `PtySession` | Spawns `codemie-claude` in a node-pty PTY; returns `{ send(text), waitFor(pattern), close() }` |
+| `spawnPty(file, args, options)` → `PtySession` | Spawns a binary in a node-pty PTY. `options: { cwd: string, env: NodeJS.ProcessEnv }`. Returns a `PtySession`. |
+
+`PtySession` interface:
+
+| Method | Signature | Purpose |
+|---|---|---|
+| `writeLine` | `(text: string) => void` | Write text followed by `\r\n` (simulates Enter) |
+| `write` | `(raw: string) => void` | Send raw bytes (use for control chars like `\x03`) |
+| `waitFor` | `(pattern: RegExp, timeoutMs: number, startFromLine?: number) => Promise<string>` | Resolve when a line matches; reject on timeout |
+| `exit` | `(timeoutMs?: number) => Promise<void>` | Wait for process to exit; force-kill after timeout (default 15 s) |
+| `lines` | `() => string[]` | Return a snapshot of all lines received so far |
 
 Used by interactive tests (TC-024, TC-025) that need to drive a running session with slash commands.
 
@@ -237,15 +247,19 @@ describe.runIf(!CI_IS_LOCAL_RUN)(
 
 ```ts
 // TC-024, TC-025 — interactive sessions driven via node-pty
-const session = await spawnPty(
+// spawnPty is synchronous; no await needed.
+const session = spawnPty(
+  process.execPath,
   [CLAUDE_BIN, ...(CI_IS_LOCAL_RUN ? [] : ['--jwt-token', jwtToken])],
-  { ...(CI_IS_LOCAL_RUN ? ssoCleanEnv() : jwtCleanEnv()), CODEMIE_HOME: testHome },
-  testHome,
+  {
+    env: { ...(CI_IS_LOCAL_RUN ? ssoCleanEnv() : jwtCleanEnv()), CODEMIE_HOME: testHome },
+    cwd: testHome,
+  },
 );
-await session.waitFor(/\$/);          // prompt
-session.send('/model claude-haiku-4-5\n');
-await session.waitFor(/switched|model/i);
-await session.close();
+await session.waitFor(/\$/, 30_000);         // prompt
+session.writeLine('/model claude-haiku-4-5');
+await session.waitFor(/switched|model/i, 30_000);
+await session.exit();
 ```
 
 ---

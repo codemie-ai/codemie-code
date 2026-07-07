@@ -104,10 +104,17 @@ export async function setup(): Promise<void> {
       // Using stdio: 'inherit' so the user sees and can complete the flow.
       console.log('[agent-integration] SSO credentials missing or expired — launching login...\n');
       const codemieUrl = process.env.CI_CODEMIE_URL ?? '';
-      execSync(
-        `node ${resolve(root, 'bin/codemie.js')} profile login --url ${codemieUrl}`,
-        { cwd: root, stdio: 'inherit' },
-      );
+      try {
+        execSync(
+          `node ${resolve(root, 'bin/codemie.js')} profile login --url ${codemieUrl}`,
+          { cwd: root, stdio: 'inherit' },
+        );
+      } catch (loginError) {
+        const msg = loginError instanceof Error ? loginError.message : String(loginError);
+        console.warn(`[agent-integration] Profile login failed: ${msg}`);
+        console.warn('[agent-integration] SSO credentials unavailable — agent SSO tests will be skipped.');
+        process.env.SSO_AVAILABLE = 'false';
+      }
     }
   }
 

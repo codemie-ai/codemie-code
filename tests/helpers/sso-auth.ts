@@ -50,7 +50,7 @@ export function writeSsoProfile(codemieHome: string): void {
  */
 export function ssoCleanEnv(): NodeJS.ProcessEnv {
   const env = Object.fromEntries(
-    Object.entries(process.env).filter(([key]) => !key.startsWith('CODEMIE_')),
+    Object.entries(process.env).filter(([key]) => !key.startsWith('CODEMIE_') && !key.startsWith('CI_CODEMIE_')),
   ) as NodeJS.ProcessEnv;
   if (env.PATH) env.PATH = stripNodeModulesBin(env.PATH);
   return env;

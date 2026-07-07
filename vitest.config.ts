@@ -1,5 +1,10 @@
 import { defineConfig, defineProject } from 'vitest/config';
 
+const agentMaxWorkers = (() => {
+  const n = parseInt(process.env.CI_AGENT_MAX_WORKERS ?? '', 10);
+  return Number.isNaN(n) || n < 1 ? 2 : n;
+})();
+
 export default defineConfig({
   test: {
     projects: [
@@ -66,7 +71,7 @@ export default defineConfig({
           globalSetup: ['tests/setup/agent-build-setup.ts'],
           testTimeout: 180_000,
           hookTimeout: 300_000,
-          maxWorkers: parseInt(process.env.CI_AGENT_MAX_WORKERS ?? '2', 10),
+          maxWorkers: agentMaxWorkers,
           isolate: true,
           sequence: { groupOrder: 2 },
           reporters: ['verbose'],

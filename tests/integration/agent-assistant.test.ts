@@ -62,7 +62,7 @@ function registerAssistantInConfig(codemieHome: string, id: string, name: string
   const config = JSON.parse(readFileSync(configPath, 'utf-8')) as Record<string, unknown>;
   config.codemieAssistants = [{ id, name, slug, registeredAt: new Date().toISOString() }];
   writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8');
-  const agentDir = join(codemieHome, '.claude', 'agents');
+  const agentDir = join(homedir(), '.claude', 'agents');
   mkdirSync(agentDir, { recursive: true });
   writeFileSync(join(agentDir, `${slug}.md`), `# ${name}\n`, 'utf-8');
 }
@@ -332,7 +332,10 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('Assistant management test
       );
     }, 90_000);
 
-    afterAll(() => rmSync(testHome, { recursive: true, force: true }));
+    afterAll(() => {
+      rmSync(testHome, { recursive: true, force: true });
+      rmSync(join(homedir(), '.claude', 'agents', `${ASSISTANT_SLUG}.md`), { force: true });
+    });
 
     it('exits 0 and returns a number 1-10', () => {
       const out = (chatResult.stdout ?? '') + (chatResult.stderr ?? '');

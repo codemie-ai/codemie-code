@@ -8,7 +8,7 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { delimiter, resolve } from 'node:path';
 
 function parseDotEnvFile(filePath: string): Record<string, string> {
   try {
@@ -67,6 +67,9 @@ export function getTestEnvFlagOrDefault(name: string, defaultValue: boolean): bo
  * Strip node_modules/.bin entries from a PATH string so locally-installed
  * package shims don't shadow globally-linked binaries in spawned subprocesses.
  */
-export function stripNodeModulesBin(path: string): string {
-  return path.split(':').filter(dir => !dir.includes('node_modules/.bin')).join(':');
+export function stripNodeModulesBin(envPath: string): string {
+  return envPath
+    .split(delimiter)
+    .filter(dir => !dir.replace(/\\/g, '/').includes('node_modules/.bin'))
+    .join(delimiter);
 }
