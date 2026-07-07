@@ -2,7 +2,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import type { Assistant, AssistantBase } from 'codemie-sdk';
 import { logger } from '@/utils/logger.js';
-import { ConfigLoader } from '@/utils/config.js';
+import { ConfigLoader, loadRegisteredAssistants } from '@/utils/config.js';
 import { StorageScope } from '@/env/types.js';
 import type { CodemieAssistant } from '@/env/types.js';
 import { MESSAGES, ACTIONS } from '@/cli/commands/assistants/constants.js';
@@ -66,7 +66,7 @@ async function setupAssistants(options: SetupCommandOptions, hostAgent?: TargetA
 
   const config = await ConfigLoader.load(workingDir, { name: profileName });
   const client = await getAuthenticatedClient(config);
-  const registeredAssistants = config.codemieAssistants || [];
+  const registeredAssistants = await loadRegisteredAssistants();
   config.codemieAssistants = registeredAssistants;
 
   const { selectedIds, action } = await promptAssistantSelection(config, options, client);
