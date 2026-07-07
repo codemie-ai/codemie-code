@@ -20,6 +20,8 @@ export interface SourceLoadOptions {
   filter: AnalyticsFilter;
   /** Sessions source only: skip native agent-log discovery. Ignored by other sources. */
   scanNative?: boolean;
+  /** Sessions source only: include non-CodeMie-owned native sessions (tagged 'native-external') in output. Ignored by other sources. */
+  includeExternal?: boolean;
 }
 
 export interface SourceResult {

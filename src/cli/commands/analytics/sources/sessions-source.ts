@@ -17,9 +17,9 @@ export class SessionsSource implements AnalyticsSource {
     if (opts.scanNative !== false) {
       try {
         const { loadNativeSessions } = await import('../native-loader.js');
-        const natives = (await loadNativeSessions(opts.filter)).filter((s) =>
-          loader.sessionMatchesFilter(s, opts.filter)
-        );
+        const natives = (await loadNativeSessions(opts.filter))
+          .filter((s) => loader.sessionMatchesFilter(s, opts.filter))
+          .filter((s) => opts.includeExternal || s.startEvent?.data.provider !== 'native-external');
         rawSessions.push(...natives);
       } catch (error) {
         logger.debug('Native session discovery failed (continuing with tracked sessions):', error);
