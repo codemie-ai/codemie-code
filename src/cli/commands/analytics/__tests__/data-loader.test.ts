@@ -195,4 +195,27 @@ describe('MetricsDataLoader.loadSessions — completed_ prefixed sessions', () =
     expect(sessions).toHaveLength(1);
     expect(sessions[0].agentSessionFile).toBeUndefined();
   });
+
+  it('leaves agentSessionFile undefined when correlation is present but not yet matched (no file)', () => {
+    const sessionId = 'eddd66b2-0e73-4167-841c-9263207870ae';
+    writeFileSync(
+      join(dir, `completed_${sessionId}.json`),
+      JSON.stringify({
+        startTime: 1000,
+        endTime: 2000,
+        status: 'completed',
+        agentName: 'claude',
+        provider: 'anthropic',
+        workingDirectory: '/tmp/project',
+        // Correlation exists but never matched a native log: no agentSessionFile.
+        correlation: { status: 'pending', retryCount: 2 },
+      })
+    );
+
+    const loader = new MetricsDataLoader(dir);
+    const sessions = loader.loadSessions({ sessionId });
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].agentSessionFile).toBeUndefined();
+  });
 });
