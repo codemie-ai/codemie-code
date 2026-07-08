@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "task": "Fix incorrect version reporting after 'codemie install claude <version>' by changing installVersion() return type from void to string|null, propagating the verified version through the call chain, and hardening getVersion() to prevent stale PATH fallback.",
+  "generated": "2026-07-08T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 15,
+  "size": "M",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Five distinct components touched: AgentAdapter interface (types.ts), BaseAgentAdapter, ClaudePlugin, KimiPlugin, and the install CLI command — spanning Core/Interface, Agent-Plugin, and CLI layers. The interface contract change cascades to all agent adapter implementations, qualifying as 'touches core shared utilities'."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Primary fix path covers types.ts, BaseAgentAdapter.ts, claude.plugin.ts, kimi.plugin.ts, and install.ts (5 files). Existing test files install.version-selection.test.ts and kimi.plugin.test.ts require updates to reflect the changed return type, bringing the total to ~7 files across 4 directories (src/agents/core/, src/agents/plugins/claude/, src/agents/plugins/kimi/, src/cli/commands/)."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Three distinct layers are involved: CLI (install.ts), Agent-Plugin (claude.plugin.ts, kimi.plugin.ts), and Core/Interface (types.ts, BaseAgentAdapter.ts). No DB, no external service, no UI layer."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from M (3) to L (4): touches core shared AgentAdapter interface in types.ts, which is the authoritative contract for all agent implementations."
+  ],
+  "split_recommendation": null
+}
