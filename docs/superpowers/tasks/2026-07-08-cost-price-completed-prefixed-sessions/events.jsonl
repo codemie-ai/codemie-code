@@ -1,0 +1,1 @@
+{"schema":1,"ts":"2026-07-08T23:20:03Z","event":"decision.recorded","phase":5,"actor":"decision-router","summary":"Decision recorded for code-review.final: approve","artifacts":["decisions.jsonl"],"data":{"gate_id":"code-review.final","mode":"hitl","decision":"approve","source":"hitl","escalated":false}}
