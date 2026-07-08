@@ -1,0 +1,201 @@
+diff --git a/src/cli/commands/analytics/__tests__/data-loader.test.ts b/src/cli/commands/analytics/__tests__/data-loader.test.ts
+new file mode 100644
+index 0000000..c420797
+--- /dev/null
++++ b/src/cli/commands/analytics/__tests__/data-loader.test.ts
+@@ -0,0 +1,113 @@
++/**
++ * Unit tests for MetricsDataLoader's session-id filtering — regression coverage for
++ * the bug where `--session <id>` silently matched every session.
++ */
++
++import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { mkdtempSync, rmSync, writeFileSync } from 'fs';
++import { tmpdir } from 'os';
++import { join } from 'path';
++import { MetricsDataLoader, type RawSessionData } from '../data-loader.js';
++
++function rawSession(sessionId: string): RawSessionData {
++  return {
++    sessionId,
++    startEvent: {
++      recordId: sessionId,
++      type: 'session_start',
++      timestamp: 1000,
++      codeMieSessionId: sessionId,
++      agentName: 'claude',
++      syncStatus: 'synced',
++      data: {
++        provider: 'anthropic',
++        workingDirectory: '/tmp/project',
++        startTime: 1000,
++      },
++    },
++    deltas: [],
++  };
++}
++
++describe('MetricsDataLoader.sessionMatchesFilter', () => {
++  it('matches when sessionId equals the filter sessionId', () => {
++    const loader = new MetricsDataLoader('/nonexistent');
++    const session = rawSession('abc-123');
++    expect(loader.sessionMatchesFilter(session, { sessionId: 'abc-123' })).toBe(true);
++  });
++
++  it('rejects when sessionId differs from the filter sessionId', () => {
++    const loader = new MetricsDataLoader('/nonexistent');
++    const session = rawSession('abc-123');
++    expect(loader.sessionMatchesFilter(session, { sessionId: 'other-999' })).toBe(false);
++  });
++
++  it('matches any session when no sessionId filter is set', () => {
++    const loader = new MetricsDataLoader('/nonexistent');
++    const session = rawSession('abc-123');
++    expect(loader.sessionMatchesFilter(session, { agentName: 'claude' })).toBe(true);
++  });
++});
++
++describe('MetricsDataLoader.loadSessions — completed_ prefixed sessions', () => {
++  let dir: string;
++
++  beforeEach(() => {
++    dir = mkdtempSync(join(tmpdir(), 'data-loader-test-'));
++  });
++
++  afterEach(() => {
++    rmSync(dir, { recursive: true, force: true });
++  });
++
++  function writeCompletedSession(id: string): void {
++    writeFileSync(
++      join(dir, `completed_${id}.json`),
++      JSON.stringify({
++        startTime: 1000,
++        endTime: 2000,
++        status: 'completed',
++        agentName: 'claude',
++        provider: 'anthropic',
++        workingDirectory: '/tmp/project',
++      })
++    );
++  }
++
++  it('derives the bare UUID (not "completed_<uuid>") as sessionId', () => {
++    const sessionId = 'eddd66b2-0e73-4167-841c-9263207870ae';
++    writeCompletedSession(sessionId);
++
++    const loader = new MetricsDataLoader(dir);
++    const sessions = loader.loadSessions();
++
++    expect(sessions).toHaveLength(1);
++    expect(sessions[0].sessionId).toBe(sessionId);
++  });
++
++  it('filters to exactly the requested completed session by bare UUID', () => {
++    const target = 'eddd66b2-0e73-4167-841c-9263207870ae';
++    const other = '086cca74-d58d-4007-a529-fa73910c085e';
++    writeCompletedSession(target);
++    writeCompletedSession(other);
++
++    const loader = new MetricsDataLoader(dir);
++    const sessions = loader.loadSessions({ sessionId: target });
++
++    expect(sessions).toHaveLength(1);
++    expect(sessions[0].sessionId).toBe(target);
++  });
++
++  it('still reads deltas from the completed_-prefixed metrics file', () => {
++    const sessionId = 'eddd66b2-0e73-4167-841c-9263207870ae';
++    writeCompletedSession(sessionId);
++    const delta = { recordId: 'd1', sessionId, syncStatus: 'synced', gitBranch: 'main' };
++    writeFileSync(join(dir, `completed_${sessionId}_metrics.jsonl`), JSON.stringify(delta) + '\n');
++
++    const loader = new MetricsDataLoader(dir);
++    const sessions = loader.loadSessions({ sessionId });
++
++    expect(sessions).toHaveLength(1);
++    expect(sessions[0].deltas).toHaveLength(1);
++  });
++});
+diff --git a/src/cli/commands/analytics/data-loader.ts b/src/cli/commands/analytics/data-loader.ts
+index a5af33d..cf01e6c 100644
+--- a/src/cli/commands/analytics/data-loader.ts
++++ b/src/cli/commands/analytics/data-loader.ts
+@@ -3,7 +3,7 @@
+  * Uses core MetricDelta type from src/metrics/types.ts
+  */
+ 
+-import { readFileSync, readdirSync } from 'fs';
++import { readFileSync, readdirSync, existsSync } from 'fs';
+ import { join } from 'path';
+ import type { MetricDelta } from '../../../agents/core/metrics/types.js';
+ import type { AnalyticsFilter } from './types.js';
+@@ -139,8 +139,11 @@ export class MetricsDataLoader {
+       const sessionFiles = files.filter(f => f.endsWith('.json') && !f.includes('_metrics'));
+ 
+       for (const sessionFile of sessionFiles) {
+-        // Extract session ID from filename
+-        const sessionId = sessionFile.replace('.json', '');
++        // Extract session ID from filename. `hook.ts` renames `<id>.json` to
++        // `completed_<id>.json` on SessionEnd — strip that prefix so filtering
++        // and the returned sessionId always use the bare UUID (matches the
++        // fallback pattern in src/cli/commands/log/reader.ts).
++        const sessionId = sessionFile.replace('.json', '').replace(/^completed_/, '');
+ 
+         // Skip if filtering by session ID
+         if (filter?.sessionId && sessionId !== filter.sessionId) {
+@@ -172,8 +175,8 @@ export class MetricsDataLoader {
+    * Load a single session's records
+    */
+   private loadSession(sessionId: string): RawSessionData | null {
+-    const sessionFile = join(this.sessionsDir, `${sessionId}.json`);
+-    const metricsFile = join(this.sessionsDir, `${sessionId}_metrics.jsonl`);
++    const sessionFile = this.resolveSessionPath(sessionId, '.json');
++    const metricsFile = this.resolveSessionPath(sessionId, '_metrics.jsonl');
+ 
+     try {
+       // Read session metadata
+@@ -244,6 +247,18 @@ export class MetricsDataLoader {
+     }
+   }
+ 
++  /**
++   * Resolve a session-scoped file path from the bare sessionId: prefer the active
++   * filename, fall back to the `completed_` prefix hook.ts renames it to on SessionEnd.
++   */
++  private resolveSessionPath(sessionId: string, suffix: string): string {
++    const active = join(this.sessionsDir, `${sessionId}${suffix}`);
++    if (existsSync(active)) {
++      return active;
++    }
++    return join(this.sessionsDir, `completed_${sessionId}${suffix}`);
++  }
++
+   /**
+    * Public filter check — apply the same criteria to externally-sourced sessions
+    * (e.g. native-discovered ones) so all surfaces filter consistently.
+@@ -260,6 +275,11 @@ export class MetricsDataLoader {
+       return true;
+     }
+ 
++    // Filter by session ID
++    if (filter.sessionId && sessionData.sessionId !== filter.sessionId) {
++      return false;
++    }
++
+     const startEvent = sessionData.startEvent;
+     if (!startEvent) {
+       return false;
+diff --git a/src/utils/auth.ts b/src/utils/auth.ts
+index 21a4883..ff542f6 100644
+--- a/src/utils/auth.ts
++++ b/src/utils/auth.ts
+@@ -35,7 +35,7 @@ export async function getAuthenticatedClient(config: ProviderProfile): Promise<C
+     }
+     return new CodeMieClient({
+       codemie_api_domain: config.baseUrl,
+-      jwt_token: token,
++      external_token: token,
+       verify_ssl: process.env.CODEMIE_INSECURE !== '1',
+     });
+   }
