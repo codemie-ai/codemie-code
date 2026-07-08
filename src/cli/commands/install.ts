@@ -174,8 +174,9 @@ export function createInstallCommand(): Command {
 
           try {
             // Use installVersion if available and version specified
+            let installedVersion: string | null = null;
             if (versionToInstall && agent.installVersion) {
-              await agent.installVersion(versionToInstall);
+              installedVersion = await agent.installVersion(versionToInstall);
             } else {
               await agent.install();
             }
@@ -183,9 +184,9 @@ export function createInstallCommand(): Command {
             // Restore CLI bin link if overwritten by agent package
             await restoreCliBinLink();
 
-            // Get installed version for success message
-            const installedVersion = await agent.getVersion();
-            const installedVersionStr = installedVersion ? ` v${installedVersion}` : '';
+            // Use version returned by installVersion(); fall back to getVersion() when null
+            const displayVersion = installedVersion ?? await agent.getVersion();
+            const installedVersionStr = displayVersion ? ` v${displayVersion}` : '';
 
             spinner.succeed(`${agent.displayName}${installedVersionStr} installed successfully`);
 
@@ -195,11 +196,11 @@ export function createInstallCommand(): Command {
             }
 
             // Show warning if installed version is newer than supported
-            if (installedVersion && agent.checkVersionCompatibility) {
+            if (displayVersion && agent.checkVersionCompatibility) {
               const compat = await agent.checkVersionCompatibility();
               if (compat.isNewer) {
                 console.log();
-                console.log(chalk.yellow(`⚠️  Note: This version (${installedVersion}) is newer than the supported version (${compat.supportedVersion}).`));
+                console.log(chalk.yellow(`⚠️  Note: This version (${displayVersion}) is newer than the supported version (${compat.supportedVersion}).`));
                 console.log(chalk.yellow(`   You may encounter compatibility issues with the CodeMie backend.`));
                 console.log(chalk.yellow(`   To install the supported version, run:`), chalk.blueBright(`codemie install ${agent.name} --supported`));
               }

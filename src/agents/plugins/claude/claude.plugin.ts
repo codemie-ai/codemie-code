@@ -327,7 +327,7 @@ export class ClaudePlugin extends BaseAgentAdapter {
     if (process.platform !== 'win32') {
       const fullPath = resolveHomeDir('.local/bin/claude');
       try {
-        const result = await exec(fullPath, ['--version']);
+        const result = await exec(fullPath, ['--version'], { shell: true });
 
         // Parse version from output like '2.1.23 (Claude Code)'
         const versionMatch = result.stdout.trim().match(/^(\d+\.\d+\.\d+)/);
@@ -430,7 +430,7 @@ export class ClaudePlugin extends BaseAgentAdapter {
    * @param version - Version string (e.g., '2.0.30', 'latest', 'supported')
    * @throws {AgentInstallationError} If installation fails
    */
-  async installVersion(version?: string): Promise<void> {
+  async installVersion(version?: string): Promise<string | null> {
     const metadata = this.metadata;
 
     // Resolve 'supported' to actual version from metadata
@@ -537,6 +537,8 @@ export class ClaudePlugin extends BaseAgentAdapter {
         );
       }
     }
+
+    return result.installedVersion ?? null;
   }
 
   /**
