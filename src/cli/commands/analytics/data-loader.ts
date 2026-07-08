@@ -137,6 +137,7 @@ export class MetricsDataLoader {
 
       // Find all .json files (session metadata)
       const sessionFiles = files.filter(f => f.endsWith('.json') && !f.includes('_metrics'));
+      const seenSessionIds = new Set<string>();
 
       for (const sessionFile of sessionFiles) {
         // Extract session ID from filename. `hook.ts` renames `<id>.json` to
@@ -149,6 +150,15 @@ export class MetricsDataLoader {
         if (filter?.sessionId && sessionId !== filter.sessionId) {
           continue;
         }
+
+        // Guard against a stale/active filename pair for the same id (e.g. an
+        // interrupted, non-atomic hook.ts rename leaving both on disk at once) —
+        // resolveSessionPath() would resolve both filenames to the same file, so
+        // without this the session would be loaded and counted twice.
+        if (seenSessionIds.has(sessionId)) {
+          continue;
+        }
+        seenSessionIds.add(sessionId);
 
         // Load session records
         const sessionData = this.loadSession(sessionId);

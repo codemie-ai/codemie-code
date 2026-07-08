@@ -110,4 +110,55 @@ describe('MetricsDataLoader.loadSessions — completed_ prefixed sessions', () =
     expect(sessions).toHaveLength(1);
     expect(sessions[0].deltas).toHaveLength(1);
   });
+
+  it('does not double-count a session when both the active and completed_ filenames exist for the same id', () => {
+    const sessionId = 'eddd66b2-0e73-4167-841c-9263207870ae';
+    // Simulate an interrupted/non-atomic hook.ts rename: both filenames present at once.
+    writeFileSync(
+      join(dir, `${sessionId}.json`),
+      JSON.stringify({
+        startTime: 1000,
+        agentName: 'claude',
+        provider: 'anthropic',
+        workingDirectory: '/tmp/project',
+      })
+    );
+    writeCompletedSession(sessionId);
+
+    const loader = new MetricsDataLoader(dir);
+    const sessions = loader.loadSessions();
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].sessionId).toBe(sessionId);
+  });
+
+  it('returns null and skips the session when neither filename variant exists', () => {
+    const loader = new MetricsDataLoader(dir);
+    // Filter targets an id with no backing file at all.
+    const sessions = loader.loadSessions({ sessionId: 'no-such-session' });
+
+    expect(sessions).toHaveLength(0);
+  });
+
+  it('resolves the .json and _metrics.jsonl suffixes independently when only one has been renamed', () => {
+    const sessionId = 'eddd66b2-0e73-4167-841c-9263207870ae';
+    // Active metadata file, but the metrics file was already renamed to completed_ (partial rename).
+    writeFileSync(
+      join(dir, `${sessionId}.json`),
+      JSON.stringify({
+        startTime: 1000,
+        agentName: 'claude',
+        provider: 'anthropic',
+        workingDirectory: '/tmp/project',
+      })
+    );
+    const delta = { recordId: 'd1', sessionId, syncStatus: 'synced', gitBranch: 'main' };
+    writeFileSync(join(dir, `completed_${sessionId}_metrics.jsonl`), JSON.stringify(delta) + '\n');
+
+    const loader = new MetricsDataLoader(dir);
+    const sessions = loader.loadSessions({ sessionId });
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].deltas).toHaveLength(1);
+  });
 });
