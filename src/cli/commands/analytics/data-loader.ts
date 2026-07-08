@@ -260,6 +260,11 @@ export class MetricsDataLoader {
       return true;
     }
 
+    // Filter by session ID
+    if (filter.sessionId && sessionData.sessionId !== filter.sessionId) {
+      return false;
+    }
+
     const startEvent = sessionData.startEvent;
     if (!startEvent) {
       return false;
