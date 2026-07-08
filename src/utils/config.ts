@@ -1452,7 +1452,12 @@ export async function loadRegisteredAssistants(): Promise<CodemieAssistant[]> {
       ConfigLoader.loadAssistantsByScope(StorageScope.GLOBAL, workingDir).catch(() => [] as CodemieAssistant[]),
       ConfigLoader.loadAssistantsByScope(StorageScope.LOCAL, workingDir).catch(() => [] as CodemieAssistant[]),
     ]);
-    return [...globalAssistants, ...localAssistants];
+    const seen = new Set<string>();
+    return [...localAssistants, ...globalAssistants].filter(a => {
+      if (seen.has(a.id)) return false;
+      seen.add(a.id);
+      return true;
+    });
   } catch {
     return [];
   }
