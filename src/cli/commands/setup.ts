@@ -512,7 +512,7 @@ async function promptForModelSelection(
  * @param modelName - The model name to parse
  * @returns Array of version numbers, or empty array if no numbers found
  */
-function parseModelVersion(modelName: string): number[] {
+export function parseModelVersion(modelName: string): number[] {
   // Normalize dots to dashes for consistent parsing
   // claude-haiku-4.5 → claude-haiku-4-5
   const normalized = modelName.replace(/\./g, '-');
@@ -534,7 +534,7 @@ function parseModelVersion(modelName: string): number[] {
  * @param b - Second model name
  * @returns Comparison result: 1 (a > b), -1 (a < b), 0 (equal)
  */
-function compareModelVersions(a: string, b: string): number {
+export function compareModelVersions(a: string, b: string): number {
   const versionA = parseModelVersion(a);
   const versionB = parseModelVersion(b);
 
@@ -574,7 +574,7 @@ function compareModelVersions(a: string, b: string): number {
  *
  * Latest = highest version number parsed from model name
  */
-async function autoSelectModelTiers(
+export async function autoSelectModelTiers(
   models: string[],
   selectedModel: string
 ): Promise<{ haikuModel?: string; sonnetModel?: string; opusModel?: string }> {
@@ -621,13 +621,18 @@ async function autoSelectModelTiers(
     });
   }
 
-  // Use selected model as sonnet tier (or env var if set)
+  // Use selected model as sonnet tier only when it affirmatively identifies as sonnet-class.
+  // Negative exclusion (blocking only opus/haiku) would mis-classify custom or future model
+  // IDs that lack those keywords. Positive inclusion ensures we never assign an unrecognised
+  // model to sonnetModel (EPMCDME-12779).
   if (envSonnet) {
     result.sonnetModel = envSonnet;
     logger.debug('Using sonnet model from environment variable', { model: envSonnet });
-  } else {
+  } else if (selectedModel.toLowerCase().includes('sonnet')) {
     result.sonnetModel = selectedModel;
     logger.debug('Using selected model as sonnet tier', { model: selectedModel });
+  } else {
+    logger.debug('Selected model not assigned to sonnet tier — no sonnet keyword in model ID', { model: selectedModel });
   }
 
   // Select latest opus model (or use env var if set)

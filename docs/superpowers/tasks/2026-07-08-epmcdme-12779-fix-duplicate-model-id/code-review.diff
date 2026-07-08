@@ -1,0 +1,273 @@
+diff --git a/docs/CLAUDE_MODEL_TIER_AUTO_SELECTION.md b/docs/CLAUDE_MODEL_TIER_AUTO_SELECTION.md
+index 90e06a7..7a24044 100644
+--- a/docs/CLAUDE_MODEL_TIER_AUTO_SELECTION.md
++++ b/docs/CLAUDE_MODEL_TIER_AUTO_SELECTION.md
+@@ -39,9 +39,9 @@ If environment variables are not set, auto-select from available models:
+    - Select model with highest version number
+    - Example: `claude-haiku-4-5-20251001`
+ 
+-2. **Sonnet Tier**: User's selected model
+-   - Use the model the user selected during setup
+-   - This is the default/main model for the profile
++2. **Sonnet Tier**: User's selected model (when it is sonnet-class)
++   - Use the model the user selected during setup, **provided it is not opus- or haiku-class**
++   - If the user selected an opus or haiku model (e.g. on a tenant that only provisions opus), `sonnetModel` is left unset
+    - Example: `claude-sonnet-4-6`
+ 
+ 3. **Opus Tier**: Latest opus model
+@@ -151,6 +151,18 @@ Result:
+ 
+ Hybrid approach: env var for opus, auto-select for haiku/sonnet.
+ 
++### Scenario 5: Opus-only Tenant (Bug Fix — EPMCDME-12779)
++
++Available models:
++- `claude-opus-4-6-20260205` (user selects this — only model available)
++
++Result:
++- Haiku: unset (no haiku-class model available)
++- Sonnet: **unset** (selected model is opus-class — not assigned to prevent duplicate display)
++- Opus: `claude-opus-4-6-20260205`
++
++The Claude Code binary will show only "Custom Opus model" — not a duplicate "Custom Sonnet model" pointing to the same ID.
++
+ ### Scenario 4: Future Claude Versions
+ 
+ When Claude 5.0 is released with models like:
+diff --git a/src/cli/commands/__tests__/model-tier-auto-selection.test.ts b/src/cli/commands/__tests__/model-tier-auto-selection.test.ts
+index ba555ab..9706f50 100644
+--- a/src/cli/commands/__tests__/model-tier-auto-selection.test.ts
++++ b/src/cli/commands/__tests__/model-tier-auto-selection.test.ts
+@@ -10,47 +10,7 @@
+  */
+ 
+ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+-
+-// Import the functions we want to test
+-// We'll need to export them from setup.ts for testing
+-// For now, we'll duplicate the logic here to test the algorithm
+-
+-/**
+- * Parse model version from model name
+- * Handles dashes and dots as separators
+- */
+-function parseModelVersion(modelName: string): number[] {
+-  const normalized = modelName.replace(/\./g, '-');
+-  const numbers = normalized.match(/\d+/g);
+-  if (!numbers) return [];
+-  return numbers.map(n => parseInt(n, 10));
+-}
+-
+-/**
+- * Compare two model versions
+- * Falls back to string comparison if parsing fails
+- */
+-function compareModelVersions(a: string, b: string): number {
+-  const versionA = parseModelVersion(a);
+-  const versionB = parseModelVersion(b);
+-
+-  // Fallback to string comparison if parsing failed
+-  if (versionA.length === 0 || versionB.length === 0) {
+-    return a.localeCompare(b);
+-  }
+-
+-  const maxLength = Math.max(versionA.length, versionB.length);
+-
+-  for (let i = 0; i < maxLength; i++) {
+-    const numA = versionA[i] || 0;
+-    const numB = versionB[i] || 0;
+-
+-    if (numA > numB) return 1;
+-    if (numA < numB) return -1;
+-  }
+-
+-  return 0;
+-}
++import { parseModelVersion, compareModelVersions, autoSelectModelTiers } from '../setup.js';
+ 
+ /**
+  * Select latest model from a list
+@@ -382,3 +342,40 @@ describe('autoSelectModelTiers integration', () => {
+     });
+   });
+ });
++
++describe('autoSelectModelTiers — opus-only tenant (EPMCDME-12779)', () => {
++  const originalEnv = { ...process.env };
++
++  beforeEach(() => {
++    delete process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
++    delete process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
++    delete process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
++  });
++
++  afterEach(() => {
++    process.env = { ...originalEnv };
++  });
++
++  it('should not set sonnetModel when selectedModel is opus-class', async () => {
++    const models = ['claude-opus-4-6-20260205'];
++    const result = await autoSelectModelTiers(models, 'claude-opus-4-6-20260205');
++    expect(result.sonnetModel).toBeUndefined();
++    expect(result.opusModel).toBe('claude-opus-4-6-20260205');
++  });
++
++  it('should not set sonnetModel when selectedModel contains opus keyword', async () => {
++    const models = ['claude-opus-4-7', 'claude-haiku-4-5-20251001'];
++    const result = await autoSelectModelTiers(models, 'claude-opus-4-7');
++    expect(result.sonnetModel).toBeUndefined();
++    expect(result.opusModel).toBe('claude-opus-4-7');
++    expect(result.haikuModel).toBe('claude-haiku-4-5-20251001');
++  });
++
++  it('should set sonnetModel normally when selectedModel is sonnet-class', async () => {
++    const models = ['claude-sonnet-4-6', 'claude-opus-4-6-20260205', 'claude-haiku-4-5-20251001'];
++    const result = await autoSelectModelTiers(models, 'claude-sonnet-4-6');
++    expect(result.sonnetModel).toBe('claude-sonnet-4-6');
++    expect(result.opusModel).toBe('claude-opus-4-6-20260205');
++    expect(result.haikuModel).toBe('claude-haiku-4-5-20251001');
++  });
++});
+diff --git a/src/cli/commands/setup.ts b/src/cli/commands/setup.ts
+index cbefb71..22e17e4 100644
+--- a/src/cli/commands/setup.ts
++++ b/src/cli/commands/setup.ts
+@@ -512,7 +512,7 @@ async function promptForModelSelection(
+  * @param modelName - The model name to parse
+  * @returns Array of version numbers, or empty array if no numbers found
+  */
+-function parseModelVersion(modelName: string): number[] {
++export function parseModelVersion(modelName: string): number[] {
+   // Normalize dots to dashes for consistent parsing
+   // claude-haiku-4.5 → claude-haiku-4-5
+   const normalized = modelName.replace(/\./g, '-');
+@@ -534,7 +534,7 @@ function parseModelVersion(modelName: string): number[] {
+  * @param b - Second model name
+  * @returns Comparison result: 1 (a > b), -1 (a < b), 0 (equal)
+  */
+-function compareModelVersions(a: string, b: string): number {
++export function compareModelVersions(a: string, b: string): number {
+   const versionA = parseModelVersion(a);
+   const versionB = parseModelVersion(b);
+ 
+@@ -574,7 +574,7 @@ function compareModelVersions(a: string, b: string): number {
+  *
+  * Latest = highest version number parsed from model name
+  */
+-async function autoSelectModelTiers(
++export async function autoSelectModelTiers(
+   models: string[],
+   selectedModel: string
+ ): Promise<{ haikuModel?: string; sonnetModel?: string; opusModel?: string }> {
+@@ -621,11 +621,17 @@ async function autoSelectModelTiers(
+     });
+   }
+ 
+-  // Use selected model as sonnet tier (or env var if set)
++  // Use selected model as sonnet tier only when it is not opus- or haiku-class.
++  // When a tenant provisions only opus models the selected model will be opus;
++  // assigning it to sonnetModel would cause both tiers to display the same ID
++  // in the Claude Code selector (EPMCDME-12779).
+   if (envSonnet) {
+     result.sonnetModel = envSonnet;
+     logger.debug('Using sonnet model from environment variable', { model: envSonnet });
+-  } else {
++  } else if (
++    !selectedModel.toLowerCase().includes('opus') &&
++    !selectedModel.toLowerCase().includes('haiku')
++  ) {
+     result.sonnetModel = selectedModel;
+     logger.debug('Using selected model as sonnet tier', { model: selectedModel });
+   }
+diff --git a/src/providers/plugins/sso/__tests__/sso.http-client.test.ts b/src/providers/plugins/sso/__tests__/sso.http-client.test.ts
+new file mode 100644
+index 0000000..8ac78d4
+--- /dev/null
++++ b/src/providers/plugins/sso/__tests__/sso.http-client.test.ts
+@@ -0,0 +1,56 @@
++/**
++ * Tests for fetchCodeMieModels — model ID deduplication (EPMCDME-12779)
++ * @group unit
++ */
++import { vi, describe, it, expect, beforeEach } from 'vitest';
++
++const { mockGetRaw } = vi.hoisted(() => ({ mockGetRaw: vi.fn() }));
++
++vi.mock('../../../core/base/http-client.js', () => ({
++  HTTPClient: class {
++    getRaw = mockGetRaw;
++  },
++}));
++
++vi.mock('../../../core/codemie-auth-helpers.js', () => ({
++  buildAuthHeaders: vi.fn().mockReturnValue({}),
++  fetchCodeMieUserInfo: vi.fn(),
++}));
++
++describe('fetchCodeMieModels — deduplication', () => {
++  beforeEach(() => {
++    mockGetRaw.mockReset();
++  });
++
++  it('should deduplicate model IDs when backend returns same deployment_name twice', async () => {
++    mockGetRaw.mockResolvedValue({
++      statusCode: 200,
++      data: JSON.stringify([
++        { deployment_name: 'claude-opus-4-6-20260205', label: 'Custom Opus model', enabled: true },
++        { deployment_name: 'claude-opus-4-6-20260205', label: 'Custom Sonnet model', enabled: true },
++      ]),
++    });
++
++    const { fetchCodeMieModels } = await import('../sso.http-client.js');
++    const result = await fetchCodeMieModels('https://api.example.com', 'fake-jwt');
++
++    expect(result).toHaveLength(1);
++    expect(result).toEqual(['claude-opus-4-6-20260205']);
++  });
++
++  it('should return unique model IDs when all are distinct', async () => {
++    mockGetRaw.mockResolvedValue({
++      statusCode: 200,
++      data: JSON.stringify([
++        { deployment_name: 'claude-haiku-4-5-20251001', label: 'Haiku', enabled: true },
++        { deployment_name: 'claude-sonnet-4-6', label: 'Sonnet', enabled: true },
++        { deployment_name: 'claude-opus-4-6-20260205', label: 'Opus', enabled: true },
++      ]),
++    });
++
++    const { fetchCodeMieModels } = await import('../sso.http-client.js');
++    const result = await fetchCodeMieModels('https://api.example.com', 'fake-jwt');
++
++    expect(result).toHaveLength(3);
++  });
++});
+diff --git a/src/providers/plugins/sso/sso.http-client.ts b/src/providers/plugins/sso/sso.http-client.ts
+index 2c94749..03b17b0 100644
+--- a/src/providers/plugins/sso/sso.http-client.ts
++++ b/src/providers/plugins/sso/sso.http-client.ts
+@@ -148,6 +148,7 @@ export async function fetchCodeMieModels(
+   }
+ 
+   // Filter and map models based on the actual API response structure
++  const seen = new Set<string>();
+   const filteredModels = models
+     .filter(model => {
+       if (!model) return false;
+@@ -158,11 +159,13 @@ export async function fetchCodeMieModels(
+ 
+       return hasId || hasBaseName || hasDeploymentName;
+     })
+-    .map(model => {
+-      // Use the most appropriate identifier field
+-      return model.id || model.base_name || model.deployment_name || model.label || 'unknown';
+-    })
++    .map(model => model.id || model.base_name || model.deployment_name || model.label || 'unknown')
+     .filter(id => id !== 'unknown')
++    .filter(id => {
++      if (seen.has(id)) return false;
++      seen.add(id);
++      return true;
++    })
+     .sort();
+ 
+   return filteredModels;

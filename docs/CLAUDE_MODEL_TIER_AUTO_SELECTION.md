@@ -39,9 +39,9 @@ If environment variables are not set, auto-select from available models:
    - Select model with highest version number
    - Example: `claude-haiku-4-5-20251001`
 
-2. **Sonnet Tier**: User's selected model
-   - Use the model the user selected during setup
-   - This is the default/main model for the profile
+2. **Sonnet Tier**: User's selected model (when it is sonnet-class)
+   - Use the model the user selected during setup, **provided it is not opus- or haiku-class**
+   - If the user selected an opus or haiku model (e.g. on a tenant that only provisions opus), `sonnetModel` is left unset
    - Example: `claude-sonnet-4-6`
 
 3. **Opus Tier**: Latest opus model
@@ -150,6 +150,18 @@ Result:
 - Opus: `custom-opus` (from env var)
 
 Hybrid approach: env var for opus, auto-select for haiku/sonnet.
+
+### Scenario 5: Opus-only Tenant (Bug Fix — EPMCDME-12779)
+
+Available models:
+- `claude-opus-4-6-20260205` (user selects this — only model available)
+
+Result:
+- Haiku: unset (no haiku-class model available)
+- Sonnet: **unset** (selected model is opus-class — not assigned to prevent duplicate display)
+- Opus: `claude-opus-4-6-20260205`
+
+The Claude Code binary will show only "Custom Opus model" — not a duplicate "Custom Sonnet model" pointing to the same ID.
 
 ### Scenario 4: Future Claude Versions
 

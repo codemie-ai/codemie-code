@@ -148,6 +148,7 @@ export async function fetchCodeMieModels(
   }
 
   // Filter and map models based on the actual API response structure
+  const seen = new Set<string>();
   const filteredModels = models
     .filter(model => {
       if (!model) return false;
@@ -158,11 +159,13 @@ export async function fetchCodeMieModels(
 
       return hasId || hasBaseName || hasDeploymentName;
     })
-    .map(model => {
-      // Use the most appropriate identifier field
-      return model.id || model.base_name || model.deployment_name || model.label || 'unknown';
-    })
+    .map(model => model.id || model.base_name || model.deployment_name || model.label || 'unknown')
     .filter(id => id !== 'unknown')
+    .filter(id => {
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    })
     .sort();
 
   return filteredModels;

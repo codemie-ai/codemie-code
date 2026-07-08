@@ -1,0 +1,108 @@
+diff --git a/src/agents/core/BaseAgentAdapter.ts b/src/agents/core/BaseAgentAdapter.ts
+index d710dd8..66d3922 100644
+--- a/src/agents/core/BaseAgentAdapter.ts
++++ b/src/agents/core/BaseAgentAdapter.ts
+@@ -1040,6 +1040,10 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
+       for (const envVar of envMapping.sonnetModel) {
+         env[envVar] = env.CODEMIE_SONNET_MODEL;
+       }
++    } else if (!env.CODEMIE_SONNET_MODEL && env.CODEMIE_OPUS_MODEL && envMapping.sonnetModel?.includes('CLAUDE_CODE_SUBAGENT_MODEL')) {
++      // Opus-only tenant fallback: CLAUDE_CODE_SUBAGENT_MODEL must resolve to a provisioned
++      // model even when no sonnet-class model is available (EPMCDME-12779).
++      env['CLAUDE_CODE_SUBAGENT_MODEL'] = env.CODEMIE_OPUS_MODEL;
+     }
+     if (env.CODEMIE_OPUS_MODEL && envMapping.opusModel) {
+       for (const envVar of envMapping.opusModel) {
+diff --git a/src/cli/commands/__tests__/model-tier-auto-selection.test.ts b/src/cli/commands/__tests__/model-tier-auto-selection.test.ts
+index 9706f50..82c9050 100644
+--- a/src/cli/commands/__tests__/model-tier-auto-selection.test.ts
++++ b/src/cli/commands/__tests__/model-tier-auto-selection.test.ts
+@@ -9,7 +9,7 @@
+  * - Environment variable priority
+  */
+ 
+-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
++import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
+ import { parseModelVersion, compareModelVersions, autoSelectModelTiers } from '../setup.js';
+ 
+ /**
+@@ -344,16 +344,14 @@ describe('autoSelectModelTiers integration', () => {
+ });
+ 
+ describe('autoSelectModelTiers — opus-only tenant (EPMCDME-12779)', () => {
+-  const originalEnv = { ...process.env };
+-
+   beforeEach(() => {
+-    delete process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+-    delete process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
+-    delete process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
++    vi.stubEnv('ANTHROPIC_DEFAULT_HAIKU_MODEL', '');
++    vi.stubEnv('ANTHROPIC_DEFAULT_SONNET_MODEL', '');
++    vi.stubEnv('ANTHROPIC_DEFAULT_OPUS_MODEL', '');
+   });
+ 
+   afterEach(() => {
+-    process.env = { ...originalEnv };
++    vi.unstubAllEnvs();
+   });
+ 
+   it('should not set sonnetModel when selectedModel is opus-class', async () => {
+@@ -378,4 +376,11 @@ describe('autoSelectModelTiers — opus-only tenant (EPMCDME-12779)', () => {
+     expect(result.opusModel).toBe('claude-opus-4-6-20260205');
+     expect(result.haikuModel).toBe('claude-haiku-4-5-20251001');
+   });
++
++  it('should not set sonnetModel when selectedModel is a custom/unknown model ID', async () => {
++    const models = ['my-enterprise-llm', 'claude-haiku-4-5-20251001'];
++    const result = await autoSelectModelTiers(models, 'my-enterprise-llm');
++    expect(result.sonnetModel).toBeUndefined();
++    expect(result.haikuModel).toBe('claude-haiku-4-5-20251001');
++  });
+ });
+diff --git a/src/cli/commands/setup.ts b/src/cli/commands/setup.ts
+index 22e17e4..52a765e 100644
+--- a/src/cli/commands/setup.ts
++++ b/src/cli/commands/setup.ts
+@@ -621,19 +621,18 @@ export async function autoSelectModelTiers(
+     });
+   }
+ 
+-  // Use selected model as sonnet tier only when it is not opus- or haiku-class.
+-  // When a tenant provisions only opus models the selected model will be opus;
+-  // assigning it to sonnetModel would cause both tiers to display the same ID
+-  // in the Claude Code selector (EPMCDME-12779).
++  // Use selected model as sonnet tier only when it affirmatively identifies as sonnet-class.
++  // Negative exclusion (blocking only opus/haiku) would mis-classify custom or future model
++  // IDs that lack those keywords. Positive inclusion ensures we never assign an unrecognised
++  // model to sonnetModel (EPMCDME-12779).
+   if (envSonnet) {
+     result.sonnetModel = envSonnet;
+     logger.debug('Using sonnet model from environment variable', { model: envSonnet });
+-  } else if (
+-    !selectedModel.toLowerCase().includes('opus') &&
+-    !selectedModel.toLowerCase().includes('haiku')
+-  ) {
++  } else if (selectedModel.toLowerCase().includes('sonnet')) {
+     result.sonnetModel = selectedModel;
+     logger.debug('Using selected model as sonnet tier', { model: selectedModel });
++  } else {
++    logger.debug('Selected model not assigned to sonnet tier — no sonnet keyword in model ID', { model: selectedModel });
+   }
+ 
+   // Select latest opus model (or use env var if set)
+diff --git a/src/providers/plugins/bedrock/bedrock.template.ts b/src/providers/plugins/bedrock/bedrock.template.ts
+index e6d6f67..b7d3399 100644
+--- a/src/providers/plugins/bedrock/bedrock.template.ts
++++ b/src/providers/plugins/bedrock/bedrock.template.ts
+@@ -116,6 +116,11 @@ export const BedrockTemplate = registerProvider<ProviderTemplate>({
+         if (env.CODEMIE_SONNET_MODEL) {
+           env.ANTHROPIC_DEFAULT_SONNET_MODEL = env.CODEMIE_SONNET_MODEL;
+           env.CLAUDE_CODE_SUBAGENT_MODEL = env.CODEMIE_SONNET_MODEL;
++        } else if (env.CODEMIE_OPUS_MODEL) {
++          // Opus-only tenant fallback: route subagent model to opus when no sonnet is
++          // provisioned so background tasks don't fall back to an unprovisioned default
++          // (EPMCDME-12779).
++          env.CLAUDE_CODE_SUBAGENT_MODEL = env.CODEMIE_OPUS_MODEL;
+         }
+         if (env.CODEMIE_OPUS_MODEL) {
+           env.ANTHROPIC_DEFAULT_OPUS_MODEL = env.CODEMIE_OPUS_MODEL;

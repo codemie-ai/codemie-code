@@ -1,0 +1,62 @@
+{
+  "decision": "request-changes",
+  "rationale": "Three blocking findings. CR-001: the tier-classification guard uses negative keyword exclusion rather than positive 'sonnet' inclusion, silently mis-classifying custom model IDs. CR-002 (critical, decision_needed): leaving sonnetModel unset breaks CLAUDE_CODE_SUBAGENT_MODEL for opus-only tenants — verified at claude.plugin.ts:87 (envMapping sonnetModel → CLAUDE_CODE_SUBAGENT_MODEL) and bedrock.template.ts:118; the fix strategy must be decided before this can land. CR-003: the afterEach process.env replacement pattern does not restore the live process.env object and will cause env-var leakage in tests. No formal acceptance spec was present — no-spec round, confidence low.",
+  "confidence": "low",
+  "risk_flags": ["breaking-change"],
+  "business_review": [],
+  "standards_review": [
+    {
+      "standard": "Conventional Commits",
+      "source": ".ai-run/guides/standards/git-workflow.md",
+      "status": "na",
+      "notes": "Commit messages not present in diff; plan shows compliant format (fix(setup)/fix(sso) with scoped subject). Cannot evaluate from diff alone."
+    },
+    {
+      "standard": "TypeScript / code quality",
+      "source": ".ai-run/guides/standards/code-quality.md",
+      "status": "pass",
+      "notes": "Exported functions carry explicit return types; no `any` introduced; ES module imports retain .js extension; keyword guard is consistent with existing pattern. CR-001 is a logic correctness issue, not a style violation."
+    },
+    {
+      "standard": "Security",
+      "source": "project-standard",
+      "status": "pass",
+      "notes": "No credentials, secrets, or injection vectors introduced. Set-based deduplication and string keyword checks are safe."
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "title": "Tier-classification guard uses negative keyword exclusion — custom model IDs are silently assigned to sonnetModel",
+      "file": "src/cli/commands/setup.ts",
+      "line": "631-636",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "The guard `!selectedModel.toLowerCase().includes('opus') && !selectedModel.toLowerCase().includes('haiku')` assigns any model ID that lacks both keywords to `result.sonnetModel`. Custom or enterprise deployment names like `my-enterprise-llm`, `gpt-proxy-xl`, or future Anthropic tiers whose names do not contain 'opus'/'haiku' pass the guard and are incorrectly assigned to the sonnet tier.",
+      "impact": "Tenants using custom deployment names behind the SSO gateway will have an arbitrary non-sonnet model written to `ANTHROPIC_DEFAULT_SONNET_MODEL`, causing silent fallback or API errors depending on the backend.",
+      "recommendation": "Replace with a positive inclusion check: `selectedModel.toLowerCase().includes('sonnet')`. This is symmetric with the existing haiku/opus auto-select pattern and leaves sonnetModel unset for custom or unrecognized model IDs rather than guessing. A `logger.debug` noting that sonnetModel was left unset (and why) aids future diagnostics."
+    },
+    {
+      "id": "CR-002",
+      "title": "Leaving sonnetModel unset clears CLAUDE_CODE_SUBAGENT_MODEL — all subagent operations fail for opus-only tenants",
+      "file": "src/cli/commands/setup.ts",
+      "line": "621-637",
+      "severity": "critical",
+      "triage": "decision_needed",
+      "problem": "The envMapping at src/agents/plugins/claude/claude.plugin.ts:87 maps sonnetModel to both ANTHROPIC_DEFAULT_SONNET_MODEL and CLAUDE_CODE_SUBAGENT_MODEL. When sonnetModel is undefined, transformEnvVars does not set CLAUDE_CODE_SUBAGENT_MODEL, so Claude Code falls back to its internal default (e.g. claude-sonnet-4-5), which is not provisioned by the tenant's SSO gateway. The Bedrock template has the same conditional at src/providers/plugins/bedrock/bedrock.template.ts:118: CLAUDE_CODE_SUBAGENT_MODEL is set inside `if (env.CODEMIE_SONNET_MODEL)`, so opus-only Bedrock tenants are equally affected.",
+      "impact": "Critical: all subagent operations fail for opus-only tenants with 404/authorization errors from the proxy. The primary interactive session works but every delegated background task breaks. The user explicitly asked to leave sonnetModel unset (ticket AC), creating a direct conflict between the UI fix and subagent routing correctness.",
+      "recommendation": "Decision needed — two viable strategies: (A) Keep sonnetModel unset and add a fallback in BaseAgentAdapter.transformEnvVars and bedrock.template.ts beforeRun: when CODEMIE_SONNET_MODEL is absent but CODEMIE_OPUS_MODEL is set, assign CLAUDE_CODE_SUBAGENT_MODEL = CODEMIE_OPUS_MODEL. This preserves the ticket intent while fixing subagent routing. (B) Move the duplicate-display fix to the UI layer (Claude Code model selector) and keep sonnetModel = opusModel; no functional regression, but requires a UI change rather than just a setup fix. Strategy A is recommended as it does not require touching the external binary."
+    },
+    {
+      "id": "CR-003",
+      "title": "afterEach process.env object replacement does not restore the live process.env — env vars leak between tests",
+      "file": "src/cli/commands/__tests__/model-tier-auto-selection.test.ts",
+      "line": "354-356",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "`process.env = { ...originalEnv }` replaces the local variable binding but does NOT affect the global process.env object that the SUT (autoSelectModelTiers) already holds a reference to. In Node.js, process.env is a special native binding; reassigning it to a plain spread object breaks the live proxy for the current and subsequent test workers. The same pattern appears in the existing describe block at line ~104. Any env var set in a test and not explicitly deleted by beforeEach will persist across tests.",
+      "impact": "Test isolation is unreliable. The current three-key beforeEach cleanup happens to prevent leakage for this test, but any future test that sets additional env vars expecting afterEach to fully restore them will see intermittent failures.",
+      "recommendation": "Use vitest's `vi.stubEnv` / `vi.unstubAllEnvs()` API, which patches process.env correctly without replacing the object reference. Alternatively, delete each key explicitly in afterEach rather than doing an object replacement."
+    }
+  ]
+}

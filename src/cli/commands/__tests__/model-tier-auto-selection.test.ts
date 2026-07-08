@@ -9,48 +9,8 @@
  * - Environment variable priority
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-
-// Import the functions we want to test
-// We'll need to export them from setup.ts for testing
-// For now, we'll duplicate the logic here to test the algorithm
-
-/**
- * Parse model version from model name
- * Handles dashes and dots as separators
- */
-function parseModelVersion(modelName: string): number[] {
-  const normalized = modelName.replace(/\./g, '-');
-  const numbers = normalized.match(/\d+/g);
-  if (!numbers) return [];
-  return numbers.map(n => parseInt(n, 10));
-}
-
-/**
- * Compare two model versions
- * Falls back to string comparison if parsing fails
- */
-function compareModelVersions(a: string, b: string): number {
-  const versionA = parseModelVersion(a);
-  const versionB = parseModelVersion(b);
-
-  // Fallback to string comparison if parsing failed
-  if (versionA.length === 0 || versionB.length === 0) {
-    return a.localeCompare(b);
-  }
-
-  const maxLength = Math.max(versionA.length, versionB.length);
-
-  for (let i = 0; i < maxLength; i++) {
-    const numA = versionA[i] || 0;
-    const numB = versionB[i] || 0;
-
-    if (numA > numB) return 1;
-    if (numA < numB) return -1;
-  }
-
-  return 0;
-}
+import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { parseModelVersion, compareModelVersions, autoSelectModelTiers } from '../setup.js';
 
 /**
  * Select latest model from a list
@@ -380,5 +340,47 @@ describe('autoSelectModelTiers integration', () => {
       expect(selectLatestModel(haikuModels)).toBeUndefined();
       expect(selectLatestModel(opusModels)).toBeUndefined();
     });
+  });
+});
+
+describe('autoSelectModelTiers — opus-only tenant (EPMCDME-12779)', () => {
+  beforeEach(() => {
+    vi.stubEnv('ANTHROPIC_DEFAULT_HAIKU_MODEL', '');
+    vi.stubEnv('ANTHROPIC_DEFAULT_SONNET_MODEL', '');
+    vi.stubEnv('ANTHROPIC_DEFAULT_OPUS_MODEL', '');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('should not set sonnetModel when selectedModel is opus-class', async () => {
+    const models = ['claude-opus-4-6-20260205'];
+    const result = await autoSelectModelTiers(models, 'claude-opus-4-6-20260205');
+    expect(result.sonnetModel).toBeUndefined();
+    expect(result.opusModel).toBe('claude-opus-4-6-20260205');
+  });
+
+  it('should not set sonnetModel when selectedModel contains opus keyword', async () => {
+    const models = ['claude-opus-4-7', 'claude-haiku-4-5-20251001'];
+    const result = await autoSelectModelTiers(models, 'claude-opus-4-7');
+    expect(result.sonnetModel).toBeUndefined();
+    expect(result.opusModel).toBe('claude-opus-4-7');
+    expect(result.haikuModel).toBe('claude-haiku-4-5-20251001');
+  });
+
+  it('should set sonnetModel normally when selectedModel is sonnet-class', async () => {
+    const models = ['claude-sonnet-4-6', 'claude-opus-4-6-20260205', 'claude-haiku-4-5-20251001'];
+    const result = await autoSelectModelTiers(models, 'claude-sonnet-4-6');
+    expect(result.sonnetModel).toBe('claude-sonnet-4-6');
+    expect(result.opusModel).toBe('claude-opus-4-6-20260205');
+    expect(result.haikuModel).toBe('claude-haiku-4-5-20251001');
+  });
+
+  it('should not set sonnetModel when selectedModel is a custom/unknown model ID', async () => {
+    const models = ['my-enterprise-llm', 'claude-haiku-4-5-20251001'];
+    const result = await autoSelectModelTiers(models, 'my-enterprise-llm');
+    expect(result.sonnetModel).toBeUndefined();
+    expect(result.haikuModel).toBe('claude-haiku-4-5-20251001');
   });
 });

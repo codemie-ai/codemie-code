@@ -116,6 +116,11 @@ export const BedrockTemplate = registerProvider<ProviderTemplate>({
         if (env.CODEMIE_SONNET_MODEL) {
           env.ANTHROPIC_DEFAULT_SONNET_MODEL = env.CODEMIE_SONNET_MODEL;
           env.CLAUDE_CODE_SUBAGENT_MODEL = env.CODEMIE_SONNET_MODEL;
+        } else if (env.CODEMIE_OPUS_MODEL) {
+          // Opus-only tenant fallback: set both sonnet-mapped variables to opus when no
+          // sonnet is provisioned (EPMCDME-12779 FR-002).
+          env.ANTHROPIC_DEFAULT_SONNET_MODEL = env.CODEMIE_OPUS_MODEL;
+          env.CLAUDE_CODE_SUBAGENT_MODEL = env.CODEMIE_OPUS_MODEL;
         }
         if (env.CODEMIE_OPUS_MODEL) {
           env.ANTHROPIC_DEFAULT_OPUS_MODEL = env.CODEMIE_OPUS_MODEL;

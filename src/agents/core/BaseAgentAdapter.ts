@@ -1071,6 +1071,13 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       for (const envVar of envMapping.sonnetModel) {
         env[envVar] = env.CODEMIE_SONNET_MODEL;
       }
+    } else if (!env.CODEMIE_SONNET_MODEL && env.CODEMIE_OPUS_MODEL && envMapping.sonnetModel) {
+      // Opus-only tenant fallback: set all sonnet-mapped env vars to opus when no sonnet is
+      // provisioned, ensuring both ANTHROPIC_DEFAULT_SONNET_MODEL and CLAUDE_CODE_SUBAGENT_MODEL
+      // resolve to a provisioned model (EPMCDME-12779 FR-001).
+      for (const envVar of envMapping.sonnetModel) {
+        env[envVar] = env.CODEMIE_OPUS_MODEL;
+      }
     }
     if (env.CODEMIE_OPUS_MODEL && envMapping.opusModel) {
       for (const envVar of envMapping.opusModel) {

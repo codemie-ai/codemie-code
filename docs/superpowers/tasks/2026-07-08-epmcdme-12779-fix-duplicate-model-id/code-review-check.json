@@ -1,0 +1,45 @@
+{
+  "decision": "approve",
+  "rationale": "All three blocking findings from code-review.final are resolved. CR-001: negative exclusion replaced with positive includes('sonnet') guard plus debug log; new test covers custom model ID. CR-002: BaseAgentAdapter.transformEnvVars and bedrock.template.ts both now set CLAUDE_CODE_SUBAGENT_MODEL to CODEMIE_OPUS_MODEL when no sonnet model is provisioned. CR-003: broken process.env object replacement replaced with vi.stubEnv / vi.unstubAllEnvs(). All 35 unit tests pass; typecheck clean.",
+  "confidence": "medium",
+  "risk_flags": [],
+  "business_review": [],
+  "standards_review": [
+    {
+      "standard": "Conventional Commits",
+      "source": ".ai-run/guides/standards/git-workflow.md",
+      "status": "pass",
+      "notes": "Fix-up commit uses fix(setup) with compliant subject. Scoped to setup; references EPMCDME-12779."
+    },
+    {
+      "standard": "TypeScript / code quality",
+      "source": ".ai-run/guides/standards/code-quality.md",
+      "status": "pass",
+      "notes": "No new any, explicit types maintained, optional-chaining used for envMapping.sonnetModel?.includes()."
+    },
+    {
+      "standard": "Security",
+      "source": "project-standard",
+      "status": "pass",
+      "notes": "No new security surface. Fallback only routes a provisioned model ID string — no credential or injection risk."
+    }
+  ],
+  "findings": [],
+  "finding_status": [
+    {
+      "id": "CR-001",
+      "status": "resolved",
+      "notes": "setup.ts:631 now uses includes('sonnet') positive check. Custom model ID regression test added."
+    },
+    {
+      "id": "CR-002",
+      "status": "resolved",
+      "notes": "BaseAgentAdapter.ts:1039 else-if sets CLAUDE_CODE_SUBAGENT_MODEL=CODEMIE_OPUS_MODEL when sonnet absent. bedrock.template.ts:116 else-if does the same. Both paths verified."
+    },
+    {
+      "id": "CR-003",
+      "status": "resolved",
+      "notes": "Test file now uses vi.stubEnv in beforeEach and vi.unstubAllEnvs() in afterEach. process.env object replacement removed."
+    }
+  ]
+}
