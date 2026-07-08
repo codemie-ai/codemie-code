@@ -3,7 +3,7 @@
  * Uses core MetricDelta type from src/metrics/types.ts
  */
 
-import { readFileSync, readdirSync } from 'fs';
+import { readFileSync, readdirSync, existsSync } from 'fs';
 import { join } from 'path';
 import type { MetricDelta } from '../../../agents/core/metrics/types.js';
 import type { AnalyticsFilter } from './types.js';
@@ -139,8 +139,11 @@ export class MetricsDataLoader {
       const sessionFiles = files.filter(f => f.endsWith('.json') && !f.includes('_metrics'));
 
       for (const sessionFile of sessionFiles) {
-        // Extract session ID from filename
-        const sessionId = sessionFile.replace('.json', '');
+        // Extract session ID from filename. `hook.ts` renames `<id>.json` to
+        // `completed_<id>.json` on SessionEnd — strip that prefix so filtering
+        // and the returned sessionId always use the bare UUID (matches the
+        // fallback pattern in src/cli/commands/log/reader.ts).
+        const sessionId = sessionFile.replace('.json', '').replace(/^completed_/, '');
 
         // Skip if filtering by session ID
         if (filter?.sessionId && sessionId !== filter.sessionId) {
@@ -172,8 +175,8 @@ export class MetricsDataLoader {
    * Load a single session's records
    */
   private loadSession(sessionId: string): RawSessionData | null {
-    const sessionFile = join(this.sessionsDir, `${sessionId}.json`);
-    const metricsFile = join(this.sessionsDir, `${sessionId}_metrics.jsonl`);
+    const sessionFile = this.resolveSessionPath(sessionId, '.json');
+    const metricsFile = this.resolveSessionPath(sessionId, '_metrics.jsonl');
 
     try {
       // Read session metadata
@@ -242,6 +245,18 @@ export class MetricsDataLoader {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Resolve a session-scoped file path from the bare sessionId: prefer the active
+   * filename, fall back to the `completed_` prefix hook.ts renames it to on SessionEnd.
+   */
+  private resolveSessionPath(sessionId: string, suffix: string): string {
+    const active = join(this.sessionsDir, `${sessionId}${suffix}`);
+    if (existsSync(active)) {
+      return active;
+    }
+    return join(this.sessionsDir, `completed_${sessionId}${suffix}`);
   }
 
   /**
