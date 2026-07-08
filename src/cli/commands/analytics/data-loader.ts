@@ -109,9 +109,12 @@ export interface RawSessionData {
   endEvent?: SessionEndEvent;
   deltas: MetricDelta[];
   /**
-   * Native agent log path, set for sessions discovered directly from agent logs
-   * (not tracked by CodeMie). When present, the cost enricher prices from this path
-   * instead of the ~/.codemie/sessions correlation file.
+   * Native agent log path used for cost pricing. Resolved either from a
+   * native-discovered session (which carries its log path directly) or from a
+   * CodeMie-tracked session's `correlation.agentSessionFile`. When present, the
+   * cost enricher prices from this path directly instead of re-reading the
+   * ~/.codemie/sessions correlation file (which its bare-UUID lookup misses for
+   * `completed_`-prefixed metadata).
    */
   agentSessionFile?: string;
 }
@@ -251,7 +254,7 @@ export class MetricsDataLoader {
         // Metrics file doesn't exist or can't be read - that's okay, session might have no metrics yet
       }
 
-      return { sessionId, startEvent, endEvent, deltas };
+      return { sessionId, startEvent, endEvent, deltas, agentSessionFile: sessionMetadata.correlation?.agentSessionFile };
     } catch {
       return null;
     }

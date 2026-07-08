@@ -161,4 +161,38 @@ describe('MetricsDataLoader.loadSessions — completed_ prefixed sessions', () =
     expect(sessions).toHaveLength(1);
     expect(sessions[0].deltas).toHaveLength(1);
   });
+
+  it('populates agentSessionFile from correlation.agentSessionFile for a completed_ session', () => {
+    const sessionId = 'eddd66b2-0e73-4167-841c-9263207870ae';
+    const agentSessionFile = '/home/user/.claude/projects/proj/native-log.jsonl';
+    writeFileSync(
+      join(dir, `completed_${sessionId}.json`),
+      JSON.stringify({
+        startTime: 1000,
+        endTime: 2000,
+        status: 'completed',
+        agentName: 'claude',
+        provider: 'anthropic',
+        workingDirectory: '/tmp/project',
+        correlation: { status: 'matched', agentSessionId: 'native-1', agentSessionFile, retryCount: 0 },
+      })
+    );
+
+    const loader = new MetricsDataLoader(dir);
+    const sessions = loader.loadSessions({ sessionId });
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].agentSessionFile).toBe(agentSessionFile);
+  });
+
+  it('leaves agentSessionFile undefined when the session has no correlation', () => {
+    const sessionId = 'eddd66b2-0e73-4167-841c-9263207870ae';
+    writeCompletedSession(sessionId); // helper writes no correlation key
+
+    const loader = new MetricsDataLoader(dir);
+    const sessions = loader.loadSessions({ sessionId });
+
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0].agentSessionFile).toBeUndefined();
+  });
 });
