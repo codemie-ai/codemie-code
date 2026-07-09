@@ -67,6 +67,8 @@ export const ClaudePluginMetadata: AgentMetadata = {
   npmPackage: '@anthropic-ai/claude-code',
   cliCommand: 'claude',
 
+  sessionAnalyticsReport: true,
+
   // Version management configuration
   supportedVersion: CLAUDE_SUPPORTED_VERSION,       // Latest version tested with CodeMie backend
   minimumSupportedVersion: CLAUDE_MINIMUM_SUPPORTED_VERSION, // Minimum version required to run
