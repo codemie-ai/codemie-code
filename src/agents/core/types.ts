@@ -318,6 +318,13 @@ export interface AgentMetadata {
   // === Analytics Support ===
   analyticsAdapter?: AgentAnalyticsAdapter;  // Optional analytics adapter
 
+  /**
+   * When true, a per-session analytics JSON report is written automatically on
+   * session exit (see BaseAgentAdapter finalization). Default off; enabled on the
+   * interactive agents. A `--no-analytics-report` CLI flag disables it per run.
+   */
+  sessionAnalyticsReport?: boolean;
+
   // === Metrics Configuration ===
   /**
    * Metrics collection configuration for this agent

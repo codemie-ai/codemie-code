@@ -109,6 +109,8 @@ export const CodexPluginMetadata: AgentMetadata = {
   npmPackage: '@openai/codex',
   cliCommand: process.env.CODEMIE_CODEX_BIN || 'codex',
 
+  sessionAnalyticsReport: true,
+
   // Version management configuration
   supportedVersion: CODEX_SUPPORTED_VERSION,       // Latest version tested with CodeMie backend
   minimumSupportedVersion: CODEX_MINIMUM_SUPPORTED_VERSION, // Minimum version required to run

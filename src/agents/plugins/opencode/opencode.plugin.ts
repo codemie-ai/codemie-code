@@ -20,6 +20,8 @@ export const OpenCodePluginMetadata: AgentMetadata = {
   description: 'OpenCode - open-source AI coding assistant',
   npmPackage: 'opencode-ai',  // Official npm package (npm i -g opencode-ai)
   cliCommand: process.env.CODEMIE_OPENCODE_BIN || 'opencode',
+
+  sessionAnalyticsReport: true,
   dataPaths: {
     home: '.opencode'
     // NOTE: Session storage is NOT in home - it's in XDG_DATA_HOME/opencode/storage/

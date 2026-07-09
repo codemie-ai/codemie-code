@@ -78,6 +78,7 @@ export class AgentCLI {
       .option('--task <prompt>', 'Execute a single task (agent-specific flag mapping)')
       .option('--reasoning-effort <level>', 'Reasoning/thinking effort: minimal|low|medium|high|xhigh|max')
       .option('--resume <session-id>', 'Resume an existing session by ID')
+      .option('--no-analytics-report', 'Disable the automatic per-session analytics report written on exit')
       .allowUnknownOption()
       .argument('[args...]', `Arguments to pass to ${this.adapter.displayName}`)
       .action(async (args, options) => {
@@ -301,6 +302,12 @@ export class AgentCLI {
       // Pass status flag to lifecycle hooks
       if (options.status) {
         providerEnv.CODEMIE_STATUS = '1';
+      }
+
+      // Disable per-session analytics report on exit (default enabled).
+      // Commander sets options.analyticsReport = false only when --no-analytics-report is passed.
+      if (options.analyticsReport === false) {
+        providerEnv.CODEMIE_SESSION_ANALYTICS_REPORT = '0';
       }
 
       // Serialize full profile config for proxy plugins (read once at CLI level)
@@ -527,7 +534,7 @@ export class AgentCLI {
   ): string[] {
     const agentArgs = [...args];
     // Config-only options (not passed to agent, handled by CodeMie CLI)
-    const configOnlyOptions = ['profile', 'provider', 'apiKey', 'baseUrl', 'timeout', 'model', 'silent', 'status', 'jwtToken', 'reasoningEffort'];
+    const configOnlyOptions = ['profile', 'provider', 'apiKey', 'baseUrl', 'timeout', 'model', 'silent', 'status', 'jwtToken', 'reasoningEffort', 'analyticsReport'];
 
     for (const [key, value] of Object.entries(options)) {
       // Skip config-only options (handled by CodeMie CLI layer)

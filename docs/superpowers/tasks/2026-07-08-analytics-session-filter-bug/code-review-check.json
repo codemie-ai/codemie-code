@@ -1,0 +1,37 @@
+{
+  "decision": "approve",
+  "rationale": "Fix-up diff resolves both blocking findings from code-review.final. CR-002: loadSessions() now tracks seenSessionIds and skips a sessionFile whose derived id was already loaded, closing the double-counting gap exactly as recommended; the new regression test (both <id>.json and completed_<id>.json present for the same id) passed after the fix (npm run test:unit -- src/cli/commands/analytics/__tests__/data-loader.test.ts: 9/9 passed). CR-001: 2 additional tests were added covering the fallback-miss (neither filename variant exists -> loadSessions returns []) and partial-rename (.json active, _metrics.jsonl already completed_-prefixed -> both resolved independently) cases, alongside the coexistence test that also verifies CR-002's fix. No new high-risk issue introduced by the fix-up diff (a Set-based dedup guard plus tests only) - no confirmation pass needed.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": "All 3 commits use allowed type/scope and subjects under 100 chars, per commitlint.config.cjs and .ai-run/guides/standards/git-workflow.md."
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": "ES module imports keep .js extensions, no `any`, explicit types on the new resolveSessionPath() signature; consistent with surrounding code and .ai-run/guides/standards/code-quality.md."
+    },
+    {
+      "kind": "security",
+      "status": "partial",
+      "notes": "resolveSessionPath() concatenates the CLI-supplied sessionId into a filesystem path with no validation, per .ai-run/guides/security/security-practices.md's path-validation practice. Pre-existing (the original single join() call had the same gap) and not introduced or worsened by this diff - tracked as a deferred, non-blocking observation, not a new finding."
+    }
+  ],
+  "findings": [],
+  "finding_status": [
+    {
+      "id": "CR-001",
+      "status": "resolved",
+      "notes": "3 tests added to data-loader.test.ts: fallback-miss (neither filename variant exists), both-variants-coexist (also the CR-002 regression test), and partial-rename (json/metrics resolved independently). All pass."
+    },
+    {
+      "id": "CR-002",
+      "status": "resolved",
+      "notes": "loadSessions() now dedupes via a seenSessionIds Set, skipping a sessionFile whose derived sessionId was already loaded. Regression test confirms exactly 1 session returned when both <id>.json and completed_<id>.json exist for the same id."
+    }
+  ]
+}

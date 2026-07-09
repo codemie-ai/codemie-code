@@ -1,0 +1,71 @@
+{
+  "task": "Fix two bugs in codemie analytics' --session <id> filter (sessionId never checked in matchesFilter/sessionMatchesFilter; loadSessions did not strip the completed_ filename prefix), plus an incidental unrelated typecheck fix in src/utils/auth.ts",
+  "generated": "2026-07-08T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 3,
+      "label": "M",
+      "affected": "MetricsDataLoader (analytics data-loader: matchesFilter, sessionMatchesFilter, loadSessions, resolveSessionPath), getAuthenticatedClient (shared auth utility)",
+      "layers": "Service, DB-Persistence"
+    },
+    "requirements_clarity": {
+      "score": 2,
+      "label": "S",
+      "status": "Clear",
+      "gaps": null
+    },
+    "technical_risk": {
+      "score": 4,
+      "label": "L",
+      "risk_factors": "Filename-resolution edge case (interrupted/non-atomic completed_ rename by hook.ts) risked double-counting a session across two filename variants; incidental fix touches authentication client construction in src/utils/auth.ts (jwt_token -> external_token)",
+      "mitigation": "Added seenSessionIds dedup guard plus regression tests covering both filename variants and the sessionId filter; both code-review.final findings (CR-001 missing coverage, CR-002 double-counting) resolved and verified in the code-review.check follow-up round"
+    },
+    "file_change_estimate": {
+      "score": 2,
+      "label": "S",
+      "modified_files": 2,
+      "modified_file_list": [
+        "src/cli/commands/analytics/data-loader.ts",
+        "src/utils/auth.ts"
+      ],
+      "new_files": 1,
+      "new_file_list": [
+        "src/cli/commands/analytics/__tests__/data-loader.test.ts"
+      ],
+      "affected_dirs": [
+        "src/cli",
+        "src/utils"
+      ]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 2,
+      "label": "S",
+      "layers_changed": [
+        "Service",
+        "DB-Persistence"
+      ],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 14,
+  "size": "S",
+  "band_range": "10-14",
+  "files_changed": 3,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "technical_risk", "reason": "Bug fix required careful reasoning about a non-atomic filename-rename edge case that could silently double-count sessions; caught only in code review (CR-002), plus an incidental touch to the shared authentication utility (src/utils/auth.ts)" },
+    { "dimension": "component_scope", "reason": "Core change is confined to a single component (MetricsDataLoader), but the diff also touches src/utils/auth.ts, a core shared utility, which is unrelated to the primary task" }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from M to L: change touches src/utils/auth.ts (authentication client construction)",
+    "Component Scope bumped from S to M: touches core shared utility src/utils/auth.ts"
+  ],
+  "split_recommendation": null
+}

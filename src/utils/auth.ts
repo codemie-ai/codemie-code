@@ -35,7 +35,7 @@ export async function getAuthenticatedClient(config: ProviderProfile): Promise<C
     }
     return new CodeMieClient({
       codemie_api_domain: config.baseUrl,
-      jwt_token: token,
+      external_token: token,
       verify_ssl: process.env.CODEMIE_INSECURE !== '1',
     });
   }
