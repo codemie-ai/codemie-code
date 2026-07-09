@@ -53,6 +53,34 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   }
 
   /**
+   * Writes a per-session analytics JSON report on session exit when the agent
+   * opts in (`metadata.sessionAnalyticsReport`) and the run did not disable it
+   * (`CODEMIE_SESSION_ANALYTICS_REPORT !== '0'`). Non-fatal: any failure is logged
+   * and swallowed so session finalization always completes.
+   */
+  private async maybeWriteSessionReport(env: NodeJS.ProcessEnv): Promise<void> {
+    if (!this.metadata.sessionAnalyticsReport) return;
+    if (env.CODEMIE_SESSION_ANALYTICS_REPORT === '0') return;
+    const sessionId = env.CODEMIE_SESSION_ID;
+    if (!sessionId) return;
+
+    try {
+      const { generateSessionReport } = await import('../../cli/commands/analytics/report/session-report.js');
+      const outputPath = join(process.cwd(), 'docs', 'codemie', 'analytics', `codemie-analytics-${sessionId}.json`);
+      const result = await generateSessionReport({ sessionId, outputPath });
+      if (result.written) {
+        logger.debug(`[${this.displayName}] Session analytics report written: ${result.written}`);
+      } else {
+        logger.debug(`[${this.displayName}] No analytics data for session ${sessionId}; report skipped`);
+      }
+    } catch (err) {
+      logger.warn(`[${this.displayName}] Session analytics report failed (non-fatal)`, {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
    * Get metrics configuration for this agent
    * Used by post-processor to filter/sanitize metrics
    */
@@ -806,6 +834,9 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
           if (code !== null) {
             await executeAfterRun(this, this.metadata.lifecycle, this.metadata.name, code, env);
           }
+
+          // Write the per-session analytics report (gated, non-fatal).
+          await this.maybeWriteSessionReport(env);
 
           // Show goodbye message with random easter egg (skip in silent mode for ACP)
           if (!this.metadata.silentMode) {
