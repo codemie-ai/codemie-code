@@ -42,27 +42,27 @@ describe('CodexPlugin version support', () => {
   it('declares the supported and minimum supported Codex CLI versions', async () => {
     const { CodexPluginMetadata } = await import('../codex.plugin.js');
 
-    expect(CodexPluginMetadata.supportedVersion).toBe('0.129.0');
-    expect(CodexPluginMetadata.minimumSupportedVersion).toBe('0.119.0');
+    expect(CodexPluginMetadata.supportedVersion).toBe('0.143.0');
+    expect(CodexPluginMetadata.minimumSupportedVersion).toBe('0.133.0');
   });
 
   it('extracts semver from codex --version output before compatibility comparison', async () => {
     const processes = await import('../../../../utils/processes.js');
     vi.mocked(processes.exec).mockResolvedValue({
       code: 0,
-      stdout: 'codex-cli 0.130.1\n',
+      stdout: 'codex-cli 0.144.1\n',
       stderr: '',
     });
 
     const { CodexPlugin } = await import('../codex.plugin.js');
     const plugin = new CodexPlugin();
 
-    await expect(plugin.getVersion()).resolves.toBe('0.130.1');
+    await expect(plugin.getVersion()).resolves.toBe('0.144.1');
 
     const compat = await plugin.checkVersionCompatibility();
-    expect(compat.installedVersion).toBe('0.130.1');
-    expect(compat.supportedVersion).toBe('0.129.0');
-    expect(compat.minimumSupportedVersion).toBe('0.119.0');
+    expect(compat.installedVersion).toBe('0.144.1');
+    expect(compat.supportedVersion).toBe('0.143.0');
+    expect(compat.minimumSupportedVersion).toBe('0.133.0');
     expect(compat.isNewer).toBe(true);
     expect(compat.compatible).toBe(false);
   });
@@ -82,7 +82,7 @@ describe('CodexPlugin version support', () => {
 
     expect(compat.installedVersion).toBe('0.118.9');
     expect(compat.isBelowMinimum).toBe(true);
-    expect(compat.minimumSupportedVersion).toBe('0.119.0');
+    expect(compat.minimumSupportedVersion).toBe('0.133.0');
   });
 
   it('installs the supported Codex CLI version when requested', async () => {
@@ -95,7 +95,7 @@ describe('CodexPlugin version support', () => {
     await plugin.installVersion('supported');
 
     expect(processes.installGlobal).toHaveBeenCalledWith('@openai/codex', {
-      version: '0.129.0',
+      version: '0.143.0',
     });
   });
   it('passes the direct CodeMie sync API URL to Codex lifecycle hook processing', async () => {
