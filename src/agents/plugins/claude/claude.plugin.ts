@@ -321,7 +321,7 @@ export class ClaudePlugin extends BaseAgentAdapter {
     const { exec } = await import('../../../utils/processes.js');
     const fullPath = resolveHomeDir('.local/bin/claude');
     try {
-      const result = await exec(fullPath, ['--version'], { shell: true });
+      const result = await exec(fullPath, ['--version']);
       return result.code === 0 ? result.stdout.trim() : null;
     } catch {
       return null;
