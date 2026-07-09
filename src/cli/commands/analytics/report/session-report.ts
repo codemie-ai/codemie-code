@@ -42,6 +42,10 @@ export async function generateSessionReport(options: SessionReportOptions): Prom
     [...index.values()].filter((c) => c.tokens.total > 0).map((c) => c.sessionId)
   );
   const analytics = AnalyticsAggregator.aggregate(rawSessions, true, keepSessionIds);
+  if (analytics.totalSessions === 0) {
+    return { written: null, sessions: 0 };
+  }
+
   const payload = buildPayload(analytics, index, summary, {
     rangeLabel: 'all',
     projectFilter: 'all',

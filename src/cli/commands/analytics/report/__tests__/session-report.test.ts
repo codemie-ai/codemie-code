@@ -49,4 +49,19 @@ describe('generateSessionReport', () => {
     expect(generateReportJsonMock).not.toHaveBeenCalled();
     expect(res).toEqual({ written: null, sessions: 0 });
   });
+
+  it('writes nothing when a non-empty session aggregates to zero analytics data', async () => {
+    loadMock.mockResolvedValue({ rawSessions: [{ sessionId: 's1' }] });
+    enrichCostsMock.mockResolvedValue({
+      index: new Map([['s1', { sessionId: 's1', tokens: { total: 0 } }]]),
+      summary: { totalCostUSD: 0, pricedSessions: 0, totalSessions: 0 },
+    });
+    aggregateMock.mockReturnValue({ totalSessions: 0, projects: [] });
+
+    const { generateSessionReport } = await import('../session-report.js');
+    const res = await generateSessionReport({ sessionId: 's1', outputPath: '/tmp/zero.json' });
+
+    expect(generateReportJsonMock).not.toHaveBeenCalled();
+    expect(res).toEqual({ written: null, sessions: 0 });
+  });
 });
