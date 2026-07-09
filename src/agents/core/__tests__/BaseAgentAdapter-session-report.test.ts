@@ -1,5 +1,6 @@
 // src/agents/core/__tests__/BaseAgentAdapter-session-report.test.ts
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { join } from 'path';
 
 const generateSessionReportMock = vi.fn();
 vi.mock('../../../cli/commands/analytics/report/session-report.js', () => ({
@@ -30,7 +31,7 @@ describe('BaseAgentAdapter.maybeWriteSessionReport', () => {
     expect(generateSessionReportMock).toHaveBeenCalledTimes(1);
     const arg = generateSessionReportMock.mock.calls[0][0];
     expect(arg.sessionId).toBe('s1');
-    expect(arg.outputPath).toContain('docs/codemie/analytics/codemie-analytics-s1.json');
+    expect(arg.outputPath).toContain(join('docs', 'codemie', 'analytics', 'codemie-analytics-s1.json'));
   });
 
   it('skips when metadata flag is not set', async () => {
