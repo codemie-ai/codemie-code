@@ -178,6 +178,16 @@ Default output path: `./codemie-analytics-YYYY-MM-DD.html` in the current direct
 
 ---
 
+## Automatic Per-Session Report on Exit
+
+When a `codemie-claude`, `codemie-codex`, or `codemie-opencode` session exits, CodeMie automatically writes a JSON analytics report for that session to `./docs/codemie/analytics/codemie-analytics-<session_id>.json`.
+
+- **Enabled by default** — it runs in-process as part of session finalization, not as a separate command.
+- **Disable per run** with `--no-analytics-report`, e.g. `codemie claude --no-analytics-report ...` (same for `codemie codex` and `codemie opencode`).
+- **Non-fatal** — a failure never blocks session exit, and the report is skipped when the session produced no analytics data.
+
+---
+
 ## Data Sources
 
 CodeMie merges two sources to give the most complete picture:
