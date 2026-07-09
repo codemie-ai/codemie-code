@@ -4,6 +4,7 @@ const getAgentMock = vi.fn();
 const restoreCliBinLinkMock = vi.fn();
 const spinnerSucceedMock = vi.fn();
 const spinnerFailMock = vi.fn();
+const spinnerWarnMock = vi.fn();
 
 vi.mock('../../../agents/registry.js', () => ({
   AgentRegistry: {
@@ -28,6 +29,7 @@ vi.mock('ora', () => ({
     start: vi.fn(() => ({
       succeed: spinnerSucceedMock,
       fail: spinnerFailMock,
+      warn: spinnerWarnMock,
     })),
   })),
 }));
@@ -107,6 +109,44 @@ describe('install command version selection', () => {
     expect(installVersion).toHaveBeenCalledWith('supported');
     // must show the version from installVersion(), not the stale '2.1.33' from getVersion()
     expect(spinnerSucceedMock).toHaveBeenCalledWith('Claude Code v2.1.34 installed successfully');
+  });
+
+  it('warns when detected version does not match requested version (stale PATH)', async () => {
+    // Simulates Windows: installVersion() returns the old PATH version, not the one just installed
+    const installVersion = vi.fn().mockResolvedValue('2.1.33');
+    const getVersion = vi.fn().mockResolvedValue('2.1.33');
+
+    getAgentMock.mockReturnValue({
+      name: 'claude',
+      displayName: 'Claude Code',
+      description: 'Claude Code - AI coding agent by Anthropic',
+      metadata: {},
+      isInstalled: vi.fn().mockResolvedValue(false),
+      install: vi.fn().mockResolvedValue(undefined),
+      installVersion,
+      checkVersionCompatibility: vi.fn().mockResolvedValue({
+        supportedVersion: '2.1.34',
+        installedVersion: null,
+        compatible: false,
+        isNewer: false,
+        hasUpdate: false,
+        isBelowMinimum: false,
+        minimumSupportedVersion: '2.1.199',
+      }),
+      getVersion,
+    });
+
+    const { createInstallCommand } = await import('../install.js');
+    const command = createInstallCommand();
+
+    await command.parseAsync(['node', 'codemie', 'claude', '2.1.34']);
+
+    expect(spinnerSucceedMock).not.toHaveBeenCalled();
+    expect(spinnerWarnMock).toHaveBeenCalledWith(
+      expect.stringContaining('v2.1.33') &&
+      expect.stringContaining('v2.1.34') &&
+      expect.stringContaining('terminal restart')
+    );
   });
 
   it('falls back to getVersion() when installVersion() returns null', async () => {

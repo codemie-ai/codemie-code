@@ -188,7 +188,24 @@ export function createInstallCommand(): Command {
             const displayVersion = installedVersion ?? await agent.getVersion();
             const installedVersionStr = displayVersion ? ` v${displayVersion}` : '';
 
-            spinner.succeed(`${agent.displayName}${installedVersionStr} installed successfully`);
+            // Sanity-check: if verification found a version that doesn't match what was requested,
+            // the installer ran but PATH still resolves the old binary (common on Windows after install).
+            // Report honestly instead of asserting the wrong version as success.
+            const requestedVersion = actualVersionToInstall;
+            const versionMismatch =
+              requestedVersion &&
+              displayVersion &&
+              displayVersion !== requestedVersion;
+
+            if (versionMismatch) {
+              spinner.warn(
+                `${agent.displayName} installation completed, but the detected version` +
+                ` (v${displayVersion}) does not match the requested version (v${requestedVersion}).` +
+                ` A terminal restart may be required.`,
+              );
+            } else {
+              spinner.succeed(`${agent.displayName}${installedVersionStr} installed successfully`);
+            }
 
             // Run additional installation steps (e.g., sounds)
             if (agent.additionalInstallation) {
