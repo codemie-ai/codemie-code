@@ -49,24 +49,44 @@ export async function setup(): Promise<void> {
     process.env.PATH = `${localBin}${pathSep}${process.env.PATH ?? ''}`;
   }
 
+  // Import supported version and plugin class from the just-built dist.
+  // CLAUDE_SUPPORTED_VERSION is the single source of truth; when a developer
+  // bumps it locally and runs tests, this block installs the correct version.
+  const { CLAUDE_SUPPORTED_VERSION, ClaudePlugin } = await import(
+    resolve(root, 'dist/agents/plugins/claude/claude.plugin.js')
+  ) as {
+    CLAUDE_SUPPORTED_VERSION: string;
+    ClaudePlugin: new () => { installVersion(v: string): Promise<void> };
+  };
+
+  let installedVersion: string | null = null;
   try {
-    execSync('claude --version', { stdio: 'pipe' });
-    console.log('[agent-integration] claude CLI found.\n');
+    const versionOutput = execSync('claude --version', { stdio: 'pipe' }).toString().trim();
+    const match = versionOutput.match(/^(\d+\.\d+\.\d+)/);
+    installedVersion = match ? match[1] : null;
   } catch {
-    console.log('[agent-integration] claude CLI not found — installing via codemie...');
-    try {
-      // Installer may exit non-zero on Windows when it warns that ~/.local/bin
-      // is not yet in the system PATH — installation itself succeeds.
-      execSync(`node ${resolve(root, 'bin/codemie.js')} install claude`, { cwd: root, stdio: 'inherit' });
-    } catch {
-      // Ignore exit code — verify the binary is actually present below.
+    // Binary not found — installedVersion stays null.
+  }
+
+  if (installedVersion === CLAUDE_SUPPORTED_VERSION) {
+    console.log(`[agent-integration] claude CLI ${CLAUDE_SUPPORTED_VERSION} already installed — skipping.\n`);
+  } else {
+    if (installedVersion) {
+      console.log(
+        `[agent-integration] claude CLI version mismatch (installed: ${installedVersion}, required: ${CLAUDE_SUPPORTED_VERSION}) — installing supported version...`,
+      );
+    } else {
+      console.log(
+        `[agent-integration] claude CLI not found — installing supported version ${CLAUDE_SUPPORTED_VERSION}...`,
+      );
     }
+    await new ClaudePlugin().installVersion('supported');
     // Re-add localBin in case the installer modified PATH during its run.
     if (!(process.env.PATH ?? '').includes(localBin)) {
       process.env.PATH = `${localBin}${pathSep}${process.env.PATH ?? ''}`;
     }
     execSync('claude --version', { stdio: 'pipe' }); // throws if install genuinely failed
-    console.log('[agent-integration] claude CLI installed.\n');
+    console.log(`[agent-integration] claude CLI ${CLAUDE_SUPPORTED_VERSION} installed.\n`);
   }
 
   // Link the local build to global PATH so `codemie hook` resolves when

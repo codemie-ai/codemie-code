@@ -34,7 +34,7 @@ let statuslineManagedThisSession = false;
  *
  * **UPDATE THIS WHEN BUMPING CLAUDE VERSION**
  */
-const CLAUDE_SUPPORTED_VERSION = '2.1.199';
+export const CLAUDE_SUPPORTED_VERSION = '2.1.204';
 
 /**
  * Minimum supported Claude Code version
