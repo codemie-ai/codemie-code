@@ -86,4 +86,24 @@ describe('DesktopTelemetryRuntime', () => {
     const [sessionArg] = mockSendSessionStart.mock.calls[0];
     expect(sessionArg).toMatchObject({ repository: 'codemie-ai/codemie-code' });
   });
+
+  it('forwards session.repository to MetricsSender.sendSessionEnd', async () => {
+    const mockSessionStore = {
+      findSessionByExternalId: vi.fn().mockResolvedValue(null),
+      saveSession: vi.fn().mockResolvedValue(undefined),
+      loadSession: vi.fn()
+    };
+
+    const runtime = new DesktopTelemetryRuntime(mockAdapter, config);
+    const session = await (runtime as any).ensureSession(discovered);
+
+    mockSessionStore.loadSession.mockResolvedValue({ ...session, status: 'active' });
+    (runtime as any).sessionStore.loadSession = mockSessionStore.loadSession;
+
+    await (runtime as any).finalizeSession(session.sessionId, 'test-reason');
+
+    expect(mockSendSessionEnd).toHaveBeenCalledOnce();
+    const [sessionArg] = mockSendSessionEnd.mock.calls[0];
+    expect(sessionArg).toMatchObject({ repository: 'codemie-ai/codemie-code' });
+  });
 });

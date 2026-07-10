@@ -58,14 +58,23 @@ function detectEngine() {
 const engine = detectEngine();
 
 if (!engine) {
-  console.log('No container engine found - skipping secrets detection');
-  console.log('Install Docker, Podman, or Apple Containers to enable local secrets scanning');
+  if (!process.env.CODEMIE_SKIP_SECRETS_SCAN) {
+    console.error('No container engine found — install Docker, Podman, or Apple Containers to enable local secrets scanning.');
+    console.error('To skip on this machine: set CODEMIE_SKIP_SECRETS_SCAN=1 in your shell environment.');
+    process.exit(1);
+  }
+  console.log('No container engine found — skipping secrets detection (CODEMIE_SKIP_SECRETS_SCAN=1)');
   process.exit(0);
 }
 
 const engineBin = resolveCommand(engine);
 if (!engineBin) {
-  console.log('Container engine binary not found — skipping secrets detection');
+  if (!process.env.CODEMIE_SKIP_SECRETS_SCAN) {
+    console.error('Container engine binary not found — install Docker, Podman, or Apple Containers to enable local secrets scanning.');
+    console.error('To skip on this machine: set CODEMIE_SKIP_SECRETS_SCAN=1 in your shell environment.');
+    process.exit(1);
+  }
+  console.log('Container engine binary not found — skipping secrets detection (CODEMIE_SKIP_SECRETS_SCAN=1)');
   process.exit(0);
 }
 // shell:true is used on Windows so paths with spaces must be quoted for the shell.
