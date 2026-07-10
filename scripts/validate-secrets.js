@@ -60,13 +60,13 @@ const engine = detectEngine();
 if (!engine) {
   console.log('No container engine found - skipping secrets detection');
   console.log('Install Docker, Podman, or Apple Containers to enable local secrets scanning');
-  process.exit(1);
+  process.exit(0);
 }
 
 const engineBin = resolveCommand(engine);
 if (!engineBin) {
   console.log('Container engine binary not found — skipping secrets detection');
-  process.exit(1);
+  process.exit(0);
 }
 // shell:true is used on Windows so paths with spaces must be quoted for the shell.
 // On Linux/Mac shell:false passes the path directly to execve — no quoting needed.
