@@ -4,6 +4,7 @@
  * @group unit
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { join } from 'path';
 
 vi.mock('fs/promises');
 vi.mock('fs');
@@ -24,6 +25,13 @@ vi.mock('@/utils/security.js', () => ({
 }));
 
 describe('statusline-installer', () => {
+  // Derived paths go through path.join in production, so compute expected values the same
+  // way to get the correct separator on each OS (backslashes on Windows).
+  const CLAUDE_HOME = '/home/testuser/claude';
+  const SCRIPT_PATH = join(CLAUDE_HOME, 'codemie-budget-status.js');
+  const LEGACY_SCRIPT_PATH = join(CLAUDE_HOME, 'codemie-statusline.mjs');
+  const SETTINGS_PATH = join(CLAUDE_HOME, 'settings.json');
+
   let fsp: typeof import('fs/promises');
   let fsMod: typeof import('fs');
 
@@ -51,9 +59,9 @@ describe('statusline-installer', () => {
       const result = await installStatusline();
 
       expect(result.alreadyConfigured).toBe(false);
-      expect(result.scriptPath).toBe('/home/testuser/claude/codemie-budget-status.js');
+      expect(result.scriptPath).toBe(SCRIPT_PATH);
 
-      const settingsWrite = vi.mocked(fsp.writeFile).mock.calls.find(([p]) => p === '/home/testuser/claude/settings.json');
+      const settingsWrite = vi.mocked(fsp.writeFile).mock.calls.find(([p]) => p === SETTINGS_PATH);
       expect(settingsWrite).toBeDefined();
       const written = JSON.parse(settingsWrite![1] as string);
       expect(written.statusLine.type).toBe('command');
@@ -84,7 +92,7 @@ describe('statusline-installer', () => {
       const { installStatusline } = await import('../statusline-installer.js');
       await installStatusline();
 
-      expect(fsp.mkdir).toHaveBeenCalledWith('/home/testuser/claude', { recursive: true });
+      expect(fsp.mkdir).toHaveBeenCalledWith(CLAUDE_HOME, { recursive: true });
     });
 
     it('throws ConfigurationError and does not overwrite malformed settings.json', async () => {
@@ -103,7 +111,7 @@ describe('statusline-installer', () => {
   describe('uninstallStatusline', () => {
     it('removes the script and the statusLine settings entry', async () => {
       vi.mocked(fsMod.existsSync).mockImplementation((p: any) =>
-        p === '/home/testuser/claude/codemie-budget-status.js' || p === '/home/testuser/claude/settings.json'
+        p === SCRIPT_PATH || p === SETTINGS_PATH
       );
       vi.mocked(fsp.rm).mockResolvedValue(undefined);
       vi.mocked(fsp.readFile).mockResolvedValueOnce(JSON.stringify({ statusLine: {}, theme: 'dark' }) as any);
@@ -112,7 +120,7 @@ describe('statusline-installer', () => {
       const { uninstallStatusline } = await import('../statusline-installer.js');
       await uninstallStatusline();
 
-      expect(fsp.rm).toHaveBeenCalledWith('/home/testuser/claude/codemie-budget-status.js');
+      expect(fsp.rm).toHaveBeenCalledWith(SCRIPT_PATH);
       const written = JSON.parse(vi.mocked(fsp.writeFile).mock.calls[0][1] as string);
       expect(written.statusLine).toBeUndefined();
       expect(written.theme).toBe('dark');
@@ -127,7 +135,7 @@ describe('statusline-installer', () => {
       const { uninstallStatusline } = await import('../statusline-installer.js');
       await uninstallStatusline();
 
-      expect(fsp.rm).toHaveBeenCalledWith('/home/testuser/claude/codemie-statusline.mjs');
+      expect(fsp.rm).toHaveBeenCalledWith(LEGACY_SCRIPT_PATH);
     });
 
     it('skips removal when neither script exists', async () => {
