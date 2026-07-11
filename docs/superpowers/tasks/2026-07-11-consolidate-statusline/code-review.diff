@@ -1,0 +1,1261 @@
+diff --git a/src/agents/plugins/claude/__tests__/claude.plugin.statusline.test.ts b/src/agents/plugins/claude/__tests__/claude.plugin.statusline.test.ts
+index aead6d6981..5fb8d67cfa 100644
+--- a/src/agents/plugins/claude/__tests__/claude.plugin.statusline.test.ts
++++ b/src/agents/plugins/claude/__tests__/claude.plugin.statusline.test.ts
+@@ -1,21 +1,24 @@
+ /**
+- * Tests for Claude Plugin statusline lifecycle hooks (--status flag)
++ * Tests for Claude Plugin statusline lifecycle hooks (--status flag).
++ *
++ * The --status flag is a thin alias for `installStatusline()` (the same function
++ * `codemie install statusline` uses) — it must not duplicate deploy/settings logic.
+  *
+  * @group unit
+  */
+ 
+ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+-import { join } from 'path';
+ import type { AgentConfig } from '../../../core/types.js';
+ 
+-// --- Module mocks (hoisted before imports) ---
+-
+ vi.mock('fs/promises');
+ vi.mock('fs');
+ 
++vi.mock('../statusline-installer.js', () => ({
++  installStatusline: vi.fn(),
++}));
++
+ vi.mock('../../../../utils/paths.js', () => ({
+   resolveHomeDir: vi.fn((dir: string) => `/home/testuser/${dir.replace(/^\./, '')}`),
+-  getDirname: vi.fn(() => '/fake/dist/plugins/claude'),
+   getCodemieHome: vi.fn(() => '/home/testuser/.codemie'),
+   getCodemiePath: vi.fn((...parts: string[]) => `/home/testuser/.codemie/${parts.join('/')}`),
+ }));
+@@ -37,8 +40,6 @@ vi.mock('../../../../utils/security.js', () => ({
+   sanitizeLogArgs: vi.fn((...args: unknown[]) => args),
+ }));
+ 
+-// ---
+-
+ type HookEnv = NodeJS.ProcessEnv;
+ type BeforeRunFn = (env: HookEnv, config: AgentConfig) => Promise<HookEnv>;
+ type AfterRunFn = (exitCode: number, env: HookEnv) => Promise<void>;
+@@ -46,29 +47,22 @@ type AfterRunFn = (exitCode: number, env: HookEnv) => Promise<void>;
+ describe('Claude Plugin – statusline lifecycle hooks', () => {
+   let beforeRun: BeforeRunFn;
+   let afterRun: AfterRunFn;
++  let installerMod: { installStatusline: ReturnType<typeof vi.fn> };
+   let fsp: typeof import('fs/promises');
+   let fsMod: typeof import('fs');
+   let loggerMod: { logger: Record<string, ReturnType<typeof vi.fn>> };
+ 
+   const mockConfig: AgentConfig = {};
+-  // CLAUDE_HOME is used directly from the resolveHomeDir mock (not passed through path.join),
+-  // so it keeps forward slashes on all OSes.
+-  const CLAUDE_HOME = '/home/testuser/claude';
+-  // Derived paths go through path.join in production, so compute them the same way
+-  // to get the correct separator on each OS (backslashes on Windows).
+-  const SCRIPT_DEST = join(CLAUDE_HOME, 'codemie-statusline.mjs');
+-  const SETTINGS_PATH = join(CLAUDE_HOME, 'settings.json');
+-  const SCRIPT_SRC = join('/fake/dist/plugins/claude', 'plugin', 'codemie-statusline.mjs');
+ 
+   beforeEach(async () => {
+     vi.resetModules(); // Reset module cache → resets statuslineManagedThisSession to false
+-    vi.resetAllMocks(); // Reset mock implementations and call counts
++    vi.resetAllMocks();
+ 
+-    // Re-import after reset to get fresh module instances
+     const mod = await import('../claude.plugin.js');
+     beforeRun = mod.ClaudePluginMetadata.lifecycle!.beforeRun!;
+     afterRun = mod.ClaudePluginMetadata.lifecycle!.afterRun!;
+ 
++    installerMod = (await import('../statusline-installer.js')) as any;
+     fsp = await import('fs/promises');
+     fsMod = await import('fs');
+     loggerMod = (await import('../../../../utils/logger.js')) as any;
+@@ -78,199 +72,88 @@ describe('Claude Plugin – statusline lifecycle hooks', () => {
+     vi.restoreAllMocks();
+   });
+ 
+-  // ---------------------------------------------------------------------------
+-  // beforeRun
+-  // ---------------------------------------------------------------------------
+-
+   describe('beforeRun', () => {
+-    it('should not touch files when CODEMIE_STATUS is not set', async () => {
++    it('should not call installStatusline when CODEMIE_STATUS is not set', async () => {
+       const env: HookEnv = { CODEMIE_PROFILE_NAME: 'default' };
+       const result = await beforeRun(env, mockConfig);
+ 
+       expect(result).toBe(env);
+-      expect(fsp.readFile).not.toHaveBeenCalled();
+-      expect(fsp.writeFile).not.toHaveBeenCalled();
++      expect(installerMod.installStatusline).not.toHaveBeenCalled();
+     });
+ 
+-    it('should deploy script and inject statusLine when CODEMIE_STATUS=1 and no settings.json', async () => {
+-      // Script source read → dummy content
+-      vi.mocked(fsp.readFile).mockResolvedValueOnce('#!/usr/bin/env node\n// statusline' as any);
+-      // claudeHome exists, settings.json does not
+-      vi.mocked(fsMod.existsSync)
+-        .mockReturnValueOnce(true)   // claudeHome exists
+-        .mockReturnValueOnce(false); // settings.json absent
+-      vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
+-      vi.mocked(fsp.chmod).mockResolvedValue(undefined);
++    it('should call installStatusline and mark the session managed when not already configured', async () => {
++      installerMod.installStatusline.mockResolvedValue({
++        scriptPath: '/home/testuser/claude/codemie-budget-status.js',
++        alreadyConfigured: false,
++      });
+ 
+       const env: HookEnv = { CODEMIE_STATUS: '1' };
+       const result = await beforeRun(env, mockConfig);
+ 
+       expect(result).toBe(env);
+-      // Script written to ~/.claude/codemie-statusline.mjs
+-      expect(fsp.writeFile).toHaveBeenCalledWith(SCRIPT_DEST, expect.any(String), 'utf-8');
+-      // settings.json written with statusLine
+-      const settingsWriteCall = vi.mocked(fsp.writeFile).mock.calls.find(
+-        ([p]) => p === SETTINGS_PATH
+-      );
+-      expect(settingsWriteCall).toBeDefined();
+-      const written = JSON.parse(settingsWriteCall![1] as string);
+-      expect(written.statusLine).toBeDefined();
+-      expect(written.statusLine.type).toBe('command');
+-    });
+-
+-    it('should read the script from the compiled plugin directory', async () => {
+-      vi.mocked(fsp.readFile).mockResolvedValueOnce('// content' as any);
+-      vi.mocked(fsMod.existsSync).mockReturnValueOnce(true).mockReturnValueOnce(false);
+-      vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
+-      vi.mocked(fsp.chmod).mockResolvedValue(undefined);
+-
+-      await beforeRun({ CODEMIE_STATUS: '1' }, mockConfig);
+-
+-      expect(fsp.readFile).toHaveBeenCalledWith(SCRIPT_SRC, 'utf-8');
+-    });
++      expect(installerMod.installStatusline).toHaveBeenCalledTimes(1);
+ 
+-    it('should quote the script path in the command to handle spaces in home dir', async () => {
+-      vi.mocked(fsp.readFile).mockResolvedValueOnce('// content' as any);
+-      vi.mocked(fsMod.existsSync).mockReturnValueOnce(true).mockReturnValueOnce(false);
++      // Session-managed → afterRun must clean up settings.json.
++      vi.mocked(fsMod.existsSync).mockReturnValue(true);
++      vi.mocked(fsp.readFile).mockResolvedValueOnce(
++        JSON.stringify({ statusLine: { type: 'command', command: 'node "x"' }, theme: 'dark' }) as any
++      );
+       vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
+-      vi.mocked(fsp.chmod).mockResolvedValue(undefined);
+ 
+-      await beforeRun({ CODEMIE_STATUS: '1' }, mockConfig);
++      await afterRun(0, {});
+ 
+-      const settingsWriteCall = vi.mocked(fsp.writeFile).mock.calls.find(
+-        ([p]) => p === SETTINGS_PATH
+-      );
+-      const written = JSON.parse(settingsWriteCall![1] as string);
+-      // Command must wrap the path in double quotes: node "/path/to/script.mjs"
+-      expect(written.statusLine.command).toMatch(/^node ".*"$/);
+-      expect(written.statusLine.command).toContain(SCRIPT_DEST);
++      expect(fsp.writeFile).toHaveBeenCalledTimes(1);
++      const written = JSON.parse(vi.mocked(fsp.writeFile).mock.calls[0][1] as string);
++      expect(written.statusLine).toBeUndefined();
++      expect(written.theme).toBe('dark');
+     });
+ 
+-    it('should not re-inject statusLine if it already exists in settings.json', async () => {
+-      const existingSettings = { statusLine: { type: 'command', command: 'node "/existing/script.mjs"' }, theme: 'dark' };
+-      vi.mocked(fsp.readFile)
+-        .mockResolvedValueOnce('// content' as any)          // script source
+-        .mockResolvedValueOnce(JSON.stringify(existingSettings) as any); // settings.json
+-      vi.mocked(fsMod.existsSync).mockReturnValue(true); // both paths exist
+-      vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
+-      vi.mocked(fsp.chmod).mockResolvedValue(undefined);
++    it('should NOT mark the session managed when a persistent install already existed', async () => {
++      installerMod.installStatusline.mockResolvedValue({
++        scriptPath: '/home/testuser/claude/codemie-budget-status.js',
++        alreadyConfigured: true,
++      });
+ 
+       await beforeRun({ CODEMIE_STATUS: '1' }, mockConfig);
++      await afterRun(0, {}); // must be a no-op — persistent `codemie install statusline` config must survive
+ 
+-      // writeFile called once for the script, NOT for settings.json
+-      const settingsWriteCall = vi.mocked(fsp.writeFile).mock.calls.find(
+-        ([p]) => p === SETTINGS_PATH
+-      );
+-      expect(settingsWriteCall).toBeUndefined();
++      expect(fsp.readFile).not.toHaveBeenCalled();
++      expect(fsp.writeFile).not.toHaveBeenCalled();
+     });
+ 
+-    it('should return env early and not overwrite settings.json when it contains malformed JSON', async () => {
+-      vi.mocked(fsp.readFile)
+-        .mockResolvedValueOnce('// content' as any) // script source
+-        .mockResolvedValueOnce('{ invalid: json' as any); // corrupt settings.json
+-      vi.mocked(fsMod.existsSync).mockReturnValue(true); // both paths exist
+-      vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
+-      vi.mocked(fsp.chmod).mockResolvedValue(undefined);
++    it('should log a warning and not throw when installStatusline fails', async () => {
++      installerMod.installStatusline.mockRejectedValue(new Error('disk full'));
+ 
+       const env: HookEnv = { CODEMIE_STATUS: '1' };
+       const result = await beforeRun(env, mockConfig);
+ 
+       expect(result).toBe(env);
+-      // settings.json must NOT be written
+-      const settingsWriteCall = vi.mocked(fsp.writeFile).mock.calls.find(
+-        ([p]) => p === SETTINGS_PATH
+-      );
+-      expect(settingsWriteCall).toBeUndefined();
+-      // Warning must be logged
+       expect(loggerMod.logger.warn).toHaveBeenCalledWith(
+-        expect.stringContaining('Could not parse settings.json'),
++        expect.stringContaining('Failed to configure statusline'),
+         expect.anything(),
+       );
+     });
+-
+-    it('should create ~/.claude directory when it does not exist', async () => {
+-      vi.mocked(fsp.readFile).mockResolvedValueOnce('// content' as any);
+-      vi.mocked(fsMod.existsSync)
+-        .mockReturnValueOnce(false)  // claudeHome does NOT exist
+-        .mockReturnValueOnce(false); // settings.json absent
+-      vi.mocked(fsp.mkdir).mockResolvedValue(undefined);
+-      vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
+-      vi.mocked(fsp.chmod).mockResolvedValue(undefined);
+-
+-      await beforeRun({ CODEMIE_STATUS: '1' }, mockConfig);
+-
+-      expect(fsp.mkdir).toHaveBeenCalledWith(CLAUDE_HOME, { recursive: true });
+-    });
+-
+-    it('should not set CODEMIE_STATUS_MANAGED env var (uses module-level flag instead)', async () => {
+-      vi.mocked(fsp.readFile).mockResolvedValueOnce('// content' as any);
+-      vi.mocked(fsMod.existsSync).mockReturnValueOnce(true).mockReturnValueOnce(false);
+-      vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
+-      vi.mocked(fsp.chmod).mockResolvedValue(undefined);
+-
+-      const env: HookEnv = { CODEMIE_STATUS: '1' };
+-      await beforeRun(env, mockConfig);
+-
+-      // The env object must not contain any managed/internal tracking keys
+-      expect(Object.keys(env)).not.toContain('CODEMIE_STATUS_MANAGED');
+-      expect(Object.keys(env)).not.toContain('CODEMIE_STATUSLINE_MANAGED');
+-    });
+   });
+ 
+-  // ---------------------------------------------------------------------------
+-  // afterRun
+-  // ---------------------------------------------------------------------------
+-
+   describe('afterRun', () => {
+     it('should not touch files when statusline was not managed in this session', async () => {
+-      // Do NOT call beforeRun → statuslineManagedThisSession stays false
+       await afterRun(0, {});
+ 
+       expect(fsp.readFile).not.toHaveBeenCalled();
+       expect(fsp.writeFile).not.toHaveBeenCalled();
+     });
+ 
+-    it('should remove statusLine from settings.json after a managed session', async () => {
+-      // --- Set up the flag via beforeRun ---
+-      vi.mocked(fsp.readFile).mockResolvedValueOnce('// script' as any);
+-      vi.mocked(fsMod.existsSync).mockReturnValueOnce(true).mockReturnValueOnce(false);
+-      vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
+-      vi.mocked(fsp.chmod).mockResolvedValue(undefined);
+-      await beforeRun({ CODEMIE_STATUS: '1' }, mockConfig);
+-      vi.resetAllMocks();
+-
+-      // --- afterRun ---
+-      const existingSettings = { statusLine: { type: 'command', command: 'node "/x/y.mjs"' }, theme: 'dark' };
+-      vi.mocked(fsMod.existsSync).mockReturnValue(true);
+-      vi.mocked(fsp.readFile).mockResolvedValueOnce(JSON.stringify(existingSettings) as any);
+-      vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
+-
+-      await afterRun(0, {});
+-
+-      expect(fsp.writeFile).toHaveBeenCalledTimes(1);
+-      const written = JSON.parse(vi.mocked(fsp.writeFile).mock.calls[0][1] as string);
+-      expect(written.statusLine).toBeUndefined();
+-      // Other settings are preserved
+-      expect(written.theme).toBe('dark');
+-    });
+-
+     it('should reset the module-level flag so a second afterRun call is a no-op', async () => {
+-      // Set the flag via beforeRun
+-      vi.mocked(fsp.readFile).mockResolvedValueOnce('// script' as any);
+-      vi.mocked(fsMod.existsSync).mockReturnValueOnce(true).mockReturnValueOnce(false);
+-      vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
+-      vi.mocked(fsp.chmod).mockResolvedValue(undefined);
++      installerMod.installStatusline.mockResolvedValue({ scriptPath: '/x/y.js', alreadyConfigured: false });
+       await beforeRun({ CODEMIE_STATUS: '1' }, mockConfig);
+       vi.resetAllMocks();
+ 
+-      // First afterRun – performs cleanup
+       vi.mocked(fsMod.existsSync).mockReturnValue(true);
+       vi.mocked(fsp.readFile).mockResolvedValueOnce(JSON.stringify({ statusLine: {} }) as any);
+       vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
+       await afterRun(0, {});
+       vi.resetAllMocks();
+ 
+-      // Second afterRun – must be a no-op (flag already reset)
+       await afterRun(0, {});
+ 
+       expect(fsp.readFile).not.toHaveBeenCalled();
+@@ -278,15 +161,10 @@ describe('Claude Plugin – statusline lifecycle hooks', () => {
+     });
+ 
+     it('should log a sanitized warning when settings cleanup fails', async () => {
+-      // Set the flag via beforeRun
+-      vi.mocked(fsp.readFile).mockResolvedValueOnce('// script' as any);
+-      vi.mocked(fsMod.existsSync).mockReturnValueOnce(true).mockReturnValueOnce(false);
+-      vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
+-      vi.mocked(fsp.chmod).mockResolvedValue(undefined);
++      installerMod.installStatusline.mockResolvedValue({ scriptPath: '/x/y.js', alreadyConfigured: false });
+       await beforeRun({ CODEMIE_STATUS: '1' }, mockConfig);
+       vi.resetAllMocks();
+ 
+-      // afterRun encounters malformed settings.json
+       vi.mocked(fsMod.existsSync).mockReturnValue(true);
+       vi.mocked(fsp.readFile).mockResolvedValueOnce('{ bad json' as any);
+ 
+@@ -299,15 +177,10 @@ describe('Claude Plugin – statusline lifecycle hooks', () => {
+     });
+ 
+     it('should skip cleanup when settings.json does not exist', async () => {
+-      // Set the flag via beforeRun
+-      vi.mocked(fsp.readFile).mockResolvedValueOnce('// script' as any);
+-      vi.mocked(fsMod.existsSync).mockReturnValueOnce(true).mockReturnValueOnce(false);
+-      vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
+-      vi.mocked(fsp.chmod).mockResolvedValue(undefined);
++      installerMod.installStatusline.mockResolvedValue({ scriptPath: '/x/y.js', alreadyConfigured: false });
+       await beforeRun({ CODEMIE_STATUS: '1' }, mockConfig);
+       vi.resetAllMocks();
+ 
+-      // settings.json does not exist at cleanup time
+       vi.mocked(fsMod.existsSync).mockReturnValue(false);
+ 
+       await afterRun(0, {});
+diff --git a/src/agents/plugins/claude/__tests__/statusline-installer.test.ts b/src/agents/plugins/claude/__tests__/statusline-installer.test.ts
+new file mode 100644
+index 0000000000..425f8157e2
+--- /dev/null
++++ b/src/agents/plugins/claude/__tests__/statusline-installer.test.ts
+@@ -0,0 +1,156 @@
++/**
++ * Tests for the statusline installer (`codemie install statusline` / `codemie uninstall statusline`).
++ *
++ * @group unit
++ */
++import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
++
++vi.mock('fs/promises');
++vi.mock('fs');
++
++// statusline-installer.ts imports these via the `@/` alias, so mock that exact
++// specifier (not a relative path) to guarantee the resolver targets the same module.
++vi.mock('@/utils/paths.js', () => ({
++  resolveHomeDir: vi.fn((dir: string) => `/home/testuser/${dir.replace(/^\./, '')}`),
++  getDirname: vi.fn(() => '/fake/dist/plugins/claude'),
++}));
++
++vi.mock('@/utils/logger.js', () => ({
++  logger: { debug: vi.fn(), warn: vi.fn(), info: vi.fn(), error: vi.fn() },
++}));
++
++vi.mock('@/utils/security.js', () => ({
++  sanitizeLogArgs: vi.fn((...args: unknown[]) => args),
++}));
++
++describe('statusline-installer', () => {
++  let fsp: typeof import('fs/promises');
++  let fsMod: typeof import('fs');
++
++  beforeEach(async () => {
++    vi.resetModules();
++    vi.resetAllMocks();
++    fsp = await import('fs/promises');
++    fsMod = await import('fs');
++  });
++
++  afterEach(() => {
++    vi.restoreAllMocks();
++  });
++
++  describe('installStatusline', () => {
++    it('deploys the script and reports alreadyConfigured=false when settings.json has no statusLine yet', async () => {
++      vi.mocked(fsp.readFile)
++        .mockResolvedValueOnce('#!/usr/bin/env node\n// statusline' as any) // script source
++        .mockResolvedValueOnce(JSON.stringify({ theme: 'dark' }) as any);   // settings.json
++      vi.mocked(fsMod.existsSync).mockReturnValue(true);
++      vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
++      vi.mocked(fsp.chmod).mockResolvedValue(undefined);
++
++      const { installStatusline } = await import('../statusline-installer.js');
++      const result = await installStatusline();
++
++      expect(result.alreadyConfigured).toBe(false);
++      expect(result.scriptPath).toBe('/home/testuser/claude/codemie-budget-status.js');
++
++      const settingsWrite = vi.mocked(fsp.writeFile).mock.calls.find(([p]) => p === '/home/testuser/claude/settings.json');
++      expect(settingsWrite).toBeDefined();
++      const written = JSON.parse(settingsWrite![1] as string);
++      expect(written.statusLine.type).toBe('command');
++      expect(written.statusLine.refreshInterval).toBe(60);
++    });
++
++    it('reports alreadyConfigured=true (and still refreshes settings) when statusLine already exists', async () => {
++      vi.mocked(fsp.readFile)
++        .mockResolvedValueOnce('// script' as any)
++        .mockResolvedValueOnce(JSON.stringify({ statusLine: { type: 'command', command: 'node "/old.js"' } }) as any);
++      vi.mocked(fsMod.existsSync).mockReturnValue(true);
++      vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
++      vi.mocked(fsp.chmod).mockResolvedValue(undefined);
++
++      const { installStatusline } = await import('../statusline-installer.js');
++      const result = await installStatusline();
++
++      expect(result.alreadyConfigured).toBe(true);
++    });
++
++    it('creates ~/.claude when it does not exist', async () => {
++      vi.mocked(fsp.readFile).mockResolvedValueOnce('// script' as any);
++      vi.mocked(fsMod.existsSync).mockReturnValueOnce(false).mockReturnValueOnce(false);
++      vi.mocked(fsp.mkdir).mockResolvedValue(undefined);
++      vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
++      vi.mocked(fsp.chmod).mockResolvedValue(undefined);
++
++      const { installStatusline } = await import('../statusline-installer.js');
++      await installStatusline();
++
++      expect(fsp.mkdir).toHaveBeenCalledWith('/home/testuser/claude', { recursive: true });
++    });
++
++    it('throws ConfigurationError and does not overwrite malformed settings.json', async () => {
++      vi.mocked(fsp.readFile)
++        .mockResolvedValueOnce('// script' as any)
++        .mockResolvedValueOnce('{ bad json' as any);
++      vi.mocked(fsMod.existsSync).mockReturnValue(true);
++      vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
++      vi.mocked(fsp.chmod).mockResolvedValue(undefined);
++
++      const { installStatusline } = await import('../statusline-installer.js');
++      await expect(installStatusline()).rejects.toThrow('Could not parse ~/.claude/settings.json');
++    });
++  });
++
++  describe('uninstallStatusline', () => {
++    it('removes the script and the statusLine settings entry', async () => {
++      vi.mocked(fsMod.existsSync).mockImplementation((p: any) =>
++        p === '/home/testuser/claude/codemie-budget-status.js' || p === '/home/testuser/claude/settings.json'
++      );
++      vi.mocked(fsp.rm).mockResolvedValue(undefined);
++      vi.mocked(fsp.readFile).mockResolvedValueOnce(JSON.stringify({ statusLine: {}, theme: 'dark' }) as any);
++      vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
++
++      const { uninstallStatusline } = await import('../statusline-installer.js');
++      await uninstallStatusline();
++
++      expect(fsp.rm).toHaveBeenCalledWith('/home/testuser/claude/codemie-budget-status.js');
++      const written = JSON.parse(vi.mocked(fsp.writeFile).mock.calls[0][1] as string);
++      expect(written.statusLine).toBeUndefined();
++      expect(written.theme).toBe('dark');
++    });
++
++    it('also removes the legacy codemie-statusline.mjs artifact if present', async () => {
++      vi.mocked(fsMod.existsSync).mockReturnValue(true);
++      vi.mocked(fsp.rm).mockResolvedValue(undefined);
++      vi.mocked(fsp.readFile).mockResolvedValueOnce(JSON.stringify({}) as any);
++      vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
++
++      const { uninstallStatusline } = await import('../statusline-installer.js');
++      await uninstallStatusline();
++
++      expect(fsp.rm).toHaveBeenCalledWith('/home/testuser/claude/codemie-statusline.mjs');
++    });
++
++    it('skips removal when neither script exists', async () => {
++      vi.mocked(fsMod.existsSync).mockReturnValue(false);
++
++      const { uninstallStatusline } = await import('../statusline-installer.js');
++      await uninstallStatusline();
++
++      expect(fsp.rm).not.toHaveBeenCalled();
++    });
++  });
++
++  describe('isStatuslineInstalled', () => {
++    it('returns true when the script file exists', async () => {
++      vi.mocked(fsMod.existsSync).mockReturnValue(true);
++      const { isStatuslineInstalled } = await import('../statusline-installer.js');
++      expect(isStatuslineInstalled()).toBe(true);
++    });
++
++    it('returns false when the script file does not exist', async () => {
++      vi.mocked(fsMod.existsSync).mockReturnValue(false);
++      const { isStatuslineInstalled } = await import('../statusline-installer.js');
++      expect(isStatuslineInstalled()).toBe(false);
++    });
++  });
++});
+diff --git a/src/agents/plugins/claude/claude.plugin.ts b/src/agents/plugins/claude/claude.plugin.ts
+index c700aed35e..d62011385d 100644
+--- a/src/agents/plugins/claude/claude.plugin.ts
++++ b/src/agents/plugins/claude/claude.plugin.ts
+@@ -18,7 +18,7 @@ import {
+ import { logger } from '../../../utils/logger.js';
+ import { sanitizeLogArgs } from '../../../utils/security.js';
+ import chalk from 'chalk';
+-import { resolveHomeDir, getDirname } from '../../../utils/paths.js';
++import { resolveHomeDir } from '../../../utils/paths.js';
+ import {
+   detectInstallationMethod,
+   type InstallationMethod,
+@@ -200,67 +200,24 @@ export const ClaudePluginMetadata: AgentMetadata = {
+         env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = String(autocompactPct);
+       }
+ 
+-      // Statusline setup: when --status flag is passed, configure Claude Code
+-      // status bar with a multi-line display showing model, context, git, cost
++      // Statusline setup: when --status is passed, ensure the CodeMie statusline is
++      // installed — the same installer `codemie install statusline` uses, so there is
++      // exactly one statusline implementation instead of a separate duplicated one here.
+       // https://code.claude.com/docs/en/statusline
+       if (env.CODEMIE_STATUS === '1') {
+-        const { writeFile, readFile, mkdir, chmod } = await import('fs/promises');
+-        const { existsSync } = await import('fs');
+-        const { join } = await import('path');
+-
+-        const claudeHome = resolveHomeDir('.claude');
+-        const scriptPath = join(claudeHome, 'codemie-statusline.mjs');
+-        const settingsPath = join(claudeHome, 'settings.json');
+-
+-        // Read the statusline script from the compiled output directory
+-        const scriptContent = await readFile(
+-          join(getDirname(import.meta.url), 'plugin/codemie-statusline.mjs'),
+-          'utf-8'
+-        );
+-
+-        // Ensure ~/.claude directory exists
+-        if (!existsSync(claudeHome)) {
+-          await mkdir(claudeHome, { recursive: true });
+-        }
+-
+-        // Write script (always update to latest version)
+-        await writeFile(scriptPath, scriptContent, 'utf-8');
+-
+-        // Make script executable on Unix systems
+-        if (process.platform !== 'win32') {
+-          await chmod(scriptPath, 0o755);
+-        }
+-
+-        // Inject statusLine into ~/.claude/settings.json if not already configured
+-        let settings: Record<string, unknown> = {};
+-        if (existsSync(settingsPath)) {
+-          try {
+-            const raw = await readFile(settingsPath, 'utf-8');
+-            settings = JSON.parse(raw) as Record<string, unknown>;
+-          } catch (parseError) {
+-            // Abort injection to prevent overwriting potentially valid settings
+-            // that are temporarily unreadable (e.g., concurrent write, partial flush)
+-            logger.warn(
+-              '[Claude] Could not parse settings.json, skipping statusline injection to avoid data loss',
+-              ...sanitizeLogArgs({
+-                settingsPath,
+-                error: parseError instanceof Error ? parseError.message : String(parseError),
+-              })
+-            );
+-            return env;
+-          }
+-        }
+-
+-        if (!settings.statusLine) {
+-          settings.statusLine = {
+-            type: 'command',
+-            // Quote the path to handle spaces in home directory (e.g. /Users/John Doe/)
+-            command: `node "${scriptPath}"`,
+-          };
+-          await writeFile(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+-          // Use module-level flag (not env var) to avoid leaking into subprocess env
+-          statuslineManagedThisSession = true;
+-          logger.debug('[Claude] Statusline configured', { scriptPath });
++        try {
++          const { installStatusline } = await import('./statusline-installer.js');
++          const { alreadyConfigured } = await installStatusline();
++          // Only clean up on afterRun if THIS session enabled it — a persistent
++          // `codemie install statusline` setup must survive after the session ends.
++          statuslineManagedThisSession = !alreadyConfigured;
++        } catch (error) {
++          logger.warn(
++            '[Claude] Failed to configure statusline via --status flag',
++            ...sanitizeLogArgs({
++              error: error instanceof Error ? error.message : String(error),
++            })
++          );
+         }
+       }
+ 
+diff --git a/src/agents/plugins/claude/plugin/__tests__/statusline.test.ts b/src/agents/plugins/claude/plugin/__tests__/statusline.test.ts
+new file mode 100644
+index 0000000000..6017e9449d
+--- /dev/null
++++ b/src/agents/plugins/claude/plugin/__tests__/statusline.test.ts
+@@ -0,0 +1,197 @@
++import { describe, it, expect, vi } from 'vitest';
++import {
++  matchBudgetRow,
++  formatBudgetSegment,
++  extractBasicInfo,
++  formatDuration,
++  fmt,
++  buildStatusLine,
++  resolveBudget,
++} from '../statusline.mjs';
++
++describe('matchBudgetRow', () => {
++  const rows = [
++    { project_name: 'nikita_levyankov@epam.com (cli)', current_spending: 500.26, total: 100.05, budget_reset_at: '2026-07-13T00:00:18.663000Z' },
++    { project_name: 'nikita_levyankov@epam.com', current_spending: 6.05, total: 5.04, budget_reset_at: '2026-07-17T09:30:34.278000Z' },
++    { project_name: 'nikita_levyankov@epam.com (premium)', current_spending: 24.93, total: 83.11, budget_reset_at: '2026-07-18T16:55:53.270000Z' },
++  ];
++
++  it('matches only the "(cli)" suffixed row for the given email', () => {
++    const row = matchBudgetRow(rows, 'nikita_levyankov@epam.com');
++    expect(row).toEqual(rows[0]);
++  });
++
++  it('returns null when no row matches the email', () => {
++    expect(matchBudgetRow(rows, 'someone-else@epam.com')).toBeNull();
++  });
++
++  it('returns null when rows is not an array', () => {
++    expect(matchBudgetRow(undefined, 'x@y.com')).toBeNull();
++    expect(matchBudgetRow(null, 'x@y.com')).toBeNull();
++  });
++
++  it('returns null when userEmail is falsy', () => {
++    expect(matchBudgetRow(rows, '')).toBeNull();
++    expect(matchBudgetRow(rows, undefined)).toBeNull();
++  });
++});
++
++describe('formatBudgetSegment', () => {
++  it('formats current spend, percentage, and reset date — never budget_limit', () => {
++    const row = { current_spending: 12.34, budget_limit: 999, total: 41, budget_reset_at: '2026-07-15T00:00:00.000Z' };
++    const result = formatBudgetSegment(row);
++    expect(result.text).toContain('$12.34');
++    expect(result.text).toContain('41%');
++    expect(result.text).not.toContain('999');
++    expect(result.pct).toBe(41);
++  });
++
++  it('returns null for a null row', () => {
++    expect(formatBudgetSegment(null)).toBeNull();
++  });
++});
++
++describe('extractBasicInfo', () => {
++  it('extracts model, project, context, cost, and duration from a full Claude Code payload', () => {
++    const ctx = {
++      workspace: { current_dir: '/Users/me/repos/my-project' },
++      model: { display_name: 'Claude Sonnet 5' },
++      context_window: { used_percentage: 42, total_input_tokens: 12345, total_output_tokens: 678 },
++      cost: { total_cost_usd: 1.2345, total_duration_ms: 125000 },
++    };
++    const info = extractBasicInfo(ctx);
++    expect(info.projectName).toBe('my-project');
++    expect(info.model).toBe('Claude Sonnet 5');
++    expect(info.ctxPct).toBe(42);
++    expect(info.tokIn).toBe(12345);
++    expect(info.tokOut).toBe(678);
++    expect(info.cost).toBe(1.2345);
++    expect(info.durationMs).toBe(125000);
++  });
++
++  it('returns safe defaults for an empty/malformed payload', () => {
++    const info = extractBasicInfo({});
++    expect(info.projectName).toBe('');
++    expect(info.model).toBe('');
++    expect(info.ctxPct).toBeNull();
++    expect(info.cost).toBeNull();
++    expect(info.durationMs).toBeNull();
++  });
++});
++
++describe('formatDuration', () => {
++  it('formats milliseconds as "Xm Ys"', () => {
++    expect(formatDuration(125000)).toBe('2m 5s');
++  });
++
++  it('returns null for null/undefined input', () => {
++    expect(formatDuration(null)).toBeNull();
++    expect(formatDuration(undefined)).toBeNull();
++  });
++});
++
++describe('fmt', () => {
++  it('formats large numbers with k/M suffixes', () => {
++    expect(fmt(500)).toBe('500');
++    expect(fmt(1500)).toBe('1.5k');
++    expect(fmt(2_500_000)).toBe('2.5M');
++  });
++});
++
++describe('buildStatusLine', () => {
++  const basic = {
++    projectName: 'my-project', branch: 'main', model: 'Claude Sonnet 5',
++    ctxPct: 42, tokIn: 1000, tokOut: 200, cost: 1.5, durationMs: 65000,
++  };
++
++  it('always renders basic info (including session cost and duration) with no budget/profile', () => {
++    const line = buildStatusLine({ ...basic, budget: null, budgetError: null });
++    expect(line).not.toContain('⚠');
++    expect(line).toContain('$1.5000');
++    expect(line).toContain('1m 5s');
++    expect(line).toContain('[my-project]');
++    expect(line).toContain('(main)');
++    expect(line).toContain('[Claude Sonnet 5]');
++  });
++
++  it('shows a minimal warning indicator (not blocking basic info) when the budget fetch fails', () => {
++    const line = buildStatusLine({ ...basic, budget: null, budgetError: 'reauthenticate' });
++    expect(line).toContain('⚠ reauthenticate');
++    expect(line).toContain('$1.5000');
++    expect(line).toContain('[my-project]');
++  });
++
++  it('shows the budget segment (and no warning) when budget resolves successfully', () => {
++    const line = buildStatusLine({ ...basic, budget: { text: '$12.34 (41%) resets 7/15/2026', pct: 41 }, budgetError: null });
++    expect(line).toContain('$12.34 (41%)');
++    expect(line).not.toContain('⚠');
++  });
++});
++
++describe('resolveBudget', () => {
++  it('skips silently (no error) when there is no CodeMie config at all', async () => {
++    const readFile = vi.fn().mockRejectedValue(new Error('ENOENT'));
++    const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl: vi.fn(), getAuthHeadersImpl: vi.fn() });
++    expect(result).toEqual({ budget: null, budgetError: null });
++  });
++
++  it('skips silently when the profile is missing codeMieUrl/baseUrl/userEmail', async () => {
++    const readFile = vi.fn()
++      .mockRejectedValueOnce(new Error('no cache'))
++      .mockResolvedValueOnce(JSON.stringify({ activeProfile: 'default', profiles: { default: {} } }));
++    const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl: vi.fn(), getAuthHeadersImpl: vi.fn() });
++    expect(result).toEqual({ budget: null, budgetError: null });
++  });
++
++  it('returns a "reauthenticate" error when no auth headers are available', async () => {
++    const readFile = vi.fn()
++      .mockRejectedValueOnce(new Error('no cache'))
++      .mockResolvedValueOnce(JSON.stringify({
++        activeProfile: 'default',
++        profiles: { default: { codeMieUrl: 'https://x', baseUrl: 'https://x/api', userEmail: 'me@x.com' } },
++      }));
++    const getAuthHeadersImpl = vi.fn().mockResolvedValue(null);
++    const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl: vi.fn(), getAuthHeadersImpl });
++    expect(result).toEqual({ budget: null, budgetError: 'reauthenticate' });
++  });
++
++  it('returns the HTTP error message when the fetch fails', async () => {
++    const readFile = vi.fn()
++      .mockRejectedValueOnce(new Error('no cache'))
++      .mockResolvedValueOnce(JSON.stringify({
++        activeProfile: 'default',
++        profiles: { default: { codeMieUrl: 'https://x', baseUrl: 'https://x/api', userEmail: 'me@x.com' } },
++      }));
++    const getAuthHeadersImpl = vi.fn().mockResolvedValue({ cookie: 'a=b' });
++    const fetchImpl = vi.fn().mockResolvedValue({ ok: false, status: 500 });
++    const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl, getAuthHeadersImpl });
++    expect(result).toEqual({ budget: null, budgetError: 'HTTP 500' });
++  });
++
++  it('resolves and caches the matched budget row on success', async () => {
++    const readFile = vi.fn()
++      .mockRejectedValueOnce(new Error('no cache'))
++      .mockResolvedValueOnce(JSON.stringify({
++        activeProfile: 'default',
++        profiles: { default: { codeMieUrl: 'https://x', baseUrl: 'https://x/api', userEmail: 'me@x.com' } },
++      }));
++    const getAuthHeadersImpl = vi.fn().mockResolvedValue({ cookie: 'a=b' });
++    const fetchImpl = vi.fn().mockResolvedValue({
++      ok: true,
++      json: async () => ({ data: { rows: [{ project_name: 'me@x.com (cli)', current_spending: 5, total: 10, budget_reset_at: '2026-07-15T00:00:00.000Z' }] } }),
++    });
++    const writeFile = vi.fn().mockResolvedValue(undefined);
++    const result = await resolveBudget({ readFile, writeFile, fetchImpl, getAuthHeadersImpl });
++    expect(result.budgetError).toBeNull();
++    expect(result.budget.text).toContain('$5.00');
++    expect(writeFile).toHaveBeenCalledWith(expect.stringContaining('budget-cache.json'), expect.any(String), 'utf8');
++  });
++
++  it('returns the fresh cached value without touching config/network when cache is fresh', async () => {
++    const readFile = vi.fn().mockResolvedValueOnce(JSON.stringify({ ts: Date.now(), value: { text: 'cached', pct: 5 } }));
++    const fetchImpl = vi.fn();
++    const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl, getAuthHeadersImpl: vi.fn() });
++    expect(result).toEqual({ budget: { text: 'cached', pct: 5 }, budgetError: null });
++    expect(fetchImpl).not.toHaveBeenCalled();
++  });
++});
+diff --git a/src/agents/plugins/claude/plugin/statusline.mjs b/src/agents/plugins/claude/plugin/statusline.mjs
+index 43bb55d8e3..0f2f7c24d7 100644
+--- a/src/agents/plugins/claude/plugin/statusline.mjs
++++ b/src/agents/plugins/claude/plugin/statusline.mjs
+@@ -1,6 +1,9 @@
+ #!/usr/bin/env node
+-// CodeMie statusline — shows budget, project, branch, model, and context stats
+-// Deployed to ~/.claude/ by `codemie install statusline`. Runs standalone without the project runtime.
++// CodeMie statusline — shows model, project, branch, context, session cost/duration,
++// and (when a CodeMie profile is configured) the CLI budget for the authenticated user.
++// Deployed to ~/.claude/ by `codemie install statusline` (also triggered by the `--status`
++// CLI flag, which calls the same installer). Runs standalone — Node builtins only, no
++// project imports, since it executes via `node <path>` after the project process exits.
+ import crypto from 'crypto';
+ import { exec } from 'child_process';
+ import fs from 'fs/promises';
+@@ -47,7 +50,7 @@ async function readCredsFile(filePath) {
+   }
+ }
+ 
+-async function getAuthHeaders(codeMieUrl) {
++export async function getAuthHeaders(codeMieUrl) {
+   const hash = urlHash(codeMieUrl);
+ 
+   const sso = await readCredsFile(path.join(CREDS_DIR, `sso-${hash}.enc`));
+@@ -63,23 +66,51 @@ async function getAuthHeaders(codeMieUrl) {
+   return null;
+ }
+ 
+-async function fetchBudget(baseUrl, headers, budgetName) {
+-  const res = await fetch(`${baseUrl}/v1/analytics/budget_usage`, {
+-    headers: { 'Content-Type': 'application/json', 'X-CodeMie-Client': 'codemie-cli', ...headers },
+-  });
+-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
++// --- Pure functions (unit-testable, no filesystem/network access) ---
+ 
+-  const json = await res.json();
+-  const row = json?.data?.rows?.find(r => r.project_name === budgetName);
+-  if (!row) throw new Error('row not found');
++export function matchBudgetRow(rows, userEmail) {
++  if (!Array.isArray(rows) || !userEmail) return null;
++  const target = `${userEmail} (cli)`;
++  return rows.find(r => r.project_name === target) ?? null;
++}
+ 
+-  const pct = Math.round((row.current_spending / row.budget_limit) * 100);
++export function formatBudgetSegment(row) {
++  if (!row) return null;
++  const pct = Math.round(row.total ?? 0);
++  const reset = row.budget_reset_at ? new Date(row.budget_reset_at).toLocaleDateString() : '?';
+   return {
+-    text: `$${row.current_spending.toFixed(2)}/$${row.budget_limit.toFixed(0)} (${pct}%)`,
++    text: `$${row.current_spending.toFixed(2)} (${pct}%) resets ${reset}`,
+     pct,
+   };
+ }
+ 
++export function extractBasicInfo(ctx) {
++  const cwd = ctx?.workspace?.current_dir ?? ctx?.cwd ?? '';
++  return {
++    projectName: cwd ? path.basename(cwd) : '',
++    cwd,
++    model: ctx?.model?.display_name ?? '',
++    ctxPct: ctx?.context_window?.used_percentage ?? null,
++    tokIn: ctx?.context_window?.total_input_tokens ?? null,
++    tokOut: ctx?.context_window?.total_output_tokens ?? null,
++    cost: ctx?.cost?.total_cost_usd ?? null,
++    durationMs: ctx?.cost?.total_duration_ms ?? null,
++  };
++}
++
++export function formatDuration(ms) {
++  if (ms == null) return null;
++  const mins = Math.floor(ms / 60000);
++  const secs = Math.floor((ms % 60000) / 1000);
++  return `${mins}m ${secs}s`;
++}
++
++export function fmt(n) {
++  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
++  if (n >= 1_000)     return `${(n / 1_000).toFixed(1)}k`;
++  return String(n);
++}
++
+ const C = {
+   reset:  '\x1b[0m',
+   purple: '\x1b[38;2;177;185;249m',
+@@ -90,33 +121,29 @@ const C = {
+   blue:   '\x1b[0;94m',
+   gray:   '\x1b[0;37m',
+ };
+-
+ const c = (color, text) => `${color}${text}${C.reset}`;
+ 
+-function fmt(n) {
+-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+-  if (n >= 1_000)     return `${(n / 1_000).toFixed(1)}k`;
+-  return String(n);
+-}
+-
+ function budgetColor(pct) {
+-  if (pct < 0) return C.yellow;
+   return pct > 85 ? C.red : pct > 30 ? C.yellow : C.green;
+ }
+ 
+-function buildStatusLine({ projectName, branch, model, ctxPct, tokIn, tokOut, budget, budgetPct }) {
++export function buildStatusLine({ projectName, branch, model, ctxPct, tokIn, tokOut, cost, durationMs, budget, budgetError }) {
+   const parts = [];
+ 
+   if (projectName) parts.push(c(C.purple, `[${projectName}]`));
+-  if (budget)      parts.push(c(budgetColor(budgetPct), budget));
+-  if (branch)      parts.push(c(C.blue,   `(${branch})`));
+-  if (model)       parts.push(c(C.cyan,   `[${model}]`));
++  if (budget)            parts.push(c(budgetColor(budget.pct), budget.text));
++  else if (budgetError)  parts.push(c(C.yellow, `⚠ ${budgetError}`));
++  if (branch) parts.push(c(C.blue, `(${branch})`));
++  if (model)  parts.push(c(C.cyan, `[${model}]`));
+ 
+   const stats = [];
+   if (ctxPct != null) stats.push(`ctx:${ctxPct}%`);
+   if (tokIn != null)  stats.push(`in:${fmt(tokIn)}`);
+   if (tokOut != null) stats.push(`out:${fmt(tokOut)}`);
+-  if (stats.length)   parts.push(c(C.gray, stats.join(' ')));
++  if (cost != null)   stats.push(`$${cost.toFixed(4)}`);
++  const dur = formatDuration(durationMs);
++  if (dur) stats.push(dur);
++  if (stats.length) parts.push(c(C.gray, stats.join(' ')));
+ 
+   return parts.join(' | ');
+ }
+@@ -141,84 +168,77 @@ function gitBranch(cwd) {
+   });
+ }
+ 
+-async function main() {
+-  const [stdinRaw, cacheRaw] = await Promise.all([
+-    readStdin(),
+-    fs.readFile(CACHE_FILE, 'utf8').catch(() => null),
+-  ]);
++// --- Budget resolution (network/filesystem; dependencies injectable for tests) ---
+ 
+-  let projectName = '', cwd = '', model = '', ctxPct = null, tokIn = null, tokOut = null;
++export async function resolveBudget({
++  readFile = fs.readFile,
++  writeFile = fs.writeFile,
++  fetchImpl = fetch,
++  getAuthHeadersImpl = getAuthHeaders,
++} = {}) {
++  // Fast path: fresh cache, skip config/network entirely.
+   try {
+-    const ctx = JSON.parse(stdinRaw);
+-    cwd         = ctx?.workspace?.current_dir ?? ctx?.cwd ?? '';
+-    projectName = path.basename(cwd);
+-    model       = ctx?.model?.display_name ?? '';
+-    ctxPct      = ctx?.context_window?.used_percentage ?? null;
+-    tokIn       = ctx?.context_window?.total_input_tokens ?? null;
+-    tokOut      = ctx?.context_window?.total_output_tokens ?? null;
++    const cacheRaw = await readFile(CACHE_FILE, 'utf8');
++    const cache = JSON.parse(cacheRaw);
++    if (Date.now() - cache.ts < CACHE_TTL_MS) {
++      return { budget: cache.value, budgetError: null };
++    }
+   } catch {}
+ 
+-  const branchPromise = cwd ? gitBranch(cwd) : Promise.resolve('');
+-
+-  if (cacheRaw) {
+-    try {
+-      const cache = JSON.parse(cacheRaw);
+-      if (Date.now() - cache.ts < CACHE_TTL_MS) {
+-        const branch = await branchPromise;
+-        process.stdout.write(buildStatusLine({
+-          projectName, branch, model, ctxPct, tokIn, tokOut,
+-          budget: cache.value, budgetPct: cache.pct ?? 0,
+-        }));
+-        return;
+-      }
+-    } catch {}
++  let config;
++  try {
++    config = JSON.parse(await readFile(CONFIG_FILE, 'utf8'));
++  } catch {
++    return { budget: null, budgetError: null }; // no CodeMie config at all → skip silently
+   }
+ 
+-  let budget = '', budgetPct = 0;
+-
+-  do {
+-    let config;
+-    try {
+-      config = JSON.parse(await fs.readFile(CONFIG_FILE, 'utf8'));
+-    } catch {
+-      budget = '⚠ no config'; budgetPct = -1; break;
+-    }
+-
+-    const profile = config.profiles?.[config.activeProfile];
+-    if (!profile) { budget = '⚠ no profile'; budgetPct = -1; break; }
+-
+-    const { codeMieUrl, baseUrl, statuslineBudgetName } = profile;
+-    if (!codeMieUrl || !baseUrl) {
+-      budget = '⚠ incomplete profile'; budgetPct = -1; break;
+-    }
+-    if (!statuslineBudgetName) {
+-      budget = '⚠ run: codemie install statusline'; budgetPct = -1; break;
+-    }
++  const profile = config.profiles?.[config.activeProfile];
++  const { codeMieUrl, baseUrl, userEmail } = profile ?? {};
++  if (!profile || !codeMieUrl || !baseUrl || !userEmail) {
++    return { budget: null, budgetError: null }; // no CodeMie profile configured → skip silently
++  }
+ 
+-    const headers = await getAuthHeaders(codeMieUrl);
+-    if (!headers) { budget = '⚠ Reauthenticate'; budgetPct = -1; break; }
++  const headers = await getAuthHeadersImpl(codeMieUrl);
++  if (!headers) {
++    return { budget: null, budgetError: 'reauthenticate' };
++  }
+ 
+-    const budgetResult = await fetchBudget(baseUrl, headers, statuslineBudgetName).catch(e => ({ error: e.message }));
+-    if (budgetResult.error) {
+-      budget = `⚠ ${budgetResult.error}`; budgetPct = -1; break;
+-    }
++  try {
++    const res = await fetchImpl(`${baseUrl}/v1/analytics/budget_usage`, {
++      headers: { 'Content-Type': 'application/json', 'X-CodeMie-Client': 'codemie-cli', ...headers },
++    });
++    if (!res.ok) throw new Error(`HTTP ${res.status}`);
++
++    const json = await res.json();
++    const row = matchBudgetRow(json?.data?.rows, userEmail);
++    if (!row) throw new Error('budget row not found');
++
++    const budget = formatBudgetSegment(row);
++    await writeFile(CACHE_FILE, JSON.stringify({ ts: Date.now(), value: budget }), 'utf8');
++    return { budget, budgetError: null };
++  } catch (e) {
++    return { budget: null, budgetError: e.message };
++  }
++}
+ 
+-    await fs.writeFile(
+-      CACHE_FILE,
+-      JSON.stringify({ ts: Date.now(), value: budgetResult.text, pct: budgetResult.pct }),
+-      'utf8'
+-    );
++export async function main() {
++  const stdinRaw = await readStdin();
+ 
+-    budget = budgetResult.text;
+-    budgetPct = budgetResult.pct;
+-  } while (false);
++  let basic;
++  try {
++    basic = extractBasicInfo(JSON.parse(stdinRaw));
++  } catch {
++    basic = extractBasicInfo({});
++  }
+ 
+-  const branch = await branchPromise;
++  const branchPromise = basic.cwd ? gitBranch(basic.cwd) : Promise.resolve('');
++  const [budgetResult, branch] = await Promise.all([resolveBudget(), branchPromise]);
+ 
+-  process.stdout.write(buildStatusLine({
+-    projectName, branch, model, ctxPct, tokIn, tokOut,
+-    budget, budgetPct,
+-  }));
++  process.stdout.write(buildStatusLine({ ...basic, branch, ...budgetResult }));
+ }
+ 
+-main();
++const isEntrypoint = process.argv[1] && import.meta.url === `file://${process.argv[1]}`;
++if (isEntrypoint) {
++  // Statusline must never crash Claude Code — swallow any unexpected error.
++  main().catch(() => { process.stdout.write(''); });
++}
+diff --git a/src/agents/plugins/claude/statusline-installer.ts b/src/agents/plugins/claude/statusline-installer.ts
+index 8c297d616d..df979fd9d7 100644
+--- a/src/agents/plugins/claude/statusline-installer.ts
++++ b/src/agents/plugins/claude/statusline-installer.ts
+@@ -1,21 +1,26 @@
+-import { readFile, writeFile, mkdir, chmod, rm, unlink } from 'fs/promises';
++import { readFile, writeFile, mkdir, chmod, rm } from 'fs/promises';
+ import { existsSync } from 'fs';
+ import { join } from 'path';
+ import { homedir } from 'os';
+-import { getDirname, resolveHomeDir, getCodemieHome } from '@/utils/paths.js';
++import { getDirname, resolveHomeDir } from '@/utils/paths.js';
+ import { logger } from '@/utils/logger.js';
+-import { sanitizeLogArgs, CredentialStore } from '@/utils/security.js';
++import { sanitizeLogArgs } from '@/utils/security.js';
+ import { ConfigurationError } from '@/utils/errors.js';
+-import { ConfigLoader } from '@/utils/config.js';
+ 
+ export const STATUSLINE_NAME = 'statusline';
+ export const STATUSLINE_DISPLAY_NAME = 'CodeMie Statusline';
+ export const STATUSLINE_DESCRIPTION = 'Budget usage, project, branch, model, context & token stats for Claude Code';
+ 
+ const SCRIPT_FILENAME = 'codemie-budget-status.js';
++const LEGACY_SCRIPT_FILENAME = 'codemie-statusline.mjs';
+ const REFRESH_INTERVAL = 60;
+ 
+-export async function installStatusline(): Promise<string> {
++export interface InstallStatuslineResult {
++  scriptPath: string;
++  alreadyConfigured: boolean;
++}
++
++export async function installStatusline(): Promise<InstallStatuslineResult> {
+   const claudeHome = resolveHomeDir('.claude');
+   const scriptPath = join(claudeHome, SCRIPT_FILENAME);
+   const settingsPath = join(claudeHome, 'settings.json');
+@@ -48,6 +53,8 @@ export async function installStatusline(): Promise<string> {
+     }
+   }
+ 
++  const alreadyConfigured = Boolean(settings.statusLine);
++
+   settings.statusLine = {
+     type: 'command',
+     command: `node "${scriptPath}"`,
+@@ -56,17 +63,23 @@ export async function installStatusline(): Promise<string> {
+ 
+   await writeFile(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+   logger.debug('[Statusline] Installed', ...sanitizeLogArgs({ scriptPath }));
+-  return scriptPath;
++  return { scriptPath, alreadyConfigured };
+ }
+ 
+ export async function uninstallStatusline(): Promise<void> {
+   const claudeHome = resolveHomeDir('.claude');
+   const scriptPath = join(claudeHome, SCRIPT_FILENAME);
++  const legacyScriptPath = join(claudeHome, LEGACY_SCRIPT_FILENAME);
+   const settingsPath = join(claudeHome, 'settings.json');
+ 
+   if (existsSync(scriptPath)) {
+     await rm(scriptPath);
+   }
++  // Clean up the orphaned artifact from the old, now-removed --status flag mechanism,
++  // in case it was ever written by a version prior to this consolidation.
++  if (existsSync(legacyScriptPath)) {
++    await rm(legacyScriptPath);
++  }
+ 
+   if (existsSync(settingsPath)) {
+     try {
+@@ -91,61 +104,3 @@ export async function uninstallStatusline(): Promise<void> {
+ export function isStatuslineInstalled(): boolean {
+   return existsSync(join(homedir(), '.claude', SCRIPT_FILENAME));
+ }
+-
+-export async function promptBudgetSelection(): Promise<boolean> {
+-  const config = await ConfigLoader.loadMultiProviderConfig();
+-  const profileName = config.activeProfile;
+-  const profile = config.profiles?.[profileName];
+-
+-  if (!profile?.codeMieUrl || !profile?.baseUrl) return false;
+-
+-  const store = CredentialStore.getInstance();
+-  const [sso, jwt] = await Promise.all([
+-    store.retrieveSSOCredentials(profile.codeMieUrl),
+-    store.retrieveJWTCredentials(profile.codeMieUrl),
+-  ]);
+-
+-  const headers: Record<string, string> = {};
+-  if (sso?.cookies) {
+-    headers['cookie'] = Object.entries(sso.cookies).map(([k, v]) => `${k}=${v}`).join(';');
+-  } else if (jwt?.token) {
+-    headers['authorization'] = `Bearer ${jwt.token}`;
+-  } else {
+-    return false;
+-  }
+-
+-  let rows: Array<{ project_name: string }>;
+-  try {
+-    const res = await fetch(`${profile.baseUrl}/v1/analytics/budget_usage`, {
+-      headers: { 'Content-Type': 'application/json', 'X-CodeMie-Client': 'codemie-cli', ...headers },
+-    });
+-    if (!res.ok) return false;
+-    const json = await res.json() as { data?: { rows?: Array<{ project_name: string }> } };
+-    rows = json?.data?.rows ?? [];
+-  } catch {
+-    return false;
+-  }
+-
+-  if (!rows.length) return false;
+-
+-  const inquirer = (await import('inquirer')).default;
+-  const budgetNames = rows.map(r => r.project_name);
+-  const { budgetName } = await inquirer.prompt<{ budgetName: string }>([{
+-    type: 'list',
+-    name: 'budgetName',
+-    message: 'Select budget to track in the statusline:',
+-    choices: budgetNames,
+-    default: profile.statuslineBudgetName ?? budgetNames[0],
+-  }]);
+-
+-  const previousBudgetName = profile.statuslineBudgetName;
+-  profile.statuslineBudgetName = budgetName;
+-  await ConfigLoader.saveProfile(profileName, profile);
+-
+-  if (budgetName !== previousBudgetName) {
+-    await unlink(join(getCodemieHome(), 'budget-cache.json')).catch(() => {});
+-  }
+-
+-  logger.debug('[Statusline] Budget name saved', ...sanitizeLogArgs({ budgetName }));
+-  return true;
+-}
+diff --git a/src/cli/commands/install.ts b/src/cli/commands/install.ts
+index c33a8c3d89..24b2c0ba80 100644
+--- a/src/cli/commands/install.ts
++++ b/src/cli/commands/install.ts
+@@ -10,7 +10,6 @@ import {
+   STATUSLINE_DESCRIPTION,
+   installStatusline,
+   isStatuslineInstalled,
+-  promptBudgetSelection,
+ } from '@/agents/plugins/claude/statusline-installer.js';
+ import ora from 'ora';
+ import chalk from 'chalk';
+@@ -271,7 +270,7 @@ export function createInstallCommand(): Command {
+           const spinner = ora(spinnerLabel).start();
+ 
+           try {
+-            const scriptPath = await installStatusline();
++            const { scriptPath } = await installStatusline();
+             const successMsg = alreadyInstalled
+               ? `${STATUSLINE_DISPLAY_NAME} updated`
+               : `${STATUSLINE_DISPLAY_NAME} installed`;
+@@ -280,15 +279,7 @@ export function createInstallCommand(): Command {
+             console.log(chalk.cyan('💡 The statusline appears at the bottom of every Claude Code session'));
+             console.log(chalk.white(`   ${STATUSLINE_DESCRIPTION}`));
+             console.log(chalk.gray(`   Script: ${scriptPath}`));
+-            console.log();
+-
+-            const budgetSelected = await promptBudgetSelection();
+-            if (budgetSelected) {
+-              console.log(chalk.green('✓ Budget selected for tracking'));
+-            } else {
+-              console.log(chalk.yellow('⚠️  Budget tracking requires authentication. Run: codemie setup'));
+-            }
+-
++            console.log(chalk.gray('   Budget is auto-detected from your authenticated CodeMie profile — no setup needed'));
+             console.log();
+           } catch (error: unknown) {
+             spinner.fail(`Failed to install ${STATUSLINE_DISPLAY_NAME}`);
+diff --git a/src/env/types.ts b/src/env/types.ts
+index 0896e25790..f39324d3d0 100644
+--- a/src/env/types.ts
++++ b/src/env/types.ts
+@@ -134,9 +134,6 @@ export interface ProviderProfile {
+ 
+   // Claude Code-specific settings
+   claudeAutocompactPct?: number; // Auto-compact threshold percentage (sets CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, default: 85)
+-
+-  // Statusline budget tracking
+-  statuslineBudgetName?: string; // Budget row name selected during statusline install
+ }
+ 
+ /**

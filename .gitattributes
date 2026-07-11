@@ -1,0 +1,7 @@
+# Normalize line endings to LF in the repository and on checkout, regardless of the
+# checking-out platform's git config. Without this, GitHub-hosted Windows runners
+# (core.autocrlf=true by default) inject CRLF into every text file at checkout time,
+# which breaks Vite/Vitest's module transform for any .mjs file starting with a
+# shebang line (e.g. src/agents/plugins/claude/plugin/statusline.mjs) with a
+# "SyntaxError: Invalid or unexpected token".
+* text=auto eol=lf
