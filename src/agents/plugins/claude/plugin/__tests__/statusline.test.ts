@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
+import { resolve } from 'path';
+import { pathToFileURL } from 'url';
 import {
   matchBudgetRow,
   formatBudgetSegment,
@@ -272,20 +274,28 @@ describe('resolveBudget', () => {
 });
 
 describe('isMainModule', () => {
+  // Build the file URL from a real, platform-resolved absolute path (via pathToFileURL)
+  // rather than hardcoding POSIX-style "file:///..." strings, so this test is symmetric
+  // on Windows too — fileURLToPath() decodes to a backslash-separated path there.
   it('matches when the raw path equals the decoded file URL', () => {
-    expect(isMainModule('/Users/me/script.mjs', 'file:///Users/me/script.mjs')).toBe(true);
+    const scriptPath = resolve('Users', 'me', 'script.mjs');
+    expect(isMainModule(scriptPath, pathToFileURL(scriptPath).href)).toBe(true);
   });
 
-  it('matches even when the home directory contains spaces (percent-encoded in the URL)', () => {
-    expect(isMainModule('/Users/John Doe/.claude/codemie-budget-status.js', 'file:///Users/John%20Doe/.claude/codemie-budget-status.js')).toBe(true);
+  it('matches even when the path contains spaces (percent-encoded in the URL)', () => {
+    const scriptPath = resolve('Users', 'John Doe', '.claude', 'codemie-budget-status.js');
+    expect(isMainModule(scriptPath, pathToFileURL(scriptPath).href)).toBe(true);
   });
 
   it('returns false for a different path', () => {
-    expect(isMainModule('/Users/me/other.mjs', 'file:///Users/me/script.mjs')).toBe(false);
+    const scriptPath = resolve('Users', 'me', 'script.mjs');
+    const otherPath = resolve('Users', 'me', 'other.mjs');
+    expect(isMainModule(otherPath, pathToFileURL(scriptPath).href)).toBe(false);
   });
 
   it('returns false when argv1 is falsy', () => {
-    expect(isMainModule('', 'file:///Users/me/script.mjs')).toBe(false);
-    expect(isMainModule(undefined, 'file:///Users/me/script.mjs')).toBe(false);
+    const url = pathToFileURL(resolve('Users', 'me', 'script.mjs')).href;
+    expect(isMainModule('', url)).toBe(false);
+    expect(isMainModule(undefined, url)).toBe(false);
   });
 });
