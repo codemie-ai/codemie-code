@@ -10,6 +10,7 @@ import { BaseHealthCheck } from '../../core/base/BaseHealthCheck.js';
 import { ProviderRegistry } from '../../core/registry.js';
 import { AzureOpenAITemplate } from './azure-openai.template.js';
 import { AzureOpenAIModelProxy } from './azure-openai.models.js';
+import { ConfigurationError } from '../../../utils/errors.js';
 
 export class AzureOpenAIHealthCheck extends BaseHealthCheck {
   private modelProxy: AzureOpenAIModelProxy;
@@ -52,7 +53,7 @@ export class AzureOpenAIHealthCheck extends BaseHealthCheck {
   protected async ping(): Promise<void> {
     const models = await this.listModels();
     if (models.length === 0) {
-      throw new Error('No Azure OpenAI deployments found. Verify that at least one deployment exists and that the API version matches the resource.');
+      throw new ConfigurationError('No Azure OpenAI deployments found. Verify that at least one deployment exists and that the API version matches the resource.');
     }
   }
 

@@ -29,17 +29,17 @@
  *      → Keep only the conservative Chat Completions request shape that DIAL
  *        accepts across GPT, Claude, Gemini, Grok, Qwen, DeepSeek, Llama, etc.
  *
- * Scope: Only runs for azure-dial-* providers (registered per-deployment by
+ * Scope: Only runs for azure-openai-* providers (registered per-deployment by
  * buildAzureOpenAIProviders in codemie-code.plugin.ts). Provider IDs always
- * start with "azure-dial-".
+ * start with "azure-openai-".
  *
  * Why a string constant: The plugin uses `import type { Plugin } from "@opencode-ai/plugin"`
  * which doesn't exist in codemie-code's dependencies. Embedding as a string avoids
  * TypeScript compilation issues. Bun strips the type import at runtime.
  */
 
-// Utility: sanitize an OpenAI/DIAL payload for strict DIAL compatibility
-export function sanitizeAzureDialPayload(obj: any): any {
+// Utility: sanitize an OpenAI/DIAL payload for strict Azure OpenAI / DIAL compatibility
+export function sanitizeAzureOpenAIPayload(obj: any): any {
   if (obj == null || typeof obj !== 'object') return obj;
   // conservative OpenAI Chat Completions allowed fields
   const allowedRoot = [
@@ -76,7 +76,7 @@ export function sanitizeAzureDialPayload(obj: any): any {
   return cleaned;
 }
 
-export const AZURE_DIAL_SANITIZER_PLUGIN_SOURCE = `
+export const AZURE_OPENAI_SANITIZER_PLUGIN_SOURCE = `
 import type { Plugin } from "@opencode-ai/plugin";
 
 const UNSUPPORTED_TOP_LEVEL_FIELDS = [
@@ -232,22 +232,22 @@ function sanitizeParamsContainer(container: unknown): void {
  * Strip provider-specific fields from messages and top-level params for
  * Azure OpenAI / EPAM DIAL providers.
  *
- * Activated only for providers whose ID starts with "azure-dial-"
+ * Activated only for providers whose ID starts with "azure-openai-"
  * (the naming convention used by buildAzureOpenAIProviders).
  *
  * Always sanitizes for ALL models (including Claude), because DIAL exposes a
  * single OpenAI-compatible schema and rejects extra provider-native fields.
  */
-const AzureDialSanitizerPlugin: Plugin = async (_input) => ({
+const AzureOpenAISanitizerPlugin: Plugin = async (_input) => ({
   "chat.params": async (input, output) => {
     const pid: string = (input.model?.providerID ?? "").toLowerCase();
     const aid: string = (input.model?.api?.id ?? "").toLowerCase();
 
-    // Only run for azure-dial-* providers
-    const isAzureDial =
-      pid.startsWith("azure-dial-") ||
-      aid.startsWith("azure-dial-");
-    if (!isAzureDial) return;
+    // Only run for azure-openai-* per-deployment providers
+    const isAzureOpenAI =
+      pid.startsWith("azure-openai-") ||
+      aid.startsWith("azure-openai-");
+    if (!isAzureOpenAI) return;
 
     // 1. Strip provider-native fields from every message and nested content item.
     if (Array.isArray(output.messages)) {
@@ -260,5 +260,5 @@ const AzureDialSanitizerPlugin: Plugin = async (_input) => ({
   },
 });
 
-export default AzureDialSanitizerPlugin;
+export default AzureOpenAISanitizerPlugin;
 `;

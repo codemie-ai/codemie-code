@@ -79,14 +79,14 @@ vi.mock('../reasoning-sanitizer/index.js', () => ({
   cleanupReasoningSanitizerPlugin: mockCleanupReasoningSanitizer,
 }));
 
-// Mock azure-dial-sanitizer
-const { mockGetAzureDialSanitizerPluginUrl, mockCleanupAzureDialSanitizer } = vi.hoisted(() => ({
-  mockGetAzureDialSanitizerPluginUrl: vi.fn(() => 'file:///mock/azure-dial-sanitizer.ts'),
-  mockCleanupAzureDialSanitizer: vi.fn(),
+// Mock azure-openai-sanitizer
+const { mockGetAzureOpenAISanitizerPluginUrl, mockCleanupAzureOpenAISanitizer } = vi.hoisted(() => ({
+  mockGetAzureOpenAISanitizerPluginUrl: vi.fn(() => 'file:///mock/azure-openai-sanitizer.ts'),
+  mockCleanupAzureOpenAISanitizer: vi.fn(),
 }));
-vi.mock('../azure-dial-sanitizer/index.js', () => ({
-  getAzureDialSanitizerPluginUrl: mockGetAzureDialSanitizerPluginUrl,
-  cleanupAzureDialSanitizerPlugin: mockCleanupAzureDialSanitizer,
+vi.mock('../azure-openai-sanitizer/index.js', () => ({
+  getAzureOpenAISanitizerPluginUrl: mockGetAzureOpenAISanitizerPluginUrl,
+  cleanupAzureOpenAISanitizerPlugin: mockCleanupAzureOpenAISanitizer,
 }));
 
 // Mock OpenCodeSessionAdapter
@@ -261,7 +261,7 @@ describe('CodeMie Code Plugin — Reasoning Sanitization Integration', () => {
       expect(config.plugin).toContain('file:///mock/reasoning-sanitizer.ts');
     });
 
-    it('injects azure-dial-sanitizer plugin for azure-openai provider', async () => {
+    it('injects azure-openai-sanitizer plugin for azure-openai provider', async () => {
       const env = createEnv({
         CODEMIE_PROVIDER: 'azure-openai',
         CODEMIE_API_KEY: 'azure-key',
@@ -270,8 +270,8 @@ describe('CodeMie Code Plugin — Reasoning Sanitization Integration', () => {
       await beforeRun(env, {} as any);
 
       const config = parseConfig(env);
-      expect(config.plugin).toContain('file:///mock/azure-dial-sanitizer.ts');
-      expect(mockGetAzureDialSanitizerPluginUrl).toHaveBeenCalled();
+      expect(config.plugin).toContain('file:///mock/azure-openai-sanitizer.ts');
+      expect(mockGetAzureOpenAISanitizerPluginUrl).toHaveBeenCalled();
     });
   });
 
@@ -307,7 +307,7 @@ describe('CodeMie Code Plugin — Reasoning Sanitization Integration', () => {
 
       expect(mockCleanupHooksPlugin).toHaveBeenCalled();
       expect(mockCleanupReasoningSanitizer).toHaveBeenCalled();
-      expect(mockCleanupAzureDialSanitizer).toHaveBeenCalled();
+      expect(mockCleanupAzureOpenAISanitizer).toHaveBeenCalled();
     });
   });
 });

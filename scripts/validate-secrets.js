@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 /**
  * Cross-platform secrets detection using Gitleaks
- * Works on Windows, macOS, and Linux
+ * Works on Windows (native Docker or Docker-in-WSL), macOS, and Linux
  *
  * Supports Docker, Podman, and Apple Containers.
+ * On Windows without Docker Desktop, falls back to Docker running inside WSL2
+ * by invoking: wsl -e bash -l -c "docker ..."
+ *
  * CI uses the official gitleaks-action@v2 for better GitHub integration.
  * Both share the same .gitleaks.toml configuration.
  *
@@ -47,30 +50,42 @@ function appleContainersRunning() {
   return spawnSync(bin, ['system', 'status'], { stdio: 'ignore', shell: false }).status === 0;
 }
 
+/**
+ * On Windows, check if Docker is available inside WSL2 by running
+ * `wsl -e bash -l -c "docker info"`. Returns true if the daemon responds.
+ */
+function wslDockerRunning() {
+  if (!isWindows) return false;
+  const wslBin = resolveCommand('wsl');
+  if (!wslBin) return false;
+  const result = spawnSync(wslBin, ['-e', 'bash', '-l', '-c', 'docker info'], {
+    stdio: 'ignore',
+    shell: false,
+  });
+  return result.status === 0;
+}
+
+/**
+ * Detects the available container engine.
+ * Returns one of: 'docker' | 'podman' | 'container' | 'wsl-docker' | null
+ */
 function detectEngine() {
   for (const engine of ['docker', 'podman']) {
     if (commandExists(engine) && daemonRunning(engine)) return engine;
   }
   if (appleContainersRunning()) return 'container';
+  // Fallback: Docker running inside WSL2 on Windows
+  if (wslDockerRunning()) return 'wsl-docker';
   return null;
 }
 
 const engine = detectEngine();
 
 if (!engine) {
-  console.log('No container engine found - skipping secrets detection');
-  console.log('Install Docker, Podman, or Apple Containers to enable local secrets scanning');
+  console.log('No container engine found - secrets detection skipped');
+  console.log('Install Docker (or enable Docker in WSL2), Podman, or Apple Containers to enable local secrets scanning');
   process.exit(1);
 }
-
-const engineBin = resolveCommand(engine);
-if (!engineBin) {
-  console.log('Container engine binary not found — skipping secrets detection');
-  process.exit(1);
-}
-// shell:true is used on Windows so paths with spaces must be quoted for the shell.
-// On Linux/Mac shell:false passes the path directly to execve — no quoting needed.
-const spawnBin = isWindows && engineBin.includes(' ') ? `"${engineBin}"` : engineBin;
 
 // Produce the staged diff on the host so gitleaks doesn't need git access
 // inside the container — required for Apple Containers which cannot run git
@@ -88,24 +103,62 @@ if (!stagedDiff || stagedDiff.length === 0) {
   process.exit(0);
 }
 
-const args = ['run', '--rm', '-i'];
+console.log(`Running Gitleaks secrets detection (engine: ${engine})...`);
 
-if (hasConfig) {
-  args.push('-v', `${projectPath}/.gitleaks.toml:/gitleaks.toml`);
+let gitleaks;
+
+if (engine === 'wsl-docker') {
+  // Docker is inside WSL2: build the full docker command as a shell string
+  // and pass it via `wsl -e bash -l -c "..."`.
+  // The .gitleaks.toml is mounted from the WSL-translated Windows path.
+  const wslBin = resolveCommand('wsl');
+
+  // Convert Windows path to WSL /mnt/... path: C:\foo\bar -> /mnt/c/foo/bar
+  function toWslPath(winPath) {
+    return winPath.replace(/\\/g, '/').replace(/^([A-Za-z]):/, (_, d) => `/mnt/${d.toLowerCase()}`);
+  }
+
+  const wslProjectPath = toWslPath(projectPath);
+  const wslConfigPath = toWslPath(configPath);
+
+  let dockerCmd = 'docker run --rm -i';
+  if (hasConfig) {
+    dockerCmd += ` -v "${wslConfigPath}:/gitleaks.toml"`;
+  }
+  dockerCmd += ' ghcr.io/gitleaks/gitleaks:v8.30.1 detect --pipe --verbose';
+  if (hasConfig) {
+    dockerCmd += ' --config=/gitleaks.toml';
+  }
+
+  // Pipe the staged diff into the WSL command via stdin
+  gitleaks = spawn(wslBin, ['-e', 'bash', '-l', '-c', dockerCmd], {
+    stdio: ['pipe', 'inherit', 'inherit'],
+    shell: false,
+  });
+} else {
+  const engineBin = resolveCommand(engine);
+  if (!engineBin) {
+    console.log('Container engine binary not found — skipping secrets detection');
+    process.exit(1);
+  }
+  // shell:true is used on Windows so paths with spaces must be quoted for the shell.
+  // On Linux/Mac shell:false passes the path directly to execve — no quoting needed.
+  const spawnBin = isWindows && engineBin.includes(' ') ? `"${engineBin}"` : engineBin;
+
+  const args = ['run', '--rm', '-i'];
+  if (hasConfig) {
+    args.push('-v', `${projectPath}/.gitleaks.toml:/gitleaks.toml`);
+  }
+  args.push('ghcr.io/gitleaks/gitleaks:v8.30.1', 'detect', '--pipe', '--verbose');
+  if (hasConfig) {
+    args.push('--config=/gitleaks.toml');
+  }
+
+  gitleaks = spawn(spawnBin, args, {
+    stdio: ['pipe', 'inherit', 'inherit'],
+    shell: isWindows,
+  });
 }
-
-args.push('ghcr.io/gitleaks/gitleaks:v8.30.1', 'detect', '--pipe', '--verbose');
-
-if (hasConfig) {
-  args.push('--config=/gitleaks.toml');
-}
-
-console.log('Running Gitleaks secrets detection...');
-
-const gitleaks = spawn(spawnBin, args, {
-  stdio: ['pipe', 'inherit', 'inherit'],
-  shell: isWindows,
-});
 
 gitleaks.stdin.write(stagedDiff);
 gitleaks.stdin.end();

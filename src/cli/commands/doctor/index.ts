@@ -48,7 +48,8 @@ export function createDoctorCommand(): Command {
         const { runDialIntegrationTest } = await import('../../../utils/dial-model-integrity.js');
         const config = await ConfigLoader.load();
         if (!config.provider || (config.provider !== 'azure-openai' && !config.provider.toLowerCase().includes('dial'))) {
-          console.log('\n⚠ dial integration test: active profile provider не DIAL/azure-openai. Выберите профиль DIAL через codemie profile switch или setup.\n');
+          logger.warn('[doctor] --test-dial: active profile provider is not DIAL/azure-openai.');
+          console.log(chalk.yellow('\n⚠ dial integration test: The active profile provider is not DIAL/azure-openai. Switch to a DIAL profile via "codemie profile switch" or run "codemie setup".\n'));
           process.exit(1);
         }
          console.log(chalk.bold('\n🔍 CodeMie Code Health Check\n'));

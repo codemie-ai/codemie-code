@@ -11,7 +11,14 @@ useDefault = true
 description = "Exclude test files and build artifacts containing intentional fake secrets"
 paths = [
   '''src/utils/__tests__/sanitize\.test\.ts$''',
+  '''src/providers/plugins/azure-openai/__tests__/''',
   '''dist/''',
   '''\.idea/''',
   '''\.mcp\.json'''
+]
+# Ignore well-known no-entropy test placeholder strings that appear in diffs
+# when replacing old fixture values. These are not real secrets.
+stopwords = [
+  "test-api-key-1234567890",
+  "PLACEHOLDER-KEY-FOR-TESTING-ONLY"
 ]

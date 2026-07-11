@@ -257,7 +257,7 @@ async function handlePluginSetup(
       modelsSpinner.succeed(chalk.green(`Found ${models.length} available models`));
     } catch (error) {
       modelsSpinner.warn(chalk.yellow('Could not fetch models - will use manual entry'));
-      console.error(chalk.red('Failed to fetch models'), error);
+      logger.warn('[setup] Could not fetch models', { error: error instanceof Error ? error.message : String(error) });
       models = [];
     }
 

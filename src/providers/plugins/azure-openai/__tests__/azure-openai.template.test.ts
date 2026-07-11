@@ -17,11 +17,11 @@ function makeEnv(overrides: Record<string, string | undefined> = {}): NodeJS.Pro
     CODEMIE_PROVIDER: 'azure-openai',
     CODEMIE_BASE_URL: 'https://my-epam-dial.example.com',
     CODEMIE_AZURE_OPENAI_BASE_URL: 'https://my-epam-dial.example.com',
-    CODEMIE_API_KEY: 'test-api-key-1234567890',
+    CODEMIE_API_KEY: 'PLACEHOLDER-KEY-FOR-TESTING-ONLY',
     CODEMIE_MODEL: 'anthropic.claude-sonnet-4-6',
-    AZURE_OPENAI_API_KEY: 'test-api-key-1234567890', // set by wildcard hook first
+    AZURE_OPENAI_API_KEY: 'PLACEHOLDER-KEY-FOR-TESTING-ONLY', // set by wildcard hook first
     ANTHROPIC_BASE_URL: 'https://my-epam-dial.example.com',
-    ANTHROPIC_AUTH_TOKEN: 'test-api-key-1234567890',
+    ANTHROPIC_AUTH_TOKEN: 'PLACEHOLDER-KEY-FOR-TESTING-ONLY',
     ...overrides,
   };
 }

@@ -7,12 +7,21 @@
 import type { CodeMieConfigOptions } from '../../../env/types.js';
 import type { ModelInfo, ProviderModelFetcher } from '../../core/types.js';
 import { ProviderRegistry } from '../../core/registry.js';
+import { ConfigurationError } from '../../../utils/errors.js';
 
 export interface AzureOpenAIDeploymentInfo {
   id: string;
   name: string;
   description?: string;
   model?: string;
+}
+
+/**
+ * Extension of ProviderModelFetcher that also supports fetching raw deployment info.
+ * Implemented by AzureOpenAIModelProxy and accessible via ProviderRegistry.getModelProxy('azure-openai').
+ */
+export interface AzureDeploymentFetcher {
+  fetchDeploymentInfos(config: CodeMieConfigOptions): Promise<AzureOpenAIDeploymentInfo[]>;
 }
 
 export class AzureOpenAIModelProxy implements ProviderModelFetcher {
@@ -48,7 +57,7 @@ export class AzureOpenAIModelProxy implements ProviderModelFetcher {
     });
 
     if (!response.ok) {
-      throw new Error(`Failed to fetch Azure OpenAI deployments: ${response.status} ${response.statusText}`);
+      throw new ConfigurationError(`Failed to fetch Azure OpenAI deployments: ${response.status} ${response.statusText}`);
     }
 
     const data = await response.json() as { data?: Array<Record<string, unknown>> };
