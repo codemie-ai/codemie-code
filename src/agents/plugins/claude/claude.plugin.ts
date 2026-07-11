@@ -18,7 +18,7 @@ import {
 import { logger } from '../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../utils/security.js';
 import chalk from 'chalk';
-import { resolveHomeDir, getDirname } from '../../../utils/paths.js';
+import { resolveHomeDir } from '../../../utils/paths.js';
 import {
   detectInstallationMethod,
   type InstallationMethod,
@@ -200,67 +200,24 @@ export const ClaudePluginMetadata: AgentMetadata = {
         env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = String(autocompactPct);
       }
 
-      // Statusline setup: when --status flag is passed, configure Claude Code
-      // status bar with a multi-line display showing model, context, git, cost
+      // Statusline setup: when --status is passed, ensure the CodeMie statusline is
+      // installed — the same installer `codemie install statusline` uses, so there is
+      // exactly one statusline implementation instead of a separate duplicated one here.
       // https://code.claude.com/docs/en/statusline
       if (env.CODEMIE_STATUS === '1') {
-        const { writeFile, readFile, mkdir, chmod } = await import('fs/promises');
-        const { existsSync } = await import('fs');
-        const { join } = await import('path');
-
-        const claudeHome = resolveHomeDir('.claude');
-        const scriptPath = join(claudeHome, 'codemie-statusline.mjs');
-        const settingsPath = join(claudeHome, 'settings.json');
-
-        // Read the statusline script from the compiled output directory
-        const scriptContent = await readFile(
-          join(getDirname(import.meta.url), 'plugin/codemie-statusline.mjs'),
-          'utf-8'
-        );
-
-        // Ensure ~/.claude directory exists
-        if (!existsSync(claudeHome)) {
-          await mkdir(claudeHome, { recursive: true });
-        }
-
-        // Write script (always update to latest version)
-        await writeFile(scriptPath, scriptContent, 'utf-8');
-
-        // Make script executable on Unix systems
-        if (process.platform !== 'win32') {
-          await chmod(scriptPath, 0o755);
-        }
-
-        // Inject statusLine into ~/.claude/settings.json if not already configured
-        let settings: Record<string, unknown> = {};
-        if (existsSync(settingsPath)) {
-          try {
-            const raw = await readFile(settingsPath, 'utf-8');
-            settings = JSON.parse(raw) as Record<string, unknown>;
-          } catch (parseError) {
-            // Abort injection to prevent overwriting potentially valid settings
-            // that are temporarily unreadable (e.g., concurrent write, partial flush)
-            logger.warn(
-              '[Claude] Could not parse settings.json, skipping statusline injection to avoid data loss',
-              ...sanitizeLogArgs({
-                settingsPath,
-                error: parseError instanceof Error ? parseError.message : String(parseError),
-              })
-            );
-            return env;
-          }
-        }
-
-        if (!settings.statusLine) {
-          settings.statusLine = {
-            type: 'command',
-            // Quote the path to handle spaces in home directory (e.g. /Users/John Doe/)
-            command: `node "${scriptPath}"`,
-          };
-          await writeFile(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
-          // Use module-level flag (not env var) to avoid leaking into subprocess env
-          statuslineManagedThisSession = true;
-          logger.debug('[Claude] Statusline configured', { scriptPath });
+        try {
+          const { installStatusline } = await import('./statusline-installer.js');
+          const { alreadyConfigured } = await installStatusline();
+          // Only clean up on afterRun if THIS session enabled it — a persistent
+          // `codemie install statusline` setup must survive after the session ends.
+          statuslineManagedThisSession = !alreadyConfigured;
+        } catch (error) {
+          logger.warn(
+            '[Claude] Failed to configure statusline via --status flag',
+            ...sanitizeLogArgs({
+              error: error instanceof Error ? error.message : String(error),
+            })
+          );
         }
       }
 
