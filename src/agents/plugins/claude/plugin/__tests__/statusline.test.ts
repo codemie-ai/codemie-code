@@ -8,7 +8,12 @@ import {
   buildStatusLine,
   resolveBudget,
   isMainModule,
+  ctxBar,
 } from '../statusline.mjs';
+
+const YELLOW = '\x1b[0;33m';
+const GREEN = '\x1b[0;32m';
+const RED = '\x1b[0;31m';
 
 describe('matchBudgetRow', () => {
   const rows = [
@@ -110,6 +115,27 @@ describe('fmt', () => {
   });
 });
 
+describe('ctxBar', () => {
+  it('renders a 10-segment filled/empty bar plus the percentage', () => {
+    const bar = ctxBar(50);
+    expect(bar).toContain('50%');
+    expect(bar).toContain('█████░░░░░');
+  });
+
+  it('colors the bar green below 70%, yellow from 70-89%, red at 90%+', () => {
+    expect(ctxBar(50)).toContain(GREEN);
+    expect(ctxBar(75)).toContain(YELLOW);
+    expect(ctxBar(95)).toContain(RED);
+  });
+
+  it('returns null for non-numeric or missing input', () => {
+    expect(ctxBar(null)).toBeNull();
+    expect(ctxBar(undefined)).toBeNull();
+    expect(ctxBar(NaN)).toBeNull();
+    expect(ctxBar('not-a-number')).toBeNull();
+  });
+});
+
 describe('buildStatusLine', () => {
   const basic = {
     projectName: 'my-project', branch: 'main', model: 'Claude Sonnet 5',
@@ -124,6 +150,13 @@ describe('buildStatusLine', () => {
     expect(line).toContain('[my-project]');
     expect(line).toContain('(main)');
     expect(line).toContain('[Claude Sonnet 5]');
+  });
+
+  it('renders the context-% as a colored bar, and the cost in its own distinct (yellow) color', () => {
+    const line = buildStatusLine({ ...basic, budget: null, budgetError: null });
+    expect(line).toContain('42%');
+    expect(line).toContain('████░░░░░░'); // 42% -> 4 filled segments
+    expect(line).toContain(`${YELLOW}$1.5000${'\x1b[0m'}`);
   });
 
   it('shows a minimal warning indicator (not blocking basic info) when the budget fetch fails', () => {

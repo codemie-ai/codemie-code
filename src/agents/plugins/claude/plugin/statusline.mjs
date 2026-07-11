@@ -129,6 +129,15 @@ function budgetColor(pct) {
   return pct > 85 ? C.red : pct > 30 ? C.yellow : C.green;
 }
 
+export function ctxBar(pct) {
+  if (typeof pct !== 'number' || Number.isNaN(pct)) return null;
+  const clamped = Math.max(0, Math.min(100, pct));
+  const color = clamped >= 90 ? C.red : clamped >= 70 ? C.yellow : C.green;
+  const filled = Math.floor(clamped / 10);
+  const bar = '█'.repeat(filled) + '░'.repeat(10 - filled);
+  return `${c(color, bar)} ${pct}%`;
+}
+
 export function buildStatusLine({ projectName, branch, model, ctxPct, tokIn, tokOut, cost, durationMs, budget, budgetError }) {
   const parts = [];
 
@@ -138,14 +147,18 @@ export function buildStatusLine({ projectName, branch, model, ctxPct, tokIn, tok
   if (branch) parts.push(c(C.blue, `(${branch})`));
   if (model)  parts.push(c(C.cyan, `[${model}]`));
 
+  const bar = ctxBar(ctxPct);
+  if (bar) parts.push(bar);
+
   const stats = [];
-  if (ctxPct != null) stats.push(`ctx:${ctxPct}%`);
   if (tokIn != null)  stats.push(`in:${fmt(tokIn)}`);
   if (tokOut != null) stats.push(`out:${fmt(tokOut)}`);
-  if (typeof cost === 'number' && !Number.isNaN(cost)) stats.push(`$${cost.toFixed(4)}`);
-  const dur = formatDuration(durationMs);
-  if (dur) stats.push(dur);
   if (stats.length) parts.push(c(C.gray, stats.join(' ')));
+
+  if (typeof cost === 'number' && !Number.isNaN(cost)) parts.push(c(C.yellow, `$${cost.toFixed(4)}`));
+
+  const dur = formatDuration(durationMs);
+  if (dur) parts.push(c(C.gray, dur));
 
   return parts.join(' | ');
 }
