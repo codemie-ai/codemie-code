@@ -7,6 +7,7 @@ import {
   fmt,
   buildStatusLine,
   resolveBudget,
+  isMainModule,
 } from '../statusline.mjs';
 
 describe('matchBudgetRow', () => {
@@ -33,6 +34,11 @@ describe('matchBudgetRow', () => {
   it('returns null when userEmail is falsy', () => {
     expect(matchBudgetRow(rows, '')).toBeNull();
     expect(matchBudgetRow(rows, undefined)).toBeNull();
+  });
+
+  it('matches regardless of email casing or surrounding whitespace', () => {
+    expect(matchBudgetRow(rows, 'Nikita_Levyankov@EPAM.com')).toEqual(rows[0]);
+    expect(matchBudgetRow(rows, '  nikita_levyankov@epam.com  ')).toEqual(rows[0]);
   });
 });
 
@@ -88,6 +94,12 @@ describe('formatDuration', () => {
     expect(formatDuration(null)).toBeNull();
     expect(formatDuration(undefined)).toBeNull();
   });
+
+  it('returns null instead of "NaNm NaNs" for non-numeric or negative input', () => {
+    expect(formatDuration(NaN)).toBeNull();
+    expect(formatDuration(-1)).toBeNull();
+    expect(formatDuration('not-a-number')).toBeNull();
+  });
 });
 
 describe('fmt', () => {
@@ -125,6 +137,13 @@ describe('buildStatusLine', () => {
     const line = buildStatusLine({ ...basic, budget: { text: '$12.34 (41%) resets 7/15/2026', pct: 41 }, budgetError: null });
     expect(line).toContain('$12.34 (41%)');
     expect(line).not.toContain('⚠');
+  });
+
+  it('does not throw and omits the cost segment when cost is non-numeric', () => {
+    expect(() => buildStatusLine({ ...basic, cost: 'not-a-number', budget: null, budgetError: null })).not.toThrow();
+    const line = buildStatusLine({ ...basic, cost: 'not-a-number', budget: null, budgetError: null });
+    expect(line).not.toContain('NaN');
+    expect(line).toContain('[my-project]'); // basic info still renders
   });
 });
 
@@ -188,10 +207,52 @@ describe('resolveBudget', () => {
   });
 
   it('returns the fresh cached value without touching config/network when cache is fresh', async () => {
-    const readFile = vi.fn().mockResolvedValueOnce(JSON.stringify({ ts: Date.now(), value: { text: 'cached', pct: 5 } }));
+    const readFile = vi.fn().mockResolvedValueOnce(JSON.stringify({ schema: 2, ts: Date.now(), value: { text: 'cached', pct: 5 } }));
     const fetchImpl = vi.fn();
     const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl, getAuthHeadersImpl: vi.fn() });
     expect(result).toEqual({ budget: { text: 'cached', pct: 5 }, budgetError: null });
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('treats a pre-upgrade string-shaped cache entry as a cache miss instead of using it', async () => {
+    // Old cache format: value was a plain string, not { text, pct }.
+    const readFile = vi.fn()
+      .mockResolvedValueOnce(JSON.stringify({ ts: Date.now(), value: '$5.00/$10 (50%)', pct: 50 }))
+      .mockRejectedValueOnce(new Error('no config'));
+    const fetchImpl = vi.fn();
+    const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl, getAuthHeadersImpl: vi.fn() });
+    expect(result).toEqual({ budget: null, budgetError: null });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('returns a graceful budgetError instead of an uncaught rejection when getAuthHeadersImpl throws', async () => {
+    const readFile = vi.fn()
+      .mockRejectedValueOnce(new Error('no cache'))
+      .mockResolvedValueOnce(JSON.stringify({
+        activeProfile: 'default',
+        profiles: { default: { codeMieUrl: 'https://x', baseUrl: 'https://x/api', userEmail: 'me@x.com' } },
+      }));
+    const getAuthHeadersImpl = vi.fn().mockRejectedValue(new Error('keychain locked'));
+    const result = await resolveBudget({ readFile, writeFile: vi.fn(), fetchImpl: vi.fn(), getAuthHeadersImpl });
+    expect(result).toEqual({ budget: null, budgetError: 'keychain locked' });
+  });
+});
+
+describe('isMainModule', () => {
+  it('matches when the raw path equals the decoded file URL', () => {
+    expect(isMainModule('/Users/me/script.mjs', 'file:///Users/me/script.mjs')).toBe(true);
+  });
+
+  it('matches even when the home directory contains spaces (percent-encoded in the URL)', () => {
+    expect(isMainModule('/Users/John Doe/.claude/codemie-budget-status.js', 'file:///Users/John%20Doe/.claude/codemie-budget-status.js')).toBe(true);
+  });
+
+  it('returns false for a different path', () => {
+    expect(isMainModule('/Users/me/other.mjs', 'file:///Users/me/script.mjs')).toBe(false);
+  });
+
+  it('returns false when argv1 is falsy', () => {
+    expect(isMainModule('', 'file:///Users/me/script.mjs')).toBe(false);
+    expect(isMainModule(undefined, 'file:///Users/me/script.mjs')).toBe(false);
   });
 });

@@ -9,12 +9,14 @@ import { exec } from 'child_process';
 import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
 const HOME = process.env.CODEMIE_HOME || path.join(os.homedir(), '.codemie');
 const CACHE_FILE = path.join(HOME, 'budget-cache.json');
 const CONFIG_FILE = path.join(HOME, 'codemie-cli.config.json');
 const CREDS_DIR = path.join(HOME, 'credentials');
 const CACHE_TTL_MS = 60_000;
+const CACHE_SCHEMA = 2; // bump when the cache.value shape changes, to discard stale pre-upgrade entries
 
 const ENCRYPTION_KEY = (() => {
   const id = os.hostname() + os.platform() + os.arch();
@@ -70,8 +72,8 @@ export async function getAuthHeaders(codeMieUrl) {
 
 export function matchBudgetRow(rows, userEmail) {
   if (!Array.isArray(rows) || !userEmail) return null;
-  const target = `${userEmail} (cli)`;
-  return rows.find(r => r.project_name === target) ?? null;
+  const target = `${userEmail.trim().toLowerCase()} (cli)`;
+  return rows.find(r => r.project_name?.trim().toLowerCase() === target) ?? null;
 }
 
 export function formatBudgetSegment(row) {
@@ -99,7 +101,7 @@ export function extractBasicInfo(ctx) {
 }
 
 export function formatDuration(ms) {
-  if (ms == null) return null;
+  if (typeof ms !== 'number' || Number.isNaN(ms) || ms < 0) return null;
   const mins = Math.floor(ms / 60000);
   const secs = Math.floor((ms % 60000) / 1000);
   return `${mins}m ${secs}s`;
@@ -140,7 +142,7 @@ export function buildStatusLine({ projectName, branch, model, ctxPct, tokIn, tok
   if (ctxPct != null) stats.push(`ctx:${ctxPct}%`);
   if (tokIn != null)  stats.push(`in:${fmt(tokIn)}`);
   if (tokOut != null) stats.push(`out:${fmt(tokOut)}`);
-  if (cost != null)   stats.push(`$${cost.toFixed(4)}`);
+  if (typeof cost === 'number' && !Number.isNaN(cost)) stats.push(`$${cost.toFixed(4)}`);
   const dur = formatDuration(durationMs);
   if (dur) stats.push(dur);
   if (stats.length) parts.push(c(C.gray, stats.join(' ')));
@@ -176,11 +178,15 @@ export async function resolveBudget({
   fetchImpl = fetch,
   getAuthHeadersImpl = getAuthHeaders,
 } = {}) {
-  // Fast path: fresh cache, skip config/network entirely.
+  // Fast path: fresh cache, skip config/network entirely. Discard any cache entry that
+  // isn't this schema version (e.g. a pre-upgrade string-shaped value) instead of trusting it.
   try {
     const cacheRaw = await readFile(CACHE_FILE, 'utf8');
     const cache = JSON.parse(cacheRaw);
-    if (Date.now() - cache.ts < CACHE_TTL_MS) {
+    const validShape = cache.schema === CACHE_SCHEMA
+      && typeof cache.value === 'object' && cache.value !== null
+      && typeof cache.value.text === 'string';
+    if (validShape && Date.now() - cache.ts < CACHE_TTL_MS) {
       return { budget: cache.value, budgetError: null };
     }
   } catch {}
@@ -198,7 +204,12 @@ export async function resolveBudget({
     return { budget: null, budgetError: null }; // no CodeMie profile configured → skip silently
   }
 
-  const headers = await getAuthHeadersImpl(codeMieUrl);
+  let headers;
+  try {
+    headers = await getAuthHeadersImpl(codeMieUrl);
+  } catch (e) {
+    return { budget: null, budgetError: e.message };
+  }
   if (!headers) {
     return { budget: null, budgetError: 'reauthenticate' };
   }
@@ -214,7 +225,7 @@ export async function resolveBudget({
     if (!row) throw new Error('budget row not found');
 
     const budget = formatBudgetSegment(row);
-    await writeFile(CACHE_FILE, JSON.stringify({ ts: Date.now(), value: budget }), 'utf8');
+    await writeFile(CACHE_FILE, JSON.stringify({ schema: CACHE_SCHEMA, ts: Date.now(), value: budget }), 'utf8');
     return { budget, budgetError: null };
   } catch (e) {
     return { budget: null, budgetError: e.message };
@@ -237,8 +248,18 @@ export async function main() {
   process.stdout.write(buildStatusLine({ ...basic, branch, ...budgetResult }));
 }
 
-const isEntrypoint = process.argv[1] && import.meta.url === `file://${process.argv[1]}`;
-if (isEntrypoint) {
+// Compares decoded paths (not raw strings) so this correctly matches even when the
+// script's path contains characters import.meta.url percent-encodes (e.g. spaces).
+export function isMainModule(argv1, metaUrl) {
+  if (!argv1) return false;
+  try {
+    return fileURLToPath(metaUrl) === argv1;
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule(process.argv[1], import.meta.url)) {
   // Statusline must never crash Claude Code — swallow any unexpected error.
   main().catch(() => { process.stdout.write(''); });
 }
