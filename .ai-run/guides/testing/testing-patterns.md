@@ -125,6 +125,41 @@ try {
 
 ---
 
+## Cross-Platform Path/URL Assertions
+
+Rule: Never hardcode POSIX-style path or `file://` URL literals in test expectations. Derive paths through `path.join()`/`path.resolve()` and build `file://` URLs via `url.pathToFileURL()`, so the assertion matches whatever separator/encoding the current OS actually produces.
+
+Reference: `src/agents/plugins/claude/plugin/__tests__/statusline.test.ts:276-301`, `src/agents/plugins/claude/__tests__/statusline-installer.test.ts:26-35`
+
+| Bad | Best |
+|-----|------|
+| `expect(result.scriptPath).toBe('/home/testuser/claude/x.js')` | `expect(result.scriptPath).toBe(join(CLAUDE_HOME, 'x.js'))` |
+| `isMainModule(p, 'file:///Users/me/script.mjs')` | `isMainModule(p, pathToFileURL(p).href)` |
+
+Why: `path.join()` uses backslashes on Windows; a hardcoded forward-slash literal only matches on POSIX. This exact class of bug reached CI twice in one PR (#418) — undetected locally because macOS/Linux never surface it.
+
+---
+
+## Testing Dependency-Free Scripts via Parameter Injection
+
+Rule: For a standalone script that must stay import-free of the project's `src/` tree (deployed and run outside the compiled package), avoid `vi.mock()` on its own filesystem/network calls. Instead, give the function optional parameters defaulting to the real dependency, and pass fakes directly in tests.
+
+Reference: `src/agents/plugins/claude/plugin/statusline.mjs:188-246`, `src/agents/plugins/claude/plugin/__tests__/statusline.test.ts:185-273`
+
+```typescript
+export async function resolveBudget({
+  readFile = fs.readFile,
+  fetchImpl = fetch,
+} = {}) { /* ... */ }
+
+// test: no vi.mock() needed — pass fakes directly
+await resolveBudget({ readFile: vi.fn().mockResolvedValue(...), fetchImpl: vi.fn() });
+```
+
+Why: `vi.mock('fs/promises')` only intercepts imports the *test file* resolves — a dependency-free deployed script that must remain framework-agnostic still needs a test seam. Default-parameter injection provides one without adding a runtime dependency.
+
+---
+
 ## Integration Tests
 
 Rule: Integration tests use real dependencies (file system, config) and no mocking unless testing external services.

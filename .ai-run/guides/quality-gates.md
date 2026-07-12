@@ -42,6 +42,12 @@ Run order is fastest-to-slowest. Each gate is a real `npm run` script in `packag
 **Auto-fix**: none.
 **Skip if**: never, unless the change is `.ai-run/guides/` or doc-only.
 
+### Cross-platform CI (Windows)
+
+CI runs a separate `test-windows` job (`.github/workflows/ci.yml`) using the same `npm run test:unit`/`test:integration` commands on `windows-latest`. GitHub's Windows runners default `core.autocrlf=true`, so any text file is checked out with CRLF unless `.gitattributes` forces LF. The repo's `.gitattributes` (`* text=auto eol=lf`) exists specifically to prevent this — without it, a `.mjs`/`.js` file starting with a shebang line (`#!/usr/bin/env node`) breaks Vite/Vitest's module transform with `SyntaxError: Invalid or unexpected token` when checked out with CRLF. See `src/agents/plugins/claude/plugin/statusline.mjs:1`.
+
+**Local repro**: convert a file to CRLF (`perl -pi -e 's/\n/\r\n/ unless /\r\n$/' <file>`) and re-run `npx vitest run <its-test>` — this reproduces Windows-only CI failures without needing a Windows machine.
+
 ### Integration tests
 
 **Run**: `npm run test:integration` (`vitest run tests/integration`)
