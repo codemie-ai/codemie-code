@@ -248,6 +248,8 @@ export interface AnalyticsOptions {
   reportFormat?: 'html' | 'json' | 'both';
   /** When false (via --no-scan-native), skip native-log discovery and use tracked sessions only. */
   scanNative?: boolean;
+  /** When true (via --include-external), include non-CodeMie-owned native sessions in output (matches pre-fix behavior). */
+  includeExternal?: boolean;
 }
 
 /** Options for the `analytics otel` subcommand: the shared base plus OTEL-specific flags. */

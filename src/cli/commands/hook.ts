@@ -619,6 +619,19 @@ async function routeHookEvent(event: BaseHookEvent, rawInput: string, sessionId:
         return;
     }
 
+    // Deferred ownership marker: covers sessions where transcript_path was empty at
+    // SessionStart (transcript file not yet created). appendTranscriptMarker is idempotent —
+    // it skips if the per-Claude-session sidecar already exists.
+    if (
+      event.transcript_path &&
+      (normalizedEventName === 'UserPromptSubmit' || normalizedEventName === 'Stop')
+    ) {
+      const { appendTranscriptMarker } = await import(
+        '../../agents/core/session/session-origin-audit.js'
+      );
+      appendTranscriptMarker(event.transcript_path, sessionId, agentName);
+    }
+
     const duration = Date.now() - startTime;
     logger.info(`[hook:router] Event handled successfully: ${normalizedEventName} (${duration}ms)`);
 

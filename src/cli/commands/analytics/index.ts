@@ -20,6 +20,7 @@ export function createAnalyticsCommand(): Command {
   // Default source: local CodeMie-tracked sessions + native agent logs.
   applyCommonOptions(command)
     .option('--no-scan-native', 'Skip native agent-log discovery (use only CodeMie-tracked sessions)')
+    .option('--include-external', 'Include non-CodeMie-owned native sessions in output (opt-in; matches pre-fix behavior)')
     .action((options: AnalyticsOptions) => runAnalytics(options, new SessionsSource()));
 
   // `codemie analytics otel --file <path>` — OTEL file source.
@@ -62,7 +63,11 @@ function applyCommonOptions(command: Command): Command {
 async function runAnalytics(options: AnalyticsOptions, source: AnalyticsSource): Promise<void> {
   try {
     const filter = parseFilterOptions(options);
-    const { rawSessions, cost } = await source.load({ filter, scanNative: options.scanNative });
+    const { rawSessions, cost } = await source.load({
+      filter,
+      scanNative: options.scanNative,
+      includeExternal: options.includeExternal
+    });
 
     if (rawSessions.length === 0) {
       console.log(chalk.yellow('\nNo sessions found matching the specified criteria.'));

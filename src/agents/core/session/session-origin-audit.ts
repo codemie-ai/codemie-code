@@ -1,5 +1,5 @@
 import { appendFileSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { getCodemiePath } from '../../../utils/paths.js';
 import { logger } from '../../../utils/logger.js';
@@ -35,20 +35,29 @@ export function appendTranscriptMarker(
 
   // CR-006: write a race-condition-free sidecar marker in ~/.codemie/sessions/ instead of
   // appending to the live Claude transcript (avoids byte-level interleaving on concurrent writes).
+  // Key by the Claude session ID (transcript basename) so each distinct Claude session gets its
+  // own non-overwriting marker — prevents a session resume from clobbering the prior transcript's
+  // entry in the ownership index. The write is idempotent: skip if the file already exists.
   try {
     const sessionsDir = getCodemiePath('sessions');
     mkdirSync(sessionsDir, { recursive: true });
-    writeFileSync(
-      join(sessionsDir, `${codemieSessionId}-codemie-marker.json`),
-      JSON.stringify({
-        transcriptPath,
-        codemieSessionId,
-        codemieAgent,
-        timestamp: new Date().toISOString(),
-      }),
-      'utf-8',
-    );
-    logger.debug(`[session-origin] Sidecar marker written for session ${codemieSessionId}`);
+    const claudeSessionId = basename(transcriptPath, '.jsonl');
+    const sidecarPath = join(sessionsDir, `${claudeSessionId}-codemie-marker.json`);
+    if (existsSync(sidecarPath)) {
+      logger.debug(`[session-origin] Sidecar marker already exists for ${claudeSessionId}, skipping`);
+    } else {
+      writeFileSync(
+        sidecarPath,
+        JSON.stringify({
+          transcriptPath,
+          codemieSessionId,
+          codemieAgent,
+          timestamp: new Date().toISOString(),
+        }),
+        'utf-8',
+      );
+      logger.debug(`[session-origin] Sidecar marker written for ${claudeSessionId} (codemie: ${codemieSessionId})`);
+    }
   } catch (err) {
     logger.debug(`[session-origin] Failed to write sidecar marker (non-fatal): ${err}`);
   }
