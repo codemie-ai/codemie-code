@@ -1,0 +1,91 @@
+{
+  "decision": "approve",
+  "rationale": "All three lenses ran and produced usable results. The production guard is correctly placed at BaseAgentAdapter.ts:755 — after the else-if(!isWindows) block and before let finalCommand — and its regex matches the existing quoting branch at line 713. Three unit tests cover the three behavioral branches (null-path+metachar → quoted, null-path+clean → unchanged, resolved-path+metachar → not double-quoted), confirmed by 154/154 test files passing. Standards: commit fix(cli): ... passes commitlint type-enum (fix) and scope-enum (cli). No blocking findings. Five deferred observations noted in rationale; four dismissed as non-applicable.",
+  "findings": [],
+  "business_review": [
+    {
+      "criterion": "Special characters in Windows username path no longer crash CLI",
+      "status": "pass",
+      "notes": "isWindows + /[ ()&|<>^%[\\]{}]/.test + !startsWith('\"') guard wraps commandPath before shell:true spawn."
+    },
+    {
+      "criterion": "CLI properly escapes all valid Windows directory names",
+      "status": "pass",
+      "notes": "Regex covers the full CMD.EXE metacharacter set; identical pattern used at the existing quoting branch (line 713)."
+    },
+    {
+      "criterion": "Manual verification in affected environment",
+      "status": "partial",
+      "notes": "Cannot verify from a diff; no execution evidence for a real profile path containing parentheses."
+    },
+    {
+      "criterion": "Regression tests ensure directory name edge cases (spaces, parentheses) do not break CLI",
+      "status": "partial",
+      "notes": "Three tests cover the three behavioral branches (parentheses path, clean path, non-null resolved path). Space-path test not present; guard handles spaces identically to parentheses (same regex branch). Deferred: adding a fourth test case."
+    },
+    {
+      "criterion": "Fix placed after else-if(!isWindows) block, before let finalCommand",
+      "status": "pass",
+      "notes": "Confirmed from source read: guard is at line 755, let finalCommand at line 761."
+    },
+    {
+      "criterion": "Regex /[ ()&|<>^%[\\]{}]/ matches existing quoting branch at line 713",
+      "status": "pass",
+      "notes": "Identical character class at both locations."
+    },
+    {
+      "criterion": "Guard !commandPath.startsWith('\"') prevents double-quoting when path already quoted",
+      "status": "pass",
+      "notes": "Test 3 exercises this: if the check were removed, commandPath would be double-quoted and Test 3 would fail."
+    },
+    {
+      "criterion": "Three specified unit tests all pass",
+      "status": "pass",
+      "notes": "22 tests in BaseAgentAdapter.test.ts pass; 2259/2259 tests pass overall."
+    }
+  ],
+  "standards_review": [
+    {
+      "standard": "Conventional Commits format (commitlint.config.cjs + .husky/commit-msg)",
+      "status": "pass",
+      "notes": "fix(cli): quote Windows commandPath when getCommandPath returns null — type 'fix' and scope 'cli' both in type-enum and scope-enum; subject 57 chars, under 100-char limit. Commit passed commitlint hook."
+    },
+    {
+      "standard": "TypeScript strict mode (tsc --noEmit)",
+      "status": "pass",
+      "notes": "Typecheck step in pre-commit hook exited 0."
+    },
+    {
+      "standard": "ESLint zero-warning policy (lint-staged)",
+      "status": "pass",
+      "notes": "lint-staged ran during pre-commit without warnings or errors."
+    },
+    {
+      "standard": "Security practices",
+      "status": "pass",
+      "notes": "No new user-controlled input surface introduced. commandPath originates from plugin metadata, not from untrusted external input."
+    },
+    {
+      "standard": "No child_process.exec directly (use exec() from utils/processes.ts)",
+      "status": "pass",
+      "notes": "Change does not introduce any new exec() calls; it only modifies the commandPath string before the existing spawn() call."
+    }
+  ],
+  "risk_flags": [],
+  "confidence": "medium",
+  "_review_notes": {
+    "deferred": [
+      "EC-001: Malformed pre-quoted path ('\"path' without closing quote) bypasses !startsWith guard — theoretical, plugin metadata does not produce half-open quotes.",
+      "EC-002: No test for space in path — guard handles spaces identically to parentheses (same regex branch); three behavioral branches fully covered.",
+      "EC-003: Missing test for already-quoted-null-path case — edge case, plugin metadata does not pre-quote commandPath.",
+      "EC-004: No test for guard + non-empty args interaction — minor, args concatenation has independent coverage.",
+      "EC-005: Unescaped [ in regex character class — pre-existing at line 713; not introduced by this PR."
+    ],
+    "dismissed": [
+      "Blind: Embedded '\"' in commandPath via injection — Windows forbids '\"' in filesystem paths; not reachable.",
+      "Blind: Mock setup concern — all 22 tests in file pass; mocks are correctly configured.",
+      "Blind: Real getCommandPath called — mocks are in place; tests pass.",
+      "AC-001/AC-002: Truncated-diff artifacts from acceptance lens — full diff confirmed as correct from source read."
+    ]
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "mode": "actual",
+  "task": "Fix codemie-code CLI on Windows when user profile path contains CMD.EXE metacharacters by quoting commandPath before shell:true spawn in BaseAgentAdapter.ts.",
+  "generated": "2026-07-13T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 1, "label": "XS" },
+    "requirements_clarity": { "score": 1, "label": "XS" },
+    "technical_risk":       { "score": 1, "label": "XS" },
+    "file_change_estimate": { "score": 1, "label": "XS" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 6,
+  "size": "XS",
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Single method (run()) in BaseAgentAdapter — a 3-line if-block inserted before let finalCommand. No layer boundary crossed, no second file in production code."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Exactly 2 files changed (BaseAgentAdapter.ts +7 lines, BaseAgentAdapter.test.ts +83 lines), 0 new files. diffstat: 2 files changed, 89 insertions(+), 1 deletion(-). exec.ts was not touched."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}
