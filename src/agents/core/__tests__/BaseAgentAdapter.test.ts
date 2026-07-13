@@ -500,6 +500,41 @@ describe('BaseAgentAdapter', () => {
       );
     });
 
+    it.each([
+      [' ', 'space'],
+      ['\t', 'tab'],
+      [',', 'comma'],
+      [';', 'semicolon'],
+      ['=', 'equals'],
+      ['(', 'open paren'],
+      [')', 'close paren'],
+      ['&', 'ampersand'],
+      ['|', 'pipe'],
+      ['<', 'less-than'],
+      ['>', 'greater-than'],
+      ['^', 'caret'],
+      ['%', 'percent'],
+      ['[', 'open bracket'],
+      [']', 'close bracket'],
+      ['{', 'open brace'],
+      ['}', 'close brace'],
+    ])('wraps commandPath in double-quotes when path contains %s (%s)', async (char) => {
+      const spawnMock = vi.mocked(spawn);
+
+      const adapter = new RunPathAdapter({
+        ...baseMetadata,
+        cliCommand: `C:\\Users\\Name${char}Org\\bin\\cmd.exe`,
+      });
+
+      await adapter.run([], {});
+
+      expect(spawnMock).toHaveBeenCalledWith(
+        `"C:\\Users\\Name${char}Org\\bin\\cmd.exe"`,
+        [],
+        expect.objectContaining({ shell: true }),
+      );
+    });
+
     it('leaves commandPath unchanged when path has no CMD.EXE metacharacters', async () => {
       const spawnMock = vi.mocked(spawn);
 

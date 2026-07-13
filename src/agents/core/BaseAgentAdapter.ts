@@ -710,7 +710,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       const { getCommandPath } = await import('../../utils/processes.js');
       const resolvedPath = await getCommandPath(this.metadata.cliCommand);
       if (resolvedPath) {
-        commandPath = isWindows && /[ ()&|<>^%[\]{}]/.test(resolvedPath) ? `"${resolvedPath}"` : resolvedPath;
+        commandPath = isWindows && /[ \t,;=()&|<>^%[\]{}]/.test(resolvedPath) ? `"${resolvedPath}"` : resolvedPath;
         logger.debug(`Resolved command path: ${resolvedPath}`);
       } else if (!isWindows) {
         // On Unix, check common installation paths if command not found in PATH
@@ -750,9 +750,10 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       }
 
       // getCommandPath() may return null (binary not in PATH), leaving commandPath as the raw
-      // unquoted absolute path from plugin metadata. CMD.EXE treats bare '(' as a group delimiter,
-      // so a path like C:\Users\Name(Org\...\bin\cmd.exe must be quoted before shell: true spawn.
-      if (isWindows && /[ ()&|<>^%[\]{}]/.test(commandPath) && !commandPath.startsWith('"')) {
+      // unquoted absolute path from plugin metadata. CMD.EXE treats bare '(' as a group delimiter
+      // and tab , ; = as token delimiters, so a path like C:\Users\Name(Org\...\bin\cmd.exe or
+      // C:\Users\Name;Org\... must be quoted before shell: true spawn.
+      if (isWindows && /[ \t,;=()&|<>^%[\]{}]/.test(commandPath) && !commandPath.startsWith('"')) {
         commandPath = `"${commandPath}"`;
       }
 
