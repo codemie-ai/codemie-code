@@ -749,6 +749,13 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         }
       }
 
+      // getCommandPath() may return null (binary not in PATH), leaving commandPath as the raw
+      // unquoted absolute path from plugin metadata. CMD.EXE treats bare '(' as a group delimiter,
+      // so a path like C:\Users\Name(Org\...\bin\cmd.exe must be quoted before shell: true spawn.
+      if (isWindows && /[ ()&|<>^%[\]{}]/.test(commandPath) && !commandPath.startsWith('"')) {
+        commandPath = `"${commandPath}"`;
+      }
+
       // When shell: true is needed (Windows), merge args into command to avoid DEP0190
       // Node.js deprecation warning: shell mode doesn't escape array arguments, only concatenates them
       let finalCommand = commandPath;
