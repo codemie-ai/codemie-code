@@ -126,6 +126,26 @@ $PrefixDir = Join-Path $InstallRoot 'npm-prefix'
 $NpmPath = Get-CommandPath 'npm.cmd'
 $NodePath = Get-CommandPath 'node.exe'
 $GitPath = Get-CommandPath 'git.exe'
+
+# Fallback: probe common Node.js install locations when PATH lookup fails.
+# GUI apps (e.g. Connect wizard) may not inherit the user's shell PATH.
+if (-not $NodePath) {
+  $probes = @(
+    "$env:ProgramFiles\nodejs\node.exe",
+    "${env:ProgramFiles(x86)}\nodejs\node.exe",
+    "$env:LOCALAPPDATA\Programs\nodejs\node.exe"
+  )
+  foreach ($probe in $probes) {
+    if (Test-Path $probe) {
+      $NodePath = $probe
+      if (-not $NpmPath) {
+        $NpmPath = Join-Path (Split-Path $probe) 'npm.cmd'
+      }
+      break
+    }
+  }
+}
+
 $NodeMajor = Get-NodeMajor $NodePath
 
 Write-Host 'CodeMie installer diagnostics'
