@@ -14,7 +14,6 @@ import { OpenCodeSessionAdapter } from './opencode/opencode.session.js';
 import { resolveCodemieOpenCodeBinary, getPlatformPackage } from './codemie-code-binary.js';
 import { getHooksPluginFileUrl, cleanupHooksPlugin } from './codemie-code-hooks/index.js';
 import { getReasoningSanitizerPluginUrl, cleanupReasoningSanitizerPlugin } from './reasoning-sanitizer/index.js';
-import { getAzureOpenAISanitizerPluginUrl, cleanupAzureOpenAISanitizerPlugin } from './azure-openai-sanitizer/index.js';
 import { getCodemieHome } from '../../utils/paths.js';
 import type { HookProcessingConfig } from '../../cli/commands/hook.js';
 import { toBedrockModelId } from '../../providers/plugins/bedrock/bedrock.utils.js';
@@ -90,7 +89,7 @@ function normalizeOllamaModelId(modelId: string): string {
 /**
  * Build Azure OpenAI provider entries for OpenCode config.
  *
- * Architecture note: EPAM DIAL (and standard Azure OpenAI) require the deployment
+ * Architecture note: Azure OpenAI require the deployment
  * name in the URL path:
  *   /openai/deployments/{deployment}/chat/completions?api-version={ver}
  *
@@ -126,7 +125,7 @@ function buildAzureOpenAIProviders(
       options: {
         baseURL: deploymentUrl,
         // IMPORTANT: Do NOT put key in apiKey — sdk would send Authorization: Bearer.
-        // DIAL requires `api-key` header (Azure standard).
+        // Azure OpenAI requires `api-key` header (Azure standard).
         apiKey: '',
         headers: {
           'api-key': apiKey,
@@ -333,6 +332,14 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
       // Resolve the effective provider name.
       // CODEMIE_PROVIDER is set by ConfigLoader.exportProviderEnvVars from config.provider.
       const provider = env.CODEMIE_PROVIDER;
+      const isAzureOpenAI = provider === 'azure-openai';
+
+      // Do not let Azure-only sanitizer flags leak into another provider when
+      // the parent shell still contains variables from an earlier Azure run.
+      if (!isAzureOpenAI) {
+        delete env.CLAUDE_CODE_USE_AZURE_OPENAI;
+      }
+
       const baseUrl = env.CODEMIE_BASE_URL;
 
       if (!baseUrl) {
@@ -371,7 +378,6 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
 
       const isBedrock = provider === 'bedrock';
       const isLiteLLM = provider === 'litellm';
-      const isAzureOpenAI = provider === 'azure-openai';
       const proxyBaseUrl = provider !== 'ollama' && !isBedrock && !isLiteLLM && !isAzureOpenAI ? baseUrl : undefined;
       const ollamaBaseUrl = resolveOllamaBaseUrl(baseUrl, provider);
       const activeProvider = determineActiveProvider(provider);
@@ -393,6 +399,9 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
       let azureProvidersResult: ReturnType<typeof buildAzureOpenAIProviders> | undefined;
       if (isAzureOpenAI) {
         const azureEndpoint = resolveAzureOpenAIBaseUrl(env);
+        const azureProviderBaseUrl = env.CODEMIE_PROXY_ACTIVE === '1'
+          ? env.CODEMIE_BASE_URL || azureEndpoint
+          : azureEndpoint;
         const azureApiVersion = env.CODEMIE_AZURE_OPENAI_API_VERSION || env.AZURE_OPENAI_API_VERSION;
         const azureApiKey = env.CODEMIE_API_KEY || '';
         if (azureEndpoint) {
@@ -402,7 +411,7 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
           const { displayName: _dn, providerOptions: _po, use_responses_api: _ra, ...opencodeCfg } = cfg as any;
           initialAzureModels[modelId] = opencodeCfg;
       
-          // Try to fetch all deployments from DIAL/Azure for a full model list
+          // Try to fetch all deployments from Azure for a full model list
           try {
             const proxy = ProviderRegistry.getModelProxy('azure-openai') as unknown as (AzureDeploymentFetcher | undefined);
             if (proxy?.fetchDeploymentInfos) {
@@ -425,7 +434,7 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
           }
       
           azureProvidersResult = buildAzureOpenAIProviders(
-            azureEndpoint,
+            azureProviderBaseUrl || azureEndpoint,
             azureApiKey,
             azureApiVersion,
             initialAzureModels,
@@ -506,15 +515,6 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
       plugins.push(sanitizerPluginUrl);
       logger.debug(`[codemie-code] Injected reasoning-sanitizer plugin: ${sanitizerPluginUrl}`);
       
-      // Inject Azure OpenAI sanitizer for all azure-openai-* per-deployment providers.
-      // Strips cache_control from messages, thinking and reasoning params
-      // which DIAL/Azure OpenAI do not support (would return HTTP 400).
-      if (isAzureOpenAI) {
-        const azureOpenAISanitizerUrl = getAzureOpenAISanitizerPluginUrl();
-        plugins.push(azureOpenAISanitizerUrl);
-        logger.debug(`[codemie-code] Injected azure-openai-sanitizer plugin: ${azureOpenAISanitizerUrl}`);
-      }
-
       // --- Storage path configuration ---
       // Configure storage path for OpenCode sessions
       // This ensures codemie-opencode writes sessions to a location we can discover
@@ -620,7 +620,6 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
         delete process.env.OPENCODE_STORAGE_PATH;
         cleanupHooksPlugin();
         cleanupReasoningSanitizerPlugin();
-        cleanupAzureOpenAISanitizerPlugin();
       }
     }
   }

@@ -16,6 +16,7 @@ import { RequestSanitizerPlugin } from "./request-sanitizer.plugin.js";
 import { ClaudeRequestNormalizerPlugin } from "./claude-request-normalizer.plugin.js";
 import { KimiRequestNormalizerPlugin } from "./kimi-request-normalizer.plugin.js";
 import { CodexEncryptedContentSanitizerPlugin } from "./codex-encrypted-content-sanitizer.plugin.js";
+import { AzureOpenAISanitizerPlugin } from "./azure-openai-sanitizer.plugin.js";
 import { LoggingPlugin } from "./logging.plugin.js";
 import { SSOSessionSyncPlugin } from "./sso.session-sync.plugin.js";
 
@@ -35,6 +36,7 @@ registry.register(new GatewayKeyPlugin()); // Priority 7 - validates local gatew
   registry.register(new ClaudeRequestNormalizerPlugin()); // Priority 14 - normalizes thinking params for claude models
   registry.register(new KimiRequestNormalizerPlugin()); // Priority 14 - caps Kimi output token requests for upstream limits
   registry.register(new RequestSanitizerPlugin()); // Priority 15 - strips unsupported reasoning params
+  registry.register(new AzureOpenAISanitizerPlugin()); // Priority 15 - Azure OpenAI request compatibility
   registry.register(new CodexEncryptedContentSanitizerPlugin()); // Priority 16 - strips encrypted reasoning state for Codex
   registry.register(new HeaderInjectionPlugin());
   registry.register(new LoggingPlugin()); // Always enabled - logs to log files at INFO level
@@ -56,6 +58,7 @@ export {
   ClaudeRequestNormalizerPlugin,
   KimiRequestNormalizerPlugin,
   CodexEncryptedContentSanitizerPlugin,
+  AzureOpenAISanitizerPlugin,
   LoggingPlugin,
 };
 export { SSOSessionSyncPlugin } from "./sso.session-sync.plugin.js";

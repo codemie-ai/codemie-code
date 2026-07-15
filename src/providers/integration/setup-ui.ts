@@ -18,8 +18,8 @@ import type { ProviderTemplate, ModelInfo } from '../core/types.js';
  * - Capability hints (dimmed)
  */
 export function formatProviderChoice(template: ProviderTemplate): string {
-  // For Azure OpenAI EPAM DIAL — brief remark
-  if (template.name === 'azure-openai' && template.displayName.toLowerCase().includes('dial')) {
+  // For Azure OpenAI — brief remark
+  if (template.name === 'azure-openai') {
     return `${template.displayName} - ${template.description} — features limited`;
   }
   return `${template.displayName} - ${template.description}`;
@@ -115,10 +115,10 @@ export function formatModelChoice(
 ): { name: string; value: string } {
   const metadata = template?.modelMetadata?.[modelId];
 
-  // Note for models via DIAL (Azure OpenAI) — reasoning/thinking disabled
+  // Note for Azure OpenAI models — reasoning/thinking disabled
   let featureNote = '';
   if (
-    template?.name === 'azure-openai' && template?.displayName?.toLowerCase().includes('dial') &&
+    template?.name === 'azure-openai' &&
     (!modelId.toLowerCase().includes('gpt') && !modelId.toLowerCase().includes('openai'))
   ) {
     featureNote = ' [no reasoning]';

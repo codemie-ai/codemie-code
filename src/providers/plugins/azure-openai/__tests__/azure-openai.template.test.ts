@@ -2,7 +2,7 @@
  * Azure OpenAI Template — beforeRun hook tests
  *
  * Verifies the claude-specific beforeRun hook correctly configures Claude Code
- * for Azure / EPAM DIAL usage, including DIAL compatibility settings that
+ * for Azure OpenAI usage, including compatibility settings that
  * prevent HTTP 400 errors caused by Anthropic-native request fields.
  *
  * @group unit
@@ -15,12 +15,12 @@ import { AzureOpenAITemplate } from '../azure-openai.template.js';
 function makeEnv(overrides: Record<string, string | undefined> = {}): NodeJS.ProcessEnv {
   return {
     CODEMIE_PROVIDER: 'azure-openai',
-    CODEMIE_BASE_URL: 'https://my-epam-dial.example.com',
-    CODEMIE_AZURE_OPENAI_BASE_URL: 'https://my-epam-dial.example.com',
+    CODEMIE_BASE_URL: 'https://my-azure-openai.example.com',
+    CODEMIE_AZURE_OPENAI_BASE_URL: 'https://my-azure-openai.example.com',
     CODEMIE_API_KEY: 'PLACEHOLDER-KEY-FOR-TESTING-ONLY',
     CODEMIE_MODEL: 'anthropic.claude-sonnet-4-6',
     AZURE_OPENAI_API_KEY: 'PLACEHOLDER-KEY-FOR-TESTING-ONLY', // set by wildcard hook first
-    ANTHROPIC_BASE_URL: 'https://my-epam-dial.example.com',
+    ANTHROPIC_BASE_URL: 'https://my-azure-openai.example.com',
     ANTHROPIC_AUTH_TOKEN: 'PLACEHOLDER-KEY-FOR-TESTING-ONLY',
     ...overrides,
   };
@@ -48,19 +48,19 @@ describe('AzureOpenAITemplate — claude.beforeRun hook', () => {
       expect(result.CLAUDE_CODE_USE_AZURE_OPENAI).toBe('1');
     });
 
-    it('sets ANTHROPIC_BASE_URL to the Azure/DIAL endpoint', async () => {
+    it('sets ANTHROPIC_BASE_URL to the Azure OpenAI endpoint', async () => {
       const env = makeEnv();
       const result = await runClaudeBeforeRunHook(env);
-      expect(result.ANTHROPIC_BASE_URL).toBe('https://my-epam-dial.example.com');
+      expect(result.ANTHROPIC_BASE_URL).toBe('https://my-azure-openai.example.com');
     });
 
     it('prefers CODEMIE_AZURE_OPENAI_BASE_URL over CODEMIE_BASE_URL for ANTHROPIC_BASE_URL', async () => {
       const env = makeEnv({
         CODEMIE_BASE_URL: 'http://localhost:3001', // proxy URL
-        CODEMIE_AZURE_OPENAI_BASE_URL: 'https://real-dial-endpoint.example.com',
+        CODEMIE_AZURE_OPENAI_BASE_URL: 'https://real-azure-openai-endpoint.example.com',
       });
       const result = await runClaudeBeforeRunHook(env);
-      expect(result.ANTHROPIC_BASE_URL).toBe('https://real-dial-endpoint.example.com');
+      expect(result.ANTHROPIC_BASE_URL).toBe('https://real-azure-openai-endpoint.example.com');
     });
 
     it('removes ANTHROPIC_AUTH_TOKEN to prevent Anthropic API auth attempt', async () => {
@@ -77,7 +77,7 @@ describe('AzureOpenAITemplate — claude.beforeRun hook', () => {
   });
 
   // ──────────────────────────────────────────────────────────────────────────
-  describe('DIAL/Azure compatibility — cache_control prevention', () => {
+  describe('Azure OpenAI compatibility — cache_control prevention', () => {
     it('disables prompt caching (ENABLE_PROMPT_CACHING_1H=0) to prevent cache_control in requests', async () => {
       const env = makeEnv();
       const result = await runClaudeBeforeRunHook(env);
@@ -102,7 +102,7 @@ describe('AzureOpenAITemplate — claude.beforeRun hook', () => {
       expect(result.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS).toBe('1');
     });
 
-    it('disables thinking-related features that DIAL rejects', async () => {
+    it('disables thinking-related features that Azure OpenAI rejects', async () => {
       const env = makeEnv({
         CLAUDE_CODE_DISABLE_THINKING: undefined,
         MAX_THINKING_TOKENS: undefined,

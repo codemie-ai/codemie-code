@@ -79,16 +79,6 @@ vi.mock('../reasoning-sanitizer/index.js', () => ({
   cleanupReasoningSanitizerPlugin: mockCleanupReasoningSanitizer,
 }));
 
-// Mock azure-openai-sanitizer
-const { mockGetAzureOpenAISanitizerPluginUrl, mockCleanupAzureOpenAISanitizer } = vi.hoisted(() => ({
-  mockGetAzureOpenAISanitizerPluginUrl: vi.fn(() => 'file:///mock/azure-openai-sanitizer.ts'),
-  mockCleanupAzureOpenAISanitizer: vi.fn(),
-}));
-vi.mock('../azure-openai-sanitizer/index.js', () => ({
-  getAzureOpenAISanitizerPluginUrl: mockGetAzureOpenAISanitizerPluginUrl,
-  cleanupAzureOpenAISanitizerPlugin: mockCleanupAzureOpenAISanitizer,
-}));
-
 // Mock OpenCodeSessionAdapter
 const { mockDiscoverSessions } = vi.hoisted(() => ({
   mockDiscoverSessions: vi.fn(),
@@ -261,18 +251,6 @@ describe('CodeMie Code Plugin — Reasoning Sanitization Integration', () => {
       expect(config.plugin).toContain('file:///mock/reasoning-sanitizer.ts');
     });
 
-    it('injects azure-openai-sanitizer plugin for azure-openai provider', async () => {
-      const env = createEnv({
-        CODEMIE_PROVIDER: 'azure-openai',
-        CODEMIE_API_KEY: 'azure-key',
-        CODEMIE_AZURE_OPENAI_BASE_URL: 'https://dial.example.com',
-      });
-      await beforeRun(env, {} as any);
-
-      const config = parseConfig(env);
-      expect(config.plugin).toContain('file:///mock/azure-openai-sanitizer.ts');
-      expect(mockGetAzureOpenAISanitizerPluginUrl).toHaveBeenCalled();
-    });
   });
 
   describe('Cleanup — onSessionEnd', () => {
@@ -307,7 +285,6 @@ describe('CodeMie Code Plugin — Reasoning Sanitization Integration', () => {
 
       expect(mockCleanupHooksPlugin).toHaveBeenCalled();
       expect(mockCleanupReasoningSanitizer).toHaveBeenCalled();
-      expect(mockCleanupAzureOpenAISanitizer).toHaveBeenCalled();
     });
   });
 });

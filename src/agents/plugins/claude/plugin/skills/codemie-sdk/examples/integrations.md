@@ -69,7 +69,7 @@ codemie sdk integrations create --json jira-integration.json
 | `enabled` | — | `false` = disable the integration without deleting it (default: `true`) |
 | `external_id` | — | External system identifier for cross-referencing with other tools |
 
-**All supported `credential_type` values:** `Jira`, `Confluence`, `Git`, `Kubernetes`, `AWS`, `GCP`, `Azure`, `Keycloak`, `Elastic`, `OpenAPI`, `Plugin`, `FileSystem`, `Scheduler`, `Webhook`, `Email`, `AzureDevOps`, `Sonar`, `SQL`, `Telegram`, `ZephyrScale`, `ZephyrSquad`, `ServiceNow`, `DIAL`, `A2A`, `MCP`, `LiteLLM`, `ReportPortal`, `Xray`, `SharePoint`
+**All supported `credential_type` values:** `Jira`, `Confluence`, `Git`, `Kubernetes`, `AWS`, `GCP`, `Azure`, `Keycloak`, `Elastic`, `OpenAPI`, `Plugin`, `FileSystem`, `Scheduler`, `Webhook`, `Email`, `AzureDevOps`, `Sonar`, `SQL`, `Telegram`, `ZephyrScale`, `ZephyrSquad`, `ServiceNow`, `Azure OpenAI`, `A2A`, `MCP`, `LiteLLM`, `ReportPortal`, `Xray`, `SharePoint`
 
 > **Important:** `credential_values` **must include an `alias` key** with the same value as the top-level `alias` field, otherwise the API returns an error. Always add `{"key": "alias", "value": "<alias>"}` to the array.
 

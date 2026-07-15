@@ -4,9 +4,9 @@
  * Template definition for Azure OpenAI.
  * Auto-registers on import via registerProvider().
  *
- * Key architecture notes for EPAM DIAL and standard Azure OpenAI:
+ * Key architecture notes for Azure OpenAI:
  *
- * 1. AUTH HEADER: Azure OpenAI (including DIAL) uses `api-key: {key}` header,
+ * 1. AUTH HEADER: Azure OpenAI uses `api-key: {key}` header,
  *    NOT `Authorization: Bearer {key}`. @ai-sdk/openai-compatible always sends
  *    the Bearer header when apiKey is set, so we pass apiKey='' and inject the
  *    correct header explicitly via `headers: { 'api-key': key }`.
@@ -23,12 +23,12 @@
  *    agentHooks['claude'].beforeRun → CLAUDE_CODE_USE_AZURE_OPENAI=1, delete ANTHROPIC_AUTH_TOKEN,
  *                                     AZURE_OPENAI_API_KEY=<key>, ANTHROPIC_MODEL=<deployment>
  *
- * 4. CACHE_CONTROL STRIPPING (DIAL/Azure): When CLAUDE_CODE_USE_AZURE_OPENAI=1,
+ * 4. CACHE_CONTROL STRIPPING (Azure OpenAI): When CLAUDE_CODE_USE_AZURE_OPENAI=1,
  *    Claude Code bypasses the SSO proxy entirely and sends requests directly to
- *    the Azure/DIAL endpoint. This means proxy-level sanitizers (e.g.,
+ *    the Azure OpenAI endpoint. This means proxy-level sanitizers (e.g.,
  *    ClaudeRequestNormalizerPlugin) are NOT applied.
  *
- *    DIAL and Azure OpenAI use the OpenAI Chat Completions spec and do NOT support
+ *    Azure OpenAI use the OpenAI Chat Completions spec and do NOT support
  *    Anthropic-native fields such as `cache_control` on messages or content items,
  *    `thinking`, or `betas` request headers. Claude Code in recent versions adds
  *    these fields when prompt caching and experimental betas are enabled.
@@ -39,11 +39,11 @@
  *      - Set CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1 → prevents beta HTTP headers
  *      - Set CLAUDE_CODE_DISABLE_THINKING=1 / MAX_THINKING_TOKENS=0
  *        → prevents `thinking` and follow-up `reasoning_content` blocks that
- *          DIAL rejects on later turns for Claude deployments
+ *          Azure OpenAI rejects on later turns for Claude deployments
  *      - Set DISABLE_INTERLEAVED_THINKING=1
  *        → prevents interleaved-thinking beta behavior on gateway/provider
  *          combinations that do not preserve Anthropic semantics fully
- *        that some DIAL versions reject (e.g. anthropic-beta: prompt-caching-2024-07-31)
+ *          that some Azure OpenAI versions reject (e.g. anthropic-beta: prompt-caching-2024-07-31)
  *
  *    NOTE: The agent default lifecycle.beforeRun (claude.plugin.ts) is NOT executed
  *    when a provider supplies BOTH a wildcard (*) AND agent-specific (claude) hook,
@@ -94,8 +94,10 @@ export const AzureOpenAITemplate = registerProvider<ProviderTemplate>({
     // Sets the standard Azure SDK env vars used by OpenAI-compatible clients.
     '*': {
       beforeRun: async (env) => {
-        // Azure endpoint (prefer the dedicated var; fall back to generic base URL)
-        const endpoint = env.CODEMIE_AZURE_OPENAI_BASE_URL || env.CODEMIE_BASE_URL;
+        // Azure endpoint; when proxy is active, use the local proxy URL.
+        const endpoint = env.CODEMIE_PROXY_ACTIVE === '1'
+          ? env.CODEMIE_BASE_URL
+          : env.CODEMIE_AZURE_OPENAI_BASE_URL || env.CODEMIE_BASE_URL;
         if (endpoint) {
           env.AZURE_OPENAI_ENDPOINT = endpoint;
         }
@@ -126,10 +128,11 @@ export const AzureOpenAITemplate = registerProvider<ProviderTemplate>({
         // Signal Claude Code to use Azure OpenAI instead of the Anthropic API.
         env.CLAUDE_CODE_USE_AZURE_OPENAI = '1';
         
-        // Claude Code in Azure mode reads ANTHROPIC_BASE_URL as the Azure endpoint.
-        // (BaseAgentAdapter.transformEnvVars already mapped CODEMIE_BASE_URL → ANTHROPIC_BASE_URL;
-        //  here we ensure it points to the Azure endpoint, not a potential proxy URL.)
-        const endpoint = env.CODEMIE_AZURE_OPENAI_BASE_URL || env.CODEMIE_BASE_URL;
+        // Claude Code in Azure mode reads ANTHROPIC_BASE_URL as its API endpoint.
+        // Keep the local proxy URL when proxy routing is active.
+        const endpoint = env.CODEMIE_PROXY_ACTIVE === '1'
+          ? env.CODEMIE_BASE_URL
+          : env.CODEMIE_AZURE_OPENAI_BASE_URL || env.CODEMIE_BASE_URL;
         if (endpoint) {
           env.ANTHROPIC_BASE_URL = endpoint;
         }
@@ -142,13 +145,13 @@ export const AzureOpenAITemplate = registerProvider<ProviderTemplate>({
         // AZURE_OPENAI_API_KEY already set by the wildcard hook above; no duplication needed.
         
         // Model / deployment: Claude Code respects ANTHROPIC_MODEL for the active model.
-        // In Azure/DIAL, model == deployment name.
+        // For Azure OpenAI, model == deployment name.
         if (env.CODEMIE_MODEL) {
           env.ANTHROPIC_MODEL = env.CODEMIE_MODEL;
 
           // Keep internal/background model selection on the same deployment.
           // This avoids hidden switches to Anthropic defaults that do not exist
-          // on a DIAL gateway or under a custom deployment naming scheme.
+          // on an Azure OpenAI endpoint or under a custom deployment naming scheme.
           if (!env.ANTHROPIC_DEFAULT_HAIKU_MODEL) {
             env.ANTHROPIC_DEFAULT_HAIKU_MODEL = env.CODEMIE_MODEL;
           }
@@ -168,27 +171,27 @@ export const AzureOpenAITemplate = registerProvider<ProviderTemplate>({
         }
         
         // ----------------------------------------------------------------
-        // DIAL/Azure compatibility: disable Anthropic-specific request fields
+        // Azure OpenAI compatibility: disable Anthropic-specific request fields
         // ----------------------------------------------------------------
         //
-        // Claude Code in Azure mode sends requests DIRECTLY to the Azure/DIAL
-        // endpoint — the SSO proxy (and its ClaudeRequestNormalizerPlugin) is
-        // NOT in the path.  DIAL uses the OpenAI Chat Completions spec and
+        // Claude Code in Azure mode sends requests to the configured endpoint.
+        // When proxy routing is active, that endpoint is the local proxy and
+        // Azure OpenAI remains the upstream target. Azure OpenAI uses the OpenAI Chat Completions spec and
         // rejects Anthropic-native fields with HTTP 400:
         //
         //   • cache_control on messages / content items
         //     → added by Claude Code when ENABLE_PROMPT_CACHING_1H=1
-        //     → DIAL error: "Extra inputs are not permitted on path messages.0.cache_control"
+        //     → Azure OpenAI error: "Extra inputs are not permitted on path messages.0.cache_control"
         //
         //   • anthropic-beta: prompt-caching-* request header
         //     → added when experimental betas are enabled
-        //     → some DIAL gateway versions reject unknown beta headers
+        //     → some Azure OpenAI gateway versions reject unknown beta headers
         //
-        // Fix: explicitly disable both features for Azure/DIAL sessions.
+        // Fix: explicitly disable both features for Azure OpenAI sessions.
         env.ENABLE_PROMPT_CACHING_1H = '0';
         env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS = '1';
 
-        // Azure/DIAL exposes an OpenAI-compatible endpoint, not Anthropic's
+        // Azure OpenAI exposes an OpenAI-compatible endpoint, not Anthropic's
         // full Messages API surface.  Disable extended/interleaved thinking so
         // Claude Code does not emit `thinking` params or persist
         // `reasoning_content` blocks into follow-up messages.
