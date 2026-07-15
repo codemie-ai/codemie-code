@@ -71,7 +71,7 @@ describe('CodexPlugin version support', () => {
     const processes = await import('../../../../utils/processes.js');
     vi.mocked(processes.exec).mockResolvedValue({
       code: 0,
-      stdout: 'codex 0.118.9\n',
+      stdout: 'codex 0.132.9\n',
       stderr: '',
     });
 
@@ -80,7 +80,7 @@ describe('CodexPlugin version support', () => {
 
     const compat = await plugin.checkVersionCompatibility();
 
-    expect(compat.installedVersion).toBe('0.118.9');
+    expect(compat.installedVersion).toBe('0.132.9');
     expect(compat.isBelowMinimum).toBe(true);
     expect(compat.minimumSupportedVersion).toBe('0.133.0');
   });

@@ -36,7 +36,7 @@ export async function setup(): Promise<void> {
     for (const arch of ['darwin-arm64', 'darwin-x64']) {
       const helper = join(root, 'node_modules', 'node-pty', 'prebuilds', arch, 'spawn-helper');
       if (existsSync(helper)) {
-        try { chmodSync(helper, 0o755); } catch { /* non-fatal */ }
+        try { chmodSync(helper, 0o755); } catch (e) { console.warn(`[test-setup] chmod failed for ${helper}: ${(e as Error).message}`); }
       }
     }
   }
