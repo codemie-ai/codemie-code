@@ -1,5 +1,11 @@
 import { logger } from '../../../utils/logger.js';
 
+function toWrapperAgentName(name: string): string {
+  if (!name) return name;
+  const normalized = name.toLowerCase().replace(/^codemie_/, 'codemie-');
+  return normalized.startsWith('codemie-') ? normalized : `codemie-${normalized}`;
+}
+
 /**
  * Ensure session metadata file exists for SessionSyncer.
  * Creates a new session file in ~/.codemie/sessions/ if one doesn't already exist.
@@ -23,7 +29,7 @@ export async function ensureSessionFile(
       return;
     }
 
-    const agentName = env.CODEMIE_AGENT || defaultAgentName;
+    const agentName = toWrapperAgentName(env.CODEMIE_AGENT || defaultAgentName);
     const provider = env.CODEMIE_PROVIDER || 'unknown';
     const project = env.CODEMIE_PROJECT;
     const workingDirectory = process.cwd();

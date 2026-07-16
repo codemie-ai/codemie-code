@@ -286,4 +286,11 @@ describe('MetricsDataLoader.loadSessions — wrapper agent name filter', () => {
     const sessions = loader.loadSessions({ agentName: 'codemie-gemini' });
     expect(sessions).toHaveLength(0);
   });
+
+  it('hyphen filter "codemie-cli" matches underscore-form session "codemie_cli" (legacy normalisation)', () => {
+    writeAgentSession('aaaa-0007', 'codemie_cli');
+    const loader = new MetricsDataLoader(dir);
+    const sessions = loader.loadSessions({ agentName: 'codemie-cli' });
+    expect(sessions).toHaveLength(1);
+  });
 });

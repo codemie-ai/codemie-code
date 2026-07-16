@@ -653,7 +653,9 @@ async function routeHookEvent(event: BaseHookEvent, rawInput: string, sessionId:
  * Only the persisted session JSON uses the wrapper name.
  */
 export function toWrapperAgentName(name: string): string {
-  return name.startsWith('codemie') ? name : `codemie-${name}`;
+  if (!name) return name;
+  const normalized = name.toLowerCase().replace(/^codemie_/, 'codemie-');
+  return normalized.startsWith('codemie-') ? normalized : `codemie-${normalized}`;
 }
 
 /**
@@ -806,7 +808,7 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
 async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: string, agentSessionId: string, config?: HookProcessingConfig): Promise<void> {
   try {
     // Get required configuration values
-    const agentName = getConfigValue('CODEMIE_AGENT', config);
+    const agentName = getConfigValue('CODEMIE_AGENT', config); // short plugin name intentional — backend API key
     const provider = getConfigValue('CODEMIE_PROVIDER', config);
     const ssoUrl = getConfigValue('CODEMIE_URL', config);
     const syncApiUrl = getConfigValue('CODEMIE_SYNC_API_URL', config);
@@ -1079,7 +1081,7 @@ async function renameSessionFiles(sessionId: string): Promise<void> {
 async function sendSessionEndMetrics(event: SessionEndEvent, sessionId: string, agentSessionId: string, config?: HookProcessingConfig): Promise<void> {
   try {
     // Get required configuration values
-    const agentName = getConfigValue('CODEMIE_AGENT', config);
+    const agentName = getConfigValue('CODEMIE_AGENT', config); // short plugin name intentional — backend API key
     const provider = getConfigValue('CODEMIE_PROVIDER', config);
     const ssoUrl = getConfigValue('CODEMIE_URL', config);
     const apiUrl = getConfigValue('CODEMIE_SYNC_API_URL', config) || getConfigValue('CODEMIE_BASE_URL', config);
