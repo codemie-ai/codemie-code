@@ -647,6 +647,16 @@ async function routeHookEvent(event: BaseHookEvent, rawInput: string, sessionId:
 }
 
 /**
+ * Derive the wrapper agent name for session file storage.
+ * CODEMIE_AGENT carries the short plugin name (e.g. 'claude') so that
+ * AgentRegistry.getAgent() lookups and the backend API payload are unaffected.
+ * Only the persisted session JSON uses the wrapper name.
+ */
+export function toWrapperAgentName(name: string): string {
+  return name.startsWith('codemie') ? name : `codemie-${name}`;
+}
+
+/**
  * Helper: Create and save session record
  * Uses correlation information from hook event
  *
@@ -737,7 +747,7 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
     // Create session record with correlation already matched
     const session = {
       sessionId,
-      agentName,
+      agentName: toWrapperAgentName(agentName),
       provider,
       ...(project && { project }),
       startTime: Date.now(),

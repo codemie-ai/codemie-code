@@ -112,7 +112,7 @@ export interface RuntimeCheckpoint {
  */
 export interface Session {
   sessionId: string; // CodeMie session ID (UUID)
-  agentName: string; // 'claude', 'gemini'
+  agentName: string; // 'codemie-claude', 'codemie-gemini', etc. (wrapper name, not short plugin name)
   provider: string; // 'ai-run-sso', etc.
   project?: string; // SSO project name (optional, only for ai-run-sso provider)
   startTime: number; // Unix timestamp (ms)
