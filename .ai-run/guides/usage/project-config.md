@@ -181,11 +181,11 @@ Claude Code reads `~/.claude/settings.json` at startup. If that file contains an
 `ANTHROPIC_BASE_URL` key, Claude Code uses it instead of any environment variable.
 
 `codemie-code` detects this at startup and prints a visible warning showing:
-- The profile URL that was injected
-- The settings.json URL that will actually be used
+- **Profile URL** — the URL the active profile tried to inject
+- **Active URL** — the settings.json URL that will actually be used
 
 **Precedence chain (highest wins):**
-`~/.claude/settings.json` → `env.ANTHROPIC_BASE_URL` (codemie-code profile)
+`~/.claude/settings.json` > `env.ANTHROPIC_BASE_URL` (codemie-code profile)
 
 To avoid silent overrides: remove `ANTHROPIC_BASE_URL` from `~/.claude/settings.json`.
 
