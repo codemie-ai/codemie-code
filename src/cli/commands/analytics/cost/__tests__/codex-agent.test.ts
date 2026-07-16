@@ -61,4 +61,9 @@ describe('agentMatchesAnalyticsFilter — new agents', () => {
     expect(agentMatchesAnalyticsFilter('codemie-claude', 'codemie-gemini')).toBe(false);
     expect(agentMatchesAnalyticsFilter('claude', 'gemini')).toBe(false);
   });
+
+  it('returns false for undefined session agent (marker/non-session files)', () => {
+    expect(agentMatchesAnalyticsFilter(undefined, 'claude')).toBe(false);
+    expect(agentMatchesAnalyticsFilter(undefined, 'codemie-claude')).toBe(false);
+  });
 });

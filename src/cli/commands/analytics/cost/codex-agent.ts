@@ -25,7 +25,8 @@ function normalizeAgentId(name: string): string {
  * - short-name filter (no prefix): matches both the short name AND `codemie-<short>`.
  * - Legacy `codemie_xxx` (underscore) in either position is normalised to `codemie-xxx`.
  */
-export function agentMatchesAnalyticsFilter(sessionAgent: string, filterAgent: string): boolean {
+export function agentMatchesAnalyticsFilter(sessionAgent: string | undefined, filterAgent: string): boolean {
+  if (!sessionAgent) return false;
   const filter = normalizeAgentId(filterAgent);
   const session = normalizeAgentId(sessionAgent);
 
