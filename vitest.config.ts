@@ -16,7 +16,9 @@ export default defineConfig({
           globals: true,
           environment: 'node',
           testTimeout: 30_000,
-          hookTimeout: 10_000,
+          // Increased from 10_000: WSL2 filesystem (on /mnt/c Windows path) causes
+          // cold-start module loading to exceed 10 s. 30 s gives enough headroom.
+          hookTimeout: 30_000,
           isolate: true,
           env: {
             FORCE_COLOR: '1',
