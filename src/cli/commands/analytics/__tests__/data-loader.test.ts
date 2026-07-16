@@ -219,3 +219,71 @@ describe('MetricsDataLoader.loadSessions — completed_ prefixed sessions', () =
     expect(sessions[0].agentSessionFile).toBeUndefined();
   });
 });
+
+describe('MetricsDataLoader.loadSessions — wrapper agent name filter', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'data-loader-agent-test-'));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  function writeAgentSession(id: string, agentName: string): void {
+    writeFileSync(
+      join(dir, `completed_${id}.json`),
+      JSON.stringify({
+        startTime: 1000,
+        endTime: 2000,
+        status: 'completed',
+        agentName,
+        provider: 'anthropic',
+        workingDirectory: '/tmp/project',
+      })
+    );
+  }
+
+  it('short filter "claude" matches wrapper-named session "codemie-claude" (broad)', () => {
+    writeAgentSession('aaaa-0001', 'codemie-claude');
+    const loader = new MetricsDataLoader(dir);
+    const sessions = loader.loadSessions({ agentName: 'claude' });
+    expect(sessions).toHaveLength(1);
+  });
+
+  it('short filter "gemini" matches wrapper-named session "codemie-gemini" (broad)', () => {
+    writeAgentSession('aaaa-0002', 'codemie-gemini');
+    const loader = new MetricsDataLoader(dir);
+    const sessions = loader.loadSessions({ agentName: 'gemini' });
+    expect(sessions).toHaveLength(1);
+  });
+
+  it('exact wrapper filter "codemie-claude" matches wrapper session "codemie-claude" (narrow)', () => {
+    writeAgentSession('aaaa-0003', 'codemie-claude');
+    const loader = new MetricsDataLoader(dir);
+    const sessions = loader.loadSessions({ agentName: 'codemie-claude' });
+    expect(sessions).toHaveLength(1);
+  });
+
+  it('short filter "claude" also matches native short-name session "claude" (backward compat)', () => {
+    writeAgentSession('aaaa-0004', 'claude');
+    const loader = new MetricsDataLoader(dir);
+    const sessions = loader.loadSessions({ agentName: 'claude' });
+    expect(sessions).toHaveLength(1);
+  });
+
+  it('exact wrapper filter "codemie-claude" does NOT match native session "claude" (prevents native leak)', () => {
+    writeAgentSession('aaaa-0005', 'claude');
+    const loader = new MetricsDataLoader(dir);
+    const sessions = loader.loadSessions({ agentName: 'codemie-claude' });
+    expect(sessions).toHaveLength(0);
+  });
+
+  it('exact wrapper filter "codemie-gemini" does NOT match "codemie-claude" session (cross-agent)', () => {
+    writeAgentSession('aaaa-0006', 'codemie-claude');
+    const loader = new MetricsDataLoader(dir);
+    const sessions = loader.loadSessions({ agentName: 'codemie-gemini' });
+    expect(sessions).toHaveLength(0);
+  });
+});
