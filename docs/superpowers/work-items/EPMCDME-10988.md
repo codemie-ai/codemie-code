@@ -1,7 +1,7 @@
 # Work Item: EPMCDME-10988
 
 **Type**: Bug
-**Status**: Ready for dev
+**Status**: Ready for review
 **Assignee**: Aleksandr Budanov
 **External Ticket**: EPMCDME-10988 (Jira EPM-CDME)
 **External Sync**: synced
