@@ -111,4 +111,49 @@ describe('Claude Plugin – settings conflict detection in beforeRun', () => {
     );
     expect(conflictCalls).toHaveLength(0);
   });
+
+  it('does not throw when detectSettingsConflict rejects, calls logger.warn instead', async () => {
+    conflictMod.detectSettingsConflict.mockRejectedValue(new Error('os.homedir() failed'));
+
+    const env: HookEnv = { ANTHROPIC_BASE_URL: 'https://ai-proxy.lab.epam.com' };
+    await expect(beforeRun(env, mockConfig)).resolves.not.toThrow();
+
+    const loggerMod = await import('../../../../utils/logger.js');
+    expect(loggerMod.logger.warn).toHaveBeenCalledWith(
+      '[Claude] Failed to check for ANTHROPIC_BASE_URL settings conflict',
+      expect.anything()
+    );
+  });
+
+  it('shows "(not set)" when profileUrl is empty string', async () => {
+    conflictMod.detectSettingsConflict.mockResolvedValue({
+      settingsUrl: 'https://other-proxy.example.com',
+      profileUrl: '',
+    });
+
+    const env: HookEnv = {};
+    await beforeRun(env, mockConfig);
+
+    const allOutput = consoleErrorSpy.mock.calls.map(c => String(c[0] ?? '')).join('\n');
+    expect(allOutput).toContain('not set');
+    expect(allOutput).not.toMatch(/Profile URL\s+│\s+\n/);
+  });
+
+  it('strips C0 control characters from URL values to prevent terminal injection', async () => {
+    // A \r in the URL value would move the cursor to column 0 and allow the subsequent
+    // text to overwrite the displayed line (terminal injection). safeUrl() strips \r so
+    // the raw bytes cannot manipulate the terminal, even though the remaining text is still
+    // included in the displayed URL value.
+    conflictMod.detectSettingsConflict.mockResolvedValue({
+      settingsUrl: 'https://malicious.example.com\r  FORGED LINE',
+      profileUrl: 'https://ai-proxy.lab.epam.com\x1b[2K',
+    });
+
+    const env: HookEnv = { ANTHROPIC_BASE_URL: 'https://ai-proxy.lab.epam.com' };
+    await beforeRun(env, mockConfig);
+
+    const allOutput = consoleErrorSpy.mock.calls.map(c => String(c[0] ?? '')).join('\n');
+    expect(allOutput).not.toContain('\r');
+    expect(allOutput).not.toContain('\x1b[2K');
+  });
 });
