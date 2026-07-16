@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "task": "Fix codemie analytics to correctly attribute sessions to wrapper agent names (codemie-claude, codemie-codex, etc.) by changing CODEMIE_AGENT env var derivation in BaseAgentAdapter.ts and extending agentMatchesAnalyticsFilter in codex-agent.ts to handle all 7 agent types bidirectionally.",
+  "generated": "2026-07-16T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 19,
+  "size": "M",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "BaseAgentAdapter.ts is the shared base class for all 7 agent plugins — a core shared utility change. The CODEMIE_AGENT env var flows cross-cuttingly through BaseAgentAdapter, hook.ts (createSessionRecord, AgentRegistry.getAgent call sites), codex-agent.ts (analytics filter), and session types.ts. Red flag applied: touches core shared utilities and affects multiple agents."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "AgentRegistry.getAgent(CODEMIE_AGENT) is called at multiple points in hook.ts (performIncrementalSync line 318, normalizeEventName line 534, sendSessionStartMetrics line 831). A naive change to the env var will silently break session processing because the registry key is the short name (claude), not the wrapper name. The fix requires deriving wrapper name separately at the CODEMIE_AGENT assignment site while keeping metadata.name unchanged for registry lookups. Additionally, the backend API receives agentName via sendSessionStartMetrics/sendSessionEndMetrics — changing the value changes API payloads and may break server-side dashboards. The codemie_cli legacy underscore variant has no obvious codebase source, requiring special-case handling."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from M (3) to L (4): BaseAgentAdapter.ts is a core shared utility and the change affects all 7 agent types flowing through it"
+  ],
+  "split_recommendation": null
+}
