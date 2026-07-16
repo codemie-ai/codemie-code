@@ -93,4 +93,24 @@ describe('detectSettingsConflict', () => {
 
     expect(result).toBeNull();
   });
+
+  it('returns null when settings.json ANTHROPIC_BASE_URL is an empty string', async () => {
+    vi.mocked(fsMod.existsSync).mockReturnValue(true);
+    vi.mocked(fsp.readFile).mockResolvedValue(JSON.stringify({ ANTHROPIC_BASE_URL: '' }) as any);
+
+    const result = await detectSettingsConflict({ ANTHROPIC_BASE_URL: PROFILE_URL });
+
+    expect(result).toBeNull();
+  });
+
+  it('returns null when readFile rejects with a filesystem error', async () => {
+    vi.mocked(fsMod.existsSync).mockReturnValue(true);
+    vi.mocked(fsp.readFile).mockRejectedValue(
+      Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }),
+    );
+
+    const result = await detectSettingsConflict({ ANTHROPIC_BASE_URL: PROFILE_URL });
+
+    expect(result).toBeNull();
+  });
 });
