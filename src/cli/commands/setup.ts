@@ -574,7 +574,7 @@ function compareModelVersions(a: string, b: string): number {
  *
  * Latest = highest version number parsed from model name
  */
-async function autoSelectModelTiers(
+export async function autoSelectModelTiers(
   models: string[],
   selectedModel: string
 ): Promise<{ haikuModel?: string; sonnetModel?: string; opusModel?: string }> {
@@ -602,6 +602,7 @@ async function autoSelectModelTiers(
 
   // Filter models by type
   const haikuModels = models.filter(m => m.toLowerCase().includes('haiku'));
+  const sonnetModels = models.filter(m => m.toLowerCase().includes('sonnet'));
   const opusModels = models.filter(m => m.toLowerCase().includes('opus'));
 
   // Select latest haiku model (or use env var if set)
@@ -621,13 +622,28 @@ async function autoSelectModelTiers(
     });
   }
 
-  // Use selected model as sonnet tier (or env var if set)
+  // Select sonnet model: prefer env var, then selectedModel if it's sonnet-class, then
+  // auto-select the latest sonnet model from the available list (same pattern as haiku/opus).
+  // This ensures the Custom Sonnet slot in Claude Code's /model picker is always populated
+  // with a real sonnet model when one is provisioned, regardless of which tier the user
+  // selected as their primary model (EPMCDME-12779).
   if (envSonnet) {
     result.sonnetModel = envSonnet;
     logger.debug('Using sonnet model from environment variable', { model: envSonnet });
-  } else {
+  } else if (selectedModel.toLowerCase().includes('sonnet')) {
     result.sonnetModel = selectedModel;
     logger.debug('Using selected model as sonnet tier', { model: selectedModel });
+  } else if (sonnetModels.length > 0) {
+    const sortedSonnet = [...sonnetModels].sort((a, b) => compareModelVersions(b, a));
+    const latestSonnet = sortedSonnet[0];
+    result.sonnetModel = latestSonnet;
+    logger.debug('Auto-selected sonnet model', {
+      selected: latestSonnet,
+      candidates: sonnetModels,
+      sortedOrder: sortedSonnet
+    });
+  } else {
+    logger.debug('No sonnet model available — sonnet tier not assigned', { availableModels: models });
   }
 
   // Select latest opus model (or use env var if set)

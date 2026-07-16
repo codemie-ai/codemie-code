@@ -1387,9 +1387,12 @@ export class ConfigLoader {
 
     if (config.model) env.CODEMIE_MODEL = config.model;
     if (config.reasoningEffort) env.CODEMIE_REASONING_EFFORT = config.reasoningEffort;
-    if (config.haikuModel) env.CODEMIE_HAIKU_MODEL = config.haikuModel;
-    if (config.sonnetModel) env.CODEMIE_SONNET_MODEL = config.sonnetModel;
-    if (config.opusModel) env.CODEMIE_OPUS_MODEL = config.opusModel;
+    // Always emit tier model vars — even when absent — so stale shell values are
+    // overridden during env merge in BaseAgentAdapter (EPMCDME-12779).
+    // Empty string is falsy, so transformEnvVars() correctly skips absent tiers.
+    env.CODEMIE_HAIKU_MODEL = config.haikuModel ?? '';
+    env.CODEMIE_SONNET_MODEL = config.sonnetModel ?? '';
+    env.CODEMIE_OPUS_MODEL = config.opusModel ?? '';
     if (config.timeout) env.CODEMIE_TIMEOUT = String(config.timeout);
     if (config.debug) env.CODEMIE_DEBUG = String(config.debug);
 

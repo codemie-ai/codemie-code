@@ -9,7 +9,8 @@
  * - Environment variable priority
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { autoSelectModelTiers } from '../setup.js';
 
 // Import the functions we want to test
 // We'll need to export them from setup.ts for testing
@@ -380,5 +381,69 @@ describe('autoSelectModelTiers integration', () => {
       expect(selectLatestModel(haikuModels)).toBeUndefined();
       expect(selectLatestModel(opusModels)).toBeUndefined();
     });
+  });
+});
+
+describe('autoSelectModelTiers — opus-only tenant (EPMCDME-12779)', () => {
+  beforeEach(() => {
+    vi.stubEnv('ANTHROPIC_DEFAULT_HAIKU_MODEL', '');
+    vi.stubEnv('ANTHROPIC_DEFAULT_SONNET_MODEL', '');
+    vi.stubEnv('ANTHROPIC_DEFAULT_OPUS_MODEL', '');
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it('should not set sonnetModel when selectedModel is opus-class', async () => {
+    const models = ['claude-opus-4-6-20260205'];
+    const result = await autoSelectModelTiers(models, 'claude-opus-4-6-20260205');
+    expect(result.sonnetModel).toBeUndefined();
+    expect(result.opusModel).toBe('claude-opus-4-6-20260205');
+  });
+
+  it('should not set sonnetModel when selectedModel contains opus keyword', async () => {
+    const models = ['claude-opus-4-7', 'claude-haiku-4-5-20251001'];
+    const result = await autoSelectModelTiers(models, 'claude-opus-4-7');
+    expect(result.sonnetModel).toBeUndefined();
+    expect(result.opusModel).toBe('claude-opus-4-7');
+    expect(result.haikuModel).toBe('claude-haiku-4-5-20251001');
+  });
+
+  it('should set sonnetModel normally when selectedModel is sonnet-class', async () => {
+    const models = ['claude-sonnet-4-6', 'claude-opus-4-6-20260205', 'claude-haiku-4-5-20251001'];
+    const result = await autoSelectModelTiers(models, 'claude-sonnet-4-6');
+    expect(result.sonnetModel).toBe('claude-sonnet-4-6');
+    expect(result.opusModel).toBe('claude-opus-4-6-20260205');
+    expect(result.haikuModel).toBe('claude-haiku-4-5-20251001');
+  });
+
+  it('should not set sonnetModel when selectedModel is a custom/unknown model ID', async () => {
+    const models = ['my-enterprise-llm', 'claude-haiku-4-5-20251001'];
+    const result = await autoSelectModelTiers(models, 'my-enterprise-llm');
+    expect(result.sonnetModel).toBeUndefined();
+    expect(result.haikuModel).toBe('claude-haiku-4-5-20251001');
+  });
+
+  it('should auto-select sonnet from models list when selectedModel is haiku-class (EPMCDME-12779)', async () => {
+    // User selects haiku as primary but tenant also has sonnet provisioned.
+    // sonnetModel must be assigned from the list so Claude Code's Custom Sonnet slot
+    // shows the real sonnet model instead of falling back to the selected haiku model.
+    const models = ['claude-haiku-4-5-20251001', 'claude-sonnet-4-6', 'claude-opus-4-6-20260205'];
+    const result = await autoSelectModelTiers(models, 'claude-haiku-4-5-20251001');
+    expect(result.sonnetModel).toBe('claude-sonnet-4-6');
+    expect(result.haikuModel).toBe('claude-haiku-4-5-20251001');
+    expect(result.opusModel).toBe('claude-opus-4-6-20260205');
+  });
+
+  it('should not set sonnetModel when no sonnet model is in the available list', async () => {
+    // True no-sonnet tenant: only haiku and opus provisioned.
+    // sonnetModel must remain undefined so the haiku-only/opus-only fallback in
+    // BaseAgentAdapter can handle the slot routing correctly.
+    const models = ['claude-haiku-4-5-20251001', 'claude-opus-4-6-20260205'];
+    const result = await autoSelectModelTiers(models, 'claude-haiku-4-5-20251001');
+    expect(result.sonnetModel).toBeUndefined();
+    expect(result.haikuModel).toBe('claude-haiku-4-5-20251001');
+    expect(result.opusModel).toBe('claude-opus-4-6-20260205');
   });
 });

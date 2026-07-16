@@ -64,9 +64,10 @@ describe('Model Tier Configuration', () => {
     vi.restoreAllMocks();
   });
 
-  it('should transform CODEMIE_HAIKU_MODEL to ANTHROPIC_DEFAULT_HAIKU_MODEL', () => {
+  it('should transform CODEMIE_HAIKU_MODEL to ANTHROPIC_DEFAULT_HAIKU_MODEL when sonnet is also present', () => {
     const env: NodeJS.ProcessEnv = {
       CODEMIE_HAIKU_MODEL: 'claude-haiku-4-5-20251001',
+      CODEMIE_SONNET_MODEL: 'claude-sonnet-4-6', // not haiku-only → normal mapping applies
     };
 
     const result = adapter.testTransformEnvVars(env);
@@ -161,7 +162,7 @@ describe('Model Tier Configuration', () => {
     expect(result.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
   });
 
-  it('should handle partial tier configuration', () => {
+  it('should handle haiku-only configuration by mapping haiku to its slot and CLAUDE_CODE_SUBAGENT_MODEL (EPMCDME-12779)', () => {
     const env: NodeJS.ProcessEnv = {
       CODEMIE_HAIKU_MODEL: 'claude-haiku-4-5-20251001',
       // sonnetModel and opusModel not provided
@@ -169,9 +170,31 @@ describe('Model Tier Configuration', () => {
 
     const result = adapter.testTransformEnvVars(env);
 
-    // Only haiku should be set
+    // Haiku-only: set ANTHROPIC_DEFAULT_HAIKU_MODEL normally; ANTHROPIC_DEFAULT_SONNET_MODEL
+    // is intentionally left unset. CLAUDE_CODE_SUBAGENT_MODEL routes background tasks to haiku.
     expect(result.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-haiku-4-5-20251001');
     expect(result.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
+    expect(result.CLAUDE_CODE_SUBAGENT_MODEL).toBe('claude-haiku-4-5-20251001');
+    expect(result.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
+  });
+
+  it('should clear stale sonnet/opus vars when switching to haiku-only config (EPMCDME-12779)', () => {
+    // Simulates the user removing sonnet/opus from config after a prior session that had
+    // all three tiers — stale ANTHROPIC_DEFAULT_SONNET_MODEL and ANTHROPIC_DEFAULT_OPUS_MODEL
+    // must not survive.
+    const env: NodeJS.ProcessEnv = {
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'claude-haiku-4-5-20251001',
+      ANTHROPIC_DEFAULT_SONNET_MODEL: 'claude-sonnet-4-6',
+      ANTHROPIC_DEFAULT_OPUS_MODEL: 'claude-opus-4-6-20260205',
+      CODEMIE_HAIKU_MODEL: 'claude-haiku-4-5-20251001',
+      // CODEMIE_SONNET_MODEL and CODEMIE_OPUS_MODEL absent — haiku-only
+    };
+
+    const result = adapter.testTransformEnvVars(env);
+
+    expect(result.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-haiku-4-5-20251001');
+    expect(result.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
+    expect(result.CLAUDE_CODE_SUBAGENT_MODEL).toBe('claude-haiku-4-5-20251001');
     expect(result.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
   });
 
@@ -236,9 +259,10 @@ describe('ConfigLoader.exportProviderEnvVars', () => {
     const env = ConfigLoader.exportProviderEnvVars(config);
 
     expect(env.CODEMIE_MODEL).toBe('claude-4-5-sonnet');
-    expect(env.CODEMIE_HAIKU_MODEL).toBeUndefined();
-    expect(env.CODEMIE_SONNET_MODEL).toBeUndefined();
-    expect(env.CODEMIE_OPUS_MODEL).toBeUndefined();
+    // Always emitted as empty string to override stale shell values (EPMCDME-12779)
+    expect(env.CODEMIE_HAIKU_MODEL).toBe('');
+    expect(env.CODEMIE_SONNET_MODEL).toBe('');
+    expect(env.CODEMIE_OPUS_MODEL).toBe('');
   });
 
   it('should not export placeholder auth token for anthropic-subscription', async () => {
