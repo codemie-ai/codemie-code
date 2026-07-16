@@ -44,6 +44,7 @@ describe('detectSettingsConflict', () => {
 
     const result = await detectSettingsConflict({ ANTHROPIC_BASE_URL: PROFILE_URL });
 
+    expect(vi.mocked(fsMod.existsSync)).toHaveBeenCalledWith(SETTINGS_PATH);
     expect(result).toBeNull();
   });
 
@@ -71,6 +72,7 @@ describe('detectSettingsConflict', () => {
 
     const result = await detectSettingsConflict({ ANTHROPIC_BASE_URL: PROFILE_URL });
 
+    expect(vi.mocked(fsMod.existsSync)).toHaveBeenCalledWith(SETTINGS_PATH);
     expect(result).toEqual({ settingsUrl: SETTINGS_URL, profileUrl: PROFILE_URL });
   });
 
