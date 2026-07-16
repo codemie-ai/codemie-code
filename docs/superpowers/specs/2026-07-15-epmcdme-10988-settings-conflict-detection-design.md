@@ -82,7 +82,7 @@ export async function detectSettingsConflict(
 - `existsSync` from `'fs'`
 - `readFile` from `'fs/promises'`
 - `join` from `'path'`
-- `resolveHomeDir` from `'../../../utils/paths.js'`
+- `resolveHomeDir` from `'../../../utils/paths.js'` (deep-relative, matching the pattern in `claude.plugin.ts` line 21)
 
 ### Modified: `src/agents/plugins/claude/claude.plugin.ts`
 
@@ -136,10 +136,10 @@ Test cases:
 | 5 | env `ANTHROPIC_BASE_URL` undefined, settings has URL | `ConflictInfo { settingsUrl, profileUrl: undefined }` |
 | 6 | settings.json is malformed JSON | `null` |
 
-Integration test addition in `claude.plugin.conflict.test.ts` (or append to `claude.plugin.statusline.test.ts`):
+Integration test addition in `claude.plugin.conflict.test.ts` (dedicated file — do not mix into `claude.plugin.statusline.test.ts`):
 
-- `beforeRun` calls `displayWarningMessage` when `detectSettingsConflict` returns non-null
-- `beforeRun` does NOT call `displayWarningMessage` for conflict when result is `null`
+- `beforeRun` calls `console.error(chalk.yellow(...))` when `detectSettingsConflict` returns non-null
+- `beforeRun` does NOT call `console.error` for conflict when `detectSettingsConflict` returns `null`
 
 ### Documentation update: `.ai-run/guides/usage/project-config.md`
 
@@ -176,7 +176,7 @@ BaseAgentAdapter.run()
               return { settingsUrl, profileUrl }
             else
               return null
-       → if ConflictInfo: displayWarningMessage(title, details)  → stderr
+       → if ConflictInfo: console.error(chalk.yellow(...))  → stderr
        → return env                              (env unchanged; warning is informational)
   4. Claude Code starts                          → uses settings.json URL if present
 ```
@@ -200,7 +200,7 @@ BaseAgentAdapter.run()
 | AC | Implementation |
 |---|---|
 | Detect `ANTHROPIC_BASE_URL` override at startup | `detectSettingsConflict` called from `beforeRun` |
-| Clear warning printed before session starts | `displayWarningMessage` in `beforeRun` |
+| Clear warning printed before session starts | `console.error(chalk.yellow(...))` in `beforeRun` |
 | Banner / info reflects actual endpoint | Warning shows `settingsUrl` as "Active URL" alongside "Profile URL" |
 | Documentation updated | `.ai-run/guides/usage/project-config.md` section added |
 | Tests added/updated covering override scenario | `settings-conflict.test.ts` + `claude.plugin.conflict.test.ts` |
