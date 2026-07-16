@@ -58,7 +58,7 @@ function detectEngine() {
 const engine = detectEngine();
 
 if (!engine) {
-  if (!process.env.CODEMIE_SKIP_SECRETS_SCAN) {
+  if (process.env.CODEMIE_SKIP_SECRETS_SCAN !== '1') {
     console.error('No container engine found — install Docker, Podman, or Apple Containers to enable local secrets scanning.');
     console.error('To skip on this machine: set CODEMIE_SKIP_SECRETS_SCAN=1 in your shell environment.');
     process.exit(1);
@@ -69,7 +69,7 @@ if (!engine) {
 
 const engineBin = resolveCommand(engine);
 if (!engineBin) {
-  if (!process.env.CODEMIE_SKIP_SECRETS_SCAN) {
+  if (process.env.CODEMIE_SKIP_SECRETS_SCAN !== '1') {
     console.error('Container engine binary not found — install Docker, Podman, or Apple Containers to enable local secrets scanning.');
     console.error('To skip on this machine: set CODEMIE_SKIP_SECRETS_SCAN=1 in your shell environment.');
     process.exit(1);
