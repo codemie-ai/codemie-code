@@ -221,6 +221,26 @@ export const ClaudePluginMetadata: AgentMetadata = {
         }
       }
 
+      // Detect ANTHROPIC_BASE_URL override in ~/.claude/settings.json
+      // Claude Code reads settings.json at startup and silently overrides env vars;
+      // warn the user so they know which endpoint is actually in use.
+      const { detectSettingsConflict } = await import('./settings-conflict.js');
+      const conflict = await detectSettingsConflict(env);
+      if (conflict) {
+        const profileDisplay = conflict.profileUrl ?? '(not set — direct Anthropic API)';
+        console.error(chalk.yellow('\n⚠️  ANTHROPIC_BASE_URL override detected in ~/.claude/settings.json'));
+        console.error(chalk.yellow('─'.repeat(60)));
+        console.error(chalk.yellow(`  Profile URL  │ ${profileDisplay}`));
+        console.error(chalk.yellow(`  Active URL   │ ${conflict.settingsUrl}  ← settings.json wins`));
+        console.error(chalk.yellow(''));
+        console.error(chalk.yellow('  ~/.claude/settings.json ANTHROPIC_BASE_URL takes precedence'));
+        console.error(chalk.yellow('  over the profile value. Session will use the settings.json URL.'));
+        console.error(chalk.yellow(''));
+        console.error(chalk.yellow('  To fix: remove ANTHROPIC_BASE_URL from ~/.claude/settings.json'));
+        console.error(chalk.yellow('─'.repeat(60)));
+        console.error('');
+      }
+
       return env;
     },
 
