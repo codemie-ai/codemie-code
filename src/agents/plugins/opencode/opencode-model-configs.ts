@@ -538,6 +538,31 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
       context: 1048576,
       output: 65536
     }
+  },
+
+  // ── DeepSeek Models (via DIAL) ────────────────────────────────────
+  'DeepSeek-V4-Flash-2026-04-23': {
+    id: 'DeepSeek-V4-Flash-2026-04-23',
+    name: 'DeepSeek V4 Flash',
+    displayName: 'DeepSeek V4 Flash',
+    family: 'deepseek',
+    tool_call: true,
+    reasoning: false,
+    attachment: false,
+    temperature: true,
+    modalities: { input: ['text'], output: ['text'] },
+    knowledge: '2025-07-01',
+    release_date: '2026-04-23',
+    last_updated: '2026-07-17',
+    open_weights: true,
+    cost: {
+      input: 0,   // TODO: per million tokens (USD) — confirm before merge
+      output: 0   // TODO: per million tokens (USD) — confirm before merge
+    },
+    limit: {
+      context: 65536,  // TODO: confirm from model card
+      output: 65536
+    }
   }
 };
 
