@@ -556,12 +556,12 @@ export const OPENCODE_MODEL_CONFIGS: Record<string, OpenCodeModelConfig> = {
     last_updated: '2026-07-17',
     open_weights: true,
     cost: {
-      input: 0,   // TODO: per million tokens (USD) — confirm before merge
-      output: 0   // TODO: per million tokens (USD) — confirm before merge
+      input: 0.14,
+      output: 0.28
     },
     limit: {
-      context: 65536,  // TODO: confirm from model card
-      output: 65536
+      context: 1048576,
+      output: 393216
     }
   }
 };
