@@ -4,14 +4,22 @@
  * Interactive setup flow for LiteLLM provider.
  */
 
-import type { ProviderSetupSteps, ProviderCredentials } from '../../core/types.js';
+import type { ProviderSetupSteps, ProviderCredentials, SetupContext } from '../../core/types.js';
 import { LiteLLMTemplate } from './litellm.template.js';
 import inquirer from 'inquirer';
+import chalk from 'chalk';
 
 export const LiteLLMSetupSteps: ProviderSetupSteps = {
   name: 'litellm',
 
-  async getCredentials(_isUpdate = false): Promise<ProviderCredentials> {
+  async getCredentials(_isUpdate = false, context?: SetupContext): Promise<ProviderCredentials> {
+    const enforced = context?.enforcedIntegration;
+
+    if (enforced) {
+      console.log(chalk.cyan(`\n🔒 LiteLLM integration required: "${enforced.alias}"`));
+      console.log(chalk.dim('   Get your API key from your CodeMie portal (Settings → Integrations).\n'));
+    }
+
     const answers = await inquirer.prompt([
       {
         type: 'input',
@@ -23,14 +31,21 @@ export const LiteLLMSetupSteps: ProviderSetupSteps = {
       {
         type: 'password',
         name: 'apiKey',
-        message: 'API Key (optional, leave empty if not required):',
-        mask: '*'
+        message: enforced
+          ? `API Key for integration "${enforced.alias}" (required):`
+          : 'API Key (optional, leave empty if not required):',
+        mask: '*',
+        validate: enforced
+          ? (input: string) =>
+              input.trim() !== '' ||
+              'API Key is required for this integration. Retrieve it from your CodeMie portal.'
+          : undefined
       }
     ]);
 
     return {
       baseUrl: answers.baseUrl.trim(),
-      apiKey: answers.apiKey?.trim() || 'not-required'
+      apiKey: enforced ? answers.apiKey.trim() : (answers.apiKey?.trim() || 'not-required')
     };
   },
 
@@ -46,7 +61,6 @@ export const LiteLLMSetupSteps: ProviderSetupSteps = {
       const models = await modelProxy.listModels();
       return models.map(m => m.id);
     } catch {
-      // If fetch fails, return recommended models
       return LiteLLMTemplate.recommendedModels;
     }
   },
