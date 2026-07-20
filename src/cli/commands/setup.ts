@@ -45,8 +45,13 @@ export async function detectLiteLLMEnforcement(existingCodeMieUrl?: string): Pro
     }
     const { project } = await selectCodeMieProject(authResult);
     const allIntegrations = await fetchCodeMieIntegrations(authResult.apiUrl, authResult.cookies);
-    const projectIntegrations = allIntegrations.filter(i => i.project_name === project);
+    const projectIntegrations = allIntegrations.filter(
+      i => i.project_name === project && i.credential_type === 'LiteLLM'
+    );
     if (projectIntegrations.length === 0) return { enforced: false };
+    if (projectIntegrations.length > 1) {
+      logger.warn(`Multiple LiteLLM integrations found for project "${project}". Using "${projectIntegrations[0].alias}".`);
+    }
     return { enforced: true, integration: projectIntegrations[0], project, authResult };
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
@@ -235,7 +240,8 @@ async function runSetupWizard(force?: boolean): Promise<void> {
   }
 
   // Step 1: Check for mandatory LiteLLM integration before provider selection
-  const enforcementResult = await detectLiteLLMEnforcement();
+  // Skip SSO gate on update flows — enforcement only applies to fresh configurations.
+  const enforcementResult = isUpdate ? { enforced: false as const } : await detectLiteLLMEnforcement();
 
   let provider: string;
   let enforcementContext: LiteLLMEnforcementContext | undefined;

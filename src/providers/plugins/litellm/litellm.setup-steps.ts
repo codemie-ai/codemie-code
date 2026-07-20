@@ -45,7 +45,7 @@ export const LiteLLMSetupSteps: ProviderSetupSteps = {
 
     return {
       baseUrl: answers.baseUrl.trim(),
-      apiKey: enforced ? answers.apiKey.trim() : (answers.apiKey?.trim() || 'not-required')
+      apiKey: enforced ? (answers.apiKey?.trim() ?? '') : (answers.apiKey?.trim() || 'not-required')
     };
   },
 
