@@ -272,6 +272,18 @@ export interface ProviderCredentials {
 }
 
 /**
+ * Context passed from the setup wizard into provider setup steps.
+ * When enforcedIntegration is set, the provider must enforce API key entry.
+ */
+export interface SetupContext {
+  enforcedIntegration?: {
+    id: string;
+    alias: string;
+    codeMieUrl: string;
+  };
+}
+
+/**
  * Validation result
  */
 export interface ValidationResult {
@@ -296,7 +308,7 @@ export interface ProviderSetupSteps {
    *
    * Interactive prompts for API keys, URLs, etc.
    */
-  getCredentials(isUpdate?: boolean): Promise<ProviderCredentials>;
+  getCredentials(isUpdate?: boolean, context?: SetupContext): Promise<ProviderCredentials>;
 
   /**
    * Step 2: Fetch available models
