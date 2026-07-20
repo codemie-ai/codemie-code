@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 import { execSync } from 'node:child_process';
 import { existsSync, readFileSync, appendFileSync } from 'node:fs';
 import { homedir, platform } from 'node:os';
@@ -136,5 +135,8 @@ export async function run() {
 
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1];
 if (isMain) {
-	await run();
+	run().catch((err) => {
+		console.error(err);
+		process.exitCode = 1;
+	});
 }
