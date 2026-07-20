@@ -17,6 +17,44 @@ import { AgentRegistry } from '../../agents/registry.js';
 import type { VersionCompatibilityResult } from '../../agents/core/types.js';
 import { createAssistantsSetupCommand } from './assistants/setup/index.js';
 import { createSkillsSetupCommand } from './skills/setup/index.js';
+import {
+  DEFAULT_CODEMIE_BASE_URL,
+  promptForCodeMieUrl,
+  authenticateWithCodeMie,
+  selectCodeMieProject
+} from '../../providers/core/codemie-auth-helpers.js';
+import { fetchCodeMieIntegrations } from '../../providers/plugins/sso/sso.http-client.js';
+import type { CodeMieIntegration, SSOAuthResult } from '../../providers/core/types.js';
+
+interface LiteLLMEnforcementContext {
+  integration: CodeMieIntegration;
+  project: string;
+  authResult: SSOAuthResult;
+}
+
+export type EnforcementGateResult =
+  | { enforced: false }
+  | (LiteLLMEnforcementContext & { enforced: true });
+
+export async function detectLiteLLMEnforcement(existingCodeMieUrl?: string): Promise<EnforcementGateResult> {
+  try {
+    const codeMieUrl = await promptForCodeMieUrl(existingCodeMieUrl || DEFAULT_CODEMIE_BASE_URL);
+    const authResult = await authenticateWithCodeMie(codeMieUrl);
+    if (!authResult.success || !authResult.apiUrl || !authResult.cookies) {
+      throw new Error(authResult.error || 'SSO authentication failed');
+    }
+    const { project } = await selectCodeMieProject(authResult);
+    const allIntegrations = await fetchCodeMieIntegrations(authResult.apiUrl, authResult.cookies);
+    const projectIntegrations = allIntegrations.filter(i => i.project_name === project);
+    if (projectIntegrations.length === 0) return { enforced: false };
+    return { enforced: true, integration: projectIntegrations[0], project, authResult };
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    logger.warn(`Could not check for mandatory integrations: ${errorMessage}`);
+    console.log(chalk.yellow(`\n⚠️  Could not check for mandatory integrations (${errorMessage}). Continuing with normal provider setup.\n`));
+    return { enforced: false };
+  }
+}
 
 
 export function createSetupCommand(): Command {
