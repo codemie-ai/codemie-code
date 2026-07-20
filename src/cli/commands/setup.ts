@@ -24,7 +24,7 @@ import {
   selectCodeMieProject
 } from '../../providers/core/codemie-auth-helpers.js';
 import { fetchCodeMieIntegrations } from '../../providers/plugins/sso/sso.http-client.js';
-import type { CodeMieIntegration, SSOAuthResult } from '../../providers/core/types.js';
+import type { CodeMieIntegration, SSOAuthResult, SetupContext } from '../../providers/core/types.js';
 
 interface LiteLLMEnforcementContext {
   integration: CodeMieIntegration;
@@ -234,21 +234,41 @@ async function runSetupWizard(force?: boolean): Promise<void> {
     }
   }
 
-  // Step 1: Get all registered providers from ProviderRegistry
-  const registeredProviders = ProviderRegistry.getAllProviders();
-  const allProviderChoices = getAllProviderChoices(registeredProviders);
+  // Step 1: Check for mandatory LiteLLM integration before provider selection
+  const enforcementResult = await detectLiteLLMEnforcement();
 
-  const { provider } = await inquirer.prompt([
-    {
-      type: 'list',
-      name: 'provider',
-      message: 'Choose your LLM provider:\n',
-      choices: allProviderChoices,
-      pageSize: 15,
-      // Default to highest priority provider (SSO has priority 0)
-      default: allProviderChoices[0]?.value
+  let provider: string;
+  let enforcementContext: LiteLLMEnforcementContext | undefined;
+
+  if (enforcementResult.enforced) {
+    const litellmSteps = ProviderRegistry.getSetupSteps('litellm');
+    if (!litellmSteps) {
+      throw new Error('LiteLLM provider is required by your project integration but is not configured');
     }
-  ]);
+    provider = 'litellm';
+    enforcementContext = {
+      integration: enforcementResult.integration,
+      project: enforcementResult.project,
+      authResult: enforcementResult.authResult
+    };
+    console.log(chalk.cyan(`\n🔒 LiteLLM integration "${enforcementResult.integration.alias}" is required for project "${enforcementResult.project}". Proceeding with LiteLLM setup.\n`));
+  } else {
+    // Step 1b: Normal provider selection
+    const registeredProviders = ProviderRegistry.getAllProviders();
+    const allProviderChoices = getAllProviderChoices(registeredProviders);
+
+    const { provider: selectedProvider } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'provider',
+        message: 'Choose your LLM provider:\n',
+        choices: allProviderChoices,
+        pageSize: 15,
+        default: allProviderChoices[0]?.value
+      }
+    ]);
+    provider = selectedProvider;
+  }
 
   // Get setup steps from provider registry
   const setupSteps = ProviderRegistry.getSetupSteps(provider);
@@ -258,7 +278,7 @@ async function runSetupWizard(force?: boolean): Promise<void> {
   }
 
   // Use plugin-based setup flow
-  await handlePluginSetup(provider, setupSteps, profileName, isUpdate, storageLocation);
+  await handlePluginSetup(provider, setupSteps, profileName, isUpdate, storageLocation, enforcementContext);
 }
 
 /**
@@ -271,7 +291,8 @@ async function handlePluginSetup(
   setupSteps: any,
   profileName: string | null,
   isUpdate: boolean,
-  storageLocation: 'global' | 'local' = 'global'
+  storageLocation: 'global' | 'local' = 'global',
+  enforcementContext?: LiteLLMEnforcementContext
 ): Promise<void> {
   try {
     const providerTemplate = ProviderRegistry.getProvider(providerName);
@@ -281,8 +302,17 @@ async function handlePluginSetup(
       displaySetupInstructions(providerTemplate);
     }
 
-    // Step 1: Get credentials
-    const credentials = await setupSteps.getCredentials(isUpdate);
+    // Step 1: Get credentials — pass SetupContext when LiteLLM enforcement is active
+    const setupContext: SetupContext | undefined = enforcementContext
+      ? {
+          enforcedIntegration: {
+            id: enforcementContext.integration.id,
+            alias: enforcementContext.integration.alias,
+            codeMieUrl: enforcementContext.authResult.apiUrl!
+          }
+        }
+      : undefined;
+    const credentials = await setupSteps.getCredentials(isUpdate, setupContext);
 
     // Step 2: Fetch models
     const modelsSpinner = ora('Fetching available models...').start();
@@ -687,6 +717,8 @@ async function autoSelectModelTiers(
 
   return result;
 }
+
+export { runSetupWizard as runSetupWizardForTest };
 
 /**
  * Check and install Claude Code if needed
