@@ -130,6 +130,7 @@ export interface AgentAdapter {
   execute(args: string[], options?: ExecutionOptions): Promise<void>;
   isInstalled(): Promise<boolean>;
   getVersion(): Promise<string | undefined>;
+  installVersion?(version: string): Promise<string | null>; // returns verified installed version; null = binary not yet on PATH
 }
 ```
 

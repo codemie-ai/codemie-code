@@ -50,6 +50,31 @@ try {
 - ❌ Expose internal implementation details
 - ❌ Log stack traces to console (use logger.debug())
 
+### Pattern: Defensive null return for post-install version calls
+
+After `npm.installGlobal()` or a native install, the binary may not yet be on PATH (Windows PATH-refresh delay, brief permission change during binary replacement). Wrap `getVersion()` in a try/catch and return `null` rather than propagating — the caller handles `null` as "version unknown" and degrades gracefully.
+
+```typescript
+// Source: src/agents/core/BaseAgentAdapter.ts — installVersion()
+try {
+  return await this.getVersion();
+} catch {
+  return null;
+}
+```
+
+The CLI layer (`install.ts`) then falls back: `const displayVersion = installedVersion ?? await agent.getVersion()`.
+
+**Related heuristic**: when comparing `requestedVersion` against a resolved installed version to detect a PATH-refresh mismatch, only compare when `requestedVersion` is a concrete semver — channel aliases (`latest`, `stable`, `supported`) must never fail the mismatch check:
+
+```typescript
+const versionMismatch =
+  requestedVersion &&
+  /^\d+\.\d+\.\d+/.test(requestedVersion) &&
+  displayVersion &&
+  displayVersion !== requestedVersion;
+```
+
 ---
 
 ## Logging

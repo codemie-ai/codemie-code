@@ -71,13 +71,15 @@ spinner.succeed(`${agent.displayName}${displayVersion ? ` v${displayVersion}` : 
 
 ### `getVersion()` hardening
 
-Add `shell: true` to the primary `exec` call in `ClaudePlugin.getVersion()`. This mirrors what `verifyInstallation()` already does and prevents the silent fallback to the old PATH binary independently of the return-type change:
+> **Decision reversal (commit `a9c7192`)**: This section originally specified adding `shell: true` to `ClaudePlugin.getVersion()`. During implementation the decision was reversed: `shell: true` was **removed** from `execVersionAtFullPath()`. Reason: ELF binaries execute directly without a shell and `shell: true` breaks invocation paths that contain spaces. The safety net for the "old PATH binary" scenario is instead provided by the `installVersion()` return-value flow and the try-catch defensive pattern — not by `shell: true`.
+
+~~Add `shell: true` to the primary `exec` call in `ClaudePlugin.getVersion()`. This mirrors what `verifyInstallation()` already does and prevents the silent fallback to the old PATH binary independently of the return-type change:~~
 
 ```ts
 // before
 const result = await exec(fullPath, ['--version']);
-// after
-const result = await exec(fullPath, ['--version'], { shell: true });
+// after — NOT applied; shell: true removed instead (see note above)
+// const result = await exec(fullPath, ['--version'], { shell: true });
 ```
 
 ### Callers unaffected
