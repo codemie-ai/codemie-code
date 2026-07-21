@@ -627,6 +627,15 @@ async function cmdSharepoint(args) {
   const token = await getValidToken();
   const limit = parseInt(args.limit) || 20;
 
+  if (args.resolveSite) {
+    const data = await graphGet(`/sites/${args.resolveSite}`, token, { $select: 'id,displayName,webUrl' });
+    if (args.json) { console.log(JSON.stringify(data, null, 2)); return; }
+    console.log(`ID  : ${data.id}`);
+    console.log(`Name: ${data.displayName || 'N/A'}`);
+    console.log(`URL : ${data.webUrl || 'N/A'}`);
+    return;
+  }
+
   if (args.sites) {
     let data  = await graphGet('/me/followedSites', token, { $select: 'id,displayName,webUrl' });
     let sites = data.value || [];
@@ -671,7 +680,19 @@ async function cmdSharepoint(args) {
     return;
   }
 
-  console.log('SharePoint: --sites | --site SITE_ID [--path PATH] | --download ITEM_ID [--output FILE]');
+  if (args.siteFile) {
+    if (!args.path) { console.error('Error: --site-file requires --path FILE_PATH'); process.exit(1); }
+    const outPath = args.output || path.basename(args.path);
+    const content = await graphDownload(`/sites/${args.siteFile}/drive/root:/${args.path}:/content`, token);
+    fs.writeFileSync(outPath, content);
+    console.log(`Downloaded ${content.length} bytes to ${outPath}`);
+    return;
+  }
+
+  console.log('SharePoint: --resolve-site HOSTNAME_PATH');
+  console.log('            --sites | --site SITE_ID [--path PATH]');
+  console.log('            --download ITEM_ID [--output FILE]');
+  console.log('            --site-file SITE_ID --path FILE_PATH [--output LOCAL_PATH]');
 }
 
 async function cmdTeams(args) {
@@ -1638,7 +1659,9 @@ Data:
   calendar [--limit N] [--json]
            [--create TITLE --start DT --end DT [--location L] [--timezone TZ]]
            [--availability --start DT --end DT]
-  sharepoint [--sites] [--site ID [--path P]] [--download ID [--output FILE]] [--json]
+  sharepoint [--resolve-site HOSTNAME_PATH]
+             [--sites] [--site ID [--path P]] [--download ID [--output FILE]]
+             [--site-file SITE_ID --path FILE_PATH [--output LOCAL_PATH]] [--json]
   teams [--chats] [--messages CHAT_ID] [--send MSG --chat-id ID] [--teams-list]
         [--lookup-user EMAIL] [--dm EMAIL --send MSG] [--json]
   channels --team-id ID --list
