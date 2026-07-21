@@ -272,6 +272,27 @@ describe('buildPayload', () => {
     expect(buildPayload(root, idx, summary, ctxAll).sessions[0].dispatches).toEqual(dispatches);
     expect(buildPayload(root, costIndex, summary, ctxAll).sessions[0].dispatches).toBeUndefined();
   });
+
+  it('includes userEmail, periodStart, periodEnd in meta when provided in context', () => {
+    const payload = buildPayload(root, costIndex, summary, {
+      rangeLabel: 'custom',
+      projectFilter: 'all',
+      generatedAt: '2026-07-21T00:00:00.000Z',
+      userEmail: 'alice@example.com',
+      periodStart: '2026-07-01T00:00:00.000Z',
+      periodEnd: '2026-07-21T23:59:59.000Z',
+    });
+    expect(payload.meta.userEmail).toBe('alice@example.com');
+    expect(payload.meta.periodStart).toBe('2026-07-01T00:00:00.000Z');
+    expect(payload.meta.periodEnd).toBe('2026-07-21T23:59:59.000Z');
+  });
+
+  it('omits userEmail/periodStart/periodEnd in meta when absent from context', () => {
+    const payload = buildPayload(root, costIndex, summary, ctxAll);
+    expect(payload.meta.userEmail).toBeUndefined();
+    expect(payload.meta.periodStart).toBeUndefined();
+    expect(payload.meta.periodEnd).toBeUndefined();
+  });
 });
 
 function emptyTokens() {

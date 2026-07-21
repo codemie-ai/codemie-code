@@ -14,6 +14,9 @@ export interface PayloadContext {
   rangeLabel: string;
   projectFilter: string;
   generatedAt: string; // ISO — caller stamps it
+  userEmail?: string;   // caller stamps; absent when not authenticated
+  periodStart?: string; // ISO — caller stamps from filter or session start
+  periodEnd?: string;   // ISO — caller stamps from filter or session end
 }
 
 export function buildPayload(
@@ -138,6 +141,9 @@ export function buildPayload(
     },
     unpricedModels: summary.unpricedModels,
     coverage: [...coverageMap.values()].sort((a, b) => b.total - a.total),
+    ...(ctx.userEmail !== undefined && { userEmail: ctx.userEmail }),
+    ...(ctx.periodStart !== undefined && { periodStart: ctx.periodStart }),
+    ...(ctx.periodEnd !== undefined && { periodEnd: ctx.periodEnd }),
   };
 
   return { meta, sessions };
