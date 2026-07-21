@@ -194,6 +194,7 @@ export function createInstallCommand(): Command {
             const requestedVersion = actualVersionToInstall;
             const versionMismatch =
               requestedVersion &&
+              /^\d+\.\d+\.\d+/.test(requestedVersion) &&
               displayVersion &&
               displayVersion !== requestedVersion;
 

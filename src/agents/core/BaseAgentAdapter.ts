@@ -179,7 +179,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       throw error;
     }
 
-    return await this.getVersion();
+    try {
+      return await this.getVersion();
+    } catch {
+      return null;
+    }
   }
 
   /**
