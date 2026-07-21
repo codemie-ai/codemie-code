@@ -61,16 +61,22 @@ export function generateReportJson(payload: ReportPayload, outputPath: string): 
   writeFileSync(outputPath, JSON.stringify(payload, null, 2), 'utf-8');
 }
 
-export function getDefaultReportPath(cwd: string): string {
-  const date = new Date().toISOString().split('T')[0];
-  return join(cwd, `codemie-analytics-${date}.html`);
+function emailSlug(email: string): string {
+  return email.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
 }
 
-export function getDefaultReportJsonPath(cwd: string): string {
+export function getDefaultReportPath(cwd: string, userEmail?: string): string {
   const date = new Date().toISOString().split('T')[0];
+  const slug = userEmail ? `${emailSlug(userEmail)}-` : '';
+  return join(cwd, `codemie-analytics-${slug}${date}.html`);
+}
+
+export function getDefaultReportJsonPath(cwd: string, userEmail?: string): string {
+  const date = new Date().toISOString().split('T')[0];
+  const slug = userEmail ? `${emailSlug(userEmail)}-` : '';
   // `.report.json` (not `.json`) so the default never collides with `--export json`,
   // which writes the cost-less analytics tree to `codemie-analytics-<date>.json`.
-  return join(cwd, `codemie-analytics-${date}.report.json`);
+  return join(cwd, `codemie-analytics-${slug}${date}.report.json`);
 }
 
 /**
