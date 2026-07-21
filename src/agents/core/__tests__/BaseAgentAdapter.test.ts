@@ -1,4 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { spawn } from 'child_process';
+import { getCommandPath } from '../../../utils/processes.js';
 import { BaseAgentAdapter } from '../BaseAgentAdapter.js';
 import type { AgentMetadata } from '../types.js';
 import { logger } from '../../../utils/logger.js';
@@ -451,6 +453,120 @@ describe('BaseAgentAdapter', () => {
       } finally {
         consoleErrorSpy.mockRestore();
       }
+    });
+  });
+
+  describe('run() — Windows command path quoting', () => {
+    class RunPathAdapter extends BaseAgentAdapter {}
+
+    const baseMetadata: AgentMetadata = {
+      name: 'path-agent',
+      displayName: 'Path Agent',
+      description: 'Windows path quoting tests',
+      npmPackage: null,
+      cliCommand: null,
+      envMapping: {},
+      supportedProviders: ['anthropic-subscription'],
+      silentMode: true,
+    };
+
+    let platformSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(() => {
+      vi.clearAllMocks();
+      // Force Windows detection regardless of host OS so tests are portable
+      platformSpy = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32' as NodeJS.Platform);
+      delete process.env['CODEMIE_REASONING_EFFORT'];
+    });
+
+    afterEach(() => {
+      platformSpy.mockRestore();
+    });
+
+    it('wraps commandPath in double-quotes when getCommandPath returns null and path contains (', async () => {
+      const spawnMock = vi.mocked(spawn);
+
+      const adapter = new RunPathAdapter({
+        ...baseMetadata,
+        cliCommand: 'C:\\Users\\Name(Org\\bin\\cmd.exe',
+      });
+
+      await adapter.run([], {});
+
+      expect(spawnMock).toHaveBeenCalledWith(
+        '"C:\\Users\\Name(Org\\bin\\cmd.exe"',
+        [],
+        expect.objectContaining({ shell: true }),
+      );
+    });
+
+    it.each([
+      [' ', 'space'],
+      ['\t', 'tab'],
+      [',', 'comma'],
+      [';', 'semicolon'],
+      ['=', 'equals'],
+      ['(', 'open paren'],
+      [')', 'close paren'],
+      ['&', 'ampersand'],
+      ['|', 'pipe'],
+      ['<', 'less-than'],
+      ['>', 'greater-than'],
+      ['^', 'caret'],
+      ['%', 'percent'],
+      ['[', 'open bracket'],
+      [']', 'close bracket'],
+      ['{', 'open brace'],
+      ['}', 'close brace'],
+    ])('wraps commandPath in double-quotes when path contains %s (%s)', async (char) => {
+      const spawnMock = vi.mocked(spawn);
+
+      const adapter = new RunPathAdapter({
+        ...baseMetadata,
+        cliCommand: `C:\\Users\\Name${char}Org\\bin\\cmd.exe`,
+      });
+
+      await adapter.run([], {});
+
+      expect(spawnMock).toHaveBeenCalledWith(
+        `"C:\\Users\\Name${char}Org\\bin\\cmd.exe"`,
+        [],
+        expect.objectContaining({ shell: true }),
+      );
+    });
+
+    it('leaves commandPath unchanged when path has no CMD.EXE metacharacters', async () => {
+      const spawnMock = vi.mocked(spawn);
+
+      const adapter = new RunPathAdapter({
+        ...baseMetadata,
+        cliCommand: 'C:\\Users\\Normal\\bin\\cmd.exe',
+      });
+
+      await adapter.run([], {});
+
+      expect(spawnMock).toHaveBeenCalledWith(
+        'C:\\Users\\Normal\\bin\\cmd.exe',
+        [],
+        expect.objectContaining({ shell: true }),
+      );
+    });
+
+    it('does not double-quote when getCommandPath returns a path that already contains ( (existing branch quotes it once)', async () => {
+      const spawnMock = vi.mocked(spawn);
+      vi.mocked(getCommandPath).mockResolvedValueOnce('C:\\Users\\Name(Org\\bin\\cmd.exe');
+
+      const adapter = new RunPathAdapter({
+        ...baseMetadata,
+        cliCommand: 'C:\\Users\\Name(Org\\bin\\cmd.exe',
+      });
+
+      await adapter.run([], {});
+
+      const firstArg = spawnMock.mock.calls[0]?.[0] as string;
+      // Quoted exactly once — starts with " but not ""
+      expect(firstArg).toBe('"C:\\Users\\Name(Org\\bin\\cmd.exe"');
+      expect(firstArg.startsWith('""')).toBe(false);
     });
   });
 });

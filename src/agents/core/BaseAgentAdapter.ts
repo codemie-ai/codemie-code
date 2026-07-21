@@ -710,7 +710,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       const { getCommandPath } = await import('../../utils/processes.js');
       const resolvedPath = await getCommandPath(this.metadata.cliCommand);
       if (resolvedPath) {
-        commandPath = isWindows && /[ ()&|<>^%[\]{}]/.test(resolvedPath) ? `"${resolvedPath}"` : resolvedPath;
+        commandPath = isWindows && /[ \t,;=()&|<>^%[\]{}]/.test(resolvedPath) ? `"${resolvedPath}"` : resolvedPath;
         logger.debug(`Resolved command path: ${resolvedPath}`);
       } else if (!isWindows) {
         // On Unix, check common installation paths if command not found in PATH
@@ -747,6 +747,14 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
             }
           }
         }
+      }
+
+      // getCommandPath() may return null (binary not in PATH), leaving commandPath as the raw
+      // unquoted absolute path from plugin metadata. CMD.EXE treats bare '(' as a group delimiter
+      // and tab , ; = as token delimiters, so a path like C:\Users\Name(Org\...\bin\cmd.exe or
+      // C:\Users\Name;Org\... must be quoted before shell: true spawn.
+      if (isWindows && /[ \t,;=()&|<>^%[\]{}]/.test(commandPath) && !commandPath.startsWith('"')) {
+        commandPath = `"${commandPath}"`;
       }
 
       // When shell: true is needed (Windows), merge args into command to avoid DEP0190
@@ -1070,13 +1078,6 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     if (env.CODEMIE_SONNET_MODEL && envMapping.sonnetModel) {
       for (const envVar of envMapping.sonnetModel) {
         env[envVar] = env.CODEMIE_SONNET_MODEL;
-      }
-    } else if (!env.CODEMIE_SONNET_MODEL && env.CODEMIE_OPUS_MODEL && envMapping.sonnetModel) {
-      // Opus-only tenant fallback: set all sonnet-mapped env vars to opus when no sonnet is
-      // provisioned, ensuring both ANTHROPIC_DEFAULT_SONNET_MODEL and CLAUDE_CODE_SUBAGENT_MODEL
-      // resolve to a provisioned model (EPMCDME-12779 FR-001).
-      for (const envVar of envMapping.sonnetModel) {
-        env[envVar] = env.CODEMIE_OPUS_MODEL;
       }
     }
     if (env.CODEMIE_OPUS_MODEL && envMapping.opusModel) {

@@ -10,8 +10,8 @@
     {"id": "integration",   "command": "npm run test:integration", "available": true},
     {"id": "secrets",       "command": "npm run validate:secrets", "available": true},
     {"id": "commitlint",    "command": "npm run commitlint:last", "available": true},
-    {"id": "ui",            "command": "n/a",                   "available": false}
+    {"id": "ui",            "command": null,                    "available": false}
   ],
-  "ui_globs": ["\\.(tsx|jsx|css|html|vue|svelte)$", "src/(ui|frontend|components)/"],
-  "detected_at": "2026-07-08T18:54:00Z"
+  "ui_globs": ["\\.(?:tsx|jsx|css|html|vue|svelte)$", "src/(?:ui|frontend|components)/"],
+  "detected_at": "2026-07-13T11:30:00Z"
 }
