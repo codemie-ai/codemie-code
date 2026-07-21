@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
 import { homedir } from 'node:os';
@@ -31,6 +31,16 @@ let originalSsoProfile: string | undefined;
  * Ensures dist/ exists and the claude CLI is installed before agent tests run.
  */
 export async function setup(): Promise<void> {
+  // npm strips execute bits on macOS when unpacking prebuilt node-pty binaries
+  if (process.platform === 'darwin') {
+    for (const arch of ['darwin-arm64', 'darwin-x64']) {
+      const helper = join(root, 'node_modules', 'node-pty', 'prebuilds', arch, 'spawn-helper');
+      if (existsSync(helper)) {
+        try { chmodSync(helper, 0o755); } catch (e) { console.warn(`[test-setup] chmod failed for ${helper}: ${(e as Error).message}`); }
+      }
+    }
+  }
+
   loadEnv({ path: resolve(root, '.env.test.local'), override: true });
 
   // Default to the public prod instance when no .env.test.local is present.
