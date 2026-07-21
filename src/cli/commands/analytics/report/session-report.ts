@@ -5,6 +5,7 @@
  * from agent session finalization. Failures propagate to the caller (who logs them).
  */
 
+import { join } from 'node:path';
 import { SessionsSource } from '../sources/sessions-source.js';
 import { enrichCosts } from '../cost/cost-enricher.js';
 import { AnalyticsAggregator } from '../aggregator.js';
@@ -14,10 +15,12 @@ import { generateReportJson, writeReportWithFallback } from './report-generator.
 export interface SessionReportOptions {
   /** Session id to scope the report to. */
   sessionId: string;
-  /** Absolute or cwd-relative output path for the JSON report. */
-  outputPath: string;
+  /** Absolute or cwd-relative output path for the JSON report. Defaults to `docs/codemie/analytics/codemie-analytics-[email-]<sessionId>.json` relative to cwd. */
+  outputPath?: string;
   /** Include native agent-log discovery (default true). */
   scanNative?: boolean;
+  /** User email to embed in report metadata and default filename. */
+  userEmail?: string;
 }
 
 export interface SessionReportResult {
@@ -46,13 +49,31 @@ export async function generateSessionReport(options: SessionReportOptions): Prom
     return { written: null, sessions: 0 };
   }
 
+  const session = rawSessions[0];
+  const periodStart = session.startEvent?.data.startTime
+    ? new Date(session.startEvent.data.startTime).toISOString()
+    : undefined;
+  const periodEnd = session.endEvent?.data.endTime
+    ? new Date(session.endEvent.data.endTime).toISOString()
+    : undefined;
+
   const payload = buildPayload(analytics, index, summary, {
     rangeLabel: 'all',
     projectFilter: 'all',
     generatedAt: new Date().toISOString(),
+    ...(options.userEmail !== undefined && { userEmail: options.userEmail }),
+    ...(periodStart !== undefined && { periodStart }),
+    ...(periodEnd !== undefined && { periodEnd }),
   });
 
+  const emailSlug = options.userEmail
+    ? options.userEmail.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') + '-'
+    : '';
+  const outputPath =
+    options.outputPath ??
+    join(process.cwd(), 'docs', 'codemie', 'analytics', `codemie-analytics-${emailSlug}${options.sessionId}.json`);
+
   // Explicit path ⇒ no home/tmp fallback; a write error propagates to the caller.
-  const result = writeReportWithFallback((p) => generateReportJson(payload, p), options.outputPath, false);
+  const result = writeReportWithFallback((p) => generateReportJson(payload, p), outputPath, false);
   return { written: result.path, sessions: payload.meta.totals.sessions };
 }
