@@ -2,6 +2,8 @@ import { Command } from 'commander';
 import { logger } from '@/utils/logger.js';
 import { AgentRegistry } from '@/agents/registry.js';
 import { getSessionPath, getSessionMetricsPath, getSessionConversationPath } from '@/agents/core/session/session-config.js';
+import { toWrapperAgentName } from '@/agents/core/session/agent-name.js';
+export { toWrapperAgentName };
 import type { BaseHookEvent, HookTransformer, MCPConfigSummary, ExtensionsScanSummary } from '@/agents/core/types.js';
 import type { ProcessingContext } from '@/agents/core/session/BaseProcessor.js';
 
@@ -644,18 +646,6 @@ async function routeHookEvent(event: BaseHookEvent, rawInput: string, sessionId:
     );
     throw error;
   }
-}
-
-/**
- * Derive the wrapper agent name for session file storage.
- * CODEMIE_AGENT carries the short plugin name (e.g. 'claude') so that
- * AgentRegistry.getAgent() lookups and the backend API payload are unaffected.
- * Only the persisted session JSON uses the wrapper name.
- */
-export function toWrapperAgentName(name: string): string {
-  if (!name) return name;
-  const normalized = name.toLowerCase().replace(/^codemie_/, 'codemie-');
-  return normalized.startsWith('codemie-') ? normalized : `codemie-${normalized}`;
 }
 
 /**

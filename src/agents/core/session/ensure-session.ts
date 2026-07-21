@@ -1,10 +1,5 @@
 import { logger } from '../../../utils/logger.js';
-
-function toWrapperAgentName(name: string): string {
-  if (!name) return name;
-  const normalized = name.toLowerCase().replace(/^codemie_/, 'codemie-');
-  return normalized.startsWith('codemie-') ? normalized : `codemie-${normalized}`;
-}
+import { toWrapperAgentName } from './agent-name.js';
 
 /**
  * Ensure session metadata file exists for SessionSyncer.
