@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "task": "Fix scripts/postinstall.mjs so Windows npm global installs correctly detect the npm prefix, use the right PATH separator, and persist the CodeMie bin path to the Windows user PATH (reusing src/utils/windows-path.ts), with exported helpers and new Vitest coverage.",
+  "generated": "2026-07-02",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 16,
+  "size": "M",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Touches scripts/postinstall.mjs (export refactor of a previously side-effect-only script), vitest.config.ts, a new test file, and reuse/possible extension of src/utils/windows-path.ts — a shared utility already consumed by src/utils/native-installer.ts, which is what pushed this from M to L." },
+    { "dimension": "requirements_clarity", "reason": "Acceptance criteria are unusually detailed (platform branch, separator, persistence mechanism, shim files, test file, no regression), but one real design decision is open: whether npm install -g should mimic install.ps1's isolated-prefix/wrapper-shim pattern or simply fix detection for npm's actual unmanaged global prefix — this needs resolving before implementation." },
+    { "dimension": "technical_risk", "reason": "Two independent existing Windows PATH-persistence implementations already exist in the repo (install.ps1's .NET API, windows-path.ts's setx/reg.exe); reusing the already-tested, exported windows-path.ts keeps risk moderate, but no repo precedent exists for mocking raw child_process calls if that reuse path isn't taken." },
+    { "dimension": "file_change_estimate", "reason": "Realistic footprint is small: postinstall.mjs (rewrite), vitest.config.ts (test.include glob fix), scripts/__tests__/postinstall.test.ts (new), and possibly a small addition to windows-path.ts." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from M (3) to L (4): touches core shared utility src/utils/windows-path.ts, which is consumed elsewhere by src/utils/native-installer.ts"
+  ],
+  "split_recommendation": null
+}

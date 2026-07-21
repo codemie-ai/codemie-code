@@ -8,11 +8,11 @@ const agentMaxWorkers = (() => {
 export default defineConfig({
   test: {
     projects: [
-      // ── Unit tests (src/) ────────────────────────────────────────────────
+      // ── Unit tests (src/ + scripts/) ─────────────────────────────────────
       defineProject({
         test: {
           name: 'unit',
-          include: ['src/**/*.test.ts', 'src/**/*.spec.ts'],
+          include: ['src/**/*.test.ts', 'src/**/*.spec.ts', 'scripts/**/*.test.ts'],
           globals: true,
           environment: 'node',
           testTimeout: 30_000,

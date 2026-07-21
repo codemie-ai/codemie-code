@@ -1,0 +1,57 @@
+{
+  "task": "Implement Windows PATH shim detection/repair and Unix PATH append logic in the npm postinstall script, with test coverage and a vitest config tweak to include scripts tests.",
+  "generated": "2026-07-03T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 2,
+      "label": "S",
+      "affected": "postinstall script (scripts/postinstall.mjs), validate-secrets pre-commit script (scripts/validate-secrets.js), vitest test configuration (vitest.config.ts)",
+      "layers": "Infra / build tooling scripts"
+    },
+    "requirements_clarity": {
+      "score": 2,
+      "label": "S",
+      "status": "Clear",
+      "gaps": null
+    },
+    "technical_risk": {
+      "score": 3,
+      "label": "M",
+      "risk_factors": "Modifies the user's system PATH via setx (Windows) or shell rc-file append (Unix) during postinstall; dynamically imports the compiled dist/utils/windows-path.js helper with a warning fallback if dist/ has not been built yet; platform-specific branching (win32 vs. posix) and shell detection (zsh/bash) increase the number of edge cases to reason about.",
+      "mitigation": "Idempotency checks (isInUserPath / alreadyInRcFile) prevent duplicate PATH entries on repeated installs; try/catch fallbacks emit warnings instead of failing the install if the windows-path helper or npm prefix lookup fails; extensive new unit test coverage (scripts/__tests__/postinstall.test.ts, 375 lines) exercises both win32 and posix code paths with injectable platform/separator parameters."
+    },
+    "file_change_estimate": {
+      "score": 3,
+      "label": "M",
+      "modified_files": 3,
+      "modified_file_list": ["scripts/postinstall.mjs", "scripts/validate-secrets.js", "vitest.config.ts"],
+      "new_files": 1,
+      "new_file_list": ["scripts/__tests__/postinstall.test.ts"],
+      "affected_dirs": ["scripts", "."]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 1,
+      "label": "XS",
+      "layers_changed": ["Infra"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 12,
+  "size": "S",
+  "band_range": "10-14",
+  "files_changed": 4,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "technical_risk", "reason": "Postinstall script now mutates the user's system PATH (setx on Windows, rc-file append on Unix) and dynamically loads a compiled helper module — a new pattern for this codebase, though heavily mitigated with idempotency checks and fallback warnings." },
+    { "dimension": "file_change_estimate", "reason": "4 files touched total (3 modified, 1 new large test file); diffstat total-file-count maps to the M band under the actual-mode mapping rule even though the change is functionally narrow." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

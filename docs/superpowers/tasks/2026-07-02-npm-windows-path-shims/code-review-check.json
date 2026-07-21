@@ -1,0 +1,26 @@
+{
+  "decision": "approve",
+  "rationale": "CR-001 resolved: runWindows() now wraps the dynamic import of dist/utils/windows-path.js and both its calls (isInUserPath, addToUserPath) in separate try/catch blocks, each degrading to a console.warn + return (no exitCode set) on failure — matching the non-fatal treatment already used for missing npm prefix and missing shim files. A new test ('degrades gracefully ... when the windows-path helper cannot be loaded or used') exercises this via a rejected isInUserPath call; manually confirmed via a standalone node script that a genuine dynamic-import-of-missing-module rejection is caught the same way. Full test suite (27 postinstall tests + 26 windows-path tests), lint, and typecheck all pass. This is a small, purely-defensive, mechanical fix-up with no new security-sensitive surface or behavior change to the paths already reviewed in the final round, so the narrow blind+edge-case confirmation pass was not run — nothing about this fix-up suggested a new high-risk issue. The fix-up diff also shows unrelated pre-existing uncommitted local changes to .codemie/codemie-cli.config.json and package.json (user-directed local-only changes, not part of this task) — noise in the diff, not reviewed as part of this change.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {"criterion": "getNpmPrefix/getShimDir/isInPath/getShellRcFile/alreadyInRcFile/getExpectedShimNames/findMissingShims/runWindows/runUnix/run all exported with spec'd signatures", "status": "pass", "notes": "Confirmed by acceptance lens against live file."},
+    {"criterion": "Direct-execution guard prevents side effects on import", "status": "pass", "notes": "isMain check via fileURLToPath(import.meta.url) === process.argv[1]."},
+    {"criterion": "Windows flow steps 1-7 implemented in order", "status": "pass", "notes": "prefix -> dir -> missing-shim warn -> dynamic import -> isInUserPath no-op -> addToUserPath success/failure handling, matches spec exactly."},
+    {"criterion": "Unix flow unchanged except delimiter fix", "status": "pass", "notes": "Same logic, isInPath now takes explicit sep derived from plat."},
+    {"criterion": "Exit policy table (only addToUserPath failure exits 1)", "status": "pass", "notes": "Now also correctly holds for the previously-unhandled missing-dist/-helper failure mode, which degrades to exit 0 like the other non-actionable failures."},
+    {"criterion": "Reuse windows-path.ts via dist/, no duplicated PATH logic", "status": "pass", "notes": "windows-path.ts untouched, only dynamically imported."},
+    {"criterion": "10 required test cases present", "status": "pass", "notes": "All 10 present plus the new CR-001 regression test."},
+    {"criterion": "vitest.config.ts includes scripts/**/*.test.ts", "status": "pass", "notes": "Confirmed."},
+    {"criterion": "Out-of-scope items absent (isolated prefix redirect, hook executor fix, install.cmd fix, install.ps1/native-installer changes)", "status": "pass", "notes": "git diff confirms zero changes to those files."}
+  ],
+  "standards_review": [
+    {"standard": "git-workflow.md: Conventional Commits format + allowed scopes", "status": "pass", "notes": "Fix-up commit uses fix(cli): ... format with a valid scope."},
+    {"standard": "code-quality.md: naming, .js import extensions, function size, comments explain why", "status": "pass", "notes": "console.log/warn/error usage remains a justified exception for this standalone lifecycle script."},
+    {"standard": "security-practices.md: no hardcoded secrets, path validation, no injection", "status": "pass", "notes": "No new secrets or unvalidated paths introduced by the fix-up."}
+  ],
+  "finding_status": [
+    {"id": "CR-001", "status": "resolved"}
+  ],
+  "findings": []
+}
