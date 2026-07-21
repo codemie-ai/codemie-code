@@ -142,11 +142,11 @@ describe('install command version selection', () => {
     await command.parseAsync(['node', 'codemie', 'claude', '2.1.34']);
 
     expect(spinnerSucceedMock).not.toHaveBeenCalled();
-    expect(spinnerWarnMock).toHaveBeenCalledWith(
-      expect.stringContaining('v2.1.33') &&
-      expect.stringContaining('v2.1.34') &&
-      expect.stringContaining('terminal restart')
-    );
+    expect(spinnerWarnMock).toHaveBeenCalledTimes(1);
+    const [actualArg] = spinnerWarnMock.mock.calls[0];
+    expect(actualArg).toContain('v2.1.33');
+    expect(actualArg).toContain('v2.1.34');
+    expect(actualArg).toContain('terminal restart');
   });
 
   it('falls back to getVersion() when installVersion() returns null', async () => {

@@ -322,7 +322,9 @@ export class ClaudePlugin extends BaseAgentAdapter {
     const fullPath = resolveHomeDir('.local/bin/claude');
     try {
       const result = await exec(fullPath, ['--version']);
-      return result.code === 0 ? result.stdout.trim() : null;
+      if (result.code !== 0) return null;
+      const trimmed = result.stdout.trim();
+      return trimmed.length > 0 ? trimmed : null;
     } catch {
       return null;
     }

@@ -64,7 +64,7 @@ spinner.succeed(`${agent.displayName}${displayVersion ? ` v${displayVersion}` : 
 | `src/agents/core/types.ts` | `installVersion?()` return type: `Promise<void>` → `Promise<string \| null>` |
 | `src/agents/core/BaseAgentAdapter.ts` | Return `await this.getVersion()` after `npm.installGlobal()` |
 | `src/agents/plugins/claude/claude.plugin.ts` | Return `result.installedVersion ?? null` from `installVersion()`; add `shell: true` to primary exec in `getVersion()` |
-| `src/agents/plugins/kimi/kimi.plugin.ts` | Return `await this.getVersion()` after `this.installNative()` |
+| `src/agents/plugins/kimi/kimi.plugin.ts` | `installVersion()` delegates to `installNative()`, which returns `result.installedVersion ?? null` directly — no redundant `getVersion()` call after install |
 | `src/cli/commands/install.ts` | Capture return value of `installVersion()`; use it for success message; fall back to `getVersion()` when null |
 | `src/agents/plugins/kimi/__tests__/kimi.plugin.test.ts` | Update 6 assertions from `.resolves.toBeUndefined()` to `.resolves.not.toThrow()` or check for string/null |
 | `src/cli/commands/__tests__/install.version-selection.test.ts` | Update mock return value; add test for null-fallback path |
