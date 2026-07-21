@@ -121,3 +121,46 @@ describe('GPT-5.5 / GPT-5.4 → Responses API routing', () => {
     expect(OPENCODE_MODEL_CONFIGS['gpt-5.5-2026-04-24']!.limit.context).toBe(1050000);
   });
 });
+
+describe('GPT-5.6 → Responses API routing', () => {
+  let convertApiModelToOpenCodeConfig: typeof import('../opencode/opencode-dynamic-models.js').convertApiModelToOpenCodeConfig;
+  let OPENCODE_MODEL_CONFIGS: typeof import('../opencode/opencode-model-configs.js').OPENCODE_MODEL_CONFIGS;
+
+  beforeEach(async () => {
+    vi.resetModules();
+    ({ convertApiModelToOpenCodeConfig } = await import('../opencode/opencode-dynamic-models.js'));
+    ({ OPENCODE_MODEL_CONFIGS } = await import('../opencode/opencode-model-configs.js'));
+  });
+
+  // ── Dynamic path (live catalogue) ──────────────────────────────────────────
+
+  it('routes gpt-5.6-sol-2026-07-09 to Responses API via dynamic model conversion', () => {
+    const config = convertApiModelToOpenCodeConfig(makeLlmModel('gpt-5.6-sol-2026-07-09'));
+    expect(config.use_responses_api).toBe(true);
+  });
+
+  it('routes gpt-5-6-sol-2026-07-09 (hyphenated variant) to Responses API via dynamic conversion', () => {
+    const config = convertApiModelToOpenCodeConfig(makeLlmModel('gpt-5-6-sol-2026-07-09'));
+    expect(config.use_responses_api).toBe(true);
+  });
+
+  it('dynamic gpt-5.6-sol-2026-07-09 reports context limit of 1050000', () => {
+    const config = convertApiModelToOpenCodeConfig(makeLlmModel('gpt-5.6-sol-2026-07-09'));
+    expect(config.limit.context).toBe(1050000);
+  });
+
+  // ── Static fallback path (OPENCODE_MODEL_CONFIGS) ──────────────────────────
+
+  it('static config has gpt-5.6-sol-2026-07-09 with use_responses_api: true', () => {
+    expect(OPENCODE_MODEL_CONFIGS['gpt-5.6-sol-2026-07-09']).toBeDefined();
+    expect(OPENCODE_MODEL_CONFIGS['gpt-5.6-sol-2026-07-09']!.use_responses_api).toBe(true);
+  });
+
+  it('static config gpt-5.6-sol-2026-07-09 supports tool_call', () => {
+    expect(OPENCODE_MODEL_CONFIGS['gpt-5.6-sol-2026-07-09']!.tool_call).toBe(true);
+  });
+
+  it('static config gpt-5.6-sol-2026-07-09 reports context limit of 1050000', () => {
+    expect(OPENCODE_MODEL_CONFIGS['gpt-5.6-sol-2026-07-09']!.limit.context).toBe(1050000);
+  });
+});
