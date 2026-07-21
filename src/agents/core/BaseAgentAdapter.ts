@@ -72,7 +72,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       if (env.CODEMIE_PROFILE_CONFIG) {
         try {
           const profileConfig = JSON.parse(env.CODEMIE_PROFILE_CONFIG) as { userEmail?: string };
-          userEmail = profileConfig.userEmail ?? undefined;
+          userEmail = profileConfig.userEmail || undefined;
         } catch {
           // malformed env — omit email gracefully
         }

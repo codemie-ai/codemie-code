@@ -145,7 +145,7 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
       let userEmail: string | undefined;
       try {
         const cfg = await ConfigLoader.loadMultiProviderConfig();
-        userEmail = cfg.userEmail ?? undefined;
+        userEmail = cfg.userEmail || undefined;
       } catch {
         // omit email gracefully
       }

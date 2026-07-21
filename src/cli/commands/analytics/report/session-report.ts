@@ -10,7 +10,7 @@ import { SessionsSource } from '../sources/sessions-source.js';
 import { enrichCosts } from '../cost/cost-enricher.js';
 import { AnalyticsAggregator } from '../aggregator.js';
 import { buildPayload } from './payload-builder.js';
-import { generateReportJson, writeReportWithFallback } from './report-generator.js';
+import { emailSlug, generateReportJson, writeReportWithFallback } from './report-generator.js';
 
 export interface SessionReportOptions {
   /** Session id to scope the report to. */
@@ -66,12 +66,10 @@ export async function generateSessionReport(options: SessionReportOptions): Prom
     ...(periodEnd !== undefined && { periodEnd }),
   });
 
-  const emailSlug = options.userEmail
-    ? options.userEmail.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') + '-'
-    : '';
+  const emailPrefix = options.userEmail ? `${emailSlug(options.userEmail)}-` : '';
   const outputPath =
     options.outputPath ??
-    join(process.cwd(), 'docs', 'codemie', 'analytics', `codemie-analytics-${emailSlug}${options.sessionId}.json`);
+    join(process.cwd(), 'docs', 'codemie', 'analytics', `codemie-analytics-${emailPrefix}${options.sessionId}.json`);
 
   // Explicit path ⇒ no home/tmp fallback; a write error propagates to the caller.
   const result = writeReportWithFallback((p) => generateReportJson(payload, p), outputPath, false);

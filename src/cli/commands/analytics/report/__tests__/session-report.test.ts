@@ -14,6 +14,7 @@ const buildPayloadMock = vi.fn();
 vi.mock('../payload-builder.js', () => ({ buildPayload: (...a: unknown[]) => buildPayloadMock(...a) }));
 const generateReportJsonMock = vi.fn();
 vi.mock('../report-generator.js', () => ({
+  emailSlug: (email: string) => email.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, ''),
   generateReportJson: (...a: unknown[]) => generateReportJsonMock(...a),
   // Real fallback semantics: just invoke the writer with the preferred path.
   writeReportWithFallback: (write: (p: string) => void, p: string) => {

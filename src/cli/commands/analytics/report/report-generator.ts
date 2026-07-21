@@ -61,7 +61,7 @@ export function generateReportJson(payload: ReportPayload, outputPath: string): 
   writeFileSync(outputPath, JSON.stringify(payload, null, 2), 'utf-8');
 }
 
-function emailSlug(email: string): string {
+export function emailSlug(email: string): string {
   return email.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
 }
 
