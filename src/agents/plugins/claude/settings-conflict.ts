@@ -23,7 +23,8 @@ export async function detectSettingsConflict(
     return null;
   }
 
-  const settingsUrl = settings.ANTHROPIC_BASE_URL;
+  const envBlock = settings.env as Record<string, unknown> | undefined;
+  const settingsUrl = envBlock?.ANTHROPIC_BASE_URL;
   if (typeof settingsUrl !== 'string' || !settingsUrl) return null;
 
   const profileUrl = env.ANTHROPIC_BASE_URL;

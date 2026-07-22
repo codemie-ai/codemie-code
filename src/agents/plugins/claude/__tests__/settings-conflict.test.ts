@@ -59,7 +59,7 @@ describe('detectSettingsConflict', () => {
 
   it('returns null when settings.json ANTHROPIC_BASE_URL equals env value', async () => {
     vi.mocked(fsMod.existsSync).mockReturnValue(true);
-    vi.mocked(fsp.readFile).mockResolvedValue(JSON.stringify({ ANTHROPIC_BASE_URL: PROFILE_URL }) as any);
+    vi.mocked(fsp.readFile).mockResolvedValue(JSON.stringify({ env: { ANTHROPIC_BASE_URL: PROFILE_URL } }) as any);
 
     const result = await detectSettingsConflict({ ANTHROPIC_BASE_URL: PROFILE_URL });
 
@@ -68,7 +68,7 @@ describe('detectSettingsConflict', () => {
 
   it('returns ConflictInfo when settings.json URL differs from env URL', async () => {
     vi.mocked(fsMod.existsSync).mockReturnValue(true);
-    vi.mocked(fsp.readFile).mockResolvedValue(JSON.stringify({ ANTHROPIC_BASE_URL: SETTINGS_URL }) as any);
+    vi.mocked(fsp.readFile).mockResolvedValue(JSON.stringify({ env: { ANTHROPIC_BASE_URL: SETTINGS_URL } }) as any);
 
     const result = await detectSettingsConflict({ ANTHROPIC_BASE_URL: PROFILE_URL });
 
@@ -78,7 +78,7 @@ describe('detectSettingsConflict', () => {
 
   it('returns ConflictInfo with undefined profileUrl when env has no ANTHROPIC_BASE_URL', async () => {
     vi.mocked(fsMod.existsSync).mockReturnValue(true);
-    vi.mocked(fsp.readFile).mockResolvedValue(JSON.stringify({ ANTHROPIC_BASE_URL: SETTINGS_URL }) as any);
+    vi.mocked(fsp.readFile).mockResolvedValue(JSON.stringify({ env: { ANTHROPIC_BASE_URL: SETTINGS_URL } }) as any);
 
     const result = await detectSettingsConflict({});
 
@@ -96,7 +96,7 @@ describe('detectSettingsConflict', () => {
 
   it('returns null when settings.json ANTHROPIC_BASE_URL is an empty string', async () => {
     vi.mocked(fsMod.existsSync).mockReturnValue(true);
-    vi.mocked(fsp.readFile).mockResolvedValue(JSON.stringify({ ANTHROPIC_BASE_URL: '' }) as any);
+    vi.mocked(fsp.readFile).mockResolvedValue(JSON.stringify({ env: { ANTHROPIC_BASE_URL: '' } }) as any);
 
     const result = await detectSettingsConflict({ ANTHROPIC_BASE_URL: PROFILE_URL });
 

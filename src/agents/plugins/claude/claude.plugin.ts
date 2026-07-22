@@ -231,7 +231,7 @@ export const ClaudePluginMetadata: AgentMetadata = {
           // Strip C0/C1 control characters and ANSI CSI sequences before displaying
           // URL values from settings.json — prevents terminal injection via crafted URLs.
           const safeUrl = (s: string): string =>
-            s.replace(/[\x00-\x1f\x7f]|\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]/g, '');
+            s.replace(/\x1b\[[\x30-\x3f]*[\x20-\x2f]*[\x40-\x7e]|[\x00-\x1f\x7f]/g, ''); // eslint-disable-line no-control-regex
           const profileDisplay = safeUrl(conflict.profileUrl || '(not set — direct Anthropic API)');
           const activeDisplay = safeUrl(conflict.settingsUrl);
           console.error(chalk.yellow('\n⚠️  ANTHROPIC_BASE_URL override detected in ~/.claude/settings.json'));
