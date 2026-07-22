@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "runner": "npm",
+  "merge_base": "ac92f9a2c33bb18504079a0f35ca5a15da7ce9bc",
+  "gates": [
+    {"id": "license",      "command": "npm run license-check",    "available": true},
+    {"id": "lint",         "command": "npm run lint",             "available": true},
+    {"id": "typecheck",    "command": "npm run typecheck",        "available": true},
+    {"id": "build",        "command": "npm run build",            "available": true},
+    {"id": "unit",         "command": "npm run test:unit",        "available": true},
+    {"id": "integration",  "command": "npm run test:integration", "available": true},
+    {"id": "secrets",      "command": "npm run validate:secrets", "available": false, "reason": "Docker daemon not running — skip if per guide"},
+    {"id": "commitlint",   "command": "npm run commitlint:last",  "available": true},
+    {"id": "ui",           "command": "n/a",                      "available": false, "reason": "no UI surface changed"}
+  ],
+  "ui_globs": ["\\.(tsx|jsx|css|html|vue|svelte)$", "src/(ui|frontend|components)/"],
+  "detected_at": "2026-07-10T00:00:00Z"
+}

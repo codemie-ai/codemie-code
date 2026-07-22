@@ -272,4 +272,32 @@ describe('Metrics Post-Processing Integration', () => {
     expect(truncAttrs.error_messages).toBeDefined();
     expect(truncAttrs.error_messages[0].length).toBeLessThanOrEqual(500); // v2 cap
   });
+
+  it('uses session.repository (git-remote) over filesystem extractRepository fallback', () => {
+    const sessionWithGitRemote: MetricsSession = {
+      ...mockSession,
+      workingDirectory: '/Users/test/some-other-path',
+      repository: 'codemie-ai/codemie-code'
+    };
+
+    const deltas: MetricDelta[] = [
+      {
+        recordId: 'record-git-1',
+        sessionId: 'test-session-id',
+        agentSessionId: 'agent-session-1',
+        timestamp: Date.now(),
+        gitBranch: 'main',
+        tools: {Read: 1},
+        toolStatus: {Read: {success: 1, failure: 0}},
+        syncStatus: 'pending',
+        syncAttempts: 0
+      }
+    ];
+
+    const metrics = aggregateDeltas(deltas, sessionWithGitRemote, '1.0.0', 'codemie-claude');
+
+    expect(metrics).toHaveLength(1);
+    // git-remote value must win over extractRepository('/Users/test/some-other-path') = 'test/some-other-path'
+    expect(metrics[0].attributes.repository).toBe('codemie-ai/codemie-code');
+  });
 });

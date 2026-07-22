@@ -263,6 +263,7 @@ export class DesktopTelemetryRuntime {
         provider: this.config.provider,
         startTime: session.startTime,
         workingDirectory: session.workingDirectory,
+        repository: session.repository,
         model: discovered.model
       },
       session.workingDirectory,
@@ -291,7 +292,8 @@ export class DesktopTelemetryRuntime {
         agentName: this.config.clientType,
         provider: this.config.provider,
         startTime: session.startTime,
-        workingDirectory: session.workingDirectory
+        workingDirectory: session.workingDirectory,
+        repository: session.repository
       },
       session.workingDirectory,
       { status: 'completed', reason: session.reason || 'desktop-session-complete' },
