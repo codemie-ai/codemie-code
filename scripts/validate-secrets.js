@@ -20,9 +20,7 @@ import { existsSync } from 'fs';
 const isWindows = platform() === 'win32';
 const projectPath = resolve(process.cwd());
 
-const configPath = process.env.GITLEAKS_CONFIG_PATH
-  ? resolve(process.env.GITLEAKS_CONFIG_PATH)
-  : resolve(projectPath, '.gitleaks.toml');
+const configPath = resolve(projectPath, '.gitleaks.toml');
 const hasConfig = existsSync(configPath);
 
 function resolveCommand(cmd) {
@@ -102,7 +100,7 @@ if (!stagedDiff || stagedDiff.length === 0) {
 const args = ['run', '--rm', '-i'];
 
 if (hasConfig) {
-  args.push('-v', `${configPath}:/gitleaks.toml`);
+  args.push('-v', `${projectPath}/.gitleaks.toml:/gitleaks.toml`);
 }
 
 args.push('ghcr.io/gitleaks/gitleaks:v8.30.1', 'detect', '--pipe', '--verbose');
