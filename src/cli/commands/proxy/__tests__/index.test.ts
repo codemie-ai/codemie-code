@@ -155,6 +155,47 @@ describe('proxy connect desktop', () => {
     expect(syncRegisteredSkills).toHaveBeenCalledWith('test-profile', process.cwd());
     expect(syncPluginSkills).toHaveBeenCalledOnce();
   });
+
+  it('uses the effective active profile when --profile is omitted', async () => {
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    const { ProviderRegistry } = await import('../../../../providers/index.js');
+    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
+    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { writeDesktopConfig } = await import('../connectors/desktop.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    vi.mocked(ConfigLoader.load).mockResolvedValue({
+      name: 'selected-profile',
+      provider: 'ai-run-sso',
+      baseUrl: 'https://example.com/api',
+      codeMieUrl: 'https://example.com',
+      model: 'selected-model',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+    vi.mocked(ProviderRegistry.getProvider).mockReturnValue({
+      name: 'ai-run-sso',
+      authType: 'sso',
+    } as ReturnType<typeof ProviderRegistry.getProvider>);
+    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
+      return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
+    } as unknown as typeof CodeMieSSO);
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(spawnDaemon).mockResolvedValue({
+      url: 'http://localhost:4001',
+      profile: 'selected-profile',
+      port: 4001,
+      gatewayKey: 'gk',
+      startedAt: new Date().toISOString(),
+      telemetryMode: 'claude-desktop',
+    } as Awaited<ReturnType<typeof spawnDaemon>>);
+    vi.mocked(writeDesktopConfig).mockResolvedValue('/path/to/config');
+
+    await createProxyCommand().parseAsync(['connect', 'desktop'], { from: 'user' });
+
+    expect(ConfigLoader.load).toHaveBeenCalledWith(process.cwd());
+    expect(spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({
+      profile: 'selected-profile',
+    }));
+  });
 });
 
 describe('proxy start', () => {

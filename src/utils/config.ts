@@ -94,11 +94,12 @@ export class ConfigLoader {
     // 3. Project-local config (.codemie/codemie-cli.config.json)
     const localConfig = await this.loadLocalConfigProfile(workingDir, localProfileName);
 
-    // When an explicit --profile selects a global profile different from the team's local
-    // default, keep only project-level local fields. This prevents the selected provider,
-    // model, and credentials from being silently replaced by the local team's defaults.
-    const applyProjectOnly =
-      cliOverrides?.name && localProfileName && cliOverrides.name !== localProfileName;
+    // When the selected global profile differs from the team's local profile, keep only
+    // project-level local fields. The selection may come from --profile or activeProfile;
+    // either way, the local team fallback must not replace provider, model, or credentials.
+    const applyProjectOnly = Boolean(
+      selectedProfileName && localProfileName && selectedProfileName !== localProfileName
+    );
     // When applying project-only composition, gate it on URL equality. If the
     // selected global profile targets a different CodeMie env than the local
     // team profile, the team's project/integration/URL all reference the wrong
@@ -1194,8 +1195,9 @@ export class ConfigLoader {
     const globalConfig = await this.loadGlobalConfigProfile(selectedProfileName);
     const localConfig = await this.loadLocalConfigProfile(workingDir, localProfileName);
 
-    const applyProjectOnly =
-      cliOverrides?.name && localProfileName && cliOverrides.name !== localProfileName;
+    const applyProjectOnly = Boolean(
+      selectedProfileName && localProfileName && selectedProfileName !== localProfileName
+    );
     const selectedProfileDefinesProjectContext =
       Boolean(globalConfig.codeMieProject || globalConfig.codeMieIntegration);
     const preserveProjectContext =

@@ -74,7 +74,7 @@ codemie proxy inspect desktop    # Inspect Desktop telemetry and sync state
 
 ### VS Code BYOK custom endpoint
 
-Configure VS Code Stable with the active SSO-backed CodeMie profile:
+Configure VS Code Stable with the currently selected SSO-backed CodeMie profile:
 
 ```bash
 codemie proxy connect vscode
@@ -169,7 +169,7 @@ codemie proxy connect desktop --profile codemie-new
 ```
 
 Behavior:
-- uses the current active CodeMie profile by default
+- uses the effective active CodeMie profile by default (including a local selection that references a global profile)
 - `--profile` overrides for the current run only
 - fails if the resolved profile is not a CodeMie SSO profile
 
