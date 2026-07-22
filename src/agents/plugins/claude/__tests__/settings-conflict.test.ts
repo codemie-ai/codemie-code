@@ -94,6 +94,34 @@ describe('detectSettingsConflict', () => {
     expect(result).toBeNull();
   });
 
+  it('returns null when settings.json contains JSON null (valid JSON, non-object)', async () => {
+    vi.mocked(fsMod.existsSync).mockReturnValue(true);
+    vi.mocked(fsp.readFile).mockResolvedValue('null' as any);
+
+    const result = await detectSettingsConflict({ ANTHROPIC_BASE_URL: PROFILE_URL });
+
+    expect(result).toBeNull();
+  });
+
+  it('returns null when settings.json contains a JSON array (non-object)', async () => {
+    vi.mocked(fsMod.existsSync).mockReturnValue(true);
+    vi.mocked(fsp.readFile).mockResolvedValue(JSON.stringify([{ ANTHROPIC_BASE_URL: SETTINGS_URL }]) as any);
+
+    const result = await detectSettingsConflict({ ANTHROPIC_BASE_URL: PROFILE_URL });
+
+    expect(result).toBeNull();
+  });
+
+  it('returns null when ANTHROPIC_BASE_URL is at root level (not under env block)', async () => {
+    // CR-001 regression guard: keys must be under settings.env, not at root
+    vi.mocked(fsMod.existsSync).mockReturnValue(true);
+    vi.mocked(fsp.readFile).mockResolvedValue(JSON.stringify({ ANTHROPIC_BASE_URL: SETTINGS_URL }) as any);
+
+    const result = await detectSettingsConflict({ ANTHROPIC_BASE_URL: PROFILE_URL });
+
+    expect(result).toBeNull();
+  });
+
   it('returns null when settings.json ANTHROPIC_BASE_URL is an empty string', async () => {
     vi.mocked(fsMod.existsSync).mockReturnValue(true);
     vi.mocked(fsp.readFile).mockResolvedValue(JSON.stringify({ env: { ANTHROPIC_BASE_URL: '' } }) as any);

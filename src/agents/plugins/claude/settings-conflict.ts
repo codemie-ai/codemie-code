@@ -19,6 +19,7 @@ export async function detectSettingsConflict(
   try {
     const raw = await readFile(settingsPath, 'utf-8');
     settings = JSON.parse(raw) as Record<string, unknown>;
+    if (!settings || typeof settings !== 'object' || Array.isArray(settings)) return null;
   } catch {
     return null;
   }
