@@ -465,6 +465,18 @@ codemie codebase ui
 
 Use `codemie codebase start|stop|status` to manage the UI process, or `codemie codebase open` to open the URL only.
 
+## Connect VS Code BYOK via CodeMie Proxy
+
+Configure VS Code's chat language model provider from the active SSO-backed CodeMie profile:
+
+```bash
+codemie proxy connect vscode
+```
+
+Use `--profile <name>` for a one-run profile override or `--insiders` for VS Code Insiders. The command starts or reuses the profile-model daemon and safely merges the CodeMie model into `chatLanguageModels.json` using only `/v1/chat/completions`.
+
+No plaintext key or generated placeholder is written to that file. On first setup, press ⇧⌘P on macOS or Ctrl+Shift+P on Windows/Linux, run `Chat: Manage Language Models`, right-click **CodeMie Profile Model**, choose **Update API Key**, and enter the local key `codemie-proxy`. VS Code keeps it in secret storage. Reload VS Code after configuration.
+
 ## Connect Claude Desktop via CodeMie Proxy
 
 Use Claude Desktop 3P through CodeMie proxy routing to capture `claude-desktop` metrics and synced conversations.

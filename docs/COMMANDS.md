@@ -65,6 +65,7 @@ codemie-claude init bmad --bmad-set bmm.user_skill_level=expert bmm.project_know
 codemie proxy start              # Start the local proxy daemon
 codemie proxy stop               # Stop the local proxy daemon
 codemie proxy status             # Show daemon status
+codemie proxy connect vscode     # Configure VS Code BYOK to use the local proxy
 codemie proxy connect desktop    # Configure Claude Desktop (3P) to use the local proxy
 codemie proxy inspect desktop    # Inspect Desktop telemetry and sync state
 ```
@@ -73,52 +74,36 @@ codemie proxy inspect desktop    # Inspect Desktop telemetry and sync state
 
 ### VS Code BYOK custom endpoint
 
-Start the local proxy in profile-model mode:
+Configure VS Code Stable with the active SSO-backed CodeMie profile:
 
 ```bash
-codemie proxy start \
-  --profile work \
-  --port 4001 \
-  --use-profile-model
+codemie proxy connect vscode
+codemie proxy connect vscode --profile work
+codemie proxy connect vscode --insiders
 ```
 
-This mode pins the selected profile and model when the daemon starts. Restart the daemon after changing the profile or its model. VS Code can send the stable logical model ID `codemie-profile-default`; the proxy replaces only that request field with the pinned profile model and forwards the rest of the OpenAI-compatible request unchanged.
+The connector starts or reuses a healthy daemon in profile-model mode, synchronizes skills, and merges the CodeMie provider into VS Code's `User/chatLanguageModels.json`. VS Code sends the stable logical model ID `codemie-profile-default`; for JSON `POST /v1/chat/completions` requests, the proxy replaces only that field with the configured profile model and forwards the remaining request unchanged.
 
-The SSO credentials remain in CodeMie and are never added to VS Code. The VS Code `apiKey` is the local gateway key (normally `codemie-proxy`), and the daemon listens only on `127.0.0.1`.
+The SSO credentials remain in CodeMie and are never added to VS Code. The connector preserves an existing `${input:chat.lm.secret.*}` reference, but does not write a plaintext key or generate a placeholder when no valid reference exists.
 
-Use the Responses API when the selected CodeMie tenant and model support it:
+For a new provider or an invalid existing key, the command prints this required one-time action:
+
+```text
+Press ⇧⌘P (macOS) or Ctrl+Shift+P (Windows/Linux)
+Run Chat: Manage Language Models
+Right-click CodeMie Profile Model → Update API Key
+Enter API key: codemie-proxy
+```
+
+VS Code stores that local key in its secret storage and adds the reference to the configuration. The CLI cannot inspect whether an existing secret reference still resolves; if VS Code reports a missing or invalid key, use **Update API Key** again.
+
+The managed provider has this effective structure. The port is taken from the running daemon, including a fallback port:
 
 ```json
 [
   {
     "name": "CodeMie",
     "vendor": "customendpoint",
-    "apiKey": "codemie-proxy",
-    "apiType": "responses",
-    "models": [
-      {
-        "id": "codemie-profile-default",
-        "name": "CodeMie Profile Model",
-        "url": "http://127.0.0.1:4001/v1/responses",
-        "toolCalling": true,
-        "vision": false,
-        "streaming": true,
-        "maxInputTokens": 128000,
-        "maxOutputTokens": 16000
-      }
-    ]
-  }
-]
-```
-
-If Responses is unavailable but the tenant supports Chat Completions, use this fallback:
-
-```json
-[
-  {
-    "name": "CodeMie",
-    "vendor": "customendpoint",
-    "apiKey": "codemie-proxy",
     "apiType": "chat-completions",
     "models": [
       {
@@ -126,37 +111,50 @@ If Responses is unavailable but the tenant supports Chat Completions, use this f
         "name": "CodeMie Profile Model",
         "url": "http://127.0.0.1:4001/v1/chat/completions",
         "toolCalling": true,
-        "vision": false,
+        "vision": true,
         "streaming": true,
-        "maxInputTokens": 128000,
+        "thinking": true,
+        "supportsReasoningEffort": [
+          "minimal",
+          "low",
+          "medium",
+          "high"
+        ],
+        "reasoningEffortFormat": "chat-completions",
+        "maxInputTokens": 112000,
         "maxOutputTokens": 16000
       }
-    ]
+    ],
+    "settings": {
+      "codemie-profile-default": {
+        "reasoningEffort": "minimal"
+      }
+    }
   }
 ]
 ```
 
-Do not configure both examples with the same display name unless you are deliberately testing both API families. Token limits, vision, streaming, and tool-calling values are VS Code metadata; they must match the real profile model because the proxy does not discover or synchronize model capabilities.
+The connector preserves unrelated providers, other models in the same provider, unrelated settings, and unknown provider properties. It rejects malformed JSON or a non-array root without overwriting the file. `codemie proxy start --use-profile-model` remains available for low-level manual setup.
 
 Check the pinned settings with `codemie proxy status`. For a direct local smoke test:
 
 ```bash
-npm run test:vscode-byok -- --api-type responses --stream --message "Reply with OK"
-npm run test:vscode-byok -- --api-type chat-completions --tool-test
+npm run test:vscode-byok -- --stream --message "Reply with OK"
+npm run test:vscode-byok -- --tool-test
 ```
 
 #### Troubleshooting VS Code BYOK
 
 | Symptom | Likely cause | Action |
 |---|---|---|
-| Model does not appear in Agent mode | `toolCalling` is false | Enable it only for a model that supports tools |
-| HTTP 401 from localhost | Wrong local gateway key | Use the key from daemon state or restart with the default |
+| Model does not appear | VS Code has not reloaded the configuration | Reload VS Code and open Chat: Manage Language Models |
+| Missing or invalid API key | The secret reference does not resolve | Right-click CodeMie Profile Model → Update API Key and enter `codemie-proxy` again |
+| HTTP 401 from localhost | The stored local key is missing or stale | Right-click CodeMie Profile Model → Update API Key and enter `codemie-proxy` |
 | HTTP 401/403 from upstream | Expired SSO session | Run `codemie profile login`, stop, and restart the proxy |
-| Model-not-found error | Daemon is transparent or has no pinned model | Check `codemie proxy status` and restart with `--use-profile-model` |
-| Unsupported endpoint | Tenant/model does not support that API family | Switch between Responses and Chat Completions |
+| Model-not-found error | The profile model changed after daemon startup | Re-run `codemie proxy connect vscode` |
+| Configuration is rejected | `chatLanguageModels.json` is malformed or not an array | Repair the file; the connector leaves invalid content unchanged |
 | VS Code still uses old settings | Model configuration was not reloaded | Reload VS Code |
-| Active profile changed but model did not | The daemon pins startup configuration | Stop and restart the proxy |
-| Agent model missing from picker | Model/tool metadata mismatch | Verify `toolCalling` and context limits |
+| Active profile changed but model did not | The daemon pins startup configuration | Re-run `codemie proxy connect vscode` |
 | Inline suggestions still use Copilot | Expected limitation | BYOK covers chat/agent workflows, not inline completion |
 
 ### Claude Desktop 3P

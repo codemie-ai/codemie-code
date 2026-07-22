@@ -85,7 +85,7 @@ describe('ProfileModelOverridePlugin', () => {
   });
 
   describe('Responses API', () => {
-    it('replaces only model and updates request metadata and body headers', async () => {
+    it('passes requests through without applying the profile model', async () => {
       const original = {
         model: 'codemie-profile-default',
         input: 'Hello',
@@ -95,23 +95,20 @@ describe('ProfileModelOverridePlugin', () => {
         reasoning: { effort: 'high' },
       };
       const context = createRequestContext(original);
+      const originalBody = context.requestBody!.toString('utf-8');
 
       await interceptor.onRequest!(context);
 
-      expect(parseBody(context)).toEqual({ ...original, model: PROFILE_MODEL });
-      expect(context.model).toBe(PROFILE_MODEL);
-      expect(context.metadata.originalRequestedModel).toBe('codemie-profile-default');
-      expect(context.metadata.profileModelApplied).toBe(true);
-      expect(context.headers['content-length']).toBe(String(context.requestBody!.length));
-      expect(context.headers['transfer-encoding']).toBeUndefined();
-      expect(context.headers['Transfer-Encoding']).toBeUndefined();
+      expect(context.requestBody!.toString('utf-8')).toBe(originalBody);
+      expect(context.model).toBeUndefined();
+      expect(context.metadata.profileModelApplied).toBeUndefined();
     });
 
-    it('populates a missing or empty incoming model', async () => {
+    it('does not populate a missing or empty incoming model', async () => {
       for (const body of [{ input: 'Hello' }, { model: '', input: 'Hello' }]) {
         const context = createRequestContext(body);
         await interceptor.onRequest!(context);
-        expect(parseBody(context).model).toBe(PROFILE_MODEL);
+        expect(parseBody(context).model).toBe('model' in body ? body.model : undefined);
       }
     });
 
@@ -150,8 +147,8 @@ describe('ProfileModelOverridePlugin', () => {
   describe('request boundaries', () => {
     it('recognizes supported endpoints with query strings', async () => {
       const context = createRequestContext(
-        { model: 'logical', input: 'Hello' },
-        { url: '/v1/responses?api-version=2026-01-01' }
+        { model: 'logical', messages: [{ role: 'user', content: 'Hello' }] },
+        { url: '/v1/chat/completions?api-version=2026-01-01' }
       );
 
       await interceptor.onRequest!(context);

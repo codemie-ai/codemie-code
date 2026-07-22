@@ -9,10 +9,7 @@
 import type { ProxyContext } from '../proxy-types.js';
 import type { PluginContext, ProxyInterceptor, ProxyPlugin } from './types.js';
 
-const SUPPORTED_PATHS = new Set([
-  '/v1/responses',
-  '/v1/chat/completions',
-]);
+const SUPPORTED_PATH = '/v1/chat/completions';
 
 function getHeader(headers: Record<string, string>, name: string): string | undefined {
   const target = name.toLowerCase();
@@ -22,9 +19,9 @@ function getHeader(headers: Record<string, string>, name: string): string | unde
 
 function isSupportedPath(rawUrl: string): boolean {
   try {
-    return SUPPORTED_PATHS.has(new URL(rawUrl, 'http://127.0.0.1').pathname);
+    return new URL(rawUrl, 'http://127.0.0.1').pathname === SUPPORTED_PATH;
   } catch {
-    return SUPPORTED_PATHS.has(rawUrl.split('?')[0]);
+    return rawUrl.split('?')[0] === SUPPORTED_PATH;
   }
 }
 

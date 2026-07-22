@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "activeProfile": "epm-cdme",
+  "activeProfile": "o2de-gpt5",
   "profiles": {
     "epm-cdme": {
       "codeMieProject": "epm-cdme",

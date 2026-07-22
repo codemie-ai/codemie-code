@@ -129,7 +129,7 @@ describe('profile-model proxy integration', () => {
       input: 'Hello',
       tools: [{ type: 'function', name: 'read_file' }],
       stream: false,
-    }],
+    }, 'codemie-profile-default'],
     ['/v1/chat/completions', {
       model: 'codemie-profile-default',
       messages: [
@@ -146,8 +146,8 @@ describe('profile-model proxy integration', () => {
       temperature: 0.2,
       top_p: 0.9,
       max_tokens: 1000,
-    }],
-  ])('rewrites only the model for %s', async (path, body) => {
+    }, PROFILE_MODEL],
+  ])('applies endpoint-specific model handling for %s', async (path, body, expectedModel) => {
     const captured: CapturedRequest[] = [];
     const upstream = await startCapturingUpstream(captured);
     servers.push(upstream.server);
@@ -160,7 +160,7 @@ describe('profile-model proxy integration', () => {
     expect(await response.json()).toEqual({ ok: true });
     expect(captured).toHaveLength(1);
     expect(captured[0].url).toBe(path);
-    expect(captured[0].body).toEqual({ ...body, model: PROFILE_MODEL });
+    expect(captured[0].body).toEqual({ ...body, model: expectedModel });
     expect(captured[0].headers.authorization).toBeUndefined();
     expect(captured[0].headers['x-codemie-client']).toBe('vscode-byok');
   });

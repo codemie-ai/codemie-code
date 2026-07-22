@@ -19,6 +19,7 @@ import {
 } from './daemon-manager.js';
 import { writeDesktopConfig, getDesktopBaseDir, mapCanonicalToDesktop } from './connectors/desktop.js';
 import { fetchManagedMcpServers } from './connectors/managed-mcp-remote.js';
+import { writeVsCodeLanguageModelsConfig } from './connectors/vscode.js';
 import { checkProxyHealth } from './health-check.js';
 import { printDesktopInspection } from './inspect-desktop.js';
 
@@ -29,6 +30,13 @@ interface ProxyStartOptions {
   port?: string;
   profile?: string;
   useProfileModel?: boolean;
+}
+
+interface VsCodeConnectOptions {
+  profile?: string;
+  insiders?: boolean;
+  verbose?: boolean;
+  force?: boolean;
 }
 
 interface RequestedDaemonConfig {
@@ -88,7 +96,11 @@ function formatDaemonConflict(
   return details.join('\n');
 }
 
-async function resolveDesktopProxyConfig(profileName?: string): Promise<{
+async function resolveSsoProxyConfig(
+  profileName: string | undefined,
+  clientLabel: string,
+  connectTarget: 'desktop' | 'vscode'
+): Promise<{
   config: Awaited<ReturnType<typeof ConfigLoader.load>>;
   profileSource: 'explicit' | 'active';
 }> {
@@ -113,9 +125,9 @@ async function resolveDesktopProxyConfig(profileName?: string): Promise<{
         : 'No SSO-backed CodeMie profiles were found. Run: codemie setup';
 
       throw new ConfigurationError(
-        `Profile "${profileName}" cannot be used for Claude Desktop proxy because it is not SSO-backed.\n\n` +
+        `Profile "${profileName}" cannot be used for ${clientLabel} proxy because it is not SSO-backed.\n\n` +
         `Next step:\n` +
-        `  codemie proxy connect desktop --profile <name>\n\n` +
+        `  codemie proxy connect ${connectTarget} --profile <name>\n\n` +
         `${details}`
       );
     }
@@ -138,16 +150,16 @@ async function resolveDesktopProxyConfig(profileName?: string): Promise<{
   const details = available.length > 0
     ? `Next step:\n` +
       `  codemie profile switch <codemie-profile>\n` +
-      `  codemie proxy connect desktop\n\n` +
+      `  codemie proxy connect ${connectTarget}\n\n` +
       `Or run once with a specific profile:\n` +
-      `  codemie proxy connect desktop --profile <codemie-profile>\n\n` +
+      `  codemie proxy connect ${connectTarget} --profile <codemie-profile>\n\n` +
       `Profiles to try:\n- ${available.join('\n- ')}`
     : `No SSO-backed CodeMie profiles were found.\n\n` +
       `Next step:\n` +
       `  codemie setup`;
 
   throw new ConfigurationError(
-    `Claude Desktop proxy needs an SSO-backed CodeMie profile.\n` +
+    `${clientLabel} proxy needs an SSO-backed CodeMie profile.\n` +
     `Current active profile: "${activeProfileName ?? 'unknown'}" (provider: ${providerName})\n\n` +
     `${details}`
   );
@@ -380,7 +392,11 @@ export function createProxyCommand(): Command {
 
         if (!running) {
           console.log('Starting proxy...');
-          const { config, profileSource } = await resolveDesktopProxyConfig(opts.profile);
+          const { config, profileSource } = await resolveSsoProxyConfig(
+            opts.profile,
+            'Claude Desktop',
+            'desktop'
+          );
           if (!config.baseUrl) {
             throw new ConfigurationError('No API URL configured. Run: codemie setup');
           }
@@ -511,6 +527,163 @@ export function createProxyCommand(): Command {
           }
         }
         printProxyError(error, 'Failed to connect Claude Desktop proxy');
+      }
+    });
+
+  connect
+    .command('vscode')
+    .description('Configure VS Code BYOK to use the local proxy')
+    .option('--profile <name>', 'Profile whose credentials and model to use')
+    .option('--insiders', 'Configure VS Code Insiders instead of stable VS Code')
+    .option('--verbose', 'Show detailed connection info (URLs, config paths) for debugging')
+    .option('--force', 'Stop any existing proxy and start a fresh one, even if it looks healthy')
+    .action(async (opts: VsCodeConnectOptions) => {
+      const verbose = Boolean(opts.verbose);
+      let startedInThisRun = false;
+
+      try {
+        const { config, profileSource } = await resolveSsoProxyConfig(
+          opts.profile,
+          'VS Code',
+          'vscode'
+        );
+        if (!config.baseUrl) {
+          throw new ConfigurationError('No API URL configured. Run: codemie setup');
+        }
+
+        const profile = config.name ?? 'default';
+        const profileModel = config.model?.trim();
+        if (!profileModel) {
+          throw new ConfigurationError(
+            `Profile "${profile}" has no model configured.\nRun: codemie setup`
+          );
+        }
+
+        if (verbose) {
+          console.log(
+            chalk.cyan(
+              `Using profile: ${profile} ` +
+              `(source: ${profileSource === 'explicit' ? '--profile' : 'active profile'})`
+            )
+          );
+        } else {
+          console.log(chalk.cyan(`Using profile: ${profile}`));
+        }
+
+        await verifySsoCredentials(config.baseUrl, profile);
+        const cwd = process.cwd();
+        await Promise.allSettled([
+          syncRegisteredSkills(profile, cwd),
+          syncPluginSkills(),
+        ]);
+
+        let { running, state } = await checkStatus();
+        const matchesRequestedMode = running && state
+          ? state.profile === profile &&
+            state.enforceProfileModel === true &&
+            state.model === profileModel &&
+            getEffectiveClientType(state) === 'vscode-byok'
+          : false;
+
+        let unhealthy = false;
+        if (running && state && matchesRequestedMode && !opts.force) {
+          const health = await checkProxyHealth({
+            port: state.port,
+            gatewayKey: state.gatewayKey,
+            deep: true,
+          });
+          unhealthy = !health.healthy;
+          if (unhealthy) {
+            console.log(
+              chalk.yellow(`Existing proxy is unhealthy (${health.reason ?? 'unknown'}). Restarting...`)
+            );
+          }
+        }
+
+        if (running && (!matchesRequestedMode || unhealthy || opts.force)) {
+          if (opts.force) {
+            console.log('Forcing a fresh proxy restart...');
+          } else if (!matchesRequestedMode) {
+            console.log('Restarting proxy in VS Code profile-model mode...');
+          }
+          await stopDaemon();
+          running = false;
+          state = null;
+        }
+
+        if (!running) {
+          console.log('Starting proxy...');
+          state = await spawnDaemon({
+            targetUrl: config.baseUrl,
+            provider: config.provider ?? 'ai-run-sso',
+            profile,
+            port: DEFAULT_DAEMON_PORT,
+            project: config.codeMieProject,
+            model: profileModel,
+            enforceProfileModel: true,
+            clientType: 'vscode-byok',
+            syncApiUrl: config.ssoConfig?.apiUrl,
+            syncCodeMieUrl: config.codeMieUrl,
+          });
+          startedInThisRun = true;
+          console.log(verbose
+            ? chalk.green(`✓ Proxy started at ${state.url}`)
+            : chalk.green('✓ Proxy started'));
+        }
+
+        const result = await writeVsCodeLanguageModelsConfig(
+          state!.url,
+          Boolean(opts.insiders)
+        );
+        logger.info(
+          '[proxy] VS Code BYOK configuration written',
+          ...sanitizeLogArgs({
+            configPath: result.configPath,
+            gatewayUrl: state!.url,
+            profile: state!.profile,
+            model: state!.model,
+            clientType: state!.clientType,
+            requiresSecretConfiguration: result.requiresSecretConfiguration,
+          })
+        );
+
+        console.log(chalk.green(`✓ ${opts.insiders ? 'VS Code Insiders' : 'VS Code'} configured`));
+        if (verbose) {
+          console.log(`  Config:  ${result.configPath}`);
+          console.log(`  Gateway: ${state!.url}`);
+          console.log(`  Model:   ${profileModel}`);
+        }
+
+        if (result.requiresSecretConfiguration) {
+          console.log(chalk.yellow('\n  One-time VS Code secret setup required:'));
+          console.log('  1. Press ⇧⌘P (macOS) or Ctrl+Shift+P (Windows/Linux).');
+          console.log('  2. Run: Chat: Manage Language Models');
+          console.log('  3. Right-click CodeMie Profile Model → Update API Key');
+          console.log(`  4. Enter API key: ${state!.gatewayKey}`);
+        } else {
+          console.log(
+            chalk.dim(
+              `  If VS Code reports a missing or invalid key, open Chat: Manage Language Models, ` +
+              `then right-click CodeMie Profile Model → Update API Key and enter ${state!.gatewayKey}.`
+            )
+          );
+        }
+        console.log(chalk.yellow('  Reload VS Code to apply changes.'));
+      } catch (error) {
+        if (startedInThisRun) {
+          try {
+            await stopDaemon();
+            logger.info('[proxy] VS Code proxy startup rolled back after configuration failure');
+          } catch (stopError) {
+            logger.warn(
+              '[proxy] Failed to stop VS Code proxy after configuration failure',
+              ...sanitizeLogArgs({
+                error: stopError instanceof Error ? stopError.message : String(stopError),
+              })
+            );
+          }
+        }
+        printProxyError(error, 'Failed to connect VS Code proxy');
       }
     });
 

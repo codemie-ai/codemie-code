@@ -710,9 +710,11 @@ The MCP Auth Plugin works in conjunction with the stdio-to-HTTP bridge:
 
 `ProfileModelOverridePlugin` runs at priority 13: after gateway authentication and SSO/JWT injection, and before the model-specific normalizers and request sanitizers. It is initialized only when `enforceProfileModel` is true and a non-empty `model` was pinned in daemon configuration.
 
-The plugin handles only JSON `POST` requests whose exact path is `/v1/responses` or `/v1/chat/completions` (query strings are allowed). It parses the request body, replaces `body.model`, updates the context model and content length, removes transfer encoding, and preserves every other JSON field. Unsupported paths, non-JSON requests, and malformed JSON remain unchanged. Responses are never transformed, so SSE chunks and tool-call payloads continue through the existing streaming path byte-for-byte.
+The plugin handles only JSON `POST` requests whose exact path is `/v1/chat/completions` (query strings are allowed). It parses the request body, replaces `body.model`, updates the context model and content length, removes transfer encoding, and preserves every other JSON field. Unsupported paths, including `/v1/responses`, non-JSON requests, and malformed JSON remain unchanged. Response bodies are never transformed, so SSE chunks and tool-call payloads continue through the existing streaming path byte-for-byte.
 
-The daemon receives the model as an immutable startup value rather than loading the active profile per request. This guarantees that changing the active profile does not silently reroute a running VS Code session. The CLI rejects reuse when profile, port, enforcement mode, pinned model, or client type differs.
+The daemon receives the model as an immutable startup value rather than loading the active profile per request. This guarantees that changing the active profile does not silently reroute a running VS Code session. `codemie proxy connect vscode` reuses a healthy daemon only when its profile, enforcement mode, pinned model, and client type match; otherwise it restarts the daemon and configures the actual bound URL.
+
+The connector merges one managed model into VS Code's `chatLanguageModels.json` and preserves an existing `${input:chat.lm.secret.*}` reference as `apiKey`. If no valid reference exists, it omits `apiKey` rather than generating a placeholder and directs the user to open `Chat: Manage Language Models`, right-click **CodeMie Profile Model**, and choose **Update API Key**. VS Code then stores the local `codemie-proxy` key in secret storage; CodeMie SSO credentials never enter VS Code configuration.
 
 ```mermaid
 sequenceDiagram
@@ -721,7 +723,7 @@ sequenceDiagram
     participant GW as CodeMie Gateway
     participant LM as Profile Model
 
-    VS->>PX: POST /v1/responses<br/>model=codemie-profile-default<br/>Bearer local gateway key
+    VS->>PX: POST /v1/chat/completions<br/>model=codemie-profile-default<br/>Bearer local gateway key
     PX->>PX: Validate and strip local key
     PX->>PX: Replace model with pinned profile model
     PX->>PX: Inject CodeMie SSO cookies

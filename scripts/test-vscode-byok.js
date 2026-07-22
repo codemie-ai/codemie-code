@@ -19,7 +19,6 @@ function printUsage() {
   console.log(`Usage: node scripts/test-vscode-byok.js [options]
 
 Options:
-  --api-type <type>   responses | chat-completions (default: responses)
   --stream            Request a streaming response
   --message <text>    Prompt text (default: "Reply with OK")
   --tool-test         Ask the model to call the harmless get_test_value function
@@ -36,7 +35,6 @@ function readOptionValue(argv, index, optionName) {
 
 function parseArgs(argv) {
   const options = {
-    apiType: 'responses',
     stream: false,
     message: 'Reply with OK',
     toolTest: false,
@@ -48,13 +46,8 @@ function parseArgs(argv) {
     if (arg === '--help' || arg === '-h') options.help = true;
     else if (arg === '--stream') options.stream = true;
     else if (arg === '--tool-test') options.toolTest = true;
-    else if (arg === '--api-type') options.apiType = readOptionValue(argv, index++, arg);
     else if (arg === '--message') options.message = readOptionValue(argv, index++, arg);
     else throw new Error(`Unknown option: ${arg}`);
-  }
-
-  if (!['responses', 'chat-completions'].includes(options.apiType)) {
-    throw new Error('--api-type must be responses or chat-completions');
   }
   return options;
 }
@@ -69,7 +62,9 @@ async function loadDaemonState() {
 
   const state = JSON.parse(raw);
   if (state.enforceProfileModel !== true) {
-    throw new Error('The running proxy is not in profile-model mode. Restart it with --use-profile-model.');
+    throw new Error(
+      'The running proxy is not in profile-model mode. Run: codemie proxy connect vscode'
+    );
   }
   if (!state.url || !state.gatewayKey || !state.model) {
     throw new Error('Daemon state is missing URL, gateway key, or pinned model. Restart the proxy.');
@@ -77,22 +72,13 @@ async function loadDaemonState() {
   return state;
 }
 
-function createTool(apiType) {
+function createTool() {
   const parameters = {
     type: 'object',
     properties: { name: { type: 'string' } },
     required: ['name'],
     additionalProperties: false,
   };
-  if (apiType === 'responses') {
-    return {
-      type: 'function',
-      name: 'get_test_value',
-      description: 'Return a harmless synthetic test value.',
-      parameters,
-      strict: true,
-    };
-  }
   return {
     type: 'function',
     function: {
@@ -108,22 +94,11 @@ function createRequestBody(options) {
   const message = options.toolTest
     ? 'Call get_test_value with name "vscode-byok-smoke". Do not answer directly.'
     : options.message;
-  const common = {
+  return {
     model: LOGICAL_MODEL,
     stream: options.stream,
-  };
-
-  if (options.apiType === 'responses') {
-    return {
-      ...common,
-      input: message,
-      ...(options.toolTest ? { tools: [createTool(options.apiType)], tool_choice: 'required' } : {}),
-    };
-  }
-  return {
-    ...common,
     messages: [{ role: 'user', content: message }],
-    ...(options.toolTest ? { tools: [createTool(options.apiType)], tool_choice: 'required' } : {}),
+    ...(options.toolTest ? { tools: [createTool()], tool_choice: 'required' } : {}),
   };
 }
 
@@ -160,8 +135,7 @@ async function main() {
   }
 
   const state = await loadDaemonState();
-  const endpoint = options.apiType === 'responses' ? '/v1/responses' : '/v1/chat/completions';
-  const targetUrl = new URL(endpoint, state.url);
+  const targetUrl = new URL('/v1/chat/completions', state.url);
   const body = createRequestBody(options);
 
   console.log(`Endpoint:     ${targetUrl.href}`);
