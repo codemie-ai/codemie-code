@@ -778,7 +778,7 @@ export interface AgentAdapter {
    * Install specific version of agent (optional, for version-managed agents)
    * @param version - Version string or channel ('latest', 'stable', 'supported')
    */
-  installVersion?(version: string): Promise<void>;
+  installVersion?(version: string): Promise<string | null>;
 
   /**
    * Check version compatibility (optional, for version-managed agents)

@@ -316,6 +316,20 @@ export class ClaudePlugin extends BaseAgentAdapter {
    *
    * @returns Version string or null if not installed
    */
+  private async execVersionAtFullPath(): Promise<string | null> {
+    if (process.platform === 'win32') return null;
+    const { exec } = await import('../../../utils/processes.js');
+    const fullPath = resolveHomeDir('.local/bin/claude');
+    try {
+      const result = await exec(fullPath, ['--version']);
+      if (result.code !== 0) return null;
+      const trimmed = result.stdout.trim();
+      return trimmed.length > 0 ? trimmed : null;
+    } catch {
+      return null;
+    }
+  }
+
   async getVersion(): Promise<string | null> {
     if (!this.metadata.cliCommand) {
       return null;
@@ -324,21 +338,10 @@ export class ClaudePlugin extends BaseAgentAdapter {
     const { exec } = await import('../../../utils/processes.js');
 
     // Try full path first on Unix systems (native installer places binary at ~/.local/bin/claude)
-    if (process.platform !== 'win32') {
-      const fullPath = resolveHomeDir('.local/bin/claude');
-      try {
-        const result = await exec(fullPath, ['--version']);
-
-        // Parse version from output like '2.1.23 (Claude Code)'
-        const versionMatch = result.stdout.trim().match(/^(\d+\.\d+\.\d+)/);
-        if (versionMatch) {
-          return versionMatch[1];
-        }
-
-        return result.stdout.trim();
-      } catch {
-        // Full path check failed, fall through to PATH check
-      }
+    const fullPathOutput = await this.execVersionAtFullPath();
+    if (fullPathOutput !== null) {
+      const versionMatch = fullPathOutput.match(/^(\d+\.\d+\.\d+)/);
+      return versionMatch ? versionMatch[1] : fullPathOutput;
     }
 
     // Fall back to command in PATH (works for npm installations, Windows, etc.)
@@ -346,7 +349,6 @@ export class ClaudePlugin extends BaseAgentAdapter {
       const result = await exec(this.metadata.cliCommand, ['--version']);
 
       // Parse version from output like '2.1.23 (Claude Code)'
-      // Extract just the version number
       const versionMatch = result.stdout.trim().match(/^(\d+\.\d+\.\d+)/);
       if (versionMatch) {
         return versionMatch[1];
@@ -384,26 +386,12 @@ export class ClaudePlugin extends BaseAgentAdapter {
       return true; // Built-in agents are always "installed"
     }
 
-    // On Unix systems, check full path first (native installer places binary at ~/.local/bin/claude)
-    // This avoids PATH issues where ~/.local/bin is not in user's PATH
-    if (process.platform !== 'win32') {
-      const fullPath = resolveHomeDir('.local/bin/claude');
-      try {
-        const { exec } = await import('../../../utils/processes.js');
-        const result = await exec(fullPath, ['--version']);
-        if (result.code === 0) {
-          return true;
-        }
-      } catch {
-        // Full path check failed, fall through to PATH check
-      }
+    // On Unix, check full path first to avoid PATH issues
+    if (await this.execVersionAtFullPath() !== null) {
+      return true;
     }
 
     // Fall back to base implementation (checks if command is in PATH)
-    // This handles:
-    // 1. npm global installations (in PATH)
-    // 2. Windows installations
-    // 3. Other installation methods
     return super.isInstalled();
   }
 
@@ -430,7 +418,7 @@ export class ClaudePlugin extends BaseAgentAdapter {
    * @param version - Version string (e.g., '2.0.30', 'latest', 'supported')
    * @throws {AgentInstallationError} If installation fails
    */
-  async installVersion(version?: string): Promise<void> {
+  async installVersion(version?: string): Promise<string | null> {
     const metadata = this.metadata;
 
     // Resolve 'supported' to actual version from metadata
@@ -537,6 +525,8 @@ export class ClaudePlugin extends BaseAgentAdapter {
         );
       }
     }
+
+    return result.installedVersion ?? null;
   }
 
   /**

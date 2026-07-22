@@ -152,7 +152,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
    *
    * @param version - Specific version, 'supported', or undefined for latest
    */
-  async installVersion(version?: string): Promise<void> {
+  async installVersion(version?: string): Promise<string | null> {
     if (!this.metadata.npmPackage) {
       throw new Error(`${this.displayName} is built-in and cannot be installed`);
     }
@@ -177,6 +177,12 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         throw new Error(`Failed to install ${this.displayName}: ${error.message}`);
       }
       throw error;
+    }
+
+    try {
+      return await this.getVersion();
+    } catch {
+      return null;
     }
   }
 

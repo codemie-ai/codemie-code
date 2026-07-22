@@ -173,7 +173,7 @@ export class KimiPlugin extends BaseAgentAdapter {
     return false;
   }
 
-  private async installNative(version?: string): Promise<void> {
+  private async installNative(version?: string): Promise<string | null> {
     if (!this.metadata.installerUrls) {
       throw new AgentInstallationError(
         this.metadata.name,
@@ -202,6 +202,7 @@ export class KimiPlugin extends BaseAgentAdapter {
       }
 
       logger.success(`${this.metadata.displayName} installed successfully`);
+      return result.installedVersion ?? null;
     } catch (error) {
       if (error instanceof AgentInstallationError) {
         throw error;
@@ -220,7 +221,7 @@ export class KimiPlugin extends BaseAgentAdapter {
   }
 
   override async install(): Promise<void> {
-    return this.installVersion(undefined);
+    await this.installVersion(undefined);
   }
 
   /**
@@ -329,7 +330,7 @@ export class KimiPlugin extends BaseAgentAdapter {
     }
   }
 
-  override async installVersion(version?: string): Promise<void> {
+  override async installVersion(version?: string): Promise<string | null> {
     // Resolve 'supported' to the version from metadata
     let resolvedVersion: string | undefined = version;
     if (version === 'supported') {
@@ -365,7 +366,7 @@ export class KimiPlugin extends BaseAgentAdapter {
       }
     }
 
-    await this.installNative(resolvedVersion);
+    return await this.installNative(resolvedVersion);
   }
 
   protected override async setupProxy(env: NodeJS.ProcessEnv): Promise<void> {

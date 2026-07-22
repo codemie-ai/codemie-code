@@ -45,7 +45,7 @@ describe('KimiPlugin', () => {
     it('installs supported version natively', async () => {
       const plugin = new KimiPlugin();
 
-      await expect(plugin.installVersion('supported')).resolves.toBeUndefined();
+      await expect(plugin.installVersion('supported')).resolves.toBe('1.0.0');
 
       const { installNativeAgent } = await import('../../../../utils/native-installer.js');
       expect(installNativeAgent).toHaveBeenCalledTimes(1);
@@ -60,7 +60,7 @@ describe('KimiPlugin', () => {
     it('installs npm version natively', async () => {
       const plugin = new KimiPlugin();
 
-      await expect(plugin.installVersion('npm')).resolves.toBeUndefined();
+      await expect(plugin.installVersion('npm')).resolves.toBe('1.0.0');
 
       const { installNativeAgent } = await import('../../../../utils/native-installer.js');
       expect(installNativeAgent).toHaveBeenCalledTimes(1);
@@ -75,7 +75,7 @@ describe('KimiPlugin', () => {
     it('installs latest version natively', async () => {
       const plugin = new KimiPlugin();
 
-      await expect(plugin.installVersion('latest')).resolves.toBeUndefined();
+      await expect(plugin.installVersion('latest')).resolves.toBe('1.0.0');
 
       const { installNativeAgent } = await import('../../../../utils/native-installer.js');
       expect(installNativeAgent).toHaveBeenCalledTimes(1);
@@ -90,7 +90,7 @@ describe('KimiPlugin', () => {
     it('installs stable version natively', async () => {
       const plugin = new KimiPlugin();
 
-      await expect(plugin.installVersion('stable')).resolves.toBeUndefined();
+      await expect(plugin.installVersion('stable')).resolves.toBe('1.0.0');
 
       const { installNativeAgent } = await import('../../../../utils/native-installer.js');
       expect(installNativeAgent).toHaveBeenCalledTimes(1);
@@ -116,7 +116,7 @@ describe('KimiPlugin', () => {
     it('passes explicit semantic version through to native installer', async () => {
       const plugin = new KimiPlugin();
 
-      await expect(plugin.installVersion('1.2.3')).resolves.toBeUndefined();
+      await expect(plugin.installVersion('1.2.3')).resolves.toBe('1.0.0');
 
       const { installNativeAgent } = await import('../../../../utils/native-installer.js');
       expect(installNativeAgent).toHaveBeenCalledTimes(1);
