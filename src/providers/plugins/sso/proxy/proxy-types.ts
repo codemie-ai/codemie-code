@@ -18,8 +18,6 @@ export interface ProxyConfig {
   timeout?: number;
   profile?: string;         // Profile name for traceability
   model?: string;
-  /** Replace body.model on supported inference endpoints with the configured profile model. */
-  enforceProfileModel?: boolean;
   provider?: string;
   integrationId?: string;
   sessionId?: string;

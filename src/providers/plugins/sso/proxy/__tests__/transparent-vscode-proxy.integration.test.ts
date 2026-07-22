@@ -1,5 +1,5 @@
 /**
- * Profile-model proxy transport integration tests
+ * Transparent VS Code proxy transport integration tests
  * @group unit
  */
 
@@ -9,11 +9,9 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CodeMieProxy } from '../sso.proxy.js';
 import { GatewayKeyPlugin } from '../plugins/gateway-key.plugin.js';
 import { HeaderInjectionPlugin } from '../plugins/header-injection.plugin.js';
-import { ProfileModelOverridePlugin } from '../plugins/profile-model-override.plugin.js';
 import { getPluginRegistry, resetPluginRegistry } from '../plugins/registry.js';
 
 const GATEWAY_KEY = 'test-local-key';
-const PROFILE_MODEL = 'profile-model-id';
 
 interface StartedServer {
   server: Server;
@@ -21,7 +19,6 @@ interface StartedServer {
 }
 
 interface CapturedRequest {
-  method: string;
   url: string;
   headers: IncomingMessage['headers'];
   body: Record<string, unknown>;
@@ -47,13 +44,10 @@ async function readRequestBody(req: IncomingMessage): Promise<Record<string, unk
   return JSON.parse(Buffer.concat(chunks).toString('utf-8')) as Record<string, unknown>;
 }
 
-async function startCapturingUpstream(
-  captured: CapturedRequest[]
-): Promise<StartedServer> {
+async function startCapturingUpstream(captured: CapturedRequest[]): Promise<StartedServer> {
   return listen(createServer((req, res) => {
     void (async () => {
       captured.push({
-        method: req.method ?? 'GET',
         url: req.url ?? '/',
         headers: req.headers,
         body: await readRequestBody(req),
@@ -65,13 +59,9 @@ async function startCapturingUpstream(
   }));
 }
 
-async function startProxy(
-  targetApiUrl: string,
-  enforceProfileModel = true
-): Promise<{ proxy: CodeMieProxy; url: string }> {
+async function startProxy(targetApiUrl: string): Promise<{ proxy: CodeMieProxy; url: string }> {
   const registry = getPluginRegistry();
   registry.register(new GatewayKeyPlugin());
-  registry.register(new ProfileModelOverridePlugin());
   registry.register(new HeaderInjectionPlugin());
 
   const proxy = new CodeMieProxy({
@@ -80,9 +70,8 @@ async function startProxy(
     port: 0,
     provider: 'test-provider',
     gatewayKey: GATEWAY_KEY,
-    model: PROFILE_MODEL,
-    enforceProfileModel,
     clientType: 'vscode-byok',
+    project: 'team-project',
   });
   const { url } = await proxy.start();
   return { proxy, url };
@@ -99,7 +88,7 @@ function authenticatedJsonInit(body: unknown): RequestInit {
   };
 }
 
-describe('profile-model proxy integration', () => {
+describe('transparent VS Code proxy integration', () => {
   const proxies: CodeMieProxy[] = [];
   const servers: Server[] = [];
   const proxyEnvironment = new Map<string, string | undefined>();
@@ -123,47 +112,31 @@ describe('profile-model proxy integration', () => {
     resetPluginRegistry();
   });
 
-  it.each([
-    ['/v1/responses', {
-      model: 'codemie-profile-default',
-      input: 'Hello',
-      tools: [{ type: 'function', name: 'read_file' }],
-      stream: false,
-    }, 'codemie-profile-default'],
-    ['/v1/chat/completions', {
-      model: 'codemie-profile-default',
-      messages: [
-        { role: 'system', content: 'Be concise' },
-        { role: 'user', content: 'Hello' },
-      ],
-      tools: [{
-        type: 'function',
-        function: { name: 'read_file', parameters: { type: 'object' } },
-      }],
-      tool_choice: 'auto',
-      stream: false,
-      stream_options: { include_usage: true },
-      temperature: 0.2,
-      top_p: 0.9,
-      max_tokens: 1000,
-    }, PROFILE_MODEL],
-  ])('applies endpoint-specific model handling for %s', async (path, body, expectedModel) => {
-    const captured: CapturedRequest[] = [];
-    const upstream = await startCapturingUpstream(captured);
-    servers.push(upstream.server);
-    const startedProxy = await startProxy(upstream.url);
-    proxies.push(startedProxy.proxy);
+  it.each(['/v1/responses', '/v1/chat/completions?trace=test'])(
+    'forwards the caller-selected model and request body unchanged for %s', async (path) => {
+      const captured: CapturedRequest[] = [];
+      const upstream = await startCapturingUpstream(captured);
+      servers.push(upstream.server);
+      const startedProxy = await startProxy(upstream.url);
+      proxies.push(startedProxy.proxy);
+      const body = {
+        model: 'profile-selected-model',
+        messages: [{ role: 'user', content: 'Hello' }],
+        tools: [{ type: 'function', name: 'read_file' }],
+        stream: false,
+      };
 
-    const response = await fetch(`${startedProxy.url}${path}`, authenticatedJsonInit(body));
+      const response = await fetch(`${startedProxy.url}${path}`, authenticatedJsonInit(body));
 
-    expect(response.status).toBe(201);
-    expect(await response.json()).toEqual({ ok: true });
-    expect(captured).toHaveLength(1);
-    expect(captured[0].url).toBe(path);
-    expect(captured[0].body).toEqual({ ...body, model: expectedModel });
-    expect(captured[0].headers.authorization).toBeUndefined();
-    expect(captured[0].headers['x-codemie-client']).toBe('vscode-byok');
-  });
+      expect(response.status).toBe(201);
+      expect(captured[0].url).toBe(path);
+      expect(captured[0].body).toEqual(body);
+      expect(captured[0].headers.authorization).toBeUndefined();
+      expect(captured[0].headers['x-codemie-client']).toBe('vscode-byok');
+      expect(captured[0].headers['x-codemie-project']).toBe('team-project');
+      expect(captured[0].headers['x-codemie-cli-model']).toBeUndefined();
+    }
+  );
 
   it('forwards SSE bytes incrementally and unchanged', async () => {
     const chunks = [
@@ -189,7 +162,7 @@ describe('profile-model proxy integration', () => {
 
     const response = await fetch(
       `${startedProxy.url}/v1/chat/completions`,
-      authenticatedJsonInit({ model: 'logical', messages: [], stream: true })
+      authenticatedJsonInit({ model: 'profile-selected-model', messages: [], stream: true })
     );
     const reader = response.body!.getReader();
     const first = await reader.read();
@@ -233,7 +206,7 @@ describe('profile-model proxy integration', () => {
 
     const response = await fetch(
       `${startedProxy.url}/v1/chat/completions`,
-      authenticatedJsonInit({ model: 'logical', messages: [] })
+      authenticatedJsonInit({ model: 'profile-selected-model', messages: [] })
     );
 
     expect(await response.json()).toEqual(toolCall);
@@ -255,12 +228,13 @@ describe('profile-model proxy integration', () => {
       const response = await fetch(`${startedProxy.url}/v1/responses`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ model: 'logical', input: 'Hello' }),
+        body: JSON.stringify({ model: 'profile-selected-model', input: 'Hello' }),
       });
 
       expect(response.status).toBe(401);
       expect(upstreamRequests).toBe(0);
-    });
+    }
+  );
 
   it('keeps health unauthenticated', async () => {
     const upstream = await listen(createServer((_req, res) => res.end('{}')));
@@ -271,21 +245,5 @@ describe('profile-model proxy integration', () => {
     const response = await fetch(`${startedProxy.url}/health`);
 
     expect(response.status).toBe(200);
-  });
-
-  it('preserves caller-selected model in transparent mode', async () => {
-    const captured: CapturedRequest[] = [];
-    const upstream = await startCapturingUpstream(captured);
-    servers.push(upstream.server);
-    const startedProxy = await startProxy(upstream.url, false);
-    proxies.push(startedProxy.proxy);
-
-    await fetch(
-      `${startedProxy.url}/v1/responses?trace=test`,
-      authenticatedJsonInit({ model: 'caller-selected-model', input: 'Hello' })
-    );
-
-    expect(captured[0].body.model).toBe('caller-selected-model');
-    expect(captured[0].url).toBe('/v1/responses?trace=test');
   });
 });

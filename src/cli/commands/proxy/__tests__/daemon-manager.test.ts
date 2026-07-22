@@ -64,14 +64,12 @@ describe('readState', () => {
     expect(state?.url).toBe(SAMPLE_STATE.url);
   });
 
-  it('reads old daemon state files without new optional fields', async () => {
+  it('reads daemon state files without optional client metadata', async () => {
     await writeFile(TEST_STATE_FILE, JSON.stringify(SAMPLE_STATE), 'utf-8');
 
     const state = await readState(TEST_STATE_FILE);
 
     expect(state).toMatchObject(SAMPLE_STATE);
-    expect(state?.model).toBeUndefined();
-    expect(state?.enforceProfileModel).toBeUndefined();
     expect(state?.clientType).toBeUndefined();
   });
 });
@@ -150,7 +148,7 @@ describe('spawnDaemon', () => {
     });
   }
 
-  it('passes the pinned model, enforcement flag, and client type to the daemon', async () => {
+  it('passes client and project context without model arguments', async () => {
     arrangeReadyDaemon();
 
     await spawnDaemon({
@@ -158,20 +156,19 @@ describe('spawnDaemon', () => {
       provider: 'ai-run-sso',
       profile: 'work',
       port: 4001,
-      model: 'profile-model-id',
-      enforceProfileModel: true,
+      project: 'team-project',
       clientType: 'vscode-byok',
     });
 
     const args = vi.mocked(spawnDetached).mock.calls[0][1];
     expect(args).toEqual(expect.arrayContaining([
-      '--model', 'profile-model-id',
-      '--enforce-profile-model',
+      '--project', 'team-project',
       '--client-type', 'vscode-byok',
     ]));
+    expect(args).not.toContain('--model');
   });
 
-  it('keeps existing daemon arguments unchanged when profile-model mode is absent', async () => {
+  it('omits optional client context when it is not configured', async () => {
     arrangeReadyDaemon();
 
     await spawnDaemon({
@@ -183,7 +180,6 @@ describe('spawnDaemon', () => {
 
     const args = vi.mocked(spawnDetached).mock.calls[0][1];
     expect(args).not.toContain('--model');
-    expect(args).not.toContain('--enforce-profile-model');
     expect(args).not.toContain('--client-type');
   });
 });

@@ -13,7 +13,6 @@ import { SSOAuthPlugin } from './sso-auth.plugin.js';
 import { JWTAuthPlugin } from './jwt-auth.plugin.js';
 import { HeaderInjectionPlugin } from './header-injection.plugin.js';
 import { RequestSanitizerPlugin } from './request-sanitizer.plugin.js';
-import { ProfileModelOverridePlugin } from './profile-model-override.plugin.js';
 import { ClaudeRequestNormalizerPlugin } from './claude-request-normalizer.plugin.js';
 import { KimiRequestNormalizerPlugin } from './kimi-request-normalizer.plugin.js';
 import { CodexEncryptedContentSanitizerPlugin } from './codex-encrypted-content-sanitizer.plugin.js';
@@ -33,7 +32,6 @@ export function registerCorePlugins(): void {
   registry.register(new GatewayKeyPlugin()); // Priority 7 - validates local gateway auth, strips header before upstream
   registry.register(new SSOAuthPlugin());
   registry.register(new JWTAuthPlugin());
-  registry.register(new ProfileModelOverridePlugin()); // Priority 13 - pins VS Code BYOK requests to the profile model
   registry.register(new ClaudeRequestNormalizerPlugin()); // Priority 14 - normalizes thinking params for claude models
   registry.register(new KimiRequestNormalizerPlugin()); // Priority 14 - caps Kimi output token requests for upstream limits
   registry.register(new RequestSanitizerPlugin()); // Priority 15 - strips unsupported reasoning params
@@ -53,7 +51,6 @@ export {
   GatewayKeyPlugin,
   SSOAuthPlugin,
   JWTAuthPlugin,
-  ProfileModelOverridePlugin,
   HeaderInjectionPlugin,
   RequestSanitizerPlugin,
   ClaudeRequestNormalizerPlugin,

@@ -82,7 +82,9 @@ codemie proxy connect vscode --profile work
 codemie proxy connect vscode --insiders
 ```
 
-The connector starts or reuses a healthy daemon in profile-model mode, synchronizes skills, and merges the CodeMie provider into VS Code's `User/chatLanguageModels.json`. VS Code sends the stable logical model ID `codemie-profile-default`; for JSON `POST /v1/chat/completions` requests, the proxy replaces only that field with the configured profile model and forwards the remaining request unchanged.
+The connector resolves the selected profile once, synchronizes skills, and merges that profile's real model ID into VS Code's `User/chatLanguageModels.json`. VS Code sends the configured model ID directly; the proxy authenticates the request, adds CodeMie context headers, and forwards the request body unchanged.
+
+`--profile <name>` is a one-command override and does not change the active CodeMie profile. Model and project remain independent: the model is written into VS Code configuration, while `codeMieProject` is passed to the daemon and emitted as `X-CodeMie-Project`. When a selected profile has no project of its own, compatible repository-local project context continues to apply through the standard profile merge rules.
 
 The SSO credentials remain in CodeMie and are never added to VS Code. The connector preserves an existing `${input:chat.lm.secret.*}` reference, but does not write a plaintext key or generate a placeholder when no valid reference exists.
 
@@ -107,7 +109,7 @@ The managed provider has this effective structure. The port is taken from the ru
     "apiType": "chat-completions",
     "models": [
       {
-        "id": "codemie-profile-default",
+        "id": "<selected-profile-model>",
         "name": "CodeMie Profile Model",
         "url": "http://127.0.0.1:4001/v1/chat/completions",
         "toolCalling": true,
@@ -133,10 +135,10 @@ VS Code derives `medium` as the default reasoning effort from the managed model'
 effort levels and owns the selected model settings. The connector removes stale CodeMie model
 settings on each run to avoid racing with VS Code's configuration editor, while preserving
 unrelated providers, models, settings, and unknown provider properties. It rejects malformed JSON
-or a non-array root without overwriting the file. `codemie proxy start --use-profile-model` remains
-available for low-level manual setup.
+or a non-array root without overwriting the file. Re-running the command with another profile
+replaces the previous CodeMie-managed model without changing unrelated entries.
 
-Check the pinned settings with `codemie proxy status`. For a direct local smoke test:
+Check the daemon context with `codemie proxy status`. For a direct local smoke test:
 
 ```bash
 npm run test:vscode-byok -- --stream --message "Reply with OK"
@@ -151,10 +153,10 @@ npm run test:vscode-byok -- --tool-test
 | Missing or invalid API key | The secret reference does not resolve | Right-click CodeMie Profile Model → Update API Key and enter `codemie-proxy` again |
 | HTTP 401 from localhost | The stored local key is missing or stale | Right-click CodeMie Profile Model → Update API Key and enter `codemie-proxy` |
 | HTTP 401/403 from upstream | Expired SSO session | Run `codemie profile login`, stop, and restart the proxy |
-| Model-not-found error | The profile model changed after daemon startup | Re-run `codemie proxy connect vscode` |
+| Model-not-found error | VS Code still has an old profile model ID | Re-run `codemie proxy connect vscode` |
 | Configuration is rejected | `chatLanguageModels.json` is malformed or not an array | Repair the file; the connector leaves invalid content unchanged |
 | VS Code still uses old settings | Model configuration was not reloaded | Reload VS Code |
-| Active profile changed but model did not | The daemon pins startup configuration | Re-run `codemie proxy connect vscode` |
+| Active profile changed but model did not | VS Code configuration still contains the previous profile model | Re-run `codemie proxy connect vscode` |
 | Inline suggestions still use Copilot | Expected limitation | BYOK covers chat/agent workflows, not inline completion |
 
 ### Claude Desktop 3P

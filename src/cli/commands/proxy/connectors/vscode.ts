@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { ConfigurationError } from '@/utils/errors.js';
 
-const MANAGED_MODEL_ID = 'codemie-profile-default';
+const MANAGED_MODEL_NAME = 'CodeMie Profile Model';
 const SECRET_REFERENCE_PATTERN = /^\$\{input:chat\.lm\.secret\.[^}]+\}$/;
 
 interface VsCodeLanguageModelProvider {
@@ -40,11 +40,17 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+function isManagedModel(model: unknown, currentModelId?: string): boolean {
+  if (!isRecord(model)) return false;
+  return model.name === MANAGED_MODEL_NAME ||
+    (currentModelId !== undefined && model.id === currentModelId);
+}
+
 function isManagedProvider(provider: unknown): provider is VsCodeLanguageModelProvider {
   if (!isRecord(provider)) return false;
 
   const hasManagedModel = Array.isArray(provider.models) &&
-    provider.models.some(model => isRecord(model) && model.id === MANAGED_MODEL_ID);
+    provider.models.some(model => isManagedModel(model));
   return hasManagedModel || (provider.vendor === 'customendpoint' && provider.name === 'CodeMie');
 }
 
@@ -88,10 +94,10 @@ export function getVsCodeLanguageModelsPath(insiders = false): string {
   return join(productDir, 'User', 'chatLanguageModels.json');
 }
 
-function buildManagedModel(proxyUrl: string): VsCodeManagedModel {
+function buildManagedModel(proxyUrl: string, profileModel: string): VsCodeManagedModel {
   return {
-    id: MANAGED_MODEL_ID,
-    name: 'CodeMie Profile Model',
+    id: profileModel,
+    name: MANAGED_MODEL_NAME,
     url: new URL('/v1/chat/completions', proxyUrl).toString(),
     toolCalling: true,
     vision: true,
@@ -110,7 +116,7 @@ function reconcileModels(existingModels: unknown, managedModel: VsCodeManagedMod
   let inserted = false;
 
   for (const model of models) {
-    if (isRecord(model) && model.id === MANAGED_MODEL_ID) {
+    if (isManagedModel(model, managedModel.id)) {
       if (!inserted) {
         reconciled.push(managedModel);
         inserted = true;
@@ -126,7 +132,8 @@ function reconcileModels(existingModels: unknown, managedModel: VsCodeManagedMod
 
 function mergeManagedProviders(
   providers: VsCodeLanguageModelProvider[],
-  proxyUrl: string
+  proxyUrl: string,
+  profileModel: string
 ): { provider: VsCodeLanguageModelProvider; requiresSecretConfiguration: boolean } {
   const existingProvider = Object.assign({}, ...providers);
   const existingModels = providers.flatMap(provider =>
@@ -136,7 +143,16 @@ function mergeManagedProviders(
     {},
     ...providers.map(provider => isRecord(provider.settings) ? provider.settings : {})
   );
-  delete existingSettings[MANAGED_MODEL_ID];
+  const previousManagedModelIds = existingModels
+    .filter(model => isManagedModel(model))
+    .map(model => isRecord(model) ? model.id : undefined)
+    .filter((id): id is string => typeof id === 'string');
+  for (const modelId of new Set([
+    profileModel,
+    ...previousManagedModelIds,
+  ])) {
+    delete existingSettings[modelId];
+  }
   const existingSecretReference = providers
     .map(provider => provider.apiKey)
     .find(isVsCodeSecretReference);
@@ -146,7 +162,7 @@ function mergeManagedProviders(
     name: 'CodeMie',
     vendor: 'customendpoint',
     apiType: 'chat-completions',
-    models: reconcileModels(existingModels, buildManagedModel(proxyUrl)),
+    models: reconcileModels(existingModels, buildManagedModel(proxyUrl, profileModel)),
   };
 
   // VS Code owns model configuration state and derives "medium" as the default for this
@@ -219,9 +235,26 @@ async function writeAtomically(configPath: string, content: string): Promise<voi
 
 export async function writeVsCodeLanguageModelsConfig(
   proxyUrl: string,
+  profileModel: string,
   insiders = false
 ): Promise<WriteVsCodeConfigResult> {
-  const configPath = getVsCodeLanguageModelsPath(insiders);
+  return writeVsCodeLanguageModelsConfigAtPath(
+    getVsCodeLanguageModelsPath(insiders),
+    proxyUrl,
+    profileModel
+  );
+}
+
+export async function writeVsCodeLanguageModelsConfigAtPath(
+  configPath: string,
+  proxyUrl: string,
+  profileModel: string
+): Promise<WriteVsCodeConfigResult> {
+  const normalizedProfileModel = profileModel.trim();
+  if (!normalizedProfileModel) {
+    throw new ConfigurationError('VS Code model configuration requires a profile model.');
+  }
+
   const providers = await readProviders(configPath);
   const managedProviderIndexes = providers
     .map((provider, index) => isManagedProvider(provider) ? index : -1)
@@ -230,7 +263,7 @@ export async function writeVsCodeLanguageModelsConfig(
     .map(index => providers[index])
     .filter(isManagedProvider);
   const { provider: managedProvider, requiresSecretConfiguration } =
-    mergeManagedProviders(managedProviders, proxyUrl);
+    mergeManagedProviders(managedProviders, proxyUrl, normalizedProfileModel);
   const firstManagedProviderIndex = managedProviderIndexes[0] ?? providers.length;
   const managedProviderIndexSet = new Set(managedProviderIndexes);
   const reconciledProviders = providers.flatMap((provider, index) => {

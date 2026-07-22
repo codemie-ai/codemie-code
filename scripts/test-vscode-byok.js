@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 /**
- * Smoke-test the running VS Code BYOK profile-model proxy daemon.
- * Reads the local daemon state, sends a logical model ID, and never prints the
+ * Smoke-test the running transparent VS Code BYOK proxy daemon.
+ * Reads the model ID written to VS Code configuration and never prints the
  * local gateway key.
  */
 
@@ -10,7 +10,7 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-const LOGICAL_MODEL = 'codemie-profile-default';
+const MANAGED_MODEL_NAME = 'CodeMie Profile Model';
 const STATE_FILE = process.env.CODEMIE_HOME
   ? join(process.env.CODEMIE_HOME, 'proxy-daemon.json')
   : join(homedir(), '.codemie', 'proxy-daemon.json');
@@ -22,6 +22,7 @@ Options:
   --stream            Request a streaming response
   --message <text>    Prompt text (default: "Reply with OK")
   --tool-test         Ask the model to call the harmless get_test_value function
+  --insiders          Read VS Code Insiders configuration
   -h, --help          Show this help`);
 }
 
@@ -38,6 +39,7 @@ function parseArgs(argv) {
     stream: false,
     message: 'Reply with OK',
     toolTest: false,
+    insiders: false,
     help: false,
   };
 
@@ -46,6 +48,7 @@ function parseArgs(argv) {
     if (arg === '--help' || arg === '-h') options.help = true;
     else if (arg === '--stream') options.stream = true;
     else if (arg === '--tool-test') options.toolTest = true;
+    else if (arg === '--insiders') options.insiders = true;
     else if (arg === '--message') options.message = readOptionValue(argv, index++, arg);
     else throw new Error(`Unknown option: ${arg}`);
   }
@@ -61,15 +64,52 @@ async function loadDaemonState() {
   }
 
   const state = JSON.parse(raw);
-  if (state.enforceProfileModel !== true) {
-    throw new Error(
-      'The running proxy is not in profile-model mode. Run: codemie proxy connect vscode'
-    );
-  }
-  if (!state.url || !state.gatewayKey || !state.model) {
-    throw new Error('Daemon state is missing URL, gateway key, or pinned model. Restart the proxy.');
+  if (!state.url || !state.gatewayKey || state.clientType !== 'vscode-byok') {
+    throw new Error('Daemon state is not a VS Code proxy. Run: codemie proxy connect vscode');
   }
   return state;
+}
+
+function getVsCodeLanguageModelsPath(insiders) {
+  const productName = insiders ? 'Code - Insiders' : 'Code';
+  if (process.platform === 'darwin') {
+    return join(homedir(), 'Library', 'Application Support', productName, 'User', 'chatLanguageModels.json');
+  }
+  if (process.platform === 'win32') {
+    const roamingDir = process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming');
+    return join(roamingDir, productName, 'User', 'chatLanguageModels.json');
+  }
+  if (process.platform === 'linux') {
+    const configDir = process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config');
+    return join(configDir, productName, 'User', 'chatLanguageModels.json');
+  }
+  throw new Error(`Unsupported platform: ${process.platform}`);
+}
+
+async function loadConfiguredModel(insiders) {
+  const configPath = getVsCodeLanguageModelsPath(insiders);
+  let providers;
+  try {
+    providers = JSON.parse(await readFile(configPath, 'utf-8'));
+  } catch (error) {
+    throw new Error(
+      `Could not read VS Code language model configuration at ${configPath}: ` +
+      `${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+  if (!Array.isArray(providers)) {
+    throw new Error(`VS Code language model configuration is not an array: ${configPath}`);
+  }
+  const provider = providers.find(candidate =>
+    candidate?.name === 'CodeMie' && candidate?.vendor === 'customendpoint'
+  );
+  const model = Array.isArray(provider?.models)
+    ? provider.models.find(candidate => candidate?.name === MANAGED_MODEL_NAME)
+    : undefined;
+  if (typeof model?.id !== 'string' || !model.id.trim()) {
+    throw new Error(`CodeMie profile model was not found in ${configPath}. Re-run the connect command.`);
+  }
+  return { configPath, modelId: model.id.trim() };
 }
 
 function createTool() {
@@ -90,12 +130,12 @@ function createTool() {
   };
 }
 
-function createRequestBody(options) {
+function createRequestBody(options, modelId) {
   const message = options.toolTest
     ? 'Call get_test_value with name "vscode-byok-smoke". Do not answer directly.'
     : options.message;
   return {
-    model: LOGICAL_MODEL,
+    model: modelId,
     stream: options.stream,
     messages: [{ role: 'user', content: message }],
     ...(options.toolTest ? { tools: [createTool()], tool_choice: 'required' } : {}),
@@ -135,12 +175,14 @@ async function main() {
   }
 
   const state = await loadDaemonState();
+  const configuredModel = await loadConfiguredModel(options.insiders);
   const targetUrl = new URL('/v1/chat/completions', state.url);
-  const body = createRequestBody(options);
+  const body = createRequestBody(options, configuredModel.modelId);
 
   console.log(`Endpoint:     ${targetUrl.href}`);
   console.log(`Profile:      ${state.profile ?? 'unknown'}`);
-  console.log(`Pinned model: ${state.model}`);
+  console.log(`Model:        ${configuredModel.modelId}`);
+  console.log(`VS Code config: ${configuredModel.configPath}`);
   console.log('Gateway key:  [redacted]');
 
   const startedAt = performance.now();

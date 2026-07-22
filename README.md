@@ -473,7 +473,7 @@ Configure VS Code's chat language model provider from the active SSO-backed Code
 codemie proxy connect vscode
 ```
 
-Use `--profile <name>` for a one-run profile override or `--insiders` for VS Code Insiders. The command starts or reuses the profile-model daemon and safely merges the CodeMie model into `chatLanguageModels.json` using only `/v1/chat/completions`.
+Use `--profile <name>` for a one-run profile override or `--insiders` for VS Code Insiders. The command writes that profile's model ID into `chatLanguageModels.json` and starts or reuses a transparent CodeMie proxy. The profile's project context is passed separately as `X-CodeMie-Project`.
 
 No plaintext key or generated placeholder is written to that file. On first setup, press ⇧⌘P on macOS or Ctrl+Shift+P on Windows/Linux, run `Chat: Manage Language Models`, right-click **CodeMie Profile Model**, choose **Update API Key**, and enter the local key `codemie-proxy`. VS Code keeps it in secret storage. Reload VS Code after configuration.
 

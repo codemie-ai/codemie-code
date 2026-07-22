@@ -35,6 +35,10 @@ vi.mock('../connectors/desktop.js', () => ({
   mapCanonicalToDesktop: vi.fn().mockReturnValue([]),
 }));
 
+vi.mock('../connectors/vscode.js', () => ({
+  writeVsCodeLanguageModelsConfig: vi.fn(),
+}));
+
 vi.mock('../connectors/managed-mcp-remote.js', () => ({
   fetchManagedMcpServers: vi.fn().mockResolvedValue([]),
 }));
@@ -219,43 +223,7 @@ describe('proxy start', () => {
     exitSpy.mockRestore();
   });
 
-  it('calls syncRegisteredSkills and syncPluginSkills after credentials are verified', async () => {
-    const { ConfigLoader } = await import('../../../../utils/config.js');
-    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
-    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
-    const { syncRegisteredSkills } = await import('../../../../cli/commands/skills/setup/sync.js');
-    const { syncPluginSkills } = await import('../../../../cli/commands/skills/setup/sync-plugin.js');
-    const { createProxyCommand } = await import('../index.js');
-
-    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
-    vi.mocked(ConfigLoader.load).mockResolvedValue({
-      name: 'test-profile',
-      provider: 'ai-run-sso',
-      baseUrl: 'https://example.com/api',
-    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
-    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
-      return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
-    } as unknown as typeof CodeMieSSO);
-    vi.mocked(spawnDaemon).mockResolvedValue({
-      url: 'http://localhost:4001',
-      profile: 'test-profile',
-      port: 4001,
-      startedAt: new Date().toISOString(),
-    } as Awaited<ReturnType<typeof spawnDaemon>>);
-
-    const command = createProxyCommand();
-    await command.parseAsync(['start'], { from: 'user' });
-
-    expect(syncRegisteredSkills).toHaveBeenCalledWith('test-profile', process.cwd());
-    expect(syncPluginSkills).toHaveBeenCalledOnce();
-    expect(spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({
-      model: undefined,
-      enforceProfileModel: false,
-      clientType: undefined,
-    }));
-  });
-
-  it('pins the active profile model and VS Code client type when requested', async () => {
+  it('starts a transparent daemon without model configuration', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
     const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
@@ -263,38 +231,34 @@ describe('proxy start', () => {
 
     vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
     vi.mocked(ConfigLoader.load).mockResolvedValue({
-      name: 'work',
+      name: 'default',
       provider: 'ai-run-sso',
       baseUrl: 'https://example.com/api',
-      model: 'gpt-profile',
+      codeMieProject: 'team-project',
     } as Awaited<ReturnType<typeof ConfigLoader.load>>);
     vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
       return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
     } as unknown as typeof CodeMieSSO);
     vi.mocked(spawnDaemon).mockResolvedValue({
       url: 'http://127.0.0.1:4001',
-      profile: 'work',
+      profile: 'default',
       port: 4001,
       gatewayKey: 'local-key',
-      model: 'gpt-profile',
-      enforceProfileModel: true,
-      clientType: 'vscode-byok',
       startedAt: new Date().toISOString(),
     });
 
-    const command = createProxyCommand();
-    await command.parseAsync(['start', '--use-profile-model'], { from: 'user' });
+    await createProxyCommand().parseAsync(['start'], { from: 'user' });
 
-    expect(spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({
-      profile: 'work',
-      model: 'gpt-profile',
-      enforceProfileModel: true,
-      clientType: 'vscode-byok',
-    }));
-    expect(consoleLogSpy).toHaveBeenCalledWith('  Mode:    profile-model');
+    const options = vi.mocked(spawnDaemon).mock.calls[0][0];
+    expect(options).toMatchObject({
+      targetUrl: 'https://example.com/api',
+      profile: 'default',
+      project: 'team-project',
+    });
+    expect(options).not.toHaveProperty('model');
   });
 
-  it('loads and pins an explicitly selected profile', async () => {
+  it('keeps explicit profile selection', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
     const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
@@ -302,253 +266,179 @@ describe('proxy start', () => {
 
     vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
     vi.mocked(ConfigLoader.load).mockResolvedValue({
-      name: 'explicit-work',
+      name: 'custom',
       provider: 'ai-run-sso',
-      baseUrl: 'https://example.com/api',
-      model: 'explicit-model',
+      baseUrl: 'https://custom.example.com/api',
     } as Awaited<ReturnType<typeof ConfigLoader.load>>);
     vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
       return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
     } as unknown as typeof CodeMieSSO);
     vi.mocked(spawnDaemon).mockResolvedValue({
       url: 'http://127.0.0.1:4001',
-      profile: 'explicit-work',
+      profile: 'custom',
       port: 4001,
       gatewayKey: 'local-key',
       startedAt: new Date().toISOString(),
     });
 
-    const command = createProxyCommand();
-    await command.parseAsync(
-      ['start', '--profile', 'explicit-work', '--use-profile-model'],
-      { from: 'user' }
-    );
+    await createProxyCommand().parseAsync(['start', '--profile', 'custom'], { from: 'user' });
 
-    expect(ConfigLoader.load).toHaveBeenCalledWith(process.cwd(), { name: 'explicit-work' });
-    expect(spawnDaemon).toHaveBeenCalledWith(expect.objectContaining({
-      profile: 'explicit-work',
-      model: 'explicit-model',
-    }));
-  });
-
-  it('rejects a missing profile model before checking credentials or spawning', async () => {
-    const { ConfigLoader } = await import('../../../../utils/config.js');
-    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
-    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
-    const { createProxyCommand } = await import('../index.js');
-
-    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
-    vi.mocked(ConfigLoader.load).mockResolvedValue({
-      name: 'no-model',
-      provider: 'ai-run-sso',
-      baseUrl: 'https://example.com/api',
-    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
-
-    const command = createProxyCommand();
-    await expect(command.parseAsync(['start', '--use-profile-model'], { from: 'user' }))
-      .rejects.toThrow('process.exit:1');
-
-    expect(CodeMieSSO).not.toHaveBeenCalled();
-    expect(spawnDaemon).not.toHaveBeenCalled();
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('has no model configured'));
-  });
-
-  it('reuses a running daemon only when all effective settings match', async () => {
-    const { ConfigLoader } = await import('../../../../utils/config.js');
-    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
-    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
-    const { createProxyCommand } = await import('../index.js');
-
-    vi.mocked(ConfigLoader.load).mockResolvedValue({
-      name: 'work',
-      provider: 'ai-run-sso',
-      baseUrl: 'https://example.com/api',
-      model: 'gpt-profile',
-    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
-    vi.mocked(checkStatus).mockResolvedValue({
-      running: true,
-      state: {
-        pid: process.pid,
-        port: 4001,
-        url: 'http://127.0.0.1:4001',
-        profile: 'work',
-        gatewayKey: 'local-key',
-        model: 'gpt-profile',
-        enforceProfileModel: true,
-        clientType: 'vscode-byok',
-        startedAt: new Date().toISOString(),
-      },
-    });
-
-    const command = createProxyCommand();
-    await command.parseAsync(['start', '--use-profile-model'], { from: 'user' });
-
-    expect(CodeMieSSO).not.toHaveBeenCalled();
-    expect(spawnDaemon).not.toHaveBeenCalled();
-    expect(consoleLogSpy).toHaveBeenCalledWith(expect.stringContaining('already running'));
-  });
-
-  it.each([
-    ['transparent mode', { enforceProfileModel: false, clientType: 'codemie-daemon' }, ['start', '--use-profile-model']],
-    ['another profile', { enforceProfileModel: true, clientType: 'vscode-byok', model: 'gpt-profile' }, ['start', '--profile', 'other', '--use-profile-model']],
-    ['another port', { enforceProfileModel: true, clientType: 'vscode-byok', model: 'gpt-profile' }, ['start', '--port', '4010', '--use-profile-model']],
-  ])('rejects a running daemon configured for %s', async (_label, stateOverrides, args) => {
-    const { ConfigLoader } = await import('../../../../utils/config.js');
-    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
-    const { createProxyCommand } = await import('../index.js');
-
-    vi.mocked(ConfigLoader.load).mockResolvedValue({
-      name: args.includes('other') ? 'other' : 'work',
-      provider: 'ai-run-sso',
-      baseUrl: 'https://example.com/api',
-      model: 'gpt-profile',
-    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
-    vi.mocked(checkStatus).mockResolvedValue({
-      running: true,
-      state: {
-        pid: process.pid,
-        port: 4001,
-        url: 'http://127.0.0.1:4001',
-        profile: 'work',
-        gatewayKey: 'local-key',
-        startedAt: new Date().toISOString(),
-        ...stateOverrides,
-      },
-    });
-
-    const command = createProxyCommand();
-    await expect(command.parseAsync(args, { from: 'user' })).rejects.toThrow('process.exit:1');
-
-    expect(spawnDaemon).not.toHaveBeenCalled();
-    expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('codemie proxy stop'));
-  });
-
-  it('checks credentials before spawning the daemon', async () => {
-    const { ConfigLoader } = await import('../../../../utils/config.js');
-    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
-    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
-    const { createProxyCommand } = await import('../index.js');
-
-    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
-    vi.mocked(ConfigLoader.load).mockResolvedValue({
-      name: 'work',
-      provider: 'ai-run-sso',
-      baseUrl: 'https://example.com/api',
-      model: 'gpt-profile',
-    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
-    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
-      return { getStoredCredentials: vi.fn().mockResolvedValue(null) };
-    } as unknown as typeof CodeMieSSO);
-
-    const command = createProxyCommand();
-    await expect(command.parseAsync(['start', '--use-profile-model'], { from: 'user' }))
-      .rejects.toThrow('process.exit:1');
-
-    expect(spawnDaemon).not.toHaveBeenCalled();
+    expect(ConfigLoader.load).toHaveBeenCalledWith(process.cwd(), { name: 'custom' });
   });
 });
 
-describe('proxy status', () => {
+describe('proxy connect vscode', () => {
   let consoleLogSpy: ReturnType<typeof vi.spyOn>;
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+  let exitSpy: ReturnType<typeof vi.spyOn>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.resetModules();
     vi.clearAllMocks();
     consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    exitSpy = vi.spyOn(process, 'exit').mockImplementation((code?: string | number | null | undefined) => {
+      throw new Error(`process.exit:${code}`);
+    });
+
+    const { ProviderRegistry } = await import('../../../../providers/index.js');
+    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
+    const { writeVsCodeLanguageModelsConfig } = await import('../connectors/vscode.js');
+    vi.mocked(ProviderRegistry.getProvider).mockReturnValue({
+      name: 'ai-run-sso',
+      authType: 'sso',
+    } as ReturnType<typeof ProviderRegistry.getProvider>);
+    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
+      return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
+    } as unknown as typeof CodeMieSSO);
+    vi.mocked(writeVsCodeLanguageModelsConfig).mockResolvedValue({
+      configPath: '/mock/chatLanguageModels.json',
+      requiresSecretConfiguration: false,
+    });
   });
 
   afterEach(() => {
     consoleLogSpy.mockRestore();
+    consoleErrorSpy.mockRestore();
+    exitSpy.mockRestore();
   });
 
-  it('shows profile-model mode, client, and pinned model', async () => {
-    const { checkStatus } = await import('../daemon-manager.js');
-    const { checkProxyHealth } = await import('../health-check.js');
+  it('uses an explicit profile for daemon context and writes its model into VS Code', async () => {
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { writeVsCodeLanguageModelsConfig } = await import('../connectors/vscode.js');
     const { createProxyCommand } = await import('../index.js');
+    vi.mocked(ConfigLoader.load).mockResolvedValue({
+      name: 'custom',
+      provider: 'ai-run-sso',
+      baseUrl: 'https://custom.example.com/api',
+      model: 'custom-profile-model',
+      codeMieProject: 'team-project',
+      codeMieUrl: 'https://custom.example.com',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(spawnDaemon).mockResolvedValue({
+      pid: process.pid,
+      port: 4001,
+      url: 'http://127.0.0.1:4001',
+      profile: 'custom',
+      gatewayKey: 'local-key',
+      provider: 'ai-run-sso',
+      targetUrl: 'https://custom.example.com/api',
+      project: 'team-project',
+      clientType: 'vscode-byok',
+      startedAt: new Date().toISOString(),
+    });
 
+    await createProxyCommand().parseAsync(
+      ['connect', 'vscode', '--profile', 'custom'],
+      { from: 'user' }
+    );
+
+    expect(ConfigLoader.load).toHaveBeenCalledWith(process.cwd(), { name: 'custom' });
+    const daemonOptions = vi.mocked(spawnDaemon).mock.calls[0][0];
+    expect(daemonOptions).toMatchObject({
+      profile: 'custom',
+      project: 'team-project',
+      clientType: 'vscode-byok',
+    });
+    expect(daemonOptions).not.toHaveProperty('model');
+    expect(writeVsCodeLanguageModelsConfig).toHaveBeenCalledWith(
+      'http://127.0.0.1:4001',
+      'custom-profile-model',
+      false
+    );
+  });
+
+  it('reuses a matching daemon when only the profile model changes', async () => {
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    const { checkStatus, spawnDaemon, stopDaemon } = await import('../daemon-manager.js');
+    const { checkProxyHealth } = await import('../health-check.js');
+    const { writeVsCodeLanguageModelsConfig } = await import('../connectors/vscode.js');
+    const { createProxyCommand } = await import('../index.js');
+    vi.mocked(ConfigLoader.load).mockResolvedValue({
+      name: 'custom',
+      provider: 'ai-run-sso',
+      baseUrl: 'https://custom.example.com/api',
+      model: 'new-profile-model',
+      codeMieProject: 'team-project',
+      codeMieUrl: 'https://custom.example.com',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
     vi.mocked(checkStatus).mockResolvedValue({
       running: true,
       state: {
         pid: process.pid,
         port: 4001,
         url: 'http://127.0.0.1:4001',
-        profile: 'work',
+        profile: 'custom',
         gatewayKey: 'local-key',
-        model: 'gpt-profile',
-        enforceProfileModel: true,
+        provider: 'ai-run-sso',
+        targetUrl: 'https://custom.example.com/api',
+        project: 'team-project',
         clientType: 'vscode-byok',
         startedAt: new Date().toISOString(),
       },
     });
-    vi.mocked(checkProxyHealth).mockResolvedValue({
-      healthy: true,
-      level: 'shallow',
-      code: 'ok',
+    vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'deep', code: 'ok' });
+
+    await createProxyCommand().parseAsync(['connect', 'vscode', '--profile', 'custom'], { from: 'user' });
+
+    expect(stopDaemon).not.toHaveBeenCalled();
+    expect(spawnDaemon).not.toHaveBeenCalled();
+    expect(writeVsCodeLanguageModelsConfig).toHaveBeenCalledWith(
+      'http://127.0.0.1:4001',
+      'new-profile-model',
+      false
+    );
+  });
+
+});
+
+describe('proxy status', () => {
+  it('shows client and project context', async () => {
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { checkProxyHealth } = await import('../health-check.js');
+    const { createProxyCommand } = await import('../index.js');
+    vi.mocked(checkStatus).mockResolvedValue({
+      running: true,
+      state: {
+        pid: process.pid,
+        port: 4001,
+        url: 'http://127.0.0.1:4001',
+        profile: 'work',
+        gatewayKey: 'local-key',
+        clientType: 'vscode-byok',
+        project: 'team-project',
+        startedAt: new Date().toISOString(),
+      },
     });
+    vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'shallow', code: 'ok' });
 
     await createProxyCommand().parseAsync(['status'], { from: 'user' });
 
     expect(consoleLogSpy).toHaveBeenCalledWith('  Client:  vscode-byok');
-    expect(consoleLogSpy).toHaveBeenCalledWith('  Mode:    profile-model');
-    expect(consoleLogSpy).toHaveBeenCalledWith('  Model:   gpt-profile');
-  });
-
-  it('shows transparent mode for new transparent daemon state', async () => {
-    const { checkStatus } = await import('../daemon-manager.js');
-    const { checkProxyHealth } = await import('../health-check.js');
-    const { createProxyCommand } = await import('../index.js');
-
-    vi.mocked(checkStatus).mockResolvedValue({
-      running: true,
-      state: {
-        pid: process.pid,
-        port: 4001,
-        url: 'http://127.0.0.1:4001',
-        profile: 'work',
-        gatewayKey: 'local-key',
-        enforceProfileModel: false,
-        clientType: 'codemie-daemon',
-        startedAt: new Date().toISOString(),
-      },
-    });
-    vi.mocked(checkProxyHealth).mockResolvedValue({
-      healthy: true,
-      level: 'shallow',
-      code: 'ok',
-    });
-
-    await createProxyCommand().parseAsync(['status'], { from: 'user' });
-
-    expect(consoleLogSpy).toHaveBeenCalledWith('  Mode:    transparent');
-    expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining('Model:'));
-  });
-
-  it('omits new fields for an old daemon state file', async () => {
-    const { checkStatus } = await import('../daemon-manager.js');
-    const { checkProxyHealth } = await import('../health-check.js');
-    const { createProxyCommand } = await import('../index.js');
-
-    vi.mocked(checkStatus).mockResolvedValue({
-      running: true,
-      state: {
-        pid: process.pid,
-        port: 4001,
-        url: 'http://127.0.0.1:4001',
-        profile: 'work',
-        gatewayKey: 'local-key',
-        startedAt: new Date().toISOString(),
-      },
-    });
-    vi.mocked(checkProxyHealth).mockResolvedValue({
-      healthy: true,
-      level: 'shallow',
-      code: 'ok',
-    });
-
-    await createProxyCommand().parseAsync(['status'], { from: 'user' });
-
-    expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining('Client:'));
-    expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining('Mode:'));
-    expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining('Model:'));
+    expect(consoleLogSpy).toHaveBeenCalledWith('  Project: team-project');
+    consoleLogSpy.mockRestore();
   });
 });
