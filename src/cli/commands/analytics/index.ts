@@ -12,6 +12,7 @@ import { logger } from '../../../utils/logger.js';
 import { SessionsSource } from './sources/sessions-source.js';
 import { OtelSource } from './sources/otel-source.js';
 import type { AnalyticsSource } from './sources/types.js';
+import { ConfigLoader } from '../../../utils/config.js';
 
 export function createAnalyticsCommand(): Command {
   const command = new Command('analytics')
@@ -60,7 +61,7 @@ function applyCommonOptions(command: Command): Command {
     .option('--report-format <format>', 'Report serialization: html, json, or both (default: html)');
 }
 
-async function runAnalytics(options: AnalyticsOptions, source: AnalyticsSource): Promise<void> {
+export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsSource): Promise<void> {
   try {
     const filter = parseFilterOptions(options);
     const { rawSessions, cost } = await source.load({
@@ -140,11 +141,23 @@ async function runAnalytics(options: AnalyticsOptions, source: AnalyticsSource):
         writeReportWithFallback
       } = await import('./report/report-generator.js');
 
+      // Load user email for report metadata and filename; non-fatal if config is unavailable.
+      let userEmail: string | undefined;
+      try {
+        const cfg = await ConfigLoader.loadMultiProviderConfig();
+        userEmail = cfg.userEmail || undefined;
+      } catch {
+        // omit email gracefully
+      }
+
       const { index: costIndex, summary } = costResult;
       const payload = buildPayload(analytics, costIndex, summary, {
         rangeLabel: options.last ?? (options.from || options.to ? 'custom' : 'all'),
         projectFilter: options.project ?? 'all',
-        generatedAt: new Date().toISOString()
+        generatedAt: new Date().toISOString(),
+        ...(userEmail !== undefined && { userEmail }),
+        ...(filter.fromDate !== undefined && { periodStart: filter.fromDate.toISOString() }),
+        ...(filter.toDate !== undefined && { periodEnd: filter.toDate.toISOString() }),
       });
 
       const cwd = process.cwd();
@@ -155,14 +168,14 @@ async function runAnalytics(options: AnalyticsOptions, source: AnalyticsSource):
 
       if (reportFormat === 'both') {
         const base = options.reportOutput?.replace(/\.(html|json)$/i, '');
-        htmlPath = base ? `${base}.html` : getDefaultReportPath(cwd);
-        jsonPath = base ? `${base}.json` : getDefaultReportJsonPath(cwd);
+        htmlPath = base ? `${base}.html` : getDefaultReportPath(cwd, userEmail);
+        jsonPath = base ? `${base}.json` : getDefaultReportJsonPath(cwd, userEmail);
         htmlIsDefault = jsonIsDefault = !base;
       } else if (reportFormat === 'html') {
-        htmlPath = options.reportOutput || getDefaultReportPath(cwd);
+        htmlPath = options.reportOutput || getDefaultReportPath(cwd, userEmail);
         htmlIsDefault = !options.reportOutput;
       } else {
-        jsonPath = options.reportOutput || getDefaultReportJsonPath(cwd);
+        jsonPath = options.reportOutput || getDefaultReportJsonPath(cwd, userEmail);
         jsonIsDefault = !options.reportOutput;
       }
 

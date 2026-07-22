@@ -1,0 +1,81 @@
+{
+  "task": "Add per-session analytics JSON report generation triggered on agent session exit, with email metadata threading through the analytics pipeline and session-scoped reporting via generateSessionReport.",
+  "generated": "2026-07-21T00:00:00.000Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 5,
+      "label": "XL",
+      "affected": "BaseAgentAdapter, analytics/index (runAnalytics), analytics/report/session-report, analytics/report/payload-builder, analytics/report/report-generator, analytics/report/types",
+      "layers": "Agent-Core, CLI, Service"
+    },
+    "requirements_clarity": {
+      "score": 2,
+      "label": "S",
+      "status": "Clear",
+      "gaps": null
+    },
+    "technical_risk": {
+      "score": 3,
+      "label": "M",
+      "risk_factors": "XSS defense via unicode escaping in inline-script HTML injection, non-fatal error swallowing in session finalization path, dynamic import of report module for lazy loading, fallback path logic for unwritable volumes",
+      "mitigation": "Errors caught and logged as warnings (non-fatal); HTML escaping applied before payload embedding; writeReportWithFallback provides home/tmp fallback chain"
+    },
+    "file_change_estimate": {
+      "score": 5,
+      "label": "XL",
+      "modified_files": 2,
+      "modified_file_list": [
+        "src/agents/core/BaseAgentAdapter.ts",
+        "src/cli/commands/analytics/index.ts"
+      ],
+      "new_files": 9,
+      "new_file_list": [
+        "src/agents/core/__tests__/BaseAgentAdapter-session-report.test.ts",
+        "src/cli/commands/analytics/__tests__/analytics-cli-metadata.test.ts",
+        "src/cli/commands/analytics/report/__tests__/payload-builder.test.ts",
+        "src/cli/commands/analytics/report/__tests__/report-generator.test.ts",
+        "src/cli/commands/analytics/report/__tests__/session-report.test.ts",
+        "src/cli/commands/analytics/report/payload-builder.ts",
+        "src/cli/commands/analytics/report/report-generator.ts",
+        "src/cli/commands/analytics/report/session-report.ts",
+        "src/cli/commands/analytics/report/types.ts"
+      ],
+      "affected_dirs": [
+        "src/agents",
+        "src/cli"
+      ]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 3,
+      "label": "M",
+      "layers_changed": ["Agent-Core", "CLI", "Service"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 19,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 11,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "BaseAgentAdapter is the core shared base class inherited by every agent adapter in the codebase; modifying it to add maybeWriteSessionReport() has blast-radius impact even though the change is non-fatal and gated. The feature also introduces a new analytics/report/ subpackage (4 new implementation files) and wires it through the analytics CLI command. Red flag applied: touches core shared utility."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "11 files total from diffstat places this firmly in the XL (11-15 files) band: 2 modified existing files (BaseAgentAdapter.ts, analytics/index.ts) plus 9 new files spanning implementation (4) and tests (5)."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L (4) to XL (5): BaseAgentAdapter is the shared core base class for all agent adapters — touching it triggers the 'core shared utilities' red flag"
+  ],
+  "split_recommendation": null
+}
