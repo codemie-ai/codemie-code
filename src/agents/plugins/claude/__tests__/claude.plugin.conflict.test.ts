@@ -168,6 +168,22 @@ describe('Claude Plugin – settings conflict detection in beforeRun', () => {
     expect(allOutput).not.toContain('\x1b[2K');
   });
 
+  it('strips single-byte C1 CSI (\\x9b) sequences to prevent terminal injection via C1 form', async () => {
+    // \x9b is the single-byte form of ESC[ (CSI) used in 8-bit terminal emulators.
+    // A URL containing \x9b31mFORGED\x9bm would render as colored "FORGED" if \x9b is not stripped.
+    conflictMod.detectSettingsConflict.mockResolvedValue({
+      settingsUrl: 'https://proxy/\x9b31mFORGED\x9bm',
+      profileUrl: 'https://ai-proxy.lab.epam.com',
+    });
+
+    const env: HookEnv = { ANTHROPIC_BASE_URL: 'https://ai-proxy.lab.epam.com' };
+    await beforeRun(env, mockConfig);
+
+    const allOutput = consoleErrorSpy.mock.calls.map(c => String(c[0] ?? '')).join('\n');
+    expect(allOutput).not.toContain('\x9b');
+    expect(allOutput).not.toContain('31mFORGED');
+  });
+
   it('strips CSI sequences atomically so bracket residue does not appear in output', async () => {
     // If the regex alternation consumes \x1b via the C0 alternative first, the bracket
     // sequence ([31mFORGED[0m) leaks as visible text. The CSI alternative must be tried
