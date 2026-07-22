@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import chalk from 'chalk';
 import { ConfigLoader } from '../../../utils/config.js';
 import { ProviderRegistry } from '../../../providers/index.js';
+import { displaySetupInstructions } from '../../../providers/integration/setup-ui.js';
 import {
   ConfigurationError,
   createErrorContext,
@@ -655,11 +656,16 @@ export function createProxyCommand(): Command {
         }
 
         if (result.requiresSecretConfiguration) {
-          console.log(chalk.yellow('\n  One-time VS Code secret setup required:'));
-          console.log('  1. Press ⇧⌘P (macOS) or Ctrl+Shift+P (Windows/Linux).');
-          console.log('  2. Run: Chat: Manage Language Models');
-          console.log('  3. Right-click CodeMie Profile Model → Update API Key');
-          console.log(`  4. Enter API key: ${state!.gatewayKey}`);
+          displaySetupInstructions({
+            setupInstructions: [
+              'One-time VS Code secret setup required:\n',
+              '1. Press ⇧⌘P (macOS) or Ctrl+Shift+P (Windows/Linux).',
+              '2. Run: Chat: Manage Language Models',
+              '3. Right-click CodeMie Profile Model → Update API Key',
+              `4. Enter API key: ${state!.gatewayKey}\n`,
+              'Reload VS Code to apply changes.',
+            ].join('\n'),
+          });
         } else {
           console.log(
             chalk.dim(
@@ -668,7 +674,6 @@ export function createProxyCommand(): Command {
             )
           );
         }
-        console.log(chalk.yellow('  Reload VS Code to apply changes.'));
       } catch (error) {
         if (startedInThisRun) {
           try {

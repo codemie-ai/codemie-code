@@ -66,7 +66,9 @@ export function getAllProviderChoices(providers: ProviderTemplate[]): Array<{ na
  *
  * Shows markdown-formatted instructions if available
  */
-export function displaySetupInstructions(template: ProviderTemplate): void {
+export function displaySetupInstructions(
+  template: Pick<ProviderTemplate, 'setupInstructions'>
+): void {
   if (!template.setupInstructions) {
     return;
   }
