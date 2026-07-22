@@ -71,6 +71,94 @@ codemie proxy inspect desktop    # Inspect Desktop telemetry and sync state
 
 `codemie proxy connect desktop` does more than write the gateway config. When the daemon is started through this path, CodeMie also discovers Claude Desktop 3P local session transcripts from the `Claude-3p` storage directory and syncs metrics plus conversations to CodeMie with client identity `claude-desktop`.
 
+### VS Code BYOK custom endpoint
+
+Start the local proxy in profile-model mode:
+
+```bash
+codemie proxy start \
+  --profile work \
+  --port 4001 \
+  --use-profile-model
+```
+
+This mode pins the selected profile and model when the daemon starts. Restart the daemon after changing the profile or its model. VS Code can send the stable logical model ID `codemie-profile-default`; the proxy replaces only that request field with the pinned profile model and forwards the rest of the OpenAI-compatible request unchanged.
+
+The SSO credentials remain in CodeMie and are never added to VS Code. The VS Code `apiKey` is the local gateway key (normally `codemie-proxy`), and the daemon listens only on `127.0.0.1`.
+
+Use the Responses API when the selected CodeMie tenant and model support it:
+
+```json
+[
+  {
+    "name": "CodeMie",
+    "vendor": "customendpoint",
+    "apiKey": "codemie-proxy",
+    "apiType": "responses",
+    "models": [
+      {
+        "id": "codemie-profile-default",
+        "name": "CodeMie Profile Model",
+        "url": "http://127.0.0.1:4001/v1/responses",
+        "toolCalling": true,
+        "vision": false,
+        "streaming": true,
+        "maxInputTokens": 128000,
+        "maxOutputTokens": 16000
+      }
+    ]
+  }
+]
+```
+
+If Responses is unavailable but the tenant supports Chat Completions, use this fallback:
+
+```json
+[
+  {
+    "name": "CodeMie",
+    "vendor": "customendpoint",
+    "apiKey": "codemie-proxy",
+    "apiType": "chat-completions",
+    "models": [
+      {
+        "id": "codemie-profile-default",
+        "name": "CodeMie Profile Model",
+        "url": "http://127.0.0.1:4001/v1/chat/completions",
+        "toolCalling": true,
+        "vision": false,
+        "streaming": true,
+        "maxInputTokens": 128000,
+        "maxOutputTokens": 16000
+      }
+    ]
+  }
+]
+```
+
+Do not configure both examples with the same display name unless you are deliberately testing both API families. Token limits, vision, streaming, and tool-calling values are VS Code metadata; they must match the real profile model because the proxy does not discover or synchronize model capabilities.
+
+Check the pinned settings with `codemie proxy status`. For a direct local smoke test:
+
+```bash
+npm run test:vscode-byok -- --api-type responses --stream --message "Reply with OK"
+npm run test:vscode-byok -- --api-type chat-completions --tool-test
+```
+
+#### Troubleshooting VS Code BYOK
+
+| Symptom | Likely cause | Action |
+|---|---|---|
+| Model does not appear in Agent mode | `toolCalling` is false | Enable it only for a model that supports tools |
+| HTTP 401 from localhost | Wrong local gateway key | Use the key from daemon state or restart with the default |
+| HTTP 401/403 from upstream | Expired SSO session | Run `codemie profile login`, stop, and restart the proxy |
+| Model-not-found error | Daemon is transparent or has no pinned model | Check `codemie proxy status` and restart with `--use-profile-model` |
+| Unsupported endpoint | Tenant/model does not support that API family | Switch between Responses and Chat Completions |
+| VS Code still uses old settings | Model configuration was not reloaded | Reload VS Code |
+| Active profile changed but model did not | The daemon pins startup configuration | Stop and restart the proxy |
+| Agent model missing from picker | Model/tool metadata mismatch | Verify `toolCalling` and context limits |
+| Inline suggestions still use Copilot | Expected limitation | BYOK covers chat/agent workflows, not inline completion |
+
 ### Claude Desktop 3P
 
 #### `codemie proxy connect desktop`

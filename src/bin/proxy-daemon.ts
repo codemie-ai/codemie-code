@@ -33,6 +33,9 @@ const { values } = parseArgs({
     'provider':     { type: 'string' },
     'profile':      { type: 'string' },
     'project':      { type: 'string' },
+    'model':        { type: 'string' },
+    'enforce-profile-model': { type: 'boolean' },
+    'client-type':  { type: 'string' },
     'port':         { type: 'string' },
     'gateway-key':  { type: 'string' },
     'state-file':   { type: 'string' },
@@ -63,6 +66,9 @@ const gatewayKey = (values['gateway-key'] as string | undefined) ?? 'codemie-pro
 const profile    = (values['profile'] as string | undefined) ?? 'default';
 const provider   = (values['provider'] as string | undefined) ?? 'ai-run-sso';
 const project = values['project'] as string | undefined;
+const model = values['model'] as string | undefined;
+const enforceProfileModel = values['enforce-profile-model'] === true;
+const clientType = values['client-type'] as string | undefined;
 const authMethod = ((values['auth-method'] as string | undefined) ?? 'sso') as 'sso' | 'jwt';
 const telemetryMode = ((values['telemetry-mode'] as string | undefined) ?? 'none') as 'none' | 'claude-desktop';
 const syncApiUrl = values['sync-api-url'] as string | undefined;
@@ -78,9 +84,11 @@ const config: ProxyConfig = {
   provider,
   profile,
   project,
+  model,
+  enforceProfileModel,
   gatewayKey,
   authMethod,
-  clientType: telemetryMode === 'claude-desktop' ? 'claude-desktop' : 'codemie-daemon',
+  clientType: clientType ?? (telemetryMode === 'claude-desktop' ? 'claude-desktop' : 'codemie-daemon'),
   version: readCliVersion(),
   telemetryMode,
   syncApiUrl,
@@ -165,6 +173,8 @@ try {
     targetUrl: config.targetApiUrl,
     provider: config.provider,
     project: config.project,
+    model: config.model,
+    enforceProfileModel: config.enforceProfileModel,
     clientType: config.clientType,
     telemetryMode,
     syncApiUrl: config.syncApiUrl,

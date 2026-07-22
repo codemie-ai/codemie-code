@@ -25,6 +25,20 @@ import { printDesktopInspection } from './inspect-desktop.js';
 const DEFAULT_DAEMON_PORT = 4001;
 const DEFAULT_DESKTOP_INSPECT_LIMIT = 5;
 
+interface ProxyStartOptions {
+  port?: string;
+  profile?: string;
+  useProfileModel?: boolean;
+}
+
+interface RequestedDaemonConfig {
+  profile: string;
+  port: number;
+  enforceProfileModel: boolean;
+  model?: string;
+  clientType: string;
+}
+
 function parsePortOption(value: string | undefined, fallback: number): number {
   if (!value) {
     return fallback;
@@ -36,6 +50,42 @@ function parsePortOption(value: string | undefined, fallback: number): number {
   }
 
   return parsed;
+}
+
+function getEffectiveClientType(state: NonNullable<Awaited<ReturnType<typeof readState>>>): string {
+  return state.clientType ?? (state.telemetryMode === 'claude-desktop'
+    ? 'claude-desktop'
+    : 'codemie-daemon');
+}
+
+function daemonMatchesRequest(
+  state: NonNullable<Awaited<ReturnType<typeof readState>>>,
+  requested: RequestedDaemonConfig
+): boolean {
+  const stateEnforcesProfileModel = state.enforceProfileModel === true;
+  return state.profile === requested.profile &&
+    state.port === requested.port &&
+    stateEnforcesProfileModel === requested.enforceProfileModel &&
+    (!requested.enforceProfileModel || state.model === requested.model) &&
+    getEffectiveClientType(state) === requested.clientType;
+}
+
+function formatDaemonConflict(
+  state: NonNullable<Awaited<ReturnType<typeof readState>>>
+): string {
+  const mode = state.enforceProfileModel === true ? 'profile-model' : 'transparent';
+  const details = [
+    'A proxy is already running with different settings:',
+    `  profile: ${state.profile}`,
+    `  mode: ${mode}`,
+    `  port: ${state.port}`,
+  ];
+
+  if (state.clientType) details.push(`  client: ${state.clientType}`);
+  if (state.enforceProfileModel && state.model) details.push(`  model: ${state.model}`);
+
+  details.push('', 'Stop it first:', '  codemie proxy stop');
+  return details.join('\n');
 }
 
 async function resolveDesktopProxyConfig(profileName?: string): Promise<{
@@ -142,44 +192,79 @@ export function createProxyCommand(): Command {
     .description('Start the background proxy daemon')
     .option('--port <port>', `Fixed port to listen on (default: ${DEFAULT_DAEMON_PORT})`)
     .option('--profile <name>', 'Profile whose credentials to use')
-    .action(async (opts) => {
-      const { running, state } = await checkStatus();
-      if (running && state) {
-        console.log(chalk.green(`✓ Proxy already running at ${state.url}  (profile: ${state.profile})`));
-        return;
+    .option(
+      '--use-profile-model',
+      'Replace incoming inference model with the selected profile model'
+    )
+    .action(async (opts: ProxyStartOptions) => {
+      try {
+        const requestedPort = parsePortOption(opts.port, DEFAULT_DAEMON_PORT);
+        const config = await ConfigLoader.load(
+          process.cwd(),
+          opts.profile ? { name: opts.profile } : undefined
+        );
+        const profile = config.name ?? 'default';
+        const profileModel = opts.useProfileModel ? config.model?.trim() : undefined;
+
+        if (opts.useProfileModel && !profileModel) {
+          throw new ConfigurationError(
+            `Profile "${profile}" has no model configured.\nRun: codemie setup`
+          );
+        }
+
+        const requestedDaemon: RequestedDaemonConfig = {
+          profile,
+          port: requestedPort,
+          enforceProfileModel: Boolean(opts.useProfileModel),
+          model: profileModel,
+          clientType: opts.useProfileModel ? 'vscode-byok' : 'codemie-daemon',
+        };
+        const { running, state } = await checkStatus();
+        if (running && state) {
+          if (daemonMatchesRequest(state, requestedDaemon)) {
+            console.log(chalk.green(`✓ Proxy already running at ${state.url}  (profile: ${state.profile})`));
+            return;
+          }
+          throw new ConfigurationError(formatDaemonConflict(state));
+        }
+
+        if (!config.baseUrl) {
+          throw new ConfigurationError('No API URL configured for this profile.\nRun: codemie setup');
+        }
+
+        await verifySsoCredentials(config.baseUrl, profile);
+
+        const cwd = process.cwd();
+        await Promise.allSettled([
+          syncRegisteredSkills(profile, cwd),
+          syncPluginSkills(),
+        ]);
+
+        console.log('Starting proxy daemon...');
+        const daemonState = await spawnDaemon({
+          targetUrl: config.baseUrl,
+          provider: config.provider ?? 'ai-run-sso',
+          profile,
+          port: requestedPort,
+          project: config.codeMieProject,
+          model: profileModel,
+          enforceProfileModel: Boolean(opts.useProfileModel),
+          clientType: opts.useProfileModel ? 'vscode-byok' : undefined,
+          syncApiUrl: config.ssoConfig?.apiUrl,
+          syncCodeMieUrl: config.codeMieUrl,
+        });
+
+        if (opts.useProfileModel) {
+          console.log(chalk.green(`✓ Proxy running at ${daemonState.url}`));
+          console.log(`  Profile: ${profile}`);
+          console.log(`  Model:   ${profileModel}`);
+          console.log('  Mode:    profile-model');
+        } else {
+          console.log(chalk.green(`✓ Proxy running at ${daemonState.url}  (profile: ${daemonState.profile})`));
+        }
+      } catch (error) {
+        printProxyError(error, 'Failed to start proxy');
       }
-
-      const config = await ConfigLoader.load(
-        process.cwd(),
-        opts.profile ? { name: opts.profile } : undefined
-      );
-
-      if (!config.baseUrl) {
-        console.error(chalk.red('✗ No API URL configured for this profile.'));
-        console.error('  Run: codemie setup');
-        process.exit(1);
-      }
-
-      await verifySsoCredentials(config.baseUrl, config.name ?? 'default');
-
-      const cwd = process.cwd();
-      await Promise.allSettled([
-        syncRegisteredSkills(config.name ?? 'default', cwd),
-        syncPluginSkills(),
-      ]);
-
-      console.log('Starting proxy daemon...');
-      const daemonState = await spawnDaemon({
-        targetUrl: config.baseUrl,
-        provider: config.provider ?? 'ai-run-sso',
-        profile: config.name ?? 'default',
-        port: parsePortOption(opts.port, DEFAULT_DAEMON_PORT),
-        project: config.codeMieProject,
-        syncApiUrl: config.ssoConfig?.apiUrl,
-        syncCodeMieUrl: config.codeMieUrl,
-      });
-
-      console.log(chalk.green(`✓ Proxy running at ${daemonState.url}  (profile: ${daemonState.profile})`));
     });
 
   // ── proxy stop ──────────────────────────────────────────────────────────────
@@ -232,6 +317,15 @@ export function createProxyCommand(): Command {
       console.log(`  URL:     ${state.url}`);
       console.log(`  Port:    ${state.port}`);
       console.log(`  Profile: ${state.profile}`);
+      if (state.clientType) {
+        console.log(`  Client:  ${state.clientType}`);
+      }
+      if (state.enforceProfileModel !== undefined) {
+        console.log(`  Mode:    ${state.enforceProfileModel ? 'profile-model' : 'transparent'}`);
+      }
+      if (state.enforceProfileModel && state.model) {
+        console.log(`  Model:   ${state.model}`);
+      }
       console.log(`  Uptime:  ${uptime}`);
 
       // Surface a recorded give-up reason even when a fresh ping happens to pass.

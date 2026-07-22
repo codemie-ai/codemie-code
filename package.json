@@ -42,6 +42,7 @@
     "test:all": "vitest run --project unit && vitest run --project cli && vitest run --project agent",
     "test:coverage": "vitest run --project unit --coverage",
     "test:watch": "vitest --watch",
+    "test:vscode-byok": "node scripts/test-vscode-byok.js",
     "test:ui": "vitest --ui",
     "typecheck": "tsc --noEmit",
     "format": "npm run lint:fix",

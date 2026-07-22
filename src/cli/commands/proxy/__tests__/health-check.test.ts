@@ -85,7 +85,9 @@ describe('checkProxyHealth', () => {
     expect(result.healthy).toBe(false);
     expect(result.level).toBe('deep');
     expect(result.code).toBe('unauthorized');
-    expect(result.reason).toContain('SSO session expired');
+    expect(result.reason).toBe(
+      'SSO session expired — run `codemie profile login` and restart the proxy.'
+    );
   });
 
   it('deep: unauthorized when /v1/llm_models returns 403', async () => {

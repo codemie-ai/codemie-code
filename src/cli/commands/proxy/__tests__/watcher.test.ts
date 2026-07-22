@@ -18,7 +18,10 @@ const UPSTREAM_DOWN: ProxyHealthResult = {
   healthy: false, level: 'deep', code: 'upstream-error', reason: 'Upstream model discovery returned 500',
 };
 const UNAUTHORIZED: ProxyHealthResult = {
-  healthy: false, level: 'deep', code: 'unauthorized', reason: 'SSO session expired — run `codemie proxy connect desktop` to re-login.',
+  healthy: false,
+  level: 'deep',
+  code: 'unauthorized',
+  reason: 'SSO session expired — run `codemie profile login` and restart the proxy.',
 };
 
 function makeCallbacks(): WatcherCallbacks & {

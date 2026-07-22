@@ -10,6 +10,7 @@ import { existsSync } from 'fs';
 
 // Override state file path before importing
 const TEST_STATE_FILE = join(tmpdir(), `codemie-proxy-daemon-test-${Date.now()}.json`);
+const DEFAULT_TEST_STATE_FILE = join(tmpdir(), 'proxy-daemon.json');
 vi.mock('../../../../utils/paths.js', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../../utils/paths.js')>();
   return {
@@ -20,12 +21,23 @@ vi.mock('../../../../utils/paths.js', async (importOriginal) => {
   };
 });
 
+vi.mock('../../../../utils/processes.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../../utils/processes.js')>();
+  return {
+    ...actual,
+    spawnDetached: vi.fn(),
+  };
+});
+
+import { spawnDetached } from '../../../../utils/processes.js';
+
 import {
   readState,
   writeState,
   clearState,
   isProcessAlive,
   checkStatus,
+  spawnDaemon,
   type DaemonState,
 } from '../daemon-manager.js';
 
@@ -50,6 +62,17 @@ describe('readState', () => {
     const state = await readState(TEST_STATE_FILE);
     expect(state?.pid).toBe(SAMPLE_STATE.pid);
     expect(state?.url).toBe(SAMPLE_STATE.url);
+  });
+
+  it('reads old daemon state files without new optional fields', async () => {
+    await writeFile(TEST_STATE_FILE, JSON.stringify(SAMPLE_STATE), 'utf-8');
+
+    const state = await readState(TEST_STATE_FILE);
+
+    expect(state).toMatchObject(SAMPLE_STATE);
+    expect(state?.model).toBeUndefined();
+    expect(state?.enforceProfileModel).toBeUndefined();
+    expect(state?.clientType).toBeUndefined();
   });
 });
 
@@ -111,5 +134,56 @@ describe('checkStatus', () => {
     const { running } = await checkStatus(TEST_STATE_FILE);
     expect(running).toBe(false);
     expect(existsSync(TEST_STATE_FILE)).toBe(false);
+  });
+});
+
+describe('spawnDaemon', () => {
+  afterEach(async () => {
+    vi.clearAllMocks();
+    try { await unlink(DEFAULT_TEST_STATE_FILE); } catch { /* ignore */ }
+  });
+
+  function arrangeReadyDaemon(): void {
+    vi.mocked(spawnDetached).mockImplementation(() => {
+      void writeFile(DEFAULT_TEST_STATE_FILE, JSON.stringify(SAMPLE_STATE), 'utf-8');
+      return SAMPLE_STATE.pid;
+    });
+  }
+
+  it('passes the pinned model, enforcement flag, and client type to the daemon', async () => {
+    arrangeReadyDaemon();
+
+    await spawnDaemon({
+      targetUrl: 'https://upstream.example.com',
+      provider: 'ai-run-sso',
+      profile: 'work',
+      port: 4001,
+      model: 'profile-model-id',
+      enforceProfileModel: true,
+      clientType: 'vscode-byok',
+    });
+
+    const args = vi.mocked(spawnDetached).mock.calls[0][1];
+    expect(args).toEqual(expect.arrayContaining([
+      '--model', 'profile-model-id',
+      '--enforce-profile-model',
+      '--client-type', 'vscode-byok',
+    ]));
+  });
+
+  it('keeps existing daemon arguments unchanged when profile-model mode is absent', async () => {
+    arrangeReadyDaemon();
+
+    await spawnDaemon({
+      targetUrl: 'https://upstream.example.com',
+      provider: 'ai-run-sso',
+      profile: 'work',
+      port: 4001,
+    });
+
+    const args = vi.mocked(spawnDetached).mock.calls[0][1];
+    expect(args).not.toContain('--model');
+    expect(args).not.toContain('--enforce-profile-model');
+    expect(args).not.toContain('--client-type');
   });
 });

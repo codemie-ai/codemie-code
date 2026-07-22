@@ -91,7 +91,7 @@ export async function checkProxyHealth(
         healthy: false,
         level: 'deep',
         code: 'unauthorized',
-        reason: 'SSO session expired — run `codemie proxy connect desktop` to re-login.',
+        reason: 'SSO session expired — run `codemie profile login` and restart the proxy.',
       };
     }
     if (!res.ok) {
