@@ -42,6 +42,17 @@ vi.mock('../../../../utils/security.js', () => ({
   sanitizeLogArgs: vi.fn((...args: unknown[]) => args),
 }));
 
+// BaseAgentAdapter transitively imports providers/index.ts which auto-registers all provider
+// plugins on load. At least one provider (SSO) attempts network I/O during registration,
+// causing a 30-second timeout in CI/WSL environments. Mock the class entirely — the test
+// only exercises ClaudePluginMetadata.lifecycle.beforeRun, which is a plain object property
+// and never touches the class hierarchy at runtime.
+vi.mock('../../../core/BaseAgentAdapter.js', () => ({
+  BaseAgentAdapter: class {
+    constructor() {}
+  },
+}));
+
 type HookEnv = NodeJS.ProcessEnv;
 type BeforeRunFn = (env: HookEnv, config: AgentConfig) => Promise<HookEnv>;
 
@@ -155,5 +166,23 @@ describe('Claude Plugin – settings conflict detection in beforeRun', () => {
     const allOutput = consoleErrorSpy.mock.calls.map(c => String(c[0] ?? '')).join('\n');
     expect(allOutput).not.toContain('\r');
     expect(allOutput).not.toContain('\x1b[2K');
+  });
+
+  it('strips CSI sequences atomically so bracket residue does not appear in output', async () => {
+    // If the regex alternation consumes \x1b via the C0 alternative first, the bracket
+    // sequence ([31mFORGED[0m) leaks as visible text. The CSI alternative must be tried
+    // first so the entire escape sequence is consumed in one match.
+    conflictMod.detectSettingsConflict.mockResolvedValue({
+      settingsUrl: 'https://proxy/\x1b[31mFORGED\x1b[0m',
+      profileUrl: 'https://ai-proxy.lab.epam.com',
+    });
+
+    const env: HookEnv = { ANTHROPIC_BASE_URL: 'https://ai-proxy.lab.epam.com' };
+    await beforeRun(env, mockConfig);
+
+    const allOutput = consoleErrorSpy.mock.calls.map(c => String(c[0] ?? '')).join('\n');
+    // chalk adds its own \x1b codes; check only that the injected residue sequences are gone
+    expect(allOutput).not.toContain('[31m');
+    expect(allOutput).not.toContain('[0m');
   });
 });
