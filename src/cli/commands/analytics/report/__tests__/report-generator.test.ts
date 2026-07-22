@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { renderReportHtml } from '../report-generator.js';
+import { renderReportHtml, getDefaultReportPath, getDefaultReportJsonPath } from '../report-generator.js';
 
 const template = `<style>/* __CODEMIE_CSS__ */</style>
 <script>window.__ANALYTICS__ = /*__ANALYTICS_DATA__*/ null;</script>
@@ -81,5 +81,31 @@ describe('renderReportHtml', () => {
     expect(html).not.toContain('<script>alert(1)'); // bare opening tag from data must be neutralized
     const m = html.match(/window\.__ANALYTICS__ = (.*?);<\/script>/s);
     expect(JSON.parse(m![1]).sessions[0].sessionId).toBe('<!--<script>alert(1)');
+  });
+});
+
+describe('getDefaultReportPath', () => {
+  it('includes email slug in filename when email is provided', () => {
+    const p = getDefaultReportPath('/tmp', 'alice@example.com');
+    expect(p).toMatch(/codemie-analytics-alice-example-com-\d{4}-\d{2}-\d{2}\.html$/);
+  });
+
+  it('uses original format when email is absent', () => {
+    const p = getDefaultReportPath('/tmp');
+    expect(p).toMatch(/codemie-analytics-\d{4}-\d{2}-\d{2}\.html$/);
+    expect(p).not.toContain('example');
+  });
+});
+
+describe('getDefaultReportJsonPath', () => {
+  it('includes email slug in filename when email is provided', () => {
+    const p = getDefaultReportJsonPath('/tmp', 'alice@example.com');
+    expect(p).toMatch(/codemie-analytics-alice-example-com-\d{4}-\d{2}-\d{2}\.report\.json$/);
+  });
+
+  it('uses original format when email is absent', () => {
+    const p = getDefaultReportJsonPath('/tmp');
+    expect(p).toMatch(/codemie-analytics-\d{4}-\d{2}-\d{2}\.report\.json$/);
+    expect(p).not.toContain('example');
   });
 });

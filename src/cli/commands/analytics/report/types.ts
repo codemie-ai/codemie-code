@@ -63,6 +63,9 @@ export interface ReportMeta {
   };
   unpricedModels: string[];
   coverage: AgentCoverage[]; // per-agent priced/total — "which tools are included"
+  userEmail?: string;   // identity of the report owner; absent when not authenticated
+  periodStart?: string; // ISO — start of the reported range; absent for unfiltered reports
+  periodEnd?: string;   // ISO — end of the reported range; absent for unfiltered reports
 }
 
 export interface ReportPayload {

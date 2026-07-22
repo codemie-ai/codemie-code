@@ -1,0 +1,79 @@
+diff --git a/src/agents/core/BaseAgentAdapter.ts b/src/agents/core/BaseAgentAdapter.ts
+index 0e58b5c..7f2bf3a 100644
+--- a/src/agents/core/BaseAgentAdapter.ts
++++ b/src/agents/core/BaseAgentAdapter.ts
+@@ -72,7 +72,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
+       if (env.CODEMIE_PROFILE_CONFIG) {
+         try {
+           const profileConfig = JSON.parse(env.CODEMIE_PROFILE_CONFIG) as { userEmail?: string };
+-          userEmail = profileConfig.userEmail ?? undefined;
++          userEmail = profileConfig.userEmail || undefined;
+         } catch {
+           // malformed env — omit email gracefully
+         }
+diff --git a/src/cli/commands/analytics/index.ts b/src/cli/commands/analytics/index.ts
+index 447be4e..b02b605 100644
+--- a/src/cli/commands/analytics/index.ts
++++ b/src/cli/commands/analytics/index.ts
+@@ -145,7 +145,7 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
+       let userEmail: string | undefined;
+       try {
+         const cfg = await ConfigLoader.loadMultiProviderConfig();
+-        userEmail = cfg.userEmail ?? undefined;
++        userEmail = cfg.userEmail || undefined;
+       } catch {
+         // omit email gracefully
+       }
+diff --git a/src/cli/commands/analytics/report/__tests__/session-report.test.ts b/src/cli/commands/analytics/report/__tests__/session-report.test.ts
+index a68fc82..323989c 100644
+--- a/src/cli/commands/analytics/report/__tests__/session-report.test.ts
++++ b/src/cli/commands/analytics/report/__tests__/session-report.test.ts
+@@ -14,6 +14,7 @@ const buildPayloadMock = vi.fn();
+ vi.mock('../payload-builder.js', () => ({ buildPayload: (...a: unknown[]) => buildPayloadMock(...a) }));
+ const generateReportJsonMock = vi.fn();
+ vi.mock('../report-generator.js', () => ({
++  emailSlug: (email: string) => email.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, ''),
+   generateReportJson: (...a: unknown[]) => generateReportJsonMock(...a),
+   // Real fallback semantics: just invoke the writer with the preferred path.
+   writeReportWithFallback: (write: (p: string) => void, p: string) => {
+diff --git a/src/cli/commands/analytics/report/report-generator.ts b/src/cli/commands/analytics/report/report-generator.ts
+index 8f457ba..f12ec4c 100644
+--- a/src/cli/commands/analytics/report/report-generator.ts
++++ b/src/cli/commands/analytics/report/report-generator.ts
+@@ -61,7 +61,7 @@ export function generateReportJson(payload: ReportPayload, outputPath: string):
+   writeFileSync(outputPath, JSON.stringify(payload, null, 2), 'utf-8');
+ }
+ 
+-function emailSlug(email: string): string {
++export function emailSlug(email: string): string {
+   return email.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+ }
+ 
+diff --git a/src/cli/commands/analytics/report/session-report.ts b/src/cli/commands/analytics/report/session-report.ts
+index 444b2d3..464fe8d 100644
+--- a/src/cli/commands/analytics/report/session-report.ts
++++ b/src/cli/commands/analytics/report/session-report.ts
+@@ -10,7 +10,7 @@ import { SessionsSource } from '../sources/sessions-source.js';
+ import { enrichCosts } from '../cost/cost-enricher.js';
+ import { AnalyticsAggregator } from '../aggregator.js';
+ import { buildPayload } from './payload-builder.js';
+-import { generateReportJson, writeReportWithFallback } from './report-generator.js';
++import { emailSlug, generateReportJson, writeReportWithFallback } from './report-generator.js';
+ 
+ export interface SessionReportOptions {
+   /** Session id to scope the report to. */
+@@ -66,12 +66,10 @@ export async function generateSessionReport(options: SessionReportOptions): Prom
+     ...(periodEnd !== undefined && { periodEnd }),
+   });
+ 
+-  const emailSlug = options.userEmail
+-    ? options.userEmail.replace(/[^a-zA-Z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') + '-'
+-    : '';
++  const emailPrefix = options.userEmail ? `${emailSlug(options.userEmail)}-` : '';
+   const outputPath =
+     options.outputPath ??
+-    join(process.cwd(), 'docs', 'codemie', 'analytics', `codemie-analytics-${emailSlug}${options.sessionId}.json`);
++    join(process.cwd(), 'docs', 'codemie', 'analytics', `codemie-analytics-${emailPrefix}${options.sessionId}.json`);
+ 
+   // Explicit path ⇒ no home/tmp fallback; a write error propagates to the caller.
+   const result = writeReportWithFallback((p) => generateReportJson(payload, p), outputPath, false);

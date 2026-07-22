@@ -1,6 +1,5 @@
 // src/agents/core/__tests__/BaseAgentAdapter-session-report.test.ts
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { join } from 'path';
 
 const generateSessionReportMock = vi.fn();
 vi.mock('../../../cli/commands/analytics/report/session-report.js', () => ({
@@ -31,7 +30,36 @@ describe('BaseAgentAdapter.maybeWriteSessionReport', () => {
     expect(generateSessionReportMock).toHaveBeenCalledTimes(1);
     const arg = generateSessionReportMock.mock.calls[0][0];
     expect(arg.sessionId).toBe('s1');
-    expect(arg.outputPath).toContain(join('docs', 'codemie', 'analytics', 'codemie-analytics-s1.json'));
+    // outputPath is now derived inside session-report.ts; adapter passes sessionId + optional userEmail only
+    expect(arg.outputPath).toBeUndefined();
+  });
+
+  it('extracts userEmail from CODEMIE_PROFILE_CONFIG and passes it to generateSessionReport', async () => {
+    const env = {
+      ...baseEnv,
+      CODEMIE_PROFILE_CONFIG: JSON.stringify({ userEmail: 'carol@example.com' }),
+    } as NodeJS.ProcessEnv;
+    await new TestAdapter({ sessionAnalyticsReport: true }).call(env);
+    expect(generateSessionReportMock).toHaveBeenCalledWith(
+      expect.objectContaining({ userEmail: 'carol@example.com' })
+    );
+  });
+
+  it('omits userEmail when CODEMIE_PROFILE_CONFIG has no email', async () => {
+    const env = {
+      ...baseEnv,
+      CODEMIE_PROFILE_CONFIG: JSON.stringify({ someOtherField: 'value' }),
+    } as NodeJS.ProcessEnv;
+    await new TestAdapter({ sessionAnalyticsReport: true }).call(env);
+    const arg = generateSessionReportMock.mock.calls[0][0];
+    expect(arg.userEmail).toBeUndefined();
+  });
+
+  it('omits userEmail gracefully when CODEMIE_PROFILE_CONFIG is malformed JSON', async () => {
+    const env = { ...baseEnv, CODEMIE_PROFILE_CONFIG: 'not-json' } as NodeJS.ProcessEnv;
+    await expect(new TestAdapter({ sessionAnalyticsReport: true }).call(env)).resolves.toBeUndefined();
+    const arg = generateSessionReportMock.mock.calls[0][0];
+    expect(arg.userEmail).toBeUndefined();
   });
 
   it('skips when metadata flag is not set', async () => {

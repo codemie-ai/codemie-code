@@ -66,8 +66,19 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
 
     try {
       const { generateSessionReport } = await import('../../cli/commands/analytics/report/session-report.js');
-      const outputPath = join(process.cwd(), 'docs', 'codemie', 'analytics', `codemie-analytics-${sessionId}.json`);
-      const result = await generateSessionReport({ sessionId, outputPath });
+
+      // Email is available in CODEMIE_PROFILE_CONFIG (already parsed at adapter startup for other uses).
+      let userEmail: string | undefined;
+      if (env.CODEMIE_PROFILE_CONFIG) {
+        try {
+          const profileConfig = JSON.parse(env.CODEMIE_PROFILE_CONFIG) as { userEmail?: string };
+          userEmail = profileConfig.userEmail || undefined;
+        } catch {
+          // malformed env — omit email gracefully
+        }
+      }
+
+      const result = await generateSessionReport({ sessionId, userEmail });
       if (result.written) {
         logger.debug(`[${this.displayName}] Session analytics report written: ${result.written}`);
       } else {
