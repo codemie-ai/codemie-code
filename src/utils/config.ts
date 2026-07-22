@@ -104,8 +104,11 @@ export class ConfigLoader {
     // team profile, the team's project/integration/URL all reference the wrong
     // env's records — drop the project-context bundle and let the global
     // profile supply everything.
+    const selectedProfileDefinesProjectContext =
+      Boolean(globalConfig.codeMieProject || globalConfig.codeMieIntegration);
     const preserveProjectContext =
       applyProjectOnly &&
+      !selectedProfileDefinesProjectContext &&
       this.shouldPreserveProjectContext(localConfig.codeMieUrl, globalConfig.codeMieUrl);
     const effectiveLocalConfig = preserveProjectContext
       ? this.filterProjectFields(localConfig)
@@ -1193,8 +1196,11 @@ export class ConfigLoader {
 
     const applyProjectOnly =
       cliOverrides?.name && localProfileName && cliOverrides.name !== localProfileName;
+    const selectedProfileDefinesProjectContext =
+      Boolean(globalConfig.codeMieProject || globalConfig.codeMieIntegration);
     const preserveProjectContext =
       applyProjectOnly &&
+      !selectedProfileDefinesProjectContext &&
       this.shouldPreserveProjectContext(localConfig.codeMieUrl, globalConfig.codeMieUrl);
     const effectiveLocalConfig = preserveProjectContext
       ? this.filterProjectFields(localConfig)

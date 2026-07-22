@@ -555,6 +555,37 @@ describe('ConfigLoader - cross-env URL gate', () => {
       expect(cfg.codeMieIntegration).toBe('prod-int');
     });
 
+    it('keeps project context explicitly defined by the selected profile', async () => {
+      await writeGlobal('personal-anthropic', {
+        'personal-anthropic': {
+          provider: 'anthropic-subscription',
+          codeMieUrl: 'https://prod.example.com',
+          codeMieProject: 'personal-proj',
+          codeMieIntegration: 'personal-int' as unknown as CodeMieIntegrationInfo,
+          baseUrl: 'https://api.anthropic.com',
+          model: 'claude-sonnet-4-6',
+          name: 'personal-anthropic'
+        }
+      });
+      await writeLocal('team-prod', {
+        'team-prod': {
+          provider: 'ai-run-sso',
+          codeMieUrl: 'https://prod.example.com',
+          codeMieProject: 'team-proj',
+          codeMieIntegration: 'team-int' as unknown as CodeMieIntegrationInfo,
+          baseUrl: 'https://prod.example.com/code-assistant-api',
+          model: 'claude-sonnet-4-6',
+          name: 'team-prod'
+        }
+      });
+
+      const cfg = await ConfigLoader.load(path.join(TEST_DIR, 'project'), { name: 'personal-anthropic' });
+
+      expect(cfg.codeMieUrl).toBe('https://prod.example.com');
+      expect(cfg.codeMieProject).toBe('personal-proj');
+      expect(cfg.codeMieIntegration).toBe('personal-int');
+    });
+
     it('preserves local codeMieProject when local profile has no codeMieUrl', async () => {
       await writeGlobal('preview', {
         preview: {

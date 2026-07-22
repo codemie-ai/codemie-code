@@ -27,8 +27,8 @@ interface VsCodeManagedModel {
   thinking: true;
   supportsReasoningEffort: readonly ['minimal', 'low', 'medium', 'high'];
   reasoningEffortFormat: 'chat-completions';
-  maxInputTokens: 112000;
-  maxOutputTokens: 16000;
+  maxInputTokens: 224000;
+  maxOutputTokens: 32000;
 }
 
 export interface WriteVsCodeConfigResult {
@@ -40,10 +40,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function hasManagedModel(provider: unknown): provider is VsCodeLanguageModelProvider {
-  if (!isRecord(provider) || provider.vendor !== 'customendpoint') return false;
-  if (!Array.isArray(provider.models)) return false;
-  return provider.models.some(model => isRecord(model) && model.id === MANAGED_MODEL_ID);
+function isManagedProvider(provider: unknown): provider is VsCodeLanguageModelProvider {
+  if (!isRecord(provider)) return false;
+
+  const hasManagedModel = Array.isArray(provider.models) &&
+    provider.models.some(model => isRecord(model) && model.id === MANAGED_MODEL_ID);
+  return hasManagedModel || (provider.vendor === 'customendpoint' && provider.name === 'CodeMie');
 }
 
 export function isVsCodeSecretReference(value: unknown): value is string {
@@ -97,8 +99,8 @@ function buildManagedModel(proxyUrl: string): VsCodeManagedModel {
     thinking: true,
     supportsReasoningEffort: ['minimal', 'low', 'medium', 'high'],
     reasoningEffortFormat: 'chat-completions',
-    maxInputTokens: 112000,
-    maxOutputTokens: 16000,
+    maxInputTokens: 224000,
+    maxOutputTokens: 32000,
   };
 }
 
@@ -120,6 +122,46 @@ function reconcileModels(existingModels: unknown, managedModel: VsCodeManagedMod
 
   if (!inserted) reconciled.push(managedModel);
   return reconciled;
+}
+
+function mergeManagedProviders(
+  providers: VsCodeLanguageModelProvider[],
+  proxyUrl: string
+): { provider: VsCodeLanguageModelProvider; requiresSecretConfiguration: boolean } {
+  const existingProvider = Object.assign({}, ...providers);
+  const existingModels = providers.flatMap(provider =>
+    Array.isArray(provider.models) ? provider.models : []
+  );
+  const existingSettings = Object.assign(
+    {},
+    ...providers.map(provider => isRecord(provider.settings) ? provider.settings : {})
+  );
+  delete existingSettings[MANAGED_MODEL_ID];
+  const existingSecretReference = providers
+    .map(provider => provider.apiKey)
+    .find(isVsCodeSecretReference);
+
+  const provider: VsCodeLanguageModelProvider = {
+    ...existingProvider,
+    name: 'CodeMie',
+    vendor: 'customendpoint',
+    apiType: 'chat-completions',
+    models: reconcileModels(existingModels, buildManagedModel(proxyUrl)),
+  };
+
+  // VS Code owns model configuration state and derives "medium" as the default for this
+  // non-Claude model. Writing the same setting here races with VS Code's editor and can
+  // produce duplicate `settings` keys in its unsaved buffer.
+  if (Object.keys(existingSettings).length > 0) provider.settings = existingSettings;
+  else delete provider.settings;
+
+  if (existingSecretReference) provider.apiKey = existingSecretReference;
+  else delete provider.apiKey;
+
+  return {
+    provider,
+    requiresSecretConfiguration: !existingSecretReference,
+  };
 }
 
 async function readProviders(configPath: string): Promise<unknown[]> {
@@ -181,42 +223,25 @@ export async function writeVsCodeLanguageModelsConfig(
 ): Promise<WriteVsCodeConfigResult> {
   const configPath = getVsCodeLanguageModelsPath(insiders);
   const providers = await readProviders(configPath);
-  const providerIndex = providers.findIndex(hasManagedModel);
-  const existingProvider = providerIndex >= 0 && isRecord(providers[providerIndex])
-    ? providers[providerIndex] as VsCodeLanguageModelProvider
-    : {};
-
-  const existingSecretReference = existingProvider.apiKey;
-  const requiresSecretConfiguration = !isVsCodeSecretReference(existingSecretReference);
-
-  const existingSettings = isRecord(existingProvider.settings)
-    ? existingProvider.settings
-    : {};
-  const managedProvider: VsCodeLanguageModelProvider = {
-    ...existingProvider,
-    name: 'CodeMie',
-    vendor: 'customendpoint',
-    apiType: 'chat-completions',
-    models: reconcileModels(existingProvider.models, buildManagedModel(proxyUrl)),
-    settings: {
-      ...existingSettings,
-      [MANAGED_MODEL_ID]: { reasoningEffort: 'minimal' },
-    },
-  };
-  if (isVsCodeSecretReference(existingSecretReference)) {
-    managedProvider.apiKey = existingSecretReference;
-  } else {
-    delete managedProvider.apiKey;
-  }
-
-  if (providerIndex >= 0) {
-    providers[providerIndex] = managedProvider;
-  } else {
-    providers.push(managedProvider);
-  }
+  const managedProviderIndexes = providers
+    .map((provider, index) => isManagedProvider(provider) ? index : -1)
+    .filter(index => index >= 0);
+  const managedProviders = managedProviderIndexes
+    .map(index => providers[index])
+    .filter(isManagedProvider);
+  const { provider: managedProvider, requiresSecretConfiguration } =
+    mergeManagedProviders(managedProviders, proxyUrl);
+  const firstManagedProviderIndex = managedProviderIndexes[0] ?? providers.length;
+  const managedProviderIndexSet = new Set(managedProviderIndexes);
+  const reconciledProviders = providers.flatMap((provider, index) => {
+    if (index === firstManagedProviderIndex) return [managedProvider];
+    if (managedProviderIndexSet.has(index)) return [];
+    return [provider];
+  });
+  if (managedProviderIndexes.length === 0) reconciledProviders.push(managedProvider);
 
   try {
-    await writeAtomically(configPath, `${JSON.stringify(providers, null, '\t')}\n`);
+    await writeAtomically(configPath, `${JSON.stringify(reconciledProviders, null, '\t')}\n`);
   } catch (error) {
     throw new ConfigurationError(
       `Failed to update VS Code language model configuration at ${configPath}: ` +

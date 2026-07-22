@@ -15,6 +15,7 @@ export interface DaemonState {
   telemetryMode?: 'none' | 'claude-desktop';
   targetUrl?: string;
   provider?: string;
+  project?: string;
   model?: string;
   enforceProfileModel?: boolean;
   clientType?: string;

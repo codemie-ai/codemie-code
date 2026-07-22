@@ -43,6 +43,7 @@ interface VsCodeConnectOptions {
 interface RequestedDaemonConfig {
   profile: string;
   port: number;
+  project?: string;
   enforceProfileModel: boolean;
   model?: string;
   clientType: string;
@@ -74,6 +75,7 @@ function daemonMatchesRequest(
   const stateEnforcesProfileModel = state.enforceProfileModel === true;
   return state.profile === requested.profile &&
     state.port === requested.port &&
+    state.project === requested.project &&
     stateEnforcesProfileModel === requested.enforceProfileModel &&
     (!requested.enforceProfileModel || state.model === requested.model) &&
     getEffectiveClientType(state) === requested.clientType;
@@ -91,6 +93,7 @@ function formatDaemonConflict(
   ];
 
   if (state.clientType) details.push(`  client: ${state.clientType}`);
+  if (state.project) details.push(`  project: ${state.project}`);
   if (state.enforceProfileModel && state.model) details.push(`  model: ${state.model}`);
 
   details.push('', 'Stop it first:', '  codemie proxy stop');
@@ -228,6 +231,7 @@ export function createProxyCommand(): Command {
         const requestedDaemon: RequestedDaemonConfig = {
           profile,
           port: requestedPort,
+          project: config.codeMieProject,
           enforceProfileModel: Boolean(opts.useProfileModel),
           model: profileModel,
           clientType: opts.useProfileModel ? 'vscode-byok' : 'codemie-daemon',
@@ -332,6 +336,9 @@ export function createProxyCommand(): Command {
       console.log(`  Profile: ${state.profile}`);
       if (state.clientType) {
         console.log(`  Client:  ${state.clientType}`);
+      }
+      if (state.project) {
+        console.log(`  Project: ${state.project}`);
       }
       if (state.enforceProfileModel !== undefined) {
         console.log(`  Mode:    ${state.enforceProfileModel ? 'profile-model' : 'transparent'}`);
@@ -581,6 +588,7 @@ export function createProxyCommand(): Command {
         let { running, state } = await checkStatus();
         const matchesRequestedMode = running && state
           ? state.profile === profile &&
+            state.project === config.codeMieProject &&
             state.enforceProfileModel === true &&
             state.model === profileModel &&
             getEffectiveClientType(state) === 'vscode-byok'
@@ -642,6 +650,7 @@ export function createProxyCommand(): Command {
             configPath: result.configPath,
             gatewayUrl: state!.url,
             profile: state!.profile,
+            project: state!.project,
             model: state!.model,
             clientType: state!.clientType,
             requiresSecretConfiguration: result.requiresSecretConfiguration,
@@ -653,6 +662,7 @@ export function createProxyCommand(): Command {
           console.log(`  Config:  ${result.configPath}`);
           console.log(`  Gateway: ${state!.url}`);
           console.log(`  Model:   ${profileModel}`);
+          console.log(`  Project: ${config.codeMieProject || '(not configured)'}`);
         }
 
         if (result.requiresSecretConfiguration) {

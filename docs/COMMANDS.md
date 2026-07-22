@@ -121,20 +121,20 @@ The managed provider has this effective structure. The port is taken from the ru
           "high"
         ],
         "reasoningEffortFormat": "chat-completions",
-        "maxInputTokens": 112000,
-        "maxOutputTokens": 16000
+        "maxInputTokens": 224000,
+        "maxOutputTokens": 32000
       }
-    ],
-    "settings": {
-      "codemie-profile-default": {
-        "reasoningEffort": "minimal"
-      }
-    }
+    ]
   }
 ]
 ```
 
-The connector preserves unrelated providers, other models in the same provider, unrelated settings, and unknown provider properties. It rejects malformed JSON or a non-array root without overwriting the file. `codemie proxy start --use-profile-model` remains available for low-level manual setup.
+VS Code derives `medium` as the default reasoning effort from the managed model's supported
+effort levels and owns the selected model settings. The connector removes stale CodeMie model
+settings on each run to avoid racing with VS Code's configuration editor, while preserving
+unrelated providers, models, settings, and unknown provider properties. It rejects malformed JSON
+or a non-array root without overwriting the file. `codemie proxy start --use-profile-model` remains
+available for low-level manual setup.
 
 Check the pinned settings with `codemie proxy status`. For a direct local smoke test:
 

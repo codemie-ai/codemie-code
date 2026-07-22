@@ -29,23 +29,35 @@ Local config does **not** isolate from global — missing local fields fall back
 
 ---
 
-## Profile Resolution (2-Level Lookup)
+## Profile Resolution
 
-Profile lookup is two-level: global base + local overlay.
+Profile lookup is based on the selected profile name. An explicit `--profile <name>` takes
+precedence over `activeProfile`.
 
-1. Load the global profile as a base.
-2. Overlay the local profile of the same name on top (field-by-field merge).
-3. Result: local fields win; global fields fill gaps.
+1. Load the selected global profile as a base.
+2. If the repository has a local profile with the same name, overlay it field by field.
+3. If a differently named local profile is the repository's active profile, use it only
+   as a project-context overlay when the selected profile does not define its own
+   `codeMieProject` or `codeMieIntegration`.
+4. Apply that project-context overlay only when the global and local CodeMie URLs match
+   after normalization, or when either URL is absent.
+
+Provider, model, and credentials always remain aligned to the selected global profile
+when profile names differ. A selected profile's explicit project or integration is also
+authoritative; the compatible local project context only fills that gap.
 
 | Scenario | Source of provider/model | Source of codeMieProject |
 |---|---|---|
 | Only global config | global | global |
-| Local overrides project fields | global | local |
-| `--profile <global-name>` with local team profile | global (selected profile) | local team profile |
+| Same-named local profile overrides project fields | global | local |
+| Differently named local profile; selected profile defines project context | global (selected profile) | global (selected profile) |
+| Differently named local profile; selected profile lacks project context and URLs are compatible | global (selected profile) | local project overlay |
+| Differently named local profile; URLs differ | global (selected profile) | global (selected profile) |
+| `--profile <name>` with a same-named local profile | local overlay | local overlay |
 
 **Key rule**: `activeProfile` switches are stored in local config when `.codemie/` exists; the profile data itself can come from either source.
 
-`file:src/env/config-loader.ts` — `loadWithSources()` implements the merge.
+`file:src/utils/config.ts` — `loadWithSources()` implements the merge.
 
 ---
 
@@ -67,7 +79,7 @@ await ConfigLoader.initProjectConfig(process.cwd(), {
 });
 ```
 
-**Method signatures** — `file:src/env/config-loader.ts`:
+**Method signatures** — `file:src/utils/config.ts`:
 
 | Method | Returns |
 |---|---|
@@ -128,16 +140,17 @@ interface ConfigWithSources {
 
 Keep global config with provider/model. Each repo's local config sets only `codeMieProject` and `codeMieIntegration`. All other fields inherit from global.
 
-### Team profile with personal provider
+### Team project context with a selected provider profile
 
-Repository commits a local `team` profile with `codeMieProject`/`codeMieIntegration`. Each developer keeps their own global profile (`kimi`, `anthropic`, etc.) and passes `--profile <their-profile>` at runtime. The selected global profile supplies provider + credentials; the local team profile supplies project context.
+A repository's local team profile can supply `codeMieProject`, `codeMieIntegration`, and
+`codeMieUrl` when the selected global profile does not define its own project context and
+the URLs are compatible. If the selected global profile defines a project or integration,
+those selected-profile values win.
 
 ```bash
-codemie-kimi   --profile kimi       # uses global kimi profile + local project fields
-codemie-claude --profile anthropic  # uses global anthropic profile + local project fields
+codemie-kimi   --profile kimi       # selected project wins when the profile defines one
+codemie-claude --profile anthropic  # otherwise compatible local project context is used
 ```
-
-> **URL precondition.** Project-context preservation (`codeMieProject`, `codeMieIntegration`, `codeMieUrl`) applies only when the selected global profile and the local team profile target the same `codeMieUrl` (compared after stripping trailing slashes and lower-casing). When the URLs differ, the user is switching CodeMie environments and the team's project/integration IDs would reference the wrong env's records — so the local project context is dropped and the selected global profile supplies everything. This is enforced in `ConfigLoader.load()` and `ConfigLoader.loadWithSources()`.
 
 ### CI/CD overrides
 
