@@ -241,6 +241,7 @@ export const ClaudePluginMetadata: AgentMetadata = {
           // URL userinfo guard: https://user@evil.com routes to evil.com; the @ is valid
           // ASCII so the allowlist cannot catch it — URL parsing is required.
           const safeUrl = (s: string): string => {
+            // ESC-form: P=DCS X=SOS ^=PM _=APC; C1-form: \x90 \x98 \x9e \x9f
             const noStringCmds = s.replace(/(?:\x1b[PX^_]|[\x90\x98\x9e\x9f])[\s\S]*?(?:\x07|\x1b\\|\x9c|$)/g, ''); // eslint-disable-line no-control-regex
             const stripped = stripAnsi(noStringCmds).replace(/[^\x20-\x7e]/gu, '');
             try {
@@ -255,7 +256,11 @@ export const ClaudePluginMetadata: AgentMetadata = {
             }
             return stripped;
           };
-          const profileDisplay = safeUrl(conflict.profileUrl || '(not set — direct Anthropic API)');
+          // The fallback literal contains U+2014 (em dash) which the ASCII allowlist strips.
+          // Bypass safeUrl for the known-safe constant; only user-controlled values need it.
+          const profileDisplay = conflict.profileUrl
+            ? safeUrl(conflict.profileUrl)
+            : '(not set — direct Anthropic API)';
           const activeDisplay = safeUrl(conflict.settingsUrl);
           console.error(chalk.yellow('\n⚠️  ANTHROPIC_BASE_URL override detected in ~/.claude/settings.json'));
           console.error(chalk.yellow('─'.repeat(60)));
