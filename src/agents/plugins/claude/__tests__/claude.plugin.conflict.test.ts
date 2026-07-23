@@ -199,6 +199,51 @@ describe('Claude Plugin – settings conflict detection in beforeRun', () => {
     expect(allOutput).not.toContain('INJECTED');
   });
 
+  it('preserves em dash in the hardcoded "(not set)" fallback when profileUrl is absent', async () => {
+    // The fallback literal contains U+2014 (em dash). safeUrl's ASCII allowlist strips
+    // everything above 0x7E — passing the constant through safeUrl corrupts it to a
+    // double space. The fix bypasses safeUrl for the known-safe hardcoded string.
+    conflictMod.detectSettingsConflict.mockResolvedValue({
+      settingsUrl: 'https://proxy.example.com',
+      profileUrl: undefined,
+    });
+    const env: HookEnv = {};
+    await beforeRun(env, mockConfig);
+
+    const allOutput = consoleErrorSpy.mock.calls.map(c => String(c[0] ?? '')).join('\n');
+    expect(allOutput).toContain('not set — direct Anthropic API');
+    expect(allOutput).not.toContain('not set  direct');
+  });
+
+  it('strips DCS payload with no terminator — |$ fallback consumes to end-of-string', async () => {
+    // An unterminated DCS sequence (\x1bPINJECTED, no \x07/\x1b\/\x9c) must still be
+    // fully consumed. The regex uses |$ so the lazy *? scans to EOL if no terminator found.
+    conflictMod.detectSettingsConflict.mockResolvedValue({
+      settingsUrl: 'https://proxy/\x1bPINJECTED',
+      profileUrl: 'https://ai-proxy.lab.epam.com',
+    });
+    const env: HookEnv = { ANTHROPIC_BASE_URL: 'https://ai-proxy.lab.epam.com' };
+    await beforeRun(env, mockConfig);
+
+    const allOutput = consoleErrorSpy.mock.calls.map(c => String(c[0] ?? '')).join('\n');
+    expect(allOutput).not.toContain('INJECTED');
+  });
+
+  it('strips C1 DCS form (\\x90...\\x07) — single-byte introducer used by 8-bit terminals', async () => {
+    // \x90 is the single-byte C1 form of DCS. strip-ansi does not recognise it.
+    // The allowlist alone strips \x90 but leaves the ASCII payload intact.
+    // The DCS pre-strip regex covers [\x90\x98\x9e\x9f] for this reason.
+    conflictMod.detectSettingsConflict.mockResolvedValue({
+      settingsUrl: 'https://proxy/\x90INJECTED\x07',
+      profileUrl: 'https://ai-proxy.lab.epam.com',
+    });
+    const env: HookEnv = { ANTHROPIC_BASE_URL: 'https://ai-proxy.lab.epam.com' };
+    await beforeRun(env, mockConfig);
+
+    const allOutput = consoleErrorSpy.mock.calls.map(c => String(c[0] ?? '')).join('\n');
+    expect(allOutput).not.toContain('INJECTED');
+  });
+
   it('strips URL userinfo (@-trick) and prepends [credentials removed]', async () => {
     // https://user@evil.com — RFC 3986 userinfo: "user" is the credential, "evil.com" is the
     // actual host. Displaying the raw string lets the user see "user" as the apparent hostname.
@@ -214,6 +259,22 @@ describe('Claude Plugin – settings conflict detection in beforeRun', () => {
     expect(allOutput).toContain('[credentials removed]');
     expect(allOutput).toContain('evil.com');
     expect(allOutput).not.toContain('trusted.epam.com@');
+  });
+
+  it('strips URL userinfo including password field (user:pass@host)', async () => {
+    // Covers the url.password branch of the userinfo guard — distinct from the
+    // username-only case already tested above.
+    conflictMod.detectSettingsConflict.mockResolvedValue({
+      settingsUrl: 'https://user:s3cr3t@evil.com/path',
+      profileUrl: 'https://ai-proxy.lab.epam.com',
+    });
+    const env: HookEnv = { ANTHROPIC_BASE_URL: 'https://ai-proxy.lab.epam.com' };
+    await beforeRun(env, mockConfig);
+
+    const allOutput = consoleErrorSpy.mock.calls.map(c => String(c[0] ?? '')).join('\n');
+    expect(allOutput).toContain('[credentials removed]');
+    expect(allOutput).not.toContain('s3cr3t');
+    expect(allOutput).not.toContain('user:');
   });
 
   it('strips CSI sequences atomically so bracket residue does not appear in output', async () => {
