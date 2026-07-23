@@ -1087,15 +1087,27 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     }
 
     // Transform model tiers (haiku/sonnet/opus)
+    // Note: All tier vars were already cleared in Step 1 above
     if (env.CODEMIE_HAIKU_MODEL && envMapping.haikuModel) {
       for (const envVar of envMapping.haikuModel) {
         env[envVar] = env.CODEMIE_HAIKU_MODEL;
       }
     }
-    if (env.CODEMIE_SONNET_MODEL && envMapping.sonnetModel) {
+    if (env.CODEMIE_SONNET_MODEL && env.CODEMIE_SONNET_MODEL !== env.CODEMIE_HAIKU_MODEL && envMapping.sonnetModel) {
+      // Distinct sonnet tier — map to all target vars normally
       for (const envVar of envMapping.sonnetModel) {
         env[envVar] = env.CODEMIE_SONNET_MODEL;
       }
+    } else if ((!env.CODEMIE_SONNET_MODEL || env.CODEMIE_SONNET_MODEL === env.CODEMIE_HAIKU_MODEL) && env.CODEMIE_OPUS_MODEL && envMapping.sonnetModel?.includes('CLAUDE_CODE_SUBAGENT_MODEL')) {
+      // No distinct sonnet tier, opus provisioned: route subagent to opus.
+      // ANTHROPIC_DEFAULT_SONNET_MODEL is intentionally left unset to prevent
+      // duplicate-ID display in /model (EPMCDME-12779).
+      env['CLAUDE_CODE_SUBAGENT_MODEL'] = env.CODEMIE_OPUS_MODEL;
+    } else if ((!env.CODEMIE_SONNET_MODEL || env.CODEMIE_SONNET_MODEL === env.CODEMIE_HAIKU_MODEL) && !env.CODEMIE_OPUS_MODEL && env.CODEMIE_HAIKU_MODEL && envMapping.sonnetModel?.includes('CLAUDE_CODE_SUBAGENT_MODEL')) {
+      // Haiku-only tenant: route subagent to haiku.
+      // ANTHROPIC_DEFAULT_SONNET_MODEL is intentionally left unset to prevent
+      // duplicate-ID display in /model (EPMCDME-12779).
+      env['CLAUDE_CODE_SUBAGENT_MODEL'] = env.CODEMIE_HAIKU_MODEL;
     }
     if (env.CODEMIE_OPUS_MODEL && envMapping.opusModel) {
       for (const envVar of envMapping.opusModel) {
