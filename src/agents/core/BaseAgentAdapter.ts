@@ -1062,16 +1062,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     }
 
     // Transform model tiers (haiku/sonnet/opus)
-    if (envMapping.haikuModel) {
-      for (const envVar of envMapping.haikuModel) delete env[envVar];
-    }
-    if (envMapping.sonnetModel) {
-      for (const envVar of envMapping.sonnetModel) delete env[envVar];
-    }
-    if (envMapping.opusModel) {
-      for (const envVar of envMapping.opusModel) delete env[envVar];
-    }
-
+    // Note: All tier vars were already cleared in Step 1 above
     if (env.CODEMIE_HAIKU_MODEL && envMapping.haikuModel) {
       for (const envVar of envMapping.haikuModel) {
         env[envVar] = env.CODEMIE_HAIKU_MODEL;

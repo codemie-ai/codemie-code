@@ -296,9 +296,9 @@ async function handlePluginSetup(
     }
 
     // Merge model tiers into config
-    if (modelTiers.haikuModel) config.haikuModel = modelTiers.haikuModel;
-    if (modelTiers.sonnetModel) config.sonnetModel = modelTiers.sonnetModel;
-    if (modelTiers.opusModel) config.opusModel = modelTiers.opusModel;
+    config.haikuModel = modelTiers.haikuModel;
+    config.sonnetModel = modelTiers.sonnetModel;
+    config.opusModel = modelTiers.opusModel;
 
     // Step 5: Ask for profile name (if creating new)
     let finalProfileName = profileName;
@@ -583,21 +583,7 @@ export async function autoSelectModelTiers(
   const envSonnet = process.env.ANTHROPIC_DEFAULT_SONNET_MODEL;
   const envOpus = process.env.ANTHROPIC_DEFAULT_OPUS_MODEL;
 
-  // If all env vars are set, use those
-  if (envHaiku && envSonnet && envOpus) {
-    logger.debug('Using model tiers from environment variables', {
-      haiku: envHaiku,
-      sonnet: envSonnet,
-      opus: envOpus
-    });
-    return {
-      haikuModel: envHaiku,
-      sonnetModel: envSonnet,
-      opusModel: envOpus
-    };
-  }
-
-  // Otherwise, auto-select from available models
+  // Auto-select from available models with validation against env vars
   const result: { haikuModel?: string; sonnetModel?: string; opusModel?: string } = {};
 
   // Filter models by type
@@ -605,8 +591,8 @@ export async function autoSelectModelTiers(
   const sonnetModels = models.filter(m => m.toLowerCase().includes('sonnet'));
   const opusModels = models.filter(m => m.toLowerCase().includes('opus'));
 
-  // Select latest haiku model (or use env var if set)
-  if (envHaiku) {
+  // Select latest haiku model (or use env var if set and valid)
+  if (envHaiku && haikuModels.includes(envHaiku)) {
     result.haikuModel = envHaiku;
     logger.debug('Using haiku model from environment variable', { model: envHaiku });
   } else if (haikuModels.length > 0) {
@@ -622,12 +608,12 @@ export async function autoSelectModelTiers(
     });
   }
 
-  // Select sonnet model: prefer env var, then selectedModel if it's sonnet-class, then
+  // Select sonnet model: prefer env var (if valid), then selectedModel if it's sonnet-class, then
   // auto-select the latest sonnet model from the available list (same pattern as haiku/opus).
   // This ensures the Custom Sonnet slot in Claude Code's /model picker is always populated
   // with a real sonnet model when one is provisioned, regardless of which tier the user
   // selected as their primary model (EPMCDME-12779).
-  if (envSonnet) {
+  if (envSonnet && sonnetModels.includes(envSonnet)) {
     result.sonnetModel = envSonnet;
     logger.debug('Using sonnet model from environment variable', { model: envSonnet });
   } else if (selectedModel.toLowerCase().includes('sonnet')) {
@@ -646,8 +632,8 @@ export async function autoSelectModelTiers(
     logger.debug('No sonnet model available — sonnet tier not assigned', { availableModels: models });
   }
 
-  // Select latest opus model (or use env var if set)
-  if (envOpus) {
+  // Select latest opus model (or use env var if set and valid)
+  if (envOpus && opusModels.includes(envOpus)) {
     result.opusModel = envOpus;
     logger.debug('Using opus model from environment variable', { model: envOpus });
   } else if (opusModels.length > 0) {
