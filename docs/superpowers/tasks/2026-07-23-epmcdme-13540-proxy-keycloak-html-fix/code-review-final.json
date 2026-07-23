@@ -1,0 +1,7 @@
+{
+  "decision": "approve",
+  "rationale": "All changes narrowly implement the approved spec. The two Content-Type guards in desktop.ts and health-check.ts match spec Fix 1 and Fix 2 verbatim, including error messages and return shapes. All five specified test cases are present. Existing mock objects were updated to include headers (required correctness fix). No public contract, type signature, or exported API was added, removed, or changed.",
+  "follow_ups": [],
+  "confidence": "high",
+  "risk_flags": []
+}
