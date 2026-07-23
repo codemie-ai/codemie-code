@@ -138,12 +138,8 @@ unrelated providers, models, settings, and unknown provider properties. It rejec
 or a non-array root without overwriting the file. Re-running the command with another profile
 replaces the previous CodeMie-managed model without changing unrelated entries.
 
-Check the daemon context with `codemie proxy status`. For a direct local smoke test:
-
-```bash
-npm run test:vscode-byok -- --stream --message "Reply with OK"
-npm run test:vscode-byok -- --tool-test
-```
+Check the daemon context with `codemie proxy status`. Automated VS Code BYOK configuration
+and routing coverage runs as part of `npm run test:all`.
 
 #### Troubleshooting VS Code BYOK
 
