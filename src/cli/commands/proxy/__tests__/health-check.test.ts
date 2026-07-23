@@ -7,6 +7,7 @@ vi.mock('@/utils/logger.js', () => ({
 
 const HEALTH = (url: unknown): boolean => String(url).endsWith('/health');
 const MODELS = (url: unknown): boolean => String(url).includes('/v1/llm_models');
+const mkHeaders = (ct: string) => ({ get: (h: string) => h === 'content-type' ? ct : null });
 
 describe('checkProxyHealth', () => {
   let originalFetch: typeof globalThis.fetch;
@@ -59,7 +60,7 @@ describe('checkProxyHealth', () => {
   it('deep: healthy when /health and /v1/llm_models both succeed, with Bearer auth', async () => {
     const fetchSpy = vi.fn(async (url: unknown) => {
       if (HEALTH(url)) return { ok: true, status: 200 };
-      if (MODELS(url)) return { ok: true, status: 200, json: async () => [] };
+      if (MODELS(url)) return { ok: true, status: 200, headers: mkHeaders('application/json'), json: async () => [] };
       throw new Error(`unexpected url ${String(url)}`);
     });
     globalThis.fetch = fetchSpy as unknown as typeof globalThis.fetch;
@@ -131,5 +132,32 @@ describe('checkProxyHealth', () => {
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(MODELS(fetchSpy.mock.calls[0][0])).toBe(false);
+  });
+
+  it('deep: unauthorized when /v1/llm_models returns 200 with HTML content-type (Keycloak redirect)', async () => {
+    globalThis.fetch = vi.fn(async (url: unknown) => {
+      if (HEALTH(url)) return { ok: true, status: 200 };
+      if (MODELS(url)) return { ok: true, status: 200, headers: mkHeaders('text/html; charset=utf-8') };
+      throw new Error(`unexpected url ${String(url)}`);
+    }) as unknown as typeof globalThis.fetch;
+
+    const result = await checkProxyHealth({ port: 4001, gatewayKey: 'k', deep: true });
+
+    expect(result.healthy).toBe(false);
+    expect(result.level).toBe('deep');
+    expect(result.code).toBe('unauthorized');
+    expect(result.reason).toContain('SSO session expired');
+  });
+
+  it('deep: healthy when /v1/llm_models returns 200 with application/json (regression)', async () => {
+    globalThis.fetch = vi.fn(async (url: unknown) => {
+      if (HEALTH(url)) return { ok: true, status: 200 };
+      if (MODELS(url)) return { ok: true, status: 200, headers: mkHeaders('application/json'), json: async () => [] };
+      throw new Error(`unexpected url ${String(url)}`);
+    }) as unknown as typeof globalThis.fetch;
+
+    const result = await checkProxyHealth({ port: 4001, gatewayKey: 'k', deep: true });
+
+    expect(result).toEqual({ healthy: true, level: 'deep', code: 'ok' });
   });
 });
