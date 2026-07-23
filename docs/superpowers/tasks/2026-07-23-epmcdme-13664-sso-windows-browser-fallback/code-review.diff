@@ -1,0 +1,158 @@
+diff --git a/src/agents/plugins/claude/__tests__/claude.plugin.statusline.test.ts b/src/agents/plugins/claude/__tests__/claude.plugin.statusline.test.ts
+index 5fb8d67..c41fd4a 100644
+--- a/src/agents/plugins/claude/__tests__/claude.plugin.statusline.test.ts
++++ b/src/agents/plugins/claude/__tests__/claude.plugin.statusline.test.ts
+@@ -40,6 +40,40 @@ vi.mock('../../../../utils/security.js', () => ({
+   sanitizeLogArgs: vi.fn((...args: unknown[]) => args),
+ }));
+ 
++// Prevent loading claude.plugin.ts's heavy static deps (BaseAgentAdapter → ProviderRegistry →
++// all providers → sso.proxy → module-level plugin auto-registration) — these are not exercised
++// by the statusline lifecycle hooks, but loading them causes the vi.resetModules() + re-import
++// in beforeEach to time out.
++vi.mock('../../../core/BaseAgentAdapter.js', () => ({
++  BaseAgentAdapter: class BaseAgentAdapter {},
++}));
++
++vi.mock('../claude.session.js', () => ({
++  ClaudeSessionAdapter: class ClaudeSessionAdapter {},
++}));
++
++vi.mock('../claude.plugin-installer.js', () => ({
++  ClaudePluginInstaller: class ClaudePluginInstaller {},
++}));
++
++vi.mock('../../../../utils/native-installer.js', () => ({
++  installNativeAgent: vi.fn(),
++}));
++
++vi.mock('../../../../utils/installation-detector.js', () => ({
++  detectInstallationMethod: vi.fn(),
++}));
++
++vi.mock('../../../../utils/version-utils.js', () => ({
++  isValidSemanticVersion: vi.fn().mockReturnValue(true),
++}));
++
++vi.mock('../../../../utils/errors.js', () => ({
++  AgentInstallationError: class AgentInstallationError extends Error {},
++  createErrorContext: vi.fn(() => ({})),
++  getErrorMessage: vi.fn((e: unknown) => String(e)),
++}));
++
+ type HookEnv = NodeJS.ProcessEnv;
+ type BeforeRunFn = (env: HookEnv, config: AgentConfig) => Promise<HookEnv>;
+ type AfterRunFn = (exitCode: number, env: HookEnv) => Promise<void>;
+diff --git a/src/providers/plugins/sso/__tests__/sso.auth.test.ts b/src/providers/plugins/sso/__tests__/sso.auth.test.ts
+index 7e5daee..603dc52 100644
+--- a/src/providers/plugins/sso/__tests__/sso.auth.test.ts
++++ b/src/providers/plugins/sso/__tests__/sso.auth.test.ts
+@@ -2,9 +2,23 @@
+  * Tests for deriveExpiresAt — JWT exp extraction from cookie dict.
+  * @group unit
+  */
+-import { describe, it, expect } from 'vitest';
++import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
++import open from 'open';
++import { spawn } from 'child_process';
+ import { deriveExpiresAt } from '../sso.auth.js';
+ 
++vi.mock('open', () => ({
++  default: vi.fn().mockResolvedValue(undefined),
++}));
++
++vi.mock('child_process', async (importOriginal) => {
++  const actual = await importOriginal<typeof import('child_process')>();
++  return {
++    ...actual,
++    spawn: vi.fn(() => ({ unref: vi.fn() })),
++  };
++});
++
+ function makeJwt(exp: number): string {
+   const payload = { sub: 'uid', email: 'u@test.com', exp, iss: 'codemie-local' };
+   const b64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+@@ -43,3 +57,57 @@ describe('deriveExpiresAt', () => {
+     expect(result).toBeLessThanOrEqual(after + 24 * 60 * 60 * 1000 + 1000);
+   });
+ });
++
++describe('CodeMieSSO.authenticate() — browser launch', () => {
++  let originalPlatform: NodeJS.Platform;
++  let consoleSpy: ReturnType<typeof vi.spyOn>;
++
++  beforeEach(() => {
++    originalPlatform = process.platform;
++    consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
++    vi.mocked(open).mockClear();
++    vi.mocked(spawn).mockClear();
++  });
++
++  afterEach(() => {
++    Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
++    consoleSpy.mockRestore();
++  });
++
++  it('prints the SSO URL to console before browser launch on any platform', async () => {
++    const { CodeMieSSO } = await import('../sso.auth.js');
++    const sso = new CodeMieSSO();
++
++    // timeout: 50 causes authenticate() to time out quickly after launching the browser
++    await sso.authenticate({ codeMieUrl: 'https://example.com', timeout: 50 });
++
++    const output = consoleSpy.mock.calls.map(args => String(args[0])).join('\n');
++    expect(output).toContain('/v1/auth/login/');
++  });
++
++  it('spawns explorer.exe on Windows and does not call open()', async () => {
++    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
++    const { CodeMieSSO } = await import('../sso.auth.js');
++    const sso = new CodeMieSSO();
++
++    await sso.authenticate({ codeMieUrl: 'https://example.com', timeout: 50 });
++
++    expect(spawn).toHaveBeenCalledWith(
++      'explorer.exe',
++      [expect.stringContaining('/v1/auth/login/')],
++      expect.objectContaining({ detached: true, stdio: 'ignore' }),
++    );
++    expect(open).not.toHaveBeenCalled();
++  });
++
++  it('calls open() on macOS and does not spawn explorer.exe', async () => {
++    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
++    const { CodeMieSSO } = await import('../sso.auth.js');
++    const sso = new CodeMieSSO();
++
++    await sso.authenticate({ codeMieUrl: 'https://example.com', timeout: 50 });
++
++    expect(open).toHaveBeenCalledWith(expect.stringContaining('/v1/auth/login/'));
++    expect(spawn).not.toHaveBeenCalled();
++  });
++});
+diff --git a/src/providers/plugins/sso/sso.auth.ts b/src/providers/plugins/sso/sso.auth.ts
+index 673bb8a..ef2ce86 100644
+--- a/src/providers/plugins/sso/sso.auth.ts
++++ b/src/providers/plugins/sso/sso.auth.ts
+@@ -107,7 +107,20 @@ export class CodeMieSSO {
+ 
+       // 3. Launch browser
+       console.log(chalk.white(`Opening browser for authentication...`));
+-      await open(ssoUrl);
++      // Always print the SSO URL — open() silently exits under WDAC/AppLocker without throwing,
++      // so a catch-block fallback would never fire on affected corporate machines.
++      console.log(chalk.cyan(`\nIf the browser doesn't open, navigate to this URL manually:\n${ssoUrl}\n`));
++
++      if (process.platform === 'win32') {
++        // Use explorer.exe directly — avoids powershell.exe Start-Process which WDAC/AppLocker
++        // can block on corporate machines. open npm v10+ always delegates to PowerShell on Windows.
++        // Note: mcp-oauth-provider.ts chose PowerShell over cmd /c start to preserve URL
++        // query-string characters; explorer.exe via spawn avoids both PowerShell and CMD entirely.
++        const { spawn } = await import('child_process');
++        spawn('explorer.exe', [ssoUrl], { detached: true, stdio: 'ignore' }).unref();
++      } else {
++        await open(ssoUrl);
++      }
+ 
+       // 4. Wait for callback with timeout and abort signal
+       const result = await this.waitForCallback(

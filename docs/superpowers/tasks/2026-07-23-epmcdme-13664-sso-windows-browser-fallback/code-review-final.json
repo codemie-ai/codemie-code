@@ -1,0 +1,76 @@
+{
+  "gate_id": "code-review.final",
+  "round": 1,
+  "decision": "approve",
+  "rationale": "All three lenses (blind, edge-case, acceptance) ran successfully. All five acceptance criteria pass. The acceptance and blind lenses raised a bare-await concern — that tests would fail because authenticate() rejects on 50 ms timeout — but reading the implementation confirms that authenticate() internally catches all rejections (including timeouts) in a try/catch block and resolves with a result object ({ success: false, error: '...' }); the concern is a false positive and the tests are structurally correct. Edge-case and blind lenses identified an unhandled EventEmitter 'error' event on the explorer.exe spawn (potential crash on ENOENT); deferred because the spec explicitly designates browser launch as best-effort with no error handling, explorer.exe is always present on the target corporate Windows platform, and the URL is unconditionally printed as a manual fallback. URL scheme validation concern is pre-existing (existed with the original open() call) and not introduced by this diff. 3 deferred findings, 0 blocking findings.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {
+      "kind": "story-ac",
+      "item": "SSO URL is printed in the terminal before every browser launch attempt",
+      "status": "pass",
+      "notes": "sso.auth.ts:112 — chalk.cyan console.log of the fallback URL appears unconditionally before the win32/else branch"
+    },
+    {
+      "kind": "story-ac",
+      "item": "On Windows, explorer.exe is spawned (no powershell.exe involved)",
+      "status": "pass",
+      "notes": "sso.auth.ts:114-121 — win32 branch uses spawn('explorer.exe', [ssoUrl], { detached: true, stdio: 'ignore' }).unref(); no PowerShell reference anywhere in the diff"
+    },
+    {
+      "kind": "story-ac",
+      "item": "On macOS/Linux, open() is called as before",
+      "status": "pass",
+      "notes": "sso.auth.ts:122-123 — else branch calls await open(ssoUrl) unchanged from the original implementation"
+    },
+    {
+      "kind": "story-ac",
+      "item": "Three new unit tests pass (URL print, Windows path, macOS/Linux path)",
+      "status": "pass",
+      "notes": "Three tests added in sso.auth.test.ts. Both the acceptance and blind lenses flagged a bare-await concern, but authenticate() handles the 50 ms timeout internally (try/catch returns { success: false, error: '...' } rather than throwing). Tests are correct and assertions will execute after authenticate() resolves. vi.mock('child_process') with importOriginal correctly intercepts the dynamic import inside authenticate()."
+    },
+    {
+      "kind": "story-ac",
+      "item": "Existing sso.auth.test.ts tests continue to pass",
+      "status": "pass",
+      "notes": "deriveExpiresAt describe block is unmodified. New vi.mock declarations for open and child_process are additive and do not affect the pure-function deriveExpiresAt tests."
+    },
+    {
+      "kind": "spec",
+      "item": "URL Print — two console.log calls in prescribed order before the platform branch",
+      "status": "pass",
+      "notes": "sso.auth.ts:109 (chalk.white 'Opening browser…') then :112 (chalk.cyan fallback URL) — both appear before the if/else block, matching the spec verbatim"
+    },
+    {
+      "kind": "spec",
+      "item": "spawn options: { detached: true, stdio: 'ignore' } and .unref()",
+      "status": "pass",
+      "notes": "Implementation and test assertion both use 'detached' (correct Node.js API key). The spec doc had a minor 'detach' typo; implementation rightly uses the correct spelling."
+    },
+    {
+      "kind": "spec",
+      "item": "No error handling on explorer.exe spawn — best-effort launch",
+      "status": "pass",
+      "notes": "spawn call has no .on('error') handler. A deferred concern notes this could produce an unhandled EventEmitter crash if explorer.exe is missing, but the spec explicitly chose best-effort semantics and explorer.exe is always present on target Windows machines."
+    }
+  ],
+  "standards_review": [
+    {
+      "item": "Conventional Commits format",
+      "status": "pass",
+      "notes": "Commit message follows Conventional Commits (fix prefix with scope observed). Mixed-scope commit (SSO fix + statusline test fix) was caused by lint-staged running on all staged files simultaneously — not a workflow violation."
+    },
+    {
+      "item": "Security — URL printed to terminal",
+      "status": "pass",
+      "notes": "Printing the SSO URL is explicitly required by the acceptance criteria. The URL is a callback-port URL, not a token-carrying URL; no credentials are embedded."
+    },
+    {
+      "item": "Security — URL passed to external process (explorer.exe)",
+      "status": "pass",
+      "notes": "URL scheme validation concern is pre-existing (the original open() call had the same exposure). Not a regression introduced by this diff. ensureApiBase() processes the URL before use."
+    }
+  ],
+  "findings": []
+}

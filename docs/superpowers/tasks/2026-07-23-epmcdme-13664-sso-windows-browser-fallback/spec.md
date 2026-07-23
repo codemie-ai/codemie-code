@@ -117,6 +117,6 @@ Three new test cases:
 - [ ] SSO URL is printed in the terminal before every browser launch attempt
 - [ ] On Windows, `explorer.exe` is spawned (no `powershell.exe` involved)
 - [ ] On macOS/Linux, `open()` is called as before
-- [ ] With the `open` no-op simulation from the reproduction guide active, the user can paste the printed URL into a browser and complete `codemie setup` successfully
+- [ ] With the `open` no-op simulation from the reproduction guide active, the user can paste the printed URL into a browser and complete `codemie setup` successfully *(manual QA — not a unit test)*
 - [ ] Three new unit tests pass (URL print, Windows path, macOS/Linux path)
 - [ ] Existing `sso.auth.test.ts` tests continue to pass

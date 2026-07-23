@@ -1,0 +1,5 @@
+{"event":"lifecycle_emission","intent":"record_complexity_score","assessment_mode":"initial","status":"succeeded"}
+{"event":"decision.recorded","gate_id":"spec.approved","status":"succeeded"}
+{"event":"lifecycle_emission","intent":"artifact_published","artifact_kind":"spec","status":"succeeded"}
+{"schema":1,"ts":"2026-07-23T10:00:00.000Z","event":"decision.recorded","run_id":null,"phase":4,"actor":"decision-router","summary":"Decision recorded for plan.approved: approve","artifacts":["decisions.jsonl"],"data":{"gate_id":"plan.approved","mode":"hitl","decision":"approve","source":"hitl","escalated":false,"prior_context":{"question":"Stage 4 complete — plan written. Do you approve this implementation plan?","options":["Approve","Request changes","Abort"],"phase":4,"risk_flags":["auth"],"artifact_refs":["docs/superpowers/tasks/2026-07-23-epmcdme-13664-sso-windows-browser-fallback/plan.md"]}}}
+{"event":"lifecycle_emission","intent":"artifact_published","artifact_kind":"plan","status":"succeeded"}

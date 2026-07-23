@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "task": "Fix CodeMie CLI SSO authentication on Windows: always print the SSO URL as a manual fallback and use explorer.exe instead of open() to avoid WDAC/AppLocker-blocked PowerShell dependency",
+  "generated": "2026-07-23T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 2, "label": "S" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 12,
+  "size": "S",
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "technical_risk",
+      "reason": "CodeMieSSO.authenticate() is entirely untested; the fix introduces a novel explorer.exe spawn path (no codebase precedent); the URL print must precede open() because WDAC silently swallows the open() call without throwing an exception; an inline comment is required to justify divergence from the deliberate PowerShell choice in mcp-oauth-provider.ts:162-168 — all well-understood risks but requiring care in implementation and test authoring"
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "1–2 source files modified (sso.auth.ts primary, browser.ts optionally) plus test additions to the existing sso.auth.test.ts; all within the sso plugin directory and optionally utils; no new files needed; the bulk of effort is writing new test scenarios (platform override, spawn mock, URL print assertion, macOS regression)"
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from S (2) to M (3): change is inside the SSO authentication setup flow, triggering the auth/authorization red flag"
+  ],
+  "split_recommendation": null
+}
