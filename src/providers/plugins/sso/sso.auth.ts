@@ -107,7 +107,20 @@ export class CodeMieSSO {
 
       // 3. Launch browser
       console.log(chalk.white(`Opening browser for authentication...`));
-      await open(ssoUrl);
+      // Always print the SSO URL — open() silently exits under WDAC/AppLocker without throwing,
+      // so a catch-block fallback would never fire on affected corporate machines.
+      console.log(chalk.cyan(`\nIf the browser doesn't open, navigate to this URL manually:\n${ssoUrl}\n`));
+
+      if (process.platform === 'win32') {
+        // Use explorer.exe directly — avoids powershell.exe Start-Process which WDAC/AppLocker
+        // can block on corporate machines. open npm v10+ always delegates to PowerShell on Windows.
+        // Note: mcp-oauth-provider.ts chose PowerShell over cmd /c start to preserve URL
+        // query-string characters; explorer.exe via spawn avoids both PowerShell and CMD entirely.
+        const { spawn } = await import('child_process');
+        spawn('explorer.exe', [ssoUrl], { detached: true, stdio: 'ignore' }).unref();
+      } else {
+        await open(ssoUrl);
+      }
 
       // 4. Wait for callback with timeout and abort signal
       const result = await this.waitForCallback(

@@ -40,6 +40,40 @@ vi.mock('../../../../utils/security.js', () => ({
   sanitizeLogArgs: vi.fn((...args: unknown[]) => args),
 }));
 
+// Prevent loading claude.plugin.ts's heavy static deps (BaseAgentAdapter → ProviderRegistry →
+// all providers → sso.proxy → module-level plugin auto-registration) — these are not exercised
+// by the statusline lifecycle hooks, but loading them causes the vi.resetModules() + re-import
+// in beforeEach to time out.
+vi.mock('../../../core/BaseAgentAdapter.js', () => ({
+  BaseAgentAdapter: class BaseAgentAdapter {},
+}));
+
+vi.mock('../claude.session.js', () => ({
+  ClaudeSessionAdapter: class ClaudeSessionAdapter {},
+}));
+
+vi.mock('../claude.plugin-installer.js', () => ({
+  ClaudePluginInstaller: class ClaudePluginInstaller {},
+}));
+
+vi.mock('../../../../utils/native-installer.js', () => ({
+  installNativeAgent: vi.fn(),
+}));
+
+vi.mock('../../../../utils/installation-detector.js', () => ({
+  detectInstallationMethod: vi.fn(),
+}));
+
+vi.mock('../../../../utils/version-utils.js', () => ({
+  isValidSemanticVersion: vi.fn().mockReturnValue(true),
+}));
+
+vi.mock('../../../../utils/errors.js', () => ({
+  AgentInstallationError: class AgentInstallationError extends Error {},
+  createErrorContext: vi.fn(() => ({})),
+  getErrorMessage: vi.fn((e: unknown) => String(e)),
+}));
+
 type HookEnv = NodeJS.ProcessEnv;
 type BeforeRunFn = (env: HookEnv, config: AgentConfig) => Promise<HookEnv>;
 type AfterRunFn = (exitCode: number, env: HookEnv) => Promise<void>;
