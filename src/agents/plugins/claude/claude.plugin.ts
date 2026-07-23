@@ -229,10 +229,32 @@ export const ClaudePluginMetadata: AgentMetadata = {
         const { detectSettingsConflict } = await import('./settings-conflict.js');
         const conflict = await detectSettingsConflict(env);
         if (conflict) {
-          // Strip C0/C1 control characters and ANSI CSI sequences before displaying
-          // URL values from settings.json — prevents terminal injection via crafted URLs.
-          const safeUrl = (s: string): string =>
-            stripAnsi(s).replace(/[\x00-\x1f\x7f-\x9f]/gu, ''); // eslint-disable-line no-control-regex
+          // ASCII allowlist: accept only printable ASCII (0x20–0x7E) after stripping ANSI
+          // sequences. This blocks C0/C1 bytes, Bidi override chars, soft hyphen,
+          // zero-width chars, combining marks, and every other non-ASCII Unicode vector.
+          //
+          // DCS pre-strip: strip-ansi only removes the 2-byte introducer (\x1bP etc.),
+          // leaving the payload as plain ASCII. Strip the full sequence — from introducer
+          // to BEL/ST/C1-ST terminator — before handing off to strip-ansi. If no terminator
+          // is found, consume to end-of-string (greedy fallback) to prevent partial leakage.
+          //
+          // URL userinfo guard: https://user@evil.com routes to evil.com; the @ is valid
+          // ASCII so the allowlist cannot catch it — URL parsing is required.
+          const safeUrl = (s: string): string => {
+            const noStringCmds = s.replace(/(?:\x1b[PX^_]|[\x90\x98\x9e\x9f])[\s\S]*?(?:\x07|\x1b\\|\x9c|$)/g, ''); // eslint-disable-line no-control-regex
+            const stripped = stripAnsi(noStringCmds).replace(/[^\x20-\x7e]/gu, '');
+            try {
+              const url = new URL(stripped);
+              if (url.username || url.password) {
+                url.username = '';
+                url.password = '';
+                return `[credentials removed] ${url.toString()}`;
+              }
+            } catch {
+              // Not a parseable URL — return stripped string as-is
+            }
+            return stripped;
+          };
           const profileDisplay = safeUrl(conflict.profileUrl || '(not set — direct Anthropic API)');
           const activeDisplay = safeUrl(conflict.settingsUrl);
           console.error(chalk.yellow('\n⚠️  ANTHROPIC_BASE_URL override detected in ~/.claude/settings.json'));

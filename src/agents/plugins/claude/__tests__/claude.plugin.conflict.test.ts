@@ -184,6 +184,38 @@ describe('Claude Plugin – settings conflict detection in beforeRun', () => {
     expect(allOutput).not.toContain('31mFORGED');
   });
 
+  it('strips DCS payload (\\x1bP...\\x07) — ansi-regex only strips the 2-byte introducer, leaving payload text', async () => {
+    // strip-ansi matches \x1bP as a 2-char CSI (P falls in A-P final-byte range) and strips
+    // only those two bytes; the payload and BEL (\x07, C0-stripped) are left. An attacker
+    // can inject arbitrary readable text inline: \x1bPINJECTED\x07 → "INJECTED".
+    conflictMod.detectSettingsConflict.mockResolvedValue({
+      settingsUrl: 'https://proxy/\x1bPINJECTED\x07',
+      profileUrl: 'https://ai-proxy.lab.epam.com',
+    });
+    const env: HookEnv = { ANTHROPIC_BASE_URL: 'https://ai-proxy.lab.epam.com' };
+    await beforeRun(env, mockConfig);
+
+    const allOutput = consoleErrorSpy.mock.calls.map(c => String(c[0] ?? '')).join('\n');
+    expect(allOutput).not.toContain('INJECTED');
+  });
+
+  it('strips URL userinfo (@-trick) and prepends [credentials removed]', async () => {
+    // https://user@evil.com — RFC 3986 userinfo: "user" is the credential, "evil.com" is the
+    // actual host. Displaying the raw string lets the user see "user" as the apparent hostname.
+    // The fix parses the URL, removes userinfo, and flags it with [credentials removed].
+    conflictMod.detectSettingsConflict.mockResolvedValue({
+      settingsUrl: 'https://trusted.epam.com@evil.com/path',
+      profileUrl: 'https://ai-proxy.lab.epam.com',
+    });
+    const env: HookEnv = { ANTHROPIC_BASE_URL: 'https://ai-proxy.lab.epam.com' };
+    await beforeRun(env, mockConfig);
+
+    const allOutput = consoleErrorSpy.mock.calls.map(c => String(c[0] ?? '')).join('\n');
+    expect(allOutput).toContain('[credentials removed]');
+    expect(allOutput).toContain('evil.com');
+    expect(allOutput).not.toContain('trusted.epam.com@');
+  });
+
   it('strips CSI sequences atomically so bracket residue does not appear in output', async () => {
     // If the regex alternation consumes \x1b via the C0 alternative first, the bracket
     // sequence ([31mFORGED[0m) leaks as visible text. The CSI alternative must be tried
