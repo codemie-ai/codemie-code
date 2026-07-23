@@ -18,6 +18,7 @@ import {
 import { logger } from '../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../utils/security.js';
 import chalk from 'chalk';
+import stripAnsi from 'strip-ansi';
 import { resolveHomeDir } from '../../../utils/paths.js';
 import {
   detectInstallationMethod,
@@ -219,6 +220,67 @@ export const ClaudePluginMetadata: AgentMetadata = {
             })
           );
         }
+      }
+
+      // Detect ANTHROPIC_BASE_URL override in ~/.claude/settings.json
+      // Claude Code reads settings.json at startup and silently overrides env vars;
+      // warn the user so they know which endpoint is actually in use.
+      try {
+        const { detectSettingsConflict } = await import('./settings-conflict.js');
+        const conflict = await detectSettingsConflict(env);
+        if (conflict) {
+          // ASCII allowlist: accept only printable ASCII (0x20–0x7E) after stripping ANSI
+          // sequences. This blocks C0/C1 bytes, Bidi override chars, soft hyphen,
+          // zero-width chars, combining marks, and every other non-ASCII Unicode vector.
+          //
+          // DCS pre-strip: strip-ansi only removes the 2-byte introducer (\x1bP etc.),
+          // leaving the payload as plain ASCII. Strip the full sequence — from introducer
+          // to BEL/ST/C1-ST terminator — before handing off to strip-ansi. If no terminator
+          // is found, consume to end-of-string (greedy fallback) to prevent partial leakage.
+          //
+          // URL userinfo guard: https://user@evil.com routes to evil.com; the @ is valid
+          // ASCII so the allowlist cannot catch it — URL parsing is required.
+          const safeUrl = (s: string): string => {
+            // ESC-form: P=DCS X=SOS ^=PM _=APC; C1-form: \x90 \x98 \x9e \x9f
+            const noStringCmds = s.replace(/(?:\x1b[PX^_]|[\x90\x98\x9e\x9f])[\s\S]*?(?:\x07|\x1b\\|\x9c|$)/g, ''); // eslint-disable-line no-control-regex
+            const stripped = stripAnsi(noStringCmds).replace(/[^\x20-\x7e]/gu, '');
+            try {
+              const url = new URL(stripped);
+              if (url.username || url.password) {
+                url.username = '';
+                url.password = '';
+                return `[credentials removed] ${url.toString()}`;
+              }
+            } catch {
+              // Not a parseable URL — return stripped string as-is
+            }
+            return stripped;
+          };
+          // The fallback literal contains U+2014 (em dash) which the ASCII allowlist strips.
+          // Bypass safeUrl for the known-safe constant; only user-controlled values need it.
+          const profileDisplay = conflict.profileUrl
+            ? safeUrl(conflict.profileUrl)
+            : '(not set — direct Anthropic API)';
+          const activeDisplay = safeUrl(conflict.settingsUrl);
+          console.error(chalk.yellow('\n⚠️  ANTHROPIC_BASE_URL override detected in ~/.claude/settings.json'));
+          console.error(chalk.yellow('─'.repeat(60)));
+          console.error(chalk.yellow(`  Profile URL  │ ${profileDisplay}`));
+          console.error(chalk.yellow(`  Active URL   │ ${activeDisplay}  ← settings.json wins`));
+          console.error(chalk.yellow(''));
+          console.error(chalk.yellow('  ~/.claude/settings.json ANTHROPIC_BASE_URL takes precedence'));
+          console.error(chalk.yellow('  over the profile value. Session will use the settings.json URL.'));
+          console.error(chalk.yellow(''));
+          console.error(chalk.yellow('  To fix: remove ANTHROPIC_BASE_URL from ~/.claude/settings.json'));
+          console.error(chalk.yellow('─'.repeat(60)));
+          console.error('');
+        }
+      } catch (error) {
+        logger.warn(
+          '[Claude] Failed to check for ANTHROPIC_BASE_URL settings conflict',
+          ...sanitizeLogArgs({
+            error: error instanceof Error ? error.message : String(error),
+          })
+        );
       }
 
       return env;
