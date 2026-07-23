@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "task": "Fix proxy connect desktop crash on Keycloak HTML response — add Content-Type/redirect guard in fetchClaudeModels, fix false-healthy deep-check in health-check.ts, surface actionable re-auth error, add regression tests",
+  "generated": "2026-07-23T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 15,
+  "size": "M",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Three components across two layers: fetchClaudeModels() in desktop.ts (primary crash site), checkProxyHealth() deep-check in health-check.ts (secondary false-healthy fix), and ConfigurationError in the utility layer for new four-way error classification. Coordination needed but established patterns cover the pattern."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Base risk is low — Content-Type/redirect guard is a well-known Node.js fetch pattern and fetchManagedMcpServers provides a reference. Bumped from S to M by the auth red flag: fix involves detecting and classifying Keycloak/SSO session failures, which touches the authentication failure path. The non-trivial design decision is plumbing authServerUrl/authRealm from profile config into the error message path, which has no existing implementation."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Five files modified: desktop.ts and health-check.ts (source fixes), errors.ts or equivalent (new error message path), desktop.test.ts and health-check.test.ts (regression tests for four error scenarios). All modifications, no new files. Spans src/cli/commands/proxy/connectors/, src/cli/commands/proxy/, and src/utils/ — three directories."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from S (2) to M (3): fix involves detecting and classifying Keycloak/SSO authentication failures — affects authentication flow red flag triggered"
+  ],
+  "split_recommendation": null
+}

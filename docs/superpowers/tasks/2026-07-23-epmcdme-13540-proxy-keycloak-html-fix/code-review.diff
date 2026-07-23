@@ -1,0 +1,236 @@
+diff --git a/src/cli/commands/proxy/__tests__/health-check.test.ts b/src/cli/commands/proxy/__tests__/health-check.test.ts
+index 92ad99a..4a8c230 100644
+--- a/src/cli/commands/proxy/__tests__/health-check.test.ts
++++ b/src/cli/commands/proxy/__tests__/health-check.test.ts
+@@ -7,6 +7,7 @@ vi.mock('@/utils/logger.js', () => ({
+ 
+ const HEALTH = (url: unknown): boolean => String(url).endsWith('/health');
+ const MODELS = (url: unknown): boolean => String(url).includes('/v1/llm_models');
++const mkHeaders = (ct: string) => ({ get: (h: string) => h === 'content-type' ? ct : null });
+ 
+ describe('checkProxyHealth', () => {
+   let originalFetch: typeof globalThis.fetch;
+@@ -59,7 +60,7 @@ describe('checkProxyHealth', () => {
+   it('deep: healthy when /health and /v1/llm_models both succeed, with Bearer auth', async () => {
+     const fetchSpy = vi.fn(async (url: unknown) => {
+       if (HEALTH(url)) return { ok: true, status: 200 };
+-      if (MODELS(url)) return { ok: true, status: 200, json: async () => [] };
++      if (MODELS(url)) return { ok: true, status: 200, headers: mkHeaders('application/json'), json: async () => [] };
+       throw new Error(`unexpected url ${String(url)}`);
+     });
+     globalThis.fetch = fetchSpy as unknown as typeof globalThis.fetch;
+@@ -132,4 +133,31 @@ describe('checkProxyHealth', () => {
+     expect(fetchSpy).toHaveBeenCalledTimes(1);
+     expect(MODELS(fetchSpy.mock.calls[0][0])).toBe(false);
+   });
++
++  it('deep: unauthorized when /v1/llm_models returns 200 with HTML content-type (Keycloak redirect)', async () => {
++    globalThis.fetch = vi.fn(async (url: unknown) => {
++      if (HEALTH(url)) return { ok: true, status: 200 };
++      if (MODELS(url)) return { ok: true, status: 200, headers: mkHeaders('text/html; charset=utf-8') };
++      throw new Error(`unexpected url ${String(url)}`);
++    }) as unknown as typeof globalThis.fetch;
++
++    const result = await checkProxyHealth({ port: 4001, gatewayKey: 'k', deep: true });
++
++    expect(result.healthy).toBe(false);
++    expect(result.level).toBe('deep');
++    expect(result.code).toBe('unauthorized');
++    expect(result.reason).toContain('SSO session expired');
++  });
++
++  it('deep: healthy when /v1/llm_models returns 200 with application/json (regression)', async () => {
++    globalThis.fetch = vi.fn(async (url: unknown) => {
++      if (HEALTH(url)) return { ok: true, status: 200 };
++      if (MODELS(url)) return { ok: true, status: 200, headers: mkHeaders('application/json'), json: async () => [] };
++      throw new Error(`unexpected url ${String(url)}`);
++    }) as unknown as typeof globalThis.fetch;
++
++    const result = await checkProxyHealth({ port: 4001, gatewayKey: 'k', deep: true });
++
++    expect(result).toEqual({ healthy: true, level: 'deep', code: 'ok' });
++  });
+ });
+diff --git a/src/cli/commands/proxy/connectors/__tests__/desktop.test.ts b/src/cli/commands/proxy/connectors/__tests__/desktop.test.ts
+index db4ab3b..f78f15b 100644
+--- a/src/cli/commands/proxy/connectors/__tests__/desktop.test.ts
++++ b/src/cli/commands/proxy/connectors/__tests__/desktop.test.ts
+@@ -75,9 +75,12 @@ describe('fetchClaudeModels', () => {
+   beforeEach(() => { originalFetch = globalThis.fetch; });
+   afterEach(() => { globalThis.fetch = originalFetch; });
+ 
++  const mkHeaders = (ct: string) => ({ get: (h: string) => h === 'content-type' ? ct : null });
++
+   it('returns Claude family ids and excludes vertex / non-claude entries', async () => {
+     globalThis.fetch = vi.fn().mockResolvedValue({
+       ok: true,
++      headers: mkHeaders('application/json'),
+       json: async () => [
+         { base_name: 'claude-sonnet-4-5-20250929' },
+         { base_name: 'claude-4-5-sonnet' },
+@@ -89,7 +92,7 @@ describe('fetchClaudeModels', () => {
+         { base_name: 'claude-opus-4-6-vertex' },
+         { base_name: 'gpt-5.5-2026-04-24' },
+       ],
+-    }) as any;
++    }) as unknown as typeof globalThis.fetch;
+ 
+     const models = await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy');
+     expect(models).toEqual([
+@@ -104,8 +107,8 @@ describe('fetchClaudeModels', () => {
+   });
+ 
+   it('sends Authorization Bearer header with the gateway key', async () => {
+-    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [] }) });
+-    globalThis.fetch = fetchSpy as any;
++    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, headers: mkHeaders('application/json'), json: async () => ({ data: [] }) });
++    globalThis.fetch = fetchSpy as unknown as typeof globalThis.fetch;
+ 
+     await fetchClaudeModels('http://127.0.0.1:4001', 'my-key');
+     const [, init] = fetchSpy.mock.calls[0];
+@@ -127,12 +130,13 @@ describe('fetchClaudeModels', () => {
+   it('returns vertex Claude ids when the catalog is vertex-only', async () => {
+     globalThis.fetch = vi.fn().mockResolvedValue({
+       ok: true,
++      headers: mkHeaders('application/json'),
+       json: async () => [
+         { base_name: 'gemini-2.5-flash' },
+         { base_name: 'claude-sonnet-4-5-vertex' },
+         { base_name: 'claude-sonnet-4-6-vertex' },
+       ],
+-    }) as any;
++    }) as unknown as typeof globalThis.fetch;
+ 
+     const models = await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy');
+     expect(models).toEqual([
+@@ -144,16 +148,50 @@ describe('fetchClaudeModels', () => {
+   it('prefers non-vertex Claude ids when both canonical and vertex entries exist', async () => {
+     globalThis.fetch = vi.fn().mockResolvedValue({
+       ok: true,
++      headers: mkHeaders('application/json'),
+       json: async () => [
+         { base_name: 'claude-sonnet-4-6' },
+         { base_name: 'claude-sonnet-4-6-vertex' },
+         { base_name: 'claude-opus-4-6-vertex' },
+       ],
+-    }) as any;
++    }) as unknown as typeof globalThis.fetch;
+ 
+     const models = await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy');
+     expect(models).toEqual(['claude-sonnet-4-6']);
+   });
++
++  it('throws ConfigurationError with re-auth message when response is HTML (Keycloak redirect)', async () => {
++    globalThis.fetch = vi.fn().mockResolvedValue({
++      ok: true,
++      headers: mkHeaders('text/html; charset=utf-8'),
++      json: async () => { throw new SyntaxError("Unexpected token '<'"); },
++    }) as unknown as typeof globalThis.fetch;
++
++    await expect(fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy'))
++      .rejects.toThrow('SSO session may have expired');
++  });
++
++  it('throws ConfigurationError when response content-type is plain text (not JSON)', async () => {
++    globalThis.fetch = vi.fn().mockResolvedValue({
++      ok: true,
++      headers: mkHeaders('text/plain; charset=utf-8'),
++      json: async () => { throw new SyntaxError('not json'); },
++    }) as unknown as typeof globalThis.fetch;
++
++    await expect(fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy'))
++      .rejects.toThrow('SSO session may have expired');
++  });
++
++  it('returns models when content-type is application/json (regression)', async () => {
++    globalThis.fetch = vi.fn().mockResolvedValue({
++      ok: true,
++      headers: mkHeaders('application/json; charset=utf-8'),
++      json: async () => ({ data: [{ id: 'claude-sonnet-4-6' }] }),
++    }) as unknown as typeof globalThis.fetch;
++
++    const models = await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy');
++    expect(models).toContain('claude-sonnet-4-6');
++  });
+ });
+ 
+ describe('selectPreferredClaudeModels', () => {
+@@ -266,8 +304,9 @@ describe('writeDesktopConfig', () => {
+     // Default: stub fetch to return our model list so writeDesktopConfig can populate inferenceModels.
+     globalThis.fetch = vi.fn().mockResolvedValue({
+       ok: true,
++      headers: { get: (h: string) => h === 'content-type' ? 'application/json' : null },
+       json: async () => MODEL_LIST_RESPONSE,
+-    }) as any;
++    }) as unknown as typeof globalThis.fetch;
+   });
+ 
+   afterEach(() => { globalThis.fetch = originalFetch; });
+@@ -351,7 +390,11 @@ describe('writeDesktopConfig', () => {
+   });
+ 
+   it('fails fast when discovery returns nothing', async () => {
+-    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] }) as any;
++    globalThis.fetch = vi.fn().mockResolvedValue({
++      ok: true,
++      headers: { get: (h: string) => h === 'content-type' ? 'application/json' : null },
++      json: async () => [],
++    }) as unknown as typeof globalThis.fetch;
+     await expect(writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath))
+       .rejects.toThrow('Local proxy did not expose any Claude models');
+   });
+@@ -359,13 +402,14 @@ describe('writeDesktopConfig', () => {
+   it('succeeds with a vertex-only model catalog like a Vertex-only tenant', async () => {
+     globalThis.fetch = vi.fn().mockResolvedValue({
+       ok: true,
++      headers: { get: (h: string) => h === 'content-type' ? 'application/json' : null },
+       json: async () => [
+         { base_name: 'gemini-2.5-flash', deployment_name: 'gemini-2.5-flash' },
+         { base_name: 'gemini-2.5-pro', deployment_name: 'gemini-2.5-pro' },
+         { base_name: 'claude-sonnet-4-5-vertex', deployment_name: 'claude-sonnet-4-5-vertex' },
+         { base_name: 'claude-sonnet-4-6-vertex', deployment_name: 'claude-sonnet-4-6-vertex' },
+       ],
+-    }) as any;
++    }) as unknown as typeof globalThis.fetch;
+ 
+     const written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir);
+     const config = JSON.parse(await readFile(written, 'utf-8'));
+diff --git a/src/cli/commands/proxy/connectors/desktop.ts b/src/cli/commands/proxy/connectors/desktop.ts
+index ee7c800..d4bf5ac 100644
+--- a/src/cli/commands/proxy/connectors/desktop.ts
++++ b/src/cli/commands/proxy/connectors/desktop.ts
+@@ -101,6 +101,14 @@ export async function fetchClaudeModels(proxyUrl: string, gatewayKey: string): P
+           : `Local proxy model discovery failed at ${endpoint}: ${response.status} ${response.statusText}`
+       );
+     }
++    const contentType = response.headers.get('content-type') ?? '';
++    if (!contentType.includes('application/json')) {
++      throw new ConfigurationError(
++        `Local proxy model discovery received an unexpected response (${contentType || 'no content-type'}) from ${endpoint}. ` +
++        `Your SSO session may have expired — run \`codemie proxy stop && codemie profile login\` ` +
++        `to re-authenticate, then run \`codemie proxy connect desktop\` again.`
++      );
++    }
+     const json = await response.json() as ModelsListResponse | CodeMieLlmModel[];
+     const ids = Array.isArray(json)
+       ? json
+diff --git a/src/cli/commands/proxy/health-check.ts b/src/cli/commands/proxy/health-check.ts
+index af35d8c..f0dc016 100644
+--- a/src/cli/commands/proxy/health-check.ts
++++ b/src/cli/commands/proxy/health-check.ts
+@@ -102,6 +102,15 @@ export async function checkProxyHealth(
+         reason: `Upstream model discovery returned ${res.status}`,
+       };
+     }
++    const contentType = res.headers.get('content-type') ?? '';
++    if (!contentType.includes('application/json')) {
++      return {
++        healthy: false,
++        level: 'deep',
++        code: 'unauthorized',
++        reason: 'SSO session expired — run `codemie proxy stop && codemie profile login` to re-authenticate.',
++      };
++    }
+     return { healthy: true, level: 'deep', code: 'ok' };
+   } catch (error) {
+     logger.debug('[proxy-health] Deep check failed', error);
