@@ -101,6 +101,14 @@ export async function fetchClaudeModels(proxyUrl: string, gatewayKey: string): P
           : `Local proxy model discovery failed at ${endpoint}: ${response.status} ${response.statusText}`
       );
     }
+    const contentType = response.headers.get('content-type') ?? '';
+    if (!contentType.includes('application/json')) {
+      throw new ConfigurationError(
+        `Local proxy model discovery received an unexpected response (${contentType || 'no content-type'}) from ${endpoint}. ` +
+        `Your SSO session may have expired — run \`codemie proxy stop && codemie profile login\` ` +
+        `to re-authenticate, then run \`codemie proxy connect desktop\` again.`
+      );
+    }
     const json = await response.json() as ModelsListResponse | CodeMieLlmModel[];
     const ids = Array.isArray(json)
       ? json

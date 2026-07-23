@@ -75,9 +75,12 @@ describe('fetchClaudeModels', () => {
   beforeEach(() => { originalFetch = globalThis.fetch; });
   afterEach(() => { globalThis.fetch = originalFetch; });
 
+  const mkHeaders = (ct: string) => ({ get: (h: string) => h === 'content-type' ? ct : null });
+
   it('returns Claude family ids and excludes vertex / non-claude entries', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
+      headers: mkHeaders('application/json'),
       json: async () => [
         { base_name: 'claude-sonnet-4-5-20250929' },
         { base_name: 'claude-4-5-sonnet' },
@@ -89,7 +92,7 @@ describe('fetchClaudeModels', () => {
         { base_name: 'claude-opus-4-6-vertex' },
         { base_name: 'gpt-5.5-2026-04-24' },
       ],
-    }) as any;
+    }) as unknown as typeof globalThis.fetch;
 
     const models = await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy');
     expect(models).toEqual([
@@ -104,8 +107,8 @@ describe('fetchClaudeModels', () => {
   });
 
   it('sends Authorization Bearer header with the gateway key', async () => {
-    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ data: [] }) });
-    globalThis.fetch = fetchSpy as any;
+    const fetchSpy = vi.fn().mockResolvedValue({ ok: true, headers: mkHeaders('application/json'), json: async () => ({ data: [] }) });
+    globalThis.fetch = fetchSpy as unknown as typeof globalThis.fetch;
 
     await fetchClaudeModels('http://127.0.0.1:4001', 'my-key');
     const [, init] = fetchSpy.mock.calls[0];
@@ -127,12 +130,13 @@ describe('fetchClaudeModels', () => {
   it('returns vertex Claude ids when the catalog is vertex-only', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
+      headers: mkHeaders('application/json'),
       json: async () => [
         { base_name: 'gemini-2.5-flash' },
         { base_name: 'claude-sonnet-4-5-vertex' },
         { base_name: 'claude-sonnet-4-6-vertex' },
       ],
-    }) as any;
+    }) as unknown as typeof globalThis.fetch;
 
     const models = await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy');
     expect(models).toEqual([
@@ -144,15 +148,49 @@ describe('fetchClaudeModels', () => {
   it('prefers non-vertex Claude ids when both canonical and vertex entries exist', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
+      headers: mkHeaders('application/json'),
       json: async () => [
         { base_name: 'claude-sonnet-4-6' },
         { base_name: 'claude-sonnet-4-6-vertex' },
         { base_name: 'claude-opus-4-6-vertex' },
       ],
-    }) as any;
+    }) as unknown as typeof globalThis.fetch;
 
     const models = await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy');
     expect(models).toEqual(['claude-sonnet-4-6']);
+  });
+
+  it('throws ConfigurationError with re-auth message when response is HTML (Keycloak redirect)', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: mkHeaders('text/html; charset=utf-8'),
+      json: async () => { throw new SyntaxError("Unexpected token '<'"); },
+    }) as unknown as typeof globalThis.fetch;
+
+    await expect(fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy'))
+      .rejects.toThrow('SSO session may have expired');
+  });
+
+  it('throws ConfigurationError when response content-type is plain text (not JSON)', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: mkHeaders('text/plain; charset=utf-8'),
+      json: async () => { throw new SyntaxError('not json'); },
+    }) as unknown as typeof globalThis.fetch;
+
+    await expect(fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy'))
+      .rejects.toThrow('SSO session may have expired');
+  });
+
+  it('returns models when content-type is application/json (regression)', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: mkHeaders('application/json; charset=utf-8'),
+      json: async () => ({ data: [{ id: 'claude-sonnet-4-6' }] }),
+    }) as unknown as typeof globalThis.fetch;
+
+    const models = await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy');
+    expect(models).toContain('claude-sonnet-4-6');
   });
 });
 
@@ -266,8 +304,9 @@ describe('writeDesktopConfig', () => {
     // Default: stub fetch to return our model list so writeDesktopConfig can populate inferenceModels.
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
+      headers: { get: (h: string) => h === 'content-type' ? 'application/json' : null },
       json: async () => MODEL_LIST_RESPONSE,
-    }) as any;
+    }) as unknown as typeof globalThis.fetch;
   });
 
   afterEach(() => { globalThis.fetch = originalFetch; });
@@ -351,7 +390,11 @@ describe('writeDesktopConfig', () => {
   });
 
   it('fails fast when discovery returns nothing', async () => {
-    globalThis.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => [] }) as any;
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      headers: { get: (h: string) => h === 'content-type' ? 'application/json' : null },
+      json: async () => [],
+    }) as unknown as typeof globalThis.fetch;
     await expect(writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath))
       .rejects.toThrow('Local proxy did not expose any Claude models');
   });
@@ -359,13 +402,14 @@ describe('writeDesktopConfig', () => {
   it('succeeds with a vertex-only model catalog like a Vertex-only tenant', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
+      headers: { get: (h: string) => h === 'content-type' ? 'application/json' : null },
       json: async () => [
         { base_name: 'gemini-2.5-flash', deployment_name: 'gemini-2.5-flash' },
         { base_name: 'gemini-2.5-pro', deployment_name: 'gemini-2.5-pro' },
         { base_name: 'claude-sonnet-4-5-vertex', deployment_name: 'claude-sonnet-4-5-vertex' },
         { base_name: 'claude-sonnet-4-6-vertex', deployment_name: 'claude-sonnet-4-6-vertex' },
       ],
-    }) as any;
+    }) as unknown as typeof globalThis.fetch;
 
     const written = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir);
     const config = JSON.parse(await readFile(written, 'utf-8'));
