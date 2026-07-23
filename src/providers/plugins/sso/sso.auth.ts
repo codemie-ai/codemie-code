@@ -6,6 +6,7 @@
  */
 
 import { createServer, Server } from 'http';
+import { spawn } from 'child_process';
 import { URL } from 'url';
 import open from 'open';
 import chalk from 'chalk';
@@ -107,7 +108,14 @@ export class CodeMieSSO {
 
       // 3. Launch browser
       console.log(chalk.white(`Opening browser for authentication...`));
-      await open(ssoUrl);
+      console.log(chalk.dim(`  If browser does not open, visit: ${ssoUrl}`));
+      if (process.platform === 'win32') {
+        // explorer.exe is Windows-native and has no PowerShell dependency,
+        // avoiding failures on machines where WDAC/AppLocker blocks Start-Process.
+        spawn('explorer.exe', [ssoUrl], { detached: true, stdio: 'ignore' }).unref();
+      } else {
+        await open(ssoUrl);
+      }
 
       // 4. Wait for callback with timeout and abort signal
       const result = await this.waitForCallback(
