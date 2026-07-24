@@ -105,6 +105,8 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
         maxOutputTokens: definition.maxOutputTokens,
       };
       if (definition.adaptiveThinking) expected.adaptiveThinking = true;
+      if (definition.modelOptions) expected.modelOptions = definition.modelOptions;
+      if (definition.requestHeaders) expected.requestHeaders = definition.requestHeaders;
       if (definition.supportsReasoningEffort) {
         expected.supportsReasoningEffort = definition.supportsReasoningEffort;
       }
@@ -117,7 +119,53 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
     }
   });
 
-  it('replaces legacy CodeMie models while preserving the secret and saved settings', async () => {
+  it('omits top_p for Claude 4.5 models that reject dual sampling parameters', async () => {
+    await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001');
+
+    const providers = await readProviders();
+    const models = providers[0].models as Array<Record<string, unknown>>;
+    const affectedIds = [
+      'claude-sonnet-4-5-20250929',
+      'claude-4-5-sonnet',
+      'claude-haiku-4-5-20251001',
+    ];
+
+    for (const id of affectedIds) {
+      expect(models.find(model => model.id === id)).toMatchObject({
+        modelOptions: { top_p: null },
+      });
+    }
+  });
+
+  it('does not advertise the rejected none effort for GPT-5.1 Codex', async () => {
+    await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001');
+
+    const providers = await readProviders();
+    const models = providers[0].models as Array<Record<string, unknown>>;
+    const codex = models.find(model => model.id === 'gpt-5-1-codex-2025-11-13');
+
+    expect(codex?.supportsReasoningEffort).toEqual(['low', 'medium', 'high']);
+  });
+
+  it('forces bearer authentication for Messages models only', async () => {
+    await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001');
+
+    const providers = await readProviders();
+    const models = providers[0].models as Array<Record<string, unknown>>;
+
+    for (const definition of VS_CODE_SUPPORTED_MODELS) {
+      const model = models.find(candidate => candidate.id === definition.id);
+      if (definition.apiType === 'messages') {
+        expect(model?.requestHeaders).toEqual({
+          Authorization: 'Bearer ${apiKey}',
+        });
+      } else {
+        expect(model).not.toHaveProperty('requestHeaders');
+      }
+    }
+  });
+
+  it('overrides the CodeMie model catalog while preserving the secret and saved settings', async () => {
     const secretReference = '${input:chat.lm.secret.codemie}';
     await writeFile(configPath, JSON.stringify([
       {
@@ -132,12 +180,11 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
         apiKey: secretReference,
         customProperty: 'preserved',
         settings: {
-          'old-profile-model': { reasoningEffort: 'medium' },
           'gpt-5.5-2026-04-24': { reasoningEffort: 'high' },
           'custom-setting': { enabled: true },
         },
         models: [
-          { id: 'old-profile-model', name: 'CodeMie Profile Model', stale: true },
+          { id: 'stale-catalog-model', name: 'Stale catalog model', stale: true },
           { id: 'user-managed-model', name: 'User model', custom: true },
         ],
       },
@@ -169,7 +216,6 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
         'custom-setting': { enabled: true },
       },
     });
-    expect(codeMie.settings).not.toHaveProperty('old-profile-model');
     expect(models.map(model => model.id)).toEqual(EXPECTED_MODEL_IDS);
     expect(models.some(model => model.id === 'user-managed-model')).toBe(false);
   });

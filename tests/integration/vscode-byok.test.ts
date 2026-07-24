@@ -106,7 +106,7 @@ function buildRequestBody(
         description: 'Return a synthetic test value.',
         input_schema: { type: 'object', properties: {} },
       }],
-      tool_choice: { type: 'any' },
+      tool_choice: { type: 'auto' },
       ...(definition.adaptiveThinking ? { thinking: { type: 'adaptive' } } : {}),
       ...(effort ? { output_config: { effort } } : {}),
     };
@@ -128,6 +128,21 @@ function buildRequestBody(
     tool_choice: 'required',
     ...(effort ? { reasoning_effort: effort } : {}),
   };
+}
+
+function buildVsCodeAuthHeaders(
+  definition: VsCodeModelDefinition
+): Record<string, string> {
+  if (definition.requestHeaders?.Authorization) {
+    return {
+      authorization: definition.requestHeaders.Authorization.replace(
+        '${apiKey}',
+        GATEWAY_KEY
+      ),
+    };
+  }
+  if (definition.apiType === 'messages') return { 'x-api-key': GATEWAY_KEY };
+  return { authorization: `Bearer ${GATEWAY_KEY}` };
 }
 
 describe('VS Code BYOK model matrix', () => {
@@ -199,13 +214,13 @@ describe('VS Code BYOK model matrix', () => {
       });
 
       const efforts: ReadonlyArray<VsCodeReasoningEffort | undefined> =
-        definition.supportsReasoningEffort ?? [undefined];
+        [undefined, ...(definition.supportsReasoningEffort ?? [])];
       for (const effort of efforts) {
         const requestBody = buildRequestBody(definition, effort);
         const response = await fetch(String(configuredModel?.url), {
           method: 'POST',
           headers: {
-            authorization: `Bearer ${GATEWAY_KEY}`,
+            ...buildVsCodeAuthHeaders(definition),
             'content-type': 'application/json',
           },
           body: JSON.stringify(requestBody),
@@ -218,6 +233,7 @@ describe('VS Code BYOK model matrix', () => {
         expect(forwarded?.url).toBe(new URL(String(configuredModel?.url)).pathname);
         expect(forwarded?.body).toEqual(requestBody);
         expect(forwarded?.headers.authorization).toBeUndefined();
+        expect(forwarded?.headers['x-api-key']).toBeUndefined();
         expect(forwarded?.headers['x-codemie-client']).toBe('vscode-byok');
         expect(forwarded?.headers['x-codemie-project']).toBe('test-project');
         expect(forwarded?.headers['x-codemie-cli-model']).toBeUndefined();

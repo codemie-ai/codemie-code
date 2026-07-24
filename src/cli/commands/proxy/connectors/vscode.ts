@@ -9,7 +9,6 @@ import {
   type VsCodeReasoningEffort,
 } from './vscode-models.js';
 
-const LEGACY_MANAGED_MODEL_NAME = 'CodeMie Profile Model';
 const SECRET_REFERENCE_PATTERN = /^\$\{input:chat\.lm\.secret\.[^}]+\}$/;
 
 interface VsCodeLanguageModelProvider {
@@ -32,6 +31,11 @@ interface VsCodeManagedModel {
   streaming: true;
   thinking: boolean;
   adaptiveThinking?: true;
+  modelOptions?: Readonly<{
+    temperature?: number | null;
+    top_p?: number | null;
+  }>;
+  requestHeaders?: Readonly<Record<string, string>>;
   supportsReasoningEffort?: readonly VsCodeReasoningEffort[];
   reasoningEffortFormat?: 'chat-completions' | 'responses';
   maxInputTokens: number;
@@ -47,18 +51,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function isLegacyManagedModel(model: unknown): boolean {
-  if (!isRecord(model)) return false;
-  return model.name === LEGACY_MANAGED_MODEL_NAME;
-}
-
 function isManagedProvider(provider: unknown): provider is VsCodeLanguageModelProvider {
-  if (!isRecord(provider)) return false;
-
-  const hasLegacyManagedModel = Array.isArray(provider.models) &&
-    provider.models.some(model => isLegacyManagedModel(model));
-  return hasLegacyManagedModel ||
-    (provider.vendor === 'customendpoint' && provider.name === 'CodeMie');
+  return isRecord(provider) &&
+    provider.vendor === 'customendpoint' &&
+    provider.name === 'CodeMie';
 }
 
 export function isVsCodeSecretReference(value: unknown): value is string {
@@ -123,6 +119,8 @@ function buildManagedModels(proxyUrl: string): VsCodeManagedModel[] {
     };
 
     if (definition.adaptiveThinking) model.adaptiveThinking = true;
+    if (definition.modelOptions) model.modelOptions = definition.modelOptions;
+    if (definition.requestHeaders) model.requestHeaders = definition.requestHeaders;
     if (definition.supportsReasoningEffort) {
       model.supportsReasoningEffort = definition.supportsReasoningEffort;
     }
@@ -139,20 +137,10 @@ function mergeManagedProviders(
   proxyUrl: string
 ): { provider: VsCodeLanguageModelProvider; requiresSecretConfiguration: boolean } {
   const existingProvider = Object.assign({}, ...providers);
-  const existingModels = providers.flatMap(provider =>
-    Array.isArray(provider.models) ? provider.models : []
-  );
   const existingSettings = Object.assign(
     {},
     ...providers.map(provider => isRecord(provider.settings) ? provider.settings : {})
   );
-  const legacyManagedModelIds = existingModels
-    .filter(model => isLegacyManagedModel(model))
-    .map(model => isRecord(model) ? model.id : undefined)
-    .filter((id): id is string => typeof id === 'string');
-  for (const modelId of new Set(legacyManagedModelIds)) {
-    delete existingSettings[modelId];
-  }
   const existingSecretReference = providers
     .map(provider => provider.apiKey)
     .find(isVsCodeSecretReference);

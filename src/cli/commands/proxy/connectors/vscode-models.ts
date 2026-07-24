@@ -16,6 +16,11 @@ export interface VsCodeModelDefinition {
   vision: boolean;
   thinking: boolean;
   adaptiveThinking?: true;
+  modelOptions?: Readonly<{
+    temperature?: number | null;
+    top_p?: number | null;
+  }>;
+  requestHeaders?: Readonly<Record<string, string>>;
   supportsReasoningEffort?: readonly VsCodeReasoningEffort[];
   reasoningEffortFormat?: 'chat-completions' | 'responses';
   maxInputTokens: number;
@@ -23,7 +28,8 @@ export interface VsCodeModelDefinition {
 }
 
 const GPT_5_EFFORTS = ['minimal', 'low', 'medium', 'high'] as const;
-const GPT_5_1_EFFORTS = ['none', 'low', 'medium', 'high'] as const;
+const GPT_5_1_EFFORTS = ['low', 'medium', 'high'] as const;
+const GPT_5_2_EFFORTS = ['none', 'low', 'medium', 'high'] as const;
 const GPT_5_XHIGH_EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh'] as const;
 const GPT_5_6_EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 const GEMINI_FLASH_EFFORTS = ['minimal', 'low', 'medium', 'high'] as const;
@@ -31,6 +37,9 @@ const GEMINI_PRO_EFFORTS = ['low', 'medium', 'high'] as const;
 const CLAUDE_EFFORTS = ['low', 'medium', 'high'] as const;
 const CLAUDE_MAX_EFFORTS = ['low', 'medium', 'high', 'max'] as const;
 const CLAUDE_XHIGH_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'] as const;
+const MESSAGE_AUTH_HEADERS = {
+  Authorization: 'Bearer ${apiKey}',
+} as const;
 
 export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
   {
@@ -39,6 +48,7 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     apiType: 'chat-completions',
     vision: true,
     thinking: false,
+    modelOptions: { top_p: null },
     maxInputTokens: 136000,
     maxOutputTokens: 64000,
   },
@@ -110,7 +120,7 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     apiType: 'chat-completions',
     vision: true,
     thinking: true,
-    supportsReasoningEffort: GPT_5_1_EFFORTS,
+    supportsReasoningEffort: GPT_5_2_EFFORTS,
     reasoningEffortFormat: 'chat-completions',
     maxInputTokens: 272000,
     maxOutputTokens: 128000,
@@ -209,6 +219,7 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     apiType: 'chat-completions',
     vision: true,
     thinking: false,
+    modelOptions: { top_p: null },
     maxInputTokens: 136000,
     maxOutputTokens: 64000,
   },
@@ -219,6 +230,7 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     vision: true,
     thinking: true,
     adaptiveThinking: true,
+    requestHeaders: MESSAGE_AUTH_HEADERS,
     supportsReasoningEffort: CLAUDE_MAX_EFFORTS,
     maxInputTokens: 936000,
     maxOutputTokens: 64000,
@@ -230,6 +242,7 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     vision: true,
     thinking: true,
     adaptiveThinking: true,
+    requestHeaders: MESSAGE_AUTH_HEADERS,
     supportsReasoningEffort: CLAUDE_XHIGH_EFFORTS,
     maxInputTokens: 872000,
     maxOutputTokens: 128000,
@@ -240,6 +253,7 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     apiType: 'messages',
     vision: true,
     thinking: false,
+    requestHeaders: MESSAGE_AUTH_HEADERS,
     supportsReasoningEffort: CLAUDE_EFFORTS,
     maxInputTokens: 136000,
     maxOutputTokens: 64000,
@@ -251,6 +265,7 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     vision: true,
     thinking: true,
     adaptiveThinking: true,
+    requestHeaders: MESSAGE_AUTH_HEADERS,
     supportsReasoningEffort: CLAUDE_MAX_EFFORTS,
     maxInputTokens: 872000,
     maxOutputTokens: 128000,
@@ -262,6 +277,7 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     vision: true,
     thinking: true,
     adaptiveThinking: true,
+    requestHeaders: MESSAGE_AUTH_HEADERS,
     supportsReasoningEffort: CLAUDE_XHIGH_EFFORTS,
     maxInputTokens: 872000,
     maxOutputTokens: 128000,
@@ -273,6 +289,7 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     vision: true,
     thinking: true,
     adaptiveThinking: true,
+    requestHeaders: MESSAGE_AUTH_HEADERS,
     supportsReasoningEffort: CLAUDE_XHIGH_EFFORTS,
     maxInputTokens: 872000,
     maxOutputTokens: 128000,
@@ -283,6 +300,7 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     apiType: 'chat-completions',
     vision: true,
     thinking: false,
+    modelOptions: { top_p: null },
     maxInputTokens: 136000,
     maxOutputTokens: 64000,
   },
