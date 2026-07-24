@@ -91,10 +91,12 @@ The SSO credentials remain in CodeMie and are never added to VS Code. The connec
 For a new provider or an invalid existing key, the command prints this required one-time action:
 
 ```text
-Press ⇧⌘P (macOS) or Ctrl+Shift+P (Windows/Linux)
-Run Chat: Manage Language Models
-Right-click CodeMie Profile Model → Update API Key
-Enter API key: codemie-proxy
+One-time VS Code secret setup required:
+1. Open VS Code and Press ⇧⌘P (macOS) or Ctrl+Shift+P (Windows/Linux).
+2. Find Chat: Manage Language Models
+3. In opened dialog Right-click any CodeMie model → Update API Key
+4. Enter API key: codemie-proxy
+Reload VS Code, then select a CodeMie model from the model picker
 ```
 
 VS Code stores that local key in its secret storage and adds the reference to the configuration. The CLI cannot inspect whether an existing secret reference still resolves; if VS Code reports a missing or invalid key, use **Update API Key** again.
