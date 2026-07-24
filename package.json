@@ -37,6 +37,7 @@
     "test:unit": "vitest run --project unit",
     "test:integration": "vitest run --project cli",
     "test:integration:cli": "vitest run --project cli",
+    "test:integration:vscode-models": "vitest run --project cli tests/integration/vscode-byok.test.ts tests/integration/vscode-models.live.test.ts",
     "test:integration:agent": "vitest run --project agent",
     "test:run": "vitest run --project unit --project cli",
     "test:all": "vitest run --project unit && vitest run --project cli && vitest run --project agent",

@@ -323,7 +323,7 @@ describe('proxy connect vscode', () => {
     exitSpy.mockRestore();
   });
 
-  it('uses an explicit profile for daemon context and writes its model into VS Code', async () => {
+  it('uses an explicit profile without requiring its model for VS Code', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
     const { writeVsCodeLanguageModelsConfig } = await import('../connectors/vscode.js');
@@ -332,7 +332,6 @@ describe('proxy connect vscode', () => {
       name: 'custom',
       provider: 'ai-run-sso',
       baseUrl: 'https://custom.example.com/api',
-      model: 'custom-profile-model',
       codeMieProject: 'team-project',
       codeMieUrl: 'https://custom.example.com',
     } as Awaited<ReturnType<typeof ConfigLoader.load>>);
@@ -365,12 +364,11 @@ describe('proxy connect vscode', () => {
     expect(daemonOptions).not.toHaveProperty('model');
     expect(writeVsCodeLanguageModelsConfig).toHaveBeenCalledWith(
       'http://127.0.0.1:4001',
-      'custom-profile-model',
       false
     );
   });
 
-  it('reuses a matching daemon when only the profile model changes', async () => {
+  it('reuses a matching daemon independently of the profile model', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { checkStatus, spawnDaemon, stopDaemon } = await import('../daemon-manager.js');
     const { checkProxyHealth } = await import('../health-check.js');
@@ -407,7 +405,6 @@ describe('proxy connect vscode', () => {
     expect(spawnDaemon).not.toHaveBeenCalled();
     expect(writeVsCodeLanguageModelsConfig).toHaveBeenCalledWith(
       'http://127.0.0.1:4001',
-      'new-profile-model',
       false
     );
   });

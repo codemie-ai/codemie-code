@@ -21,6 +21,7 @@ import {
 import { writeDesktopConfig, getDesktopBaseDir, mapCanonicalToDesktop } from './connectors/desktop.js';
 import { fetchManagedMcpServers } from './connectors/managed-mcp-remote.js';
 import { writeVsCodeLanguageModelsConfig } from './connectors/vscode.js';
+import { VS_CODE_SUPPORTED_MODELS } from './connectors/vscode-models.js';
 import { checkProxyHealth } from './health-check.js';
 import { printDesktopInspection } from './inspect-desktop.js';
 
@@ -509,7 +510,7 @@ export function createProxyCommand(): Command {
   connect
     .command('vscode')
     .description('Configure VS Code BYOK to use the local proxy')
-    .option('--profile <name>', 'Profile whose credentials and model to use')
+    .option('--profile <name>', 'Profile whose URL, credentials, and project to use')
     .option('--insiders', 'Configure VS Code Insiders instead of stable VS Code')
     .option('--verbose', 'Show detailed connection info (URLs, config paths) for debugging')
     .option('--force', 'Stop any existing proxy and start a fresh one, even if it looks healthy')
@@ -528,12 +529,6 @@ export function createProxyCommand(): Command {
         }
 
         const profile = config.name ?? 'default';
-        const profileModel = config.model?.trim();
-        if (!profileModel) {
-          throw new ConfigurationError(
-            `Profile "${profile}" has no model configured.\nRun: codemie setup`
-          );
-        }
 
         if (verbose) {
           console.log(
@@ -608,7 +603,6 @@ export function createProxyCommand(): Command {
 
         const result = await writeVsCodeLanguageModelsConfig(
           state!.url,
-          profileModel,
           Boolean(opts.insiders)
         );
         logger.info(
@@ -618,7 +612,7 @@ export function createProxyCommand(): Command {
             gatewayUrl: state!.url,
             profile: state!.profile,
             project: state!.project,
-            model: profileModel,
+            modelCount: VS_CODE_SUPPORTED_MODELS.length,
             clientType: state!.clientType,
             requiresSecretConfiguration: result.requiresSecretConfiguration,
           })
@@ -628,7 +622,7 @@ export function createProxyCommand(): Command {
         if (verbose) {
           console.log(`  Config:  ${result.configPath}`);
           console.log(`  Gateway: ${state!.url}`);
-          console.log(`  Model:   ${profileModel}`);
+          console.log(`  Models:  ${VS_CODE_SUPPORTED_MODELS.length}`);
           console.log(`  Project: ${config.codeMieProject || '(not configured)'}`);
         }
 
@@ -636,18 +630,18 @@ export function createProxyCommand(): Command {
           displaySetupInstructions({
             setupInstructions: [
               'One-time VS Code secret setup required:\n',
-              '1. Press ⇧⌘P (macOS) or Ctrl+Shift+P (Windows/Linux).',
-              '2. Run: Chat: Manage Language Models',
-              '3. Right-click CodeMie Profile Model → Update API Key',
+              '1. Open VS Code and Press ⇧⌘P (macOS) or Ctrl+Shift+P (Windows/Linux).',
+              '2. Find Chat: Manage Language Models',
+              '3. In opened dialog Right-click any CodeMie model → Update API Key',
               `4. Enter API key: ${state!.gatewayKey}\n`,
-              'Reload VS Code to apply changes.',
+              'Reload VS Code, then select a CodeMie model from the model picker.',
             ].join('\n'),
           });
         } else {
           console.log(
             chalk.dim(
               `  If VS Code reports a missing or invalid key, open Chat: Manage Language Models, ` +
-              `then right-click CodeMie Profile Model → Update API Key and enter ${state!.gatewayKey}.`
+              `then right-click any CodeMie model → Update API Key and enter ${state!.gatewayKey}.`
             )
           );
         }

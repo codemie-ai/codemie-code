@@ -7,7 +7,44 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { VS_CODE_SUPPORTED_MODELS, type VsCodeApiType } from '../vscode-models.js';
 import { writeVsCodeLanguageModelsConfigAtPath } from '../vscode.js';
+
+const EXPECTED_MODEL_IDS = [
+  'claude-sonnet-4-5-20250929',
+  'gpt-4.1',
+  'gpt-4.1-mini',
+  'gpt-5-2025-08-07',
+  'gpt-5-mini-2025-08-07',
+  'gpt-5-nano-2025-08-07',
+  'gpt-5-1-codex-2025-11-13',
+  'gpt-5-2-2025-12-11',
+  'gpt-5.4-2026-03-05',
+  'gpt-5.5-2026-04-24',
+  'gpt-5.6-luna-2026-07-09',
+  'gpt-5.6-sol-2026-07-09',
+  'gpt-5.6-terra-2026-07-09',
+  'gemini-3-flash',
+  'gemini-3.1-pro',
+  'gemini-3.5-flash',
+  'claude-4-5-sonnet',
+  'claude-sonnet-4-6',
+  'claude-sonnet-5',
+  'claude-opus-4-5-20251101',
+  'claude-opus-4-6-20260205',
+  'claude-opus-4-7',
+  'claude-opus-4-8',
+  'claude-haiku-4-5-20251001',
+  'qwen.qwen3-coder-30b-a3b-v1',
+  'qwen.qwen3-coder-480b-a35b-v1',
+  'moonshotai.kimi-k2.5',
+] as const;
+
+function getApiPath(apiType: VsCodeApiType): string {
+  if (apiType === 'responses') return '/v1/responses';
+  if (apiType === 'messages') return '/v1/messages';
+  return '/v1/chat/completions';
+}
 
 describe('writeVsCodeLanguageModelsConfigAtPath', () => {
   let testDir: string;
@@ -27,26 +64,60 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
     return JSON.parse(await readFile(configPath, 'utf-8')) as Array<Record<string, unknown>>;
   }
 
-  it('writes the selected profile model as the model ID', async () => {
+  it('writes the exact supported model allowlist under the CodeMie provider', async () => {
     const result = await writeVsCodeLanguageModelsConfigAtPath(
       configPath,
-      'http://127.0.0.1:4001',
-      'gpt-profile-model'
+      'http://127.0.0.1:4001'
     );
 
     const providers = await readProviders();
-    const models = providers[0].models as Array<Record<string, unknown>>;
+    const provider = providers[0];
+    const models = provider.models as Array<Record<string, unknown>>;
+
     expect(result).toEqual({ configPath, requiresSecretConfiguration: true });
-    expect(models).toEqual([
-      expect.objectContaining({
-        id: 'gpt-profile-model',
-        name: 'CodeMie Profile Model',
-        url: 'http://127.0.0.1:4001/v1/chat/completions',
-      }),
-    ]);
+    expect(provider).toMatchObject({
+      name: 'CodeMie',
+      vendor: 'customendpoint',
+      apiType: 'chat-completions',
+    });
+    expect(models.map(model => model.id)).toEqual(EXPECTED_MODEL_IDS);
+    expect(models.map(model => model.name)).toEqual(EXPECTED_MODEL_IDS);
   });
 
-  it('updates the managed model and preserves unrelated configuration', async () => {
+  it('renders every catalog capability and endpoint without internal metadata', async () => {
+    await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001');
+
+    const providers = await readProviders();
+    const models = providers[0].models as Array<Record<string, unknown>>;
+
+    for (const definition of VS_CODE_SUPPORTED_MODELS) {
+      const model = models.find(candidate => candidate.id === definition.id);
+      const expected: Record<string, unknown> = {
+        id: definition.id,
+        name: definition.id,
+        url: `http://127.0.0.1:4001${getApiPath(definition.apiType)}`,
+        apiType: definition.apiType,
+        toolCalling: true,
+        vision: definition.vision,
+        streaming: true,
+        thinking: definition.thinking,
+        maxInputTokens: definition.maxInputTokens,
+        maxOutputTokens: definition.maxOutputTokens,
+      };
+      if (definition.adaptiveThinking) expected.adaptiveThinking = true;
+      if (definition.supportsReasoningEffort) {
+        expected.supportsReasoningEffort = definition.supportsReasoningEffort;
+      }
+      if (definition.reasoningEffortFormat) {
+        expected.reasoningEffortFormat = definition.reasoningEffortFormat;
+      }
+
+      expect(model).toEqual(expected);
+      expect(model).not.toHaveProperty('releaseSlice');
+    }
+  });
+
+  it('replaces legacy CodeMie models while preserving the secret and saved settings', async () => {
     const secretReference = '${input:chat.lm.secret.codemie}';
     await writeFile(configPath, JSON.stringify([
       {
@@ -57,11 +128,12 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
       {
         name: 'CodeMie',
         vendor: 'customendpoint',
-        apiType: 'chat-completions',
+        apiType: 'messages',
         apiKey: secretReference,
         customProperty: 'preserved',
         settings: {
           'old-profile-model': { reasoningEffort: 'medium' },
+          'gpt-5.5-2026-04-24': { reasoningEffort: 'high' },
           'custom-setting': { enabled: true },
         },
         models: [
@@ -73,50 +145,51 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
 
     const result = await writeVsCodeLanguageModelsConfigAtPath(
       configPath,
-      'http://127.0.0.1:4010',
-      'claude-profile-model'
+      'http://127.0.0.1:4010'
     );
 
     const providers = await readProviders();
-    const codemie = providers[1];
+    const codeMie = providers[1];
+    const models = codeMie.models as Array<Record<string, unknown>>;
+
     expect(result.requiresSecretConfiguration).toBe(false);
-    expect(providers[0]).toMatchObject({ name: 'Other' });
-    expect(codemie).toMatchObject({
+    expect(providers[0]).toEqual({
+      name: 'Other',
+      vendor: 'customendpoint',
+      models: [{ id: 'other-model', name: 'Other model' }],
+    });
+    expect(codeMie).toMatchObject({
       name: 'CodeMie',
+      vendor: 'customendpoint',
+      apiType: 'chat-completions',
       apiKey: secretReference,
       customProperty: 'preserved',
-      settings: { 'custom-setting': { enabled: true } },
+      settings: {
+        'gpt-5.5-2026-04-24': { reasoningEffort: 'high' },
+        'custom-setting': { enabled: true },
+      },
     });
-    expect(codemie.models).toEqual([
-      expect.objectContaining({ id: 'claude-profile-model', name: 'CodeMie Profile Model' }),
-      { id: 'user-managed-model', name: 'User model', custom: true },
-    ]);
+    expect(codeMie.settings).not.toHaveProperty('old-profile-model');
+    expect(models.map(model => model.id)).toEqual(EXPECTED_MODEL_IDS);
+    expect(models.some(model => model.id === 'user-managed-model')).toBe(false);
   });
 
-  it('replaces the previous profile model when the selected profile changes', async () => {
-    await writeVsCodeLanguageModelsConfigAtPath(
-      configPath,
-      'http://127.0.0.1:4001',
-      'first-profile-model'
-    );
+  it('updates every managed endpoint without changing saved model settings', async () => {
+    await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001');
     const firstProviders = await readProviders();
     firstProviders[0].settings = {
-      'first-profile-model': { reasoningEffort: 'high' },
-      unrelated: { enabled: true },
+      'claude-opus-4-8': { reasoningEffort: 'xhigh' },
     };
     await writeFile(configPath, JSON.stringify(firstProviders, null, 2), 'utf-8');
 
-    await writeVsCodeLanguageModelsConfigAtPath(
-      configPath,
-      'http://127.0.0.1:4001',
-      'second-profile-model'
-    );
+    await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4010');
 
     const providers = await readProviders();
     const models = providers[0].models as Array<Record<string, unknown>>;
-    expect(models).toHaveLength(1);
-    expect(models[0].id).toBe('second-profile-model');
-    expect(providers[0].settings).toEqual({ unrelated: { enabled: true } });
+    expect(models.every(model => String(model.url).startsWith('http://127.0.0.1:4010/'))).toBe(true);
+    expect(providers[0].settings).toEqual({
+      'claude-opus-4-8': { reasoningEffort: 'xhigh' },
+    });
   });
 
   it.each([
@@ -127,18 +200,9 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
 
     await expect(writeVsCodeLanguageModelsConfigAtPath(
       configPath,
-      'http://127.0.0.1:4001',
-      'profile-model'
+      'http://127.0.0.1:4001'
     )).rejects.toThrow();
 
     expect(await readFile(configPath, 'utf-8')).toBe(original);
-  });
-
-  it('rejects an empty profile model before writing configuration', async () => {
-    await expect(writeVsCodeLanguageModelsConfigAtPath(
-      configPath,
-      'http://127.0.0.1:4001',
-      '   '
-    )).rejects.toThrow('requires a profile model');
   });
 });

@@ -112,7 +112,7 @@ describe('transparent VS Code proxy integration', () => {
     resetPluginRegistry();
   });
 
-  it.each(['/v1/responses', '/v1/chat/completions?trace=test'])(
+  it.each(['/v1/responses', '/v1/messages', '/v1/chat/completions?trace=test'])(
     'forwards the caller-selected model and request body unchanged for %s', async (path) => {
       const captured: CapturedRequest[] = [];
       const upstream = await startCapturingUpstream(captured);
@@ -120,7 +120,7 @@ describe('transparent VS Code proxy integration', () => {
       const startedProxy = await startProxy(upstream.url);
       proxies.push(startedProxy.proxy);
       const body = {
-        model: 'profile-selected-model',
+        model: 'caller-selected-model',
         messages: [{ role: 'user', content: 'Hello' }],
         tools: [{ type: 'function', name: 'read_file' }],
         stream: false,
@@ -138,53 +138,54 @@ describe('transparent VS Code proxy integration', () => {
     }
   );
 
-  it('forwards SSE bytes incrementally and unchanged', async () => {
-    const chunks = [
-      'data: {"id":"1","choices":[{"delta":{"content":"A"}}]}\n\n',
-      'data: {"id":"1","choices":[{"delta":{"content":"B"}}]}\n\n',
-      'data: [DONE]\n\n',
-    ];
-    let upstreamClosed = false;
-    const upstream = await listen(createServer((req, res) => {
-      void readRequestBody(req).then(() => {
-        res.statusCode = 200;
-        res.setHeader('content-type', 'text/event-stream');
-        res.write(chunks[0]);
-        setTimeout(() => {
-          res.write(chunks[1]);
-          res.end(chunks[2], () => { upstreamClosed = true; });
-        }, 30);
-      });
-    }));
-    servers.push(upstream.server);
-    const startedProxy = await startProxy(upstream.url);
-    proxies.push(startedProxy.proxy);
+  it.each(['/v1/chat/completions', '/v1/responses', '/v1/messages'])(
+    'forwards SSE bytes incrementally and unchanged for %s', async (path) => {
+      const chunks = [
+        'data: {"id":"1","choices":[{"delta":{"content":"A"}}]}\n\n',
+        'data: {"id":"1","choices":[{"delta":{"content":"B"}}]}\n\n',
+        'data: [DONE]\n\n',
+      ];
+      let upstreamClosed = false;
+      const upstream = await listen(createServer((req, res) => {
+        void readRequestBody(req).then(() => {
+          res.statusCode = 200;
+          res.setHeader('content-type', 'text/event-stream');
+          res.write(chunks[0]);
+          setTimeout(() => {
+            res.write(chunks[1]);
+            res.end(chunks[2], () => { upstreamClosed = true; });
+          }, 30);
+        });
+      }));
+      servers.push(upstream.server);
+      const startedProxy = await startProxy(upstream.url);
+      proxies.push(startedProxy.proxy);
 
-    const response = await fetch(
-      `${startedProxy.url}/v1/chat/completions`,
-      authenticatedJsonInit({ model: 'profile-selected-model', messages: [], stream: true })
-    );
-    const reader = response.body!.getReader();
-    const first = await reader.read();
+      const response = await fetch(
+        `${startedProxy.url}${path}`,
+        authenticatedJsonInit({ model: 'caller-selected-model', messages: [], stream: true })
+      );
+      const reader = response.body!.getReader();
+      const first = await reader.read();
 
-    expect(upstreamClosed).toBe(false);
-    const received = [Buffer.from(first.value ?? []).toString('utf-8')];
-    while (true) {
-      const next = await reader.read();
-      if (next.done) break;
-      received.push(Buffer.from(next.value).toString('utf-8'));
+      expect(upstreamClosed).toBe(false);
+      const received = [Buffer.from(first.value ?? []).toString('utf-8')];
+      while (true) {
+        const next = await reader.read();
+        if (next.done) break;
+        received.push(Buffer.from(next.value).toString('utf-8'));
+      }
+
+      expect(response.headers.get('content-type')).toContain('text/event-stream');
+      expect(received.join('')).toBe(chunks.join(''));
     }
+  );
 
-    expect(response.headers.get('content-type')).toContain('text/event-stream');
-    expect(received.join('')).toBe(chunks.join(''));
-  });
-
-  it('forwards tool-call response fields unchanged', async () => {
-    const toolCall = {
+  it.each([
+    ['/v1/chat/completions', {
       id: 'completion-1',
       choices: [{
-        index: 0,
-        delta: {
+        message: {
           tool_calls: [{
             id: 'call-1',
             type: 'function',
@@ -193,7 +194,27 @@ describe('transparent VS Code proxy integration', () => {
         },
         finish_reason: 'tool_calls',
       }],
-    };
+    }],
+    ['/v1/responses', {
+      id: 'response-1',
+      output: [{
+        id: 'call-1',
+        type: 'function_call',
+        name: 'get_test_value',
+        arguments: '{"name":"value"}',
+      }],
+    }],
+    ['/v1/messages', {
+      id: 'message-1',
+      content: [{
+        id: 'call-1',
+        type: 'tool_use',
+        name: 'get_test_value',
+        input: { name: 'value' },
+      }],
+      stop_reason: 'tool_use',
+    }],
+  ])('forwards tool-call response fields unchanged for %s', async (path, toolCall) => {
     const upstream = await listen(createServer((req, res) => {
       void readRequestBody(req).then(() => {
         res.setHeader('content-type', 'application/json');
@@ -205,8 +226,8 @@ describe('transparent VS Code proxy integration', () => {
     proxies.push(startedProxy.proxy);
 
     const response = await fetch(
-      `${startedProxy.url}/v1/chat/completions`,
-      authenticatedJsonInit({ model: 'profile-selected-model', messages: [] })
+      `${startedProxy.url}${path}`,
+      authenticatedJsonInit({ model: 'caller-selected-model', messages: [] })
     );
 
     expect(await response.json()).toEqual(toolCall);

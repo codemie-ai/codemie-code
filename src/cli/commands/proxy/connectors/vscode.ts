@@ -3,8 +3,13 @@ import { mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promis
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { ConfigurationError } from '@/utils/errors.js';
+import {
+  VS_CODE_SUPPORTED_MODELS,
+  type VsCodeApiType,
+  type VsCodeReasoningEffort,
+} from './vscode-models.js';
 
-const MANAGED_MODEL_NAME = 'CodeMie Profile Model';
+const LEGACY_MANAGED_MODEL_NAME = 'CodeMie Profile Model';
 const SECRET_REFERENCE_PATTERN = /^\$\{input:chat\.lm\.secret\.[^}]+\}$/;
 
 interface VsCodeLanguageModelProvider {
@@ -21,14 +26,16 @@ interface VsCodeManagedModel {
   id: string;
   name: string;
   url: string;
+  apiType: VsCodeApiType;
   toolCalling: true;
-  vision: true;
+  vision: boolean;
   streaming: true;
-  thinking: true;
-  supportsReasoningEffort: readonly ['minimal', 'low', 'medium', 'high'];
-  reasoningEffortFormat: 'chat-completions';
-  maxInputTokens: 224000;
-  maxOutputTokens: 32000;
+  thinking: boolean;
+  adaptiveThinking?: true;
+  supportsReasoningEffort?: readonly VsCodeReasoningEffort[];
+  reasoningEffortFormat?: 'chat-completions' | 'responses';
+  maxInputTokens: number;
+  maxOutputTokens: number;
 }
 
 export interface WriteVsCodeConfigResult {
@@ -40,18 +47,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function isManagedModel(model: unknown, currentModelId?: string): boolean {
+function isLegacyManagedModel(model: unknown): boolean {
   if (!isRecord(model)) return false;
-  return model.name === MANAGED_MODEL_NAME ||
-    (currentModelId !== undefined && model.id === currentModelId);
+  return model.name === LEGACY_MANAGED_MODEL_NAME;
 }
 
 function isManagedProvider(provider: unknown): provider is VsCodeLanguageModelProvider {
   if (!isRecord(provider)) return false;
 
-  const hasManagedModel = Array.isArray(provider.models) &&
-    provider.models.some(model => isManagedModel(model));
-  return hasManagedModel || (provider.vendor === 'customendpoint' && provider.name === 'CodeMie');
+  const hasLegacyManagedModel = Array.isArray(provider.models) &&
+    provider.models.some(model => isLegacyManagedModel(model));
+  return hasLegacyManagedModel ||
+    (provider.vendor === 'customendpoint' && provider.name === 'CodeMie');
 }
 
 export function isVsCodeSecretReference(value: unknown): value is string {
@@ -94,46 +101,42 @@ export function getVsCodeLanguageModelsPath(insiders = false): string {
   return join(productDir, 'User', 'chatLanguageModels.json');
 }
 
-function buildManagedModel(proxyUrl: string, profileModel: string): VsCodeManagedModel {
-  return {
-    id: profileModel,
-    name: MANAGED_MODEL_NAME,
-    url: new URL('/v1/chat/completions', proxyUrl).toString(),
-    toolCalling: true,
-    vision: true,
-    streaming: true,
-    thinking: true,
-    supportsReasoningEffort: ['minimal', 'low', 'medium', 'high'],
-    reasoningEffortFormat: 'chat-completions',
-    maxInputTokens: 224000,
-    maxOutputTokens: 32000,
-  };
+function getApiPath(apiType: VsCodeApiType): string {
+  if (apiType === 'responses') return '/v1/responses';
+  if (apiType === 'messages') return '/v1/messages';
+  return '/v1/chat/completions';
 }
 
-function reconcileModels(existingModels: unknown, managedModel: VsCodeManagedModel): unknown[] {
-  const models = Array.isArray(existingModels) ? existingModels : [];
-  const reconciled: unknown[] = [];
-  let inserted = false;
+function buildManagedModels(proxyUrl: string): VsCodeManagedModel[] {
+  return VS_CODE_SUPPORTED_MODELS.map(definition => {
+    const model: VsCodeManagedModel = {
+      id: definition.id,
+      name: definition.id,
+      url: new URL(getApiPath(definition.apiType), proxyUrl).toString(),
+      apiType: definition.apiType,
+      toolCalling: true,
+      vision: definition.vision,
+      streaming: true,
+      thinking: definition.thinking,
+      maxInputTokens: definition.maxInputTokens,
+      maxOutputTokens: definition.maxOutputTokens,
+    };
 
-  for (const model of models) {
-    if (isManagedModel(model, managedModel.id)) {
-      if (!inserted) {
-        reconciled.push(managedModel);
-        inserted = true;
-      }
-      continue;
+    if (definition.adaptiveThinking) model.adaptiveThinking = true;
+    if (definition.supportsReasoningEffort) {
+      model.supportsReasoningEffort = definition.supportsReasoningEffort;
     }
-    reconciled.push(model);
-  }
+    if (definition.reasoningEffortFormat) {
+      model.reasoningEffortFormat = definition.reasoningEffortFormat;
+    }
 
-  if (!inserted) reconciled.push(managedModel);
-  return reconciled;
+    return model;
+  });
 }
 
 function mergeManagedProviders(
   providers: VsCodeLanguageModelProvider[],
-  proxyUrl: string,
-  profileModel: string
+  proxyUrl: string
 ): { provider: VsCodeLanguageModelProvider; requiresSecretConfiguration: boolean } {
   const existingProvider = Object.assign({}, ...providers);
   const existingModels = providers.flatMap(provider =>
@@ -143,14 +146,11 @@ function mergeManagedProviders(
     {},
     ...providers.map(provider => isRecord(provider.settings) ? provider.settings : {})
   );
-  const previousManagedModelIds = existingModels
-    .filter(model => isManagedModel(model))
+  const legacyManagedModelIds = existingModels
+    .filter(model => isLegacyManagedModel(model))
     .map(model => isRecord(model) ? model.id : undefined)
     .filter((id): id is string => typeof id === 'string');
-  for (const modelId of new Set([
-    profileModel,
-    ...previousManagedModelIds,
-  ])) {
+  for (const modelId of new Set(legacyManagedModelIds)) {
     delete existingSettings[modelId];
   }
   const existingSecretReference = providers
@@ -162,12 +162,10 @@ function mergeManagedProviders(
     name: 'CodeMie',
     vendor: 'customendpoint',
     apiType: 'chat-completions',
-    models: reconcileModels(existingModels, buildManagedModel(proxyUrl, profileModel)),
+    models: buildManagedModels(proxyUrl),
   };
 
-  // VS Code owns model configuration state and derives "medium" as the default for this
-  // non-Claude model. Writing the same setting here races with VS Code's editor and can
-  // produce duplicate `settings` keys in its unsaved buffer.
+  // VS Code owns effort selections. Preserve them instead of racing with the editor.
   if (Object.keys(existingSettings).length > 0) provider.settings = existingSettings;
   else delete provider.settings;
 
@@ -235,26 +233,18 @@ async function writeAtomically(configPath: string, content: string): Promise<voi
 
 export async function writeVsCodeLanguageModelsConfig(
   proxyUrl: string,
-  profileModel: string,
   insiders = false
 ): Promise<WriteVsCodeConfigResult> {
   return writeVsCodeLanguageModelsConfigAtPath(
     getVsCodeLanguageModelsPath(insiders),
-    proxyUrl,
-    profileModel
+    proxyUrl
   );
 }
 
 export async function writeVsCodeLanguageModelsConfigAtPath(
   configPath: string,
-  proxyUrl: string,
-  profileModel: string
+  proxyUrl: string
 ): Promise<WriteVsCodeConfigResult> {
-  const normalizedProfileModel = profileModel.trim();
-  if (!normalizedProfileModel) {
-    throw new ConfigurationError('VS Code model configuration requires a profile model.');
-  }
-
   const providers = await readProviders(configPath);
   const managedProviderIndexes = providers
     .map((provider, index) => isManagedProvider(provider) ? index : -1)
@@ -263,7 +253,7 @@ export async function writeVsCodeLanguageModelsConfigAtPath(
     .map(index => providers[index])
     .filter(isManagedProvider);
   const { provider: managedProvider, requiresSecretConfiguration } =
-    mergeManagedProviders(managedProviders, proxyUrl, normalizedProfileModel);
+    mergeManagedProviders(managedProviders, proxyUrl);
   const firstManagedProviderIndex = managedProviderIndexes[0] ?? providers.length;
   const managedProviderIndexSet = new Set(managedProviderIndexes);
   const reconciledProviders = providers.flatMap((provider, index) => {
