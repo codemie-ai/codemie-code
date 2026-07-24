@@ -140,6 +140,14 @@ unrelated providers, models, settings, and unknown provider properties. It rejec
 or a non-array root without overwriting the file. Re-running the command with another profile
 replaces the previous CodeMie-managed model without changing unrelated entries.
 
+GPT-5.5 and GPT-5.6 are deliberate exceptions: the connector routes them through Chat Completions
+but publishes `thinking: false` and omits reasoning-effort metadata. The current CodeMie/LiteLLM
+route rejects Chat Completions requests that combine tool calling with reasoning. Responses API
+reasoning is not used as a fallback because load-balanced follow-up requests can fail when the
+referenced `previous_response_id` is unavailable. Keep thinking disabled for these models until
+the upstream Chat route accepts tools with reasoning or the Responses route provides reliable
+response-state continuity.
+
 Check the daemon context with `codemie proxy status`. Automated VS Code BYOK configuration
 and routing coverage runs as part of `npm run test:all`.
 
@@ -155,6 +163,7 @@ and routing coverage runs as part of `npm run test:all`.
 | Configuration is rejected | `chatLanguageModels.json` is malformed or not an array | Repair the file; the connector leaves invalid content unchanged |
 | VS Code still uses old settings | Model configuration was not reloaded | Reload VS Code |
 | Active profile changed but model did not | VS Code configuration still contains the previous profile model | Re-run `codemie proxy connect vscode` |
+| GPT-5.5 or GPT-5.6 fails when thinking is enabled | Current Chat route rejects tools combined with reasoning | Keep thinking disabled; the managed catalog intentionally omits reasoning controls |
 | Inline suggestions still use Copilot | Expected limitation | BYOK covers chat/agent workflows, not inline completion |
 
 ### Claude Desktop 3P

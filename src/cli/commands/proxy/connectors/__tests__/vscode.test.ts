@@ -17,11 +17,11 @@ const EXPECTED_MODEL_IDS = [
   'gpt-5-2025-08-07',
   'gpt-5-mini-2025-08-07',
   'gpt-5-nano-2025-08-07',
-  'gpt-5-1-codex-2025-11-13',
   'gpt-5-2-2025-12-11',
   'gpt-5.4-2026-03-05',
   'gpt-5.5-2026-04-24',
   'gpt-5.6-luna-2026-07-09',
+  'gpt-5.6-sol-2026-07-09',
   'gpt-5.6-terra-2026-07-09',
   'gemini-3-flash',
   'gemini-3.1-pro',
@@ -135,14 +135,27 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
     }
   });
 
-  it('does not advertise the rejected none effort for GPT-5.1 Codex', async () => {
+  it('disables thinking for GPT-5.5 and GPT-5.6 Chat Completions models', async () => {
     await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001');
 
     const providers = await readProviders();
     const models = providers[0].models as Array<Record<string, unknown>>;
-    const codex = models.find(model => model.id === 'gpt-5-1-codex-2025-11-13');
+    const affectedIds = [
+      'gpt-5.5-2026-04-24',
+      'gpt-5.6-luna-2026-07-09',
+      'gpt-5.6-sol-2026-07-09',
+      'gpt-5.6-terra-2026-07-09',
+    ];
 
-    expect(codex?.supportsReasoningEffort).toEqual(['low', 'medium', 'high']);
+    for (const id of affectedIds) {
+      const model = models.find(candidate => candidate.id === id);
+      expect(model).toMatchObject({
+        apiType: 'chat-completions',
+        thinking: false,
+      });
+      expect(model).not.toHaveProperty('supportsReasoningEffort');
+      expect(model).not.toHaveProperty('reasoningEffortFormat');
+    }
   });
 
   it('forces bearer authentication for Messages models only', async () => {
@@ -178,7 +191,7 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
         apiKey: secretReference,
         customProperty: 'preserved',
         settings: {
-          'gpt-5.5-2026-04-24': { reasoningEffort: 'high' },
+          'gpt-5.4-2026-03-05': { reasoningEffort: 'high' },
           'custom-setting': { enabled: true },
         },
         models: [
@@ -210,7 +223,7 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
       apiKey: secretReference,
       customProperty: 'preserved',
       settings: {
-        'gpt-5.5-2026-04-24': { reasoningEffort: 'high' },
+        'gpt-5.4-2026-03-05': { reasoningEffort: 'high' },
         'custom-setting': { enabled: true },
       },
     });

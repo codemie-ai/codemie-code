@@ -716,6 +716,13 @@ The command reuses a healthy daemon when its profile, project, provider, target 
 
 The connector merges one managed model into VS Code's `chatLanguageModels.json` and preserves unrelated models plus an existing `${input:chat.lm.secret.*}` reference as `apiKey`. If no valid reference exists, it omits `apiKey` rather than generating a placeholder and directs the user to open `Chat: Manage Language Models`, right-click **CodeMie Profile Model**, and choose **Update API Key**. VS Code then stores the local `codemie-proxy` key in secret storage; CodeMie SSO credentials never enter VS Code configuration.
 
+GPT-5.5 and GPT-5.6 are routed through Chat Completions with `thinking: false` and no
+reasoning-effort metadata. This is an explicit compatibility tradeoff: the current
+CodeMie/LiteLLM Chat route rejects requests that combine tools with reasoning, while the
+Responses route can lose `previous_response_id` state across load-balanced follow-up requests.
+The models must remain non-reasoning in the VS Code catalog until one of those upstream
+limitations is resolved.
+
 ```mermaid
 sequenceDiagram
     participant VS as VS Code Agent
