@@ -3,7 +3,7 @@
  *
  * Required:
  *   CODEMIE_VSCODE_LIVE=1
- *   CODEMIE_VSCODE_MODELS=<model-id|model-a,model-b|slice:1|all>
+ *   CODEMIE_VSCODE_MODELS=<model-id|model-a,model-b|all>
  *
  * Authentication:
  *   Either start a VS Code proxy with `codemie proxy connect vscode`, or set:
@@ -85,12 +85,6 @@ function getApiPath(definition: VsCodeModelDefinition): string {
 
 function selectModels(selector: string): readonly VsCodeModelDefinition[] {
   if (selector === 'all') return VS_CODE_SUPPORTED_MODELS;
-
-  const sliceMatch = /^slice:([123])$/.exec(selector);
-  if (sliceMatch) {
-    const slice = Number(sliceMatch[1]);
-    return VS_CODE_SUPPORTED_MODELS.filter(model => model.releaseSlice === slice);
-  }
 
   const requestedIds = selector.split(',').map(value => value.trim()).filter(Boolean);
   const selected = VS_CODE_SUPPORTED_MODELS.filter(model => requestedIds.includes(model.id));

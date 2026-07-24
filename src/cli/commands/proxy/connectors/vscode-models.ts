@@ -10,7 +10,6 @@ export type VsCodeReasoningEffort =
   | 'max';
 
 export interface VsCodeModelDefinition {
-  releaseSlice: 1 | 2 | 3;
   id: string;
   apiType: VsCodeApiType;
   vision: boolean;
@@ -43,7 +42,6 @@ const MESSAGE_AUTH_HEADERS = {
 
 export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
   {
-    releaseSlice: 3,
     id: 'claude-sonnet-4-5-20250929',
     apiType: 'chat-completions',
     vision: true,
@@ -53,7 +51,6 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     maxOutputTokens: 64000,
   },
   {
-    releaseSlice: 1,
     id: 'gpt-4.1',
     apiType: 'chat-completions',
     vision: true,
@@ -62,7 +59,6 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     maxOutputTokens: 32768,
   },
   {
-    releaseSlice: 1,
     id: 'gpt-4.1-mini',
     apiType: 'chat-completions',
     vision: true,
@@ -71,7 +67,6 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     maxOutputTokens: 32768,
   },
   {
-    releaseSlice: 1,
     id: 'gpt-5-2025-08-07',
     apiType: 'chat-completions',
     vision: true,
@@ -82,7 +77,6 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     maxOutputTokens: 128000,
   },
   {
-    releaseSlice: 1,
     id: 'gpt-5-mini-2025-08-07',
     apiType: 'chat-completions',
     vision: true,
@@ -93,7 +87,6 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     maxOutputTokens: 128000,
   },
   {
-    releaseSlice: 1,
     id: 'gpt-5-nano-2025-08-07',
     apiType: 'chat-completions',
     vision: true,
@@ -104,7 +97,6 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     maxOutputTokens: 128000,
   },
   {
-    releaseSlice: 2,
     id: 'gpt-5-1-codex-2025-11-13',
     apiType: 'responses',
     vision: true,
@@ -115,7 +107,6 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     maxOutputTokens: 128000,
   },
   {
-    releaseSlice: 2,
     id: 'gpt-5-2-2025-12-11',
     apiType: 'chat-completions',
     vision: true,
@@ -126,7 +117,6 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     maxOutputTokens: 128000,
   },
   {
-    releaseSlice: 2,
     id: 'gpt-5.4-2026-03-05',
     apiType: 'chat-completions',
     vision: true,
@@ -137,7 +127,6 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     maxOutputTokens: 128000,
   },
   {
-    releaseSlice: 2,
     id: 'gpt-5.5-2026-04-24',
     apiType: 'responses',
     vision: true,
@@ -148,7 +137,6 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     maxOutputTokens: 128000,
   },
   {
-    releaseSlice: 2,
     id: 'gpt-5.6-luna-2026-07-09',
     apiType: 'responses',
     vision: true,
@@ -158,19 +146,10 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     maxInputTokens: 922000,
     maxOutputTokens: 128000,
   },
+  // gpt-5.6-sol-2026-07-09 is intentionally excluded: its CodeMie Responses
+  // route rejects minimal requests, while Chat rejects tools with reasoning.
+  // Re-add only after the Responses route passes live VS Code certification.
   {
-    releaseSlice: 2,
-    id: 'gpt-5.6-sol-2026-07-09',
-    apiType: 'responses',
-    vision: true,
-    thinking: true,
-    supportsReasoningEffort: GPT_5_6_EFFORTS,
-    reasoningEffortFormat: 'responses',
-    maxInputTokens: 922000,
-    maxOutputTokens: 128000,
-  },
-  {
-    releaseSlice: 2,
     id: 'gpt-5.6-terra-2026-07-09',
     apiType: 'responses',
     vision: true,
@@ -181,7 +160,6 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     maxOutputTokens: 128000,
   },
   {
-    releaseSlice: 3,
     id: 'gemini-3-flash',
     apiType: 'chat-completions',
     vision: true,
@@ -192,7 +170,6 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     maxOutputTokens: 65536,
   },
   {
-    releaseSlice: 3,
     id: 'gemini-3.1-pro',
     apiType: 'chat-completions',
     vision: true,
@@ -203,7 +180,6 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     maxOutputTokens: 65536,
   },
   {
-    releaseSlice: 3,
     id: 'gemini-3.5-flash',
     apiType: 'chat-completions',
     vision: true,
@@ -214,7 +190,6 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     maxOutputTokens: 65536,
   },
   {
-    releaseSlice: 3,
     id: 'claude-4-5-sonnet',
     apiType: 'chat-completions',
     vision: true,
@@ -224,7 +199,6 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     maxOutputTokens: 64000,
   },
   {
-    releaseSlice: 3,
     id: 'claude-sonnet-4-6',
     apiType: 'messages',
     vision: true,
@@ -236,7 +210,6 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     maxOutputTokens: 64000,
   },
   {
-    releaseSlice: 3,
     id: 'claude-sonnet-5',
     apiType: 'messages',
     vision: true,
@@ -248,7 +221,6 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     maxOutputTokens: 128000,
   },
   {
-    releaseSlice: 3,
     id: 'claude-opus-4-5-20251101',
     apiType: 'messages',
     vision: true,
@@ -259,7 +231,6 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     maxOutputTokens: 64000,
   },
   {
-    releaseSlice: 3,
     id: 'claude-opus-4-6-20260205',
     apiType: 'messages',
     vision: true,
@@ -271,7 +242,6 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     maxOutputTokens: 128000,
   },
   {
-    releaseSlice: 3,
     id: 'claude-opus-4-7',
     apiType: 'messages',
     vision: true,
@@ -283,7 +253,6 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     maxOutputTokens: 128000,
   },
   {
-    releaseSlice: 3,
     id: 'claude-opus-4-8',
     apiType: 'messages',
     vision: true,
@@ -295,7 +264,6 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     maxOutputTokens: 128000,
   },
   {
-    releaseSlice: 3,
     id: 'claude-haiku-4-5-20251001',
     apiType: 'chat-completions',
     vision: true,
@@ -305,7 +273,6 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     maxOutputTokens: 64000,
   },
   {
-    releaseSlice: 1,
     id: 'qwen.qwen3-coder-30b-a3b-v1',
     apiType: 'chat-completions',
     vision: false,
@@ -314,7 +281,6 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     maxOutputTokens: 16384,
   },
   {
-    releaseSlice: 1,
     id: 'qwen.qwen3-coder-480b-a35b-v1',
     apiType: 'chat-completions',
     vision: false,
@@ -323,7 +289,6 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     maxOutputTokens: 16384,
   },
   {
-    releaseSlice: 1,
     id: 'moonshotai.kimi-k2.5',
     apiType: 'chat-completions',
     vision: true,

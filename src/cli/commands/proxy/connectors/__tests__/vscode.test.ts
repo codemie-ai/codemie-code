@@ -22,7 +22,6 @@ const EXPECTED_MODEL_IDS = [
   'gpt-5.4-2026-03-05',
   'gpt-5.5-2026-04-24',
   'gpt-5.6-luna-2026-07-09',
-  'gpt-5.6-sol-2026-07-09',
   'gpt-5.6-terra-2026-07-09',
   'gemini-3-flash',
   'gemini-3.1-pro',
@@ -115,7 +114,6 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
       }
 
       expect(model).toEqual(expected);
-      expect(model).not.toHaveProperty('releaseSlice');
     }
   });
 
