@@ -294,4 +294,59 @@ describe('Claude Plugin – settings conflict detection in beforeRun', () => {
     expect(allOutput).not.toContain('[31m');
     expect(allOutput).not.toContain('[0m');
   });
+
+  // CR-001 regression guard: C1-form OSC (\x9d) must be stripped by the DCS pre-pass.
+  // strip-ansi does not recognise \x9d; without the pre-strip fix the payload leaks as
+  // printable ASCII text after \x9d is removed by the allowlist.
+  it('strips C1-form OSC (\\x9d) payload to prevent terminal injection', async () => {
+    conflictMod.detectSettingsConflict.mockResolvedValue({
+      settingsUrl: 'https://proxy/\x9d0;injected-title\x07',
+      profileUrl: 'https://ai-proxy.lab.epam.com',
+    });
+
+    const env: HookEnv = { ANTHROPIC_BASE_URL: 'https://ai-proxy.lab.epam.com' };
+    await beforeRun(env, mockConfig);
+
+    const allOutput = consoleErrorSpy.mock.calls.map(c => String(c[0] ?? '')).join('\n');
+    expect(allOutput).not.toContain('injected-title');
+    expect(allOutput).not.toContain('\x9d');
+  });
+
+  // CR-002 regression guard: hash fragments must be stripped from URLs displayed in the
+  // warning. A URL with a hash-only payload (no credentials) previously fell through to the
+  // `return stripped` path, preserving the fragment verbatim in the output.
+  it('strips URL hash fragment from settingsUrl to prevent misleading terminal output', async () => {
+    conflictMod.detectSettingsConflict.mockResolvedValue({
+      settingsUrl: 'https://proxy.example.com/path#injected-section',
+      profileUrl: 'https://ai-proxy.lab.epam.com',
+    });
+
+    const env: HookEnv = { ANTHROPIC_BASE_URL: 'https://ai-proxy.lab.epam.com' };
+    await beforeRun(env, mockConfig);
+
+    const allOutput = consoleErrorSpy.mock.calls.map(c => String(c[0] ?? '')).join('\n');
+    expect(allOutput).not.toContain('#injected-section');
+    expect(allOutput).toContain('[credentials removed]');
+  });
+
+  // CR-003 regression guard: conflict.profileModel comes from env.ANTHROPIC_MODEL and must
+  // be sanitized via safeUrl() before reaching console.error. Previously it was interpolated
+  // raw, allowing ANSI injection via a crafted ANTHROPIC_MODEL environment variable.
+  // safeUrl strips control codes but preserves printable ASCII text — the injected CSI
+  // sequences (\x1b[31m, \x1b[0m) must not appear as residue alongside chalk's own codes.
+  it('strips CSI sequences from conflict.profileModel (env.ANTHROPIC_MODEL)', async () => {
+    conflictMod.detectSettingsConflict.mockResolvedValue({
+      settingsModel: 'claude-opus-4-5',
+      profileModel: 'claude-sonnet\x1b[31mFORGED\x1b[0m',
+    });
+
+    const env: HookEnv = { ANTHROPIC_MODEL: 'claude-sonnet' };
+    await beforeRun(env, mockConfig);
+
+    const allOutput = consoleErrorSpy.mock.calls.map(c => String(c[0] ?? '')).join('\n');
+    // chalk adds its own \x1b codes; verify injected CSI residue is gone
+    expect(allOutput).not.toContain('[31m');
+    expect(allOutput).not.toContain('[0m');
+    expect(allOutput).toContain('claude-sonnet');
+  });
 });

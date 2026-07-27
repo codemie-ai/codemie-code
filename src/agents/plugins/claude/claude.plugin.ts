@@ -241,15 +241,16 @@ export const ClaudePluginMetadata: AgentMetadata = {
           // URL userinfo guard: https://user@evil.com routes to evil.com; the @ is valid
           // ASCII so the allowlist cannot catch it — URL parsing is required.
           const safeUrl = (s: string): string => {
-            // ESC-form: P=DCS X=SOS ^=PM _=APC; C1-form: \x90 \x98 \x9e \x9f
-            const noStringCmds = s.replace(/(?:\x1b[PX^_]|[\x90\x98\x9e\x9f])[\s\S]*?(?:\x07|\x1b\\|\x9c|$)/g, ''); // eslint-disable-line no-control-regex
+            // ESC-form: P=DCS X=SOS ^=PM _=APC; C1-form: \x90 \x98 \x9d(OSC) \x9e \x9f
+            const noStringCmds = s.replace(/(?:\x1b[PX^_]|[\x90\x98\x9d\x9e\x9f])[\s\S]*?(?:\x07|\x1b\\|\x9c|$)/g, ''); // eslint-disable-line no-control-regex
             const stripped = stripAnsi(noStringCmds).replace(/[^\x20-\x7e]/gu, '');
             try {
               const url = new URL(stripped);
-              if (url.username || url.password || url.search) {
+              if (url.username || url.password || url.search || url.hash) {
                 url.username = '';
                 url.password = '';
                 url.search = '';
+                url.hash = '';
                 return `[credentials removed] ${url.toString()}`;
               }
             } catch {
@@ -271,7 +272,9 @@ export const ClaudePluginMetadata: AgentMetadata = {
             console.error(chalk.yellow(''));
           }
           if (conflict.settingsModel) {
-            const profileModelDisplay = conflict.profileModel ?? '(not set — profile default)';
+            const profileModelDisplay = conflict.profileModel
+              ? safeUrl(conflict.profileModel)
+              : '(not set — profile default)';
             const activeModelDisplay = safeUrl(conflict.settingsModel);
             console.error(chalk.yellow(`  Profile model │ ${profileModelDisplay}`));
             console.error(chalk.yellow(`  Active model  │ ${activeModelDisplay}  ← settings.json wins`));
