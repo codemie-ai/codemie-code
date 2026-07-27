@@ -76,7 +76,16 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
           const profileConfig = JSON.parse(env.CODEMIE_PROFILE_CONFIG) as { userEmail?: string };
           userEmail = profileConfig.userEmail || undefined;
         } catch {
-          // malformed env — omit email gracefully
+          // malformed env — fall through to ConfigLoader fallback
+        }
+      }
+      if (!userEmail) {
+        try {
+          const { ConfigLoader } = await import('../../utils/config.js');
+          const cfg = await ConfigLoader.loadMultiProviderConfig();
+          userEmail = cfg.userEmail || undefined;
+        } catch {
+          // no ~/.codemie config — omit email gracefully
         }
       }
 
