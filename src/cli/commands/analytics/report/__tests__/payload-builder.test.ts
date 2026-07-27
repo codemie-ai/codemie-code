@@ -287,11 +287,101 @@ describe('buildPayload', () => {
     expect(payload.meta.periodEnd).toBe('2026-07-21T23:59:59.000Z');
   });
 
-  it('omits userEmail/periodStart/periodEnd in meta when absent from context', () => {
+  it('omits userEmail in meta when absent from context', () => {
     const payload = buildPayload(root, costIndex, summary, ctxAll);
     expect(payload.meta.userEmail).toBeUndefined();
+  });
+
+  it('derives meta.periodStart from min(startTime) when ctx omits it', () => {
+    const early = session({ sessionId: 's-early', startTime: 1_700_000_000_000, duration: 30_000 });
+    const late = session({ sessionId: 's-late', startTime: 1_700_000_600_000, duration: 60_000 });
+    const rootTwo = {
+      ...root,
+      projects: [
+        { projectPath: '/repo/app', branches: [{ branchName: 'main', sessions: [early, late] }] },
+      ],
+    } as unknown as RootAnalytics;
+    const costIndexTwo: SessionCostIndex = new Map([
+      ['s-early', { sessionId: 's-early', tokens: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, total: 2 }, costUSD: 0, perModel: [], priced: true, hadLog: true }],
+      ['s-late', { sessionId: 's-late', tokens: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, total: 2 }, costUSD: 0, perModel: [], priced: true, hadLog: true }],
+    ]);
+    const payload = buildPayload(rootTwo, costIndexTwo, summary, ctxAll);
+    expect(payload.meta.periodStart).toBe(new Date(1_700_000_000_000).toISOString());
+  });
+
+  it('derives meta.periodEnd from max(startTime + duration) when ctx omits it', () => {
+    const early = session({ sessionId: 's-early', startTime: 1_700_000_000_000, duration: 30_000 });
+    const late = session({ sessionId: 's-late', startTime: 1_700_000_600_000, duration: 60_000 });
+    const rootTwo = {
+      ...root,
+      projects: [
+        { projectPath: '/repo/app', branches: [{ branchName: 'main', sessions: [early, late] }] },
+      ],
+    } as unknown as RootAnalytics;
+    const costIndexTwo: SessionCostIndex = new Map([
+      ['s-early', { sessionId: 's-early', tokens: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, total: 2 }, costUSD: 0, perModel: [], priced: true, hadLog: true }],
+      ['s-late', { sessionId: 's-late', tokens: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, total: 2 }, costUSD: 0, perModel: [], priced: true, hadLog: true }],
+    ]);
+    const payload = buildPayload(rootTwo, costIndexTwo, summary, ctxAll);
+    expect(payload.meta.periodEnd).toBe(new Date(1_700_000_600_000 + 60_000).toISOString());
+  });
+
+  it('prefers ctx.periodStart / ctx.periodEnd over derived values (regression guard)', () => {
+    const payload = buildPayload(root, costIndex, summary, {
+      rangeLabel: 'custom',
+      projectFilter: 'all',
+      generatedAt: '2026-07-27T00:00:00Z',
+      periodStart: '2026-01-01T00:00:00.000Z',
+      periodEnd: '2026-06-30T00:00:00.000Z',
+    });
+    expect(payload.meta.periodStart).toBe('2026-01-01T00:00:00.000Z');
+    expect(payload.meta.periodEnd).toBe('2026-06-30T00:00:00.000Z');
+  });
+
+  it('treats duration=0 as endTime=startTime for periodEnd derivation', () => {
+    const only = session({ sessionId: 's-only', startTime: 1_700_000_000_000, duration: 0 });
+    const rootOne = {
+      ...root,
+      projects: [
+        { projectPath: '/repo/app', branches: [{ branchName: 'main', sessions: [only] }] },
+      ],
+    } as unknown as RootAnalytics;
+    const costIndexOne: SessionCostIndex = new Map([
+      ['s-only', { sessionId: 's-only', tokens: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, total: 2 }, costUSD: 0, perModel: [], priced: true, hadLog: true }],
+    ]);
+    const payload = buildPayload(rootOne, costIndexOne, summary, ctxAll);
+    expect(payload.meta.periodStart).toBe(new Date(1_700_000_000_000).toISOString());
+    expect(payload.meta.periodEnd).toBe(new Date(1_700_000_000_000).toISOString());
+  });
+
+  it('omits meta.periodStart / meta.periodEnd when there are no valid sessions', () => {
+    const emptyRoot = {
+      totalSessions: 0, totalDuration: 0, totalTurns: 0, totalFileOperations: 0,
+      totalLinesAdded: 0, totalLinesRemoved: 0, totalLinesModified: 0, netLinesChanged: 0,
+      totalToolCalls: 0, successfulToolCalls: 0, failedToolCalls: 0, toolSuccessRate: 0,
+      models: [], tools: [], languages: [], formats: [], projects: [],
+    } as unknown as RootAnalytics;
+    const payload = buildPayload(emptyRoot, new Map(), summary, ctxAll);
     expect(payload.meta.periodStart).toBeUndefined();
     expect(payload.meta.periodEnd).toBeUndefined();
+  });
+
+  it('skips records with startTime <= 0 when computing min/max', () => {
+    const zero = session({ sessionId: 's-zero', startTime: 0, duration: 60_000 });
+    const valid = session({ sessionId: 's-valid', startTime: 1_700_000_000_000, duration: 60_000 });
+    const rootMixed = {
+      ...root,
+      projects: [
+        { projectPath: '/repo/app', branches: [{ branchName: 'main', sessions: [zero, valid] }] },
+      ],
+    } as unknown as RootAnalytics;
+    const costIndexMixed: SessionCostIndex = new Map([
+      ['s-zero', { sessionId: 's-zero', tokens: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, total: 2 }, costUSD: 0, perModel: [], priced: true, hadLog: true }],
+      ['s-valid', { sessionId: 's-valid', tokens: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, total: 2 }, costUSD: 0, perModel: [], priced: true, hadLog: true }],
+    ]);
+    const payload = buildPayload(rootMixed, costIndexMixed, summary, ctxAll);
+    expect(payload.meta.periodStart).toBe(new Date(1_700_000_000_000).toISOString());
+    expect(payload.meta.periodEnd).toBe(new Date(1_700_000_000_000 + 60_000).toISOString());
   });
 });
 

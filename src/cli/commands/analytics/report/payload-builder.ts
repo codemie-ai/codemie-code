@@ -34,6 +34,10 @@ export function buildPayload(
   // the full (duplicated) session metrics. Dedupe by sessionId so the flat record
   // list — the single source of truth for the client — counts each session once.
   const seen = new Set<string>();
+  // Track earliest/latest activity across included sessions so the meta block can
+  // fall back to derived period when the caller did not stamp explicit dates.
+  let minStartMs: number | undefined;
+  let maxEndMs: number | undefined;
 
   for (const project of root.projects) {
     for (const branch of project.branches) {
@@ -42,6 +46,15 @@ export function buildPayload(
           continue;
         }
         seen.add(s.sessionId);
+        if (s.startTime > 0) {
+          if (minStartMs === undefined || s.startTime < minStartMs) {
+            minStartMs = s.startTime;
+          }
+          const endMs = s.startTime + Math.max(s.duration ?? 0, 0);
+          if (maxEndMs === undefined || endMs > maxEndMs) {
+            maxEndMs = endMs;
+          }
+        }
         const cost = costIndex.get(s.sessionId);
         agents.add(s.agentName);
         const skillInvocations = s.skillInvocations ?? [];
@@ -149,8 +162,16 @@ export function buildPayload(
     unpricedModels: summary.unpricedModels,
     coverage: [...coverageMap.values()].sort((a, b) => b.total - a.total),
     ...(ctx.userEmail !== undefined && { userEmail: ctx.userEmail }),
-    ...(ctx.periodStart !== undefined && { periodStart: ctx.periodStart }),
-    ...(ctx.periodEnd !== undefined && { periodEnd: ctx.periodEnd }),
+    ...(ctx.periodStart !== undefined
+      ? { periodStart: ctx.periodStart }
+      : minStartMs !== undefined
+        ? { periodStart: new Date(minStartMs).toISOString() }
+        : {}),
+    ...(ctx.periodEnd !== undefined
+      ? { periodEnd: ctx.periodEnd }
+      : maxEndMs !== undefined
+        ? { periodEnd: new Date(maxEndMs).toISOString() }
+        : {}),
   };
 
   return { meta, sessions };
