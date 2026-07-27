@@ -141,4 +141,67 @@ describe('detectSettingsConflict', () => {
 
     expect(result).toBeNull();
   });
+
+  const PROFILE_MODEL = 'claude-opus-4-5';
+  const SETTINGS_MODEL = 'claude-3-haiku-20240307';
+
+  it('returns ConflictInfo with model fields when settings.json ANTHROPIC_MODEL differs from env', async () => {
+    vi.mocked(fsMod.existsSync).mockReturnValue(true);
+    vi.mocked(fsp.readFile).mockResolvedValue(
+      JSON.stringify({ env: { ANTHROPIC_MODEL: SETTINGS_MODEL } }) as any,
+    );
+
+    const result = await detectSettingsConflict({ ANTHROPIC_MODEL: PROFILE_MODEL });
+
+    expect(result).toEqual({ settingsModel: SETTINGS_MODEL, profileModel: PROFILE_MODEL });
+  });
+
+  it('returns ConflictInfo with model fields when env has no ANTHROPIC_MODEL', async () => {
+    vi.mocked(fsMod.existsSync).mockReturnValue(true);
+    vi.mocked(fsp.readFile).mockResolvedValue(
+      JSON.stringify({ env: { ANTHROPIC_MODEL: SETTINGS_MODEL } }) as any,
+    );
+
+    const result = await detectSettingsConflict({});
+
+    expect(result).toEqual({ settingsModel: SETTINGS_MODEL, profileModel: undefined });
+  });
+
+  it('returns null when settings.json ANTHROPIC_MODEL equals env value', async () => {
+    vi.mocked(fsMod.existsSync).mockReturnValue(true);
+    vi.mocked(fsp.readFile).mockResolvedValue(
+      JSON.stringify({ env: { ANTHROPIC_MODEL: PROFILE_MODEL } }) as any,
+    );
+
+    const result = await detectSettingsConflict({ ANTHROPIC_MODEL: PROFILE_MODEL });
+
+    expect(result).toBeNull();
+  });
+
+  it('returns ConflictInfo with both url and model fields when both conflict', async () => {
+    vi.mocked(fsMod.existsSync).mockReturnValue(true);
+    vi.mocked(fsp.readFile).mockResolvedValue(
+      JSON.stringify({ env: { ANTHROPIC_BASE_URL: SETTINGS_URL, ANTHROPIC_MODEL: SETTINGS_MODEL } }) as any,
+    );
+
+    const result = await detectSettingsConflict({ ANTHROPIC_BASE_URL: PROFILE_URL, ANTHROPIC_MODEL: PROFILE_MODEL });
+
+    expect(result).toEqual({
+      settingsUrl: SETTINGS_URL,
+      profileUrl: PROFILE_URL,
+      settingsModel: SETTINGS_MODEL,
+      profileModel: PROFILE_MODEL,
+    });
+  });
+
+  it('returns null when settings.json ANTHROPIC_MODEL is an empty string', async () => {
+    vi.mocked(fsMod.existsSync).mockReturnValue(true);
+    vi.mocked(fsp.readFile).mockResolvedValue(
+      JSON.stringify({ env: { ANTHROPIC_MODEL: '' } }) as any,
+    );
+
+    const result = await detectSettingsConflict({ ANTHROPIC_MODEL: PROFILE_MODEL });
+
+    expect(result).toBeNull();
+  });
 });

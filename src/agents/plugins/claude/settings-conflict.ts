@@ -4,8 +4,10 @@ import { join } from 'path';
 import { resolveHomeDir } from '../../../utils/paths.js';
 
 export interface ConflictInfo {
-  settingsUrl: string;
-  profileUrl: string | undefined;
+  settingsUrl?: string;
+  profileUrl?: string;
+  settingsModel?: string;
+  profileModel?: string;
 }
 
 export async function detectSettingsConflict(
@@ -25,11 +27,23 @@ export async function detectSettingsConflict(
   }
 
   const envBlock = settings.env as Record<string, unknown> | undefined;
-  const settingsUrl = envBlock?.ANTHROPIC_BASE_URL;
-  if (typeof settingsUrl !== 'string' || !settingsUrl) return null;
+  const rawUrl = envBlock?.ANTHROPIC_BASE_URL;
+  const rawModel = envBlock?.ANTHROPIC_MODEL;
 
-  const profileUrl = env.ANTHROPIC_BASE_URL;
-  if (profileUrl !== undefined && settingsUrl === profileUrl) return null;
+  const hasUrlConflict =
+    typeof rawUrl === 'string' &&
+    rawUrl !== '' &&
+    (env.ANTHROPIC_BASE_URL === undefined || rawUrl !== env.ANTHROPIC_BASE_URL);
 
-  return { settingsUrl, profileUrl };
+  const hasModelConflict =
+    typeof rawModel === 'string' &&
+    rawModel !== '' &&
+    (env.ANTHROPIC_MODEL === undefined || rawModel !== env.ANTHROPIC_MODEL);
+
+  if (!hasUrlConflict && !hasModelConflict) return null;
+
+  return {
+    ...(hasUrlConflict ? { settingsUrl: rawUrl as string, profileUrl: env.ANTHROPIC_BASE_URL } : {}),
+    ...(hasModelConflict ? { settingsModel: rawModel as string, profileModel: env.ANTHROPIC_MODEL } : {}),
+  };
 }

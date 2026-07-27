@@ -259,19 +259,28 @@ export const ClaudePluginMetadata: AgentMetadata = {
           };
           // The fallback literal contains U+2014 (em dash) which the ASCII allowlist strips.
           // Bypass safeUrl for the known-safe constant; only user-controlled values need it.
-          const profileDisplay = conflict.profileUrl
-            ? safeUrl(conflict.profileUrl)
-            : '(not set — direct Anthropic API)';
-          const activeDisplay = safeUrl(conflict.settingsUrl);
-          console.error(chalk.yellow('\n⚠️  ANTHROPIC_BASE_URL override detected in ~/.claude/settings.json'));
+          console.error(chalk.yellow('\n⚠️  ~/.claude/settings.json overrides detected'));
           console.error(chalk.yellow('─'.repeat(60)));
-          console.error(chalk.yellow(`  Profile URL  │ ${profileDisplay}`));
-          console.error(chalk.yellow(`  Active URL   │ ${activeDisplay}  ← settings.json wins`));
+          if (conflict.settingsUrl) {
+            const profileDisplay = conflict.profileUrl
+              ? safeUrl(conflict.profileUrl)
+              : '(not set — direct Anthropic API)';
+            const activeDisplay = safeUrl(conflict.settingsUrl);
+            console.error(chalk.yellow(`  Profile URL   │ ${profileDisplay}`));
+            console.error(chalk.yellow(`  Active URL    │ ${activeDisplay}  ← settings.json wins`));
+            console.error(chalk.yellow(''));
+          }
+          if (conflict.settingsModel) {
+            const profileModelDisplay = conflict.profileModel ?? '(not set — profile default)';
+            const activeModelDisplay = safeUrl(conflict.settingsModel);
+            console.error(chalk.yellow(`  Profile model │ ${profileModelDisplay}`));
+            console.error(chalk.yellow(`  Active model  │ ${activeModelDisplay}  ← settings.json wins`));
+            console.error(chalk.yellow(''));
+          }
+          console.error(chalk.yellow('  ~/.claude/settings.json values take precedence over the profile.'));
+          console.error(chalk.yellow('  Session will use the settings.json values.'));
           console.error(chalk.yellow(''));
-          console.error(chalk.yellow('  ~/.claude/settings.json ANTHROPIC_BASE_URL takes precedence'));
-          console.error(chalk.yellow('  over the profile value. Session will use the settings.json URL.'));
-          console.error(chalk.yellow(''));
-          console.error(chalk.yellow('  To fix: remove ANTHROPIC_BASE_URL from ~/.claude/settings.json'));
+          console.error(chalk.yellow('  To fix: remove overriding keys from ~/.claude/settings.json'));
           console.error(chalk.yellow('─'.repeat(60)));
           console.error('');
         }
