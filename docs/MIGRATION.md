@@ -28,10 +28,14 @@ All CodeMie commands are available under `codemie` and `codemie-code`.
 
 **Option 2: Add your own shell alias.**
 
-If you prefer the shorter name, add this to your `~/.zshrc` or `~/.bashrc`:
+> **Warning:** `alias code=codemie` will shadow the VS Code `code` command. If you use VS Code's CLI (`code .`, `code myfile.ts`), this alias will break it. Only do this if you do not rely on VS Code's `code` CLI, or use a different shorthand (e.g. `alias cm=codemie`).
+
+If you prefer the shorter name and do not use VS Code's `code` CLI, add this to your `~/.zshrc` or `~/.bashrc`:
 
 ```sh
 alias code=codemie
+# Or use a shorthand that doesn't conflict:
+# alias cm=codemie
 ```
 
 Then reload your shell:
@@ -42,14 +46,14 @@ source ~/.zshrc   # or ~/.bashrc
 
 ### Stale symlink note
 
-If you installed `@codemieai/code` globally **before this release**, npm may have already created a `code` symlink in your global bin directory. Upgrading via `npm update -g @codemieai/code` removes it for a fresh install of the new package, but existing symlinks from older installs may persist.
+If you installed `@codemieai/code` globally **before this release**, npm may have already created a `code` symlink in your global bin directory. Running `npm update -g @codemieai/code` alone does **not** remove the stale symlink — npm does not unlink bin entries that are removed from `package.json` during an update. A full uninstall and reinstall is required.
 
 To verify and clean up:
 
 ```sh
 # Check if the stale symlink exists
-which code
+which code   # macOS/Linux; on Windows use: where code
 
-# If it still points to codemie, reinstall to clear it
-npm unlink -g @codemieai/code && npm install -g @codemieai/code
+# To remove it, uninstall and reinstall the package
+npm uninstall -g @codemieai/code && npm install -g @codemieai/code
 ```
