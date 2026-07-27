@@ -46,11 +46,16 @@ export function buildPayload(
           continue;
         }
         seen.add(s.sessionId);
-        if (s.startTime > 0) {
+        // Guard both fields with Number.isFinite so a single malformed session
+        // (NaN/Infinity from a corrupted timestamp event or unreliable native log)
+        // does not propagate into new Date(...).toISOString() and throw RangeError,
+        // which would crash report generation for every user.
+        if (Number.isFinite(s.startTime) && s.startTime > 0) {
           if (minStartMs === undefined || s.startTime < minStartMs) {
             minStartMs = s.startTime;
           }
-          const endMs = s.startTime + Math.max(s.duration ?? 0, 0);
+          const dur = Number.isFinite(s.duration) ? Math.max(s.duration, 0) : 0;
+          const endMs = s.startTime + dur;
           if (maxEndMs === undefined || endMs > maxEndMs) {
             maxEndMs = endMs;
           }

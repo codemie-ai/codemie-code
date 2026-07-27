@@ -366,6 +366,31 @@ describe('buildPayload', () => {
     expect(payload.meta.periodEnd).toBeUndefined();
   });
 
+  it('skips records with non-finite startTime or duration and does not throw', () => {
+    // Guard against RangeError from new Date(NaN|Infinity).toISOString() — a single
+    // malformed session must not crash report generation for every other session.
+    const nanDur = session({ sessionId: 's-nan-dur', startTime: 1_700_000_000_000, duration: Number.NaN });
+    const infStart = session({ sessionId: 's-inf-start', startTime: Number.POSITIVE_INFINITY, duration: 60_000 });
+    const good = session({ sessionId: 's-good', startTime: 1_700_000_300_000, duration: 60_000 });
+    const rootMixed = {
+      ...root,
+      projects: [
+        { projectPath: '/repo/app', branches: [{ branchName: 'main', sessions: [nanDur, infStart, good] }] },
+      ],
+    } as unknown as RootAnalytics;
+    const costIndexMixed: SessionCostIndex = new Map([
+      ['s-nan-dur', { sessionId: 's-nan-dur', tokens: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, total: 2 }, costUSD: 0, perModel: [], priced: true, hadLog: true }],
+      ['s-inf-start', { sessionId: 's-inf-start', tokens: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, total: 2 }, costUSD: 0, perModel: [], priced: true, hadLog: true }],
+      ['s-good', { sessionId: 's-good', tokens: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, total: 2 }, costUSD: 0, perModel: [], priced: true, hadLog: true }],
+    ]);
+    const payload = buildPayload(rootMixed, costIndexMixed, summary, ctxAll);
+    // nanDur contributes its finite startTime (NaN duration collapses to 0 → endMs=startTime).
+    // infStart is skipped entirely (non-finite startTime fails the guard).
+    // good extends maxEndMs past nanDur's startTime.
+    expect(payload.meta.periodStart).toBe(new Date(1_700_000_000_000).toISOString());
+    expect(payload.meta.periodEnd).toBe(new Date(1_700_000_300_000 + 60_000).toISOString());
+  });
+
   it('skips records with startTime <= 0 when computing min/max', () => {
     const zero = session({ sessionId: 's-zero', startTime: 0, duration: 60_000 });
     const valid = session({ sessionId: 's-valid', startTime: 1_700_000_000_000, duration: 60_000 });
