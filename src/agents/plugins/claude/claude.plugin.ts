@@ -246,9 +246,10 @@ export const ClaudePluginMetadata: AgentMetadata = {
             const stripped = stripAnsi(noStringCmds).replace(/[^\x20-\x7e]/gu, '');
             try {
               const url = new URL(stripped);
-              if (url.username || url.password) {
+              if (url.username || url.password || url.search) {
                 url.username = '';
                 url.password = '';
+                url.search = '';
                 return `[credentials removed] ${url.toString()}`;
               }
             } catch {
