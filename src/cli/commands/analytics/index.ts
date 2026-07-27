@@ -296,6 +296,7 @@ function parseFilterOptions(options: AnalyticsOptions): AnalyticsFilter {
       console.warn(chalk.yellow(`Warning: Invalid --last duration "${options.last}", ignoring filter`));
     } else {
       filter.fromDate = new Date(Date.now() - duration);
+      filter.toDate = new Date();
     }
   }
 
