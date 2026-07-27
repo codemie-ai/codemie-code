@@ -76,6 +76,26 @@ const summary: CostSummary = {
   unpricedModels: [],
 };
 
+// Shared timestamps and cost helpers for period-derivation tests.
+const T0 = 1_700_000_000_000;
+const T_PLUS_5M = T0 + 5 * 60_000;
+const T_PLUS_10M = T0 + 10 * 60_000;
+const HALF_MIN = 30_000;
+const ONE_MIN = 60_000;
+
+function pricedCost(id: string) {
+  return { sessionId: id, tokens: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, total: 2 }, costUSD: 0, perModel: [], priced: true, hadLog: true };
+}
+function pricedIndex(...ids: string[]): SessionCostIndex {
+  return new Map(ids.map((id) => [id, pricedCost(id)]));
+}
+function singleBranchRoot(sessions: Record<string, unknown>[]): RootAnalytics {
+  return {
+    ...root,
+    projects: [{ projectPath: '/repo/app', branches: [{ branchName: 'main', sessions }] }],
+  } as unknown as RootAnalytics;
+}
+
 describe('buildPayload', () => {
   it('flattens sessions and joins cost + meta', () => {
     const payload = buildPayload(root, costIndex, summary, {
@@ -293,37 +313,21 @@ describe('buildPayload', () => {
   });
 
   it('derives meta.periodStart from min(startTime) when ctx omits it', () => {
-    const early = session({ sessionId: 's-early', startTime: 1_700_000_000_000, duration: 30_000 });
-    const late = session({ sessionId: 's-late', startTime: 1_700_000_600_000, duration: 60_000 });
-    const rootTwo = {
-      ...root,
-      projects: [
-        { projectPath: '/repo/app', branches: [{ branchName: 'main', sessions: [early, late] }] },
-      ],
-    } as unknown as RootAnalytics;
-    const costIndexTwo: SessionCostIndex = new Map([
-      ['s-early', { sessionId: 's-early', tokens: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, total: 2 }, costUSD: 0, perModel: [], priced: true, hadLog: true }],
-      ['s-late', { sessionId: 's-late', tokens: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, total: 2 }, costUSD: 0, perModel: [], priced: true, hadLog: true }],
-    ]);
-    const payload = buildPayload(rootTwo, costIndexTwo, summary, ctxAll);
-    expect(payload.meta.periodStart).toBe(new Date(1_700_000_000_000).toISOString());
+    const sessions = [
+      session({ sessionId: 's-early', startTime: T0, duration: HALF_MIN }),
+      session({ sessionId: 's-late', startTime: T_PLUS_10M, duration: ONE_MIN }),
+    ];
+    const payload = buildPayload(singleBranchRoot(sessions), pricedIndex('s-early', 's-late'), summary, ctxAll);
+    expect(payload.meta.periodStart).toBe(new Date(T0).toISOString());
   });
 
   it('derives meta.periodEnd from max(startTime + duration) when ctx omits it', () => {
-    const early = session({ sessionId: 's-early', startTime: 1_700_000_000_000, duration: 30_000 });
-    const late = session({ sessionId: 's-late', startTime: 1_700_000_600_000, duration: 60_000 });
-    const rootTwo = {
-      ...root,
-      projects: [
-        { projectPath: '/repo/app', branches: [{ branchName: 'main', sessions: [early, late] }] },
-      ],
-    } as unknown as RootAnalytics;
-    const costIndexTwo: SessionCostIndex = new Map([
-      ['s-early', { sessionId: 's-early', tokens: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, total: 2 }, costUSD: 0, perModel: [], priced: true, hadLog: true }],
-      ['s-late', { sessionId: 's-late', tokens: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, total: 2 }, costUSD: 0, perModel: [], priced: true, hadLog: true }],
-    ]);
-    const payload = buildPayload(rootTwo, costIndexTwo, summary, ctxAll);
-    expect(payload.meta.periodEnd).toBe(new Date(1_700_000_600_000 + 60_000).toISOString());
+    const sessions = [
+      session({ sessionId: 's-early', startTime: T0, duration: HALF_MIN }),
+      session({ sessionId: 's-late', startTime: T_PLUS_10M, duration: ONE_MIN }),
+    ];
+    const payload = buildPayload(singleBranchRoot(sessions), pricedIndex('s-early', 's-late'), summary, ctxAll);
+    expect(payload.meta.periodEnd).toBe(new Date(T_PLUS_10M + ONE_MIN).toISOString());
   });
 
   it('prefers ctx.periodStart / ctx.periodEnd over derived values (regression guard)', () => {
@@ -339,19 +343,10 @@ describe('buildPayload', () => {
   });
 
   it('treats duration=0 as endTime=startTime for periodEnd derivation', () => {
-    const only = session({ sessionId: 's-only', startTime: 1_700_000_000_000, duration: 0 });
-    const rootOne = {
-      ...root,
-      projects: [
-        { projectPath: '/repo/app', branches: [{ branchName: 'main', sessions: [only] }] },
-      ],
-    } as unknown as RootAnalytics;
-    const costIndexOne: SessionCostIndex = new Map([
-      ['s-only', { sessionId: 's-only', tokens: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, total: 2 }, costUSD: 0, perModel: [], priced: true, hadLog: true }],
-    ]);
-    const payload = buildPayload(rootOne, costIndexOne, summary, ctxAll);
-    expect(payload.meta.periodStart).toBe(new Date(1_700_000_000_000).toISOString());
-    expect(payload.meta.periodEnd).toBe(new Date(1_700_000_000_000).toISOString());
+    const sessions = [session({ sessionId: 's-only', startTime: T0, duration: 0 })];
+    const payload = buildPayload(singleBranchRoot(sessions), pricedIndex('s-only'), summary, ctxAll);
+    expect(payload.meta.periodStart).toBe(new Date(T0).toISOString());
+    expect(payload.meta.periodEnd).toBe(new Date(T0).toISOString());
   });
 
   it('omits meta.periodStart / meta.periodEnd when there are no valid sessions', () => {
@@ -367,46 +362,32 @@ describe('buildPayload', () => {
   });
 
   it('skips records with non-finite startTime or duration and does not throw', () => {
-    // Guard against RangeError from new Date(NaN|Infinity).toISOString() — a single
-    // malformed session must not crash report generation for every other session.
-    const nanDur = session({ sessionId: 's-nan-dur', startTime: 1_700_000_000_000, duration: Number.NaN });
-    const infStart = session({ sessionId: 's-inf-start', startTime: Number.POSITIVE_INFINITY, duration: 60_000 });
-    const good = session({ sessionId: 's-good', startTime: 1_700_000_300_000, duration: 60_000 });
-    const rootMixed = {
-      ...root,
-      projects: [
-        { projectPath: '/repo/app', branches: [{ branchName: 'main', sessions: [nanDur, infStart, good] }] },
-      ],
-    } as unknown as RootAnalytics;
-    const costIndexMixed: SessionCostIndex = new Map([
-      ['s-nan-dur', { sessionId: 's-nan-dur', tokens: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, total: 2 }, costUSD: 0, perModel: [], priced: true, hadLog: true }],
-      ['s-inf-start', { sessionId: 's-inf-start', tokens: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, total: 2 }, costUSD: 0, perModel: [], priced: true, hadLog: true }],
-      ['s-good', { sessionId: 's-good', tokens: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, total: 2 }, costUSD: 0, perModel: [], priced: true, hadLog: true }],
-    ]);
-    const payload = buildPayload(rootMixed, costIndexMixed, summary, ctxAll);
     // nanDur contributes its finite startTime (NaN duration collapses to 0 → endMs=startTime).
     // infStart is skipped entirely (non-finite startTime fails the guard).
     // good extends maxEndMs past nanDur's startTime.
-    expect(payload.meta.periodStart).toBe(new Date(1_700_000_000_000).toISOString());
-    expect(payload.meta.periodEnd).toBe(new Date(1_700_000_300_000 + 60_000).toISOString());
+    const sessions = [
+      session({ sessionId: 's-nan-dur', startTime: T0, duration: Number.NaN }),
+      session({ sessionId: 's-inf-start', startTime: Number.POSITIVE_INFINITY, duration: ONE_MIN }),
+      session({ sessionId: 's-good', startTime: T_PLUS_5M, duration: ONE_MIN }),
+    ];
+    const payload = buildPayload(
+      singleBranchRoot(sessions),
+      pricedIndex('s-nan-dur', 's-inf-start', 's-good'),
+      summary,
+      ctxAll,
+    );
+    expect(payload.meta.periodStart).toBe(new Date(T0).toISOString());
+    expect(payload.meta.periodEnd).toBe(new Date(T_PLUS_5M + ONE_MIN).toISOString());
   });
 
   it('skips records with startTime <= 0 when computing min/max', () => {
-    const zero = session({ sessionId: 's-zero', startTime: 0, duration: 60_000 });
-    const valid = session({ sessionId: 's-valid', startTime: 1_700_000_000_000, duration: 60_000 });
-    const rootMixed = {
-      ...root,
-      projects: [
-        { projectPath: '/repo/app', branches: [{ branchName: 'main', sessions: [zero, valid] }] },
-      ],
-    } as unknown as RootAnalytics;
-    const costIndexMixed: SessionCostIndex = new Map([
-      ['s-zero', { sessionId: 's-zero', tokens: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, total: 2 }, costUSD: 0, perModel: [], priced: true, hadLog: true }],
-      ['s-valid', { sessionId: 's-valid', tokens: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, total: 2 }, costUSD: 0, perModel: [], priced: true, hadLog: true }],
-    ]);
-    const payload = buildPayload(rootMixed, costIndexMixed, summary, ctxAll);
-    expect(payload.meta.periodStart).toBe(new Date(1_700_000_000_000).toISOString());
-    expect(payload.meta.periodEnd).toBe(new Date(1_700_000_000_000 + 60_000).toISOString());
+    const sessions = [
+      session({ sessionId: 's-zero', startTime: 0, duration: ONE_MIN }),
+      session({ sessionId: 's-valid', startTime: T0, duration: ONE_MIN }),
+    ];
+    const payload = buildPayload(singleBranchRoot(sessions), pricedIndex('s-zero', 's-valid'), summary, ctxAll);
+    expect(payload.meta.periodStart).toBe(new Date(T0).toISOString());
+    expect(payload.meta.periodEnd).toBe(new Date(T0 + ONE_MIN).toISOString());
   });
 });
 
