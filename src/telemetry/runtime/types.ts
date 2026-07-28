@@ -23,6 +23,7 @@ export interface DesktopTelemetryRuntimeConfig {
   syncCodeMieUrl?: string;
   pollIntervalMs: number;
   inactivityTimeoutMs: number;
+  sessionRepositoryMap?: Map<string, string>;
 }
 
 export interface LocalTelemetryAdapter {
