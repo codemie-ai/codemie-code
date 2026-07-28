@@ -6,6 +6,7 @@ import { OpenCodePlugin } from './plugins/opencode/index.js';
 import { CodexPlugin } from './plugins/codex/index.js';
 import { KimiPlugin } from './plugins/kimi/kimi.plugin.js';
 import { KimiAcpPlugin } from './plugins/kimi/kimi-acp.plugin.js';
+import { CopilotCliPlugin } from './plugins/copilot-cli/index.js';
 import { AgentAdapter, AgentAnalyticsAdapter } from './core/types.js';
 
 // Re-export for backwards compatibility
@@ -37,6 +38,9 @@ export class AgentRegistry {
     AgentRegistry.registerPlugin(new CodexPlugin());
     AgentRegistry.registerPlugin(new KimiPlugin());
     AgentRegistry.registerPlugin(new KimiAcpPlugin());
+    // Analytics-only: CodeMie never installs, launches, or manages Copilot — this
+    // registration exists so the analytics pipeline can reach its session adapter.
+    AgentRegistry.registerPlugin(new CopilotCliPlugin());
 
     AgentRegistry.initialized = true;
   }
