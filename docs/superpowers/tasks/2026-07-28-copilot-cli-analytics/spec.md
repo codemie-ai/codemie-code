@@ -189,9 +189,19 @@ never manages.
 | `skill.invoked` | `skillInvocations` — **feeds `detectSessionSource` for free** (D11) |
 | `user.message` | `userPrompts` |
 
-D11 means Copilot sessions classify in the Source column (CodeMie AI Factory / Superpowers /
-OpenSpec / SpecKit / BMAD / Pure chat) exactly like Claude sessions, rather than all defaulting to
-"Pure chat". `detectSessionSource` already consumes `skillInvocations`; no detector changes needed.
+D11 wires `skill.invoked` into `metrics.skillInvocations`, which `detectSessionSource` already
+consumes — no detector changes.
+
+**Known limitation (measured, accepted).** The data flows correctly, but Copilot sessions still
+classify as **"Pure chat"**. `session-source-detector.ts` matches the `superpowers:` *prefix*
+(and `sdlc-factory:` etc.), whereas Copilot writes skill names **un-namespaced** — `brainstorming`,
+`writing-plans`, `using-superpowers` — because its plugins resolve skills by bare name. Verified on
+two real sessions whose `skillInvocations` are populated with exactly those names.
+
+Loosening the shared detector to substring-match would change how Claude and Codex sessions
+classify for the sake of one column, so it is deliberately **not** done here. The skill data is
+captured and available; only the classification rule does not fit Copilot's naming. Revisit if
+Source-column coverage for Copilot becomes worth the shared-rule change.
 
 ### 7. Analytics wiring
 
@@ -263,6 +273,25 @@ agent-agnostic and needs no change once `readCopilotCli` returns a populated `Us
 - Mapping premium requests / AI credits to a true billed USD figure.
 - Per-turn cost-growth series for Copilot (§7).
 - Any install / launch / configure / BYOK-proxy capability for Copilot.
+
+## Implementation notes (discovered during build, not anticipated by this spec)
+
+Two assumptions in §6 were wrong about the real `events.jsonl` shape and were corrected during
+implementation. Both were caught only by running against real sessions — the unit-test fixtures had
+encoded the assumptions rather than reality.
+
+1. **`tool.execution_complete` carries no tool name and no status string.** It has `toolCallId`,
+   a boolean `success`, and `error`/`result`. The tool **name and arguments live on
+   `tool.execution_start`**, so the two events must be paired by `toolCallId`. Before the fix, tool
+   metrics were silently empty for every session.
+2. **`parsed.messages` must also carry Claude-shaped per-turn records.** `synthesizeRawSession`
+   derives turns, models, timestamps, cwd and branch by treating `messages` as Claude-shaped, so
+   per-model usage rows alone yielded 1 turn per session and no models. `messages` now holds both:
+   `readCopilotCli` filters on `model` + `usage`, turn counting filters on `type === 'assistant'` —
+   orthogonal filters over one array, so no second synthesizer was needed.
+
+Also: `session.shutdown.codeChanges` line totals are **merged into** the per-file operations
+gathered from tool arguments rather than appended, so a path recorded by both is not double-counted.
 
 ## User-visible effect
 
