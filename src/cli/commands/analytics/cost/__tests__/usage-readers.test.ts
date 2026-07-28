@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { readUsageByModel, extractClaudeUsageRecords, gatherDedupedUsageRecords, sumUsageRecords, extractKimiUsageRecords, extractCodexUsageRecords } from '../usage-readers.js';
+import { readUsageByModel, gatherUsageDeduped, extractClaudeUsageRecords, gatherDedupedUsageRecords, sumUsageRecords, extractKimiUsageRecords, extractCodexUsageRecords } from '../usage-readers.js';
 
 const claudeParsed = {
   sessionId: 's1',
@@ -558,5 +558,33 @@ describe('readUsageByModel — copilot-cli cache decomposition', () => {
   it('returns an empty map for a session with no messages', () => {
     const empty = { sessionId: 's0', agentName: 'GitHub Copilot CLI', metadata: {}, messages: [] } as never;
     expect(readUsageByModel('copilot-cli', empty).size).toBe(0);
+  });
+});
+
+/**
+ * The cost enricher computes run-level totals through gatherUsageDeduped, NOT
+ * readUsageByModel. An agent branched into one but not the other yields correct
+ * per-session numbers and $0 report totals — a silent, plausible-looking failure.
+ */
+describe('gatherUsageDeduped — copilot-cli', () => {
+  it('returns populated run-level totals (guards the $0-totals trap)', () => {
+    const m = gatherUsageDeduped('copilot-cli', copilotParsed, new Set());
+
+    expect(m.size).toBe(2);
+    expect(m.get('gpt-5.2')!.input).toBe(381719);
+    expect(m.get('claude-sonnet-4.5')!.cacheCreation).toBe(125660);
+  });
+
+  it('agrees with readUsageByModel', () => {
+    const viaReader = readUsageByModel('copilot-cli', copilotParsed);
+    const viaDedup = gatherUsageDeduped('copilot-cli', copilotParsed, new Set());
+    expect([...viaDedup.entries()]).toEqual([...viaReader.entries()]);
+  });
+
+  it('is session-local — a shared seen set does not suppress a second session', () => {
+    const seen = new Set<string>();
+    const first = gatherUsageDeduped('copilot-cli', copilotParsed, seen);
+    const second = gatherUsageDeduped('copilot-cli', copilotParsed, seen);
+    expect(second.get('gpt-5.2')!.input).toBe(first.get('gpt-5.2')!.input);
   });
 });
