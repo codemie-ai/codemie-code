@@ -37,8 +37,10 @@ import { extractCopilotUsage } from './copilot-cli.usage.js';
 import type {
   CopilotSessionStartData,
   CopilotShutdownData,
+  CopilotToolStartData,
   CopilotToolCompleteData,
   CopilotSkillInvokedData,
+  CopilotAssistantMessageData,
 } from './copilot-cli-event-types.js';
 import { CopilotCliMetricsProcessor } from './session/processors/copilot-cli.metrics-processor.js';
 import { CopilotCliConversationsProcessor } from './session/processors/copilot-cli.conversations-processor.js';
@@ -46,6 +48,12 @@ import { logger } from '../../../utils/logger.js';
 
 const DEFAULT_MAX_AGE_DAYS = 30;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+/**
+ * Copilot tools that write to disk. `view` also carries a `path` but is a read, and the
+ * aggregator excludes reads from the changed-files metrics.
+ */
+const FILE_WRITE_TOOLS = new Set(['create', 'edit']);
 
 /** Trailing-slash-insensitive directory comparison. */
 function sameDir(a: string | undefined, b: string): boolean {
@@ -174,18 +182,46 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
     const userPrompts: Array<{ count: number; text: string }> = [];
     const fileOperations: NonNullable<ParsedSession['metrics']>['fileOperations'] = [];
 
+    const context = start?.context;
+    const cwd = context?.cwd ?? context?.gitRoot;
+    const branch = context?.branch;
+
+    // Per-turn records in the Claude-shaped form `synthesizeRawSession` understands, so
+    // native synthesis derives turns, models, timestamps, cwd and branch correctly. These
+    // carry no `usage`, so `readCopilotCli` skips them; the per-model usage rows appended
+    // afterwards carry no `type`, so turn counting skips those. Orthogonal filters.
+    const turnRecords: unknown[] = [];
+
+    // tool.execution_start is the ONLY event carrying the tool name and arguments;
+    // tool.execution_complete carries just toolCallId + a boolean success. Pair by id.
+    const toolNameById = new Map<string, string>();
+
     for (const event of events) {
       switch (event.type) {
-        case 'tool.execution_complete': {
-          const data = (event.data ?? {}) as CopilotToolCompleteData;
-          if (!data.name) {
+        case 'tool.execution_start': {
+          const data = (event.data ?? {}) as CopilotToolStartData;
+          if (!data.toolCallId || !data.toolName) {
             break;
           }
-          tools[data.name] = (tools[data.name] ?? 0) + 1;
-          const bucket = toolStatus[data.name] ?? { success: 0, failure: 0 };
-          const failed = data.status === 'error' || data.error !== undefined;
+          toolNameById.set(data.toolCallId, data.toolName);
+
+          const path = data.arguments?.path;
+          if (path && FILE_WRITE_TOOLS.has(data.toolName)) {
+            fileOperations.push({ type: data.toolName === 'create' ? 'write' : 'edit', path });
+          }
+          break;
+        }
+        case 'tool.execution_complete': {
+          const data = (event.data ?? {}) as CopilotToolCompleteData;
+          const name = data.toolCallId ? toolNameById.get(data.toolCallId) : undefined;
+          if (!name) {
+            break; // orphaned completion (truncated transcript) — nothing to attribute
+          }
+          tools[name] = (tools[name] ?? 0) + 1;
+          const bucket = toolStatus[name] ?? { success: 0, failure: 0 };
+          const failed = data.success === false || data.error !== undefined;
           bucket[failed ? 'failure' : 'success'] += 1;
-          toolStatus[data.name] = bucket;
+          toolStatus[name] = bucket;
           break;
         }
         case 'skill.invoked': {
@@ -201,6 +237,24 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
           if (typeof text === 'string' && text.trim()) {
             userPrompts.push({ count: 1, text });
           }
+          turnRecords.push({
+            type: 'user',
+            timestamp: event.timestamp,
+            cwd,
+            gitBranch: branch,
+            message: { role: 'user', content: typeof text === 'string' ? text : '' },
+          });
+          break;
+        }
+        case 'assistant.message': {
+          const data = (event.data ?? {}) as CopilotAssistantMessageData;
+          turnRecords.push({
+            type: 'assistant',
+            timestamp: event.timestamp,
+            cwd,
+            gitBranch: branch,
+            message: { role: 'assistant', model: data.model },
+          });
           break;
         }
         default:
@@ -208,32 +262,38 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
       }
     }
 
-    // session.shutdown.codeChanges is the authoritative churn figure. Copilot reports no
-    // per-file line deltas, so the session totals are attributed to the first modified
-    // file and the rest are recorded as touched.
+    // session.shutdown.codeChanges is the authoritative churn figure, but reports only
+    // session-wide line totals plus a file list — no per-file deltas. Merge it into the
+    // per-file operations already gathered from tool arguments rather than appending a
+    // second entry for the same path, which would double-count the file.
     const changes = shutdown?.codeChanges;
-    for (const [index, path] of (changes?.filesModified ?? []).entries()) {
-      fileOperations.push({
-        type: 'edit',
-        path,
-        linesAdded: index === 0 ? changes?.linesAdded ?? 0 : 0,
-        linesRemoved: index === 0 ? changes?.linesRemoved ?? 0 : 0,
-      });
+    if (changes) {
+      for (const path of changes.filesModified ?? []) {
+        if (!fileOperations.some((op) => op.path === path)) {
+          fileOperations.push({ type: 'edit', path });
+        }
+      }
+      // Attribute the session totals to the first changed file: Copilot gives no
+      // per-file split, and the aggregator sums these into the session's churn.
+      const target = fileOperations[0];
+      if (target) {
+        target.linesAdded = changes.linesAdded ?? 0;
+        target.linesRemoved = changes.linesRemoved ?? 0;
+      }
     }
 
-    const context = start?.context;
     return {
       sessionId,
       agentName: this.metadata.displayName,
       agentVersion: start?.copilotVersion,
       metadata: {
-        projectPath: context?.cwd ?? context?.gitRoot,
+        projectPath: cwd,
         createdAt: start?.startTime,
         repository: context?.repository,
-        branch: context?.branch,
-        gitBranch: context?.branch,
+        branch,
+        gitBranch: branch,
       },
-      messages: usage.messages,
+      messages: [...turnRecords, ...usage.messages],
       usageMeta: {
         premiumRequests: usage.premiumRequests,
         usagePartial: usage.partial,

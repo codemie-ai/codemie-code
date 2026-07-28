@@ -37,17 +37,32 @@ const LINES: unknown[] = [
   { type: 'user.message', timestamp: '2026-06-16T06:21:02Z', data: { text: 'hello there' } },
   { type: 'skill.invoked', timestamp: '2026-06-16T06:21:03Z', data: { skill: 'superpowers:brainstorming' } },
   { type: 'assistant.message', timestamp: '2026-06-16T06:21:04Z', data: { model: 'gpt-5.4', outputTokens: 296 } },
+  // Real shape: the tool NAME and arguments appear only on tool.execution_start;
+  // tool.execution_complete carries just toolCallId plus a boolean `success`.
   {
-    type: 'tool.execution_complete',
+    type: 'tool.execution_start',
     timestamp: '2026-06-16T06:21:05Z',
-    data: { name: 'view', status: 'success', arguments: { path: '/repo/app/a.ts' } },
+    data: { toolCallId: 'c1', toolName: 'view', arguments: { path: '/repo/app/a.ts' } },
   },
+  { type: 'tool.execution_complete', timestamp: '2026-06-16T06:21:05Z', data: { toolCallId: 'c1', success: true } },
   {
-    type: 'tool.execution_complete',
+    type: 'tool.execution_start',
     timestamp: '2026-06-16T06:21:06Z',
-    data: { name: 'view', status: 'success', arguments: { path: '/repo/app/b.ts' } },
+    data: { toolCallId: 'c2', toolName: 'view', arguments: { path: '/repo/app/b.ts' } },
   },
-  { type: 'tool.execution_complete', timestamp: '2026-06-16T06:21:07Z', data: { name: 'bash', status: 'error' } },
+  { type: 'tool.execution_complete', timestamp: '2026-06-16T06:21:06Z', data: { toolCallId: 'c2', success: true } },
+  {
+    type: 'tool.execution_start',
+    timestamp: '2026-06-16T06:21:07Z',
+    data: { toolCallId: 'c3', toolName: 'bash', arguments: {} },
+  },
+  { type: 'tool.execution_complete', timestamp: '2026-06-16T06:21:07Z', data: { toolCallId: 'c3', success: false } },
+  {
+    type: 'tool.execution_start',
+    timestamp: '2026-06-16T06:21:07.5Z',
+    data: { toolCallId: 'c4', toolName: 'edit', arguments: { path: '/repo/app/a.ts', old_str: 'a', new_str: 'b' } },
+  },
+  { type: 'tool.execution_complete', timestamp: '2026-06-16T06:21:07.6Z', data: { toolCallId: 'c4', success: true } },
   {
     type: 'session.shutdown',
     timestamp: '2026-06-16T06:21:08Z',
@@ -99,23 +114,54 @@ describe('CopilotCliSessionAdapter.parseSessionFile', () => {
     expect(parsed.metadata.createdAt).toBe('2026-06-16T06:21:01.967Z');
   });
 
-  it('emits raw per-model usage buckets as messages', async () => {
+  it('emits raw per-model usage buckets among the messages', async () => {
     const parsed = await newAdapter().parseSessionFile(file, 'sess-1');
-    const messages = parsed.messages as CopilotUsageMessage[];
+    const usageRows = (parsed.messages as CopilotUsageMessage[]).filter((m) => m.usage);
 
-    expect(messages).toHaveLength(1);
-    expect(messages[0].model).toBe('gpt-5.4');
+    expect(usageRows).toHaveLength(1);
+    expect(usageRows[0].model).toBe('gpt-5.4');
     // RAW — cache-inclusive. readCopilotCli performs the decomposition.
-    expect(messages[0].usage.inputTokens).toBe(1431122);
-    expect(messages[0].requests).toBe(22);
+    expect(usageRows[0].usage.inputTokens).toBe(1431122);
+    expect(usageRows[0].requests).toBe(22);
   });
 
-  it('extracts tool counts and success/failure status', async () => {
+  it('emits Claude-shaped per-turn records so native synthesis derives turns and models', async () => {
+    const parsed = await newAdapter().parseSessionFile(file, 'sess-1');
+    const turns = (parsed.messages as Array<{ type?: string; message?: { model?: string }; cwd?: string }>).filter(
+      (m) => m.type === 'assistant'
+    );
+
+    expect(turns).toHaveLength(1);
+    expect(turns[0].message!.model).toBe('gpt-5.4');
+    expect(turns[0].cwd).toBe('/repo/app');
+  });
+
+  it('pairs tool.execution_start with _complete by toolCallId for names and outcomes', async () => {
     const parsed = await newAdapter().parseSessionFile(file, 'sess-1');
 
-    expect(parsed.metrics!.tools).toEqual({ view: 2, bash: 1 });
+    expect(parsed.metrics!.tools).toEqual({ view: 2, bash: 1, edit: 1 });
     expect(parsed.metrics!.toolStatus!.view).toEqual({ success: 2, failure: 0 });
     expect(parsed.metrics!.toolStatus!.bash).toEqual({ success: 0, failure: 1 });
+  });
+
+  it('ignores an orphaned completion with no matching start', async () => {
+    const orphan = join(dir, 'orphan.jsonl');
+    writeFileSync(
+      orphan,
+      JSON.stringify({ type: 'tool.execution_complete', data: { toolCallId: 'gone', success: true } }) + '\n'
+    );
+
+    const parsed = await newAdapter().parseSessionFile(orphan, 'sess-orphan');
+    expect(parsed.metrics!.tools).toEqual({});
+  });
+
+  it('records file writes from tool arguments but not reads', async () => {
+    const parsed = await newAdapter().parseSessionFile(file, 'sess-1');
+    const paths = parsed.metrics!.fileOperations!.map((o) => `${o.type}:${o.path}`);
+
+    expect(paths).toContain('edit:/repo/app/a.ts');
+    // `view` carries a path too, but it is a read and must not count as a change.
+    expect(paths.some((p) => p.startsWith('view:'))).toBe(false);
   });
 
   it('extracts skill invocations so the Source column can classify the session', async () => {
@@ -128,12 +174,31 @@ describe('CopilotCliSessionAdapter.parseSessionFile', () => {
     expect(parsed.metrics!.userPrompts).toEqual([{ count: 1, text: 'hello there' }]);
   });
 
-  it('records code changes from session.shutdown', async () => {
+  it('merges session.shutdown line totals into the per-file operations without duplicating', async () => {
     const parsed = await newAdapter().parseSessionFile(file, 'sess-1');
     const ops = parsed.metrics!.fileOperations!;
 
-    expect(ops).toHaveLength(1);
+    // /repo/app/a.ts appears in BOTH the edit tool call and shutdown.filesModified;
+    // it must be recorded once, not twice.
+    expect(ops.filter((o) => o.path === '/repo/app/a.ts')).toHaveLength(1);
     expect(ops[0]).toMatchObject({ path: '/repo/app/a.ts', linesAdded: 12, linesRemoved: 4 });
+  });
+
+  it('adds files that only session.shutdown knows about', async () => {
+    const extra = join(dir, 'extra.jsonl');
+    writeFileSync(
+      extra,
+      JSON.stringify({
+        type: 'session.shutdown',
+        data: { codeChanges: { linesAdded: 5, linesRemoved: 1, filesModified: ['/only/in/shutdown.ts'] } },
+      }) + '\n'
+    );
+
+    const parsed = await newAdapter().parseSessionFile(extra, 'sess-extra');
+    const ops = parsed.metrics!.fileOperations!;
+
+    expect(ops).toHaveLength(1);
+    expect(ops[0]).toMatchObject({ path: '/only/in/shutdown.ts', linesAdded: 5, linesRemoved: 1 });
   });
 
   it('exposes premium requests and non-partial usage state', async () => {
@@ -149,11 +214,13 @@ describe('CopilotCliSessionAdapter.parseSessionFile', () => {
     writeFileSync(noShutdown, LINES.slice(0, -1).map((l) => JSON.stringify(l)).join('\n') + '\n');
 
     const parsed = await newAdapter().parseSessionFile(noShutdown, 'sess-2');
-    const messages = parsed.messages as CopilotUsageMessage[];
+    const usageRows = (parsed.messages as CopilotUsageMessage[]).filter((m) => m.usage);
 
     expect(parsed.usageMeta!.usagePartial).toBe(true);
-    expect(messages[0].usage.outputTokens).toBe(296);
-    expect(parsed.metrics!.fileOperations).toEqual([]);
+    expect(usageRows).toHaveLength(1);
+    expect(usageRows[0].usage.outputTokens).toBe(296);
+    // Without shutdown there are no line totals, but the edit tool call is still recorded.
+    expect(parsed.metrics!.fileOperations).toEqual([{ type: 'edit', path: '/repo/app/a.ts' }]);
   });
 
   it('reports a reason when the transcript carries no usage at all', async () => {

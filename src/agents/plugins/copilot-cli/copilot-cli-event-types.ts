@@ -110,13 +110,38 @@ export interface CopilotAssistantMessageData {
   toolRequests?: Array<{ toolCallId?: string; name?: string; arguments?: unknown }>;
 }
 
-/** `data` of a `tool.execution_complete` event. */
+/**
+ * `data` of a `tool.execution_start` event.
+ *
+ * The tool NAME and arguments live here only — `tool.execution_complete` carries neither,
+ * so the two events must be paired by `toolCallId` to attribute a call to a tool.
+ */
+export interface CopilotToolStartData {
+  toolCallId?: string;
+  toolName?: string;
+  turnId?: string;
+  arguments?: {
+    path?: string;
+    /** Present on `create`. */
+    file_text?: string;
+    /** Present on `edit`. */
+    old_str?: string;
+    new_str?: string;
+  };
+}
+
+/**
+ * `data` of a `tool.execution_complete` event.
+ *
+ * Outcome is the boolean `success` — there is no `status` string and no tool name.
+ */
 export interface CopilotToolCompleteData {
   toolCallId?: string;
-  name?: string;
-  status?: string;
+  success?: boolean;
   error?: unknown;
-  arguments?: { path?: string };
+  result?: unknown;
+  model?: string;
+  turnId?: string;
 }
 
 /** `data` of a `skill.invoked` event — feeds the report's session-source classification. */

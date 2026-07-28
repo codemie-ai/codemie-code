@@ -28,7 +28,24 @@ import { firstCodexUserText } from '../../../agents/plugins/codex/session/codex-
 import { collectCodexChildThreadIds } from '../../../agents/plugins/codex/session/codex-collab-links.js';
 
 /** Agents whose native logs we discover + synthesize. */
-const NATIVE_AGENTS = ['claude', 'codex'] as const;
+const NATIVE_AGENTS = ['claude', 'codex', 'copilot-cli'] as const;
+
+/**
+ * Agents CodeMie only reads analytics for and never installs, launches, or manages.
+ *
+ * The ownership gate below exists to stop analytics silently counting UNMANAGED runs of an
+ * agent CodeMie CAN manage (EPMCDME-13367). An analytics-only agent has no managed variant,
+ * so it can never carry an ownership marker — applying the gate would tag 100% of its
+ * sessions `native-external` and drop them from the default report, making the integration
+ * a silent no-op.
+ */
+function isAnalyticsOnlyAgent(agentName: string): boolean {
+  try {
+    return AgentRegistry.getAgent(agentName)?.metadata.analyticsOnly === true;
+  } catch {
+    return false;
+  }
+}
 
 /** A discovered native session paired with its agent. */
 export interface DiscoveredNative {
@@ -515,7 +532,11 @@ export async function loadNativeSessions(
       continue;
     }
     const raw = synthesizeRawSession(agentName, descriptor, parsed);
-    if (!deps.hasOwnershipMarker(descriptor.filePath) && raw.startEvent) {
+    if (
+      !isAnalyticsOnlyAgent(agentName) &&
+      !deps.hasOwnershipMarker(descriptor.filePath) &&
+      raw.startEvent
+    ) {
       raw.startEvent.data.provider = 'native-external';
     }
     out.push(raw);
