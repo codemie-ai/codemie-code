@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { join } from 'path';
 
 vi.mock('fs/promises');
 vi.mock('fs');
@@ -20,7 +21,7 @@ describe('detectSettingsConflict', () => {
   let fsMod: typeof import('fs');
   let fsp: typeof import('fs/promises');
 
-  const SETTINGS_PATH = '/home/testuser/claude/settings.json';
+  const SETTINGS_PATH = join('/home/testuser/claude', 'settings.json');
   const PROFILE_URL = 'https://ai-proxy.lab.epam.com';
   const SETTINGS_URL = 'https://other-proxy.example.com';
 
