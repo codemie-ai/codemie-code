@@ -45,6 +45,26 @@ export interface ParsedSession {
     agentType?: string;   // from agent-<id>.meta.json — the agent type string
   }>;
 
+  /**
+   * Provenance of this session's token usage, for agents whose transcripts cannot always
+   * carry a complete rollup. Lets the cost enricher distinguish "cost is genuinely zero"
+   * from "cost is unmeasurable", and the report explain which it is.
+   *
+   * Optional and additive — agents that always record complete usage omit it entirely.
+   */
+  usageMeta?: {
+    /**
+     * Billing units the provider itself charges in, when it reports them and they differ
+     * from tokens. Currently only GitHub Copilot CLI ("premium requests"), whose bill does
+     * not track token volume.
+     */
+    premiumRequests?: number;
+    /** True when usage was reconstructed from partial data and understates actual use. */
+    usagePartial?: boolean;
+    /** Why this session has no usage data; absent when usage was found. */
+    usageUnavailableReason?: string;
+  };
+
   // Parsed metrics data (optional - for metrics processor)
   metrics?: {
     tools?: Record<string, number>;

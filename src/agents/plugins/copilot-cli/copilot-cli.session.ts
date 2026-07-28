@@ -32,6 +32,16 @@ import type { AgentMetadata } from '../../core/types.js';
 import { getCopilotSessionStateRoot } from './copilot-cli.paths.js';
 import { readWorkspaceManifest } from './copilot-cli.workspace.js';
 import { COPILOT_CLI_AGENT_NAME } from './copilot-cli.constants.js';
+import { readCopilotEventsTolerant } from './copilot-cli.storage-utils.js';
+import { extractCopilotUsage } from './copilot-cli.usage.js';
+import type {
+  CopilotSessionStartData,
+  CopilotShutdownData,
+  CopilotToolCompleteData,
+  CopilotSkillInvokedData,
+} from './copilot-cli-event-types.js';
+import { CopilotCliMetricsProcessor } from './session/processors/copilot-cli.metrics-processor.js';
+import { CopilotCliConversationsProcessor } from './session/processors/copilot-cli.conversations-processor.js';
 import { logger } from '../../../utils/logger.js';
 
 const DEFAULT_MAX_AGE_DAYS = 30;
@@ -49,7 +59,10 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
   readonly agentName = COPILOT_CLI_AGENT_NAME;
   private processors: SessionProcessor[] = [];
 
-  constructor(private readonly metadata: AgentMetadata) {}
+  constructor(private readonly metadata: AgentMetadata) {
+    this.registerProcessor(new CopilotCliMetricsProcessor());
+    this.registerProcessor(new CopilotCliConversationsProcessor());
+  }
 
   registerProcessor(processor: SessionProcessor): void {
     this.processors.push(processor);
@@ -136,23 +149,149 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
     return results;
   }
 
-  // Implemented in Task 3/6 of the plan.
-  async parseSessionFile(_filePath: string, sessionId: string): Promise<ParsedSession> {
+  /**
+   * Read `events.jsonl` into the unified `ParsedSession`.
+   *
+   * `messages` carries the RAW per-model Copilot buckets — `readCopilotCli` in
+   * `usage-readers.ts` owns the conversion into `TokenUsage`, so the OpenAI/Anthropic
+   * convention mismatch lives in exactly one place.
+   */
+  async parseSessionFile(filePath: string, sessionId: string): Promise<ParsedSession> {
+    const events = readCopilotEventsTolerant(filePath);
+
+    const start = events.find((e) => e.type === 'session.start')?.data as
+      | CopilotSessionStartData
+      | undefined;
+    const shutdown = [...events].reverse().find((e) => e.type === 'session.shutdown')?.data as
+      | CopilotShutdownData
+      | undefined;
+
+    const usage = extractCopilotUsage(events);
+
+    const tools: Record<string, number> = {};
+    const toolStatus: Record<string, { success: number; failure: number }> = {};
+    const skillInvocations: Record<string, number> = {};
+    const userPrompts: Array<{ count: number; text: string }> = [];
+    const fileOperations: NonNullable<ParsedSession['metrics']>['fileOperations'] = [];
+
+    for (const event of events) {
+      switch (event.type) {
+        case 'tool.execution_complete': {
+          const data = (event.data ?? {}) as CopilotToolCompleteData;
+          if (!data.name) {
+            break;
+          }
+          tools[data.name] = (tools[data.name] ?? 0) + 1;
+          const bucket = toolStatus[data.name] ?? { success: 0, failure: 0 };
+          const failed = data.status === 'error' || data.error !== undefined;
+          bucket[failed ? 'failure' : 'success'] += 1;
+          toolStatus[data.name] = bucket;
+          break;
+        }
+        case 'skill.invoked': {
+          const data = (event.data ?? {}) as CopilotSkillInvokedData;
+          const name = data.skill ?? data.name;
+          if (name) {
+            skillInvocations[name] = (skillInvocations[name] ?? 0) + 1;
+          }
+          break;
+        }
+        case 'user.message': {
+          const text = (event.data as { text?: string } | undefined)?.text;
+          if (typeof text === 'string' && text.trim()) {
+            userPrompts.push({ count: 1, text });
+          }
+          break;
+        }
+        default:
+          break;
+      }
+    }
+
+    // session.shutdown.codeChanges is the authoritative churn figure. Copilot reports no
+    // per-file line deltas, so the session totals are attributed to the first modified
+    // file and the rest are recorded as touched.
+    const changes = shutdown?.codeChanges;
+    for (const [index, path] of (changes?.filesModified ?? []).entries()) {
+      fileOperations.push({
+        type: 'edit',
+        path,
+        linesAdded: index === 0 ? changes?.linesAdded ?? 0 : 0,
+        linesRemoved: index === 0 ? changes?.linesRemoved ?? 0 : 0,
+      });
+    }
+
+    const context = start?.context;
     return {
       sessionId,
       agentName: this.metadata.displayName,
-      metadata: {},
-      messages: [],
+      agentVersion: start?.copilotVersion,
+      metadata: {
+        projectPath: context?.cwd ?? context?.gitRoot,
+        createdAt: start?.startTime,
+        repository: context?.repository,
+        branch: context?.branch,
+        gitBranch: context?.branch,
+      },
+      messages: usage.messages,
+      usageMeta: {
+        premiumRequests: usage.premiumRequests,
+        usagePartial: usage.partial,
+        usageUnavailableReason: usage.unavailableReason,
+      },
+      metrics: {
+        tools,
+        toolStatus,
+        fileOperations,
+        skillInvocations,
+        userPrompts,
+      },
     };
   }
 
-  // Implemented in Task 6 of the plan.
+  /** Parse once, then run every registered processor in priority order. */
   async processSession(
-    _filePath: string,
-    _sessionId: string,
-    _context: ProcessingContext
+    filePath: string,
+    sessionId: string,
+    context: ProcessingContext
   ): Promise<AggregatedResult> {
-    const processors: Record<string, ProcessingResult & { success: boolean }> = {};
-    return { success: true, processors, totalRecords: 0, failedProcessors: [] };
+    const parsed = await this.parseSessionFile(filePath, sessionId);
+
+    const processors: AggregatedResult['processors'] = {};
+    const failedProcessors: string[] = [];
+    let totalRecords = 0;
+
+    for (const processor of this.processors) {
+      if (!processor.shouldProcess(parsed)) {
+        continue;
+      }
+      try {
+        const result: ProcessingResult = await processor.process(parsed, context);
+        const recordsProcessed = result.metadata?.recordsProcessed ?? 0;
+        totalRecords += recordsProcessed;
+        processors[processor.name] = {
+          success: result.success,
+          message: result.message,
+          recordsProcessed,
+        };
+        if (!result.success) {
+          failedProcessors.push(processor.name);
+        }
+      } catch (error) {
+        logger.error(`[copilot-cli-adapter] Processor ${processor.name} failed:`, error);
+        processors[processor.name] = {
+          success: false,
+          message: error instanceof Error ? error.message : String(error),
+        };
+        failedProcessors.push(processor.name);
+      }
+    }
+
+    return {
+      success: failedProcessors.length === 0,
+      processors,
+      totalRecords,
+      failedProcessors,
+    };
   }
 }
