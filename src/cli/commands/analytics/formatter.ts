@@ -3,6 +3,7 @@
  */
 
 import chalk from 'chalk';
+import { agentLabel } from './agent-labels.js';
 import type {
   RootAnalytics,
   ProjectAnalytics,
@@ -158,7 +159,7 @@ export class AnalyticsFormatter {
     console.log(chalk.white(`      Session: ${session.sessionId}`));
     console.log(chalk.dim(`      ${'-'.repeat(54)}`));
 
-    console.log(chalk.gray(`      Agent:     ${session.agentName}`));
+    console.log(chalk.gray(`      Agent:     ${agentLabel(session.agentName)}`));
     const providerLabel =
       session.provider === 'native-external'
         ? chalk.yellow('native [external ⚠ not CodeMie-managed]')
