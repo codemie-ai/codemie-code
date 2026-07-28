@@ -408,3 +408,155 @@ describe('extractCodexUsageRecords', () => {
     expect(series.length).toBeGreaterThanOrEqual(2);
   });
 });
+
+/**
+ * GitHub Copilot CLI.
+ *
+ * Copilot reports usage in the OpenAI convention: `inputTokens` INCLUDES `cacheReadTokens`,
+ * and it applies that convention to Anthropic models too. This repository's `costBreakdown`
+ * bills `input` at full rate AND `cacheRead` separately — the Anthropic convention. The
+ * reader must therefore decompose rather than pass through.
+ *
+ * Figures below are measured from a real ~/.copilot session (CLI 1.0.48); see
+ * docs/superpowers/tasks/2026-07-28-copilot-cli-analytics/phase0-spike.md.
+ */
+const copilotParsed = {
+  sessionId: 's-copilot',
+  agentName: 'GitHub Copilot CLI',
+  metadata: {},
+  messages: [
+    {
+      model: 'gpt-5.2',
+      requests: 374,
+      usage: {
+        inputTokens: 14076695,
+        outputTokens: 173180,
+        cacheReadTokens: 13694976,
+        cacheWriteTokens: 0,
+        reasoningTokens: 90359,
+      },
+    },
+    {
+      model: 'claude-sonnet-4.5',
+      requests: 60,
+      usage: {
+        inputTokens: 1654378,
+        outputTokens: 27215,
+        cacheReadTokens: 1504366,
+        cacheWriteTokens: 125660,
+        reasoningTokens: 0,
+      },
+    },
+  ],
+} as never;
+
+describe('readUsageByModel — copilot-cli cache decomposition', () => {
+  it('subtracts cache reads from inputTokens instead of double-billing them', () => {
+    const u = readUsageByModel('copilot-cli', copilotParsed).get('gpt-5.2')!;
+
+    // 14,076,695 − 13,694,976 = 381,719. Passing the raw value through would
+    // over-count the input component ~36x.
+    expect(u.input).toBe(381719);
+    expect(u.cacheRead).toBe(13694976);
+    expect(u.output).toBe(173180);
+    expect(u.cacheCreation).toBe(0);
+  });
+
+  it('splits fresh input into cache-write and plain input for Anthropic models', () => {
+    const u = readUsageByModel('copilot-cli', copilotParsed).get('claude-sonnet-4.5')!;
+
+    // fresh = 1,654,378 − 1,504,366 = 150,012, of which 125,660 were cache writes.
+    expect(u.cacheCreation).toBe(125660);
+    expect(u.input).toBe(24352);
+    expect(u.cacheRead).toBe(1504366);
+    expect(u.cacheCreation1h).toBe(0); // Copilot exposes no cache-TTL split
+  });
+
+  it('never bills reasoning tokens separately — they are inside outputTokens', () => {
+    const u = readUsageByModel('copilot-cli', copilotParsed).get('gpt-5.2')!;
+    expect(u.output).toBe(173180); // not 173180 + 90359
+  });
+
+  it('reports total as the sum of the decomposed components', () => {
+    const u = readUsageByModel('copilot-cli', copilotParsed).get('gpt-5.2')!;
+    expect(u.total).toBe(u.input + u.output + u.cacheRead + u.cacheCreation);
+  });
+
+  it('clamps to zero rather than going negative on inconsistent buckets', () => {
+    const weird = {
+      sessionId: 's-weird',
+      agentName: 'GitHub Copilot CLI',
+      metadata: {},
+      messages: [
+        { model: 'gpt-5.2', usage: { inputTokens: 100, cacheReadTokens: 500, cacheWriteTokens: 900 } },
+      ],
+    } as never;
+
+    const u = readUsageByModel('copilot-cli', weird).get('gpt-5.2')!;
+    expect(u.input).toBe(0);
+  });
+
+  it('handles the output-only partial shape from the per-turn fallback', () => {
+    const partial = {
+      sessionId: 's-partial',
+      agentName: 'GitHub Copilot CLI',
+      metadata: {},
+      messages: [{ model: 'gpt-5.2', requests: 3, partial: true, usage: { outputTokens: 350 } }],
+    } as never;
+
+    const u = readUsageByModel('copilot-cli', partial).get('gpt-5.2')!;
+    expect(u.output).toBe(350);
+    expect(u.input).toBe(0);
+    expect(u.cacheRead).toBe(0);
+    expect(u.total).toBe(350);
+  });
+
+  it('sums repeated entries for the same model', () => {
+    const dup = {
+      sessionId: 's-dup',
+      agentName: 'GitHub Copilot CLI',
+      metadata: {},
+      messages: [
+        { model: 'gpt-5.2', usage: { inputTokens: 100, outputTokens: 10, cacheReadTokens: 40 } },
+        { model: 'gpt-5.2', usage: { inputTokens: 200, outputTokens: 20, cacheReadTokens: 50 } },
+      ],
+    } as never;
+
+    const u = readUsageByModel('copilot-cli', dup).get('gpt-5.2')!;
+    expect(u.input).toBe(60 + 150);
+    expect(u.output).toBe(30);
+    expect(u.cacheRead).toBe(90);
+  });
+
+  it('folds sub-agent transcripts into the owning session', () => {
+    const withSub = {
+      sessionId: 's-sub',
+      agentName: 'GitHub Copilot CLI',
+      metadata: {},
+      messages: [{ model: 'gpt-5.2', usage: { inputTokens: 100, outputTokens: 10 } }],
+      subagents: [
+        { agentId: 'a1', filePath: '/x', messages: [{ model: 'gpt-5.2', usage: { inputTokens: 50, outputTokens: 5 } }] },
+      ],
+    } as never;
+
+    const u = readUsageByModel('copilot-cli', withSub).get('gpt-5.2')!;
+    expect(u.input).toBe(150);
+    expect(u.output).toBe(15);
+  });
+
+  it('skips entries with no model or no usage', () => {
+    const junk = {
+      sessionId: 's-junk',
+      agentName: 'GitHub Copilot CLI',
+      metadata: {},
+      messages: [{ usage: { inputTokens: 5 } }, { model: 'gpt-5.2' }, 'not-an-object', null],
+    } as never;
+
+    expect(readUsageByModel('copilot-cli', junk).size).toBe(0);
+  });
+
+  it('returns an empty map for a session with no messages', () => {
+    const empty = { sessionId: 's0', agentName: 'GitHub Copilot CLI', metadata: {}, messages: [] } as never;
+    expect(readUsageByModel('copilot-cli', empty).size).toBe(0);
+  });
+});

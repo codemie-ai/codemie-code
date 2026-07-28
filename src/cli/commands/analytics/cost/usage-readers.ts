@@ -254,6 +254,69 @@ function readGemini(parsed: ParsedSession): UsageMap {
   return out;
 }
 
+/**
+ * Raw per-model buckets exactly as the Copilot adapter emits them (Copilot's own field
+ * names). Copilot normalizes every provider it proxies to the OpenAI convention.
+ */
+interface CopilotCliRawMessage {
+  model?: string;
+  requests?: number;
+  partial?: boolean;
+  usage?: {
+    inputTokens?: number;
+    outputTokens?: number;
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+    reasoningTokens?: number;
+  };
+}
+
+/**
+ * GitHub Copilot CLI.
+ *
+ * CONVENTION MISMATCH — the reason this reader is not a pass-through:
+ *   Copilot:    `inputTokens` INCLUDES `cacheReadTokens` (OpenAI convention), applied to
+ *               every provider it proxies, Anthropic models included.
+ *   This repo:  {@link costBreakdown} bills `input` at full rate AND `cacheRead`
+ *               separately, so `TokenUsage.input` must EXCLUDE cache reads.
+ * Passing `inputTokens` through unchanged over-counts the input component ~36x on a real
+ * measured session.
+ *
+ * `reasoningTokens` is a SUBSET of `outputTokens` (OpenAI convention, corroborated by
+ * per-turn output sums matching the shutdown rollup exactly), so it is never billed
+ * separately. `cacheWriteTokens` is treated as a subset of fresh input: on observed data
+ * cache-write (125,660) fits inside fresh input (150,012), and subtracting can never
+ * over-bill. Copilot exposes no cache-TTL split, so all writes fall in the 5m bucket.
+ */
+function readCopilotCli(parsed: ParsedSession): UsageMap {
+  const out: UsageMap = new Map();
+  for (const arr of allMessageArrays(parsed)) {
+    for (const raw of arr as CopilotCliRawMessage[]) {
+      if (!raw || typeof raw !== 'object' || !raw.model || !raw.usage) {
+        continue;
+      }
+      const u = raw.usage;
+      const cacheRead = u.cacheReadTokens ?? 0;
+      const cacheCreation = u.cacheWriteTokens ?? 0;
+      const output = u.outputTokens ?? 0;
+
+      // inputTokens is the TOTAL prompt; peel off the cached and cache-written parts.
+      const freshInput = Math.max(0, (u.inputTokens ?? 0) - cacheRead);
+      const input = Math.max(0, freshInput - cacheCreation);
+
+      accumulate(out, raw.model, {
+        input,
+        output,
+        cacheRead,
+        cacheCreation,
+        cacheCreation1h: 0,
+        total: input + output + cacheRead + cacheCreation,
+      });
+    }
+  }
+  return out;
+}
+
 interface CodexRolloutLine {
   timestamp?: string;
   type?: string;
@@ -461,6 +524,8 @@ export function readUsageByModel(agentName: string, parsed: ParsedSession): Usag
       return readGemini(parsed);
     case 'kimi':
       return readKimi(parsed);
+    case 'copilot-cli':
+      return readCopilotCli(parsed);
     default:
       if (isCodexFamilyAgent(agentName)) {
         return readCodex(parsed);
