@@ -8,8 +8,20 @@
  * (Anthropic/Claude Code format) and maps them to OpenCode plugin lifecycle hooks.
  *
  * Why a string constant: The plugin uses `import type { Plugin } from "@opencode-ai/plugin"`
- * which doesn't exist in codemie-code's dependencies. Embedding as a string avoids
+ * which doesn't exist in this package's dependencies. Embedding as a string avoids
  * TypeScript compilation issues. Bun strips the type import at runtime.
+ *
+ * PLUGIN CONTRACT — see reasoning-sanitizer-source.ts for the reference shape:
+ * a Plugin is an async factory returning a FLAT map of dotted-key handlers, and
+ * each handler takes `(input, output)` and MUTATES `output`. Returned values are
+ * discarded. An earlier version of this file exported a plain object with nested
+ * `hooks: { tool: { execute: { before } } }` keys and returned values from every
+ * handler, so none of it ever ran.
+ *
+ * Session id: taken from the payload OpenCode passes in (`input.sessionID`, or
+ * `input.event.properties.sessionID` for bus events). `codemie hook` rejects an
+ * empty session_id with exit code 2, so a hook with no resolvable session id is
+ * skipped rather than invoked.
  */
 
 export const SHELL_HOOKS_PLUGIN_SOURCE = `
@@ -36,7 +48,6 @@ type HookEventName =
   | "PreToolUse"
   | "PostToolUse"
   | "UserPromptSubmit"
-  | "PermissionRequest"
   | "PreCompact"
   | "SessionStart"
   | "SessionEnd"
@@ -81,7 +92,7 @@ function matchesPattern(pattern: string, toolName: string): boolean {
 // ─── Config Loading ──────────────────────────────────────────────────────────
 
 function loadHooksConfig(): HooksConfig {
-  // Priority 1: OPENCODE_HOOKS env var (set by codemie-code)
+  // Priority 1: OPENCODE_HOOKS env var (set by the CodeMie CLI)
   const envHooks = process.env.OPENCODE_HOOKS;
   if (envHooks) {
     try {
@@ -141,7 +152,26 @@ function getMatchingCommands(
   return result;
 }
 
-// ─── Shell Execution ─────────────────────────────────────────────────────────
+// ─── Session / Payload Helpers ───────────────────────────────────────────────
+
+// OPENCODE_SESSION_ID is a last-resort fallback only: nothing sets it today, and
+// relying on it is what made every previous hook invocation ship an empty
+// session_id and get rejected with exit code 2.
+function resolveSessionId(input: any): string {
+  return (
+    input?.sessionID ||
+    input?.event?.properties?.sessionID ||
+    input?.event?.properties?.info?.id ||
+    process.env.OPENCODE_SESSION_ID ||
+    ""
+  );
+}
+
+// codemie hook needs a transcript path to re-parse the session; for OpenCode
+// that is the SQLite database, exported by the CLI before spawning.
+function transcriptPath(): string {
+  return process.env.CODEMIE_OPENCODE_TRANSCRIPT || "";
+}
 
 function buildEnvVars(sessionId: string, event: string): Record<string, string> {
   const projectDir = process.env.OPENCODE_PROJECT_DIR || process.cwd();
@@ -152,6 +182,18 @@ function buildEnvVars(sessionId: string, event: string): Record<string, string> 
     CLAUDE_PROJECT_DIR: projectDir, // Anthropic alias
   };
 }
+
+function basePayload(event: HookEventName, sessionId: string): HookStdinPayload {
+  return {
+    hook_event_name: event,
+    session_id: sessionId,
+    cwd: process.cwd(),
+    permission_mode: "default",
+    transcript_path: transcriptPath(),
+  };
+}
+
+// ─── Shell Execution ─────────────────────────────────────────────────────────
 
 interface ExecResult {
   stdout: string;
@@ -194,7 +236,13 @@ function execCommandAsync(
     stdio: ["pipe", "ignore", "ignore"],
     detached: true,
   });
+  // A ChildProcess or stdin 'error' with no listener is an UNHANDLED error
+  // event, which throws inside the host OpenCode process. Stop is configured
+  // async, so this is the production path: a failed spawn (ENOENT for sh,
+  // EAGAIN) or a broken pipe must degrade telemetry, never kill the session.
+  child.on("error", () => {});
   if (child.stdin) {
+    child.stdin.on("error", () => {});
     child.stdin.write(stdin);
     child.stdin.end();
   }
@@ -207,7 +255,6 @@ interface ParsedResponse {
   blocked: boolean;
   reason?: string;
   updatedInput?: Record<string, unknown>;
-  permissionDecision?: "allow" | "deny" | "ask";
   additionalContext?: string;
 }
 
@@ -226,39 +273,23 @@ function parseResponse(
     return { blocked: false };
   }
 
-  // Parse stdout JSON
   const trimmed = result.stdout.trim();
   if (!trimmed) return { blocked: false };
 
   try {
     const json = JSON.parse(trimmed);
 
-    // PreToolUse: check for hookSpecificOutput.updatedInput or plain object → merge into args
+    // PreToolUse: hookSpecificOutput.updatedInput, or a bare object → merged args
     if (event === "PreToolUse") {
       const updated = json.hookSpecificOutput?.updatedInput || json.updatedInput;
       if (updated && typeof updated === "object") {
         return { blocked: false, updatedInput: updated };
       }
-      // If it's a plain object without known keys, treat as updatedInput
       if (typeof json === "object" && !json.hookSpecificOutput && !json.decision) {
         return { blocked: false, updatedInput: json };
       }
     }
 
-    // PermissionRequest: check for permissionDecision
-    if (event === "PermissionRequest") {
-      const decision =
-        json.hookSpecificOutput?.permissionDecision || json.permissionDecision;
-      if (decision && ["allow", "deny", "ask"].includes(decision)) {
-        return { blocked: false, permissionDecision: decision };
-      }
-      // Plain string
-      if (typeof json === "string" && ["allow", "deny", "ask"].includes(json)) {
-        return { blocked: false, permissionDecision: json };
-      }
-    }
-
-    // PreCompact: additionalContext
     if (event === "PreCompact") {
       const context = json.additionalContext || json.context;
       if (typeof context === "string") {
@@ -273,250 +304,174 @@ function parseResponse(
   }
 }
 
+/** Run every configured command for an event. Returns the parsed responses. */
+function runCommands(
+  event: HookEventName,
+  sessionId: string,
+  payload: HookStdinPayload,
+  commands: Array<{ command: string; timeout: number; isAsync: boolean }>,
+  swallowErrors: boolean,
+): ParsedResponse[] {
+  const env = buildEnvVars(sessionId, event);
+  const stdin = JSON.stringify(payload);
+  const responses: ParsedResponse[] = [];
+
+  for (const cmd of commands) {
+    if (cmd.isAsync) {
+      execCommandAsync(cmd.command, stdin, env);
+      continue;
+    }
+    if (swallowErrors) {
+      try {
+        responses.push(parseResponse(execCommand(cmd.command, stdin, env, cmd.timeout), event));
+      } catch {
+        // Fire-and-forget events must never break the session.
+      }
+      continue;
+    }
+    responses.push(parseResponse(execCommand(cmd.command, stdin, env, cmd.timeout), event));
+  }
+
+  return responses;
+}
+
+// ─── Idle Deduplication ──────────────────────────────────────────────────────
+
+// OpenCode publishes both the deprecated \`session.idle\` and the newer
+// \`session.status\` {type:"idle"} back to back. Subscribing to only one risks
+// silently losing active-time accounting if it is removed upstream, so both are
+// handled and collapsed on the busy→idle transition.
+const idleState = new Map<string, boolean>();
+
+function shouldEmitIdle(sessionId: string, isIdle: boolean): boolean {
+  const wasIdle = idleState.get(sessionId) === true;
+  idleState.set(sessionId, isIdle);
+  return isIdle && !wasIdle;
+}
+
 // ─── Plugin Definition ───────────────────────────────────────────────────────
 
 const config = loadHooksConfig();
-const hasHooks = config.hooks && Object.keys(config.hooks).length > 0;
 
-const plugin: Plugin = {
-  name: "shell-hooks",
-  ...(hasHooks
-    ? {
-        hooks: {
-          // PreToolUse → tool.execute.before (blocking)
-          tool: {
-            execute: {
-              before: async (input) => {
-                const commands = getMatchingCommands(config, "PreToolUse", input.tool);
-                if (commands.length === 0) return input;
+const ShellHooksPlugin: Plugin = async (_input) => ({
+  // PreToolUse → tool.execute.before (blocking; mutate output.args)
+  "tool.execute.before": async (input: any, output: any) => {
+    const commands = getMatchingCommands(config, "PreToolUse", input?.tool);
+    if (commands.length === 0) return;
 
-                const sessionId = process.env.OPENCODE_SESSION_ID || "";
-                const env = buildEnvVars(sessionId, "PreToolUse");
-                const payload: HookStdinPayload = {
-                  hook_event_name: "PreToolUse",
-                  session_id: sessionId,
-                  cwd: process.cwd(),
-                  permission_mode: "default",
-                  transcript_path: "",
-                  tool_name: input.tool,
-                  tool_input: input.args as Record<string, unknown>,
-                };
-                const stdin = JSON.stringify(payload);
+    const sessionId = resolveSessionId(input);
+    if (!sessionId) return;
 
-                let mergedInput = { ...input };
-                for (const cmd of commands) {
-                  if (cmd.isAsync) {
-                    execCommandAsync(cmd.command, stdin, env);
-                    continue;
-                  }
-                  const result = execCommand(cmd.command, stdin, env, cmd.timeout);
-                  const parsed = parseResponse(result, "PreToolUse");
-                  if (parsed.blocked) {
-                    throw new Error(parsed.reason || "Hook blocked tool execution");
-                  }
-                  if (parsed.updatedInput) {
-                    mergedInput = {
-                      ...mergedInput,
-                      args: { ...(mergedInput.args as Record<string, unknown>), ...parsed.updatedInput },
-                    };
-                  }
-                }
-                return mergedInput;
-              },
+    const payload = basePayload("PreToolUse", sessionId);
+    payload.tool_name = input?.tool;
+    payload.tool_input = output?.args as Record<string, unknown>;
 
-              // PostToolUse → tool.execute.after (fire-and-forget)
-              after: async (output) => {
-                const commands = getMatchingCommands(config, "PostToolUse", output.tool);
-                if (commands.length === 0) return output;
-
-                const sessionId = process.env.OPENCODE_SESSION_ID || "";
-                const env = buildEnvVars(sessionId, "PostToolUse");
-                const payload: HookStdinPayload = {
-                  hook_event_name: "PostToolUse",
-                  session_id: sessionId,
-                  cwd: process.cwd(),
-                  permission_mode: "default",
-                  transcript_path: "",
-                  tool_name: output.tool,
-                  tool_input: output.args as Record<string, unknown>,
-                  tool_output: typeof output.result === "string" ? output.result : JSON.stringify(output.result),
-                };
-                const stdin = JSON.stringify(payload);
-
-                for (const cmd of commands) {
-                  if (cmd.isAsync) {
-                    execCommandAsync(cmd.command, stdin, env);
-                    continue;
-                  }
-                  try {
-                    execCommand(cmd.command, stdin, env, cmd.timeout);
-                  } catch {
-                    // PostToolUse is fire-and-forget
-                  }
-                }
-                return output;
-              },
-            },
-          },
-
-          // UserPromptSubmit → chat.message (blocking)
-          chat: {
-            message: async (input) => {
-              const commands = getMatchingCommands(config, "UserPromptSubmit");
-              if (commands.length === 0) return input;
-
-              const sessionId = process.env.OPENCODE_SESSION_ID || "";
-              const env = buildEnvVars(sessionId, "UserPromptSubmit");
-              const payload: HookStdinPayload = {
-                hook_event_name: "UserPromptSubmit",
-                session_id: sessionId,
-                cwd: process.cwd(),
-                permission_mode: "default",
-                transcript_path: "",
-                prompt: Array.isArray(input.parts)
-                  ? input.parts
-                      .filter((p: any) => p.type === "text")
-                      .map((p: any) => p.text)
-                      .join("\\n")
-                  : String(input.parts),
-              };
-              const stdin = JSON.stringify(payload);
-
-              for (const cmd of commands) {
-                if (cmd.isAsync) {
-                  execCommandAsync(cmd.command, stdin, env);
-                  continue;
-                }
-                const result = execCommand(cmd.command, stdin, env, cmd.timeout);
-                const parsed = parseResponse(result, "UserPromptSubmit");
-                if (parsed.blocked) {
-                  // Clear message parts to block submission
-                  return { ...input, parts: [] };
-                }
-              }
-              return input;
-            },
-          },
-
-          // PermissionRequest → permission.ask (blocking)
-          permission: {
-            ask: async (input) => {
-              const commands = getMatchingCommands(config, "PermissionRequest", input.tool);
-              if (commands.length === 0) return input;
-
-              const sessionId = process.env.OPENCODE_SESSION_ID || "";
-              const env = buildEnvVars(sessionId, "PermissionRequest");
-              const payload: HookStdinPayload = {
-                hook_event_name: "PermissionRequest",
-                session_id: sessionId,
-                cwd: process.cwd(),
-                permission_mode: "default",
-                transcript_path: "",
-                tool_name: input.tool,
-                tool_input: input.args as Record<string, unknown>,
-              };
-              const stdin = JSON.stringify(payload);
-
-              for (const cmd of commands) {
-                if (cmd.isAsync) {
-                  execCommandAsync(cmd.command, stdin, env);
-                  continue;
-                }
-                const result = execCommand(cmd.command, stdin, env, cmd.timeout);
-                const parsed = parseResponse(result, "PermissionRequest");
-                if (parsed.permissionDecision === "allow") {
-                  return { ...input, allowed: true };
-                }
-                if (parsed.permissionDecision === "deny") {
-                  return { ...input, allowed: false };
-                }
-              }
-              return input;
-            },
-          },
-
-          // PreCompact → experimental.session.compacting (non-blocking)
-          experimental: {
-            session: {
-              compacting: async (input) => {
-                const commands = getMatchingCommands(config, "PreCompact");
-                if (commands.length === 0) return input;
-
-                const sessionId = process.env.OPENCODE_SESSION_ID || "";
-                const env = buildEnvVars(sessionId, "PreCompact");
-                const payload: HookStdinPayload = {
-                  hook_event_name: "PreCompact",
-                  session_id: sessionId,
-                  cwd: process.cwd(),
-                  permission_mode: "default",
-                  transcript_path: "",
-                };
-                const stdin = JSON.stringify(payload);
-
-                for (const cmd of commands) {
-                  if (cmd.isAsync) {
-                    execCommandAsync(cmd.command, stdin, env);
-                    continue;
-                  }
-                  try {
-                    const result = execCommand(cmd.command, stdin, env, cmd.timeout);
-                    const parsed = parseResponse(result, "PreCompact");
-                    if (parsed.additionalContext) {
-                      return {
-                        ...input,
-                        context: ((input as any).context || "") + "\\n" + parsed.additionalContext,
-                      };
-                    }
-                  } catch {
-                    // Non-blocking
-                  }
-                }
-                return input;
-              },
-            },
-          },
-
-          // SessionStart/SessionEnd/Stop/Notification → event (non-blocking)
-          event: async (input) => {
-            let hookEvent: HookEventName | undefined;
-            const eventType = (input as any).type || (input as any).event;
-            if (eventType === "session.created") hookEvent = "SessionStart";
-            else if (eventType === "session.deleted") hookEvent = "SessionEnd";
-            else if (eventType === "session.idle") hookEvent = "Stop";
-            else if (eventType === "session.error") hookEvent = "Notification";
-
-            if (!hookEvent) return;
-
-            const commands = getMatchingCommands(config, hookEvent);
-            if (commands.length === 0) return;
-
-            const sessionId = process.env.OPENCODE_SESSION_ID || "";
-            const env = buildEnvVars(sessionId, hookEvent);
-            const payload: HookStdinPayload = {
-              hook_event_name: hookEvent,
-              session_id: sessionId,
-              cwd: process.cwd(),
-              permission_mode: "default",
-              transcript_path: "",
-            };
-            const stdin = JSON.stringify(payload);
-
-            for (const cmd of commands) {
-              if (cmd.isAsync) {
-                execCommandAsync(cmd.command, stdin, env);
-                continue;
-              }
-              try {
-                execCommand(cmd.command, stdin, env, cmd.timeout);
-              } catch {
-                // Event hooks are non-blocking
-              }
-            }
-          },
-        },
+    for (const parsed of runCommands("PreToolUse", sessionId, payload, commands, false)) {
+      if (parsed.blocked) {
+        throw new Error(parsed.reason || "Hook blocked tool execution");
       }
-    : {}),
-};
+      if (parsed.updatedInput && output) {
+        output.args = { ...(output.args || {}), ...parsed.updatedInput };
+      }
+    }
+  },
 
-export default plugin;
+  // PostToolUse → tool.execute.after (fire-and-forget)
+  "tool.execute.after": async (input: any, output: any) => {
+    const commands = getMatchingCommands(config, "PostToolUse", input?.tool);
+    if (commands.length === 0) return;
+
+    const sessionId = resolveSessionId(input);
+    if (!sessionId) return;
+
+    const payload = basePayload("PostToolUse", sessionId);
+    payload.tool_name = input?.tool;
+    payload.tool_output =
+      typeof output?.output === "string" ? output.output : JSON.stringify(output?.output ?? null);
+
+    runCommands("PostToolUse", sessionId, payload, commands, true);
+  },
+
+  // UserPromptSubmit → chat.message. Marks the start of an active period;
+  // codemie hook forwards it to SessionStore.startActivityTracking.
+  "chat.message": async (input: any, output: any) => {
+    const sessionId = resolveSessionId(input);
+    if (!sessionId) return;
+
+    // A new prompt opens a new active period, so the session is busy again.
+    // Clearing the flag here is what lets the NEXT idle emit a Stop: on a build
+    // that publishes session.idle without session.status, nothing else ever
+    // resets it, so every turn after the first would be suppressed and
+    // active_duration_ms would count only turn one.
+    idleState.set(sessionId, false);
+
+    const commands = getMatchingCommands(config, "UserPromptSubmit");
+    if (commands.length === 0) return;
+
+    // The message parts live on output, not input.
+    const parts = output?.parts;
+    const payload = basePayload("UserPromptSubmit", sessionId);
+    payload.prompt = Array.isArray(parts)
+      ? parts
+          .filter((p: any) => p?.type === "text")
+          .map((p: any) => p.text)
+          .join("\\n")
+      : "";
+
+    runCommands("UserPromptSubmit", sessionId, payload, commands, true);
+  },
+
+  // PreCompact → experimental.session.compacting (non-blocking)
+  "experimental.session.compacting": async (input: any, output: any) => {
+    const commands = getMatchingCommands(config, "PreCompact");
+    if (commands.length === 0) return;
+
+    const sessionId = resolveSessionId(input);
+    if (!sessionId) return;
+
+    const responses = runCommands(
+      "PreCompact", sessionId, basePayload("PreCompact", sessionId), commands, true
+    );
+
+    for (const parsed of responses) {
+      if (parsed.additionalContext && output) {
+        output.context = (output.context || "") + "\\n" + parsed.additionalContext;
+      }
+    }
+  },
+
+  // Stop / Notification → event bus (non-blocking).
+  // SessionStart and SessionEnd are deliberately NOT mapped here: session.created
+  // and session.deleted do not correspond to CLI process start/exit, and the
+  // CodeMie CLI raises both lifecycle events in-process instead.
+  "event": async (input: any) => {
+    const eventType = input?.event?.type;
+    if (typeof eventType !== "string") return;
+
+    const sessionId = resolveSessionId(input);
+    if (!sessionId) return;
+
+    let hookEvent: HookEventName | undefined;
+
+    if (eventType === "session.idle") {
+      if (!shouldEmitIdle(sessionId, true)) return;
+      hookEvent = "Stop";
+    } else if (eventType === "session.status") {
+      const isIdle = input?.event?.properties?.status?.type === "idle";
+      if (!shouldEmitIdle(sessionId, isIdle)) return;
+      hookEvent = "Stop";
+    } else if (eventType === "session.error") {
+      hookEvent = "Notification";
+    }
+
+    if (!hookEvent) return;
+
+    const commands = getMatchingCommands(config, hookEvent);
+    if (commands.length === 0) return;
+
+    runCommands(hookEvent, sessionId, basePayload(hookEvent, sessionId), commands, true);
+  },
+});
+
+export default ShellHooksPlugin;
 `;

@@ -1,0 +1,7 @@
+{
+  "id": "part-txt-reply",
+  "sessionID": "test-session-1",
+  "messageID": "msg-assistant-1",
+  "type": "text",
+  "text": "Created src/test.ts with three console.log statements and read src/existing.ts."
+}

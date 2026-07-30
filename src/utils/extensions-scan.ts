@@ -104,23 +104,69 @@ async function listScriptFiles(dirPath: string): Promise<string[]> {
 // Directory Scanning
 // ============================================================================
 
+/** Subdirectory names scanned per category when an agent declares no override. */
+const DEFAULT_DIR_NAMES: Required<NonNullable<AgentExtensionsConfig['dirNames']>> = {
+  agents: ['agents'],
+  commands: ['commands'],
+  skills: ['skills'],
+  hooks: ['hooks'],
+  rules: ['rules'],
+};
+
 /**
- * Scan an agent's extension base directory and return counts and names per category.
- * Each subdirectory (agents/, commands/, skills/, hooks/, rules/) is scanned independently.
+ * Merge per-directory results, dropping a name only when an EARLIER directory
+ * already supplied it.
  *
- * @param baseDir - Resolved absolute path to the agent's extensions base directory
- * @param skillsEntryFile - If set, only count/name skills files with this exact name (e.g. 'SKILL.md')
+ * De-duplication is deliberately across directories, never within one. A single
+ * directory is listed recursively, so `commands/a/build.md` and
+ * `commands/b/build.md` are two distinct extensions that both must count —
+ * flattening into one Set collapsed them and silently shrank commands_count /
+ * agents_count for every agent that uses namespaced subdirectories. Only the
+ * cross-directory case (the same extension found under two spellings, e.g.
+ * `agent/` and `agents/`) is a genuine duplicate.
  */
-async function scanExtensionsDir(
-  baseDir: string,
-  skillsEntryFile?: string
+function mergeNames(results: string[][]): string[] {
+  const seen = new Set<string>();
+  const merged: string[] = [];
+
+  for (const names of results) {
+    merged.push(...names.filter(name => !seen.has(name)));
+    for (const name of names) {
+      seen.add(name);
+    }
+  }
+
+  return merged.sort();
+}
+
+/**
+ * Scan an agent's extension base directories and return counts and names per category.
+ *
+ * Each category may map to several subdirectory names (see
+ * AgentExtensionsConfig.dirNames) and each scope may span several base
+ * directories; everything is scanned and merged, with names de-duplicated so an
+ * extension present under two spellings is not counted twice.
+ *
+ * @param baseDirs - Resolved absolute paths to scan for this scope
+ * @param config - The agent's extensions config (dirNames, skillsEntryFile)
+ */
+async function scanExtensionsDirs(
+  baseDirs: string[],
+  config: AgentExtensionsConfig
 ): Promise<{ counts: ExtensionsCount; names: ExtensionsNames }> {
+  const dirNames = { ...DEFAULT_DIR_NAMES, ...config.dirNames };
+  const { skillsEntryFile } = config;
+
+  /** Every (baseDir, subdirectory) pair to scan for one category. */
+  const targets = (category: keyof typeof dirNames): string[] =>
+    baseDirs.flatMap(baseDir => dirNames[category].map(name => path.join(baseDir, name)));
+
   const [agents, commands, skills, hooks, rules] = await Promise.all([
-    listMdFiles(path.join(baseDir, 'agents')),
-    listMdFiles(path.join(baseDir, 'commands')),
-    listMdFiles(path.join(baseDir, 'skills'), skillsEntryFile),
-    listScriptFiles(path.join(baseDir, 'hooks')),
-    listMdFiles(path.join(baseDir, 'rules')),
+    Promise.all(targets('agents').map(dir => listMdFiles(dir))).then(mergeNames),
+    Promise.all(targets('commands').map(dir => listMdFiles(dir))).then(mergeNames),
+    Promise.all(targets('skills').map(dir => listMdFiles(dir, skillsEntryFile))).then(mergeNames),
+    Promise.all(targets('hooks').map(dir => listScriptFiles(dir))).then(mergeNames),
+    Promise.all(targets('rules').map(dir => listMdFiles(dir))).then(mergeNames),
   ]);
 
   return {
@@ -131,13 +177,7 @@ async function scanExtensionsDir(
       hooks: hooks.length,
       rules: rules.length,
     },
-    names: {
-      agents: agents.sort(),
-      commands: commands.sort(),
-      skills: skills.sort(),
-      hooks: hooks.sort(),
-      rules: rules.sort(),
-    },
+    names: { agents, commands, skills, hooks, rules },
   };
 }
 
@@ -173,14 +213,20 @@ export async function getExtensionsScanSummary(
   }
 
   try {
-    const { skillsEntryFile } = extensionsConfig;
+    const resolveScope = (primary: string | undefined, extras: string[] | undefined): string[] =>
+      [primary, ...(extras ?? [])]
+        .filter((dir): dir is string => Boolean(dir))
+        .map(dir => resolveExtensionsPath(dir, cwd));
+
+    const projectDirs = resolveScope(extensionsConfig.project, extensionsConfig.extraProjectDirs);
+    const globalDirs = resolveScope(extensionsConfig.global, extensionsConfig.extraGlobalDirs);
 
     const [projectResult, globalResult] = await Promise.all([
-      extensionsConfig.project
-        ? scanExtensionsDir(resolveExtensionsPath(extensionsConfig.project, cwd), skillsEntryFile)
+      projectDirs.length > 0
+        ? scanExtensionsDirs(projectDirs, extensionsConfig)
         : Promise.resolve({ counts: { ...emptyCount }, names: { ...emptyNames } }),
-      extensionsConfig.global
-        ? scanExtensionsDir(resolveExtensionsPath(extensionsConfig.global, cwd), skillsEntryFile)
+      globalDirs.length > 0
+        ? scanExtensionsDirs(globalDirs, extensionsConfig)
         : Promise.resolve({ counts: { ...emptyCount }, names: { ...emptyNames } }),
     ]);
 

@@ -22,7 +22,6 @@ import { fileURLToPath } from 'url';
 import { AgentRegistry } from '../../../src/agents/registry.js';
 import { SessionStore } from '../../../src/agents/core/session/SessionStore.js';
 import { getSessionMetricsPath } from '../../../src/agents/core/session/session-config.js';
-import { getCodemiePath } from '../../../src/utils/paths.js';
 import type { MetricDelta } from '../../../src/agents/core/metrics/types.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -52,6 +51,7 @@ async function processSessionViaAdapter(
     sessionId,
     agentSessionId: 'test-session-1',
     agentSessionFile: sessionFilePath,
+    gitBranch: 'feature/test-branch',
     provider: 'test-provider',
     apiBaseUrl: 'http://localhost:3000',
     cookies: {},
@@ -93,9 +93,7 @@ describe('OpenCode Metrics Processor - Basic Validation', () => {
   });
 
   afterAll(() => {
-    // Cleanup test files and cache
-    const cacheFile = join(getCodemiePath('cache', 'opencode'), `${TEST_SESSION_ID}_last_processed`);
-    [metricsFilePath, sessionFilePath, conversationFilePath, cacheFile].forEach(file => {
+    [metricsFilePath, sessionFilePath, conversationFilePath].forEach(file => {
       if (existsSync(file)) {
         try {
           unlinkSync(file);
@@ -213,14 +211,65 @@ describe('OpenCode Metrics Processor - Basic Validation', () => {
     }
   });
 
-  it('should have correct model information', () => {
+  it('should report the bare model id, matching codemie-claude', () => {
     const deltas = readMetricsFile(TEST_SESSION_ID);
 
-    for (const delta of deltas) {
-      expect(delta.models).toBeDefined();
-      expect(delta.models.length).toBeGreaterThan(0);
-      expect(delta.models[0]).toBe('anthropic/claude-sonnet-4-6');
+    // Only assistant-derived deltas carry a model; user-prompt deltas do not.
+    const withModels = deltas.filter(d => d.models && d.models.length > 0);
+    expect(withModels.length).toBeGreaterThan(0);
+
+    for (const delta of withModels) {
+      // No `anthropic/` provider prefix — codemie-claude sends a bare model id,
+      // and a prefix would split the same model across two analytics buckets.
+      expect(delta.models![0]).toBe('claude-sonnet-4-6');
     }
+  });
+
+  it('should attribute every delta to the branch from the processing context', () => {
+    const deltas = readMetricsFile(TEST_SESSION_ID);
+
+    expect(deltas.length).toBeGreaterThan(0);
+    for (const delta of deltas) {
+      // The aggregator groups on gitBranch; an empty value collapses every
+      // session into one nameless branch bucket.
+      expect(delta.gitBranch).toBe('feature/test-branch');
+    }
+  });
+
+  it('should give each tool call and prompt its own recordId', () => {
+    const deltas = readMetricsFile(TEST_SESSION_ID);
+
+    const recordIds = deltas.map(d => d.recordId);
+    expect(new Set(recordIds).size).toBe(recordIds.length);
+
+    // Tool deltas are keyed {messageId}:{callID}; prompts {messageId}:prompt.
+    expect(recordIds.some(id => id.endsWith(':prompt'))).toBe(true);
+    expect(recordIds.some(id => !id.endsWith(':prompt'))).toBe(true);
+  });
+
+  it('should aggregate into a tool-usage metric with a real session id and branch', async () => {
+    const { aggregateDeltas } = await import(
+      '../../../src/providers/plugins/sso/session/processors/metrics/metrics-aggregator.js'
+    );
+    const session = await sessionStore.loadSession(TEST_SESSION_ID);
+    const deltas = readMetricsFile(TEST_SESSION_ID);
+
+    const metrics = aggregateDeltas(deltas, session!, '1.0.0', 'codemie-opencode');
+
+    expect(metrics.length).toBe(1);
+    const attrs = metrics[0].attributes;
+
+    // The two headline regressions this work fixes.
+    expect(attrs.session_id).not.toBe('unknown');
+    expect(attrs.branch).toBe('feature/test-branch');
+
+    expect(attrs.llm_model).toBe('claude-sonnet-4-6');
+    expect(attrs.total_tool_calls).toBeGreaterThan(0);
+    expect(attrs.total_user_prompts).toBe(1);
+    expect(attrs.files_created).toBeGreaterThan(0);
+    // Parity guard: codemie-claude sends no token or cost fields anywhere.
+    expect(attrs).not.toHaveProperty('total_tokens');
+    expect(attrs).not.toHaveProperty('total_cost');
   });
 
   it('should have user prompts associated with deltas', () => {
@@ -256,29 +305,45 @@ describe('OpenCode Metrics Processor - Basic Validation', () => {
     }
   });
 
-  it.skip('should generate conversation JSONL', async () => {
-    // TODO: OpenCode conversations processor doesn't write JSONL yet (unlike Claude)
-    // This is a future enhancement - for now we're focused on metrics sync
-    // Once implemented, this test should verify:
-    // - Conversation file exists
-    // - Contains payload records with status 'pending'
-    // - Has correct structure (conversationId, history array)
+  it('should be idempotent when reprocessed by the incremental sync timer', async () => {
+    const before = readMetricsFile(TEST_SESSION_ID);
+
+    // The timer re-parses the same session every tick. Without stable per-record
+    // recordIds this would append the whole session again on every pass.
+    await processSessionViaAdapter(SESSION_FILE, TEST_SESSION_ID);
+
+    const after = readMetricsFile(TEST_SESSION_ID);
+    expect(after.length).toBe(before.length);
+    expect(after.map(d => d.recordId)).toEqual(before.map(d => d.recordId));
+  });
+
+  it('should queue a conversation payload for the sync processor', () => {
     expect(existsSync(conversationFilePath)).toBe(true);
 
-    const content = readFileSync(conversationFilePath, 'utf-8');
-    const lines = content.trim().split('\n').filter(line => line.length > 0);
-    expect(lines.length).toBeGreaterThan(0);
+    const lines = readFileSync(conversationFilePath, 'utf-8')
+      .trim().split('\n').filter(line => line.length > 0);
+    // Exactly one: the session was processed twice (see the idempotency test
+    // above) and the checkpoint sentinel must suppress the second queueing.
+    expect(lines.length).toBe(1);
 
-    // Parse conversation payloads
-    const payloads = lines.map(line => JSON.parse(line));
+    const record = JSON.parse(lines[0]);
 
-    // Verify structure
-    for (const payload of payloads) {
-      expect(payload).toHaveProperty('sessionId');
-      expect(payload).toHaveProperty('conversationHistory');
-      expect(payload).toHaveProperty('syncStatus');
-      expect(payload.sessionId).toBe(TEST_SESSION_ID);
-      expect(Array.isArray(payload.conversationHistory)).toBe(true);
-    }
+    expect(record.status).toBe('pending');
+    expect(record.payloadId).toContain('test-session-1@');
+    // Set explicitly so it never falls back to the 'Claude Desktop' default.
+    expect(record.payload.folder).toBe('opencode');
+    expect(record.payload.conversationId).toBe('test-session-1');
+    expect(record.payload.llmModel).toBe('claude-sonnet-4-6');
+
+    const history = record.payload.history;
+    expect(Array.isArray(history)).toBe(true);
+    expect(history.some((entry: any) => entry.role === 'User')).toBe(true);
+
+    const assistant = history.find((entry: any) => entry.role === 'Assistant');
+    expect(assistant).toBeDefined();
+    // Tool calls ride along as thoughts, not as visible history entries.
+    const toolThoughts = (assistant.thoughts ?? []).filter((t: any) => t.author_type === 'Tool');
+    expect(toolThoughts.length).toBe(2);
+    expect(toolThoughts.map((t: any) => t.author_name).sort()).toEqual(['Read', 'Write']);
   });
 });

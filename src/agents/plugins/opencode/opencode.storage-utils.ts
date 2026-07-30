@@ -77,3 +77,62 @@ export async function readJsonWithRetry<T>(
 export async function readJsonlTolerant<T>(filePath: string): Promise<T[]> {
   return readJSONLTolerant<T>(filePath, '[opencode-storage]');
 }
+
+/**
+ * Load the parts belonging to one message, from either backend.
+ *
+ * SQLite-backed sessions arrive with every part pre-loaded in `partsMap` (one
+ * bulk query per session); file-backed sessions read storage/part/{messageID}/.
+ * Parts are validated against their owning message and session before use —
+ * OpenCode's storage has been observed to retain orphaned part files.
+ *
+ * @param storagePath - Path to the OpenCode `storage/` directory
+ * @param messageId - Message whose parts to load
+ * @param expectedSessionId - When set, drop parts belonging to another session
+ * @param partsMap - Pre-loaded parts keyed by message id (SQLite path)
+ * @returns Parts sorted by id (their creation order)
+ */
+export async function loadPartsForMessage<T extends { id: string; messageID: string; sessionID: string }>(
+  storagePath: string,
+  messageId: string,
+  expectedSessionId?: string,
+  partsMap?: Record<string, T[]>
+): Promise<T[]> {
+  const isValid = (part: T): boolean => {
+    if (part.messageID !== messageId) {
+      logger.debug(`[opencode-storage] Skipping orphaned part ${part.id}: messageID mismatch`);
+      return false;
+    }
+    if (expectedSessionId && part.sessionID !== expectedSessionId) {
+      logger.debug(`[opencode-storage] Skipping part ${part.id}: sessionID mismatch`);
+      return false;
+    }
+    return true;
+  };
+
+  if (partsMap?.[messageId]) {
+    return partsMap[messageId].filter(isValid).sort((a, b) => a.id.localeCompare(b.id));
+  }
+
+  const { existsSync } = await import('fs');
+  const { readdir } = await import('fs/promises');
+  const { join } = await import('path');
+
+  const partsDir = join(storagePath, 'part', messageId);
+  if (!existsSync(partsDir)) {
+    return [];
+  }
+
+  const parts: T[] = [];
+  try {
+    for (const file of await readdir(partsDir)) {
+      if (!file.endsWith('.json')) continue;
+      const part = await readJsonWithRetry<T>(join(partsDir, file));
+      if (part && isValid(part)) parts.push(part);
+    }
+  } catch (error) {
+    logger.debug(`[opencode-storage] Error loading parts from ${partsDir}:`, error);
+  }
+
+  return parts.sort((a, b) => a.id.localeCompare(b.id));
+}

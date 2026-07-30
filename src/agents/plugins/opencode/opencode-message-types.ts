@@ -37,7 +37,8 @@ export interface OpenCodeMessageBase {
   role: 'user' | 'assistant';
   // Numeric timestamp
   time: {
-    created: number;  // Unix timestamp (ms)
+    created: number;      // Unix timestamp (ms)
+    completed?: number;   // Unix timestamp (ms), set once the turn finishes
   };
 }
 
@@ -68,6 +69,16 @@ export interface OpenCodeAssistantMessage extends OpenCodeMessageBase {
   path?: string[];
   // Legacy: agent field (may still exist in some sessions)
   agent?: string;
+  /**
+   * Turn-level failure (provider error, aborted turn, ...).
+   * This is OpenCode's equivalent of Claude's `isApiErrorMessage` transcript
+   * entries and is the ONLY source of MetricDelta.apiErrorMessage — tool
+   * failures are reported through toolStatus instead, matching codemie-claude.
+   */
+  error?: {
+    name: string;
+    data?: { message?: string };
+  };
 }
 
 /**

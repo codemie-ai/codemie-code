@@ -122,9 +122,17 @@ export interface SessionAdapter {
    * Parse session file to unified format.
    * @param filePath - Absolute path to session file
    * @param sessionId - CodeMie session ID (already correlated)
+   * @param agentSessionId - The agent's own session ID, when known. Only needed
+   *   by adapters whose storage holds many sessions in one file (e.g. OpenCode's
+   *   SQLite database) and which therefore must disambiguate. Adapters reading a
+   *   one-session-per-file transcript ignore it.
    * @returns Parsed session in agent-agnostic format
    */
-  parseSessionFile(filePath: string, sessionId: string): Promise<ParsedSession>;
+  parseSessionFile(
+    filePath: string,
+    sessionId: string,
+    agentSessionId?: string
+  ): Promise<ParsedSession>;
 
   /**
    * Register a processor to run during session processing.

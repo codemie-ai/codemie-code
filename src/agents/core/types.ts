@@ -360,11 +360,14 @@ export interface AgentMetadata {
  */
 export interface MCPConfigSource {
   /**
-   * Path to config file
-   * - Absolute: starts with '~/' (resolved to home dir)
+   * Path to config file, or several candidate paths tried in order (the first
+   * one that exists and parses wins). Multiple candidates cover agents that
+   * accept more than one config filename — OpenCode reads both `opencode.json`
+   * and `opencode.jsonc`.
+   * - Absolute: an absolute path, or one starting with '~/' (resolved to home)
    * - Relative: resolved from cwd
    */
-  path: string;
+  path: string | string[];
 
   /**
    * JSON path to mcpServers object
@@ -447,6 +450,34 @@ export interface AgentExtensionsConfig {
    * Example: Claude uses subdirectory-per-skill with a 'SKILL.md' entry file
    */
   skillsEntryFile?: string;
+
+  /**
+   * Per-category subdirectory names to scan, overriding the defaults
+   * ('agents', 'commands', 'skills', 'hooks', 'rules').
+   *
+   * Every listed directory is scanned and the results merged, which covers
+   * agents that accept more than one spelling — OpenCode reads both `agent/`
+   * and `agents/`. An empty array means the agent has no such concept and the
+   * category always reports zero.
+   */
+  dirNames?: {
+    agents?: string[];
+    commands?: string[];
+    skills?: string[];
+    hooks?: string[];
+    rules?: string[];
+  };
+
+  /**
+   * Additional global (user-level) roots scanned alongside `global`, for agents
+   * that read extensions from more than one location.
+   */
+  extraGlobalDirs?: string[];
+
+  /**
+   * Additional project-level roots scanned alongside `project`.
+   */
+  extraProjectDirs?: string[];
 }
 
 /**

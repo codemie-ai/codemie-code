@@ -150,15 +150,20 @@ async function readMCPFromSource(
     return [];
   }
 
-  const filePath = resolveConfigPath(source.path, cwd);
-  const config = await readJsonFile(filePath);
+  // Candidates are tried in order; the first file that exists AND parses wins.
+  // Note readJsonFile uses JSON.parse, so a .jsonc file carrying comments will
+  // not parse and is skipped like any other unreadable config.
+  const candidates = Array.isArray(source.path) ? source.path : [source.path];
 
-  if (!config) {
-    return [];
+  for (const candidate of candidates) {
+    const config = await readJsonFile(resolveConfigPath(candidate, cwd));
+    if (!config) continue;
+
+    const mcpServers = navigateJsonPath(config, source.jsonPath, cwd);
+    return extractServerNames(mcpServers);
   }
 
-  const mcpServers = navigateJsonPath(config, source.jsonPath, cwd);
-  return extractServerNames(mcpServers);
+  return [];
 }
 
 /**
