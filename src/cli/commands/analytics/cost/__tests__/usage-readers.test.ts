@@ -417,8 +417,8 @@ describe('extractCodexUsageRecords', () => {
  * bills `input` at full rate AND `cacheRead` separately — the Anthropic convention. The
  * reader must therefore decompose rather than pass through.
  *
- * Figures below are measured from a real ~/.copilot session (CLI 1.0.48); see
- * docs/superpowers/tasks/2026-07-28-copilot-cli-analytics/phase0-spike.md.
+ * Figures below reflect a real Copilot CLI 1.0.x session, retained because they are
+ * the exact values that expose the cache-inclusive over-billing bug.
  */
 const copilotParsed = {
   sessionId: 's-copilot',

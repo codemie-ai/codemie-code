@@ -29,36 +29,36 @@ describe('readWorkspaceManifest', () => {
   });
 
   it('parses a full manifest into epoch-ms timestamps', () => {
-    const dir = join(root, '879c0438-dace-429f-b4db-450aae9bde54');
+    const dir = join(root, '11111111-2222-3333-4444-555555555555');
     mkdirSync(dir);
     writeFileSync(
       join(dir, 'workspace.yaml'),
       [
-        'id: 879c0438-dace-429f-b4db-450aae9bde54',
+        'id: 11111111-2222-3333-4444-555555555555',
         'cwd: /Users/x/repo',
         'git_root: /Users/x/repo',
-        'repository: codemie-ai/codemie-code',
+        'repository: example-org/example-repo',
         'host_type: github',
-        'branch: fix/analytics',
+        'branch: feat/example',
         'user_named: false',
         'summary_count: 0',
         'created_at: 2026-06-16T06:21:01.974Z',
         'updated_at: 2026-06-16T06:21:05.138Z',
-        'name: does the app support Copilot sessions?',
+        'name: example session title',
       ].join('\n')
     );
 
     const m = readWorkspaceManifest(dir);
     expect(m).not.toBeNull();
-    expect(m!.id).toBe('879c0438-dace-429f-b4db-450aae9bde54');
+    expect(m!.id).toBe('11111111-2222-3333-4444-555555555555');
     expect(m!.cwd).toBe('/Users/x/repo');
     expect(m!.gitRoot).toBe('/Users/x/repo');
-    expect(m!.repository).toBe('codemie-ai/codemie-code');
+    expect(m!.repository).toBe('example-org/example-repo');
     expect(m!.hostType).toBe('github');
-    expect(m!.branch).toBe('fix/analytics');
+    expect(m!.branch).toBe('feat/example');
     expect(m!.createdAt).toBe(Date.parse('2026-06-16T06:21:01.974Z'));
     expect(m!.updatedAt).toBe(Date.parse('2026-06-16T06:21:05.138Z'));
-    expect(m!.name).toBe('does the app support Copilot sessions?');
+    expect(m!.name).toBe('example session title');
   });
 
   it('tolerates an older manifest missing host_type and name', () => {

@@ -1,15 +1,14 @@
 /**
  * Copilot CLI token-extraction unit tests.
  *
- * Numbers are measured from real ~/.copilot sessions (CLI 1.0.48) — see
- * docs/superpowers/tasks/2026-07-28-copilot-cli-analytics/phase0-spike.md.
+ * Figures reflect Copilot CLI 1.0.x on-disk shapes, taken from a real transcript.
  */
 
 import { describe, it, expect } from 'vitest';
 import { extractCopilotUsage } from '../copilot-cli.usage.js';
 import type { CopilotEvent } from '../copilot-cli-event-types.js';
 
-/** Session 2bcffe67 — a real mixed-model session (gpt-5.2 + claude-sonnet-4.5). */
+/** A representative mixed-model session (gpt-5.2 + claude-sonnet-4.5). */
 const shutdownEvent: CopilotEvent = {
   type: 'session.shutdown',
   data: {
