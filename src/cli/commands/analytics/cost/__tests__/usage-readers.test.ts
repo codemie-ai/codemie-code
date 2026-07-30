@@ -494,6 +494,34 @@ describe('readUsageByModel — copilot-cli cache decomposition', () => {
 
     const u = readUsageByModel('copilot-cli', weird).get('gpt-5.2')!;
     expect(u.input).toBe(0);
+    // Cache writes price ABOVE the base input rate, so a malformed transcript must not be
+    // able to bill more of them than there was fresh input to write. Clamping input to 0
+    // while still billing 900 cache-write tokens would over-charge on garbage data.
+    expect(u.cacheCreation).toBe(0);
+    expect(u.total).toBe(500); // cacheRead only
+  });
+
+  it('does not let cache writes exceed the fresh input they were written from', () => {
+    const skewed = {
+      sessionId: 's-skew',
+      agentName: 'GitHub Copilot CLI',
+      metadata: {},
+      messages: [
+        // fresh input = 1000 − 400 = 600, but the transcript claims 5000 cache writes.
+        { model: 'gpt-5.2', usage: { inputTokens: 1000, cacheReadTokens: 400, cacheWriteTokens: 5000 } },
+      ],
+    } as never;
+
+    const u = readUsageByModel('copilot-cli', skewed).get('gpt-5.2')!;
+    expect(u.cacheCreation).toBe(600);
+    expect(u.input).toBe(0);
+  });
+
+  it('leaves well-formed real-world buckets untouched by the clamp', () => {
+    // Regression guard: the clamp must not alter the measured session's numbers.
+    const u = readUsageByModel('copilot-cli', copilotParsed).get('claude-sonnet-4.5')!;
+    expect(u.cacheCreation).toBe(125660);
+    expect(u.input).toBe(24352);
   });
 
   it('handles the output-only partial shape from the per-turn fallback', () => {

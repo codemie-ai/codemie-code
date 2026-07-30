@@ -184,6 +184,34 @@ describe('CopilotCliSessionAdapter.parseSessionFile', () => {
     expect(ops[0]).toMatchObject({ path: '/repo/app/a.ts', linesAdded: 12, linesRemoved: 4 });
   });
 
+  it('attributes line totals to a file shutdown actually lists as modified', async () => {
+    // Tools touched /read-only.ts first, but shutdown says only /changed.ts was modified.
+    // Putting the churn on the first entry would credit lines to a file that never changed.
+    const f = join(dir, 'attribution.jsonl');
+    writeFileSync(
+      f,
+      [
+        { type: 'tool.execution_start', data: { toolCallId: 'x', toolName: 'edit', arguments: { path: '/read-only.ts' } } },
+        { type: 'tool.execution_complete', data: { toolCallId: 'x', success: true } },
+        {
+          type: 'session.shutdown',
+          data: { codeChanges: { linesAdded: 30, linesRemoved: 2, filesModified: ['/changed.ts'] } },
+        },
+      ]
+        .map((l) => JSON.stringify(l))
+        .join('\n') + '\n'
+    );
+
+    const parsed = await newAdapter().parseSessionFile(f, 'sess-attr');
+    const ops = parsed.metrics!.fileOperations!;
+    const changed = ops.find((o) => o.path === '/changed.ts')!;
+    const readOnly = ops.find((o) => o.path === '/read-only.ts')!;
+
+    expect(changed.linesAdded).toBe(30);
+    expect(changed.linesRemoved).toBe(2);
+    expect(readOnly.linesAdded ?? 0).toBe(0);
+  });
+
   it('adds files that only session.shutdown knows about', async () => {
     const extra = join(dir, 'extra.jsonl');
     writeFileSync(

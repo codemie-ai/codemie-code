@@ -297,12 +297,16 @@ function readCopilotCli(parsed: ParsedSession): UsageMap {
       }
       const u = raw.usage;
       const cacheRead = u.cacheReadTokens ?? 0;
-      const cacheCreation = u.cacheWriteTokens ?? 0;
       const output = u.outputTokens ?? 0;
 
       // inputTokens is the TOTAL prompt; peel off the cached and cache-written parts.
       const freshInput = Math.max(0, (u.inputTokens ?? 0) - cacheRead);
-      const input = Math.max(0, freshInput - cacheCreation);
+      // Clamp cache writes to the fresh input they were written from. Cache creation is
+      // priced ABOVE the base input rate, so an inconsistent transcript must not be able
+      // to bill more of it than the prompt actually contained. Clamping also keeps `input`
+      // non-negative by construction.
+      const cacheCreation = Math.min(u.cacheWriteTokens ?? 0, freshInput);
+      const input = freshInput - cacheCreation;
 
       accumulate(out, raw.model, {
         input,

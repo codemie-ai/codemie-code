@@ -303,9 +303,12 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
           fileOperations.push({ type: 'edit', path });
         }
       }
-      // Attribute the session totals to the first changed file: Copilot gives no
-      // per-file split, and the aggregator sums these into the session's churn.
-      const target = fileOperations[0];
+      // Copilot gives no per-file split, so the session totals land on one entry. Prefer a
+      // file shutdown actually lists as modified — the first tool-derived entry may be a
+      // file that was opened but never changed, and crediting churn to it would be wrong.
+      const modified = new Set(changes.filesModified ?? []);
+      const target =
+        fileOperations.find((op) => op.path !== undefined && modified.has(op.path)) ?? fileOperations[0];
       if (target) {
         target.linesAdded = changes.linesAdded ?? 0;
         target.linesRemoved = changes.linesRemoved ?? 0;
