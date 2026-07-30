@@ -196,6 +196,13 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
     // tool.execution_complete carries just toolCallId + a boolean success. Pair by id.
     const toolNameById = new Map<string, string>();
 
+    // Only the newest CLI builds put `model` on each assistant.message; 1.0.17 and every
+    // 0.0.x omit it. Track the model in effect from session.model_change so those turns
+    // are still attributed, and remember which turns stayed unlabelled for the
+    // single-model backfill below.
+    let currentModel: string | undefined;
+    const unlabelledTurns: Array<{ message: { model?: string } }> = [];
+
     for (const event of events) {
       switch (event.type) {
         case 'tool.execution_start': {
@@ -246,19 +253,42 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
           });
           break;
         }
+        case 'session.model_change': {
+          const next = (event.data as { newModel?: string } | undefined)?.newModel;
+          if (next) {
+            currentModel = next;
+          }
+          break;
+        }
         case 'assistant.message': {
           const data = (event.data ?? {}) as CopilotAssistantMessageData;
-          turnRecords.push({
+          const record = {
             type: 'assistant',
             timestamp: event.timestamp,
             cwd,
             gitBranch: branch,
-            message: { role: 'assistant', model: data.model },
-          });
+            message: { role: 'assistant', model: data.model ?? currentModel },
+          };
+          if (!record.message.model) {
+            unlabelledTurns.push(record);
+          }
+          turnRecords.push(record);
           break;
         }
         default:
           break;
+      }
+    }
+
+    // Last resort: if turns are still unlabelled but the shutdown rollup shows the session
+    // used exactly ONE model, every turn must have been that model. With two or more,
+    // attributing an unlabelled turn to either would be a fabrication — leave it unknown.
+    if (unlabelledTurns.length > 0) {
+      const usedModels = Object.keys(shutdown?.modelMetrics ?? {});
+      if (usedModels.length === 1) {
+        for (const turn of unlabelledTurns) {
+          turn.message.model = usedModels[0];
+        }
       }
     }
 

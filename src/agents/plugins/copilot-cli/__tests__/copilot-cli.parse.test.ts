@@ -250,6 +250,87 @@ describe('CopilotCliSessionAdapter.parseSessionFile', () => {
   });
 });
 
+/**
+ * Only the newest Copilot CLI builds put `model` on each `assistant.message`. Older ones
+ * (1.0.17 and every 0.0.x) omit it, so the model must be recovered from the other events
+ * that do carry it — otherwise the report shows "unknown model" for most sessions.
+ */
+describe('CopilotCliSessionAdapter — model attribution fallbacks', () => {
+  function write(name: string, lines: unknown[]): string {
+    const p = join(dir, name);
+    writeFileSync(p, lines.map((l) => JSON.stringify(l)).join('\n') + '\n');
+    return p;
+  }
+
+  function modelsOf(parsed: Awaited<ReturnType<CopilotCliSessionAdapter['parseSessionFile']>>): string[] {
+    return (parsed.messages as Array<{ type?: string; message?: { model?: string } }>)
+      .filter((m) => m.type === 'assistant')
+      .map((m) => m.message?.model)
+      .filter((m): m is string => !!m);
+  }
+
+  it('prefers the per-turn model when present', async () => {
+    const f = write('per-turn.jsonl', [
+      { type: 'session.model_change', data: { newModel: 'gpt-5.2' } },
+      { type: 'assistant.message', data: { model: 'claude-sonnet-4.6', outputTokens: 5 } },
+    ]);
+    expect(modelsOf(await newAdapter().parseSessionFile(f, 's'))).toEqual(['claude-sonnet-4.6']);
+  });
+
+  it('falls back to the model in effect from session.model_change', async () => {
+    const f = write('model-change.jsonl', [
+      { type: 'session.model_change', data: { newModel: 'gpt-5.2' } },
+      { type: 'assistant.message', data: { outputTokens: 5 } },
+      { type: 'assistant.message', data: { outputTokens: 7 } },
+    ]);
+    expect(modelsOf(await newAdapter().parseSessionFile(f, 's'))).toEqual(['gpt-5.2', 'gpt-5.2']);
+  });
+
+  it('tracks a mid-session model switch chronologically', async () => {
+    const f = write('switch.jsonl', [
+      { type: 'session.model_change', data: { newModel: 'gpt-5.2' } },
+      { type: 'assistant.message', data: { outputTokens: 1 } },
+      { type: 'session.model_change', data: { previousModel: 'gpt-5.2', newModel: 'claude-sonnet-4.6' } },
+      { type: 'assistant.message', data: { outputTokens: 1 } },
+    ]);
+    expect(modelsOf(await newAdapter().parseSessionFile(f, 's'))).toEqual(['gpt-5.2', 'claude-sonnet-4.6']);
+  });
+
+  it('backfills from shutdown modelMetrics when the session used exactly one model', async () => {
+    const f = write('single-model.jsonl', [
+      { type: 'assistant.message', data: { outputTokens: 5 } },
+      { type: 'assistant.message', data: { outputTokens: 9 } },
+      {
+        type: 'session.shutdown',
+        data: { modelMetrics: { 'gpt-5.2': { requests: { count: 2 }, usage: { inputTokens: 10, outputTokens: 14 } } } },
+      },
+    ]);
+    expect(modelsOf(await newAdapter().parseSessionFile(f, 's'))).toEqual(['gpt-5.2', 'gpt-5.2']);
+  });
+
+  it('does NOT guess when the session used several models and turns are unlabelled', async () => {
+    const f = write('ambiguous.jsonl', [
+      { type: 'assistant.message', data: { outputTokens: 5 } },
+      {
+        type: 'session.shutdown',
+        data: {
+          modelMetrics: {
+            'gpt-5.2': { usage: { outputTokens: 3 } },
+            'claude-sonnet-4.5': { usage: { outputTokens: 2 } },
+          },
+        },
+      },
+    ]);
+    // Attributing an unlabelled turn to one of two models would be a fabrication.
+    expect(modelsOf(await newAdapter().parseSessionFile(f, 's'))).toEqual([]);
+  });
+
+  it('leaves the model unknown when no source carries it', async () => {
+    const f = write('none.jsonl', [{ type: 'assistant.message', data: { outputTokens: 5 } }]);
+    expect(modelsOf(await newAdapter().parseSessionFile(f, 's'))).toEqual([]);
+  });
+});
+
 describe('CopilotCliSessionAdapter.processSession', () => {
   it('runs registered processors and aggregates their results', async () => {
     const adapter = newAdapter();
