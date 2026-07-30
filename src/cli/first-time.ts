@@ -12,7 +12,7 @@ export class FirstTimeExperience {
    * Get all agents split into built-in and external
    */
   private static getAgents(): { builtIn: AgentAdapter | undefined; external: AgentAdapter[] } {
-    const allAgents = AgentRegistry.getAllAgents();
+    const allAgents = AgentRegistry.getManageableAgents();
     return {
       builtIn: allAgents.find(agent => agent.name === BUILTIN_AGENT_NAME),
       external: allAgents.filter(agent => agent.name !== BUILTIN_AGENT_NAME)
@@ -111,7 +111,7 @@ export class FirstTimeExperience {
     console.log(chalk.bold('📚 Additional Resources:\n'));
     console.log(chalk.white('   • Documentation: ') + chalk.blue('README.md'));
 
-    const allAgents = AgentRegistry.getAllAgents();
+    const allAgents = AgentRegistry.getManageableAgents();
     const agentShortcuts = allAgents.map(agent =>
       agent.name.startsWith('codemie-') ? agent.name : `codemie-${agent.name}`
     ).join(', ');
@@ -191,7 +191,7 @@ export class FirstTimeExperience {
 
     console.log(chalk.bold('Run Agents:'));
 
-    const allAgents = AgentRegistry.getAllAgents();
+    const allAgents = AgentRegistry.getManageableAgents();
     allAgents.forEach(agent => {
       // Handle special case where agent name already includes 'codemie-' prefix
       const command = agent.name.startsWith('codemie-') ? agent.name : `codemie-${agent.name}`;

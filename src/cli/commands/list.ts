@@ -14,7 +14,7 @@ export function createListCommand(): Command {
         // List agents
         const agents = options.installed
           ? await AgentRegistry.getInstalledAgents()
-          : AgentRegistry.getAllAgents();
+          : AgentRegistry.getManageableAgents();
 
         if (agents.length === 0) {
           logger.info(options.installed ? 'No agents installed' : 'No agents available');

@@ -28,7 +28,12 @@ export const CopilotCliPluginMetadata: AgentMetadata = {
   name: COPILOT_CLI_AGENT_NAME,
   displayName: COPILOT_CLI_DISPLAY_NAME,
   description: 'GitHub Copilot CLI — analytics ingestion only (not managed by CodeMie)',
-  npmPackage: '@github/copilot',
+  // Deliberately null, even though Copilot ships as @github/copilot. `codemie update`
+  // bypasses the adapter entirely — updateAgent() reads metadata.npmPackage and runs
+  // `npm install -g <pkg> --force`, which would overwrite the user's own Copilot install.
+  // Null makes that path fail safe ("cannot be updated") instead of destructively, as
+  // defense in depth behind the getManageableAgents() exclusion.
+  npmPackage: null,
   cliCommand: 'copilot',
   dataPaths: {
     home: '.copilot',

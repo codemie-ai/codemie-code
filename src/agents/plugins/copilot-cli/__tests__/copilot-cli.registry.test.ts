@@ -39,3 +39,39 @@ describe('copilot-cli registration', () => {
     }
   });
 });
+
+/**
+ * An analytics-only agent must be invisible to every agent-MANAGEMENT surface.
+ *
+ * Overriding install()/uninstall()/run() to refuse is not sufficient: `codemie update`
+ * never calls the adapter at all — updateAgent() reads metadata.npmPackage and calls
+ * npm.installGlobal(..., { force: true }) directly. Left visible, CodeMie would
+ * force-reinstall a user's global Copilot, and install/uninstall/list/doctor/first-time
+ * would advertise commands that always error.
+ */
+describe('copilot-cli is excluded from agent-management surfaces', () => {
+  it('is absent from getManageableAgents()', () => {
+    const names = AgentRegistry.getManageableAgents().map((a) => a.name);
+
+    expect(names).not.toContain('copilot-cli');
+    // Manageable agents are otherwise untouched.
+    for (const name of ['claude', 'codex', 'gemini', 'kimi', 'opencode']) {
+      expect(names, `${name} must stay manageable`).toContain(name);
+    }
+  });
+
+  it('is still present in getAllAgents() so analytics can reach its adapter', () => {
+    expect(AgentRegistry.getAllAgents().map((a) => a.name)).toContain('copilot-cli');
+  });
+
+  it('is absent from getInstalledAgents(), which only feeds management surfaces', async () => {
+    const names = (await AgentRegistry.getInstalledAgents()).map((a) => a.name);
+    expect(names).not.toContain('copilot-cli');
+  });
+
+  it('declares a null npmPackage, so `codemie update` cannot npm-install it', () => {
+    // Defense in depth: even if a management surface is missed, updateAgent() throws
+    // "cannot be updated (no npm package configured)" instead of mutating a global install.
+    expect(AgentRegistry.getAgent('copilot-cli')!.metadata.npmPackage).toBeNull();
+  });
+});
