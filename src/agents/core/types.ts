@@ -717,7 +717,7 @@ export interface AgentAdapter {
   install(): Promise<void>;
   uninstall(): Promise<void>;
   isInstalled(): Promise<boolean>;
-  run(args: string[], env?: Record<string, string>): Promise<void>;
+  run(args: string[], env?: Record<string, string>, options?: { dryRun?: boolean }): Promise<void>;
   getVersion(): Promise<string | null>;
   getMetricsConfig(): AgentMetricsConfig | undefined;
   readonly ownedSubcommands?: string[];

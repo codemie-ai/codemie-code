@@ -27,6 +27,8 @@ import {
   executeOnSessionEnd,
   executeAfterRun
 } from './lifecycle-helpers.js';
+import { redactSecrets } from './config-redaction.js';
+import { extractGeneratedConfig } from './print-config.js';
 import inquirer from 'inquirer';
 
 /**
@@ -373,7 +375,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   /**
    * Run the agent
    */
-  async run(args: string[], envOverrides?: Record<string, string>): Promise<void> {
+  async run(
+    args: string[],
+    envOverrides?: Record<string, string>,
+    runOptions?: { dryRun?: boolean },
+  ): Promise<void> {
     // Check version compatibility before running (only for agents with a supportedVersion configured)
     if (this.metadata.supportedVersion) {
       const compat = await this.checkVersionCompatibility();
@@ -576,6 +582,12 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     // Lifecycle hook: beforeRun (provider-aware)
     // Can override or extend env transformations, setup config files
     env = await executeBeforeRun(this, this.metadata.lifecycle, this.metadata.name, env, this.extractConfig(env));
+
+    if (runOptions?.dryRun) {
+      const generatedConfig = extractGeneratedConfig(env);
+      console.log(JSON.stringify(redactSecrets(generatedConfig), null, 2));
+      return;
+    }
 
     // Merge modified env back into process.env
     // This ensures enrichArgs hook can access variables set by beforeRun
