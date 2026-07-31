@@ -82,7 +82,7 @@ codemie proxy connect vscode --profile work
 codemie proxy connect vscode --insiders
 ```
 
-The connector resolves the selected profile once, synchronizes skills, and merges that profile's real model ID into VS Code's `User/chatLanguageModels.json`. VS Code sends the configured model ID directly; the proxy authenticates the request, adds CodeMie context headers, and forwards the request body unchanged.
+The connector resolves the selected profile once, synchronizes skills, and writes the managed CodeMie model catalog into VS Code's `User/chatLanguageModels.json`. VS Code sends the configured model ID directly; the proxy authenticates the request, adds CodeMie context headers, and applies only the documented compatibility normalization before forwarding.
 
 `--profile <name>` is a one-command override and does not change the active CodeMie profile. Model and project remain independent: the model is written into VS Code configuration, while `codeMieProject` is passed to the daemon and emitted as `X-CodeMie-Project`. When a selected profile has no project of its own, compatible repository-local project context continues to apply through the standard profile merge rules.
 
@@ -101,7 +101,7 @@ Reload VS Code, then select a CodeMie model from the model picker
 
 VS Code stores that local key in its secret storage and adds the reference to the configuration. The CLI cannot inspect whether an existing secret reference still resolves; if VS Code reports a missing or invalid key, use **Update API Key** again.
 
-The managed provider has this effective structure. The port is taken from the running daemon, including a fallback port:
+The managed provider has this effective structure for a GPT-5.6 Responses entry. The port is taken from the running daemon, including a fallback port; other catalog entries retain their model-specific API type and capabilities:
 
 ```json
 [
@@ -111,22 +111,26 @@ The managed provider has this effective structure. The port is taken from the ru
     "apiType": "chat-completions",
     "models": [
       {
-        "id": "<selected-profile-model>",
-        "name": "CodeMie Profile Model",
-        "url": "http://127.0.0.1:4001/v1/chat/completions",
+        "id": "gpt-5.6-sol-2026-07-09",
+        "name": "gpt-5.6-sol-2026-07-09",
+        "url": "http://127.0.0.1:4001/v1/responses",
+        "apiType": "responses",
         "toolCalling": true,
         "vision": true,
         "streaming": true,
         "thinking": true,
+        "zeroDataRetentionEnabled": true,
         "supportsReasoningEffort": [
-          "minimal",
+          "none",
           "low",
           "medium",
-          "high"
+          "high",
+          "xhigh",
+          "max"
         ],
-        "reasoningEffortFormat": "chat-completions",
-        "maxInputTokens": 224000,
-        "maxOutputTokens": 32000
+        "reasoningEffortFormat": "responses",
+        "maxInputTokens": 922000,
+        "maxOutputTokens": 128000
       }
     ]
   }
@@ -140,13 +144,19 @@ unrelated providers, models, settings, and unknown provider properties. It rejec
 or a non-array root without overwriting the file. Re-running the command with another profile
 replaces the previous CodeMie-managed model without changing unrelated entries.
 
-GPT-5.5 and GPT-5.6 are deliberate exceptions: the connector routes them through Chat Completions
-but publishes `thinking: false` and omits reasoning-effort metadata. The current CodeMie/LiteLLM
-route rejects Chat Completions requests that combine tool calling with reasoning. Responses API
-reasoning is not used as a fallback because load-balanced follow-up requests can fail when the
-referenced `previous_response_id` is unavailable. Keep thinking disabled for these models until
-the upstream Chat route accepts tools with reasoning or the Responses route provides reliable
-response-state continuity.
+GPT-5.5 and all three GPT-5.6 entries use the Responses API with
+`zeroDataRetentionEnabled: true` and Responses-format reasoning. Current VS Code builds use this
+flag to construct each request from the complete conversation held locally, send `store: false`,
+omit `previous_response_id`, and replay assistant, function-call, and function-call-output items.
+Use `medium` as the initial baseline; `none`, lower efforts, and `xhigh`/`max` remain selectable
+according to each model's advertised capability list.
+
+The proxy does not cache conversation state or rewrite response streams. Its bounded compatibility
+layer adds a safe `user` value when needed, limits long identifiers to 32 characters, and removes
+deployment-bound encrypted reasoning content for `vscode-byok`. This preserves the selected
+`reasoning.effort`, visible assistant history, and tool-call history, at the cost of cross-turn
+hidden-reasoning continuity. Prefer a current VS Code release (1.122 or newer) so the stateless
+flag and marker suppression are honored.
 
 Check the daemon context with `codemie proxy status`. Automated VS Code BYOK configuration
 and routing coverage runs as part of `npm run test:all`.
@@ -163,7 +173,10 @@ and routing coverage runs as part of `npm run test:all`.
 | Configuration is rejected | `chatLanguageModels.json` is malformed or not an array | Repair the file; the connector leaves invalid content unchanged |
 | VS Code still uses old settings | Model configuration was not reloaded | Reload VS Code |
 | Active profile changed but model did not | VS Code configuration still contains the previous profile model | Re-run `codemie proxy connect vscode` |
-| GPT-5.5 or GPT-5.6 fails when thinking is enabled | Current Chat route rejects tools combined with reasoning | Keep thinking disabled; the managed catalog intentionally omits reasoning controls |
+| `previous_response_id` appears in a VS Code request | VS Code is older than the stateless Responses implementation or has stale model metadata | Upgrade to a current VS Code release, re-run the connector, reload VS Code, and verify `store: false` plus no `previous_response_id` in Chat Debug logs |
+| `previous_response_not_found` occurs on a follow-up | The client is still using stateful Responses replay | Complete the compatibility check above; do not add proxy-side response caching or deployment affinity |
+| `invalid_encrypted_content` occurs on a follow-up | Encrypted reasoning state reached a different deployment or the sanitizer is not active | Use the current proxy, confirm the `vscode-byok` sanitizer is enabled, and retry without sharing encrypted reasoning content in logs |
+| An effort value is rejected | The selected effort is not supported by that model/deployment | Choose an advertised effort (`none`, `low`, `medium`, `high`, `xhigh`, or `max` as listed for the model) and certify the deployment before broad rollout |
 | Inline suggestions still use Copilot | Expected limitation | BYOK covers chat/agent workflows, not inline completion |
 
 ### Claude Desktop 3P

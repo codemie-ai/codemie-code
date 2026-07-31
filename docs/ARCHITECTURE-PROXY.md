@@ -716,12 +716,19 @@ The command reuses a healthy daemon when its profile, project, provider, target 
 
 The connector merges one managed model into VS Code's `chatLanguageModels.json` and preserves unrelated models plus an existing `${input:chat.lm.secret.*}` reference as `apiKey`. If no valid reference exists, it omits `apiKey` rather than generating a placeholder and directs the user to open `Chat: Manage Language Models`, right-click **CodeMie Profile Model**, and choose **Update API Key**. VS Code then stores the local `codemie-proxy` key in secret storage; CodeMie SSO credentials never enter VS Code configuration.
 
-GPT-5.5 and GPT-5.6 are routed through Chat Completions with `thinking: false` and no
-reasoning-effort metadata. This is an explicit compatibility tradeoff: the current
-CodeMie/LiteLLM Chat route rejects requests that combine tools with reasoning, while the
-Responses route can lose `previous_response_id` state across load-balanced follow-up requests.
-The models must remain non-reasoning in the VS Code catalog until one of those upstream
-limitations is resolved.
+GPT-5.5 and all three GPT-5.6 entries use `/v1/responses` with
+`zeroDataRetentionEnabled: true`, `thinking: true`, and Responses-format reasoning efforts. VS
+Code owns the complete conversation history for these entries and sends stateless requests with
+`store: false`, no `previous_response_id`, and replayed assistant, function-call, and
+function-call-output items. This keeps LiteLLM free to load-balance each request across Azure
+deployments.
+
+The proxy performs only bounded compatibility normalization for `vscode-byok`: it constrains the
+Responses `user` identifier and removes deployment-bound encrypted reasoning state. It preserves
+the selected `reasoning.effort`, visible messages, assistant phases, tools, call IDs, and tool
+outputs. The proxy does not persist conversation content, add session affinity, buffer Responses
+events, or transform the SSE stream. Removing encrypted state trades hidden-reasoning continuity
+for deployment-independent follow-ups, matching the established Codex compatibility behavior.
 
 ```mermaid
 sequenceDiagram
@@ -730,11 +737,12 @@ sequenceDiagram
     participant GW as CodeMie Gateway
     participant LM as Profile Model
 
-    VS->>PX: POST /v1/chat/completions<br/>model=&lt;selected-profile-model&gt;<br/>Bearer local gateway key
+    VS->>PX: POST /v1/responses<br/>store=false<br/>input=full local history<br/>Bearer local gateway key
     PX->>PX: Validate and strip local key
     PX->>PX: Inject CodeMie SSO cookies
     PX->>PX: Inject profile/project context headers
-    PX->>GW: Forward request body unchanged
+    PX->>PX: Normalize user and strip encrypted reasoning state
+    PX->>GW: Forward stateless request
     GW->>LM: Invoke configured model
     LM-->>GW: Streaming events / tool calls
     GW-->>PX: SSE stream

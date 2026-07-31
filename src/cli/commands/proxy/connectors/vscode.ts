@@ -30,6 +30,7 @@ interface VsCodeManagedModel {
   vision: boolean;
   streaming: true;
   thinking: boolean;
+  zeroDataRetentionEnabled?: boolean;
   adaptiveThinking?: true;
   modelOptions?: Readonly<{
     temperature?: number | null;
@@ -119,6 +120,9 @@ function buildManagedModels(proxyUrl: string): VsCodeManagedModel[] {
     };
 
     if (definition.adaptiveThinking) model.adaptiveThinking = true;
+    if (definition.zeroDataRetentionEnabled !== undefined) {
+      model.zeroDataRetentionEnabled = definition.zeroDataRetentionEnabled;
+    }
     if (definition.modelOptions) model.modelOptions = definition.modelOptions;
     if (definition.requestHeaders) model.requestHeaders = definition.requestHeaders;
     if (definition.supportsReasoningEffort) {
