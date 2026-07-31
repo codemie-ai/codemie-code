@@ -422,6 +422,17 @@ Omit `--task` to resume in interactive mode instead.
 
 An unknown or expired session id is passed straight through to the underlying CLI, which reports the error and exits with a non-zero status.
 
+### Printing the Generated Config (`--print-config`, OpenCode only)
+
+`--print-config` prints the opencode config CodeMie generated (profile/provider/model resolution, `beforeRun` hook) as JSON on stdout, then exits without starting opencode. Secrets are redacted: any key matching `apiKey`, `token`, `secret`, `password`, `privateKey`, `credentials`, or `authorization` (case-insensitive, any depth) is replaced with `***REDACTED***`. No proxy is left running and `--task` is not required.
+
+```bash
+codemie-opencode --print-config
+codemie-opencode --print-config --profile work --model claude-sonnet-4-6
+```
+
+Other agents (`codemie-claude`, `codemie-codex`, `codemie-gemini`) reject `--print-config` and exit with an error — only opencode generates its config this way.
+
 ### Capturing Output
 
 ```bash

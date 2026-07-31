@@ -151,13 +151,13 @@ Mark skipped gates as `➖ N/A` in the report table.
 Once all required gates pass, ask the user:
 
 ```
-✅ All quality gates passed. Ready to commit and create PR via codemie-pr. Proceed?
+✅ All quality gates passed. Ready to commit and create PR via mr-creator. Proceed?
 ```
 
-Wait for confirmation. If the user confirms (any affirmative: "yes", "proceed", "go ahead", "ok", etc.), invoke the `codemie-pr` skill:
+Wait for confirmation. If the user confirms (any affirmative: "yes", "proceed", "go ahead", "ok", etc.), invoke the `sdlc-factory:mr-creator` skill:
 
 ```
-Invoke Skill: codemie-pr
+Invoke Skill: sdlc-factory:mr-creator
 ```
 
 Do not invoke it without explicit user confirmation.
@@ -169,4 +169,4 @@ Do not invoke it without explicit user confirmation.
 | Agent | When |
 |-------|------|
 | `tech-lead` | After implementation → user runs qa-lead before PR |
-| `codemie-pr` | Run after qa-lead passes |
+| `sdlc-factory:mr-creator` | Run after qa-lead passes |

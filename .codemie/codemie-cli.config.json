@@ -1,57 +1,22 @@
 {
   "version": 2,
-  "activeProfile": "epm-cdme",
+  "activeProfile": "preview",
   "profiles": {
-    "epm-cdme": {
-      "codeMieProject": "epm-cdme",
+    "preview": {
+      "codeMieProject": "taras_spashchenko@epam.com",
+      "codeMieIntegration": {
+        "id": "338df9e0-171b-4ee9-999b-9df47660af35",
+        "alias": "ts-litellm-preview-env"
+      },
       "provider": "ai-run-sso",
-      "codeMieUrl": "https://codemie.lab.epam.com",
+      "codeMieUrl": "https://codemie-preview.lab.epam.com",
       "apiKey": "sso-provided",
-      "baseUrl": "https://codemie.lab.epam.com/code-assistant-api",
+      "baseUrl": "https://codemie-preview.lab.epam.com/code-assistant-api",
       "model": "claude-sonnet-5",
       "haikuModel": "claude-haiku-4-5-20251001",
       "sonnetModel": "claude-sonnet-5",
       "opusModel": "claude-opus-5",
-      "name": "epm-cdme"
+      "name": "preview"
     }
-  },
-  "codemieAssistants": [
-    {
-      "id": "289d2751-afd9-4c77-a272-90df7cd71702",
-      "name": "CodeMie JIRA Assistant",
-      "slug": "codemie-jira-assistant",
-      "description": "Business Analyst Assistant - expert to work with Jira. Used for creating/getting/managing Jira tickets in EPM-CDME project (Epics, Stories, Tasks, and Bugs). Main role is to analyze requirements from the request, clarify additional questions if necessary, generate requirements with the description structure defined in the prompt and additional details from the request, and create tickets in EPM-CDME project Jira. The Assistant uses Generic Jira tool for Jira tickets creation.",
-      "project": "epm-cdme",
-      "registeredAt": "2026-06-17T09:31:24.907Z",
-      "registrationMode": "skill",
-      "agentTargets": [
-        "claude"
-      ]
-    },
-    {
-      "id": "05959338-06de-477d-9cc3-08369f858057",
-      "name": "AI/Run FAQ",
-      "slug": "codemie-onboarding",
-      "description": "This is smart CodeMie assistant which can help you with onboarding process.\nCodeMie can answer to all you questions about capabilities, usage and so on.",
-      "project": "codemie",
-      "registeredAt": "2026-06-17T09:31:24.908Z",
-      "registrationMode": "skill",
-      "agentTargets": [
-        "claude"
-      ]
-    },
-    {
-      "id": "0368dce9-3987-49ac-b12e-41ce45623a20",
-      "name": "SonarQube MCP Analyzer",
-      "slug": "sonarqube-mcp-analyzer",
-      "description": "A highly specialized assistant designed to analyze SonarQube reports using SonarQube MCP Server tools. It processes report links, interpreting all available metrics such as the number and types of issues, severities, affected code snippets, coverage details, and more. Serving both direct users and other AI Assistants, it delivers in-depth insights and actionable recommendations on code quality, technical debt, and coverage improvement.",
-      "project": "epm-cdme",
-      "registeredAt": "2026-06-17T09:31:24.909Z",
-      "registrationMode": "skill",
-      "agentTargets": [
-        "claude"
-      ]
-    }
-  ],
-  "codemieSkills": []
+  }
 }
