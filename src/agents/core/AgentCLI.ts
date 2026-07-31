@@ -79,6 +79,7 @@ export class AgentCLI {
       .option('--reasoning-effort <level>', 'Reasoning/thinking effort: minimal|low|medium|high|xhigh|max')
       .option('--resume <session-id>', 'Resume an existing session by ID')
       .option('--no-analytics-report', 'Disable the automatic per-session analytics report written on exit')
+      .option('--print-config', 'Print the generated opencode config and exit without starting opencode')
       .allowUnknownOption()
       .argument('[args...]', `Arguments to pass to ${this.adapter.displayName}`)
       .action(async (args, options) => {
@@ -165,9 +166,10 @@ export class AgentCLI {
       }
 
       // Auto-enable silent mode in non-interactive mode (--task flag present)
-      // This suppresses welcome/goodbye messages and interactive prompts
+      // or when only printing the generated config (--print-config).
+      // This suppresses welcome/goodbye messages and interactive prompts.
       const isNonInteractiveMode = !!options.task;
-      const shouldBeSilent = options.silent || isNonInteractiveMode;
+      const shouldBeSilent = options.silent || isNonInteractiveMode || !!options.printConfig;
 
       // Apply silent mode from CLI flag or auto-detected non-interactive mode
       if (shouldBeSilent) {
@@ -175,6 +177,13 @@ export class AgentCLI {
         if ('setSilentMode' in this.adapter && typeof this.adapter.setSilentMode === 'function') {
           this.adapter.setSilentMode(true);
         }
+      }
+
+      // --print-config only makes sense for opencode: it's the only agent that
+      // generates its own on-the-fly config via a beforeRun hook.
+      if (options.printConfig && this.adapter.name !== 'opencode') {
+        console.error(chalk.red(`\n✗ --print-config is not supported for ${this.adapter.displayName}\n`));
+        process.exit(1);
       }
 
       // Load configuration with CLI overrides
@@ -395,7 +404,7 @@ export class AgentCLI {
       logger.debug(`[AgentCLI] collected agentArgs: ${JSON.stringify(agentArgs)}`);
 
       // Run the agent (welcome message will be shown inside)
-      await this.adapter.run(agentArgs, providerEnv);
+      await this.adapter.run(agentArgs, providerEnv, options.printConfig ? { dryRun: true } : undefined);
       // Clean up the process-level flag set for same-process conversation sync consumers.
       delete process.env.CODEMIE_CONV_SYNC_DISABLED;
     } catch (error) {
