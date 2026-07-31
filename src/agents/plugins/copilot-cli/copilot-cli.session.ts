@@ -194,7 +194,7 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
 
     // tool.execution_start is the ONLY event carrying the tool name and arguments;
     // tool.execution_complete carries just toolCallId + a boolean success. Pair by id.
-    const toolNameById = new Map<string, string>();
+    const toolCallById = new Map<string, { name: string; path?: string }>();
 
     // Only the newest CLI builds put `model` on each assistant.message; 1.0.17 and every
     // 0.0.x omit it. Track the model in effect from session.model_change so those turns
@@ -210,25 +210,30 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
           if (!data.toolCallId || !data.toolName) {
             break;
           }
-          toolNameById.set(data.toolCallId, data.toolName);
-
-          const path = data.arguments?.path;
-          if (path && FILE_WRITE_TOOLS.has(data.toolName)) {
-            fileOperations.push({ type: data.toolName === 'create' ? 'write' : 'edit', path });
-          }
+          // Remember the name and target path; whether the write actually happened is
+          // only known at tool.execution_complete.
+          toolCallById.set(data.toolCallId, { name: data.toolName, path: data.arguments?.path });
           break;
         }
         case 'tool.execution_complete': {
           const data = (event.data ?? {}) as CopilotToolCompleteData;
-          const name = data.toolCallId ? toolNameById.get(data.toolCallId) : undefined;
-          if (!name) {
+          const call = data.toolCallId ? toolCallById.get(data.toolCallId) : undefined;
+          if (!call) {
             break; // orphaned completion (truncated transcript) — nothing to attribute
           }
-          tools[name] = (tools[name] ?? 0) + 1;
-          const bucket = toolStatus[name] ?? { success: 0, failure: 0 };
+          tools[call.name] = (tools[call.name] ?? 0) + 1;
+          const bucket = toolStatus[call.name] ?? { success: 0, failure: 0 };
           const failed = data.success === false || data.error !== undefined;
           bucket[failed ? 'failure' : 'success'] += 1;
-          toolStatus[name] = bucket;
+          toolStatus[call.name] = bucket;
+
+          // Record the file operation only once the write is known to have SUCCEEDED.
+          // A failed edit/create (permission denied, bad old_str) must not count as a
+          // changed file, or the report inflates filesChanged and can attach the
+          // session's line totals to a file that was never written.
+          if (!failed && call.path && FILE_WRITE_TOOLS.has(call.name)) {
+            fileOperations.push({ type: call.name === 'create' ? 'write' : 'edit', path: call.path });
+          }
           break;
         }
         case 'skill.invoked': {

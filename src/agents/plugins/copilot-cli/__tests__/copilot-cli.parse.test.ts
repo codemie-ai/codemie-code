@@ -144,6 +144,28 @@ describe('CopilotCliSessionAdapter.parseSessionFile', () => {
     expect(parsed.metrics!.toolStatus!.bash).toEqual({ success: 0, failure: 1 });
   });
 
+  it('does not record a file operation for a FAILED write', async () => {
+    const f = join(dir, 'failed-write.jsonl');
+    writeFileSync(
+      f,
+      [
+        { type: 'tool.execution_start', data: { toolCallId: 'ok', toolName: 'create', arguments: { path: '/written.ts' } } },
+        { type: 'tool.execution_complete', data: { toolCallId: 'ok', success: true } },
+        { type: 'tool.execution_start', data: { toolCallId: 'bad', toolName: 'edit', arguments: { path: '/never-written.ts' } } },
+        { type: 'tool.execution_complete', data: { toolCallId: 'bad', success: false } },
+      ]
+        .map((l) => JSON.stringify(l))
+        .join('\n') + '\n'
+    );
+
+    const parsed = await newAdapter().parseSessionFile(f, 'sess-failed');
+    const paths = parsed.metrics!.fileOperations!.map((o) => o.path);
+
+    expect(paths).toEqual(['/written.ts']);
+    // The failed call still counts as a tool invocation, just not as a file change.
+    expect(parsed.metrics!.toolStatus!.edit).toEqual({ success: 0, failure: 1 });
+  });
+
   it('ignores an orphaned completion with no matching start', async () => {
     const orphan = join(dir, 'orphan.jsonl');
     writeFileSync(

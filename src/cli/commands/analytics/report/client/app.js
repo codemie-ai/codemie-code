@@ -397,7 +397,7 @@
     agentList.forEach(function (a) {
       var ss = byAgent.get(a);
       var c = el('div', 'acard'); c.style.setProperty('--ac', colorFor(a));
-      c.appendChild(el('h3', null, '<span class="pill"></span>' + esc(a)));
+      c.appendChild(el('h3', null, '<span class="pill"></span>' + esc(labelFor(a))));
       c.appendChild(el('span', 'text-muted', '<span style="font-size:12px">' + ss.length + ' sessions · ' + Math.round((ss.length / fs.length) * 100) + '% of activity</span>'));
       var mini = el('div', 'mini');
       var stats = [
@@ -610,7 +610,7 @@
       bloated.map(function (x) {
         var s = x.s;
         return ['<span title="' + esc(sessTitle(s)) + '">' + esc(truncStr(sessTitle(s), 44)) + '</span>',
-          '<span class="tag tag-sm" style="text-transform:capitalize">' + esc(s.agentName) + '</span>',
+          '<span class="tag tag-sm"' + (AGENT_LABELS[s.agentName] ? '' : ' style="text-transform:capitalize"') + '>' + esc(labelFor(s.agentName)) + '</span>',
           '<span class="tag tag-sm">' + esc((s.models && s.models[0]) || '—') + '</span>',
           fmtTokens(Math.round(x.ctx)), fmtTokens(s.tokens ? s.tokens.cacheRead : 0), fmtUSD(s.costUSD), (Math.round(x.bloat * 10) / 10) + '%'];
       }),
@@ -641,7 +641,7 @@
       dw.innerHTML = tableHTML(['Session', 'Agent', 'Model', 'Turns', 'Cost'],
         topDead.map(function (s) {
           return ['<span title="' + esc(sessTitle(s)) + '">' + esc(truncStr(sessTitle(s), 44)) + '</span>',
-            '<span class="tag tag-sm" style="text-transform:capitalize">' + esc(s.agentName) + '</span>',
+            '<span class="tag tag-sm"' + (AGENT_LABELS[s.agentName] ? '' : ' style="text-transform:capitalize"') + '>' + esc(labelFor(s.agentName)) + '</span>',
             '<span class="tag tag-sm">' + esc((s.models && s.models[0]) || '—') + '</span>',
             fmtNum(s.turns), fmtUSD(s.costUSD)];
         }), [false, false, false, true, true]);
@@ -744,7 +744,7 @@
           else if (c.withLog === 0) status = '<span class="cov-warn">no native log</span>';
           else if (c.priced === 0) status = '<span class="cov-warn">no token reader</span>';
           else status = '<span class="cov-warn">partial</span>';
-          return ['<span class="tag tag-sm" style="text-transform:capitalize">' + esc(c.agentName) + '</span>',
+          return ['<span class="tag tag-sm"' + (AGENT_LABELS[c.agentName] ? '' : ' style="text-transform:capitalize"') + '>' + esc(labelFor(c.agentName)) + '</span>',
             fmtNum(c.total), c.priced + '/' + c.total, fmtNum(c.withLog), status];
         }),
         [false, true, true, true, false]) + '</div>';
@@ -781,7 +781,7 @@
       ['Session', 'Agent', 'Project', 'Input', 'Output', 'Cached', 'Total', 'Cost'],
       top.map(function (s) {
         return [esc(s.sessionId.slice(0, 8)),
-          '<span class="tag tag-sm" style="text-transform:capitalize">' + esc(s.agentName) + '</span>',
+          '<span class="tag tag-sm"' + (AGENT_LABELS[s.agentName] ? '' : ' style="text-transform:capitalize"') + '>' + esc(labelFor(s.agentName)) + '</span>',
           '<span title="' + esc(s.project) + '">' + esc(shortPath(s.project)) + '</span>',
           fmtTokens(tkIn(s)), fmtTokens(tkOut(s)), fmtTokens(tkCached(s)), fmtTokens(s.tokens ? s.tokens.total : 0), fmtUSD(s.costUSD)];
       }),
@@ -808,7 +808,7 @@
       var list = fs.slice().sort(function (a, b) { return b.startTime - a.startTime; });
       if (q) {
         var ql = q.toLowerCase();
-        list = list.filter(function (s) { return (s.sessionId + ' ' + s.agentName + ' ' + s.project + ' ' + s.branch + ' ' + (s.title || '') + ' ' + (s.sessionSource || '')).toLowerCase().indexOf(ql) >= 0; });
+        list = list.filter(function (s) { return (s.sessionId + ' ' + s.agentName + ' ' + labelFor(s.agentName) + ' ' + s.project + ' ' + s.branch + ' ' + (s.title || '') + ' ' + (s.sessionSource || '')).toLowerCase().indexOf(ql) >= 0; });
       }
       var shown = list.slice(0, 300);
       holder.innerHTML = tableHTML(
@@ -819,7 +819,7 @@
           var sourceCell = '<span class="tag tag-sm">' + esc(s.sessionSource || 'Pure chat') + '</span>';
           return [new Date(s.startTime).toISOString().slice(0, 16).replace('T', ' '),
             promptCell,
-            '<span class="tag tag-sm" style="text-transform:capitalize">' + esc(s.agentName) + '</span>',
+            '<span class="tag tag-sm"' + (AGENT_LABELS[s.agentName] ? '' : ' style="text-transform:capitalize"') + '>' + esc(labelFor(s.agentName)) + '</span>',
             '<span title="' + esc(s.project) + '">' + esc(shortPath(s.project)) + '</span>', branchCell, sourceCell,
             fmtNum(s.turns), fmtNum(s.netLines), fmtTokens(tkIn(s)), fmtTokens(tkOut(s)), fmtTokens(tkCached(s)), fmtUSD(s.costUSD)];
         }),

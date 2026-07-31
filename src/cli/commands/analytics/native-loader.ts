@@ -532,12 +532,16 @@ export async function loadNativeSessions(
       continue;
     }
     const raw = synthesizeRawSession(agentName, descriptor, parsed);
-    if (
-      !isAnalyticsOnlyAgent(agentName) &&
-      !deps.hasOwnershipMarker(descriptor.filePath) &&
-      raw.startEvent
-    ) {
-      raw.startEvent.data.provider = 'native-external';
+    if (raw.startEvent && !deps.hasOwnershipMarker(descriptor.filePath)) {
+      // Analytics-only agents can never carry an ownership marker, so tagging them
+      // 'native-external' would drop 100% of their sessions from the default report.
+      // They still are not CodeMie-managed though, so they get their own tag rather than
+      // the plain 'native' that means "CodeMie launched this" — otherwise the report
+      // cannot distinguish managed from unmanaged usage. 'native-unmanaged' passes the
+      // sessions-source filter (included by default) while staying honest about origin.
+      raw.startEvent.data.provider = isAnalyticsOnlyAgent(agentName)
+        ? 'native-unmanaged'
+        : 'native-external';
     }
     out.push(raw);
   }

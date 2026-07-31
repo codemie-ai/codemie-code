@@ -132,6 +132,55 @@ describe('extractCopilotUsage — tier 2 (per-turn fallback)', () => {
   });
 });
 
+/**
+ * Tier 2 exists for CLI builds that never write session.shutdown — and those are exactly
+ * the builds that also omit per-turn `model`. Requiring `model` on the message made the
+ * fallback unreachable where it was needed, so those sessions were reported as having no
+ * telemetry even though their output tokens were sitting in the transcript.
+ */
+describe('extractCopilotUsage — tier 2 model recovery on older builds', () => {
+  it('attributes unlabelled turns to the model in effect from session.model_change', () => {
+    const result = extractCopilotUsage([
+      { type: 'session.model_change', data: { newModel: 'gpt-5.2' } },
+      { type: 'assistant.message', data: { outputTokens: 100 } },
+      { type: 'assistant.message', data: { outputTokens: 250 } },
+    ]);
+
+    expect(result.partial).toBe(true);
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0].model).toBe('gpt-5.2');
+    expect(result.messages[0].usage.outputTokens).toBe(350);
+    expect(result.messages[0].requests).toBe(2);
+  });
+
+  it('follows a mid-session model switch', () => {
+    const result = extractCopilotUsage([
+      { type: 'session.model_change', data: { newModel: 'gpt-5.2' } },
+      { type: 'assistant.message', data: { outputTokens: 10 } },
+      { type: 'session.model_change', data: { previousModel: 'gpt-5.2', newModel: 'claude-sonnet-4.6' } },
+      { type: 'assistant.message', data: { outputTokens: 20 } },
+    ]);
+
+    const byModel = Object.fromEntries(result.messages.map((m) => [m.model, m.usage.outputTokens]));
+    expect(byModel).toEqual({ 'gpt-5.2': 10, 'claude-sonnet-4.6': 20 });
+  });
+
+  it('still prefers an explicit per-turn model over the tracked one', () => {
+    const result = extractCopilotUsage([
+      { type: 'session.model_change', data: { newModel: 'gpt-5.2' } },
+      { type: 'assistant.message', data: { model: 'claude-sonnet-4.5', outputTokens: 7 } },
+    ]);
+
+    expect(result.messages[0].model).toBe('claude-sonnet-4.5');
+  });
+
+  it('leaves turns unattributed when no model signal exists at all', () => {
+    const result = extractCopilotUsage([{ type: 'assistant.message', data: { outputTokens: 5 } }]);
+    expect(result.messages).toEqual([]);
+    expect(result.unavailableReason).toBeTruthy();
+  });
+});
+
 describe('extractCopilotUsage — tier 3 (no usage data)', () => {
   it('returns empty with a reason when no usage events exist', () => {
     const result = extractCopilotUsage([

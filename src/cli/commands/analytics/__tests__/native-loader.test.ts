@@ -272,13 +272,19 @@ describe('loadNativeSessions — ownership gate exemption for analytics-only age
     };
   }
 
-  it('does NOT tag an unowned copilot-cli session as native-external', async () => {
+  it('tags an unowned copilot-cli session native-unmanaged, not native-external', async () => {
     const results = await loadNativeSessions(undefined, unownedDeps('copilot-cli', 'cp1', copilotParsed));
 
     expect(results).toHaveLength(1);
-    // 'native-external' here would mean sessions-source.ts filters it out by default,
-    // i.e. the feature would ship displaying nothing.
-    expect(results[0].startEvent!.data.provider).toBe('native');
+    // 'native-external' would mean sessions-source.ts filters it out by default, i.e. the
+    // feature ships displaying nothing. Plain 'native' would claim CodeMie launched it.
+    expect(results[0].startEvent!.data.provider).toBe('native-unmanaged');
+  });
+
+  it('keeps native-unmanaged out of the native-external filter', async () => {
+    // sessions-source.ts includes anything that is not exactly 'native-external'.
+    const results = await loadNativeSessions(undefined, unownedDeps('copilot-cli', 'cp1', copilotParsed));
+    expect(results[0].startEvent!.data.provider).not.toBe('native-external');
   });
 
   it('still tags an unowned claude session as native-external', async () => {

@@ -70,18 +70,32 @@ function fromShutdown(data: CopilotShutdownData): CopilotUsageMessage[] {
 function fromPerTurn(events: CopilotEvent[]): CopilotUsageMessage[] {
   const byModel = new Map<string, { output: number; requests: number }>();
 
+  // Tier 2 exists for builds that never write session.shutdown — and those are exactly the
+  // builds that also omit per-turn `model`. Tracking the model in effect from
+  // session.model_change is what makes this fallback reachable at all; requiring
+  // `data.model` would skip every turn on the versions this tier is for.
+  let currentModel: string | undefined;
+
   for (const event of events) {
+    if (event.type === 'session.model_change') {
+      const next = (event.data as { newModel?: string } | undefined)?.newModel;
+      if (next) {
+        currentModel = next;
+      }
+      continue;
+    }
     if (event.type !== 'assistant.message' || !event.data) {
       continue;
     }
     const data = event.data as CopilotAssistantMessageData;
-    if (!data.model || typeof data.outputTokens !== 'number') {
-      continue;
+    const model = data.model ?? currentModel;
+    if (!model || typeof data.outputTokens !== 'number') {
+      continue; // no model signal anywhere — attributing it would be a guess
     }
-    const accumulated = byModel.get(data.model) ?? { output: 0, requests: 0 };
+    const accumulated = byModel.get(model) ?? { output: 0, requests: 0 };
     accumulated.output += data.outputTokens;
     accumulated.requests += 1;
-    byModel.set(data.model, accumulated);
+    byModel.set(model, accumulated);
   }
 
   return [...byModel.entries()].map(([model, accumulated]) => ({
