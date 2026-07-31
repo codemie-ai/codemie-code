@@ -269,6 +269,17 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     maxOutputTokens: 128000,
   },
   {
+    id: 'claude-opus-5',
+    apiType: 'messages',
+    vision: true,
+    thinking: true,
+    adaptiveThinking: true,
+    requestHeaders: MESSAGE_AUTH_HEADERS,
+    supportsReasoningEffort: CLAUDE_XHIGH_EFFORTS,
+    maxInputTokens: 872000,
+    maxOutputTokens: 128000,
+  },
+  {
     id: 'claude-haiku-4-5-20251001',
     apiType: 'chat-completions',
     vision: true,

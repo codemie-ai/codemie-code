@@ -33,6 +33,7 @@ const EXPECTED_MODEL_IDS = [
   'claude-opus-4-6-20260205',
   'claude-opus-4-7',
   'claude-opus-4-8',
+  'claude-opus-5',
   'claude-haiku-4-5-20251001',
   'qwen.qwen3-coder-30b-a3b-v1',
   'qwen.qwen3-coder-480b-a35b-v1',
