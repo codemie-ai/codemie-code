@@ -8,10 +8,10 @@
       "codeMieUrl": "https://codemie.lab.epam.com",
       "apiKey": "sso-provided",
       "baseUrl": "https://codemie.lab.epam.com/code-assistant-api",
-      "model": "claude-sonnet-4-6",
+      "model": "claude-sonnet-5",
       "haikuModel": "claude-haiku-4-5-20251001",
-      "sonnetModel": "claude-sonnet-4-6",
-      "opusModel": "claude-opus-4-8",
+      "sonnetModel": "claude-sonnet-5",
+      "opusModel": "claude-opus-5",
       "name": "epm-cdme"
     }
   },

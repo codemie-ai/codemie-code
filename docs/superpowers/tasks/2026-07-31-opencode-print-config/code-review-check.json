@@ -1,0 +1,19 @@
+{
+  "decision": "approve",
+  "rationale": "Both blocking findings from code-review.final are resolved by the fix-up diff. CR-001: BaseAgentAdapter.ts's dry-run branch now wraps the print in try/finally and stops this.proxy (setting it back to null) before returning — confirmed against the actual patch hunk at BaseAgentAdapter.ts:584-600, and covered by a new regression test ('stops the proxy before returning when the profile uses SSO/JWT auth') that sets CODEMIE_PROVIDER: 'ai-run-sso' and asserts the mocked proxy.stop() was called and this.proxy is null afterward; the fix additionally covers the error path (extractGeneratedConfig throwing) since finally runs regardless. CR-002: config-redaction.ts's SECRET_KEY_PATTERN is broadened to api[-_]?key|private[-_]?key|token|secret|password|credentials?|authorization, and a new test confirms 'x-api-key', 'password', 'privateKey', and 'credentials' are all now masked while an unrelated key ('X-Trace-Id') is left untouched. No new high-risk issue is suspected in the fix-up itself — it is a small, narrowly-scoped patch (try/finally + regex broadening + test-only changes to fix a test mock's constructibility and an ambient-env leak guard) with no new external interfaces, no new dependencies, and no changes to error-handling contracts beyond the two findings being fixed — so the scoped blind+edge-case confirmation pass was not dispatched. Full unit+cli-integration suite re-run after the fix-up: 2740 passed, 11 skipped, zero failures.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {"criterion": "Return before spawn(); spawn, signal handlers, afterRun/exit-code hooks skipped entirely; exit 0", "status": "pass"},
+    {"criterion": "Redact recursively: any key matching a secret-like name (case-insensitive) at any depth, key names untouched", "status": "pass"}
+  ],
+  "standards_review": [
+    {"standard": "git-workflow.md — Conventional Commits format", "status": "pass", "notes": "Fix-up commit 4b2ce5f follows fix(<scope>): <subject> with a descriptive body."},
+    {"standard": "code-quality.md — explicit return types on exported functions, no undocumented `any`", "status": "pass", "notes": "No signature or type changes in the fix-up; redactSecrets/extractGeneratedConfig return types unchanged."}
+  ],
+  "findings": [],
+  "finding_status": [
+    {"id": "CR-001", "status": "resolved", "evidence": "src/agents/core/BaseAgentAdapter.ts: dry-run branch now `try { ... } finally { if (this.proxy) { await this.proxy.stop(); this.proxy = null; } }` before `return;`. New test 'stops the proxy before returning when the profile uses SSO/JWT auth' passes, asserting mockProxyStop called once and adapter.proxy is null."},
+    {"id": "CR-002", "status": "resolved", "evidence": "src/agents/core/config-redaction.ts: SECRET_KEY_PATTERN changed from /apikey|token|secret|authorization/i to /api[-_]?key|private[-_]?key|token|secret|password|credentials?|authorization/i. New test 'masks hyphenated header-style keys and other common secret-key spellings' passes, covering x-api-key, password, privateKey, credentials."}
+  ]
+}

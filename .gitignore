@@ -77,3 +77,4 @@ docs/superpowers/runs/
 docs/superpowers/tasks/*/.state.json
 .superpowers
 /.rtk/
+/opencode.json
