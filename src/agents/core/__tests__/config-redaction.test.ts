@@ -55,6 +55,24 @@ describe('redactSecrets', () => {
     expect(input).toEqual([{ apiKey: 'a' }, { apiKey: 'b' }]); // original untouched
   });
 
+  it('masks hyphenated header-style keys and other common secret-key spellings', () => {
+    const input = {
+      'x-api-key': 'sk-real-value',
+      password: 'p@ss',
+      privateKey: 'priv',
+      credentials: 'creds',
+      'X-Trace-Id': 'trace-1',
+    };
+
+    expect(redactSecrets(input)).toEqual({
+      'x-api-key': '***REDACTED***',
+      password: '***REDACTED***',
+      privateKey: '***REDACTED***',
+      credentials: '***REDACTED***',
+      'X-Trace-Id': 'trace-1',
+    });
+  });
+
   it('passes through primitives unchanged', () => {
     expect(redactSecrets('hello')).toBe('hello');
     expect(redactSecrets(42)).toBe(42);

@@ -584,8 +584,18 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     env = await executeBeforeRun(this, this.metadata.lifecycle, this.metadata.name, env, this.extractConfig(env));
 
     if (runOptions?.dryRun) {
-      const generatedConfig = extractGeneratedConfig(env);
-      console.log(JSON.stringify(redactSecrets(generatedConfig), null, 2));
+      try {
+        const generatedConfig = extractGeneratedConfig(env);
+        console.log(JSON.stringify(redactSecrets(generatedConfig), null, 2));
+      } finally {
+        // setupProxy() (called earlier in this method) may have started a real
+        // listening server for SSO/JWT-auth profiles. Without stopping it here,
+        // the process never exits after printing the config.
+        if (this.proxy) {
+          await this.proxy.stop();
+          this.proxy = null;
+        }
+      }
       return;
     }
 

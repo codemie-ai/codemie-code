@@ -98,11 +98,14 @@ vi.mock('child_process', async (importOriginal) => {
 });
 
 // Stub CodeMieProxy so setupProxy doesn't try to start a real proxy server
+const { mockProxyStop } = vi.hoisted(() => ({ mockProxyStop: vi.fn(() => Promise.resolve()) }));
 vi.mock('../../../providers/plugins/sso/index.js', () => ({
-  CodeMieProxy: vi.fn().mockImplementation(() => ({
-    start: vi.fn(() => Promise.resolve()),
-    stop:  vi.fn(() => Promise.resolve()),
-  })),
+  CodeMieProxy: vi.fn().mockImplementation(function () {
+    return {
+      start: vi.fn(() => Promise.resolve({ port: 0, url: 'http://127.0.0.1:0' })),
+      stop:  mockProxyStop,
+    };
+  }),
 }));
 
 vi.mock('../../../utils/mcp-config.js', () => ({
@@ -582,12 +585,17 @@ describe('BaseAgentAdapter', () => {
       envMapping: {},
       supportedProviders: ['ai-run-sso'],
       silentMode: true,
+      ssoConfig: { enabled: true, clientType: 'codemie-claude' },
     };
 
     let consoleLogSpy: ReturnType<typeof vi.spyOn>;
 
     beforeEach(async () => {
       vi.clearAllMocks();
+      // Guard against CODEMIE_PROVIDER leaking in from the host shell's ambient
+      // environment (run() merges process.env), which would make shouldUseProxy
+      // start the mock proxy in tests that don't set it explicitly.
+      delete process.env['CODEMIE_PROVIDER'];
       consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
       const { executeBeforeRun } = await import('../lifecycle-helpers.js');
       vi.mocked(executeBeforeRun).mockImplementation((_adapter: any, _lifecycle: any, _name: any, env: any) =>
@@ -663,6 +671,19 @@ describe('BaseAgentAdapter', () => {
 
       expect(vi.mocked(spawn)).toHaveBeenCalledOnce();
       expect(consoleLogSpy).not.toHaveBeenCalled();
+    });
+
+    it('stops the proxy before returning when the profile uses SSO/JWT auth (regression: process must not hang)', async () => {
+      const { executeBeforeRun } = await import('../lifecycle-helpers.js');
+      vi.mocked(executeBeforeRun).mockImplementation((_adapter: any, _lifecycle: any, _name: any, env: any) =>
+        Promise.resolve({ ...env, OPENCODE_CONFIG_CONTENT: JSON.stringify({ model: 'gpt-5' }) }),
+      );
+      const adapter = new DryRunAdapter(dryRunMetadata);
+
+      await adapter.run([], { CODEMIE_PROVIDER: 'ai-run-sso', CODEMIE_BASE_URL: 'https://example.invalid' }, { dryRun: true });
+
+      expect(mockProxyStop).toHaveBeenCalledOnce();
+      expect((adapter as any).proxy).toBeNull();
     });
   });
 });

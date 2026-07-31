@@ -1,4 +1,4 @@
-const SECRET_KEY_PATTERN = /apikey|token|secret|authorization/i;
+const SECRET_KEY_PATTERN = /api[-_]?key|private[-_]?key|token|secret|password|credentials?|authorization/i;
 
 /**
  * Recursively redacts values whose object key matches a secret-like name
