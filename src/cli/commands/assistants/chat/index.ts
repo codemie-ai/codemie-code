@@ -21,7 +21,7 @@ import { loadConversationHistory } from './historyLoader.js';
 import { appendConversationTurn } from './historyPersister.js';
 import { isExitCommand, enableVerboseMode } from './utils.js';
 import type { ChatCommandOptions, SingleMessageOptions } from './types.js';
-import { detectFileUploadsFromSession } from './claudeUploadsDetector.js';
+import { createUploadsDetector } from './uploadsDetector.factory.js';
 import type { DetectedFile } from './types.js';
 import { readFilesFromPaths } from './uploadsUtils.js';
 
@@ -99,7 +99,8 @@ async function chatWithAssistant(
 
   // 1. Detect files from session (if conversationId exists)
   if (conversationId) {
-    detectedFiles = await detectFileUploadsFromSession(conversationId, { quiet: false });
+    const detector = await createUploadsDetector(conversationId);
+    detectedFiles = await detector.detectFromSession(conversationId, { quiet: false });
   }
 
   // 2. Read files from --file paths (if provided)
