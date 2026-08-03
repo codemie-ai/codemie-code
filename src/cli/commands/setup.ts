@@ -24,7 +24,12 @@ import {
   selectCodeMieProject
 } from '../../providers/core/codemie-auth-helpers.js';
 import { fetchCodeMieIntegrations } from '../../providers/plugins/sso/sso.http-client.js';
-import type { CodeMieIntegration, SSOAuthResult, SetupContext } from '../../providers/core/types.js';
+import type {
+  CodeMieIntegration,
+  CodeMieSetupSession,
+  SSOAuthResult,
+  SetupContext
+} from '../../providers/core/types.js';
 
 interface LiteLLMEnforcementContext {
   integration: CodeMieIntegration;
@@ -34,26 +39,34 @@ interface LiteLLMEnforcementContext {
 }
 
 export type EnforcementGateResult =
-  | { enforced: false }
-  | (LiteLLMEnforcementContext & { enforced: true });
+  | { enforced: false; session?: CodeMieSetupSession }
+  | (LiteLLMEnforcementContext & { enforced: true; session: CodeMieSetupSession });
 
 export async function detectLiteLLMEnforcement(existingCodeMieUrl?: string): Promise<EnforcementGateResult> {
+  let session: CodeMieSetupSession | undefined;
+
   try {
     const codeMieUrl = await promptForCodeMieUrl(existingCodeMieUrl || DEFAULT_CODEMIE_BASE_URL);
     const authResult = await authenticateWithCodeMie(codeMieUrl);
     if (!authResult.success || !authResult.apiUrl || !authResult.cookies) {
       throw new Error(authResult.error || 'SSO authentication failed');
     }
-    const { project } = await selectCodeMieProject(authResult);
+    const { project, userEmail } = await selectCodeMieProject(authResult);
+
+    // The gate has now completed a full CodeMie handshake (URL + browser SSO +
+    // project). Carry it out of the gate on EVERY exit path so provider setup
+    // steps can reuse it instead of authenticating a second time.
+    session = { codeMieUrl, authResult, project, userEmail };
+
     const allIntegrations = await fetchCodeMieIntegrations(authResult.apiUrl, authResult.cookies);
     const projectIntegrations = allIntegrations.filter(
       i => i.project_name === project && i.credential_type === 'LiteLLM'
     );
-    if (projectIntegrations.length === 0) return { enforced: false };
+    if (projectIntegrations.length === 0) return { enforced: false, session };
     if (projectIntegrations.length > 1) {
       logger.warn(`Multiple LiteLLM integrations found for project "${project}". Using "${projectIntegrations[0].alias}".`);
     }
-    return { enforced: true, integration: projectIntegrations[0], project, authResult, codeMieUrl };
+    return { enforced: true, integration: projectIntegrations[0], project, authResult, codeMieUrl, session };
   } catch (error) {
     if (isPromptAbortError(error)) {
       throw error;
@@ -61,7 +74,8 @@ export async function detectLiteLLMEnforcement(existingCodeMieUrl?: string): Pro
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.warn(`Could not check for mandatory integrations: ${errorMessage}`);
     console.log(chalk.yellow(`\n⚠️  Could not check for mandatory integrations (${errorMessage}). Continuing with normal provider setup.\n`));
-    return { enforced: false };
+
+    return { enforced: false, session };
   }
 }
 
@@ -283,6 +297,7 @@ async function runSetupWizard(force?: boolean): Promise<void> {
 
   let provider: string;
   let enforcementContext: LiteLLMEnforcementContext | undefined;
+  const codeMieSession = enforcementResult.session;
 
   if (enforcementResult.enforced) {
     const litellmSteps = ProviderRegistry.getSetupSteps('litellm');
@@ -323,7 +338,7 @@ async function runSetupWizard(force?: boolean): Promise<void> {
   }
 
   // Use plugin-based setup flow
-  await handlePluginSetup(provider, setupSteps, profileName, isUpdate, storageLocation, enforcementContext);
+  await handlePluginSetup(provider, setupSteps, profileName, isUpdate, storageLocation, enforcementContext, codeMieSession);
 }
 
 /**
@@ -337,7 +352,8 @@ async function handlePluginSetup(
   profileName: string | null,
   isUpdate: boolean,
   storageLocation: 'global' | 'local' = 'global',
-  enforcementContext?: LiteLLMEnforcementContext
+  enforcementContext?: LiteLLMEnforcementContext,
+  codeMieSession?: CodeMieSetupSession
 ): Promise<void> {
   try {
     const providerTemplate = ProviderRegistry.getProvider(providerName);
@@ -347,16 +363,23 @@ async function handlePluginSetup(
       displaySetupInstructions(providerTemplate);
     }
 
-    // Step 1: Get credentials — pass SetupContext when LiteLLM enforcement is active
-    const setupContext: SetupContext | undefined = enforcementContext
-      ? {
-          enforcedIntegration: {
-            id: enforcementContext.integration.id,
-            alias: enforcementContext.integration.alias,
-            codeMieUrl: enforcementContext.codeMieUrl
-          }
-        }
-      : undefined;
+    // Step 1: Get credentials — pass SetupContext when LiteLLM enforcement is
+    // active and/or when the wizard already established a CodeMie session, so
+    // SSO-based providers reuse that session rather than re-authenticating.
+    let setupContext: SetupContext | undefined;
+    if (enforcementContext || codeMieSession) {
+      setupContext = {};
+      if (enforcementContext) {
+        setupContext.enforcedIntegration = {
+          id: enforcementContext.integration.id,
+          alias: enforcementContext.integration.alias,
+          codeMieUrl: enforcementContext.codeMieUrl
+        };
+      }
+      if (codeMieSession) {
+        setupContext.codeMieSession = codeMieSession;
+      }
+    }
     const credentials = await setupSteps.getCredentials(isUpdate, setupContext);
 
     // Step 2: Fetch models
