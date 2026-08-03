@@ -13,7 +13,7 @@ import { readJSONL } from '@/agents/core/session/utils/jsonl-reader.js';
 import type { ClaudeMessage } from '@/agents/plugins/claude/claude-message-types.js';
 import type { Session } from '@/agents/core/session/types.js';
 import { getSessionPath } from '@/agents/core/session/session-config.js';
-import type { DetectedFile } from './types.js';
+import type { DetectedFile, UploadsDetector } from './types.js';
 import { bytesToMB, ATTACHMENT_CONSTRAINTS } from './uploadsUtils.js';
 
 const ATTACHMENT_PATH_PATTERN = /\[(Image|Document): source: ([^\]]+)\]/g;
@@ -291,5 +291,14 @@ export async function detectFileUploadsFromSession(
   } catch (error) {
     logger.debug(`${LOG_PREFIX} Failed to detect file uploads`, { error });
     return [];
+  }
+}
+
+export class ClaudeUploadsDetector implements UploadsDetector {
+  async detectFromSession(
+    conversationId: string,
+    options?: { quiet?: boolean }
+  ): Promise<DetectedFile[]> {
+    return detectFileUploadsFromSession(conversationId, options);
   }
 }
