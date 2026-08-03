@@ -3,7 +3,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { detectFileUploadsFromSession, readFilesFromPaths } from '../claudeUploadsDetector.js';
+import { detectFileUploadsFromSession } from '../claudeUploadsDetector.js';
+import { readFilesFromPaths } from '../uploadsUtils.js';
 import type { ClaudeMessage } from '@/agents/plugins/claude/claude-message-types.js';
 import type { Session } from '@/agents/core/session/types.js';
 
@@ -973,7 +974,7 @@ describe('fileResolver', () => {
 
         expect(result).toEqual([]);
         expect(logger.warn).toHaveBeenCalledWith(
-          '[claudeUploadsDetector] File does not exist',
+          '[uploadsUtils] File does not exist',
           expect.objectContaining({ filePath: expect.stringContaining('nonexistent.png') })
         );
       });
@@ -990,7 +991,7 @@ describe('fileResolver', () => {
 
         expect(result).toEqual([]);
         expect(logger.warn).toHaveBeenCalledWith(
-          '[claudeUploadsDetector] Path is not a file',
+          '[uploadsUtils] Path is not a file',
           expect.objectContaining({ filePath: expect.stringContaining('directory') })
         );
       });
@@ -1009,7 +1010,7 @@ describe('fileResolver', () => {
 
         expect(result).toEqual([]);
         expect(logger.warn).toHaveBeenCalledWith(
-          '[claudeUploadsDetector] File exceeds size limit',
+          '[uploadsUtils] File exceeds size limit',
           expect.objectContaining({
             limit: 100
           })
@@ -1032,7 +1033,7 @@ describe('fileResolver', () => {
 
         expect(result).toEqual([]);
         expect(logger.warn).toHaveBeenCalledWith(
-          '[claudeUploadsDetector] Failed to read file',
+          '[uploadsUtils] Failed to read file',
           expect.objectContaining({ filePath })
         );
       });

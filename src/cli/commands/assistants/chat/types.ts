@@ -30,3 +30,18 @@ export interface MessageSendRequest {
   history: HistoryMessage[];
   conversationId?: string;
 }
+
+export interface DetectedFile {
+  fileName: string;
+  data: string;
+  mediaType: string;
+  type: 'image' | 'document';
+  sizeBytes: number;
+}
+
+export interface UploadsDetector {
+  detectFromSession(
+    conversationId: string,
+    options?: { quiet?: boolean }
+  ): Promise<DetectedFile[]>;
+}

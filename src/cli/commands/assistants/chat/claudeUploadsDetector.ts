@@ -5,22 +5,21 @@
  * Claude-specific implementation that parses Claude message types.
  */
 
-import { existsSync, readFileSync, statSync } from 'fs';
-import { basename, resolve } from 'path';
+import { existsSync, readFileSync } from 'fs';
+import { basename } from 'path';
 import chalk from 'chalk';
-import mime from 'mime-types';
 import { logger } from '@/utils/logger.js';
 import { readJSONL } from '@/agents/core/session/utils/jsonl-reader.js';
 import type { ClaudeMessage } from '@/agents/plugins/claude/claude-message-types.js';
 import type { Session } from '@/agents/core/session/types.js';
 import { getSessionPath } from '@/agents/core/session/session-config.js';
+import type { DetectedFile } from './types.js';
+import { bytesToMB, ATTACHMENT_CONSTRAINTS } from './uploadsUtils.js';
 
 const ATTACHMENT_PATH_PATTERN = /\[(Image|Document): source: ([^\]]+)\]/g;
-const RECENT_MESSAGES_LIMIT = 2;
-const MAX_FILE_SIZE_MB = 100;
-const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
+const RECENT_MESSAGES_LIMIT = ATTACHMENT_CONSTRAINTS.RECENT_MESSAGES_LIMIT;
+const MAX_FILE_SIZE_BYTES = ATTACHMENT_CONSTRAINTS.MAX_FILE_SIZE_MB * 1024 * 1024;
 const BYTES_PER_KB = 1024;
-const BYTES_PER_MB = 1024 * 1024;
 
 const MESSAGE_TYPE = {
   USER: 'user',
@@ -40,14 +39,6 @@ const CORRELATION_STATUS = {
 const DEFAULT_MEDIA_TYPE = 'application/octet-stream';
 const LOG_PREFIX = '[claudeUploadsDetector]';
 
-export interface DetectedFile {
-  fileName: string;
-  data: string;
-  mediaType: string;
-  type: 'image' | 'document';
-  sizeBytes: number;
-}
-
 function isAttachmentType(type: string): boolean {
   return type === MESSAGE_TYPE.IMAGE || type === MESSAGE_TYPE.DOCUMENT;
 }
@@ -56,10 +47,6 @@ function hasValidBase64Source(item: { source?: { type?: string; data?: string } 
   return item.source?.type === SOURCE_TYPE.BASE64 &&
          !!item.source?.data &&
          item.source.data.length > 0;
-}
-
-function bytesToMB(bytes: number): string {
-  return (bytes / BYTES_PER_MB).toFixed(2);
 }
 
 function generateFallbackFileName(fileCount: number, fileIndex: number): string {
@@ -183,7 +170,7 @@ function processFileItem(
       logger.warn(`${LOG_PREFIX} File exceeds size limit, skipping`, {
         fileName,
         sizeMB: bytesToMB(fileSize),
-        limit: MAX_FILE_SIZE_MB
+        limit: ATTACHMENT_CONSTRAINTS.MAX_FILE_SIZE_MB
       });
       return null;
     }
@@ -264,127 +251,6 @@ function logDetectedFiles(files: DetectedFile[], quiet: boolean): void {
     console.log(chalk.dim(`  ${index + 1}. ${file.fileName} (${file.mediaType}, ${sizeKB} KB)`));
   });
   console.log('');
-}
-
-/**
- * Detect MIME type from file path using mime-types library
- */
-function detectMimeType(filePath: string): string {
-  const mimeType = mime.lookup(filePath);
-  return mimeType || DEFAULT_MEDIA_TYPE;
-}
-
-/**
- * Determine if file should be treated as image or document
- */
-function detectFileType(mimeType: string): 'image' | 'document' {
-  return mimeType.startsWith('image/') ? 'image' : 'document';
-}
-
-/**
- * Read files from disk and convert to DetectedFile format
- */
-export async function readFilesFromPaths(
-  filePaths: string[],
-  options: { quiet?: boolean } = {}
-): Promise<DetectedFile[]> {
-  const { quiet = false } = options;
-  const detectedFiles: DetectedFile[] = [];
-
-  if (filePaths.length === 0) {
-    return [];
-  }
-
-  logger.debug(`${LOG_PREFIX} Reading files from paths`, {
-    fileCount: filePaths.length,
-    paths: filePaths
-  });
-
-  for (const filePath of filePaths) {
-    try {
-      // Resolve to absolute path
-      const absolutePath = resolve(filePath);
-
-      // Check if file exists
-      if (!existsSync(absolutePath)) {
-        logger.warn(`${LOG_PREFIX} File does not exist`, { filePath: absolutePath });
-        if (!quiet) {
-          console.log(chalk.yellow(`⚠ File not found: ${filePath}`));
-        }
-        continue;
-      }
-
-      // Check if it's a file (not directory)
-      const stats = statSync(absolutePath);
-      if (!stats.isFile()) {
-        logger.warn(`${LOG_PREFIX} Path is not a file`, { filePath: absolutePath });
-        if (!quiet) {
-          console.log(chalk.yellow(`⚠ Not a file: ${filePath}`));
-        }
-        continue;
-      }
-
-      // Check file size
-      const fileSize = stats.size;
-      if (fileSize > MAX_FILE_SIZE_BYTES) {
-        logger.warn(`${LOG_PREFIX} File exceeds size limit`, {
-          filePath: absolutePath,
-          sizeMB: bytesToMB(fileSize),
-          limit: MAX_FILE_SIZE_MB
-        });
-        if (!quiet) {
-          console.log(chalk.yellow(`⚠ File too large (>${MAX_FILE_SIZE_MB}MB): ${filePath}`));
-        }
-        continue;
-      }
-
-      // Read file content
-      const fileBuffer = readFileSync(absolutePath);
-      const base64Data = fileBuffer.toString('base64');
-      const fileName = basename(absolutePath);
-      const mimeType = detectMimeType(absolutePath);
-      const fileType = detectFileType(mimeType);
-
-      const detectedFile: DetectedFile = {
-        fileName,
-        data: base64Data,
-        mediaType: mimeType,
-        type: fileType,
-        sizeBytes: fileSize
-      };
-
-      detectedFiles.push(detectedFile);
-
-      logger.debug(`${LOG_PREFIX} Read file from disk`, {
-        fileName,
-        mediaType: mimeType,
-        type: fileType,
-        sizeMB: bytesToMB(fileSize)
-      });
-
-    } catch (error) {
-      logger.warn(`${LOG_PREFIX} Failed to read file`, { filePath, error });
-      if (!quiet) {
-        console.log(chalk.yellow(`⚠ Failed to read file: ${filePath}`));
-      }
-    }
-  }
-
-  if (!quiet && detectedFiles.length > 0) {
-    console.log(chalk.cyan(`\n📎 Loaded ${detectedFiles.length} file(s) from disk:`));
-    detectedFiles.forEach((file, index) => {
-      const sizeKB = Math.round(file.sizeBytes / BYTES_PER_KB);
-      console.log(chalk.dim(`  ${index + 1}. ${file.fileName} (${file.mediaType}, ${sizeKB} KB)`));
-    });
-    console.log('');
-  }
-
-  logger.debug(`${LOG_PREFIX} Files read from disk`, {
-    requestedCount: filePaths.length,
-    successCount: detectedFiles.length
-  });
-
-  return detectedFiles;
 }
 
 export async function detectFileUploadsFromSession(

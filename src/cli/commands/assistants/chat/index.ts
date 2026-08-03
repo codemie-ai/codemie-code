@@ -21,7 +21,9 @@ import { loadConversationHistory } from './historyLoader.js';
 import { appendConversationTurn } from './historyPersister.js';
 import { isExitCommand, enableVerboseMode } from './utils.js';
 import type { ChatCommandOptions, SingleMessageOptions } from './types.js';
-import { detectFileUploadsFromSession, readFilesFromPaths, type DetectedFile } from './claudeUploadsDetector.js';
+import { detectFileUploadsFromSession } from './claudeUploadsDetector.js';
+import type { DetectedFile } from './types.js';
+import { readFilesFromPaths } from './uploadsUtils.js';
 
 /** Assistant label color */
 const ASSISTANT_LABEL_COLOR = [177, 185, 249] as const;
