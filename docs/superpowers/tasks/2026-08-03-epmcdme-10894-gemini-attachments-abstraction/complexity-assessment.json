@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "task": "Extend file attachments to codemie-gemini via a reusable UploadsDetector abstraction layer shared across CLI agents",
+  "generated": "2026-08-03T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 3, "label": "M" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 18,
+  "size": "M",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Touches chat/index.ts (consumer refactor), claudeUploadsDetector.ts (interface impl + DetectedFile extraction), chat/types.ts (new UploadsDetector interface + DetectedFile), new geminiUploadsDetector.ts, and possibly a factory/selector module — 4+ components across CLI command and abstraction layers, with both Claude and Gemini agents affected; bumped from L to XL by 'affects multiple agents' red flag"
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "Core objectives are stated (Gemini attachment support, shared abstraction, constraint documentation, no regression), but design decisions remain open: factory vs strategy pattern for UploadsDetector selection, whether gemini.conversations-processor.ts file_names hardcode is in scope, and how to handle the architectural fact that Gemini sessions contain no embedded file blobs (session-based detection will likely be a no-op)"
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Introduces a novel UploadsDetector interface and factory pattern with no direct codebase precedent; refactoring claudeUploadsDetector.ts risks breaking the comprehensive existing test suite; GeminiPlugin has zero unit tests today; no security or performance sensitivity"
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L (4) to XL (5): affects multiple agents/workflows — both Claude (refactored to implement UploadsDetector interface) and Gemini (new GeminiUploadsDetector implementation) are changed"
+  ],
+  "split_recommendation": null
+}
