@@ -86,6 +86,13 @@ export function buildPayload(
           costUSD: cost?.costUSD ?? 0,
           cacheReadCostUSD: cost?.cacheReadCostUSD ?? 0,
           perModelCost: cost?.perModel ?? [],
+          // Optional and additive — omitted entirely for agents that record full usage,
+          // so no other agent's record changes shape.
+          ...(cost?.premiumRequests !== undefined ? { premiumRequests: cost.premiumRequests } : {}),
+          ...(cost?.usagePartial ? { usagePartial: true } : {}),
+          ...(cost?.usageUnavailableReason
+            ? { usageUnavailableReason: cost.usageUnavailableReason }
+            : {}),
           ...(cost?.costSeries && cost.costSeries.length ? { costSeries: cost.costSeries } : {}),
           ...(cost?.dispatches && cost.dispatches.length ? { dispatches: cost.dispatches } : {}),
           skillInvocations,

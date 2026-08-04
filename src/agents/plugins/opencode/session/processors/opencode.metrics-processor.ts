@@ -24,15 +24,64 @@ import type {
   OpenCodeMetadata,
 } from '../../opencode-message-types.js';
 import { isToolPart } from '../../opencode-message-types.js';
-import { readJsonWithRetry, readJsonlTolerant } from '../../opencode.storage-utils.js';
+import { readJsonlTolerant, loadPartsForMessage } from '../../opencode.storage-utils.js';
 import { logger } from '../../../../../utils/logger.js';
-import { getCodemiePath } from '../../../../../utils/paths.js';
-import { readdir, readFile, writeFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join } from 'path';
 
-// Cooldown to prevent concurrent processing of same session (ADR-18)
-const REPROCESS_COOLDOWN_MS = 60_000; // 60 seconds
+// NOTE: the former 60s REPROCESS_COOLDOWN_MS gate was removed deliberately.
+// It predated incremental sync and would swallow every timer tick, stranding
+// deltas on disk. Deduplication on `recordId` already makes process()
+// idempotent, and the sync timer holds its own in-flight guard.
+
+/**
+ * Map an apply_patch/patch per-file operation kind to a MetricDelta file
+ * operation type. The aggregator counts 'write' as files_created, 'edit' as
+ * files_modified and 'delete' as files_deleted.
+ */
+function mapPatchFileType(type: unknown): FileOperationType {
+  switch (type) {
+    case 'add': return 'write';
+    case 'delete': return 'delete';
+    case 'update': return 'edit';
+    default: return 'edit';
+  }
+}
+
+/** Emitted delta shape before MetricsWriter stamps sync bookkeeping onto it. */
+type PendingDelta = Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>;
+
+/** File operation entry as carried on a MetricDelta. */
+type DeltaFileOperation = NonNullable<MetricDelta['fileOperations']>[number];
+
+/**
+ * Count added/removed lines in a unified diff.
+ *
+ * OpenCode reports edits as patch text (`state.metadata.filediff.patch`,
+ * `state.metadata.diff`, `apply_patch` per-file `patch`); unlike Claude it never
+ * emits numeric additions/deletions, so the counts have to come from the diff.
+ */
+export function countDiffLines(patch: unknown): { linesAdded: number; linesRemoved: number } {
+  if (typeof patch !== 'string' || patch.length === 0) {
+    return { linesAdded: 0, linesRemoved: 0 };
+  }
+
+  let linesAdded = 0;
+  let linesRemoved = 0;
+
+  for (const line of patch.split('\n')) {
+    // Skip hunk headers and the ---/+++ file header pair, which are not content.
+    // The header test requires the trailing space git always emits ("--- a/x"),
+    // so a *content* line that merely starts with --- or +++ (a markdown rule, a
+    // YAML document separator) is still counted instead of silently dropped.
+    if (line.startsWith('@@')) continue;
+    if (line.startsWith('+++ ') || line.startsWith('--- ')) continue;
+    if (line.startsWith('+')) linesAdded++;
+    else if (line.startsWith('-')) linesRemoved++;
+  }
+
+  return { linesAdded, linesRemoved };
+}
 
 /**
  * OpenCode Metrics Processor
@@ -43,12 +92,6 @@ const REPROCESS_COOLDOWN_MS = 60_000; // 60 seconds
 export class OpenCodeMetricsProcessor implements SessionProcessor {
   readonly name = 'opencode-metrics';
   readonly priority = 1;  // Run first (before conversations)
-
-  private readonly cacheDir: string;
-
-  constructor() {
-    this.cacheDir = getCodemiePath('cache', 'opencode');
-  }
 
   /**
    * Check if session has data to process
@@ -62,7 +105,7 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
    *
    * Per tech spec ADR-1/G2: Validate metadata at START before any processing
    */
-  async process(session: ParsedSession, _context: ProcessingContext): Promise<ProcessingResult> {
+  async process(session: ParsedSession, context: ProcessingContext): Promise<ProcessingResult> {
     try {
       // MANDATORY: Validate metadata has required fields (ADR-1, Review 13 G2)
       const metadata = session.metadata as Record<string, unknown>;
@@ -80,15 +123,6 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
       const storagePath = metadata.storagePath;
       const openCodeSessionId = (metadata.openCodeSessionId as string) || 'unknown';
 
-      // Check concurrent processing prevention (ADR-18)
-      if (!await this.shouldProcessSession(session.sessionId)) {
-        return {
-          success: true,
-          message: 'Session recently processed, skipping',
-          metadata: { skippedReason: 'RECENTLY_PROCESSED' }
-        };
-      }
-
       const messages = session.messages as OpenCodeMessage[];
 
       // Transform messages to deltas
@@ -104,12 +138,18 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
         storageType: metadata.storageType as 'sqlite' | 'file' | undefined,
       };
 
+      // Branch attribution: the aggregator groups deltas by gitBranch and emits
+      // one codemie_cli_tool_usage_total per branch. Without this every delta
+      // lands in the empty-string bucket.
+      const gitBranch = await this.resolveBranch(context, openCodeMetadata);
+
       const { deltas, stats } = await this.transformMessagesToDeltas(
         messages,
         session.sessionId,
         openCodeSessionId,
         storagePath,
-        openCodeMetadata
+        openCodeMetadata,
+        gitBranch
       );
 
       if (deltas.length === 0) {
@@ -146,9 +186,6 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
         await writer.appendDelta(delta);
       }
 
-      // Mark session as processed (ADR-18)
-      await this.markSessionProcessed(session.sessionId);
-
       logger.info(`[opencode-metrics] Wrote ${deltas.length} deltas for session ${session.sessionId}`);
       logger.info(`[opencode-metrics] Metrics file: ${writer.getFilePath()}`);
 
@@ -175,143 +212,166 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
   }
 
   /**
-   * Check if session should be processed (cooldown check per ADR-18)
-   */
-  private async shouldProcessSession(sessionId: string): Promise<boolean> {
-    try {
-      const lastProcessedPath = join(this.cacheDir, `${sessionId}_last_processed`);
-
-      if (existsSync(lastProcessedPath)) {
-        const lastProcessed = parseInt(await readFile(lastProcessedPath, 'utf-8'), 10);
-        if (Date.now() - lastProcessed < REPROCESS_COOLDOWN_MS) {
-          logger.debug(`[opencode-metrics] Session ${sessionId} processed recently, skipping`);
-          return false;
-        }
-      }
-    } catch {
-      // File corrupt or missing, proceed with processing
-    }
-
-    return true;
-  }
-
-  /**
-   * Mark session as processed (ADR-18)
-   */
-  private async markSessionProcessed(sessionId: string): Promise<void> {
-    try {
-      const { mkdir } = await import('fs/promises');
-      if (!existsSync(this.cacheDir)) {
-        await mkdir(this.cacheDir, { recursive: true });
-      }
-      const lastProcessedPath = join(this.cacheDir, `${sessionId}_last_processed`);
-      await writeFile(lastProcessedPath, Date.now().toString());
-    } catch (error) {
-      logger.debug(`[opencode-metrics] Failed to mark session processed: ${error}`);
-    }
-  }
-
-  /**
-   * Transform messages to MetricDelta records
+   * Resolve the git branch every delta in this batch is attributed to.
    *
-   * Per ADR-16: One delta per assistant message with tokens
+   * Mirrors codex.metrics-processor's resolveBranch: prefer the branch the CLI
+   * already resolved (BaseAgentAdapter sets CODEMIE_GIT_BRANCH before spawning),
+   * then the value the adapter overlaid onto session metadata, then detect it.
+   */
+  private async resolveBranch(
+    context: ProcessingContext,
+    sessionMetadata: OpenCodeMetadata & { gitBranch?: string }
+  ): Promise<string | undefined> {
+    if (context.gitBranch) return context.gitBranch;
+    if (sessionMetadata.gitBranch) return sessionMetadata.gitBranch;
+    if (!sessionMetadata.projectPath) return undefined;
+
+    try {
+      const { detectGitBranch } = await import('../../../../../utils/processes.js');
+      return (await detectGitBranch(sessionMetadata.projectPath)) ?? undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /**
+   * Transform messages to MetricDelta records.
+   *
+   * One delta per tool call (`{messageId}:{callID}`), per user prompt
+   * (`{messageId}:prompt`) and per failed turn (`{messageId}:error`).
+   *
+   * Granularity matters: when the recordId was the bare assistant message id,
+   * the first incremental tick claimed the message and every tool that message
+   * accumulated afterwards was deduped away and never reported.
    */
   private async transformMessagesToDeltas(
     messages: OpenCodeMessage[],
     codemieSessionId: string,
     openCodeSessionId: string,
     storagePath: string,
-    sessionMetadata: OpenCodeMetadata
+    sessionMetadata: OpenCodeMetadata,
+    gitBranch: string | undefined
   ): Promise<{
-    deltas: Array<Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>>;
-    stats: {
-      skippedDueToDedup: number;
-    };
+    deltas: PendingDelta[];
+    stats: { skippedDueToDedup: number };
   }> {
-    const deltas: Array<Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>> = [];
-    const stats = {
-      skippedDueToDedup: 0
-    };
+    const deltas: PendingDelta[] = [];
+    const stats = { skippedDueToDedup: 0 };
 
-    // Get existing record IDs for deduplication (ADR-5)
+    // Single read of the existing JSONL — recordId dedup is the only state needed.
     const existingRecordIds = await this.getExistingRecordIds(codemieSessionId);
-    const existingDeltas = await this.readExistingDeltas(codemieSessionId);
 
-    // Track already-attached user prompts (ADR-21)
-    const alreadyAttachedPrompts = new Set<string>();
-    for (const delta of existingDeltas) {
-      if (delta.userPrompts) {
-        for (const prompt of delta.userPrompts) {
-          if (prompt.text) alreadyAttachedPrompts.add(prompt.text);
-        }
-      }
-    }
-
-    // Extract all user prompts (pass partsMap for SQLite-backed sessions)
-    const allUserPrompts = await this.extractUserPrompts(messages, storagePath, openCodeSessionId, sessionMetadata.partsMap);
-
-    // Filter to only NEW prompts
-    const newPrompts = allUserPrompts.filter(p => !alreadyAttachedPrompts.has(p.text));
-    let promptsAttached = false;
+    const base = (recordId: string, timestamp: number): PendingDelta => ({
+      recordId,
+      sessionId: codemieSessionId,
+      agentSessionId: openCodeSessionId,
+      timestamp,
+      ...(gitBranch && { gitBranch }),
+    });
 
     for (const msg of messages) {
-      if (msg.role !== 'assistant') continue;
+      const timestamp = this.resolveTimestamp(msg, sessionMetadata);
+
+      if (msg.role === 'user') {
+        const recordId = `${msg.id}:prompt`;
+        if (existingRecordIds.has(recordId)) {
+          stats.skippedDueToDedup++;
+          continue;
+        }
+
+        const text = await this.extractUserPromptText(
+          msg, storagePath, openCodeSessionId, sessionMetadata.partsMap
+        );
+        if (!text) continue;
+
+        deltas.push({ ...base(recordId, timestamp), userPrompts: [{ count: 1, text }] });
+        continue;
+      }
 
       const assistantMsg = msg as OpenCodeAssistantMessage;
+      const modelString = this.getValidModelString(assistantMsg.modelID);
 
-      // Check deduplication (ADR-5, ADR-15)
-      if (existingRecordIds.has(assistantMsg.id)) {
-        stats.skippedDueToDedup++;
-        continue;
+      const parts = await loadPartsForMessage(
+        storagePath, assistantMsg.id, openCodeSessionId, sessionMetadata.partsMap
+      );
+
+      for (const part of parts.filter(isToolPart) as OpenCodeToolPart[]) {
+        // callID is the semantically meaningful key, but older sessions and
+        // some tools omit it; part.id is the storage primary key and is always
+        // present, so it guarantees the recordId stays collision-free.
+        const recordId = `${assistantMsg.id}:${part.callID || part.id}`;
+        if (existingRecordIds.has(recordId)) {
+          stats.skippedDueToDedup++;
+          continue;
+        }
+
+        const toolDelta = this.buildToolDelta(part, base(recordId, timestamp), modelString);
+        if (toolDelta) deltas.push(toolDelta);
       }
 
-      // Load parts for this message (use pre-loaded partsMap if available from SQLite)
-      const parts = await this.loadPartsForMessage(storagePath, assistantMsg.id, openCodeSessionId, sessionMetadata.partsMap);
+      // Turn-level failure. This is OpenCode's analogue of Claude's
+      // isApiErrorMessage entries and the ONLY source of apiErrorMessage —
+      // tool failures stay in toolStatus, exactly as codemie-claude does, so
+      // raw tool output never reaches the error_messages wire field.
+      if (assistantMsg.error) {
+        const recordId = `${assistantMsg.id}:error`;
+        if (existingRecordIds.has(recordId)) {
+          stats.skippedDueToDedup++;
+          continue;
+        }
 
-      // Extract tool metrics
-      const { tools, toolStatus, fileOperations } = this.extractToolMetrics(parts);
-
-      // Skip if no tools, file ops, and not a prompt carrier (nothing meaningful to record)
-      const hasData = Object.keys(tools).length > 0 || fileOperations.length > 0;
-      const isPromptCarrier = !promptsAttached && newPrompts.length > 0;
-      if (!hasData && !isPromptCarrier) {
-        continue;
+        const detail = assistantMsg.error.data?.message;
+        deltas.push({
+          ...base(recordId, timestamp),
+          apiErrorMessage: detail
+            ? `${assistantMsg.error.name}: ${detail}`
+            : assistantMsg.error.name,
+          ...(modelString && { models: [modelString] }),
+        });
       }
-
-      // Build delta (ADR-15: recordId is message.id)
-      const delta: Omit<MetricDelta, 'syncStatus' | 'syncAttempts'> = {
-        recordId: assistantMsg.id,
-        sessionId: codemieSessionId,
-        agentSessionId: openCodeSessionId,
-        timestamp: this.resolveTimestamp(assistantMsg, sessionMetadata),
-        tools,
-        ...(Object.keys(toolStatus).length > 0 && { toolStatus }),
-        ...(fileOperations.length > 0 && { fileOperations })
-      };
-
-      // Add model if present (ADR-6)
-      const modelString = this.getValidModelString(assistantMsg.providerID, assistantMsg.modelID);
-      if (modelString) {
-        delta.models = [modelString];
-      }
-
-      // Attach user prompts to first NEW delta only (ADR-21)
-      if (!promptsAttached && newPrompts.length > 0) {
-        (delta as any).userPrompts = newPrompts;
-        promptsAttached = true;
-      }
-
-      deltas.push(delta);
     }
 
     return { deltas, stats };
   }
 
   /**
+   * Build a single-tool delta, or undefined when the tool is still in flight.
+   */
+  private buildToolDelta(
+    part: OpenCodeToolPart,
+    delta: PendingDelta,
+    modelString: string | undefined
+  ): PendingDelta | undefined {
+    const toolName = part.tool.toLowerCase();
+    const statusResult = this.mapToolStatus(part.state.status);
+
+    // pending/running tools are not counted at all — a later tick picks them up
+    // once they settle, and the recordId keeps that second visit idempotent.
+    if (statusResult === 'skip') return undefined;
+
+    const fileOperations = statusResult === 'success'
+      ? this.extractFileOperation(part.tool, part.state.input, part.state.metadata)
+      : [];
+
+    return {
+      ...delta,
+      tools: { [toolName]: 1 },
+      toolStatus: {
+        [toolName]: {
+          success: statusResult === 'success' ? 1 : 0,
+          failure: statusResult === 'failure' ? 1 : 0,
+        },
+      },
+      ...(fileOperations.length > 0 && { fileOperations }),
+      ...(modelString && { models: [modelString] }),
+    };
+  }
+
+  /**
    * Resolve timestamp with fallback chain (ADR-13 G4)
    */
   private resolveTimestamp(
-    msg: OpenCodeAssistantMessage,
+    msg: OpenCodeMessage,
     sessionMetadata: OpenCodeMetadata
   ): number {
     // Primary: message timestamp
@@ -331,126 +391,6 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
     // Last resort: current time
     logger.warn(`[opencode-metrics] Missing timestamp for message ${msg.id}, using Date.now()`);
     return Date.now();
-  }
-
-  /**
-   * Load parts for a message (ADR-11 - part-message validation)
-   *
-   * When partsMap is provided (SQLite-backed sessions), uses pre-loaded parts
-   * directly instead of reading from the filesystem.
-   */
-  private async loadPartsForMessage(
-    storagePath: string,
-    messageId: string,
-    expectedSessionId?: string,
-    partsMap?: Record<string, OpenCodePart[]>
-  ): Promise<OpenCodePart[]> {
-    // Use pre-loaded partsMap if available (from SQLite bulk query)
-    if (partsMap && partsMap[messageId]) {
-      const parts = partsMap[messageId];
-      // Apply same validation as file-based path
-      return parts.filter(part => {
-        if (part.messageID !== messageId) {
-          logger.debug(`[opencode-metrics] Skipping orphaned part ${part.id}: messageID mismatch`);
-          return false;
-        }
-        if (expectedSessionId && part.sessionID !== expectedSessionId) {
-          logger.debug(`[opencode-metrics] Skipping part ${part.id}: sessionID mismatch`);
-          return false;
-        }
-        return true;
-      }).sort((a, b) => a.id.localeCompare(b.id));
-    }
-
-    // File-based loading fallback
-    const partsDir = join(storagePath, 'part', messageId);
-
-    if (!existsSync(partsDir)) {
-      return [];
-    }
-
-    const parts: OpenCodePart[] = [];
-
-    try {
-      const files = await readdir(partsDir);
-
-      for (const file of files) {
-        if (!file.endsWith('.json')) continue;
-
-        const part = await readJsonWithRetry<OpenCodePart>(join(partsDir, file));
-        if (!part) continue;
-
-        // Validate part belongs to this message (ADR-11)
-        if (part.messageID !== messageId) {
-          logger.debug(`[opencode-metrics] Skipping orphaned part ${part.id}: messageID mismatch`);
-          continue;
-        }
-
-        // Optionally validate session correlation
-        if (expectedSessionId && part.sessionID !== expectedSessionId) {
-          logger.debug(`[opencode-metrics] Skipping part ${part.id}: sessionID mismatch`);
-          continue;
-        }
-
-        parts.push(part);
-      }
-    } catch (error) {
-      logger.debug(`[opencode-metrics] Error loading parts from ${partsDir}:`, error);
-    }
-
-    return parts.sort((a, b) => a.id.localeCompare(b.id));
-  }
-
-  /**
-   * Extract tool metrics from parts (ADR-8, ADR-14)
-   */
-  private extractToolMetrics(parts: OpenCodePart[]): {
-    tools: Record<string, number>;
-    toolStatus: Record<string, { success: number; failure: number }>;
-    fileOperations: Array<{
-      type: FileOperationType;
-      path?: string;
-      pattern?: string;
-      linesAdded?: number;
-      linesRemoved?: number;
-    }>;
-  } {
-    const tools: Record<string, number> = {};
-    const toolStatus: Record<string, { success: number; failure: number }> = {};
-    const fileOperations: Array<{
-      type: FileOperationType;
-      path?: string;
-      pattern?: string;
-      linesAdded?: number;
-      linesRemoved?: number;
-    }> = [];
-
-    const toolParts = parts.filter(isToolPart) as OpenCodeToolPart[];
-
-    for (const part of toolParts) {
-      const toolName = part.tool.toLowerCase();
-      tools[toolName] = (tools[toolName] || 0) + 1;
-
-      const statusResult = this.mapToolStatus(part.state.status);
-      if (statusResult !== 'skip') {
-        if (!toolStatus[toolName]) {
-          toolStatus[toolName] = { success: 0, failure: 0 };
-        }
-        toolStatus[toolName][statusResult]++;
-
-        // Extract file operations only for completed tools (ADR-8)
-        if (statusResult === 'success') {
-          const ops = this.extractFileOperation(
-            part.tool,
-            part.state.input,
-            part.state.metadata
-          );
-          fileOperations.push(...ops);
-        }
-      }
-    }
-
-    return { tools, toolStatus, fileOperations };
   }
 
   /**
@@ -479,21 +419,9 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
     toolName: string,
     input: Record<string, unknown> | undefined,
     metadata?: Record<string, unknown>
-  ): Array<{
-    type: FileOperationType;
-    path?: string;
-    pattern?: string;
-    linesAdded?: number;
-    linesRemoved?: number;
-  }> {
+  ): DeltaFileOperation[] {
     const toolLower = toolName.toLowerCase();
-    const operations: Array<{
-      type: FileOperationType;
-      path?: string;
-      pattern?: string;
-      linesAdded?: number;
-      linesRemoved?: number;
-    }> = [];
+    const operations: DeltaFileOperation[] = [];
 
     // Map tools to allowed types (ADR-8)
     const typeMapping: Record<string, FileOperationType> = {
@@ -502,39 +430,38 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
       'edit': 'edit',
       'glob': 'glob',
       'grep': 'grep',
-      'apply_patch': 'edit',  // Map to edit, not patch
+      'apply_patch': 'edit',  // per-file type refines this below
+      'patch': 'edit',        // per-file type refines this below
       'multiedit': 'edit',    // Map to edit, not multiedit
     };
 
     const mappedType = typeMapping[toolLower];
     if (!mappedType) return [];
 
-    // Handle apply_patch - extract from state.metadata.files (ADR-17)
-    if (toolLower === 'apply_patch') {
+    // apply_patch / patch — state.metadata.files carries one entry per touched
+    // file with its own operation kind and diff (ADR-17). The per-file `type` is
+    // what makes files_deleted reachable; mapping every entry to 'edit' left it
+    // permanently 0.
+    if (toolLower === 'apply_patch' || toolLower === 'patch') {
       const files = metadata?.files as Array<{
         filePath?: string;
         relativePath?: string;
         type?: string;
-        additions?: number;
-        deletions?: number;
+        patch?: string;
       }> | undefined;
 
       if (Array.isArray(files)) {
         for (const file of files) {
           const path = file.filePath || file.relativePath;
-          if (typeof path === 'string') {
-            const op: any = { type: 'edit', path };
+          if (typeof path !== 'string') continue;
 
-            // Add line metrics from apply_patch (ADR-8)
-            if (typeof file.additions === 'number') {
-              op.linesAdded = file.additions;
-            }
-            if (typeof file.deletions === 'number') {
-              op.linesRemoved = file.deletions;
-            }
-
-            operations.push(op);
-          }
+          const { linesAdded, linesRemoved } = countDiffLines(file.patch);
+          operations.push({
+            type: mapPatchFileType(file.type),
+            path,
+            ...(linesAdded > 0 && { linesAdded }),
+            ...(linesRemoved > 0 && { linesRemoved }),
+          });
         }
       }
       return operations;
@@ -553,8 +480,7 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
       return operations;
     }
 
-    // Standard file operations
-    const fileOp: any = { type: mappedType };
+    const fileOp: DeltaFileOperation = { type: mappedType };
 
     // Per ADR-17: field names are camelCase (filePath, not file_path)
     const filePath = input?.filePath || input?.path;
@@ -566,31 +492,25 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
       fileOp.pattern = input.pattern;
     }
 
-    operations.push(fileOp);
-    return operations;
-  }
-
-  /**
-   * Extract user prompts from messages (ADR-10, ADR-20)
-   */
-  private async extractUserPrompts(
-    messages: OpenCodeMessage[],
-    storagePath: string,
-    sessionId?: string,
-    partsMap?: Record<string, OpenCodePart[]>
-  ): Promise<Array<{ count: number; text: string }>> {
-    const prompts: Array<{ count: number; text: string }> = [];
-
-    for (const msg of messages) {
-      if (msg.role !== 'user') continue;
-
-      const text = await this.extractUserPromptText(msg, storagePath, sessionId, partsMap);
-      if (text) {
-        prompts.push({ count: 1, text });
+    if (toolLower === 'write') {
+      // A write creates the whole file, so every line is an addition. Matches
+      // claude-file-operation.ts, which counts Write content lines the same way.
+      const content = input?.content;
+      if (typeof content === 'string' && content.length > 0) {
+        fileOp.linesAdded = content.split('\n').length;
       }
     }
 
-    return prompts;
+    if (toolLower === 'edit') {
+      // OpenCode reports the edit as diff text; there is no numeric count.
+      const filediff = metadata?.filediff as { patch?: string } | undefined;
+      const { linesAdded, linesRemoved } = countDiffLines(filediff?.patch ?? metadata?.diff);
+      if (linesAdded > 0) fileOp.linesAdded = linesAdded;
+      if (linesRemoved > 0) fileOp.linesRemoved = linesRemoved;
+    }
+
+    operations.push(fileOp);
+    return operations;
   }
 
   /**
@@ -605,7 +525,7 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
     // Try pre-loaded partsMap first (SQLite path), then file-based
     const hasParts = partsMap?.[msg.id] || existsSync(join(storagePath, 'part', msg.id));
     if (hasParts) {
-      const parts = await this.loadPartsForMessage(storagePath, msg.id, sessionId, partsMap);
+      const parts = await loadPartsForMessage(storagePath, msg.id, sessionId, partsMap);
       // Filter: exclude ignored and synthetic parts (ADR-10)
       const textParts = parts.filter(p =>
         p.type === 'text' &&
@@ -636,12 +556,19 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
   }
 
   /**
-   * Get existing record IDs for deduplication (ADR-5)
-   * Uses tolerant JSONL reading to handle corrupted lines.
+   * Get existing record IDs for deduplication (ADR-5).
+   * Single tolerant read of the JSONL — corrupted lines are skipped.
    */
   private async getExistingRecordIds(sessionId: string): Promise<Set<string>> {
     try {
-      const existingDeltas = await this.readExistingDeltas(sessionId);
+      const { MetricsWriter } = await import('../../../../../providers/plugins/sso/session/processors/metrics/MetricsWriter.js');
+      const writer = new MetricsWriter(sessionId);
+
+      if (!writer.exists()) {
+        return new Set();
+      }
+
+      const existingDeltas = await readJsonlTolerant<MetricDelta>(writer.getFilePath());
       return new Set(existingDeltas.map(d => d.recordId));
     } catch (error) {
       logger.warn('[opencode-metrics] Could not read existing deltas:', error);
@@ -650,34 +577,15 @@ export class OpenCodeMetricsProcessor implements SessionProcessor {
   }
 
   /**
-   * Read existing deltas from JSONL file (ADR-5, ADR-21)
+   * Get valid model string (ADR-6).
+   *
+   * Returns the BARE model id. codemie-claude reports `llm_model` without a
+   * provider prefix, so emitting `codemie-proxy/<model>` here would split the
+   * same model into two buckets in backend analytics. The provider stays on
+   * session metadata for local traceability.
    */
-  private async readExistingDeltas(sessionId: string): Promise<MetricDelta[]> {
-    try {
-      const { MetricsWriter } = await import('../../../../../providers/plugins/sso/session/processors/metrics/MetricsWriter.js');
-      const writer = new MetricsWriter(sessionId);
-
-      if (!writer.exists()) {
-        return [];
-      }
-
-      // Use tolerant read that skips corrupted lines
-      return await readJsonlTolerant<MetricDelta>(writer.getFilePath());
-    } catch (error) {
-      logger.debug('[opencode-metrics] Could not read existing deltas:', error);
-      return [];
-    }
-  }
-
-  /**
-   * Get valid model string (ADR-6)
-   */
-  private getValidModelString(providerID?: string, modelID?: string): string | undefined {
-    const model = modelID?.trim();
-    if (!model) return undefined;
-
-    const provider = providerID?.toLowerCase().trim();
-    return provider ? `${provider}/${model}` : model;
+  private getValidModelString(modelID?: string): string | undefined {
+    return modelID?.trim() || undefined;
   }
 
 }

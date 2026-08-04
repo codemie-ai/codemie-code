@@ -2,7 +2,7 @@
  * Codex Encrypted Content Sanitizer Plugin Tests
  *
  * Tests agent-scoping and functional encrypted-content removal for
- * codemie-codex, codemie-code, and codemie-opencode agents.
+ * codemie-codex, codemie-code, codemie-opencode, and vscode-byok agents.
  *
  * @group unit
  */
@@ -74,6 +74,11 @@ describe('CodexEncryptedContentSanitizerPlugin', () => {
 
     it('creates interceptor for codemie-opencode', async () => {
       const interceptor = await plugin.createInterceptor(createPluginContext('codemie-opencode'));
+      expect(interceptor).toBeDefined();
+    });
+
+    it('creates interceptor for vscode-byok', async () => {
+      const interceptor = await plugin.createInterceptor(createPluginContext('vscode-byok'));
       expect(interceptor).toBeDefined();
     });
 
@@ -164,6 +169,68 @@ describe('CodexEncryptedContentSanitizerPlugin', () => {
 
       const result = JSON.parse(context.requestBody!.toString('utf-8'));
       expect(result.input).toHaveLength(0);
+    });
+  });
+
+  describe('Encrypted content removal — vscode-byok', () => {
+    it('removes encrypted state while preserving reasoning effort and visible tool history', async () => {
+      const interceptor = await plugin.createInterceptor(createPluginContext('vscode-byok'));
+      const visibleItems = [
+        { type: 'message', role: 'user', content: 'hello' },
+        {
+          type: 'message',
+          role: 'assistant',
+          phase: 'commentary',
+          content: [{ type: 'output_text', text: 'I will call the tool.' }],
+        },
+        {
+          type: 'function_call',
+          call_id: 'call-1',
+          name: 'get_test_value',
+          arguments: '{}',
+        },
+        {
+          type: 'function_call_output',
+          call_id: 'call-1',
+          output: 'ready',
+        },
+      ];
+      const body = {
+        model: 'gpt-5.6-sol-2026-07-09',
+        reasoning: { effort: 'medium' },
+        include: ['reasoning.encrypted_content', 'usage'],
+        input: [
+          visibleItems[0],
+          { type: 'reasoning', summary: [], encrypted_content: 'deployment-bound-state' },
+          ...visibleItems.slice(1),
+        ],
+      };
+      const context = createProxyContext(body);
+      const originalLength = Number(context.headers['content-length']);
+
+      await interceptor.onRequest!(context);
+
+      const result = JSON.parse(context.requestBody!.toString('utf-8'));
+      expect(result.reasoning).toEqual({ effort: 'medium' });
+      expect(result.include).toEqual(['usage']);
+      expect(result.input).toEqual(visibleItems);
+      expect(result.input).not.toContainEqual(
+        expect.objectContaining({ type: 'reasoning', encrypted_content: expect.any(String) })
+      );
+      expect(result.input[1]).toMatchObject({
+        role: 'assistant',
+        phase: 'commentary',
+      });
+      expect(result.input[2]).toMatchObject({
+        type: 'function_call',
+        call_id: 'call-1',
+      });
+      expect(result.input[3]).toMatchObject({
+        type: 'function_call_output',
+        call_id: 'call-1',
+      });
+      expect(Number(context.headers['content-length'])).toBe(context.requestBody!.length);
+      expect(Number(context.headers['content-length'])).toBeLessThan(originalLength);
     });
   });
 });

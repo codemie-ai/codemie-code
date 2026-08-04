@@ -95,6 +95,21 @@ Why: Static imports happen before `beforeEach`; the module caches the `exec` ref
 
 ---
 
+## Lazy-Getter Override for Class-Level Statics
+
+Rule: When a class initialises a static field from a path utility at class-load time, a spy set up in `beforeEach` cannot intercept that call — it already ran before the test suite started. Convert the field to a lazy getter that resolves the value on first access; add a paired private setter so tests can write a direct override without a spy.
+
+| Bad | Best |
+|---|---|
+| `private static GLOBAL_CONFIG = getCodemiePath(...)` | `private static get GLOBAL_CONFIG(): string { return this._override ?? getCodemiePath(...); }` |
+| `vi.spyOn(paths, 'getCodemiePath')` in `beforeEach` never intercepted — field resolved at class-load | Getter resolves at access time; spy in `beforeEach` is honored |
+
+Reference: `src/utils/config.ts:47-60` — `ConfigLoader.GLOBAL_CONFIG_DIR` and `GLOBAL_CONFIG` converted from static fields to lazy getter/setter pairs.
+
+Why: Same root cause as the dynamic-import problem — resolution happens before test setup. A lazy getter shifts it to runtime without changing production behavior.
+
+---
+
 ## Testing Async Operations
 
 Rule: Use `await expect(...).rejects.toThrow(ErrorClass)` for async error assertions; alternatively use try/catch to inspect error properties.

@@ -1,0 +1,77 @@
+{
+  "task": "Fix bash command logging in ClaudeConversationsProcessor: add <bash-stdout>/<bash-stderr> filter, unwrap <bash-input> to !<cmd>, convert single-turn processing to drain loop, and fix ConfigLoader static-field test-mockability",
+  "generated": "2026-07-30T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 2,
+      "label": "S",
+      "affected": "ConversationsProcessor (processMessages drain loop + isSystemMessage + extractCommand), ConfigLoader (GLOBAL_CONFIG/GLOBAL_CONFIG_DIR lazy getter/setter)",
+      "layers": "Agent-Tool, Service"
+    },
+    "requirements_clarity": {
+      "score": 1,
+      "label": "XS",
+      "status": "Clear",
+      "gaps": null
+    },
+    "technical_risk": {
+      "score": 2,
+      "label": "S",
+      "risk_factors": "Drain loop changes incremental sync state machine behavior (lastSyncedMessageUuid advancement); ConfigLoader change touches a shared core utility used across the codebase",
+      "mitigation": "Drain loop is bounded and tested via T3 multi-turn scenario; ConfigLoader change is backward-compatible (setters preserve existing workarounds); existing mid-turn system events test remains green"
+    },
+    "file_change_estimate": {
+      "score": 3,
+      "label": "M",
+      "modified_files": 5,
+      "modified_file_list": [
+        "src/agents/plugins/claude/__tests__/claude.conversations-processor.test.ts",
+        "src/agents/plugins/claude/session/processors/claude.conversations-processor.ts",
+        "src/utils/config.ts",
+        "tests/integration/session/fixtures/claude/incremental-simple/expected-conversation.jsonl",
+        "tests/integration/session/incremental-conversation-processing.test.ts"
+      ],
+      "new_files": 0,
+      "new_file_list": [],
+      "affected_dirs": ["src", "tests"]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 2,
+      "label": "S",
+      "layers_changed": ["Agent-Tool", "Service"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 11,
+  "size": "S",
+  "band_range": "10-14",
+  "files_changed": 5,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "file_change_estimate",
+      "reason": "5 files modified (0 new): conversations-processor.ts (drain loop + filter/unwrap), its unit test (new !bash describe block with 6 cases), config.ts (lazy getter fix), integration test (updated drain assertion), and expected-conversation.jsonl fixture (updated to 4 records). Initial estimate assumed 1 file; the drain loop and the folded-in ConfigLoader fix each added a file."
+    },
+    {
+      "dimension": "component_scope",
+      "reason": "Two components touched: ConversationsProcessor received three changes (isSystemMessage pattern list, extractCommand bash branch, processMessages drain loop) and ConfigLoader received a static-field-to-lazy-getter refactor. Both are within the plugin/service tier with no cross-architectural-boundary changes."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Agent-Tool layer (ConversationsProcessor session processor) and Service layer (ConfigLoader core utility). Two layers, same tier — simple handoff, no DB, External, or API layer involvement."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Drain loop is the highest-risk change: it replaces single-turn-per-invocation with drain-all-per-invocation, altering how lastSyncedMessageUuid advances. This was anticipated in the technical analysis and is covered by the T3 multi-turn test. ConfigLoader lazy-getter is conservative and backward-compatible."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

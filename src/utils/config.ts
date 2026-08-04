@@ -34,8 +34,30 @@ export { StorageScope };
  * - Multi-provider profiles (version 2)
  */
 export class ConfigLoader {
-  private static GLOBAL_CONFIG_DIR = getCodemieHome();
-  private static GLOBAL_CONFIG = getCodemiePath('codemie-cli.config.json');
+  // Lazy getters so tests that vi.spyOn(paths.getCodemieHome / getCodemiePath)
+  // in beforeEach are honored — the previous static-initialized fields were
+  // resolved once at class-load time (before any spy could apply), which made
+  // the real ~/.codemie path leak into tests. Runtime resolution keeps the
+  // production behavior identical and makes the class properly mockable.
+  //
+  // The setters exist so tests that already worked around the class-load-time
+  // issue by overwriting the static value directly (see
+  // config-project-override.test.ts "cross-env URL gate" suite) keep working.
+  // Production code never assigns these.
+  private static _globalConfigDirOverride: string | undefined;
+  private static _globalConfigOverride: string | undefined;
+  private static get GLOBAL_CONFIG_DIR(): string {
+    return this._globalConfigDirOverride ?? getCodemieHome();
+  }
+  private static set GLOBAL_CONFIG_DIR(value: string) {
+    this._globalConfigDirOverride = value;
+  }
+  private static get GLOBAL_CONFIG(): string {
+    return this._globalConfigOverride ?? getCodemiePath('codemie-cli.config.json');
+  }
+  private static set GLOBAL_CONFIG(value: string) {
+    this._globalConfigOverride = value;
+  }
   private static LOCAL_CONFIG = '.codemie/codemie-cli.config.json';
 
   // Cache for multi-provider config

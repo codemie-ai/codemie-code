@@ -35,8 +35,8 @@
 ## MR Adapter
 
 **Status**: configured
-**Adapter**: Invoke the `codemie-pr` skill via the Skill tool.
-**Instructions**: The `codemie-pr` skill checks current branch state via `gh pr list --head $(git branch --show-current)` and avoids creating duplicate PRs; it follows Conventional Commits and the project Squash-and-Merge default. Pass the user's intent ("commit changes", "push", "create PR") verbatim as the skill argument.
+**Adapter**: `gh` CLI (authenticated; repo remote is GitHub).
+**Instructions**: Check current branch state via `gh pr list --head $(git branch --show-current)` and avoid creating duplicate PRs. Follow Conventional Commits and the project Squash-and-Merge default. Create with `gh pr create --title "<type>(<scope>): <subject>" --body "<body>"` using the Body Template below.
 
 ## Lifecycle Intent Handling
 

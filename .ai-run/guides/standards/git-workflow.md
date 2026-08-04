@@ -2,7 +2,7 @@
 
 ## Quick Summary
 
-Git workflow for CodeMie Code: branching, Conventional Commits, PRs, code review, Squash-and-Merge. Used by `codemie-pr` skill and SDLC Factory MR/PR adapters.
+Git workflow for CodeMie Code: branching, Conventional Commits, PRs, code review, Squash-and-Merge. Used by `sdlc-factory:mr-creator` skill and SDLC Factory MR/PR adapters.
 
 **Category**: Standards
 **Complexity**: Simple
@@ -48,7 +48,7 @@ git push -u origin <branch>
 gh pr create --title "<type>(<scope>): <subject>" --body "<body>"
 ```
 
-The `codemie-pr` skill automates steps 3–4 and writes the PR body. Always invoke it via the Skill tool, never by hand-typing `gh`.
+The `sdlc-factory:mr-creator` skill automates steps 3–4 and writes the PR body. Always invoke it via the Skill tool rather than hand-typing `gh` directly.
 
 ---
 
@@ -188,7 +188,7 @@ git rebase -i HEAD~3        # squash WIP commits before pushing
 | `git push --force` to a shared branch | Rewrites history others depend on | `git push --force-with-lease` only on your branch |
 | `git commit --no-verify` | Bypasses commitlint + husky checks | Fix the underlying lint/typecheck issue |
 | Merge commits into `main` | Breaks the squash-only convention | Use `gh pr merge --squash` |
-| Hand-written `gh pr create` for routine flows | Skips the project PR body template | Invoke the `codemie-pr` skill |
+| Hand-written `gh pr create` for routine flows | Skips the project PR body template | Invoke the `sdlc-factory:mr-creator` skill |
 | Mixing two scopes in one commit | Rejected by `commitlint scope-enum` and hard to revert | Split into two commits |
 | Ticket key in the commit subject when scope already conveys context | Adds noise; project history shows scope+subject is enough | Reference the ticket in the body footer instead |
 

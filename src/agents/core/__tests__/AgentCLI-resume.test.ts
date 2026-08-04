@@ -205,6 +205,7 @@ describe('handleRun resume ownership flow', () => {
       expect.objectContaining({
         CODEMIE_CONV_SYNC_DISABLED: '1',
       }),
+      undefined,
     );
     expect(process.env.CODEMIE_CONV_SYNC_DISABLED).toBeUndefined();
   });
@@ -264,6 +265,7 @@ describe('handleRun resume ownership flow', () => {
       expect.not.objectContaining({
         CODEMIE_CONV_SYNC_DISABLED: '1',
       }),
+      undefined,
     );
   });
 });

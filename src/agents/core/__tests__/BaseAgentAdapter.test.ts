@@ -98,11 +98,14 @@ vi.mock('child_process', async (importOriginal) => {
 });
 
 // Stub CodeMieProxy so setupProxy doesn't try to start a real proxy server
+const { mockProxyStop } = vi.hoisted(() => ({ mockProxyStop: vi.fn(() => Promise.resolve()) }));
 vi.mock('../../../providers/plugins/sso/index.js', () => ({
-  CodeMieProxy: vi.fn().mockImplementation(() => ({
-    start: vi.fn(() => Promise.resolve()),
-    stop:  vi.fn(() => Promise.resolve()),
-  })),
+  CodeMieProxy: vi.fn().mockImplementation(function () {
+    return {
+      start: vi.fn(() => Promise.resolve({ port: 0, url: 'http://127.0.0.1:0' })),
+      stop:  mockProxyStop,
+    };
+  }),
 }));
 
 vi.mock('../../../utils/mcp-config.js', () => ({
@@ -567,6 +570,120 @@ describe('BaseAgentAdapter', () => {
       // Quoted exactly once — starts with " but not ""
       expect(firstArg).toBe('"C:\\Users\\Name(Org\\bin\\cmd.exe"');
       expect(firstArg.startsWith('""')).toBe(false);
+    });
+  });
+
+  describe('run() — dry-run print-config', () => {
+    class DryRunAdapter extends BaseAgentAdapter {}
+
+    const dryRunMetadata: AgentMetadata = {
+      name: 'opencode',
+      displayName: 'OpenCode',
+      description: 'Dry-run print-config tests',
+      npmPackage: null,
+      cliCommand: 'opencode',
+      envMapping: {},
+      supportedProviders: ['ai-run-sso'],
+      silentMode: true,
+      ssoConfig: { enabled: true, clientType: 'codemie-claude' },
+    };
+
+    let consoleLogSpy: ReturnType<typeof vi.spyOn>;
+
+    beforeEach(async () => {
+      vi.clearAllMocks();
+      // Guard against CODEMIE_PROVIDER leaking in from the host shell's ambient
+      // environment (run() merges process.env), which would make shouldUseProxy
+      // start the mock proxy in tests that don't set it explicitly.
+      delete process.env['CODEMIE_PROVIDER'];
+      consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+      const { executeBeforeRun } = await import('../lifecycle-helpers.js');
+      vi.mocked(executeBeforeRun).mockImplementation((_adapter: any, _lifecycle: any, _name: any, env: any) =>
+        Promise.resolve(env),
+      );
+    });
+
+    afterEach(() => {
+      consoleLogSpy.mockRestore();
+    });
+
+    it('prints the redacted config and never spawns when the inline channel is populated', async () => {
+      const { executeBeforeRun } = await import('../lifecycle-helpers.js');
+      vi.mocked(executeBeforeRun).mockImplementation((_adapter: any, _lifecycle: any, _name: any, env: any) =>
+        Promise.resolve({
+          ...env,
+          OPENCODE_CONFIG_CONTENT: JSON.stringify({
+            model: 'codemie-proxy/gpt-5',
+            provider: { 'codemie-proxy': { options: { apiKey: 'proxy-handled' } } },
+          }),
+        }),
+      );
+      const adapter = new DryRunAdapter(dryRunMetadata);
+
+      await adapter.run([], {}, { dryRun: true });
+
+      expect(vi.mocked(spawn)).not.toHaveBeenCalled();
+      expect(consoleLogSpy).toHaveBeenCalledTimes(1);
+      const printed = JSON.parse(consoleLogSpy.mock.calls[0][0] as string);
+      expect(printed).toEqual({
+        model: 'codemie-proxy/gpt-5',
+        provider: { 'codemie-proxy': { options: { apiKey: '***REDACTED***' } } },
+      });
+    });
+
+    it('reads from the OPENCODE_CONFIG temp-file fallback when CONTENT is absent', async () => {
+      const { writeFileSync, unlinkSync } = await import('fs');
+      const { join } = await import('path');
+      const { tmpdir } = await import('os');
+      const path = join(tmpdir(), `basadapter-dryrun-${Date.now()}.json`);
+      writeFileSync(path, JSON.stringify({ model: 'from-file' }), 'utf-8');
+
+      try {
+        const { executeBeforeRun } = await import('../lifecycle-helpers.js');
+        vi.mocked(executeBeforeRun).mockImplementation((_adapter: any, _lifecycle: any, _name: any, env: any) =>
+          Promise.resolve({ ...env, OPENCODE_CONFIG: path }),
+        );
+        const adapter = new DryRunAdapter(dryRunMetadata);
+
+        await adapter.run([], {}, { dryRun: true });
+
+        expect(vi.mocked(spawn)).not.toHaveBeenCalled();
+        const printed = JSON.parse(consoleLogSpy.mock.calls[0][0] as string);
+        expect(printed).toEqual({ model: 'from-file' });
+      } finally {
+        unlinkSync(path);
+      }
+    });
+
+    it('rejects with a descriptive error and never spawns when neither env var is populated', async () => {
+      const adapter = new DryRunAdapter(dryRunMetadata);
+
+      await expect(adapter.run([], {}, { dryRun: true })).rejects.toThrow(
+        'Could not generate opencode config: CODEMIE_BASE_URL is missing or invalid',
+      );
+      expect(vi.mocked(spawn)).not.toHaveBeenCalled();
+    });
+
+    it('does not short-circuit when dryRun is not set (regression guard)', async () => {
+      const adapter = new DryRunAdapter(dryRunMetadata);
+
+      await adapter.run([], {});
+
+      expect(vi.mocked(spawn)).toHaveBeenCalledOnce();
+      expect(consoleLogSpy).not.toHaveBeenCalled();
+    });
+
+    it('stops the proxy before returning when the profile uses SSO/JWT auth (regression: process must not hang)', async () => {
+      const { executeBeforeRun } = await import('../lifecycle-helpers.js');
+      vi.mocked(executeBeforeRun).mockImplementation((_adapter: any, _lifecycle: any, _name: any, env: any) =>
+        Promise.resolve({ ...env, OPENCODE_CONFIG_CONTENT: JSON.stringify({ model: 'gpt-5' }) }),
+      );
+      const adapter = new DryRunAdapter(dryRunMetadata);
+
+      await adapter.run([], { CODEMIE_PROVIDER: 'ai-run-sso', CODEMIE_BASE_URL: 'https://example.invalid' }, { dryRun: true });
+
+      expect(mockProxyStop).toHaveBeenCalledOnce();
+      expect((adapter as any).proxy).toBeNull();
     });
   });
 });

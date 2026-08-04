@@ -23,6 +23,12 @@ import {
   HeaderInjectionPlugin,
 } from '../../src/providers/plugins/sso/proxy/plugins/header-injection.plugin.js';
 import {
+  CodexEncryptedContentSanitizerPlugin,
+} from '../../src/providers/plugins/sso/proxy/plugins/codex-encrypted-content-sanitizer.plugin.js';
+import {
+  VsCodeRequestNormalizerPlugin,
+} from '../../src/providers/plugins/sso/proxy/plugins/vscode-request-normalizer.plugin.js';
+import {
   getPluginRegistry,
   resetPluginRegistry,
 } from '../../src/providers/plugins/sso/proxy/plugins/registry.js';
@@ -46,6 +52,10 @@ interface LanguageModel {
   name: string;
   url: string;
   apiType: string;
+  thinking?: boolean;
+  zeroDataRetentionEnabled?: boolean;
+  supportsReasoningEffort?: readonly string[];
+  reasoningEffortFormat?: string;
 }
 
 interface LanguageModelProvider {
@@ -81,6 +91,7 @@ function buildRequestBody(
   if (definition.apiType === 'responses') {
     return {
       model: definition.id,
+      store: false,
       stream: false,
       input: [{ role: 'user', content: 'Call get_test_value.' }],
       tools: [{
@@ -145,6 +156,32 @@ function buildVsCodeAuthHeaders(
   return { authorization: `Bearer ${GATEWAY_KEY}` };
 }
 
+function registerVsCodePipeline(): void {
+  const registry = getPluginRegistry();
+  registry.register(new GatewayKeyPlugin());
+  registry.register(new HeaderInjectionPlugin());
+  registry.register(new CodexEncryptedContentSanitizerPlugin());
+  registry.register(new VsCodeRequestNormalizerPlugin());
+}
+
+async function startVsCodeProxy(targetApiUrl: string): Promise<{
+  proxy: CodeMieProxy;
+  url: string;
+}> {
+  registerVsCodePipeline();
+  const proxy = new CodeMieProxy({
+    targetApiUrl,
+    host: '127.0.0.1',
+    port: 0,
+    provider: 'test-provider',
+    gatewayKey: GATEWAY_KEY,
+    clientType: 'vscode-byok',
+    project: 'test-project',
+  });
+  const started = await proxy.start();
+  return { proxy, url: started.url };
+}
+
 describe('VS Code BYOK model matrix', () => {
   const proxies: CodeMieProxy[] = [];
   const servers: Server[] = [];
@@ -178,20 +215,8 @@ describe('VS Code BYOK model matrix', () => {
     }));
     servers.push(upstream.server);
 
-    const registry = getPluginRegistry();
-    registry.register(new GatewayKeyPlugin());
-    registry.register(new HeaderInjectionPlugin());
-    const proxy = new CodeMieProxy({
-      targetApiUrl: upstream.url,
-      host: '127.0.0.1',
-      port: 0,
-      provider: 'test-provider',
-      gatewayKey: GATEWAY_KEY,
-      clientType: 'vscode-byok',
-      project: 'test-project',
-    });
-    proxies.push(proxy);
-    const startedProxy = await proxy.start();
+    const startedProxy = await startVsCodeProxy(upstream.url);
+    proxies.push(startedProxy.proxy);
 
     const configPath = join(testDir, 'User', 'chatLanguageModels.json');
     await writeVsCodeLanguageModelsConfigAtPath(configPath, startedProxy.url);
@@ -212,6 +237,14 @@ describe('VS Code BYOK model matrix', () => {
         name: definition.id,
         apiType: definition.apiType,
       });
+      if (definition.apiType === 'responses') {
+        expect(configuredModel).toMatchObject({
+          thinking: true,
+          zeroDataRetentionEnabled: true,
+          supportsReasoningEffort: definition.supportsReasoningEffort,
+          reasoningEffortFormat: 'responses',
+        });
+      }
 
       const efforts: ReadonlyArray<VsCodeReasoningEffort | undefined> =
         [undefined, ...(definition.supportsReasoningEffort ?? [])];
@@ -231,7 +264,10 @@ describe('VS Code BYOK model matrix', () => {
 
         const forwarded = captured.at(-1);
         expect(forwarded?.url).toBe(new URL(String(configuredModel?.url)).pathname);
-        expect(forwarded?.body).toEqual(requestBody);
+        const expectedBody = definition.apiType === 'responses'
+          ? { ...requestBody, user: 'vscode-byok' }
+          : requestBody;
+        expect(forwarded?.body).toEqual(expectedBody);
         expect(forwarded?.headers.authorization).toBeUndefined();
         expect(forwarded?.headers['x-api-key']).toBeUndefined();
         expect(forwarded?.headers['x-codemie-client']).toBe('vscode-byok');
@@ -239,5 +275,82 @@ describe('VS Code BYOK model matrix', () => {
         expect(forwarded?.headers['x-codemie-cli-model']).toBeUndefined();
       }
     }
+  });
+
+  it('strips encrypted Responses state while preserving stateless reasoning and tool history', async () => {
+    const captured: CapturedRequest[] = [];
+    const upstream = await listen(createServer((req, res) => {
+      void readRequestBody(req).then((body) => {
+        captured.push({
+          url: req.url ?? '/',
+          headers: req.headers,
+          body,
+        });
+        res.setHeader('content-type', 'application/json');
+        res.end(JSON.stringify({ ok: true }));
+      });
+    }));
+    servers.push(upstream.server);
+
+    const startedProxy = await startVsCodeProxy(upstream.url);
+    proxies.push(startedProxy.proxy);
+    const input = [
+      { type: 'message', role: 'user', content: 'Call the test tool.' },
+      {
+        type: 'reasoning',
+        summary: [],
+        encrypted_content: 'deployment-bound-state',
+      },
+      {
+        type: 'message',
+        role: 'assistant',
+        phase: 'commentary',
+        content: [{ type: 'output_text', text: 'Calling the tool.' }],
+      },
+      {
+        type: 'function_call',
+        call_id: 'call-1',
+        name: 'get_test_value',
+        arguments: '{}',
+      },
+      {
+        type: 'function_call_output',
+        call_id: 'call-1',
+        output: 'ready',
+      },
+    ];
+    const requestBody = {
+      model: 'gpt-5.6-sol-2026-07-09',
+      store: false,
+      stream: false,
+      reasoning: { effort: 'medium' },
+      include: ['reasoning.encrypted_content', 'usage'],
+      input,
+      tools: [{ type: 'function', name: 'get_test_value' }],
+    };
+
+    const response = await fetch(`${startedProxy.url}/v1/responses`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${GATEWAY_KEY}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true });
+
+    const expectedBody = {
+      ...requestBody,
+      include: ['usage'],
+      input: input.filter(item => item.type !== 'reasoning'),
+      user: 'vscode-byok',
+    };
+    expect(captured[0]?.body).toEqual(expectedBody);
+    expect(captured[0]?.body).not.toHaveProperty('previous_response_id');
+    expect(captured[0]?.headers['content-length']).toBe(
+      String(Buffer.byteLength(JSON.stringify(expectedBody), 'utf-8'))
+    );
   });
 });

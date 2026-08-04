@@ -132,6 +132,43 @@ export function getOpenCodeStoragePath(): string | null {
 }
 
 /**
+ * Get OpenCode's data directory (the parent of both `storage/` and `opencode.db`).
+ *
+ * Unlike getOpenCodeStoragePath() this never gates on existence: a SQLite-only
+ * install has no `storage/` subdirectory at all, so gating there would make the
+ * database undiscoverable.
+ *
+ * Priority mirrors getOpenCodeStoragePath():
+ * 1. dirname(OPENCODE_STORAGE_PATH)
+ * 2. XDG_DATA_HOME/opencode
+ * 3. Platform-specific defaults
+ */
+export function getOpenCodeDataDir(): string {
+  const home = homedir();
+
+  if (process.env.OPENCODE_STORAGE_PATH) {
+    return dirname(process.env.OPENCODE_STORAGE_PATH);
+  }
+
+  if (process.env.XDG_DATA_HOME) {
+    return join(process.env.XDG_DATA_HOME, 'opencode');
+  }
+
+  switch (process.platform) {
+    case 'darwin':
+      return join(home, 'Library', 'Application Support', 'opencode');
+    case 'win32': {
+      const appData = process.env.LOCALAPPDATA;
+      return appData
+        ? join(appData, 'opencode')
+        : join(home, '.local', 'share', 'opencode');
+    }
+    default:
+      return join(home, '.local', 'share', 'opencode');
+  }
+}
+
+/**
  * Get OpenCode sessions directory path
  * Sessions are stored at: storage/session/{projectID}/{sessionID}.json
  *
@@ -190,16 +227,16 @@ export function getOpenCodeConfigDir(): string {
 /**
  * Get path to OpenCode's SQLite database (opencode.db)
  *
- * The DB lives one level above the storage/ directory:
- *   ~/.codemie/opencode-storage/opencode/opencode.db
+ * The DB is a sibling of the storage/ directory:
+ *   ~/.local/share/opencode/opencode.db
+ *
+ * Resolved via getOpenCodeDataDir() rather than getOpenCodeStoragePath() so a
+ * SQLite-only install (no storage/ directory) is still discovered.
  *
  * @returns Path to opencode.db or null if not found
  */
 export function getOpenCodeDbPath(): string | null {
-  const storagePath = getOpenCodeStoragePath();
-  if (!storagePath) return null;
-
-  const dbPath = join(dirname(storagePath), 'opencode.db');
+  const dbPath = join(getOpenCodeDataDir(), 'opencode.db');
   if (existsSync(dbPath)) {
     logger.debug(`[opencode-paths] Found SQLite DB: ${dbPath}`);
     return dbPath;

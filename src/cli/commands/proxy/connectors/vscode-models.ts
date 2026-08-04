@@ -14,6 +14,7 @@ export interface VsCodeModelDefinition {
   apiType: VsCodeApiType;
   vision: boolean;
   thinking: boolean;
+  zeroDataRetentionEnabled?: boolean;
   adaptiveThinking?: true;
   modelOptions?: Readonly<{
     temperature?: number | null;
@@ -29,6 +30,7 @@ export interface VsCodeModelDefinition {
 const GPT_5_EFFORTS = ['minimal', 'low', 'medium', 'high'] as const;
 const GPT_5_2_EFFORTS = ['none', 'low', 'medium', 'high'] as const;
 const GPT_5_XHIGH_EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh'] as const;
+const GPT_5_6_EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 const GEMINI_FLASH_EFFORTS = ['minimal', 'low', 'medium', 'high'] as const;
 const GEMINI_PRO_EFFORTS = ['low', 'medium', 'high'] as const;
 const CLAUDE_EFFORTS = ['low', 'medium', 'high'] as const;
@@ -114,39 +116,51 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
     maxInputTokens: 922000,
     maxOutputTokens: 128000,
   },
-  // GPT-5.5/5.6 use Chat Completions to avoid Responses API follow-up failures
-  // caused by missing previous_response_id state. The current CodeMie/LiteLLM
-  // route rejects Chat requests that combine tools with reasoning, so thinking
-  // stays disabled and reasoning-effort metadata is intentionally omitted.
+  // VS Code's zero-data-retention Responses mode replays the complete local
+  // conversation with store=false and without previous_response_id. The proxy
+  // strips deployment-bound encrypted reasoning state while preserving the
+  // selected effort and visible/tool history for load-balanced continuations.
   {
     id: 'gpt-5.5-2026-04-24',
-    apiType: 'chat-completions',
+    apiType: 'responses',
     vision: true,
-    thinking: false,
+    thinking: true,
+    zeroDataRetentionEnabled: true,
+    supportsReasoningEffort: GPT_5_XHIGH_EFFORTS,
+    reasoningEffortFormat: 'responses',
     maxInputTokens: 922000,
     maxOutputTokens: 128000,
   },
   {
     id: 'gpt-5.6-luna-2026-07-09',
-    apiType: 'chat-completions',
+    apiType: 'responses',
     vision: true,
-    thinking: false,
+    thinking: true,
+    zeroDataRetentionEnabled: true,
+    supportsReasoningEffort: GPT_5_6_EFFORTS,
+    reasoningEffortFormat: 'responses',
     maxInputTokens: 922000,
     maxOutputTokens: 128000,
   },
   {
     id: 'gpt-5.6-sol-2026-07-09',
-    apiType: 'chat-completions',
+    apiType: 'responses',
     vision: true,
-    thinking: false,
+    thinking: true,
+    zeroDataRetentionEnabled: true,
+    supportsReasoningEffort: GPT_5_6_EFFORTS,
+    reasoningEffortFormat: 'responses',
     maxInputTokens: 922000,
     maxOutputTokens: 128000,
   },
   {
     id: 'gpt-5.6-terra-2026-07-09',
-    apiType: 'chat-completions',
+    apiType: 'responses',
     vision: true,
-    thinking: false,
+    thinking: true,
+    zeroDataRetentionEnabled: true,
+    supportsReasoningEffort: GPT_5_6_EFFORTS,
+    reasoningEffortFormat: 'responses',
     maxInputTokens: 922000,
     maxOutputTokens: 128000,
   },
@@ -245,6 +259,17 @@ export const VS_CODE_SUPPORTED_MODELS: readonly VsCodeModelDefinition[] = [
   },
   {
     id: 'claude-opus-4-8',
+    apiType: 'messages',
+    vision: true,
+    thinking: true,
+    adaptiveThinking: true,
+    requestHeaders: MESSAGE_AUTH_HEADERS,
+    supportsReasoningEffort: CLAUDE_XHIGH_EFFORTS,
+    maxInputTokens: 872000,
+    maxOutputTokens: 128000,
+  },
+  {
+    id: 'claude-opus-5',
     apiType: 'messages',
     vision: true,
     thinking: true,

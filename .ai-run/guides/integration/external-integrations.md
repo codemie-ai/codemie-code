@@ -228,6 +228,42 @@ Codex uses two pipelines (same model as Claude). Cost computed server-side; CLI 
 
 ---
 
+## Claude Session Processing
+
+`ConversationsProcessor` transforms raw JSONL transcript messages from a Claude Code session into conversation-log turns and syncs them to a per-session JSONL file. The processor is invoked on every `Stop` and `SessionEnd` hook event.
+
+### Drain Loop
+
+Claude Code's `Stop` hook fires only when the assistant responds. A burst of `!bash` commands with no assistant reply produces zero `Stop` events; without a drain loop those turns are lost before `SessionEnd` finalises the transcript. `processMessages` therefore iterates `transformMessages` in a bounded loop rather than calling it once per hook event.
+
+| Invariant | Rule |
+|---|---|
+| Hard iteration cap | `Math.max(1, session.messages.length + 1)` — prevents unbounded loops if `transformMessages` regresses |
+| Empty-history exit | Loop breaks immediately when `transformMessages` returns `history: []` |
+| Advance guard | Loop breaks if `lastProcessedMessageUuid` and `currentHistoryIndex` are both unchanged from the previous iteration |
+
+`file:src/agents/plugins/claude/session/processors/claude.conversations-processor.ts:128-156`
+
+### Per-Iteration Sync Checkpoint
+
+After each successful JSONL append, `SessionStore.saveSession()` persists the updated sync pointer to session metadata. A crash mid-drain cannot cause the next invocation to re-append already-written turns; the final `applyProcessingSyncUpdates` pass is idempotent for the same fields.
+
+`file:src/agents/plugins/claude/session/processors/claude.conversations-processor.ts:189-211`
+
+### Bash Passthrough Contract
+
+Claude Code injects `!bash` commands as synthetic `type:'user'` messages. The processor must unwrap the command and filter all terminal-output messages so they do not consume turn slots.
+
+| Raw transcript form | Handling |
+|---|---|
+| `<bash-input>cmd</bash-input>` | Unwrapped to `!cmd` by `extractCommand`; emits a `User` entry |
+| `<bash-stdout>…` / `<bash-stderr>…` | Filtered by `isSystemMessage`; never consumes a turn slot |
+| `<bash-input></bash-input>` (empty or whitespace) | Filtered; no bare `!` entry emitted |
+
+`file:src/agents/plugins/claude/session/processors/claude.conversations-processor.ts:667-688`, `856-871`
+
+---
+
 ## skills.sh Wrapper (`codemie skills`)
 
 Catalog-agnostic thin wrapper around the upstream `skills` npm CLI. Discovery, ranking, and source classification are out of scope for this CLI.
@@ -284,6 +320,7 @@ Validate provider config at startup; warn (not throw) on connectivity failures. 
 - Provider core types: `src/providers/core/types.ts`
 - OpenCode plugin: `src/agents/plugins/opencode/`
 - Codex plugin: `src/agents/plugins/codex/`
+- Claude plugin: `src/agents/plugins/claude/`
 - MCP proxy: `src/mcp/`
 - Session adapters: `src/agents/core/session/`
 - Config loader: `src/env/config-loader.ts`

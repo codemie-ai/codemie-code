@@ -43,6 +43,12 @@ const ALL_EFFORTS: readonly VsCodeReasoningEffort[] = [
   'xhigh',
   'max',
 ];
+const STATELESS_RESPONSES_MODEL_IDS = new Set([
+  'gpt-5.5-2026-04-24',
+  'gpt-5.6-luna-2026-07-09',
+  'gpt-5.6-sol-2026-07-09',
+  'gpt-5.6-terra-2026-07-09',
+]);
 const DEFAULT_REPORT_PATH = resolve('reports/vscode-model-certification.md');
 
 interface LiveConfiguration {
@@ -100,7 +106,20 @@ function selectEfforts(
   definition: VsCodeModelDefinition,
   selector: string | undefined
 ): ReadonlyArray<VsCodeReasoningEffort | undefined> {
-  if (!selector) return [undefined];
+  if (!selector) {
+    if (!STATELESS_RESPONSES_MODEL_IDS.has(definition.id)) return [undefined];
+
+    const supported = definition.supportsReasoningEffort ?? [];
+    const candidates: Array<VsCodeReasoningEffort | undefined> = [
+      'none',
+      'medium',
+      supported[supported.length - 1],
+    ];
+    return [...new Set(candidates.filter(
+      (effort): effort is VsCodeReasoningEffort =>
+        effort !== undefined && supported.includes(effort)
+    ))];
+  }
   if (selector === 'all') {
     return [undefined, ...(definition.supportsReasoningEffort ?? [])];
   }
@@ -131,6 +150,7 @@ function buildRequestBody(
   if (definition.apiType === 'responses') {
     return {
       model: definition.id,
+      store: false,
       input: [{ role: 'user', content: 'Call get_test_value with value "ready".' }],
       tools: [{
         type: 'function',
@@ -483,6 +503,17 @@ describe.runIf(LIVE_ENABLED)('VS Code live model certification', () => {
     const configuration = await resolveLiveConfiguration();
     const selectedModels = selectModels(selector);
     expect(selectedModels.length).toBeGreaterThan(0);
+
+    for (const definition of selectedModels) {
+      if (!STATELESS_RESPONSES_MODEL_IDS.has(definition.id)) continue;
+      expect(definition.apiType).toBe('responses');
+      expect(definition.zeroDataRetentionEnabled).toBe(true);
+      expect(definition.thinking).toBe(true);
+      expect(definition.supportsReasoningEffort).toEqual(
+        expect.arrayContaining(['none', 'medium'])
+      );
+      expect(definition.reasoningEffortFormat).toBe('responses');
+    }
 
     const parsedTimeout = Number(process.env.CODEMIE_VSCODE_REQUEST_TIMEOUT_MS ?? '120000');
     if (!Number.isFinite(parsedTimeout) || parsedTimeout <= 0) {

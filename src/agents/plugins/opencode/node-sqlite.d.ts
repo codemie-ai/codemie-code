@@ -12,6 +12,11 @@ declare module 'node:sqlite' {
 
   interface DatabaseSyncOptions {
     open?: boolean;
+    /**
+     * Open the database in read-only mode. Required when reading OpenCode's
+     * live database, which the `opencode` binary may be writing concurrently.
+     */
+    readOnly?: boolean;
   }
 
   class DatabaseSync {

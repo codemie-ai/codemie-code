@@ -33,6 +33,7 @@ const EXPECTED_MODEL_IDS = [
   'claude-opus-4-6-20260205',
   'claude-opus-4-7',
   'claude-opus-4-8',
+  'claude-opus-5',
   'claude-haiku-4-5-20251001',
   'qwen.qwen3-coder-30b-a3b-v1',
   'qwen.qwen3-coder-480b-a35b-v1',
@@ -98,11 +99,14 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
         apiType: definition.apiType,
         toolCalling: true,
         vision: definition.vision,
-        streaming: true,
-        thinking: definition.thinking,
-        maxInputTokens: definition.maxInputTokens,
-        maxOutputTokens: definition.maxOutputTokens,
-      };
+      streaming: true,
+      thinking: definition.thinking,
+      maxInputTokens: definition.maxInputTokens,
+      maxOutputTokens: definition.maxOutputTokens,
+    };
+      if (definition.zeroDataRetentionEnabled !== undefined) {
+        expected.zeroDataRetentionEnabled = definition.zeroDataRetentionEnabled;
+      }
       if (definition.adaptiveThinking) expected.adaptiveThinking = true;
       if (definition.modelOptions) expected.modelOptions = definition.modelOptions;
       if (definition.requestHeaders) expected.requestHeaders = definition.requestHeaders;
@@ -135,26 +139,51 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
     }
   });
 
-  it('disables thinking for GPT-5.5 and GPT-5.6 Chat Completions models', async () => {
+  it('renders stateless Responses reasoning capabilities for GPT-5.5 and GPT-5.6', async () => {
     await writeVsCodeLanguageModelsConfigAtPath(configPath, 'http://127.0.0.1:4001');
 
     const providers = await readProviders();
     const models = providers[0].models as Array<Record<string, unknown>>;
-    const affectedIds = [
-      'gpt-5.5-2026-04-24',
-      'gpt-5.6-luna-2026-07-09',
-      'gpt-5.6-sol-2026-07-09',
-      'gpt-5.6-terra-2026-07-09',
-    ];
+    const expectedEfforts = new Map([
+      ['gpt-5.5-2026-04-24', ['none', 'low', 'medium', 'high', 'xhigh']],
+      ['gpt-5.6-luna-2026-07-09', ['none', 'low', 'medium', 'high', 'xhigh', 'max']],
+      ['gpt-5.6-sol-2026-07-09', ['none', 'low', 'medium', 'high', 'xhigh', 'max']],
+      ['gpt-5.6-terra-2026-07-09', ['none', 'low', 'medium', 'high', 'xhigh', 'max']],
+    ]);
 
-    for (const id of affectedIds) {
+    for (const [id, efforts] of expectedEfforts) {
       const model = models.find(candidate => candidate.id === id);
       expect(model).toMatchObject({
-        apiType: 'chat-completions',
-        thinking: false,
+        apiType: 'responses',
+        url: 'http://127.0.0.1:4001/v1/responses',
+        zeroDataRetentionEnabled: true,
+        thinking: true,
+        supportsReasoningEffort: efforts,
+        reasoningEffortFormat: 'responses',
       });
-      expect(model).not.toHaveProperty('supportsReasoningEffort');
-      expect(model).not.toHaveProperty('reasoningEffortFormat');
+    }
+  });
+
+  it('requires every Responses catalog entry to enable stateless mode', () => {
+    const responsesModels = VS_CODE_SUPPORTED_MODELS.filter(
+      definition => definition.apiType === 'responses'
+    );
+
+    expect(responsesModels.length).toBeGreaterThan(0);
+    for (const definition of responsesModels) {
+      expect(definition.zeroDataRetentionEnabled).toBe(true);
+    }
+  });
+
+  it('requires effort metadata for every thinking-enabled Responses entry', () => {
+    const responsesModels = VS_CODE_SUPPORTED_MODELS.filter(
+      definition => definition.apiType === 'responses' && definition.thinking
+    );
+
+    expect(responsesModels.length).toBeGreaterThan(0);
+    for (const definition of responsesModels) {
+      expect(definition.supportsReasoningEffort?.length).toBeGreaterThan(0);
+      expect(definition.reasoningEffortFormat).toBe('responses');
     }
   });
 

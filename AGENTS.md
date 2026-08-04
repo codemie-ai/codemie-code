@@ -68,7 +68,7 @@ Do not proactively commit, push, branch, or suggest git operations.
 |---|---|---|
 | Check Guides First | ANY task | Match keywords → category → load P0 guide before searching the codebase |
 | Tests on explicit request only | "write tests" / "run tests" / "create unit tests" | Otherwise do not write, run, or suggest tests |
-| Git ops on explicit request only | "commit" / "push" / "create branch" / "create PR" | Load `.ai-run/guides/standards/git-workflow.md`; defer to `codemie-pr` skill for PR work |
+| Git ops on explicit request only | "commit" / "push" / "create branch" / "create PR" | Load `.ai-run/guides/standards/git-workflow.md`; defer to `sdlc-factory:mr-creator` skill for PR work |
 | Shell | ANY shell command | bash/Linux syntax only |
 <!-- ai-run-init:critical-rules end -->
 
@@ -112,7 +112,7 @@ Ask the user when:
 | External integrations | `.ai-run/guides/integration/external-integrations.md` | Provider plugins, SSO, LiteLLM, Bedrock, Kimi, ACP |
 | Exposed API | `.ai-run/guides/integration/exposed-api.md` | CLI surface, MCP proxy endpoints, plugin contracts |
 | Project config | `.ai-run/guides/usage/project-config.md` | Profiles, ConfigLoader, env vars, paths |
-| Project context | `.ai-run/guides/project.md` | Tracker (Jira EPM-CDME / codemie-jira-assistant), MR (GitHub / codemie-pr) |
+| Project context | `.ai-run/guides/project.md` | Tracker (Jira EPM-CDME / codemie-jira-assistant), MR (GitHub / sdlc-factory:mr-creator) |
 | Quality gates | `.ai-run/guides/quality-gates.md` | lint, typecheck, build, test, license, secrets |
 <!-- ai-run-init:guide-imports end -->
 
@@ -186,7 +186,7 @@ Detailed patterns for architecture, error handling, logging, security, project c
 | Pre-commit | `.ai-run/guides/quality-gates.md` | `.husky/pre-commit`, `package.json:scripts.check:pre-commit` | Runs automatically; do not `--no-verify` |
 | Full CI | `.ai-run/guides/quality-gates.md` | `package.json:scripts.ci`, `scripts.ci:full` | Required before merge |
 | Commit message | `.ai-run/guides/standards/git-workflow.md` | `commitlint.config.cjs`, `.husky/commit-msg` | Conventional Commits enforced |
-| PR creation | `.ai-run/guides/standards/git-workflow.md` | `.claude/skills/codemie-pr/SKILL.md` | Invoke the `codemie-pr` skill |
+| PR creation | `.ai-run/guides/standards/git-workflow.md` | `sdlc-factory:mr-creator` skill | Invoke the `mr-creator` skill |
 | Ticket lookup / create | `.ai-run/guides/project.md` | `.codemie/codemie-cli.config.json`, codemie-jira-assistant | Invoke the `codemie-jira-assistant` skill |
 | Doctor | (no guide needed) | `codemie doctor`, `codemie-code health` | Health diagnostics |
 <!-- ai-run-init:commands end -->
@@ -216,7 +216,7 @@ ES modules, async/await, `interface` for shapes, explicit return types on export
 ### Git Policy
 
 - Only perform git operations on explicit user request.
-- Before any git operation, load and follow `.ai-run/guides/standards/git-workflow.md`; defer to the `codemie-pr` skill for PR work.
+- Before any git operation, load and follow `.ai-run/guides/standards/git-workflow.md`; defer to the `sdlc-factory:mr-creator` skill for PR work.
 
 ## Troubleshooting
 

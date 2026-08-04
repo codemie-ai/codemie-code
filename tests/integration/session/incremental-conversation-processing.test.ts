@@ -101,6 +101,7 @@ describe('Incremental Conversation Processing - Simple Session', () => {
 
   afterAll(() => {
     // Cleanup test files
+    if (process.env.KEEP_FIXTURE_OUTPUT === '1') return;
     [conversationPath, sessionFilePath, metricsFilePath].forEach(file => {
       if (existsSync(file)) {
         try {
@@ -160,19 +161,28 @@ describe('Incremental Conversation Processing - Simple Session', () => {
     expect(session?.sync?.conversations?.lastSyncedHistoryIndex).toBe(0);
   });
 
-  it('should process turn 2 and create second conversation record', async () => {
+  it('should process turn 2 and drain all remaining conversation records', async () => {
     const result = await processSessionViaAdapter(turn2File, TEST_SESSION_ID);
-    
+
     expect(result.success).toBe(true);
 
+    // turn-2.jsonl contains 4 real user turns total: `show tools` (already
+    // synced from turn-1) plus `hi`, `expore current repo…`, `tell me more…`.
+    // Each processSession() invocation must drain every pending turn so a
+    // burst of user prompts (e.g. `!bash` runs, or several quick questions
+    // between hook events) is not silently truncated — see EPMCDME-13675.
     const records = readConversationFile(TEST_SESSION_ID);
-    expect(records).toHaveLength(2);
+    expect(records).toHaveLength(4);
 
-    const record = records[1];
-    expect(record.status).toBe('pending');
-    expect(record.isTurnContinuation).toBe(false);
-    expect(record.messageCount).toBe(2);
-    expect(record.payload.history).toHaveLength(2);
+    for (let i = 1; i < records.length; i++) {
+      const record = records[i];
+      expect(record.status).toBe('pending');
+      expect(record.isTurnContinuation).toBe(false);
+      expect(record.messageCount).toBe(2);
+      expect(record.payload.history).toHaveLength(2);
+      // Sync pointer must advance monotonically across turns.
+      expect(record.payload.history[0].history_index).toBe(i);
+    }
   });
 
   it('should match expected conversation structure', () => {
@@ -262,6 +272,7 @@ describe('Incremental Conversation Processing - Session with Subagents', () => {
 
   afterAll(() => {
     // Cleanup test files
+    if (process.env.KEEP_FIXTURE_OUTPUT === '1') return;
     [conversationPath, sessionFilePath, metricsFilePath].forEach(file => {
       if (existsSync(file)) {
         try {

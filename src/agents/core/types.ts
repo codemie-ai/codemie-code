@@ -319,6 +319,17 @@ export interface AgentMetadata {
   analyticsAdapter?: AgentAnalyticsAdapter;  // Optional analytics adapter
 
   /**
+   * True for agents CodeMie only reads analytics for and never installs, launches,
+   * or manages (e.g. GitHub Copilot CLI).
+   *
+   * Such an agent can never carry a CodeMie ownership marker, so the analytics
+   * ownership gate must not apply to it — see `isAnalyticsOnlyAgent` in
+   * `src/cli/commands/analytics/native-loader.ts`. Applying the gate would tag every
+   * one of its sessions `native-external` and drop them from the default report.
+   */
+  analyticsOnly?: boolean;
+
+  /**
    * When true, a per-session analytics JSON report is written automatically on
    * session exit (see BaseAgentAdapter finalization). Default off; enabled on the
    * interactive agents. A `--no-analytics-report` CLI flag disables it per run.
@@ -360,11 +371,14 @@ export interface AgentMetadata {
  */
 export interface MCPConfigSource {
   /**
-   * Path to config file
-   * - Absolute: starts with '~/' (resolved to home dir)
+   * Path to config file, or several candidate paths tried in order (the first
+   * one that exists and parses wins). Multiple candidates cover agents that
+   * accept more than one config filename — OpenCode reads both `opencode.json`
+   * and `opencode.jsonc`.
+   * - Absolute: an absolute path, or one starting with '~/' (resolved to home)
    * - Relative: resolved from cwd
    */
-  path: string;
+  path: string | string[];
 
   /**
    * JSON path to mcpServers object
@@ -447,6 +461,34 @@ export interface AgentExtensionsConfig {
    * Example: Claude uses subdirectory-per-skill with a 'SKILL.md' entry file
    */
   skillsEntryFile?: string;
+
+  /**
+   * Per-category subdirectory names to scan, overriding the defaults
+   * ('agents', 'commands', 'skills', 'hooks', 'rules').
+   *
+   * Every listed directory is scanned and the results merged, which covers
+   * agents that accept more than one spelling — OpenCode reads both `agent/`
+   * and `agents/`. An empty array means the agent has no such concept and the
+   * category always reports zero.
+   */
+  dirNames?: {
+    agents?: string[];
+    commands?: string[];
+    skills?: string[];
+    hooks?: string[];
+    rules?: string[];
+  };
+
+  /**
+   * Additional global (user-level) roots scanned alongside `global`, for agents
+   * that read extensions from more than one location.
+   */
+  extraGlobalDirs?: string[];
+
+  /**
+   * Additional project-level roots scanned alongside `project`.
+   */
+  extraProjectDirs?: string[];
 }
 
 /**
@@ -686,7 +728,7 @@ export interface AgentAdapter {
   install(): Promise<void>;
   uninstall(): Promise<void>;
   isInstalled(): Promise<boolean>;
-  run(args: string[], env?: Record<string, string>): Promise<void>;
+  run(args: string[], env?: Record<string, string>, options?: { dryRun?: boolean }): Promise<void>;
   getVersion(): Promise<string | null>;
   getMetricsConfig(): AgentMetricsConfig | undefined;
   readonly ownedSubcommands?: string[];

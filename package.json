@@ -1,13 +1,12 @@
 {
   "name": "@codemieai/code",
-  "version": "0.10.1",
+  "version": "0.11.0",
   "description": "Unified AI coding assistant CLI - Manage Claude Code, Gemini & custom agents. Multi-provider support (OpenAI, Azure, LiteLLM, SSO). Built-in LangGraph agent with file operations & git integration.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
     "codemie": "./bin/codemie.js",
-    "code": "./bin/codemie.js",
     "codemie-code": "./bin/agent-executor.js",
     "codemie-claude": "./bin/codemie-claude.js",
     "codemie-claude-acp": "./bin/codemie-claude-acp.js",

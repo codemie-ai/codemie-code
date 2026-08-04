@@ -77,3 +77,9 @@ docs/superpowers/runs/
 docs/superpowers/tasks/*/.state.json
 .superpowers
 /.rtk/
+/opencode.json
+
+# Review-diff snapshots are regenerable from git (git diff <merge-base>...HEAD) and
+# otherwise get counted inside the next diff, inflating review scope.
+docs/superpowers/tasks/*/code-review.diff
+docs/superpowers/tasks/*/code-review-check.diff

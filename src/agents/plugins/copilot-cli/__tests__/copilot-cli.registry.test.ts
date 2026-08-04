@@ -1,0 +1,77 @@
+/**
+ * Registry wiring tests.
+ *
+ * `native-loader.ts` resolves session adapters via
+ * `AgentRegistry.getAgent(name)?.getSessionAdapter?.()`. If that call does not resolve,
+ * Copilot sessions are never discovered and the whole integration is a no-op.
+ */
+
+import { describe, it, expect } from 'vitest';
+import { AgentRegistry } from '../../../registry.js';
+
+describe('copilot-cli registration', () => {
+  it('resolves through the exact call native-loader makes', () => {
+    const adapter = AgentRegistry.getAgent('copilot-cli')?.getSessionAdapter?.();
+
+    expect(adapter).toBeDefined();
+    expect(typeof adapter!.discoverSessions).toBe('function');
+    expect(adapter!.agentName).toBe('copilot-cli');
+  });
+
+  it('advertises the user-facing display label', () => {
+    expect(AgentRegistry.getAgent('copilot-cli')!.metadata.displayName).toBe('GitHub Copilot CLI');
+  });
+
+  it('is marked analytics-only so the ownership gate exempts it', () => {
+    expect(AgentRegistry.getAgent('copilot-cli')!.metadata.analyticsOnly).toBe(true);
+  });
+
+  it('refuses to be installed or launched by CodeMie', async () => {
+    const plugin = AgentRegistry.getAgent('copilot-cli')!;
+
+    await expect(plugin.install()).rejects.toThrow(/not managed by CodeMie/i);
+    await expect(plugin.run([])).rejects.toThrow(/not managed by CodeMie/i);
+  });
+
+  it('does not disturb existing agents', () => {
+    for (const name of ['claude', 'codex', 'gemini', 'kimi', 'opencode']) {
+      expect(AgentRegistry.getAgent(name), `${name} should still resolve`).toBeDefined();
+    }
+  });
+});
+
+/**
+ * An analytics-only agent must be invisible to every agent-MANAGEMENT surface.
+ *
+ * Overriding install()/uninstall()/run() to refuse is not sufficient: `codemie update`
+ * never calls the adapter at all — updateAgent() reads metadata.npmPackage and calls
+ * npm.installGlobal(..., { force: true }) directly. Left visible, CodeMie would
+ * force-reinstall a user's global Copilot, and install/uninstall/list/doctor/first-time
+ * would advertise commands that always error.
+ */
+describe('copilot-cli is excluded from agent-management surfaces', () => {
+  it('is absent from getManageableAgents()', () => {
+    const names = AgentRegistry.getManageableAgents().map((a) => a.name);
+
+    expect(names).not.toContain('copilot-cli');
+    // Manageable agents are otherwise untouched.
+    for (const name of ['claude', 'codex', 'gemini', 'kimi', 'opencode']) {
+      expect(names, `${name} must stay manageable`).toContain(name);
+    }
+  });
+
+  it('is still present in getAllAgents() so analytics can reach its adapter', () => {
+    expect(AgentRegistry.getAllAgents().map((a) => a.name)).toContain('copilot-cli');
+  });
+
+  it('is absent from getInstalledAgents(), which only feeds management surfaces', async () => {
+    const names = (await AgentRegistry.getInstalledAgents()).map((a) => a.name);
+    expect(names).not.toContain('copilot-cli');
+  });
+
+  it('declares a null npmPackage, so `codemie update` cannot npm-install it', () => {
+    // Defense in depth: even if a management surface is missed, updateAgent() throws
+    // "cannot be updated (no npm package configured)" instead of mutating a global install.
+    expect(AgentRegistry.getAgent('copilot-cli')!.metadata.npmPackage).toBeNull();
+  });
+});

@@ -110,10 +110,14 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
    * UPDATED (GPT-5.9): OpenCode uses numeric timestamps (time.created/time.updated)
    * not ISO strings. We convert to ISO for CodeMie's canonical format.
    */
-  async parseSessionFile(filePath: string, sessionId: string): Promise<ParsedSession> {
+  async parseSessionFile(
+    filePath: string,
+    sessionId: string,
+    openCodeSessionId?: string
+  ): Promise<ParsedSession> {
     // Route to SQLite parsing if filePath points to a .db file
     if (filePath.endsWith('.db')) {
-      return this.parseSessionFromDb(filePath, sessionId);
+      return this.parseSessionFromDb(filePath, sessionId, openCodeSessionId);
     }
 
     try {
@@ -181,20 +185,26 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
   /**
    * Parse a session from SQLite database.
    * Reads session, messages, and all parts in bulk from opencode.db.
+   *
+   * @param openCodeSessionId - OpenCode's own `ses_*` id when known. The plugin
+   *   Stop hook supplies it via ProcessingContext.agentSessionId; the in-process
+   *   SessionEnd path cannot (OpenCode's id does not exist when the CodeMie
+   *   session record is created), so selection falls back to a cwd match.
    */
-  private async parseSessionFromDb(dbPath: string, sessionId: string): Promise<ParsedSession> {
+  private async parseSessionFromDb(
+    dbPath: string,
+    sessionId: string,
+    openCodeSessionId?: string
+  ): Promise<ParsedSession> {
     try {
       logger.debug(`[opencode-adapter] Parsing session ${sessionId} from SQLite: ${dbPath}`);
 
-      // Read session data
-      // Note: sessionId may be a CodeMie UUID (not an OpenCode ses_* ID).
-      // Try exact match first, then fallback to most recent session (sorted by time_created DESC).
       const sessions = await readSessionsFromDb(dbPath, { maxAgeDays: 1 });
-      const session = sessions.find(s => s.id === sessionId) ?? sessions[0];
+      const session = this.selectSessionFromDb(sessions, openCodeSessionId);
       if (!session) {
         throw new Error(`Session ${sessionId} not found in SQLite DB: ${dbPath}`);
       }
-      if (session.id !== sessionId) {
+      if (session.id !== openCodeSessionId) {
         logger.debug(`[opencode-adapter] Mapped CodeMie session ${sessionId} → OpenCode session ${session.id}`);
       }
 
@@ -228,6 +238,9 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
         openCodeVersion: session.version,
         partsMap,
         storageType: 'sqlite',
+        // gitBranch is overlaid by processSession from ProcessingContext when
+        // available; the metrics processor falls back to detecting it from
+        // projectPath.
       };
 
       return {
@@ -241,6 +254,42 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
       logger.error(`[opencode-adapter] Failed to parse SQLite session ${sessionId}:`, error);
       throw error;
     }
+  }
+
+  /**
+   * Pick which OpenCode session a set of DB rows refers to.
+   *
+   * Ordering matters: the previous implementation used
+   * `sessions.find(s => s.id === sessionId) ?? sessions[0]` where `sessionId`
+   * is a CodeMie UUID. That match can never succeed, so it always degraded to
+   * "newest session in any directory" — silently attributing another
+   * repository's session to this one.
+   *
+   * @param sessions - Rows already sorted newest-first by readSessionsFromDb
+   */
+  private selectSessionFromDb(
+    sessions: OpenCodeSession[],
+    openCodeSessionId?: string
+  ): OpenCodeSession | undefined {
+    // 1. Exact match on OpenCode's own id (plugin Stop path).
+    if (openCodeSessionId?.startsWith('ses_')) {
+      const exact = sessions.find(s => s.id === openCodeSessionId);
+      if (exact) return exact;
+    }
+
+    // 2. Newest session started in this working directory (in-process SessionEnd path).
+    const cwd = process.cwd().replace(/\/+$/, '');
+    const byCwd = sessions.find(s => s.directory.replace(/\/+$/, '') === cwd);
+    if (byCwd) return byCwd;
+
+    // 3. Newest session overall — may belong to another repository.
+    if (sessions.length > 0) {
+      logger.warn(
+        `[opencode-adapter] No OpenCode session matched id=${openCodeSessionId ?? 'n/a'} or cwd=${cwd}; ` +
+        `falling back to newest session ${sessions[0].id} (directory=${sessions[0].directory})`
+      );
+    }
+    return sessions[0];
   }
 
   /**
@@ -349,8 +398,21 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
     try {
       logger.debug(`[opencode-adapter] Processing session ${sessionId} with ${this.processors.length} processors`);
 
-      // 1. Parse session once
-      const parsedSession = await this.parseSessionFile(filePath, sessionId);
+      // 1. Parse session once.
+      //    context.agentSessionId is OpenCode's ses_* id on the plugin Stop path
+      //    and the CodeMie UUID on the in-process SessionEnd path; the adapter
+      //    distinguishes them by prefix.
+      const parsedSession = await this.parseSessionFile(
+        filePath,
+        sessionId,
+        context.agentSessionId
+      );
+
+      // Carry the branch resolved by the CLI through to the processors so every
+      // MetricDelta is attributed to a branch (the aggregator groups on it).
+      if (context.gitBranch && parsedSession.metadata) {
+        (parsedSession.metadata as Record<string, unknown>).gitBranch = context.gitBranch;
+      }
 
       // 2. Run processors in priority order
       const processorResults: Record<string, {
@@ -418,9 +480,12 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
     if (dbPath && await isSqliteAvailable()) {
       logger.debug(`[opencode-discovery] Using SQLite storage: ${dbPath}`);
       try {
+        // Age, directory and limit predicates are applied in SQL — this query
+        // runs on every incremental-sync tick against the user's live database.
         const sessions = await readSessionsFromDb(dbPath, {
           maxAgeDays: options?.maxAgeDays ?? 30,
           cwd: options?.cwd,
+          limit: options?.limit,
         });
 
         const descriptors: SessionDescriptor[] = sessions.map(session => ({
@@ -432,15 +497,9 @@ export class OpenCodeSessionAdapter implements SessionAdapter {
           agentName: 'opencode',
         }));
 
-        // Sort by createdAt descending (newest first)
+        // Already ordered by time_created DESC in SQL; re-sort defensively for
+        // the sqlite3 CLI fallback path.
         descriptors.sort((a, b) => b.createdAt - a.createdAt);
-
-        // Apply limit
-        if (options?.limit && options.limit > 0) {
-          const limited = descriptors.slice(0, options.limit);
-          logger.debug(`[opencode-discovery] Found ${descriptors.length} SQLite sessions, returning ${limited.length} (limit: ${options.limit})`);
-          return limited;
-        }
 
         logger.debug(`[opencode-discovery] Found ${descriptors.length} SQLite sessions`);
         return descriptors;

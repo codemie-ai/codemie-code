@@ -59,18 +59,30 @@ export function getDbPathFromStorage(storagePath: string): string | null {
   return existsSync(dbPath) ? dbPath : null;
 }
 
+/** Values accepted as bound SQL parameters. */
+type SqlParam = string | number;
+
 /**
  * Execute a read-only SQLite query using Node.js native node:sqlite (Node.js 22.5+).
  *
+ * The database is opened READ-ONLY: codemie-opencode reads the user's live
+ * ~/.local/share/opencode/opencode.db, which the plain `opencode` binary may be
+ * writing to concurrently. Opening read-write risks lock contention and, worse,
+ * WAL recovery writes into a database we do not own.
+ *
  * @returns Parsed rows, or null if node:sqlite is unavailable or the query fails
  */
-async function queryDbViaNative<T>(dbPath: string, sql: string): Promise<T[] | null> {
+async function queryDbViaNative<T>(
+  dbPath: string,
+  sql: string,
+  params: SqlParam[]
+): Promise<T[] | null> {
   try {
     const { DatabaseSync } = await import('node:sqlite');
-    const db = new DatabaseSync(dbPath, { open: true });
+    const db = new DatabaseSync(dbPath, { open: true, readOnly: true });
     try {
       const stmt = db.prepare(sql);
-      return stmt.all() as unknown as T[];
+      return stmt.all(...params) as unknown as T[];
     } finally {
       db.close();
     }
@@ -80,25 +92,38 @@ async function queryDbViaNative<T>(dbPath: string, sql: string): Promise<T[] | n
 }
 
 /**
+ * Inline bound parameters into a SQL string for the sqlite3 CLI fallback,
+ * which has no parameter-binding interface.
+ */
+function inlineParams(sql: string, params: SqlParam[]): string {
+  let index = 0;
+  return sql.replace(/\?/g, () => {
+    const value = params[index++];
+    return typeof value === 'number' ? String(value) : `'${escapeSqlString(String(value))}'`;
+  });
+}
+
+/**
  * Execute a read-only SQLite query and return parsed JSON rows.
  *
  * Tries node:sqlite first (Node.js 22.5+, no external tools required).
  * Falls back to the sqlite3 CLI if node:sqlite is unavailable.
  *
  * @param dbPath - Path to the SQLite database
- * @param sql - SQL query to execute
+ * @param sql - SQL query with `?` placeholders
+ * @param params - Values bound to the placeholders
  * @returns Parsed rows as an array of objects
  */
-async function queryDb<T>(dbPath: string, sql: string): Promise<T[]> {
+async function queryDb<T>(dbPath: string, sql: string, params: SqlParam[] = []): Promise<T[]> {
   // Try native node:sqlite first (no external tool required)
-  const nativeResult = await queryDbViaNative<T>(dbPath, sql);
+  const nativeResult = await queryDbViaNative<T>(dbPath, sql, params);
   if (nativeResult !== null) {
     return nativeResult;
   }
 
   // Fallback to sqlite3 CLI
   try {
-    const result = await exec('sqlite3', ['-json', '-readonly', dbPath, sql], {
+    const result = await exec('sqlite3', ['-json', '-readonly', dbPath, inlineParams(sql, params)], {
       timeout: 10_000,
     });
 
@@ -157,59 +182,60 @@ interface PartRow {
 /**
  * Read sessions from the SQLite database.
  *
+ * Age, directory and row-count predicates are pushed into SQL rather than
+ * applied in JS: this query runs on every incremental-sync tick against the
+ * user's live database, which can hold thousands of sessions across every
+ * project they have ever opened.
+ *
  * @param dbPath - Path to opencode.db
- * @param options - Optional filtering (maxAgeDays, cwd)
- * @returns Array of OpenCodeSession objects
+ * @param options - Optional filtering (maxAgeDays, cwd, limit)
+ * @returns Array of OpenCodeSession objects, newest first
  */
 export async function readSessionsFromDb(
   dbPath: string,
-  options?: { maxAgeDays?: number; cwd?: string }
+  options?: { maxAgeDays?: number; cwd?: string; limit?: number }
 ): Promise<OpenCodeSession[]> {
-  const rows = await queryDb<SessionRow>(
-    dbPath,
-    `SELECT id, project_id, slug, directory, title, version, time_created, time_updated FROM session ORDER BY time_created DESC`
-  );
-
-  const sessions: OpenCodeSession[] = [];
   const maxAgeMs = (options?.maxAgeDays ?? 30) * 24 * 60 * 60 * 1000;
   const cutoff = Date.now() - maxAgeMs;
   const normalizedCwd = options?.cwd?.replace(/\/+$/, '');
 
-  for (const row of rows) {
-    const session: OpenCodeSession = {
-      id: row.id,
-      title: row.title,
-      directory: row.directory || '',
-      time: {
-        created: row.time_created ?? 0,
-        updated: row.time_updated ?? 0,
-      },
-      projectID: row.project_id,
-      slug: row.slug,
-      version: row.version,
-    };
+  const conditions: string[] = ['(time_created IS NULL OR time_created >= ?)'];
+  const params: SqlParam[] = [cutoff];
 
-    // Apply age filter
-    if (session.time.created && session.time.created < cutoff) {
-      continue;
-    }
-
-    // Apply cwd filter
-    if (normalizedCwd && session.directory) {
-      const normalizedDir = session.directory.replace(/\/+$/, '');
-      if (normalizedDir !== normalizedCwd) {
-        continue;
-      }
-    }
-
-    sessions.push(session);
+  if (normalizedCwd) {
+    // OpenCode stores `directory` without a trailing separator; accept both forms.
+    conditions.push('(directory = ? OR directory = ?)');
+    params.push(normalizedCwd, `${normalizedCwd}/`);
   }
 
-  return sessions;
+  let sql =
+    `SELECT id, project_id, slug, directory, title, version, time_created, time_updated ` +
+    `FROM session WHERE ${conditions.join(' AND ')} ORDER BY time_created DESC`;
+
+  if (options?.limit && options.limit > 0) {
+    sql += ' LIMIT ?';
+    params.push(options.limit);
+  }
+
+  const rows = await queryDb<SessionRow>(dbPath, sql, params);
+
+  return rows.map((row) => ({
+    id: row.id,
+    title: row.title,
+    directory: row.directory || '',
+    time: {
+      created: row.time_created ?? 0,
+      updated: row.time_updated ?? 0,
+    },
+    projectID: row.project_id,
+    slug: row.slug,
+    version: row.version,
+  }));
 }
 
 /**
  * Escape a string for safe use in SQL single-quoted literals.
+ * Only needed for the sqlite3 CLI fallback, which cannot bind parameters.
  */
 function escapeSqlString(value: string): string {
   return value.replace(/'/g, "''");
@@ -226,10 +252,10 @@ export async function readMessagesFromDb(
   dbPath: string,
   sessionId: string
 ): Promise<OpenCodeMessage[]> {
-  const escapedId = escapeSqlString(sessionId);
   const rows = await queryDb<MessageRow>(
     dbPath,
-    `SELECT id, session_id, data FROM message WHERE session_id = '${escapedId}'`
+    `SELECT id, session_id, data FROM message WHERE session_id = ?`,
+    [sessionId]
   );
 
   const messages: OpenCodeMessage[] = [];
@@ -238,16 +264,22 @@ export async function readMessagesFromDb(
     try {
       const data = JSON.parse(row.data) as Record<string, unknown>;
       const role = data.role as string;
+      const time = data.time as { created?: number; completed?: number } | undefined;
 
       const base = {
         id: row.id,
         sessionID: row.session_id,
         time: {
-          created: (data.time as any)?.created ?? 0,
+          created: time?.created ?? 0,
+          ...(typeof time?.completed === 'number' && { completed: time.completed }),
         },
       };
 
       if (role === 'assistant') {
+        // NOTE: token/cost columns are deliberately NOT carried across.
+        // codemie-claude sends no token or cost fields on any metric, and
+        // codemie-opencode mirrors that exactly. See MetricDelta in
+        // src/agents/core/metrics/types.ts.
         const msg: OpenCodeAssistantMessage = {
           ...base,
           role: 'assistant',
@@ -255,6 +287,7 @@ export async function readMessagesFromDb(
           modelID: data.modelID as string | undefined,
           path: data.path as string[] | undefined,
           agent: data.agent as string | undefined,
+          error: data.error as OpenCodeAssistantMessage['error'],
         };
         messages.push(msg);
       } else {
@@ -289,10 +322,10 @@ export async function readAllPartsForSessionFromDb(
   dbPath: string,
   sessionId: string
 ): Promise<Record<string, OpenCodePart[]>> {
-  const escapedId = escapeSqlString(sessionId);
   const rows = await queryDb<PartRow>(
     dbPath,
-    `SELECT id, message_id, session_id, data FROM part WHERE session_id = '${escapedId}' ORDER BY id ASC`
+    `SELECT id, message_id, session_id, data FROM part WHERE session_id = ? ORDER BY id ASC`,
+    [sessionId]
   );
 
   const partsMap: Record<string, OpenCodePart[]> = {};
