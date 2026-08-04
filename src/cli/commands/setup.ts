@@ -66,6 +66,12 @@ export async function detectLiteLLMEnforcement(existingCodeMieUrl?: string): Pro
     if (!authResult.success || !authResult.apiUrl || !authResult.cookies) {
       throw new Error(authResult.error || 'SSO authentication failed');
     }
+
+    // Announce success here, where the login actually happens. Provider setup
+    // steps reuse this session and so never reach their own success message —
+    // without this the user (and the setup e2e) sees no confirmation at all.
+    console.log(chalk.green('✓ Authentication successful!\n'));
+
     const { project, userEmail } = await selectCodeMieProject(authResult);
 
     // The gate has now completed a full CodeMie handshake (URL + browser SSO +
