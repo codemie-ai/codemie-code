@@ -24,12 +24,27 @@ import {
   selectCodeMieProject
 } from '../../providers/core/codemie-auth-helpers.js';
 import { fetchCodeMieIntegrations } from '../../providers/plugins/sso/sso.http-client.js';
+import { ProviderName } from '../../providers/core/types.js';
 import type {
   CodeMieIntegration,
   CodeMieSetupSession,
   SSOAuthResult,
   SetupContext
 } from '../../providers/core/types.js';
+
+/**
+ * Providers whose setup talks to the CodeMie platform.
+ *
+ * Only these are subject to the mandatory-integration gate — the gate needs an
+ * authenticated CodeMie session to resolve the user's project, and asking a
+ * Bedrock or Ollama user to log into CodeMie just to reach the provider list
+ * is friction with no enforcement value.
+ */
+const CODEMIE_BACKED_PROVIDERS: readonly string[] = [ProviderName.AI_RUN_SSO, ProviderName.LITELLM];
+
+function isCodeMieBackedProvider(provider: string): boolean {
+  return CODEMIE_BACKED_PROVIDERS.includes(provider);
+}
 
 interface LiteLLMEnforcementContext {
   integration: CodeMieIntegration;
@@ -270,64 +285,60 @@ async function runSetupWizard(force?: boolean): Promise<void> {
     }
   }
 
-  // Step 1: Check for mandatory LiteLLM integration before provider selection
-  //
-  // On update flows, thread the existing profile's stored portal URL so users
-  // are not re-prompted for a URL they already configured. On fresh setup
-  // (no profile selected yet) `existingCodeMieUrl` stays undefined and
-  // `detectLiteLLMEnforcement` falls back to `DEFAULT_CODEMIE_BASE_URL`.
-  let existingCodeMieUrl: string | undefined;
-  if (isUpdate && profileName) {
-    const existingProfile = await ConfigLoader.getProfile(profileName);
-    existingCodeMieUrl = existingProfile?.codeMieUrl;
-  }
+  // Step 1: Provider selection.
+  const registeredProviders = ProviderRegistry.getAllProviders();
+  const allProviderChoices = getAllProviderChoices(registeredProviders);
 
-  let enforcementResult: EnforcementGateResult;
-  try {
-    enforcementResult = await detectLiteLLMEnforcement(existingCodeMieUrl);
-  } catch (error) {
-    // Ctrl+C during the enforcement gate's SSO prompts should exit cleanly,
-    // not surface as a raw stack trace via the Commander action handler.
-    if (isPromptAbortError(error)) {
-      console.log(chalk.yellow('\nSetup cancelled.\n'));
-      return;
+  const { provider: selectedProvider } = await inquirer.prompt([
+    {
+      type: 'list',
+      name: 'provider',
+      message: 'Choose your LLM provider:\n',
+      choices: allProviderChoices,
+      pageSize: 15,
+      default: allProviderChoices[0]?.value
     }
-    throw error;
-  }
+  ]);
 
-  let provider: string;
+  let provider: string = selectedProvider;
   let enforcementContext: LiteLLMEnforcementContext | undefined;
-  const codeMieSession = enforcementResult.session;
+  let codeMieSession: CodeMieSetupSession | undefined;
 
-  if (enforcementResult.enforced) {
-    const litellmSteps = ProviderRegistry.getSetupSteps('litellm');
-    if (!litellmSteps) {
-      throw new Error('LiteLLM integration is required for this project but the LiteLLM provider is not available. Please reinstall codemie-cli.');
-    }
-    provider = 'litellm';
-    enforcementContext = {
-      integration: enforcementResult.integration,
-      project: enforcementResult.project,
-      authResult: enforcementResult.authResult,
-      codeMieUrl: enforcementResult.codeMieUrl
-    };
-    console.log(chalk.cyan(`\n📌 This project uses a mandatory LiteLLM integration: "${enforcementResult.integration.alias}"\n   Provider has been set to LiteLLM automatically.\n`));
-  } else {
-    // Step 1b: Normal provider selection
-    const registeredProviders = ProviderRegistry.getAllProviders();
-    const allProviderChoices = getAllProviderChoices(registeredProviders);
-
-    const { provider: selectedProvider } = await inquirer.prompt([
-      {
-        type: 'list',
-        name: 'provider',
-        message: 'Choose your LLM provider:\n',
-        choices: allProviderChoices,
-        pageSize: 15,
-        default: allProviderChoices[0]?.value
+  // Step 2: Check for a mandatory LiteLLM integration.
+  //
+  // Skipped on update flows: re-authenticating to change the model of a profile
+  // that already exists carries no enforcement benefit and costs the user a
+  // browser round trip (CR-003 on EPMCDME-11733).
+  if (!isUpdate && isCodeMieBackedProvider(provider)) {
+    let enforcementResult: EnforcementGateResult;
+    try {
+      enforcementResult = await detectLiteLLMEnforcement();
+    } catch (error) {
+      // Ctrl+C during the gate's SSO prompts should exit cleanly, not surface
+      // as a raw stack trace via the Commander action handler.
+      if (isPromptAbortError(error)) {
+        console.log(chalk.yellow('\nSetup cancelled.\n'));
+        return;
       }
-    ]);
-    provider = selectedProvider;
+      throw error;
+    }
+
+    codeMieSession = enforcementResult.session;
+
+    if (enforcementResult.enforced) {
+      const litellmSteps = ProviderRegistry.getSetupSteps(ProviderName.LITELLM);
+      if (!litellmSteps) {
+        throw new Error('LiteLLM integration is required for this project but the LiteLLM provider is not available. Please reinstall codemie-cli.');
+      }
+      provider = ProviderName.LITELLM;
+      enforcementContext = {
+        integration: enforcementResult.integration,
+        project: enforcementResult.project,
+        authResult: enforcementResult.authResult,
+        codeMieUrl: enforcementResult.codeMieUrl
+      };
+      console.log(chalk.cyan(`\n📌 This project uses a mandatory LiteLLM integration: "${enforcementResult.integration.alias}"\n   Provider has been set to LiteLLM automatically.\n`));
+    }
   }
 
   // Get setup steps from provider registry
@@ -338,7 +349,15 @@ async function runSetupWizard(force?: boolean): Promise<void> {
   }
 
   // Use plugin-based setup flow
-  await handlePluginSetup(provider, setupSteps, profileName, isUpdate, storageLocation, enforcementContext, codeMieSession);
+  await handlePluginSetup(
+    provider,
+    setupSteps,
+    profileName,
+    isUpdate,
+    storageLocation,
+    enforcementContext,
+    codeMieSession
+  );
 }
 
 /**
