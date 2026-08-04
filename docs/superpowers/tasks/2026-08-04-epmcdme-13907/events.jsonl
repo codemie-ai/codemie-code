@@ -1,0 +1,4 @@
+{"event":"lifecycle_emission","intent":"artifact_published","artifact_kind":"plan","status":"failed"}
+{"event":"lifecycle_emission","intent":"artifact_published","artifact_kind":"plan","status":"failed","note":"Jira attachment tool returned empty error; plan.md is at docs/superpowers/tasks/2026-08-04-epmcdme-13907/plan.md"}
+{"schema":1,"ts":"2026-08-04T17:30:00Z","event":"decision.recorded","run_id":"epmcdme-13907","phase":5,"actor":"decision-router","summary":"Decision recorded for code-review.final: approve","artifacts":["decisions.jsonl"],"data":{"gate_id":"code-review.final","mode":"hitl","decision":"approve","source":"hitl","escalated":false,"prior_context":{"question":"Code review: approve or request changes?","phase":5,"risk_flags":[],"artifact_refs":["code-review.diff","code-review-final.json"]}}}
+{"event":"lifecycle_emission","intent":"record_complexity_score","assessment_mode":"actual","status":"succeeded"}
