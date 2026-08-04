@@ -184,13 +184,13 @@ describe('fileResolver', () => {
 
         const base64Data = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
         const messages: ClaudeMessage[] = [
-          // Meta message with file name
+          // Real Claude Code JSONL: meta message holds BOTH base64 and [Image: source:] text
           {
             type: 'user',
             uuid: 'meta-1',
-            parentUuid: 'msg-1',
+            parentUuid: 'msg-parent',
             sessionId: mockSessionId,
-            timestamp: '2024-01-01T00:00:00Z',
+            timestamp: '2024-01-01T00:00:01Z',
             isMeta: true,
             message: {
               role: 'user',
@@ -198,22 +198,6 @@ describe('fileResolver', () => {
                 {
                   type: 'text',
                   text: '[Image: source: /path/to/screenshot.png]'
-                }
-              ]
-            }
-          } as ClaudeMessage,
-          // User message with image
-          {
-            type: 'user',
-            uuid: 'msg-1',
-            sessionId: mockSessionId,
-            timestamp: '2024-01-01T00:00:01Z',
-            message: {
-              role: 'user',
-              content: [
-                {
-                  type: 'text',
-                  text: 'Look at this image'
                 },
                 {
                   type: 'image',
@@ -224,6 +208,17 @@ describe('fileResolver', () => {
                   }
                 }
               ]
+            }
+          } as ClaudeMessage,
+          // Parent non-meta message — empty, as in real Claude Code JSONL
+          {
+            type: 'user',
+            uuid: 'msg-parent',
+            sessionId: mockSessionId,
+            timestamp: '2024-01-01T00:00:00Z',
+            message: {
+              role: 'user',
+              content: []
             }
           } as ClaudeMessage
         ];
@@ -253,13 +248,13 @@ describe('fileResolver', () => {
         vi.mocked(readFileSync).mockReturnValue(JSON.stringify(mockSession));
 
         const messages: ClaudeMessage[] = [
-          // Meta message with multiple file names
+          // Single meta message with filename text AND both attachment content items
           {
             type: 'user',
             uuid: 'meta-1',
-            parentUuid: 'msg-1',
+            parentUuid: 'msg-parent',
             sessionId: mockSessionId,
-            timestamp: '2024-01-01T00:00:00Z',
+            timestamp: '2024-01-01T00:00:01Z',
             isMeta: true,
             message: {
               role: 'user',
@@ -267,19 +262,7 @@ describe('fileResolver', () => {
                 {
                   type: 'text',
                   text: '[Image: source: /path/to/image1.png]\n[Document: source: /path/to/doc.pdf]'
-                }
-              ]
-            }
-          } as ClaudeMessage,
-          // User message with multiple attachments
-          {
-            type: 'user',
-            uuid: 'msg-1',
-            sessionId: mockSessionId,
-            timestamp: '2024-01-01T00:00:01Z',
-            message: {
-              role: 'user',
-              content: [
+                },
                 {
                   type: 'image',
                   source: {
@@ -298,6 +281,13 @@ describe('fileResolver', () => {
                 }
               ]
             }
+          } as ClaudeMessage,
+          {
+            type: 'user',
+            uuid: 'msg-parent',
+            sessionId: mockSessionId,
+            timestamp: '2024-01-01T00:00:00Z',
+            message: { role: 'user', content: [] }
           } as ClaudeMessage
         ];
         vi.mocked(readJSONL).mockResolvedValue(messages);
@@ -313,7 +303,7 @@ describe('fileResolver', () => {
         expect(result[1].sizeBytes).toBeGreaterThan(0);
       });
 
-      it('should only check last 2 user messages', async () => {
+      it('should detect attachment at any position within the current turn', async () => {
         vi.mocked(existsSync).mockReturnValue(true);
         const mockSession: Session = {
           id: mockSessionId,
@@ -324,65 +314,61 @@ describe('fileResolver', () => {
         } as Session;
         vi.mocked(readFileSync).mockReturnValue(JSON.stringify(mockSession));
 
+        // Session layout (chronological, as stored in JSONL):
+        //   [0] assistant message     ← turn boundary (scan stops here)
+        //   [1] msg-parent            ← non-meta empty (current turn)
+        //   [2] meta-with-image       ← isMeta, has base64 (current turn) ← MUST detect
+        //   [3] meta-text-only        ← isMeta, no attachment (current turn)
+        //   [4] msg-tool-result       ← non-meta tool_result (current turn)
         const messages: ClaudeMessage[] = [
-          // Old user message (should be ignored)
           {
-            type: 'user',
-            uuid: 'msg-old',
+            type: 'assistant',
+            uuid: 'asst-1',
             sessionId: mockSessionId,
             timestamp: '2024-01-01T00:00:00Z',
-            message: {
-              role: 'user',
-              content: [
-                {
-                  type: 'image',
-                  source: {
-                    type: 'base64',
-                    media_type: 'image/png',
-                    data: 'old-image-data'
-                  }
-                }
-              ]
-            }
+            message: { role: 'assistant', content: 'Previous assistant reply' }
           } as ClaudeMessage,
-          // Recent user message 1
           {
             type: 'user',
-            uuid: 'msg-1',
+            uuid: 'msg-parent',
             sessionId: mockSessionId,
             timestamp: '2024-01-01T00:00:01Z',
+            message: { role: 'user', content: [] }
+          } as ClaudeMessage,
+          {
+            type: 'user',
+            uuid: 'meta-with-image',
+            parentUuid: 'msg-parent',
+            sessionId: mockSessionId,
+            timestamp: '2024-01-01T00:00:02Z',
+            isMeta: true,
             message: {
               role: 'user',
               content: [
+                { type: 'text', text: '[Image: source: /path/to/photo.png]' },
                 {
                   type: 'image',
-                  source: {
-                    type: 'base64',
-                    media_type: 'image/png',
-                    data: 'recent-image-1'
-                  }
+                  source: { type: 'base64', media_type: 'image/png', data: 'base64-photo-data' }
                 }
               ]
             }
           } as ClaudeMessage,
-          // Recent user message 2
           {
             type: 'user',
-            uuid: 'msg-2',
+            uuid: 'meta-text-only',
             sessionId: mockSessionId,
-            timestamp: '2024-01-01T00:00:02Z',
+            timestamp: '2024-01-01T00:00:03Z',
+            isMeta: true,
+            message: { role: 'user', content: [{ type: 'text', text: 'some context' }] }
+          } as ClaudeMessage,
+          {
+            type: 'user',
+            uuid: 'msg-tool-result',
+            sessionId: mockSessionId,
+            timestamp: '2024-01-01T00:00:04Z',
             message: {
               role: 'user',
-              content: [
-                {
-                  type: 'image',
-                  source: {
-                    type: 'base64',
-                    media_type: 'image/png',
-                    data: 'recent-image-2'
-                  }
-                }
-              ]
+              content: [{ type: 'tool_result', content: 'tool output' }]
             }
           } as ClaudeMessage
         ];
@@ -390,14 +376,152 @@ describe('fileResolver', () => {
 
         const result = await detectFileUploadsFromSession(mockSessionId);
 
-        expect(result).toHaveLength(2);
-        expect(result[0].data).toBe('recent-image-2'); // Most recent first
+        expect(result).toHaveLength(1);
+        expect(result[0].data).toBe('base64-photo-data');
+        expect(result[0].fileName).toBe('photo.png');
         expect(result[0].sizeBytes).toBeGreaterThan(0);
-        expect(result[1].data).toBe('recent-image-1');
-        expect(result[1].sizeBytes).toBeGreaterThan(0);
       });
 
-      it('should generate fallback filename when meta message is missing', async () => {
+      it('should not detect attachments from a previous turn', async () => {
+        vi.mocked(existsSync).mockReturnValue(true);
+        const mockSession: Session = {
+          id: mockSessionId,
+          correlation: {
+            status: 'matched',
+            agentSessionFile: mockAgentSessionFile
+          }
+        } as Session;
+        vi.mocked(readFileSync).mockReturnValue(JSON.stringify(mockSession));
+
+        // Turn 1: user uploaded an image, assistant replied
+        // Turn 2: user sends a plain message — no new upload
+        // detectFileUploadsFromSession must return [] (no current-turn attachment)
+        const messages: ClaudeMessage[] = [
+          {
+            type: 'user',
+            uuid: 'meta-old',
+            parentUuid: 'msg-old-parent',
+            sessionId: mockSessionId,
+            timestamp: '2024-01-01T00:00:00Z',
+            isMeta: true,
+            message: {
+              role: 'user',
+              content: [
+                { type: 'text', text: '[Image: source: /old/image.png]' },
+                {
+                  type: 'image',
+                  source: { type: 'base64', media_type: 'image/png', data: 'old-image-data' }
+                }
+              ]
+            }
+          } as ClaudeMessage,
+          {
+            type: 'user',
+            uuid: 'msg-old-parent',
+            sessionId: mockSessionId,
+            timestamp: '2024-01-01T00:00:01Z',
+            message: { role: 'user', content: [] }
+          } as ClaudeMessage,
+          // Assistant reply — turn boundary
+          {
+            type: 'assistant',
+            uuid: 'asst-1',
+            sessionId: mockSessionId,
+            timestamp: '2024-01-01T00:00:02Z',
+            message: { role: 'assistant', content: 'I see your image.' }
+          } as ClaudeMessage,
+          // Turn 2 — current turn, plain text only
+          {
+            type: 'user',
+            uuid: 'msg-current',
+            sessionId: mockSessionId,
+            timestamp: '2024-01-01T00:00:03Z',
+            message: {
+              role: 'user',
+              content: [{ type: 'text', text: 'Just a text message, no new file' }]
+            }
+          } as ClaudeMessage
+        ];
+        vi.mocked(readJSONL).mockResolvedValue(messages);
+
+        const result = await detectFileUploadsFromSession(mockSessionId);
+
+        expect(result).toEqual([]);
+      });
+
+      it('should detect image at position 3 when tool-result messages are at positions 1 and 2', async () => {
+        vi.mocked(existsSync).mockReturnValue(true);
+        const mockSession: Session = {
+          id: mockSessionId,
+          correlation: {
+            status: 'matched',
+            agentSessionFile: mockAgentSessionFile
+          }
+        } as Session;
+        vi.mocked(readFileSync).mockReturnValue(JSON.stringify(mockSession));
+
+        // Reproduces the real evidence from EPMCDME-13907:
+        //   uuid=c8d31c75  tool_result   ← pos 1 (most recent, no attachment)
+        //   uuid=a31514f8  isMeta, text  ← pos 2 (no attachment)
+        //   uuid=00b98ab8  isMeta, image ← pos 3 (was missed by old RECENT_MESSAGES_LIMIT=2)
+        //   uuid=3677b4c3  non-meta, []  ← parent, empty
+        const messages: ClaudeMessage[] = [
+          {
+            type: 'user',
+            uuid: 'msg-3677b4c3',
+            sessionId: mockSessionId,
+            timestamp: '2024-01-01T00:00:00Z',
+            message: { role: 'user', content: [] }
+          } as ClaudeMessage,
+          {
+            type: 'user',
+            uuid: 'msg-00b98ab8',
+            parentUuid: 'msg-3677b4c3',
+            sessionId: mockSessionId,
+            timestamp: '2024-01-01T00:00:01Z',
+            isMeta: true,
+            message: {
+              role: 'user',
+              content: [
+                { type: 'text', text: '[Image: source: /uploads/diagram.png]' },
+                {
+                  type: 'image',
+                  source: { type: 'base64', media_type: 'image/png', data: 'base64-diagram' }
+                }
+              ]
+            }
+          } as ClaudeMessage,
+          {
+            type: 'user',
+            uuid: 'msg-a31514f8',
+            sessionId: mockSessionId,
+            timestamp: '2024-01-01T00:00:02Z',
+            isMeta: true,
+            message: { role: 'user', content: [{ type: 'text', text: 'context only' }] }
+          } as ClaudeMessage,
+          {
+            type: 'user',
+            uuid: 'msg-c8d31c75',
+            sessionId: mockSessionId,
+            timestamp: '2024-01-01T00:00:03Z',
+            message: {
+              role: 'user',
+              content: [{ type: 'tool_result', content: 'tool result value' }]
+            }
+          } as ClaudeMessage
+        ];
+        vi.mocked(readJSONL).mockResolvedValue(messages);
+
+        const result = await detectFileUploadsFromSession(mockSessionId);
+
+        expect(result).toHaveLength(1);
+        expect(result[0].fileName).toBe('diagram.png');
+        expect(result[0].data).toBe('base64-diagram');
+        expect(result[0].type).toBe('image');
+        expect(result[0].sizeBytes).toBeGreaterThan(0);
+      });
+
+      it('should generate fallback filename when filename annotation is absent from meta message', async () => {
         vi.mocked(existsSync).mockReturnValue(true);
         const mockSession: Session = {
           id: mockSessionId,
@@ -414,6 +538,7 @@ describe('fileResolver', () => {
             uuid: 'msg-1',
             sessionId: mockSessionId,
             timestamp: '2024-01-01T00:00:00Z',
+            isMeta: true,
             message: {
               role: 'user',
               content: [
@@ -455,6 +580,7 @@ describe('fileResolver', () => {
             uuid: 'msg-1',
             sessionId: mockSessionId,
             timestamp: '2024-01-01T00:00:00Z',
+            isMeta: true,
             message: {
               role: 'user',
               content: [
@@ -497,6 +623,7 @@ describe('fileResolver', () => {
             uuid: 'msg-1',
             sessionId: mockSessionId,
             timestamp: '2024-01-01T00:00:00Z',
+            isMeta: true,
             message: {
               role: 'user',
               content: [
@@ -542,6 +669,7 @@ describe('fileResolver', () => {
             uuid: 'msg-1',
             sessionId: mockSessionId,
             timestamp: '2024-01-01T00:00:00Z',
+            isMeta: true,
             message: {
               role: 'user',
               content: [
@@ -587,6 +715,7 @@ describe('fileResolver', () => {
             uuid: 'msg-1',
             sessionId: mockSessionId,
             timestamp: '2024-01-01T00:00:00Z',
+            isMeta: true,
             message: {
               role: 'user',
               content: [
@@ -630,6 +759,7 @@ describe('fileResolver', () => {
             uuid: 'msg-1',
             sessionId: mockSessionId,
             timestamp: '2024-01-01T00:00:00Z',
+            isMeta: true,
             message: {
               role: 'user',
               content: [
@@ -674,6 +804,7 @@ describe('fileResolver', () => {
             uuid: 'msg-1',
             sessionId: mockSessionId,
             timestamp: '2024-01-01T00:00:00Z',
+            isMeta: true,
             message: {
               role: 'user',
               content: [
@@ -718,6 +849,7 @@ describe('fileResolver', () => {
             uuid: 'msg-1',
             sessionId: mockSessionId,
             timestamp: '2024-01-01T00:00:00Z',
+            isMeta: true,
             message: {
               role: 'user',
               content: [
