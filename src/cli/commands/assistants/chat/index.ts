@@ -95,9 +95,12 @@ async function chatWithAssistant(
   // Collect files from session and CLI paths
   let detectedFiles: DetectedFile[] = [];
 
-  // 1. Detect files from session (if conversationId exists)
-  if (conversationId) {
-    detectedFiles = await detectFileUploadsFromSession(conversationId, { quiet: false });
+  // 1. Detect files from the Claude session (always use CODEMIE_SESSION_ID, not --conversation-id).
+  // --conversation-id identifies the assistant chat thread; CODEMIE_SESSION_ID identifies the
+  // Claude session whose JSONL contains the uploaded file blobs.
+  const claudeSessionId = process.env.CODEMIE_SESSION_ID;
+  if (claudeSessionId) {
+    detectedFiles = await detectFileUploadsFromSession(claudeSessionId, { quiet: false });
   }
 
   // 2. Read files from --file paths (if provided)
