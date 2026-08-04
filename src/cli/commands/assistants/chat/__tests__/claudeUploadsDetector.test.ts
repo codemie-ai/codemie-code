@@ -396,10 +396,13 @@ describe('fileResolver', () => {
         // Turn 1: user uploaded an image, assistant replied
         // Turn 2: user sends a plain message — no new upload
         // detectFileUploadsFromSession must return [] (no current-turn attachment)
+        // promptId is the grouping key: turn-1 messages share 'prompt-prev',
+        // turn-2 message has 'prompt-curr' (no isMeta in turn 2)
         const messages: ClaudeMessage[] = [
           {
             type: 'user',
             uuid: 'meta-old',
+            promptId: 'prompt-prev',
             parentUuid: 'msg-old-parent',
             sessionId: mockSessionId,
             timestamp: '2024-01-01T00:00:00Z',
@@ -418,6 +421,7 @@ describe('fileResolver', () => {
           {
             type: 'user',
             uuid: 'msg-old-parent',
+            promptId: 'prompt-prev',
             sessionId: mockSessionId,
             timestamp: '2024-01-01T00:00:01Z',
             message: { role: 'user', content: [] }
@@ -434,6 +438,7 @@ describe('fileResolver', () => {
           {
             type: 'user',
             uuid: 'msg-current',
+            promptId: 'prompt-curr',
             sessionId: mockSessionId,
             timestamp: '2024-01-01T00:00:03Z',
             message: {
@@ -447,6 +452,162 @@ describe('fileResolver', () => {
         const result = await detectFileUploadsFromSession(mockSessionId);
 
         expect(result).toEqual([]);
+      });
+
+      it('should detect image when base64 and filename are in separate isMeta messages sharing the same promptId (Bug B)', async () => {
+        vi.mocked(existsSync).mockReturnValue(true);
+        const mockSession: Session = {
+          id: mockSessionId,
+          correlation: {
+            status: 'matched',
+            agentSessionFile: mockAgentSessionFile
+          }
+        } as Session;
+        vi.mocked(readFileSync).mockReturnValue(JSON.stringify(mockSession));
+
+        // Real Claude Code JSONL structure (confirmed by live test):
+        //   isMeta A — contains only base64 image data, no [Image: source:] text
+        //   isMeta B — contains only [Image: source: /path] text, no base64
+        //   Both share the same promptId; the algorithm must cross-message-match them
+        const base64Data = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJ';
+        const messages: ClaudeMessage[] = [
+          {
+            type: 'user',
+            uuid: 'msg-parent',
+            promptId: 'prompt-abc',
+            sessionId: mockSessionId,
+            timestamp: '2024-01-01T00:00:00Z',
+            message: { role: 'user', content: [] }
+          } as ClaudeMessage,
+          {
+            type: 'user',
+            uuid: 'meta-base64',
+            promptId: 'prompt-abc',
+            sessionId: mockSessionId,
+            timestamp: '2024-01-01T00:00:01Z',
+            isMeta: true,
+            message: {
+              role: 'user',
+              content: [
+                { type: 'image', source: { type: 'base64', media_type: 'image/png', data: base64Data } }
+              ]
+            }
+          } as ClaudeMessage,
+          {
+            type: 'user',
+            uuid: 'meta-filename',
+            promptId: 'prompt-abc',
+            sessionId: mockSessionId,
+            timestamp: '2024-01-01T00:00:02Z',
+            isMeta: true,
+            message: {
+              role: 'user',
+              content: [
+                { type: 'text', text: '[Image: source: /path/to/screenshot.png]' }
+              ]
+            }
+          } as ClaudeMessage
+        ];
+        vi.mocked(readJSONL).mockResolvedValue(messages);
+
+        const result = await detectFileUploadsFromSession(mockSessionId);
+
+        expect(result).toHaveLength(1);
+        expect(result[0].fileName).toBe('screenshot.png');
+        expect(result[0].data).toBe(base64Data);
+        expect(result[0].mediaType).toBe('image/png');
+        expect(result[0].type).toBe('image');
+        expect(result[0].sizeBytes).toBeGreaterThan(0);
+      });
+
+      it('should detect image even when an assistant tool_use message appears after isMeta messages within the same prompt (Bug A)', async () => {
+        vi.mocked(existsSync).mockReturnValue(true);
+        const mockSession: Session = {
+          id: mockSessionId,
+          correlation: {
+            status: 'matched',
+            agentSessionFile: mockAgentSessionFile
+          }
+        } as Session;
+        vi.mocked(readFileSync).mockReturnValue(JSON.stringify(mockSession));
+
+        // Real Claude Code JSONL order (confirmed by live test):
+        //   msg-parent    — non-meta user message (the triggering prompt)
+        //   meta-base64   — isMeta, base64 only
+        //   meta-filename — isMeta, [Image: source:] text only
+        //   asst-tool-use — assistant tool_use (Claude starts executing before bash returns)
+        //   tool-result   — user tool_result message
+        //
+        // The old turn-boundary scan hit asst-tool-use and stopped before reaching meta-base64.
+        const base64Data = 'aW1hZ2VkYXRh';
+        const messages: ClaudeMessage[] = [
+          {
+            type: 'user',
+            uuid: 'msg-parent',
+            promptId: 'prompt-xyz',
+            sessionId: mockSessionId,
+            timestamp: '2024-01-01T00:00:00Z',
+            message: { role: 'user', content: [] }
+          } as ClaudeMessage,
+          {
+            type: 'user',
+            uuid: 'meta-base64',
+            promptId: 'prompt-xyz',
+            sessionId: mockSessionId,
+            timestamp: '2024-01-01T00:00:01Z',
+            isMeta: true,
+            message: {
+              role: 'user',
+              content: [
+                { type: 'image', source: { type: 'base64', media_type: 'image/png', data: base64Data } }
+              ]
+            }
+          } as ClaudeMessage,
+          {
+            type: 'user',
+            uuid: 'meta-filename',
+            promptId: 'prompt-xyz',
+            sessionId: mockSessionId,
+            timestamp: '2024-01-01T00:00:02Z',
+            isMeta: true,
+            message: {
+              role: 'user',
+              content: [
+                { type: 'text', text: '[Image: source: /uploads/photo.png]' }
+              ]
+            }
+          } as ClaudeMessage,
+          // Assistant tool_use appears AFTER isMeta messages (Bug A trigger)
+          {
+            type: 'assistant',
+            uuid: 'asst-tool-use',
+            sessionId: mockSessionId,
+            timestamp: '2024-01-01T00:00:03Z',
+            message: {
+              role: 'assistant',
+              content: [{ type: 'tool_use', id: 'tool-1', name: 'Bash', input: { command: 'process' } }]
+            }
+          } as ClaudeMessage,
+          {
+            type: 'user',
+            uuid: 'tool-result',
+            promptId: 'prompt-xyz',
+            sessionId: mockSessionId,
+            timestamp: '2024-01-01T00:00:04Z',
+            message: {
+              role: 'user',
+              content: [{ type: 'tool_result', tool_use_id: 'tool-1', content: 'done' }]
+            }
+          } as ClaudeMessage
+        ];
+        vi.mocked(readJSONL).mockResolvedValue(messages);
+
+        const result = await detectFileUploadsFromSession(mockSessionId);
+
+        expect(result).toHaveLength(1);
+        expect(result[0].fileName).toBe('photo.png');
+        expect(result[0].data).toBe(base64Data);
+        expect(result[0].sizeBytes).toBeGreaterThan(0);
       });
 
       it('should detect image at position 3 when tool-result messages are at positions 1 and 2', async () => {
@@ -535,9 +696,16 @@ describe('fileResolver', () => {
         const messages: ClaudeMessage[] = [
           {
             type: 'user',
-            uuid: 'msg-1',
+            uuid: 'msg-parent',
             sessionId: mockSessionId,
             timestamp: '2024-01-01T00:00:00Z',
+            message: { role: 'user', content: [] }
+          } as ClaudeMessage,
+          {
+            type: 'user',
+            uuid: 'msg-1',
+            sessionId: mockSessionId,
+            timestamp: '2024-01-01T00:00:01Z',
             isMeta: true,
             message: {
               role: 'user',
@@ -577,9 +745,16 @@ describe('fileResolver', () => {
         const messages: ClaudeMessage[] = [
           {
             type: 'user',
-            uuid: 'msg-1',
+            uuid: 'msg-parent',
             sessionId: mockSessionId,
             timestamp: '2024-01-01T00:00:00Z',
+            message: { role: 'user', content: [] }
+          } as ClaudeMessage,
+          {
+            type: 'user',
+            uuid: 'msg-1',
+            sessionId: mockSessionId,
+            timestamp: '2024-01-01T00:00:01Z',
             isMeta: true,
             message: {
               role: 'user',
@@ -620,9 +795,16 @@ describe('fileResolver', () => {
         const messages: ClaudeMessage[] = [
           {
             type: 'user',
-            uuid: 'msg-1',
+            uuid: 'msg-parent',
             sessionId: mockSessionId,
             timestamp: '2024-01-01T00:00:00Z',
+            message: { role: 'user', content: [] }
+          } as ClaudeMessage,
+          {
+            type: 'user',
+            uuid: 'msg-1',
+            sessionId: mockSessionId,
+            timestamp: '2024-01-01T00:00:01Z',
             isMeta: true,
             message: {
               role: 'user',
@@ -666,9 +848,16 @@ describe('fileResolver', () => {
         const messages: ClaudeMessage[] = [
           {
             type: 'user',
-            uuid: 'msg-1',
+            uuid: 'msg-parent',
             sessionId: mockSessionId,
             timestamp: '2024-01-01T00:00:00Z',
+            message: { role: 'user', content: [] }
+          } as ClaudeMessage,
+          {
+            type: 'user',
+            uuid: 'msg-1',
+            sessionId: mockSessionId,
+            timestamp: '2024-01-01T00:00:01Z',
             isMeta: true,
             message: {
               role: 'user',
@@ -712,9 +901,16 @@ describe('fileResolver', () => {
         const messages: ClaudeMessage[] = [
           {
             type: 'user',
-            uuid: 'msg-1',
+            uuid: 'msg-parent',
             sessionId: mockSessionId,
             timestamp: '2024-01-01T00:00:00Z',
+            message: { role: 'user', content: [] }
+          } as ClaudeMessage,
+          {
+            type: 'user',
+            uuid: 'msg-1',
+            sessionId: mockSessionId,
+            timestamp: '2024-01-01T00:00:01Z',
             isMeta: true,
             message: {
               role: 'user',
@@ -756,9 +952,16 @@ describe('fileResolver', () => {
         const messages: ClaudeMessage[] = [
           {
             type: 'user',
-            uuid: 'msg-1',
+            uuid: 'msg-parent',
             sessionId: mockSessionId,
             timestamp: '2024-01-01T00:00:00Z',
+            message: { role: 'user', content: [] }
+          } as ClaudeMessage,
+          {
+            type: 'user',
+            uuid: 'msg-1',
+            sessionId: mockSessionId,
+            timestamp: '2024-01-01T00:00:01Z',
             isMeta: true,
             message: {
               role: 'user',
@@ -801,9 +1004,16 @@ describe('fileResolver', () => {
         const messages: ClaudeMessage[] = [
           {
             type: 'user',
-            uuid: 'msg-1',
+            uuid: 'msg-parent',
             sessionId: mockSessionId,
             timestamp: '2024-01-01T00:00:00Z',
+            message: { role: 'user', content: [] }
+          } as ClaudeMessage,
+          {
+            type: 'user',
+            uuid: 'msg-1',
+            sessionId: mockSessionId,
+            timestamp: '2024-01-01T00:00:01Z',
             isMeta: true,
             message: {
               role: 'user',
@@ -846,9 +1056,16 @@ describe('fileResolver', () => {
         const messages: ClaudeMessage[] = [
           {
             type: 'user',
-            uuid: 'msg-1',
+            uuid: 'msg-parent',
             sessionId: mockSessionId,
             timestamp: '2024-01-01T00:00:00Z',
+            message: { role: 'user', content: [] }
+          } as ClaudeMessage,
+          {
+            type: 'user',
+            uuid: 'msg-1',
+            sessionId: mockSessionId,
+            timestamp: '2024-01-01T00:00:01Z',
             isMeta: true,
             message: {
               role: 'user',

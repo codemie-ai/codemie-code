@@ -11,7 +11,7 @@ import chalk from 'chalk';
 import mime from 'mime-types';
 import { logger } from '@/utils/logger.js';
 import { readJSONL } from '@/agents/core/session/utils/jsonl-reader.js';
-import type { ClaudeMessage } from '@/agents/plugins/claude/claude-message-types.js';
+import type { ClaudeMessage, ContentItem } from '@/agents/plugins/claude/claude-message-types.js';
 import type { Session } from '@/agents/core/session/types.js';
 import { getSessionPath } from '@/agents/core/session/session-config.js';
 
@@ -155,21 +155,34 @@ function processFileItem(
 }
 
 function extractFileContentFromMessages(messages: ClaudeMessage[]): DetectedFile[] {
-  const detectedFiles: DetectedFile[] = [];
-
+  // Step 1: find the most recent non-meta user message and capture its promptId.
+  // promptId groups all JSONL entries belonging to one user prompt turn.
+  let foundAnchor = false;
+  let anchorPromptId: string | undefined;
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
-
-    if (msg.type === MESSAGE_TYPE.ASSISTANT) {
+    if (msg.type === MESSAGE_TYPE.USER && !msg.isMeta) {
+      foundAnchor = true;
+      anchorPromptId = msg.promptId;
       break;
     }
+  }
+  if (!foundAnchor) {
+    logger.debug(`${LOG_PREFIX} Checked current-turn messages`, { filesFound: 0 });
+    return [];
+  }
 
-    if (!msg.isMeta || !Array.isArray(msg.message?.content)) {
-      continue;
-    }
+  // Step 2: collect all isMeta messages that share the anchor's promptId.
+  // In real Claude Code JSONL the base64 data and the [Image: source:] filename
+  // text live in separate isMeta entries — both carry the same promptId.
+  const promptMessages = messages.filter(
+    msg => msg.isMeta && msg.promptId === anchorPromptId && Array.isArray(msg.message?.content)
+  );
 
-    const fileNames: string[] = [];
-    for (const item of msg.message.content) {
+  // Step 3: gather every filename annotation across all those messages first.
+  const fileNames: string[] = [];
+  for (const msg of promptMessages) {
+    for (const item of msg.message!.content as ContentItem[]) {
       if (item.type === MESSAGE_TYPE.TEXT && item.text) {
         const matches = item.text.matchAll(ATTACHMENT_PATH_PATTERN);
         for (const match of matches) {
@@ -177,15 +190,17 @@ function extractFileContentFromMessages(messages: ClaudeMessage[]): DetectedFile
         }
       }
     }
+  }
 
-    let fileIndex = 0;
-    for (const item of msg.message.content) {
+  // Step 4: collect every base64 attachment item and match by positional index.
+  const detectedFiles: DetectedFile[] = [];
+  let fileIndex = 0;
+  for (const msg of promptMessages) {
+    for (const item of msg.message!.content as ContentItem[]) {
       if (isAttachmentType(item.type)) {
         const fileName = fileNames[fileIndex] ?? generateFallbackFileName(detectedFiles.length, fileIndex);
         const detectedFile = processFileItem(item, fileName, msg.uuid);
-        if (detectedFile) {
-          detectedFiles.push(detectedFile);
-        }
+        if (detectedFile) detectedFiles.push(detectedFile);
         fileIndex++;
       }
     }
