@@ -28,7 +28,7 @@ import { firstCodexUserText } from '../../../agents/plugins/codex/session/codex-
 import { collectCodexChildThreadIds } from '../../../agents/plugins/codex/session/codex-collab-links.js';
 
 /** Agents whose native logs we discover + synthesize. */
-const NATIVE_AGENTS = ['claude', 'codex', 'copilot-cli'] as const;
+const NATIVE_AGENTS = ['claude', 'codex', 'copilot-cli', 'gemini'] as const;
 
 /**
  * Agents CodeMie only reads analytics for and never installs, launches, or manages.

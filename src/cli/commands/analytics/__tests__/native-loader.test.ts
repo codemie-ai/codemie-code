@@ -335,6 +335,79 @@ describe('synthesizeCodexRawSession', () => {
   });
 });
 
+describe('loadNativeSessions — gemini ownership gate', () => {
+  const geminiParsed = {
+    sessionId: 'gm1',
+    agentName: 'Gemini CLI',
+    metadata: {},
+    messages: [],
+    metrics: { tools: { view: 1 }, toolStatus: {}, fileOperations: [] },
+  } as never;
+
+  function geminiDeps(filePath: string, parsedSession: unknown): NativeLoaderDeps {
+    return {
+      trackedLogPaths: () => new Set<string>(),
+      discover: async () => [
+        {
+          agentName: 'gemini',
+          descriptor: {
+            sessionId: 'gm1',
+            filePath,
+            projectPath: undefined,
+            createdAt: 1000,
+            updatedAt: 2000,
+            agentName: 'gemini',
+          },
+        },
+      ],
+      parse: async () => parsedSession as never,
+      realPath: (p) => p,
+      hasOwnershipMarker: () => false,
+    };
+  }
+
+  it('synthesizes a native gemini session into RawSessionData', async () => {
+    const results = await loadNativeSessions(undefined, geminiDeps('/tmp/gm1.json', geminiParsed));
+
+    expect(results).toHaveLength(1);
+    expect(results[0].sessionId).toBe('gm1');
+    expect(results[0].agentSessionFile).toBe('/tmp/gm1.json');
+  });
+
+  it('tags an unowned gemini session native-external (gemini is a managed agent)', async () => {
+    const results = await loadNativeSessions(undefined, geminiDeps('/tmp/gm1.json', geminiParsed));
+
+    // gemini is not analyticsOnly — unmanaged sessions are native-external, not native-unmanaged
+    expect(results[0].startEvent!.data.provider).toBe('native-external');
+  });
+
+  it('deduplicates a gemini session already tracked by CodeMie', async () => {
+    const trackedPath = '/tmp/gm1.json';
+    const deps: NativeLoaderDeps = {
+      trackedLogPaths: () => new Set([trackedPath]),
+      discover: async () => [
+        {
+          agentName: 'gemini',
+          descriptor: {
+            sessionId: 'gm1',
+            filePath: trackedPath,
+            projectPath: undefined,
+            createdAt: 1000,
+            agentName: 'gemini',
+          },
+        },
+      ],
+      parse: async () => geminiParsed as never,
+      realPath: (p) => p,
+      hasOwnershipMarker: () => false,
+    };
+
+    const results = await loadNativeSessions(undefined, deps);
+
+    expect(results).toHaveLength(0);
+  });
+});
+
 describe('loadNativeSessions codex child dedup', () => {
   it('skips native child rollout files referenced by wait_agent targets', async () => {
     const parentMessages = [
