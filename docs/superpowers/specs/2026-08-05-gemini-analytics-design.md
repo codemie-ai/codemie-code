@@ -22,7 +22,7 @@ Five files change; no new abstractions beyond a small paths helper.
 | `src/agents/plugins/gemini/gemini.session-adapter.ts` | Add `discoverSessions(options?)` method |
 | `src/cli/commands/analytics/native-loader.ts` | Add `'gemini'` to `NATIVE_AGENTS` |
 | `src/cli/commands/analytics/agent-labels.ts` | Add `'gemini': 'Gemini CLI'` |
-| `src/agents/plugins/gemini/report/client/app.js` | Add `gemini` entry to inline `AGENT_LABELS` and `AGENT_COLORS` |
+| `src/cli/commands/analytics/report/client/app.js` | Add `gemini` entry to inline `AGENT_LABELS` and `AGENT_COLORS` |
 
 The `synthesizeRawSession` path in `native-loader.ts` handles non-Codex agents without changes. `projectPath` will be `undefined` from the descriptor (no reverse-hash mapping exists in the Gemini CLI); the loader falls back to `'Unknown'`.
 
@@ -74,7 +74,7 @@ const AGENT_LABELS: Record<string, string> = {
 };
 ```
 
-`report/client/app.js` — add matching entries to the inline `AGENT_LABELS` object and pick a color for `AGENT_COLORS` from the existing palette (the report handles unknown agents gracefully, so this is cosmetic).
+`src/cli/commands/analytics/report/client/app.js` — add matching entries to the inline `AGENT_LABELS` object and pick a color for `AGENT_COLORS` from the existing palette (the report handles unknown agents gracefully, so this is cosmetic).
 
 ## Data Flow
 
