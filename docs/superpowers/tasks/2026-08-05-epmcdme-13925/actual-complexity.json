@@ -1,0 +1,63 @@
+{
+  "task": "Add agent tests validation gate to scripts/release.sh with three outcome branches gated on npm run test:integration:agent exit code and numPassedTests from vitest JSON reporter",
+  "generated": "2026-08-05T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 2,
+      "label": "S",
+      "affected": "release script (scripts/release.sh)",
+      "layers": "Workflow"
+    },
+    "requirements_clarity": {
+      "score": 1,
+      "label": "XS",
+      "status": "Clear",
+      "gaps": null
+    },
+    "technical_risk": {
+      "score": 2,
+      "label": "S",
+      "risk_factors": "bash signal-handling edge case (trap for SIGINT/SIGTERM cleanup), mktemp failure scenario, inline JSON parsing via node -e",
+      "mitigation": "two fix-up commits addressed both edge cases; patterns are standard bash idioms; change is trivially reversible"
+    },
+    "file_change_estimate": {
+      "score": 1,
+      "label": "XS",
+      "modified_files": 1,
+      "modified_file_list": ["scripts/release.sh"],
+      "new_files": 0,
+      "new_file_list": [],
+      "affected_dirs": ["scripts"]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 1,
+      "label": "XS",
+      "layers_changed": ["Workflow"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 8,
+  "size": "XS",
+  "band_range": "6-9",
+  "files_changed": 1,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "48-line gate block with 3-branch outcome logic added to a single self-contained bash file — meaningful logic beyond a trivial line change, but strictly one file and one component"
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Standard bash patterns (mktemp, trap EXIT/INT/TERM, node -e inline JSON parse) used correctly, but two fix-up commits were required for signal-cleanup trap and mktemp failure guard — indicates minor non-trivial edge cases that fell within well-known bash idioms"
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}
