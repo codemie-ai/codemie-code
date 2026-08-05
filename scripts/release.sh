@@ -205,7 +205,8 @@ fi
 # Run agent tests before tagging — gate the release on test outcome
 echo ""
 echo "🧪 Running agent tests..."
-AGENT_TEST_JSON=$(mktemp /tmp/agent-test-XXXXX.json)
+AGENT_TEST_JSON=$(mktemp /tmp/agent-test-XXXXX.json) || { echo "ERROR: mktemp failed, cannot capture agent test results"; exit 1; }
+trap 'rm -f "$AGENT_TEST_JSON"' EXIT INT TERM
 npm run test:integration:agent -- --reporter=verbose --reporter=json --outputFile="$AGENT_TEST_JSON"
 AGENT_EXIT_CODE=$?
 
