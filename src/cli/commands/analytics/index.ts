@@ -4,6 +4,7 @@
 
 import { Command } from 'commander';
 import chalk from 'chalk';
+import inquirer from 'inquirer';
 import { AnalyticsAggregator } from './aggregator.js';
 import { AnalyticsFormatter } from './formatter.js';
 import { AnalyticsExporter } from './exporter.js';
@@ -148,6 +149,26 @@ export async function runAnalytics(options: AnalyticsOptions, source: AnalyticsS
         userEmail = cfg.userEmail || undefined;
       } catch {
         // omit email gracefully
+      }
+
+      if (userEmail === undefined && process.stdout.isTTY) {
+        console.log(chalk.yellow('\n  Warning: your email is not configured. It will be included in the report metadata and saved for future runs.'));
+        try {
+          const { email } = await inquirer.prompt<{ email: string }>([{
+            type: 'input',
+            name: 'email',
+            message: 'Enter your email address:',
+            validate: (v: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim()) || 'Please enter a valid email address',
+          }]);
+          userEmail = email.trim();
+          await ConfigLoader.saveUserEmail(userEmail).catch(() => { /* non-fatal */ });
+        } catch (err) {
+          if (err instanceof Error && (err.name === 'ExitPromptError' || err.name === 'AbortPromptError')) {
+            console.log(chalk.dim('\n  Report generation cancelled.'));
+            return;
+          }
+          throw err;
+        }
       }
 
       const { index: costIndex, summary } = costResult;
