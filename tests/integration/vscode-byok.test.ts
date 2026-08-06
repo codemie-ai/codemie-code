@@ -10,10 +10,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
-  VS_CODE_SUPPORTED_MODELS,
-  type VsCodeModelDefinition,
+  normalizeVsCodeModelCatalog,
+  type VsCodeCatalogModel,
   type VsCodeReasoningEffort,
-} from '../../src/cli/commands/proxy/connectors/vscode-models.js';
+} from '../../src/cli/commands/proxy/connectors/vscode-model-catalog.js';
+import {
+  resolveVsCodeModelCatalog,
+  type ResolvedVsCodeModel,
+} from '../../src/cli/commands/proxy/connectors/vscode-protocol-resolver.js';
 import {
   writeVsCodeLanguageModelsConfigAtPath,
 } from '../../src/cli/commands/proxy/connectors/vscode.js';
@@ -36,6 +40,48 @@ import {
 const GATEWAY_KEY = 'test-local-key';
 const PROFILE_MODEL = 'profile-selected-model-that-must-not-be-used';
 
+const CATALOG_MODELS: VsCodeCatalogModel[] = [
+  {
+    base_name: 'gpt-4.1',
+    deployment_name: 'gpt-4.1',
+    label: 'GPT 4.1',
+    enabled: true,
+    multimodal: true,
+    features: { streaming: true, tools: true },
+  },
+  {
+    base_name: 'gpt-5.6-sol',
+    deployment_name: 'gpt-5.6-sol-2026-07-09',
+    label: 'GPT 5.6 Sol',
+    enabled: true,
+    multimodal: true,
+    features: { streaming: true, tools: true },
+    protocol: {
+      type: 'responses',
+      zero_data_retention: true,
+      reasoning_efforts: ['low', 'high'],
+      reasoning_effort_format: 'responses',
+    },
+  },
+  {
+    base_name: 'claude-opus-4-8',
+    deployment_name: 'claude-opus-4-8',
+    label: 'Claude Opus 4.8',
+    enabled: true,
+    multimodal: true,
+    features: { streaming: true, tools: true },
+    protocol: {
+      type: 'messages',
+      adaptive_thinking: true,
+      reasoning_efforts: ['low', 'high'],
+    },
+  },
+];
+
+const RESOLVED_MODELS = resolveVsCodeModelCatalog(
+  normalizeVsCodeModelCatalog(CATALOG_MODELS).models
+).models;
+
 interface StartedServer {
   server: Server;
   url: string;
@@ -56,6 +102,8 @@ interface LanguageModel {
   zeroDataRetentionEnabled?: boolean;
   supportsReasoningEffort?: readonly string[];
   reasoningEffortFormat?: string;
+  maxInputTokens?: number;
+  maxOutputTokens?: number;
 }
 
 interface LanguageModelProvider {
@@ -85,12 +133,13 @@ async function readRequestBody(req: IncomingMessage): Promise<Record<string, unk
 }
 
 function buildRequestBody(
-  definition: VsCodeModelDefinition,
+  definition: ResolvedVsCodeModel,
   effort: VsCodeReasoningEffort | undefined
 ): Record<string, unknown> {
-  if (definition.apiType === 'responses') {
+  const { descriptor, protocol } = definition;
+  if (protocol.type === 'responses') {
     return {
-      model: definition.id,
+      model: descriptor.requestId,
       store: false,
       stream: false,
       input: [{ role: 'user', content: 'Call get_test_value.' }],
@@ -106,9 +155,9 @@ function buildRequestBody(
     };
   }
 
-  if (definition.apiType === 'messages') {
+  if (protocol.type === 'messages') {
     return {
-      model: definition.id,
+      model: descriptor.requestId,
       max_tokens: 1024,
       stream: false,
       messages: [{ role: 'user', content: 'Call get_test_value.' }],
@@ -118,13 +167,13 @@ function buildRequestBody(
         input_schema: { type: 'object', properties: {} },
       }],
       tool_choice: { type: 'auto' },
-      ...(definition.adaptiveThinking ? { thinking: { type: 'adaptive' } } : {}),
+      ...(protocol.defaults.adaptiveThinking ? { thinking: { type: 'adaptive' } } : {}),
       ...(effort ? { output_config: { effort } } : {}),
     };
   }
 
   return {
-    model: definition.id,
+    model: descriptor.requestId,
     stream: false,
     messages: [{ role: 'user', content: 'Call get_test_value.' }],
     tools: [{
@@ -142,17 +191,17 @@ function buildRequestBody(
 }
 
 function buildVsCodeAuthHeaders(
-  definition: VsCodeModelDefinition
+  definition: ResolvedVsCodeModel
 ): Record<string, string> {
-  if (definition.requestHeaders?.Authorization) {
+  const authorization = definition.protocol.defaults.requestHeaders?.Authorization;
+  if (authorization) {
     return {
-      authorization: definition.requestHeaders.Authorization.replace(
+      authorization: authorization.replace(
         '${apiKey}',
         GATEWAY_KEY
       ),
     };
   }
-  if (definition.apiType === 'messages') return { 'x-api-key': GATEWAY_KEY };
   return { authorization: `Bearer ${GATEWAY_KEY}` };
 }
 
@@ -219,7 +268,11 @@ describe('VS Code BYOK model matrix', () => {
     proxies.push(startedProxy.proxy);
 
     const configPath = join(testDir, 'User', 'chatLanguageModels.json');
-    await writeVsCodeLanguageModelsConfigAtPath(configPath, startedProxy.url);
+    await writeVsCodeLanguageModelsConfigAtPath(
+      configPath,
+      startedProxy.url,
+      RESOLVED_MODELS
+    );
     const providers = JSON.parse(
       await readFile(configPath, 'utf-8')
     ) as LanguageModelProvider[];
@@ -227,27 +280,32 @@ describe('VS Code BYOK model matrix', () => {
       provider => provider.name === 'CodeMie' && provider.vendor === 'customendpoint'
     );
 
-    expect(codeMieProvider?.models).toHaveLength(VS_CODE_SUPPORTED_MODELS.length);
+    expect(codeMieProvider?.models).toHaveLength(RESOLVED_MODELS.length);
     expect(codeMieProvider?.models?.some(model => model.id === PROFILE_MODEL)).toBe(false);
 
-    for (const definition of VS_CODE_SUPPORTED_MODELS) {
-      const configuredModel = codeMieProvider?.models?.find(model => model.id === definition.id);
+    for (const definition of RESOLVED_MODELS) {
+      const { descriptor, protocol } = definition;
+      const configuredModel = codeMieProvider?.models?.find(
+        model => model.id === descriptor.requestId
+      );
       expect(configuredModel).toMatchObject({
-        id: definition.id,
-        name: definition.id,
-        apiType: definition.apiType,
+        id: descriptor.requestId,
+        name: descriptor.label,
+        apiType: protocol.type,
+        maxInputTokens: protocol.defaults.maxInputTokens,
+        maxOutputTokens: protocol.defaults.maxOutputTokens,
       });
-      if (definition.apiType === 'responses') {
+      if (protocol.type === 'responses') {
         expect(configuredModel).toMatchObject({
           thinking: true,
           zeroDataRetentionEnabled: true,
-          supportsReasoningEffort: definition.supportsReasoningEffort,
+          supportsReasoningEffort: protocol.defaults.supportsReasoningEffort,
           reasoningEffortFormat: 'responses',
         });
       }
 
       const efforts: ReadonlyArray<VsCodeReasoningEffort | undefined> =
-        [undefined, ...(definition.supportsReasoningEffort ?? [])];
+        [undefined, ...(protocol.defaults.supportsReasoningEffort ?? [])];
       for (const effort of efforts) {
         const requestBody = buildRequestBody(definition, effort);
         const response = await fetch(String(configuredModel?.url), {
@@ -264,7 +322,7 @@ describe('VS Code BYOK model matrix', () => {
 
         const forwarded = captured.at(-1);
         expect(forwarded?.url).toBe(new URL(String(configuredModel?.url)).pathname);
-        const expectedBody = definition.apiType === 'responses'
+        const expectedBody = protocol.type === 'responses'
           ? { ...requestBody, user: 'vscode-byok' }
           : requestBody;
         expect(forwarded?.body).toEqual(expectedBody);

@@ -3,11 +3,11 @@ import { mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promis
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { ConfigurationError } from '@/utils/errors.js';
-import {
-  VS_CODE_SUPPORTED_MODELS,
-  type VsCodeApiType,
-  type VsCodeReasoningEffort,
-} from './vscode-models.js';
+import type { VsCodeReasoningEffort } from './vscode-model-catalog.js';
+import type {
+  ResolvedVsCodeModel,
+  VsCodeProtocolType,
+} from './vscode-protocol-resolver.js';
 
 const SECRET_REFERENCE_PATTERN = /^\$\{input:chat\.lm\.secret\.[^}]+\}$/;
 
@@ -25,10 +25,10 @@ interface VsCodeManagedModel {
   id: string;
   name: string;
   url: string;
-  apiType: VsCodeApiType;
-  toolCalling: true;
+  apiType: VsCodeProtocolType;
+  toolCalling: boolean;
   vision: boolean;
-  streaming: true;
+  streaming: boolean;
   thinking: boolean;
   zeroDataRetentionEnabled?: boolean;
   adaptiveThinking?: true;
@@ -39,8 +39,8 @@ interface VsCodeManagedModel {
   requestHeaders?: Readonly<Record<string, string>>;
   supportsReasoningEffort?: readonly VsCodeReasoningEffort[];
   reasoningEffortFormat?: 'chat-completions' | 'responses';
-  maxInputTokens: number;
-  maxOutputTokens: number;
+  maxInputTokens?: number;
+  maxOutputTokens?: number;
 }
 
 export interface WriteVsCodeConfigResult {
@@ -98,38 +98,56 @@ export function getVsCodeLanguageModelsPath(insiders = false): string {
   return join(productDir, 'User', 'chatLanguageModels.json');
 }
 
-function getApiPath(apiType: VsCodeApiType): string {
-  if (apiType === 'responses') return '/v1/responses';
-  if (apiType === 'messages') return '/v1/messages';
-  return '/v1/chat/completions';
-}
-
-function buildManagedModels(proxyUrl: string): VsCodeManagedModel[] {
-  return VS_CODE_SUPPORTED_MODELS.map(definition => {
+function buildManagedModels(
+  proxyUrl: string,
+  resolvedModels: readonly ResolvedVsCodeModel[]
+): VsCodeManagedModel[] {
+  return resolvedModels.map(({ descriptor, protocol }) => {
+    const protocolDefaults = protocol.defaults;
     const model: VsCodeManagedModel = {
-      id: definition.id,
-      name: definition.id,
-      url: new URL(getApiPath(definition.apiType), proxyUrl).toString(),
-      apiType: definition.apiType,
-      toolCalling: true,
-      vision: definition.vision,
-      streaming: true,
-      thinking: definition.thinking,
-      maxInputTokens: definition.maxInputTokens,
-      maxOutputTokens: definition.maxOutputTokens,
+      id: descriptor.requestId,
+      name: descriptor.label,
+      url: new URL(protocolDefaults.apiPath, proxyUrl).toString(),
+      apiType: protocol.type,
+      toolCalling: descriptor.features.tools ?? false,
+      vision: descriptor.multimodal,
+      streaming: descriptor.features.streaming ?? false,
+      thinking: protocolDefaults.thinking ?? (
+        protocolDefaults.adaptiveThinking === true ||
+        Boolean(protocolDefaults.supportsReasoningEffort?.length)
+      ),
     };
 
-    if (definition.adaptiveThinking) model.adaptiveThinking = true;
-    if (definition.zeroDataRetentionEnabled !== undefined) {
-      model.zeroDataRetentionEnabled = definition.zeroDataRetentionEnabled;
+    const maxInputTokens = descriptor.maxInputTokens ?? protocolDefaults.maxInputTokens;
+    if (maxInputTokens !== undefined) {
+      model.maxInputTokens = maxInputTokens;
     }
-    if (definition.modelOptions) model.modelOptions = definition.modelOptions;
-    if (definition.requestHeaders) model.requestHeaders = definition.requestHeaders;
-    if (definition.supportsReasoningEffort) {
-      model.supportsReasoningEffort = definition.supportsReasoningEffort;
+    const maxOutputTokens = descriptor.maxOutputTokens ?? protocolDefaults.maxOutputTokens;
+    if (maxOutputTokens !== undefined) {
+      model.maxOutputTokens = maxOutputTokens;
     }
-    if (definition.reasoningEffortFormat) {
-      model.reasoningEffortFormat = definition.reasoningEffortFormat;
+    const modelOptions = {
+      ...protocolDefaults.modelOptions,
+      ...(descriptor.features.temperature === false && { temperature: null }),
+      ...(descriptor.features.top_p === false && { top_p: null }),
+    };
+    if (Object.keys(modelOptions).length > 0) {
+      model.modelOptions = {
+        ...modelOptions,
+      };
+    }
+    if (protocolDefaults.adaptiveThinking) model.adaptiveThinking = true;
+    if (protocolDefaults.zeroDataRetentionEnabled !== undefined) {
+      model.zeroDataRetentionEnabled = protocolDefaults.zeroDataRetentionEnabled;
+    }
+    if (protocolDefaults.requestHeaders) {
+      model.requestHeaders = protocolDefaults.requestHeaders;
+    }
+    if (protocolDefaults.supportsReasoningEffort) {
+      model.supportsReasoningEffort = protocolDefaults.supportsReasoningEffort;
+    }
+    if (protocolDefaults.reasoningEffortFormat) {
+      model.reasoningEffortFormat = protocolDefaults.reasoningEffortFormat;
     }
 
     return model;
@@ -138,7 +156,8 @@ function buildManagedModels(proxyUrl: string): VsCodeManagedModel[] {
 
 function mergeManagedProviders(
   providers: VsCodeLanguageModelProvider[],
-  proxyUrl: string
+  proxyUrl: string,
+  resolvedModels: readonly ResolvedVsCodeModel[]
 ): { provider: VsCodeLanguageModelProvider; requiresSecretConfiguration: boolean } {
   const existingProvider = Object.assign({}, ...providers);
   const existingSettings = Object.assign(
@@ -154,7 +173,7 @@ function mergeManagedProviders(
     name: 'CodeMie',
     vendor: 'customendpoint',
     apiType: 'chat-completions',
-    models: buildManagedModels(proxyUrl),
+    models: buildManagedModels(proxyUrl, resolvedModels),
   };
 
   // VS Code owns effort selections. Preserve them instead of racing with the editor.
@@ -225,18 +244,27 @@ async function writeAtomically(configPath: string, content: string): Promise<voi
 
 export async function writeVsCodeLanguageModelsConfig(
   proxyUrl: string,
+  resolvedModels: readonly ResolvedVsCodeModel[],
   insiders = false
 ): Promise<WriteVsCodeConfigResult> {
   return writeVsCodeLanguageModelsConfigAtPath(
     getVsCodeLanguageModelsPath(insiders),
-    proxyUrl
+    proxyUrl,
+    resolvedModels
   );
 }
 
 export async function writeVsCodeLanguageModelsConfigAtPath(
   configPath: string,
-  proxyUrl: string
+  proxyUrl: string,
+  resolvedModels: readonly ResolvedVsCodeModel[]
 ): Promise<WriteVsCodeConfigResult> {
+  if (resolvedModels.length === 0) {
+    throw new ConfigurationError(
+      'Refusing to replace the VS Code CodeMie catalog with an empty model list.'
+    );
+  }
+
   const providers = await readProviders(configPath);
   const managedProviderIndexes = providers
     .map((provider, index) => isManagedProvider(provider) ? index : -1)
@@ -245,7 +273,7 @@ export async function writeVsCodeLanguageModelsConfigAtPath(
     .map(index => providers[index])
     .filter(isManagedProvider);
   const { provider: managedProvider, requiresSecretConfiguration } =
-    mergeManagedProviders(managedProviders, proxyUrl);
+    mergeManagedProviders(managedProviders, proxyUrl, resolvedModels);
   const firstManagedProviderIndex = managedProviderIndexes[0] ?? providers.length;
   const managedProviderIndexSet = new Set(managedProviderIndexes);
   const reconciledProviders = providers.flatMap((provider, index) => {

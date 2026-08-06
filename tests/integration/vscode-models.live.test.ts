@@ -3,7 +3,6 @@
  *
  * Required:
  *   CODEMIE_VSCODE_LIVE=1
- *   CODEMIE_VSCODE_MODELS=<model-id|model-a,model-b|all>
  *
  * Authentication:
  *   Either start a VS Code proxy with `codemie proxy connect vscode`, or set:
@@ -11,6 +10,7 @@
  *   CODEMIE_VSCODE_LIVE_API_KEY=<local proxy key or gateway token>
  *
  * Optional:
+ *   CODEMIE_VSCODE_MODELS=<model-id|model-a,model-b|all> (defaults to all)
  *   CODEMIE_VSCODE_EFFORTS=<effort|effort-a,effort-b|all>
  *   CODEMIE_VSCODE_PROJECT=<project>
  *   CODEMIE_VSCODE_REPORT_PATH=<markdown-output-path>
@@ -28,10 +28,14 @@ import { dirname, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { isProcessAlive, readState } from '../../src/cli/commands/proxy/daemon-manager.js';
 import {
-  VS_CODE_SUPPORTED_MODELS,
-  type VsCodeModelDefinition,
+  fetchVsCodeModelCatalog,
   type VsCodeReasoningEffort,
-} from '../../src/cli/commands/proxy/connectors/vscode-models.js';
+} from '../../src/cli/commands/proxy/connectors/vscode-model-catalog.js';
+import {
+  resolveVsCodeModelCatalog,
+  type ResolvedVsCodeCatalog,
+  type ResolvedVsCodeModel,
+} from '../../src/cli/commands/proxy/connectors/vscode-protocol-resolver.js';
 
 const LIVE_ENABLED = process.env.CODEMIE_VSCODE_LIVE === '1';
 const ALL_EFFORTS: readonly VsCodeReasoningEffort[] = [
@@ -43,12 +47,6 @@ const ALL_EFFORTS: readonly VsCodeReasoningEffort[] = [
   'xhigh',
   'max',
 ];
-const STATELESS_RESPONSES_MODEL_IDS = new Set([
-  'gpt-5.5-2026-04-24',
-  'gpt-5.6-luna-2026-07-09',
-  'gpt-5.6-sol-2026-07-09',
-  'gpt-5.6-terra-2026-07-09',
-]);
 const DEFAULT_REPORT_PATH = resolve('reports/vscode-model-certification.md');
 
 interface LiveConfiguration {
@@ -60,7 +58,7 @@ interface LiveConfiguration {
 
 interface CertificationResult {
   model: string;
-  apiType: VsCodeModelDefinition['apiType'];
+  apiType: ResolvedVsCodeModel['protocol']['type'];
   effort: VsCodeReasoningEffort | 'default';
   passed: boolean;
   status: number;
@@ -71,30 +69,31 @@ interface CertificationResult {
 }
 
 function buildVsCodeAuthHeaders(
-  definition: VsCodeModelDefinition,
+  definition: ResolvedVsCodeModel,
   apiKey: string
 ): Record<string, string> {
-  if (definition.requestHeaders?.Authorization) {
+  const authorization = definition.protocol.defaults.requestHeaders?.Authorization;
+  if (authorization) {
     return {
-      authorization: definition.requestHeaders.Authorization.replace('${apiKey}', apiKey),
+      authorization: authorization.replace('${apiKey}', apiKey),
     };
   }
-  if (definition.apiType === 'messages') return { 'x-api-key': apiKey };
   return { authorization: `Bearer ${apiKey}` };
 }
 
-function getApiPath(definition: VsCodeModelDefinition): string {
-  if (definition.apiType === 'responses') return '/v1/responses';
-  if (definition.apiType === 'messages') return '/v1/messages';
-  return '/v1/chat/completions';
+function getApiPath(definition: ResolvedVsCodeModel): string {
+  return definition.protocol.defaults.apiPath;
 }
 
-function selectModels(selector: string): readonly VsCodeModelDefinition[] {
-  if (selector === 'all') return VS_CODE_SUPPORTED_MODELS;
+function selectModels(
+  models: readonly ResolvedVsCodeModel[],
+  selector: string
+): readonly ResolvedVsCodeModel[] {
+  if (selector === 'all') return models;
 
   const requestedIds = selector.split(',').map(value => value.trim()).filter(Boolean);
-  const selected = VS_CODE_SUPPORTED_MODELS.filter(model => requestedIds.includes(model.id));
-  const selectedIds = new Set(selected.map(model => model.id));
+  const selected = models.filter(model => requestedIds.includes(model.descriptor.requestId));
+  const selectedIds = new Set(selected.map(model => model.descriptor.requestId));
   const unknownIds = requestedIds.filter(id => !selectedIds.has(id));
   if (unknownIds.length > 0) {
     throw new Error(`Unknown VS Code model IDs: ${unknownIds.join(', ')}`);
@@ -103,25 +102,24 @@ function selectModels(selector: string): readonly VsCodeModelDefinition[] {
 }
 
 function selectEfforts(
-  definition: VsCodeModelDefinition,
+  definition: ResolvedVsCodeModel,
   selector: string | undefined
 ): ReadonlyArray<VsCodeReasoningEffort | undefined> {
+  const supported = definition.protocol.defaults.supportsReasoningEffort ?? [];
   if (!selector) {
-    if (!STATELESS_RESPONSES_MODEL_IDS.has(definition.id)) return [undefined];
-
-    const supported = definition.supportsReasoningEffort ?? [];
+    if (supported.length === 0) return [undefined];
     const candidates: Array<VsCodeReasoningEffort | undefined> = [
+      undefined,
       'none',
       'medium',
       supported[supported.length - 1],
     ];
     return [...new Set(candidates.filter(
-      (effort): effort is VsCodeReasoningEffort =>
-        effort !== undefined && supported.includes(effort)
+      effort => effort === undefined || supported.includes(effort)
     ))];
   }
   if (selector === 'all') {
-    return [undefined, ...(definition.supportsReasoningEffort ?? [])];
+    return [undefined, ...supported];
   }
 
   const requested = selector.split(',').map(value => value.trim()).filter(Boolean);
@@ -133,95 +131,95 @@ function selectEfforts(
   }
 
   const efforts = requested as VsCodeReasoningEffort[];
-  const supported = definition.supportsReasoningEffort ?? [];
   const unsupported = efforts.filter(effort => !supported.includes(effort));
   if (unsupported.length > 0) {
     throw new Error(
-      `${definition.id} does not advertise efforts: ${unsupported.join(', ')}`
+      `${definition.descriptor.requestId} does not advertise efforts: ${unsupported.join(', ')}`
     );
   }
   return efforts;
 }
 
 function buildRequestBody(
-  definition: VsCodeModelDefinition,
+  definition: ResolvedVsCodeModel,
   effort: VsCodeReasoningEffort | undefined
 ): Record<string, unknown> {
-  if (definition.apiType === 'responses') {
+  const { descriptor, protocol } = definition;
+  const toolsEnabled = descriptor.features.tools === true;
+  const prompt = toolsEnabled
+    ? 'Call get_test_value with value "ready".'
+    : 'Reply with the single word "ready".';
+  if (protocol.type === 'responses') {
     return {
-      model: definition.id,
+      model: descriptor.requestId,
       store: false,
-      input: [{ role: 'user', content: 'Call get_test_value with value "ready".' }],
-      tools: [{
-        type: 'function',
-        name: 'get_test_value',
-        description: 'Return a supplied synthetic value.',
-        parameters: {
-          type: 'object',
-          properties: { value: { type: 'string' } },
-          required: ['value'],
-        },
-      }],
-      tool_choice: 'required',
+      input: [{ role: 'user', content: prompt }],
+      ...(toolsEnabled && {
+        tools: [{
+          type: 'function',
+          name: 'get_test_value',
+          description: 'Return a supplied synthetic value.',
+          parameters: {
+            type: 'object',
+            properties: { value: { type: 'string' } },
+            required: ['value'],
+          },
+        }],
+        tool_choice: 'required',
+      }),
       stream: true,
       ...(effort ? { reasoning: { effort } } : {}),
     };
   }
 
-  if (definition.apiType === 'messages') {
+  if (protocol.type === 'messages') {
     return {
-      model: definition.id,
+      model: descriptor.requestId,
       max_tokens: 1024,
       messages: [{
         role: 'user',
-        content: 'Call get_test_value with value "ready".',
+        content: prompt,
       }],
-      tools: [{
-        name: 'get_test_value',
-        description: 'Return a supplied synthetic value.',
-        input_schema: {
-          type: 'object',
-          properties: { value: { type: 'string' } },
-          required: ['value'],
-        },
-      }],
-      tool_choice: { type: 'auto' },
+      ...(toolsEnabled && {
+        tools: [{
+          name: 'get_test_value',
+          description: 'Return a supplied synthetic value.',
+          input_schema: {
+            type: 'object',
+            properties: { value: { type: 'string' } },
+            required: ['value'],
+          },
+        }],
+        tool_choice: { type: 'auto' },
+      }),
       stream: true,
-      ...(definition.adaptiveThinking ? { thinking: { type: 'adaptive' } } : {}),
+      ...(protocol.defaults.adaptiveThinking ? { thinking: { type: 'adaptive' } } : {}),
       ...(effort ? { output_config: { effort } } : {}),
     };
   }
 
   return {
-    model: definition.id,
+    model: descriptor.requestId,
     messages: [{
       role: 'user',
-      content: 'Call get_test_value with value "ready".',
+      content: prompt,
     }],
-    tools: [{
-      type: 'function',
-      function: {
-        name: 'get_test_value',
-        description: 'Return a supplied synthetic value.',
-        parameters: {
-          type: 'object',
-          properties: { value: { type: 'string' } },
-          required: ['value'],
+    ...(toolsEnabled && {
+      tools: [{
+        type: 'function',
+        function: {
+          name: 'get_test_value',
+          description: 'Return a supplied synthetic value.',
+          parameters: {
+            type: 'object',
+            properties: { value: { type: 'string' } },
+            required: ['value'],
+          },
         },
-      },
-    }],
-    tool_choice: 'required',
+      }],
+      tool_choice: 'required',
+    }),
     stream: true,
-    ...(definition.modelOptions?.temperature === null ? {} : {
-      ...(definition.modelOptions?.temperature !== undefined
-        ? { temperature: definition.modelOptions.temperature }
-        : {}),
-    }),
-    ...(definition.modelOptions?.top_p === null ? {} : {
-      ...(definition.modelOptions?.top_p !== undefined
-        ? { top_p: definition.modelOptions.top_p }
-        : {}),
-    }),
     ...(effort ? { reasoning_effort: effort } : {}),
   };
 }
@@ -298,12 +296,14 @@ function compactDetail(value: string): string {
 
 function getResponseDetail(
   responseOk: boolean,
+  toolCallRequired: boolean,
   toolCall: boolean,
   rawBody: string,
   payloads: unknown[]
 ): string {
   if (responseOk && toolCall) return 'Streaming function tool call received.';
-  if (responseOk) return 'Request succeeded but no function tool call was detected.';
+  if (responseOk && !toolCallRequired) return 'Streaming response received.';
+  if (responseOk) return 'Request succeeded but no required function tool call was detected.';
 
   for (const payload of payloads) {
     const message = findErrorMessage(payload);
@@ -348,7 +348,7 @@ async function resolveLiveConfiguration(): Promise<LiveConfiguration> {
 
 async function certifyAttempt(
   configuration: LiveConfiguration,
-  definition: VsCodeModelDefinition,
+  definition: ResolvedVsCodeModel,
   effort: VsCodeReasoningEffort | undefined,
   timeoutMs: number,
   attempt: number
@@ -370,23 +370,24 @@ async function certifyAttempt(
     const rawBody = await response.text();
     const payloads = parseResponsePayloads(rawBody);
     const toolCall = payloads.some(payload => containsToolCall(payload));
-    const passed = response.ok && toolCall;
+    const toolCallRequired = definition.descriptor.features.tools === true;
+    const passed = response.ok && (!toolCallRequired || toolCall);
 
     return {
-      model: definition.id,
-      apiType: definition.apiType,
+      model: definition.descriptor.requestId,
+      apiType: definition.protocol.type,
       effort: effort ?? 'default',
       passed,
       status: response.status,
       toolCall,
       durationMs: Date.now() - startedAt,
       attempts: attempt,
-      detail: getResponseDetail(response.ok, toolCall, rawBody, payloads),
+      detail: getResponseDetail(response.ok, toolCallRequired, toolCall, rawBody, payloads),
     };
   } catch (error) {
     return {
-      model: definition.id,
-      apiType: definition.apiType,
+      model: definition.descriptor.requestId,
+      apiType: definition.protocol.type,
       effort: effort ?? 'default',
       passed: false,
       status: 0,
@@ -404,7 +405,7 @@ function isRetryable(result: CertificationResult): boolean {
 
 async function certifyCombination(
   configuration: LiveConfiguration,
-  definition: VsCodeModelDefinition,
+  definition: ResolvedVsCodeModel,
   effort: VsCodeReasoningEffort | undefined,
   timeoutMs: number,
   maxAttempts: number
@@ -420,6 +421,9 @@ async function certifyCombination(
     );
     if (result.passed || !isRetryable(result)) return result;
     lastResult = result;
+    if (result.status === 429 && attempt < maxAttempts) {
+      await new Promise(resolveDelay => setTimeout(resolveDelay, 5000));
+    }
   }
   if (!lastResult) throw new Error('Certification did not execute any attempts.');
   return lastResult;
@@ -427,13 +431,18 @@ async function certifyCombination(
 
 function renderReport(
   configuration: LiveConfiguration,
-  selectedModels: readonly VsCodeModelDefinition[],
+  catalog: ResolvedVsCodeCatalog,
+  discoveredCount: number,
+  enabledCount: number,
+  selectedModels: readonly ResolvedVsCodeModel[],
   results: readonly CertificationResult[]
 ): string {
   const passed = results.filter(result => result.passed).length;
   const failed = results.length - passed;
   const fullyPassingModels = selectedModels.filter(model => {
-    const modelResults = results.filter(result => result.model === model.id);
+    const modelResults = results.filter(
+      result => result.model === model.descriptor.requestId
+    );
     return modelResults.length > 0 && modelResults.every(result => result.passed);
   }).length;
 
@@ -444,7 +453,11 @@ function renderReport(
     `- Target: \`${configuration.baseUrl}\``,
     `- Authentication source: \`${configuration.source}\``,
     '- Flow: streamed function-tool request through the VS Code-scoped CodeMie proxy',
-    `- Models: ${selectedModels.length}`,
+    `- Discovered models: ${discoveredCount}`,
+    `- Enabled models: ${enabledCount}`,
+    `- Protocol-compatible models: ${catalog.models.length}`,
+    `- Unclassified models: ${catalog.unclassified.length}`,
+    `- Executed models: ${selectedModels.length}`,
     `- Model/effort combinations: ${results.length}`,
     `- Passing combinations: ${passed}`,
     `- Failing combinations: ${failed}`,
@@ -465,21 +478,45 @@ function renderReport(
     '',
     '## Advertised Configuration',
     '',
-    '| Model | API | Advertised efforts | VS Code model options |',
-    '|---|---|---|---|',
+    '| Model | API | Token limits (input/output) | Advertised efforts | VS Code model options |',
+    '|---|---|---:|---|---|',
     ...selectedModels.map(model => {
-      const efforts = model.supportsReasoningEffort?.join(', ') ?? 'none';
-      const modelOptions = model.modelOptions
-        ? `\`${JSON.stringify(model.modelOptions)}\``
+      const efforts = model.protocol.defaults.supportsReasoningEffort?.join(', ') ?? 'none';
+      const options = {
+        ...model.protocol.defaults.modelOptions,
+        ...(model.descriptor.features.temperature === false && { temperature: null }),
+        ...(model.descriptor.features.top_p === false && { top_p: null }),
+      };
+      const modelOptions = Object.keys(options).length > 0
+        ? `\`${JSON.stringify(options)}\``
         : 'default';
-      return `| \`${model.id}\` | ${model.apiType} | ${efforts} | ${modelOptions} |`;
+      const maxInputTokens = model.descriptor.maxInputTokens ??
+        model.protocol.defaults.maxInputTokens;
+      const maxOutputTokens = model.descriptor.maxOutputTokens ??
+        model.protocol.defaults.maxOutputTokens;
+      const tokenLimits = `${maxInputTokens ?? 'unset'} / ${maxOutputTokens ?? 'unset'}`;
+      return `| \`${model.descriptor.requestId}\` | ${model.protocol.type} | ` +
+        `${tokenLimits} | ${efforts} | ${modelOptions} |`;
     }),
+    '',
+    '## Unclassified Models',
+    '',
+    ...(catalog.unclassified.length === 0
+      ? ['None.']
+      : [
+        '| Model | Provider | Reason |',
+        '|---|---|---|',
+        ...catalog.unclassified.map(model =>
+          `| \`${model.descriptor.requestId}\` | ` +
+          `${model.descriptor.provider ?? 'unknown'} | ${model.protocol.reason} |`
+        ),
+      ]),
     '',
     '## Interpretation',
     '',
     '- `default` means no explicit reasoning-effort parameter was sent.',
     '- Every advertised effort was sent using the model’s configured API body shape.',
-    '- PASS requires both a successful HTTP response and a streamed function tool call.',
+    '- PASS requires a successful streamed response and, when advertised, a function tool call.',
     '- A model should remain in the released catalog only when every advertised row passes.',
     '',
     '## Documentation',
@@ -487,7 +524,6 @@ function renderReport(
     '- [VS Code custom endpoint model configuration](https://code.visualstudio.com/docs/agent-customization/language-models)',
     '- [OpenAI model and reasoning guidance](https://developers.openai.com/api/docs/models)',
     '- [AWS Claude Messages request parameters](https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-anthropic-claude-messages-request-response.html)',
-    '',
   ];
 
   return `${lines.join('\n')}\n`;
@@ -495,25 +531,15 @@ function renderReport(
 
 describe.runIf(LIVE_ENABLED)('VS Code live model certification', () => {
   it('streams tools through every requested model and reasoning effort', async () => {
-    const selector = process.env.CODEMIE_VSCODE_MODELS;
-    if (!selector) {
-      throw new Error('CODEMIE_VSCODE_MODELS is required for live certification.');
-    }
-
     const configuration = await resolveLiveConfiguration();
-    const selectedModels = selectModels(selector);
+    const discoveredCatalog = await fetchVsCodeModelCatalog(
+      configuration.baseUrl,
+      configuration.apiKey
+    );
+    const catalog = resolveVsCodeModelCatalog(discoveredCatalog.models);
+    const selector = process.env.CODEMIE_VSCODE_MODELS ?? 'all';
+    const selectedModels = selectModels(catalog.models, selector);
     expect(selectedModels.length).toBeGreaterThan(0);
-
-    for (const definition of selectedModels) {
-      if (!STATELESS_RESPONSES_MODEL_IDS.has(definition.id)) continue;
-      expect(definition.apiType).toBe('responses');
-      expect(definition.zeroDataRetentionEnabled).toBe(true);
-      expect(definition.thinking).toBe(true);
-      expect(definition.supportsReasoningEffort).toEqual(
-        expect.arrayContaining(['none', 'medium'])
-      );
-      expect(definition.reasoningEffortFormat).toBe('responses');
-    }
 
     const parsedTimeout = Number(process.env.CODEMIE_VSCODE_REQUEST_TIMEOUT_MS ?? '120000');
     if (!Number.isFinite(parsedTimeout) || parsedTimeout <= 0) {
@@ -544,7 +570,14 @@ describe.runIf(LIVE_ENABLED)('VS Code live model certification', () => {
     await mkdir(dirname(reportPath), { recursive: true });
     await writeFile(
       reportPath,
-      renderReport(configuration, selectedModels, results),
+      renderReport(
+        configuration,
+        catalog,
+        discoveredCatalog.discoveredCount,
+        discoveredCatalog.enabledCount,
+        selectedModels,
+        results
+      ),
       'utf-8'
     );
 

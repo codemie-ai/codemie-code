@@ -39,6 +39,14 @@ vi.mock('../connectors/vscode.js', () => ({
   writeVsCodeLanguageModelsConfig: vi.fn(),
 }));
 
+vi.mock('../connectors/vscode-model-catalog.js', () => ({
+  fetchVsCodeModelCatalog: vi.fn(),
+}));
+
+vi.mock('../connectors/vscode-protocol-resolver.js', () => ({
+  resolveVsCodeModelCatalog: vi.fn(),
+}));
+
 vi.mock('../connectors/managed-mcp-remote.js', () => ({
   fetchManagedMcpServers: vi.fn().mockResolvedValue([]),
 }));
@@ -303,6 +311,8 @@ describe('proxy connect vscode', () => {
 
     const { ProviderRegistry } = await import('../../../../providers/index.js');
     const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
+    const { fetchVsCodeModelCatalog } = await import('../connectors/vscode-model-catalog.js');
+    const { resolveVsCodeModelCatalog } = await import('../connectors/vscode-protocol-resolver.js');
     const { writeVsCodeLanguageModelsConfig } = await import('../connectors/vscode.js');
     vi.mocked(ProviderRegistry.getProvider).mockReturnValue({
       name: 'ai-run-sso',
@@ -314,6 +324,32 @@ describe('proxy connect vscode', () => {
     vi.mocked(writeVsCodeLanguageModelsConfig).mockResolvedValue({
       configPath: '/mock/chatLanguageModels.json',
       requiresSecretConfiguration: false,
+    });
+    const descriptor = {
+      requestId: 'gpt-4.1',
+      deploymentName: 'gpt-4.1',
+      baseName: 'gpt-4.1',
+      label: 'GPT 4.1',
+      features: { streaming: true, tools: true },
+      default: true,
+      multimodal: true,
+      protocolMetadataPresent: false,
+    };
+    vi.mocked(fetchVsCodeModelCatalog).mockResolvedValue({
+      models: [descriptor],
+      discoveredCount: 1,
+      enabledCount: 1,
+    });
+    vi.mocked(resolveVsCodeModelCatalog).mockReturnValue({
+      models: [{
+        descriptor,
+        protocol: {
+          type: 'chat-completions',
+          source: 'compatibility-rule',
+          defaults: { apiPath: '/v1/chat/completions' },
+        },
+      }],
+      unclassified: [],
     });
   });
 
@@ -364,6 +400,7 @@ describe('proxy connect vscode', () => {
     expect(daemonOptions).not.toHaveProperty('model');
     expect(writeVsCodeLanguageModelsConfig).toHaveBeenCalledWith(
       'http://127.0.0.1:4001',
+      expect.any(Array),
       false
     );
   });
@@ -405,8 +442,48 @@ describe('proxy connect vscode', () => {
     expect(spawnDaemon).not.toHaveBeenCalled();
     expect(writeVsCodeLanguageModelsConfig).toHaveBeenCalledWith(
       'http://127.0.0.1:4001',
+      expect.any(Array),
       false
     );
+  });
+
+  it('does not overwrite VS Code configuration when model discovery fails', async () => {
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { checkProxyHealth } = await import('../health-check.js');
+    const { fetchVsCodeModelCatalog } = await import('../connectors/vscode-model-catalog.js');
+    const { writeVsCodeLanguageModelsConfig } = await import('../connectors/vscode.js');
+    const { createProxyCommand } = await import('../index.js');
+    vi.mocked(ConfigLoader.load).mockResolvedValue({
+      name: 'custom',
+      provider: 'ai-run-sso',
+      baseUrl: 'https://custom.example.com/api',
+      codeMieProject: 'team-project',
+      codeMieUrl: 'https://custom.example.com',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+    vi.mocked(checkStatus).mockResolvedValue({
+      running: true,
+      state: {
+        pid: process.pid,
+        port: 4001,
+        url: 'http://127.0.0.1:4001',
+        profile: 'custom',
+        gatewayKey: 'local-key',
+        provider: 'ai-run-sso',
+        targetUrl: 'https://custom.example.com/api',
+        project: 'team-project',
+        clientType: 'vscode-byok',
+        startedAt: new Date().toISOString(),
+      },
+    });
+    vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'deep', code: 'ok' });
+    vi.mocked(fetchVsCodeModelCatalog).mockRejectedValue(new Error('catalog unavailable'));
+
+    await expect(
+      createProxyCommand().parseAsync(['connect', 'vscode', '--profile', 'custom'], { from: 'user' })
+    ).rejects.toThrow('process.exit:1');
+
+    expect(writeVsCodeLanguageModelsConfig).not.toHaveBeenCalled();
   });
 
 });

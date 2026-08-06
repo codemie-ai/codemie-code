@@ -20,8 +20,9 @@ import {
 } from './daemon-manager.js';
 import { writeDesktopConfig, getDesktopBaseDir, mapCanonicalToDesktop } from './connectors/desktop.js';
 import { fetchManagedMcpServers } from './connectors/managed-mcp-remote.js';
+import { fetchVsCodeModelCatalog } from './connectors/vscode-model-catalog.js';
+import { resolveVsCodeModelCatalog } from './connectors/vscode-protocol-resolver.js';
 import { writeVsCodeLanguageModelsConfig } from './connectors/vscode.js';
-import { VS_CODE_SUPPORTED_MODELS } from './connectors/vscode-models.js';
 import { checkProxyHealth } from './health-check.js';
 import { printDesktopInspection } from './inspect-desktop.js';
 
@@ -601,8 +602,28 @@ export function createProxyCommand(): Command {
             : chalk.green('✓ Proxy started'));
         }
 
+        const catalog = await fetchVsCodeModelCatalog(state!.url, state!.gatewayKey);
+        const resolvedCatalog = resolveVsCodeModelCatalog(catalog.models);
+        for (const { descriptor, protocol } of resolvedCatalog.unclassified) {
+          logger.warn(
+            '[proxy] Omitting unclassified VS Code model',
+            ...sanitizeLogArgs({
+              requestId: descriptor.requestId,
+              provider: descriptor.provider ?? 'unknown',
+              reason: protocol.reason,
+            })
+          );
+        }
+        if (resolvedCatalog.models.length === 0) {
+          throw new ConfigurationError(
+            'The backend catalog did not contain any models with a supported VS Code protocol. ' +
+            'The existing VS Code configuration was not changed.'
+          );
+        }
+
         const result = await writeVsCodeLanguageModelsConfig(
           state!.url,
+          resolvedCatalog.models,
           Boolean(opts.insiders)
         );
         logger.info(
@@ -612,7 +633,10 @@ export function createProxyCommand(): Command {
             gatewayUrl: state!.url,
             profile: state!.profile,
             project: state!.project,
-            modelCount: VS_CODE_SUPPORTED_MODELS.length,
+            discoveredModelCount: catalog.discoveredCount,
+            enabledModelCount: catalog.enabledCount,
+            configuredModelCount: resolvedCatalog.models.length,
+            unclassifiedModelCount: resolvedCatalog.unclassified.length,
             clientType: state!.clientType,
             requiresSecretConfiguration: result.requiresSecretConfiguration,
           })
@@ -622,7 +646,11 @@ export function createProxyCommand(): Command {
         if (verbose) {
           console.log(`  Config:  ${result.configPath}`);
           console.log(`  Gateway: ${state!.url}`);
-          console.log(`  Models:  ${VS_CODE_SUPPORTED_MODELS.length}`);
+          console.log(
+            `  Models:  ${catalog.discoveredCount} discovered, ` +
+            `${catalog.enabledCount} enabled, ${resolvedCatalog.models.length} configured, ` +
+            `${resolvedCatalog.unclassified.length} unclassified`
+          );
           console.log(`  Project: ${config.codeMieProject || '(not configured)'}`);
         }
 
