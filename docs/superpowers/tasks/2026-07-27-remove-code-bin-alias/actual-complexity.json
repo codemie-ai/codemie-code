@@ -1,0 +1,63 @@
+{
+  "task": "Remove the 'code' npm bin alias from package.json and add docs/MIGRATION.md with user migration instructions.",
+  "generated": "2026-07-27T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 1,
+      "label": "XS",
+      "affected": "package.json bin section, docs/MIGRATION.md",
+      "layers": "Package Config"
+    },
+    "requirements_clarity": {
+      "score": 1,
+      "label": "XS",
+      "status": "Clear",
+      "gaps": null
+    },
+    "technical_risk": {
+      "score": 2,
+      "label": "S",
+      "risk_factors": "Breaking change: existing global npm installations retain a stale 'code' symlink that npm update does not remove; users must fully uninstall and reinstall",
+      "mitigation": "Migration guide (docs/MIGRATION.md) documents the stale-symlink cleanup steps and alternative aliases"
+    },
+    "file_change_estimate": {
+      "score": 2,
+      "label": "S",
+      "modified_files": 1,
+      "modified_file_list": ["package.json"],
+      "new_files": 1,
+      "new_file_list": ["docs/MIGRATION.md"],
+      "affected_dirs": [".", "docs"]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 1,
+      "label": "XS",
+      "layers_changed": ["Package Config"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 8,
+  "size": "XS",
+  "band_range": "6-9",
+  "files_changed": 2,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "technical_risk",
+      "reason": "S (2) not XS because the removal is a breaking change for published npm users: existing global installs retain a stale 'code' symlink that requires a full uninstall/reinstall to clean up — real user-facing impact even though the code change itself is a single-line deletion with trivial rollback"
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "S (2) not XS because the XS band requires no new files; docs/MIGRATION.md is a net-new file, which disqualifies XS even though only 1 file was modified"
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

@@ -149,7 +149,7 @@ export function createUninstallCommand(): Command {
           console.error(chalk.red(`✗ ${getErrorMessage(error)}`));
           console.log();
           console.log(chalk.cyan('💡 Available agents and frameworks:'));
-          const allAgents = AgentRegistry.getAllAgents();
+          const allAgents = AgentRegistry.getManageableAgents();
           for (const agent of allAgents) {
             console.log(chalk.white(`   • ${agent.name}`));
           }

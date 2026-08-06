@@ -310,9 +310,13 @@ describe('createSetupCommand — setup wizard wiring', () => {
     ]);
     mockGetCredentials.mockResolvedValue({ baseUrl: 'http://litellm', apiKey: 'sk-enforced' });
 
-    // inquirer.prompt sequence: storage → manualModel → profileName (switch skipped: active===profile)
+    // inquirer.prompt sequence: storage → provider → manualModel → profileName
+    // (switch skipped: active===profile). The provider prompt now runs BEFORE the
+    // gate; picking a CodeMie-backed provider is what admits the gate at all, and
+    // enforcement then overrides the choice to litellm.
     vi.mocked(inquirerMod.default.prompt)
       .mockResolvedValueOnce({ storage: 'global' })
+      .mockResolvedValueOnce({ provider: 'ai-run-sso' })
       .mockResolvedValueOnce({ manualModel: 'gpt-4-turbo' })
       .mockResolvedValueOnce({ newProfileName: 'my-profile' });
 
@@ -361,8 +365,11 @@ describe('createSetupCommand — setup wizard wiring', () => {
     // Arrange: user hits Ctrl+C during promptForCodeMieUrl inside the gate.
     vi.mocked(authHelpers.promptForCodeMieUrl).mockRejectedValue(new ExitPromptError());
 
-    // Storage prompt still resolves normally before the gate runs.
-    vi.mocked(inquirerMod.default.prompt).mockResolvedValueOnce({ storage: 'global' });
+    // Storage and provider prompts resolve normally before the gate runs; the
+    // gate only engages because the chosen provider is CodeMie-backed.
+    vi.mocked(inquirerMod.default.prompt)
+      .mockResolvedValueOnce({ storage: 'global' })
+      .mockResolvedValueOnce({ provider: 'ai-run-sso' });
 
     // Act — must not throw out of the wizard; ExitPromptError should be caught,
     // "Setup cancelled." printed, and the wizard should return.

@@ -34,7 +34,7 @@ export function createInstallCommand(): Command {
       try {
         // If no name provided, show available agents and frameworks
         if (!name) {
-          const agents = AgentRegistry.getAllAgents();
+          const agents = AgentRegistry.getManageableAgents();
 
           console.log();
           console.log(chalk.bold('📦 Available Agents:\n'));
@@ -318,7 +318,7 @@ export function createInstallCommand(): Command {
           console.error(chalk.red(`✗ ${getErrorMessage(error)}`));
           console.log();
           console.log(chalk.cyan('💡 Available agents:'));
-          const allAgents = AgentRegistry.getAllAgents();
+          const allAgents = AgentRegistry.getManageableAgents();
           for (const agent of allAgents) {
             console.log(chalk.white(`   • ${agent.name}`));
           }

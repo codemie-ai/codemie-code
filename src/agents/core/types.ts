@@ -319,6 +319,17 @@ export interface AgentMetadata {
   analyticsAdapter?: AgentAnalyticsAdapter;  // Optional analytics adapter
 
   /**
+   * True for agents CodeMie only reads analytics for and never installs, launches,
+   * or manages (e.g. GitHub Copilot CLI).
+   *
+   * Such an agent can never carry a CodeMie ownership marker, so the analytics
+   * ownership gate must not apply to it — see `isAnalyticsOnlyAgent` in
+   * `src/cli/commands/analytics/native-loader.ts`. Applying the gate would tag every
+   * one of its sessions `native-external` and drop them from the default report.
+   */
+  analyticsOnly?: boolean;
+
+  /**
    * When true, a per-session analytics JSON report is written automatically on
    * session exit (see BaseAgentAdapter finalization). Default off; enabled on the
    * interactive agents. A `--no-analytics-report` CLI flag disables it per run.

@@ -143,7 +143,7 @@ async function checkAgentForUpdate(agent: AgentAdapter): Promise<UpdateCheckResu
  * Check all installed agents for updates
  */
 async function checkAllAgentsForUpdates(): Promise<UpdateCheckResult[]> {
-  const agents = AgentRegistry.getAllAgents();
+  const agents = AgentRegistry.getManageableAgents();
   const results: UpdateCheckResult[] = [];
 
   // Check all agents in parallel
@@ -403,7 +403,7 @@ export function createUpdateCommand(): Command {
           console.error(chalk.red(`✗ ${getErrorMessage(error)}`));
           console.log();
           console.log(chalk.cyan('💡 Available agents:'));
-          const allAgents = AgentRegistry.getAllAgents();
+          const allAgents = AgentRegistry.getManageableAgents();
           for (const agent of allAgents) {
             console.log(chalk.white(`   • ${agent.name}`));
           }

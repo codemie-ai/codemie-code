@@ -3,6 +3,7 @@
  */
 
 import chalk from 'chalk';
+import { agentLabel } from './agent-labels.js';
 import type {
   RootAnalytics,
   ProjectAnalytics,
@@ -158,11 +159,19 @@ export class AnalyticsFormatter {
     console.log(chalk.white(`      Session: ${session.sessionId}`));
     console.log(chalk.dim(`      ${'-'.repeat(54)}`));
 
-    console.log(chalk.gray(`      Agent:     ${session.agentName}`));
+    // Print the label for readability AND the raw key, which is the exact token
+    // `--agent` accepts — without it there is no discoverable path from this output
+    // to the correct filter value.
+    const label = agentLabel(session.agentName);
+    const agentText =
+      label === session.agentName ? session.agentName : `${label} (${session.agentName})`;
+    console.log(chalk.gray(`      Agent:     ${agentText}`));
     const providerLabel =
       session.provider === 'native-external'
         ? chalk.yellow('native [external ⚠ not CodeMie-managed]')
-        : session.provider;
+        : session.provider === 'native-unmanaged'
+          ? chalk.gray('native [not CodeMie-managed — analytics only]')
+          : session.provider;
     console.log(chalk.gray(`      Provider:  `) + providerLabel);
     console.log(chalk.gray(`      Duration:  ${this.formatDuration(session.duration)}`));
     console.log(chalk.gray(`      Turns:     ${session.totalTurns}`));

@@ -42,6 +42,18 @@ export interface ReportSessionRecord {
   perModelCost: ModelCost[];
   costSeries?: CostSeriesPoint[]; // per-turn cumulative cost/token growth; absent when no per-turn data
   dispatches?: DispatchEvent[]; // timed top-level agent/skill/command invocations; absent when none
+
+  // === Usage provenance (optional; absent for agents that always record full usage) ===
+  /**
+   * The provider's own billing unit, when it differs from tokens. Currently only GitHub
+   * Copilot CLI ("premium requests") — `costUSD` there is a token-derived estimate for
+   * cross-agent comparison, not GitHub's invoice.
+   */
+  premiumRequests?: number;
+  /** True when usage was reconstructed from partial data and understates actual use. */
+  usagePartial?: boolean;
+  /** Why this session shows no tokens or cost; absent when priced. */
+  usageUnavailableReason?: string;
 }
 
 export interface ReportMeta {

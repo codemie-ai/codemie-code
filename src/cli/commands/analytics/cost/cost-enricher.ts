@@ -362,6 +362,19 @@ export async function enrichCosts(
       cost.costSeries = series;
     }
     if (entry.parsed) {
+      // Usage provenance from the adapter: lets the report distinguish "cost is genuinely
+      // zero" from "cost is unmeasurable", and surface a provider's own billing unit.
+      const meta = entry.parsed.usageMeta;
+      if (meta?.premiumRequests !== undefined) {
+        cost.premiumRequests = meta.premiumRequests;
+      }
+      if (meta?.usagePartial) {
+        cost.usagePartial = true;
+      }
+      if (meta?.usageUnavailableReason) {
+        cost.usageUnavailableReason = meta.usageUnavailableReason;
+      }
+
       try {
         const dispatches = extractDispatchEvents(entry.parsed, entry.agentName);
         if (dispatches.length) {

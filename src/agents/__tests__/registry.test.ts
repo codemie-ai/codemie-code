@@ -12,8 +12,21 @@ describe('AgentRegistry', () => {
     it('should register all default agents', () => {
       const agentNames = AgentRegistry.getAgentNames();
 
-      // Should have all 8 default agents (codemie-code, claude, claude-acp, gemini, opencode, codex, kimi, kimi-acp)
-      expect(agentNames).toHaveLength(8);
+      // Asserting the membership rather than just the count, so adding or removing a
+      // plugin fails with the offending name instead of an opaque length mismatch.
+      expect(agentNames.sort()).toEqual(
+        [
+          'codemie-code',
+          'claude',
+          'claude-acp',
+          'gemini',
+          'opencode',
+          'codex',
+          'kimi',
+          'kimi-acp',
+          'copilot-cli', // analytics-only: read for the report, never managed by CodeMie
+        ].sort()
+      );
     });
 
     it('should register built-in agent', () => {
@@ -76,7 +89,7 @@ describe('AgentRegistry', () => {
     it('should return all registered agents', () => {
       const agents = AgentRegistry.getAllAgents();
 
-      expect(agents).toHaveLength(8);
+      expect(agents).toHaveLength(AgentRegistry.getAgentNames().length);
       expect(agents.every((agent) => agent.name)).toBe(true);
     });
 
