@@ -140,6 +140,10 @@ try {
   config.pinnedPort = true;
 
   if (config.telemetryMode === 'claude-desktop') {
+    const sessionRepositoryMap = new Map<string, string>();
+    config.sessionRepositoryMap = sessionRepositoryMap;
+    config.sessionCoworkMap = new Set<string>();
+
     telemetryRuntime = new DesktopTelemetryRuntime(
       new ClaudeDesktopTelemetryAdapter(),
       {
@@ -151,9 +155,12 @@ try {
         syncApiUrl: config.syncApiUrl,
         syncCodeMieUrl: config.syncCodeMieUrl,
         pollIntervalMs: config.telemetryPollIntervalMs ?? 10000,
-        inactivityTimeoutMs: config.telemetryInactivityTimeoutMs ?? 300000
+        inactivityTimeoutMs: config.telemetryInactivityTimeoutMs ?? 300000,
+        sessionRepositoryMap,
       }
     );
+
+    config.triggerPoll = () => telemetryRuntime!.triggerPoll();
     await telemetryRuntime.start();
   }
 
