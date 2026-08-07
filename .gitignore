@@ -83,3 +83,5 @@ docs/superpowers/tasks/*/.state.json
 # otherwise get counted inside the next diff, inflating review scope.
 docs/superpowers/tasks/*/code-review.diff
 docs/superpowers/tasks/*/code-review-check.diff
+/.pi/
+/.pi-subagents/
