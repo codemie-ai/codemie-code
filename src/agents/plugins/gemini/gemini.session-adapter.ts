@@ -12,12 +12,19 @@
  */
 
 import { readFile } from 'fs/promises';
+import { readdirSync, existsSync, readFileSync } from 'fs';
+import { join } from 'path';
 import type { SessionAdapter, ParsedSession, AggregatedResult } from '../../core/session/BaseSessionAdapter.js';
 import type { SessionProcessor, ProcessingContext } from '../../core/session/BaseProcessor.js';
 import type { AgentMetadata } from '../../core/types.js';
+import type { SessionDiscoveryOptions, SessionDescriptor } from '../../core/session/discovery-types.js';
 import { logger } from '../../../utils/logger.js';
 import { GeminiMetricsProcessor } from './session/processors/gemini.metrics-processor.js';
 import { GeminiConversationsProcessor } from './session/processors/gemini.conversations-processor.js';
+import { getGeminiTmpRoot } from './gemini.paths.js';
+
+const DEFAULT_MAX_AGE_DAYS = 30;
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 /**
  * Gemini session file structure (JSON, not JSONL)
@@ -105,6 +112,88 @@ export class GeminiSessionAdapter implements SessionAdapter {
     this.registerProcessor(new GeminiConversationsProcessor());
 
     logger.debug(`[gemini-adapter] Initialized ${this.processors.length} processors`);
+  }
+
+  /**
+   * Enumerate Gemini sessions from ~/.gemini/tmp/{hash}/chats/*.json, newest first.
+   *
+   * Gemini stores one JSON file per session under a project-hash directory. No reverse
+   * mapping from hash to project path exists, so projectPath is always undefined.
+   * Errors in any directory or file are logged at debug level and skipped — this method
+   * never throws.
+   */
+  async discoverSessions(options?: SessionDiscoveryOptions): Promise<SessionDescriptor[]> {
+    const tmpRoot = getGeminiTmpRoot();
+    if (!existsSync(tmpRoot)) {
+      logger.debug(`[gemini-discovery] no tmp dir at ${tmpRoot}`);
+      return [];
+    }
+
+    const maxAgeDays = options?.maxAgeDays ?? DEFAULT_MAX_AGE_DAYS;
+    const cutoffMs = Date.now() - maxAgeDays * MS_PER_DAY;
+
+    let hashDirs: string[];
+    try {
+      hashDirs = readdirSync(tmpRoot, { withFileTypes: true })
+        .filter((e) => e.isDirectory())
+        .map((e) => e.name);
+    } catch {
+      return [];
+    }
+
+    const results: SessionDescriptor[] = [];
+
+    for (const hash of hashDirs) {
+      const chatsDir = join(tmpRoot, hash, 'chats');
+      let chatFiles: string[];
+      try {
+        chatFiles = readdirSync(chatsDir).filter((f) => f.endsWith('.json'));
+      } catch {
+        logger.debug(`[gemini-discovery] no chats dir under hash ${hash}`);
+        continue;
+      }
+
+      for (const chatFile of chatFiles) {
+        const filePath = join(chatsDir, chatFile);
+        let session: { sessionId?: string; startTime?: string; lastUpdated?: string };
+        try {
+          session = JSON.parse(readFileSync(filePath, 'utf-8'));
+        } catch {
+          logger.debug(`[gemini-discovery] skipping malformed file: ${filePath}`);
+          continue;
+        }
+
+        const createdAt = session.startTime ? Date.parse(session.startTime) : NaN;
+        if (Number.isNaN(createdAt)) {
+          if (!options?.includeTimestampless) {
+            continue;
+          }
+        } else if (createdAt < cutoffMs) {
+          continue;
+        }
+
+        const updatedAtMs = session.lastUpdated ? Date.parse(session.lastUpdated) : NaN;
+
+        results.push({
+          sessionId: session.sessionId ?? chatFile.replace(/\.json$/, ''),
+          filePath,
+          projectPath: undefined,
+          createdAt: Number.isNaN(createdAt) ? 0 : createdAt,
+          updatedAt: !Number.isNaN(updatedAtMs) ? updatedAtMs : undefined,
+          agentName: this.agentName,
+        });
+      }
+    }
+
+    results.sort((a, b) => b.createdAt - a.createdAt);
+
+    if (options?.limit && options.limit > 0) {
+      logger.debug(`[gemini-discovery] found ${results.length} session(s), returning ${options.limit}`);
+      return results.slice(0, options.limit);
+    }
+
+    logger.debug(`[gemini-discovery] found ${results.length} session(s)`);
+    return results;
   }
 
   /**

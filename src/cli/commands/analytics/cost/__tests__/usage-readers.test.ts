@@ -401,12 +401,13 @@ describe('extractCodexUsageRecords', () => {
     expect(u?.total).toBeGreaterThan(1036);
   });
 
+  // Dynamic import of cost-enricher.js is slow on WSL2/NTFS under concurrent load; 120 s prevents timeout.
   it('buildCostSeries works from codex per-turn records', async () => {
     const { buildCostSeries } = await import('../cost-enricher.js');
     const recs = extractCodexUsageRecords(loadCodex('turn-2.jsonl'));
     const series = buildCostSeries(recs);
     expect(series.length).toBeGreaterThanOrEqual(2);
-  });
+  }, 120_000);
 });
 
 /**
