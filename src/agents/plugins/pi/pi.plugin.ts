@@ -138,19 +138,12 @@ export const PiPluginMetadata: AgentMetadata = {
           agentSessionId: env.PI_SESSION_ID,
         };
 
-        // Pi injects the exact session file path into bash children. If the
-        // wrapper environment captured it, use it directly.
-        if (env.PI_SESSION_FILE && env.PI_SESSION_FILE.endsWith('.jsonl')) {
-          transcriptPath = env.PI_SESSION_FILE;
-          logger.debug(`[pi] Using Pi-provided session file: ${transcriptPath}`);
+        const sessions = await adapter.discoverSessions(discoverOptions);
+        if (sessions.length > 0) {
+          transcriptPath = sessions[0].filePath;
+          logger.debug(`[pi] Discovered Pi session: ${sessions[0].sessionId}`);
         } else {
-          const sessions = await adapter.discoverSessions(discoverOptions);
-          if (sessions.length > 0) {
-            transcriptPath = sessions[0].filePath;
-            logger.debug(`[pi] Discovered Pi session: ${sessions[0].sessionId}`);
-          } else {
-            logger.debug('[pi] No recent Pi sessions found for this directory');
-          }
+          logger.debug('[pi] No recent Pi sessions found for this directory');
         }
       } catch (discoverError) {
         const msg = discoverError instanceof Error ? discoverError.message : String(discoverError);

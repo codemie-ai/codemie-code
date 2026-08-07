@@ -6,6 +6,8 @@
 
 **Architecture:** Post-hoc parsing of Pi’s JSONL session file after `pi` exits; reuse the existing `hook.ts` → `SessionAdapter` → `MetricsSyncProcessor` pipeline. No upstream Pi changes.
 
+> **Historical artifact notice.** This plan was written before implementation and multiple rounds of review. Its inline code blocks show the original intended shape and **do not match the shipped implementation**. The current source of truth is the design spec (`docs/superpowers/specs/2026-08-12-codemie-pi-metrics-design.md`) and the actual source files in `src/agents/plugins/pi/`. In particular, the plan predates the header-driven discovery, LIFO tool-call pairing, skill-wrapper stripping, and verbatim tool-name handling that the remediated code now uses.
+
 **Tech Stack:** TypeScript, ES modules, Node.js `fs/promises`, existing `MetricsWriter`, `BaseSessionAdapter`, `BaseProcessor`.
 
 ## Global Constraints

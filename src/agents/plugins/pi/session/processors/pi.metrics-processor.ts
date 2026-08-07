@@ -66,7 +66,10 @@ export class PiMetricsProcessor implements SessionProcessor {
       const base = (recordId: string, timestamp: number): PendingDelta => ({
         recordId,
         sessionId: session.sessionId,
-        agentSessionId: context.sessionId ?? session.sessionId,
+        agentSessionId:
+          (session.metadata as { agentSessionId?: string } | undefined)?.agentSessionId ??
+          context.sessionId ??
+          session.sessionId,
         timestamp,
         ...(gitBranch && { gitBranch }),
       });
@@ -172,14 +175,20 @@ export class PiMetricsProcessor implements SessionProcessor {
 
           const { entryId, toolCall, assistantTimestamp, assistantModel } = matched;
           const recordId = `${entryId}:${toolCall.id}`;
-          const toolName = toolCall.name.toLowerCase();
+          const toolName = toolCall.name;
+          const toolNameLower = toolName.toLowerCase();
           const isFailure = msg.isError === true;
-          const excludedFromErrors = this.metadata?.metricsConfig?.excludeErrorsFromTools?.includes(toolName) ?? false;
+          const excludedFromErrors =
+            this.metadata?.metricsConfig?.excludeErrorsFromTools?.map((n) => n.toLowerCase()).includes(toolNameLower) ??
+            false;
 
           let fileOps: PiFileOperation[] = [];
           let apiErrorMessage: string | undefined;
           if (isFailure && !excludedFromErrors) {
             apiErrorMessage = this.extractToolResultErrorText(msg);
+          } else if (isFailure && excludedFromErrors) {
+            // Keep had_errors/error_tools reachable without uploading raw output.
+            apiErrorMessage = `Tool failed: ${toolName}`;
           } else if (!isFailure) {
             fileOps = this.extractFileOperations(toolCall, msg).filter((op): op is PiFileOperation => op !== undefined);
           }
@@ -206,7 +215,7 @@ export class PiMetricsProcessor implements SessionProcessor {
       // Tool calls that never received a result are emitted without status, per spec §7.3.
       for (const unmatched of unmatchedToolCalls) {
         const recordId = `${unmatched.entryId}:${unmatched.toolCall.id}`;
-        const toolName = unmatched.toolCall.name.toLowerCase();
+        const toolName = unmatched.toolCall.name;
         maybePushDelta({
           ...base(recordId, unmatched.assistantTimestamp),
           tools: { [toolName]: 1 },
@@ -257,7 +266,7 @@ export class PiMetricsProcessor implements SessionProcessor {
         return metadata.startTime;
       }
     } catch (error) {
-      logger.debug('[pi-metrics] Could not load CodeMie session start time:', error);
+      logger.warn('[pi-metrics] Could not load CodeMie session start time, using permissive fallback:', error);
     }
 
     const createdAt = session.metadata?.createdAt;
@@ -265,7 +274,9 @@ export class PiMetricsProcessor implements SessionProcessor {
       const parsed = Date.parse(createdAt);
       if (!Number.isNaN(parsed)) return parsed;
     }
-    return Date.now();
+
+    logger.warn('[pi-metrics] No authoritative start time available, using permissive fallback');
+    return 0;
   }
 
   private entryTimestamp(msg: { timestamp?: number }, fallback: number): number {
@@ -274,8 +285,9 @@ export class PiMetricsProcessor implements SessionProcessor {
 
   private extractUserText(msg: { content: string | unknown[] }): string | undefined {
     if (typeof msg.content === 'string') {
-      const text = msg.content.trim();
-      return text && !this.isSyntheticUserText(text) ? text : undefined;
+      const withoutWrapper = this.stripSkillWrapper(msg.content);
+      const text = (withoutWrapper ?? msg.content).trim();
+      return text || undefined;
     }
 
     if (!Array.isArray(msg.content)) return undefined;
@@ -285,8 +297,9 @@ export class PiMetricsProcessor implements SessionProcessor {
       if (typeof part !== 'object' || part === null) continue;
       const typed = part as { type?: string; text?: string };
       if (typed.type !== 'text' || typeof typed.text !== 'string') continue;
-      const text = typed.text.trim();
-      if (text && !this.isSyntheticUserText(text)) {
+      const withoutWrapper = this.stripSkillWrapper(typed.text);
+      const text = (withoutWrapper ?? typed.text).trim();
+      if (text) {
         texts.push(text);
       }
     }
@@ -294,12 +307,17 @@ export class PiMetricsProcessor implements SessionProcessor {
     return texts.length > 0 ? texts.join('\n') : undefined;
   }
 
-  private isSyntheticUserText(text: string): boolean {
-    const trimmed = text.trim();
-    // Pi's /skill:<name> slash-command inlines the literal `<skill name="..." ...>` block.
-    // Slash-command template expansions and extension/SDK messages carry no persistent marker,
-    // so they cannot be filtered here.
-    return /^<skill/i.test(trimmed);
+  /**
+   * Strip Pi's `/skill:<name>` wrapper from the start of a text block.
+   * Pi emits the literal `<skill name="..." location="...">\n...\n</skill>\n\n`
+   * block followed by the real user prompt in a single text part. Returns the
+   * trailing user text if a wrapper was removed, otherwise undefined.
+   */
+  private stripSkillWrapper(text: string): string | undefined {
+    const skillBlockPattern = /^<skill\s+name="[^"]*"\s+location="[^"]*">\n[\s\S]*?\n<\/skill>(?:\n\n)?/;
+    const match = skillBlockPattern.exec(text);
+    if (!match) return undefined;
+    return text.slice(match[0].length);
   }
 
   private extractToolCalls(msg: PiAssistantMessage): PiToolCall[] {

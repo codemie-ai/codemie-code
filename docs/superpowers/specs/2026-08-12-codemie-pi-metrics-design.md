@@ -49,7 +49,7 @@ No changes to the upstream Pi repo are required.
 | `status`/`reason` | exit code | `status` is always `'completed'` (set in `hook.ts`); `reason` carries the exit code passed to `onSessionEnd` |
 | `had_errors` | tool errors / API errors | `toolResult.isError` or assistant `errorMessage` |
 | `error_tools` | failing tool names | names of tools with `isError: true` |
-| `error_messages` | tool error text | tool result error text; omitted for tools listed in `metricsConfig.excludeErrorsFromTools` (`bash` by default) |
+| `error_messages` | tool error text | tool result error text; for tools listed in `metricsConfig.excludeErrorsFromTools` (`bash` by default) a generic `Tool failed: <toolName>` placeholder is used instead of raw output |
 | `api_errors` | API error messages | assistant `errorMessage` |
 | `total_user_prompts` | user messages | user entries |
 | `tool_names` | tool use names | tool names from `toolCall.name` |
@@ -64,7 +64,7 @@ No changes to the upstream Pi repo are required.
 | `schema_version` | `2` | `2` |
 | `count` | `1` | `1` |
 
-MCP and extension counts are intentionally omitted for Pi because Pi does not use CodeMie’s MCP config layout or `.claude/` extension categories. The lifecycle metric will still be sent without `mcp_servers_*` and `*_project`/`*_global` extension fields.
+MCP and extension counts are intentionally omitted for Pi because Pi does not use CodeMie’s MCP config layout or `.claude/` extension categories. The lifecycle metric is still sent with those fields present as zeros (e.g. `mcp_total_servers: 0`, `agents_project: 0`, `skills_global: 0`) because the shared summary helpers return all-zero objects when no config is declared.
 
 ## 5. Architecture and components
 
@@ -118,8 +118,8 @@ src/agents/plugins/pi/
 - Sub-directory name: Pi encodes the cwd as `--<cwd with leading slash removed and `/`, `\`, `:` replaced by `-`>--`.
 - Session file name: ISO-8601 timestamp with `:` and `.` replaced by `-`, e.g. `2026-08-07T11-27-16-523Z_<sessionId>.jsonl`.
 - `discoverSessions({ cwd, maxAgeDays: 1, limit: 1 })` scans only the cwd-encoded subdirectory, reads each candidate file's line-1 header, and keeps only files whose `header.cwd` matches the requested cwd. File modification time is used for the age filter so long-running sessions are not discarded while still open.
-- If the run start time is known, files whose `header.timestamp` predates it are rejected. This guards against aborted or model-less runs that leave a previous run's transcript as the newest file.
-- If Pi provided `PI_SESSION_FILE` in the wrapper environment, that path is used directly. Otherwise, if Pi's own session id (`PI_SESSION_ID`) is known, the matching header `id` is preferred; failing that, the newest valid file is selected.
+- If the run start time is known, files whose `header.timestamp` predates it are rejected, unless the file has been modified during this run. This guards against aborted or model-less runs that leave a previous run's transcript as the newest file, while still admitting `pi --continue` / `-r` sessions that append to an older transcript.
+- If Pi's own session id (`PI_SESSION_ID`) is known, the matching header `id` is preferred among validated candidates; otherwise the newest valid file is selected.
 
 ### 7.2 Entry types
 
@@ -202,8 +202,8 @@ The metrics processor emits one `MetricDelta` per assistant tool call, plus one 
 - `toolStatus`: `{ [toolName]: { success, failure } }` (omitted when the call has no matching result)
 - `fileOperations`: extracted from matching tool results for non-failing calls
 - `models`: `[modelName]` if present, with `CODEMIE_MODEL` fallback
-- `userPrompts`: captured from `user` entries, filtering out the literal `<skill …>` wrapper produced by Pi's `/skill:<name>` slash command. Slash-command template expansions and extension/SDK-sent user messages carry no persistent provenance marker, so they cannot be filtered and may be counted as human prompts.
-- `apiErrorMessage`: assistant `errorMessage`, or tool error text extracted from a failing tool result's `content[]`; omitted for tools listed in `metricsConfig.excludeErrorsFromTools` (`bash` by default)
+- `userPrompts`: captured from `user` entries. Pi's `/skill:<name>` slash-command inlines the literal `<skill name="…" location="…">` wrapper and the real user prompt in a single text block; the wrapper is stripped and the trailing user text is kept. Slash-command template expansions and extension/SDK-sent user messages carry no persistent provenance marker, so they cannot be filtered and may be counted as human prompts.
+- `apiErrorMessage`: assistant `errorMessage`, or tool error text extracted from a failing tool result's `content[]`. For tools listed in `metricsConfig.excludeErrorsFromTools` (`bash` by default), the raw error text is replaced with a generic `Tool failed: <toolName>` placeholder so `had_errors`/`error_tools` remain accurate without exposing the tool's output.
 
 ## 8. File operation extraction
 

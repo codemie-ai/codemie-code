@@ -4,7 +4,7 @@
  * Discovers and parses Pi JSONL session files, then runs the metrics processor.
  */
 
-import { readFile, readdir, stat } from 'fs/promises';
+import { open, readFile, readdir, stat } from 'fs/promises';
 import { join, resolve } from 'path';
 import { existsSync } from 'fs';
 import type { SessionAdapter, ParsedSession, AggregatedResult, SessionDiscoveryOptions, SessionDescriptor } from '../../core/session/BaseSessionAdapter.js';
@@ -53,6 +53,7 @@ export class PiSessionAdapter implements SessionAdapter {
         metadata: {
           projectPath,
           ...(header?.timestamp && { createdAt: header.timestamp }),
+          ...(header?.id && { agentSessionId: header.id }),
         },
         messages: entries as unknown[],
       };
@@ -62,10 +63,16 @@ export class PiSessionAdapter implements SessionAdapter {
     }
   }
 
+  private static readonly HEADER_READ_BYTES = 65536;
+
   private async readSessionHeader(filePath: string): Promise<PiSessionHeader | undefined> {
+    let handle: import('fs/promises').FileHandle | undefined;
     try {
-      const content = await readFile(filePath, 'utf-8');
-      const firstLine = content.split('\n')[0]?.trim();
+      handle = await open(filePath, 'r');
+      const buffer = Buffer.alloc(PiSessionAdapter.HEADER_READ_BYTES);
+      const { bytesRead } = await handle.read(buffer, 0, PiSessionAdapter.HEADER_READ_BYTES, 0);
+      if (bytesRead === 0) return undefined;
+      const firstLine = buffer.toString('utf-8', 0, bytesRead).split('\n')[0]?.trim();
       if (!firstLine) return undefined;
       const parsed = JSON.parse(firstLine);
       if (isPiSessionHeader(parsed)) {
@@ -73,6 +80,10 @@ export class PiSessionAdapter implements SessionAdapter {
       }
     } catch {
       // ignore — malformed header is handled by caller
+    } finally {
+      await handle?.close().catch(() => {
+        // best-effort close
+      });
     }
     return undefined;
   }
@@ -214,10 +225,10 @@ export class PiSessionAdapter implements SessionAdapter {
           agentName: 'pi',
         };
 
-        // Reject files created before this run started. This guards against
-        // selecting a previous run's transcript when the current run errors or
-        // aborts before Pi writes its first assistant message.
-        if (runStartedAt !== undefined && descriptor.createdAt < runStartedAt) {
+        // Reject files created before this run started, unless the file has been
+        // modified during this run (e.g. `pi --continue` / `-r` appends to an
+        // existing transcript whose header timestamp predates the current run).
+        if (runStartedAt !== undefined && descriptor.createdAt < runStartedAt && (descriptor.updatedAt ?? 0) < runStartedAt) {
           logger.debug(`[pi-discovery] Skipping session predating run start: ${filePath}`);
           continue;
         }

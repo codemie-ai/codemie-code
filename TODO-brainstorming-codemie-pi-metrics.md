@@ -20,8 +20,12 @@
 - [x] Fix wave + re-review clean
 - [x] Round-2 review findings remediated (CR-001..CR-016)
 - [x] Round-3 review findings remediated (CR-001..CR-004 + doc fixes)
+- [x] Round-4 review findings remediated (CR-001..CR-010)
 - [x] Manual verification with synthetic v3 Pi session
 - [ ] Await merge/integration decision
 
-**Remediation report (round 3):** `.superpowers/sdd/2026-08-12-codemie-pi-metrics/remediation-report-r3.md`
+**Remediation reports:**
+- Round 2: `.superpowers/sdd/2026-08-12-codemie-pi-metrics/remediation-report.md`
+- Round 3: `.superpowers/sdd/2026-08-12-codemie-pi-metrics/remediation-report-r3.md`
+- Round 4: `.superpowers/sdd/2026-08-12-codemie-pi-metrics/remediation-report-r4.md`
 **Branch:** `feat/codemie-pi-metrics-parity`
