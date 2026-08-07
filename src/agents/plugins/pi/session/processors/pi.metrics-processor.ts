@@ -39,6 +39,16 @@ export class PiMetricsProcessor implements SessionProcessor {
   readonly name = PI_METRICS_PROCESSOR_NAME;
   readonly priority = 1;
 
+  // Tracks Pi entry ids already seen across all files in this run. /new and /fork
+  // copy history into a new transcript; this set prevents double-counting.
+  private readonly seenEntryIds = new Set<string>();
+
+  // Running activity window across every transcript processed in this run. The
+  // hook calls process() once per discovered transcript, so the bounds must be
+  // merged rather than recomputed per file.
+  private activeWindowStart: number | undefined;
+  private activeWindowEnd: number | undefined;
+
   constructor(private readonly metadata: AgentMetadata | undefined = undefined) {}
 
   shouldProcess(session: ParsedSession): boolean {
@@ -110,7 +120,12 @@ export class PiMetricsProcessor implements SessionProcessor {
       };
 
       for (const entry of entries) {
-        if (!isPiMessageEntry(entry) || !entry.id) {
+        if (!entry.id || this.seenEntryIds.has(entry.id)) {
+          continue;
+        }
+        this.seenEntryIds.add(entry.id);
+
+        if (!isPiMessageEntry(entry)) {
           continue;
         }
 
@@ -372,6 +387,14 @@ export class PiMetricsProcessor implements SessionProcessor {
     return joined.length > 0 ? joined : undefined;
   }
 
+  /**
+   * Merge this transcript's delta timestamps into the run-wide activity window and
+   * persist the resulting duration.
+   *
+   * The window bounds are merged, not the per-file spans: two transcripts covering
+   * disjoint periods form one window spanning both, which `Math.max` of their
+   * individual spans would understate.
+   */
   private async saveActiveDurationMs(sessionId: string, deltas: PendingDelta[]): Promise<void> {
     if (deltas.length === 0) return;
 
@@ -385,12 +408,15 @@ export class PiMetricsProcessor implements SessionProcessor {
     }
     if (!Number.isFinite(minTimestamp) || !Number.isFinite(maxTimestamp)) return;
 
+    this.activeWindowStart = Math.min(this.activeWindowStart ?? minTimestamp, minTimestamp);
+    this.activeWindowEnd = Math.max(this.activeWindowEnd ?? maxTimestamp, maxTimestamp);
+
     try {
       const { SessionStore } = await import('../../../../core/session/SessionStore.js');
       const sessionStore = new SessionStore();
       const metadata = await sessionStore.loadSession(sessionId);
       if (metadata) {
-        metadata.activeDurationMs = maxTimestamp - minTimestamp;
+        metadata.activeDurationMs = this.activeWindowEnd - this.activeWindowStart;
         await sessionStore.saveSession(metadata);
         logger.debug(`[pi-metrics] Saved activeDurationMs: ${metadata.activeDurationMs}`);
       }

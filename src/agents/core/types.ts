@@ -667,6 +667,7 @@ export interface AgentHookConfig {
 export interface BaseHookEvent {
   session_id: string;              // Agent's session ID
   transcript_path: string;         // Path to conversation file (agent session file)
+  transcript_paths?: string[];     // Agents that produce multiple transcript files per run (e.g. Pi /new)
   permission_mode: string;         // "default", "plan", "acceptEdits", "dontAsk", or "bypassPermissions"
   hook_event_name: string;         // Event identifier (SessionStart, SessionEnd, etc.)
   cwd?: string;                    // Current working directory (not present in all hooks)

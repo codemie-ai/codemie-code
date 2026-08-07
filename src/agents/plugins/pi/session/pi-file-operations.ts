@@ -11,10 +11,14 @@ import { logger } from '../../../../utils/logger.js';
 // tool. `bash` is intentionally absent: it mutates files arbitrarily (`sed -i`,
 // `>`, `mv`, `git apply`, etc.) and no reliable file-effect signal is persisted.
 // `write` creates OR overwrites; the result does not record which occurred.
+//
+// Tool names are matched case-sensitively: extension tools may register arbitrary
+// names, and lowercasing would misclassify an extension named `Write` as the
+// built-in write tool.
 const TOOL_TYPE_MAP: Record<string, FileOperationType> = {
-  write: 'write',
-  edit: 'edit',
   read: 'read',
+  edit: 'edit',
+  write: 'write',
   grep: 'grep',
   ls: 'read',
   find: 'glob',
@@ -60,7 +64,7 @@ export function extractPiFileOperation(
   toolArguments?: Record<string, unknown>,
   toolResultDetails?: Record<string, unknown>
 ): FileOperation | undefined {
-  const type = TOOL_TYPE_MAP[toolName.toLowerCase()];
+  const type = TOOL_TYPE_MAP[toolName];
   if (!type) {
     logger.debug(`[pi-file-ops] No file-operation mapping for tool: ${toolName}`);
     return undefined;
@@ -79,9 +83,7 @@ export function extractPiFileOperation(
     operation.pattern = toolArguments.pattern;
   }
 
-  const lowerToolName = toolName.toLowerCase();
-
-  if (lowerToolName === 'write') {
+  if (toolName === 'write') {
     const content = toolArguments?.content;
     if (typeof content === 'string' && content.length > 0) {
       // Strip a single trailing newline so newline-terminated source files are
@@ -91,7 +93,7 @@ export function extractPiFileOperation(
     }
   }
 
-  if (lowerToolName === 'edit') {
+  if (toolName === 'edit') {
     const patch = toolResultDetails?.diff ?? toolResultDetails?.patch;
     const { linesAdded, linesRemoved } = countPiDiffLines(patch);
     if (linesAdded > 0) operation.linesAdded = linesAdded;
