@@ -19,9 +19,9 @@
 - [x] Final review
 - [x] Fix wave + re-review clean
 - [x] Round-2 review findings remediated (CR-001..CR-016)
+- [x] Round-3 review findings remediated (CR-001..CR-004 + doc fixes)
 - [x] Manual verification with synthetic v3 Pi session
 - [ ] Await merge/integration decision
 
-**Remediation report:** `.superpowers/sdd/2026-08-12-codemie-pi-metrics/remediation-report.md`
+**Remediation report (round 3):** `.superpowers/sdd/2026-08-12-codemie-pi-metrics/remediation-report-r3.md`
 **Branch:** `feat/codemie-pi-metrics-parity`
-**Latest commit:** `c5515a4` (plus uncommitted remediation changes)

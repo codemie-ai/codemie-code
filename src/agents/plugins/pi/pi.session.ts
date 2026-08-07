@@ -12,6 +12,13 @@ import type { SessionProcessor, ProcessingContext } from '../../core/session/Bas
 import type { AgentMetadata } from '../../core/types.js';
 import { logger } from '../../../utils/logger.js';
 import { getPiSessionDir } from './pi.paths.js';
+
+export interface PiDiscoveryOptions extends SessionDiscoveryOptions {
+  /** Earliest time this run may have started; reject files whose header timestamp predates it. */
+  runStartedAt?: number;
+  /** Pi's own session id (from line-1 header `id`), if known. */
+  agentSessionId?: string;
+}
 import { PiMetricsProcessor } from './session/processors/pi.metrics-processor.js';
 import { isPiSessionHeader, type PiEntry, type PiSessionHeader } from './pi.types.js';
 
@@ -24,7 +31,7 @@ export class PiSessionAdapter implements SessionAdapter {
   }
 
   private initializeProcessors(): void {
-    this.registerProcessor(new PiMetricsProcessor());
+    this.registerProcessor(new PiMetricsProcessor(this.metadata));
     logger.debug(`[pi-adapter] Initialized ${this.processors.length} processors`);
   }
 
@@ -135,21 +142,31 @@ export class PiSessionAdapter implements SessionAdapter {
   }
 
   async discoverSessions(options?: SessionDiscoveryOptions): Promise<SessionDescriptor[]> {
-    const cwd = options?.cwd ?? process.cwd();
+    const piOptions = options as PiDiscoveryOptions | undefined;
+    const cwd = piOptions?.cwd ?? process.cwd();
     const sessionDir = getPiSessionDir(cwd);
 
-    const maxAgeDays = options?.maxAgeDays ?? 30;
+    const maxAgeDays = piOptions?.maxAgeDays ?? 30;
     const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
 
-    const results = await this.scanSessionDir(sessionDir, cutoff, cwd);
+    const results = await this.scanSessionDir(sessionDir, cutoff, cwd, piOptions?.runStartedAt);
     results.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
 
-    const limited = options?.limit && options.limit > 0 ? results.slice(0, options.limit) : results;
+    // Exact correlation wins when Pi tells us its own session id.
+    if (piOptions?.agentSessionId) {
+      const exact = results.find((r) => r.sessionId === piOptions.agentSessionId);
+      if (exact) {
+        logger.debug(`[pi-discovery] Matched Pi session id: ${exact.sessionId}`);
+        return [exact];
+      }
+    }
+
+    const limited = piOptions?.limit && piOptions.limit > 0 ? results.slice(0, piOptions.limit) : results;
     logger.debug(`[pi-discovery] Found ${results.length} Pi sessions, returning ${limited.length}`);
     return limited;
   }
 
-  private async scanSessionDir(sessionDir: string, cutoff: number, projectPath: string): Promise<SessionDescriptor[]> {
+  private async scanSessionDir(sessionDir: string, cutoff: number, projectPath: string, runStartedAt?: number): Promise<SessionDescriptor[]> {
     if (!existsSync(sessionDir)) {
       return [];
     }
@@ -188,14 +205,24 @@ export class PiSessionAdapter implements SessionAdapter {
         }
 
         const createdAt = Date.parse(header.timestamp);
-        results.push({
+        const descriptor: SessionDescriptor = {
           sessionId: header.id,
           filePath,
           projectPath: header.cwd,
           createdAt: Number.isNaN(createdAt) ? updatedAt : createdAt,
           updatedAt,
           agentName: 'pi',
-        });
+        };
+
+        // Reject files created before this run started. This guards against
+        // selecting a previous run's transcript when the current run errors or
+        // aborts before Pi writes its first assistant message.
+        if (runStartedAt !== undefined && descriptor.createdAt < runStartedAt) {
+          logger.debug(`[pi-discovery] Skipping session predating run start: ${filePath}`);
+          continue;
+        }
+
+        results.push(descriptor);
       }
     } catch (error) {
       logger.debug(`[pi-discovery] Failed to scan session dir ${sessionDir}:`, error);

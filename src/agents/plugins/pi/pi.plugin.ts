@@ -8,6 +8,7 @@ import { getPiAgentDir } from './pi.paths.js';
 import { installRequiredPiPackages } from './pi.packages.js';
 import { PiSessionAdapter } from './pi.session.js';
 import type { HookProcessingConfig } from '../../../cli/commands/hook.js';
+import type { PiDiscoveryOptions } from './pi.session.js';
 
 function buildPiHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProcessingConfig {
   return {
@@ -113,30 +114,43 @@ export const PiPluginMetadata: AgentMetadata = {
         return;
       }
 
-      // Best-effort active duration: Pi emits no UserPromptSubmit, so use the
-      // wall-clock session span as active duration.
+      // Load the CodeMie session so we can correlate the Pi transcript to this run
+      // and bound entry processing to the current run's time window.
+      let runStartedAt: number | undefined;
       try {
         const { SessionStore } = await import('../../core/session/SessionStore.js');
         const sessionStore = new SessionStore();
         const session = await sessionStore.loadSession(sessionId);
-        if (session && session.startTime) {
-          session.activeDurationMs = Date.now() - session.startTime;
-          await sessionStore.saveSession(session);
-        }
-      } catch (activeDurationError) {
-        const msg = activeDurationError instanceof Error ? activeDurationError.message : String(activeDurationError);
-        logger.debug(`[pi] Active duration update failed (non-blocking): ${msg}`);
+        runStartedAt = session?.startTime;
+      } catch (sessionLoadError) {
+        const msg = sessionLoadError instanceof Error ? sessionLoadError.message : String(sessionLoadError);
+        logger.debug(`[pi] Session load failed (non-blocking): ${msg}`);
       }
 
       let transcriptPath = '';
       try {
         const adapter = new PiSessionAdapter(PiPluginMetadata);
-        const sessions = await adapter.discoverSessions({ maxAgeDays: 1, limit: 1, cwd: process.cwd() });
-        if (sessions.length > 0) {
-          transcriptPath = sessions[0].filePath;
-          logger.debug(`[pi] Discovered Pi session: ${sessions[0].sessionId}`);
+        const discoverOptions: PiDiscoveryOptions = {
+          maxAgeDays: 1,
+          limit: 1,
+          cwd: process.cwd(),
+          runStartedAt,
+          agentSessionId: env.PI_SESSION_ID,
+        };
+
+        // Pi injects the exact session file path into bash children. If the
+        // wrapper environment captured it, use it directly.
+        if (env.PI_SESSION_FILE && env.PI_SESSION_FILE.endsWith('.jsonl')) {
+          transcriptPath = env.PI_SESSION_FILE;
+          logger.debug(`[pi] Using Pi-provided session file: ${transcriptPath}`);
         } else {
-          logger.debug('[pi] No recent Pi sessions found for this directory');
+          const sessions = await adapter.discoverSessions(discoverOptions);
+          if (sessions.length > 0) {
+            transcriptPath = sessions[0].filePath;
+            logger.debug(`[pi] Discovered Pi session: ${sessions[0].sessionId}`);
+          } else {
+            logger.debug('[pi] No recent Pi sessions found for this directory');
+          }
         }
       } catch (discoverError) {
         const msg = discoverError instanceof Error ? discoverError.message : String(discoverError);

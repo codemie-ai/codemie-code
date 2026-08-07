@@ -9,6 +9,7 @@ import { readFile } from 'fs/promises';
 import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../../../../core/session/BaseProcessor.js';
 import type { ParsedSession } from '../../../../core/session/BaseSessionAdapter.js';
 import type { MetricDelta } from '../../../../core/metrics/types.js';
+import type { AgentMetadata } from '../../../../core/types.js';
 import { logger } from '../../../../../utils/logger.js';
 import {
   isPiMessageEntry,
@@ -38,6 +39,8 @@ export class PiMetricsProcessor implements SessionProcessor {
   readonly name = PI_METRICS_PROCESSOR_NAME;
   readonly priority = 1;
 
+  constructor(private readonly metadata: AgentMetadata | undefined = undefined) {}
+
   shouldProcess(session: ParsedSession): boolean {
     return session.messages.length > 0;
   }
@@ -54,9 +57,11 @@ export class PiMetricsProcessor implements SessionProcessor {
         };
       }
 
+      // Bound entry processing to this CodeMie run. On `--continue` / `-r` Pi appends
+      // to the same transcript, so entries from earlier runs must not be re-emitted.
+      const sessionStartTime = await this.getCodeMieSessionStartTime(session.sessionId, session);
       const gitBranch = context.gitBranch;
       const fallbackModel = process.env.CODEMIE_MODEL;
-      const sessionStartTime = this.deriveSessionStartTime(session);
 
       const base = (recordId: string, timestamp: number): PendingDelta => ({
         recordId,
@@ -109,13 +114,17 @@ export class PiMetricsProcessor implements SessionProcessor {
         const msg = entry.message;
 
         if (isPiUserMessage(msg)) {
+          const ts = this.entryTimestamp(msg, sessionStartTime);
+          if (ts < sessionStartTime) {
+            continue;
+          }
           const text = this.extractUserText(msg);
           if (!text) {
             continue;
           }
           const recordId = `${entry.id}:prompt`;
           maybePushDelta({
-            ...base(recordId, msg.timestamp ?? sessionStartTime),
+            ...base(recordId, ts),
             userPrompts: [{ count: 1, text }],
             ...(fallbackModel && { models: [fallbackModel] }),
           });
@@ -123,7 +132,10 @@ export class PiMetricsProcessor implements SessionProcessor {
         }
 
         if (isPiAssistantMessage(msg)) {
-          const assistantTimestamp = msg.timestamp ?? sessionStartTime;
+          const assistantTimestamp = this.entryTimestamp(msg, sessionStartTime);
+          if (assistantTimestamp < sessionStartTime) {
+            continue;
+          }
           const assistantModel = msg.model || fallbackModel;
           const toolCalls = this.extractToolCalls(msg);
 
@@ -148,6 +160,11 @@ export class PiMetricsProcessor implements SessionProcessor {
         }
 
         if (isPiToolResultMessage(msg)) {
+          const ts = this.entryTimestamp(msg, sessionStartTime);
+          if (ts < sessionStartTime) {
+            continue;
+          }
+
           const matched = findAndRemoveUnmatched(msg.toolCallId);
           if (!matched) {
             continue;
@@ -157,12 +174,13 @@ export class PiMetricsProcessor implements SessionProcessor {
           const recordId = `${entryId}:${toolCall.id}`;
           const toolName = toolCall.name.toLowerCase();
           const isFailure = msg.isError === true;
+          const excludedFromErrors = this.metadata?.metricsConfig?.excludeErrorsFromTools?.includes(toolName) ?? false;
 
           let fileOps: PiFileOperation[] = [];
           let apiErrorMessage: string | undefined;
-          if (isFailure) {
+          if (isFailure && !excludedFromErrors) {
             apiErrorMessage = this.extractToolResultErrorText(msg);
-          } else {
+          } else if (!isFailure) {
             fileOps = this.extractFileOperations(toolCall, msg).filter((op): op is PiFileOperation => op !== undefined);
           }
 
@@ -210,6 +228,10 @@ export class PiMetricsProcessor implements SessionProcessor {
         await writer.appendDelta(delta);
       }
 
+      // Derive active duration from the first to last emitted delta. This avoids
+      // reporting the full wall-clock span as activity time.
+      await this.saveActiveDurationMs(session.sessionId, deltas);
+
       return {
         success: true,
         message: `Generated ${deltas.length} deltas`,
@@ -226,13 +248,28 @@ export class PiMetricsProcessor implements SessionProcessor {
     }
   }
 
-  private deriveSessionStartTime(session: ParsedSession): number {
+  private async getCodeMieSessionStartTime(sessionId: string, session: ParsedSession): Promise<number> {
+    try {
+      const { SessionStore } = await import('../../../../core/session/SessionStore.js');
+      const sessionStore = new SessionStore();
+      const metadata = await sessionStore.loadSession(sessionId);
+      if (metadata?.startTime) {
+        return metadata.startTime;
+      }
+    } catch (error) {
+      logger.debug('[pi-metrics] Could not load CodeMie session start time:', error);
+    }
+
     const createdAt = session.metadata?.createdAt;
     if (createdAt) {
       const parsed = Date.parse(createdAt);
       if (!Number.isNaN(parsed)) return parsed;
     }
     return Date.now();
+  }
+
+  private entryTimestamp(msg: { timestamp?: number }, fallback: number): number {
+    return typeof msg.timestamp === 'number' && !Number.isNaN(msg.timestamp) ? msg.timestamp : fallback;
   }
 
   private extractUserText(msg: { content: string | unknown[] }): string | undefined {
@@ -259,7 +296,10 @@ export class PiMetricsProcessor implements SessionProcessor {
 
   private isSyntheticUserText(text: string): boolean {
     const trimmed = text.trim();
-    return /^<skill/i.test(trimmed) || /^Skill:/i.test(trimmed);
+    // Pi's /skill:<name> slash-command inlines the literal `<skill name="..." ...>` block.
+    // Slash-command template expansions and extension/SDK messages carry no persistent marker,
+    // so they cannot be filtered here.
+    return /^<skill/i.test(trimmed);
   }
 
   private extractToolCalls(msg: PiAssistantMessage): PiToolCall[] {
@@ -312,6 +352,33 @@ export class PiMetricsProcessor implements SessionProcessor {
 
     const joined = texts.join('\n').trim();
     return joined.length > 0 ? joined : undefined;
+  }
+
+  private async saveActiveDurationMs(sessionId: string, deltas: PendingDelta[]): Promise<void> {
+    if (deltas.length === 0) return;
+
+    let minTimestamp = Infinity;
+    let maxTimestamp = -Infinity;
+    for (const delta of deltas) {
+      if (typeof delta.timestamp === 'number') {
+        minTimestamp = Math.min(minTimestamp, delta.timestamp);
+        maxTimestamp = Math.max(maxTimestamp, delta.timestamp);
+      }
+    }
+    if (!Number.isFinite(minTimestamp) || !Number.isFinite(maxTimestamp)) return;
+
+    try {
+      const { SessionStore } = await import('../../../../core/session/SessionStore.js');
+      const sessionStore = new SessionStore();
+      const metadata = await sessionStore.loadSession(sessionId);
+      if (metadata) {
+        metadata.activeDurationMs = maxTimestamp - minTimestamp;
+        await sessionStore.saveSession(metadata);
+        logger.debug(`[pi-metrics] Saved activeDurationMs: ${metadata.activeDurationMs}`);
+      }
+    } catch (error) {
+      logger.debug('[pi-metrics] Failed to save active duration (non-blocking):', error);
+    }
   }
 
   private extractFileOperations(toolCall: PiToolCall, result?: PiToolResultMessage): PiFileOperation[] {

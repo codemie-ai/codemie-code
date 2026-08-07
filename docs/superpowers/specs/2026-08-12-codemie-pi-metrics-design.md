@@ -38,18 +38,18 @@ No changes to the upstream Pi repo are required.
 | codemie-claude metric field | Source in Claude session | Equivalent Pi source |
 |---|---|---|
 | `agent` | metadata name | `pi` |
-| `agent_version` | `claude --version` | `pi --version` |
+| `agent_version` | `claude --version` | `env.CODEMIE_CLI_VERSION` (same convention as codemie-claude; Pi's own `--version` is not probed) |
 | `codemie_client` | `codemie-claude` | `codemie-pi` |
 | `llm_model` | assistant message `model` | assistant entry `model`, fallback `CODEMIE_MODEL` |
 | `repository` | git remote / filesystem | existing `CODEMIE_REPOSITORY` / detection |
 | `branch` | git branch | existing `CODEMIE_GIT_BRANCH` / detection |
 | `session_id` | `CODEMIE_SESSION_ID` | `CODEMIE_SESSION_ID` |
 | `session_duration_ms` | SessionEnd − SessionStart timestamps | session record startTime → endTime |
-| `active_duration_ms` | `UserPromptSubmit`/`Stop` hooks | best-effort from session duration (no per-turn hooks) |
-| `status`/`reason` | exit code | exit code passed to `onSessionEnd` |
+| `active_duration_ms` | `UserPromptSubmit`/`Stop` hooks | derived from first to last emitted delta timestamp (falls back to unset if no deltas) |
+| `status`/`reason` | exit code | `status` is always `'completed'` (set in `hook.ts`); `reason` carries the exit code passed to `onSessionEnd` |
 | `had_errors` | tool errors / API errors | `toolResult.isError` or assistant `errorMessage` |
 | `error_tools` | failing tool names | names of tools with `isError: true` |
-| `error_messages` | tool error text | tool result error text |
+| `error_messages` | tool error text | tool result error text; omitted for tools listed in `metricsConfig.excludeErrorsFromTools` (`bash` by default) |
 | `api_errors` | API error messages | assistant `errorMessage` |
 | `total_user_prompts` | user messages | user entries |
 | `tool_names` | tool use names | tool names from `toolCall.name` |
@@ -118,6 +118,8 @@ src/agents/plugins/pi/
 - Sub-directory name: Pi encodes the cwd as `--<cwd with leading slash removed and `/`, `\`, `:` replaced by `-`>--`.
 - Session file name: ISO-8601 timestamp with `:` and `.` replaced by `-`, e.g. `2026-08-07T11-27-16-523Z_<sessionId>.jsonl`.
 - `discoverSessions({ cwd, maxAgeDays: 1, limit: 1 })` scans only the cwd-encoded subdirectory, reads each candidate file's line-1 header, and keeps only files whose `header.cwd` matches the requested cwd. File modification time is used for the age filter so long-running sessions are not discarded while still open.
+- If the run start time is known, files whose `header.timestamp` predates it are rejected. This guards against aborted or model-less runs that leave a previous run's transcript as the newest file.
+- If Pi provided `PI_SESSION_FILE` in the wrapper environment, that path is used directly. Otherwise, if Pi's own session id (`PI_SESSION_ID`) is known, the matching header `id` is preferred; failing that, the newest valid file is selected.
 
 ### 7.2 Entry types
 
@@ -200,8 +202,8 @@ The metrics processor emits one `MetricDelta` per assistant tool call, plus one 
 - `toolStatus`: `{ [toolName]: { success, failure } }` (omitted when the call has no matching result)
 - `fileOperations`: extracted from matching tool results for non-failing calls
 - `models`: `[modelName]` if present, with `CODEMIE_MODEL` fallback
-- `userPrompts`: captured from `user` entries, filtering out machine-injected content (e.g. `<skill …>` bodies)
-- `apiErrorMessage`: assistant `errorMessage`, or tool error text extracted from a failing tool result's `content[]`
+- `userPrompts`: captured from `user` entries, filtering out the literal `<skill …>` wrapper produced by Pi's `/skill:<name>` slash command. Slash-command template expansions and extension/SDK-sent user messages carry no persistent provenance marker, so they cannot be filtered and may be counted as human prompts.
+- `apiErrorMessage`: assistant `errorMessage`, or tool error text extracted from a failing tool result's `content[]`; omitted for tools listed in `metricsConfig.excludeErrorsFromTools` (`bash` by default)
 
 ## 8. File operation extraction
 
