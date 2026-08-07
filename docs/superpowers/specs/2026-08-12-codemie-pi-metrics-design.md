@@ -45,11 +45,11 @@ No changes to the upstream Pi repo are required.
 | `branch` | git branch | existing `CODEMIE_GIT_BRANCH` / detection |
 | `session_id` | `CODEMIE_SESSION_ID` | `CODEMIE_SESSION_ID` |
 | `session_duration_ms` | SessionEnd − SessionStart timestamps | session record startTime → endTime |
-| `active_duration_ms` | `UserPromptSubmit`/`Stop` hooks | derived from first to last emitted delta timestamp (falls back to unset if no deltas) |
-| `status`/`reason` | exit code | `status` is always `'completed'` (set in `hook.ts`); `reason` carries the exit code passed to `onSessionEnd` |
+| `active_duration_ms` | `UserPromptSubmit`/`Stop` hooks | first-to-last emitted delta timestamp, merged across every transcript of the run (falls back to unset if no deltas) |
+| `status`/`reason` | exit code | `status` is always `'completed'` (set in `hook.ts`); `reason` is `'exit'` on a clean exit, `exit(<code>)` on a non-zero exit, or `signal(<name>)` when Pi was terminated by a signal. The last two forms extend the `"exit"`/`"logout"`/`"clear"` set described for `BaseHookEvent.reason`. |
 | `had_errors` | tool errors / API errors | `toolResult.isError` or assistant `errorMessage` |
 | `error_tools` | failing tool names | names of tools with `isError: true` |
-| `error_messages` | tool error text | tool result error text; for tools listed in `metricsConfig.excludeErrorsFromTools` (`bash` by default) a generic `Tool failed: <toolName>` placeholder is used instead of raw output |
+| `error_messages` | tool error text | tool result error text, scrubbed in two layers. In the delta file, a failing tool listed in `metricsConfig.excludeErrorsFromTools` (`bash` by default) contributes `Tool failed: <toolName>` instead of its raw output (§7.4). Before upload, the shared post-processor replaces the **whole** array with `Excluded tool failed: <tool>` entries whenever any failing tool was excluded — messages are not correlated to tools at that layer, so a mixed failure cannot be scrubbed selectively. `had_errors` stays `true` either way. |
 | `api_errors` | API error messages | assistant `errorMessage` |
 | `total_user_prompts` | user messages | user entries |
 | `tool_names` | tool use names | tool names from `toolCall.name` |
@@ -72,7 +72,8 @@ MCP and extension counts are intentionally omitted for Pi because Pi does not us
 
 ```
 src/agents/plugins/pi/
-├── pi.session.ts                        # PiSessionAdapter
+├── pi.session.ts                        # PiSessionAdapter + run attribution
+├── pi.types.ts                          # Pi v3 JSONL entry/header shapes
 ├── session/
 │   ├── processors/
 │   │   └── pi.metrics-processor.ts      # Pi → MetricDelta translator
@@ -86,6 +87,15 @@ src/agents/plugins/pi/
   - Set `sessionAnalyticsReport: true`
   - Add `lifecycle.onSessionStart` and `lifecycle.onSessionEnd`
   - Implement `getSessionAdapter()` on `PiPlugin`
+  - Publish `PI_SESSION_ID` / `PI_CODING_AGENT_SESSION_DIR` in `beforeRun`, inject
+    `--session-id` / `--session-dir` in `enrichArgs`, and reconcile session flags in
+    `PiPlugin.run()` via `preparePiInvocation` (§9.1)
+- `src/agents/plugins/pi/pi.paths.ts` — add `resolvePiSessionDir()` / `getPiSessionDir()`,
+  with tilde expansion and project-over-global settings precedence (§7.1).
+- `src/agents/core/types.ts` — add `transcript_paths?: string[]` to the hook event, for agents
+  that produce several transcripts in one run.
+- `src/agents/core/BaseAgentAdapter.ts` — run `onSessionEnd` on signal exits, and always run proxy
+  cleanup afterwards even when the hook throws.
 - `src/agents/plugins/pi/index.ts` — re-export new symbols if needed.
 
 ### 5.3 Reused pipeline
@@ -101,25 +111,66 @@ src/agents/plugins/pi/
 1. `BaseAgentAdapter.run()` creates `CODEMIE_SESSION_ID`, sets proxy env, and calls `executeOnSessionStart`.
 2. `PiPlugin.onSessionStart` builds a `HookProcessingConfig` and calls `processEvent({ hook_event_name: 'SessionStart', ... })`.
    - `handleSessionStart` creates the CodeMie session record and sends the `started` lifecycle metric.
-3. `BaseAgentAdapter.run()` spawns `pi` with `PI_CODING_AGENT_DIR = <cwd>/.pi/codemie/agent`.
-4. Pi writes session entries to `<cwd>/.pi/codemie/agent/sessions/<encoded-cwd>/<timestamp>_<id>.jsonl`.
-5. When `pi` exits, `executeOnSessionEnd` calls `PiPlugin.onSessionEnd`.
-6. `onSessionEnd` discovers the newest Pi session file for the current cwd and calls `processEvent({ hook_event_name: 'SessionEnd', transcript_path: <file>, ... })`.
-7. `handleSessionEnd` accumulates active duration, runs `performIncrementalSync`, which calls `PiSessionAdapter.processSession`.
-8. `PiMetricsProcessor` writes `MetricDelta` records to `~/.codemie/sessions/{sessionId}_metrics.jsonl`.
-9. `syncPendingDataToAPI` runs `SessionSyncer` → `MetricsSyncProcessor` aggregates deltas and sends `codemie_cli_tool_usage_total`.
-10. `sendSessionEndMetrics` sends the `completed` lifecycle metric, `updateSessionStatus` closes the session, and files are archived.
+3. `PiPlugin.run()` reconciles CodeMie's session flags with Pi's (§9.1), then `beforeRun` publishes
+   `PI_SESSION_ID` and the resolved `PI_CODING_AGENT_SESSION_DIR` onto the run env, and `enrichArgs`
+   appends `--session-id <CODEMIE_SESSION_ID>` and `--session-dir <dir>` to the argv.
+4. `BaseAgentAdapter.run()` spawns `pi` with `PI_CODING_AGENT_DIR = <cwd>/.pi/codemie/agent`.
+5. Pi writes session entries to `<session-dir>/<timestamp>_<id>.jsonl`, where `<session-dir>` is the
+   directory resolved in step 3 — by default `<cwd>/.pi/codemie/agent/sessions/<encoded-cwd>/`.
+6. When `pi` exits, `executeOnSessionEnd` calls `PiPlugin.onSessionEnd`. The adapter always runs
+   proxy cleanup afterwards, even if the hook throws.
+7. `onSessionEnd` attributes the run's Pi transcripts (§7.1) and calls
+   `processEvent({ hook_event_name: 'SessionEnd', transcript_path: <first>, transcript_paths: [...], ... })`.
+   A run that used `/new` or `/fork` produces more than one; `hook.ts` processes every path, and the
+   metrics processor deduplicates by Pi entry id because `/fork` copies history verbatim.
+8. `handleSessionEnd` accumulates active duration, runs `performIncrementalSync`, which calls `PiSessionAdapter.processSession`.
+9. `PiMetricsProcessor` writes `MetricDelta` records to `~/.codemie/sessions/{sessionId}_metrics.jsonl`.
+   Because it is invoked once per transcript, it keeps the run's activity window across calls and
+   writes `active_duration_ms` from the merged bounds rather than the last file's span.
+10. `syncPendingDataToAPI` runs `SessionSyncer` → `MetricsSyncProcessor` aggregates deltas and sends `codemie_cli_tool_usage_total`.
+11. `sendSessionEndMetrics` sends the `completed` lifecycle metric, `updateSessionStatus` closes the session, and files are archived.
 
 ## 7. Pi session file parsing
 
 ### 7.1 Discovery
 
-- Base directory: `join(getPiAgentDir(cwd), 'sessions')`
+- Base directory: `resolvePiSessionDir(cwd, env)`, whose precedence is
+  `PI_CODING_AGENT_SESSION_DIR` → `sessionDir` in `<cwd>/.pi/settings.json` → `sessionDir` in
+  `<agentDir>/settings.json` → the default `join(getPiAgentDir(cwd), 'sessions')/<encoded-cwd>`.
+  This mirrors Pi's own resolution: Pi merges project settings over global settings, and a
+  leading `~` is expanded on every channel. The plugin has no argv at this point, so a CLI
+  `--session-dir` reaches it as `PI_CODING_AGENT_SESSION_DIR` (see §9.1) rather than as a flag.
 - Sub-directory name: Pi encodes the cwd as `--<cwd with leading slash removed and `/`, `\`, `:` replaced by `-`>--`.
 - Session file name: ISO-8601 timestamp with `:` and `.` replaced by `-`, e.g. `2026-08-07T11-27-16-523Z_<sessionId>.jsonl`.
-- `discoverSessions({ cwd, maxAgeDays: 1, limit: 1 })` scans only the cwd-encoded subdirectory, reads each candidate file's line-1 header, and keeps only files whose `header.cwd` matches the requested cwd. File modification time is used for the age filter so long-running sessions are not discarded while still open.
-- If the run start time is known, files whose `header.timestamp` predates it are rejected, unless the file has been modified during this run. This guards against aborted or model-less runs that leave a previous run's transcript as the newest file, while still admitting `pi --continue` / `-r` sessions that append to an older transcript.
-- If Pi's own session id (`PI_SESSION_ID`) is known, the matching header `id` is preferred among validated candidates; otherwise the newest valid file is selected.
+- **Collection.** `discoverSessions({ cwd, maxAgeDays: 1, runStartedAt, agentSessionId, env })`
+  reads each candidate file's line-1 header and keeps files whose `header.cwd` matches the
+  requested cwd and whose mtime is within the age window. Modification time is used for the age
+  filter so long-running sessions are not discarded while still open. No `limit` is passed: a run
+  can legitimately span several transcripts, and all of them are returned as `transcript_paths`.
+- **Attribution.** Candidates are then claimed in order of decreasing certainty. Timing never
+  accepts a transcript on its own — it only narrows the set — because a concurrent Pi run in the
+  same directory produces files that are indistinguishable by time alone:
+  1. *Identity.* The file matching `PI_SESSION_ID` is the run's anchor, resolved the way Pi
+     resolves `--session <arg>`: exact session id, then transcript path, then id prefix. Accepted
+     regardless of timing, since a `--session` resume appends to a transcript created earlier.
+  2. *Lineage.* `/fork` records the parent transcript's absolute path in `header.parentSession`,
+     so every transitive descendant of an owned file is claimed. The walk is downward only: the
+     anchor's own parent belongs to an earlier run.
+  3. *Elimination.* `/new` writes an unlinked header with a fresh id and no parent link, so it
+     carries no proof of ownership. Candidates are first pruned by run window, and — only when an
+     anchor exists — by having a parent outside the owned set. Without an anchor there is no owned
+     set to compare against, and `--continue` may reopen a transcript an earlier run forked, so
+     lineage cannot exclude anything there.
+- **With an anchor**, a UUIDv4 id identifies another CodeMie-driven Pi run — CodeMie injects v4
+  ids while Pi mints v7 — so such candidates are rejected, and their presence is the one
+  detectable signal that this directory has more than one writer. When none is present, the
+  remaining transcripts can only be this run's own `/new` files and **all** of them are claimed;
+  requiring a single survivor would silently drop every `/new` after the first.
+- **Without an anchor** (`--continue`, bare `--resume`), or when a concurrent CodeMie run *is*
+  detected, one surviving candidate is still unambiguous and is claimed; two or more cannot be
+  told apart by time, so a warning is logged and only the provably owned set is returned. The
+  UUIDv4 rule is deliberately **not** applied in the no-anchor case: `--continue` appends to a
+  transcript an earlier CodeMie run created, so that file legitimately carries a v4 id.
 
 ### 7.2 Entry types
 
@@ -203,7 +254,7 @@ The metrics processor emits one `MetricDelta` per assistant tool call, plus one 
 - `fileOperations`: extracted from matching tool results for non-failing calls
 - `models`: `[modelName]` if present, with `CODEMIE_MODEL` fallback
 - `userPrompts`: captured from `user` entries. Pi's `/skill:<name>` slash-command inlines the literal `<skill name="…" location="…">` wrapper and the real user prompt in a single text block; the wrapper is stripped and the trailing user text is kept. Slash-command template expansions and extension/SDK-sent user messages carry no persistent provenance marker, so they cannot be filtered and may be counted as human prompts.
-- `apiErrorMessage`: assistant `errorMessage`, or tool error text extracted from a failing tool result's `content[]`. For tools listed in `metricsConfig.excludeErrorsFromTools` (`bash` by default), the raw error text is replaced with a generic `Tool failed: <toolName>` placeholder so `had_errors`/`error_tools` remain accurate without exposing the tool's output.
+- `apiErrorMessage`: assistant `errorMessage`, or tool error text extracted from a failing tool result's `content[]`. For tools listed in `metricsConfig.excludeErrorsFromTools` (`bash` by default), the raw error text is replaced with a generic `Tool failed: <toolName>` placeholder so `had_errors`/`error_tools` remain accurate without exposing the tool's output. This is the **delta-file** wording; see §4 for the different string the shared post-processor puts on the wire.
 
 ## 8. File operation extraction
 
@@ -239,15 +290,22 @@ export const PiPluginMetadata: AgentMetadata = {
   },
 
   lifecycle: {
-    async beforeRun(env: NodeJS.ProcessEnv, _config: AgentConfig) { /* existing */ },
-    enrichArgs(args: string[], _config: AgentConfig): string[] { /* existing */ },
+    async beforeRun(env: NodeJS.ProcessEnv, _config: AgentConfig) {
+      // ... existing agent-dir / model preparation ...
+      // Publishes PI_SESSION_ID (unless argv already selects a session) and the
+      // resolved PI_CODING_AGENT_SESSION_DIR onto the run env.
+    },
+    enrichArgs(args: string[], _config: AgentConfig): string[] {
+      // ... existing --provider / --model / --task rewriting ...
+      // Injects `--session-id <CODEMIE_SESSION_ID>` and `--session-dir <dir>`.
+    },
 
     async onSessionStart(sessionId: string, env: NodeJS.ProcessEnv) {
       // SessionStart hook
     },
 
     async onSessionEnd(exitCode: number, env: NodeJS.ProcessEnv) {
-      // SessionEnd hook + session discovery
+      // SessionEnd hook + session discovery; emits transcript_paths[]
     },
   },
 };
@@ -264,9 +322,33 @@ export class PiPlugin extends BaseAgentAdapter {
     return this.sessionAdapter;
   }
 
+  // Translates CodeMie's session flags to Pi's and publishes the argv-derived
+  // facts that beforeRun (env only) and enrichArgs (no env) cannot read.
+  async run(args, envOverrides, runOptions) {
+    const prepared = preparePiInvocation(args, envOverrides);
+    return super.run(prepared.args, prepared.envOverrides, runOptions);
+  }
+
   // ... additionalInstallation stays ...
 }
 ```
+
+### 9.1 Session-flag reconciliation
+
+Pi's `validateSessionIdFlags` exits with code 1 when `--session-id` is combined with
+`--session`, `--continue`/`-c`, or `--resume`/`-r` (`--fork` is allowed). `preparePiInvocation`
+therefore, before the run starts:
+
+- Rewrites CodeMie's `--resume <session-id>` to Pi's `--session <session-id>`. Pi's own
+  `--resume`/`-r` is a **boolean** that opens an interactive picker, so the id would otherwise
+  be left as a bare positional and delivered to the model as a chat message.
+- Suppresses the `--session-id` injection whenever argv already selects a session, and records
+  that in `CODEMIE_PI_SESSION_SELECTED` so `beforeRun` does not publish a `PI_SESSION_ID` the
+  transcript will never carry.
+- Publishes `PI_SESSION_ID` from `--session`/`--session-id` when one names a session up front.
+  `--continue` and bare `--resume` name none, so those runs correlate by run window instead.
+- Publishes a CLI `--session-dir` value as `PI_CODING_AGENT_SESSION_DIR`, since the flag is an
+  unknown option to CodeMie's parser and would otherwise be invisible to discovery.
 
 ## 10. Error handling
 
