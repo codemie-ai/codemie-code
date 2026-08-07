@@ -18,6 +18,7 @@ import {ClaudeAcpPluginMetadata} from "../plugins/claude/claude-acp.plugin.js";
 import { CodexPluginMetadata } from '../plugins/codex/codex.plugin.js';
 import { KimiPluginMetadata } from '../plugins/kimi/kimi.plugin.js';
 import { KimiAcpPluginMetadata } from '../plugins/kimi/kimi-acp.plugin.js';
+import { PiPluginMetadata } from '../plugins/pi/pi.plugin.js';
 import { createAssistantsSetupCommand } from '../../cli/commands/assistants/setup/index.js';
 import { createSkillsSetupCommand } from '../../cli/commands/skills/setup/index.js';
 import type { TargetAgent } from '../../cli/commands/shared/agent-targets.js';
@@ -578,6 +579,7 @@ export class AgentCLI {
       'codex': CodexPluginMetadata,
       'kimi': KimiPluginMetadata,
       'kimi-acp': KimiAcpPluginMetadata,
+      'pi': PiPluginMetadata,
     };
     return metadataMap[this.adapter.name];
   }
