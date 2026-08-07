@@ -172,9 +172,30 @@ export class PiMetricsProcessor implements SessionProcessor {
     if (!Array.isArray(msg.content)) {
       return [];
     }
-    return msg.content.filter((part): part is PiToolCall =>
-      typeof part === 'object' && part !== null && (part as PiToolCall).type === 'toolCall'
-    );
+
+    return msg.content
+      .map((part): PiToolCall | undefined => {
+        if (typeof part !== 'object' || part === null) {
+          return undefined;
+        }
+
+        // Pi runtime emits the flat ToolCall shape directly in the content array.
+        const flat = part as PiToolCall;
+        if (flat.type === 'toolCall' && typeof flat.id === 'string' && typeof flat.name === 'string') {
+          return flat;
+        }
+
+        // Defensive: also accept a nested wrapper shape `{ type: 'toolCall', toolCall: {...} }`
+        // in case a Pi version or provider serializes it differently. The inner object may
+        // or may not repeat the `type` field.
+        const nested = (part as { type?: string; toolCall?: PiToolCall }).toolCall;
+        if (nested && typeof nested.id === 'string' && typeof nested.name === 'string') {
+          return nested;
+        }
+
+        return undefined;
+      })
+      .filter((toolCall): toolCall is PiToolCall => toolCall !== undefined);
   }
 
   private extractFileOperations(toolCall: PiToolCall, result?: PiToolResultMessage): PiFileOperation[] {

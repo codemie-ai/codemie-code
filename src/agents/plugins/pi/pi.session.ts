@@ -11,7 +11,7 @@ import type { SessionAdapter, ParsedSession, AggregatedResult, SessionDiscoveryO
 import type { SessionProcessor, ProcessingContext } from '../../core/session/BaseProcessor.js';
 import type { AgentMetadata } from '../../core/types.js';
 import { logger } from '../../../utils/logger.js';
-import { getPiSessionDir } from './pi.paths.js';
+import { getPiAgentDir, getPiSessionDir } from './pi.paths.js';
 import { PiMetricsProcessor } from './session/processors/pi.metrics-processor.js';
 import type { PiEntry } from './pi.types.js';
 
@@ -111,16 +111,48 @@ export class PiSessionAdapter implements SessionAdapter {
   }
 
   async discoverSessions(options?: SessionDiscoveryOptions): Promise<SessionDescriptor[]> {
-    const sessionDir = getPiSessionDir(options?.cwd ?? process.cwd());
-    if (!existsSync(sessionDir)) {
-      logger.debug(`[pi-discovery] Pi session directory does not exist: ${sessionDir}`);
-      return [];
-    }
+    const cwd = options?.cwd ?? process.cwd();
+    const exactSessionDir = getPiSessionDir(cwd);
+    const baseSessionsDir = join(getPiAgentDir(cwd), 'sessions');
 
     const maxAgeDays = options?.maxAgeDays ?? 30;
     const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
-    const results: SessionDescriptor[] = [];
 
+    const exactResults = await this.scanSessionDir(exactSessionDir, cutoff, cwd);
+
+    // Defensive fallback: if the exact cwd-encoded directory is empty or missing,
+    // scan sibling session directories so a Pi encoding change does not silently
+    // drop metrics.
+    let fallbackResults: SessionDescriptor[] = [];
+    if (exactResults.length === 0 && existsSync(baseSessionsDir)) {
+      try {
+        const siblings = await readdir(baseSessionsDir);
+        for (const sibling of siblings) {
+          const siblingDir = join(baseSessionsDir, sibling);
+          const siblingStat = await stat(siblingDir);
+          if (!siblingStat.isDirectory()) continue;
+          const siblingResults = await this.scanSessionDir(siblingDir, cutoff, cwd);
+          fallbackResults.push(...siblingResults);
+        }
+      } catch (error) {
+        logger.debug(`[pi-discovery] Failed to scan fallback session dirs:`, error);
+      }
+    }
+
+    const results = exactResults.length > 0 ? exactResults : fallbackResults;
+    results.sort((a, b) => b.createdAt - a.createdAt);
+
+    const limited = options?.limit && options.limit > 0 ? results.slice(0, options.limit) : results;
+    logger.debug(`[pi-discovery] Found ${results.length} Pi sessions, returning ${limited.length}`);
+    return limited;
+  }
+
+  private async scanSessionDir(sessionDir: string, cutoff: number, projectPath: string): Promise<SessionDescriptor[]> {
+    if (!existsSync(sessionDir)) {
+      return [];
+    }
+
+    const results: SessionDescriptor[] = [];
     try {
       const files = await readdir(sessionDir);
       for (const file of files) {
@@ -138,7 +170,7 @@ export class PiSessionAdapter implements SessionAdapter {
         results.push({
           sessionId,
           filePath,
-          projectPath: options?.cwd,
+          projectPath,
           createdAt,
           updatedAt: statResult.mtime.getTime(),
           agentName: 'pi',
@@ -146,12 +178,8 @@ export class PiSessionAdapter implements SessionAdapter {
       }
     } catch (error) {
       logger.debug(`[pi-discovery] Failed to scan session dir ${sessionDir}:`, error);
-      return [];
     }
 
-    results.sort((a, b) => b.createdAt - a.createdAt);
-    const limited = options?.limit && options.limit > 0 ? results.slice(0, options.limit) : results;
-    logger.debug(`[pi-discovery] Found ${results.length} Pi sessions, returning ${limited.length}`);
-    return limited;
+    return results;
   }
 }
