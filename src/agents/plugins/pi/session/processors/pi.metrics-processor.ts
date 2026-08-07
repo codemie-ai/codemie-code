@@ -5,6 +5,7 @@
  * them to JSONL for eventual sync to the CodeMie API.
  */
 
+import { readFile } from 'fs/promises';
 import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../../../../core/session/BaseProcessor.js';
 import type { ParsedSession } from '../../../../core/session/BaseSessionAdapter.js';
 import type { MetricDelta } from '../../../../core/metrics/types.js';
@@ -26,6 +27,13 @@ const PI_METRICS_PROCESSOR_NAME = 'pi-metrics';
 type PendingDelta = Omit<MetricDelta, 'syncStatus' | 'syncAttempts'>;
 type PiFileOperation = NonNullable<ReturnType<typeof extractPiFileOperation>>;
 
+interface UnmatchedToolCall {
+  entryId: string;
+  toolCall: PiToolCall;
+  assistantTimestamp: number;
+  assistantModel?: string;
+}
+
 export class PiMetricsProcessor implements SessionProcessor {
   readonly name = PI_METRICS_PROCESSOR_NAME;
   readonly priority = 1;
@@ -38,17 +46,17 @@ export class PiMetricsProcessor implements SessionProcessor {
     try {
       const entries = session.messages as PiEntry[];
       const existingRecordIds = await this.getExistingRecordIds(session.sessionId);
-      const gitBranch = context.gitBranch;
-
-      const toolResultByToolCallId = new Map<string, PiToolResultMessage>();
-      for (const entry of entries) {
-        if (isPiMessageEntry(entry) && isPiToolResultMessage(entry.message)) {
-          toolResultByToolCallId.set(entry.message.toolCallId, entry.message);
-        }
+      if (existingRecordIds === undefined) {
+        return {
+          success: true,
+          message: 'Skipping metrics processing: could not read existing deltas safely',
+          metadata: { recordsProcessed: entries.length, deltasWritten: 0 },
+        };
       }
 
-      const deltas: PendingDelta[] = [];
-      let skippedDueToDedup = 0;
+      const gitBranch = context.gitBranch;
+      const fallbackModel = process.env.CODEMIE_MODEL;
+      const sessionStartTime = this.deriveSessionStartTime(session);
 
       const base = (recordId: string, timestamp: number): PendingDelta => ({
         recordId,
@@ -58,8 +66,43 @@ export class PiMetricsProcessor implements SessionProcessor {
         ...(gitBranch && { gitBranch }),
       });
 
+      // Track unmatched assistant tool calls in insertion order. When a toolResult
+      // arrives, we pair it with the most recent preceding unmatched call for that id.
+      const unmatchedToolCalls: UnmatchedToolCall[] = [];
+      const unmatchedById = new Map<string, UnmatchedToolCall[]>();
+
+      const pushUnmatched = (call: UnmatchedToolCall): void => {
+        unmatchedToolCalls.push(call);
+        const list = unmatchedById.get(call.toolCall.id) ?? [];
+        list.push(call);
+        unmatchedById.set(call.toolCall.id, list);
+      };
+
+      const findAndRemoveUnmatched = (toolCallId: string): UnmatchedToolCall | undefined => {
+        const list = unmatchedById.get(toolCallId);
+        if (!list || list.length === 0) return undefined;
+        const call = list.pop()!;
+        if (list.length === 0) {
+          unmatchedById.delete(toolCallId);
+        }
+        const index = unmatchedToolCalls.lastIndexOf(call);
+        if (index !== -1) unmatchedToolCalls.splice(index, 1);
+        return call;
+      };
+
+      const deltas: PendingDelta[] = [];
+      let skippedDueToDedup = 0;
+
+      const maybePushDelta = (delta: PendingDelta): void => {
+        if (existingRecordIds.has(delta.recordId)) {
+          skippedDueToDedup++;
+          return;
+        }
+        deltas.push(delta);
+      };
+
       for (const entry of entries) {
-        if (!isPiMessageEntry(entry)) {
+        if (!isPiMessageEntry(entry) || !entry.id) {
           continue;
         }
 
@@ -71,60 +114,86 @@ export class PiMetricsProcessor implements SessionProcessor {
             continue;
           }
           const recordId = `${entry.id}:prompt`;
-          if (existingRecordIds.has(recordId)) {
-            skippedDueToDedup++;
-            continue;
-          }
-          deltas.push({ ...base(recordId, msg.timestamp), userPrompts: [{ count: 1, text }] });
+          maybePushDelta({
+            ...base(recordId, msg.timestamp ?? sessionStartTime),
+            userPrompts: [{ count: 1, text }],
+            ...(fallbackModel && { models: [fallbackModel] }),
+          });
           continue;
         }
 
         if (isPiAssistantMessage(msg)) {
+          const assistantTimestamp = msg.timestamp ?? sessionStartTime;
+          const assistantModel = msg.model || fallbackModel;
           const toolCalls = this.extractToolCalls(msg);
 
           for (const toolCall of toolCalls) {
-            const recordId = `${entry.id}:${toolCall.id}`;
-            if (existingRecordIds.has(recordId)) {
-              skippedDueToDedup++;
-              continue;
-            }
-
-            const result = toolResultByToolCallId.get(toolCall.id);
-            const toolName = toolCall.name.toLowerCase();
-            const isFailure = result?.isError === true;
-            const fileOps = !isFailure
-              ? this.extractFileOperations(toolCall, result).filter((op): op is PiFileOperation => op !== undefined)
-              : [];
-
-            const delta: PendingDelta = {
-              ...base(recordId, msg.timestamp),
-              tools: { [toolName]: 1 },
-              toolStatus: {
-                [toolName]: {
-                  success: isFailure ? 0 : 1,
-                  failure: isFailure ? 1 : 0,
-                },
-              },
-              ...(fileOps.length > 0 && { fileOperations: fileOps }),
-              ...(msg.model && { models: [msg.model] }),
-            };
-
-            deltas.push(delta);
+            pushUnmatched({
+              entryId: entry.id,
+              toolCall,
+              assistantTimestamp,
+              assistantModel,
+            });
           }
 
           if (msg.errorMessage) {
             const recordId = `${entry.id}:error`;
-            if (!existingRecordIds.has(recordId)) {
-              deltas.push({
-                ...base(recordId, msg.timestamp),
-                apiErrorMessage: msg.errorMessage,
-                ...(msg.model && { models: [msg.model] }),
-              });
-            } else {
-              skippedDueToDedup++;
-            }
+            maybePushDelta({
+              ...base(recordId, assistantTimestamp),
+              apiErrorMessage: msg.errorMessage,
+              ...(assistantModel && { models: [assistantModel] }),
+            });
           }
+          continue;
         }
+
+        if (isPiToolResultMessage(msg)) {
+          const matched = findAndRemoveUnmatched(msg.toolCallId);
+          if (!matched) {
+            continue;
+          }
+
+          const { entryId, toolCall, assistantTimestamp, assistantModel } = matched;
+          const recordId = `${entryId}:${toolCall.id}`;
+          const toolName = toolCall.name.toLowerCase();
+          const isFailure = msg.isError === true;
+
+          let fileOps: PiFileOperation[] = [];
+          let apiErrorMessage: string | undefined;
+          if (isFailure) {
+            apiErrorMessage = this.extractToolResultErrorText(msg);
+          } else {
+            fileOps = this.extractFileOperations(toolCall, msg).filter((op): op is PiFileOperation => op !== undefined);
+          }
+
+          const delta: PendingDelta = {
+            ...base(recordId, assistantTimestamp),
+            tools: { [toolName]: 1 },
+            toolStatus: {
+              [toolName]: {
+                success: isFailure ? 0 : 1,
+                failure: isFailure ? 1 : 0,
+              },
+            },
+            ...(fileOps.length > 0 && { fileOperations: fileOps }),
+            ...(assistantModel && { models: [assistantModel] }),
+            ...(apiErrorMessage && { apiErrorMessage }),
+          };
+
+          maybePushDelta(delta);
+          continue;
+        }
+      }
+
+      // Tool calls that never received a result are emitted without status, per spec §7.3.
+      for (const unmatched of unmatchedToolCalls) {
+        const recordId = `${unmatched.entryId}:${unmatched.toolCall.id}`;
+        const toolName = unmatched.toolCall.name.toLowerCase();
+        maybePushDelta({
+          ...base(recordId, unmatched.assistantTimestamp),
+          tools: { [toolName]: 1 },
+          ...(unmatched.assistantModel && { models: [unmatched.assistantModel] }),
+        });
       }
 
       if (deltas.length === 0) {
@@ -157,15 +226,40 @@ export class PiMetricsProcessor implements SessionProcessor {
     }
   }
 
+  private deriveSessionStartTime(session: ParsedSession): number {
+    const createdAt = session.metadata?.createdAt;
+    if (createdAt) {
+      const parsed = Date.parse(createdAt);
+      if (!Number.isNaN(parsed)) return parsed;
+    }
+    return Date.now();
+  }
+
   private extractUserText(msg: { content: string | unknown[] }): string | undefined {
     if (typeof msg.content === 'string') {
-      return msg.content.trim() || undefined;
+      const text = msg.content.trim();
+      return text && !this.isSyntheticUserText(text) ? text : undefined;
     }
-    const textParts = (msg.content as unknown[])
-      .filter((part): part is { type: string; text?: string } => typeof part === 'object' && part !== null)
-      .map(part => part.text)
-      .filter((text): text is string => typeof text === 'string' && text.trim().length > 0);
-    return textParts.length > 0 ? textParts.join('\n') : undefined;
+
+    if (!Array.isArray(msg.content)) return undefined;
+
+    const texts: string[] = [];
+    for (const part of msg.content) {
+      if (typeof part !== 'object' || part === null) continue;
+      const typed = part as { type?: string; text?: string };
+      if (typed.type !== 'text' || typeof typed.text !== 'string') continue;
+      const text = typed.text.trim();
+      if (text && !this.isSyntheticUserText(text)) {
+        texts.push(text);
+      }
+    }
+
+    return texts.length > 0 ? texts.join('\n') : undefined;
+  }
+
+  private isSyntheticUserText(text: string): boolean {
+    const trimmed = text.trim();
+    return /^<skill/i.test(trimmed) || /^Skill:/i.test(trimmed);
   }
 
   private extractToolCalls(msg: PiAssistantMessage): PiToolCall[] {
@@ -198,23 +292,60 @@ export class PiMetricsProcessor implements SessionProcessor {
       .filter((toolCall): toolCall is PiToolCall => toolCall !== undefined);
   }
 
+  private extractToolResultErrorText(result: PiToolResultMessage): string | undefined {
+    const { content } = result;
+    if (typeof content === 'string') {
+      const text = content.trim();
+      return text.length > 0 ? text : undefined;
+    }
+
+    if (!Array.isArray(content)) return undefined;
+
+    const texts: string[] = [];
+    for (const part of content) {
+      if (typeof part !== 'object' || part === null) continue;
+      const typed = part as { type?: string; text?: string };
+      if (typed.type !== 'text' || typeof typed.text !== 'string') continue;
+      const text = typed.text.trim();
+      if (text) texts.push(text);
+    }
+
+    const joined = texts.join('\n').trim();
+    return joined.length > 0 ? joined : undefined;
+  }
+
   private extractFileOperations(toolCall: PiToolCall, result?: PiToolResultMessage): PiFileOperation[] {
     const op = extractPiFileOperation(toolCall.name, toolCall.arguments, result?.details);
     return op ? [op] : [];
   }
 
-  private async getExistingRecordIds(sessionId: string): Promise<Set<string>> {
+  private async getExistingRecordIds(sessionId: string): Promise<Set<string> | undefined> {
     try {
       const { MetricsWriter } = await import('../../../../../providers/plugins/sso/session/processors/metrics/MetricsWriter.js');
       const writer = new MetricsWriter(sessionId);
       if (!writer.exists()) {
         return new Set();
       }
-      const existing = await writer.readAll();
-      return new Set(existing.map(d => d.recordId));
+
+      const content = await readFile(writer.getFilePath(), 'utf-8');
+      const recordIds = new Set<string>();
+      for (const line of content.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          const delta = JSON.parse(trimmed) as { recordId?: unknown };
+          if (typeof delta.recordId === 'string') {
+            recordIds.add(delta.recordId);
+          }
+        } catch {
+          // Skip malformed line rather than discarding the whole set.
+          logger.debug('[pi-metrics] Skipping malformed delta line while loading existing record ids');
+        }
+      }
+      return recordIds;
     } catch (error) {
-      logger.warn('[pi-metrics] Could not read existing deltas:', error);
-      return new Set();
+      logger.warn('[pi-metrics] Could not read existing deltas safely, skipping to avoid duplicates:', error);
+      return undefined;
     }
   }
 }

@@ -4,13 +4,18 @@
 
 import type { FileOperation, FileOperationType } from '../../../core/metrics/types.js';
 import { extractFormat, detectLanguage } from '../../../../utils/file-operations.js';
+import { logger } from '../../../../utils/logger.js';
 
+// Pi's closed tool registry is read | bash | edit | write | grep | find | ls
+// (packages/coding-agent/src/core/tools/index.ts). `find` is Pi's glob-by-filename
+// tool. `bash` is intentionally absent: it mutates files arbitrarily (`sed -i`,
+// `>`, `mv`, `git apply`, etc.) and no reliable file-effect signal is persisted.
+// `write` creates OR overwrites; the result does not record which occurred.
 const TOOL_TYPE_MAP: Record<string, FileOperationType> = {
   write: 'write',
   edit: 'edit',
   read: 'read',
   grep: 'grep',
-  glob: 'glob',
   ls: 'read',
   find: 'glob',
 };
@@ -48,7 +53,7 @@ function extractPath(args?: Record<string, unknown>, details?: Record<string, un
 
 /**
  * Build a file-operation record for a Pi tool call, or undefined if the tool
- * is not a file/search tool.
+ * is not a tracked file/search tool.
  */
 export function extractPiFileOperation(
   toolName: string,
@@ -57,6 +62,7 @@ export function extractPiFileOperation(
 ): FileOperation | undefined {
   const type = TOOL_TYPE_MAP[toolName.toLowerCase()];
   if (!type) {
+    logger.debug(`[pi-file-ops] No file-operation mapping for tool: ${toolName}`);
     return undefined;
   }
 
@@ -78,7 +84,10 @@ export function extractPiFileOperation(
   if (lowerToolName === 'write') {
     const content = toolArguments?.content;
     if (typeof content === 'string' && content.length > 0) {
-      operation.linesAdded = content.split('\n').length;
+      // Strip a single trailing newline so newline-terminated source files are
+      // not over-counted by one.
+      const normalized = content.endsWith('\n') ? content.slice(0, -1) : content;
+      operation.linesAdded = normalized.split('\n').length;
     }
   }
 

@@ -16,6 +16,7 @@ function buildPiHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProce
     provider: env.CODEMIE_PROVIDER,
     apiBaseUrl: env.CODEMIE_BASE_URL,
     ssoUrl: env.CODEMIE_URL,
+    syncApiUrl: env.CODEMIE_SYNC_API_URL,
     version: env.CODEMIE_CLI_VERSION,
     profileName: env.CODEMIE_PROFILE_NAME,
     project: env.CODEMIE_PROJECT,
@@ -110,6 +111,21 @@ export const PiPluginMetadata: AgentMetadata = {
       if (!sessionId) {
         logger.debug('[pi] No CODEMIE_SESSION_ID in environment, skipping session end');
         return;
+      }
+
+      // Best-effort active duration: Pi emits no UserPromptSubmit, so use the
+      // wall-clock session span as active duration.
+      try {
+        const { SessionStore } = await import('../../core/session/SessionStore.js');
+        const sessionStore = new SessionStore();
+        const session = await sessionStore.loadSession(sessionId);
+        if (session && session.startTime) {
+          session.activeDurationMs = Date.now() - session.startTime;
+          await sessionStore.saveSession(session);
+        }
+      } catch (activeDurationError) {
+        const msg = activeDurationError instanceof Error ? activeDurationError.message : String(activeDurationError);
+        logger.debug(`[pi] Active duration update failed (non-blocking): ${msg}`);
       }
 
       let transcriptPath = '';

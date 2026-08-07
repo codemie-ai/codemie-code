@@ -115,73 +115,93 @@ src/agents/plugins/pi/
 ### 7.1 Discovery
 
 - Base directory: `join(getPiAgentDir(cwd), 'sessions')`
-- Sub-directory name: base64url-ish encoding of the cwd. The implementation will scan all subdirectories and rely on `cwd` filtering (or heuristics) rather than reimplementing Pi’s exact encoding.
-- Session file name: `<timestamp>_<sessionId>.jsonl`
-- `discoverSessions({ cwd, maxAgeDays: 1, limit: 1 })` returns the newest file.
+- Sub-directory name: Pi encodes the cwd as `--<cwd with leading slash removed and `/`, `\`, `:` replaced by `-`>--`.
+- Session file name: ISO-8601 timestamp with `:` and `.` replaced by `-`, e.g. `2026-08-07T11-27-16-523Z_<sessionId>.jsonl`.
+- `discoverSessions({ cwd, maxAgeDays: 1, limit: 1 })` scans only the cwd-encoded subdirectory, reads each candidate file's line-1 header, and keeps only files whose `header.cwd` matches the requested cwd. File modification time is used for the age filter so long-running sessions are not discarded while still open.
 
 ### 7.2 Entry types
 
-Pi session JSONL entries are line-delimited JSON objects. The relevant entry shapes are:
+Pi session JSONL entries are line-delimited JSON objects. The shipped `pi` CLI writes format **v3** (`CURRENT_SESSION_VERSION = 3` in `packages/coding-agent/src/core/session-manager.ts`). Every file begins with a header line:
 
 ```typescript
-interface PiUserEntry {
-  role: 'user';
-  content: string | Array<{ type: string; text?: string }>;
-  timestamp?: number;
-}
-
-interface PiAssistantEntry {
-  role: 'assistant';
-  content?: Array<{
-    type: 'text';
-    text?: string;
-  } | {
-    type: 'toolCall';
-    toolCall: {
-      id: string;
-      name: string;
-      arguments: Record<string, unknown>;
-    };
-  }>;
-  model?: string;
-  usage?: { promptTokens?: number; completionTokens?: number; totalTokens?: number };
-  stopReason?: string;
-  errorMessage?: string;
-  timestamp?: number;
-}
-
-interface PiToolResultEntry {
-  role: 'toolResult';
-  toolCallId: string;
-  toolName?: string;
-  content?: string | unknown;
-  isError?: boolean;
-  details?: Record<string, unknown>;
-  durationMs?: number;
-  timestamp?: number;
+interface PiSessionHeader {
+  type: 'session';
+  version?: number;
+  id: string;
+  timestamp: string; // ISO-8601
+  cwd: string;
+  parentSession?: string;
 }
 ```
 
-These interfaces are local to the Pi plugin; Pi is not added as a dependency.
+Subsequent lines are entries with an envelope:
+
+```typescript
+interface PiEntryBase {
+  type: string;          // 'message' | 'model_change' | ...
+  id: string;            // 8-hex, collision-checked within the session
+  parentId: string | null;
+  timestamp: string;     // ISO-8601 at entry level
+}
+
+interface PiMessageEntry extends PiEntryBase {
+  type: 'message';
+  message: PiUserMessage | PiAssistantMessage | PiToolResultMessage | PiBashExecutionMessage;
+}
+
+interface PiUserMessage {
+  role: 'user';
+  content: string | Array<{ type: 'text'; text: string } | unknown>;
+  timestamp: number;     // epoch ms
+}
+
+interface PiAssistantMessage {
+  role: 'assistant';
+  content?: Array<
+    | { type: 'text'; text?: string }
+    | { type: 'toolCall'; id: string; name: string; arguments: Record<string, unknown> }
+  >;
+  model?: string;
+  usage?: Record<string, unknown>; // required by Pi but not forwarded to ToolUsageAttributes
+  stopReason?: string;
+  errorMessage?: string;
+  timestamp: number;     // epoch ms
+}
+
+interface PiToolResultMessage {
+  role: 'toolResult';
+  toolCallId: string;
+  toolName: string;
+  content?: string | Array<{ type: 'text'; text: string } | unknown>;
+  details?: Record<string, unknown>;
+  isError: boolean;      // required by Pi
+  timestamp: number;     // epoch ms
+}
+```
+
+These interfaces are local to the Pi plugin; Pi is not added as a dependency. The v4 harness format in `packages/agent/src/harness/session/jsonl/types.ts` is **not** used by the shipped CLI.
 
 ### 7.3 Matching tool calls to results
 
-- For each `assistant` entry, collect every `content` block whose `type === 'toolCall'`.
-- Look ahead through subsequent entries for `toolResult` entries whose `toolCallId` matches.
-- A tool call may map to zero results if the session ended prematurely; in that case emit the tool call without status.
+- Walk entries in file order.
+- For each `assistant` entry, collect every `content` block whose `type === 'toolCall'` and remember them as unmatched calls.
+- For each `toolResult` entry, pair it with the most recent preceding *unmatched* assistant tool call whose `toolCall.id` matches `toolResult.toolCallId`, then consume that match.
+- A tool call may map to zero results if the session ended prematurely; in that case emit the tool call without `toolStatus`.
+
+`toolCall.id` is intentionally not guaranteed session-unique (Pi passes provider ids through verbatim, e.g. `functions.<tool>:<n>`), so a global last-wins map is unsafe.
 
 ### 7.4 Deltas
 
-The metrics processor emits one `MetricDelta` per assistant entry that contains tool calls. Each delta contains:
+The metrics processor emits one `MetricDelta` per assistant tool call, plus one per user prompt and one per assistant-level API error. Each delta contains:
 
-- `recordId`: deterministic hash or `toolCall.id` of the first tool call (deduplication key)
+- `recordId`: `${entry.id}:${toolCall.id}` (entry ids are collision-checked by Pi, so this is reliably unique)
 - `timestamp`: assistant entry timestamp, or session start time if missing
-- `tools`: `{ [toolName]: count }`
-- `toolStatus`: `{ [toolName]: { success, failure } }`
-- `fileOperations`: extracted from matching tool results
-- `models`: `[modelName]` if present
-- `userPrompts`: captured from the preceding `user` entry (or current turn if interleaved)
-- `apiErrorMessage`: assistant `errorMessage` or a synthesized message when all tool results errored
+- `tools`: `{ [toolName]: 1 }`
+- `toolStatus`: `{ [toolName]: { success, failure } }` (omitted when the call has no matching result)
+- `fileOperations`: extracted from matching tool results for non-failing calls
+- `models`: `[modelName]` if present, with `CODEMIE_MODEL` fallback
+- `userPrompts`: captured from `user` entries, filtering out machine-injected content (e.g. `<skill …>` bodies)
+- `apiErrorMessage`: assistant `errorMessage`, or tool error text extracted from a failing tool result's `content[]`
 
 ## 8. File operation extraction
 
@@ -189,16 +209,20 @@ The metrics processor emits one `MetricDelta` per assistant entry that contains 
 
 | Pi tool name | Operation type | Line-count source |
 |---|---|---|
-| `write` | `write` | `toolCall.arguments.content` |
+| `write` | `write` | `toolCall.arguments.content` (single trailing newline stripped) |
 | `edit` | `edit` | `toolResult.details.diff` or `details.patch` (`+`/`-` lines) |
 | `read` | `read` | none |
 | `grep` | `grep` | none |
-| `glob` | `glob` | none |
 | `ls` | `read` | none |
 | `find` | `glob` | none |
+| `bash` | _(intentionally unmapped)_ | `bash` mutates files arbitrarily and records no reliable file-effect signal |
+
+There is no tool named `glob`; `glob` is only an optional parameter of `grep`. Extension-registered tools with unknown names are logged at debug level but not mapped.
 
 Paths are read from `toolCall.arguments.path`, `toolCall.arguments.file_path`, or `toolResult.details.path`.
 Line-count helpers reuse existing utilities in `src/utils/file-operations.ts` where possible.
+
+**Limitations:** `write` creates or overwrites, and Pi records nothing distinguishing the two, so every write is counted as a creation. File changes performed through `bash` are not tracked.
 
 ## 9. Plugin metadata changes
 
@@ -279,6 +303,6 @@ Manual verification:
 - Metric delta types: `src/agents/core/metrics/types.ts`
 - Hook command: `src/cli/commands/hook.ts`
 - Metrics sync pipeline: `src/providers/plugins/sso/session/processors/metrics/`
-- Pi source: `/home/taras_spashchenko/TS/github/pi/packages/coding-agent/src/core/session-manager.ts`
-- Pi session types: `/home/taras_spashchenko/TS/github/pi/packages/agent/src/harness/session/types.ts`
+- Pi source (v3 session format, authoritative for the shipped CLI): `/home/taras_spashchenko/TS/github/pi/packages/coding-agent/src/core/session-manager.ts`
+- Pi message types: `/home/taras_spashchenko/TS/github/pi/packages/ai/src/types.ts`
 

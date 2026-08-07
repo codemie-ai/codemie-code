@@ -1,16 +1,25 @@
 /**
  * Best-effort TypeScript shapes for Pi session JSONL entries.
  *
- * Based on Pi's public message/session types, but kept local so the plugin
- * does not depend on the upstream Pi packages.
+ * Based on the shipped Pi CLI's v3 session format
+ * (packages/coding-agent/src/core/session-manager.ts), not the v4 harness format.
+ * Kept local so the plugin does not depend on the upstream Pi packages.
  */
+
+export interface PiSessionHeader {
+  type: 'session';
+  version?: number;
+  id: string;
+  timestamp: string;
+  cwd: string;
+  parentSession?: string;
+}
 
 export interface PiEntryBase {
   type: string;
   id: string;
-  seq: number;
   parentId: string | null;
-  timestamp: number;
+  timestamp: string;
 }
 
 export interface PiTextContent {
@@ -48,11 +57,17 @@ export interface PiToolResultMessage {
   content: (PiTextContent | unknown)[] | unknown;
   details?: Record<string, unknown>;
   usage?: Record<string, unknown>;
-  isError?: boolean;
+  isError: boolean;
   timestamp: number;
 }
 
-export type PiAgentMessage = PiUserMessage | PiAssistantMessage | PiToolResultMessage;
+export interface PiBashExecutionMessage {
+  role: 'bashExecution';
+  content: unknown;
+  timestamp: number;
+}
+
+export type PiAgentMessage = PiUserMessage | PiAssistantMessage | PiToolResultMessage | PiBashExecutionMessage;
 
 export interface PiMessageEntry extends PiEntryBase {
   type: 'message';
@@ -67,7 +82,14 @@ export interface PiModelChangeEntry extends PiEntryBase {
 export type PiEntry = PiMessageEntry | PiModelChangeEntry | PiEntryBase;
 
 export function isPiMessageEntry(entry: PiEntry): entry is PiMessageEntry {
-  return entry.type === 'message' && 'message' in entry && entry.message !== undefined;
+  return (
+    entry !== null &&
+    typeof entry === 'object' &&
+    entry.type === 'message' &&
+    'message' in entry &&
+    entry.message !== null &&
+    typeof entry.message === 'object'
+  );
 }
 
 export function isPiUserMessage(message: PiAgentMessage): message is PiUserMessage {
@@ -80,4 +102,16 @@ export function isPiAssistantMessage(message: PiAgentMessage): message is PiAssi
 
 export function isPiToolResultMessage(message: PiAgentMessage): message is PiToolResultMessage {
   return message.role === 'toolResult';
+}
+
+export function isPiSessionHeader(value: unknown): value is PiSessionHeader {
+  if (!value || typeof value !== 'object') return false;
+  const header = value as Record<string, unknown>;
+  return (
+    header.type === 'session' &&
+    typeof header.id === 'string' &&
+    header.id.length > 0 &&
+    typeof header.timestamp === 'string' &&
+    typeof header.cwd === 'string'
+  );
 }

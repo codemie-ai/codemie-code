@@ -5,15 +5,15 @@
  */
 
 import { readFile, readdir, stat } from 'fs/promises';
-import { join } from 'path';
+import { join, resolve } from 'path';
 import { existsSync } from 'fs';
 import type { SessionAdapter, ParsedSession, AggregatedResult, SessionDiscoveryOptions, SessionDescriptor } from '../../core/session/BaseSessionAdapter.js';
 import type { SessionProcessor, ProcessingContext } from '../../core/session/BaseProcessor.js';
 import type { AgentMetadata } from '../../core/types.js';
 import { logger } from '../../../utils/logger.js';
-import { getPiAgentDir, getPiSessionDir } from './pi.paths.js';
+import { getPiSessionDir } from './pi.paths.js';
 import { PiMetricsProcessor } from './session/processors/pi.metrics-processor.js';
-import type { PiEntry } from './pi.types.js';
+import { isPiSessionHeader, type PiEntry, type PiSessionHeader } from './pi.types.js';
 
 export class PiSessionAdapter implements SessionAdapter {
   readonly agentName = 'pi';
@@ -37,18 +37,37 @@ export class PiSessionAdapter implements SessionAdapter {
   async parseSessionFile(filePath: string, sessionId: string): Promise<ParsedSession> {
     try {
       const entries = await this.readJsonlFile(filePath);
-      const projectPath = process.cwd();
+      const header = await this.readSessionHeader(filePath);
+      const projectPath = header?.cwd ?? process.cwd();
 
       return {
         sessionId,
         agentName: this.metadata.displayName || 'Pi',
-        metadata: { projectPath },
+        metadata: {
+          projectPath,
+          ...(header?.timestamp && { createdAt: header.timestamp }),
+        },
         messages: entries as unknown[],
       };
     } catch (error) {
       logger.error(`[pi-adapter] Failed to parse session file ${filePath}:`, error);
       throw error;
     }
+  }
+
+  private async readSessionHeader(filePath: string): Promise<PiSessionHeader | undefined> {
+    try {
+      const content = await readFile(filePath, 'utf-8');
+      const firstLine = content.split('\n')[0]?.trim();
+      if (!firstLine) return undefined;
+      const parsed = JSON.parse(firstLine);
+      if (isPiSessionHeader(parsed)) {
+        return parsed;
+      }
+    } catch {
+      // ignore — malformed header is handled by caller
+    }
+    return undefined;
   }
 
   private async readJsonlFile(filePath: string): Promise<PiEntry[]> {
@@ -58,7 +77,12 @@ export class PiSessionAdapter implements SessionAdapter {
       const trimmed = line.trim();
       if (!trimmed) continue;
       try {
-        entries.push(JSON.parse(trimmed) as PiEntry);
+        const parsed = JSON.parse(trimmed);
+        if (parsed && typeof parsed === 'object') {
+          entries.push(parsed as PiEntry);
+        } else {
+          logger.debug(`[pi-adapter] Skipping non-object JSONL line in ${filePath}`);
+        }
       } catch {
         logger.debug(`[pi-adapter] Skipping malformed JSONL line in ${filePath}`);
       }
@@ -112,35 +136,13 @@ export class PiSessionAdapter implements SessionAdapter {
 
   async discoverSessions(options?: SessionDiscoveryOptions): Promise<SessionDescriptor[]> {
     const cwd = options?.cwd ?? process.cwd();
-    const exactSessionDir = getPiSessionDir(cwd);
-    const baseSessionsDir = join(getPiAgentDir(cwd), 'sessions');
+    const sessionDir = getPiSessionDir(cwd);
 
     const maxAgeDays = options?.maxAgeDays ?? 30;
     const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
 
-    const exactResults = await this.scanSessionDir(exactSessionDir, cutoff, cwd);
-
-    // Defensive fallback: if the exact cwd-encoded directory is empty or missing,
-    // scan sibling session directories so a Pi encoding change does not silently
-    // drop metrics.
-    let fallbackResults: SessionDescriptor[] = [];
-    if (exactResults.length === 0 && existsSync(baseSessionsDir)) {
-      try {
-        const siblings = await readdir(baseSessionsDir);
-        for (const sibling of siblings) {
-          const siblingDir = join(baseSessionsDir, sibling);
-          const siblingStat = await stat(siblingDir);
-          if (!siblingStat.isDirectory()) continue;
-          const siblingResults = await this.scanSessionDir(siblingDir, cutoff, cwd);
-          fallbackResults.push(...siblingResults);
-        }
-      } catch (error) {
-        logger.debug(`[pi-discovery] Failed to scan fallback session dirs:`, error);
-      }
-    }
-
-    const results = exactResults.length > 0 ? exactResults : fallbackResults;
-    results.sort((a, b) => b.createdAt - a.createdAt);
+    const results = await this.scanSessionDir(sessionDir, cutoff, cwd);
+    results.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
 
     const limited = options?.limit && options.limit > 0 ? results.slice(0, options.limit) : results;
     logger.debug(`[pi-discovery] Found ${results.length} Pi sessions, returning ${limited.length}`);
@@ -152,27 +154,46 @@ export class PiSessionAdapter implements SessionAdapter {
       return [];
     }
 
+    const resolvedCwd = resolve(projectPath);
     const results: SessionDescriptor[] = [];
     try {
       const files = await readdir(sessionDir);
       for (const file of files) {
         if (!file.endsWith('.jsonl')) continue;
         const filePath = join(sessionDir, file);
-        const statResult = await stat(filePath);
+
+        let statResult;
+        try {
+          statResult = await stat(filePath);
+        } catch {
+          continue;
+        }
         if (!statResult.isFile()) continue;
 
-        const match = file.match(/^(\d+)_(.+?)\.jsonl$/);
-        if (!match) continue;
-        const createdAt = parseInt(match[1], 10);
-        const sessionId = match[2];
-        if (Number.isNaN(createdAt) || createdAt < cutoff) continue;
+        // Filter on modification time so long-running sessions are not discarded
+        // while they are still being written to.
+        const updatedAt = statResult.mtime.getTime();
+        if (updatedAt < cutoff) continue;
 
+        const header = await this.readSessionHeader(filePath);
+        if (!header) {
+          logger.debug(`[pi-discovery] Skipping file with invalid header: ${filePath}`);
+          continue;
+        }
+
+        // Only attribute sessions whose own header claims this cwd.
+        if (resolve(header.cwd) !== resolvedCwd) {
+          logger.debug(`[pi-discovery] Skipping session from different cwd: ${header.cwd}`);
+          continue;
+        }
+
+        const createdAt = Date.parse(header.timestamp);
         results.push({
-          sessionId,
+          sessionId: header.id,
           filePath,
-          projectPath,
-          createdAt,
-          updatedAt: statResult.mtime.getTime(),
+          projectPath: header.cwd,
+          createdAt: Number.isNaN(createdAt) ? updatedAt : createdAt,
+          updatedAt,
           agentName: 'pi',
         });
       }
