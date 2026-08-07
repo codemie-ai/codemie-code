@@ -85,3 +85,6 @@ docs/superpowers/tasks/*/code-review.diff
 docs/superpowers/tasks/*/code-review-check.diff
 /.pi/
 /.pi-subagents/
+/docs/superpowers/resume/
+/docs/superpowers/review-prompts/
+/docs/codemie/analytics/
