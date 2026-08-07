@@ -4,6 +4,7 @@ import { logger } from '@/utils/logger.js';
 import { preparePiAgentDir } from './pi.setup.js';
 import { fetchAndBuildPiModels, classifyPiModel } from './pi.models.js';
 import { getPiAgentDir } from './pi.paths.js';
+import { installRequiredPiPackages } from './pi.packages.js';
 
 export const PiPluginMetadata: AgentMetadata = {
   name: 'pi',
@@ -66,5 +67,11 @@ export const PiPluginMetadata: AgentMetadata = {
 export class PiPlugin extends BaseAgentAdapter {
   constructor() {
     super(PiPluginMetadata);
+  }
+
+  async additionalInstallation(
+    _options?: import('../../core/types.js').AgentInstallationOptions,
+  ): Promise<void> {
+    await installRequiredPiPackages({ cliCommand: this.metadata.cliCommand });
   }
 }
