@@ -21,7 +21,7 @@ export function createInstallCommand(): Command {
     .description('Install an external AI coding agent or development framework')
     .argument('[name]', 'Agent or framework name to install (run without argument to see available)')
     .argument('[version]', 'Optional: specific version to install (e.g., 2.0.30)')
-    .option('--supported', 'Install the latest supported version tested with CodeMie')
+    .option('--supported', 'Install the latest version tested with CodeMie (from metadata.supportedVersion)')
     .option('--verbose', 'Show detailed installation logs for troubleshooting')
     .option('--sounds', 'Enable sounds (plays audio on hook events)')
     .action(async (name?: string, version?: string, options?: AgentInstallationOptions & { supported?: boolean }) => {
@@ -93,14 +93,15 @@ export function createInstallCommand(): Command {
         const agent = AgentRegistry.getAgent(name);
 
         if (agent) {
-          // Determine which version to install
+          // Determine which version to install.
+          //
+          // Priority: --supported flag > explicit version argument > 'supported' default
+          // for Claude/Codex (version-sensitive backend compat) > undefined (latest).
           let versionToInstall: string | undefined;
-          let actualVersionToInstall: string | undefined; // Resolved version for display
+          let actualVersionToInstall: string | undefined; // Resolved version for display and comparison
 
-          // Priority: --supported flag > version argument > 'supported' (default for Claude) > undefined (latest)
           if (options?.supported) {
             versionToInstall = 'supported';
-            // Resolve 'supported' to actual version for display and comparison
             if (agent.checkVersionCompatibility) {
               const compat = await agent.checkVersionCompatibility();
               actualVersionToInstall = compat.supportedVersion;
@@ -109,7 +110,7 @@ export function createInstallCommand(): Command {
             versionToInstall = version;
             actualVersionToInstall = version;
           } else if ((agent.name === 'claude' || agent.name === 'codex') && agent.checkVersionCompatibility) {
-            // Default to supported version for agents whose backend compatibility is version-sensitive
+            // Default to supported version for agents whose backend compatibility is version-sensitive.
             versionToInstall = 'supported';
             const compat = await agent.checkVersionCompatibility();
             actualVersionToInstall = compat.supportedVersion;
@@ -213,15 +214,10 @@ export function createInstallCommand(): Command {
               await agent.additionalInstallation(options);
             }
 
-            // Show warning if installed version is newer than supported
-            if (displayVersion && agent.checkVersionCompatibility) {
-              const compat = await agent.checkVersionCompatibility();
-              if (compat.isNewer) {
-                console.log();
-                console.log(chalk.yellow(`⚠️  Note: This version (${displayVersion}) is newer than the supported version (${compat.supportedVersion}).`));
-                console.log(chalk.yellow(`   You may encounter compatibility issues with the CodeMie backend.`));
-                console.log(chalk.yellow(`   To install the supported version, run:`), chalk.blueBright(`codemie install ${agent.name} --supported`));
-              }
+            // One-time untested-version notice for the freshly-installed CLI.
+            // No-op if the tuple has already been acknowledged in a prior session.
+            if (displayVersion) {
+              await agent.warnOnceIfUntested();
             }
 
             // Show how to run the newly installed agent

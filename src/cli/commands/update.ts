@@ -54,17 +54,16 @@ async function checkAgentForUpdate(agent: AgentAdapter): Promise<UpdateCheckResu
     return null;
   }
 
-  // Special handling for Claude (uses native installer, not npm)
+  // Special handling for Claude (uses native installer, not npm). The compat
+  // check reads the pinned CLAUDE_SUPPORTED_VERSION constant — that's what
+  // CodeMie has verified against, and it's what `update` targets.
   if (agent.name === 'claude' && agent.checkVersionCompatibility) {
     const compat = await agent.checkVersionCompatibility();
     const supportedVersion = compat.supportedVersion;
     const cleanCurrentVersion = extractVersion(currentVersion) || currentVersion;
-
-    // Validate versions before comparing
     const cleanSupported = extractVersion(supportedVersion);
     if (!cleanSupported) return null;
 
-    // Check if update available (current < supported)
     const hasUpdate = compareVersions(cleanCurrentVersion, cleanSupported) < 0;
 
     return {
@@ -73,7 +72,7 @@ async function checkAgentForUpdate(agent: AgentAdapter): Promise<UpdateCheckResu
       currentVersion: cleanCurrentVersion,
       latestVersion: cleanSupported,
       hasUpdate,
-      npmPackage: '@anthropic-ai/claude-code' // Keep for compatibility, won't be used
+      npmPackage: '@anthropic-ai/claude-code', // Kept for compatibility; unused for Claude
     };
   }
 
@@ -207,29 +206,28 @@ async function promptAgentSelection(outdated: UpdateCheckResult[]): Promise<stri
  * Update a single agent
  */
 async function updateAgent(agent: AgentAdapter, latestVersion: string): Promise<void> {
-  // Special handling for Claude (uses native installer)
+  // Special handling for Claude (uses native installer) — install the pinned
+  // supported version so first-launch notice stays consistent with the marker.
   if (agent.name === 'claude' && agent.installVersion) {
     await agent.installVersion('supported');
-    return;
-  }
-
-  // Special handling for built-in agent — update the CLI package
-  if (agent.metadata.isBuiltIn) {
+  } else if (agent.metadata.isBuiltIn) {
+    // Special handling for built-in agent — update the CLI package
     await npm.installGlobal('@codemieai/code', { version: latestVersion, force: true });
-    return;
+  } else {
+    const npmPackage = agent.metadata.npmPackage;
+    if (!npmPackage) {
+      throw new AgentInstallationError(
+        agent.name,
+        `${agent.displayName} cannot be updated (no npm package configured)`,
+      );
+    }
+    // Use force: true to avoid ENOTEMPTY errors when updating global packages
+    await npm.installGlobal(npmPackage, { version: latestVersion, force: true });
   }
 
-  // Standard npm-based agents
-  const npmPackage = agent.metadata.npmPackage;
-  if (!npmPackage) {
-    throw new AgentInstallationError(
-      agent.name,
-      `${agent.displayName} cannot be updated (no npm package configured)`
-    );
-  }
-
-  // Use force: true to avoid ENOTEMPTY errors when updating global packages
-  await npm.installGlobal(npmPackage, { version: latestVersion, force: true });
+  // Record the one-time untested-version marker for the freshly-installed CLI
+  // so the first subsequent launch doesn't re-warn — see EPMCDME-13734.
+  await agent.warnOnceIfUntested();
 }
 
 export function createUpdateCommand(): Command {
@@ -283,12 +281,7 @@ export function createUpdateCommand(): Command {
           }
 
           if (!result.hasUpdate) {
-            // For Claude, clarify it's the latest supported version (not absolute latest)
-            if (agent.name === 'claude') {
-              spinner.succeed(`${agent.displayName} is already up to date with latest verified version by CodeMie (${result.currentVersion})`);
-            } else {
-              spinner.succeed(`${agent.displayName} is already up to date (${result.currentVersion})`);
-            }
+            spinner.succeed(`${agent.displayName} is already up to date (${result.currentVersion})`);
             return;
           }
 

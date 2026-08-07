@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "task": "Replace blocking per-agent supported-version checks in CodeMie CLI with a one-time, non-blocking untested-version warning, removing pinned version constants from all four agent plugins, adding a user-level warned-versions state store, ensuring ACP/non-interactive paths never block, and exposing verification status in codemie doctor.",
+  "generated": "2026-08-04T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 6,
+      "label": "XXL",
+      "note": "Base XL (5): 11+ files across Plugin/Core/CLI/Doctor/Persistence layers, new abstraction (warned-versions.ts), major BaseAgentAdapter.run() restructuring. Bumped +1 to XXL by 'affects multiple workflows or agents' red flag (4 distinct agent plugins + install/update/setup/doctor workflows)."
+    },
+    "requirements_clarity": {
+      "score": 3,
+      "label": "M",
+      "note": "Core intent is clear (one-time warn, never block, reset mechanism, doctor status). Two open design decisions unresolved by requirements: (1) what install --version supported resolves to after metadata.supportedVersion is removed; (2) exact form of the reset mechanism (config subcommand vs --flag vs env var). Minor assumption risk; 1-2 clarifying decisions needed."
+    },
+    "technical_risk": {
+      "score": 4,
+      "label": "L",
+      "note": "Breaking ACP silentMode behavior change (throw → log+proceed) affects ACP consumers. Zero unit-test coverage on BaseAgentAdapter.run() version-check branches (lines 383-506) — high-risk refactor on untested code. Integration test globalSetup (agent-build-setup.ts) directly imports CLAUDE_SUPPORTED_VERSION from built dist; removing the constant breaks all agent integration tests immediately. Patterns exist (MigrationTracker). Reversible. No security/compliance implications."
+    },
+    "file_change_estimate": {
+      "score": 4,
+      "label": "L",
+      "note": "11 source files modified: claude.plugin.ts, codex.plugin.ts, gemini.plugin.ts, kimi.plugin.ts, BaseAgentAdapter.ts, types.ts, install.ts, update.ts, setup.ts, AgentsCheck.ts, agent-build-setup.ts. 1-2 new source files: warned-versions.ts (definite), possibly 1 test file. New-file count (1-2) anchors below XL's 4-6 minimum; modified count (11) sits at L/XL boundary."
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "note": "No new npm packages. Solution reuses existing utilities: MigrationTracker pattern (src/migrations/tracker.ts), getCodemiePath() (src/utils/paths.ts), version-utils.ts, logger.ts, inquirer removal only."
+    },
+    "affected_layers": {
+      "score": 4,
+      "label": "L",
+      "note": "Four distinct layers: CLI commands (install/update/setup/doctor), Plugin (4 agent plugins), Core/adapter (BaseAgentAdapter), and new State-persistence (warned-versions.ts + ~/.codemie/version-warnings.json via getCodemiePath()). No external service integration, no DB schema migration, no cross-system boundary."
+    }
+  },
+  "total": 22,
+  "size": "L",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "11+ files span five architectural layers (Plugin, Core, CLI commands, Doctor, new State-persistence). New VersionWarningStore abstraction must be introduced. BaseAgentAdapter.run() — the enforcement gate shared by all four agents — requires significant behavioral restructuring. Four plugin files each need constant removal and metadata cleanup. Three CLI commands need call-site updates. One doctor check needs a new output field. 'Affects multiple workflows or agents' red flag pushed base XL to XXL."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "ACP silentMode behavior is being changed from 'throw on isBelowMinimum' to 'log-and-proceed' — a breaking behavioral change for ACP consumers that supersedes an existing ADR. BaseAgentAdapter.run() version-check branches (lines 383-506) have zero unit-test coverage, making the refactor high-risk without first adding characterisation tests. agent-build-setup.ts (integration test globalSetup) imports CLAUDE_SUPPORTED_VERSION from built dist; removing the constant breaks all agent integration tests immediately and must be fixed in the same PR."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "11 source files modified across seven distinct directories (plugins/claude, plugins/codex, plugins/gemini, plugins/kimi, agents/core, cli/commands, cli/commands/doctor/checks, utils, tests/setup). One definite new source file (warned-versions.ts). Modified count sits at the L/XL boundary (11 = XL minimum threshold); low new-file count (1-2) keeps the overall score at L."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "CLI commands layer (install, update, setup, doctor), Plugin layer (4 agent plugins), Core/adapter layer (BaseAgentAdapter), and a newly introduced State-persistence layer (version-warnings.json). Four distinct architectural layers in the project's five-layer model. No external service or DB migration involved."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from XL (5) to XXL (6): 'Affects multiple workflows or agents' — task modifies four distinct agent plugin workflows (claude, codex, gemini, kimi) plus install, update, setup, and doctor command workflows.",
+    "Component Scope: 'Touches core shared utilities' (BaseAgentAdapter is the shared base class for all agent adapters) — would bump Component Scope from XXL (6) to 7; capped at 6, no additional change."
+  ],
+  "split_recommendation": null
+}

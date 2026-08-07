@@ -34,35 +34,69 @@ vi.mock('ora', () => ({
   })),
 }));
 
+const warnOnceIfUntestedMock = vi.fn();
+
+function makeAgent(overrides: Record<string, unknown>) {
+  return {
+    name: 'claude',
+    displayName: 'Claude Code',
+    description: 'Claude Code - AI coding agent by Anthropic',
+    metadata: { supportedVersion: '2.1.34' },
+    isInstalled: vi.fn().mockResolvedValue(false),
+    install: vi.fn().mockResolvedValue(undefined),
+    installVersion: vi.fn().mockResolvedValue('2.1.34'),
+    getVersion: vi.fn().mockResolvedValue('2.1.34'),
+    checkVersionCompatibility: vi.fn().mockResolvedValue({
+      installedVersion: null,
+      supportedVersion: '2.1.34',
+      compatible: false,
+      isNewer: false,
+      hasUpdate: false,
+      isBelowMinimum: false,
+    }),
+    warnOnceIfUntested: warnOnceIfUntestedMock,
+    ...overrides,
+  };
+}
+
 describe('install command version selection', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
   });
 
-  it('defaults codex installation to the supported version like claude', async () => {
-    const installVersion = vi.fn().mockResolvedValue('0.129.0');
+  it('--supported routes to installVersion("supported")', async () => {
+    const installVersion = vi.fn().mockResolvedValue('2.1.34');
+    getAgentMock.mockReturnValue(makeAgent({ installVersion }));
+
+    const { createInstallCommand } = await import('../install.js');
+    const command = createInstallCommand();
+
+    await command.parseAsync(['node', 'codemie', 'claude', '--supported']);
+
+    expect(installVersion).toHaveBeenCalledWith('supported');
+    expect(spinnerSucceedMock).toHaveBeenCalledWith('Claude Code v2.1.34 installed successfully');
+  });
+
+  it('default install for claude/codex resolves supportedVersion via checkVersionCompatibility', async () => {
+    const installVersion = vi.fn().mockResolvedValue('0.143.0');
     const checkVersionCompatibility = vi.fn().mockResolvedValue({
-      supportedVersion: '0.129.0',
       installedVersion: null,
+      supportedVersion: '0.143.0',
       compatible: false,
       isNewer: false,
       hasUpdate: false,
       isBelowMinimum: false,
-      minimumSupportedVersion: '0.119.0',
     });
-
-    getAgentMock.mockReturnValue({
-      name: 'codex',
-      displayName: 'OpenAI Codex CLI',
-      description: 'OpenAI Codex CLI - AI coding agent by OpenAI',
-      metadata: {},
-      isInstalled: vi.fn().mockResolvedValue(false),
-      install: vi.fn().mockResolvedValue(undefined),
-      installVersion,
-      checkVersionCompatibility,
-      getVersion: vi.fn().mockResolvedValue('0.129.0'),
-    });
+    getAgentMock.mockReturnValue(
+      makeAgent({
+        installVersion,
+        checkVersionCompatibility,
+        name: 'codex',
+        displayName: 'OpenAI Codex CLI',
+        getVersion: vi.fn().mockResolvedValue('0.143.0'),
+      }),
+    );
 
     const { createInstallCommand } = await import('../install.js');
     const command = createInstallCommand();
@@ -72,69 +106,27 @@ describe('install command version selection', () => {
     expect(checkVersionCompatibility).toHaveBeenCalled();
     expect(installVersion).toHaveBeenCalledWith('supported');
     expect(restoreCliBinLinkMock).toHaveBeenCalledOnce();
-    expect(spinnerSucceedMock).toHaveBeenCalledWith(
-      'OpenAI Codex CLI v0.129.0 installed successfully'
-    );
+    expect(spinnerSucceedMock).toHaveBeenCalledWith('OpenAI Codex CLI v0.143.0 installed successfully');
   });
 
   it('uses the version returned by installVersion() for the success message', async () => {
     const installVersion = vi.fn().mockResolvedValue('2.1.34');
     const getVersion = vi.fn().mockResolvedValue('2.1.33'); // stale — must NOT appear in spinner
-
-    getAgentMock.mockReturnValue({
-      name: 'claude',
-      displayName: 'Claude Code',
-      description: 'Claude Code - AI coding agent by Anthropic',
-      metadata: {},
-      isInstalled: vi.fn().mockResolvedValue(false),
-      install: vi.fn().mockResolvedValue(undefined),
-      installVersion,
-      checkVersionCompatibility: vi.fn().mockResolvedValue({
-        supportedVersion: '2.1.34',
-        installedVersion: null,
-        compatible: false,
-        isNewer: false,
-        hasUpdate: false,
-        isBelowMinimum: false,
-        minimumSupportedVersion: '2.1.199',
-      }),
-      getVersion,
-    });
+    getAgentMock.mockReturnValue(makeAgent({ installVersion, getVersion }));
 
     const { createInstallCommand } = await import('../install.js');
     const command = createInstallCommand();
 
-    await command.parseAsync(['node', 'codemie', 'claude']);
+    await command.parseAsync(['node', 'codemie', 'claude', '2.1.34']);
 
-    expect(installVersion).toHaveBeenCalledWith('supported');
-    // must show the version from installVersion(), not the stale '2.1.33' from getVersion()
+    expect(installVersion).toHaveBeenCalledWith('2.1.34');
     expect(spinnerSucceedMock).toHaveBeenCalledWith('Claude Code v2.1.34 installed successfully');
   });
 
   it('warns when detected version does not match requested version (stale PATH)', async () => {
-    // Simulates Windows: installVersion() returns the old PATH version, not the one just installed
     const installVersion = vi.fn().mockResolvedValue('2.1.33');
     const getVersion = vi.fn().mockResolvedValue('2.1.33');
-
-    getAgentMock.mockReturnValue({
-      name: 'claude',
-      displayName: 'Claude Code',
-      description: 'Claude Code - AI coding agent by Anthropic',
-      metadata: {},
-      isInstalled: vi.fn().mockResolvedValue(false),
-      install: vi.fn().mockResolvedValue(undefined),
-      installVersion,
-      checkVersionCompatibility: vi.fn().mockResolvedValue({
-        supportedVersion: '2.1.34',
-        installedVersion: null,
-        compatible: false,
-        isNewer: false,
-        hasUpdate: false,
-        isBelowMinimum: false,
-        minimumSupportedVersion: '2.1.199',
-      }),
-      getVersion,
-    });
+    getAgentMock.mockReturnValue(makeAgent({ installVersion, getVersion }));
 
     const { createInstallCommand } = await import('../install.js');
     const command = createInstallCommand();
@@ -152,33 +144,47 @@ describe('install command version selection', () => {
   it('falls back to getVersion() when installVersion() returns null', async () => {
     const installVersion = vi.fn().mockResolvedValue(null);
     const getVersion = vi.fn().mockResolvedValue('2.1.34');
+    getAgentMock.mockReturnValue(makeAgent({ installVersion, getVersion }));
 
-    getAgentMock.mockReturnValue({
-      name: 'claude',
-      displayName: 'Claude Code',
-      description: 'Claude Code - AI coding agent by Anthropic',
-      metadata: {},
-      isInstalled: vi.fn().mockResolvedValue(false),
-      install: vi.fn().mockResolvedValue(undefined),
-      installVersion,
-      checkVersionCompatibility: vi.fn().mockResolvedValue({
-        supportedVersion: '2.1.34',
-        installedVersion: null,
-        compatible: false,
-        isNewer: false,
-        hasUpdate: false,
-        isBelowMinimum: false,
-        minimumSupportedVersion: '2.1.199',
-      }),
-      getVersion,
+    const { createInstallCommand } = await import('../install.js');
+    const command = createInstallCommand();
+
+    await command.parseAsync(['node', 'codemie', 'claude', '2.1.34']);
+
+    expect(getVersion).toHaveBeenCalled(); // fallback path exercised
+    expect(spinnerSucceedMock).toHaveBeenCalledWith('Claude Code v2.1.34 installed successfully');
+  });
+
+  it('reads metadata.supportedVersion via checkVersionCompatibility for claude default install', async () => {
+    const checkVersionCompatibility = vi.fn().mockResolvedValue({
+      installedVersion: null,
+      supportedVersion: '2.1.34',
+      compatible: false,
+      isNewer: false,
+      hasUpdate: false,
+      isBelowMinimum: false,
     });
+    const installVersion = vi.fn().mockResolvedValue('2.1.34');
+    getAgentMock.mockReturnValue(makeAgent({ installVersion, checkVersionCompatibility }));
 
     const { createInstallCommand } = await import('../install.js');
     const command = createInstallCommand();
 
     await command.parseAsync(['node', 'codemie', 'claude']);
 
-    expect(getVersion).toHaveBeenCalled(); // fallback path exercised
-    expect(spinnerSucceedMock).toHaveBeenCalledWith('Claude Code v2.1.34 installed successfully');
+    expect(checkVersionCompatibility).toHaveBeenCalled();
+    expect(installVersion).toHaveBeenCalledWith('supported');
+  });
+
+  it('calls agent.warnOnceIfUntested after a successful install to record the marker', async () => {
+    const install = vi.fn().mockResolvedValue(undefined);
+    getAgentMock.mockReturnValue(makeAgent({ install }));
+
+    const { createInstallCommand } = await import('../install.js');
+    const command = createInstallCommand();
+
+    await command.parseAsync(['node', 'codemie', 'claude']);
+
+    expect(warnOnceIfUntestedMock).toHaveBeenCalledOnce();
   });
 });

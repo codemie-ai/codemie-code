@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "runner": "npm",
+  "gates": [
+    {"id": "license-check", "command": "npm run license-check", "available": true, "source": "guide"},
+    {"id": "lint", "command": "npm run lint", "available": true, "source": "guide"},
+    {"id": "typecheck", "command": "npm run typecheck", "available": true, "source": "guide"},
+    {"id": "build", "command": "npm run build", "available": true, "source": "guide"},
+    {"id": "unit", "command": "npm run test:unit", "available": true, "source": "guide"},
+    {"id": "integration", "command": "npm run test:integration", "available": true, "source": "guide"},
+    {"id": "secrets", "command": "npm run validate:secrets", "available": true, "source": "guide"},
+    {"id": "commitlint", "command": "npm run commitlint:last", "available": true, "source": "guide"},
+    {"id": "ui", "command": "n/a", "available": false, "source": "guide"}
+  ],
+  "ui_globs": ["\\.(tsx|jsx|css|html|vue|svelte)$", "src/(ui|frontend|components)/"],
+  "detected_at": "2026-08-04T00:00:00Z"
+}

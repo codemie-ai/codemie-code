@@ -686,4 +686,64 @@ describe('BaseAgentAdapter', () => {
       expect((adapter as any).proxy).toBeNull();
     });
   });
+
+  // Characterisation tests for checkVersionCompatibility() — comparison flags
+  // are informational only (EPMCDME-13734: no blocking behavior), but the
+  // signature and return-shape stay stable so downstream callers can safely
+  // consult isNewer / hasUpdate / isBelowMinimum for display purposes.
+  describe('checkVersionCompatibility (informational, non-blocking)', () => {
+    beforeEach(() => vi.clearAllMocks());
+
+    const baseMeta = (overrides: Partial<AgentMetadata>): AgentMetadata => ({
+      name: 'test',
+      displayName: 'Test',
+      description: 'Test agent',
+      npmPackage: null,
+      cliCommand: null,
+      envMapping: {},
+      supportedProviders: ['openai'],
+      ...(overrides as any),
+    });
+
+    it('returns isNewer=true when installed > supportedVersion', async () => {
+      const adapter = new TestAdapter(
+        baseMeta({ supportedVersion: '2.0.0', minimumSupportedVersion: '1.5.0' }),
+      );
+      vi.spyOn(adapter as any, 'getVersion').mockResolvedValue('2.5.0');
+      const result = await adapter.checkVersionCompatibility();
+      expect(result.installedVersion).toBe('2.5.0');
+      expect(result.isNewer).toBe(true);
+      expect(result.hasUpdate).toBe(false);
+      expect(result.isBelowMinimum).toBe(false);
+    });
+
+    it('returns hasUpdate=true when installed < supportedVersion but >= minimum', async () => {
+      const adapter = new TestAdapter(
+        baseMeta({ supportedVersion: '2.0.0', minimumSupportedVersion: '1.5.0' }),
+      );
+      vi.spyOn(adapter as any, 'getVersion').mockResolvedValue('1.8.0');
+      const result = await adapter.checkVersionCompatibility();
+      expect(result.hasUpdate).toBe(true);
+      expect(result.isBelowMinimum).toBe(false);
+      expect(result.compatible).toBe(true);
+    });
+
+    it('returns isBelowMinimum=true when installed < minimumSupportedVersion', async () => {
+      const adapter = new TestAdapter(
+        baseMeta({ supportedVersion: '2.0.0', minimumSupportedVersion: '1.5.0' }),
+      );
+      vi.spyOn(adapter as any, 'getVersion').mockResolvedValue('1.0.0');
+      const result = await adapter.checkVersionCompatibility();
+      expect(result.isBelowMinimum).toBe(true);
+      expect(result.hasUpdate).toBe(true);
+    });
+
+    it('returns compatible=true when no supportedVersion configured', async () => {
+      const adapter = new TestAdapter(baseMeta({}));
+      vi.spyOn(adapter as any, 'getVersion').mockResolvedValue('1.0.0');
+      const result = await adapter.checkVersionCompatibility();
+      expect(result.compatible).toBe(true);
+      expect(result.installedVersion).toBe('1.0.0');
+    });
+  });
 });

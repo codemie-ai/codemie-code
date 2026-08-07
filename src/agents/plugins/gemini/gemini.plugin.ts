@@ -8,7 +8,8 @@ import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionI
 
 /**
  * Supported Gemini CLI version
- * Latest version tested and verified with CodeMie backend
+ * Latest version tested and verified with CodeMie backend.
+ * Bump this when a new gemini release has been validated with CodeMie.
  *
  * **UPDATE THIS WHEN BUMPING GEMINI VERSION**
  */
@@ -16,9 +17,9 @@ const GEMINI_SUPPORTED_VERSION = '0.29.5';
 
 /**
  * Minimum supported Gemini CLI version
- * Versions below this are known to be incompatible and will be blocked from starting
- * Rule: always 10 patch versions below GEMINI_SUPPORTED_VERSION
- * e.g. supported = 0.29.5 → minimum = 0.29.0 (patch floored at 0 since 5 - 10 < 0)
+ * Reference for the oldest version CodeMie has verified against.
+ * Never blocks — the version-check is non-blocking (EPMCDME-13734); the value is
+ * kept as documentation for CodeMie team + display.
  *
  * **UPDATE THIS WHEN BUMPING GEMINI VERSION**
  */
@@ -33,9 +34,11 @@ const metadata = {
   npmPackage: '@google/gemini-cli',
   cliCommand: 'gemini',
 
-  // Version management configuration
-  supportedVersion: GEMINI_SUPPORTED_VERSION,            // Latest version tested with CodeMie backend
-  minimumSupportedVersion: GEMINI_MINIMUM_SUPPORTED_VERSION, // Minimum version required to run
+  // Version management configuration — reference points for the non-blocking
+  // one-time untested-version notice (EPMCDME-13734). Bumped manually per
+  // CodeMie release as new gemini versions are validated.
+  supportedVersion: GEMINI_SUPPORTED_VERSION,
+  minimumSupportedVersion: GEMINI_MINIMUM_SUPPORTED_VERSION,
 
   envMapping: {
     baseUrl: ['GOOGLE_GEMINI_BASE_URL', 'GEMINI_BASE_URL'],

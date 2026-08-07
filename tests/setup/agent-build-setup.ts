@@ -59,14 +59,14 @@ export async function setup(): Promise<void> {
     process.env.PATH = `${localBin}${pathSep}${process.env.PATH ?? ''}`;
   }
 
-  // Import supported version and plugin class from the just-built dist.
-  // CLAUDE_SUPPORTED_VERSION is the single source of truth; when a developer
-  // bumps it locally and runs tests, this block installs the correct version.
+  // Install the exact Claude CLI version CodeMie has verified against
+  // (CLAUDE_SUPPORTED_VERSION), so integration tests always run against a
+  // predictable binary. See EPMCDME-13734.
   const { CLAUDE_SUPPORTED_VERSION, ClaudePlugin } = await import(
     resolve(root, 'dist/agents/plugins/claude/claude.plugin.js')
   ) as {
     CLAUDE_SUPPORTED_VERSION: string;
-    ClaudePlugin: new () => { installVersion(v: string): Promise<void> };
+    ClaudePlugin: new () => { installVersion(v: string): Promise<string | null> };
   };
 
   let installedVersion: string | null = null;
@@ -91,11 +91,10 @@ export async function setup(): Promise<void> {
       );
     }
     await new ClaudePlugin().installVersion('supported');
-    // Re-add localBin in case the installer modified PATH during its run.
     if (!(process.env.PATH ?? '').includes(localBin)) {
       process.env.PATH = `${localBin}${pathSep}${process.env.PATH ?? ''}`;
     }
-    execSync('claude --version', { stdio: 'pipe' }); // throws if install genuinely failed
+    execSync('claude --version', { stdio: 'pipe' });
     console.log(`[agent-integration] claude CLI ${CLAUDE_SUPPORTED_VERSION} installed.\n`);
   }
 

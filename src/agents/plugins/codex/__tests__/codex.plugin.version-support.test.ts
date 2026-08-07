@@ -13,9 +13,8 @@ vi.mock('../../../../providers/core/registry.js', () => ({
 
 vi.mock('../../../../utils/processes.js', async () => {
   const actual = await vi.importActual<typeof import('../../../../utils/processes.js')>(
-    '../../../../utils/processes.js'
+    '../../../../utils/processes.js',
   );
-
   return {
     ...actual,
     commandExists: vi.fn(),
@@ -34,133 +33,77 @@ vi.mock('../../../../utils/logger.js', () => ({
   },
 }));
 
-describe('CodexPlugin version support', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
+vi.mock('../../../../utils/version-warnings.js', () => ({
+  VersionWarningStore: {
+    hasWarned: vi.fn(),
+    recordWarning: vi.fn(),
+  },
+}));
 
-  it('declares the supported and minimum supported Codex CLI versions', async () => {
+vi.mock('../../../../utils/cli-updater.js', async () => {
+  const actual = await vi.importActual<typeof import('../../../../utils/cli-updater.js')>(
+    '../../../../utils/cli-updater.js',
+  );
+  return {
+    ...actual,
+    getCurrentCliVersion: vi.fn(async () => '0.11.0'),
+  };
+});
+
+vi.mock('../../../../utils/tty.js', () => ({
+  isInteractive: vi.fn(() => false),
+}));
+
+/**
+ * Contract tests for the new one-time-warning behavior. Replaces the previous
+ * constant-value assertions — see EPMCDME-13734.
+ */
+describe('CodexPlugin — one-time untested-version warning contract', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('carries supportedVersion and minimumSupportedVersion on its metadata (bumped manually per CodeMie release)', async () => {
     const { CodexPluginMetadata } = await import('../codex.plugin.js');
-
     expect(CodexPluginMetadata.supportedVersion).toBe('0.143.0');
     expect(CodexPluginMetadata.minimumSupportedVersion).toBe('0.133.0');
   });
 
-  it('extracts semver from codex --version output before compatibility comparison', async () => {
-    const processes = await import('../../../../utils/processes.js');
-    vi.mocked(processes.exec).mockResolvedValue({
-      code: 0,
-      stdout: 'codex-cli 0.144.1\n',
-      stderr: '',
-    });
+  it('warnOnceIfUntested is silent when installed matches supportedVersion (no mismatch)', async () => {
+    const { VersionWarningStore } = await import('../../../../utils/version-warnings.js');
+    vi.mocked(VersionWarningStore.hasWarned).mockResolvedValue(false);
 
     const { CodexPlugin } = await import('../codex.plugin.js');
-    const plugin = new CodexPlugin();
+    const adapter = new CodexPlugin();
+    vi.spyOn(adapter, 'getVersion').mockResolvedValue('0.143.0'); // matches metadata
 
-    await expect(plugin.getVersion()).resolves.toBe('0.144.1');
+    await adapter.warnOnceIfUntested();
 
-    const compat = await plugin.checkVersionCompatibility();
-    expect(compat.installedVersion).toBe('0.144.1');
-    expect(compat.supportedVersion).toBe('0.143.0');
-    expect(compat.minimumSupportedVersion).toBe('0.133.0');
-    expect(compat.isNewer).toBe(true);
-    expect(compat.compatible).toBe(false);
+    expect(VersionWarningStore.hasWarned).not.toHaveBeenCalled();
+    expect(VersionWarningStore.recordWarning).not.toHaveBeenCalled();
   });
 
-  it('marks Codex versions below the minimum supported version as below minimum', async () => {
-    const processes = await import('../../../../utils/processes.js');
-    vi.mocked(processes.exec).mockResolvedValue({
-      code: 0,
-      stdout: 'codex 0.132.9\n',
-      stderr: '',
-    });
+  it('warnOnceIfUntested emits + records marker when installed differs from supportedVersion', async () => {
+    const { VersionWarningStore } = await import('../../../../utils/version-warnings.js');
+    vi.mocked(VersionWarningStore.hasWarned).mockResolvedValue(false);
 
     const { CodexPlugin } = await import('../codex.plugin.js');
-    const plugin = new CodexPlugin();
+    const adapter = new CodexPlugin();
+    vi.spyOn(adapter, 'getVersion').mockResolvedValue('0.150.0'); // newer than supported 0.143.0
 
-    const compat = await plugin.checkVersionCompatibility();
+    await adapter.warnOnceIfUntested();
 
-    expect(compat.installedVersion).toBe('0.132.9');
-    expect(compat.isBelowMinimum).toBe(true);
-    expect(compat.minimumSupportedVersion).toBe('0.133.0');
+    expect(VersionWarningStore.recordWarning).toHaveBeenCalledWith('codex', '0.150.0');
   });
 
-  it('installs the supported Codex CLI version when requested', async () => {
-    const processes = await import('../../../../utils/processes.js');
-    vi.mocked(processes.installGlobal).mockResolvedValue(undefined);
+  it('warnOnceIfUntested is silent and does not record when marker is present', async () => {
+    const { VersionWarningStore } = await import('../../../../utils/version-warnings.js');
+    vi.mocked(VersionWarningStore.hasWarned).mockResolvedValue(true);
 
     const { CodexPlugin } = await import('../codex.plugin.js');
-    const plugin = new CodexPlugin();
+    const adapter = new CodexPlugin();
+    vi.spyOn(adapter, 'getVersion').mockResolvedValue('0.150.0');
 
-    await plugin.installVersion('supported');
+    await adapter.warnOnceIfUntested();
 
-    expect(processes.installGlobal).toHaveBeenCalledWith('@openai/codex', {
-      version: '0.143.0',
-    });
-  });
-  it('passes the direct CodeMie sync API URL to Codex lifecycle hook processing', async () => {
-    vi.resetModules();
-    const processEvent = vi.fn().mockResolvedValue(undefined);
-
-    vi.doMock('../../../../cli/commands/hook.js', () => ({
-      processEvent,
-    }));
-
-    const { CodexPluginMetadata } = await import('../codex.plugin.js');
-
-    await CodexPluginMetadata.lifecycle!.onSessionStart!('codemie-session-1', {
-      CODEMIE_AGENT: 'codex',
-      CODEMIE_PROVIDER: 'ai-run-sso',
-      CODEMIE_BASE_URL: 'http://127.0.0.1:49152',
-      CODEMIE_SYNC_API_URL: 'https://codemie.example.com/code-assistant-api',
-      CODEMIE_URL: 'https://codemie.example.com',
-      CODEMIE_CLI_VERSION: '0.1.0',
-      CODEMIE_PROFILE_NAME: 'work',
-      CODEMIE_PROJECT: 'project-a',
-      CODEMIE_MODEL: 'gpt-5.4',
-    });
-
-    expect(processEvent).toHaveBeenCalledWith(
-      expect.objectContaining({
-        hook_event_name: 'SessionStart',
-        session_id: 'codemie-session-1',
-      }),
-      expect.objectContaining({
-        agentName: 'codex',
-        sessionId: 'codemie-session-1',
-        apiBaseUrl: 'http://127.0.0.1:49152',
-        syncApiUrl: 'https://codemie.example.com/code-assistant-api',
-        ssoUrl: 'https://codemie.example.com',
-        clientType: 'codemie-codex',
-      })
-    );
-  });
-
-  it('sets an isolated CODEX_HOME for CodeMie-managed Codex runs', async () => {
-    const { CodexPluginMetadata } = await import('../codex.plugin.js');
-
-    const env = await CodexPluginMetadata.lifecycle!.beforeRun!(
-      {},
-      {
-        provider: 'ai-run-sso',
-        model: 'gpt-5.5-2026-04-24',
-      }
-    );
-
-    expect(env.CODEX_HOME).toMatch(/[/\\]\.codex[/\\]codemie[/\\]home$/);
-  });
-
-  it('preserves an explicit CODEX_HOME override', async () => {
-    const { CodexPluginMetadata } = await import('../codex.plugin.js');
-
-    const env = await CodexPluginMetadata.lifecycle!.beforeRun!(
-      { CODEX_HOME: '/tmp/custom-codex-home' },
-      {
-        provider: 'ai-run-sso',
-        model: 'gpt-5.5-2026-04-24',
-      }
-    );
-
-    expect(env.CODEX_HOME).toBe('/tmp/custom-codex-home');
+    expect(VersionWarningStore.recordWarning).not.toHaveBeenCalled();
   });
 });

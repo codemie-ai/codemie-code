@@ -20,9 +20,20 @@ import { sanitizeLogArgs } from '../../../utils/security.js';
 import { commandExists, exec, getCommandPath } from '../../../utils/processes.js';
 import { resolveHomeDir } from '../../../utils/paths.js';
 
-const KIMI_SUPPORTED_VERSION = '0.16.0';
-const KIMI_MINIMUM_SUPPORTED_VERSION = '0.15.0';
 const KIMI_NATIVE_BINARY_PATH = '.kimi-code/bin/kimi';
+
+/**
+ * Supported Kimi CLI version — bump on CodeMie release when a new kimi version
+ * has been validated. Reference point for the non-blocking one-time notice
+ * (EPMCDME-13734).
+ */
+const KIMI_SUPPORTED_VERSION = '0.16.0';
+
+/**
+ * Minimum supported Kimi CLI version — reference for the oldest version CodeMie
+ * has verified against. Never blocks (EPMCDME-13734).
+ */
+const KIMI_MINIMUM_SUPPORTED_VERSION = '0.15.0';
 
 const KIMI_INSTALLER_URLS = {
   macOS: 'https://code.kimi.com/kimi-code/install.sh',
@@ -331,7 +342,10 @@ export class KimiPlugin extends BaseAgentAdapter {
   }
 
   override async installVersion(version?: string): Promise<string | null> {
-    // Resolve 'supported' to the version from metadata
+    // Kimi uses the native installer. 'supported' resolves to metadata.supportedVersion
+    // (bumped manually per CodeMie release). 'npm' / 'latest' / 'stable' translate
+    // to "install the latest published build" — invoking the native installer
+    // without a specific version pin.
     let resolvedVersion: string | undefined = version;
     if (version === 'supported') {
       if (!this.metadata.supportedVersion) {
@@ -341,14 +355,8 @@ export class KimiPlugin extends BaseAgentAdapter {
         );
       }
       resolvedVersion = this.metadata.supportedVersion;
-      logger.debug('Resolved version', {
-        from: 'supported',
-        to: resolvedVersion,
-      });
+      logger.debug('Resolved kimi version', { from: 'supported', to: resolvedVersion });
     } else if (version === 'npm' || version === 'latest' || version === 'stable') {
-      // The 'npm', 'latest', and 'stable' channels request the latest build.
-      // Kimi uses the native installer, so passing undefined installs the
-      // latest version.
       resolvedVersion = undefined;
     }
 
