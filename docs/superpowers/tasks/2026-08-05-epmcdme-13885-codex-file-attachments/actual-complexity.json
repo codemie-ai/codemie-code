@@ -1,0 +1,71 @@
+{
+  "task": "Implement Codex file attachment detection for CodeMie assistants by scanning rollout JSONL files matched by CWD realpath and dispatching to the existing upload pipeline.",
+  "generated": "2026-08-05T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 3,
+      "label": "M",
+      "affected": "codexUploadsDetector (new CLI-service module), codex-message-types (Agent-Tool type definitions), chat index.ts (CLI dispatch logic)",
+      "layers": "CLI-Command, CLI-Service, Agent-Tool"
+    },
+    "requirements_clarity": {
+      "score": 2,
+      "label": "S",
+      "status": "Clear",
+      "gaps": null
+    },
+    "technical_risk": {
+      "score": 3,
+      "label": "M",
+      "risk_factors": "Two-pass JSONL extraction logic, image_wrapper_pattern inline text parsing for filename resolution, local_images[] fallback, OOM-safe base64 size estimation without full buffer allocation — no exact copy-paste precedent in codebase",
+      "mitigation": "Additive-only change; errors silently return empty array; existing upload pipeline reused unchanged; easily rolled back"
+    },
+    "file_change_estimate": {
+      "score": 2,
+      "label": "S",
+      "modified_files": 2,
+      "modified_file_list": [
+        "src/agents/plugins/codex/codex-message-types.ts",
+        "src/cli/commands/assistants/chat/index.ts"
+      ],
+      "new_files": 1,
+      "new_file_list": [
+        "src/cli/commands/assistants/chat/codexUploadsDetector.ts"
+      ],
+      "affected_dirs": [
+        "src/cli/commands/assistants/chat",
+        "src/agents/plugins/codex"
+      ]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 2,
+      "label": "S",
+      "layers_changed": ["CLI-Command", "Agent-Tool"],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 13,
+  "size": "S",
+  "band_range": "10-14",
+  "files_changed": 3,
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Three components touched across two distinct layers: new codexUploadsDetector service module, extended codex-message-types type file, and modified chat index.ts dispatch. Additive and self-contained within the assistants chat subsystem."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "No exact pattern to copy: two-pass JSONL extraction, realpath CWD matching across multiple session roots, filename resolution via image_wrapper_pattern text parsing or local_images fallback, and an OOM-safe size guard using arithmetic rather than Buffer allocation. Logic is novel but low-stakes — all errors return empty array and the upload pipeline is unchanged."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}
