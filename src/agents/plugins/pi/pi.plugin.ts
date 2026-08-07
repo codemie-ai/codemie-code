@@ -1,10 +1,28 @@
 import type { AgentMetadata, AgentConfig } from '../../core/types.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
+import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import { logger } from '@/utils/logger.js';
 import { preparePiAgentDir } from './pi.setup.js';
 import { fetchAndBuildPiModels, classifyPiModel } from './pi.models.js';
 import { getPiAgentDir } from './pi.paths.js';
 import { installRequiredPiPackages } from './pi.packages.js';
+import { PiSessionAdapter } from './pi.session.js';
+import type { HookProcessingConfig } from '../../../cli/commands/hook.js';
+
+function buildPiHookConfig(env: NodeJS.ProcessEnv, sessionId: string): HookProcessingConfig {
+  return {
+    agentName: env.CODEMIE_AGENT || 'pi',
+    sessionId,
+    provider: env.CODEMIE_PROVIDER,
+    apiBaseUrl: env.CODEMIE_BASE_URL,
+    ssoUrl: env.CODEMIE_URL,
+    version: env.CODEMIE_CLI_VERSION,
+    profileName: env.CODEMIE_PROFILE_NAME,
+    project: env.CODEMIE_PROJECT,
+    model: env.CODEMIE_MODEL,
+    clientType: 'codemie-pi',
+  };
+}
 
 export const PiPluginMetadata: AgentMetadata = {
   name: 'pi',
@@ -13,7 +31,11 @@ export const PiPluginMetadata: AgentMetadata = {
   npmPackage: '@earendil-works/pi-coding-agent',
   cliCommand: process.env.CODEMIE_PI_BIN || 'pi',
 
-  sessionAnalyticsReport: false,
+  sessionAnalyticsReport: true,
+
+  metricsConfig: {
+    excludeErrorsFromTools: ['bash'],
+  },
 
   dataPaths: {
     home: '.pi',
@@ -61,12 +83,82 @@ export const PiPluginMetadata: AgentMetadata = {
 
       return ['--provider', providerId, '--model', model, ...result];
     },
+
+    async onSessionStart(sessionId: string, env: NodeJS.ProcessEnv) {
+      try {
+        const { processEvent } = await import('../../../cli/commands/hook.js');
+        await processEvent(
+          {
+            hook_event_name: 'SessionStart',
+            session_id: sessionId,
+            transcript_path: '',
+            permission_mode: 'default',
+            cwd: process.cwd(),
+            source: 'startup',
+          },
+          buildPiHookConfig(env, sessionId)
+        );
+        logger.info(`[pi] SessionStart hook completed for session ${sessionId}`);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.error(`[pi] SessionStart hook failed (non-blocking): ${msg}`);
+      }
+    },
+
+    async onSessionEnd(exitCode: number, env: NodeJS.ProcessEnv) {
+      const sessionId = env.CODEMIE_SESSION_ID;
+      if (!sessionId) {
+        logger.debug('[pi] No CODEMIE_SESSION_ID in environment, skipping session end');
+        return;
+      }
+
+      let transcriptPath = '';
+      try {
+        const adapter = new PiSessionAdapter(PiPluginMetadata);
+        const sessions = await adapter.discoverSessions({ maxAgeDays: 1, limit: 1, cwd: process.cwd() });
+        if (sessions.length > 0) {
+          transcriptPath = sessions[0].filePath;
+          logger.debug(`[pi] Discovered Pi session: ${sessions[0].sessionId}`);
+        } else {
+          logger.debug('[pi] No recent Pi sessions found for this directory');
+        }
+      } catch (discoverError) {
+        const msg = discoverError instanceof Error ? discoverError.message : String(discoverError);
+        logger.debug(`[pi] Session discovery failed (non-blocking): ${msg}`);
+      }
+
+      try {
+        const { processEvent } = await import('../../../cli/commands/hook.js');
+        await processEvent(
+          {
+            hook_event_name: 'SessionEnd',
+            session_id: sessionId,
+            transcript_path: transcriptPath,
+            permission_mode: 'default',
+            cwd: process.cwd(),
+            reason: exitCode === 0 ? 'exit' : `exit(${exitCode})`,
+          },
+          buildPiHookConfig(env, sessionId)
+        );
+        logger.info(`[pi] SessionEnd hook completed for session ${sessionId}`);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.error(`[pi] SessionEnd hook failed (non-blocking): ${msg}`);
+      }
+    },
   },
 };
 
 export class PiPlugin extends BaseAgentAdapter {
+  private sessionAdapter: SessionAdapter;
+
   constructor() {
     super(PiPluginMetadata);
+    this.sessionAdapter = new PiSessionAdapter(PiPluginMetadata);
+  }
+
+  getSessionAdapter(): SessionAdapter {
+    return this.sessionAdapter;
   }
 
   async additionalInstallation(
