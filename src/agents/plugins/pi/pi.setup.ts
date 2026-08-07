@@ -1,6 +1,6 @@
 import { existsSync } from 'fs';
 import { cp, mkdir } from 'fs/promises';
-import { logger } from '../../../utils/logger.js';
+import { logger } from '@/utils/logger.js';
 import { getPiAgentDir, getUserPiAgentDir } from './pi.paths.js';
 
 export async function preparePiAgentDir(cwd: string = process.cwd()): Promise<void> {
