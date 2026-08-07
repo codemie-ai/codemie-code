@@ -54,10 +54,13 @@ export function postProcessMetric(
       delete attrs.error_tools;
     }
 
-    // If all failing tools were excluded, replace any error messages with a generic
-    // placeholder. This preserves the fact that errors occurred (had_errors stays true)
-    // without leaking raw output from tools the operator chose to exclude.
-    if (removedTools.length > 0 && !attrs.error_tools?.length) {
+    // Whenever any failing tool was excluded, replace the whole error_messages array
+    // with generic placeholders. Messages are not correlated to individual tools at
+    // this layer, so a message from an excluded tool cannot be removed selectively —
+    // keeping the array because a non-excluded tool also failed would upload the raw
+    // output the operator chose to exclude. This preserves the fact that errors
+    // occurred (had_errors stays true) without leaking that output.
+    if (removedTools.length > 0) {
       const uniqueRemoved = [...new Set(removedTools)];
       attrs.error_messages = uniqueRemoved.map((tool: string) => `Excluded tool failed: ${tool}`);
     } else if (!attrs.error_tools?.length) {
