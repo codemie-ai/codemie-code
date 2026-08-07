@@ -19,5 +19,11 @@ export async function preparePiAgentDir(cwd: string = process.cwd()): Promise<vo
   }
 
   logger.debug(`[pi-setup] Copying ${sourceDir} → ${destDir}`);
-  await cp(sourceDir, destDir, { recursive: true, force: true });
+  try {
+    await cp(sourceDir, destDir, { recursive: true, force: true });
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn(`[pi-setup] Failed to copy user Pi agent dir, starting fresh: ${message}`);
+    await mkdir(destDir, { recursive: true });
+  }
 }
