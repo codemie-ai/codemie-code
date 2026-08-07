@@ -305,14 +305,20 @@ async function performIncrementalSync(event: BaseHookEvent, hookName: string, se
       return;
     }
 
-    // Use transcript_path directly from event
-    const agentSessionFile = event.transcript_path;
-    if (!agentSessionFile) {
+    // Agents may provide a single transcript path or a list of paths (e.g. Pi's
+    // /new and /fork operations switch to a new file in the same run). Process
+    // every path so metrics are not lost.
+    const agentSessionFiles = event.transcript_paths?.length
+      ? event.transcript_paths
+      : event.transcript_path
+        ? [event.transcript_path]
+        : [];
+    if (agentSessionFiles.length === 0) {
       logger.warn(`[hook:${hookName}] No transcript_path in event, skipping incremental sync`);
       return;
     }
 
-    logger.debug(`[hook:${hookName}] Using transcript: ${agentSessionFile}`);
+    logger.debug(`[hook:${hookName}] Using transcript(s): ${agentSessionFiles.join(', ')}`);
 
     // Get agent from registry
     const agent = AgentRegistry.getAgent(agentName);
@@ -334,30 +340,32 @@ async function performIncrementalSync(event: BaseHookEvent, hookName: string, se
       return;
     }
 
-    // Build processing context
-    const context = await buildProcessingContext(sessionId, event.session_id, agentSessionFile, config);
+    const context = await buildProcessingContext(sessionId, event.session_id, agentSessionFiles[0], config);
 
-    // Process session with all processors (metrics + conversations)
-    logger.debug(`[hook:${hookName}] Calling SessionAdapter.processSession()`);
-    const result = await sessionAdapter.processSession(
-      agentSessionFile,
-      sessionId,
-      context
-    );
+    // Process every transcript file. Per-file entry deduplication inside the
+    // adapter prevents forked/copied history from being double-counted.
+    for (const agentSessionFile of agentSessionFiles) {
+      logger.debug(`[hook:${hookName}] Calling SessionAdapter.processSession()`);
+      const result = await sessionAdapter.processSession(
+        agentSessionFile,
+        sessionId,
+        context
+      );
 
-    if (result.success) {
-      logger.info(`[hook:${hookName}] Session processing complete: ${result.totalRecords} records processed`);
-    } else {
-      logger.warn(`[hook:${hookName}] Session processing had failures: ${result.failedProcessors.join(', ')}`);
-    }
-
-    // Log processor results
-    for (const [name, procResult] of Object.entries(result.processors)) {
-      const result = procResult as { success: boolean; message?: string; recordsProcessed?: number };
       if (result.success) {
-        logger.debug(`[hook:${hookName}] Processor ${name}: ${result.message || 'success'}`);
+        logger.info(`[hook:${hookName}] Session processing complete: ${result.totalRecords} records processed`);
       } else {
-        logger.error(`[hook:${hookName}] Processor ${name}: ${result.message || 'failed'}`);
+        logger.warn(`[hook:${hookName}] Session processing had failures: ${result.failedProcessors.join(', ')}`);
+      }
+
+      // Log processor results
+      for (const [name, procResult] of Object.entries(result.processors)) {
+        const result = procResult as { success: boolean; message?: string; recordsProcessed?: number };
+        if (result.success) {
+          logger.debug(`[hook:${hookName}] Processor ${name}: ${result.message || 'success'}`);
+        } else {
+          logger.error(`[hook:${hookName}] Processor ${name}: ${result.message || 'failed'}`);
+        }
       }
     }
 
@@ -1203,10 +1211,12 @@ function validateHookEvent(event: BaseHookEvent, config?: HookProcessingConfig):
     return;
   }
 
-  // transcript_path is optional for SessionStart/SessionEnd in programmatic mode
-  // (transcript may not exist yet at start, or may not be discoverable at end)
+  // transcript_path/transcript_paths are optional for SessionStart/SessionEnd in
+  // programmatic mode (transcript may not exist yet at start, or may not be
+  // discoverable at end). Some agents provide multiple transcript paths.
   const transcriptOptionalEvents = ['SessionStart', 'SessionEnd'];
-  if (!event.transcript_path && !transcriptOptionalEvents.includes(event.hook_event_name)) {
+  const hasTranscriptPath = Boolean(event.transcript_path) || (event.transcript_paths && event.transcript_paths.length > 0);
+  if (!hasTranscriptPath && !transcriptOptionalEvents.includes(event.hook_event_name)) {
     const error = new Error('Missing required field: transcript_path');
     if (config) {
       throw error;
