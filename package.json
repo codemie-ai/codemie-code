@@ -12,6 +12,7 @@
     "codemie-claude-acp": "./bin/codemie-claude-acp.js",
     "codemie-gemini": "./bin/codemie-gemini.js",
     "codemie-opencode": "./bin/codemie-opencode.js",
+    "codemie-pi": "./bin/codemie-pi.js",
     "codemie-codex": "./bin/codemie-codex.js",
     "codemie-kimi": "./bin/codemie-kimi.js",
     "codemie-kimi-acp": "./bin/codemie-kimi-acp.js",
