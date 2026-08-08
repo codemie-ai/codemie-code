@@ -1,6 +1,7 @@
 import { join, resolve } from 'path';
 import { homedir } from 'os';
 import { existsSync, readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
 
 export function getUserPiAgentDir(): string {
   return join(homedir(), '.pi', 'agent');
@@ -32,28 +33,56 @@ export interface PiSessionDirResolution {
 }
 
 /**
- * Expand a leading `~` to the user's home directory, then resolve to an
+ * Convert a Git Bash / MSYS / Cygwin / WSL drive path to native Windows form,
+ * matching Pi's `normalizeWindowsShellPath()`.
+ */
+function normalizeWindowsShellPath(filePath: string): string {
+  if (!filePath.startsWith('/') || filePath.startsWith('//') || filePath.includes('\\')) {
+    return filePath;
+  }
+  const match = filePath.match(/^\/(?:mnt\/|cygdrive\/)?([a-z])(?:\/(.*))?$/i);
+  if (!match) {
+    return filePath;
+  }
+  const suffix = match[2]?.replace(/\//g, '\\');
+  return `${match[1].toUpperCase()}:\\${suffix ?? ''}`;
+}
+
+/**
+ * Normalize a session-directory path the way Pi does, then resolve it to an
  * absolute path.
  *
- * Pi expands `~` on every channel it accepts a path from (`normalizePath()`,
- * which `expandTildePath()` delegates to). Node's `resolve()` does not, so
- * resolving a raw `~/pi-sessions` would create a literal `~` directory under
- * the cwd and silently disagree with the path Pi actually uses.
+ * Every channel Pi accepts a path from runs through `normalizePath()`, which
+ * rewrites Windows shell paths, expands a leading `~`, and converts `file://`
+ * URLs. Node's `resolve()` does none of that, so a raw `~/pi-sessions` would
+ * create a literal `~` directory and `file:///tmp/x` would become
+ * `<cwd>/file:/tmp/x` — in both cases discovery would scan a directory Pi never
+ * writes to, and the run's metrics would be lost without a trace.
  *
- * Only the tilde form is handled. Pi's `normalizePath()` additionally rewrites
- * `file://` URLs and Windows shell paths (`/c/…`, `/mnt/c/…`, `/cygdrive/c/…`);
- * those forms are left to `resolve()` here and are not at parity.
+ * The transform order mirrors Pi's `normalizePath()`. A malformed `file://` URL
+ * falls back to plain resolution rather than throwing.
  */
 function expandTildeAndResolve(inputPath: string): string {
-  if (inputPath === '~') {
+  const normalized = process.platform === 'win32' ? normalizeWindowsShellPath(inputPath) : inputPath;
+
+  if (normalized === '~') {
     return homedir();
   }
   const hasTildePrefix =
-    inputPath.startsWith('~/') || (process.platform === 'win32' && inputPath.startsWith('~\\'));
+    normalized.startsWith('~/') || (process.platform === 'win32' && normalized.startsWith('~\\'));
   if (hasTildePrefix) {
-    return join(homedir(), inputPath.slice(2));
+    return join(homedir(), normalized.slice(2));
   }
-  return resolve(inputPath);
+
+  if (/^file:\/\//.test(normalized)) {
+    try {
+      return fileURLToPath(normalized);
+    } catch {
+      // Not a valid file URL; fall through to plain resolution.
+    }
+  }
+
+  return resolve(normalized);
 }
 
 /**
