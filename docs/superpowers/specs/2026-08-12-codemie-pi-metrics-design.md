@@ -142,17 +142,31 @@ src/agents/plugins/pi/
   `--session-dir` reaches it as `PI_CODING_AGENT_SESSION_DIR` (see §9.1) rather than as a flag.
 - Sub-directory name: Pi encodes the cwd as `--<cwd with leading slash removed and `/`, `\`, `:` replaced by `-`>--`.
 - Session file name: ISO-8601 timestamp with `:` and `.` replaced by `-`, e.g. `2026-08-07T11-27-16-523Z_<sessionId>.jsonl`.
+- **Path forms.** Every session-directory channel is normalized the way Pi's `normalizePath()`
+  does — Windows shell paths (`/c/…`, `/mnt/c/…`, `/cygdrive/c/…`) on win32, a leading `~`, then
+  `file://` URLs — before being resolved. Node's `resolve()` performs none of these, and the CLI
+  flag reaches Pi verbatim while the derived value drives discovery, so any divergence points
+  discovery at a directory Pi never writes to and loses the run's metrics silently.
+- **Scope.** The directories to scan and the cwd candidates must declare are derived together.
+  Normally both come from the wrapper's cwd. But `--session <path>` opens a transcript directly,
+  and Pi then runs the whole session under *that transcript's* cwd (`SessionManager.open` takes the
+  cwd from the header; the runtime uses `sessionManager.getCwd()`), writing any later `/new`
+  transcript beside the opened file unless `--session-dir` says otherwise. Discovery therefore
+  follows the selected file: it scans that file's directory under the header's cwd, and also the
+  configured directory when one was named explicitly.
 - **Collection.** `discoverSessions({ cwd, maxAgeDays: 1, runStartedAt, agentSessionId, env })`
-  reads each candidate file's line-1 header and keeps files whose `header.cwd` matches the
-  requested cwd and whose mtime is within the age window. Modification time is used for the age
-  filter so long-running sessions are not discarded while still open. No `limit` is passed: a run
-  can legitimately span several transcripts, and all of them are returned as `transcript_paths`.
-- **Attribution.** Candidates are then claimed in order of decreasing certainty. Timing never
-  accepts a transcript on its own — it only narrows the set — because a concurrent Pi run in the
-  same directory produces files that are indistinguishable by time alone:
+  reads each candidate file's line-1 header and keeps files whose `header.cwd` matches the scope's
+  cwd and whose mtime is within the age window. Modification time is used for the age filter so
+  long-running sessions are not discarded while still open. No `limit` is passed: a run can
+  legitimately span several transcripts, and all of them are returned as `transcript_paths`.
+- **Attribution.** Candidates are then claimed in order of decreasing certainty:
   1. *Identity.* The file matching `PI_SESSION_ID` is the run's anchor, resolved the way Pi
      resolves `--session <arg>`: exact session id, then transcript path, then id prefix. Accepted
-     regardless of timing, since a `--session` resume appends to a transcript created earlier.
+     regardless of timing, since a `--session` resume appends to a transcript created earlier. A
+     fourth form has no counterpart in Pi's resolution but is equally provable: when `--session
+     <id>` matches a session in another project, Pi forks it into this one under a fresh UUIDv7, so
+     the named id never appears as a header id — but the fork records the source transcript's path,
+     whose file name ends in `_<source-id>.jsonl`.
   2. *Lineage.* `/fork` records the parent transcript's absolute path in `header.parentSession`,
      so every transitive descendant of an owned file is claimed. The walk is downward only: the
      anchor's own parent belongs to an earlier run.
@@ -162,15 +176,25 @@ src/agents/plugins/pi/
      set to compare against, and `--continue` may reopen a transcript an earlier run forked, so
      lineage cannot exclude anything there.
 - **With an anchor**, a UUIDv4 id identifies another CodeMie-driven Pi run — CodeMie injects v4
-  ids while Pi mints v7 — so such candidates are rejected, and their presence is the one
-  detectable signal that this directory has more than one writer. When none is present, the
-  remaining transcripts can only be this run's own `/new` files and **all** of them are claimed;
-  requiring a single survivor would silently drop every `/new` after the first.
-- **Without an anchor** (`--continue`, bare `--resume`), or when a concurrent CodeMie run *is*
-  detected, one surviving candidate is still unambiguous and is claimed; two or more cannot be
-  told apart by time, so a warning is logged and only the provably owned set is returned. The
-  UUIDv4 rule is deliberately **not** applied in the no-anchor case: `--continue` appends to a
-  transcript an earlier CodeMie run created, so that file legitimately carries a v4 id.
+  ids while Pi mints v7 — so such candidates are rejected, and their presence proves this directory
+  has more than one writer. `/new` files are claimed only when no such competing run is present
+  **and** the directory is one no other Pi process can write to. A directory the operator named
+  (via `--session-dir`, `PI_CODING_AGENT_SESSION_DIR`, or `sessionDir` in settings) does not
+  qualify: Pi reads `sessionDir` from the project's own `.pi/settings.json` too, so a bare `pi` in
+  the same project writes there alongside CodeMie under a UUIDv7 id indistinguishable from a `/new`
+  file. CodeMie's per-cwd default directory under `<cwd>/.pi/codemie/agent` is private by
+  construction, and there `all` surviving `/new` transcripts are claimed — requiring a single
+  survivor would silently drop every `/new` after the first.
+- **Timing accepts a transcript on its own in exactly one case:** a run that named no session at
+  all (`--continue`, bare `--resume`) which finds a single in-window candidate. A second writer
+  would have touched a file of its own, so a lone candidate is unambiguous. The UUIDv4 rule is
+  deliberately **not** applied here: `--continue` appends to a transcript an earlier CodeMie run
+  created, so that file legitimately carries a v4 id.
+- **Once an identity was published, timing is never used.** An unmatched transcript belongs to
+  someone else by elimination, so a run whose named transcript is absent — Pi does not create the
+  file until the session holds an assistant message, so a run that ended before its first reply
+  writes nothing — reports no transcripts rather than claiming a stranger's. Two or more
+  unattributable candidates likewise yield only the provably owned set, with a warning.
 
 ### 7.2 Entry types
 
@@ -346,9 +370,20 @@ therefore, before the run starts:
   that in `CODEMIE_PI_SESSION_SELECTED` so `beforeRun` does not publish a `PI_SESSION_ID` the
   transcript will never carry.
 - Publishes `PI_SESSION_ID` from `--session`/`--session-id` when one names a session up front.
-  `--continue` and bare `--resume` name none, so those runs correlate by run window instead.
+  `--continue` and bare `--resume` name none, so those runs correlate by run window instead. A
+  published id is not a guarantee that a transcript will carry it: `--session <id>` naming a
+  session in another project makes Pi fork it under a new id, which §7.1 resolves through the
+  fork's recorded parent path.
 - Publishes a CLI `--session-dir` value as `PI_CODING_AGENT_SESSION_DIR`, since the flag is an
   unknown option to CodeMie's parser and would otherwise be invisible to discovery.
+
+Session-flag detection scans argv for the flags themselves. Pi's parser assigns the token after a
+value-taking option unconditionally — `args[++i]` with no leading-`-` guard — so an argv that puts
+a session flag in a value position (`--system-prompt --continue`) is mis-detected as selecting a
+session. Mirroring Pi's flag table here would duplicate a list that silently rots whenever Pi adds
+an option, and the consequence is bounded: the run falls back to window-based attribution, which
+claims a lone transcript and reports nothing when it cannot tell candidates apart. The mismatch is
+accepted rather than tracked.
 
 ## 10. Error handling
 
@@ -374,6 +409,13 @@ Manual verification:
 - Conversation log sync (`_conversation.jsonl`); only metrics deltas.
 - Modifying the upstream Pi repo or adding native hooks.
 - Mapping Pi extensions/skills into CodeMie extension counts.
+- Re-implementing Pi's argument parser to detect session flags in value positions (see §9.1).
+- Keying `PiMetricsProcessor`'s cross-transcript state (`seenEntryIds`, the activity window) by
+  session id. The processor lives on the registry's singleton plugin, so the state would leak if one
+  process ever ran the metrics pipeline for two CodeMie sessions. No Pi path does: `onSessionStart`
+  carries no transcript and returns early, `onSessionEnd` fires once per process, and Pi has no
+  reconciliation loop of the kind `codex.reconciliation.ts` runs. Adding a reset for a caller that
+  does not exist is left until one does.
 
 ## 13. References
 
