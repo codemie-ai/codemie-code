@@ -6,8 +6,9 @@
  * reasoning content is load-balanced to a different deployment/API key than
  * the one that created it. Server-side encrypted_content_affinity is the
  * correct fix. This client-side sanitizer is a defensive fallback:
- * it removes encrypted reasoning state so the session can continue instead of
- * failing with invalid_encrypted_content.
+ * it removes replayed reasoning state so the session can continue instead of
+ * failing with invalid_encrypted_content (encrypted item routed to the wrong
+ * deployment) or "Item with id 'rs_...' not found" (bare item under store:false).
  *
  * Scope: codemie-codex, codemie-code, codemie-opencode, codemie-pi, and
  * vscode-byok. This
@@ -92,7 +93,7 @@ function sanitizeValue(value: unknown): SanitizeResult {
     const sanitizedItems: unknown[] = [];
 
     for (const item of value) {
-      if (isEncryptedReasoningItem(item)) {
+      if (isReasoningInputItem(item)) {
         modified = true;
         removedCount++;
         continue;
@@ -141,10 +142,15 @@ function sanitizeValue(value: unknown): SanitizeResult {
   return { value: result, modified, removedCount };
 }
 
-function isEncryptedReasoningItem(value: unknown): boolean {
-  return isPlainObject(value) &&
-    value.type === 'reasoning' &&
-    typeof value.encrypted_content === 'string';
+/**
+ * Any replayed reasoning item is deployment-bound state, not just the encrypted ones.
+ * Once `include: ["reasoning.encrypted_content"]` is stripped the upstream response
+ * carries reasoning items without `encrypted_content`; clients that persist and replay
+ * them (pi) then send a bare `rs_...` id, which `store: false` requests cannot resolve
+ * ("Item with id 'rs_...' not found"). Drop the whole item in both shapes.
+ */
+function isReasoningInputItem(value: unknown): boolean {
+  return isPlainObject(value) && value.type === 'reasoning';
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
