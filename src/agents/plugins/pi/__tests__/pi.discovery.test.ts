@@ -16,6 +16,7 @@ import { join } from 'node:path';
 import { PiSessionAdapter } from '../pi.session.js';
 import { PiPluginMetadata } from '../pi.plugin.js';
 import { getPiSessionDir } from '../pi.paths.js';
+import { redirectHomeDir } from './home-redirect.js';
 
 vi.mock('@/utils/logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -189,11 +190,11 @@ describe('discoverSessions — unscoped listing', () => {
 
   it('lists every project when the caller names no cwd', async () => {
     const here = mkdtempSync(join(tmpdir(), 'pi-here-'));
-    // The unscoped listing also reads Pi's own default root under the user's home, so HOME must
-    // be redirected or this asserts against whatever real sessions the developer happens to have.
+    // The unscoped listing also reads Pi's own default root under the user's home, so the home
+    // directory must be redirected or this asserts against whatever real sessions the developer
+    // happens to have.
     const home = mkdtempSync(join(tmpdir(), 'pi-home-'));
-    const realHome = process.env.HOME;
-    process.env.HOME = home;
+    const restoreHome = redirectHomeDir(home);
     const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(here);
     try {
       const sessionsRoot = join(getPiSessionDir(here), '..');
@@ -206,8 +207,7 @@ describe('discoverSessions — unscoped listing', () => {
       expect(found.find((s) => s.sessionId === 'theirs')?.projectPath).toBe('/some/other/repo');
     } finally {
       cwdSpy.mockRestore();
-      if (realHome === undefined) delete process.env.HOME;
-      else process.env.HOME = realHome;
+      restoreHome();
       rmSync(here, { recursive: true, force: true });
       rmSync(home, { recursive: true, force: true });
     }
@@ -218,8 +218,7 @@ describe('discoverSessions — unscoped listing', () => {
     // agent dir — so a listing that only reads <cwd>/.pi/codemie is blind to all of them.
     const here = mkdtempSync(join(tmpdir(), 'pi-here-'));
     const home = mkdtempSync(join(tmpdir(), 'pi-home-'));
-    const realHome = process.env.HOME;
-    process.env.HOME = home;
+    const restoreHome = redirectHomeDir(home);
     const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(here);
     try {
       makeProjectTranscript(join(home, '.pi', 'agent', 'sessions'), '--bare-project--', 'bare.jsonl', '/bare/repo');
@@ -229,8 +228,7 @@ describe('discoverSessions — unscoped listing', () => {
       expect(found.map((s) => s.sessionId)).toEqual(['bare']);
     } finally {
       cwdSpy.mockRestore();
-      if (realHome === undefined) delete process.env.HOME;
-      else process.env.HOME = realHome;
+      restoreHome();
       rmSync(here, { recursive: true, force: true });
       rmSync(home, { recursive: true, force: true });
     }

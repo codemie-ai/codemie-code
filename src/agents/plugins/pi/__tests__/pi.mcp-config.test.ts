@@ -4,6 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { PiPluginMetadata } from '../pi.plugin.js';
 import { getMCPConfigSummary } from '@/utils/mcp-config.js';
+import { redirectHomeDir } from './home-redirect.js';
 
 /**
  * MCP reaches Pi through the `pi-mcp-adapter` package, which reads six files that the
@@ -25,19 +26,18 @@ describe('pi MCP config', () => {
   let root: string;
   let cwd: string;
   let home: string;
-  const savedHome = process.env.HOME;
+  let restoreHome: () => void;
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'pi-mcp-'));
     cwd = join(root, 'project');
     home = join(root, 'home');
-    // homedir() reads HOME on POSIX, so '~/.pi/agent' resolves under the fixture.
-    process.env.HOME = home;
+    // So '~/.pi/agent' resolves under the fixture rather than the real user profile.
+    restoreHome = redirectHomeDir(home);
   });
 
   afterEach(() => {
-    if (savedHome === undefined) delete process.env.HOME;
-    else process.env.HOME = savedHome;
+    restoreHome();
     rmSync(root, { recursive: true, force: true });
   });
 

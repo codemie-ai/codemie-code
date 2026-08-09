@@ -4,6 +4,7 @@ import { join } from 'path';
 import { tmpdir } from 'os';
 import { PiPluginMetadata } from '../pi.plugin.js';
 import { getExtensionsScanSummary } from '@/utils/extensions-scan.js';
+import { redirectHomeDir } from './home-redirect.js';
 
 /**
  * Pi's resource directories are named differently from the scanner's defaults, and a
@@ -20,14 +21,14 @@ describe('pi extensions scan', () => {
   let root: string;
   let cwd: string;
   let home: string;
-  const savedHome = process.env.HOME;
+  let restoreHome: () => void;
 
   beforeEach(() => {
     root = mkdtempSync(join(tmpdir(), 'pi-ext-scan-'));
     cwd = join(root, 'project');
     home = join(root, 'home');
-    // homedir() reads HOME on POSIX, so '~/.pi/agent' resolves under the fixture.
-    process.env.HOME = home;
+    // So '~/.pi/agent' resolves under the fixture rather than the real user profile.
+    restoreHome = redirectHomeDir(home);
 
     // User scope: ~/.pi/agent/{skills,prompts,extensions}
     writeFile(join(home, '.pi/agent/skills/brave-search/SKILL.md'), '# Brave');
@@ -43,8 +44,7 @@ describe('pi extensions scan', () => {
   });
 
   afterEach(() => {
-    if (savedHome === undefined) delete process.env.HOME;
-    else process.env.HOME = savedHome;
+    restoreHome();
     rmSync(root, { recursive: true, force: true });
   });
 

@@ -23,8 +23,22 @@ import { getPiSessionDir, resolvePiSessionDir } from '../pi.paths.js';
 import { PiSessionAdapter } from '../pi.session.js';
 import { PiPluginMetadata } from '../pi.plugin.js';
 
+const IS_WINDOWS = process.platform === 'win32';
 const CWD = '/repo';
-const MALFORMED_URL = 'file://bad';
+
+/**
+ * `file://` URLs are the one input whose path form is platform-specific, so the fixtures
+ * have to be too — a single literal would test the opposite case on the other platform.
+ * Windows maps a host to a UNC path and demands a drive letter; POSIX rejects any host and
+ * takes the path verbatim.
+ */
+const WELL_FORMED_URL = IS_WINDOWS ? 'file:///C:/tmp/pi-sessions' : 'file:///tmp/pi-sessions';
+const WELL_FORMED_PATH = IS_WINDOWS ? 'C:\\tmp\\pi-sessions' : '/tmp/pi-sessions';
+/** No drive letter on Windows, a host on POSIX: what `fileURLToPath` rejects on each. */
+const MALFORMED_URL = IS_WINDOWS ? 'file:///notdriveletter/bad' : 'file://bad';
+/** An absolute path `resolve()` returns unchanged, so the assertion pins the value itself. */
+const EXPLICIT_DIR = IS_WINDOWS ? 'C:\\tmp\\x' : '/tmp/x';
+
 const tempDirs: string[] = [];
 
 function makeProjectDir(): string {
@@ -47,7 +61,7 @@ describe('resolvePiSessionDir', () => {
   });
 
   it('converts a well-formed file:// URL to a path', () => {
-    expect(resolveFor('file:///tmp/pi-sessions')).toBe('/tmp/pi-sessions');
+    expect(resolveFor(WELL_FORMED_URL)).toBe(WELL_FORMED_PATH);
   });
 
   it('falls back to the default directory for a malformed file:// URL', () => {
@@ -73,8 +87,8 @@ describe('resolvePiSessionDir', () => {
   });
 
   it('reports an explicit directory as custom', () => {
-    expect(resolvePiSessionDir(CWD, { PI_CODING_AGENT_SESSION_DIR: '/tmp/x' })).toEqual({
-      sessionDir: '/tmp/x',
+    expect(resolvePiSessionDir(CWD, { PI_CODING_AGENT_SESSION_DIR: EXPLICIT_DIR })).toEqual({
+      sessionDir: EXPLICIT_DIR,
       isCustom: true,
     });
   });
@@ -86,7 +100,9 @@ describe('resolvePiSessionDir', () => {
     expect(sessionDir).toContain('--repo--');
   });
 
-  it('keeps discovery away from the relative path a malformed file:// URL denotes', async () => {
+  // POSIX-only: the decoy's name contains a colon, which Windows does not allow in a path
+  // component, so the directory a malformed URL would denote cannot exist there.
+  it.skipIf(IS_WINDOWS)('keeps discovery away from the relative path a malformed file:// URL denotes', async () => {
     const projectDir = makeProjectDir();
     // What `<cwd>/file:/bad` is on disk when the working tree happens to contain it. The
     // transcript declares this project's cwd, so nothing but the session directory itself
