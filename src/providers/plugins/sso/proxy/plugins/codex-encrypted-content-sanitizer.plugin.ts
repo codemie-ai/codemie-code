@@ -9,7 +9,8 @@
  * it removes encrypted reasoning state so the session can continue instead of
  * failing with invalid_encrypted_content.
  *
- * Scope: codemie-codex, codemie-code, codemie-opencode, and vscode-byok. This
+ * Scope: codemie-codex, codemie-code, codemie-opencode, codemie-pi, and
+ * vscode-byok. This
  * cross-client fallback covers Responses-API sessions when load balancing can
  * send encrypted state to a different deployment/API key. Tradeoff: drops
  * cross-turn hidden-reasoning continuity to avoid hard invalid_encrypted_content
@@ -26,6 +27,7 @@ const ALLOWED_AGENTS = [
   'codemie-codex',
   'codemie-code',
   'codemie-opencode',
+  'codemie-pi',
   'vscode-byok',
 ];
 const ENCRYPTED_CONTENT_INCLUDE = 'reasoning.encrypted_content';
