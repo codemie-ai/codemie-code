@@ -8,13 +8,17 @@ import { mkdtempSync, rmSync, mkdirSync, writeFileSync, existsSync, readFileSync
 import { join } from 'path';
 import { tmpdir } from 'os';
 
-vi.mock('../../../../../utils/logger.js', () => ({
+// Aliased, not relative: a relative specifier copied from the module under test is one
+// directory short from here, resolves to nothing, and leaves the real file logger running —
+// which opens a write stream under the temp CODEMIE_HOME that afterEach then deletes out
+// from under it, failing the run with an unhandled ENOENT.
+vi.mock('@/utils/logger.js', () => ({
   logger: {
     debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), success: vi.fn(),
   },
 }));
 
-vi.mock('../../../../../utils/security.js', () => ({
+vi.mock('@/utils/security.js', () => ({
   sanitizeLogArgs: (...args: unknown[]) => args,
 }));
 
