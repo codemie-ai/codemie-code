@@ -1,0 +1,8 @@
+{
+  "name": "codemie-pi-run-ledger",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "description": "Records which transcripts a codemie-pi run produced, from inside Pi."
+}

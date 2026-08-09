@@ -5,52 +5,97 @@
  */
 
 import { open, readFile, readdir, stat } from 'fs/promises';
-import { basename, dirname, join, resolve } from 'path';
+import { dirname, join, resolve } from 'path';
 import { existsSync } from 'fs';
 import type { SessionAdapter, ParsedSession, AggregatedResult, SessionDiscoveryOptions, SessionDescriptor } from '../../core/session/BaseSessionAdapter.js';
 import type { SessionProcessor, ProcessingContext } from '../../core/session/BaseProcessor.js';
 import type { AgentMetadata } from '../../core/types.js';
 import { logger } from '../../../utils/logger.js';
-import { resolvePiSessionDir } from './pi.paths.js';
+import { getUserPiAgentDir, resolvePiSessionDir, type PiSessionDirResolution } from './pi.paths.js';
 
 export interface PiDiscoveryOptions extends SessionDiscoveryOptions {
-  /** Earliest time this run may have started; reject files whose header timestamp predates it. */
-  runStartedAt?: number;
-  /** Pi's own session id (from line-1 header `id`), if known. */
-  agentSessionId?: string;
   /** Environment variables used to resolve Pi session-directory overrides. */
   env?: NodeJS.ProcessEnv;
 }
-import { PiMetricsProcessor } from './session/processors/pi.metrics-processor.js';
-import { isPiSessionHeader, type PiEntry, type PiSessionHeader } from './pi.types.js';
 
-/** A transcript that could belong to this run, plus the fork link used to prove it. */
-interface PiSessionCandidate {
-  descriptor: SessionDescriptor;
-  /** Absolute path of the transcript this one was forked from, when Pi recorded one. */
-  parentSessionPath?: string;
+/** One transcript linked to a parsed session, as {@link ParsedSession.subagents} carries it. */
+type LinkedTranscript = NonNullable<ParsedSession['subagents']>[number];
+
+/**
+ * `subagents[].agentType` for a nested sub-agent run: a delegated agent Pi ran under this
+ * transcript, stored at `<transcript-without-.jsonl>/<agentId>/run-N/session.jsonl`.
+ */
+export const PI_SUBAGENT_RUN = 'pi-subagent-run';
+
+/**
+ * `subagents[].agentType` for a transcript that CONTINUED this one (`/fork`, `/branch`).
+ * Its inherited entries are byte-identical copies of this transcript's, ids included, so
+ * consumers must fold it in by entry identity rather than concatenating blindly.
+ *
+ * Never attached by this adapter — see {@link PiSessionAdapter.loadSubagentRuns} for why folding
+ * a fork family is the analytics layer's job. `native-loader.ts` attaches it.
+ */
+export const PI_FORKED_CONTINUATION = 'pi-forked-continuation';
+
+/** The transcripts that continued `parsed` via `/fork` or `/branch`, in discovery order. */
+export function piForkedContinuations(parsed: ParsedSession): LinkedTranscript[] {
+  return (parsed.subagents ?? []).filter((sub) => sub.agentType === PI_FORKED_CONTINUATION);
 }
 
-/** Where this run's transcripts can live, and under which cwd Pi ran the session. */
-interface PiDiscoveryScope {
-  /** Every directory Pi may have written a transcript to during this run. */
-  dirs: string[];
-  /** The cwd Pi's session actually ran under, which candidates must declare. */
-  cwd: string;
-  /** Whether a Pi process other than this run could also be writing to `dirs`. */
-  mayBeShared: boolean;
+/** The immediate subdirectories of `root`, or [] when it is absent or unreadable. */
+async function subdirectoriesOf(root: string): Promise<string[]> {
+  try {
+    const entries = await readdir(root, { withFileTypes: true });
+    return entries.filter((e) => e.isDirectory()).map((e) => join(root, e.name));
+  } catch {
+    return [];
+  }
 }
 
 /**
- * Whether a Pi session id was minted by CodeMie rather than by Pi.
+ * Every project's session directory, for an unscoped (analytics) listing.
  *
- * CodeMie derives it from `randomUUID()` (UUIDv4) and injects it via `--session-id`;
- * Pi's own ids are UUIDv7. So an unlinked transcript carrying a v4 id that is not
- * this run's anchor is provably another CodeMie-driven Pi run.
+ * Pi transcripts live under TWO roots, and a listing that reads one of them is blind to
+ * whichever half of the user's usage lives in the other:
+ *
+ *  - `<cwd>/.pi/codemie/agent/sessions` — where CodeMie points Pi (`beforeRun` sets
+ *    `PI_CODING_AGENT_DIR`), so every MANAGED run lands here. In practice it holds exactly
+ *    one directory, the project's own.
+ *  - `~/.pi/agent/sessions` — Pi's own default (upstream `getDefaultSessionDir`), so every
+ *    BARE `pi` run lands here. Native discovery exists precisely to report those runs, and
+ *    this is the only root that has them.
+ *
+ * Both use the same one-directory-per-cwd layout, so a root's subdirectories ARE the projects.
+ * A directory the user pointed Pi at explicitly (`PI_CODING_AGENT_SESSION_DIR`, or `sessionDir`
+ * in settings) is not part of that layout — its siblings are arbitrary directories that have
+ * nothing to do with Pi — so a custom resolution stays alone.
  */
-function isCodeMieSessionId(id: string): boolean {
-  return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
+async function allProjectSessionDirs(resolution: PiSessionDirResolution): Promise<string[]> {
+  const { sessionDir, isCustom } = resolution;
+  if (isCustom) {
+    return [sessionDir];
+  }
+
+  const dirs: string[] = [];
+  const seen = new Set<string>();
+  for (const root of [dirname(sessionDir), join(getUserPiAgentDir(), 'sessions')]) {
+    for (const dir of await subdirectoriesOf(root)) {
+      const key = resolve(dir);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      dirs.push(dir);
+    }
+  }
+  // Both roots unreadable — fall back to the project's own directory.
+  return dirs.length > 0 ? dirs : [sessionDir];
 }
+import {
+  PI_METRICS_PROCESSOR_NAME,
+  PiMetricsProcessor,
+  type PiLedgerInvocations,
+} from './session/processors/pi.metrics-processor.js';
+import { PiConversationsProcessor } from './session/processors/pi.conversations-processor.js';
+import { isPiSessionHeader, type PiEntry, type PiSessionHeader } from './pi.types.js';
 
 export class PiSessionAdapter implements SessionAdapter {
   readonly agentName = 'pi';
@@ -62,7 +107,22 @@ export class PiSessionAdapter implements SessionAdapter {
 
   private initializeProcessors(): void {
     this.registerProcessor(new PiMetricsProcessor(this.metadata));
+    this.registerProcessor(new PiConversationsProcessor());
     logger.debug(`[pi-adapter] Initialized ${this.processors.length} processors`);
+  }
+
+  /**
+   * Supply the run-ledger counts the metrics processor cannot derive from a transcript.
+   *
+   * Pi expands a prompt template into plain user text before persisting it, so `/review` never
+   * appears in the JSONL — the only record of it is the ledger the CodeMie extension wrote
+   * (`pi.extension.ts`). The processing pipeline reaches this adapter through the registry
+   * singleton, and `ProcessingContext` is shared by every agent, so the counts are handed over
+   * here rather than threaded through a field only Pi would ever read.
+   */
+  setLedgerInvocations(ledgerInvocations: PiLedgerInvocations | undefined): void {
+    this.processors = this.processors.filter((processor) => processor.name !== PI_METRICS_PROCESSOR_NAME);
+    this.registerProcessor(new PiMetricsProcessor(this.metadata, ledgerInvocations));
   }
 
   registerProcessor(processor: SessionProcessor): void {
@@ -76,6 +136,7 @@ export class PiSessionAdapter implements SessionAdapter {
       const entries = await this.readJsonlFile(filePath);
       const header = await this.readSessionHeader(filePath);
       const projectPath = header?.cwd ?? process.cwd();
+      const subagents = await this.loadSubagentRuns(filePath);
 
       return {
         sessionId,
@@ -84,14 +145,83 @@ export class PiSessionAdapter implements SessionAdapter {
           projectPath,
           ...(header?.timestamp && { createdAt: header.timestamp }),
           ...(header?.id && { agentSessionId: header.id }),
+          // The file's own statement of which transcript it was forked from. Analytics uses
+          // it to collapse a fork family into the one conversation it really is.
+          ...(header?.parentSession && { parentSession: header.parentSession }),
         },
         messages: entries as unknown[],
+        ...(subagents.length > 0 && { subagents }),
       };
     } catch (error) {
       logger.error(`[pi-adapter] Failed to parse session file ${filePath}:`, error);
       throw error;
     }
   }
+
+  /**
+   * Nested sub-agent transcripts, stored under `<transcript-without-.jsonl>/<agentId>/run-N/`.
+   *
+   * A delegated agent gets its own session file there. The parent records tool results for those
+   * dispatches but NO usage on them (measured on a real corpus: 1707 `toolResult` entries, zero
+   * carrying `usage`), so every token a sub-agent burned lives only in the nested file and a
+   * reader that walks `messages` alone misses all of it.
+   *
+   * Attached WITHOUT a `toolUseId`: this is session-level spend, not the allocation of one
+   * dispatch, and `cost-enricher.enrichDispatchCosts` keys on `toolUseId` precisely so it skips
+   * these.
+   *
+   * **Forked continuations are deliberately NOT linked here.** `/fork` writes a new file that
+   * replays the prior conversation verbatim, so folding it into its source looks tempting — but
+   * `codemie pi --fork` is a second MANAGED run with a CodeMie session of its own, and the cost
+   * enricher walks sessions in `startTime` order against a shared `seen` set. Anything attached
+   * to the earlier session's transcript is consumed by the earlier session, so the forked run
+   * reports as free and its spend lands on the wrong session, date and branch. Collapsing a fork
+   * family is the analytics layer's job, where the set of sessions being reported is known;
+   * `native-loader.ts` does it for untracked runs.
+   *
+   * This is identity, not attribution: a directory Pi named after this transcript. Nothing here
+   * guesses ownership from mtime, id shape, or timing — see {@link discoverSessions}.
+   */
+  private async loadSubagentRuns(transcriptPath: string): Promise<LinkedTranscript[]> {
+    if (!transcriptPath.endsWith('.jsonl')) {
+      return [];
+    }
+    const runsRoot = transcriptPath.slice(0, -'.jsonl'.length);
+    let agentDirs: string[];
+    try {
+      agentDirs = await readdir(runsRoot);
+    } catch {
+      return []; // no sub-agent ran under this transcript
+    }
+
+    const out: LinkedTranscript[] = [];
+    for (const agentDir of agentDirs.sort()) {
+      let runDirs: string[];
+      try {
+        runDirs = await readdir(join(runsRoot, agentDir));
+      } catch {
+        continue;
+      }
+      for (const runDir of runDirs.sort()) {
+        const sessionPath = join(runsRoot, agentDir, runDir, 'session.jsonl');
+        if (!existsSync(sessionPath)) {
+          continue;
+        }
+        try {
+          out.push({
+            agentId: `${agentDir}/${runDir}`,
+            filePath: sessionPath,
+            agentType: PI_SUBAGENT_RUN,
+            messages: (await this.readJsonlFile(sessionPath)) as unknown[],
+          });
+        } catch {
+          logger.debug(`[pi-adapter] Could not read sub-agent run: ${sessionPath}`);
+        }
+      }
+    }
+    return out;
+  }
+
 
   private static readonly HEADER_READ_BYTES = 65536;
 
@@ -182,97 +312,73 @@ export class PiSessionAdapter implements SessionAdapter {
     };
   }
 
+  /**
+   * Enumerate the Pi transcripts visible from this project.
+   *
+   * This is a plain listing, and deliberately so: it answers "which Pi transcripts
+   * exist here", never "which of them belong to the run that just finished".
+   *
+   * That second question cannot be answered from a directory. A concurrent `pi` — or
+   * a second CodeMie run in the same cwd — writes files indistinguishable from this
+   * run's by id, mtime, or `parentSession` lineage, and claiming one of them uploads
+   * a stranger's prompts and tool output under this user's session. Successive
+   * rounds of increasingly careful heuristics here were each shown to be reachable-
+   * wrong, so ownership is no longer inferred at all: the CodeMie extension records
+   * each transcript path from inside Pi, and `readPiRunLedger` reads it back.
+   *
+   * Scope follows the caller. With a `cwd`, the listing is that project's: the transcripts in
+   * that project's session directory whose own header declares that cwd — what a managed run
+   * needs. Without one, the listing is every project's, because that is what analytics needs:
+   * Claude and Codex discovery is global, so a cwd-scoped Pi would report zero usage whenever
+   * `codemie analytics` is run from anywhere but the project directory.
+   *
+   * @see pi.extension.ts
+   */
   async discoverSessions(options?: SessionDiscoveryOptions): Promise<SessionDescriptor[]> {
     const piOptions = options as PiDiscoveryOptions | undefined;
-    const scope = await this.resolveDiscoveryScope(piOptions);
+    const projectScoped = piOptions?.cwd !== undefined;
+    const cwd = piOptions?.cwd ?? process.cwd();
+    const resolution = resolvePiSessionDir(cwd, piOptions?.env);
 
     const maxAgeDays = piOptions?.maxAgeDays ?? 30;
     const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
 
-    const candidates: PiSessionCandidate[] = [];
-    const scanned = new Set<string>();
-    for (const dir of scope.dirs) {
-      const key = resolve(dir);
-      if (scanned.has(key)) continue;
-      scanned.add(key);
-      candidates.push(...(await this.collectCandidates(dir, cutoff, scope.cwd)));
+    const sessionDirs = projectScoped ? [resolution.sessionDir] : await allProjectSessionDirs(resolution);
+    const found: SessionDescriptor[] = [];
+    for (const dir of sessionDirs) {
+      found.push(...(await this.listTranscripts(dir, cutoff, projectScoped ? cwd : undefined)));
     }
+    found.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+    const limited = piOptions?.limit && piOptions.limit > 0 ? found.slice(0, piOptions.limit) : found;
 
-    const owned = this.attributeToRun(candidates, piOptions, scope.mayBeShared);
-
-    owned.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
-    const limited = piOptions?.limit && piOptions.limit > 0 ? owned.slice(0, piOptions.limit) : owned;
     logger.debug(
-      `[pi-discovery] ${candidates.length} candidate(s) in ${[...scanned].join(', ')}, `
-      + `attributed ${owned.length}, returning ${limited.length}`
+      `[pi-discovery] ${found.length} transcript(s) in ${sessionDirs.length} dir(s), returning ${limited.length}`
     );
     return limited;
   }
 
-  /** Whether Pi would treat a `--session` argument as a file path rather than an id. */
-  private looksLikeTranscriptPath(identity: string): boolean {
-    return identity.includes('/') || identity.includes('\\') || identity.endsWith('.jsonl');
-  }
-
   /**
-   * Work out where this run's transcripts can live.
+   * Every transcript in `sessionDir` recent enough to matter, optionally narrowed to one project.
    *
-   * By default that is the session directory derived from the wrapper's cwd. But
-   * `--session <path>` opens a transcript directly and Pi then runs the entire
-   * session under *that transcript's* cwd (`SessionManager.open` takes the cwd
-   * from the header, and the runtime uses `sessionManager.getCwd()`), writing any
-   * later `/new` transcript beside the opened file unless an explicit
-   * `--session-dir` says otherwise. Both differ from the wrapper's cwd, so the
-   * scope has to follow the selected file or nothing is ever attributed.
+   * A session directory can be shared between projects (`--session-dir`, or a
+   * `sessionDir` in the project's `.pi/settings.json`), so when a `projectPath` is
+   * given each file's own header must declare that cwd. Filtering is on mtime rather
+   * than header timestamp so a long-running session is not dropped while it is still
+   * being written to.
    */
-  private async resolveDiscoveryScope(options?: PiDiscoveryOptions): Promise<PiDiscoveryScope> {
-    const cwd = options?.cwd ?? process.cwd();
-    const { sessionDir, isCustom } = resolvePiSessionDir(cwd, options?.env);
-    // A custom directory is one the operator named, so another Pi process — a bare
-    // `pi` reading the same project `.pi/settings.json`, or a second CodeMie run —
-    // can be writing to it. CodeMie's own per-cwd default is private by construction.
-    const scope: PiDiscoveryScope = { dirs: [sessionDir], cwd, mayBeShared: isCustom };
-
-    const identity = options?.agentSessionId;
-    if (!identity || !this.looksLikeTranscriptPath(identity)) {
-      return scope;
-    }
-
-    const identityPath = resolve(cwd, identity);
-    const header = existsSync(identityPath) ? await this.readSessionHeader(identityPath) : undefined;
-    if (!header) {
-      return scope;
-    }
-
-    const selectedDir = dirname(identityPath);
-    const isOutsideDefaultDir = resolve(selectedDir) !== resolve(sessionDir);
-    logger.debug(`[pi-discovery] Following path-selected session into ${selectedDir} (cwd ${header.cwd})`);
-    return {
-      dirs: isCustom && isOutsideDefaultDir ? [sessionDir, selectedDir] : [selectedDir],
-      cwd: header.cwd,
-      mayBeShared: isCustom || isOutsideDefaultDir,
-    };
-  }
-
-  /**
-   * Collect every transcript in the session directory that could plausibly belong
-   * to this project. This pass is deliberately free of run attribution: the lineage
-   * closure below needs the complete set to walk `parentSession` links.
-   */
-  private async collectCandidates(
+  private async listTranscripts(
     sessionDir: string,
     cutoff: number,
-    projectPath: string
-  ): Promise<PiSessionCandidate[]> {
+    projectPath?: string
+  ): Promise<SessionDescriptor[]> {
     if (!existsSync(sessionDir)) {
       return [];
     }
 
-    const resolvedCwd = resolve(projectPath);
-    const candidates: PiSessionCandidate[] = [];
+    const resolvedCwd = projectPath === undefined ? undefined : resolve(projectPath);
+    const transcripts: SessionDescriptor[] = [];
     try {
-      const files = await readdir(sessionDir);
-      for (const file of files) {
+      for (const file of await readdir(sessionDir)) {
         if (!file.endsWith('.jsonl')) continue;
         const filePath = join(sessionDir, file);
 
@@ -284,8 +390,6 @@ export class PiSessionAdapter implements SessionAdapter {
         }
         if (!statResult.isFile()) continue;
 
-        // Filter on modification time so long-running sessions are not discarded
-        // while they are still being written to.
         const updatedAt = statResult.mtime.getTime();
         if (updatedAt < cutoff) continue;
 
@@ -294,188 +398,25 @@ export class PiSessionAdapter implements SessionAdapter {
           logger.debug(`[pi-discovery] Skipping file with invalid header: ${filePath}`);
           continue;
         }
-
-        // Only attribute sessions whose own header claims this cwd. A shared
-        // --session-dir can hold transcripts from several projects.
-        if (resolve(header.cwd) !== resolvedCwd) {
+        if (resolvedCwd !== undefined && resolve(header.cwd) !== resolvedCwd) {
           logger.debug(`[pi-discovery] Skipping session from different cwd: ${header.cwd}`);
           continue;
         }
 
         const createdAt = Date.parse(header.timestamp);
-        candidates.push({
-          descriptor: {
-            sessionId: header.id,
-            filePath,
-            projectPath: header.cwd,
-            createdAt: Number.isNaN(createdAt) ? updatedAt : createdAt,
-            updatedAt,
-            agentName: 'pi',
-          },
-          ...(header.parentSession && { parentSessionPath: header.parentSession }),
+        transcripts.push({
+          sessionId: header.id,
+          filePath,
+          projectPath: header.cwd,
+          createdAt: Number.isNaN(createdAt) ? updatedAt : createdAt,
+          updatedAt,
+          agentName: 'pi',
         });
       }
     } catch (error) {
       logger.debug(`[pi-discovery] Failed to scan session dir ${sessionDir}:`, error);
     }
 
-    return candidates;
-  }
-
-  /**
-   * Locate the transcript the published identity refers to, mirroring how Pi
-   * resolves `--session <arg>`: an exact session id, a transcript path, then an id
-   * prefix. An injected `--session-id` is always a full id, so it matches exactly.
-   *
-   * A fourth form has no counterpart in Pi's resolution but is still provable: when
-   * `--session <id>` matches a session in a *different* project, Pi asks to fork it
-   * into the current one and mints a fresh uuidv7 for the copy, so the named id
-   * never appears as a header id here. The fork does record the source transcript's
-   * path, whose file name ends in `_<source-id>.jsonl`, so descent from the named
-   * session still identifies the run.
-   */
-  private findAnchor(candidates: PiSessionCandidate[], identity: string): PiSessionCandidate | undefined {
-    return (
-      candidates.find((candidate) => candidate.descriptor.sessionId === identity) ??
-      candidates.find((candidate) => resolve(candidate.descriptor.filePath) === resolve(identity)) ??
-      candidates.find((candidate) => candidate.descriptor.sessionId.startsWith(identity)) ??
-      candidates.find(
-        (candidate) =>
-          candidate.parentSessionPath !== undefined &&
-          basename(candidate.parentSessionPath).includes(`_${identity}`)
-      )
-    );
-  }
-
-  /**
-   * Decide which candidate transcripts belong to the current run.
-   *
-   * Ownership is established in order of decreasing certainty. Timing never
-   * accepts a transcript on its own — it only narrows the set — because a
-   * concurrent Pi run in the same directory produces files indistinguishable by
-   * time alone.
-   *
-   *  1. Identity — Pi was started with `--session-id`, or resumed a named session,
-   *     so a header id match is proof.
-   *  2. Lineage — `/fork` records the parent transcript's absolute path, so every
-   *     descendant of an owned file is proof.
-   *  3. Elimination — `/new` writes an unlinked header with a fresh id, carrying no
-   *     proof at all. It is claimed only when the directory is provably this run's
-   *     alone: identity established, no competing CodeMie run in the window, and no
-   *     other Pi process able to write there.
-   *
-   * Timing alone accepts a transcript in exactly one case — a run that never named a
-   * session (`--continue`, bare `--resume`) and found a single in-window candidate.
-   * Everything else requires identity or lineage, so a run whose named transcript is
-   * missing reports nothing rather than claiming a stranger's.
-   */
-  private attributeToRun(
-    candidates: PiSessionCandidate[],
-    options?: PiDiscoveryOptions,
-    mayBeShared = true
-  ): SessionDescriptor[] {
-    const { agentSessionId, runStartedAt } = options ?? {};
-
-    const ownedPaths = new Set<string>();
-    const owned: PiSessionCandidate[] = [];
-    const adopt = (candidate: PiSessionCandidate): void => {
-      const key = resolve(candidate.descriptor.filePath);
-      if (ownedPaths.has(key)) return;
-      ownedPaths.add(key);
-      owned.push(candidate);
-    };
-
-    // 1. Identity. Pi resolves `--session <arg>` as an exact id, then a transcript
-    // path, then an id prefix, so the published identity is matched the same way.
-    const identityPublished = agentSessionId !== undefined;
-    const anchor = agentSessionId === undefined ? undefined : this.findAnchor(candidates, agentSessionId);
-    if (anchor) {
-      adopt(anchor);
-    } else if (identityPublished) {
-      // Pi does not create the transcript file until the session holds an assistant
-      // message, so a run that ended before its first reply leaves no anchor behind.
-      logger.debug(
-        `[pi-discovery] Published session identity ${agentSessionId} matched no transcript; `
-        + 'claiming nothing rather than resolving by time.'
-      );
-    }
-
-    // 2. Lineage, to a fixpoint: a forked session can itself be forked again.
-    // Only walk downward — the anchor's own parent belongs to an earlier run.
-    const closeLineage = (): void => {
-      let grew = true;
-      while (grew) {
-        grew = false;
-        for (const candidate of candidates) {
-          if (!candidate.parentSessionPath) continue;
-          if (ownedPaths.has(resolve(candidate.descriptor.filePath))) continue;
-          if (!ownedPaths.has(resolve(candidate.parentSessionPath))) continue;
-          adopt(candidate);
-          grew = true;
-        }
-      }
-    };
-    closeLineage();
-
-    // 3. Elimination, over the transcripts that are neither owned nor forked from a
-    // file we own. With an anchor, a `/new` transcript must have been created after
-    // it; without one the run appended to a transcript it never named, so only
-    // "written during the run" can be required.
-    const lowerBound = Math.max(runStartedAt ?? -Infinity, anchor?.descriptor.createdAt ?? -Infinity);
-    const unlinked = candidates.filter(({ descriptor, parentSessionPath }) => {
-      if (ownedPaths.has(resolve(descriptor.filePath))) return false;
-      // With an anchor, a transcript forked from a file we do not own belongs to
-      // whoever owns its parent. Without one there is no owned set to compare
-      // against, and `--continue` may well have reopened a transcript that an
-      // earlier run forked, so lineage cannot exclude anything.
-      if (anchor && parentSessionPath) return false;
-      return anchor
-        ? descriptor.createdAt >= lowerBound
-        : (descriptor.updatedAt ?? 0) >= (runStartedAt ?? -Infinity);
-    });
-
-    let survivors = unlinked;
-    if (anchor) {
-      // Identity is established, so any other CodeMie-minted root in the window is a
-      // concurrent CodeMie run: reject it, and treat its presence as proof that this
-      // directory has more than one writer. The v4/v7 test is only meaningful here —
-      // without an anchor, a v4 id may well be this run's own transcript, minted by
-      // the earlier CodeMie run that `--continue` is reopening.
-      const concurrentRuns = unlinked.filter((candidate) => isCodeMieSessionId(candidate.descriptor.sessionId));
-      survivors = unlinked.filter((candidate) => !isCodeMieSessionId(candidate.descriptor.sessionId));
-      // With no competing run and no other possible writer, the remaining transcripts
-      // can only be this run's own /new files, so claim them all — requiring a single
-      // survivor would silently drop every /new after the first. A directory the
-      // operator named is not exclusive: Pi reads `sessionDir` from the project's
-      // `.pi/settings.json` too, so a bare `pi` in the same project writes there
-      // alongside CodeMie, and its transcript is uuidv7 like any /new file.
-      if (concurrentRuns.length === 0 && !mayBeShared) {
-        survivors.forEach(adopt);
-        closeLineage();
-        return owned.map((candidate) => candidate.descriptor);
-      }
-    }
-
-    // Timing is the last resort and applies only to a run that named no session at
-    // all (`--continue` / bare `--resume`): Pi appended to a transcript this run
-    // never identified, so "written during the run" is the only signal available. A
-    // lone candidate is unambiguous — a second writer would have touched a file of
-    // its own. Once an identity *was* published, an unmatched transcript is someone
-    // else's by elimination, so timing must not be allowed to claim it.
-    if (!identityPublished && survivors.length === 1) {
-      adopt(survivors[0]);
-      // The adopted transcript may itself have been forked afterwards.
-      closeLineage();
-    } else if (survivors.length > 0) {
-      logger.warn(
-        `[pi-discovery] ${survivors.length} unattributable transcript(s) in the run window; `
-        + `claiming only the ${owned.length} provably owned. `
-        + (identityPublished
-          ? 'Only identity and fork lineage can prove ownership once a session was named.'
-          : 'A concurrent Pi run in this directory makes them indistinguishable by time alone.')
-      );
-    }
-
-    return owned.map((candidate) => candidate.descriptor);
+    return transcripts;
   }
 }

@@ -15,6 +15,12 @@ import { logger } from '../../../../utils/logger.js';
 // Tool names are matched case-sensitively: extension tools may register arbitrary
 // names, and lowercasing would misclassify an extension named `Write` as the
 // built-in write tool.
+//
+// There is deliberately no 'delete' mapping, so `files_deleted` stays at 0. That is
+// parity, not a gap: Pi ships no delete tool, and Claude's own TOOL_TYPE_MAP
+// (claude/session/claude-file-operation.ts) has no delete entry either. Inferring
+// deletions from `rm` inside a bash command would report a number Claude never reports
+// and would be wrong whenever the command fails, is conditional, or is a dry run.
 const TOOL_TYPE_MAP: Record<string, FileOperationType> = {
   read: 'read',
   edit: 'edit',

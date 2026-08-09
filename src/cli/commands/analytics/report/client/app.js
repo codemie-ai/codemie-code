@@ -19,7 +19,7 @@
 
   // ---- palette ------------------------------------------------------------
   var PALETTE = ['#7C5CFC', '#2297F6', '#F5A534', '#06B6D4', '#259F4C', '#F9303C', '#C084FC', '#E879A6'];
-  var AGENT_COLORS = { claude: '#7C5CFC', 'claude-acp': '#9D7BFF', 'claude-desktop': '#B79DFF', gemini: '#F5A534', codex: '#06B6D4', 'codemie-codex': '#06B6D4', opencode: '#259F4C', 'codemie-code': '#2297F6', 'copilot-cli': '#6E7681' };
+  var AGENT_COLORS = { claude: '#7C5CFC', 'claude-acp': '#9D7BFF', 'claude-desktop': '#B79DFF', gemini: '#F5A534', codex: '#06B6D4', 'codemie-codex': '#06B6D4', opencode: '#259F4C', 'codemie-code': '#2297F6', 'copilot-cli': '#6E7681', pi: '#E879A6' };
   var seenAgentColor = {};
   var colorCursor = 0;
   function colorFor(agent) {
@@ -29,7 +29,7 @@
   }
   // Agent keys are internal ids; these are what a human should read. Unmapped agents fall
   // through to the key itself, so listing an agent here is optional.
-  var AGENT_LABELS = { 'copilot-cli': 'GitHub Copilot CLI' };
+  var AGENT_LABELS = { 'copilot-cli': 'GitHub Copilot CLI', pi: 'Pi' };
   function labelFor(agent) { return AGENT_LABELS[agent] || agent; }
 
   // ---- formatting ---------------------------------------------------------

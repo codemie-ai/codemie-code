@@ -274,6 +274,9 @@ function resolveConversationFolder(clientType?: string, agentName?: string): str
   if (clientType === 'codemie-opencode' || agentName === 'opencode') {
     return 'opencode';
   }
+  if (clientType === 'codemie-pi' || agentName === 'pi') {
+    return 'pi';
+  }
   return DEFAULT_CONVERSATION_FOLDER;
 }
 

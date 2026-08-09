@@ -64,7 +64,7 @@ No changes to the upstream Pi repo are required.
 | `schema_version` | `2` | `2` |
 | `count` | `1` | `1` |
 
-MCP and extension counts are intentionally omitted for Pi because Pi does not use CodeMie’s MCP config layout or `.claude/` extension categories. The lifecycle metric is still sent with those fields present as zeros (e.g. `mcp_total_servers: 0`, `agents_project: 0`, `skills_global: 0`) because the shared summary helpers return all-zero objects when no config is declared.
+MCP and extension counts are reported for Pi, but through Pi-specific mappings rather than the `.claude/` layout — see §9.3 for the resource-directory mapping and §9.4 for the MCP one. The `agents_*` and `rules_*` fields stay at zero by design: Pi has neither concept.
 
 ## 5. Architecture and components
 
@@ -72,31 +72,61 @@ MCP and extension counts are intentionally omitted for Pi because Pi does not us
 
 ```
 src/agents/plugins/pi/
-├── pi.session.ts                        # PiSessionAdapter + run attribution
+├── pi.session.ts                        # PiSessionAdapter + transcript listing
 ├── pi.types.ts                          # Pi v3 JSONL entry/header shapes
+├── pi.extension.ts                      # extension materializer + run-ledger reader (§7.1)
+├── pi.incremental-sync.ts               # ledger-driven periodic flush (§10.1)
+├── extension/
+│   ├── index.js                         # the Pi extension itself — loaded by Pi, not by CodeMie
+│   ├── package.json                     # declares {"type":"module"} for the materialized copy
+│   └── README.md                        # why it exists and the exit(1) constraint
 ├── session/
 │   ├── processors/
-│   │   └── pi.metrics-processor.ts      # Pi → MetricDelta translator
+│   │   ├── pi.metrics-processor.ts      # Pi → MetricDelta translator
+│   │   └── pi.conversations-processor.ts # Pi → conversation history payloads
+│   ├── pi-named-invocations.ts          # skill / subagent / command counts
 │   └── pi-file-operations.ts            # tool → file op mapping
+└── __tests__/                           # regression suite (§11)
+```
+
+`extension/` is a **static asset**, not compiled source: `tsc` does not touch `.js` under `src/`, and
+`scripts/copy-plugins.js` copies the directory to `dist/` byte-identically, because Pi loads the file
+directly and what ships must be what was tested.
+
+Shared, agent-generic additions:
+
+```
+src/agents/core/session/stale-session-reconciliation.ts   # extracted from codex (§10.2)
 ```
 
 ### 5.2 Modified files
 
 - `src/agents/plugins/pi/pi.plugin.ts`
-  - Add `metricsConfig: { excludeErrorsFromTools: ['bash'] }`
-  - Set `sessionAnalyticsReport: true`
-  - Add `lifecycle.onSessionStart` and `lifecycle.onSessionEnd`
-  - Implement `getSessionAdapter()` on `PiPlugin`
-  - Publish `PI_SESSION_ID` / `PI_CODING_AGENT_SESSION_DIR` in `beforeRun`, inject
-    `--session-id` / `--session-dir` in `enrichArgs`, and reconcile session flags in
-    `PiPlugin.run()` via `preparePiInvocation` (§9.1)
-- `src/agents/plugins/pi/pi.paths.ts` — add `resolvePiSessionDir()` / `getPiSessionDir()`,
-  with tilde expansion and project-over-global settings precedence (§7.1).
-- `src/agents/core/types.ts` — add `transcript_paths?: string[]` to the hook event, for agents
-  that produce several transcripts in one run.
+  - `metricsConfig: { excludeErrorsFromTools: ['bash'] }`, `sessionAnalyticsReport: true`,
+    `mcpConfig` and `extensionsConfig` so the lifecycle metric's MCP/extension counts are populated
+  - `lifecycle.onSessionStart` / `onSessionEnd`; `getSessionAdapter()` on `PiPlugin`
+  - `beforeRun` materializes the run-ledger extension and publishes `CODEMIE_PI_LEDGER`
+  - `onSessionEnd` reads the ledger, correlates the session record to the transcripts the run
+    actually produced, and passes them as `transcript_paths` (§7.1)
+  - `enrichArgs` injects `--session-id` / `--session-dir`; `PiPlugin.run()` reconciles session flags
+    via `preparePiInvocation` (§9.1)
+- `src/agents/plugins/pi/pi.paths.ts` — `resolvePiSessionDir()` / `getPiSessionDir()`, with Pi's own
+  path normalization and project-over-global settings precedence (§7.1).
+- `src/cli/commands/analytics/cost/usage-readers.ts` — a `pi` case, so Pi sessions report tokens and
+  cost instead of zeros (§4).
+- `src/cli/commands/analytics/{agent-labels.ts, native-loader.ts, report/client/app.js}` — Pi's
+  display label and native (unmanaged `pi`) session discovery.
+- `src/providers/plugins/sso/session/processors/conversations/syncProcessor.ts` — folder mapping, so
+  Pi conversations are not filed under “Claude Desktop”.
+- `src/agents/plugins/codex/codex.reconciliation.ts` — reduced to a shim over the extracted shared
+  implementation; its existing test suite is the regression guard for the extraction.
+- `src/agents/core/types.ts` — `transcript_paths?: string[]` on the hook event, for agents that
+  produce several transcripts in one run.
 - `src/agents/core/BaseAgentAdapter.ts` — run `onSessionEnd` on signal exits, and always run proxy
   cleanup afterwards even when the hook throws.
-- `src/agents/plugins/pi/index.ts` — re-export new symbols if needed.
+- `scripts/copy-plugins.js`, `eslint.config.mjs`, `package.json` — ship and lint the extension asset.
+  The blanket `**/*.js` eslint ignore is narrowed for it specifically: it is the one file whose
+  syntax error takes down the user's session, so it must not be the one file nothing checks.
 
 ### 5.3 Reused pipeline
 
@@ -132,69 +162,100 @@ src/agents/plugins/pi/
 
 ## 7. Pi session file parsing
 
-### 7.1 Discovery
+### 7.1 Run attribution
 
-- Base directory: `resolvePiSessionDir(cwd, env)`, whose precedence is
-  `PI_CODING_AGENT_SESSION_DIR` → `sessionDir` in `<cwd>/.pi/settings.json` → `sessionDir` in
-  `<agentDir>/settings.json` → the default `join(getPiAgentDir(cwd), 'sessions')/<encoded-cwd>`.
-  This mirrors Pi's own resolution: Pi merges project settings over global settings, and a
-  leading `~` is expanded on every channel. The plugin has no argv at this point, so a CLI
-  `--session-dir` reaches it as `PI_CODING_AGENT_SESSION_DIR` (see §9.1) rather than as a flag.
-- Sub-directory name: Pi encodes the cwd as `--<cwd with leading slash removed and `/`, `\`, `:` replaced by `-`>--`.
-- Session file name: ISO-8601 timestamp with `:` and `.` replaced by `-`, e.g. `2026-08-07T11-27-16-523Z_<sessionId>.jsonl`.
-- **Path forms.** Every session-directory channel is normalized the way Pi's `normalizePath()`
-  does — Windows shell paths (`/c/…`, `/mnt/c/…`, `/cygdrive/c/…`) on win32, a leading `~`, then
-  `file://` URLs — before being resolved. Node's `resolve()` performs none of these, and the CLI
-  flag reaches Pi verbatim while the derived value drives discovery, so any divergence points
-  discovery at a directory Pi never writes to and loses the run's metrics silently.
-- **Scope.** The directories to scan and the cwd candidates must declare are derived together.
-  Normally both come from the wrapper's cwd. But `--session <path>` opens a transcript directly,
-  and Pi then runs the whole session under *that transcript's* cwd (`SessionManager.open` takes the
-  cwd from the header; the runtime uses `sessionManager.getCwd()`), writing any later `/new`
-  transcript beside the opened file unless `--session-dir` says otherwise. Discovery therefore
-  follows the selected file: it scans that file's directory under the header's cwd, and also the
-  configured directory when one was named explicitly.
-- **Collection.** `discoverSessions({ cwd, maxAgeDays: 1, runStartedAt, agentSessionId, env })`
-  reads each candidate file's line-1 header and keeps files whose `header.cwd` matches the scope's
-  cwd and whose mtime is within the age window. Modification time is used for the age filter so
-  long-running sessions are not discarded while still open. No `limit` is passed: a run can
-  legitimately span several transcripts, and all of them are returned as `transcript_paths`.
-- **Attribution.** Candidates are then claimed in order of decreasing certainty:
-  1. *Identity.* The file matching `PI_SESSION_ID` is the run's anchor, resolved the way Pi
-     resolves `--session <arg>`: exact session id, then transcript path, then id prefix. Accepted
-     regardless of timing, since a `--session` resume appends to a transcript created earlier. A
-     fourth form has no counterpart in Pi's resolution but is equally provable: when `--session
-     <id>` matches a session in another project, Pi forks it into this one under a fresh UUIDv7, so
-     the named id never appears as a header id — but the fork records the source transcript's path,
-     whose file name ends in `_<source-id>.jsonl`.
-  2. *Lineage.* `/fork` records the parent transcript's absolute path in `header.parentSession`,
-     so every transitive descendant of an owned file is claimed. The walk is downward only: the
-     anchor's own parent belongs to an earlier run.
-  3. *Elimination.* `/new` writes an unlinked header with a fresh id and no parent link, so it
-     carries no proof of ownership. Candidates are first pruned by run window, and — only when an
-     anchor exists — by having a parent outside the owned set. Without an anchor there is no owned
-     set to compare against, and `--continue` may reopen a transcript an earlier run forked, so
-     lineage cannot exclude anything there.
-- **With an anchor**, a UUIDv4 id identifies another CodeMie-driven Pi run — CodeMie injects v4
-  ids while Pi mints v7 — so such candidates are rejected, and their presence proves this directory
-  has more than one writer. `/new` files are claimed only when no such competing run is present
-  **and** the directory is one no other Pi process can write to. A directory the operator named
-  (via `--session-dir`, `PI_CODING_AGENT_SESSION_DIR`, or `sessionDir` in settings) does not
-  qualify: Pi reads `sessionDir` from the project's own `.pi/settings.json` too, so a bare `pi` in
-  the same project writes there alongside CodeMie under a UUIDv7 id indistinguishable from a `/new`
-  file. CodeMie's per-cwd default directory under `<cwd>/.pi/codemie/agent` is private by
-  construction, and there `all` surviving `/new` transcripts are claimed — requiring a single
-  survivor would silently drop every `/new` after the first.
-- **Timing accepts a transcript on its own in exactly one case:** a run that named no session at
-  all (`--continue`, bare `--resume`) which finds a single in-window candidate. A second writer
-  would have touched a file of its own, so a lone candidate is unambiguous. The UUIDv4 rule is
-  deliberately **not** applied here: `--continue` appends to a transcript an earlier CodeMie run
-  created, so that file legitimately carries a v4 id.
-- **Once an identity was published, timing is never used.** An unmatched transcript belongs to
-  someone else by elimination, so a run whose named transcript is absent — Pi does not create the
-  file until the session holds an assistant message, so a run that ended before its first reply
-  writes nothing — reports no transcripts rather than claiming a stranger's. Two or more
-  unattributable candidates likewise yield only the provably owned set, with a warning.
+A run's transcripts are **recorded, not inferred**. A CodeMie extension runs inside Pi and appends
+each transcript path to a ledger as Pi opens it; `onSessionEnd` reads the ledger back.
+
+#### Why inference was abandoned
+
+Pi names transcripts itself, writes them lazily, and a single run can produce several (`/new`,
+`/fork`, `--session` into another project). Deciding afterwards which files belong to the run just
+launched is guesswork: a concurrent `pi` — or a second CodeMie run in the same cwd — produces files
+indistinguishable by id, mtime, or `parentSession` lineage.
+
+Successive rounds of heuristics were tried here and each was shown to be reachable-wrong: identity
+anchors (defeated by Pi writing nothing until the first assistant message), fork lineage (defeated
+by a foreign fork of an owned file), uuidv4-vs-uuidv7 provenance (proves a concurrent *CodeMie* run,
+not a bare `pi`), run-window timing (defeated by any second writer), and a shared-directory test
+(the per-cwd default is shared by every CodeMie run in that directory). The failure mode is not lost
+metrics but **uploading another process's prompts and tool output under this user's session**, which
+is strictly worse than reporting nothing. The problem is not a buggy implementation; it is a
+question a directory listing cannot answer.
+
+#### The extension
+
+`src/agents/plugins/pi/extension/` ships `index.js` and a `package.json` declaring
+`{"type":"module"}`. `beforeRun` copies both into `<piAgentDir>/extensions/codemie-metrics/`, which
+is one of Pi's own discovery roots (`core/resource-loader.ts:814`), so **no argv is modified** —
+avoiding the failure mode where a stale `--extension` path makes Pi exit.
+
+The directory layout matters: Pi's `isExtensionFile` accepts only `.ts` and `.js`
+(`core/extensions/loader.ts:597-599`), and a bare `.js` would inherit its module system from
+whatever `package.json` happens to sit above it on the user's disk, where a CommonJS context makes
+`export default` a syntax error. A directory with its own `package.json` removes the ambiguity for
+both Pi's jiti loader and CodeMie's self-test.
+
+**The load hazard governs the whole design.** Any extension load failure makes Pi call
+`process.exit(1)` in every mode (`main.ts:893-899`), killing the user's coding session — far worse
+than collecting nothing. So the asset imports only node builtins, wraps its factory and every
+handler in `try/catch`, never subscribes to `tool_call` (a throwing `tool_call` handler blocks the
+tool), returns `undefined` from every handler so the `input` handler cannot alter what the user
+typed, and records only parsed command *names* — never prompt or argument text. On top of that,
+`ensurePiCodeMieExtension` performs a pre-flight `import()` of the materialized copy and **deletes
+it** unless it exports a function, so a corrupted asset degrades to "no metrics" rather than "no
+session". `CODEMIE_PI_EXTENSION_DISABLED=1` disables it and removes any installed copy.
+
+#### The ledger
+
+`~/.codemie/sessions/<CODEMIE_SESSION_ID>_pi-run.jsonl`, append-only, one JSON object per line. The
+path is passed in as `CODEMIE_PI_LEDGER`, so the asset holds no assumptions about CodeMie's layout.
+The `.jsonl` suffix keeps it clear of every consumer that enumerates session records, all of which
+filter on `.json`.
+
+| `t` | Fields |
+|---|---|
+| `boot` | `pid` |
+| `session` | `reason`, `file`, `piSessionId`, `cwd`, `prevFile`, `mode` |
+| `cmd` | `kind` (`skill` \| `prompt`), `name` |
+| `shutdown` | `reason`, `file`, `target`, `piSessionId`, `cwd`, `mode` |
+
+`cwd` is `sessionManager.getCwd()` — the *transcript's* cwd, which is what `--session <path>` runs
+under, not the wrapper's launch directory. `file` may name a path Pi has not written yet, because
+`_persist` only flushes once the session holds an assistant message, so `readPiRunLedger`
+existence-filters. Malformed lines are skipped individually, so a truncated final line after a hard
+kill does not discard the records before it.
+
+`cmd` records exist because slash commands are the one signal the transcript cannot carry: Pi
+expands a prompt template into plain user text before persisting it, so `/review` is gone by the
+time the entry is written.
+
+#### What `onSessionEnd` does with it
+
+- `transcript_paths` ← `ledger.transcripts`; nothing outside the ledger is ever claimed.
+- `correlation.agentSessionFile` ← `ledger.primaryTranscript`. This was previously left empty, which
+  made the analytics cost path resolve no native log at all and report a missing token reader.
+- `correlation.agentSessionId` ← `ledger.piSessionId`, so the wire `session_id` is Pi's id.
+- `workingDirectory` / `gitBranch` / `repository` are re-derived when `ledger.cwd` differs from the
+  launch cwd.
+- An ownership sidecar marker is written per transcript.
+
+**With no ledger** — the extension did not run, or the process was `SIGKILL`ed before it wrote —
+the run reports its lifecycle metric and *nothing else*, with an explicit warning. There is no
+fallback to inference, by design.
+
+#### What discovery still does
+
+`discoverSessions()` is now a plain listing: every `.jsonl` in the resolved session directory whose
+header declares this cwd and whose mtime is inside the age window, newest first. It answers "which
+Pi transcripts exist here" and is used only by the analytics surface. It has no notion of "this
+run", and `src/agents/plugins/pi/__tests__/pi.discovery.test.ts` contains explicit regression guards
+that fail if attribution logic is reintroduced.
+
+Session directory resolution is unchanged: `resolvePiSessionDir(cwd, env)` with precedence
+`PI_CODING_AGENT_SESSION_DIR` → `sessionDir` in `<cwd>/.pi/settings.json` → `sessionDir` in
+`<agentDir>/settings.json` → the default per-cwd directory, with Pi's own path normalization
+(Windows shell paths, `~`, `file://`) applied on every channel.
 
 ### 7.2 Entry types
 
@@ -313,6 +374,39 @@ export const PiPluginMetadata: AgentMetadata = {
     excludeErrorsFromTools: ['bash'],
   },
 
+  // `--task` becomes Pi's `-p`, the same declarative mapping claude and gemini use.
+  // See §9.2.
+  flagMappings: {
+    '--task': { type: 'flag', target: '-p' },
+  },
+
+  // Pi's resource directories are named differently from the scanner's defaults.
+  // See §9.3.
+  extensionsConfig: {
+    project: '.pi',
+    global: '~/.pi/agent',
+    skillsEntryFile: 'SKILL.md',
+    dirNames: {
+      agents: [], commands: ['prompts'], skills: ['skills'],
+      hooks: ['extensions'], rules: [],
+    },
+  },
+
+  // MCP reaches Pi via the `pi-mcp-adapter` package, which CodeMie always installs.
+  // Six adapter sources folded into three scopes. See §9.4.
+  mcpConfig: {
+    local: { path: '.pi/mcp.json', jsonPath: 'mcpServers' },
+    project: { path: '.mcp.json', jsonPath: 'mcpServers' },
+    user: {
+      // Not `~/.pi/agent/mcp.json`: a CodeMie run never reads it. See §9.4.
+      path: [
+        '.pi/codemie/agent/mcp.json',
+        '~/.agents/mcp/mcp.json', '~/.agents/mcp.json', '~/.config/mcp/mcp.json',
+      ],
+      jsonPath: 'mcpServers',
+    },
+  },
+
   lifecycle: {
     async beforeRun(env: NodeJS.ProcessEnv, _config: AgentConfig) {
       // ... existing agent-dir / model preparation ...
@@ -320,8 +414,9 @@ export const PiPluginMetadata: AgentMetadata = {
       // resolved PI_CODING_AGENT_SESSION_DIR onto the run env.
     },
     enrichArgs(args: string[], _config: AgentConfig): string[] {
-      // ... existing --provider / --model / --task rewriting ...
+      // ... existing --provider / --model injection ...
       // Injects `--session-id <CODEMIE_SESSION_ID>` and `--session-dir <dir>`.
+      // Deliberately does NOT touch --task; see §9.2.
     },
 
     async onSessionStart(sessionId: string, env: NodeJS.ProcessEnv) {
@@ -360,30 +455,129 @@ export class PiPlugin extends BaseAgentAdapter {
 ### 9.1 Session-flag reconciliation
 
 Pi's `validateSessionIdFlags` exits with code 1 when `--session-id` is combined with
-`--session`, `--continue`/`-c`, or `--resume`/`-r` (`--fork` is allowed). `preparePiInvocation`
-therefore, before the run starts:
+`--session`, `--continue`/`-c`, or `--resume`/`-r` (`--fork` is allowed). Two places cooperate:
+
+`preparePiInvocation`, before the run starts:
 
 - Rewrites CodeMie's `--resume <session-id>` to Pi's `--session <session-id>`. Pi's own
   `--resume`/`-r` is a **boolean** that opens an interactive picker, so the id would otherwise
-  be left as a bare positional and delivered to the model as a chat message.
-- Suppresses the `--session-id` injection whenever argv already selects a session, and records
-  that in `CODEMIE_PI_SESSION_SELECTED` so `beforeRun` does not publish a `PI_SESSION_ID` the
-  transcript will never carry.
-- Publishes `PI_SESSION_ID` from `--session`/`--session-id` when one names a session up front.
-  `--continue` and bare `--resume` name none, so those runs correlate by run window instead. A
-  published id is not a guarantee that a transcript will carry it: `--session <id>` naming a
-  session in another project makes Pi fork it under a new id, which §7.1 resolves through the
-  fork's recorded parent path.
+  be left as a bare positional and delivered to the model as a chat message. When argv already
+  carries `--session`, the pair is dropped rather than rewritten, so the orphaned id cannot leak
+  into the conversation.
 - Publishes a CLI `--session-dir` value as `PI_CODING_AGENT_SESSION_DIR`, since the flag is an
   unknown option to CodeMie's parser and would otherwise be invisible to discovery.
 
-Session-flag detection scans argv for the flags themselves. Pi's parser assigns the token after a
-value-taking option unconditionally — `args[++i]` with no leading-`-` guard — so an argv that puts
-a session flag in a value position (`--system-prompt --continue`) is mis-detected as selecting a
-session. Mirroring Pi's flag table here would duplicate a list that silently rots whenever Pi adds
-an option, and the consequence is bounded: the run falls back to window-based attribution, which
-claims a lone transcript and reports nothing when it cannot tell candidates apart. The mismatch is
-accepted rather than tracked.
+`enrichArgs` then suppresses the `--session-id` injection whenever argv already selects a session.
+
+Nothing here needs to be exact any more. Under the ledger (§7.1) argv is no longer evidence about
+which transcript a run produced — the extension reports that from inside Pi — so a mis-detected
+session flag costs at most a suppressed `--session-id`, not a mis-attributed transcript. The
+pre-ledger `PI_SESSION_ID` publication and its `CODEMIE_PI_SESSION_SELECTED` companion were
+deleted along with the window-attribution code that consumed them.
+
+### 9.2 `--task` → `-p`
+
+CodeMie's `--task <prompt>` means "run one task non-interactively" (`AgentCLI.ts` sets
+`isNonInteractiveMode` from it). Pi expresses that as `--print`/`-p`, *"process prompt and exit"*
+(`cli/args.ts:142`), which `resolveAppMode` turns into print mode (`main.ts:125`).
+
+The mapping is declarative, matching claude and gemini, and `enrichArgs` deliberately leaves
+`--task` alone so `transformFlags` can see it — `BaseAgentAdapter` applies `flagMappings` *after*
+the `enrichArgs` hook. Pi's `-p` adopts the argument that follows it as the prompt, so the pair
+must stay adjacent; `--session-id`/`--session-dir` are appended after it and do not intervene.
+
+The bug this replaced: `enrichArgs` used to consume `--task` and re-append its value as a trailing
+**positional**. Pi reads a bare positional as an *interactive* session with an opening prompt, so
+`codemie pi --task "…"` opened the TUI and never exited, which blocked every non-interactive use
+and all smoke testing.
+
+Known limit, shared with the other agents: a prompt beginning with a single `-` or `--` is not
+adopted by `-p` (only a `---` prefix is), and falls through to Pi's parser as an unknown option.
+
+### 9.3 Extension/resource counting
+
+Pi names its resource directories differently from `extensions-scan`'s defaults, so every
+`skills_*`/`commands_*`/`hooks_*` lifecycle field reported zero until `extensionsConfig` existed.
+The mapping is `commands → prompts/` (flat `.md`, Pi's slash-command equivalent) and
+`hooks → extensions/` (`.ts`/`.js`, Pi's in-process hooks); `skills/` already matches the default
+directory-per-skill `SKILL.md` layout.
+
+`agents` and `rules` are set to empty arrays — Pi has neither concept, and an empty array holds the
+category at zero instead of scanning a directory Pi never reads. (An *explicitly undefined* entry
+would throw inside the scanner and silently zero all ten counts, so the arrays must be empty, not
+absent.)
+
+`global` is the user's own `~/.pi/agent`, not the agent dir CodeMie redirects Pi to
+(`<cwd>/.pi/codemie/agent`). That dir is a copy of the user's plus CodeMie's own metrics extension,
+so counting it would report our plumbing as a user-authored hook for every user.
+
+### 9.4 MCP counting
+
+An earlier draft of this document asserted that Pi has no MCP support and that omitting `mcpConfig`
+was therefore correct. That was wrong, and it came from grepping the upstream clone at
+`~/TS/github/pi`, which is older than the installed package.
+
+The accurate statement is narrower: MCP is not part of Pi **core** — Pi's own `docs/usage.md` says
+it "intentionally does not include built-in MCP" — but MCP arrives through the `pi-mcp-adapter`
+package, and CodeMie installs that package for every managed Pi (`REQUIRED_PI_PACKAGES` in
+`pi.packages.ts`). For the population this metric measures, the adapter is effectively core, so
+`mcp_total_servers: 0` was a guaranteed-wrong constant rather than an accurate zero.
+
+The adapter merges six files, lowest precedence first:
+
+| Adapter precedence | Adapter source | Path | CodeMie scope |
+|---|---|---|---|
+| 1 (lowest) | `shared-global` | `~/.config/mcp/mcp.json` | `user`, candidate 4 |
+| 2 | `agents-global` | `~/.agents/mcp.json` | `user`, candidate 3 |
+| 3 | `agents-nested-global` | `~/.agents/mcp/mcp.json` | `user`, candidate 2 |
+| 4 | `pi-global` | `<agentDir>/mcp.json` | `user`, candidate 1 |
+| 5 | `shared-project` | `<cwd>/.mcp.json` | `project` |
+| 6 (highest) | `pi-project` | `<cwd>/.pi/mcp.json` | `local` |
+
+The key is `mcpServers` in every file. Three CodeMie scopes cannot hold six sources, so the two
+project files map one-to-one and the four global ones become ordered candidates, ordered by adapter
+precedence **descending** so the file CodeMie reads is the one that would have won the merge. Note
+that `readMCPFromSource` returns on the first candidate that **parses** — it never merges, and a
+file that parses without an `mcpServers` key ends the search at zero.
+
+`<agentDir>` is not fixed: the adapter resolves it through `PI_CODING_AGENT_DIR`, which `beforeRun`
+always sets to `<cwd>/.pi/codemie/agent`. That copy — not `~/.pi/agent` — is the file a
+CodeMie-launched Pi actually reads.
+
+**`~/.pi/agent/mcp.json` is deliberately not a candidate**, and an earlier draft of this section had
+it wrong. Because `PI_CODING_AGENT_DIR` is set unconditionally, the user's own Pi home is never one
+of the adapter's six sources under CodeMie. Listing it as a "first run" fallback looked harmless but
+was not: `readMCPFromSource` cannot distinguish "first run" from "copy exists but has no
+`mcp.json`", and `preparePiAgentDir` returns early forever once the copy exists (`pi.setup.ts`), so
+the second state is **permanent** for a project — while the home file keeps growing, because a bare
+`pi` writes precisely there. The metric would then name servers the run cannot load, and the
+unconditional return would additionally hide `~/.agents/*` and `~/.config/mcp`, which the adapter
+genuinely does merge. Wrong in both directions at once, and worse than the constant zero it
+replaced.
+
+Dropping it buys a clean invariant: **every server reported is one the run actually loads.**
+
+This is the opposite call from `extensionsConfig.global` (§9.3), which avoids the copy precisely
+because CodeMie injects its own extension into it. Nothing injects MCP servers, so for MCP the copy
+is simply the truth.
+
+The declaration is an approximation otherwise, and the biases are known:
+
+- **Under-counts the first run in a project**, which reports zero user servers: the copy is made in
+  `beforeRun`, and `onSessionStart` — where `getMCPConfigSummary` runs — precedes it
+  (`BaseAgentAdapter.ts:548` before `:584`). Self-healing from the second run on, and an
+  under-count is the failure direction to prefer.
+- **Over-counts** a server named in two scopes — the adapter merges those into one live server,
+  while `totalServers` sums the scopes (`serverNames` stays deduplicated).
+- **Under-counts** every global file after the first that parses, the legacy `mcp-servers` alias
+  key, and any config written as true JSONC (the adapter strips comments before parsing;
+  `readJsonFile` does not).
+- **Under-counts** host-config imports — `hostConfigDiscovery: "on"` or a per-file `"imports"`
+  array pull servers from Claude/Codex/Cursor/VS Code files. Following a key into other files with
+  other key names is beyond `navigateJsonPath`. Both mechanisms are opt-in and default off.
+
+Every one of these fails silently, which is why `pi.mcp-config.test.ts` writes real config files on
+disk rather than asserting on the declaration shape.
 
 ## 10. Error handling
 
@@ -394,28 +588,64 @@ accepted rather than tracked.
 
 ## 11. Testing
 
-The project testing policy is “tests only on explicit request.” No new tests will be added unless the user asks for them.
+The project's default policy is “tests only on explicit request.” The user explicitly authorized a
+regression suite for this work, so one exists — the earlier revision of this document recorded zero
+coverage, which is why the same class of attribution defect kept recurring across review rounds.
 
-Manual verification:
+Unit tests live beside the code under `src/agents/plugins/pi/__tests__/` and run in the `unit`
+vitest project. The load-bearing ones:
 
-1. Run `codemie pi --task "create a hello.txt file"`.
-2. Confirm `<cwd>/.pi/codemie/agent/sessions/<encoded-cwd>/<timestamp>_<id>.jsonl` exists.
-3. Confirm `~/.codemie/sessions/{sessionId}_metrics.jsonl` contains deltas.
-4. Confirm the backend receives both `codemie_cli_session_total` (started + completed) and `codemie_cli_tool_usage_total` rows.
+- `pi.extension-asset.test.ts` — drives the real `extension/index.js` against a fake Pi API and
+  asserts the safety invariants: exports a factory, no side effects on import, subscribes to exactly
+  three events and never `tool_call`, every handler returns `undefined`, argument text never reaches
+  the ledger, and hostile contexts / unwritable ledgers are swallowed rather than propagated.
+- `pi.run-ledger.test.ts` — installation, idempotence, repair of a modified asset, removal on
+  self-test failure (four ways an asset can be bad), the kill switch, and the ledger reader's
+  handling of missing files, malformed lines, and a truncated final line.
+- `pi.discovery.test.ts` — the listing behaviour, plus explicit **regression guards** asserting that
+  discovery performs no run attribution. These fail if identity, timing, uuid-version, or lineage
+  filtering is reintroduced.
+
+### 11.1 End-to-end verification against the real `pi` binary
+
+Run against `pi` 0.84.1 in a scratch git repo, with the extension installed exactly as `beforeRun`
+materializes it and a local mock OpenAI-completions server standing in for the model, so full turns
+complete offline. Results:
+
+| Scenario | Result |
+|---|---|
+| `-p` run: ledger has `boot`/`session`/`shutdown`, pi exits 0 | pass — `mode:"print"`, `file` matches the transcript on disk |
+| **Two concurrent runs, same cwd** | **pass — zero ledger overlap.** The acceptance test |
+| `--fork`: ledger records only the fork's own transcript | pass (fork replays 6 of the parent's 7 entries) |
+| Fork billing under a shared `seen` set | pass — parent 14, fork 14, total 28; standalone the fork reads 28 alone |
+| `--continue` | pass — exit 0, one transcript |
+| `-ne` (`--no-extensions`) | pass — no ledger written |
+| `--no-session` | pass — ledger written with `file:null`; the reader claims nothing |
+| Corrupted asset | **Pi exits 1 and refuses to start**, confirming the `exit(1)` hazard is real and the pre-flight self-test is load-bearing |
+| `--session-id` alongside `-p` | pass — accepted, not rejected |
+| Prompt template `/greet` | ledger records `{kind:"prompt",name:"greet"}`; the literal `/greet` appears **0 times** in the transcript, confirming the ledger is its only record |
+| `/skill:tidy please` | ledger records `{kind:"skill",name:"tidy"}`; the argument text `please` never reaches the ledger |
+| Hook pipeline over the real transcript | emits `models`, `userPrompts`, and `tools:{bash:1}` with `toolStatus` |
+| Token extraction | `input:7, output:3, cacheRead:4, total:14` from `prompt_tokens:11` + `cached_tokens:4` — Pi pre-subtracts, so the reader's **pass-through** mapping is correct; subtracting again would undercount |
+
+Not covered by the above, still requiring a human:
+
+1. A TUI session with `/new`, `/fork` and Ctrl-C — print mode cannot exercise the interactive paths.
+2. Backend receipt of `codemie_cli_session_total` (started + completed) and
+   `codemie_cli_tool_usage_total`, and conversation sync landing under folder `pi`. These need a
+   valid CodeMie SSO session; uploads above were pointed at an unreachable host by design.
 
 ## 12. Out of scope
 
-- Incremental per-turn sync during the Pi session (future enhancement).
-- Conversation log sync (`_conversation.jsonl`); only metrics deltas.
-- Modifying the upstream Pi repo or adding native hooks.
-- Mapping Pi extensions/skills into CodeMie extension counts.
-- Re-implementing Pi's argument parser to detect session flags in value positions (see §9.1).
+- Modifying the upstream Pi repo. (Pi's extension API is *used*, not changed.)
+- Re-implementing Pi's argument parser to detect session flags in value positions (see §9.1). This
+  previously mattered because a misparse could publish a wrong session identity; with `PI_SESSION_ID`
+  publication removed, a misparse can now only suppress `--session-id` injection, which is safe.
 - Keying `PiMetricsProcessor`'s cross-transcript state (`seenEntryIds`, the activity window) by
   session id. The processor lives on the registry's singleton plugin, so the state would leak if one
-  process ever ran the metrics pipeline for two CodeMie sessions. No Pi path does: `onSessionStart`
-  carries no transcript and returns early, `onSessionEnd` fires once per process, and Pi has no
-  reconciliation loop of the kind `codex.reconciliation.ts` runs. Adding a reset for a caller that
-  does not exist is left until one does.
+  process ever ran the metrics pipeline for two CodeMie sessions. **Revisit if the incremental-sync
+  timer is extended to more than one session per process** — the earlier justification rested on
+  `onSessionEnd` firing exactly once, which a periodic flush weakens.
 
 ## 13. References
 
