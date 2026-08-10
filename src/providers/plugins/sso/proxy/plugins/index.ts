@@ -36,7 +36,7 @@ export function registerCorePlugins(): void {
   registry.register(new ClaudeRequestNormalizerPlugin()); // Priority 14 - normalizes thinking params for claude models
   registry.register(new KimiRequestNormalizerPlugin()); // Priority 14 - caps Kimi output token requests for upstream limits
   registry.register(new RequestSanitizerPlugin()); // Priority 15 - strips unsupported reasoning params
-  registry.register(new CodexEncryptedContentSanitizerPlugin()); // Priority 16 - strips deployment-bound encrypted Responses reasoning state
+  registry.register(new CodexEncryptedContentSanitizerPlugin()); // Priority 16 - forwards Responses reasoning state; strips it only after upstream rejects a replay
   registry.register(new VsCodeRequestNormalizerPlugin()); // Priority 17 - constrains VS Code user identifiers
   registry.register(new HeaderInjectionPlugin());
   registry.register(new LoggingPlugin()); // Always enabled - logs to log files at INFO level
