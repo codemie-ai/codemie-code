@@ -3,8 +3,30 @@ import { basename, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { getCodemiePath } from '../../../utils/paths.js';
 import { logger } from '../../../utils/logger.js';
+import type { Session } from './types.js';
 
 const LOG_FILENAME = 'session-origin-audit.jsonl';
+
+/**
+ * Env var carrying the resume-ownership decision from AgentCLI into the spawned agent
+ * subprocess (and, transitively, into `codemie hook` invocations it shells out to).
+ */
+export const SESSION_ORIGIN_ENV_KEY = 'CODEMIE_SESSION_ORIGIN';
+export const EXTERNAL_RESUME_ORIGIN = 'external-resume' as const;
+
+/**
+ * Whether a session must never be ingested (metrics, conversations, transcript markers).
+ *
+ * Checks the persisted Session record first (authoritative — survives process boundaries
+ * like the proxy timer or DesktopTelemetryRuntime). Falls back to the env var so a session
+ * still fails closed if `createSessionRecord()` silently swallowed a write error before the
+ * origin could be persisted (it deliberately never throws — see hook.ts createSessionRecord).
+ */
+export function isExternalOrigin(session: Pick<Session, 'origin'> | null | undefined): boolean {
+  if (session?.origin === EXTERNAL_RESUME_ORIGIN) return true;
+  if (session?.origin) return false;
+  return process.env[SESSION_ORIGIN_ENV_KEY] === EXTERNAL_RESUME_ORIGIN;
+}
 
 export type AuditEventName =
   | 'transcript_marker_written'

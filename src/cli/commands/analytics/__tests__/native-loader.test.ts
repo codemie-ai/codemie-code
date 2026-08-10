@@ -2,8 +2,26 @@
  * Native session discovery + synthesis unit tests (dependency-injected — no fs/registry).
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { synthesizeRawSession, loadNativeSessions, type NativeLoaderDeps } from '../native-loader.js';
+
+// Module-level mock (must live at file top level, not inside a describe block, so Vitest's
+// hoisting transform actually lifts it above the static `native-loader.js` import above).
+// Only redirects the 'sessions' subpath used by buildOwnershipIndex(); everything else
+// (getCodemieHome, etc.) falls through to the real implementation.
+const mockSessionsDir = join(tmpdir(), `codemie-native-loader-ownership-test-${process.pid}`);
+
+vi.mock('../../../../utils/paths.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../../utils/paths.js')>();
+  return {
+    ...actual,
+    getCodemiePath: (...segments: string[]) =>
+      segments[0] === 'sessions' ? mockSessionsDir : actual.getCodemiePath(...segments),
+  };
+});
 
 const parsed = {
   sessionId: 'sx',
@@ -292,6 +310,49 @@ describe('loadNativeSessions — ownership gate exemption for analytics-only age
 
     expect(results).toHaveLength(1);
     expect(results[0].startEvent!.data.provider).toBe('native-external');
+  });
+});
+
+describe('realNativeDeps.hasOwnershipMarker — ownership index excludes external-resume records (EPMCDME-12992)', () => {
+  const ownedTranscript = join(mockSessionsDir, 'owned.jsonl');
+  const externalTranscript = join(mockSessionsDir, 'external.jsonl');
+
+  beforeEach(() => {
+    vi.resetModules();
+    rmSync(mockSessionsDir, { recursive: true, force: true });
+    mkdirSync(mockSessionsDir, { recursive: true });
+    // Plain transcripts with no in-band marker — so a `false` result only comes from the
+    // ownership index correctly excluding the record, not from the legacy 4KB-scan fallback
+    // hitting a missing file.
+    writeFileSync(ownedTranscript, '{"type":"user"}\n');
+    writeFileSync(externalTranscript, '{"type":"user"}\n');
+  });
+
+  afterEach(() => {
+    rmSync(mockSessionsDir, { recursive: true, force: true });
+  });
+
+  it('adopts the transcript of a normal CodeMie session (origin unset)', async () => {
+    writeFileSync(
+      join(mockSessionsDir, 'codemie-session-1.json'),
+      JSON.stringify({ correlation: { agentSessionFile: ownedTranscript } })
+    );
+
+    const { realNativeDeps } = await import('../native-loader.js');
+    expect(realNativeDeps.hasOwnershipMarker(ownedTranscript)).toBe(true);
+  });
+
+  it('does NOT adopt the transcript of a session flagged origin=external-resume', async () => {
+    writeFileSync(
+      join(mockSessionsDir, 'codemie-session-2.json'),
+      JSON.stringify({
+        origin: 'external-resume',
+        correlation: { agentSessionFile: externalTranscript },
+      })
+    );
+
+    const { realNativeDeps } = await import('../native-loader.js');
+    expect(realNativeDeps.hasOwnershipMarker(externalTranscript)).toBe(false);
   });
 });
 

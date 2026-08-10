@@ -3,6 +3,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import chalk from 'chalk';
 import type { AgentAdapter, ResumeOwnershipResult } from './types.js';
+import { SESSION_ORIGIN_ENV_KEY, EXTERNAL_RESUME_ORIGIN } from './session/session-origin-audit.js';
 import { ConfigLoader, CodeMieConfigOptions } from '../../utils/config.js';
 import { ensureApiBase, DEFAULT_CODEMIE_BASE_URL } from '../../providers/core/codemie-auth-helpers.js';
 import { AuthMethod, ProviderName } from '../../providers/core/types.js';
@@ -385,12 +386,14 @@ export class AgentCLI {
               process.exit(1);
             }
 
-            // Inject into subprocess env (for lifecycle hook subprocesses that inherit it)
-            // and into the current process env (for same-process consumers such as sso syncProcessor).
+            // Inject into subprocess env — the spawned agent (and, transitively, the
+            // `codemie hook` invocations it shells out to) reads this to persist the
+            // session's origin, which is what actually gates ingestion. No same-process
+            // env write is needed here: origin is persisted to the Session record before
+            // any upload is attempted.
             Object.assign(providerEnv, buildResumeEnvOverride(true));
-            process.env.CODEMIE_CONV_SYNC_DISABLED = '1';
             appendAuditEvent('resume_external_confirmed', auditData);
-            logger.info(`[AgentCLI] External resume confirmed for agent ${this.adapter.name}; conversation sync suppressed`);
+            logger.info(`[AgentCLI] External resume confirmed for agent ${this.adapter.name}; session will not be synced`);
           }
         }
       }
@@ -406,8 +409,6 @@ export class AgentCLI {
 
       // Run the agent (welcome message will be shown inside)
       await this.adapter.run(agentArgs, providerEnv, options.printConfig ? { dryRun: true } : undefined);
-      // Clean up the process-level flag set for same-process conversation sync consumers.
-      delete process.env.CODEMIE_CONV_SYNC_DISABLED;
     } catch (error) {
       // Show user-friendly error message in console first
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -688,7 +689,7 @@ export class AgentCLI {
 }
 
 export function buildResumeEnvOverride(isExternal: boolean): Record<string, string> {
-  return isExternal ? { CODEMIE_CONV_SYNC_DISABLED: '1' } : {};
+  return isExternal ? { [SESSION_ORIGIN_ENV_KEY]: EXTERNAL_RESUME_ORIGIN } : {};
 }
 
 export function shouldBlockNonInteractiveResume(): boolean {

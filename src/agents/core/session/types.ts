@@ -36,6 +36,14 @@ export interface CorrelationResult {
 export type SessionStatus = 'active' | 'completed' | 'recovered' | 'failed';
 
 /**
+ * Session origin — whether this session is safe to ingest.
+ * 'codemie': created through CodeMie tooling (default when unset, for back-compat with
+ * existing session files). 'external-resume': a confirmed resume of a Claude transcript
+ * that was never created through CodeMie — must never be synced (metrics or conversations).
+ */
+export type SessionOrigin = 'codemie' | 'external-resume';
+
+/**
  * Sync status (used by all processors)
  */
 export type SyncStatus = 'pending' | 'syncing' | 'synced' | 'failed';
@@ -124,6 +132,7 @@ export interface Session {
   correlation: CorrelationResult;
   status: SessionStatus;
   reason?: string; // Session end reason (optional, e.g., 'clear', 'logout', 'prompt_input_exit', 'other')
+  origin?: SessionOrigin; // undefined = 'codemie' (back-compat)
 
   // Active duration tracking (excludes idle time)
   activityStartedAt?: number; // Unix ms when current activity began (undefined = idle)

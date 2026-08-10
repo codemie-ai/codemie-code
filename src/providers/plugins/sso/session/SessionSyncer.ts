@@ -20,6 +20,7 @@ import { SessionStore } from '../../../../agents/core/session/SessionStore.js';
 import { MetricsSyncProcessor } from './processors/metrics/metrics-sync-processor.js';
 import { createSyncProcessor as createConversationSyncProcessor } from './processors/conversations/syncProcessor.js';
 import { applyProcessingSyncUpdates } from '../../../../agents/core/session/sync-state-utils.js';
+import { isExternalOrigin } from '../../../../agents/core/session/session-origin-audit.js';
 
 export interface SessionSyncResult {
   success: boolean;
@@ -92,6 +93,19 @@ export class SessionSyncer {
         return {
           success: false,
           message: 'Session not found',
+          processorResults: {},
+          failedProcessors: []
+        };
+      }
+
+      // Central ingestion gate: a confirmed external-resume session must never sync anything
+      // (metrics or conversations), regardless of which caller (hook, proxy timer, codex
+      // incremental sync, DesktopTelemetryRuntime) invoked this. See EPMCDME-12992.
+      if (isExternalOrigin(sessionMetadata)) {
+        logger.debug(`[SessionSyncer] Skipping sync for external-resume session ${sessionId}`);
+        return {
+          success: true,
+          message: 'Sync skipped: external-resume session',
           processorResults: {},
           failedProcessors: []
         };
