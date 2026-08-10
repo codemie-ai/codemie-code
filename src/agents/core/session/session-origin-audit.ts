@@ -26,6 +26,19 @@ export function appendAuditEvent(
   }
 }
 
+/**
+ * Agents whose transcript is a parent-linked entry tree rather than a flat log.
+ *
+ * Pi rebuilds its session from the file on every open: `_buildIndex()` takes the last
+ * non-header line as the tree leaf and `buildSessionPath()` walks `parentId` upwards from
+ * it to assemble the model context. A marker line carries neither `id` nor `parentId`, so
+ * appending one leaves the leaf undefined, ends the walk on its first step, and every later
+ * `--resume` of that transcript opens with an empty conversation — indistinguishable from a
+ * new session. Ownership for these agents is carried entirely outside the transcript, by the
+ * sidecar written above and by `correlation.agentSessionFile` on the session record.
+ */
+const TREE_STRUCTURED_TRANSCRIPT_AGENTS = new Set(['pi']);
+
 export function appendTranscriptMarker(
   transcriptPath: string,
   codemieSessionId: string,
@@ -60,6 +73,13 @@ export function appendTranscriptMarker(
     }
   } catch (err) {
     logger.debug(`[session-origin] Failed to write sidecar marker (non-fatal): ${err}`);
+  }
+
+  if (TREE_STRUCTURED_TRANSCRIPT_AGENTS.has(codemieAgent)) {
+    logger.debug(
+      `[session-origin] Skipping in-transcript marker for ${codemieAgent}: the line would become the session's tree leaf and break resume`,
+    );
+    return;
   }
 
   // CR-007: spec says "skip and emit debug log if transcript not yet present" (non-fatal).

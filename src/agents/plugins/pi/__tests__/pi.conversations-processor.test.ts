@@ -190,11 +190,11 @@ function writeSessionRecord(sync?: Record<string, unknown>): void {
 }
 
 describe('PiConversationsProcessor', () => {
-  it('still reads the conversation when CodeMie has appended its ownership marker', async () => {
-    // `appendTranscriptMarker` appends a `codemie_session_start` line to the live transcript,
-    // and `correlateRunToSession` does so before the processors run. The marker is not a tree
-    // node — no `id`, no `parentId` — so treating "last line written" as the leaf ended the
-    // parent walk immediately and every real pi session normalised to zero events.
+  it('still reads the conversation when a transcript ends with an ownership marker', async () => {
+    // Transcripts recorded before `appendTranscriptMarker` stopped writing this line for pi
+    // still end with a `codemie_session_start`, and foreign tooling may append one. The marker
+    // is not a tree node — no `id`, no `parentId` — so treating "last line written" as the leaf
+    // ended the parent walk immediately and every such pi session normalised to zero events.
     const processor = await createProcessor();
     const session = buildSession([
       userEntry('add a health endpoint'),

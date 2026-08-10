@@ -392,8 +392,8 @@ function selectActiveBranch(entries: PiEntry[]): PiActiveEntry[] {
   for (const [sourceIndex, entry] of entries.entries()) {
     // The `session` header line is not part of the tree — upstream drops it too.
     if (!entry || typeof entry !== 'object' || entry.type === 'session') continue;
-    // Only tree nodes may become the leaf. CodeMie appends its own `codemie_session_start`
-    // ownership marker to the end of the transcript (`appendTranscriptMarker`), and foreign
+    // Only tree nodes may become the leaf. Transcripts written before CodeMie stopped
+    // appending its `codemie_session_start` ownership marker still end with one, and foreign
     // tooling may append too. Such a line carries no `id`, so taking it as the leaf ended the
     // parent walk on its first step and normalised the whole conversation down to nothing.
     if (typeof entry.id !== 'string' || !entry.id) continue;
