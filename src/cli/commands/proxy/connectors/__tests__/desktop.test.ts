@@ -624,39 +624,114 @@ describe('writeDesktopConfig', () => {
     expect(servers.map((s: any) => s.name)).toEqual(['Notion', 'Linear', 'Box', 'Canva', 'Vercel', 'Netlify', 'Miro']);
   });
 
-  it('keeps the bundled default when a colliding backend entry carries no auth', async () => {
+  it('seeds no bundled default on a failed fetch when the stored managed list cannot be parsed', async () => {
+    // CR-005: a malformed stored value is NOT an empty config. Seeding the full
+    // default set would let reconcile claim those names and evict whatever the
+    // corrupt list actually held — on the very run with the least recourse.
+    const existingId = 'reuse-id';
+    await mkdir(libDir, { recursive: true });
+    await writeFile(metaPath, JSON.stringify({ appliedId: existingId, entries: [{ id: existingId, name: 'X' }] }), 'utf-8');
+    await writeFile(join(libDir, `${existingId}.json`), JSON.stringify({
+      managedMcpServers: 'not-json{{{',
+    }), 'utf-8');
+
+    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, null, statePath);
+
+    const written = JSON.parse(await readFile(configPath, 'utf-8'));
+    expect(JSON.parse(written.managedMcpServers)).toEqual([]);
+  });
+
+  it('seeds no bundled default on a failed fetch when the stored managed list is not an array', async () => {
+    const existingId = 'reuse-id';
+    await mkdir(libDir, { recursive: true });
+    await writeFile(metaPath, JSON.stringify({ appliedId: existingId, entries: [{ id: existingId, name: 'X' }] }), 'utf-8');
+    await writeFile(join(libDir, `${existingId}.json`), JSON.stringify({
+      managedMcpServers: { Notion: { url: 'https://mcp.internal.corp/notion' } },
+    }), 'utf-8');
+
+    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, null, statePath);
+
+    const written = JSON.parse(await readFile(configPath, 'utf-8'));
+    expect(JSON.parse(written.managedMcpServers)).toEqual([]);
+  });
+
+  it('applies the bundled default OAuth when a backend entry claims the same url without auth', async () => {
     const org = [
-      { name: 'notion', url: 'https://mcp.internal.test/mcp/notion', transport: 'http' as const },
+      { name: 'notion_internal', url: 'https://mcp.notion.com/mcp', transport: 'http' as const },
     ];
     const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
 
     const written = JSON.parse(await readFile(configPath, 'utf-8'));
     const servers = JSON.parse(written.managedMcpServers);
-    const notion = servers.filter((s: any) => s.name.toLowerCase() === 'notion');
+    const notion = servers.filter((s: any) => s.url === 'https://mcp.notion.com/mcp');
     expect(notion).toHaveLength(1);
-    expect(notion[0].name).toBe('Notion');
-    expect(notion[0].url).toBe('https://mcp.notion.com/mcp');
+    // Decision 4: the backend still owns the identity of the endpoint...
+    expect(notion[0].name).toBe('notion_internal');
+    // ...but never at auth weaker than the default declares for that same url.
     expect(notion[0].oauth).toBe(true);
   });
 
-  it('keeps the bundled default when a colliding backend entry resolves to oauth: false', async () => {
+  it('applies the bundled default OAuth when a backend entry resolves to oauth: false for the same url', async () => {
     const org = mapCanonicalToDesktop([
-      { name: 'notion', transport: 'http', url: 'https://mcp.internal.test/mcp/notion', auth: 'none' },
+      { name: 'notion_internal', transport: 'http', url: 'https://mcp.notion.com/mcp', auth: 'none' },
     ]);
     const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
 
     const written = JSON.parse(await readFile(configPath, 'utf-8'));
     const servers = JSON.parse(written.managedMcpServers);
-    const notion = servers.filter((s: any) => s.name.toLowerCase() === 'notion');
+    const notion = servers.filter((s: any) => s.url === 'https://mcp.notion.com/mcp');
     expect(notion).toHaveLength(1);
     expect(notion[0].oauth).toBe(true);
+  });
+
+  it('floors every no-auth entry at a bundled default url, even when a sibling entry collides by name', async () => {
+    // CR-003: two backend entries collide with the same default via different
+    // keys — one by name (carrying auth), one by URL (carrying none). The
+    // no-auth entry points at the very endpoint the default vouches for.
+    const org = [
+      { name: 'Notion', url: 'https://mcp.internal.test/mcp/notion', transport: 'http' as const, oauth: { ...OAUTH_CONFIG } },
+      { name: 'notion_alt', url: 'https://mcp.notion.com/mcp', transport: 'http' as const },
+    ];
+    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+
+    const written = JSON.parse(await readFile(configPath, 'utf-8'));
+    const servers = JSON.parse(written.managedMcpServers);
+    const publicNotion = servers.filter((s: any) => s.url === 'https://mcp.notion.com/mcp');
+    expect(publicNotion).toHaveLength(1);
+    expect(publicNotion[0].oauth).toBe(true);
+    const internal = servers.find((s: any) => s.url === 'https://mcp.internal.test/mcp/notion');
+    expect(internal?.oauth).toEqual(OAUTH_CONFIG);
+  });
+
+  it('keeps a previously managed internal server when the backend later reports it without auth', async () => {
+    // CR-004: the tenant's internal server shares only its NAME with a bundled
+    // default. Dropping it because it resolves to no auth would revoke a live
+    // server and resolve the trusted name to the public third-party endpoint.
+    const withAuth = [
+      { name: 'notion', url: 'https://mcp.internal.corp/notion', transport: 'http' as const, oauth: { ...OAUTH_CONFIG } },
+    ];
+    await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, withAuth, statePath);
+    const withoutAuth = [
+      { name: 'notion', url: 'https://mcp.internal.corp/notion', transport: 'http' as const, oauth: false },
+    ];
+    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, withoutAuth, statePath);
+
+    const written = JSON.parse(await readFile(configPath, 'utf-8'));
+    const servers = JSON.parse(written.managedMcpServers);
+    const notion = servers.filter((s: any) => s.name.toLowerCase() === 'notion');
+    expect(notion).toHaveLength(1);
+    expect(notion[0].url).toBe('https://mcp.internal.corp/notion');
+    expect(servers.some((s: any) => s.url === 'https://mcp.notion.com/mcp')).toBe(false);
+    // A default's oauth describes ITS endpoint, so it is not forced onto a
+    // different one that merely reuses the name.
+    expect(notion[0].oauth).toBe(false);
   });
 
   it('warns when a colliding backend entry would have downgraded a bundled default', async () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
     try {
       const org = [
-        { name: 'notion', url: 'https://mcp.internal.test/mcp/notion', transport: 'http' as const },
+        { name: 'notion_internal', url: 'https://mcp.notion.com/mcp', transport: 'http' as const },
       ];
       await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
       const warned = warnSpy.mock.calls.some(
@@ -665,6 +740,28 @@ describe('writeDesktopConfig', () => {
       expect(warned).toBe(true);
     } finally {
       warnSpy.mockRestore();
+    }
+  });
+
+  it('logs the oauth shape of the servers it writes, not of the candidate set', async () => {
+    // CR-006: on a failed fetch over a config that already holds every default,
+    // the candidate set is empty while seven entries are written. A summary taken
+    // over the candidate set reports zero configured beside a count of seven.
+    await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, [], statePath);
+    const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
+    try {
+      await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, null, statePath);
+      const record = infoSpy.mock.calls.find(
+        ([message]) => typeof message === 'string' && message.includes('Preparing Claude Desktop config payload'),
+      )?.[1] as any;
+      expect(record).toBeDefined();
+      expect(record.managedMcpServerCount).toBe(7);
+      expect(record.oauthFlaggedCount).toBe(7);
+      expect(
+        record.oauthConfiguredCount + record.oauthFlaggedCount + record.noAuthCount,
+      ).toBe(record.managedMcpServerCount);
+    } finally {
+      infoSpy.mockRestore();
     }
   });
 
