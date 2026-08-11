@@ -520,15 +520,20 @@ export async function writeDesktopConfig(
   // marker state untouched so a later successful run can still revoke.
   const orgFetchSucceeded = orgMcpServers !== null;
 
-  // Dedup the org catalog against bundled public defaults so an entry the backend
-  // echoes (same name or URL) is not written twice.
-  const defaultNameSet = new Set(DEFAULT_MANAGED_MCP_SERVERS.map((s) => s.name.toLowerCase()));
-  const defaultUrlSet = new Set(DEFAULT_MANAGED_MCP_SERVERS.map((s) => s.url));
-  const orgDeduped = (orgMcpServers ?? []).filter(
-    (s) => !defaultNameSet.has(s.name.toLowerCase()) && !defaultUrlSet.has(s.url),
+  // Dedup bundled public defaults against the org catalog so an entry the
+  // backend also publishes is written once. The BACKEND wins the collision: it
+  // is authoritative and now carries real OAuth client configuration, while the
+  // bundled default only holds `oauth: true`.
+  const org = orgMcpServers ?? [];
+  const orgNameSet = new Set(org.map((s) => s.name.toLowerCase()));
+  // URL comparison is intentionally case-sensitive (matching
+  // reconcileManagedMcpServers); name comparison is case-insensitive.
+  const orgUrlSet = new Set(org.map((s) => s.url));
+  const defaultsDeduped = DEFAULT_MANAGED_MCP_SERVERS.filter(
+    (d) => !orgNameSet.has(d.name.toLowerCase()) && !orgUrlSet.has(d.url),
   );
 
-  const managedSet = [...DEFAULT_MANAGED_MCP_SERVERS.map(cloneManagedEntry), ...orgDeduped];
+  const managedSet = [...defaultsDeduped.map(cloneManagedEntry), ...org.map(cloneManagedEntry)];
   const previouslyManagedNames = orgFetchSucceeded ? await readManagedMcpState(managedStatePath) : [];
   const { servers: managedMcpServers, managedNames } = reconcileManagedMcpServers(
     existing.managedMcpServers,

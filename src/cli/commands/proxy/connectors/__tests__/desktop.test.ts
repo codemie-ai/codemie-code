@@ -551,6 +551,46 @@ describe('writeDesktopConfig', () => {
     const servers = JSON.parse(written.managedMcpServers);
     expect(servers.find((s: any) => s.name === 'legacy').oauth).toBe(true);
   });
+
+  it('lets a backend entry replace the bundled default it collides with by name', async () => {
+    const org = [
+      { name: 'notion', url: 'https://mcp.internal.test/mcp/notion', transport: 'http' as const, oauth: { ...OAUTH_CONFIG } },
+    ];
+    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+
+    const written = JSON.parse(await readFile(configPath, 'utf-8'));
+    const servers = JSON.parse(written.managedMcpServers);
+    const notion = servers.filter((s: any) => s.name.toLowerCase() === 'notion');
+    expect(notion).toHaveLength(1);
+    expect(notion[0].url).toBe('https://mcp.internal.test/mcp/notion');
+    expect(notion[0].oauth).toEqual(OAUTH_CONFIG);
+  });
+
+  it('lets a backend entry replace the bundled default it collides with by url', async () => {
+    const org = [
+      { name: 'notion_internal', url: 'https://mcp.notion.com/mcp', transport: 'http' as const, oauth: { ...OAUTH_CONFIG } },
+    ];
+    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+
+    const written = JSON.parse(await readFile(configPath, 'utf-8'));
+    const servers = JSON.parse(written.managedMcpServers);
+    expect(servers.filter((s: any) => s.url === 'https://mcp.notion.com/mcp')).toHaveLength(1);
+    expect(servers.some((s: any) => s.name === 'Notion')).toBe(false);
+    expect(servers.find((s: any) => s.name === 'notion_internal').oauth).toEqual(OAUTH_CONFIG);
+  });
+
+  it('keeps non-colliding bundled defaults, still ordered before org entries', async () => {
+    const org = [
+      { name: 'onehub_core', url: 'https://mcp.internal.test/mcp/onehub_core', transport: 'http' as const, oauth: { ...OAUTH_CONFIG } },
+    ];
+    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+
+    const written = JSON.parse(await readFile(configPath, 'utf-8'));
+    const servers = JSON.parse(written.managedMcpServers);
+    const names = servers.map((s: any) => s.name);
+    expect(names.slice(0, 7)).toEqual(['Notion', 'Linear', 'Box', 'Canva', 'Vercel', 'Netlify', 'Miro']);
+    expect(names[7]).toBe('onehub_core');
+  });
 });
 
 describe('mapCanonicalToDesktop', () => {
