@@ -8,7 +8,7 @@ import { logger } from '@/utils/logger.js';
 import { getCodemiePath } from '@/utils/paths.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import managedMcpServers from './desktop-managed-mcp-servers.json' with { type: 'json' };
-import type { CanonicalMcpEntry } from './managed-mcp-remote.js';
+import { isValidOAuthConfig, type CanonicalMcpEntry, type McpOAuthConfig } from './managed-mcp-remote.js';
 
 const INFERENCE_KEYS = [
   'inferenceProvider',
@@ -25,7 +25,12 @@ export interface ManagedMcpServerEntry {
   name: string;
   url: string;
   transport?: 'http' | 'sse';
-  oauth?: boolean;
+  /**
+   * `true`/`false` is the legacy flag Claude Desktop already understood; an
+   * {@link McpOAuthConfig} is the structured client configuration the backend
+   * now supplies. The CLI forwards it verbatim — Desktop runs the flow.
+   */
+  oauth?: McpOAuthConfig | boolean;
 }
 
 interface ModelsListResponse {
@@ -258,6 +263,22 @@ function isValidMcpServerName(name: string): boolean {
 const DESKTOP_SUPPORTED_TRANSPORTS = new Set(['http', 'sse']);
 
 /**
+ * Normalize the three accepted auth shapes into what Claude Desktop consumes.
+ *
+ * Precedence: a valid oauth object wins, then the oauth boolean, then the
+ * legacy `auth` enum, then `false`. The final fallback preserves the behavior
+ * of entries carrying neither field.
+ */
+export function resolveDesktopOAuth(entry: CanonicalMcpEntry): McpOAuthConfig | boolean {
+  if (isValidOAuthConfig(entry.oauth)) return { ...entry.oauth };
+  if (entry.oauth === true) return true;
+  if (entry.oauth === false) return false;
+  if (entry.auth === 'oauth') return true;
+  if (entry.auth === 'none') return false;
+  return false;
+}
+
+/**
  * Map client-neutral canonical entries to Claude Desktop's managedMcpServers
  * shape. Drops entries Desktop cannot represent (non-http/sse transports,
  * missing URL, or invalid name).
@@ -271,7 +292,7 @@ export function mapCanonicalToDesktop(entries: CanonicalMcpEntry[]): ManagedMcpS
       name: entry.name,
       url: entry.url,
       transport: entry.transport as 'http' | 'sse',
-      oauth: entry.auth === 'oauth',
+      oauth: resolveDesktopOAuth(entry),
     });
   }
   return result;

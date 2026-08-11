@@ -16,6 +16,7 @@ import {
   getManagedMcpStatePath,
   mapCanonicalToDesktop,
   reconcileManagedMcpServers,
+  resolveDesktopOAuth,
   selectDesktopClaudeModels,
   selectPreferredClaudeModels,
   writeDesktopConfig,
@@ -37,6 +38,16 @@ const MODEL_LIST_RESPONSE = {
     { id: 'gpt-5' },
     { id: 'codemie' },
   ],
+};
+
+// Mirrors the backend's structured oauth payload for EPMCDME-14072.
+const OAUTH_CONFIG = {
+  clientId: 'codemie-mcp-proxy',
+  scope: 'openid profile email',
+  callbackHost: 'localhost',
+  callbackPort: 3118,
+  authorizationUrl: 'https://auth.codemie.test/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login',
+  tokenUrl: 'https://auth.codemie.test/realms/codemie-prod/protocol/openid-connect/token',
 };
 
 describe('buildGatewayConfig', () => {
@@ -511,6 +522,34 @@ describe('writeDesktopConfig', () => {
     const servers = JSON.parse(written.managedMcpServers);
     expect(servers.filter((s: any) => s.name === 'Notion').length).toBe(1);
   });
+
+  it('writes a structured oauth object into managedMcpServers intact', async () => {
+    const org = mapCanonicalToDesktop([
+      {
+        name: 'onehub_core',
+        transport: 'http',
+        url: 'https://mcp.example.com/mcp/onehub_core',
+        oauth: { ...OAUTH_CONFIG, audience: 'onehub' },
+      },
+    ]);
+    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+
+    const written = JSON.parse(await readFile(configPath, 'utf-8'));
+    const servers = JSON.parse(written.managedMcpServers);
+    const onehub = servers.find((s: any) => s.name === 'onehub_core');
+    expect(onehub.oauth).toEqual({ ...OAUTH_CONFIG, audience: 'onehub' });
+  });
+
+  it('writes oauth: true for a legacy auth enum entry', async () => {
+    const org = mapCanonicalToDesktop([
+      { name: 'legacy', transport: 'http', url: 'https://mcp.example.com/mcp/legacy', auth: 'oauth' },
+    ]);
+    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+
+    const written = JSON.parse(await readFile(configPath, 'utf-8'));
+    const servers = JSON.parse(written.managedMcpServers);
+    expect(servers.find((s: any) => s.name === 'legacy').oauth).toBe(true);
+  });
 });
 
 describe('mapCanonicalToDesktop', () => {
@@ -533,6 +572,61 @@ describe('mapCanonicalToDesktop', () => {
       { name: 'ok', transport: 'http', url: 'https://ok' },
     ]);
     expect(result).toEqual([{ name: 'ok', url: 'https://ok', transport: 'http', oauth: false }]);
+  });
+
+  it('forwards a structured oauth object to the Desktop entry', () => {
+    const result = mapCanonicalToDesktop([
+      { name: 'onehub_core', transport: 'http', url: 'https://mcp.example.com/mcp/onehub_core', oauth: OAUTH_CONFIG },
+    ]);
+    expect(result).toEqual([
+      {
+        name: 'onehub_core',
+        url: 'https://mcp.example.com/mcp/onehub_core',
+        transport: 'http',
+        oauth: OAUTH_CONFIG,
+      },
+    ]);
+  });
+
+  it('never writes oauth: false for an entry that supplied oauth config', () => {
+    const [mapped] = mapCanonicalToDesktop([
+      { name: 'onehub_core', transport: 'http', url: 'https://mcp.example.com/mcp/onehub_core', oauth: OAUTH_CONFIG },
+    ]);
+    expect(mapped.oauth).not.toBe(false);
+  });
+});
+
+describe('resolveDesktopOAuth', () => {
+  it('forwards a valid oauth object as a copy', () => {
+    const entry = { name: 'onehub_core', transport: 'http' as const, url: 'https://x', oauth: OAUTH_CONFIG };
+    const resolved = resolveDesktopOAuth(entry);
+    expect(resolved).toEqual(OAUTH_CONFIG);
+    expect(resolved).not.toBe(OAUTH_CONFIG);
+  });
+
+  it('preserves unknown keys inside the oauth object', () => {
+    const oauth = { ...OAUTH_CONFIG, audience: 'onehub', pkce: true };
+    expect(resolveDesktopOAuth({ name: 'a', transport: 'http', url: 'https://x', oauth })).toEqual(oauth);
+  });
+
+  it('passes the boolean shapes through unchanged', () => {
+    expect(resolveDesktopOAuth({ name: 'a', transport: 'http', url: 'https://x', oauth: true })).toBe(true);
+    expect(resolveDesktopOAuth({ name: 'a', transport: 'http', url: 'https://x', oauth: false })).toBe(false);
+  });
+
+  it('falls back to the legacy auth enum', () => {
+    expect(resolveDesktopOAuth({ name: 'a', transport: 'http', url: 'https://x', auth: 'oauth' })).toBe(true);
+    expect(resolveDesktopOAuth({ name: 'a', transport: 'http', url: 'https://x', auth: 'none' })).toBe(false);
+  });
+
+  it('prefers the oauth object over the legacy enum when both are present', () => {
+    expect(resolveDesktopOAuth({
+      name: 'a', transport: 'http', url: 'https://x', auth: 'none', oauth: OAUTH_CONFIG,
+    })).toEqual(OAUTH_CONFIG);
+  });
+
+  it('returns false when the entry carries neither field (unchanged behavior)', () => {
+    expect(resolveDesktopOAuth({ name: 'a', transport: 'http', url: 'https://x' })).toBe(false);
   });
 });
 
