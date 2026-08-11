@@ -8,6 +8,8 @@ import { join } from 'path';
 import { writeFile, readFile, mkdir, rm } from 'fs/promises';
 import { existsSync } from 'fs';
 
+import { logger } from '@/utils/logger.js';
+
 import {
   buildGatewayConfig,
   cloneManagedEntry,
@@ -578,6 +580,92 @@ describe('writeDesktopConfig', () => {
     expect(servers.filter((s: any) => s.url === 'https://mcp.notion.com/mcp')).toHaveLength(1);
     expect(servers.some((s: any) => s.name === 'Notion')).toBe(false);
     expect(servers.find((s: any) => s.name === 'notion_internal').oauth).toEqual(OAUTH_CONFIG);
+  });
+
+  it('keeps an org entry that shadowed a bundled default by name when the next fetch fails', async () => {
+    const org = [
+      { name: 'notion', url: 'https://mcp.internal.corp/notion', transport: 'http' as const, oauth: { ...OAUTH_CONFIG } },
+    ];
+    // Run 1: the backend entry shadows the bundled Notion default.
+    await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+    // Run 2: the catalog fetch FAILED (null) — the bundled public Notion must not
+    // come back and evict the tenant's internal server.
+    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, null, statePath);
+
+    const written = JSON.parse(await readFile(configPath, 'utf-8'));
+    const servers = JSON.parse(written.managedMcpServers);
+    const notion = servers.filter((s: any) => s.name.toLowerCase() === 'notion');
+    expect(notion).toHaveLength(1);
+    expect(notion[0].url).toBe('https://mcp.internal.corp/notion');
+    expect(notion[0].oauth).toEqual(OAUTH_CONFIG);
+    expect(servers.some((s: any) => s.url === 'https://mcp.notion.com/mcp')).toBe(false);
+  });
+
+  it('keeps an org entry that shadowed a bundled default by url when the next fetch fails', async () => {
+    const org = [
+      { name: 'notion_internal', url: 'https://mcp.notion.com/mcp', transport: 'http' as const, oauth: { ...OAUTH_CONFIG } },
+    ];
+    await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, null, statePath);
+
+    const written = JSON.parse(await readFile(configPath, 'utf-8'));
+    const servers = JSON.parse(written.managedMcpServers);
+    expect(servers.filter((s: any) => s.url === 'https://mcp.notion.com/mcp')).toHaveLength(1);
+    const kept = servers.find((s: any) => s.name === 'notion_internal');
+    expect(kept?.oauth).toEqual(OAUTH_CONFIG);
+    expect(servers.some((s: any) => s.name === 'Notion')).toBe(false);
+  });
+
+  it('still seeds every bundled default on a first run whose fetch failed', async () => {
+    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, null, statePath);
+
+    const written = JSON.parse(await readFile(configPath, 'utf-8'));
+    const servers = JSON.parse(written.managedMcpServers);
+    expect(servers.map((s: any) => s.name)).toEqual(['Notion', 'Linear', 'Box', 'Canva', 'Vercel', 'Netlify', 'Miro']);
+  });
+
+  it('keeps the bundled default when a colliding backend entry carries no auth', async () => {
+    const org = [
+      { name: 'notion', url: 'https://mcp.internal.test/mcp/notion', transport: 'http' as const },
+    ];
+    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+
+    const written = JSON.parse(await readFile(configPath, 'utf-8'));
+    const servers = JSON.parse(written.managedMcpServers);
+    const notion = servers.filter((s: any) => s.name.toLowerCase() === 'notion');
+    expect(notion).toHaveLength(1);
+    expect(notion[0].name).toBe('Notion');
+    expect(notion[0].url).toBe('https://mcp.notion.com/mcp');
+    expect(notion[0].oauth).toBe(true);
+  });
+
+  it('keeps the bundled default when a colliding backend entry resolves to oauth: false', async () => {
+    const org = mapCanonicalToDesktop([
+      { name: 'notion', transport: 'http', url: 'https://mcp.internal.test/mcp/notion', auth: 'none' },
+    ]);
+    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+
+    const written = JSON.parse(await readFile(configPath, 'utf-8'));
+    const servers = JSON.parse(written.managedMcpServers);
+    const notion = servers.filter((s: any) => s.name.toLowerCase() === 'notion');
+    expect(notion).toHaveLength(1);
+    expect(notion[0].oauth).toBe(true);
+  });
+
+  it('warns when a colliding backend entry would have downgraded a bundled default', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    try {
+      const org = [
+        { name: 'notion', url: 'https://mcp.internal.test/mcp/notion', transport: 'http' as const },
+      ];
+      await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+      const warned = warnSpy.mock.calls.some(
+        ([message]) => typeof message === 'string' && /downgrade/i.test(message),
+      );
+      expect(warned).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('keeps non-colliding bundled defaults, still ordered before org entries', async () => {

@@ -314,6 +314,109 @@ export function cloneManagedEntry(entry: ManagedMcpServerEntry): ManagedMcpServe
   return copy;
 }
 
+/** True when the entry carries usable OAuth information (structured config or the legacy flag). */
+function hasManagedOAuth(entry: ManagedMcpServerEntry): boolean {
+  return entry.oauth === true || (typeof entry.oauth === 'object' && entry.oauth !== null);
+}
+
+/**
+ * Collision test between a bundled default and a backend entry: names are matched
+ * case-insensitively, URLs verbatim — mirroring reconcileManagedMcpServers, where
+ * both sides come from controlled sources.
+ */
+function collidesWithManagedEntry(a: ManagedMcpServerEntry, b: ManagedMcpServerEntry): boolean {
+  return a.name.toLowerCase() === b.name.toLowerCase() || a.url === b.url;
+}
+
+/** A bundled default kept because the backend entry colliding with it carried no auth. */
+export interface SuppressedOauthDowngrade {
+  /** The bundled default that was kept. */
+  defaultName: string;
+  /** The backend entry that was dropped instead of replacing it. */
+  backendName: string;
+}
+
+export interface ManagedMcpMergeResult {
+  /** The entries CodeMie owns this run, defaults first, all freshly cloned. */
+  managed: ManagedMcpServerEntry[];
+  /** Collisions resolved in favour of the bundled default to protect its OAuth. */
+  suppressedDowngrades: SuppressedOauthDowngrade[];
+}
+
+/**
+ * Merge the bundled public defaults with the org catalog so a server the backend
+ * also publishes is written exactly once.
+ *
+ * The BACKEND normally wins a collision: it is authoritative and carries the real
+ * OAuth client configuration, while the bundled default only holds `oauth: true`.
+ * The one exception is an auth downgrade — a colliding backend entry resolving to
+ * no auth at all would silently disable OAuth for a server the bundled default
+ * knows requires it, which is exactly the defect class managed OAuth config exists
+ * to prevent. There the default is kept, the colliding backend entry is dropped,
+ * and the suppression is reported so it is visible in the field.
+ */
+export function mergeManagedMcpServers(
+  defaults: readonly ManagedMcpServerEntry[],
+  org: readonly ManagedMcpServerEntry[],
+): ManagedMcpMergeResult {
+  const keptDefaults: ManagedMcpServerEntry[] = [];
+  const suppressedOrgEntries = new Set<ManagedMcpServerEntry>();
+  const suppressedDowngrades: SuppressedOauthDowngrade[] = [];
+
+  for (const bundled of defaults) {
+    const colliding = org.filter((entry) => collidesWithManagedEntry(bundled, entry));
+    if (colliding.length === 0) {
+      keptDefaults.push(bundled);
+      continue;
+    }
+    if (!hasManagedOAuth(bundled) || colliding.some(hasManagedOAuth)) {
+      continue;
+    }
+    keptDefaults.push(bundled);
+    for (const entry of colliding) {
+      suppressedOrgEntries.add(entry);
+      suppressedDowngrades.push({ defaultName: bundled.name, backendName: entry.name });
+    }
+  }
+
+  const keptOrg = org.filter((entry) => !suppressedOrgEntries.has(entry));
+  return {
+    managed: [...keptDefaults, ...keptOrg].map(cloneManagedEntry),
+    suppressedDowngrades,
+  };
+}
+
+/**
+ * The bundled defaults that are safe to seed when the org catalog fetch FAILED.
+ *
+ * A failed fetch must change nothing. Restoring a default whose name or URL an
+ * entry already in the config occupies would make reconcileManagedMcpServers treat
+ * that name as ours and drop the existing entry — silently swapping a tenant's
+ * internal server for the bundled public endpoint of the same name, which is worse
+ * than the revocation the null-fetch contract already forbids. Whatever the config
+ * holds therefore wins; a clean or first-run config still receives the full set.
+ */
+export function selectDefaultsForFailedFetch(
+  existingServers: unknown,
+  defaults: readonly ManagedMcpServerEntry[] = DEFAULT_MANAGED_MCP_SERVERS,
+): ManagedMcpServerEntry[] {
+  const existing = parseJsonArray(existingServers).filter(isRecord);
+  const takenNames = new Set(
+    existing
+      .map((server) => getManagedMcpServerName(server))
+      .filter((name): name is string => name !== undefined)
+      .map((name) => name.toLowerCase()),
+  );
+  const takenUrls = new Set(
+    existing
+      .map((server) => server.url)
+      .filter((url): url is string => typeof url === 'string'),
+  );
+  return defaults.filter(
+    (bundled) => !takenNames.has(bundled.name.toLowerCase()) && !takenUrls.has(bundled.url),
+  );
+}
+
 export interface ManagedOauthShapeSummary {
   /** Entries forwarding a structured OAuth client configuration. */
   oauthConfigured: number;
@@ -546,19 +649,25 @@ export async function writeDesktopConfig(
   const orgFetchSucceeded = orgMcpServers !== null;
 
   // Dedup bundled public defaults against the org catalog so an entry the
-  // backend also publishes is written once. The BACKEND wins the collision: it
-  // is authoritative and now carries real OAuth client configuration, while the
-  // bundled default only holds `oauth: true`.
+  // backend also publishes is written once (see mergeManagedMcpServers for the
+  // collision precedence). On a FAILED fetch the defaults are first narrowed to
+  // those the config does not already hold, so a previously-written org entry
+  // that shadowed a default is never evicted by the public endpoint it replaced.
   const org = orgMcpServers ?? [];
-  const orgNameSet = new Set(org.map((s) => s.name.toLowerCase()));
-  // URL comparison is intentionally case-sensitive (matching
-  // reconcileManagedMcpServers); name comparison is case-insensitive.
-  const orgUrlSet = new Set(org.map((s) => s.url));
-  const defaultsDeduped = DEFAULT_MANAGED_MCP_SERVERS.filter(
-    (d) => !orgNameSet.has(d.name.toLowerCase()) && !orgUrlSet.has(d.url),
-  );
-
-  const managedSet = [...defaultsDeduped.map(cloneManagedEntry), ...org.map(cloneManagedEntry)];
+  const seedDefaults = orgFetchSucceeded
+    ? DEFAULT_MANAGED_MCP_SERVERS
+    : selectDefaultsForFailedFetch(existing.managedMcpServers);
+  const { managed: managedSet, suppressedDowngrades } = mergeManagedMcpServers(seedDefaults, org);
+  if (suppressedDowngrades.length > 0) {
+    logger.warn(
+      '[proxy] Managed MCP OAuth downgrade suppressed — kept the bundled default',
+      ...sanitizeLogArgs({
+        suppressedDowngradeCount: suppressedDowngrades.length,
+        keptBundledDefaults: suppressedDowngrades.map((d) => d.defaultName),
+        droppedBackendEntries: suppressedDowngrades.map((d) => d.backendName),
+      })
+    );
+  }
   const previouslyManagedNames = orgFetchSucceeded ? await readManagedMcpState(managedStatePath) : [];
   const { servers: managedMcpServers, managedNames } = reconcileManagedMcpServers(
     existing.managedMcpServers,
@@ -579,6 +688,9 @@ export async function writeDesktopConfig(
     await writeManagedMcpState(managedStatePath, unionNames);
   }
 
+  // Summarize the shapes we are about to WRITE (not the org catalog index.ts
+  // already logs): a default kept by suppressing a downgrade is only visible here.
+  const writtenOauthShapes = summarizeManagedOauthShapes(managedSet);
   logger.info(
     '[proxy] Preparing Claude Desktop config payload',
     ...sanitizeLogArgs({
@@ -592,6 +704,11 @@ export async function writeDesktopConfig(
       resolvedModels,
       inferenceModelsWritten: inferenceModels.length > 0,
       managedMcpServerCount: managedMcpServers.length,
+      seededDefaultCount: seedDefaults.length,
+      suppressedOauthDowngradeCount: suppressedDowngrades.length,
+      oauthConfiguredCount: writtenOauthShapes.oauthConfigured,
+      oauthFlaggedCount: writtenOauthShapes.oauthFlagged,
+      noAuthCount: writtenOauthShapes.noAuth,
       existingConfigKeys: Object.keys(existing),
     })
   );
