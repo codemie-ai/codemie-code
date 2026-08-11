@@ -20,6 +20,7 @@ import {
 } from './daemon-manager.js';
 import { writeDesktopConfig, getDesktopBaseDir, mapCanonicalToDesktop } from './connectors/desktop.js';
 import { fetchManagedMcpServers } from './connectors/managed-mcp-remote.js';
+import { writeVsCodeClaudeCodeConfig } from './connectors/vscode-claude-code.js';
 import { writeVsCodeLanguageModelsConfig } from './connectors/vscode.js';
 import { VS_CODE_SUPPORTED_MODELS } from './connectors/vscode-models.js';
 import { checkProxyHealth } from './health-check.js';
@@ -31,6 +32,14 @@ const DEFAULT_DESKTOP_INSPECT_LIMIT = 5;
 interface ProxyStartOptions {
   port?: string;
   profile?: string;
+}
+
+interface DesktopConnectOptions {
+  profile?: string;
+  verbose?: boolean;
+  force?: boolean;
+  vscodeClaudeCode?: boolean;
+  insiders?: boolean;
 }
 
 interface VsCodeConnectOptions {
@@ -333,7 +342,9 @@ export function createProxyCommand(): Command {
     .option('--profile <name>', 'Profile whose credentials to use for Claude Desktop proxy')
     .option('--verbose', 'Show detailed connection info (URLs, config paths) for debugging')
     .option('--force', 'Stop any existing proxy and start a fresh one, even if it looks healthy')
-    .action(async (opts) => {
+    .option('--vscode-claude-code', 'Also configure the VS Code Claude Code extension to skip Claude.ai login')
+    .option('--insiders', 'Configure VS Code Insiders instead of stable VS Code')
+    .action(async (opts: DesktopConnectOptions) => {
       const verbose: boolean = Boolean(opts.verbose);
       let startedInThisRun = false;
       try {
@@ -489,6 +500,43 @@ export function createProxyCommand(): Command {
           console.log(chalk.dim('  Telemetry: metrics and conversations will sync as claude-desktop.'));
         }
         console.log(chalk.yellow('  Restart Claude Desktop to apply changes.'));
+
+        if (opts.vscodeClaudeCode) {
+          try {
+            const vsCodeResult = await writeVsCodeClaudeCodeConfig(
+              state!.url,
+              state!.gatewayKey,
+              Boolean(opts.insiders)
+            );
+            logger.info(
+              '[proxy] VS Code Claude Code extension configuration written',
+              ...sanitizeLogArgs({
+                configPath: vsCodeResult.path,
+                gatewayUrl: state!.url,
+                insiders: Boolean(opts.insiders),
+                anthropicAuthToken: state!.gatewayKey,
+              })
+            );
+            console.log(
+              chalk.green(`✓ VS Code Claude Code extension configured (${vsCodeResult.path})`)
+            );
+            console.log(chalk.yellow('  Reload VS Code to apply changes.'));
+          } catch (vsCodeError) {
+            logger.warn(
+              '[proxy] Failed to configure VS Code Claude Code extension',
+              ...sanitizeLogArgs({
+                error: vsCodeError instanceof Error ? vsCodeError.message : String(vsCodeError),
+                insiders: Boolean(opts.insiders),
+              })
+            );
+            console.log(
+              chalk.yellow(
+                '  Could not configure the VS Code Claude Code extension: ' +
+                (vsCodeError instanceof Error ? vsCodeError.message : String(vsCodeError))
+              )
+            );
+          }
+        }
       } catch (error) {
         if (startedInThisRun) {
           try {
