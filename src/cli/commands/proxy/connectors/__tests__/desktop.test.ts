@@ -655,23 +655,33 @@ describe('writeDesktopConfig', () => {
     expect(JSON.parse(written.managedMcpServers)).toEqual([]);
   });
 
-  it('applies the bundled default OAuth when a backend entry claims the same url without auth', async () => {
-    const org = [
-      { name: 'notion_internal', url: 'https://mcp.notion.com/mcp', transport: 'http' as const },
-    ];
-    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+  it('forwards a backend entry with no auth verbatim when it collides with a bundled default by url, and logs the downgrade', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    try {
+      const org = [
+        { name: 'notion_internal', url: 'https://mcp.notion.com/mcp', transport: 'http' as const },
+      ];
+      const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
 
-    const written = JSON.parse(await readFile(configPath, 'utf-8'));
-    const servers = JSON.parse(written.managedMcpServers);
-    const notion = servers.filter((s: any) => s.url === 'https://mcp.notion.com/mcp');
-    expect(notion).toHaveLength(1);
-    // Decision 4: the backend still owns the identity of the endpoint...
-    expect(notion[0].name).toBe('notion_internal');
-    // ...but never at auth weaker than the default declares for that same url.
-    expect(notion[0].oauth).toBe(true);
+      const written = JSON.parse(await readFile(configPath, 'utf-8'));
+      const servers = JSON.parse(written.managedMcpServers);
+      const notion = servers.filter((s: any) => s.url === 'https://mcp.notion.com/mcp');
+      expect(notion).toHaveLength(1);
+      // Decision 4: the backend still owns the identity of the endpoint...
+      expect(notion[0].name).toBe('notion_internal');
+      // Decision 1: the CLI is a courier — the backend's published auth (none)
+      // is forwarded verbatim, never raised to the displaced default's oauth.
+      expect(notion[0].oauth).toBeUndefined();
+      const warned = warnSpy.mock.calls.some(
+        ([message]) => typeof message === 'string' && /downgrade/i.test(message),
+      );
+      expect(warned).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
-  it('applies the bundled default OAuth when a backend entry resolves to oauth: false for the same url', async () => {
+  it('forwards oauth: false verbatim when a backend entry resolves to no auth for the same url', async () => {
     const org = mapCanonicalToDesktop([
       { name: 'notion_internal', transport: 'http', url: 'https://mcp.notion.com/mcp', auth: 'none' },
     ]);
@@ -681,13 +691,13 @@ describe('writeDesktopConfig', () => {
     const servers = JSON.parse(written.managedMcpServers);
     const notion = servers.filter((s: any) => s.url === 'https://mcp.notion.com/mcp');
     expect(notion).toHaveLength(1);
-    expect(notion[0].oauth).toBe(true);
+    expect(notion[0].oauth).toBe(false);
   });
 
-  it('floors every no-auth entry at a bundled default url, even when a sibling entry collides by name', async () => {
+  it('writes every colliding backend entry verbatim, even when a sibling entry collides by name', async () => {
     // CR-003: two backend entries collide with the same default via different
-    // keys — one by name (carrying auth), one by URL (carrying none). The
-    // no-auth entry points at the very endpoint the default vouches for.
+    // keys — one by name (carrying auth), one by URL (carrying none). Each is
+    // still written exactly as the backend published it.
     const org = [
       { name: 'Notion', url: 'https://mcp.internal.test/mcp/notion', transport: 'http' as const, oauth: { ...OAUTH_CONFIG } },
       { name: 'notion_alt', url: 'https://mcp.notion.com/mcp', transport: 'http' as const },
@@ -698,9 +708,36 @@ describe('writeDesktopConfig', () => {
     const servers = JSON.parse(written.managedMcpServers);
     const publicNotion = servers.filter((s: any) => s.url === 'https://mcp.notion.com/mcp');
     expect(publicNotion).toHaveLength(1);
-    expect(publicNotion[0].oauth).toBe(true);
+    expect(publicNotion[0].name).toBe('notion_alt');
+    expect(publicNotion[0].oauth).toBeUndefined();
     const internal = servers.find((s: any) => s.url === 'https://mcp.internal.test/mcp/notion');
     expect(internal?.oauth).toEqual(OAUTH_CONFIG);
+  });
+
+  it('drops a bundled default that collides by name with a trailing-slash url variant, and logs the downgrade (CR-008)', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    try {
+      const org = [
+        { name: 'Notion', url: 'https://mcp.notion.com/mcp/', transport: 'http' as const },
+      ];
+      const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+
+      const written = JSON.parse(await readFile(configPath, 'utf-8'));
+      const servers = JSON.parse(written.managedMcpServers);
+      const notionEntries = servers.filter((s: any) => s.name.toLowerCase() === 'notion');
+      // The bundled default (exact url, no trailing slash) is dropped — the
+      // backend entry replaced it, even though the urls differ by a trailing slash.
+      expect(notionEntries).toHaveLength(1);
+      expect(notionEntries[0].url).toBe('https://mcp.notion.com/mcp/');
+      expect(notionEntries[0].oauth).toBeUndefined();
+      expect(servers.some((s: any) => s.url === 'https://mcp.notion.com/mcp')).toBe(false);
+      const warned = warnSpy.mock.calls.some(
+        ([message]) => typeof message === 'string' && /downgrade/i.test(message),
+      );
+      expect(warned).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('keeps a previously managed internal server when the backend later reports it without auth', async () => {

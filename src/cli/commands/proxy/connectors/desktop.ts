@@ -352,40 +352,32 @@ function collidesWithManagedEntry(a: ManagedMcpServerEntry, b: ManagedMcpServerE
   return a.name.toLowerCase() === b.name.toLowerCase() || a.url === b.url;
 }
 
-/** A backend entry whose missing auth was raised to the OAuth a bundled default declares for the SAME url. */
-export interface AppliedOauthFloor {
-  /** The bundled default that supplied the OAuth information. */
+/** A backend entry that collided with a bundled default and resolved to weaker auth than it. */
+export interface ManagedOauthDowngrade {
+  /** The bundled default that was displaced. */
   defaultName: string;
-  /** The backend entry that was written with that OAuth instead of none. */
+  /** The backend entry that displaced it, at weaker auth. */
   backendName: string;
-  /** The endpoint both entries point at. */
+  /** The endpoint the backend entry was published at. */
   url: string;
 }
 
 export interface ManagedMcpMergeResult {
   /** The entries CodeMie owns this run, defaults first, all freshly cloned. */
   managed: ManagedMcpServerEntry[];
-  /** Backend entries whose auth was raised to a bundled default's for the same url. */
-  appliedOauthFloors: AppliedOauthFloor[];
+  /** Collisions where the backend entry resolved to weaker auth than the default it displaced. */
+  oauthDowngrades: ManagedOauthDowngrade[];
 }
 
 /**
  * Merge the bundled public defaults with the org catalog so a server the backend
  * also publishes is written exactly once.
  *
- * The BACKEND wins every collision: it is authoritative for both the name and the
- * endpoint, and carries the real OAuth client configuration. Its entry is always
- * written, verbatim, with one narrowly scoped exception — the auth floor below.
- *
- * Auth floor: a bundled default's `oauth: true` is an assertion about an ENDPOINT,
- * not about a name. So when a backend entry points at the same URL as a default
- * that declares OAuth but itself resolves to no auth, it is written with the
- * default's OAuth: the endpoint provably needs it. A backend entry that merely
- * reuses a default's NAME while pointing elsewhere describes a different server,
- * about whose auth the default says nothing, so it is written exactly as published
- * — forcing OAuth onto it would break a tenant server that legitimately needs none,
- * and dropping it would revoke a live internal server in favour of a public
- * third-party endpoint of the same name.
+ * The BACKEND wins every collision outright: it is authoritative for both the
+ * name and the endpoint, and its entry is written exactly as published — the CLI
+ * is a courier, not a policy layer, so no oauth value is ever rewritten. A
+ * collision that lowers auth relative to the bundled default it displaces is
+ * logged (see {@link ManagedOauthDowngrade}), never corrected.
  */
 export function mergeManagedMcpServers(
   defaults: readonly ManagedMcpServerEntry[],
@@ -395,24 +387,22 @@ export function mergeManagedMcpServers(
     (bundled) => !org.some((entry) => collidesWithManagedEntry(bundled, entry)),
   );
 
-  const appliedOauthFloors: AppliedOauthFloor[] = [];
-  const resolvedOrg = org.map((entry) => {
-    if (hasManagedOAuth(entry)) return entry;
-    const sameEndpointDefault = defaults.find(
-      (bundled) => bundled.url === entry.url && hasManagedOAuth(bundled),
-    );
-    if (!sameEndpointDefault) return entry;
-    appliedOauthFloors.push({
-      defaultName: sameEndpointDefault.name,
-      backendName: entry.name,
-      url: entry.url,
-    });
-    return { ...entry, oauth: sameEndpointDefault.oauth };
-  });
+  const oauthDowngrades: ManagedOauthDowngrade[] = [];
+  for (const bundled of defaults) {
+    if (!hasManagedOAuth(bundled)) continue;
+    for (const entry of org) {
+      if (!collidesWithManagedEntry(bundled, entry) || hasManagedOAuth(entry)) continue;
+      oauthDowngrades.push({
+        defaultName: bundled.name,
+        backendName: entry.name,
+        url: entry.url,
+      });
+    }
+  }
 
   return {
-    managed: [...keptDefaults, ...resolvedOrg].map(cloneManagedEntry),
-    appliedOauthFloors,
+    managed: [...keptDefaults, ...org].map(cloneManagedEntry),
+    oauthDowngrades,
   };
 }
 
@@ -523,6 +513,12 @@ export function reconcileManagedMcpServers(
   // are matched verbatim.
   const managedUrls = new Set(managed.map((s) => s.url));
 
+  // Unlike selectDefaultsForFailedFetch (which asks "which names/URLs are
+  // already claimed?" and must treat unreadable as unknown-therefore-claimed),
+  // this asks "which existing entries must be preserved?" An unreadable value
+  // yields no identifiable entries to preserve, and a non-array value cannot be
+  // written back into a field Desktop reads as an array — so [] is the
+  // conservative answer to *this* question, not an inconsistency with the other.
   const filtered = parseJsonArray(existingServers).filter((server) => {
     const name = getManagedMcpServerName(server);
     const url = getManagedMcpServerUrl(server);
@@ -706,15 +702,15 @@ export async function writeDesktopConfig(
   const seedDefaults = orgFetchSucceeded
     ? DEFAULT_MANAGED_MCP_SERVERS
     : selectDefaultsForFailedFetch(existing.managedMcpServers);
-  const { managed: managedSet, appliedOauthFloors } = mergeManagedMcpServers(seedDefaults, org);
-  if (appliedOauthFloors.length > 0) {
+  const { managed: managedSet, oauthDowngrades } = mergeManagedMcpServers(seedDefaults, org);
+  if (oauthDowngrades.length > 0) {
     logger.warn(
-      '[proxy] Managed MCP OAuth downgrade prevented — applied the bundled default OAuth for the same url',
+      '[proxy] Managed MCP entry published without the auth its bundled default declares (auth downgrade) — forwarding it as published',
       ...sanitizeLogArgs({
-        appliedOauthFloorCount: appliedOauthFloors.length,
-        sourceBundledDefaults: appliedOauthFloors.map((floor) => floor.defaultName),
-        flooredBackendEntries: appliedOauthFloors.map((floor) => floor.backendName),
-        flooredUrls: appliedOauthFloors.map((floor) => floor.url),
+        oauthDowngradeCount: oauthDowngrades.length,
+        sourceBundledDefaults: oauthDowngrades.map((downgrade) => downgrade.defaultName),
+        downgradedBackendEntries: oauthDowngrades.map((downgrade) => downgrade.backendName),
+        downgradedUrls: oauthDowngrades.map((downgrade) => downgrade.url),
       })
     );
   }
@@ -756,7 +752,7 @@ export async function writeDesktopConfig(
       inferenceModelsWritten: inferenceModels.length > 0,
       managedMcpServerCount: managedMcpServers.length,
       seededDefaultCount: seedDefaults.length,
-      appliedOauthFloorCount: appliedOauthFloors.length,
+      oauthDowngradeCount: oauthDowngrades.length,
       oauthConfiguredCount: writtenOauthShapes.oauthConfigured,
       oauthFlaggedCount: writtenOauthShapes.oauthFlagged,
       noAuthCount: writtenOauthShapes.noAuth,
