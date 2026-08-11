@@ -10,6 +10,7 @@ import { existsSync } from 'fs';
 
 import {
   buildGatewayConfig,
+  cloneManagedEntry,
   fetchClaudeModels,
   getDesktopBaseDir,
   getDesktopConfigPath,
@@ -612,6 +613,10 @@ describe('resolveDesktopOAuth', () => {
   it('passes the boolean shapes through unchanged', () => {
     expect(resolveDesktopOAuth({ name: 'a', transport: 'http', url: 'https://x', oauth: true })).toBe(true);
     expect(resolveDesktopOAuth({ name: 'a', transport: 'http', url: 'https://x', oauth: false })).toBe(false);
+
+    // the boolean rows must beat the legacy auth enum
+    expect(resolveDesktopOAuth({ name: 'a', transport: 'http', url: 'https://x', oauth: false, auth: 'oauth' })).toBe(false);
+    expect(resolveDesktopOAuth({ name: 'a', transport: 'http', url: 'https://x', oauth: true, auth: 'none' })).toBe(true);
   });
 
   it('falls back to the legacy auth enum', () => {
@@ -723,5 +728,40 @@ describe('reconcileManagedMcpServers', () => {
       { name: 'sample', url: 'https://mcp.example.com/mcp/sample', transport: 'http', oauth: true },
       { url: 'https://something-else', transport: 'http' },
     ]);
+  });
+
+  it('does not alias the nested oauth object of a managed entry', () => {
+    const managed = [
+      { name: 'onehub_core', url: 'https://mcp.example.com/mcp/onehub_core', transport: 'http' as const, oauth: { ...OAUTH_CONFIG } },
+    ];
+    const { servers } = reconcileManagedMcpServers([], managed);
+
+    (servers[0] as any).oauth.clientId = 'mutated';
+
+    // DEFAULT_MANAGED_MCP_SERVERS is a process-lifetime constant; sharing a
+    // nested object with it would corrupt every later run in the process.
+    expect(managed[0].oauth.clientId).toBe('codemie-mcp-proxy');
+  });
+});
+
+describe('cloneManagedEntry', () => {
+  it('copies the nested oauth object rather than sharing it', () => {
+    const entry = { name: 'a', url: 'https://x', transport: 'http' as const, oauth: { ...OAUTH_CONFIG } };
+    const copy = cloneManagedEntry(entry);
+
+    expect(copy).toEqual(entry);
+    expect(copy.oauth).not.toBe(entry.oauth);
+  });
+
+  it('leaves a boolean oauth flag as-is', () => {
+    const entry = { name: 'Notion', url: 'https://mcp.notion.com/mcp', transport: 'http' as const, oauth: true };
+    expect(cloneManagedEntry(entry)).toEqual(entry);
+  });
+
+  it('handles an entry with no oauth field', () => {
+    const entry = { name: 'a', url: 'https://x' };
+    const copy = cloneManagedEntry(entry);
+    expect(copy).toEqual(entry);
+    expect(copy).not.toBe(entry);
   });
 });

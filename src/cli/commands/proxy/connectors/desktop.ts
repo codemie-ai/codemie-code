@@ -298,6 +298,22 @@ export function mapCanonicalToDesktop(entries: CanonicalMcpEntry[]): ManagedMcpS
   return result;
 }
 
+/**
+ * Copy a managed entry, including its nested oauth object.
+ *
+ * A shallow `{ ...entry }` would share the oauth object with
+ * DEFAULT_MANAGED_MCP_SERVERS — a readonly module-level constant that lives for
+ * the whole process — so a later mutation of the written config would corrupt
+ * the bundled defaults for every subsequent run.
+ */
+export function cloneManagedEntry(entry: ManagedMcpServerEntry): ManagedMcpServerEntry {
+  const copy: ManagedMcpServerEntry = { ...entry };
+  if (entry.oauth !== undefined && typeof entry.oauth === 'object') {
+    copy.oauth = { ...entry.oauth };
+  }
+  return copy;
+}
+
 export interface ReconcileResult {
   servers: unknown[];
   managedNames: string[];
@@ -345,7 +361,7 @@ export function reconcileManagedMcpServers(
   });
 
   return {
-    servers: [...managed.map((s) => ({ ...s })), ...filtered],
+    servers: [...managed.map(cloneManagedEntry), ...filtered],
     managedNames,
   };
 }
@@ -512,7 +528,7 @@ export async function writeDesktopConfig(
     (s) => !defaultNameSet.has(s.name.toLowerCase()) && !defaultUrlSet.has(s.url),
   );
 
-  const managedSet = [...DEFAULT_MANAGED_MCP_SERVERS.map((s) => ({ ...s })), ...orgDeduped];
+  const managedSet = [...DEFAULT_MANAGED_MCP_SERVERS.map(cloneManagedEntry), ...orgDeduped];
   const previouslyManagedNames = orgFetchSucceeded ? await readManagedMcpState(managedStatePath) : [];
   const { servers: managedMcpServers, managedNames } = reconcileManagedMcpServers(
     existing.managedMcpServers,
