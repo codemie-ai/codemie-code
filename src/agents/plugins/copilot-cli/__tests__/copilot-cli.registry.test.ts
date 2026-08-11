@@ -28,6 +28,44 @@ describe('copilot-cli registration', () => {
     expect(metadata.npmPackage).toBe('@github/copilot');
   });
 
+  it('advertises Copilot MCP, extension, and hook metadata', () => {
+    const metadata = AgentRegistry.getAgent('copilot-cli')!.metadata;
+
+    expect(metadata.extensionsConfig).toMatchObject({
+      project: '.github',
+      global: '~/.copilot',
+      skillsEntryFile: 'SKILL.md',
+    });
+    expect(metadata.extensionsConfig?.dirNames).toMatchObject({
+      agents: ['agents'],
+      commands: [],
+      skills: ['skills'],
+      hooks: ['hooks'],
+      rules: [],
+    });
+    expect(metadata.extensionsConfig?.extraProjectDirs).toEqual(['.github/copilot']);
+
+    expect(metadata.mcpConfig).toMatchObject({
+      project: {
+        path: ['.mcp.json', '.github/mcp.json'],
+        jsonPath: 'mcpServers',
+      },
+      user: {
+        path: '~/.copilot/mcp-config.json',
+        jsonPath: 'mcpServers',
+      },
+    });
+
+    expect(metadata.hookConfig?.eventNameMapping).toMatchObject({
+      SessionStart: 'SessionStart',
+      SessionEnd: 'SessionEnd',
+      UserPromptSubmit: 'UserPromptSubmit',
+      PreToolUse: 'UserPromptSubmit',
+      PostToolUse: 'Stop',
+      Notification: 'PermissionRequest',
+    });
+  });
+
   it('does not disturb existing agents', () => {
     for (const name of ['claude', 'codex', 'gemini', 'kimi', 'opencode']) {
       expect(AgentRegistry.getAgent(name), `${name} should still resolve`).toBeDefined();

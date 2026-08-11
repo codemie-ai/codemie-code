@@ -26,6 +26,22 @@ const COPILOT_MINIMUM_SUPPORTED_VERSION = '1.0.70';
 const COPILOT_COMPATIBLE_PROVIDERS = ['ai-run-sso', 'litellm'] as const;
 const COPILOT_RECOMMENDED_MODELS = ['gpt-5.5', 'claude-sonnet-4.6', 'gpt-5.4'];
 
+function buildCopilotHookConfig(env: NodeJS.ProcessEnv, sessionId: string) {
+  return {
+    agentName: env.CODEMIE_AGENT || COPILOT_CLI_AGENT_NAME,
+    sessionId,
+    provider: env.CODEMIE_PROVIDER,
+    apiBaseUrl: env.CODEMIE_BASE_URL,
+    ssoUrl: env.CODEMIE_URL,
+    syncApiUrl: env.CODEMIE_SYNC_API_URL,
+    version: env.CODEMIE_CLI_VERSION,
+    profileName: env.CODEMIE_PROFILE_NAME,
+    project: env.CODEMIE_PROJECT,
+    model: env.CODEMIE_MODEL,
+    clientType: COPILOT_CLI_CLIENT_TYPE,
+  };
+}
+
 function buildCopilotProviderEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   if (!env.CODEMIE_BASE_URL) {
     throw new ConfigurationError(
@@ -82,6 +98,39 @@ export const CopilotCliPluginMetadata: AgentMetadata = {
   dataPaths: {
     home: '.copilot',
   },
+  extensionsConfig: {
+    project: '.github',
+    global: '~/.copilot',
+    skillsEntryFile: 'SKILL.md',
+    dirNames: {
+      agents: ['agents'],
+      commands: [],
+      skills: ['skills'],
+      hooks: ['hooks'],
+      rules: [],
+    },
+    extraProjectDirs: ['.github/copilot'],
+  },
+  mcpConfig: {
+    project: {
+      path: ['.mcp.json', '.github/mcp.json'],
+      jsonPath: 'mcpServers',
+    },
+    user: {
+      path: '~/.copilot/mcp-config.json',
+      jsonPath: 'mcpServers',
+    },
+  },
+  hookConfig: {
+    eventNameMapping: {
+      SessionStart: 'SessionStart',
+      SessionEnd: 'SessionEnd',
+      UserPromptSubmit: 'UserPromptSubmit',
+      PreToolUse: 'UserPromptSubmit',
+      PostToolUse: 'Stop',
+      Notification: 'PermissionRequest',
+    },
+  },
   envMapping: {
     baseUrl: [],
     apiKey: [],
@@ -99,6 +148,26 @@ export const CopilotCliPluginMetadata: AgentMetadata = {
     '--task': { type: 'flag', target: '--prompt' },
   },
   lifecycle: {
+    async onSessionStart(sessionId: string, env: NodeJS.ProcessEnv) {
+      try {
+        const { processEvent } = await import('../../../cli/commands/hook.js');
+        await processEvent(
+          {
+            hook_event_name: 'SessionStart',
+            session_id: sessionId,
+            transcript_path: '',
+            permission_mode: 'default',
+            cwd: process.cwd(),
+            source: 'startup',
+          },
+          buildCopilotHookConfig(env, sessionId)
+        );
+        logger.info(`[copilot-cli] SessionStart hook completed for session ${sessionId}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error(`[copilot-cli] SessionStart hook failed (non-blocking): ${message}`);
+      }
+    },
     async beforeRun(env: NodeJS.ProcessEnv, config: AgentConfig) {
       assertCopilotProviderSupported(config);
 
@@ -106,6 +175,12 @@ export const CopilotCliPluginMetadata: AgentMetadata = {
       delete env.GH_TOKEN;
       delete env.GITHUB_TOKEN;
       delete env.COPILOT_TOKEN;
+
+      if (!env.COPILOT_HOME) {
+        env.COPILOT_HOME = this.resolveDataPath();
+      }
+
+      await this.ensureDirectory(env.COPILOT_HOME);
 
       const availableModels = (env.CODEMIE_COPILOT_AVAILABLE_MODELS || '')
         .split(',')
@@ -143,6 +218,42 @@ export const CopilotCliPluginMetadata: AgentMetadata = {
       }
 
       return enriched;
+    },
+    async onSessionEnd(exitCode: number, env: NodeJS.ProcessEnv) {
+      const sessionId = env.CODEMIE_SESSION_ID;
+      if (!sessionId) {
+        logger.debug('[copilot-cli] No CODEMIE_SESSION_ID in environment, skipping session end');
+        return;
+      }
+
+      try {
+        const adapter = new CopilotCliSessionAdapter(CopilotCliPluginMetadata);
+        const sessions = await adapter.discoverSessions({
+          maxAgeDays: 1,
+          limit: 1,
+          cwd: process.cwd(),
+        });
+
+        const transcriptPath = sessions[0]?.filePath ?? '';
+        const agentSessionId = sessions[0]?.sessionId ?? sessionId;
+
+        const { processEvent } = await import('../../../cli/commands/hook.js');
+        await processEvent(
+          {
+            hook_event_name: 'SessionEnd',
+            session_id: agentSessionId,
+            transcript_path: transcriptPath,
+            permission_mode: 'default',
+            cwd: process.cwd(),
+            reason: exitCode === 0 ? 'exit' : `exit(${exitCode})`,
+          },
+          buildCopilotHookConfig(env, sessionId)
+        );
+        logger.info(`[copilot-cli] SessionEnd hook completed for session ${sessionId}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error(`[copilot-cli] SessionEnd hook failed (non-blocking): ${message}`);
+      }
     },
   },
 };
