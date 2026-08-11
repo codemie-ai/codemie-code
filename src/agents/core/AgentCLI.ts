@@ -3,7 +3,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import chalk from 'chalk';
 import type { AgentAdapter, ResumeOwnershipResult } from './types.js';
-import { SESSION_ORIGIN_ENV_KEY, EXTERNAL_RESUME_ORIGIN } from './session/session-origin-audit.js';
+import { SESSION_ORIGIN, SESSION_ORIGIN_ENV_KEY } from './session/types.js';
 import { ConfigLoader, CodeMieConfigOptions } from '../../utils/config.js';
 import { ensureApiBase, DEFAULT_CODEMIE_BASE_URL } from '../../providers/core/codemie-auth-helpers.js';
 import { AuthMethod, ProviderName } from '../../providers/core/types.js';
@@ -689,7 +689,7 @@ export class AgentCLI {
 }
 
 export function buildResumeEnvOverride(isExternal: boolean): Record<string, string> {
-  return isExternal ? { [SESSION_ORIGIN_ENV_KEY]: EXTERNAL_RESUME_ORIGIN } : {};
+  return isExternal ? { [SESSION_ORIGIN_ENV_KEY]: SESSION_ORIGIN.EXTERNAL_RESUME } : {};
 }
 
 export function shouldBlockNonInteractiveResume(): boolean {

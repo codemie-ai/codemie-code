@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { logger } from '@/utils/logger.js';
 import { AgentRegistry } from '@/agents/registry.js';
 import { getSessionPath, getSessionMetricsPath, getSessionConversationPath } from '@/agents/core/session/session-config.js';
+import { SESSION_ORIGIN, SESSION_ORIGIN_ENV_KEY } from '@/agents/core/session/types.js';
 import type { BaseHookEvent, HookTransformer, MCPConfigSummary, ExtensionsScanSummary } from '@/agents/core/types.js';
 import type { ProcessingContext } from '@/agents/core/session/BaseProcessor.js';
 
@@ -724,7 +725,6 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
         appendTranscriptMarker: writeMarker,
         appendAuditEvent: writeAudit,
         isExternalOrigin,
-        EXTERNAL_RESUME_ORIGIN,
       } = await import('../../agents/core/session/session-origin-audit.js');
 
       existing.status = 'active';
@@ -738,8 +738,8 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
       };
       // Preserve an already-set origin; only derive from env for pre-existing records that
       // predate this field. An established origin must never flip on re-entry.
-      if (!existing.origin && getConfigValue('CODEMIE_SESSION_ORIGIN', config) === EXTERNAL_RESUME_ORIGIN) {
-        existing.origin = EXTERNAL_RESUME_ORIGIN;
+      if (!existing.origin && getConfigValue(SESSION_ORIGIN_ENV_KEY, config) === SESSION_ORIGIN.EXTERNAL_RESUME) {
+        existing.origin = SESSION_ORIGIN.EXTERNAL_RESUME;
       }
       await sessionStore.saveSession(existing);
       if (event.transcript_path && !isExternalOrigin(existing)) {
@@ -757,12 +757,12 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
       return;
     }
 
-    const { appendTranscriptMarker, appendAuditEvent, isExternalOrigin, EXTERNAL_RESUME_ORIGIN } = await import(
+    const { appendTranscriptMarker, appendAuditEvent, isExternalOrigin } = await import(
       '../../agents/core/session/session-origin-audit.js'
     );
     const origin =
-      getConfigValue('CODEMIE_SESSION_ORIGIN', config) === EXTERNAL_RESUME_ORIGIN
-        ? EXTERNAL_RESUME_ORIGIN
+      getConfigValue(SESSION_ORIGIN_ENV_KEY, config) === SESSION_ORIGIN.EXTERNAL_RESUME
+        ? SESSION_ORIGIN.EXTERNAL_RESUME
         : undefined;
 
     // Create session record with correlation already matched

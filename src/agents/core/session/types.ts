@@ -37,11 +37,24 @@ export type SessionStatus = 'active' | 'completed' | 'recovered' | 'failed';
 
 /**
  * Session origin — whether this session is safe to ingest.
- * 'codemie': created through CodeMie tooling (default when unset, for back-compat with
- * existing session files). 'external-resume': a confirmed resume of a Claude transcript
+ * CODEMIE: created through CodeMie tooling (default when unset, for back-compat with
+ * existing session files). EXTERNAL_RESUME: a confirmed resume of a Claude transcript
  * that was never created through CodeMie — must never be synced (metrics or conversations).
  */
-export type SessionOrigin = 'codemie' | 'external-resume';
+export const SESSION_ORIGIN = {
+  CODEMIE: 'codemie',
+  EXTERNAL_RESUME: 'external-resume',
+} as const;
+
+export type SessionOrigin = (typeof SESSION_ORIGIN)[keyof typeof SESSION_ORIGIN];
+
+/**
+ * Env var carrying the resume-ownership decision from AgentCLI into the spawned agent
+ * subprocess (and, transitively, into `codemie hook` invocations it shells out to).
+ * Holds a SESSION_ORIGIN value; kept separate from the object above because it names
+ * the channel, not an origin.
+ */
+export const SESSION_ORIGIN_ENV_KEY = 'CODEMIE_SESSION_ORIGIN';
 
 /**
  * Sync status (used by all processors)

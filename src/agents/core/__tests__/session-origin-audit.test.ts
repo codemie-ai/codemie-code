@@ -7,9 +7,8 @@ import {
   appendAuditEvent,
   appendTranscriptMarker,
   isExternalOrigin,
-  SESSION_ORIGIN_ENV_KEY,
-  EXTERNAL_RESUME_ORIGIN,
 } from '../session/session-origin-audit.js';
+import { SESSION_ORIGIN, SESSION_ORIGIN_ENV_KEY } from '../session/types.js';
 
 const TMP = join(tmpdir(), `codemie-audit-test-${process.pid}`);
 const auditFile = join(TMP, 'logs', 'session-origin-audit.jsonl');
@@ -90,7 +89,7 @@ describe('isExternalOrigin', () => {
   });
 
   it('returns true when the session record is flagged external-resume', () => {
-    expect(isExternalOrigin({ origin: EXTERNAL_RESUME_ORIGIN })).toBe(true);
+    expect(isExternalOrigin({ origin: SESSION_ORIGIN.EXTERNAL_RESUME })).toBe(true);
   });
 
   it('returns false when the session record is codemie-owned', () => {
@@ -102,18 +101,18 @@ describe('isExternalOrigin', () => {
   });
 
   it('does not fall back to env when the record explicitly says codemie-owned', () => {
-    process.env[SESSION_ORIGIN_ENV_KEY] = EXTERNAL_RESUME_ORIGIN;
+    process.env[SESSION_ORIGIN_ENV_KEY] = SESSION_ORIGIN.EXTERNAL_RESUME;
     expect(isExternalOrigin({ origin: 'codemie' })).toBe(false);
   });
 
   it('falls back to the env var when no record is available (fail-closed)', () => {
-    process.env[SESSION_ORIGIN_ENV_KEY] = EXTERNAL_RESUME_ORIGIN;
+    process.env[SESSION_ORIGIN_ENV_KEY] = SESSION_ORIGIN.EXTERNAL_RESUME;
     expect(isExternalOrigin(null)).toBe(true);
     expect(isExternalOrigin(undefined)).toBe(true);
   });
 
   it('falls back to the env var when the record has no origin field (write failure case)', () => {
-    process.env[SESSION_ORIGIN_ENV_KEY] = EXTERNAL_RESUME_ORIGIN;
+    process.env[SESSION_ORIGIN_ENV_KEY] = SESSION_ORIGIN.EXTERNAL_RESUME;
     expect(isExternalOrigin({})).toBe(true);
   });
 

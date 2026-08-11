@@ -23,7 +23,7 @@ import { AgentRegistry } from '../../../agents/registry.js';
 import { getCodemiePath } from '../../../utils/paths.js';
 import { logger } from '../../../utils/logger.js';
 import { stripClear } from '../../../agents/plugins/claude/session/strip-clear.js';
-import { EXTERNAL_RESUME_ORIGIN } from '../../../agents/core/session/session-origin-audit.js';
+import { SESSION_ORIGIN } from '../../../agents/core/session/types.js';
 import { isCodexFamilyAgent } from './cost/codex-agent.js';
 import { firstCodexUserText } from '../../../agents/plugins/codex/session/codex-user-prompt.js';
 import { collectCodexChildThreadIds } from '../../../agents/plugins/codex/session/codex-collab-links.js';
@@ -150,7 +150,7 @@ function buildOwnershipIndex(): Set<string> {
         // A confirmed external-resume session must never re-adopt its transcript into the
         // ownership index — that would silently exclude it from `native-external` filtering
         // again, undoing the whole point of flagging it. See EPMCDME-12992.
-        if (meta.origin === EXTERNAL_RESUME_ORIGIN) continue;
+        if (meta.origin === SESSION_ORIGIN.EXTERNAL_RESUME) continue;
         const asf = meta.correlation?.agentSessionFile;
         if (asf) out.add(safeRealPath(asf));
       }
