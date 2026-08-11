@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -29,8 +30,9 @@ describe('createSyncProcessor — Copilot folder mapping', () => {
     });
   });
 
-  afterEach(() => {
-    rmSync(tempHome, { recursive: true, force: true });
+  afterEach(async () => {
+    // fs/promises rm with maxRetries handles Windows ENOTEMPTY when file handles are briefly held
+    await rm(tempHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     if (originalCodemieHome === undefined) {
       delete process.env.CODEMIE_HOME;
     } else {
