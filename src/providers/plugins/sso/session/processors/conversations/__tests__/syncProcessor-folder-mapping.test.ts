@@ -31,7 +31,9 @@ describe('createSyncProcessor — Copilot folder mapping', () => {
   });
 
   afterEach(async () => {
-    // fs/promises rm with maxRetries handles Windows ENOTEMPTY when file handles are briefly held
+    // Close logger's write stream so Windows releases the lock on the log file before rm
+    const { logger } = await import('@/utils/logger.js');
+    await logger.close();
     await rm(tempHome, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
     if (originalCodemieHome === undefined) {
       delete process.env.CODEMIE_HOME;
