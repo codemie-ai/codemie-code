@@ -18,6 +18,7 @@ import {
   getDesktopBaseDir,
   getDesktopConfigPath,
   getManagedMcpStatePath,
+  type ManagedMcpServerEntry,
   mapCanonicalToDesktop,
   mergeManagedMcpServers,
   reconcileManagedMcpServers,
@@ -557,6 +558,24 @@ describe('writeDesktopConfig', () => {
     expect(servers.find((s: any) => s.name === 'legacy').oauth).toBe(true);
   });
 
+  it('writes a hand-built entry with the oauth key omitted without inventing one (courier contract)', async () => {
+    // Coverage restored: the downgrade fixtures below were rerouted through
+    // mapCanonicalToDesktop (which always resolves oauth to a concrete
+    // boolean or object), leaving no test for a ManagedMcpServerEntry whose
+    // optional `oauth` key is omitted entirely. The CLI is a courier — it
+    // must forward that absence, not default it to `false`.
+    const org: ManagedMcpServerEntry[] = [
+      { name: 'no_oauth_key', url: 'https://mcp.internal.test/mcp/no-oauth-key', transport: 'http' },
+    ];
+    const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+
+    const written = JSON.parse(await readFile(configPath, 'utf-8'));
+    const servers = JSON.parse(written.managedMcpServers);
+    const entry = servers.find((s: any) => s.name === 'no_oauth_key');
+    expect(entry).toBeDefined();
+    expect('oauth' in entry).toBe(false);
+  });
+
   it('lets a backend entry replace the bundled default it collides with by name', async () => {
     const org = [
       { name: 'notion', url: 'https://mcp.internal.test/mcp/notion', transport: 'http' as const, oauth: { ...OAUTH_CONFIG } },
@@ -850,6 +869,79 @@ describe('writeDesktopConfig', () => {
       expect(
         record.oauthConfiguredCount + record.oauthFlaggedCount + record.noAuthCount,
       ).toBe(record.managedMcpServerCount);
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  it('reports a displaced default for a name-only collision, with no downgrade warn', async () => {
+    const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    try {
+      // Same fixture as 'lets a backend entry replace the bundled default it
+      // collides with by name': the backend reuses Notion's name at a
+      // different internal url — a name-only collision.
+      const org = [
+        { name: 'notion', url: 'https://mcp.internal.test/mcp/notion', transport: 'http' as const, oauth: { ...OAUTH_CONFIG } },
+      ];
+      await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+      const record = infoSpy.mock.calls.find(
+        ([message]) => typeof message === 'string' && message.includes('Preparing Claude Desktop config payload'),
+      )?.[1] as any;
+      expect(record).toBeDefined();
+      expect(record.displacedDefaults).toEqual(['Notion']);
+      expect(record.displacedDefaultCount).toBe(1);
+      // Pin the pairing: a name-only collision is displacement without a
+      // downgrade warn (that warn stays scoped to same-endpoint collisions).
+      const warned = warnSpy.mock.calls.some(
+        ([message]) => typeof message === 'string' && /downgrade/i.test(message),
+      );
+      expect(warned).toBe(false);
+    } finally {
+      infoSpy.mockRestore();
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('reports a displaced default for the trailing-slash url variant — the only signal for this silent case', async () => {
+    // Both review lenses called this shape silent: the backend entry
+    // displaces the bundled Notion default by NAME (case-insensitive), but
+    // its url differs from the default's only by a trailing slash, so
+    // sameManagedEndpoint (verbatim, case-sensitive comparison) does not
+    // treat it as a same-endpoint collision — no downgrade warn fires.
+    // displacedDefaults is now the only record that an OAuth-bearing default
+    // disappeared. The url near-miss itself (that these are the same
+    // effective endpoint) is a separately-tracked, pre-existing gap this
+    // task does not fix.
+    const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
+    try {
+      const org = mapCanonicalToDesktop([
+        { name: 'Notion', transport: 'http', url: 'https://mcp.notion.com/mcp/', auth: 'none' },
+      ]);
+      await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+      const record = infoSpy.mock.calls.find(
+        ([message]) => typeof message === 'string' && message.includes('Preparing Claude Desktop config payload'),
+      )?.[1] as any;
+      expect(record).toBeDefined();
+      expect(record.displacedDefaults).toEqual(['Notion']);
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  it('reports no displaced defaults when the org catalog collides with nothing', async () => {
+    const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
+    try {
+      const org = [
+        { name: 'onehub_core', url: 'https://mcp.internal.test/mcp/onehub_core', transport: 'http' as const, oauth: { ...OAUTH_CONFIG } },
+      ];
+      await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+      const record = infoSpy.mock.calls.find(
+        ([message]) => typeof message === 'string' && message.includes('Preparing Claude Desktop config payload'),
+      )?.[1] as any;
+      expect(record).toBeDefined();
+      expect(record.displacedDefaultCount).toBe(0);
+      expect(record.displacedDefaults).toEqual([]);
     } finally {
       infoSpy.mockRestore();
     }

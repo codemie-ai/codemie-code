@@ -369,7 +369,7 @@ function collidesWithManagedEntry(a: ManagedMcpServerEntry, b: ManagedMcpServerE
   return sameManagedName(a, b) || sameManagedEndpoint(a, b);
 }
 
-/** A backend entry that collided with a bundled default and resolved to weaker auth than it. */
+/** A backend entry published at the same endpoint as a bundled default that declares OAuth, without OAuth of its own. */
 export interface ManagedOauthDowngrade {
   /** The bundled default that was displaced. */
   defaultName: string;
@@ -384,6 +384,8 @@ export interface ManagedMcpMergeResult {
   managed: ManagedMcpServerEntry[];
   /** Collisions where the backend entry resolved to weaker auth than the default it displaced. */
   oauthDowngrades: ManagedOauthDowngrade[];
+  /** Names of bundled defaults dropped because an org entry collided with them. */
+  displacedDefaults: string[];
 }
 
 /**
@@ -400,9 +402,18 @@ export function mergeManagedMcpServers(
   defaults: readonly ManagedMcpServerEntry[],
   org: readonly ManagedMcpServerEntry[],
 ): ManagedMcpMergeResult {
-  const keptDefaults = defaults.filter(
-    (bundled) => !org.some((entry) => collidesWithManagedEntry(bundled, entry)),
-  );
+  // Single pass over defaults: keptDefaults and displacedDefaults are
+  // complements of the same collidesWithManagedEntry test, so they can never
+  // disagree about which bundled default survived.
+  const keptDefaults: ManagedMcpServerEntry[] = [];
+  const displacedDefaults: string[] = [];
+  for (const bundled of defaults) {
+    if (org.some((entry) => collidesWithManagedEntry(bundled, entry))) {
+      displacedDefaults.push(bundled.name);
+    } else {
+      keptDefaults.push(bundled);
+    }
+  }
 
   // Downgrade reporting is scoped to sameManagedEndpoint, not the wider
   // collidesWithManagedEntry used for displacement above — a default's oauth
@@ -432,6 +443,7 @@ export function mergeManagedMcpServers(
   return {
     managed: [...keptDefaults, ...org].map(cloneManagedEntry),
     oauthDowngrades,
+    displacedDefaults,
   };
 }
 
@@ -731,7 +743,7 @@ export async function writeDesktopConfig(
   const seedDefaults = orgFetchSucceeded
     ? DEFAULT_MANAGED_MCP_SERVERS
     : selectDefaultsForFailedFetch(existing.managedMcpServers);
-  const { managed: managedSet, oauthDowngrades } = mergeManagedMcpServers(seedDefaults, org);
+  const { managed: managedSet, oauthDowngrades, displacedDefaults } = mergeManagedMcpServers(seedDefaults, org);
   if (oauthDowngrades.length > 0) {
     logger.warn(
       '[proxy] Managed MCP entry published without the auth its bundled default declares (auth downgrade) — forwarding it as published',
@@ -766,6 +778,8 @@ export async function writeDesktopConfig(
   // Summarize the reconciled list we are about to serialize (not the org catalog
   // index.ts already logs), so the shape counts always add up to
   // managedMcpServerCount and a logged auth downgrade is visible in the field.
+  // seededDefaultCount reports what was offered to the merge, not what was
+  // written — displacedDefaultCount and displacedDefaults reconcile the difference.
   const writtenOauthShapes = summarizeManagedOauthShapes(managedMcpServers);
   logger.info(
     '[proxy] Preparing Claude Desktop config payload',
@@ -781,6 +795,8 @@ export async function writeDesktopConfig(
       inferenceModelsWritten: inferenceModels.length > 0,
       managedMcpServerCount: managedMcpServers.length,
       seededDefaultCount: seedDefaults.length,
+      displacedDefaultCount: displacedDefaults.length,
+      displacedDefaults,
       oauthDowngradeCount: oauthDowngrades.length,
       oauthConfiguredCount: writtenOauthShapes.oauthConfigured,
       oauthFlaggedCount: writtenOauthShapes.oauthFlagged,
