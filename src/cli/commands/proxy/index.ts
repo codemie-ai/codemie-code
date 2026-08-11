@@ -503,19 +503,13 @@ export function createProxyCommand(): Command {
 
         if (opts.vscodeClaudeCode) {
           try {
+            // writeVsCodeClaudeCodeConfig already logs this event internally (with the
+            // gateway key sanitized) — no need to duplicate that log call, and its untested
+            // secret-bearing sanitizeLogArgs() payload, here.
             const vsCodeResult = await writeVsCodeClaudeCodeConfig(
               state!.url,
               state!.gatewayKey,
               Boolean(opts.insiders)
-            );
-            logger.info(
-              '[proxy] VS Code Claude Code extension configuration written',
-              ...sanitizeLogArgs({
-                configPath: vsCodeResult.path,
-                gatewayUrl: state!.url,
-                insiders: Boolean(opts.insiders),
-                anthropicAuthToken: state!.gatewayKey,
-              })
             );
             console.log(
               chalk.green(`✓ VS Code Claude Code extension configured (${vsCodeResult.path})`)

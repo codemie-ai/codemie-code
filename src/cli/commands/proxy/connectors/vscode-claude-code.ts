@@ -23,11 +23,22 @@ interface ClaudeCodeEnvVar {
 
 /**
  * Resolve the VS Code Claude Code extension's `settings.json` path for the given
- * VS Code edition, mirroring `vscode.ts`'s `getVsCodeLanguageModelsPath` but for the
- * generic per-user settings file rather than the BYOK language-model config.
+ * VS Code edition, mirroring `vscode.ts`'s `getVsCodeLanguageModelsPath` — including its
+ * throw when the product's user-data directory doesn't exist, so a missing edition fails
+ * loudly instead of silently writing into a directory tree nothing will ever read.
  */
 export function getVsCodeClaudeCodeSettingsPath(insiders = false): string {
-  return join(getVsCodeProductDir(insiders), 'User', 'settings.json');
+  const productDir = getVsCodeProductDir(insiders);
+  if (!existsSync(productDir)) {
+    const edition = insiders ? 'VS Code Insiders' : 'VS Code';
+    const alternative = insiders
+      ? 'Remove --insiders to configure stable VS Code.'
+      : 'Use --insiders if only VS Code Insiders is installed.';
+    throw new ConfigurationError(
+      `${edition} user data directory was not found at ${productDir}.\n${alternative}`
+    );
+  }
+  return join(productDir, 'User', 'settings.json');
 }
 
 async function readSettings(configPath: string): Promise<Record<string, unknown>> {
@@ -61,27 +72,59 @@ async function readSettings(configPath: string): Promise<Record<string, unknown>
   }
 }
 
+function isEnvVarEntry(value: unknown): value is ClaudeCodeEnvVar {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Upsert the two CodeMie-managed entries into an existing `claudeCode.environmentVariables`
+ * value, tolerating a malformed existing value instead of crashing or silently discarding data:
+ * - A non-array `existing` is treated as empty (logged, not silently dropped).
+ * - Non-object array entries (e.g. `null`, from a manual edit) are dropped (logged, not silently).
+ * - Entries are de-duplicated by `name`, keeping only the latest occurrence, so a pre-existing
+ *   duplicate managed entry (e.g. from an older buggy write) never leaves a stale copy behind.
+ */
 function upsertManagedEnvVars(
   existing: unknown,
   gatewayUrl: string,
   gatewayKey: string
 ): ClaudeCodeEnvVar[] {
-  const envVars: ClaudeCodeEnvVar[] = Array.isArray(existing) ? [...existing] : [];
+  if (existing !== undefined && !Array.isArray(existing)) {
+    logger.warn(
+      '[proxy] Ignoring malformed claudeCode.environmentVariables (expected an array); replacing it',
+      ...sanitizeLogArgs({ existingType: typeof existing })
+    );
+  }
+
+  const sourceEntries: unknown[] = Array.isArray(existing) ? existing : [];
+  const droppedCount = sourceEntries.filter(entry => !isEnvVarEntry(entry)).length;
+  if (droppedCount > 0) {
+    logger.warn(
+      '[proxy] Dropping malformed claudeCode.environmentVariables entries',
+      ...sanitizeLogArgs({ droppedCount })
+    );
+  }
+
+  const unnamed: ClaudeCodeEnvVar[] = [];
+  const byName = new Map<string, ClaudeCodeEnvVar>();
+  for (const entry of sourceEntries) {
+    if (!isEnvVarEntry(entry)) continue;
+    if (typeof entry.name === 'string') {
+      byName.set(entry.name, entry);
+    } else {
+      unnamed.push(entry);
+    }
+  }
+
   const managedValues: Record<string, string> = {
     [ANTHROPIC_BASE_URL_KEY]: gatewayUrl,
     [ANTHROPIC_AUTH_TOKEN_KEY]: gatewayKey,
   };
-
   for (const [name, value] of Object.entries(managedValues)) {
-    const index = envVars.findIndex(entry => entry.name === name);
-    if (index >= 0) {
-      envVars[index] = { ...envVars[index], name, value };
-    } else {
-      envVars.push({ name, value });
-    }
+    byName.set(name, { ...byName.get(name), name, value });
   }
 
-  return envVars;
+  return [...unnamed, ...byName.values()];
 }
 
 /**
