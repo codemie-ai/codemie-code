@@ -344,12 +344,29 @@ function hasManagedOAuth(entry: ManagedMcpServerEntry): boolean {
 }
 
 /**
- * Collision test between a bundled default and a backend entry: names are matched
- * case-insensitively, URLs verbatim — mirroring reconcileManagedMcpServers, where
- * both sides come from controlled sources.
+ * URL equality between two managed entries, compared verbatim. Managed entries
+ * come from controlled sources (DEFAULT_MANAGED_MCP_SERVERS or the backend
+ * catalog), so this is intentionally exact — no trailing-slash or host-case
+ * normalization. That normalization is a known, separately-tracked gap, not
+ * something this comparison closes.
+ */
+function sameManagedEndpoint(a: ManagedMcpServerEntry, b: ManagedMcpServerEntry): boolean {
+  return a.url === b.url;
+}
+
+/** Case-insensitive name equality between two managed entries. */
+function sameManagedName(a: ManagedMcpServerEntry, b: ManagedMcpServerEntry): boolean {
+  return a.name.toLowerCase() === b.name.toLowerCase();
+}
+
+/**
+ * Collision test between a bundled default and a backend entry: a shared name
+ * OR a shared endpoint, mirroring reconcileManagedMcpServers, where both sides
+ * come from controlled sources. Defined in terms of {@link sameManagedName} and
+ * {@link sameManagedEndpoint} so the wide and narrow tests cannot drift apart.
  */
 function collidesWithManagedEntry(a: ManagedMcpServerEntry, b: ManagedMcpServerEntry): boolean {
-  return a.name.toLowerCase() === b.name.toLowerCase() || a.url === b.url;
+  return sameManagedName(a, b) || sameManagedEndpoint(a, b);
 }
 
 /** A backend entry that collided with a bundled default and resolved to weaker auth than it. */
@@ -387,17 +404,29 @@ export function mergeManagedMcpServers(
     (bundled) => !org.some((entry) => collidesWithManagedEntry(bundled, entry)),
   );
 
+  // Downgrade reporting is scoped to sameManagedEndpoint, not the wider
+  // collidesWithManagedEntry used for displacement above — a default's oauth
+  // describes ITS endpoint, not its name, so a backend entry that merely
+  // reuses the name at a different endpoint is not a downgrade. Because
+  // collidesWithManagedEntry is defined as sameManagedName(a, b) ||
+  // sameManagedEndpoint(a, b), a reported downgrade is by construction a
+  // strict subset of a displacement: an endpoint collision can never displace
+  // a default without also being reportable. Do not widen this back to
+  // collidesWithManagedEntry.
   const oauthDowngrades: ManagedOauthDowngrade[] = [];
-  for (const bundled of defaults) {
-    if (!hasManagedOAuth(bundled)) continue;
-    for (const entry of org) {
-      if (!collidesWithManagedEntry(bundled, entry) || hasManagedOAuth(entry)) continue;
-      oauthDowngrades.push({
-        defaultName: bundled.name,
-        backendName: entry.name,
-        url: entry.url,
-      });
-    }
+  for (const entry of org) {
+    if (hasManagedOAuth(entry)) continue;
+    // At most one record per org entry — take the first matching default, so
+    // an entry is never double-counted if it happened to match more than one.
+    const downgradedDefault = defaults.find(
+      (bundled) => hasManagedOAuth(bundled) && sameManagedEndpoint(bundled, entry),
+    );
+    if (!downgradedDefault) continue;
+    oauthDowngrades.push({
+      defaultName: downgradedDefault.name,
+      backendName: entry.name,
+      url: entry.url,
+    });
   }
 
   return {
@@ -736,7 +765,7 @@ export async function writeDesktopConfig(
 
   // Summarize the reconciled list we are about to serialize (not the org catalog
   // index.ts already logs), so the shape counts always add up to
-  // managedMcpServerCount and an applied auth floor is visible in the field.
+  // managedMcpServerCount and a logged auth downgrade is visible in the field.
   const writtenOauthShapes = summarizeManagedOauthShapes(managedMcpServers);
   logger.info(
     '[proxy] Preparing Claude Desktop config payload',

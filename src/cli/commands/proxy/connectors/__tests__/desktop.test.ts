@@ -13,11 +13,13 @@ import { logger } from '@/utils/logger.js';
 import {
   buildGatewayConfig,
   cloneManagedEntry,
+  DEFAULT_MANAGED_MCP_SERVERS,
   fetchClaudeModels,
   getDesktopBaseDir,
   getDesktopConfigPath,
   getManagedMcpStatePath,
   mapCanonicalToDesktop,
+  mergeManagedMcpServers,
   reconcileManagedMcpServers,
   resolveDesktopOAuth,
   selectDesktopClaudeModels,
@@ -658,9 +660,12 @@ describe('writeDesktopConfig', () => {
   it('forwards a backend entry with no auth verbatim when it collides with a bundled default by url, and logs the downgrade', async () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
     try {
-      const org = [
-        { name: 'notion_internal', url: 'https://mcp.notion.com/mcp', transport: 'http' as const },
-      ];
+      // Routed through the real mapper (not a hand-built fixture): production
+      // never writes `oauth: undefined` — mapCanonicalToDesktop's
+      // resolveDesktopOAuth fallback always resolves to `false`.
+      const org = mapCanonicalToDesktop([
+        { name: 'notion_internal', transport: 'http', url: 'https://mcp.notion.com/mcp', auth: 'none' },
+      ]);
       const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
 
       const written = JSON.parse(await readFile(configPath, 'utf-8'));
@@ -671,7 +676,7 @@ describe('writeDesktopConfig', () => {
       expect(notion[0].name).toBe('notion_internal');
       // Decision 1: the CLI is a courier — the backend's published auth (none)
       // is forwarded verbatim, never raised to the displaced default's oauth.
-      expect(notion[0].oauth).toBeUndefined();
+      expect(notion[0].oauth).toBe(false);
       const warned = warnSpy.mock.calls.some(
         ([message]) => typeof message === 'string' && /downgrade/i.test(message),
       );
@@ -714,27 +719,33 @@ describe('writeDesktopConfig', () => {
     expect(internal?.oauth).toEqual(OAUTH_CONFIG);
   });
 
-  it('drops a bundled default that collides by name with a trailing-slash url variant, and logs the downgrade (CR-008)', async () => {
+  it('drops a bundled default that collides by name with a trailing-slash url variant, without reporting a downgrade (name collision only, CR-008)', async () => {
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
     try {
-      const org = [
-        { name: 'Notion', url: 'https://mcp.notion.com/mcp/', transport: 'http' as const },
-      ];
+      const org = mapCanonicalToDesktop([
+        { name: 'Notion', transport: 'http', url: 'https://mcp.notion.com/mcp/', auth: 'none' },
+      ]);
       const configPath = await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
 
       const written = JSON.parse(await readFile(configPath, 'utf-8'));
       const servers = JSON.parse(written.managedMcpServers);
       const notionEntries = servers.filter((s: any) => s.name.toLowerCase() === 'notion');
-      // The bundled default (exact url, no trailing slash) is dropped — the
-      // backend entry replaced it, even though the urls differ by a trailing slash.
+      // The bundled default (exact url, no trailing slash) is displaced by the
+      // NAME collision — the backend entry is written verbatim and exactly one
+      // entry carries the name.
       expect(notionEntries).toHaveLength(1);
       expect(notionEntries[0].url).toBe('https://mcp.notion.com/mcp/');
-      expect(notionEntries[0].oauth).toBeUndefined();
+      expect(notionEntries[0].oauth).toBe(false);
+      // The two urls are the same effective endpoint but compare unequal —
+      // sameManagedEndpoint is verbatim/case-sensitive by design; trailing-slash
+      // normalization is a known, separately-tracked gap this task does not fix.
       expect(servers.some((s: any) => s.url === 'https://mcp.notion.com/mcp')).toBe(false);
+      // A name-only collision at a different endpoint is not an auth downgrade —
+      // a default's oauth describes ITS endpoint, not the name.
       const warned = warnSpy.mock.calls.some(
         ([message]) => typeof message === 'string' && /downgrade/i.test(message),
       );
-      expect(warned).toBe(true);
+      expect(warned).toBe(false);
     } finally {
       warnSpy.mockRestore();
     }
@@ -775,6 +786,48 @@ describe('writeDesktopConfig', () => {
         ([message]) => typeof message === 'string' && /downgrade/i.test(message),
       );
       expect(warned).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('does not warn about a downgrade when a backend entry only reuses a bundled default name at a different endpoint', async () => {
+    // Companion to 'keeps a previously managed internal server...' above,
+    // which covers the write behavior for this shape — this covers the log.
+    // A default's oauth describes ITS endpoint, not its name: reusing the
+    // name at a different, internal endpoint is the ordinary case (a
+    // tenant's own "notion" server) and must never be reported as an auth
+    // downgrade.
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    try {
+      const org = mapCanonicalToDesktop([
+        { name: 'notion', transport: 'http', url: 'https://mcp.internal.corp/notion', auth: 'none' },
+      ]);
+      await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+      const warned = warnSpy.mock.calls.some(
+        ([message]) => typeof message === 'string' && /downgrade/i.test(message),
+      );
+      expect(warned).toBe(false);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('records a single downgrade with the endpoint-scoped payload when a backend entry collides by url', async () => {
+    const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    try {
+      const org = mapCanonicalToDesktop([
+        { name: 'notion_internal', transport: 'http', url: 'https://mcp.notion.com/mcp', auth: 'none' },
+      ]);
+      await writeDesktopConfig('http://127.0.0.1:4001', 'codemie-proxy', baseDir, org, statePath);
+      const record = warnSpy.mock.calls.find(
+        ([message]) => typeof message === 'string' && /downgrade/i.test(message),
+      )?.[1] as any;
+      expect(record).toBeDefined();
+      expect(record.oauthDowngradeCount).toBe(1);
+      expect(record.sourceBundledDefaults).toEqual(['Notion']);
+      expect(record.downgradedBackendEntries).toEqual(['notion_internal']);
+      expect(record.downgradedUrls).toEqual(['https://mcp.notion.com/mcp']);
     } finally {
       warnSpy.mockRestore();
     }
@@ -1001,9 +1054,17 @@ describe('reconcileManagedMcpServers', () => {
 
     (servers[0] as any).oauth.clientId = 'mutated';
 
+    // The bundled defaults carry only boolean oauth, so proving the nested
+    // object is not shared still needs this hand-built fixture.
+    expect(managed[0].oauth.clientId).toBe('codemie-mcp-proxy');
+
+    // Prove the guard protects DEFAULT_MANAGED_MCP_SERVERS itself, not just a
+    // locally-built stand-in for it: merging the real bundled defaults with an
+    // empty org catalog must not return the constant's own entry objects.
     // DEFAULT_MANAGED_MCP_SERVERS is a process-lifetime constant; sharing a
     // nested object with it would corrupt every later run in the process.
-    expect(managed[0].oauth.clientId).toBe('codemie-mcp-proxy');
+    const { managed: mergedDefaults } = mergeManagedMcpServers(DEFAULT_MANAGED_MCP_SERVERS, []);
+    expect(mergedDefaults[0]).not.toBe(DEFAULT_MANAGED_MCP_SERVERS[0]);
   });
 });
 
