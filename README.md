@@ -10,7 +10,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.3%2B-blue.svg)](https://www.typescriptlang.org/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-> **Unified AI Coding Assistant CLI** - Manage Claude Code, OpenAI Codex, Google Gemini, OpenCode, Pi, Kimi Code, and custom AI agents from one powerful command-line interface. Multi-provider support (CodeMie SSO, Bearer Auth, LiteLLM, AWS Bedrock, Ollama, Anthropic Subscription, Moonshot Subscription). Built-in native agent with file operations, command execution, planning mode, and plugins. Cross-platform support for Windows, Linux, and macOS.
+> **Unified AI Coding Assistant CLI** - Manage Claude Code, OpenAI Codex, GitHub Copilot CLI, Google Gemini, OpenCode, Pi, Kimi Code, and custom AI agents from one powerful command-line interface. Multi-provider support (CodeMie SSO, Bearer Auth, LiteLLM, AWS Bedrock, Ollama, Anthropic Subscription, Moonshot Subscription). Built-in native agent with file operations, command execution, planning mode, and plugins. Cross-platform support for Windows, Linux, and macOS.
 
 ---
 
@@ -22,7 +22,7 @@
 
 CodeMie CLI is the all-in-one AI coding assistant for developers.
 
-- ✨ **One CLI, Multiple AI Agents** - Switch between Claude Code, OpenAI Codex, Gemini, OpenCode, Pi, Kimi Code, and built-in agent.
+- ✨ **One CLI, Multiple AI Agents** - Switch between Claude Code, OpenAI Codex, GitHub Copilot CLI, Gemini, OpenCode, Pi, Kimi Code, and built-in agent.
 - 🔄 **Multi-Provider Support** - CodeMie SSO, Bearer Authorization, LiteLLM, AWS Bedrock, Ollama, Anthropic Subscription, and Moonshot Subscription.
 - 🚀 **Built-in Agent** - `codemie-code` ships with the CLI: file operations, command execution, planning mode, and native plugins.
 - 🖥️ **Cross-Platform** - Full support for Windows, Linux, and macOS with platform-specific optimizations.
@@ -46,8 +46,10 @@ codemie setup
 codemie doctor
 codemie install claude --supported
 codemie install codex --supported
+codemie install copilot
 codemie-claude "Review my API code"
 codemie-codex "Refactor this service"
+codemie-copilot --task "Summarize this module"
 codemie --task "Generate unit tests"
 codemie skills find pdf                    # discover agent skills (EPAM internal + skills.sh)
 claude mcp add my-server -- codemie-mcp-proxy "https://mcp-server.example.com/sse"
@@ -211,16 +213,39 @@ CodeMie installs external agents, routes them through the CodeMie proxy, and tra
 | Pi | `codemie install pi` | `codemie-pi` | `@earendil-works/pi-coding-agent` |
 | Kimi Code | `codemie install kimi` | `codemie-kimi` | `@moonshot-ai/kimi-code` |
 | Kimi Code ACP | `codemie install kimi-acp` | `codemie-kimi-acp` | `@moonshot-ai/kimi-code` (`acp` mode) |
-| GitHub Copilot CLI | — | — | analytics ingestion only; CodeMie never installs or launches it |
+| GitHub Copilot CLI | `codemie install copilot` | `codemie-copilot` | `@github/copilot` |
 
 ACP agents are launched by your IDE, not directly — see [ACP Agent usage](#acp-agent-usage-in-ides-and-editors) below.
 
 ```bash
 codemie install claude --supported             # install
+codemie install copilot                        # install GitHub Copilot CLI
 codemie-claude "Review my API code"            # one-shot task
 codemie-claude                                 # interactive session
+codemie-copilot --task "Refactor this auth flow"
+codemie uninstall copilot                      # uninstall GitHub Copilot CLI
 codemie-codex --task "Refactor this auth flow" # same shape for every agent
 ```
+
+#### GitHub Copilot CLI via CodeMie
+
+CodeMie can install and launch GitHub Copilot CLI as a managed agent while keeping the internal registry identity `copilot-cli`.
+
+Supported managed path for this release:
+
+- **Install:** `codemie install copilot`
+- **Uninstall:** `codemie uninstall copilot`
+- **Launch:** `codemie-copilot`
+- **One-shot task:** `codemie-copilot --task "Explain this service"`
+- **Supported providers:** CodeMie SSO and LiteLLM
+
+Requirements and behavior:
+
+- Use an authenticated CodeMie profile (`codemie setup`).
+- Managed Copilot runs are routed through CodeMie's provider/proxy path.
+- The supported managed path does **not** require GitHub login, a GitHub Copilot subscription, or a GitHub personal access token.
+- CodeMie blocks fallback to ambient GitHub credentials for this managed mode.
+- Copilot conversation sync is attributed under `copilot-cli` in CodeMie.
 
 #### ACP Agent usage in IDEs and Editors
 
