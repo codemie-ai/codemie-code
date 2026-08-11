@@ -1,0 +1,48 @@
+{
+  "decision": "approve",
+  "rationale": "Fix-up diff (8 files, +96/-48) targets exactly the six blocking findings from the final round and nothing else. Verified per finding: CR-001 update.ts now calls installVersion('latest') for Claude, invokes agent.warnOnceIfUntested() after every update path, and drops the 'verified version by CodeMie' wording. CR-002 BaseAgentAdapter.warnOnceIfUntested() returns early with logger.debug when getCurrentCliVersion() is null instead of persisting the 'unknown' fallback; a new test locks the behavior. CR-003 AgentsCheck.buildDetail() wraps VersionWarningStore.hasWarned() in try/catch that degrades to 'Untested' with logger.warn — a new test asserts doctor no longer rejects when hasWarned throws. CR-004 VersionWarningStore.clear() soft-fails on non-ENOENT unlink errors (logs and returns { removed: 0 }) so `codemie doctor --reset-version-warnings` cannot crash on EACCES/EROFS/EPERM. CR-005 setup.ts wraps warnOnceIfUntested() in a Promise.race with a 3-second timeout that resolves silently, matching the existing budget for the first getVersionInfo() call. CR-006 tests/setup/agent-build-setup.ts now installs claude --latest unconditionally at globalSetup, restoring predictable integration-test behavior. No new callers of removed symbols and no new high-risk surface — the confirmation pass was not required. Post-fix verification: typecheck PASS, lint PASS, unit suite PASS (2660 tests, 1 skipped).",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {"id": "AC-1", "criterion": "User is never prevented from launching a wrapped agent by a version check", "status": "pass"},
+    {"id": "AC-2", "criterion": "User warned at most once per (agent, agent-version, codemie-version) tuple", "status": "pass", "notes": "CR-002 fix removes the 'unknown' fallback tuple that previously broke the guarantee."},
+    {"id": "AC-3", "criterion": "All pinned per-agent supported-version constants removed", "status": "pass"},
+    {"id": "AC-4", "criterion": "Non-interactive/ACP/silent: logger.warn + proceed, never throw, never inquirer.prompt", "status": "pass"},
+    {"id": "AC-5", "criterion": "codemie doctor surfaces per-agent verification status", "status": "pass"},
+    {"id": "AC-6", "criterion": "Banner format for first launch", "status": "partial", "notes": "Minor spec deviation (single guidance line vs two in the spec example) not addressed — non-blocking, deferred."},
+    {"id": "AC-7", "criterion": "Repeat launch with already-acknowledged tuple is silent", "status": "pass"},
+    {"id": "AC-8", "criterion": "Non-interactive contexts: logger.warn only, no stderr/stdout prose", "status": "pass"},
+    {"id": "AC-9", "criterion": "codemie install: one-time warning emitted via shared helper after successful install", "status": "pass"},
+    {"id": "AC-10", "criterion": "--supported flag routes to 'latest'; default routing no longer uses supported version", "status": "pass"},
+    {"id": "AC-11", "criterion": "codemie update: use getVersionInfo(); emit one-time warning via shared helper", "status": "pass", "notes": "CR-001 fix wires warnOnceIfUntested() into updateAgent() for all agent paths."},
+    {"id": "AC-12", "criterion": "codemie setup: replace isNewer/compatible block with shared helper; preserve 3-second timeout", "status": "pass", "notes": "CR-005 fix extends the 3-second budget to warnOnceIfUntested() as well."},
+    {"id": "AC-13", "criterion": "codemie doctor --reset-version-warnings", "status": "pass"},
+    {"id": "AC-14", "criterion": "Doctor state colors: Acknowledged=green, Untested=yellow, Not installed=gray", "status": "partial", "notes": "Formatter maps status:'info' → chalk.white for 'Not installed' vs spec's chalk.gray — minor visual deviation, non-blocking, deferred."},
+    {"id": "AC-15", "criterion": "Deprecation warning for legacy npm-global installs preserved", "status": "pass"},
+    {"id": "AC-16", "criterion": "isInteractive() predicate matches spec", "status": "pass"},
+    {"id": "AC-17", "criterion": "ACP silentMode 'throw' removed — log-and-proceed only", "status": "pass"},
+    {"id": "AC-18", "criterion": "VersionWarningStore file path, schema, ordering, corrupt/missing fallback", "status": "pass"},
+    {"id": "AC-19", "criterion": "Store read/write failures are non-fatal; version-check never blocks launch", "status": "pass"},
+    {"id": "AC-20", "criterion": "VersionWarningStore unit tests: empty/record/read/dedup/clear/corrupt", "status": "pass"},
+    {"id": "AC-21", "criterion": "BaseAgentAdapter.warnOnceIfUntested tests: all branches covered", "status": "pass", "notes": "Now covers null-codemieVersion early return too."},
+    {"id": "AC-22", "criterion": "AgentsCheck + reset-version-warnings tests", "status": "pass", "notes": "Now covers hasWarned-throws graceful-degradation path."},
+    {"id": "AC-23", "criterion": "codex.plugin.version-support.test.ts rewritten", "status": "pass"},
+    {"id": "AC-24", "criterion": "agent-build-setup.ts does not import CLAUDE_SUPPORTED_VERSION", "status": "pass", "notes": "CR-006 fix reintroduces predictable version behavior via unconditional --latest install."},
+    {"id": "AC-25", "criterion": "hasUpdate && compatible prompt removed from run()", "status": "pass"}
+  ],
+  "standards_review": [
+    {"category": "git-workflow", "status": "pass", "notes": "Fix-up commit uses `fix(agents): address CR-001 through CR-006 from code-review-final` — allowed type, allowed scope, subject <100 chars."},
+    {"category": "code-quality", "status": "pass", "notes": "ES modules, .js import extensions, logger for diagnostics, no console.log for debug."},
+    {"category": "security", "status": "pass", "notes": "No new secrets, no shell injection, no unsafe file handling introduced by the fix-up."},
+    {"category": "development-practices", "status": "pass", "notes": "Error boundaries now correctly wrap the VersionWarningStore read/clear paths in the doctor code — the gap flagged in the final round is closed."}
+  ],
+  "findings": [],
+  "finding_status": [
+    {"id": "CR-001", "status": "resolved", "evidence": "src/cli/commands/update.ts:130 installVersion('latest'), :165-167 warnOnceIfUntested() call, :176 wording change"},
+    {"id": "CR-002", "status": "resolved", "evidence": "src/agents/core/BaseAgentAdapter.ts:288-293 early return with logger.debug; new test in BaseAgentAdapter.version-warning.test.ts:159-173"},
+    {"id": "CR-003", "status": "resolved", "evidence": "src/cli/commands/doctor/checks/AgentsCheck.ts:66-76 try/catch around hasWarned; new test in AgentsCheck.status.test.ts:76-86"},
+    {"id": "CR-004", "status": "resolved", "evidence": "src/utils/version-warnings.ts:118-125 non-ENOENT errors caught, logged, return { removed: 0 }"},
+    {"id": "CR-005", "status": "resolved", "evidence": "src/cli/commands/setup.ts:113-119 Promise.race wraps warnOnceIfUntested with 3-second budget"},
+    {"id": "CR-006", "status": "resolved", "evidence": "tests/setup/agent-build-setup.ts:251-256 unconditional installVersion('latest') at globalSetup"}
+  ]
+}

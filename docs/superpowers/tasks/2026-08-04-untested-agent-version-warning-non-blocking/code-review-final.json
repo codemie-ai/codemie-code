@@ -1,0 +1,113 @@
+{
+  "decision": "request-changes",
+  "rationale": "All three lenses (blind, edge-case, acceptance) ran to completion against a fully-readable diff, spec, and plan. Six blocking findings survive triage. The most consequential are (a) update.ts is not wired to warnOnceIfUntested() and still emits 'latest verified version by CodeMie' language the spec explicitly retires; (b) when getCurrentCliVersion() returns null, warnOnceIfUntested() records the marker under the literal string 'unknown', which does not match the real codemie-version tuple on the next launch — the 'one-time' contract regresses; (c) AgentsCheck.buildDetail() calls VersionWarningStore.hasWarned() without a try/catch, so a non-ENOENT read error rejects the entire doctor Promise.all; (d) resetVersionWarnings() has no error boundary around VersionWarningStore.clear(), so an EACCES/EROFS unlink error crashes `codemie doctor --reset-version-warnings`; (e) setup.ts's warnOnceIfUntested() call is outside the 3-second Promise.race and re-invokes getVersion() unguarded, so a stalled claude subprocess hangs setup indefinitely; (f) agent-build-setup.ts now reuses any installed claude version — the previous version-pinned pre-flight has weakened without a compensating minimum-version floor for integration tests. 3 lens findings were dropped as false positives (npm.getLatestVersion is exported from utils/processes.ts; `install --supported` without an explicit version falls into the !actualVersionToInstall branch and never reaches the reinstall prompt; no live caller of the removed checkVersionCompatibility remains). 3 minor findings deferred (banner second-command line, chalk.gray for Not installed, install.ts duck-type guard hygiene) — none block the change, but the update.ts wording is the user-visible one the spec is loudest about, so the change is not shippable as-is.",
+  "confidence": "high",
+  "risk_flags": ["breaking-change"],
+  "business_review": [
+    {"id": "AC-1", "criterion": "User is never prevented from launching a wrapped agent by a version check", "status": "pass"},
+    {"id": "AC-2", "criterion": "User warned at most once per (agent, agent-version, codemie-version) tuple", "status": "partial", "notes": "Store-level idempotency passes, but the codemie-version='unknown' fallback tuple breaks the guarantee across sessions — see CR-002."},
+    {"id": "AC-3", "criterion": "All pinned per-agent supported-version constants removed", "status": "pass"},
+    {"id": "AC-4", "criterion": "Non-interactive/ACP/silent: logger.warn + proceed, never throw, never inquirer.prompt", "status": "pass"},
+    {"id": "AC-5", "criterion": "codemie doctor surfaces per-agent verification status", "status": "pass"},
+    {"id": "AC-6", "criterion": "Banner format for first launch", "status": "partial", "notes": "Second guidance line (specific-version example) missing — minor spec deviation."},
+    {"id": "AC-7", "criterion": "Repeat launch with already-acknowledged tuple is silent", "status": "pass"},
+    {"id": "AC-8", "criterion": "Non-interactive contexts: logger.warn only, no stderr/stdout prose", "status": "pass"},
+    {"id": "AC-9", "criterion": "codemie install: one-time warning emitted via shared helper after successful install", "status": "pass"},
+    {"id": "AC-10", "criterion": "--supported flag routes to 'latest'; default routing no longer uses supported version", "status": "pass"},
+    {"id": "AC-11", "criterion": "codemie update: use getVersionInfo(); emit one-time warning via shared helper", "status": "fail", "notes": "update.ts still calls installVersion('supported'), still prints 'latest verified version by CodeMie', and does not call warnOnceIfUntested() — see CR-001."},
+    {"id": "AC-12", "criterion": "codemie setup: replace isNewer/compatible block with shared helper; preserve 3-second timeout", "status": "partial", "notes": "Timeout preserved for getVersionInfo but not for warnOnceIfUntested — see CR-005."},
+    {"id": "AC-13", "criterion": "codemie doctor --reset-version-warnings", "status": "pass"},
+    {"id": "AC-14", "criterion": "Doctor state colors: Acknowledged=green, Untested=yellow, Not installed=gray", "status": "partial", "notes": "Not installed renders via status:info → chalk.white in formatter, spec asks for chalk.gray — minor visual deviation."},
+    {"id": "AC-15", "criterion": "Deprecation warning for legacy npm-global installs preserved", "status": "pass"},
+    {"id": "AC-16", "criterion": "isInteractive() predicate matches spec", "status": "pass"},
+    {"id": "AC-17", "criterion": "ACP silentMode 'throw' removed — log-and-proceed only", "status": "pass"},
+    {"id": "AC-18", "criterion": "VersionWarningStore file path, schema, ordering, corrupt/missing fallback", "status": "pass"},
+    {"id": "AC-19", "criterion": "Store read/write failures are non-fatal; version-check never blocks launch", "status": "pass"},
+    {"id": "AC-20", "criterion": "VersionWarningStore unit tests: empty/record/read/dedup/clear/corrupt", "status": "pass"},
+    {"id": "AC-21", "criterion": "BaseAgentAdapter.warnOnceIfUntested tests: all branches covered", "status": "pass"},
+    {"id": "AC-22", "criterion": "AgentsCheck + reset-version-warnings tests", "status": "pass"},
+    {"id": "AC-23", "criterion": "codex.plugin.version-support.test.ts rewritten", "status": "pass"},
+    {"id": "AC-24", "criterion": "agent-build-setup.ts does not import CLAUDE_SUPPORTED_VERSION", "status": "pass", "notes": "Import removed, but the new 'reuse any installed version' policy is looser than the pre-change version match — see CR-006."},
+    {"id": "AC-25", "criterion": "hasUpdate && compatible prompt removed from run()", "status": "pass"}
+  ],
+  "standards_review": [
+    {"category": "git-workflow", "status": "pass", "notes": "All 7 commits follow <type>(<scope>): <subject>, allowed types (feat/refactor/test) and scopes (agents/cli/utils/tests). Subject length <100 chars."},
+    {"category": "code-quality", "status": "pass", "notes": "ES modules, .js import extensions, no console.log for debug (chalk only guarded interactive banner), explicit return types on exports, type-safe (no `any` beyond existing test scaffolding)."},
+    {"category": "security", "status": "pass", "notes": "No secrets, no shell injection, paths anchored at getCodemiePath(); state file is not user-controlled; sanitizeLogArgs not needed for these simple string payloads."},
+    {"category": "development-practices", "status": "pass", "notes": "logger.warn used for recoverable notices; error boundaries missing on VersionWarningStore.hasWarned and clear in the doctor path (CR-003, CR-004) — flagged as findings, not standards-blocking."}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "title": "update.ts does not emit warnOnceIfUntested and still references 'verified version by CodeMie'",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/update.ts",
+      "line": 217,
+      "problem": "Line 218 still calls agent.installVersion('supported') and line 294 still prints '${displayName} is already up to date with latest verified version by CodeMie'. The updateAgent() function does not call agent.warnOnceIfUntested() after the update completes, so the spec's requirement that update.ts emit the one-time notice through the shared helper is not met.",
+      "impact": "Users see stale 'CodeMie verified version' language that spec.md explicitly retires. The first launch after `codemie update <agent>` re-warns because the update path did not record the marker, contradicting the spec's `install/update/setup` emit-point contract.",
+      "recommendation": "Change line 218 to installVersion('latest'). Change line 294 to drop 'verified version by CodeMie' (e.g. 'already up to date (${result.currentVersion})'). After a successful install, guard-call `if ('warnOnceIfUntested' in agent) await agent.warnOnceIfUntested()` (or drop the guard and use the AgentAdapter contract directly).",
+      "sources": ["acceptance", "edge-case"]
+    },
+    {
+      "id": "CR-002",
+      "title": "warnOnceIfUntested records marker with codemieVersion='unknown' when getCurrentCliVersion() returns null",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/core/BaseAgentAdapter.ts",
+      "line": 288,
+      "problem": "When getCurrentCliVersion() resolves to null (missing/unreadable package.json, container-stripped dist, transient FS error), codemieVersion falls back to the literal 'unknown'. The tuple (agent, agentVersion, 'unknown') is recorded. On any subsequent launch where the real version is available, the tuple mismatches, hasWarned returns false, and the banner fires again for the same agent+agent-version — indefinitely.",
+      "impact": "The 'shown once per (agent, agent-version, codemie-version)' contract regresses to 'shown once per successful codemieVersion read'. In environments where package.json is intermittently unavailable, users see the banner every launch until the real version reads consistently.",
+      "recommendation": "If getCurrentCliVersion() returns null, either (a) skip warnOnceIfUntested entirely and log a debug line, or (b) do not record the marker (still emit the notice), so the marker is only ever written under a real codemieVersion. Update the version-warning test suite to cover the null-codemieVersion path.",
+      "sources": ["blind", "edge-case"]
+    },
+    {
+      "id": "CR-003",
+      "title": "AgentsCheck.buildDetail lets non-ENOENT VersionWarningStore.hasWarned errors reject the whole doctor run",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/doctor/checks/AgentsCheck.ts",
+      "line": 60,
+      "problem": "buildDetail() calls VersionWarningStore.hasWarned() with no try/catch. loadHistory() swallows non-ENOENT errors internally, but a defensive read of that file in the future (or a filesystem edge case that surfaces a different error) would reject Promise.all in run() and crash the entire doctor command, not just the one agent row. In runWithItemDisplay() the same call is sequential, so a rejection breaks all subsequent per-agent output.",
+      "impact": "codemie doctor becomes brittle to any VersionWarningStore read anomaly. Contrast with warnOnceIfUntested() which explicitly wraps hasWarned() in a try/catch and degrades to re-emit — the doctor path should degrade to 'Untested' on a read failure rather than crashing.",
+      "recommendation": "Wrap the VersionWarningStore.hasWarned call in a try/catch inside buildDetail(); on error, treat as `acknowledged=false` and log via logger.warn. Add a unit test asserting doctor completes when hasWarned throws.",
+      "sources": ["blind"]
+    },
+    {
+      "id": "CR-004",
+      "title": "resetVersionWarnings crashes when VersionWarningStore.clear() rethrows a non-ENOENT unlink error",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/doctor/index.ts",
+      "line": 34,
+      "problem": "VersionWarningStore.clear() re-throws any error that is not ENOENT (EACCES, EROFS, EPERM). resetVersionWarnings() has no try/catch around clear(), and the Commander .action() body also has none. `codemie doctor --reset-version-warnings` therefore crashes with an unhandled exception when the store file exists but the current user cannot unlink it (root-owned file, read-only filesystem, etc.).",
+      "impact": "A user running the reset flag on a slightly-misconfigured environment sees an uncaught crash instead of a friendly diagnostic and cannot fall through into the normal doctor checks that would help them diagnose the environment.",
+      "recommendation": "In VersionWarningStore.clear(), treat EACCES/EROFS/EPERM as soft failures: log a warning and return { removed: 0 }. Alternatively, wrap resetVersionWarnings' call in a try/catch that prints a friendly message and continues into the health checks.",
+      "sources": ["blind", "edge-case"]
+    },
+    {
+      "id": "CR-005",
+      "title": "setup.ts warnOnceIfUntested runs outside the 3-second Promise.race, so a stalled claude subprocess hangs setup",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/setup.ts",
+      "line": 897,
+      "problem": "The Promise.race around claude.getVersionInfo() protects the first getVersion() subprocess call. warnOnceIfUntested() is invoked afterwards and internally calls getVersionInfo() → getVersion() a second time with no timeout. If the claude CLI subprocess stalls on the second invocation (transient PATH shim, native installer verification hook, etc.), setup blocks indefinitely.",
+      "impact": "codemie setup hangs with no user escape when the claude subprocess stalls on the second version read — regressing the pre-change guarantee that the setup version check completes within 3 seconds.",
+      "recommendation": "Pass the already-read installedVersion into warnOnceIfUntested via a small adapter refactor (accept an optional pre-fetched AgentVersionInfo), OR wrap the warnOnceIfUntested call in its own Promise.race with a 3-second timeout to match the guard above.",
+      "sources": ["edge-case"]
+    },
+    {
+      "id": "CR-006",
+      "title": "agent-build-setup.ts reuses any installed claude version, losing the pre-check on integration tests",
+      "severity": "major",
+      "triage": "decision_needed",
+      "file": "tests/setup/agent-build-setup.ts",
+      "line": 80,
+      "problem": "The previous globalSetup reinstalled Claude whenever the installed version did not match CLAUDE_SUPPORTED_VERSION. The new code skips reinstall as long as ANY version is detected. A developer or CI runner with a stale/incompatible claude binary already on PATH will silently run the integration suite against it, and any resulting failures will surface as opaque test-body errors rather than a clear setup mismatch. This is consistent with the spec's philosophy of dropping pinned versions, but the integration-test class of coverage is the one place where predictable versioning still has value.",
+      "impact": "Integration tests may silently execute against incompatible or ancient claude binaries, producing hard-to-diagnose failures.",
+      "recommendation": "Decide the intended behavior: (a) install --latest unconditionally on globalSetup so integration tests always run against the current release, or (b) introduce a documented minimum-version floor (semver >=) and reinstall when the floor is not met. Document the chosen policy in a comment.",
+      "sources": ["edge-case"]
+    }
+  ]
+}

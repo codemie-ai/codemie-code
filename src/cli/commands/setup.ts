@@ -14,7 +14,6 @@ import {
 } from '../../providers/integration/setup-ui.js';
 import { FirstTimeExperience } from '../first-time.js';
 import { AgentRegistry } from '../../agents/registry.js';
-import type { VersionCompatibilityResult } from '../../agents/core/types.js';
 import { createAssistantsSetupCommand } from './assistants/setup/index.js';
 import { createSkillsSetupCommand } from './skills/setup/index.js';
 import {
@@ -879,41 +878,31 @@ async function checkAndInstallClaude(): Promise<void> {
         console.log();
       }
     } else {
-      // Claude installed - check version compatibility with timeout protection
-      if (claude.checkVersionCompatibility) {
-        try {
-          // Add timeout protection to avoid blocking setup if version check hangs
-          const compat = await Promise.race([
-            claude.checkVersionCompatibility(),
-            new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error('Version check timeout')), 3000)
-            )
-          ]) as VersionCompatibilityResult;
-
-          if (compat.isNewer) {
-            // Installed version is newer than supported
-            console.log();
-            console.log(chalk.yellow(`⚠️  Claude Code v${compat.installedVersion} is installed`));
-            console.log(chalk.yellow(`   CodeMie has only tested and verified v${compat.supportedVersion}`));
-            console.log();
-            console.log(chalk.white('   To install the supported version:'));
-            console.log(chalk.blueBright('   codemie install claude --supported'));
-            console.log();
-          } else if (compat.compatible) {
-            // Version is compatible (same or older than supported)
-            console.log();
-            console.log(chalk.green(`✓ Claude Code v${compat.installedVersion} is installed`));
-            console.log();
-          }
-        } catch (error) {
-          // Silently skip version check if it fails - don't block setup
-          logger.debug('Claude version check skipped during setup', { error });
-          console.log();
-          console.log(chalk.green(`✓ Claude Code is installed`));
-          console.log();
+      // Claude installed — emit the one-time untested-version notice if applicable
+      // (marker is short-circuited on repeat launches). Timeout-guarded so a slow
+      // version subprocess never blocks setup.
+      try {
+        const info = await Promise.race([
+          claude.getVersionInfo(),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Version check timeout')), 3000),
+          ),
+        ]);
+        const versionStr = info.installedVersion ? ` v${info.installedVersion}` : '';
+        console.log();
+        console.log(chalk.green(`✓ Claude Code${versionStr} is installed`));
+        console.log();
+        if (info.installedVersion) {
+          // warnOnceIfUntested is best-effort and never throws, but it does
+          // spawn a second `claude --version` subprocess internally. Guard it
+          // with the same 3-second budget so a stalled binary can't hang setup.
+          await Promise.race([
+            claude.warnOnceIfUntested(),
+            new Promise<void>((resolve) => setTimeout(resolve, 3000)),
+          ]);
         }
-      } else {
-        // No version check available, just show installed message
+      } catch (error) {
+        logger.debug('Claude version check skipped during setup', { error });
         console.log();
         console.log(chalk.green(`✓ Claude Code is installed`));
         console.log();

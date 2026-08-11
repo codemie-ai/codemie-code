@@ -22,6 +22,17 @@ import {
 import { ProviderRegistry } from '../../../providers/core/registry.js';
 import { adaptProviderResult } from './type-adapters.js';
 import { logger } from '../../../utils/logger.js';
+import { VersionWarningStore } from '../../../utils/version-warnings.js';
+
+/**
+ * Reset the one-time version-warning markers. Prints a single confirmation line.
+ * Returns the number of markers removed (0 when the store file is absent).
+ */
+export async function resetVersionWarnings(): Promise<number> {
+  const { removed } = await VersionWarningStore.clear();
+  console.log(chalk.blueBright(`Cleared version-warnings.json — ${removed} marker(s) removed.`));
+  return removed;
+}
 
 export function createDoctorCommand(): Command {
   const command = new Command('doctor');
@@ -29,7 +40,15 @@ export function createDoctorCommand(): Command {
   command
     .description('Check system health and configuration')
     .option('-v, --verbose', 'Enable verbose debug output with detailed API logs')
-    .action(async (options: { verbose?: boolean }) => {
+    .option(
+      '--reset-version-warnings',
+      'Clear ~/.codemie/version-warnings.json before running checks',
+    )
+    .action(async (options: { verbose?: boolean; resetVersionWarnings?: boolean }) => {
+      if (options.resetVersionWarnings) {
+        await resetVersionWarnings();
+      }
+
       // Enable debug mode if verbose flag is set
       if (options.verbose) {
         process.env.CODEMIE_DEBUG = 'true';

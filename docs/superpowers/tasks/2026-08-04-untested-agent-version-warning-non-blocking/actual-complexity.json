@@ -1,0 +1,112 @@
+{
+  "task": "Replace blocking per-agent supported-version checks with a one-time non-blocking untested-version warning (VersionWarningStore), remove pinned version constants from all four agent plugins, expose --reset-version-warnings on codemie doctor, and ensure ACP/non-interactive paths never block.",
+  "generated": "2026-08-04T00:00:00Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 6,
+      "label": "XXL",
+      "affected": "BaseAgentAdapter, AgentAdapter interface (types.ts), ClaudePlugin, CodexPlugin, GeminiPlugin, KimiPlugin, install command, setup command, update command, AgentsCheck, doctor command, VersionWarningStore (new), isInteractive utility (new)",
+      "layers": "Core/Adapter, Plugin (4 agents), CLI commands (install/setup/update/doctor), State-persistence"
+    },
+    "requirements_clarity": {
+      "score": 3,
+      "label": "M",
+      "status": "Partially Clear",
+      "gaps": "Two design decisions were open at spec time: (1) what 'install --version supported' resolves to after metadata.supportedVersion removal — resolved as an alias for 'latest'; (2) the exact form of the reset mechanism — resolved as a --reset-version-warnings flag on doctor. A code-review fix-up round was needed to address blocking findings, confirming that clarity gaps led to some rework."
+    },
+    "technical_risk": {
+      "score": 4,
+      "label": "L",
+      "risk_factors": "Behavioral change on agent launch path (throw-on-version-mismatch replaced by log-and-proceed in warnOnceIfUntested); blocking code-review findings requiring a fix-up round (8 commits total, reviewed_head fae26e83 plus fix-up acc7b99); silentMode/non-TTY path must never produce inquirer prompts or process.exit; zero pre-existing unit-test coverage on the version-check branch of BaseAgentAdapter.run()",
+      "mitigation": "warnOnceIfUntested() is wrapped in a top-level try/catch so it can never throw; isInteractive() predicate gates chalk banner to TTY-only; 8 new test files added (BaseAgentAdapter.version-warning.test.ts, version-warnings.test.ts, tty.test.ts, AgentsCheck.status.test.ts, reset-version-warnings.test.ts, install.version-selection.test.ts, codex.plugin.version-support.test.ts, kimi.plugin.test.ts); agent-build-setup.ts fixed to remove CLAUDE_SUPPORTED_VERSION import from built dist"
+    },
+    "file_change_estimate": {
+      "score": 5,
+      "label": "XL",
+      "modified_files": 13,
+      "modified_file_list": [
+        "src/agents/core/BaseAgentAdapter.ts",
+        "src/agents/core/__tests__/BaseAgentAdapter.test.ts",
+        "src/agents/core/types.ts",
+        "src/agents/plugins/claude/claude.plugin.ts",
+        "src/agents/plugins/codex/codex.plugin.ts",
+        "src/agents/plugins/gemini/gemini.plugin.ts",
+        "src/agents/plugins/kimi/kimi.plugin.ts",
+        "src/cli/commands/install.ts",
+        "src/cli/commands/setup.ts",
+        "src/cli/commands/update.ts",
+        "src/cli/commands/doctor/checks/AgentsCheck.ts",
+        "src/cli/commands/doctor/index.ts",
+        "tests/setup/agent-build-setup.ts"
+      ],
+      "new_files": 10,
+      "new_file_list": [
+        "src/utils/version-warnings.ts",
+        "src/utils/tty.ts",
+        "src/agents/core/__tests__/BaseAgentAdapter.version-warning.test.ts",
+        "src/agents/plugins/codex/__tests__/codex.plugin.version-support.test.ts",
+        "src/agents/plugins/kimi/__tests__/kimi.plugin.test.ts",
+        "src/cli/commands/__tests__/install.version-selection.test.ts",
+        "src/cli/commands/doctor/__tests__/reset-version-warnings.test.ts",
+        "src/cli/commands/doctor/checks/__tests__/AgentsCheck.status.test.ts",
+        "src/utils/__tests__/tty.test.ts",
+        "src/utils/__tests__/version-warnings.test.ts"
+      ],
+      "affected_dirs": [
+        "src/agents/core",
+        "src/agents/plugins",
+        "src/cli/commands",
+        "src/cli/commands/doctor",
+        "src/utils",
+        "tests/setup",
+        "docs/superpowers/tasks"
+      ]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 4,
+      "label": "L",
+      "layers_changed": [
+        "CLI (install, setup, update, doctor commands)",
+        "Plugin/Agent-Tool (claude, codex, gemini, kimi plugins)",
+        "Core/Adapter (BaseAgentAdapter, AgentAdapter interface)",
+        "DB-Persistence (VersionWarningStore writing ~/.codemie/version-warnings.json)"
+      ],
+      "schema_migration": false,
+      "cross_system": false
+    }
+  },
+  "total": 23,
+  "size": "L",
+  "band_range": "21-26",
+  "files_changed": 30,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Four distinct agent plugin files (claude, codex, gemini, kimi) each had pinned-version constants removed. BaseAgentAdapter — the shared launch gate for all agents — gained warnOnceIfUntested() and a restructured installVersion() method. The AgentAdapter interface in types.ts was extended with two new required methods. Three CLI commands (install, setup, update) and the doctor subsystem (index + AgentsCheck) were updated. A new VersionWarningStore abstraction was introduced. 'Affects multiple workflows or agents' red flag bumped Component Scope from XL (5) to XXL (6)."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "23 source files changed in total (13 modified, 10 new). New file count of 10 exceeds the XL threshold of 4-6 new files; modified count of 13 sits firmly in the XL range (11-15). Changes span 7 distinct directory subtrees across agents, CLI, utils, and tests. Scores XL (5) — the high new-file count is primarily 8 new test files covering previously untested code paths."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "The launch-path behavioral change (blocking version check replaced by silent warn-and-proceed) required a code-review fix-up round (final commit acc7b99 on top of reviewed head fae26e83, 8 commits total), confirming that technical risk was real. The silentMode/non-TTY contract (no chalk banner, no inquirer, no process.exit) is a correctness constraint on ACP consumers. The agent-build-setup.ts integration-test globalSetup imported CLAUDE_SUPPORTED_VERSION from built dist — removing the constant broke all agent integration tests and had to be fixed in the same branch."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Four distinct architectural layers: (1) CLI commands layer — install, setup, update, doctor surface changes; (2) Plugin/Agent-Tool — four agent plugin files, metadata cleanup; (3) Core/Adapter — BaseAgentAdapter and AgentAdapter interface, the shared base class; (4) DB-Persistence — new VersionWarningStore writing version-warnings.json at ~/.codemie/. No external service integration and no schema migration, placing the score at L (4) rather than XL."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from XL (5) to XXL (6): 'Affects multiple workflows or agents' — implementation modifies four distinct agent plugin workflows (claude, codex, gemini, kimi) plus install, update, setup, and doctor command workflows.",
+    "Component Scope: 'Touches core shared utilities' (BaseAgentAdapter is the base class for all agent adapters) — would bump from XXL (6) to 7; capped at 6."
+  ],
+  "split_recommendation": null
+}

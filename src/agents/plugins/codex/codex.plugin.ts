@@ -66,7 +66,8 @@ import { mkdir, realpath as fsRealpath } from 'fs/promises';
 
 /**
  * Supported Codex CLI version
- * Latest version tested and verified with CodeMie backend
+ * Latest version tested and verified with CodeMie backend.
+ * Bump this when a new codex release has been validated with CodeMie.
  *
  * **UPDATE THIS WHEN BUMPING CODEX VERSION**
  */
@@ -74,9 +75,9 @@ const CODEX_SUPPORTED_VERSION = '0.143.0';
 
 /**
  * Minimum supported Codex CLI version
- * Versions below this are known to be incompatible and will be blocked from starting
- * Rule: always 10 minor versions below CODEX_SUPPORTED_VERSION for 0.x Codex releases
- * e.g. supported = 0.143.0 → minimum = 0.133.0
+ * Reference for the oldest version CodeMie has verified against.
+ * Never blocks — the version-check is non-blocking (EPMCDME-13734); the value is
+ * kept as documentation for CodeMie team + display.
  *
  * **UPDATE THIS WHEN BUMPING CODEX VERSION**
  */
@@ -111,9 +112,11 @@ export const CodexPluginMetadata: AgentMetadata = {
 
   sessionAnalyticsReport: true,
 
-  // Version management configuration
-  supportedVersion: CODEX_SUPPORTED_VERSION,       // Latest version tested with CodeMie backend
-  minimumSupportedVersion: CODEX_MINIMUM_SUPPORTED_VERSION, // Minimum version required to run
+  // Version management configuration — reference points for the non-blocking
+  // one-time untested-version notice (EPMCDME-13734). Bumped manually per
+  // CodeMie release as new codex versions are validated.
+  supportedVersion: CODEX_SUPPORTED_VERSION,
+  minimumSupportedVersion: CODEX_MINIMUM_SUPPORTED_VERSION,
 
   dataPaths: {
     home: '.codex', // ~/.codex is fixed for Codex (no XDG convention)

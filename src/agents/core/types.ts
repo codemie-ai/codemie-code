@@ -192,17 +192,30 @@ export interface AgentAnalyticsAdapter {
 }
 
 /**
- * Result of version compatibility check
- * Used to compare installed version against supported version
+ * Installed-version snapshot for an agent adapter.
+ *
+ * Lightweight version query result: just the CLI-reported installed version.
+ * Complementary to `VersionCompatibilityResult` which also carries the
+ * per-agent `supportedVersion` reference and comparison flags.
+ */
+export interface AgentVersionInfo {
+  installedVersion: string | null;
+}
+
+/**
+ * Result of the non-blocking version check against per-agent pinned constants
+ * (`*_SUPPORTED_VERSION`, `*_MINIMUM_SUPPORTED_VERSION` — bumped manually per
+ * CodeMie release). Comparison flags never gate blocking behavior — see
+ * EPMCDME-13734: any mismatch triggers only a one-time non-blocking notice.
  */
 export interface VersionCompatibilityResult {
-  compatible: boolean;              // true if installed version is compatible
+  compatible: boolean;              // true if installed <= supported
   installedVersion: string | null;  // null if not installed
-  supportedVersion: string;         // version from metadata
-  isNewer: boolean;                 // true if installed > supported (requires warning)
-  hasUpdate: boolean;               // true if newer supported version available (for info prompt)
-  isBelowMinimum: boolean;          // true if installed < minimumSupportedVersion (blocks startup)
-  minimumSupportedVersion?: string; // minimum version required to run (from metadata)
+  supportedVersion: string;         // from metadata; 'latest' when unset
+  isNewer: boolean;                 // installed > supported
+  hasUpdate: boolean;               // installed < supported
+  isBelowMinimum: boolean;          // installed < minimumSupportedVersion (informational only)
+  minimumSupportedVersion?: string;
 }
 
 /**
@@ -219,20 +232,19 @@ export interface AgentMetadata {
   cliCommand: string | null;       // 'claude' or null for built-in
 
   /**
-   * Latest supported version tested with CodeMie backend
-   * Used for version compatibility checks
+   * Latest supported version tested with CodeMie backend. Reference point for
+   * the non-blocking one-time untested-version notice (EPMCDME-13734). Bumped
+   * manually per CodeMie release as new agent CLI versions are validated.
    *
-   * Format: Semantic version string (e.g., '2.0.30')
-   * Special values: 'latest', 'stable' (channels)
+   * Format: Semantic version string (e.g., '2.1.218').
    */
   supportedVersion?: string;
 
   /**
-   * Minimum version required to run the agent with CodeMie
-   * Agent startup is blocked if installed version is below this threshold
-   * Configured the same way as supportedVersion (per-agent in metadata)
+   * Oldest version CodeMie has verified against. Reference point only —
+   * never blocks startup (EPMCDME-13734).
    *
-   * Format: Semantic version string (e.g., '2.0.0')
+   * Format: Semantic version string (e.g., '2.1.208').
    */
   minimumSupportedVersion?: string;
 
@@ -824,10 +836,26 @@ export interface AgentAdapter {
   installVersion?(version: string): Promise<string | null>;
 
   /**
-   * Check version compatibility (optional, for version-managed agents)
-   * @returns Version compatibility result
+   * Return the installed-version snapshot for this adapter (lightweight).
+   */
+  getVersionInfo(): Promise<AgentVersionInfo>;
+
+  /**
+   * Compare the installed version against the pinned per-agent constants
+   * (`supportedVersion` / `minimumSupportedVersion`) and return the comparison
+   * flags. Comparison flags are informational only — the caller must not use
+   * them to block (EPMCDME-13734). Optional: adapters without pinned constants
+   * (e.g. built-in) may omit this method.
    */
   checkVersionCompatibility?(): Promise<VersionCompatibilityResult>;
+
+  /**
+   * Emit a one-time "untested version" notice per (agent, agent-version) pair
+   * when the installed version differs from `metadata.supportedVersion`, and
+   * record the marker so future launches stay silent. Never throws, never
+   * blocks. Non-blocking regardless of how far installed drifts from supported.
+   */
+  warnOnceIfUntested(): Promise<void>;
 
   /**
    * Detect installation method (optional, for installation-aware agents)

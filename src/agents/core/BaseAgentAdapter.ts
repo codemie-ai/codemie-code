@@ -1,4 +1,4 @@
-import { AgentMetadata, AgentAdapter, AgentConfig, MCPConfigSummary, ExtensionsScanSummary, VersionCompatibilityResult } from './types.js';
+import { AgentMetadata, AgentAdapter, AgentConfig, MCPConfigSummary, ExtensionsScanSummary, AgentVersionInfo, VersionCompatibilityResult } from './types.js';
 import * as npm from '../../utils/processes.js';
 import { NpmError, createErrorContext } from '../../utils/errors.js';
 import { exec, detectGitBranch, detectGitRemoteRepo } from '../../utils/processes.js';
@@ -29,7 +29,6 @@ import {
 } from './lifecycle-helpers.js';
 import { redactSecrets } from './config-redaction.js';
 import { extractGeneratedConfig } from './print-config.js';
-import inquirer from 'inquirer';
 
 /**
  * Base class for all agent adapters
@@ -167,29 +166,28 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   }
 
   /**
-   * Install agent via npm with specific version
-   * Resolves 'supported' to the version from metadata.supportedVersion
+   * Install agent via npm with a specific version.
    *
-   * Override in agent plugins for non-npm installation (e.g., native installers)
+   * The legacy 'supported' channel is retained as a silent alias for 'latest'
+   * (EPMCDME-13734 removed pinned per-agent supported versions). Override in
+   * agent plugins for non-npm installation (e.g., native installers).
    *
-   * @param version - Specific version, 'supported', or undefined for latest
+   * @param version - Specific version, 'latest', 'supported' (resolves to
+   *                  `metadata.supportedVersion`), or undefined for latest.
    */
   async installVersion(version?: string): Promise<string | null> {
     if (!this.metadata.npmPackage) {
       throw new Error(`${this.displayName} is built-in and cannot be installed`);
     }
 
-    // Resolve 'supported' to actual version from metadata
+    // Resolve the 'supported' channel to the pinned constant from metadata.
     let resolvedVersion: string | undefined = version;
     if (version === 'supported') {
       if (!this.metadata.supportedVersion) {
         throw new Error(`${this.displayName}: No supported version defined in metadata`);
       }
       resolvedVersion = this.metadata.supportedVersion;
-      logger.debug('Resolved version', {
-        from: 'supported',
-        to: resolvedVersion,
-      });
+      logger.debug('Resolved version', { from: 'supported', to: resolvedVersion });
     }
 
     try {
@@ -271,25 +269,29 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   }
 
   /**
-   * Check if installed version is compatible with CodeMie
-   * Compares installed version against metadata.supportedVersion and
-   * metadata.minimumSupportedVersion. Agents override getVersion() only;
-   * the comparison logic is shared for all agents.
+   * Return the installed-version snapshot for this agent.
    *
-   * @returns Version compatibility result with status and version info
+   * Lightweight version query; use `checkVersionCompatibility()` when you also
+   * need the per-agent supported/minimum reference points.
+   */
+  async getVersionInfo(): Promise<AgentVersionInfo> {
+    const installedVersion = await this.getVersion();
+    return { installedVersion };
+  }
+
+  /**
+   * Check the installed version against the per-agent pinned constants
+   * (`metadata.supportedVersion` / `metadata.minimumSupportedVersion`).
+   *
+   * The comparison flags are informational only — the version-check is
+   * non-blocking (EPMCDME-13734): callers must never `throw`, `process.exit`,
+   * or `inquirer.prompt` based on the result. Use `warnOnceIfUntested()` for
+   * the standard one-time non-blocking notice.
    */
   async checkVersionCompatibility(): Promise<VersionCompatibilityResult> {
     const supportedVersion = this.metadata.supportedVersion || 'latest';
     const minimumSupportedVersion = this.metadata.minimumSupportedVersion;
-
     const installedVersion = await this.getVersion();
-
-    logger.debug('Checking version compatibility', {
-      agent: this.metadata.name,
-      installedVersion,
-      supportedVersion,
-      minimumSupportedVersion,
-    });
 
     if (!installedVersion) {
       return {
@@ -318,25 +320,10 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     try {
       const comparison = compareVersions(installedVersion, supportedVersion);
       const hasUpdate = comparison < 0;
-
       let isBelowMinimum = false;
       if (minimumSupportedVersion) {
-        const minimumComparison = compareVersions(installedVersion, minimumSupportedVersion);
-        isBelowMinimum = minimumComparison < 0;
+        isBelowMinimum = compareVersions(installedVersion, minimumSupportedVersion) < 0;
       }
-
-      logger.debug('Version comparison result', {
-        agent: this.metadata.name,
-        comparison,
-        installedVersion,
-        supportedVersion,
-        minimumSupportedVersion,
-        compatible: comparison <= 0,
-        isNewer: comparison > 0,
-        hasUpdate,
-        isBelowMinimum,
-      });
-
       return {
         compatible: comparison <= 0,
         installedVersion,
@@ -348,27 +335,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       };
     } catch (error) {
       const errorContext = createErrorContext(error, { agent: this.metadata.name });
-      const isParseError =
-        error instanceof Error && error.message.includes('Invalid semantic version');
-
-      if (isParseError) {
-        logger.warn('Non-standard version format detected, treating as incompatible', {
-          ...errorContext,
-          operation: 'checkVersionCompatibility',
-          installedVersion,
-          supportedVersion,
-          minimumSupportedVersion,
-        });
-      } else {
-        logger.error('Version compatibility check failed unexpectedly', {
-          ...errorContext,
-          operation: 'checkVersionCompatibility',
-          installedVersion,
-          supportedVersion,
-          minimumSupportedVersion,
-        });
-      }
-
+      logger.warn('[checkVersionCompatibility] version comparison failed, treating as incompatible', {
+        ...errorContext,
+        installedVersion,
+        supportedVersion,
+      });
       return {
         compatible: false,
         installedVersion,
@@ -382,6 +353,94 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
   }
 
   /**
+   * Emit a one-time "untested version" notice per (agent, agent-version)
+   * pair and record the marker so future launches stay silent.
+   *
+   * Fires **only when the installed version does not match** the per-agent
+   * pinned `metadata.supportedVersion` — a user in the tested range is never
+   * notified. Once notified for a given (agent, agent-version), the marker
+   * suppresses the notice on every subsequent launch, regardless of what
+   * CodeMie version the user is on.
+   *
+   * Contract:
+   *  - Never throws. All failures are swallowed and logged; version-check must
+   *    never block agent launch.
+   *  - No `inquirer.prompt`, no `process.exit`.
+   *  - Non-interactive / silentMode / non-TTY: `logger.warn()` only, no stderr banner.
+   *  - Interactive TTY + non-silent: chalk banner to stderr AND `logger.warn()`.
+   *  - No-op when `getVersion()` returns null (nothing to warn about).
+   *  - No-op when `metadata.supportedVersion` is unset (no reference to compare against).
+   *  - No-op when installed matches supported (user in tested range — no mismatch).
+   *  - Running CodeMie version is displayed in the notice for context but is
+   *    NOT part of the marker key — a CodeMie release must not re-nag users
+   *    about an agent version they have already acknowledged (EPMCDME-13734).
+   */
+  async warnOnceIfUntested(): Promise<void> {
+    try {
+      const compat = await this.checkVersionCompatibility();
+      const { installedVersion, supportedVersion } = compat;
+      if (!installedVersion) {
+        return;
+      }
+      if (!this.metadata.supportedVersion) {
+        return;
+      }
+      // No mismatch — user is on the version CodeMie last recorded.
+      if (installedVersion === supportedVersion) {
+        return;
+      }
+
+      const { VersionWarningStore } = await import('../../utils/version-warnings.js');
+      try {
+        if (await VersionWarningStore.hasWarned(this.metadata.name, installedVersion)) {
+          return;
+        }
+      } catch (err) {
+        logger.warn('[warnOnceIfUntested] hasWarned check failed, will re-emit notice', {
+          agent: this.metadata.name,
+          err: String(err),
+        });
+      }
+
+      const { getCurrentCliVersion } = await import('../../utils/cli-updater.js');
+      const codemieVersion = (await getCurrentCliVersion()) ?? 'unknown';
+
+      const { isInteractive } = await import('../../utils/tty.js');
+      const isSilent = this.metadata.silentMode === true;
+      const noticeLine =
+        `CodeMie has verified ${this.metadata.name} v${supportedVersion}; ` +
+        `you are on v${installedVersion} (running CodeMie v${codemieVersion}). ` +
+        `Proceeding — this notice is shown once for this version.`;
+
+      logger.warn(noticeLine, {
+        agent: this.metadata.name,
+        installedVersion,
+        supportedVersion,
+        codemieVersion,
+      });
+
+      if (!isSilent && isInteractive()) {
+        console.error();
+        console.error(chalk.yellow(`⚠  ${noticeLine}`));
+        console.error(chalk.white('   To install the version CodeMie last verified, run:'));
+        console.error(chalk.blueBright(`     codemie install ${this.metadata.name} --supported`));
+        console.error();
+      }
+
+      try {
+        await VersionWarningStore.recordWarning(this.metadata.name, installedVersion);
+      } catch (err) {
+        logger.warn('[warnOnceIfUntested] recordWarning failed, marker will re-emit next launch', {
+          agent: this.metadata.name,
+          err: String(err),
+        });
+      }
+    } catch (err) {
+      logger.warn('[warnOnceIfUntested] non-fatal error, proceeding', { err: String(err) });
+    }
+  }
+
+  /**
    * Run the agent
    */
   async run(
@@ -389,131 +448,9 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
     envOverrides?: Record<string, string>,
     runOptions?: { dryRun?: boolean },
   ): Promise<void> {
-    // Check version compatibility before running (only for agents with a supportedVersion configured)
-    if (this.metadata.supportedVersion) {
-      const compat = await this.checkVersionCompatibility();
-
-      // Scenario 0: Version is below minimum supported — hard block, no override
-      if (compat.isBelowMinimum) {
-        const installedDisplay = compat.installedVersion ?? 'unknown';
-        const minimumDisplay = compat.minimumSupportedVersion ?? 'unknown';
-
-        if (this.metadata.silentMode) {
-          // In silent/ACP mode stdout is a JSON-RPC stream — never write prose to it.
-          // Throw so the caller gets a structured error and the logger captures it.
-          throw new Error(
-            `${this.displayName} v${installedDisplay} is below the minimum supported version ` +
-            `v${minimumDisplay}. Run: codemie install ${this.name}`
-          );
-        }
-
-        console.log();
-        console.log(chalk.red(`✗ ${this.displayName} v${installedDisplay} is no longer supported`));
-        console.log(chalk.red(`  Minimum required version: v${minimumDisplay}`));
-        console.log(chalk.white(`  Recommended version:      v${compat.supportedVersion} `) + chalk.green('(recommended)'));
-        console.log();
-        console.log(chalk.white('  This version is known to be incompatible with CodeMie and must be upgraded.'));
-        console.log();
-
-        const { belowMinChoice } = await inquirer.prompt([
-          {
-            type: 'list',
-            name: 'belowMinChoice',
-            message: 'What would you like to do?',
-            choices: [
-              { name: `Install v${compat.supportedVersion} now and continue`, value: 'install' },
-              { name: 'Exit', value: 'exit' },
-            ],
-            default: 'install',
-          },
-        ]);
-
-        if (belowMinChoice === 'install') {
-          console.log(chalk.blue(`\n  Installing ${this.displayName} v${compat.supportedVersion}...`));
-          await this.installVersion('supported');
-          console.log(); // Add spacing before agent starts
-        } else {
-          console.log(chalk.white('\n  If you want to update manually, run:'));
-          console.log(chalk.blueBright(`     codemie update ${this.name}`));
-          process.exit(0);
-        }
-      } else if (compat.isNewer && !this.metadata.silentMode) {
-        // User is running a newer (untested) version
-        console.log();
-        console.log(chalk.yellow(`⚠️  WARNING: You are running ${this.displayName} v${compat.installedVersion}`));
-        console.log(chalk.yellow(`   CodeMie has only tested and verified ${this.displayName} v${compat.supportedVersion}`));
-        console.log();
-        console.log(chalk.white('   Running a newer version may cause compatibility issues with the CodeMie backend proxy.'));
-        console.log();
-        console.log(chalk.white('   To install the supported version, run:'));
-        console.log(chalk.blueBright(`     codemie install ${this.name} --supported`));
-        console.log();
-        console.log(chalk.white('   Or install a specific version:'));
-        console.log(chalk.blueBright(`     codemie install ${this.name} ${compat.supportedVersion}`));
-        console.log();
-
-        const { newerChoice } = await inquirer.prompt([
-          {
-            type: 'list',
-            name: 'newerChoice',
-            message: 'What would you like to do?',
-            choices: [
-              { name: `Install v${compat.supportedVersion} now and continue`, value: 'install' },
-              { name: 'Continue with current version', value: 'continue' },
-              { name: 'Exit', value: 'exit' },
-            ],
-            default: 'install',
-          },
-        ]);
-
-        if (newerChoice === 'install') {
-          console.log(chalk.blue(`\n   Installing ${this.displayName} v${compat.supportedVersion}...`));
-          await this.installVersion('supported');
-        } else if (newerChoice === 'exit') {
-          console.log(chalk.white('\n   To install the supported version, run:'));
-          console.log(chalk.blueBright(`     codemie install ${this.name} --supported`));
-          console.log();
-          console.log(chalk.white('   Or install a specific version:'));
-          console.log(chalk.blueBright(`     codemie install ${this.name} ${compat.supportedVersion}`));
-          process.exit(0);
-        }
-
-        console.log(); // Add spacing before agent starts
-      }
-      // Scenario 2: Update available (newer supported version exists, non-blocking info)
-      else if (compat.hasUpdate && compat.compatible && !this.metadata.silentMode) {
-        console.log();
-        console.log(chalk.blue('ℹ️  A new supported version of ' + this.displayName + ' is available!'));
-        console.log(chalk.white(`   Current version: v${compat.installedVersion}`));
-        console.log(chalk.white(`   Latest version:  v${compat.supportedVersion} `) + chalk.green('(recommended)'));
-        console.log();
-
-        const { updateChoice } = await inquirer.prompt([
-          {
-            type: 'list',
-            name: 'updateChoice',
-            message: `What would you like to do?`,
-            choices: [
-              { name: `Install v${compat.supportedVersion} now and continue`, value: 'install' },
-              { name: 'Continue with current version', value: 'continue' },
-              { name: 'Exit', value: 'exit' },
-            ],
-            default: 'install',
-          },
-        ]);
-
-        if (updateChoice === 'install') {
-          console.log(chalk.blue(`\n   Installing ${this.displayName} v${compat.supportedVersion}...`));
-          await this.installVersion('supported');
-        } else if (updateChoice === 'exit') {
-          console.log(chalk.white('\n  If you want to update manually, run:'));
-          console.log(chalk.blueBright(`     codemie update ${this.name}`));
-          process.exit(0);
-        }
-
-        console.log(); // Add spacing before agent starts
-      }
-    }
+    // One-time, non-blocking untested-version notice. Replaces the previous
+    // blocking inquirer.prompt flow — see EPMCDME-13734.
+    await this.warnOnceIfUntested();
 
     // Generate session ID at the very start - this is the source of truth
     // All components (logger, metrics, proxy) will use this same session ID
