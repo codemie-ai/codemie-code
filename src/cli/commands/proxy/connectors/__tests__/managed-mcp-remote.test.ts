@@ -128,6 +128,27 @@ describe('fetchManagedMcpServers', () => {
     expect(await fetchManagedMcpServers('claude-desktop', 'https://codemie.test')).toEqual([]);
   });
 
+  it('returns null when the backend sent entries but none survived validation', async () => {
+    getRawMock.mockResolvedValue(rawOk([
+      { name: 'broken1', transport: 'http', url: 'https://a', oauth: { clientId: 'x' } },
+      { name: 'broken2', transport: 'http', url: 'https://b', oauth: { clientId: 'y' } },
+    ]));
+
+    // An authoritative "[]" would revoke the tenant's org MCP servers; a backend
+    // bug must look like a failure instead.
+    expect(await fetchManagedMcpServers('claude-desktop', 'https://codemie.test')).toBeNull();
+  });
+
+  it('returns the valid subset when only some entries are invalid', async () => {
+    getRawMock.mockResolvedValue(rawOk([
+      { name: 'good', transport: 'http', url: 'https://good', oauth: true },
+      { name: 'broken', transport: 'http', url: 'https://bad', oauth: { clientId: 'x' } },
+    ]));
+
+    const result = await fetchManagedMcpServers('claude-desktop', 'https://codemie.test');
+    expect(result).toEqual([{ name: 'good', transport: 'http', url: 'https://good', oauth: true }]);
+  });
+
   const OAUTH = {
     clientId: 'codemie-mcp-proxy',
     scope: 'openid profile email',

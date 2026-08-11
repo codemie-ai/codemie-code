@@ -155,7 +155,19 @@ export async function fetchManagedMcpServers(
     // A non-array body is a contract violation → treat as failure (null), so the
     // caller does not mistake it for an authoritative "empty catalog".
     if (!Array.isArray(json)) return null;
-    return json.filter(isValidCanonicalEntry).map(pickCanonicalFields);
+    const valid = json.filter(isValidCanonicalEntry).map(pickCanonicalFields);
+    const dropped = json.length - valid.length;
+    if (dropped > 0) {
+      logger.warn(
+        '[proxy] Managed MCP entries dropped by validation',
+        ...sanitizeLogArgs({ received: json.length, kept: valid.length, dropped }),
+      );
+    }
+    // A non-empty payload where NOTHING survived is a backend contract failure,
+    // not an authoritative empty catalog. Returning [] here would make
+    // writeDesktopConfig revoke every org MCP server the tenant has.
+    if (json.length > 0 && valid.length === 0) return null;
+    return valid;
   } catch (error) {
     logger.warn(
       '[proxy] Managed MCP fetch threw',
