@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import { AgentRegistry } from '@/agents/registry.js';
+import { getAgentUninstallCommand, getUserFacingAgentName, resolveAgentAlias } from '@/agents/core/agent-aliases.js';
 import { AgentNotFoundError, getErrorMessage } from '@/utils/errors.js';
 import {
   STATUSLINE_NAME,
@@ -54,7 +55,7 @@ export function createUninstallCommand(): Command {
               const versionStr = version ? chalk.white(` (${version})`) : '';
 
               console.log(chalk.bold(`  ${agent.displayName}`) + versionStr);
-              console.log(`    Command: ${chalk.cyan(`codemie uninstall ${agent.name}`)}`);
+              console.log(`    Command: ${chalk.cyan(getAgentUninstallCommand(agent.name))}`);
               console.log(`    ${chalk.white(agent.description)}`);
               console.log();
             }
@@ -80,7 +81,8 @@ export function createUninstallCommand(): Command {
         }
 
         // Try agent first
-        const agent = AgentRegistry.getAgent(name);
+        const canonicalName = resolveAgentAlias(name) || name;
+        const agent = AgentRegistry.getAgent(canonicalName);
 
         if (agent) {
           // Check if installed
@@ -151,7 +153,7 @@ export function createUninstallCommand(): Command {
           console.log(chalk.cyan('💡 Available agents and frameworks:'));
           const allAgents = AgentRegistry.getManageableAgents();
           for (const agent of allAgents) {
-            console.log(chalk.white(`   • ${agent.name}`));
+            console.log(chalk.white(`   • ${getUserFacingAgentName(agent.name)}`));
           }
 
           const { FrameworkRegistry } = await import('../../frameworks/index.js');

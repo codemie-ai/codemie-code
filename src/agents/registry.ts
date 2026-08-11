@@ -40,8 +40,6 @@ export class AgentRegistry {
     AgentRegistry.registerPlugin(new PiPlugin());
     AgentRegistry.registerPlugin(new KimiPlugin());
     AgentRegistry.registerPlugin(new KimiAcpPlugin());
-    // Analytics-only: CodeMie never installs, launches, or manages Copilot — this
-    // registration exists so the analytics pipeline can reach its session adapter.
     AgentRegistry.registerPlugin(new CopilotCliPlugin());
 
     AgentRegistry.initialized = true;
