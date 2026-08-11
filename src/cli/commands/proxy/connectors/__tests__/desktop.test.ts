@@ -20,6 +20,7 @@ import {
   resolveDesktopOAuth,
   selectDesktopClaudeModels,
   selectPreferredClaudeModels,
+  summarizeManagedOauthShapes,
   writeDesktopConfig,
 } from '../desktop.js';
 
@@ -803,5 +804,21 @@ describe('cloneManagedEntry', () => {
     const copy = cloneManagedEntry(entry);
     expect(copy).toEqual(entry);
     expect(copy).not.toBe(entry);
+  });
+});
+
+describe('summarizeManagedOauthShapes', () => {
+  it('counts object, boolean and absent oauth shapes', () => {
+    expect(summarizeManagedOauthShapes([
+      { name: 'obj', url: 'https://a', oauth: { ...OAUTH_CONFIG } },
+      { name: 'flag', url: 'https://b', oauth: true },
+      { name: 'off', url: 'https://c', oauth: false },
+      { name: 'absent', url: 'https://d' },
+    ])).toEqual({ oauthConfigured: 1, oauthFlagged: 1, noAuth: 2 });
+  });
+
+  it('returns zeroes for a failed fetch (null) and for an empty list', () => {
+    expect(summarizeManagedOauthShapes(null)).toEqual({ oauthConfigured: 0, oauthFlagged: 0, noAuth: 0 });
+    expect(summarizeManagedOauthShapes([])).toEqual({ oauthConfigured: 0, oauthFlagged: 0, noAuth: 0 });
   });
 });

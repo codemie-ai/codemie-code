@@ -314,6 +314,31 @@ export function cloneManagedEntry(entry: ManagedMcpServerEntry): ManagedMcpServe
   return copy;
 }
 
+export interface ManagedOauthShapeSummary {
+  /** Entries forwarding a structured OAuth client configuration. */
+  oauthConfigured: number;
+  /** Entries carrying only the legacy `oauth: true` flag. */
+  oauthFlagged: number;
+  /** Entries with `oauth: false` or no auth information at all. */
+  noAuth: number;
+}
+
+/**
+ * Count the resolved oauth shapes so a silent downgrade (every entry landing on
+ * `false`) or a mass validation drop is visible in the daemon log.
+ */
+export function summarizeManagedOauthShapes(
+  entries: ManagedMcpServerEntry[] | null,
+): ManagedOauthShapeSummary {
+  const summary: ManagedOauthShapeSummary = { oauthConfigured: 0, oauthFlagged: 0, noAuth: 0 };
+  for (const entry of entries ?? []) {
+    if (entry.oauth !== undefined && typeof entry.oauth === 'object') summary.oauthConfigured += 1;
+    else if (entry.oauth === true) summary.oauthFlagged += 1;
+    else summary.noAuth += 1;
+  }
+  return summary;
+}
+
 export interface ReconcileResult {
   servers: unknown[];
   managedNames: string[];
