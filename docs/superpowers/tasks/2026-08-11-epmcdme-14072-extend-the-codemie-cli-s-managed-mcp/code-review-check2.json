@@ -1,0 +1,66 @@
+{
+  "decision": "request-changes",
+  "rationale": "Round-3 fix commit 40c2c5a resolves all four findings from the check round, and an acceptance re-audit of the whole branch at HEAD (run beyond the check-round default, because three rounds had rewritten the collision logic since acceptance last saw it) now finds ALL EIGHT acceptance criteria passing, including AC6 which the prior verdict carried as partial. One blocking item remains and it is a product decision rather than a defect: the auth floor introduced by 40c2c5a rewrites a backend entry the backend published as no-auth into the bundled default's oauth:true, which is behavior absent from the spec and in tension with Decision 1's courier framing, so resolveDesktopOAuth is no longer the single decider of what gets written (CR-007). CR-008 records that the floor keys on exact URL equality while the collision check keys on name-or-URL, so a trailing-slash variant drops the default by name yet skips the floor by URL. Confidence is medium: the blind and acceptance lenses disagreed about the unparseable-config path (CR-009) and the check round runs no reachability verifier, so that one is recorded with the disagreement rather than adjudicated.",
+  "confidence": "medium",
+  "risk_flags": ["security"],
+  "business_review": [
+    {"kind": "spec", "item": "AC1: structured oauth object written into configLibrary/<UUID>.json intact", "status": "pass", "notes": "Re-audited at HEAD. Whole-value copy on every hop through to JSON.stringify; disk-readback test covers it."},
+    {"kind": "spec", "item": "AC2: no entry written with oauth:false when the backend supplied OAuth configuration", "status": "pass", "notes": "Re-audited at HEAD. resolveDesktopOAuth returns the object copy before any boolean branch; a gate-failing object never reaches the mapper."},
+    {"kind": "spec", "item": "AC3: legacy auth:'oauth' still produces oauth:true", "status": "pass", "notes": "Re-audited at HEAD."},
+    {"kind": "spec", "item": "AC4: unknown keys inside the oauth object survive to the Desktop config", "status": "pass", "notes": "Re-audited at HEAD. No allowlist on any hop; audience/pkce covered end-to-end in both test files."},
+    {"kind": "spec", "item": "AC5: a backend entry colliding with a bundled default replaces it", "status": "pass", "notes": "Re-audited at HEAD. Both name-collision and URL-collision paths verified. This is the criterion the last three commits exist to satisfy — a revert forfeits it."},
+    {"kind": "spec", "item": "AC6: a transient backend failure never revokes previously-managed org entries", "status": "pass", "notes": "UPGRADED from partial. The acceptance lens traced both failure modes the dedup flip could have opened — shadow-by-name and shadow-by-URL — and found both closed by selectDefaultsForFailedFetch, with marker state neither read nor written on a failed fetch. Corresponding tests exist."},
+    {"kind": "spec", "item": "AC7: a backend emitting only malformed oauth objects does not revoke the tenant's org MCPs", "status": "pass", "notes": "Re-audited at HEAD. Lives in managed-mcp-remote.ts, outside the three collision commits."},
+    {"kind": "spec", "item": "AC8: lint, typecheck, build and the full test suite pass", "status": "pass", "notes": "Out-of-band evidence at HEAD: lint and typecheck exit 0, unit project 2978 passed / 1 pre-existing platform-gated skip. Build was not separately attested in that evidence and should be confirmed at Stage 7."},
+    {"kind": "spec", "item": "Sections 1-8 (types, validation, field preservation, precedence, dedup flip, aliasing, empty-catalog mitigation, observability)", "status": "pass", "notes": "All eight re-audited at HEAD and passing. Section 8 now carries two breakdowns: the org-catalog one at index.ts and a second over the list actually serialized, so shape counts reconcile with managedMcpServerCount."},
+    {"kind": "spec", "item": "Decision 4: on name-or-URL collision, a backend entry beats a bundled default", "status": "partial", "notes": "The backend wins identity, URL, ordering and any oauth object it supplies — but NOT auth: the floor rewrites a no-auth colliding entry to the default's oauth when URLs match. Absent from the spec and in tension with Decision 1. See CR-007; this is the one item blocking the gate."},
+    {"kind": "spec", "item": "Decisions 1-3 and the error-handling contract", "status": "pass", "notes": "Re-audited at HEAD. No OAuth-flow machinery added; all three shapes accepted; sanity gate not an allowlist; every error branch present and exercised."},
+    {"kind": "spec", "item": "Non-goals respected", "status": "pass", "notes": "Re-audited at HEAD. McpOAuthProvider, mcp-auth.plugin.ts, the SSO origin allowlist, the VS Code connector, mcp-loader.ts and mcp-config.ts are untouched; marker state still persists only { managedNames }; the bundled defaults file still carries booleans only."}
+  ],
+  "standards_review": [
+    {"kind": "commit-format", "status": "pass", "notes": "Carried forward and re-confirmed for 40c2c5a: fix(proxy): scope the managed MCP oauth floor to matching urls, with the ticket key in the body footer. The seven prior commits are untouched."},
+    {"kind": "code-quality", "status": "pass", "notes": "Carried forward and re-confirmed: lint and typecheck exit 0 at HEAD; no `any` in production code; explicit return types on new exports; logging via logger + sanitizeLogArgs."},
+    {"kind": "security", "status": "partial", "notes": "Carried forward. CR-007 is a deliberate security-positive behavior lacking spec authorization; CR-008 is a real gap in that same protection."}
+  ],
+  "findings": [
+    {
+      "id": "CR-007",
+      "severity": "major",
+      "triage": "decision_needed",
+      "file": "src/cli/commands/proxy/connectors/desktop.ts",
+      "line": 372,
+      "title": "The OAuth auth floor is undocumented scope that contradicts Decision 1 and section 4",
+      "problem": "mergeManagedMcpServers rewrites a backend entry that resolves to no auth into the colliding bundled default's oauth whenever the two URLs match, so an entry the backend published as auth:'none' or oauth:false is written as oauth:true. No such rule exists in the spec: section 4's precedence ends at 'otherwise false', and Decision 1 defines the CLI as a courier that forwards what the backend supplies. resolveDesktopOAuth is therefore no longer the single decider of the written value.",
+      "impact": "Defensible security behavior — it is what closes CR-002 for the same endpoint — but it is unapproved scope, and it silently overrides an explicit backend instruction. A tenant that deliberately publishes an unauthenticated endpoint at a bundled default's URL gets OAuth forced on, which Claude Desktop will then attempt against a server that may not implement it.",
+      "recommendation": "A product decision, not an engineering one. Either adopt the floor into the spec as a fifth resolved decision (stating that a bundled default's auth is a floor for its own endpoint and the backend cannot lower it), or remove the floor and accept that a backend entry at a default's URL may be written unauthenticated. Whichever is chosen, update the spec and section 4 so the code and the spec agree."
+    },
+    {
+      "id": "CR-008",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connectors/desktop.ts",
+      "line": 351,
+      "title": "The floor keys on exact URL equality while the collision check keys on name-or-URL",
+      "problem": "collidesWithManagedEntry drops a bundled default when the backend entry matches by name OR by URL, but the auth floor applies only when bundled.url === entry.url exactly. A backend entry reusing a default's name at a trailing-slash, host-case or query-string variant of its URL therefore removes the default by name and escapes the floor by URL.",
+      "impact": "The endpoint is written unauthenticated — the precise downgrade the floor was added to close. Reachable with any URL near-miss, which the deferred URL-normalization finding shows is already a live hazard in this codebase.",
+      "recommendation": "Use one shared endpoint-identity predicate for both the collision check and the floor so they cannot disagree. Normalizing trailing slash and host case in that predicate would also close the deferred double-registration finding; if normalization is out of scope, at minimum make the floor use the same name-or-URL test as the collision check."
+    },
+    {
+      "id": "CR-009",
+      "severity": "major",
+      "triage": "decision_needed",
+      "file": "src/cli/commands/proxy/connectors/desktop.ts",
+      "line": 425,
+      "title": "Lens disagreement: unparseable stored managed list seeds nothing but is still overwritten with []",
+      "problem": "selectDefaultsForFailedFetch uses the new parseManagedServerList, which distinguishes parsed from unparseable and deliberately seeds nothing when the stored value is unreadable. reconcileManagedMcpServers still uses the pre-existing parseJsonArray, which maps that same value to []. The run therefore writes an empty array. The blind lens read this as new data loss destroying user-added entries; the acceptance lens read it as neutral, on the grounds that the prior value was already undecodable and the base code discarded it identically.",
+      "impact": "The two readings differ on whether anything recoverable is lost. Both agree the two helpers reach opposite conclusions about one input, and that the accompanying test asserts the empty-array outcome rather than preservation. The disputed sub-case is a stored value that is decodable JSON but not an array, where data exists and is discarded.",
+      "recommendation": "Adjudicate before shipping: confirm whether a decodable-but-non-array stored value can occur in practice. If it can, make reconcileManagedMcpServers share parseManagedServerList's parsed/unparseable distinction and preserve the existing list rather than writing []. If it cannot, the behavior is pre-existing and this should be deferred with the other pre-existing findings rather than fixed here."
+    }
+  ],
+  "finding_status": [
+    {"id": "CR-003", "status": "resolved", "notes": "The group-level colliding.some(...) predicate is gone; the auth decision moved onto the individual entry via the resolvedOrg map, so 'any' can no longer stand in for 'each'."},
+    {"id": "CR-004", "status": "resolved", "notes": "Suppression removed entirely — no org entry is dropped, so no live name can fall out of the managed set while remaining in the marker. A two-run test covers the internal-server-loses-auth case and asserts the tenant URL survives. Three existing tests were changed; I verified independently that all three were added one commit earlier by fccae6b and asserted the tenant URL being replaced by the public endpoint, which IS this finding — they pinned the defect and could not survive any correct fix."},
+    {"id": "CR-005", "status": "resolved", "notes": "parseManagedServerList returns a discriminated parsed/unparseable result and a present-but-unreadable list now seeds nothing and logs a warn; getManagedMcpServerUrl restores name/URL symmetry. See CR-009 for the unresolved question about what the reconcile side then writes."},
+    {"id": "CR-006", "status": "resolved", "notes": "The summary is now taken over the reconciled array, so the shape counts sum to managedMcpServerCount."}
+  ]
+}

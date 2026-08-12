@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { CodeMieSSO } from '@/providers/plugins/sso/sso.auth.js';
 import { HTTPClient } from '@/providers/core/base/http-client.js';
-import { fetchManagedMcpServers } from '../managed-mcp-remote.js';
+import { fetchManagedMcpServers, isValidOAuthConfig } from '../managed-mcp-remote.js';
 
 const CREDS = { apiUrl: 'https://api.codemie.test', cookies: { codemie_access_token: 'abc', sid: 'xyz' } };
 
@@ -126,5 +126,175 @@ describe('fetchManagedMcpServers', () => {
   it('returns an empty array (not null) on a successful empty response', async () => {
     getRawMock.mockResolvedValue(rawOk([]));
     expect(await fetchManagedMcpServers('claude-desktop', 'https://codemie.test')).toEqual([]);
+  });
+
+  it('returns null when the backend sent entries but none survived validation', async () => {
+    getRawMock.mockResolvedValue(rawOk([
+      { name: 'broken1', transport: 'http', url: 'https://a', oauth: { clientId: 'x' } },
+      { name: 'broken2', transport: 'http', url: 'https://b', oauth: { clientId: 'y' } },
+    ]));
+
+    // An authoritative "[]" would revoke the tenant's org MCP servers; a backend
+    // bug must look like a failure instead.
+    expect(await fetchManagedMcpServers('claude-desktop', 'https://codemie.test')).toBeNull();
+  });
+
+  it('returns the valid subset when only some entries are invalid', async () => {
+    getRawMock.mockResolvedValue(rawOk([
+      { name: 'good', transport: 'http', url: 'https://good', oauth: true },
+      { name: 'broken', transport: 'http', url: 'https://bad', oauth: { clientId: 'x' } },
+    ]));
+
+    const result = await fetchManagedMcpServers('claude-desktop', 'https://codemie.test');
+    expect(result).toEqual([{ name: 'good', transport: 'http', url: 'https://good', oauth: true }]);
+  });
+
+  const OAUTH = {
+    clientId: 'codemie-mcp-proxy',
+    scope: 'openid profile email',
+    callbackHost: 'localhost',
+    callbackPort: 3118,
+    authorizationUrl: 'https://auth.codemie.test/realms/codemie-prod/protocol/openid-connect/auth?kc_idp_hint=epam-oidc&prompt=login',
+    tokenUrl: 'https://auth.codemie.test/realms/codemie-prod/protocol/openid-connect/token',
+  };
+
+  it('keeps a structured oauth object intact, including unknown keys', async () => {
+    getRawMock.mockResolvedValue(rawOk([
+      {
+        name: 'onehub_core',
+        transport: 'http',
+        url: 'https://mcp.example.com/mcp/onehub_core',
+        oauth: { ...OAUTH, audience: 'onehub', pkce: true },
+      },
+    ]));
+
+    const result = await fetchManagedMcpServers('claude-desktop', 'https://codemie.test');
+
+    expect(result).toEqual([
+      {
+        name: 'onehub_core',
+        transport: 'http',
+        url: 'https://mcp.example.com/mcp/onehub_core',
+        oauth: { ...OAUTH, audience: 'onehub', pkce: true },
+      },
+    ]);
+  });
+
+  it('copies the oauth object rather than aliasing the parsed payload', async () => {
+    getRawMock.mockResolvedValue(rawOk([
+      { name: 'onehub_core', transport: 'http', url: 'https://mcp.example.com/mcp/onehub_core', oauth: OAUTH },
+    ]));
+
+    const result = await fetchManagedMcpServers('claude-desktop', 'https://codemie.test');
+
+    expect(result?.[0].oauth).toEqual(OAUTH);
+  });
+
+  it('drops entries whose oauth object is missing a required field', async () => {
+    const { clientId: _dropClientId, ...noClientId } = OAUTH;
+    const { authorizationUrl: _dropAuthUrl, ...noAuthUrl } = OAUTH;
+    const { tokenUrl: _dropTokenUrl, ...noTokenUrl } = OAUTH;
+    getRawMock.mockResolvedValue(rawOk([
+      { name: 'ok', transport: 'http', url: 'https://ok', oauth: OAUTH },
+      { name: 'noclient', transport: 'http', url: 'https://a', oauth: noClientId },
+      { name: 'noauthurl', transport: 'http', url: 'https://b', oauth: noAuthUrl },
+      { name: 'notokenurl', transport: 'http', url: 'https://c', oauth: noTokenUrl },
+      { name: 'blankclient', transport: 'http', url: 'https://d', oauth: { ...OAUTH, clientId: '   ' } },
+    ]));
+
+    const result = await fetchManagedMcpServers('claude-desktop', 'https://codemie.test');
+    expect(result?.map((e) => e.name)).toEqual(['ok']);
+  });
+
+  it('drops entries whose optional oauth fields have the wrong type', async () => {
+    getRawMock.mockResolvedValue(rawOk([
+      { name: 'ok', transport: 'http', url: 'https://ok', oauth: OAUTH },
+      { name: 'badport', transport: 'http', url: 'https://a', oauth: { ...OAUTH, callbackPort: 3118.5 } },
+      { name: 'zeroport', transport: 'http', url: 'https://b', oauth: { ...OAUTH, callbackPort: 0 } },
+      { name: 'hugeport', transport: 'http', url: 'https://c', oauth: { ...OAUTH, callbackPort: 70000 } },
+      { name: 'strport', transport: 'http', url: 'https://d', oauth: { ...OAUTH, callbackPort: '3118' } },
+      { name: 'badscope', transport: 'http', url: 'https://e', oauth: { ...OAUTH, scope: 42 } },
+      { name: 'badhost', transport: 'http', url: 'https://f', oauth: { ...OAUTH, callbackHost: [] } },
+    ]));
+
+    const result = await fetchManagedMcpServers('claude-desktop', 'https://codemie.test');
+    expect(result?.map((e) => e.name)).toEqual(['ok']);
+  });
+
+  it('drops entries whose oauth is an array or a non-object scalar', async () => {
+    getRawMock.mockResolvedValue(rawOk([
+      { name: 'ok', transport: 'http', url: 'https://ok', oauth: OAUTH },
+      { name: 'arr', transport: 'http', url: 'https://a', oauth: [OAUTH] },
+      { name: 'str', transport: 'http', url: 'https://b', oauth: 'oauth' },
+      { name: 'num', transport: 'http', url: 'https://c', oauth: 1 },
+    ]));
+
+    const result = await fetchManagedMcpServers('claude-desktop', 'https://codemie.test');
+    expect(result?.map((e) => e.name)).toEqual(['ok']);
+  });
+
+  it('accepts the boolean oauth shape and treats oauth: null as absent', async () => {
+    getRawMock.mockResolvedValue(rawOk([
+      { name: 'flagtrue', transport: 'http', url: 'https://a', oauth: true },
+      { name: 'flagfalse', transport: 'http', url: 'https://b', oauth: false },
+      { name: 'nulled', transport: 'http', url: 'https://c', oauth: null },
+    ]));
+
+    const result = await fetchManagedMcpServers('claude-desktop', 'https://codemie.test');
+    expect(result).toEqual([
+      { name: 'flagtrue', transport: 'http', url: 'https://a', oauth: true },
+      { name: 'flagfalse', transport: 'http', url: 'https://b', oauth: false },
+      { name: 'nulled', transport: 'http', url: 'https://c' },
+    ]);
+  });
+
+  it('still accepts the legacy auth enum alongside the new shape', async () => {
+    getRawMock.mockResolvedValue(rawOk([
+      { name: 'legacy', transport: 'http', url: 'https://a', auth: 'oauth' },
+      { name: 'modern', transport: 'http', url: 'https://b', oauth: OAUTH },
+    ]));
+
+    const result = await fetchManagedMcpServers('claude-desktop', 'https://codemie.test');
+    expect(result).toEqual([
+      { name: 'legacy', transport: 'http', url: 'https://a', auth: 'oauth' },
+      { name: 'modern', transport: 'http', url: 'https://b', oauth: OAUTH },
+    ]);
+  });
+});
+
+describe('isValidOAuthConfig', () => {
+  const VALID = {
+    clientId: 'codemie-mcp-proxy',
+    authorizationUrl: 'https://auth.codemie.test/auth',
+    tokenUrl: 'https://auth.codemie.test/token',
+  };
+
+  it('accepts the minimal required set', () => {
+    expect(isValidOAuthConfig(VALID)).toBe(true);
+  });
+
+  it('accepts optional fields with correct types and unknown extra keys', () => {
+    expect(isValidOAuthConfig({
+      ...VALID,
+      scope: 'openid profile email',
+      callbackHost: 'localhost',
+      callbackPort: 3118,
+      somethingNew: { nested: true },
+    })).toBe(true);
+  });
+
+  it('rejects null, arrays, scalars and booleans', () => {
+    expect(isValidOAuthConfig(null)).toBe(false);
+    expect(isValidOAuthConfig([VALID])).toBe(false);
+    expect(isValidOAuthConfig('oauth')).toBe(false);
+    expect(isValidOAuthConfig(true)).toBe(false);
+    expect(isValidOAuthConfig(undefined)).toBe(false);
+  });
+
+  it('rejects a callbackPort outside 1..65535 or non-integer', () => {
+    expect(isValidOAuthConfig({ ...VALID, callbackPort: 0 })).toBe(false);
+    expect(isValidOAuthConfig({ ...VALID, callbackPort: 65536 })).toBe(false);
+    expect(isValidOAuthConfig({ ...VALID, callbackPort: 3118.5 })).toBe(false);
+    expect(isValidOAuthConfig({ ...VALID, callbackPort: 3118 })).toBe(true);
   });
 });

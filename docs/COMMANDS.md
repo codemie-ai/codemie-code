@@ -198,6 +198,17 @@ Behavior:
 - uses the effective active CodeMie profile by default (including a local selection that references a global profile)
 - `--profile` overrides for the current run only
 - fails if the resolved profile is not a CodeMie SSO profile
+- writes to Claude Desktop's config library, resolved per platform:
+
+| Platform | Config library |
+|---|---|
+| macOS | `~/Library/Application Support/Claude-3p/configLibrary/` |
+| Windows | `%LOCALAPPDATA%\Claude-3p\configLibrary\` |
+| Linux | `$XDG_CONFIG_HOME/Claude-3p/configLibrary/`, else `~/.config/Claude-3p/configLibrary/` |
+
+On Linux this requires Claude Desktop's Ubuntu/Debian beta. If `/etc/claude-desktop/managed-settings.json` is present, the command warns that the write **may** have no effect: Claude Desktop applies a managed (MDM) source in preference to local configuration. The check is presence-only — the file is never read.
+
+The warning is not a verdict. A managed source that sets only `disableAutoUpdates` and `autoUpdaterEnforcementHours` leaves every other setting local, so the write still applies. If routing really is being ignored, ask your administrator to carry the gateway settings in the managed source — do not delete the file, which is root-owned and typically redeployed by MDM.
 
 Recommended setup:
 

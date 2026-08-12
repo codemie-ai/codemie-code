@@ -4,6 +4,7 @@ import { join } from 'path';
 import { resolveHomeDir, normalizePathSeparators } from '@/utils/paths.js';
 import type { LocalTelemetryDiscoveredSession } from '@/telemetry/runtime/types.js';
 import { logger } from '@/utils/logger.js';
+import { sanitizeLogArgs } from '@/utils/security.js';
 import {
   getClaudeDesktopCodeSessionsRoot,
   getClaudeDesktopLocalSessionsRoot
@@ -93,7 +94,21 @@ async function resolveClaudeTranscriptPath(metadata: DesktopMetadata): Promise<s
 
 async function walk(root: string): Promise<string[]> {
   const files: string[] = [];
-  const entries = await readdir(root, { withFileTypes: true });
+
+  // A directory that is unreadable (root-owned leftovers under ~/.config) or
+  // deleted between listing and descent must cost us that subtree only. This
+  // rejection would otherwise propagate through DesktopTelemetryRuntime.start()
+  // and abort the proxy daemon before it writes its state file.
+  let entries;
+  try {
+    entries = await readdir(root, { withFileTypes: true });
+  } catch (error) {
+    logger.debug(
+      '[claude-desktop] Skipping unreadable session directory',
+      ...sanitizeLogArgs({ root, error: error instanceof Error ? error.message : String(error) })
+    );
+    return files;
+  }
 
   for (const entry of entries) {
     const fullPath = join(root, entry.name);
