@@ -490,7 +490,7 @@ Proxy Stop
 
 When the proxy daemon is started in Desktop mode, the daemon also starts a local telemetry runtime for Claude Desktop 3P:
 
-- Discovers session metadata under `~/Library/Application Support/Claude-3p/local-agent-mode-sessions/`
+- Discovers session metadata under `<config root>/local-agent-mode-sessions/`, where the config root is `~/Library/Application Support/Claude-3p/` on macOS, `%LOCALAPPDATA%\Claude-3p\` on Windows, and `$XDG_CONFIG_HOME/Claude-3p/` (else `~/.config/Claude-3p/`) on Linux
 - Reads sibling `audit.jsonl` transcripts for each detected `local_<session>` directory
 - Correlates each local Desktop session to a CodeMie session stored in `~/.codemie/sessions/`
 - Normalizes Desktop events into the existing Claude metrics/conversation processors

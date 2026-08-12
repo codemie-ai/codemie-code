@@ -2,7 +2,10 @@ import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { getClaudeDesktopBaseDir } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
+import {
+  getClaudeDesktopBaseDir,
+  getClaudeDesktopManagedSettingsPath,
+} from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
 import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { getCodemiePath } from '@/utils/paths.js';
@@ -643,11 +646,30 @@ export function buildGatewayConfig(proxyUrl: string, gatewayKey: string): Deskto
 
 /**
  * Returns the base directory where Claude Desktop (3P) stores its config.
- * macOS: ~/Library/Application Support/Claude-3p
- * Windows: %APPDATA%\Claude-3p
+ * macOS:   ~/Library/Application Support/Claude-3p
+ * Windows: %LOCALAPPDATA%\Claude-3p
+ * Linux:   $XDG_CONFIG_HOME/Claude-3p, else ~/.config/Claude-3p
  */
 export function getDesktopBaseDir(): string {
   return getClaudeDesktopBaseDir();
+}
+
+/**
+ * Explains why a local config write may not take effect, or null when nothing
+ * is in the way. Claude Desktop applies a managed (MDM) source in preference to
+ * the local config library, ignoring local values entirely.
+ *
+ * The path is injectable so callers and tests can supply one; by default it is
+ * resolved from the platform.
+ */
+export function describeManagedSettingsOverride(
+  managedSettingsPath: string | null = getClaudeDesktopManagedSettingsPath()
+): string | null {
+  if (!managedSettingsPath || !existsSync(managedSettingsPath)) return null;
+  return (
+    `${managedSettingsPath} exists. Claude Desktop applies managed settings ` +
+    `instead of local configuration, so this write may have no effect.`
+  );
 }
 
 /**

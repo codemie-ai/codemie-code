@@ -3,17 +3,19 @@
  * @group unit
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { tmpdir } from 'os';
-import { join } from 'path';
+import { homedir, tmpdir } from 'os';
+import { isAbsolute, join } from 'path';
 import { writeFile, readFile, mkdir, rm } from 'fs/promises';
 import { existsSync } from 'fs';
 
 import { logger } from '@/utils/logger.js';
+import { getClaudeDesktopManagedSettingsPath } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
 
 import {
   buildGatewayConfig,
   cloneManagedEntry,
   DEFAULT_MANAGED_MCP_SERVERS,
+  describeManagedSettingsOverride,
   fetchClaudeModels,
   getDesktopBaseDir,
   getDesktopConfigPath,
@@ -69,22 +71,114 @@ describe('buildGatewayConfig', () => {
 });
 
 describe('getDesktopBaseDir', () => {
-  it.skipIf(process.platform === 'linux')('points to Claude-3p on the current platform', () => {
+  const originalPlatform = process.platform;
+  const originalLocalAppData = process.env.LOCALAPPDATA;
+  const originalXdgConfigHome = process.env.XDG_CONFIG_HOME;
+
+  function simulatePlatform(value: string): void {
+    Object.defineProperty(process, 'platform', { value, configurable: true });
+  }
+
+  function restoreEnv(key: string, value: string | undefined): void {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+
+  afterEach(() => {
+    simulatePlatform(originalPlatform);
+    restoreEnv('LOCALAPPDATA', originalLocalAppData);
+    restoreEnv('XDG_CONFIG_HOME', originalXdgConfigHome);
+  });
+
+  it('points to Claude-3p on the current platform', () => {
     const dir = getDesktopBaseDir();
     expect(dir).toMatch(/Claude-3p$/);
   });
 
-  it.runIf(process.platform === 'linux')('throws ConfigurationError on linux', () => {
-    expect(() => getDesktopBaseDir()).toThrow('not supported on platform');
-  });
-
   it('uses LOCALAPPDATA on windows (simulated)', () => {
-    const orig = process.platform;
-    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    simulatePlatform('win32');
     process.env.LOCALAPPDATA = 'C:\\Users\\test\\AppData\\Local';
     expect(getDesktopBaseDir()).toBe(join('C:\\Users\\test\\AppData\\Local', 'Claude-3p'));
-    Object.defineProperty(process, 'platform', { value: orig, configurable: true });
-    delete process.env.LOCALAPPDATA;
+  });
+
+  it('uses XDG_CONFIG_HOME on linux (simulated)', () => {
+    simulatePlatform('linux');
+    process.env.XDG_CONFIG_HOME = join(tmpdir(), 'xdg-config');
+    expect(getDesktopBaseDir()).toBe(join(tmpdir(), 'xdg-config', 'Claude-3p'));
+  });
+
+  it('falls back to ~/.config on linux when XDG_CONFIG_HOME is unset (simulated)', () => {
+    simulatePlatform('linux');
+    delete process.env.XDG_CONFIG_HOME;
+    expect(getDesktopBaseDir()).toBe(join(homedir(), '.config', 'Claude-3p'));
+  });
+
+  // The XDG spec treats an empty value as unset, and requires absolute paths;
+  // Electron does the same. Without this, join('', 'Claude-3p') yields the
+  // relative path 'Claude-3p' and the gateway key lands in the current
+  // directory instead of Claude Desktop's config library.
+  it.each([
+    ['empty', ''],
+    ['relative', '.config'],
+    ['relative with a leading dot-slash', './config'],
+  ])('ignores a %s XDG_CONFIG_HOME on linux (simulated)', (_label, value) => {
+    simulatePlatform('linux');
+    process.env.XDG_CONFIG_HOME = value;
+    expect(getDesktopBaseDir()).toBe(join(homedir(), '.config', 'Claude-3p'));
+  });
+
+  it('never returns a relative base dir on linux, whatever XDG_CONFIG_HOME holds (simulated)', () => {
+    simulatePlatform('linux');
+    for (const value of ['', ' ', '.', '..', 'relative/path', './x']) {
+      process.env.XDG_CONFIG_HOME = value;
+      expect(isAbsolute(getDesktopBaseDir())).toBe(true);
+    }
+  });
+
+  it('still throws on a platform Claude Desktop does not ship for (simulated)', () => {
+    simulatePlatform('freebsd');
+    expect(() => getDesktopBaseDir()).toThrow('not supported on platform');
+  });
+});
+
+describe('describeManagedSettingsOverride', () => {
+  const originalPlatform = process.platform;
+
+  afterEach(() => {
+    Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
+  });
+
+  it('resolves the managed settings file on linux', () => {
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
+    expect(getClaudeDesktopManagedSettingsPath()).toBe('/etc/claude-desktop/managed-settings.json');
+  });
+
+  it.each(['darwin', 'win32'])('reports no plain-file managed source on %s', (platform) => {
+    Object.defineProperty(process, 'platform', { value: platform, configurable: true });
+    expect(getClaudeDesktopManagedSettingsPath()).toBeNull();
+  });
+
+  it('returns null when the platform has no plain-file managed source', () => {
+    expect(describeManagedSettingsOverride(null)).toBeNull();
+  });
+
+  it('returns null when the managed settings file does not exist', () => {
+    expect(describeManagedSettingsOverride(join(tmpdir(), 'codemie-no-such-managed-settings.json')))
+      .toBeNull();
+  });
+
+  it('names the file when it exists, because managed settings override local config', async () => {
+    const dir = join(tmpdir(), `codemie-managed-settings-${Date.now()}`);
+    await mkdir(dir, { recursive: true });
+    const file = join(dir, 'managed-settings.json');
+    await writeFile(file, '{}');
+    try {
+      const message = describeManagedSettingsOverride(file);
+      expect(message).toContain(file);
+      expect(message).toMatch(/may have no effect/i);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
 

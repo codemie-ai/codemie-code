@@ -18,7 +18,7 @@ import {
   spawnDaemon,
   stopDaemon,
 } from './daemon-manager.js';
-import { writeDesktopConfig, getDesktopBaseDir, mapCanonicalToDesktop, summarizeManagedOauthShapes } from './connectors/desktop.js';
+import { writeDesktopConfig, describeManagedSettingsOverride, getDesktopBaseDir, mapCanonicalToDesktop, summarizeManagedOauthShapes } from './connectors/desktop.js';
 import { fetchManagedMcpServers } from './connectors/managed-mcp-remote.js';
 import { writeVsCodeLanguageModelsConfig } from './connectors/vscode.js';
 import { VS_CODE_SUPPORTED_MODELS } from './connectors/vscode-models.js';
@@ -487,6 +487,14 @@ export function createProxyCommand(): Command {
           })
         );
         console.log(chalk.green('✓ Claude Desktop configured'));
+        const managedSettingsWarning = describeManagedSettingsOverride();
+        if (managedSettingsWarning) {
+          console.log(chalk.yellow(`⚠ ${managedSettingsWarning}`));
+          logger.warn(
+            '[proxy] Claude Desktop managed settings source present',
+            ...sanitizeLogArgs({ managedSettingsWarning })
+          );
+        }
         if (verbose) {
           console.log(`  Config:  ${configPath}`);
           console.log(`  Gateway: ${state!.url}`);

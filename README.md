@@ -510,7 +510,7 @@ Use Claude Desktop 3P through CodeMie proxy routing to capture `claude-desktop` 
 
 - `codemie` installed
 - a valid CodeMie SSO profile
-- Claude Desktop 3P installed
+- Claude Desktop 3P installed — macOS, Windows, or Linux (Linux requires Claude Desktop's Ubuntu/Debian beta)
 
 ### 1. Connect Claude Desktop
 
