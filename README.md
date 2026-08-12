@@ -530,6 +530,42 @@ codemie proxy inspect desktop --limit 5
 codemie proxy stop
 ```
 
+### Linux
+
+Claude Desktop's Linux app is in beta: Ubuntu 22.04+ or Debian 12+, on x86_64 or arm64. Install it from Anthropic's apt repository first — that means registering their signing key and repo, not just `apt install`, so follow [Anthropic's Linux install guide](https://code.claude.com/docs/en/desktop-linux). Then connect exactly as on macOS and Windows:
+
+```bash
+codemie proxy connect desktop --verbose
+```
+
+`--verbose` prints the config path that was written, which is the fastest way to confirm where it landed.
+
+**Where the config goes.** Claude Desktop is an Electron app, so its config root follows the XDG convention:
+
+| Condition | Config library |
+|---|---|
+| `XDG_CONFIG_HOME` set to an absolute path | `$XDG_CONFIG_HOME/Claude-3p/configLibrary/` |
+| otherwise (the common case) | `~/.config/Claude-3p/configLibrary/` |
+
+An empty or relative `XDG_CONFIG_HOME` is ignored, per the XDG spec.
+
+**Verify the write:**
+
+```bash
+echo "${XDG_CONFIG_HOME:-(unset)}"
+ls -la ~/.config/Claude-3p/configLibrary/
+cat ~/.config/Claude-3p/configLibrary/_meta.json   # appliedId names the active config
+codemie proxy inspect desktop --limit 5
+```
+
+Claude Desktop reads its configuration **once at launch**, so fully quit and reopen the app — not just close the window.
+
+**If the app is launched from a desktop launcher**, it may not inherit the `XDG_CONFIG_HOME` you have exported in your shell. When that happens the CLI writes to one path and the app reads another, and the connect silently appears to do nothing. Compare the path from `--verbose` against `~/.config/Claude-3p/`.
+
+**Managed (MDM) settings.** If `/etc/claude-desktop/managed-settings.json` exists, `codemie proxy connect desktop` warns you: Claude Desktop applies a managed source in preference to local configuration. This is not automatically fatal — a policy that sets only `disableAutoUpdates` and `autoUpdaterEnforcementHours` leaves everything else local, so the write still applies. If routing really is ignored, ask your administrator to carry the gateway settings in the managed source rather than deleting the file, which is root-owned and typically redeployed by MDM.
+
+**WSL is not supported.** WSL reports its platform as Linux, so the config is written on the WSL side where a Windows Claude Desktop will not look for it. Run `codemie proxy connect desktop` from Windows instead.
+
 ### If Claude Desktop was already using Anthropic subscription or another Gateway
 
 1. Quit Claude Desktop.
