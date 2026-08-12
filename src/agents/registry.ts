@@ -4,8 +4,10 @@ import { CodeMieCodePlugin } from './plugins/codemie-code.plugin.js';
 import { GeminiPlugin } from './plugins/gemini/gemini.plugin.js';
 import { OpenCodePlugin } from './plugins/opencode/index.js';
 import { CodexPlugin } from './plugins/codex/index.js';
+import { PiPlugin } from './plugins/pi/index.js';
 import { KimiPlugin } from './plugins/kimi/kimi.plugin.js';
 import { KimiAcpPlugin } from './plugins/kimi/kimi-acp.plugin.js';
+import { CopilotCliPlugin } from './plugins/copilot-cli/index.js';
 import { AgentAdapter, AgentAnalyticsAdapter } from './core/types.js';
 
 // Re-export for backwards compatibility
@@ -35,8 +37,10 @@ export class AgentRegistry {
     AgentRegistry.registerPlugin(new GeminiPlugin());
     AgentRegistry.registerPlugin(new OpenCodePlugin());
     AgentRegistry.registerPlugin(new CodexPlugin());
+    AgentRegistry.registerPlugin(new PiPlugin());
     AgentRegistry.registerPlugin(new KimiPlugin());
     AgentRegistry.registerPlugin(new KimiAcpPlugin());
+    AgentRegistry.registerPlugin(new CopilotCliPlugin());
 
     AgentRegistry.initialized = true;
   }
@@ -69,11 +73,37 @@ export class AgentRegistry {
     return Array.from(AgentRegistry.adapters.keys());
   }
 
+  /**
+   * Agents CodeMie can actually install, launch and update — i.e. everything except
+   * analytics-only agents, which CodeMie reads telemetry for but never manages.
+   *
+   * Every agent-MANAGEMENT surface must use this rather than {@link getAllAgents}:
+   * install, uninstall, update, list, doctor and the first-run experience. Listing an
+   * unmanageable agent there advertises commands that always fail, and `codemie update`
+   * is actively destructive — updateAgent() never calls the adapter, it reads
+   * `metadata.npmPackage` and runs `npm install -g <pkg> --force`, which would overwrite
+   * a user's own install of a third-party tool.
+   *
+   * {@link getAllAgents} intentionally still returns them, because the analytics pipeline
+   * resolves session adapters through the registry.
+   */
+  static getManageableAgents(): AgentAdapter[] {
+    AgentRegistry.initialize();
+    return Array.from(AgentRegistry.adapters.values()).filter(
+      (adapter) => adapter.metadata.analyticsOnly !== true
+    );
+  }
+
+  /**
+   * Installed agents CodeMie can manage. Analytics-only agents are excluded: every
+   * consumer of this is a management surface (uninstall, list, doctor), and "installed"
+   * is meaningless for an agent CodeMie never installs.
+   */
   static async getInstalledAgents(): Promise<AgentAdapter[]> {
     AgentRegistry.initialize();
-    const allAdapters = Array.from(AgentRegistry.adapters.values());
+    const manageable = AgentRegistry.getManageableAgents();
     const installResults = await Promise.all(
-      allAdapters.map(async (adapter) => ({
+      manageable.map(async (adapter) => ({
         adapter,
         installed: await adapter.isInstalled()
       }))

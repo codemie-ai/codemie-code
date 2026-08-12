@@ -2,13 +2,16 @@ import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { getClaudeDesktopBaseDir } from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
+import {
+  getClaudeDesktopBaseDir,
+  getClaudeDesktopManagedSettingsPath,
+} from '@/telemetry/clients/claude-desktop/claude-desktop.paths.js';
 import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { getCodemiePath } from '@/utils/paths.js';
 import { sanitizeLogArgs } from '@/utils/security.js';
 import managedMcpServers from './desktop-managed-mcp-servers.json' with { type: 'json' };
-import type { CanonicalMcpEntry } from './managed-mcp-remote.js';
+import { isValidOAuthConfig, type CanonicalMcpEntry, type McpOAuthConfig } from './managed-mcp-remote.js';
 
 const INFERENCE_KEYS = [
   'inferenceProvider',
@@ -25,7 +28,12 @@ export interface ManagedMcpServerEntry {
   name: string;
   url: string;
   transport?: 'http' | 'sse';
-  oauth?: boolean;
+  /**
+   * `true`/`false` is the legacy flag Claude Desktop already understood; an
+   * {@link McpOAuthConfig} is the structured client configuration the backend
+   * now supplies. The CLI forwards it verbatim — Desktop runs the flow.
+   */
+  oauth?: McpOAuthConfig | boolean;
 }
 
 interface ModelsListResponse {
@@ -234,21 +242,45 @@ function getManagedMcpServerName(server: unknown): string | undefined {
   return typeof server.name === 'string' ? server.name : undefined;
 }
 
-function parseJsonArray(value: unknown): unknown[] {
+function getManagedMcpServerUrl(server: unknown): string | undefined {
+  if (!isRecord(server)) return undefined;
+  return typeof server.url === 'string' ? server.url : undefined;
+}
+
+/**
+ * Outcome of reading a stored `managedMcpServers` value.
+ *
+ * `parsed: false` means the value was PRESENT but unreadable — which callers that
+ * reason about what the config already holds must not confuse with an empty list.
+ */
+type ParsedServerList =
+  | { parsed: true; servers: unknown[] }
+  | { parsed: false };
+
+function parseManagedServerList(value: unknown): ParsedServerList {
+  if (value === undefined || value === null) {
+    return { parsed: true, servers: [] };
+  }
+
   if (Array.isArray(value)) {
-    return value;
+    return { parsed: true, servers: value };
   }
 
   if (typeof value !== 'string') {
-    return [];
+    return { parsed: false };
   }
 
   try {
     const parsed = JSON.parse(value) as unknown;
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed) ? { parsed: true, servers: parsed } : { parsed: false };
   } catch {
-    return [];
+    return { parsed: false };
   }
+}
+
+function parseJsonArray(value: unknown): unknown[] {
+  const result = parseManagedServerList(value);
+  return result.parsed ? result.servers : [];
 }
 
 function isValidMcpServerName(name: string): boolean {
@@ -256,6 +288,22 @@ function isValidMcpServerName(name: string): boolean {
 }
 
 const DESKTOP_SUPPORTED_TRANSPORTS = new Set(['http', 'sse']);
+
+/**
+ * Normalize the three accepted auth shapes into what Claude Desktop consumes.
+ *
+ * Precedence: a valid oauth object wins, then the oauth boolean, then the
+ * legacy `auth` enum, then `false`. The final fallback preserves the behavior
+ * of entries carrying neither field.
+ */
+export function resolveDesktopOAuth(entry: CanonicalMcpEntry): McpOAuthConfig | boolean {
+  if (isValidOAuthConfig(entry.oauth)) return { ...entry.oauth };
+  if (entry.oauth === true) return true;
+  if (entry.oauth === false) return false;
+  if (entry.auth === 'oauth') return true;
+  if (entry.auth === 'none') return false;
+  return false;
+}
 
 /**
  * Map client-neutral canonical entries to Claude Desktop's managedMcpServers
@@ -271,10 +319,210 @@ export function mapCanonicalToDesktop(entries: CanonicalMcpEntry[]): ManagedMcpS
       name: entry.name,
       url: entry.url,
       transport: entry.transport as 'http' | 'sse',
-      oauth: entry.auth === 'oauth',
+      oauth: resolveDesktopOAuth(entry),
     });
   }
   return result;
+}
+
+/**
+ * Copy a managed entry, including its nested oauth object.
+ *
+ * A shallow `{ ...entry }` would share the oauth object with
+ * DEFAULT_MANAGED_MCP_SERVERS — a readonly module-level constant that lives for
+ * the whole process — so a later mutation of the written config would corrupt
+ * the bundled defaults for every subsequent run.
+ */
+export function cloneManagedEntry(entry: ManagedMcpServerEntry): ManagedMcpServerEntry {
+  const copy: ManagedMcpServerEntry = { ...entry };
+  if (entry.oauth !== undefined && typeof entry.oauth === 'object') {
+    copy.oauth = { ...entry.oauth };
+  }
+  return copy;
+}
+
+/** True when the entry carries usable OAuth information (structured config or the legacy flag). */
+function hasManagedOAuth(entry: ManagedMcpServerEntry): boolean {
+  return entry.oauth === true || (typeof entry.oauth === 'object' && entry.oauth !== null);
+}
+
+/**
+ * URL equality between two managed entries, compared verbatim. Managed entries
+ * come from controlled sources (DEFAULT_MANAGED_MCP_SERVERS or the backend
+ * catalog), so this is intentionally exact — no trailing-slash or host-case
+ * normalization. That normalization is a known, separately-tracked gap, not
+ * something this comparison closes.
+ */
+function sameManagedEndpoint(a: ManagedMcpServerEntry, b: ManagedMcpServerEntry): boolean {
+  return a.url === b.url;
+}
+
+/** Case-insensitive name equality between two managed entries. */
+function sameManagedName(a: ManagedMcpServerEntry, b: ManagedMcpServerEntry): boolean {
+  return a.name.toLowerCase() === b.name.toLowerCase();
+}
+
+/**
+ * Collision test between a bundled default and a backend entry: a shared name
+ * OR a shared endpoint, mirroring reconcileManagedMcpServers, where both sides
+ * come from controlled sources. Defined in terms of {@link sameManagedName} and
+ * {@link sameManagedEndpoint} so the wide and narrow tests cannot drift apart.
+ */
+function collidesWithManagedEntry(a: ManagedMcpServerEntry, b: ManagedMcpServerEntry): boolean {
+  return sameManagedName(a, b) || sameManagedEndpoint(a, b);
+}
+
+/** A backend entry published at the same endpoint as a bundled default that declares OAuth, without OAuth of its own. */
+export interface ManagedOauthDowngrade {
+  /** The bundled default that was displaced. */
+  defaultName: string;
+  /** The backend entry that displaced it, at weaker auth. */
+  backendName: string;
+  /** The endpoint the backend entry was published at. */
+  url: string;
+}
+
+export interface ManagedMcpMergeResult {
+  /** The entries CodeMie owns this run, defaults first, all freshly cloned. */
+  managed: ManagedMcpServerEntry[];
+  /** Collisions where the backend entry resolved to weaker auth than the default it displaced. */
+  oauthDowngrades: ManagedOauthDowngrade[];
+  /** Names of bundled defaults dropped because an org entry collided with them. */
+  displacedDefaults: string[];
+}
+
+/**
+ * Merge the bundled public defaults with the org catalog so a server the backend
+ * also publishes is written exactly once.
+ *
+ * The BACKEND wins every collision outright: it is authoritative for both the
+ * name and the endpoint, and its entry is written exactly as published — the CLI
+ * is a courier, not a policy layer, so no oauth value is ever rewritten. A
+ * collision that lowers auth relative to the bundled default it displaces is
+ * logged (see {@link ManagedOauthDowngrade}), never corrected.
+ */
+export function mergeManagedMcpServers(
+  defaults: readonly ManagedMcpServerEntry[],
+  org: readonly ManagedMcpServerEntry[],
+): ManagedMcpMergeResult {
+  // Single pass over defaults: keptDefaults and displacedDefaults are
+  // complements of the same collidesWithManagedEntry test, so they can never
+  // disagree about which bundled default survived.
+  const keptDefaults: ManagedMcpServerEntry[] = [];
+  const displacedDefaults: string[] = [];
+  for (const bundled of defaults) {
+    if (org.some((entry) => collidesWithManagedEntry(bundled, entry))) {
+      displacedDefaults.push(bundled.name);
+    } else {
+      keptDefaults.push(bundled);
+    }
+  }
+
+  // Downgrade reporting is scoped to sameManagedEndpoint, not the wider
+  // collidesWithManagedEntry used for displacement above — a default's oauth
+  // describes ITS endpoint, not its name, so a backend entry that merely
+  // reuses the name at a different endpoint is not a downgrade. Because
+  // collidesWithManagedEntry is defined as sameManagedName(a, b) ||
+  // sameManagedEndpoint(a, b), a reported downgrade is by construction a
+  // strict subset of a displacement: an endpoint collision can never displace
+  // a default without also being reportable. Do not widen this back to
+  // collidesWithManagedEntry.
+  const oauthDowngrades: ManagedOauthDowngrade[] = [];
+  for (const entry of org) {
+    if (hasManagedOAuth(entry)) continue;
+    // At most one record per org entry — take the first matching default, so
+    // an entry is never double-counted if it happened to match more than one.
+    const downgradedDefault = defaults.find(
+      (bundled) => hasManagedOAuth(bundled) && sameManagedEndpoint(bundled, entry),
+    );
+    if (!downgradedDefault) continue;
+    oauthDowngrades.push({
+      defaultName: downgradedDefault.name,
+      backendName: entry.name,
+      url: entry.url,
+    });
+  }
+
+  return {
+    managed: [...keptDefaults, ...org].map(cloneManagedEntry),
+    oauthDowngrades,
+    displacedDefaults,
+  };
+}
+
+/**
+ * The bundled defaults that are safe to seed when the org catalog fetch FAILED.
+ *
+ * A failed fetch must change nothing. Restoring a default whose name or URL an
+ * entry already in the config occupies would make reconcileManagedMcpServers treat
+ * that name as ours and drop the existing entry — silently swapping a tenant's
+ * internal server for the bundled public endpoint of the same name, which is worse
+ * than the revocation the null-fetch contract already forbids. Whatever the config
+ * holds therefore wins; a clean or first-run config still receives the full set.
+ *
+ * A stored list that is present but unreadable is not an empty one: we cannot tell
+ * which names and URLs it claims, so nothing is seeded at all.
+ */
+export function selectDefaultsForFailedFetch(
+  existingServers: unknown,
+  defaults: readonly ManagedMcpServerEntry[] = DEFAULT_MANAGED_MCP_SERVERS,
+): ManagedMcpServerEntry[] {
+  const stored = parseManagedServerList(existingServers);
+  if (!stored.parsed) {
+    logger.warn(
+      '[proxy] Existing managed MCP list could not be parsed — seeding no bundled defaults after the failed fetch',
+      ...sanitizeLogArgs({
+        storedValueType: typeof existingServers,
+        skippedDefaultCount: defaults.length,
+      })
+    );
+    return [];
+  }
+
+  const existing = stored.servers.filter(isRecord);
+  const takenNames = new Set(
+    existing
+      .map((server) => getManagedMcpServerName(server))
+      .filter((name): name is string => name !== undefined)
+      .map((name) => name.toLowerCase()),
+  );
+  const takenUrls = new Set(
+    existing
+      .map((server) => getManagedMcpServerUrl(server))
+      .filter((url): url is string => url !== undefined),
+  );
+  return defaults.filter(
+    (bundled) => !takenNames.has(bundled.name.toLowerCase()) && !takenUrls.has(bundled.url),
+  );
+}
+
+export interface ManagedOauthShapeSummary {
+  /** Entries forwarding a structured OAuth client configuration. */
+  oauthConfigured: number;
+  /** Entries carrying only the legacy `oauth: true` flag. */
+  oauthFlagged: number;
+  /** Entries with `oauth: false` or no auth information at all. */
+  noAuth: number;
+}
+
+/**
+ * Count the resolved oauth shapes so a silent downgrade (every entry landing on
+ * `false`) or a mass validation drop is visible in the daemon log.
+ *
+ * Accepts loosely-typed entries so the reconciled array — managed entries plus the
+ * user entries preserved beside them — can be summarized exactly as serialized.
+ */
+export function summarizeManagedOauthShapes(
+  entries: readonly unknown[] | null,
+): ManagedOauthShapeSummary {
+  const summary: ManagedOauthShapeSummary = { oauthConfigured: 0, oauthFlagged: 0, noAuth: 0 };
+  for (const entry of entries ?? []) {
+    const oauth = isRecord(entry) ? entry.oauth : undefined;
+    if (isRecord(oauth)) summary.oauthConfigured += 1;
+    else if (oauth === true) summary.oauthFlagged += 1;
+    else summary.noAuth += 1;
+  }
+  return summary;
 }
 
 export interface ReconcileResult {
@@ -309,9 +557,15 @@ export function reconcileManagedMcpServers(
   // are matched verbatim.
   const managedUrls = new Set(managed.map((s) => s.url));
 
+  // Unlike selectDefaultsForFailedFetch (which asks "which names/URLs are
+  // already claimed?" and must treat unreadable as unknown-therefore-claimed),
+  // this asks "which existing entries must be preserved?" An unreadable value
+  // yields no identifiable entries to preserve, and a non-array value cannot be
+  // written back into a field Desktop reads as an array — so [] is the
+  // conservative answer to *this* question, not an inconsistency with the other.
   const filtered = parseJsonArray(existingServers).filter((server) => {
     const name = getManagedMcpServerName(server);
-    const url = isRecord(server) && typeof server.url === 'string' ? server.url : undefined;
+    const url = getManagedMcpServerUrl(server);
     if (!name) {
       // Still drop nameless entries that point at a managed URL, so a managed
       // endpoint can never be double-registered under an anonymous entry.
@@ -324,7 +578,7 @@ export function reconcileManagedMcpServers(
   });
 
   return {
-    servers: [...managed.map((s) => ({ ...s })), ...filtered],
+    servers: [...managed.map(cloneManagedEntry), ...filtered],
     managedNames,
   };
 }
@@ -392,11 +646,30 @@ export function buildGatewayConfig(proxyUrl: string, gatewayKey: string): Deskto
 
 /**
  * Returns the base directory where Claude Desktop (3P) stores its config.
- * macOS: ~/Library/Application Support/Claude-3p
- * Windows: %APPDATA%\Claude-3p
+ * macOS:   ~/Library/Application Support/Claude-3p
+ * Windows: %LOCALAPPDATA%\Claude-3p
+ * Linux:   $XDG_CONFIG_HOME/Claude-3p, else ~/.config/Claude-3p
  */
 export function getDesktopBaseDir(): string {
   return getClaudeDesktopBaseDir();
+}
+
+/**
+ * Explains why a local config write may not take effect, or null when nothing
+ * is in the way. Claude Desktop applies a managed (MDM) source in preference to
+ * the local config library, ignoring local values entirely.
+ *
+ * The path is injectable so callers and tests can supply one; by default it is
+ * resolved from the platform.
+ */
+export function describeManagedSettingsOverride(
+  managedSettingsPath: string | null = getClaudeDesktopManagedSettingsPath()
+): string | null {
+  if (!managedSettingsPath || !existsSync(managedSettingsPath)) return null;
+  return (
+    `${managedSettingsPath} exists. Claude Desktop applies managed settings ` +
+    `instead of local configuration, so this write may have no effect.`
+  );
 }
 
 /**
@@ -483,15 +756,27 @@ export async function writeDesktopConfig(
   // marker state untouched so a later successful run can still revoke.
   const orgFetchSucceeded = orgMcpServers !== null;
 
-  // Dedup the org catalog against bundled public defaults so an entry the backend
-  // echoes (same name or URL) is not written twice.
-  const defaultNameSet = new Set(DEFAULT_MANAGED_MCP_SERVERS.map((s) => s.name.toLowerCase()));
-  const defaultUrlSet = new Set(DEFAULT_MANAGED_MCP_SERVERS.map((s) => s.url));
-  const orgDeduped = (orgMcpServers ?? []).filter(
-    (s) => !defaultNameSet.has(s.name.toLowerCase()) && !defaultUrlSet.has(s.url),
-  );
-
-  const managedSet = [...DEFAULT_MANAGED_MCP_SERVERS.map((s) => ({ ...s })), ...orgDeduped];
+  // Dedup bundled public defaults against the org catalog so an entry the
+  // backend also publishes is written once (see mergeManagedMcpServers for the
+  // collision precedence). On a FAILED fetch the defaults are first narrowed to
+  // those the config does not already hold, so a previously-written org entry
+  // that shadowed a default is never evicted by the public endpoint it replaced.
+  const org = orgMcpServers ?? [];
+  const seedDefaults = orgFetchSucceeded
+    ? DEFAULT_MANAGED_MCP_SERVERS
+    : selectDefaultsForFailedFetch(existing.managedMcpServers);
+  const { managed: managedSet, oauthDowngrades, displacedDefaults } = mergeManagedMcpServers(seedDefaults, org);
+  if (oauthDowngrades.length > 0) {
+    logger.warn(
+      '[proxy] Managed MCP entry published without the auth its bundled default declares (auth downgrade) — forwarding it as published',
+      ...sanitizeLogArgs({
+        oauthDowngradeCount: oauthDowngrades.length,
+        sourceBundledDefaults: oauthDowngrades.map((downgrade) => downgrade.defaultName),
+        downgradedBackendEntries: oauthDowngrades.map((downgrade) => downgrade.backendName),
+        downgradedUrls: oauthDowngrades.map((downgrade) => downgrade.url),
+      })
+    );
+  }
   const previouslyManagedNames = orgFetchSucceeded ? await readManagedMcpState(managedStatePath) : [];
   const { servers: managedMcpServers, managedNames } = reconcileManagedMcpServers(
     existing.managedMcpServers,
@@ -512,6 +797,12 @@ export async function writeDesktopConfig(
     await writeManagedMcpState(managedStatePath, unionNames);
   }
 
+  // Summarize the reconciled list we are about to serialize (not the org catalog
+  // index.ts already logs), so the shape counts always add up to
+  // managedMcpServerCount and a logged auth downgrade is visible in the field.
+  // seededDefaultCount reports what was offered to the merge, not what was
+  // written — displacedDefaultCount and displacedDefaults reconcile the difference.
+  const writtenOauthShapes = summarizeManagedOauthShapes(managedMcpServers);
   logger.info(
     '[proxy] Preparing Claude Desktop config payload',
     ...sanitizeLogArgs({
@@ -525,6 +816,13 @@ export async function writeDesktopConfig(
       resolvedModels,
       inferenceModelsWritten: inferenceModels.length > 0,
       managedMcpServerCount: managedMcpServers.length,
+      seededDefaultCount: seedDefaults.length,
+      displacedDefaultCount: displacedDefaults.length,
+      displacedDefaults,
+      oauthDowngradeCount: oauthDowngrades.length,
+      oauthConfiguredCount: writtenOauthShapes.oauthConfigured,
+      oauthFlaggedCount: writtenOauthShapes.oauthFlagged,
+      noAuthCount: writtenOauthShapes.noAuth,
       existingConfigKeys: Object.keys(existing),
     })
   );

@@ -9,6 +9,13 @@ vi.mock('../../../utils/logger.js', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), setSessionId: vi.fn(), setAgentName: vi.fn(), setProfileName: vi.fn() },
 }));
 
+const loadMultiProviderConfigMock = vi.fn();
+vi.mock('../../../utils/config.js', () => ({
+  ConfigLoader: {
+    loadMultiProviderConfig: (...a: unknown[]) => loadMultiProviderConfigMock(...a),
+  },
+}));
+
 import { BaseAgentAdapter } from '../BaseAgentAdapter.js';
 import type { AgentMetadata } from '../types.js';
 
@@ -23,7 +30,11 @@ class TestAdapter extends BaseAgentAdapter {
 const baseEnv = { CODEMIE_SESSION_ID: 's1' } as NodeJS.ProcessEnv;
 
 describe('BaseAgentAdapter.maybeWriteSessionReport', () => {
-  beforeEach(() => { vi.clearAllMocks(); generateSessionReportMock.mockResolvedValue({ written: '/x.json', sessions: 1 }); });
+  beforeEach(() => {
+    vi.clearAllMocks();
+    generateSessionReportMock.mockResolvedValue({ written: '/x.json', sessions: 1 });
+    loadMultiProviderConfigMock.mockResolvedValue({ userEmail: undefined });
+  });
 
   it('generates a report when enabled', async () => {
     await new TestAdapter({ sessionAnalyticsReport: true }).call(baseEnv);
@@ -80,5 +91,46 @@ describe('BaseAgentAdapter.maybeWriteSessionReport', () => {
   it('never throws when report generation fails (non-fatal)', async () => {
     generateSessionReportMock.mockRejectedValue(new Error('boom'));
     await expect(new TestAdapter({ sessionAnalyticsReport: true }).call(baseEnv)).resolves.toBeUndefined();
+  });
+
+  it('falls back to ConfigLoader.loadMultiProviderConfig when CODEMIE_PROFILE_CONFIG is absent', async () => {
+    loadMultiProviderConfigMock.mockResolvedValue({ userEmail: 'from-config@example.com' });
+    await new TestAdapter({ sessionAnalyticsReport: true }).call(baseEnv);
+    expect(loadMultiProviderConfigMock).toHaveBeenCalledTimes(1);
+    expect(generateSessionReportMock).toHaveBeenCalledWith(
+      expect.objectContaining({ userEmail: 'from-config@example.com' })
+    );
+  });
+
+  it('falls back to ConfigLoader when CODEMIE_PROFILE_CONFIG has no email', async () => {
+    loadMultiProviderConfigMock.mockResolvedValue({ userEmail: 'from-config@example.com' });
+    const env = {
+      ...baseEnv,
+      CODEMIE_PROFILE_CONFIG: JSON.stringify({ someOtherField: 'value' }),
+    } as NodeJS.ProcessEnv;
+    await new TestAdapter({ sessionAnalyticsReport: true }).call(env);
+    expect(loadMultiProviderConfigMock).toHaveBeenCalledTimes(1);
+    expect(generateSessionReportMock).toHaveBeenCalledWith(
+      expect.objectContaining({ userEmail: 'from-config@example.com' })
+    );
+  });
+
+  it('does not call ConfigLoader when CODEMIE_PROFILE_CONFIG already has an email', async () => {
+    const env = {
+      ...baseEnv,
+      CODEMIE_PROFILE_CONFIG: JSON.stringify({ userEmail: 'from-env@example.com' }),
+    } as NodeJS.ProcessEnv;
+    await new TestAdapter({ sessionAnalyticsReport: true }).call(env);
+    expect(loadMultiProviderConfigMock).not.toHaveBeenCalled();
+    expect(generateSessionReportMock).toHaveBeenCalledWith(
+      expect.objectContaining({ userEmail: 'from-env@example.com' })
+    );
+  });
+
+  it('omits userEmail silently when both env and ConfigLoader fail', async () => {
+    loadMultiProviderConfigMock.mockRejectedValue(new Error('no config file'));
+    await new TestAdapter({ sessionAnalyticsReport: true }).call(baseEnv);
+    const arg = generateSessionReportMock.mock.calls[0][0];
+    expect(arg.userEmail).toBeUndefined();
   });
 });

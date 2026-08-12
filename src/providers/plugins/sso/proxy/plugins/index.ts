@@ -16,6 +16,7 @@ import { RequestSanitizerPlugin } from './request-sanitizer.plugin.js';
 import { ClaudeRequestNormalizerPlugin } from './claude-request-normalizer.plugin.js';
 import { KimiRequestNormalizerPlugin } from './kimi-request-normalizer.plugin.js';
 import { CodexEncryptedContentSanitizerPlugin } from './codex-encrypted-content-sanitizer.plugin.js';
+import { CopilotEncryptedContentSanitizerPlugin } from './copilot-encrypted-content-sanitizer.plugin.js';
 import { VsCodeRequestNormalizerPlugin } from './vscode-request-normalizer.plugin.js';
 import { LoggingPlugin } from './logging.plugin.js';
 import { SSOSessionSyncPlugin } from './sso.session-sync.plugin.js';
@@ -36,7 +37,8 @@ export function registerCorePlugins(): void {
   registry.register(new ClaudeRequestNormalizerPlugin()); // Priority 14 - normalizes thinking params for claude models
   registry.register(new KimiRequestNormalizerPlugin()); // Priority 14 - caps Kimi output token requests for upstream limits
   registry.register(new RequestSanitizerPlugin()); // Priority 15 - strips unsupported reasoning params
-  registry.register(new CodexEncryptedContentSanitizerPlugin()); // Priority 16 - strips deployment-bound encrypted Responses reasoning state
+  registry.register(new CodexEncryptedContentSanitizerPlugin()); // Priority 16 - forwards Responses reasoning state; strips it only after upstream rejects a replay
+  registry.register(new CopilotEncryptedContentSanitizerPlugin()); // Priority 16 - retries Copilot once after encrypted reasoning replay rejection
   registry.register(new VsCodeRequestNormalizerPlugin()); // Priority 17 - constrains VS Code user identifiers
   registry.register(new HeaderInjectionPlugin());
   registry.register(new LoggingPlugin()); // Always enabled - logs to log files at INFO level
@@ -58,6 +60,7 @@ export {
   ClaudeRequestNormalizerPlugin,
   KimiRequestNormalizerPlugin,
   CodexEncryptedContentSanitizerPlugin,
+  CopilotEncryptedContentSanitizerPlugin,
   VsCodeRequestNormalizerPlugin,
   LoggingPlugin,
 };

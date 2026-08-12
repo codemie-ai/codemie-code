@@ -1,6 +1,7 @@
 import chalk from 'chalk';
 import { ConfigLoader } from '../utils/config.js';
 import { AgentRegistry, BUILTIN_AGENT_NAME } from '../agents/registry.js';
+import { getAgentInstallCommand, getAgentLauncherCommand } from '../agents/core/agent-aliases.js';
 import type { AgentAdapter } from '../agents/core/types.js';
 
 /**
@@ -12,7 +13,7 @@ export class FirstTimeExperience {
    * Get all agents split into built-in and external
    */
   private static getAgents(): { builtIn: AgentAdapter | undefined; external: AgentAdapter[] } {
-    const allAgents = AgentRegistry.getAllAgents();
+    const allAgents = AgentRegistry.getManageableAgents();
     return {
       builtIn: allAgents.find(agent => agent.name === BUILTIN_AGENT_NAME),
       external: allAgents.filter(agent => agent.name !== BUILTIN_AGENT_NAME)
@@ -92,13 +93,13 @@ export class FirstTimeExperience {
     const { external } = this.getAgents();
 
     external.forEach(agent => {
-      const installCmd = `codemie install ${agent.name}`.padEnd(30);
+      const installCmd = getAgentInstallCommand(agent.name).padEnd(30);
       console.log(chalk.white('  $ ') + chalk.green(installCmd) + chalk.white(`# Install ${agent.displayName}`));
     });
 
     external.forEach(agent => {
       // Handle special case where agent name already includes 'codemie-' prefix
-      const command = agent.name.startsWith('codemie-') ? agent.name : `codemie-${agent.name}`;
+      const command = getAgentLauncherCommand(agent.name);
       const runCmd = command.padEnd(30);
       console.log(chalk.white('  $ ') + chalk.green(runCmd) + chalk.white(`# Run ${agent.displayName}`));
     });
@@ -111,7 +112,7 @@ export class FirstTimeExperience {
     console.log(chalk.bold('📚 Additional Resources:\n'));
     console.log(chalk.white('   • Documentation: ') + chalk.blue('README.md'));
 
-    const allAgents = AgentRegistry.getAllAgents();
+    const allAgents = AgentRegistry.getManageableAgents();
     const agentShortcuts = allAgents.map(agent =>
       agent.name.startsWith('codemie-') ? agent.name : `codemie-${agent.name}`
     ).join(', ');
@@ -162,7 +163,7 @@ export class FirstTimeExperience {
       console.log(chalk.cyan('  codemie list') + chalk.white('              # List available agents'));
 
       external.forEach(agent => {
-        const paddedCommand = `codemie install ${agent.name}`.padEnd(28);
+        const paddedCommand = getAgentInstallCommand(agent.name).padEnd(28);
         console.log(chalk.cyan(`  ${paddedCommand}`) + chalk.white(`# Install ${agent.displayName}`));
       });
 
@@ -191,10 +192,10 @@ export class FirstTimeExperience {
 
     console.log(chalk.bold('Run Agents:'));
 
-    const allAgents = AgentRegistry.getAllAgents();
+    const allAgents = AgentRegistry.getManageableAgents();
     allAgents.forEach(agent => {
       // Handle special case where agent name already includes 'codemie-' prefix
-      const command = agent.name.startsWith('codemie-') ? agent.name : `codemie-${agent.name}`;
+      const command = getAgentLauncherCommand(agent.name);
       const paddedCommand = command.padEnd(28);
       console.log(chalk.cyan(`  ${paddedCommand}`) + chalk.white(`# Run ${agent.displayName}`));
     });
@@ -233,9 +234,9 @@ export class FirstTimeExperience {
       console.log(chalk.cyan('3. Install additional agents:'));
 
       external.forEach(agent => {
-        const installCmd = `codemie install ${agent.name}`.padEnd(35);
+        const installCmd = getAgentInstallCommand(agent.name).padEnd(35);
         // Handle special case where agent name already includes 'codemie-' prefix
-        const command = agent.name.startsWith('codemie-') ? agent.name : `codemie-${agent.name}`;
+        const command = getAgentLauncherCommand(agent.name);
         const runCmd = command.padEnd(35);
 
         console.log(chalk.white('   $ ') + chalk.green(installCmd) + chalk.white(`# Install ${agent.displayName}`));

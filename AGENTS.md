@@ -122,11 +122,13 @@ Ask the user when:
 | Keywords | P0 Guide | P1 Guide |
 |---|---|---|
 | `plugin`, `registry`, `agent`, `adapter` | architecture | external-integrations |
+| `claude`, `codex`, `gemini`, `opencode`, `pi`, `kimi`, `copilot`, `acp` | architecture | external-integrations |
+| `session`, `metrics`, `analytics`, `transcript`, `sync` | architecture | external-integrations |
 | `architecture`, `layer`, `structure`, `pattern` | architecture | development-practices |
 | `test`, `vitest`, `mock`, `coverage` | testing-patterns | development-practices |
 | `error`, `exception`, `validation` | development-practices | security-practices |
 | `security`, `sanitize`, `credential` | security-practices | development-practices |
-| `provider`, `sso`, `bedrock`, `litellm`, `langgraph`, `kimi` | external-integrations | architecture |
+| `provider`, `sso`, `bedrock`, `litellm`, `langgraph`, `ollama`, `subscription` | external-integrations | architecture |
 | `cli`, `command`, `commander` | architecture | development-practices |
 | `workflow`, `ci/cd`, `github`, `gitlab` | git-workflow | quality-gates |
 | `lint`, `eslint`, `format`, `code quality` | code-quality | quality-gates |
@@ -166,7 +168,7 @@ Detailed patterns for architecture, error handling, logging, security, project c
 | Imports without `.js` | Always include `.js` extension |
 | Deep relative imports (`../../..`) | `@/` alias (e.g. `@/env/types.js`) |
 | Writing tests by default | Tests only on explicit request |
-| `child_process.exec` directly | `exec()` from `src/utils/processes.ts` |
+| `child_process.exec` directly | `exec()` from `src/utils/exec.ts`; npm/spawn helpers in `src/utils/processes.ts` |
 | `console.log()` debug output | `logger.debug()` |
 | Logging raw secrets or tokens | `sanitizeLogArgs()` |
 | Throwing generic `Error` | Specific project error classes |
@@ -196,11 +198,34 @@ Project defaults:
 - Package manager: npm
 - Test framework: Vitest
 - Build output: `dist/`
-- Entry points: `bin/codemie.js`, `bin/agent-executor.js`
+- Entry points: `bin/codemie.js` (CLI), `bin/agent-executor.js` (built-in agent), `bin/codemie-<agent>.js` (per-agent shortcuts), `bin/codemie-mcp-proxy.js`, `bin/proxy-daemon.js`. All declared in `package.json:bin`.
 
 ## Project Context
 
 See `package.json` for exact dependency versions and `.ai-run/guides/architecture/architecture.md` for the plugin-based 5-layer architecture, layer responsibilities, and `src/` directory roles.
+
+### Agent Plugins (`src/agents/plugins/`, registered in `src/agents/registry.ts`)
+
+| Plugin | Dir | Upstream | Notes |
+|---|---|---|---|
+| `codemie-code` | `codemie-code.plugin.ts` | `@codemieai/codemie-opencode` | Built-in (`isBuiltIn`); native binary resolved by `codemie-code-binary.ts`, OpenCode-derived (`.opencode` home, `run`/`chat`/`config`/`init` subcommands). **Not** LangGraph — LangGraph now only backs LLM hooks (`src/hooks/prompt-executor.ts`) |
+| `claude` / `claude-acp` | `claude/` | `@anthropic-ai/claude-code`, `@zed-industries/claude-code-acp` | Ships the CodeMie Claude plugin (`claude/plugin/`) |
+| `codex` | `codex/` | `@openai/codex` | Responses API; reasoning state handled by proxy plugins |
+| `gemini` | `gemini/` | `@google/gemini-cli` | |
+| `opencode` | `opencode/` | `opencode-ai` | Session metrics via `codemie opencode-metrics` |
+| `pi` | `pi/` | `@earendil-works/pi-coding-agent` | Redirects `PI_CODING_AGENT_DIR` to `<cwd>/.pi/codemie/agent`; metrics via injected extension + run ledger |
+| `kimi` / `kimi-acp` | `kimi/` | `@moonshot-ai/kimi-code` | ACP variant prepends `acp` to argv |
+| `copilot-cli` | `copilot-cli/` | none | Analytics ingestion only — never installed or launched by CodeMie |
+
+Not agent adapters, but injected runtime plugins under the same tree: `codemie-code-hooks/` (injected into `codemie-code` and `opencode`) and `reasoning-sanitizer/` (injected into `codemie-code`).
+
+### Provider Plugins (`src/providers/plugins/`, auto-register via `registerProvider()`)
+
+`sso` (CodeMie SSO — default, owns the local proxy), `jwt` (Bearer Authorization), `litellm`, `bedrock`, `ollama`, `anthropic-subscription`, `moonshot-subscription`.
+
+Proxy plugins live under `src/providers/plugins/sso/proxy/plugins/` — see `.ai-run/guides/` and `docs/ARCHITECTURE-PROXY.md`.
+
+> Neither `.ai-run/guides/integration/external-integrations.md` nor `docs/AGENTS.md` covers Pi yet. For Pi work, read `src/agents/plugins/pi/` directly plus the design docs under `docs/superpowers/specs/`.
 
 ## Coding Standards
 

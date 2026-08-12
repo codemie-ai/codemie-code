@@ -38,13 +38,32 @@ export function postProcessMetric(
   // 2. Filter error_tools based on agent exclusion list
   if (sanitized.attributes.had_errors) {
     const attrs = sanitized.attributes as any;
-    if (attrs.error_tools?.length) {
-      attrs.error_tools = filterErrorTools(attrs.error_tools, agentConfig);
+    const originalErrorTools: string[] = attrs.error_tools ?? [];
+    const removedTools: string[] = [];
+    if (originalErrorTools.length) {
+      const excludedTools = getExcludedTools(agentConfig);
+      attrs.error_tools = originalErrorTools.filter((tool: string) => {
+        if (excludedTools.includes(tool)) {
+          removedTools.push(tool);
+          return false;
+        }
+        return true;
+      });
     }
-    // If all tools were filtered, clear messages too — correlation is lost, so we cannot
-    // determine which messages came from excluded tools; intent of exclusion is no reporting.
     if (!attrs.error_tools?.length) {
       delete attrs.error_tools;
+    }
+
+    // Whenever any failing tool was excluded, replace the whole error_messages array
+    // with generic placeholders. Messages are not correlated to individual tools at
+    // this layer, so a message from an excluded tool cannot be removed selectively —
+    // keeping the array because a non-excluded tool also failed would upload the raw
+    // output the operator chose to exclude. This preserves the fact that errors
+    // occurred (had_errors stays true) without leaking that output.
+    if (removedTools.length > 0) {
+      const uniqueRemoved = [...new Set(removedTools)];
+      attrs.error_messages = uniqueRemoved.map((tool: string) => `Excluded tool failed: ${tool}`);
+    } else if (!attrs.error_tools?.length) {
       delete attrs.error_messages;
     }
 
@@ -113,29 +132,14 @@ export function truncateProjectPath(fullPath: string): string {
 }
 
 /**
- * Filter error_tools list based on agent exclusion config.
- * Per-tool→message correlation is intentionally absent in v2 schema,
- * so only the tools list is filtered; error_messages are kept as-is.
+ * Resolve the list of excluded tool names from agent config, falling back to
+ * the global metrics config. The comparison is case-sensitive (tools are
+ * emitted with their original casing; callers are expected to align casing).
  */
-export function filterErrorTools(
-  errorTools: string[],
-  agentConfig?: AgentMetricsConfig
-): string[] {
-  const excludedTools: string[] = agentConfig?.excludeErrorsFromTools
+function getExcludedTools(agentConfig?: AgentMetricsConfig): string[] {
+  return agentConfig?.excludeErrorsFromTools
     || (METRICS_CONFIG as any).excludeErrorsFromTools
     || [];
-
-  if (excludedTools.length === 0) return errorTools;
-
-  logger.debug(`[post-processor] Filtering error_tools, excluded: [${excludedTools.join(', ')}]`);
-
-  return errorTools.filter(tool => {
-    if (excludedTools.includes(tool)) {
-      logger.debug(`[post-processor] Excluding tool from error_tools: ${tool}`);
-      return false;
-    }
-    return true;
-  });
 }
 
 /**

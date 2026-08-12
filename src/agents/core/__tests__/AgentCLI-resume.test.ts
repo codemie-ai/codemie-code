@@ -57,9 +57,9 @@ function mockHandleRunDependencies(overrides: Record<string, unknown> = {}) {
 }
 
 describe('buildResumeEnvOverride', () => {
-  it('returns CODEMIE_CONV_SYNC_DISABLED=1 for an external confirmed resume', () => {
+  it('returns CODEMIE_SESSION_ORIGIN=external-resume for an external confirmed resume', () => {
     const env = buildResumeEnvOverride(true);
-    expect(env).toEqual({ CODEMIE_CONV_SYNC_DISABLED: '1' });
+    expect(env).toEqual({ CODEMIE_SESSION_ORIGIN: 'external-resume' });
   });
 
   it('returns empty object for a CodeMie-owned session', () => {
@@ -149,7 +149,7 @@ describe('handleRun resume ownership flow', () => {
   });
 
   afterEach(() => {
-    delete process.env.CODEMIE_CONV_SYNC_DISABLED;
+    delete process.env.CODEMIE_SESSION_ORIGIN;
     vi.restoreAllMocks();
   });
 
@@ -172,7 +172,7 @@ describe('handleRun resume ownership flow', () => {
     expect(run).toHaveBeenCalledTimes(1);
   });
 
-  it('prompts, appends audit data, and injects the sync override for confirmed external resumes', async () => {
+  it('prompts, appends audit data, and injects the origin override for confirmed external resumes', async () => {
     mockHandleRunDependencies();
     const resolveResumeOwnership = vi.fn().mockResolvedValue({
       supported: true,
@@ -203,11 +203,13 @@ describe('handleRun resume ownership flow', () => {
     expect(run).toHaveBeenCalledWith(
       ['--resume', 'external-123'],
       expect.objectContaining({
-        CODEMIE_CONV_SYNC_DISABLED: '1',
+        CODEMIE_SESSION_ORIGIN: 'external-resume',
       }),
       undefined,
     );
-    expect(process.env.CODEMIE_CONV_SYNC_DISABLED).toBeUndefined();
+    // No same-process env write is needed — origin is persisted to the Session record
+    // by createSessionRecord() before any upload is attempted, not read from process env here.
+    expect(process.env.CODEMIE_SESSION_ORIGIN).toBeUndefined();
   });
 
   it('blocks unowned external resumes and records the blocked audit payload when confirmation is denied', async () => {
@@ -263,7 +265,7 @@ describe('handleRun resume ownership flow', () => {
     expect(run).toHaveBeenCalledWith(
       ['--resume', 'resume-789'],
       expect.not.objectContaining({
-        CODEMIE_CONV_SYNC_DISABLED: '1',
+        CODEMIE_SESSION_ORIGIN: 'external-resume',
       }),
       undefined,
     );

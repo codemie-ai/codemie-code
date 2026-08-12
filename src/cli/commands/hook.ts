@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { logger } from '@/utils/logger.js';
 import { AgentRegistry } from '@/agents/registry.js';
 import { getSessionPath, getSessionMetricsPath, getSessionConversationPath } from '@/agents/core/session/session-config.js';
+import { SESSION_ORIGIN, SESSION_ORIGIN_ENV_KEY } from '@/agents/core/session/types.js';
 import type { BaseHookEvent, HookTransformer, MCPConfigSummary, ExtensionsScanSummary } from '@/agents/core/types.js';
 import type { ProcessingContext } from '@/agents/core/session/BaseProcessor.js';
 
@@ -305,14 +306,20 @@ async function performIncrementalSync(event: BaseHookEvent, hookName: string, se
       return;
     }
 
-    // Use transcript_path directly from event
-    const agentSessionFile = event.transcript_path;
-    if (!agentSessionFile) {
+    // Agents may provide a single transcript path or a list of paths (e.g. Pi's
+    // /new and /fork operations switch to a new file in the same run). Process
+    // every path so metrics are not lost.
+    const agentSessionFiles = event.transcript_paths?.length
+      ? event.transcript_paths
+      : event.transcript_path
+        ? [event.transcript_path]
+        : [];
+    if (agentSessionFiles.length === 0) {
       logger.warn(`[hook:${hookName}] No transcript_path in event, skipping incremental sync`);
       return;
     }
 
-    logger.debug(`[hook:${hookName}] Using transcript: ${agentSessionFile}`);
+    logger.debug(`[hook:${hookName}] Using transcript(s): ${agentSessionFiles.join(', ')}`);
 
     // Get agent from registry
     const agent = AgentRegistry.getAgent(agentName);
@@ -334,30 +341,32 @@ async function performIncrementalSync(event: BaseHookEvent, hookName: string, se
       return;
     }
 
-    // Build processing context
-    const context = await buildProcessingContext(sessionId, event.session_id, agentSessionFile, config);
+    const context = await buildProcessingContext(sessionId, event.session_id, agentSessionFiles[0], config);
 
-    // Process session with all processors (metrics + conversations)
-    logger.debug(`[hook:${hookName}] Calling SessionAdapter.processSession()`);
-    const result = await sessionAdapter.processSession(
-      agentSessionFile,
-      sessionId,
-      context
-    );
+    // Process every transcript file. Per-file entry deduplication inside the
+    // adapter prevents forked/copied history from being double-counted.
+    for (const agentSessionFile of agentSessionFiles) {
+      logger.debug(`[hook:${hookName}] Calling SessionAdapter.processSession()`);
+      const result = await sessionAdapter.processSession(
+        agentSessionFile,
+        sessionId,
+        context
+      );
 
-    if (result.success) {
-      logger.info(`[hook:${hookName}] Session processing complete: ${result.totalRecords} records processed`);
-    } else {
-      logger.warn(`[hook:${hookName}] Session processing had failures: ${result.failedProcessors.join(', ')}`);
-    }
-
-    // Log processor results
-    for (const [name, procResult] of Object.entries(result.processors)) {
-      const result = procResult as { success: boolean; message?: string; recordsProcessed?: number };
       if (result.success) {
-        logger.debug(`[hook:${hookName}] Processor ${name}: ${result.message || 'success'}`);
+        logger.info(`[hook:${hookName}] Session processing complete: ${result.totalRecords} records processed`);
       } else {
-        logger.error(`[hook:${hookName}] Processor ${name}: ${result.message || 'failed'}`);
+        logger.warn(`[hook:${hookName}] Session processing had failures: ${result.failedProcessors.join(', ')}`);
+      }
+
+      // Log processor results
+      for (const [name, procResult] of Object.entries(result.processors)) {
+        const result = procResult as { success: boolean; message?: string; recordsProcessed?: number };
+        if (result.success) {
+          logger.debug(`[hook:${hookName}] Processor ${name}: ${result.message || 'success'}`);
+        } else {
+          logger.error(`[hook:${hookName}] Processor ${name}: ${result.message || 'failed'}`);
+        }
       }
     }
 
@@ -626,10 +635,16 @@ async function routeHookEvent(event: BaseHookEvent, rawInput: string, sessionId:
       event.transcript_path &&
       (normalizedEventName === 'UserPromptSubmit' || normalizedEventName === 'Stop')
     ) {
-      const { appendTranscriptMarker } = await import(
+      const { appendTranscriptMarker, isExternalOrigin } = await import(
         '../../agents/core/session/session-origin-audit.js'
       );
-      appendTranscriptMarker(event.transcript_path, sessionId, agentName);
+      const { SessionStore } = await import('../../agents/core/session/SessionStore.js');
+      const session = await new SessionStore().loadSession(sessionId);
+      // Never (re-)stamp a transcript that's flagged external-resume — doing so would
+      // re-adopt it into the local analytics ownership index (native-loader.ts).
+      if (!isExternalOrigin(session)) {
+        appendTranscriptMarker(event.transcript_path, sessionId, agentName);
+      }
     }
 
     const duration = Date.now() - startTime;
@@ -706,6 +721,12 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
     // process with a fresh CODEMIE_SESSION_ID, so it never reaches this branch.)
     const existing = await sessionStore.loadSession(sessionId);
     if (existing && existing.status === 'active' && existing.endTime === undefined) {
+      const {
+        appendTranscriptMarker: writeMarker,
+        appendAuditEvent: writeAudit,
+        isExternalOrigin,
+      } = await import('../../agents/core/session/session-origin-audit.js');
+
       existing.status = 'active';
       if (gitBranch) existing.gitBranch = gitBranch;
       if (remoteRepository) existing.repository = remoteRepository;
@@ -715,11 +736,13 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
         ...(event.session_id && { agentSessionId: event.session_id }),
         ...(event.transcript_path && { agentSessionFile: event.transcript_path }),
       };
+      // Preserve an already-set origin; only derive from env for pre-existing records that
+      // predate this field. An established origin must never flip on re-entry.
+      if (!existing.origin && getConfigValue(SESSION_ORIGIN_ENV_KEY, config) === SESSION_ORIGIN.EXTERNAL_RESUME) {
+        existing.origin = SESSION_ORIGIN.EXTERNAL_RESUME;
+      }
       await sessionStore.saveSession(existing);
-      const { appendTranscriptMarker: writeMarker, appendAuditEvent: writeAudit } = await import(
-        '../../agents/core/session/session-origin-audit.js'
-      );
-      if (event.transcript_path) {
+      if (event.transcript_path && !isExternalOrigin(existing)) {
         writeMarker(event.transcript_path, sessionId, agentName);
         writeAudit('transcript_marker_written', {
           codemieSessionId: sessionId,
@@ -734,6 +757,14 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
       return;
     }
 
+    const { appendTranscriptMarker, appendAuditEvent, isExternalOrigin } = await import(
+      '../../agents/core/session/session-origin-audit.js'
+    );
+    const origin =
+      getConfigValue(SESSION_ORIGIN_ENV_KEY, config) === SESSION_ORIGIN.EXTERNAL_RESUME
+        ? SESSION_ORIGIN.EXTERNAL_RESUME
+        : undefined;
+
     // Create session record with correlation already matched
     const session = {
       sessionId,
@@ -746,6 +777,7 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
       ...(gitBranch && { gitBranch }),
       status: 'active' as const,
       activeDurationMs: 0, // Initialize active duration tracking
+      ...(origin && { origin }),
       correlation: {
         status: 'matched' as const,
         agentSessionId: event.session_id,
@@ -757,10 +789,9 @@ async function createSessionRecord(event: SessionStartEvent, sessionId: string, 
     // Save session
     await sessionStore.saveSession(session);
 
-    const { appendTranscriptMarker, appendAuditEvent } = await import(
-      '../../agents/core/session/session-origin-audit.js'
-    );
-    if (session.correlation.agentSessionFile) {
+    // Never stamp a transcript that's flagged external-resume — doing so would re-adopt it
+    // into the local analytics ownership index (native-loader.ts) and undo the exclusion.
+    if (session.correlation.agentSessionFile && !isExternalOrigin(session)) {
       appendTranscriptMarker(
         session.correlation.agentSessionFile,
         sessionId,
@@ -807,6 +838,16 @@ async function sendSessionStartMetrics(event: SessionStartEvent, sessionId: stri
 
     if (!sessionId || !agentName || !ssoUrl || !apiUrl) {
       logger.debug('[hook:SessionStart] Missing required config for metrics');
+      return;
+    }
+
+    // Session record is created (with origin persisted) immediately before this is called —
+    // see handleSessionStart. Never upload lifecycle metrics for a confirmed external resume.
+    const { isExternalOrigin } = await import('../../agents/core/session/session-origin-audit.js');
+    const { SessionStore } = await import('../../agents/core/session/SessionStore.js');
+    const session = await new SessionStore().loadSession(sessionId);
+    if (isExternalOrigin(session)) {
+      logger.debug('[hook:SessionStart] Skipping start metrics for external-resume session');
       return;
     }
 
@@ -1092,6 +1133,12 @@ async function sendSessionEndMetrics(event: SessionEndEvent, sessionId: string, 
       return;
     }
 
+    const { isExternalOrigin } = await import('../../agents/core/session/session-origin-audit.js');
+    if (isExternalOrigin(session)) {
+      logger.debug('[hook:SessionEnd] Skipping end metrics for external-resume session');
+      return;
+    }
+
     // Calculate durations
     const wallClockDurationMs = Date.now() - session.startTime;
     const activeDurationMs = session.activeDurationMs || undefined;
@@ -1203,10 +1250,12 @@ function validateHookEvent(event: BaseHookEvent, config?: HookProcessingConfig):
     return;
   }
 
-  // transcript_path is optional for SessionStart/SessionEnd in programmatic mode
-  // (transcript may not exist yet at start, or may not be discoverable at end)
+  // transcript_path/transcript_paths are optional for SessionStart/SessionEnd in
+  // programmatic mode (transcript may not exist yet at start, or may not be
+  // discoverable at end). Some agents provide multiple transcript paths.
   const transcriptOptionalEvents = ['SessionStart', 'SessionEnd'];
-  if (!event.transcript_path && !transcriptOptionalEvents.includes(event.hook_event_name)) {
+  const hasTranscriptPath = Boolean(event.transcript_path) || (event.transcript_paths && event.transcript_paths.length > 0);
+  if (!hasTranscriptPath && !transcriptOptionalEvents.includes(event.hook_event_name)) {
     const error = new Error('Missing required field: transcript_path');
     if (config) {
       throw error;

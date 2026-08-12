@@ -103,10 +103,13 @@ describe('Metrics Post-Processing Integration', () => {
     expect(metric.attributes.total_lines_added).toBe(15);
     expect(metric.attributes.total_lines_removed).toBe(3);
 
-    // Bash is excluded for claude agent — all tools filtered → session is error-free
-    expect(metric.attributes.had_errors).toBe(false);
+    // Bash is excluded for claude agent — the raw bash message is replaced with a
+    // generic placeholder so the session still reports that errors occurred.
+    expect(metric.attributes.had_errors).toBe(true);
     expect((metric.attributes as any).error_tools).toBeUndefined();
-    expect((metric.attributes as any).error_messages).toBeUndefined();
+    expect((metric.attributes as any).error_messages).toEqual([
+      'Excluded tool failed: Bash',
+    ]);
     expect((metric.attributes as any).api_errors).toBeUndefined();
 
     // Check user prompts

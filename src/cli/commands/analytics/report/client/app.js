@@ -19,7 +19,7 @@
 
   // ---- palette ------------------------------------------------------------
   var PALETTE = ['#7C5CFC', '#2297F6', '#F5A534', '#06B6D4', '#259F4C', '#F9303C', '#C084FC', '#E879A6'];
-  var AGENT_COLORS = { claude: '#7C5CFC', 'claude-acp': '#9D7BFF', 'claude-desktop': '#B79DFF', gemini: '#F5A534', codex: '#06B6D4', 'codemie-codex': '#06B6D4', opencode: '#259F4C', 'codemie-code': '#2297F6' };
+  var AGENT_COLORS = { claude: '#7C5CFC', 'claude-acp': '#9D7BFF', 'claude-desktop': '#B79DFF', gemini: '#F5A534', codex: '#06B6D4', 'codemie-codex': '#06B6D4', opencode: '#259F4C', 'codemie-code': '#2297F6', 'copilot-cli': '#6E7681', pi: '#E879A6' };
   var seenAgentColor = {};
   var colorCursor = 0;
   function colorFor(agent) {
@@ -27,6 +27,10 @@
     if (!seenAgentColor[agent]) { seenAgentColor[agent] = PALETTE[colorCursor % PALETTE.length]; colorCursor++; }
     return seenAgentColor[agent];
   }
+  // Agent keys are internal ids; these are what a human should read. Unmapped agents fall
+  // through to the key itself, so listing an agent here is optional.
+  var AGENT_LABELS = { 'copilot-cli': 'GitHub Copilot CLI', pi: 'Pi' };
+  function labelFor(agent) { return AGENT_LABELS[agent] || agent; }
 
   // ---- formatting ---------------------------------------------------------
   function fmtNum(n) { return (n || 0).toLocaleString('en-US'); }
@@ -393,7 +397,7 @@
     agentList.forEach(function (a) {
       var ss = byAgent.get(a);
       var c = el('div', 'acard'); c.style.setProperty('--ac', colorFor(a));
-      c.appendChild(el('h3', null, '<span class="pill"></span>' + esc(a)));
+      c.appendChild(el('h3', null, '<span class="pill"></span>' + esc(labelFor(a))));
       c.appendChild(el('span', 'text-muted', '<span style="font-size:12px">' + ss.length + ' sessions · ' + Math.round((ss.length / fs.length) * 100) + '% of activity</span>'));
       var mini = el('div', 'mini');
       var stats = [
@@ -440,7 +444,9 @@
       agentList.map(function (a) {
         var ss = byAgent.get(a);
         var topModel = topOf(ss.flatMap(function (s) { return s.models; }));
-        return ['<span class="tag tag-sm" style="text-transform:capitalize">' + esc(a) + '</span>', fmtNum(ss.length), tdNum(sum(ss, function (s) { return s.turns; })), tdNum(sum(ss, function (s) { return s.fileOps; })), tdNum(sum(ss, function (s) { return s.netLines; })), '<span class="tag tag-sm">' + esc(topModel || '—') + '</span>', tdNum(successRate(ss) + '%'), tdNum(fmtUSD(sum(ss, function (s) { return s.costUSD; })))];
+        // No text-transform: it would render a mapped label as "Github Copilot Cli".
+        // Unmapped keys keep their original look via the capitalize fallback below.
+        return ['<span class="tag tag-sm"' + (AGENT_LABELS[a] ? '' : ' style="text-transform:capitalize"') + '>' + esc(labelFor(a)) + '</span>', fmtNum(ss.length), tdNum(sum(ss, function (s) { return s.turns; })), tdNum(sum(ss, function (s) { return s.fileOps; })), tdNum(sum(ss, function (s) { return s.netLines; })), '<span class="tag tag-sm">' + esc(topModel || '—') + '</span>', tdNum(successRate(ss) + '%'), tdNum(fmtUSD(sum(ss, function (s) { return s.costUSD; })))];
       }),
       [false, true, true, true, true, false, true, true]);
     host.appendChild(detail);
@@ -604,7 +610,7 @@
       bloated.map(function (x) {
         var s = x.s;
         return ['<span title="' + esc(sessTitle(s)) + '">' + esc(truncStr(sessTitle(s), 44)) + '</span>',
-          '<span class="tag tag-sm" style="text-transform:capitalize">' + esc(s.agentName) + '</span>',
+          '<span class="tag tag-sm"' + (AGENT_LABELS[s.agentName] ? '' : ' style="text-transform:capitalize"') + '>' + esc(labelFor(s.agentName)) + '</span>',
           '<span class="tag tag-sm">' + esc((s.models && s.models[0]) || '—') + '</span>',
           fmtTokens(Math.round(x.ctx)), fmtTokens(s.tokens ? s.tokens.cacheRead : 0), fmtUSD(s.costUSD), (Math.round(x.bloat * 10) / 10) + '%'];
       }),
@@ -635,7 +641,7 @@
       dw.innerHTML = tableHTML(['Session', 'Agent', 'Model', 'Turns', 'Cost'],
         topDead.map(function (s) {
           return ['<span title="' + esc(sessTitle(s)) + '">' + esc(truncStr(sessTitle(s), 44)) + '</span>',
-            '<span class="tag tag-sm" style="text-transform:capitalize">' + esc(s.agentName) + '</span>',
+            '<span class="tag tag-sm"' + (AGENT_LABELS[s.agentName] ? '' : ' style="text-transform:capitalize"') + '>' + esc(labelFor(s.agentName)) + '</span>',
             '<span class="tag tag-sm">' + esc((s.models && s.models[0]) || '—') + '</span>',
             fmtNum(s.turns), fmtUSD(s.costUSD)];
         }), [false, false, false, true, true]);
@@ -738,7 +744,7 @@
           else if (c.withLog === 0) status = '<span class="cov-warn">no native log</span>';
           else if (c.priced === 0) status = '<span class="cov-warn">no token reader</span>';
           else status = '<span class="cov-warn">partial</span>';
-          return ['<span class="tag tag-sm" style="text-transform:capitalize">' + esc(c.agentName) + '</span>',
+          return ['<span class="tag tag-sm"' + (AGENT_LABELS[c.agentName] ? '' : ' style="text-transform:capitalize"') + '>' + esc(labelFor(c.agentName)) + '</span>',
             fmtNum(c.total), c.priced + '/' + c.total, fmtNum(c.withLog), status];
         }),
         [false, true, true, true, false]) + '</div>';
@@ -775,7 +781,7 @@
       ['Session', 'Agent', 'Project', 'Input', 'Output', 'Cached', 'Total', 'Cost'],
       top.map(function (s) {
         return [esc(s.sessionId.slice(0, 8)),
-          '<span class="tag tag-sm" style="text-transform:capitalize">' + esc(s.agentName) + '</span>',
+          '<span class="tag tag-sm"' + (AGENT_LABELS[s.agentName] ? '' : ' style="text-transform:capitalize"') + '>' + esc(labelFor(s.agentName)) + '</span>',
           '<span title="' + esc(s.project) + '">' + esc(shortPath(s.project)) + '</span>',
           fmtTokens(tkIn(s)), fmtTokens(tkOut(s)), fmtTokens(tkCached(s)), fmtTokens(s.tokens ? s.tokens.total : 0), fmtUSD(s.costUSD)];
       }),
@@ -802,7 +808,7 @@
       var list = fs.slice().sort(function (a, b) { return b.startTime - a.startTime; });
       if (q) {
         var ql = q.toLowerCase();
-        list = list.filter(function (s) { return (s.sessionId + ' ' + s.agentName + ' ' + s.project + ' ' + s.branch + ' ' + (s.title || '') + ' ' + (s.sessionSource || '')).toLowerCase().indexOf(ql) >= 0; });
+        list = list.filter(function (s) { return (s.sessionId + ' ' + s.agentName + ' ' + labelFor(s.agentName) + ' ' + s.project + ' ' + s.branch + ' ' + (s.title || '') + ' ' + (s.sessionSource || '')).toLowerCase().indexOf(ql) >= 0; });
       }
       var shown = list.slice(0, 300);
       holder.innerHTML = tableHTML(
@@ -813,7 +819,7 @@
           var sourceCell = '<span class="tag tag-sm">' + esc(s.sessionSource || 'Pure chat') + '</span>';
           return [new Date(s.startTime).toISOString().slice(0, 16).replace('T', ' '),
             promptCell,
-            '<span class="tag tag-sm" style="text-transform:capitalize">' + esc(s.agentName) + '</span>',
+            '<span class="tag tag-sm"' + (AGENT_LABELS[s.agentName] ? '' : ' style="text-transform:capitalize"') + '>' + esc(labelFor(s.agentName)) + '</span>',
             '<span title="' + esc(s.project) + '">' + esc(shortPath(s.project)) + '</span>', branchCell, sourceCell,
             fmtNum(s.turns), fmtNum(s.netLines), fmtTokens(tkIn(s)), fmtTokens(tkOut(s)), fmtTokens(tkCached(s)), fmtUSD(s.costUSD)];
         }),
@@ -1030,6 +1036,50 @@
     container.appendChild(sidePane);
     return container;
   }
+  /**
+   * Rebuild a single-session ReportPayload matching what
+   * `codemie analytics --report --report-format json --session <id>` writes:
+   * { meta, sessions: [record] }, with meta.totals/coverage scoped to this one session
+   * and userEmail / periodStart / periodEnd populated. Mirrors buildPayload()'s meta
+   * assembly (see report/payload-builder.ts) so the exported file is drop-in comparable.
+   */
+  function sessionPayload(s) {
+    var perModel = s.perModelCost || [];
+    var priced = perModel.length > 0;
+    var unpricedModels = [];
+    perModel.forEach(function (m) {
+      if (m.unpriced && unpricedModels.indexOf(m.model) === -1) unpricedModels.push(m.model);
+    });
+    var meta = {
+      generatedAt: new Date().toISOString(),
+      // --session applies no date filter, so the CLI stamps 'all' / 'all' here too.
+      rangeLabel: 'all',
+      agents: [s.agentName],
+      projectFilter: 'all',
+      totals: {
+        sessions: 1,
+        durationMs: s.durationMs,
+        turns: s.turns,
+        files: s.fileOps,
+        netLines: s.netLines,
+        toolCallsTotal: s.toolCallsTotal,
+        toolSuccessRate: s.toolCallsTotal ? Math.round((s.toolCallsSuccess / s.toolCallsTotal) * 1000) / 10 : 0,
+        totalCostUSD: s.costUSD,
+        cacheReadCostUSD: s.cacheReadCostUSD,
+        pricedSessions: priced ? 1 : 0
+      },
+      unpricedModels: unpricedModels,
+      coverage: [{ agentName: s.agentName, total: 1, priced: priced ? 1 : 0, withLog: s.hadLog ? 1 : 0 }]
+    };
+    // Same conditional-spread semantics as buildPayload: omit rather than emit null.
+    if (DATA.meta && DATA.meta.userEmail !== undefined) meta.userEmail = DATA.meta.userEmail;
+    if (Number.isFinite(s.startTime) && s.startTime > 0) {
+      meta.periodStart = new Date(s.startTime).toISOString();
+      meta.periodEnd = new Date(s.startTime + Math.max(Number.isFinite(s.durationMs) ? s.durationMs : 0, 0)).toISOString();
+    }
+    return { meta: meta, sessions: [s] };
+  }
+
   function openSessionModal(s, onBack) {
     if (!s) return;
     closeSessionModal();
@@ -1048,7 +1098,7 @@
       htxt.appendChild(back);
     }
     htxt.appendChild(el('div', 'modal-title', esc(truncStr(firstWords(sessTitle(s), 10), 120))));
-    var metaBits = [s.agentName, (s.models && s.models[0]) || null, shortPath(s.project), s.branch].filter(Boolean);
+    var metaBits = [labelFor(s.agentName), (s.models && s.models[0]) || null, shortPath(s.project), s.branch].filter(Boolean);
     htxt.appendChild(el('div', 'modal-meta', metaBits.map(function (b) { return esc(b); }).join('  ·  ')));
     head.appendChild(htxt);
     var headBtns = el('div'); headBtns.style.cssText = 'display:flex;gap:6px;align-items:center;flex-shrink:0;';
@@ -1056,7 +1106,7 @@
     exportBtn.setAttribute('aria-label', 'Export session as JSON');
     exportBtn.setAttribute('title', 'Export session details as JSON');
     exportBtn.addEventListener('click', function () {
-      var json = JSON.stringify(s, null, 2);
+      var json = JSON.stringify(sessionPayload(s), null, 2);
       var blob = new Blob([json], { type: 'application/json' });
       var url = URL.createObjectURL(blob);
       var a = document.createElement('a');
@@ -1076,12 +1126,24 @@
     // Cost & Time / Token Usage / Activity — light borderless stats, equal-height cards.
     var t = s.tokens || { input: 0, output: 0, cacheRead: 0, cacheCreation: 0, total: 0 };
     var grid3 = el('div', 'grid-3');
-    var costCard = card('Cost & Time'); costCard._body.appendChild(statsEl([
-      ['Cost', fmtUSD(s.costUSD), 'API-equivalent'],
+    // Usage provenance (optional, present only for agents that report it — e.g. Copilot CLI,
+    // which bills in premium requests rather than tokens, and whose older CLI versions
+    // recorded no telemetry at all). Appended so other agents' cards are unchanged.
+    var costRows = [
+      ['Cost', s.usageUnavailableReason ? '—' : fmtUSD(s.costUSD), s.usageUnavailableReason ? 'not measurable' : 'API-equivalent'],
       ['Cache-read', s.cacheReadCostUSD ? fmtUSD(s.cacheReadCostUSD) : '—', ''],
       ['Duration', fmtDuration(s.durationMs || 0), ''],
       ['Started', '<span class="mval-sm">' + esc(fmtWhen(s.startTime)) + '</span>', '']
-    ]));
+    ];
+    if (s.premiumRequests !== undefined) {
+      costRows.push(['Premium requests', fmtNum(s.premiumRequests), 'provider billing unit']);
+    }
+    var costCard = card('Cost & Time'); costCard._body.appendChild(statsEl(costRows));
+    if (s.usageUnavailableReason) {
+      costCard._body.appendChild(el('div', 'text-muted', '<span style="font-size:12px">' + esc(s.usageUnavailableReason) + '</span>'));
+    } else if (s.usagePartial) {
+      costCard._body.appendChild(el('div', 'text-muted', '<span style="font-size:12px">Partial usage — output tokens only; this session recorded no full rollup, so cost is understated.</span>'));
+    }
     var tokCard = card('Token usage'); tokCard._body.appendChild(statsEl([
       ['Input', fmtTokens(t.input), ''], ['Output', fmtTokens(t.output), ''],
       ['Cache read', fmtTokens(t.cacheRead), ''], ['Cache create', fmtTokens(t.cacheCreation), ''],
@@ -1300,7 +1362,7 @@
     var chips = document.getElementById('agent-chips');
     DATA.meta.agents.forEach(function (a) {
       var chip = el('span', 'chip-tog');
-      chip.innerHTML = '<span class="dot" style="background:' + colorFor(a) + '"></span>' + esc(a);
+      chip.innerHTML = '<span class="dot" style="background:' + colorFor(a) + '"></span>' + esc(labelFor(a));
       chip.addEventListener('click', function () {
         if (state.agents.has(a)) { state.agents.delete(a); chip.classList.add('off'); }
         else { state.agents.add(a); chip.classList.remove('off'); }

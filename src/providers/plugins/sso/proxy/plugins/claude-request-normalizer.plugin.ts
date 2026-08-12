@@ -8,15 +8,20 @@
  * 1. Models that DO NOT support thinking (e.g. claude-haiku-4-5, 4-6):
  *    → strips the thinking field entirely to prevent API errors
  *
- * 2. Models that require adaptive thinking API (e.g. claude-opus-4-7+):
+ * 2. Models that require adaptive thinking API (e.g. claude-opus-4-7+, claude-sonnet-5):
  *    → "enabled"  → thinking: { type: "adaptive" } + output_config.effort
- *    → "disabled" → delete the thinking field
+ *    → "disabled" → either preserve or delete the field depending on model support
+ *
+ * 3. Models that deprecate sampling parameters (e.g. claude-sonnet-5):
+ *    → strips temperature / top_p / top_k entirely to prevent API errors
  *
  * Problem: Claude Code sends `thinking: { type: "enabled", budget_tokens: N }`.
  * - Haiku models reject thinking field with HTTP 400
  * - Opus 4-7+ requires adaptive thinking format with output_config.effort
+ * - Sonnet 5 rejects manual extended thinking and sampling parameters
  *
- * Scope: Enabled for codemie-claude (Claude Code via SSO proxy) and claude-desktop (Desktop 3P mode).
+ * Scope: Enabled for codemie-claude (Claude Code via SSO proxy), codemie-copilot
+ * (GitHub Copilot CLI via BYOK Anthropic shape), and claude-desktop (Desktop 3P mode).
  *
  * To add model support: update NO_THINKING_MODEL_PATTERNS or ADAPTIVE_THINKING_MODEL_PATTERNS.
  */
@@ -40,6 +45,7 @@ const NO_THINKING_MODEL_PATTERNS: RegExp[] = [
  */
 const ADAPTIVE_THINKING_MODEL_PATTERNS: RegExp[] = [
   /claude-opus-4-[7-9](?:[^0-9]|$)/i,  // claude-opus-4-7/8/9 and date-tagged variants (e.g. claude-opus-4-7-20250514); excludes claude-opus-4-70+
+  /claude-sonnet-5(?:[^0-9]|$)/i,      // claude-sonnet-5 and date-tagged variants
 ];
 
 function modelDisablesThinking(modelName: string): boolean {
@@ -48,6 +54,14 @@ function modelDisablesThinking(modelName: string): boolean {
 
 function modelRequiresAdaptiveThinking(modelName: string): boolean {
   return ADAPTIVE_THINKING_MODEL_PATTERNS.some(p => p.test(modelName));
+}
+
+function modelPreservesDisabledThinking(modelName: string): boolean {
+  return /claude-sonnet-5(?:[^0-9]|$)/i.test(modelName);
+}
+
+function modelDisablesSamplingParameters(modelName: string): boolean {
+  return /claude-sonnet-5(?:[^0-9]|$)/i.test(modelName);
 }
 
 /**
@@ -103,6 +117,13 @@ function handleAdaptiveThinkingTransform(body: any, model: string): boolean {
       `[claude-request-normalizer] Transformed thinking: "enabled" → "adaptive", effort="${effort}" for model: ${model}`
     );
   } else {
+    if (modelPreservesDisabledThinking(model)) {
+      logger.debug(
+        `[claude-request-normalizer] Preserved thinking.type="disabled" for model: ${model}`
+      );
+      return false;
+    }
+
     delete body.thinking;
     logger.debug(
       `[claude-request-normalizer] Removed unsupported thinking.type="disabled" for model: ${model}`
@@ -112,8 +133,31 @@ function handleAdaptiveThinkingTransform(body: any, model: string): boolean {
   return true;
 }
 
+function handleDeprecatedSamplingParams(body: any, model: string): boolean {
+  if (!modelDisablesSamplingParameters(model)) {
+    return false;
+  }
+
+  const stripped: string[] = [];
+  for (const key of ['temperature', 'top_p', 'top_k'] as const) {
+    if (key in body) {
+      delete body[key];
+      stripped.push(key);
+    }
+  }
+
+  if (stripped.length === 0) {
+    return false;
+  }
+
+  logger.debug(
+    `[claude-request-normalizer] Stripped deprecated sampling params for model ${model}: ${stripped.join(', ')}`
+  );
+  return true;
+}
+
 /** Agents whose Claude API requests need thinking normalization */
-const ALLOWED_AGENTS = ['codemie-claude', 'claude-desktop'];
+const ALLOWED_AGENTS = ['codemie-claude', 'codemie-copilot', 'claude-desktop'];
 
 export class ClaudeRequestNormalizerPlugin implements ProxyPlugin {
   id = '@codemie/proxy-claude-request-normalizer';
@@ -146,21 +190,22 @@ class ClaudeRequestNormalizerInterceptor implements ProxyInterceptor {
       const bodyStr = context.requestBody.toString('utf-8');
       const body = JSON.parse(bodyStr);
 
-      if (!body.thinking) {
-        return;
-      }
-
       const model = (typeof body.model === 'string' && body.model) || this.configModel || '';
       if (!model) {
         return;
       }
 
-      // Chain handlers: first match wins and modifies body
-      const modified =
-        handleNoThinkingModels(body, model) ||
-        handleAdaptiveThinkingTransform(body, model);
+      const modifiedBySampling = handleDeprecatedSamplingParams(body, model);
 
-      if (modified) {
+      let modifiedByThinking = false;
+      if (body.thinking) {
+        // Chain handlers: first match wins and modifies body
+        modifiedByThinking =
+          handleNoThinkingModels(body, model) ||
+          handleAdaptiveThinkingTransform(body, model);
+      }
+
+      if (modifiedBySampling || modifiedByThinking) {
         const newBodyStr = JSON.stringify(body);
         context.requestBody = Buffer.from(newBodyStr, 'utf-8');
         context.headers['content-length'] = String(context.requestBody.length);

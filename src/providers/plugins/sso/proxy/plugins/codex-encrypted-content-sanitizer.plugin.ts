@@ -2,20 +2,30 @@
  * Encrypted Content Sanitizer
  * Priority: 16 (after generic request sanitizer, before header injection)
  *
- * LiteLLM/Azure can reject Responses API follow-up requests when encrypted
- * reasoning content is load-balanced to a different deployment/API key than
- * the one that created it. Server-side encrypted_content_affinity is the
- * correct fix. This client-side sanitizer is a defensive fallback:
- * it removes encrypted reasoning state so the session can continue instead of
- * failing with invalid_encrypted_content.
+ * Responses API reasoning items are bound to the deployment that produced them:
+ * `encrypted_content` is decryptable only by the API key that created it, and a
+ * bare `rs_...` id is unresolvable under `store: false`. Replaying either one
+ * against the wrong deployment fails the turn.
  *
- * Scope: codemie-codex, codemie-code, codemie-opencode, and vscode-byok. This
- * cross-client fallback covers Responses-API sessions when load balancing can
- * send encrypted state to a different deployment/API key. Tradeoff: drops
- * cross-turn hidden-reasoning continuity to avoid hard invalid_encrypted_content
- * failures while preserving effort, visible messages, and tool history. If
- * server-side encrypted_content_affinity becomes available, this client strip
- * becomes redundant.
+ * The gateway now runs LiteLLM `encrypted_content_affinity`, which routes a
+ * follow-up carrying encrypted content back to its originating deployment. So
+ * the default path is pass-through: reasoning state is forwarded untouched and
+ * agents keep full cross-turn reasoning continuity.
+ *
+ * Affinity pins expire (`deployment_affinity_ttl_seconds`), and a session
+ * resumed after expiry replays state no deployment can resolve. Because clients
+ * replay their whole history every turn, that first failure would otherwise
+ * repeat forever. This interceptor therefore watches upstream responses for the
+ * two failure signatures and, once either is seen, strips reasoning state from
+ * every subsequent request for the life of the proxy. The failing turn surfaces
+ * its error; the session then self-heals with degraded continuity instead of
+ * staying stuck.
+ *
+ * Stripping is the same trade as before: reasoning effort, visible messages,
+ * tool calls, and tool outputs survive; prior hidden reasoning does not.
+ *
+ * Scope: codemie-codex, codemie-code, codemie-opencode, codemie-pi, and
+ * vscode-byok.
  */
 
 import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
@@ -26,9 +36,23 @@ const ALLOWED_AGENTS = [
   'codemie-codex',
   'codemie-code',
   'codemie-opencode',
+  'codemie-pi',
   'vscode-byok',
 ];
 const ENCRYPTED_CONTENT_INCLUDE = 'reasoning.encrypted_content';
+const RESPONSES_PATH_SUFFIX = '/responses';
+
+/**
+ * Upstream signatures that mean replayed reasoning state was rejected:
+ * affinity miss or expired pin, and a bare reasoning id under `store: false`.
+ * Kept short so LiteLLM's nested JSON escaping cannot break the match.
+ */
+const UNUSABLE_REASONING_STATE_MARKERS = [
+  'invalid_encrypted_content',
+  'Items are not persisted when',
+];
+const MARKER_OVERLAP_BYTES = Math.max(...UNUSABLE_REASONING_STATE_MARKERS.map(m => m.length)) - 1;
+const MARKER_CARRY_KEY = 'encryptedContentSanitizerMarkerCarry';
 
 interface SanitizeResult {
   value: unknown;
@@ -55,9 +79,16 @@ export class CodexEncryptedContentSanitizerPlugin implements ProxyPlugin {
 class CodexEncryptedContentSanitizerInterceptor implements ProxyInterceptor {
   name = 'codex-encrypted-content-sanitizer';
 
+  /** Set once upstream rejects replayed reasoning state; never cleared for this proxy. */
+  private reasoningStateUnusable = false;
+
   constructor(private readonly clientType: string) {}
 
   async onRequest(context: ProxyContext): Promise<void> {
+    if (!this.reasoningStateUnusable) {
+      return;
+    }
+
     if (!context.requestBody || !context.headers['content-type']?.includes('application/json')) {
       return;
     }
@@ -81,6 +112,38 @@ class CodexEncryptedContentSanitizerInterceptor implements ProxyInterceptor {
       // Not valid JSON or unexpected structure — pass through unchanged.
     }
   }
+
+  /**
+   * Read-only scan of the upstream stream. Returns the chunk untouched; the only
+   * effect is latching `reasoningStateUnusable` so later requests get stripped.
+   */
+  async onResponseChunk(context: ProxyContext, chunk: Buffer): Promise<Buffer | null> {
+    if (this.reasoningStateUnusable || !context.url.includes(RESPONSES_PATH_SUFFIX)) {
+      return chunk;
+    }
+
+    // Carry lives on the per-request context: concurrent streams must not share it.
+    const carry = context.metadata[MARKER_CARRY_KEY];
+    const searchable = Buffer.isBuffer(carry) ? Buffer.concat([carry, chunk]) : chunk;
+    const marker = UNUSABLE_REASONING_STATE_MARKERS.find(m => searchable.includes(m));
+
+    if (marker) {
+      this.reasoningStateUnusable = true;
+      delete context.metadata[MARKER_CARRY_KEY];
+      logger.warn(
+        `[${this.name}] Upstream rejected replayed reasoning state for ${this.clientType} ("${marker}"). ` +
+        'Stripping reasoning state from subsequent requests — cross-turn reasoning continuity is degraded ' +
+        'for the rest of this session. Expected after an encrypted_content_affinity pin expires; ' +
+        'a rising rate means deployment_affinity_ttl_seconds is too short.'
+      );
+      return chunk;
+    }
+
+    context.metadata[MARKER_CARRY_KEY] = searchable.subarray(
+      Math.max(0, searchable.length - MARKER_OVERLAP_BYTES)
+    );
+    return chunk;
+  }
 }
 
 function sanitizeValue(value: unknown): SanitizeResult {
@@ -90,7 +153,7 @@ function sanitizeValue(value: unknown): SanitizeResult {
     const sanitizedItems: unknown[] = [];
 
     for (const item of value) {
-      if (isEncryptedReasoningItem(item)) {
+      if (isReasoningInputItem(item)) {
         modified = true;
         removedCount++;
         continue;
@@ -139,10 +202,15 @@ function sanitizeValue(value: unknown): SanitizeResult {
   return { value: result, modified, removedCount };
 }
 
-function isEncryptedReasoningItem(value: unknown): boolean {
-  return isPlainObject(value) &&
-    value.type === 'reasoning' &&
-    typeof value.encrypted_content === 'string';
+/**
+ * Any replayed reasoning item is deployment-bound state, not just the encrypted ones.
+ * Once `include: ["reasoning.encrypted_content"]` is stripped the upstream response
+ * carries reasoning items without `encrypted_content`; clients that persist and replay
+ * them (pi) then send a bare `rs_...` id, which `store: false` requests cannot resolve
+ * ("Item with id 'rs_...' not found"). Drop the whole item in both shapes.
+ */
+function isReasoningInputItem(value: unknown): boolean {
+  return isPlainObject(value) && value.type === 'reasoning';
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {

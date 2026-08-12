@@ -1,0 +1,121 @@
+{
+  "decision": "request-changes",
+  "rationale": "All three lenses ran as independent subagents with parseable output against a spec, and the batched reachability verifier simulated each candidate against the real code; no lens failed and the diff needed no sharding. Two blocking findings survive, both newly introduced by the Task 5 dedup precedence flip and both rooted in the same unconditional collision replacement: a shadowing org entry is reverted to the bundled public URL on a transient fetch failure (violating acceptance criterion 6, which the acceptance lens passed only because the existing regression test does not construct the shadowing case), and a colliding backend entry with no OAuth config silently downgrades a bundled default's oauth:true. 5 findings were deferred as real but pre-existing and out of this change's scope (partial-validation revocation; unnormalized URL collision allowing double registration; authorizationUrl/tokenUrl accepted as any non-empty string with no scheme check; callbackHost not loopback-restricted; org catalog not deduped against itself) and are recorded in docs/superpowers/tasks/2026-08-11-epmcdme-14072-extend-the-codemie-cli-s-managed-mcp/code-review-deferred.md; 13 candidates were dismissed as unreachable or below the blocking floor.",
+  "confidence": "high",
+  "risk_flags": ["security"],
+  "business_review": [
+    {
+      "kind": "spec",
+      "item": "AC1: a backend entry carrying the new oauth object is written into configLibrary/<UUID>.json -> managedMcpServers with the object intact, all keys preserved",
+      "status": "pass",
+      "notes": "End-to-end path verified: pickCanonicalFields copies oauth wholesale (managed-mcp-remote.ts:97-99) -> resolveDesktopOAuth spreads it (desktop.ts:273) -> cloneManagedEntry copies it (desktop.ts:309-313) -> JSON.stringify into configLibrary/<configId>.json (desktop.ts:611). The covering test reads the file back off disk and re-parses the stringified managedMcpServers rather than asserting on mapper output."
+    },
+    {
+      "kind": "spec",
+      "item": "AC2: no entry is written with oauth:false when the backend supplied OAuth configuration",
+      "status": "pass",
+      "notes": "The defect line `oauth: entry.auth === 'oauth'` is replaced by resolveDesktopOAuth (desktop.ts:295); a malformed oauth object cannot arrive as false because isValidCanonicalEntry drops the whole entry (managed-mcp-remote.ts:74-81). Covered by 'never writes oauth: false for an entry that supplied oauth config'."
+    },
+    {
+      "kind": "spec",
+      "item": "AC3: entries using the legacy auth:'oauth' enum continue to produce oauth:true",
+      "status": "pass",
+      "notes": "desktop.ts:276; legacy `auth` retained on CanonicalMcpEntry (managed-mcp-remote.ts:33) and still forwarded by pickCanonicalFields. Verified on disk by 'writes oauth: true for a legacy auth enum entry' plus per-row unit coverage."
+    },
+    {
+      "kind": "spec",
+      "item": "AC4: unknown keys inside the oauth object survive to the Desktop config",
+      "status": "pass",
+      "notes": "Every hop is a whole-value copy with no allowlist rebuild; index signature on McpOAuthConfig (managed-mcp-remote.ts:26) and isValidOAuthConfig ignores unknown keys. The disk-readback test asserts `audience` survives; the fetch-level test also carries `pkce`."
+    },
+    {
+      "kind": "spec",
+      "item": "AC5: a backend entry colliding with a bundled default replaces it",
+      "status": "pass",
+      "notes": "Precedence flipped at desktop.ts:552-561; three tests read the written file (name collision, URL collision asserting the bundled 'Notion' is gone, and non-colliding order with defaults still leading). Mechanically satisfied — but see CR-001/CR-002 for two consequences of replacing unconditionally."
+    },
+    {
+      "kind": "spec",
+      "item": "AC6: a transient backend failure still never revokes previously-managed org entries",
+      "status": "partial",
+      "notes": "Holds for ordinary org entries — the pre-existing null-fetch regression test still guards that path. FAILS for an org entry that shadowed a bundled default: verifier simulation shows run 1 writes the internal entry and marks it, then a failed fetch in run 2 sets org=[], restores all defaults, sets previouslyManagedNames=[], and reconcileManagedMcpServers drops the internal entry in favour of the bundled public URL. Newly reachable only because of the dedup flip. See CR-001."
+    },
+    {
+      "kind": "spec",
+      "item": "AC7: a backend emitting only malformed oauth objects does not revoke the tenant's org MCPs",
+      "status": "pass",
+      "notes": "managed-mcp-remote.ts:169 returns null when json.length > 0 && valid.length === 0, routing into the no-revoke branch. Covered by 'returns null when the backend sent entries but none survived validation'. Note the partial-invalid case is deliberately not covered by this criterion — deferred separately."
+    },
+    {
+      "kind": "spec",
+      "item": "AC8: npm run lint, typecheck, build and the full test suite pass",
+      "status": "pass",
+      "notes": "Accepted on out-of-band gate evidence: lint/typecheck/build exit 0; test:unit 2967 passed with 1 pre-existing platform-gated skip across 198 files. Not re-run here."
+    },
+    {
+      "kind": "spec",
+      "item": "Sections 1-4: types, sanity-gate validation, field preservation, six-row precedence table",
+      "status": "pass",
+      "notes": "managed-mcp-remote.ts:19-38, 47-60, 74-81, 97-99 and desktop.ts:24-31, 272-279. The precedence chain matches the spec row for row including boolean-beats-legacy-enum, with an explicit test per row. Deviation recorded, not a violation: explicit nulls on optional oauth fields are tolerated and forwarded, consistent with the file's existing FastAPI-null convention."
+    },
+    {
+      "kind": "spec",
+      "item": "Sections 5-8: dedup flip, aliasing fix, empty-catalog mitigation, observability",
+      "status": "pass",
+      "notes": "desktop.ts:552-561 (flip, documented case asymmetry), 309-313 + both former spread sites at 389 and 561 (cloneManagedEntry), managed-mcp-remote.ts:169 (mitigation, guarded by json.length > 0 so a genuinely empty catalog still returns []), desktop.ts:330-340 consumed at index.ts:459 inside sanitizeLogArgs."
+    },
+    {
+      "kind": "spec",
+      "item": "Error-handling table and the fail-soft null-vs-empty contract",
+      "status": "pass",
+      "notes": "managed-mcp-remote.ts:121-157 and the catch at 171-177 are unmodified; both new returns sit strictly after the existing failure gates, so no-creds / network / non-2xx / non-array-body all still yield null."
+    },
+    {
+      "kind": "spec",
+      "item": "Non-goals respected: no CLI-side OAuth flow; McpOAuthProvider, mcp-auth.plugin.ts, SSO origin allowlist, VS Code connector, mcp-loader.ts, mcp-config.ts, marker state shape and the bundled defaults file all untouched",
+      "status": "pass",
+      "notes": "The diff touches exactly six files (two connectors, proxy index, three test files); repo-wide grep for the changed symbols returns no hits outside src/cli/commands/proxy. Marker state remains { managedNames }. desktop-managed-mcp-servers.json is correctly absent from the diff."
+    }
+  ],
+  "standards_review": [
+    {
+      "kind": "commit-format",
+      "status": "pass",
+      "notes": ".ai-run/guides/standards/git-workflow.md readable. All six commits in 917b4f0..HEAD use <type>(proxy): <subject> with allowed types (feat/fix) and the ticket key EPMCDME-14072 in the body footer rather than the subject; commitlint enforced this via the pre-commit hook on every commit."
+    },
+    {
+      "kind": "code-quality",
+      "status": "pass",
+      "notes": ".ai-run/guides/standards/code-quality.md readable. ESLint --max-warnings=0 and tsc both exit 0; ES module .js import extensions preserved, explicit return types on all new exports, no `any` in production code (`as any` confined to test files, matching existing style), logging routed through logger + sanitizeLogArgs with no console.log introduced."
+    },
+    {
+      "kind": "security",
+      "status": "partial",
+      "notes": ".ai-run/guides/development/security-patterns.md is absent at the documented path; the project's equivalent guide is .ai-run/guides/security/security-practices.md, which is readable and was used. Its checklist items are satisfied — no credential storage, no path I/O, log sanitization via sanitizeLogArgs. Marked partial because this change introduces two authentication-affecting defects in the collision path (CR-001, CR-002); the pre-existing lack of scheme validation on backend-supplied OAuth endpoints is deferred, not counted here."
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connectors/desktop.ts",
+      "line": 552,
+      "title": "A transient fetch failure reverts a shadowing org entry to the bundled public URL",
+      "problem": "The dedup flip lets a backend entry suppress a bundled default by name or URL, but nothing records that the suppression happened. When a later fetch fails, `org` becomes `[]` (desktop.ts:552), so `defaultsDeduped` restores every bundled default, and because `orgFetchSucceeded` is false `previouslyManagedNames` is `[]` (desktop.ts:562). `reconcileManagedMcpServers` then treats the bundled name as owned and drops the user's existing internal entry in its favour. Verifier simulation: run 1 writes org `{name:'notion', url:'https://mcp.internal.corp/notion'}`; run 2 with a failed fetch leaves the config holding the bundled `Notion` at `https://mcp.notion.com/mcp`.",
+      "impact": "Violates acceptance criterion 6 — a transient backend outage must never revoke a previously-managed org entry. Worse than a plain revocation: the tenant's internal MCP server is silently replaced by a public third-party endpoint of the same name, so the client keeps working while pointing somewhere the tenant did not intend. Newly introduced by this change — before the flip the colliding org entry was dropped at run 1 and could never be written, so the scenario did not exist.",
+      "recommendation": "Make the failed-fetch path preserve a previously-shadowed default rather than restoring it. Options: persist the set of suppressed default names alongside `managedNames` in the marker state and continue to filter those defaults while `orgFetchSucceeded` is false; or skip the bundled-default restoration entirely on a failed fetch, consistent with the existing rule that a failed fetch changes nothing. Cover it with a two-run test — successful shadowing fetch, then a null fetch — asserting the internal URL survives."
+    },
+    {
+      "id": "CR-002",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/proxy/connectors/desktop.ts",
+      "line": 557,
+      "title": "Collision replacement has no auth-shape guard, so a backend entry can downgrade a bundled default's oauth:true",
+      "problem": "`defaultsDeduped` (desktop.ts:557-559) drops a bundled default purely on a name or URL collision, with no comparison of the two entries' resolved auth. `isValidCanonicalEntry` makes both `oauth` and `auth` optional (managed-mcp-remote.ts:65-90), so a backend row such as `{name:'Notion', transport:'http', url:...}` validates cleanly and `resolveDesktopOAuth` falls through to `return false` (desktop.ts:278). The bundled entry's `oauth: true` is replaced by `oauth: false`.",
+      "impact": "Silently disables OAuth for that server — the exact defect class this ticket exists to fix, reintroduced through a different door. `summarizeManagedOauthShapes` does not catch it: it is computed over the org catalog only (index.ts:459), so the log looks identical whether or not a default's auth was suppressed. Newly introduced by the dedup flip.",
+      "recommendation": "Guard the replacement on auth: when a backend entry collides with a bundled default whose oauth is `true` or an object, and the backend entry resolves to `false`, keep the default (or at minimum log the downgrade loudly). Separately, compute the oauth-shape summary over the final written `managedSet` rather than the org catalog so any suppression is visible in the field."
+    }
+  ]
+}

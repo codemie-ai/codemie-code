@@ -265,6 +265,9 @@ function resolveConversationFolder(clientType?: string, agentName?: string): str
   if (clientType === 'codemie-codex' || agentName === 'codex') {
     return 'codex';
   }
+  if (clientType === 'codemie-copilot' || agentName === 'copilot-cli') {
+    return 'copilot-cli';
+  }
   if (clientType === 'codemie-gemini' || agentName === 'gemini') {
     return 'gemini';
   }
@@ -273,6 +276,9 @@ function resolveConversationFolder(clientType?: string, agentName?: string): str
   }
   if (clientType === 'codemie-opencode' || agentName === 'opencode') {
     return 'opencode';
+  }
+  if (clientType === 'codemie-pi' || agentName === 'pi') {
+    return 'pi';
   }
   return DEFAULT_CONVERSATION_FOLDER;
 }

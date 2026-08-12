@@ -30,6 +30,12 @@ const copyConfigs = [
     dest: join(rootDir, 'dist/agents/plugins/kimi/extension')
   },
   {
+    // Loaded by Pi itself, so it must ship byte-identical — tsc does not compile .js under src/.
+    name: 'Pi run-ledger extension',
+    src: join(rootDir, 'src/agents/plugins/pi/extension'),
+    dest: join(rootDir, 'dist/agents/plugins/pi/extension')
+  },
+  {
     name: 'Top-level assets',
     src: join(rootDir, 'assets'),
     dest: join(rootDir, 'dist/assets')

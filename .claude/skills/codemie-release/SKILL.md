@@ -101,6 +101,20 @@ Example output:
 Confirm release version 0.0.36?
 ```
 
+## Run Tests
+
+**After user confirms the version, run the full test suite before any commits.**
+
+```bash
+npm run test:all
+```
+
+This runs unit tests, CLI integration tests, and agent tests (`unit` + `cli` + `agent` projects).
+
+**If tests fail**: stop the release, report which suite failed, and do not proceed to the release steps. Ask the user how to proceed.
+
+**If tests pass**: continue to Generate Release Notes and Release Steps.
+
 ## Generate Release Notes
 
 **CRITICAL**: Group commits by type and generate concrete, user-focused release notes.

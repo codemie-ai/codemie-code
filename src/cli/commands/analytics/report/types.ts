@@ -40,8 +40,21 @@ export interface ReportSessionRecord {
   costUSD: number;
   cacheReadCostUSD: number; // USD attributable to cache reads (subset of costUSD)
   perModelCost: ModelCost[];
+  hadLog: boolean; // a native agent log was located for this session (priced<hadLog ⇒ parse/reader gap)
   costSeries?: CostSeriesPoint[]; // per-turn cumulative cost/token growth; absent when no per-turn data
   dispatches?: DispatchEvent[]; // timed top-level agent/skill/command invocations; absent when none
+
+  // === Usage provenance (optional; absent for agents that always record full usage) ===
+  /**
+   * The provider's own billing unit, when it differs from tokens. Currently only GitHub
+   * Copilot CLI ("premium requests") — `costUSD` there is a token-derived estimate for
+   * cross-agent comparison, not GitHub's invoice.
+   */
+  premiumRequests?: number;
+  /** True when usage was reconstructed from partial data and understates actual use. */
+  usagePartial?: boolean;
+  /** Why this session shows no tokens or cost; absent when priced. */
+  usageUnavailableReason?: string;
 }
 
 export interface ReportMeta {
@@ -64,8 +77,8 @@ export interface ReportMeta {
   unpricedModels: string[];
   coverage: AgentCoverage[]; // per-agent priced/total — "which tools are included"
   userEmail?: string;   // identity of the report owner; absent when not authenticated
-  periodStart?: string; // ISO — start of the reported range; absent for unfiltered reports
-  periodEnd?: string;   // ISO — end of the reported range; absent for unfiltered reports
+  periodStart?: string; // ISO — start of the reported range; always present when the report contains any sessions
+  periodEnd?: string;   // ISO — end of the reported range; always present when the report contains any sessions
 }
 
 export interface ReportPayload {

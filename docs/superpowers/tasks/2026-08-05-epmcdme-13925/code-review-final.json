@@ -1,0 +1,83 @@
+{
+  "decision": "request-changes",
+  "rationale": "Two major findings from multi-lens review. CR-001: temp file from mktemp is not cleaned up if the script receives a signal (SIGINT/SIGTERM) during the multi-minute npm run test:integration:agent execution — rm -f at line 216 runs correctly in all normal code paths but not on mid-run signal kills; fix: add trap after mktemp. CR-002: no guard on mktemp failure — if /tmp is full or has a permission issue, AGENT_TEST_JSON is set to empty string; --outputFile=\"\" is falsy to vitest's JSON reporter (writes to stdout instead), [[ -f \"\" ]] is always false, AGENT_PASSED stays 0, and in non-interactive CI the script exits 1 with the misleading message 'agent tests must pass before releasing' when the real failure is mktemp; fix: add || { echo 'ERROR: mktemp failed'; exit 1; } immediately after mktemp. All six acceptance criteria are satisfied — three outcome branches are exhaustive and the gate is unconditional. numPassedTests is the correct vitest 4.x JSON reporter field. --outputFile with multiple reporters maps correctly. Commit format and security pass. Two deferred findings: double verbose reporter (cosmetic duplicate output; no gate impact) and non-interactive CI behavior (CI exit-1 when stdin=/dev/null is correct gating behavior per the requirements; CI_AGENT_TESTS_CONFIRMED bypass is a future enhancement, not required by the ACs).",
+  "follow_ups": [
+    "Add `trap 'rm -f \"$AGENT_TEST_JSON\"' EXIT INT TERM` on the line immediately after the mktemp call (line 208 of scripts/release.sh)",
+    "Guard mktemp: change line 208 to `AGENT_TEST_JSON=$(mktemp /tmp/agent-test-XXXXX.json) || { echo 'ERROR: mktemp failed, cannot capture agent test results'; exit 1; }`"
+  ],
+  "confidence": "medium",
+  "risk_flags": [],
+  "business_review": [
+    {
+      "id": "AC-1",
+      "description": "Attempt to run agent tests automatically via npm run test:integration:agent",
+      "status": "pass",
+      "notes": "Lines 208-210: command runs unconditionally in the execution section; exit code captured immediately into AGENT_EXIT_CODE."
+    },
+    {
+      "id": "AC-2",
+      "description": "If tests run and pass (exit 0, >0 tests executed) → continue the release automatically",
+      "status": "pass",
+      "notes": "Lines 223-224: elif AGENT_PASSED -gt 0 branch prints success and falls through with no prompt or exit; execution reaches tag creation at line 250."
+    },
+    {
+      "id": "AC-3",
+      "description": "If tests run and fail (exit non-zero) → block the release with a clear error message",
+      "status": "pass",
+      "notes": "Lines 218-222: AGENT_EXIT_CODE -ne 0 branch emits ❌ message with numeric exit code and exits 1."
+    },
+    {
+      "id": "AC-4",
+      "description": "If tests cannot run automatically (exit 0, 0 tests executed) → notify user why, require explicit manual confirmation",
+      "status": "pass",
+      "notes": "Lines 225-247: else branch fires exactly when exit 0 AND AGENT_PASSED == 0. Provides SSO/JWT fix instructions for both local and CI, then read -p prompt defaulting to N blocks on non-Y answer."
+    },
+    {
+      "id": "AC-5",
+      "description": "Release MUST NOT proceed without (a) passing automated tests or (b) explicit user confirmation",
+      "status": "pass",
+      "notes": "All branches in lines 218-248 are exhaustive: non-zero → exit 1; passed>0 → continue; passed==0 → prompt, blocks on non-Y. No path reaches line 250 (tag creation) without satisfying a or b."
+    },
+    {
+      "id": "AC-6",
+      "description": "Never silently skip agent test validation",
+      "status": "pass",
+      "notes": "The gate block at lines 205-248 is unconditional — not guarded by any skip flag, environment variable, or conditional branch."
+    }
+  ],
+  "standards_review": [
+    {
+      "standard": "Conventional Commits (git-workflow.md)",
+      "status": "pass",
+      "notes": "feat(ci): is a valid type/scope combination per commitlint.config.cjs; subject is 47 chars (limit 100)."
+    },
+    {
+      "standard": "Code quality (code-quality.md)",
+      "status": "na",
+      "notes": "Change is a bash script; TypeScript/ESLint standards do not apply."
+    },
+    {
+      "standard": "Security",
+      "status": "pass",
+      "notes": "No credentials logged. AGENT_TEST_JSON template uses absolute /tmp/ path — TMPDIR not consulted, mktemp X-replacement uses [a-zA-Z0-9] only, no quoting injection possible. No user-controlled input."
+    }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "Temp file created by mktemp at line 208 is not cleaned up if the script receives SIGINT/SIGTERM during the npm run test:integration:agent execution.",
+      "impact": "The rm -f at line 216 runs correctly in all normal code paths (tests fail, user declines, tests pass) because it executes before the if/elif/else block. However, npm run test:integration:agent runs for several minutes. If the user presses Ctrl-C or the CI runner kills the process mid-run, /tmp/agent-test-XXXXX.json persists until the next system reboot. In long-running CI systems this accumulates silently across interrupted release attempts.",
+      "recommendation": "Add `trap 'rm -f \"$AGENT_TEST_JSON\"' EXIT INT TERM` on the line immediately after the mktemp call (after line 208: AGENT_TEST_JSON=$(mktemp /tmp/agent-test-XXXXX.json))."
+    },
+    {
+      "id": "CR-002",
+      "severity": "major",
+      "triage": "patch",
+      "problem": "No guard on mktemp failure. If mktemp exits non-zero (e.g. /tmp full or permission denied), AGENT_TEST_JSON is set to the empty string.",
+      "impact": "With AGENT_TEST_JSON=\"\", --outputFile=\"\" is passed to npm run test:integration:agent. The vitest JSON reporter treats an empty outputFile as falsy and writes JSON to stdout instead of to a file. [[ -f \"\" ]] evaluates to false, so AGENT_PASSED stays 0 and the gate falls to the 'credentials unavailable' manual-confirmation branch. In a non-interactive CI environment, read receives EOF immediately, REPLY is empty, and the release exits 1 with the misleading message 'agent tests must pass before releasing' — when the actual failure was the mktemp call, not missing credentials.",
+      "recommendation": "Guard mktemp with a failure check: `AGENT_TEST_JSON=$(mktemp /tmp/agent-test-XXXXX.json) || { echo 'ERROR: mktemp failed, cannot capture agent test results'; exit 1; }`"
+    }
+  ]
+}

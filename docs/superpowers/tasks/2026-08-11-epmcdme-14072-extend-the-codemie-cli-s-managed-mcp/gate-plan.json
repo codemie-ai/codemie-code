@@ -1,0 +1,106 @@
+{
+  "schema": 1,
+  "runner": "npm",
+  "gates": [
+    {
+      "id": "license-check",
+      "command": "npm run license-check",
+      "available": true,
+      "source": "guide"
+    },
+    {
+      "id": "lint",
+      "command": "npm run lint",
+      "available": true,
+      "source": "guide"
+    },
+    {
+      "id": "typecheck",
+      "command": "npm run typecheck",
+      "available": true,
+      "source": "guide"
+    },
+    {
+      "id": "build",
+      "command": "npm run build",
+      "available": true,
+      "source": "guide"
+    },
+    {
+      "id": "unit",
+      "command": "npm run test:unit",
+      "available": true,
+      "source": "guide"
+    },
+    {
+      "id": "integration",
+      "command": "npm run test:integration",
+      "available": true,
+      "source": "guide"
+    },
+    {
+      "id": "secrets",
+      "command": "npm run validate:secrets",
+      "available": true,
+      "source": "guide+hook"
+    },
+    {
+      "id": "commitlint-last",
+      "command": "npm run commitlint:last",
+      "available": true,
+      "source": "guide"
+    },
+    {
+      "id": "affected",
+      "command": "npx vitest related --run --exclude 'tests/integration/agent-*.test.ts' --exclude 'tests/integration/cli-commands/models.test.ts' <changed .ts files>",
+      "available": true,
+      "source": "hook"
+    },
+    {
+      "id": "hook-eslint",
+      "command": "npx eslint --max-warnings=0 --no-warn-ignored <changed .ts files>",
+      "available": true,
+      "source": "hook"
+    },
+    {
+      "id": "ci-commitlint-range",
+      "command": "npx commitlint --from main --to HEAD --verbose",
+      "available": true,
+      "source": "ci"
+    },
+    {
+      "id": "ci-gitleaks",
+      "command": "gitleaks/gitleaks-action@v2 (.github/workflows/ci.yml: secrets-detection)",
+      "available": false,
+      "source": "ci"
+    },
+    {
+      "id": "ci-pr-title",
+      "command": "echo \"$PR_TITLE\" | npx commitlint --verbose",
+      "available": false,
+      "source": "ci"
+    },
+    {
+      "id": "ci-test-windows",
+      "command": "npm run test:unit && npm run test:integration (windows-latest)",
+      "available": false,
+      "source": "ci"
+    },
+    {
+      "id": "ui",
+      "command": "npm run test:ui",
+      "available": false,
+      "source": "guide"
+    }
+  ],
+  "ui_globs": [
+    "\\.(tsx|jsx|css|html|vue|svelte)$",
+    "src/(ui|frontend|components)/"
+  ],
+  "notes": {
+    "ui": "package.json has a test:ui script but it is Vitest's interactive UI (vitest --ui), not a browser/UI test suite; treated as unavailable for gating.",
+    "guide_drift": ".ai-run/guides/quality-gates.md documents test:unit as 'vitest run src' and test:integration as 'vitest run tests/integration'; package.json now uses 'vitest run --project unit' and 'vitest run --project cli'. Script names (the Run field) are unchanged, so gates ran verbatim.",
+    "check-pre-commit": "npm run check:pre-commit and npm run ci are aggregates of gates already run individually; not re-run."
+  },
+  "detected_at": "2026-08-11T21:01:36+02:00"
+}
