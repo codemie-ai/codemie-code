@@ -10,7 +10,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.3%2B-blue.svg)](https://www.typescriptlang.org/)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
-> **Unified AI Coding Assistant CLI** - Manage Claude Code, OpenAI Codex, Google Gemini, OpenCode, Pi, Kimi Code, and custom AI agents from one powerful command-line interface. Multi-provider support (CodeMie SSO, Bearer Auth, LiteLLM, AWS Bedrock, Ollama, Anthropic Subscription, Moonshot Subscription). Built-in native agent with file operations, command execution, planning mode, and plugins. Cross-platform support for Windows, Linux, and macOS.
+> **Unified AI Coding Assistant CLI** - Manage Claude Code, OpenAI Codex, GitHub Copilot CLI, Google Gemini, OpenCode, Pi, Kimi Code, and custom AI agents from one powerful command-line interface. Multi-provider support (CodeMie SSO, Bearer Auth, LiteLLM, AWS Bedrock, Ollama, Anthropic Subscription, Moonshot Subscription). Built-in native agent with file operations, command execution, planning mode, and plugins. Cross-platform support for Windows, Linux, and macOS.
 
 ---
 
@@ -22,7 +22,7 @@
 
 CodeMie CLI is the all-in-one AI coding assistant for developers.
 
-- ✨ **One CLI, Multiple AI Agents** - Switch between Claude Code, OpenAI Codex, Gemini, OpenCode, Pi, Kimi Code, and built-in agent.
+- ✨ **One CLI, Multiple AI Agents** - Switch between Claude Code, OpenAI Codex, GitHub Copilot CLI, Gemini, OpenCode, Pi, Kimi Code, and built-in agent.
 - 🔄 **Multi-Provider Support** - CodeMie SSO, Bearer Authorization, LiteLLM, AWS Bedrock, Ollama, Anthropic Subscription, and Moonshot Subscription.
 - 🚀 **Built-in Agent** - `codemie-code` ships with the CLI: file operations, command execution, planning mode, and native plugins.
 - 🖥️ **Cross-Platform** - Full support for Windows, Linux, and macOS with platform-specific optimizations.
@@ -46,8 +46,10 @@ codemie setup
 codemie doctor
 codemie install claude --supported
 codemie install codex --supported
+codemie install copilot
 codemie-claude "Review my API code"
 codemie-codex "Refactor this service"
+codemie-copilot --task "Summarize this module"
 codemie --task "Generate unit tests"
 codemie skills find pdf                    # discover agent skills (EPAM internal + skills.sh)
 claude mcp add my-server -- codemie-mcp-proxy "https://mcp-server.example.com/sse"
@@ -211,16 +213,39 @@ CodeMie installs external agents, routes them through the CodeMie proxy, and tra
 | Pi | `codemie install pi` | `codemie-pi` | `@earendil-works/pi-coding-agent` |
 | Kimi Code | `codemie install kimi` | `codemie-kimi` | `@moonshot-ai/kimi-code` |
 | Kimi Code ACP | `codemie install kimi-acp` | `codemie-kimi-acp` | `@moonshot-ai/kimi-code` (`acp` mode) |
-| GitHub Copilot CLI | — | — | analytics ingestion only; CodeMie never installs or launches it |
+| GitHub Copilot CLI | `codemie install copilot` | `codemie-copilot` | `@github/copilot` |
 
 ACP agents are launched by your IDE, not directly — see [ACP Agent usage](#acp-agent-usage-in-ides-and-editors) below.
 
 ```bash
 codemie install claude --supported             # install
+codemie install copilot                        # install GitHub Copilot CLI
 codemie-claude "Review my API code"            # one-shot task
 codemie-claude                                 # interactive session
+codemie-copilot --task "Refactor this auth flow"
+codemie uninstall copilot                      # uninstall GitHub Copilot CLI
 codemie-codex --task "Refactor this auth flow" # same shape for every agent
 ```
+
+#### GitHub Copilot CLI via CodeMie
+
+CodeMie can install and launch GitHub Copilot CLI as a managed agent while keeping the internal registry identity `copilot-cli`.
+
+Supported managed path for this release:
+
+- **Install:** `codemie install copilot`
+- **Uninstall:** `codemie uninstall copilot`
+- **Launch:** `codemie-copilot`
+- **One-shot task:** `codemie-copilot --task "Explain this service"`
+- **Supported providers:** CodeMie SSO and LiteLLM
+
+Requirements and behavior:
+
+- Use an authenticated CodeMie profile (`codemie setup`).
+- Managed Copilot runs are routed through CodeMie's provider/proxy path.
+- The supported managed path does **not** require GitHub login, a GitHub Copilot subscription, or a GitHub personal access token.
+- CodeMie blocks fallback to ambient GitHub credentials for this managed mode.
+- Copilot conversation sync is attributed under `copilot-cli` in CodeMie.
 
 #### ACP Agent usage in IDEs and Editors
 
@@ -510,7 +535,7 @@ Use Claude Desktop 3P through CodeMie proxy routing to capture `claude-desktop` 
 
 - `codemie` installed
 - a valid CodeMie SSO profile
-- Claude Desktop 3P installed
+- Claude Desktop 3P installed — macOS, Windows, or Linux (Linux requires Claude Desktop's Ubuntu/Debian beta)
 
 ### 1. Connect Claude Desktop
 
@@ -529,6 +554,42 @@ codemie proxy status
 codemie proxy inspect desktop --limit 5
 codemie proxy stop
 ```
+
+### Linux
+
+Claude Desktop's Linux app is in beta: Ubuntu 22.04+ or Debian 12+, on x86_64 or arm64. Install it from Anthropic's apt repository first — that means registering their signing key and repo, not just `apt install`, so follow [Anthropic's Linux install guide](https://code.claude.com/docs/en/desktop-linux). Then connect exactly as on macOS and Windows:
+
+```bash
+codemie proxy connect desktop --verbose
+```
+
+`--verbose` prints the config path that was written, which is the fastest way to confirm where it landed.
+
+**Where the config goes.** Claude Desktop is an Electron app, so its config root follows the XDG convention:
+
+| Condition | Config library |
+|---|---|
+| `XDG_CONFIG_HOME` set to an absolute path | `$XDG_CONFIG_HOME/Claude-3p/configLibrary/` |
+| otherwise (the common case) | `~/.config/Claude-3p/configLibrary/` |
+
+An empty or relative `XDG_CONFIG_HOME` is ignored, per the XDG spec.
+
+**Verify the write:**
+
+```bash
+echo "${XDG_CONFIG_HOME:-(unset)}"
+ls -la ~/.config/Claude-3p/configLibrary/
+cat ~/.config/Claude-3p/configLibrary/_meta.json   # appliedId names the active config
+codemie proxy inspect desktop --limit 5
+```
+
+Claude Desktop reads its configuration **once at launch**, so fully quit and reopen the app — not just close the window.
+
+**If the app is launched from a desktop launcher**, it may not inherit the `XDG_CONFIG_HOME` you have exported in your shell. When that happens the CLI writes to one path and the app reads another, and the connect silently appears to do nothing. Compare the path from `--verbose` against `~/.config/Claude-3p/`.
+
+**Managed (MDM) settings.** If `/etc/claude-desktop/managed-settings.json` exists, `codemie proxy connect desktop` warns you: Claude Desktop applies a managed source in preference to local configuration. This is not automatically fatal — a policy that sets only `disableAutoUpdates` and `autoUpdaterEnforcementHours` leaves everything else local, so the write still applies. If routing really is ignored, ask your administrator to carry the gateway settings in the managed source rather than deleting the file, which is root-owned and typically redeployed by MDM.
+
+**WSL is not supported.** WSL reports its platform as Linux, so the config is written on the WSL side where a Windows Claude Desktop will not look for it. Run `codemie proxy connect desktop` from Windows instead.
 
 ### If Claude Desktop was already using Anthropic subscription or another Gateway
 

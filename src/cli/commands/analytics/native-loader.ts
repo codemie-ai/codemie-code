@@ -41,10 +41,9 @@ function isPiAgent(agentName: string): boolean {
  * Agents CodeMie only reads analytics for and never installs, launches, or manages.
  *
  * The ownership gate below exists to stop analytics silently counting UNMANAGED runs of an
- * agent CodeMie CAN manage (EPMCDME-13367). An analytics-only agent has no managed variant,
- * so it can never carry an ownership marker — applying the gate would tag 100% of its
- * sessions `native-external` and drop them from the default report, making the integration
- * a silent no-op.
+ * agent CodeMie CAN manage (EPMCDME-13367). A truly analytics-only agent has no managed
+ * variant, so it can never carry an ownership marker — applying the gate would tag 100% of
+ * its sessions `native-external` and drop them from the default report.
  */
 function isAnalyticsOnlyAgent(agentName: string): boolean {
   try {
@@ -751,12 +750,11 @@ export async function loadNativeSessions(
     }
     const raw = synthesizeRawSession(agentName, descriptor, parsed);
     if (raw.startEvent && !deps.hasOwnershipMarker(descriptor.filePath)) {
-      // Analytics-only agents can never carry an ownership marker, so tagging them
-      // 'native-external' would drop 100% of their sessions from the default report.
-      // They still are not CodeMie-managed though, so they get their own tag rather than
-      // the plain 'native' that means "CodeMie launched this" — otherwise the report
-      // cannot distinguish managed from unmanaged usage. 'native-unmanaged' passes the
-      // sessions-source filter (included by default) while staying honest about origin.
+      // Truly analytics-only agents can never carry an ownership marker, so tagging them
+      // 'native-external' would drop 100% of their sessions from the default report. They
+      // still are not CodeMie-managed, so they get their own tag rather than the plain
+      // 'native' that means "CodeMie launched this". Managed agents, including Copilot CLI,
+      // remain 'native-external' when their transcript lacks CodeMie ownership.
       raw.startEvent.data.provider = isAnalyticsOnlyAgent(agentName)
         ? 'native-unmanaged'
         : 'native-external';

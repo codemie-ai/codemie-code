@@ -20,6 +20,8 @@ import { CodexPluginMetadata } from '../plugins/codex/codex.plugin.js';
 import { KimiPluginMetadata } from '../plugins/kimi/kimi.plugin.js';
 import { KimiAcpPluginMetadata } from '../plugins/kimi/kimi-acp.plugin.js';
 import { PiPluginMetadata } from '../plugins/pi/pi.plugin.js';
+import { CopilotCliPluginMetadata } from '../plugins/copilot-cli/index.js';
+import { getAgentInstallCommand, getAgentLauncherCommand } from './agent-aliases.js';
 import { createAssistantsSetupCommand } from '../../cli/commands/assistants/setup/index.js';
 import { createSkillsSetupCommand } from '../../cli/commands/skills/setup/index.js';
 import type { TargetAgent } from '../../cli/commands/shared/agent-targets.js';
@@ -159,7 +161,7 @@ export class AgentCLI {
       if (!(await this.adapter.isInstalled())) {
         console.log(chalk.red(`\n✗ ${this.adapter.displayName} is not installed\n`));
         console.log(chalk.white('Install it with:\n'));
-        console.log(chalk.cyan(`  codemie install ${this.adapter.name}\n`));
+        console.log(chalk.cyan(`  ${getAgentInstallCommand(this.adapter.name)}\n`));
 
         // Windows-specific guidance for PATH refresh issue
         this.displayWindowsPathGuidance();
@@ -438,7 +440,7 @@ export class AgentCLI {
 
         console.log(chalk.red(`\n✗ ${this.adapter.displayName} is not installed\n`));
         console.log(chalk.white('Install it with:\n'));
-        console.log(chalk.cyan(`  codemie install ${this.adapter.name}\n`));
+        console.log(chalk.cyan(`  ${getAgentInstallCommand(this.adapter.name)}\n`));
 
         // Windows-specific guidance for PATH refresh issue
         if (isWindows) {
@@ -581,6 +583,7 @@ export class AgentCLI {
       'kimi': KimiPluginMetadata,
       'kimi-acp': KimiAcpPluginMetadata,
       'pi': PiPluginMetadata,
+      'copilot-cli': CopilotCliPluginMetadata,
     };
     return metadataMap[this.adapter.name];
   }
@@ -625,7 +628,7 @@ export class AgentCLI {
       if (recommendedModels && recommendedModels.length > 0) {
         const modelExamples = recommendedModels.slice(0, 3).join(', ');
         const suggestedModel = recommendedModels[0];
-        const command = this.adapter.name.startsWith('codemie-') ? this.adapter.name : `codemie-${this.adapter.name}`;
+        const command = getAgentLauncherCommand(this.adapter.name);
 
         console.log(chalk.white(`  1. ${this.adapter.displayName} requires compatible models (e.g., ${modelExamples})`));
         console.log(chalk.white('  2. Update profile: ') + chalk.cyan('codemie setup'));

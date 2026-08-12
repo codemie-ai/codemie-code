@@ -31,8 +31,10 @@ vi.mock('../health-check.js', () => ({
 
 vi.mock('../connectors/desktop.js', () => ({
   writeDesktopConfig: vi.fn(),
+  describeManagedSettingsOverride: vi.fn().mockReturnValue(null),
   getDesktopBaseDir: vi.fn().mockReturnValue('/mock/desktop/base'),
   mapCanonicalToDesktop: vi.fn().mockReturnValue([]),
+  summarizeManagedOauthShapes: vi.fn().mockReturnValue({ oauthConfigured: 0, oauthFlagged: 0, noAuth: 0 }),
 }));
 
 vi.mock('../connectors/vscode.js', () => ({
@@ -158,6 +160,90 @@ describe('proxy connect desktop', () => {
 
     expect(syncRegisteredSkills).toHaveBeenCalledWith('test-profile', process.cwd());
     expect(syncPluginSkills).toHaveBeenCalledOnce();
+  });
+
+  it('warns that a managed settings source overrides the config it just wrote', async () => {
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    const { ProviderRegistry } = await import('../../../../providers/index.js');
+    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
+    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { writeDesktopConfig, describeManagedSettingsOverride } = await import('../connectors/desktop.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(ConfigLoader.load).mockResolvedValue({
+      name: 'test-profile',
+      provider: 'ai-run-sso',
+      baseUrl: 'https://example.com/api',
+      codeMieUrl: 'https://example.com',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+    vi.mocked(ProviderRegistry.getProvider).mockReturnValue({
+      name: 'ai-run-sso',
+      authType: 'sso',
+    } as ReturnType<typeof ProviderRegistry.getProvider>);
+    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
+      return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
+    } as unknown as typeof CodeMieSSO);
+    vi.mocked(spawnDaemon).mockResolvedValue({
+      url: 'http://localhost:4001',
+      profile: 'test-profile',
+      port: 4001,
+      gatewayKey: 'gk',
+      startedAt: new Date().toISOString(),
+      telemetryMode: 'claude-desktop',
+    } as Awaited<ReturnType<typeof spawnDaemon>>);
+    vi.mocked(writeDesktopConfig).mockResolvedValue('/path/to/config');
+    vi.mocked(describeManagedSettingsOverride).mockReturnValue(
+      '/etc/claude-desktop/managed-settings.json exists. Claude Desktop applies managed settings instead of local configuration, so this write may have no effect.'
+    );
+
+    await createProxyCommand().parseAsync(['connect', 'desktop', '--profile', 'test-profile'], {
+      from: 'user',
+    });
+
+    expect(consoleLogSpy).toHaveBeenCalledWith(
+      expect.stringContaining('/etc/claude-desktop/managed-settings.json')
+    );
+  });
+
+  it('stays silent about managed settings when no managed source is present', async () => {
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    const { ProviderRegistry } = await import('../../../../providers/index.js');
+    const { CodeMieSSO } = await import('../../../../providers/plugins/sso/sso.auth.js');
+    const { checkStatus, spawnDaemon } = await import('../daemon-manager.js');
+    const { writeDesktopConfig, describeManagedSettingsOverride } = await import('../connectors/desktop.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+    vi.mocked(ConfigLoader.load).mockResolvedValue({
+      name: 'test-profile',
+      provider: 'ai-run-sso',
+      baseUrl: 'https://example.com/api',
+      codeMieUrl: 'https://example.com',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+    vi.mocked(ProviderRegistry.getProvider).mockReturnValue({
+      name: 'ai-run-sso',
+      authType: 'sso',
+    } as ReturnType<typeof ProviderRegistry.getProvider>);
+    vi.mocked(CodeMieSSO).mockImplementation(function MockCodeMieSSO() {
+      return { getStoredCredentials: vi.fn().mockResolvedValue({ token: 'tok' }) };
+    } as unknown as typeof CodeMieSSO);
+    vi.mocked(spawnDaemon).mockResolvedValue({
+      url: 'http://localhost:4001',
+      profile: 'test-profile',
+      port: 4001,
+      gatewayKey: 'gk',
+      startedAt: new Date().toISOString(),
+      telemetryMode: 'claude-desktop',
+    } as Awaited<ReturnType<typeof spawnDaemon>>);
+    vi.mocked(writeDesktopConfig).mockResolvedValue('/path/to/config');
+    vi.mocked(describeManagedSettingsOverride).mockReturnValue(null);
+
+    await createProxyCommand().parseAsync(['connect', 'desktop', '--profile', 'test-profile'], {
+      from: 'user',
+    });
+
+    expect(consoleLogSpy).not.toHaveBeenCalledWith(expect.stringContaining('managed settings'));
   });
 
   it('uses the effective active profile when --profile is omitted', async () => {

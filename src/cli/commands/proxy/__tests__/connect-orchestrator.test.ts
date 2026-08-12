@@ -28,6 +28,8 @@ vi.mock('../connectors/desktop.js', () => ({
   writeDesktopConfig: vi.fn(),
   getDesktopBaseDir: vi.fn().mockReturnValue('/mock/desktop/base'),
   mapCanonicalToDesktop: vi.fn().mockReturnValue([]),
+  summarizeManagedOauthShapes: vi.fn().mockReturnValue({ oauthConfigured: 0, oauthFlagged: 0, noAuth: 0 }),
+  describeManagedSettingsOverride: vi.fn().mockReturnValue(null),
 }));
 vi.mock('../connectors/vscode.js', () => ({
   writeVsCodeLanguageModelsConfig: vi.fn(),

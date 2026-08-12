@@ -243,12 +243,11 @@ describe('loadNativeSessions — external session labeling', () => {
 
 /**
  * The ownership gate stops analytics silently counting UNMANAGED runs of an agent CodeMie
- * CAN manage (EPMCDME-13367). An analytics-only agent has no managed variant, so it can
- * never carry an ownership marker — applying the gate would tag every one of its sessions
- * `native-external`, which sources/sessions-source.ts filters out by default, dropping
- * 100% of them and making the integration a silent no-op.
+ * CAN manage (EPMCDME-13367). Copilot CLI used to be analytics-only and was exempt from
+ * that gate; now it is a managed CodeMie agent, so unowned native Copilot sessions follow
+ * the same native-external classification as other managed agents.
  */
-describe('loadNativeSessions — ownership gate exemption for analytics-only agents', () => {
+describe('loadNativeSessions — ownership gate for managed Copilot CLI', () => {
   const copilotParsed = {
     sessionId: 'cp1',
     agentName: 'GitHub Copilot CLI',
@@ -267,7 +266,7 @@ describe('loadNativeSessions — ownership gate exemption for analytics-only age
     metrics: { tools: {} },
   } as never;
 
-  /** Deps with NO ownership marker — the situation every Copilot session is in. */
+  /** Deps with NO ownership marker — an unmanaged/native run of a CodeMie-manageable agent. */
   function unownedDeps(agentName: string, sessionId: string, parsedSession: unknown): NativeLoaderDeps {
     return {
       trackedLogPaths: () => new Set<string>(),
@@ -290,19 +289,17 @@ describe('loadNativeSessions — ownership gate exemption for analytics-only age
     };
   }
 
-  it('tags an unowned copilot-cli session native-unmanaged, not native-external', async () => {
+  it('tags an unowned copilot-cli session native-external now that Copilot is managed', async () => {
     const results = await loadNativeSessions(undefined, unownedDeps('copilot-cli', 'cp1', copilotParsed));
 
     expect(results).toHaveLength(1);
-    // 'native-external' would mean sessions-source.ts filters it out by default, i.e. the
-    // feature ships displaying nothing. Plain 'native' would claim CodeMie launched it.
-    expect(results[0].startEvent!.data.provider).toBe('native-unmanaged');
+    expect(results[0].startEvent!.data.provider).toBe('native-external');
   });
 
-  it('keeps native-unmanaged out of the native-external filter', async () => {
-    // sessions-source.ts includes anything that is not exactly 'native-external'.
+  it('does not apply the analytics-only native-unmanaged exemption to copilot-cli', async () => {
     const results = await loadNativeSessions(undefined, unownedDeps('copilot-cli', 'cp1', copilotParsed));
-    expect(results[0].startEvent!.data.provider).not.toBe('native-external');
+
+    expect(results[0].startEvent!.data.provider).not.toBe('native-unmanaged');
   });
 
   it('still tags an unowned claude session as native-external', async () => {

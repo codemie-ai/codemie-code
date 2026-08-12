@@ -25,6 +25,7 @@
 import { createServer, Server, IncomingMessage, ServerResponse } from 'http';
 import { randomUUID } from 'crypto';
 import { URL } from 'url';
+import { Readable } from 'stream';
 import { ProviderRegistry } from '../../../core/registry.js';
 import { AuthMethod } from '../../../core/types.js';
 import type { JWTCredentials, SSOCredentials } from '../../../core/types.js';
@@ -33,7 +34,7 @@ import { ProxyHTTPClient } from './proxy-http-client.js';
 import { ProxyConfig, ProxyContext } from './proxy-types.js';
 import { AuthenticationError, NetworkError, TimeoutError, normalizeError } from './proxy-errors.js';
 import { getPluginRegistry } from './plugins/registry.js';
-import { PluginContext, ProxyInterceptor, ResponseMetadata } from './plugins/types.js';
+import { PluginContext, ProxyInterceptor, ResponseMetadata, UpstreamResponseTools } from './plugins/types.js';
 import './plugins/index.js'; // Auto-register core plugins
 
 /**
@@ -319,12 +320,14 @@ export class CodeMieProxy {
       );
 
       logger.debug(`[proxy] Forwarding request to upstream for ${context.requestId}`);
-      const upstreamResponse = await this.httpClient.forward(targetUrl, {
+      let upstreamResponse = await this.httpClient.forward(targetUrl, {
         method: req.method!,
         headers: context.headers,
         body: context.requestBody || undefined
       });
       logger.debug(`[proxy] Received upstream response object for ${context.requestId}`);
+
+      upstreamResponse = await this.runUpstreamResponseHooks(context, upstreamResponse, targetUrl, req.method!);
 
       // 4. Run onResponseHeaders hooks (BEFORE streaming)
       await this.runHook('onResponseHeaders', interceptor =>
@@ -558,6 +561,52 @@ export class CodeMieProxy {
         // Continue with other interceptors
       }
     }
+  }
+
+  private async runUpstreamResponseHooks(
+    context: ProxyContext,
+    upstreamResponse: IncomingMessage,
+    targetUrl: URL,
+    method: string
+  ): Promise<IncomingMessage> {
+    let response = upstreamResponse;
+
+    const tools: UpstreamResponseTools = {
+      readBody: (incoming) => this.httpClient.readResponseBody(incoming),
+      retry: (requestBody) => this.httpClient.forward(targetUrl, {
+        method,
+        headers: context.headers,
+        body: requestBody,
+      }),
+      fromBuffer: (incoming, body) => this.createBufferedResponse(incoming, body),
+    };
+
+    for (const interceptor of this.interceptors) {
+      if (!interceptor.onUpstreamResponse) {
+        continue;
+      }
+
+      try {
+        response = await interceptor.onUpstreamResponse(context, response, tools);
+      } catch (error) {
+        logger.error(`[CodeMieProxy] Upstream response hook error in ${interceptor.name}:`, error);
+      }
+    }
+
+    return response;
+  }
+
+  private createBufferedResponse(source: IncomingMessage, body: Buffer): IncomingMessage {
+    const readable = Readable.from(body) as IncomingMessage;
+
+    readable.statusCode = source.statusCode;
+    readable.statusMessage = source.statusMessage;
+    readable.headers = {
+      ...source.headers,
+      'content-length': String(body.length),
+    };
+
+    return readable;
   }
 
   /**

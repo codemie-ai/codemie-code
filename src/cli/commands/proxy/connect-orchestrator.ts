@@ -26,7 +26,13 @@ import {
   stopDaemon,
   type DaemonState,
 } from './daemon-manager.js';
-import { writeDesktopConfig, getDesktopBaseDir, mapCanonicalToDesktop } from './connectors/desktop.js';
+import {
+  writeDesktopConfig,
+  getDesktopBaseDir,
+  mapCanonicalToDesktop,
+  describeManagedSettingsOverride,
+  summarizeManagedOauthShapes,
+} from './connectors/desktop.js';
 import { fetchManagedMcpServers } from './connectors/managed-mcp-remote.js';
 import { writeVsCodeClaudeCodeConfig } from './connectors/vscode-claude-code.js';
 import { writeVsCodeLanguageModelsConfig } from './connectors/vscode.js';
@@ -356,6 +362,7 @@ async function runClaudeDesktop(state: DaemonState, verbose: boolean): Promise<T
       ? await fetchManagedMcpServers('claude-desktop', state.syncCodeMieUrl)
       : null;
     const orgMcpServers = canonical ? mapCanonicalToDesktop(canonical) : null;
+    const oauthShapes = summarizeManagedOauthShapes(orgMcpServers);
     logger.info(
       '[proxy] Resolved managed MCP servers for Claude Desktop',
       ...sanitizeLogArgs({
@@ -364,6 +371,9 @@ async function runClaudeDesktop(state: DaemonState, verbose: boolean): Promise<T
         canonicalCount: canonical?.length ?? 0,
         mappedCount: orgMcpServers?.length ?? 0,
         mappedNames: orgMcpServers?.map((s) => s.name) ?? [],
+        oauthConfiguredCount: oauthShapes.oauthConfigured,
+        oauthFlaggedCount: oauthShapes.oauthFlagged,
+        noAuthCount: oauthShapes.noAuth,
       })
     );
     const configPath = await writeDesktopConfig(
@@ -383,6 +393,14 @@ async function runClaudeDesktop(state: DaemonState, verbose: boolean): Promise<T
       })
     );
     console.log(chalk.green('✓ Claude Desktop configured'));
+    const managedSettingsWarning = describeManagedSettingsOverride();
+    if (managedSettingsWarning) {
+      console.log(chalk.yellow(`⚠ ${managedSettingsWarning}`));
+      logger.warn(
+        '[proxy] Claude Desktop managed settings source present',
+        ...sanitizeLogArgs({ managedSettingsWarning })
+      );
+    }
     if (verbose) {
       console.log(`  Config:  ${configPath}`);
       console.log(`  Gateway: ${state.url}`);

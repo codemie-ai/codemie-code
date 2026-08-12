@@ -5,6 +5,7 @@ on:
     branches: [ 'main' ]
   pull_request:
     branches: [ '**' ]
+    types: [opened, synchronize, reopened, edited]
   workflow_call:
 
 jobs:
@@ -57,8 +58,12 @@ jobs:
 
       - name: Validate PR title
         env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
         run: |
+          # Fetch current title from API — event payload is stale on re-runs and title edits
+          PR_TITLE=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json title -q '.title')
           echo "📋 Validating PR title..."
           echo ""
           echo "PR Title: \"$PR_TITLE\""
