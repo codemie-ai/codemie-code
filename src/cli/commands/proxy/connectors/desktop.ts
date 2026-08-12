@@ -85,6 +85,7 @@ export async function fetchClaudeModels(proxyUrl: string, gatewayKey: string): P
       headers: { Authorization: `Bearer ${gatewayKey}` },
     });
     if (!response.ok) {
+      const isUpstreamFailure = response.status >= 500 && response.status < 600;
       logger.warn(
         '[proxy] Gateway model discovery failed',
         ...sanitizeLogArgs({
@@ -92,8 +93,19 @@ export async function fetchClaudeModels(proxyUrl: string, gatewayKey: string): P
           status: response.status,
           statusText: response.statusText,
           inferenceGatewayBaseUrl: proxyUrl,
+          fallbackToPreferredModels: isUpstreamFailure,
         })
       );
+      if (isUpstreamFailure) {
+        logger.warn(
+          '[proxy] Falling back to the curated Claude Desktop model list because the upstream model catalog failed',
+          ...sanitizeLogArgs({
+            endpoint,
+            preferredModels: [...PREFERRED_CLAUDE_MODELS],
+          })
+        );
+        return [...PREFERRED_CLAUDE_MODELS];
+      }
       throw new ConfigurationError(
         response.status === 401
           ? `Local proxy model discovery was rejected with 401 Unauthorized at ${endpoint}. ` +

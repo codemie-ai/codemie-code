@@ -17,6 +17,7 @@ import {
   readState,
   spawnDaemon,
   stopDaemon,
+  writeState,
 } from './daemon-manager.js';
 import { writeDesktopConfig, getDesktopBaseDir, mapCanonicalToDesktop } from './connectors/desktop.js';
 import { fetchManagedMcpServers } from './connectors/managed-mcp-remote.js';
@@ -301,6 +302,20 @@ export function createProxyCommand(): Command {
       if (health.healthy) {
         const label = health.level === 'deep' ? 'running, healthy (upstream OK)' : 'running, healthy';
         console.log(`Status:  ${chalk.green(label)}`);
+
+        // If we explicitly verified upstream/auth and it is now healthy,
+        // clear any stale "last recorded issue" persisted by the watcher.
+        if (opts.deep && state.health === 'unhealthy') {
+          await writeState({
+            ...state,
+            health: 'ok',
+            healthReason: undefined,
+            lastHealthyAt: new Date().toISOString(),
+          });
+          state.health = 'ok';
+          state.healthReason = undefined;
+          state.lastHealthyAt = new Date().toISOString();
+        }
       } else {
         console.log(`Status:  ${chalk.yellow('running but UNHEALTHY')}`);
         console.log(`  Reason:  ${health.reason ?? state.healthReason ?? 'unknown'}`);

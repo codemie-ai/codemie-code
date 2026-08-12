@@ -121,6 +121,19 @@ describe('fetchClaudeModels', () => {
       .rejects.toThrow('Local proxy model discovery could not reach');
   });
 
+  it('falls back to preferred Claude ids when the proxy upstream returns 5xx', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      statusText: 'Internal Server Error',
+      headers: mkHeaders('application/json'),
+      json: async () => ({ data: [] }),
+    }) as unknown as typeof globalThis.fetch;
+
+    const models = await fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy');
+    expect(models).toEqual(['claude-sonnet-4-6', 'claude-opus-4-8', 'claude-opus-4-7', 'claude-opus-4-6', 'claude-haiku-4-5']);
+  });
+
   it('throws when response is not ok', async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({ ok: false, json: async () => ({}) }) as any;
     await expect(fetchClaudeModels('http://127.0.0.1:4001', 'codemie-proxy'))
