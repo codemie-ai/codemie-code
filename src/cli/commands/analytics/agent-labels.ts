@@ -11,6 +11,7 @@
  */
 const AGENT_LABELS: Record<string, string> = {
   'copilot-cli': 'GitHub Copilot CLI',
+  pi: 'Pi',
 };
 
 /** Display label for an agent key; returns the key unchanged when unmapped. */

@@ -152,11 +152,15 @@ Use `medium` as the initial baseline; `none`, lower efforts, and `xhigh`/`max` r
 according to each model's advertised capability list.
 
 The proxy does not cache conversation state or rewrite response streams. Its bounded compatibility
-layer adds a safe `user` value when needed, limits long identifiers to 32 characters, and removes
-deployment-bound encrypted reasoning content for `vscode-byok`. This preserves the selected
-`reasoning.effort`, visible assistant history, and tool-call history, at the cost of cross-turn
-hidden-reasoning continuity. Prefer a current VS Code release (1.122 or newer) so the stateless
-flag and marker suppression are honored.
+layer adds a safe `user` value when needed and limits long identifiers to 32 characters.
+
+Encrypted reasoning content is forwarded unchanged: the gateway runs LiteLLM
+`encrypted_content_affinity`, so a follow-up carrying encrypted state is routed back to the
+deployment that produced it and cross-turn reasoning continuity is preserved. If an affinity pin
+expires and upstream rejects the replayed state, the proxy strips reasoning state for the
+remainder of that proxy's lifetime — that turn reports an error, then the session self-heals with
+reduced hidden-reasoning continuity. Prefer a current VS Code release (1.122 or newer) so the
+stateless flag and marker suppression are honored.
 
 Check the daemon context with `codemie proxy status`. Automated VS Code BYOK configuration
 and routing coverage runs as part of `npm run test:all`.
@@ -175,7 +179,7 @@ and routing coverage runs as part of `npm run test:all`.
 | Active profile changed but model did not | VS Code configuration still contains the previous profile model | Re-run `codemie proxy connect vscode` |
 | `previous_response_id` appears in a VS Code request | VS Code is older than the stateless Responses implementation or has stale model metadata | Upgrade to a current VS Code release, re-run the connector, reload VS Code, and verify `store: false` plus no `previous_response_id` in Chat Debug logs |
 | `previous_response_not_found` occurs on a follow-up | The client is still using stateful Responses replay | Complete the compatibility check above; do not add proxy-side response caching or deployment affinity |
-| `invalid_encrypted_content` occurs on a follow-up | Encrypted reasoning state reached a different deployment or the sanitizer is not active | Use the current proxy, confirm the `vscode-byok` sanitizer is enabled, and retry without sharing encrypted reasoning content in logs |
+| `invalid_encrypted_content` occurs on a follow-up | The affinity pin expired, or `encrypted_content_affinity` is not configured on the gateway | Retry the turn — the proxy strips reasoning state after the first rejection and the session continues. If it recurs on every session, verify the gateway's `optional_pre_call_checks` and `deployment_affinity_ttl_seconds`. Never share encrypted reasoning content in logs |
 | An effort value is rejected | The selected effort is not supported by that model/deployment | Choose an advertised effort (`none`, `low`, `medium`, `high`, `xhigh`, or `max` as listed for the model) and certify the deployment before broad rollout |
 | Inline suggestions still use Copilot | Expected limitation | BYOK covers chat/agent workflows, not inline completion |
 
@@ -194,6 +198,17 @@ Behavior:
 - uses the effective active CodeMie profile by default (including a local selection that references a global profile)
 - `--profile` overrides for the current run only
 - fails if the resolved profile is not a CodeMie SSO profile
+- writes to Claude Desktop's config library, resolved per platform:
+
+| Platform | Config library |
+|---|---|
+| macOS | `~/Library/Application Support/Claude-3p/configLibrary/` |
+| Windows | `%LOCALAPPDATA%\Claude-3p\configLibrary\` |
+| Linux | `$XDG_CONFIG_HOME/Claude-3p/configLibrary/`, else `~/.config/Claude-3p/configLibrary/` |
+
+On Linux this requires Claude Desktop's Ubuntu/Debian beta. If `/etc/claude-desktop/managed-settings.json` is present, the command warns that the write **may** have no effect: Claude Desktop applies a managed (MDM) source in preference to local configuration. The check is presence-only — the file is never read.
+
+The warning is not a verdict. A managed source that sets only `disableAutoUpdates` and `autoUpdaterEnforcementHours` leaves every other setting local, so the write still applies. If routing really is being ignored, ask your administrator to carry the gateway settings in the managed source — do not delete the file, which is root-owned and typically redeployed by MDM.
 
 Recommended setup:
 

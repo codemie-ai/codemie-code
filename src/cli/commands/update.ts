@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import { AgentRegistry } from '../../agents/registry.js';
+import { getAgentInstallCommand, getUserFacingAgentName, resolveAgentAlias } from '../../agents/core/agent-aliases.js';
 import { AgentAdapter } from '../../agents/core/types.js';
 import { AgentNotFoundError, AgentInstallationError, getErrorMessage } from '../../utils/errors.js';
 import { logger } from '../../utils/logger.js';
@@ -253,7 +254,8 @@ export function createUpdateCommand(): Command {
 
         // Case 1: Update specific agent
         if (name) {
-          const agent = AgentRegistry.getAgent(name);
+          const canonicalName = resolveAgentAlias(name) || name;
+          const agent = AgentRegistry.getAgent(canonicalName);
 
           if (!agent) {
             throw new AgentNotFoundError(name);
@@ -269,7 +271,7 @@ export function createUpdateCommand(): Command {
           const installed = await agent.isInstalled();
           if (!installed) {
             console.log(chalk.yellow(`${agent.displayName} is not installed`));
-            console.log(chalk.cyan(`💡 Install it with: codemie install ${agent.name}`));
+            console.log(chalk.cyan(`💡 Install it with: ${getAgentInstallCommand(agent.name)}`));
             return;
           }
 
@@ -405,7 +407,7 @@ export function createUpdateCommand(): Command {
           console.log(chalk.cyan('💡 Available agents:'));
           const allAgents = AgentRegistry.getManageableAgents();
           for (const agent of allAgents) {
-            console.log(chalk.white(`   • ${agent.name}`));
+            console.log(chalk.white(`   • ${getUserFacingAgentName(agent.name)}`));
           }
           console.log();
           console.log(chalk.cyan('💡 Tip:') + ' Run ' + chalk.blueBright('codemie update --check') + ' to see installed agents');

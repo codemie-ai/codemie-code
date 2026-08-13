@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import { AgentRegistry } from '@/agents/registry.js';
+import { getAgentInstallCommand, getAgentLauncherCommand, getUserFacingAgentName, resolveAgentAlias } from '@/agents/core/agent-aliases.js';
 import { AgentInstallationError, getErrorMessage } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { restoreCliBinLink } from '@/utils/cli-bin.js';
@@ -46,7 +47,7 @@ export function createInstallCommand(): Command {
             const versionStr = version ? chalk.white(` (${version})`) : '';
 
             console.log(chalk.bold(`  ${agent.displayName}`) + versionStr);
-            console.log(`    Command: ${chalk.cyan(`codemie install ${agent.name}`)}`);
+            console.log(`    Command: ${chalk.cyan(getAgentInstallCommand(agent.name))}`);
             console.log(`    Status: ${status}`);
             console.log(`    ${chalk.white(agent.description)}`);
             console.log();
@@ -90,7 +91,8 @@ export function createInstallCommand(): Command {
         }
 
         // Try agent first
-        const agent = AgentRegistry.getAgent(name);
+        const canonicalName = resolveAgentAlias(name) || name;
+        const agent = AgentRegistry.getAgent(canonicalName);
 
         if (agent) {
           // Determine which version to install
@@ -220,7 +222,7 @@ export function createInstallCommand(): Command {
                 console.log();
                 console.log(chalk.yellow(`⚠️  Note: This version (${displayVersion}) is newer than the supported version (${compat.supportedVersion}).`));
                 console.log(chalk.yellow(`   You may encounter compatibility issues with the CodeMie backend.`));
-                console.log(chalk.yellow(`   To install the supported version, run:`), chalk.blueBright(`codemie install ${agent.name} --supported`));
+                console.log(chalk.yellow(`   To install the supported version, run:`), chalk.blueBright(`${getAgentInstallCommand(agent.name)} --supported`));
               }
             }
 
@@ -239,7 +241,7 @@ export function createInstallCommand(): Command {
               // Default hints for regular agents
               console.log(chalk.cyan('💡 Next steps:'));
               // Handle special case where agent name already includes 'codemie-' prefix
-              const command = agent.name.startsWith('codemie-') ? agent.name : `codemie-${agent.name}`;
+              const command = getAgentLauncherCommand(agent.name);
               console.log(chalk.white(`   Interactive mode:`), chalk.blueBright(command));
               console.log(chalk.white(`   Single task:`), chalk.blueBright(`${command} --task "your task"`));
               console.log();
@@ -320,7 +322,7 @@ export function createInstallCommand(): Command {
           console.log(chalk.cyan('💡 Available agents:'));
           const allAgents = AgentRegistry.getManageableAgents();
           for (const agent of allAgents) {
-            console.log(chalk.white(`   • ${agent.name}`));
+            console.log(chalk.white(`   • ${getUserFacingAgentName(agent.name)}`));
           }
           console.log();
           console.log(chalk.cyan('💡 Tip:') + ' Run ' + chalk.blueBright('codemie install') + ' to see all agents');

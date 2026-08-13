@@ -165,6 +165,47 @@ codemie-gemini --model gemini-2.5-flash "analyze code"  # With config override
 
 **Note:** Installed via Python (pip/uv), not npm. Requires Python 3.9+ and Anthropic or OpenAI API key.
 
+## GitHub Copilot CLI
+
+GitHub Copilot CLI managed by CodeMie for CodeMie-routed SSO and LiteLLM sessions.
+
+**Installation:** `codemie install copilot`
+
+**Requirements:**
+- Node.js 20.0.0 or higher
+- An authenticated CodeMie profile (`codemie setup`)
+- Supported providers: **AI/Run SSO** or **LiteLLM**
+
+**Managed-mode behavior:**
+- Launch with `codemie-copilot`
+- Uninstall with `codemie uninstall copilot`
+- CodeMie routes the supported Copilot path through its own provider/proxy flow
+- The supported managed path does **not** require GitHub login, a GitHub Copilot subscription, or a GitHub personal access token
+- Ambient GitHub credentials are intentionally not used for managed Copilot runs
+
+**Features:**
+- Managed install/uninstall flow through CodeMie
+- CodeMie profile/model routing for GPT-family and Claude-family compatible models
+- Conversation sync and attribution under `copilot-cli`
+- MCP, skills/custom agents, and hook discovery through Copilot-supported locations
+
+**Usage:**
+```bash
+codemie install copilot
+codemie-copilot                          # Interactive mode
+codemie-copilot "explain this file"      # Start with message
+codemie-copilot --task "review this diff"
+codemie uninstall copilot
+```
+
+**Customization locations:**
+- User-level Copilot home: `~/.copilot`
+- User MCP config: `~/.copilot/mcp-config.json`
+- User custom agents: `~/.copilot/agents/`
+- User skills: `~/.copilot/skills/`
+- Project MCP config: `.mcp.json` or `.github/mcp.json`
+- Project agents/skills/hooks: `.github/agents/`, `.github/skills/`, `.github/hooks/`
+
 ## OpenCode
 
 Open-source AI coding assistant with comprehensive session analytics.

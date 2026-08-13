@@ -277,7 +277,7 @@ describe('VS Code BYOK model matrix', () => {
     }
   });
 
-  it('strips encrypted Responses state while preserving stateless reasoning and tool history', async () => {
+  it('forwards encrypted Responses state untouched while affinity is healthy', async () => {
     const captured: CapturedRequest[] = [];
     const upstream = await listen(createServer((req, res) => {
       void readRequestBody(req).then((body) => {
@@ -343,14 +343,87 @@ describe('VS Code BYOK model matrix', () => {
 
     const expectedBody = {
       ...requestBody,
-      include: ['usage'],
-      input: input.filter(item => item.type !== 'reasoning'),
       user: 'vscode-byok',
     };
     expect(captured[0]?.body).toEqual(expectedBody);
     expect(captured[0]?.body).not.toHaveProperty('previous_response_id');
     expect(captured[0]?.headers['content-length']).toBe(
       String(Buffer.byteLength(JSON.stringify(expectedBody), 'utf-8'))
+    );
+  });
+
+  it('strips reasoning state on later requests once upstream rejects a replay', async () => {
+    const captured: CapturedRequest[] = [];
+    const upstream = await listen(createServer((req, res) => {
+      void readRequestBody(req).then((body) => {
+        captured.push({ url: req.url ?? '/', headers: req.headers, body });
+        res.setHeader('content-type', 'application/json');
+        // First response mimics an expired affinity pin; later ones succeed.
+        if (captured.length === 1) {
+          res.statusCode = 400;
+          res.end(JSON.stringify({
+            error: { code: 'invalid_encrypted_content', message: 'could not be verified' },
+          }));
+          return;
+        }
+        res.end(JSON.stringify({ ok: true }));
+      });
+    }));
+    servers.push(upstream.server);
+
+    const startedProxy = await startVsCodeProxy(upstream.url);
+    proxies.push(startedProxy.proxy);
+
+    const input = [
+      { type: 'message', role: 'user', content: 'Call the test tool.' },
+      { type: 'reasoning', summary: [], encrypted_content: 'deployment-bound-state' },
+      {
+        type: 'function_call',
+        call_id: 'call-1',
+        name: 'get_test_value',
+        arguments: '{}',
+      },
+    ];
+    const requestBody = {
+      model: 'gpt-5.6-sol-2026-07-09',
+      store: false,
+      stream: false,
+      reasoning: { effort: 'medium' },
+      include: ['reasoning.encrypted_content', 'usage'],
+      input,
+      tools: [{ type: 'function', name: 'get_test_value' }],
+    };
+    const send = () => fetch(`${startedProxy.url}/v1/responses`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${GATEWAY_KEY}`,
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(requestBody),
+    });
+
+    const rejected = await send();
+    expect(rejected.status).toBe(400);
+    // Rejection is surfaced, not swallowed: that turn fails, the session recovers.
+    expect(captured[0]?.body).toMatchObject({
+      include: ['reasoning.encrypted_content', 'usage'],
+    });
+    expect(captured[0]?.body.input).toContainEqual(
+      expect.objectContaining({ type: 'reasoning' })
+    );
+
+    const recovered = await send();
+    expect(recovered.status).toBe(200);
+
+    const strippedBody = {
+      ...requestBody,
+      include: ['usage'],
+      input: input.filter(item => item.type !== 'reasoning'),
+      user: 'vscode-byok',
+    };
+    expect(captured[1]?.body).toEqual(strippedBody);
+    expect(captured[1]?.headers['content-length']).toBe(
+      String(Buffer.byteLength(JSON.stringify(strippedBody), 'utf-8'))
     );
   });
 });

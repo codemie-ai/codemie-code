@@ -76,6 +76,26 @@ const summary: CostSummary = {
   unpricedModels: [],
 };
 
+// Shared timestamps and cost helpers for period-derivation tests.
+const T0 = 1_700_000_000_000;
+const T_PLUS_5M = T0 + 5 * 60_000;
+const T_PLUS_10M = T0 + 10 * 60_000;
+const HALF_MIN = 30_000;
+const ONE_MIN = 60_000;
+
+function pricedCost(id: string) {
+  return { sessionId: id, tokens: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, total: 2 }, costUSD: 0, perModel: [], priced: true, hadLog: true };
+}
+function pricedIndex(...ids: string[]): SessionCostIndex {
+  return new Map(ids.map((id) => [id, pricedCost(id)]));
+}
+function singleBranchRoot(sessions: Record<string, unknown>[]): RootAnalytics {
+  return {
+    ...root,
+    projects: [{ projectPath: '/repo/app', branches: [{ branchName: 'main', sessions }] }],
+  } as unknown as RootAnalytics;
+}
+
 describe('buildPayload', () => {
   it('flattens sessions and joins cost + meta', () => {
     const payload = buildPayload(root, costIndex, summary, {
@@ -287,11 +307,87 @@ describe('buildPayload', () => {
     expect(payload.meta.periodEnd).toBe('2026-07-21T23:59:59.000Z');
   });
 
-  it('omits userEmail/periodStart/periodEnd in meta when absent from context', () => {
+  it('omits userEmail in meta when absent from context', () => {
     const payload = buildPayload(root, costIndex, summary, ctxAll);
     expect(payload.meta.userEmail).toBeUndefined();
+  });
+
+  it('derives meta.periodStart from min(startTime) when ctx omits it', () => {
+    const sessions = [
+      session({ sessionId: 's-early', startTime: T0, duration: HALF_MIN }),
+      session({ sessionId: 's-late', startTime: T_PLUS_10M, duration: ONE_MIN }),
+    ];
+    const payload = buildPayload(singleBranchRoot(sessions), pricedIndex('s-early', 's-late'), summary, ctxAll);
+    expect(payload.meta.periodStart).toBe(new Date(T0).toISOString());
+  });
+
+  it('derives meta.periodEnd from max(startTime + duration) when ctx omits it', () => {
+    const sessions = [
+      session({ sessionId: 's-early', startTime: T0, duration: HALF_MIN }),
+      session({ sessionId: 's-late', startTime: T_PLUS_10M, duration: ONE_MIN }),
+    ];
+    const payload = buildPayload(singleBranchRoot(sessions), pricedIndex('s-early', 's-late'), summary, ctxAll);
+    expect(payload.meta.periodEnd).toBe(new Date(T_PLUS_10M + ONE_MIN).toISOString());
+  });
+
+  it('prefers ctx.periodStart / ctx.periodEnd over derived values (regression guard)', () => {
+    const payload = buildPayload(root, costIndex, summary, {
+      rangeLabel: 'custom',
+      projectFilter: 'all',
+      generatedAt: '2026-07-27T00:00:00Z',
+      periodStart: '2026-01-01T00:00:00.000Z',
+      periodEnd: '2026-06-30T00:00:00.000Z',
+    });
+    expect(payload.meta.periodStart).toBe('2026-01-01T00:00:00.000Z');
+    expect(payload.meta.periodEnd).toBe('2026-06-30T00:00:00.000Z');
+  });
+
+  it('treats duration=0 as endTime=startTime for periodEnd derivation', () => {
+    const sessions = [session({ sessionId: 's-only', startTime: T0, duration: 0 })];
+    const payload = buildPayload(singleBranchRoot(sessions), pricedIndex('s-only'), summary, ctxAll);
+    expect(payload.meta.periodStart).toBe(new Date(T0).toISOString());
+    expect(payload.meta.periodEnd).toBe(new Date(T0).toISOString());
+  });
+
+  it('omits meta.periodStart / meta.periodEnd when there are no valid sessions', () => {
+    const emptyRoot = {
+      totalSessions: 0, totalDuration: 0, totalTurns: 0, totalFileOperations: 0,
+      totalLinesAdded: 0, totalLinesRemoved: 0, totalLinesModified: 0, netLinesChanged: 0,
+      totalToolCalls: 0, successfulToolCalls: 0, failedToolCalls: 0, toolSuccessRate: 0,
+      models: [], tools: [], languages: [], formats: [], projects: [],
+    } as unknown as RootAnalytics;
+    const payload = buildPayload(emptyRoot, new Map(), summary, ctxAll);
     expect(payload.meta.periodStart).toBeUndefined();
     expect(payload.meta.periodEnd).toBeUndefined();
+  });
+
+  it('skips records with non-finite startTime or duration and does not throw', () => {
+    // nanDur contributes its finite startTime (NaN duration collapses to 0 → endMs=startTime).
+    // infStart is skipped entirely (non-finite startTime fails the guard).
+    // good extends maxEndMs past nanDur's startTime.
+    const sessions = [
+      session({ sessionId: 's-nan-dur', startTime: T0, duration: Number.NaN }),
+      session({ sessionId: 's-inf-start', startTime: Number.POSITIVE_INFINITY, duration: ONE_MIN }),
+      session({ sessionId: 's-good', startTime: T_PLUS_5M, duration: ONE_MIN }),
+    ];
+    const payload = buildPayload(
+      singleBranchRoot(sessions),
+      pricedIndex('s-nan-dur', 's-inf-start', 's-good'),
+      summary,
+      ctxAll,
+    );
+    expect(payload.meta.periodStart).toBe(new Date(T0).toISOString());
+    expect(payload.meta.periodEnd).toBe(new Date(T_PLUS_5M + ONE_MIN).toISOString());
+  });
+
+  it('skips records with startTime <= 0 when computing min/max', () => {
+    const sessions = [
+      session({ sessionId: 's-zero', startTime: 0, duration: ONE_MIN }),
+      session({ sessionId: 's-valid', startTime: T0, duration: ONE_MIN }),
+    ];
+    const payload = buildPayload(singleBranchRoot(sessions), pricedIndex('s-zero', 's-valid'), summary, ctxAll);
+    expect(payload.meta.periodStart).toBe(new Date(T0).toISOString());
+    expect(payload.meta.periodEnd).toBe(new Date(T0 + ONE_MIN).toISOString());
   });
 });
 

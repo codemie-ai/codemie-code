@@ -196,6 +196,60 @@ describe('CopilotCliSessionAdapter.parseSessionFile', () => {
     expect(parsed.metrics!.userPrompts).toEqual([{ count: 1, text: 'hello there' }]);
   });
 
+  it('reads the real content-based Copilot transcript fields', async () => {
+    const contentFile = join(dir, 'content-shaped.jsonl');
+    writeFileSync(
+      contentFile,
+      [
+        {
+          type: 'session.start',
+          timestamp: '2026-08-11T11:29:15.489Z',
+          data: {
+            sessionId: 'cp-content',
+            copilotVersion: '1.0.79',
+            startTime: '2026-08-11T11:29:15.437Z',
+            context: {
+              cwd: '/repo/app',
+              gitRoot: '/repo/app',
+              branch: 'main',
+              repository: 'org/app',
+            },
+          },
+        },
+        {
+          type: 'user.message',
+          timestamp: '2026-08-11T11:29:21.539Z',
+          data: { content: 'Hi from content' },
+        },
+        {
+          type: 'assistant.message',
+          timestamp: '2026-08-11T11:29:25.092Z',
+          data: {
+            model: 'gpt-5.5-2026-04-24',
+            content: 'Hello from content',
+            outputTokens: 11,
+            toolRequests: [{ toolCallId: 'tool-1', name: 'view', arguments: { path: '/repo/app/a.ts' } }],
+          },
+        },
+      ].map((l) => JSON.stringify(l)).join('\n') + '\n'
+    );
+
+    const parsed = await newAdapter().parseSessionFile(contentFile, 'cp-content');
+    const turnRecords = parsed.messages as Array<{
+      type?: string;
+      message?: { role?: string; content?: string; model?: string };
+    }>;
+
+    expect(parsed.metrics!.userPrompts).toEqual([{ count: 1, text: 'Hi from content' }]);
+    expect(turnRecords.find((m) => m.type === 'user')?.message?.content).toBe('Hi from content');
+    expect(turnRecords.find((m) => m.type === 'assistant')?.message).toMatchObject({
+      role: 'assistant',
+      model: 'gpt-5.5-2026-04-24',
+      content: 'Hello from content',
+      toolRequests: [{ toolCallId: 'tool-1', name: 'view', arguments: { path: '/repo/app/a.ts' } }],
+    });
+  });
+
   it('merges session.shutdown line totals into the per-file operations without duplicating', async () => {
     const parsed = await newAdapter().parseSessionFile(file, 'sess-1');
     const ops = parsed.metrics!.fileOperations!;

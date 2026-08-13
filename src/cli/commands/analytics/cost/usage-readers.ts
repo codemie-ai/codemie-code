@@ -29,11 +29,11 @@ function messagesOf(parsed: ParsedSession): unknown[] {
 }
 
 /**
- * The session's message arrays: main transcript first, then each sub-agent transcript
- * (transcripts of Task/Agent dispatches that the adapter parsed into `parsed.subagents`). Sub-agent token
- * usage belongs to the owning session — readers that skip these undercount sessions
- * that dispatch agents. Non-array `messages` entries are skipped with the same
- * defensive posture as {@link messagesOf}.
+ * The session's message arrays: main transcript first, then every linked transcript the adapter
+ * parsed into `parsed.subagents` — transcripts of Task/Agent dispatches, and for Pi also the
+ * `/fork` continuations that carry the rest of the same conversation. Their token usage belongs
+ * to the owning session — readers that skip them undercount sessions that dispatch agents.
+ * Non-array `messages` entries are skipped with the same defensive posture as {@link messagesOf}.
  */
 function allMessageArrays(parsed: ParsedSession): unknown[][] {
   const arrays: unknown[][] = [messagesOf(parsed)];
@@ -91,6 +91,54 @@ function isMoreCompleteUsageRecord(candidate: UsageRecord, current: UsageRecord)
 }
 
 /**
+ * Append `record`, collapsing repeats of the same dedup key in place.
+ *
+ * One API response can legitimately appear more than once in the transcripts an extractor
+ * walks — Claude Code writes progressive JSONL rows for a streaming response, and Pi copies
+ * inherited history verbatim into a forked log. Keeping the most complete row (rather than the
+ * first or the last) stops a partial chunk from winning, and replacing in place keeps the
+ * record's original position so chronological order survives.
+ */
+function appendDedupedRecord(records: UsageRecord[], keyed: Map<string, UsageRecord>, record: UsageRecord): void {
+  if (record.key === null) {
+    records.push(record); // unkeyable ⇒ always counted
+    return;
+  }
+  const current = keyed.get(record.key);
+  if (!current) {
+    keyed.set(record.key, record);
+    records.push(record);
+    return;
+  }
+  if (isMoreCompleteUsageRecord(record, current)) {
+    const index = records.indexOf(current);
+    if (index !== -1) {
+      records[index] = record;
+    }
+    keyed.set(record.key, record);
+  }
+}
+
+/**
+ * Records whose dedup key no earlier session has claimed, marking each survivor as claimed.
+ * Order is preserved. `seen` is shared across every session in a run, so the EARLIEST session
+ * owns a response that several transcripts replay.
+ */
+function takeUnseenRecords(records: UsageRecord[], seen: Set<string>): UsageRecord[] {
+  const out: UsageRecord[] = [];
+  for (const record of records) {
+    if (record.key !== null) {
+      if (seen.has(record.key)) {
+        continue; // duplicate API response replayed into another session file
+      }
+      seen.add(record.key);
+    }
+    out.push(record);
+  }
+  return out;
+}
+
+/**
  * Extract one {@link UsageRecord} per Claude assistant message (skipping `<synthetic>`),
  * across the main transcript AND every sub-agent transcript in `parsed.subagents`.
  * Claude Code replays prior turns into resumed/forked session files, so the SAME API
@@ -123,27 +171,12 @@ export function extractClaudeUsageRecords(parsed: ParsedSession): UsageRecord[] 
       const key = id || reqId ? `${id ?? ''}::${reqId ?? ''}` : null;
       const parsedTs = raw.timestamp ? Date.parse(raw.timestamp) : NaN;
       const ts = Number.isFinite(parsedTs) ? parsedTs : null;
-      const record: UsageRecord = {
+      appendDedupedRecord(records, keyedRecords, {
         key,
         ts,
         model,
         usage: { input, output, cacheRead, cacheCreation, cacheCreation1h, total: input + output + cacheRead + cacheCreation },
-      };
-      if (key !== null) {
-        const current = keyedRecords.get(key);
-        if (!current) {
-          keyedRecords.set(key, record);
-          records.push(record);
-        } else if (isMoreCompleteUsageRecord(record, current)) {
-          const index = records.indexOf(current);
-          if (index !== -1) {
-            records[index] = record;
-          }
-          keyedRecords.set(key, record);
-        }
-      } else {
-        records.push(record);
-      }
+      });
     }
   }
   // Main and sub-agent records interleave in real time. Sort chronologically when every
@@ -513,6 +546,192 @@ export function extractKimiUsageRecords(parsed: ParsedSession): UsageRecord[] {
 }
 
 /**
+ * Pi's normalized per-response usage block, exactly as Pi persists it (`Usage` in the upstream
+ * `packages/ai/src/types.ts:368-389`).
+ *
+ * NO SUBTRACTION HERE — and that is deliberate. Pi converts EVERY provider it talks to into the
+ * Anthropic (disjoint) convention before writing the transcript, so `input`, `cacheRead` and
+ * `cacheWrite` never overlap:
+ *   - openai-completions: `input = max(0, prompt_tokens - cached_tokens - cache_write_tokens)`
+ *     (`packages/ai/src/api/openai-completions.ts:1384-1396`)
+ *   - anthropic-messages: the provider's already-disjoint fields are copied through unchanged
+ *     (`packages/ai/src/api/anthropic-messages.ts:576-584`)
+ * {@link readCopilotCli} and {@link codexBlockToUsage} subtract because THEIR sources report an
+ * inclusive prompt total. Applying the same subtraction to Pi would remove the cached prompt a
+ * second time and undercount every Pi session by the size of its cache reads — which, on real
+ * transcripts, is the overwhelming majority of the prompt.
+ *
+ * `reasoning` is documented as a subset of `output` (`packages/ai/src/types.ts:375-380`), so it
+ * is never billed separately. `cost` is present but always zero for CodeMie-proxied models
+ * (Pi has no price table for them), which is why the report prices from `pricing.json` instead.
+ */
+interface PiUsage {
+  input?: number;
+  output?: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  cacheWrite1h?: number;
+  totalTokens?: number;
+}
+
+/** A Pi v3 session-log line, narrowed to the fields the usage reader needs. */
+interface PiUsageEntry {
+  type?: string;
+  id?: string;
+  /** ISO timestamp on the entry envelope — the only timestamp `branch_summary`/`compaction` carry. */
+  timestamp?: string;
+  /** Model the user switched to, on a `model_change` entry. */
+  modelId?: string;
+  /** Summary-generation spend, recorded at entry level with no model attached. */
+  usage?: PiUsage;
+  message?: {
+    role?: string;
+    model?: string;
+    /** Concrete model when it differs from the requested one (e.g. an `auto` route). */
+    responseModel?: string;
+    responseId?: string;
+    usage?: PiUsage;
+    /** Epoch ms. */
+    timestamp?: number;
+  };
+}
+
+function piBlockToUsage(block: PiUsage): TokenUsage {
+  const input = block.input ?? 0;
+  const output = block.output ?? 0;
+  const cacheRead = block.cacheRead ?? 0;
+  const cacheCreation = block.cacheWrite ?? 0;
+  return {
+    input,
+    output,
+    cacheRead,
+    cacheCreation,
+    cacheCreation1h: block.cacheWrite1h ?? 0,
+    total: block.totalTokens ?? input + output + cacheRead + cacheCreation,
+  };
+}
+
+function piRecordTimestamp(entry: PiUsageEntry): number | null {
+  const messageTs = entry.message?.timestamp;
+  if (typeof messageTs === 'number' && Number.isFinite(messageTs)) {
+    return messageTs;
+  }
+  const entryTs = entry.timestamp ? Date.parse(entry.timestamp) : NaN;
+  return Number.isFinite(entryTs) ? entryTs : null;
+}
+
+/**
+ * Dedup key for a Pi usage entry, or null when the entry carries no identity.
+ *
+ * `responseId` is the provider's own response identifier and is the strongest available key.
+ * When it is absent (aborted turns, and every summary entry), fall back to the Pi entry id plus
+ * its timestamp. Pi's `/fork` copies inherited entries VERBATIM, ids included
+ * (`packages/coding-agent/src/core/session-manager.ts:1621-1626`), so the entry id is exactly
+ * what stops a fork from double-counting the history it inherited.
+ *
+ * An entry with neither is unkeyable and returns null, per {@link UsageRecord.key}. Synthesizing
+ * a key from the timestamp alone would be worse than useless: an entry lacking both id and
+ * timestamp would then key on the constant `"::"`, and `takeUnseenRecords` would discard every
+ * such record after the first ACROSS THE WHOLE RUN. Pi always writes an entry id
+ * (`SessionEntryBase.id`), so null here means a corrupt line — counted once, never suppressing
+ * an unrelated one.
+ */
+function piRecordKey(entry: PiUsageEntry, ts: number | null): string | null {
+  const responseId = entry.message?.responseId;
+  if (typeof responseId === 'string' && responseId.length > 0) {
+    return responseId;
+  }
+  return entry.id ? `${entry.id}::${ts ?? ''}` : null;
+}
+
+/**
+ * Extract one {@link UsageRecord} per billable Pi entry, across the main transcript AND every
+ * linked transcript in `parsed.subagents` (nested sub-agent runs and `/fork` continuations —
+ * see `pi.session.ts loadLinkedTranscripts`). Pi records NO usage on the parent's `toolResult`
+ * entries for a sub-agent dispatch, so the nested files are the only place that spend exists.
+ *
+ * Upstream bills three kinds of entry (`packages/coding-agent/src/core/usage-totals.ts:36-70`):
+ *   1. `message` / role `assistant` — the model is `responseModel ?? model`.
+ *   2. `message` / role `toolResult` carrying its own `usage` — sub-agent and summary spend.
+ *   3. `branch_summary` / `compaction` with a top-level `entry.usage`.
+ *
+ * Pi attributes NO model to (2) and (3) — it buckets them under a single "Tools/summaries" key.
+ * The report is per-model, so they are APPROXIMATED to the model in effect at that point in the
+ * transcript: the last assistant response's model, or — before any assistant reply — the last
+ * `model_change` entry, which is what Pi writes at session start and on every `/model` switch.
+ * Without the `model_change` source a transcript whose first usage-bearing entry is a
+ * `compaction` or `branch_summary` (routine right after `/compact` in a forked session) would
+ * bill real dollars to a phantom `unknown` model row. Dropping the entries instead would
+ * silently undercount sub-agent-heavy sessions outright, which is the worse error.
+ *
+ * Records come back in chronological order when every record is timed; otherwise in
+ * concatenation order (main transcript first, then linked transcripts in discovery order).
+ */
+export function extractPiUsageRecords(parsed: ParsedSession): UsageRecord[] {
+  const records: UsageRecord[] = [];
+  const keyedRecords = new Map<string, UsageRecord>();
+
+  for (const messages of allMessageArrays(parsed)) {
+    // Model attribution never crosses a transcript boundary: a sub-agent log is its own
+    // conversation, so its first unattributed entry must not inherit the parent's last model.
+    let currentModel: string | undefined;
+
+    for (const entry of messages as PiUsageEntry[]) {
+      if (!entry || typeof entry !== 'object') {
+        continue;
+      }
+      if (entry.type === 'model_change' && typeof entry.modelId === 'string' && entry.modelId) {
+        currentModel = entry.modelId;
+        continue;
+      }
+      const message = entry.type === 'message' ? entry.message : undefined;
+      let block: PiUsage | undefined;
+
+      if (message?.role === 'assistant') {
+        currentModel = message.responseModel ?? message.model ?? currentModel;
+        block = message.usage;
+      } else if (message?.role === 'toolResult') {
+        block = message.usage;
+      } else if (entry.type === 'branch_summary' || entry.type === 'compaction') {
+        block = entry.usage;
+      }
+      if (!block) {
+        continue;
+      }
+
+      const ts = piRecordTimestamp(entry);
+      appendDedupedRecord(records, keyedRecords, {
+        key: piRecordKey(entry, ts),
+        ts,
+        model: currentModel ?? 'unknown',
+        usage: piBlockToUsage(block),
+      });
+    }
+  }
+
+  // Same chronological normalization as the Claude reader: main and sub-agent records
+  // interleave in real time, so sort when every record is timed and otherwise keep
+  // concatenation order (matching buildCostSeries' ordinal-axis fallback).
+  if (records.length > 1 && records.every((r) => r.ts !== null)) {
+    records.sort((a, b) => (a.ts as number) - (b.ts as number));
+  }
+  return records;
+}
+
+/**
+ * Session total for Pi. No separate linked-transcript fold is needed (unlike {@link readCodex})
+ * because {@link extractPiUsageRecords} already walks `parsed.subagents` via
+ * {@link allMessageArrays}.
+ */
+function readPi(parsed: ParsedSession): UsageMap {
+  const out: UsageMap = new Map();
+  for (const r of extractPiUsageRecords(parsed)) {
+    accumulate(out, r.model, r.usage);
+  }
+  return out;
+}
+
+/**
  * Returns per-model {@link TokenUsage}. An empty map means the agent is
  * unsupported or the session carried no usage data. (Session-local; does NOT
  * dedupe across sessions — use {@link gatherUsageDeduped} for run-level totals.)
@@ -528,6 +747,8 @@ export function readUsageByModel(agentName: string, parsed: ParsedSession): Usag
       return readGemini(parsed);
     case 'kimi':
       return readKimi(parsed);
+    case 'pi':
+      return readPi(parsed);
     case 'copilot-cli':
       return readCopilotCli(parsed);
     default:
@@ -560,24 +781,28 @@ export function gatherUsageDeduped(agentName: string, parsed: ParsedSession, see
   if (isCodexFamilyAgent(a)) {
     return readCodex(parsed);
   }
+  if (a === 'pi') {
+    // Cross-session dedup, like Claude and unlike the session-local readers above: `/fork`
+    // copies the inherited history verbatim into the new transcript, so one API response
+    // really does appear in several files and must be billed to the earliest one only.
+    const out: UsageMap = new Map();
+    for (const r of takeUnseenRecords(extractPiUsageRecords(parsed), seen)) {
+      accumulate(out, r.model, r.usage);
+    }
+    return out;
+  }
   if (a === 'claude' || a === 'claude-acp' || a === 'claude-desktop') {
     const rollup = readClaudeSdkResult(parsed);
     if (rollup) {
       return rollup; // authoritative SDK rollup
     }
     const out: UsageMap = new Map();
-    for (const r of extractClaudeUsageRecords(parsed)) {
-      if (r.key !== null) {
-        if (seen.has(r.key)) {
-          continue; // duplicate API response replayed into another session file
-        }
-        seen.add(r.key);
-      }
+    for (const r of takeUnseenRecords(extractClaudeUsageRecords(parsed), seen)) {
       accumulate(out, r.model, r.usage);
     }
     return out;
   }
-  return new Map(); // codex/opencode/etc — no usage reader yet
+  return new Map(); // opencode/etc — no usage reader yet
 }
 
 /**
@@ -594,17 +819,10 @@ export function gatherDedupedUsageRecords(agentName: string, parsed: ParsedSessi
     return extractKimiUsageRecords(parsed);
   }
   if (isCodexFamilyAgent(a)) {
-    const out: UsageRecord[] = [];
-    for (const r of extractCodexUsageRecords(parsed)) {
-      if (r.key !== null) {
-        if (seen.has(r.key)) {
-          continue;
-        }
-        seen.add(r.key);
-      }
-      out.push(r);
-    }
-    return out;
+    return takeUnseenRecords(extractCodexUsageRecords(parsed), seen);
+  }
+  if (a === 'pi') {
+    return takeUnseenRecords(extractPiUsageRecords(parsed), seen);
   }
   if (a !== 'claude' && a !== 'claude-acp' && a !== 'claude-desktop') {
     return []; // gemini/opencode/etc — no per-turn series
@@ -612,17 +830,7 @@ export function gatherDedupedUsageRecords(agentName: string, parsed: ParsedSessi
   if (readClaudeSdkResult(parsed)) {
     return []; // authoritative rollup carries no per-message order
   }
-  const out: UsageRecord[] = [];
-  for (const r of extractClaudeUsageRecords(parsed)) {
-    if (r.key !== null) {
-      if (seen.has(r.key)) {
-        continue; // duplicate API response replayed into another session file
-      }
-      seen.add(r.key);
-    }
-    out.push(r);
-  }
-  return out;
+  return takeUnseenRecords(extractClaudeUsageRecords(parsed), seen);
 }
 
 /** Sum ordered usage records into a per-model {@link UsageMap} (equivalent to the summed dedup path). */

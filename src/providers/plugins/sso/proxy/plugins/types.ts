@@ -81,6 +81,17 @@ export interface ProxyInterceptor {
   /** Called after response headers received (BEFORE body streaming) */
   onResponseHeaders?(context: ProxyContext, headers: IncomingHttpHeaders): Promise<void>;
 
+  /**
+   * Called after the upstream response is received but before headers/body are
+   * streamed downstream. Interceptors may return the original response or a
+   * replacement response (for example, after a sanitized one-shot retry).
+   */
+  onUpstreamResponse?(
+    context: ProxyContext,
+    response: IncomingMessage,
+    tools: UpstreamResponseTools
+  ): Promise<IncomingMessage>;
+
   /** Called during streaming (optional, for transform/inspection) */
   onResponseChunk?(context: ProxyContext, chunk: Buffer): Promise<Buffer | null>;
 
@@ -111,6 +122,12 @@ export interface ProxyInterceptor {
     res: ServerResponse,
     httpClient: ProxyHTTPClient
   ): Promise<boolean>;
+}
+
+export interface UpstreamResponseTools {
+  readBody(response: IncomingMessage): Promise<Buffer>;
+  retry(requestBody: Buffer): Promise<IncomingMessage>;
+  fromBuffer(response: IncomingMessage, body: Buffer): IncomingMessage;
 }
 
 /**

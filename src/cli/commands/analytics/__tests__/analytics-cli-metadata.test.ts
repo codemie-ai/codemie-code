@@ -120,4 +120,63 @@ describe('runAnalytics CLI metadata wiring', () => {
     const ctx = buildPayloadMock.mock.calls[0][3];
     expect(ctx.userEmail).toBeUndefined();
   });
+
+  it('passes both periodStart and periodEnd into buildPayload when --last is used', async () => {
+    const before = Date.now();
+    const { runAnalytics } = await import('../index.js');
+    await runAnalytics(
+      { report: true, reportFormat: 'json', last: '7d' } as never,
+      mockSource() as never
+    );
+    const after = Date.now();
+    const ctx = buildPayloadMock.mock.calls[0][3];
+    expect(typeof ctx.periodStart).toBe('string');
+    expect(typeof ctx.periodEnd).toBe('string');
+    const startMs = Date.parse(ctx.periodStart);
+    const endMs = Date.parse(ctx.periodEnd);
+    expect(endMs).toBeGreaterThanOrEqual(before);
+    expect(endMs).toBeLessThanOrEqual(after);
+    expect(startMs).toBeLessThan(endMs);
+    // 7 days in ms, allow ±5s window for parseDuration + Date.now drift
+    const diff = endMs - startMs;
+    expect(diff).toBeGreaterThan(7 * 24 * 60 * 60 * 1000 - 5000);
+    expect(diff).toBeLessThan(7 * 24 * 60 * 60 * 1000 + 5000);
+  });
+
+  it('invokes buildPayload for --session with no --from/--to', async () => {
+    const { runAnalytics } = await import('../index.js');
+    await runAnalytics(
+      { report: true, reportFormat: 'json', session: 'abc-123' } as never,
+      mockSource() as never
+    );
+    expect(buildPayloadMock).toHaveBeenCalledTimes(1);
+    const ctx = buildPayloadMock.mock.calls[0][3];
+    expect(ctx.periodStart).toBeUndefined();
+    expect(ctx.periodEnd).toBeUndefined();
+    // Fallback is buildPayload's responsibility (covered in payload-builder.test.ts).
+  });
+
+  it('invokes buildPayload for --project + --branch with no --from/--to', async () => {
+    const { runAnalytics } = await import('../index.js');
+    await runAnalytics(
+      { report: true, reportFormat: 'json', project: 'my-proj', branch: 'feature/x' } as never,
+      mockSource() as never
+    );
+    expect(buildPayloadMock).toHaveBeenCalledTimes(1);
+    const ctx = buildPayloadMock.mock.calls[0][3];
+    expect(ctx.periodStart).toBeUndefined();
+    expect(ctx.periodEnd).toBeUndefined();
+  });
+
+  it('invokes buildPayload for a bare report (no filters at all)', async () => {
+    const { runAnalytics } = await import('../index.js');
+    await runAnalytics(
+      { report: true, reportFormat: 'json' } as never,
+      mockSource() as never
+    );
+    expect(buildPayloadMock).toHaveBeenCalledTimes(1);
+    const ctx = buildPayloadMock.mock.calls[0][3];
+    expect(ctx.periodStart).toBeUndefined();
+    expect(ctx.periodEnd).toBeUndefined();
+  });
 });

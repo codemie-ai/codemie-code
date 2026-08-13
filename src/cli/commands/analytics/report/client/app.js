@@ -19,7 +19,7 @@
 
   // ---- palette ------------------------------------------------------------
   var PALETTE = ['#7C5CFC', '#2297F6', '#F5A534', '#06B6D4', '#259F4C', '#F9303C', '#C084FC', '#E879A6'];
-  var AGENT_COLORS = { claude: '#7C5CFC', 'claude-acp': '#9D7BFF', 'claude-desktop': '#B79DFF', gemini: '#F5A534', codex: '#06B6D4', 'codemie-codex': '#06B6D4', opencode: '#259F4C', 'codemie-code': '#2297F6', 'copilot-cli': '#6E7681' };
+  var AGENT_COLORS = { claude: '#7C5CFC', 'claude-acp': '#9D7BFF', 'claude-desktop': '#B79DFF', gemini: '#F5A534', codex: '#06B6D4', 'codemie-codex': '#06B6D4', opencode: '#259F4C', 'codemie-code': '#2297F6', 'copilot-cli': '#6E7681', pi: '#E879A6' };
   var seenAgentColor = {};
   var colorCursor = 0;
   function colorFor(agent) {
@@ -29,7 +29,7 @@
   }
   // Agent keys are internal ids; these are what a human should read. Unmapped agents fall
   // through to the key itself, so listing an agent here is optional.
-  var AGENT_LABELS = { 'copilot-cli': 'GitHub Copilot CLI' };
+  var AGENT_LABELS = { 'copilot-cli': 'GitHub Copilot CLI', pi: 'Pi' };
   function labelFor(agent) { return AGENT_LABELS[agent] || agent; }
 
   // ---- formatting ---------------------------------------------------------
@@ -1036,6 +1036,50 @@
     container.appendChild(sidePane);
     return container;
   }
+  /**
+   * Rebuild a single-session ReportPayload matching what
+   * `codemie analytics --report --report-format json --session <id>` writes:
+   * { meta, sessions: [record] }, with meta.totals/coverage scoped to this one session
+   * and userEmail / periodStart / periodEnd populated. Mirrors buildPayload()'s meta
+   * assembly (see report/payload-builder.ts) so the exported file is drop-in comparable.
+   */
+  function sessionPayload(s) {
+    var perModel = s.perModelCost || [];
+    var priced = perModel.length > 0;
+    var unpricedModels = [];
+    perModel.forEach(function (m) {
+      if (m.unpriced && unpricedModels.indexOf(m.model) === -1) unpricedModels.push(m.model);
+    });
+    var meta = {
+      generatedAt: new Date().toISOString(),
+      // --session applies no date filter, so the CLI stamps 'all' / 'all' here too.
+      rangeLabel: 'all',
+      agents: [s.agentName],
+      projectFilter: 'all',
+      totals: {
+        sessions: 1,
+        durationMs: s.durationMs,
+        turns: s.turns,
+        files: s.fileOps,
+        netLines: s.netLines,
+        toolCallsTotal: s.toolCallsTotal,
+        toolSuccessRate: s.toolCallsTotal ? Math.round((s.toolCallsSuccess / s.toolCallsTotal) * 1000) / 10 : 0,
+        totalCostUSD: s.costUSD,
+        cacheReadCostUSD: s.cacheReadCostUSD,
+        pricedSessions: priced ? 1 : 0
+      },
+      unpricedModels: unpricedModels,
+      coverage: [{ agentName: s.agentName, total: 1, priced: priced ? 1 : 0, withLog: s.hadLog ? 1 : 0 }]
+    };
+    // Same conditional-spread semantics as buildPayload: omit rather than emit null.
+    if (DATA.meta && DATA.meta.userEmail !== undefined) meta.userEmail = DATA.meta.userEmail;
+    if (Number.isFinite(s.startTime) && s.startTime > 0) {
+      meta.periodStart = new Date(s.startTime).toISOString();
+      meta.periodEnd = new Date(s.startTime + Math.max(Number.isFinite(s.durationMs) ? s.durationMs : 0, 0)).toISOString();
+    }
+    return { meta: meta, sessions: [s] };
+  }
+
   function openSessionModal(s, onBack) {
     if (!s) return;
     closeSessionModal();
@@ -1062,7 +1106,7 @@
     exportBtn.setAttribute('aria-label', 'Export session as JSON');
     exportBtn.setAttribute('title', 'Export session details as JSON');
     exportBtn.addEventListener('click', function () {
-      var json = JSON.stringify(s, null, 2);
+      var json = JSON.stringify(sessionPayload(s), null, 2);
       var blob = new Blob([json], { type: 'application/json' });
       var url = URL.createObjectURL(blob);
       var a = document.createElement('a');

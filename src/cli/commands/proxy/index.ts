@@ -18,7 +18,7 @@ import {
   spawnDaemon,
   stopDaemon,
 } from './daemon-manager.js';
-import { writeDesktopConfig, getDesktopBaseDir, mapCanonicalToDesktop } from './connectors/desktop.js';
+import { writeDesktopConfig, describeManagedSettingsOverride, getDesktopBaseDir, mapCanonicalToDesktop, summarizeManagedOauthShapes } from './connectors/desktop.js';
 import { fetchManagedMcpServers } from './connectors/managed-mcp-remote.js';
 import { writeVsCodeLanguageModelsConfig } from './connectors/vscode.js';
 import { VS_CODE_SUPPORTED_MODELS } from './connectors/vscode-models.js';
@@ -456,6 +456,7 @@ export function createProxyCommand(): Command {
           ? await fetchManagedMcpServers('claude-desktop', state!.syncCodeMieUrl)
           : null;
         const orgMcpServers = canonical ? mapCanonicalToDesktop(canonical) : null;
+        const oauthShapes = summarizeManagedOauthShapes(orgMcpServers);
         logger.info(
           '[proxy] Resolved managed MCP servers for Claude Desktop',
           ...sanitizeLogArgs({
@@ -464,6 +465,9 @@ export function createProxyCommand(): Command {
             canonicalCount: canonical?.length ?? 0,
             mappedCount: orgMcpServers?.length ?? 0,
             mappedNames: orgMcpServers?.map((s) => s.name) ?? [],
+            oauthConfiguredCount: oauthShapes.oauthConfigured,
+            oauthFlaggedCount: oauthShapes.oauthFlagged,
+            noAuthCount: oauthShapes.noAuth,
           })
         );
         const configPath = await writeDesktopConfig(
@@ -483,6 +487,14 @@ export function createProxyCommand(): Command {
           })
         );
         console.log(chalk.green('✓ Claude Desktop configured'));
+        const managedSettingsWarning = describeManagedSettingsOverride();
+        if (managedSettingsWarning) {
+          console.log(chalk.yellow(`⚠ ${managedSettingsWarning}`));
+          logger.warn(
+            '[proxy] Claude Desktop managed settings source present',
+            ...sanitizeLogArgs({ managedSettingsWarning })
+          );
+        }
         if (verbose) {
           console.log(`  Config:  ${configPath}`);
           console.log(`  Gateway: ${state!.url}`);

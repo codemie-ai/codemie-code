@@ -4,6 +4,12 @@
 # CodeMie Code Release Script
 # Simple script to automate releases following KISS principles
 # Designed to be resumable - can continue from failed steps
+#
+# Release flow: version bump → commit → agent tests gate → tag → push → GitHub release
+# Agent tests gate: runs `npm run test:integration:agent` before tagging.
+#   - Tests pass → continue automatically
+#   - Tests fail → release blocked (fix tests first)
+#   - Tests cannot run (missing SSO/JWT credentials) → manual confirmation required
 
 DRY_RUN=false
 VERSION=""
@@ -142,6 +148,8 @@ if [[ "$TAG_EXISTS" == "false" ]]; then
     echo "$STEP. Create git tag v$VERSION"
     STEP=$((STEP + 1))
 fi
+echo "$STEP. Run agent tests (or confirm manual run if credentials unavailable)"
+STEP=$((STEP + 1))
 echo "$STEP. Push commit and tag to origin"
 STEP=$((STEP + 1))
 if command -v gh >/dev/null 2>&1 && [[ "$RELEASE_EXISTS" == "false" ]]; then
@@ -192,6 +200,52 @@ else
 🤖 Generated with release script" || {
         echo "⚠️  Failed to commit (possibly already committed), continuing..."
     }
+fi
+
+# Run agent tests before tagging — gate the release on test outcome
+echo ""
+echo "🧪 Running agent tests..."
+AGENT_TEST_JSON=$(mktemp /tmp/agent-test-XXXXX.json) || { echo "ERROR: mktemp failed, cannot capture agent test results"; exit 1; }
+trap 'rm -f "$AGENT_TEST_JSON"' EXIT INT TERM
+npm run test:integration:agent -- --reporter=verbose --reporter=json --outputFile="$AGENT_TEST_JSON"
+AGENT_EXIT_CODE=$?
+
+AGENT_PASSED=0
+if [[ -f "$AGENT_TEST_JSON" ]]; then
+    AGENT_PASSED=$(node -e "const fs=require('fs');try{const r=JSON.parse(fs.readFileSync('$AGENT_TEST_JSON','utf8'));console.log(r.numPassedTests||0)}catch{console.log(0)}")
+fi
+rm -f "$AGENT_TEST_JSON"
+
+if [[ $AGENT_EXIT_CODE -ne 0 ]]; then
+    echo ""
+    echo "❌ Agent tests FAILED (exit code $AGENT_EXIT_CODE). Release cannot proceed."
+    echo "   Fix the failing agent tests before releasing."
+    exit 1
+elif [[ "$AGENT_PASSED" -gt 0 ]]; then
+    echo "✅ Agent tests passed ($AGENT_PASSED tests)"
+else
+    echo ""
+    echo "⚠️  Agent tests could not run automatically (0 tests executed)."
+    echo "   This usually means SSO credentials or network access are unavailable."
+    echo ""
+    echo "   Why agent tests are required:"
+    echo "   Agent tests validate the full codemie-code integration against a live"
+    echo "   CodeMie server. Skipping them risks releasing broken agent behavior."
+    echo ""
+    echo "   To run agent tests automatically:"
+    echo "   • Local: ensure your active profile uses provider 'ai-run-sso'"
+    echo "     (check: cat ~/.codemie/codemie-cli.config.json)"
+    echo "   • CI:    set CI_IS_LOCAL_RUN=false and provide tests/.env.test.local"
+    echo ""
+    echo "   To run manually: npm run test:integration:agent"
+    echo ""
+    read -p "❓ Have you manually run agent tests and confirmed they pass? (y/N): " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "❌ Release aborted — agent tests must pass before releasing."
+        exit 1
+    fi
+    echo "✅ Agent tests manually confirmed by user"
 fi
 
 # Create tag (skip if exists)

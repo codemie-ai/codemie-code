@@ -76,7 +76,16 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
           const profileConfig = JSON.parse(env.CODEMIE_PROFILE_CONFIG) as { userEmail?: string };
           userEmail = profileConfig.userEmail || undefined;
         } catch {
-          // malformed env — omit email gracefully
+          // malformed env — fall through to ConfigLoader fallback
+        }
+      }
+      if (!userEmail) {
+        try {
+          const { ConfigLoader } = await import('../../utils/config.js');
+          const cfg = await ConfigLoader.loadMultiProviderConfig();
+          userEmail = cfg.userEmail || undefined;
+        } catch {
+          // no ~/.codemie config — omit email gracefully
         }
       }
 
@@ -697,6 +706,22 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       }
     };
 
+    // Run the session-end hook, then release the proxy. The hook is agent- and
+    // provider-supplied and is not guaranteed to guard its own body; letting it
+    // throw here would skip cleanup(), stranding the proxy and its final metrics
+    // sync, and would leave the exit handler's promise unsettled. Since this now
+    // runs on signal exits too, that would happen on every Ctrl+C.
+    const endSessionAndCleanup = async (exitCode: number) => {
+      try {
+        await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, exitCode, env);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        logger.error(`[${this.displayName}] onSessionEnd hook failed (non-blocking): ${msg}`);
+      } finally {
+        await cleanup();
+      }
+    };
+
     // --- Built-in agent path (customRunHandler) ---
     // Used when no external binary is available but a built-in handler exists.
     // The handler receives args plus AgentConfig (which carries the profile name).
@@ -711,8 +736,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         // subcommand format and must not corrupt the built-in handler's arg parsing.
         await this.metadata.customRunHandler(args, {}, agentConfig);
 
-        await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, 0, env);
-        await cleanup();
+        await endSessionAndCleanup(0);
         await executeAfterRun(this, this.metadata.lifecycle, this.metadata.name, 0, env);
 
         if (!this.metadata.silentMode) {
@@ -723,8 +747,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         }
         return;
       } catch (error) {
-        await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, 1, env);
-        await cleanup();
+        await endSessionAndCleanup(1);
         await executeAfterRun(this, this.metadata.lifecycle, this.metadata.name, 1, env);
         throw error;
       }
@@ -838,11 +861,8 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
           process.off('SIGINT', sigintHandler);
           process.off('SIGTERM', sigtermHandler);
 
-          // Lifecycle hook: session end (provider-aware)
-          await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, 1, env);
-
-          // Clean up proxy (triggers final sync)
-          await cleanup();
+          // Lifecycle hook: session end, then proxy cleanup (triggers final sync)
+          await endSessionAndCleanup(1);
 
           // Lifecycle hook: afterRun (provider-aware)
           await executeAfterRun(this, this.metadata.lifecycle, this.metadata.name, 1, env);
@@ -850,7 +870,7 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
           reject(new Error(`Failed to start ${this.displayName}: ${error.message}`));
         });
 
-        child.on('exit', async (code) => {
+        child.on('exit', async (code, signal) => {
           // Remove signal handlers to prevent memory leaks
           process.off('SIGINT', sigintHandler);
           process.off('SIGTERM', sigtermHandler);
@@ -869,13 +889,16 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
             await new Promise(resolve => setTimeout(resolve, gracePeriodMs));
           }
 
-          // Lifecycle hook: session end (provider-aware)
-          if (code !== null) {
-            await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, code, env);
+          // Preserve signal information for lifecycle hooks. A null exit code
+          // means the process was terminated by a signal; agents still need the
+          // session-end hook to finalize metrics.
+          if (signal) {
+            env.CODEMIE_EXIT_SIGNAL = signal;
           }
+          const effectiveExitCode = code ?? 1;
 
-          // Clean up proxy
-          await cleanup();
+          // Lifecycle hook: session end, then proxy cleanup
+          await endSessionAndCleanup(effectiveExitCode);
 
           // Lifecycle hook: afterRun (provider-aware)
           if (code !== null) {
@@ -902,11 +925,8 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       });
     } catch (error) {
 
-      // Lifecycle hook: session end (provider-aware)
-      await executeOnSessionEnd(this, this.metadata.lifecycle, this.metadata.name, 1, env);
-
-      // Clean up proxy on error (triggers final sync)
-      await cleanup();
+      // Lifecycle hook: session end, then proxy cleanup (triggers final sync)
+      await endSessionAndCleanup(1);
 
       // Lifecycle hook: afterRun (provider-aware)
       await executeAfterRun(this, this.metadata.lifecycle, this.metadata.name, 1, env);

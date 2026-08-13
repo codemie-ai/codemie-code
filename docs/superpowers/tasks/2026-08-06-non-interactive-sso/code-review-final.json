@@ -1,0 +1,41 @@
+{
+  "decision": "request-changes",
+  "rationale": "All 3 lenses ran cleanly against a present, well-specified spec (no lens failures, no decision_needed items). The acceptance lens found the ticket's 'Optional --non-interactive or equivalent behavior is documented' AC only partially met (JSDoc only, no README/CLI-help/CHANGELOG note) -> CR-001, forcing request-changes. 4 concerns deferred as accepted, already-discussed design trade-offs from the approved spec (TTY-only detection: no stdout check, pseudo-TTY containers still hang; --task/isNonInteractiveMode signal not threaded; shared-gate assumes all promptForReauth implementers require a TTY, true only for the current SSO provider) -- real but out of scope for this ticket, good follow-up candidates. 5 findings dismissed as non-issues (theoretical process.stdin undefined guard, diagnostic-message differentiation nice-to-have, expected unit-test boundary re: not literally exercising inquirer/readline, theoretical test global-state flakiness with no observed flakiness in a full green run, and a pre-existing missing try/catch explicitly out of scope).",
+  "confidence": "high",
+  "risk_flags": ["documentation"],
+  "business_review": [
+    {"kind": "spec", "item": "New utility src/utils/interactive.ts exports isNonInteractiveEnvironment(): boolean returning !process.stdin.isTTY", "status": "pass", "notes": "src/utils/interactive.ts:15; unit tests cover true/false/undefined isTTY branches, all pass"},
+    {"kind": "spec", "item": "Guard the shared gate handleAuthValidationFailure: check isNonInteractiveEnvironment() before calling setupSteps.promptForReauth; when true, skip and fall into the no-promptForReauth branch", "status": "pass", "notes": "src/providers/core/auth-validation.ts:32 condition changed to `setupSteps?.promptForReauth && !isNonInteractiveEnvironment()`"},
+    {"kind": "spec", "item": "Single edit at the shared gate fixes all three call sites with no per-caller changes", "status": "pass", "notes": "diff touches only auth-validation.ts plus new interactive.ts/tests; AgentCLI.ts, cli/commands/profile/index.ts, utils/auth.ts all call the shared function unmodified"},
+    {"kind": "spec", "item": "sso.setup-steps.ts / promptForReauth implementation itself is unchanged", "status": "pass", "notes": "no changes to src/providers/plugins/sso/sso.setup-steps.ts in the diff"},
+    {"kind": "spec", "item": "Interactive (TTY present): behavior unchanged, prompt still invoked", "status": "pass", "notes": "test 'should call promptForReauth when a TTY is present...' passes"},
+    {"kind": "spec", "item": "Non-interactive + missing/expired SSO credentials: clean actionable message printed, inquirer.prompt() never invoked, no hang/ERR_USE_AFTER_CLOSE", "status": "pass", "notes": "guard short-circuits before promptForReauth is reached; verified by test assertions"},
+    {"kind": "spec", "item": "Non-interactive failure path yields a non-zero exit", "status": "pass", "notes": "handleAuthValidationFailure returns false unchanged; AgentCLI.ts still calls process.exit(1); utils/auth.ts throws ConfigurationError -- both pre-existing, unchanged"},
+    {"kind": "spec", "item": "JWT (or any provider without promptForReauth): behavior unchanged regardless of TTY", "status": "pass", "notes": "condition still short-circuits on missing promptForReauth first; dedicated test passes"},
+    {"kind": "spec", "item": "No new --non-interactive CLI flag; no CI env var check; detection is TTY-only", "status": "pass", "notes": "interactive.ts uses only process.stdin.isTTY"},
+    {"kind": "spec", "item": "No changes to ProviderProfile / CodeMieConfigOptions persisted config shape", "status": "pass", "notes": "diff does not touch env/types.ts or any config schema"},
+    {"kind": "story-ac", "item": "CLI detects non-interactive execution reliably", "status": "pass", "notes": "isNonInteractiveEnvironment() in src/utils/interactive.ts, tested"},
+    {"kind": "story-ac", "item": "Missing/expired SSO credentials in non-interactive mode produce a clean non-zero exit", "status": "pass", "notes": "shared-gate guard + pre-existing process.exit(1)/ConfigurationError paths, confirmed unchanged"},
+    {"kind": "story-ac", "item": "Error message explains how to authenticate before retrying", "status": "pass", "notes": "underlying SSO validationResult.error already includes actionable re-auth instructions"},
+    {"kind": "story-ac", "item": "Optional --non-interactive or equivalent behavior is documented (README/CLI help as applicable)", "status": "partial", "notes": "only JSDoc added in auth-validation.ts and interactive.ts; no README, CLI --help, or CHANGELOG entry documents the new auto-detect behavior"},
+    {"kind": "story-ac", "item": "No readline crash occurs when authentication cannot proceed", "status": "pass", "notes": "inquirer.prompt() is never reached in non-interactive mode; verified via not-called assertions"},
+    {"kind": "story-ac", "item": "Regression tests cover interactive and non-interactive authentication paths", "status": "pass", "notes": "8/8 new tests pass covering TTY-present/absent x promptForReauth-present, JWT no-promptForReauth, and null-setupSteps cases"}
+  ],
+  "standards_review": [
+    {"kind": "commit-format", "status": "na", "notes": "no commits made yet in this session -- project policy defers git operations to explicit user request"},
+    {"kind": "code-quality", "status": "pass", "notes": "explicit return types, .js-extension imports, JSDoc on exported functions, kebab-case filenames, no `any`, functions well under 50 lines -- matches .ai-run/guides/standards/code-quality.md"},
+    {"kind": "security", "status": "na", "notes": "no credential handling, secrets, or sanitization-relevant code touched by this diff"}
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "major",
+      "triage": "patch",
+      "file": "unknown",
+      "title": "New non-interactive auto-detect behavior is not documented for end users",
+      "problem": "The ticket's acceptance criterion requires the optional --non-interactive-or-equivalent behavior to be documented, but only internal JSDoc was added in auth-validation.ts and interactive.ts -- no README, CLI --help text, or CHANGELOG entry tells CLI users/automation authors that SSO re-auth now fails fast (instead of hanging) when no TTY is attached.",
+      "impact": "Users relying on this behavior in CI/automation have no discoverable documentation confirming or explaining it; the ticket's documentation AC is not met.",
+      "recommendation": "Add a short note (e.g. in README's authentication/SSO section, or the relevant CLI --help text) describing: in a non-interactive environment (no TTY), missing/expired SSO credentials now fail fast with a clear message and non-zero exit instead of hanging."
+    }
+  ]
+}

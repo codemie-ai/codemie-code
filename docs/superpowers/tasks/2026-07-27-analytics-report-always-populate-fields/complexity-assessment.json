@@ -1,0 +1,28 @@
+{
+  "schema": 1,
+  "task": "Fix analytics report metadata (userEmail, periodStart, periodEnd) to always be populated in ReportMeta regardless of filter mode by deriving fallback period values from session data when explicit date filters are absent.",
+  "generated": "2026-07-27T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 1, "label": "XS" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 2, "label": "S" }
+  },
+  "total": 12,
+  "size": "S",
+  "routing": "writing-plans",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Three functions across two files: parseFilterOptions() and runAnalytics() in analytics/index.ts (primary bug sites), plus buildPayload() in analytics/report/payload-builder.ts (optional fallback derivation). All within the analytics subsystem; no new abstractions needed."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Approximately 5 files modified: index.ts, payload-builder.ts, possibly types.ts (JSDoc update), analytics-cli-metadata.test.ts (4 new filter-mode test cases), and payload-builder.test.ts. No new files. Changes span 3-4 subdirectories all within src/cli/commands/analytics/."
+    }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

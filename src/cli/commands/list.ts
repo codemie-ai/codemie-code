@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import { AgentRegistry } from '../../agents/registry.js';
+import { getUserFacingAgentName } from '../../agents/core/agent-aliases.js';
 import { logger } from '../../utils/logger.js';
 import chalk from 'chalk';
 
@@ -22,13 +23,14 @@ export function createListCommand(): Command {
           console.log(chalk.bold('\n📦 Available Agents:\n'));
 
           for (const agent of agents) {
+            const userFacingName = getUserFacingAgentName(agent.name);
             const installed = await agent.isInstalled();
             const status = installed ? chalk.green('✓ installed') : chalk.white('not installed');
             const version = installed ? await agent.getVersion() : null;
             const versionStr = version ? chalk.white(` (${version})`) : '';
 
             console.log(chalk.bold(`  ${agent.displayName}`) + versionStr);
-            console.log(`    Command: ${chalk.cyan(agent.name)}`);
+            console.log(`    Command: ${chalk.cyan(userFacingName)}`);
             console.log(`    Status: ${status}`);
             console.log(`    ${chalk.white(agent.description)}`);
             console.log();

@@ -490,7 +490,7 @@ Proxy Stop
 
 When the proxy daemon is started in Desktop mode, the daemon also starts a local telemetry runtime for Claude Desktop 3P:
 
-- Discovers session metadata under `~/Library/Application Support/Claude-3p/local-agent-mode-sessions/`
+- Discovers session metadata under `<config root>/local-agent-mode-sessions/`, where the config root is `~/Library/Application Support/Claude-3p/` on macOS, `%LOCALAPPDATA%\Claude-3p\` on Windows, and `$XDG_CONFIG_HOME/Claude-3p/` (else `~/.config/Claude-3p/`) on Linux
 - Reads sibling `audit.jsonl` transcripts for each detected `local_<session>` directory
 - Correlates each local Desktop session to a CodeMie session stored in `~/.codemie/sessions/`
 - Normalizes Desktop events into the existing Claude metrics/conversation processors
@@ -724,11 +724,22 @@ function-call-output items. This keeps LiteLLM free to load-balance each request
 deployments.
 
 The proxy performs only bounded compatibility normalization for `vscode-byok`: it constrains the
-Responses `user` identifier and removes deployment-bound encrypted reasoning state. It preserves
-the selected `reasoning.effort`, visible messages, assistant phases, tools, call IDs, and tool
-outputs. The proxy does not persist conversation content, add session affinity, buffer Responses
-events, or transform the SSE stream. Removing encrypted state trades hidden-reasoning continuity
-for deployment-independent follow-ups, matching the established Codex compatibility behavior.
+Responses `user` identifier and forwards reasoning state untouched. It preserves the selected
+`reasoning.effort`, visible messages, assistant phases, tools, call IDs, and tool outputs. The
+proxy does not persist conversation content, add session affinity, buffer Responses events, or
+transform the SSE stream.
+
+Deployment-bound reasoning state is now handled server-side: the gateway runs LiteLLM
+`encrypted_content_affinity`, which routes a follow-up carrying encrypted content back to the
+deployment that produced it. Follow-ups therefore keep full cross-turn reasoning continuity.
+
+The proxy retains a self-healing fallback for the case where an affinity pin has expired
+(`deployment_affinity_ttl_seconds`). It watches upstream responses for `invalid_encrypted_content`
+and for bare-reasoning-id rejections; on the first sighting it strips reasoning state from every
+later request for the life of that proxy. The failing turn surfaces its error, then the session
+continues with degraded hidden-reasoning continuity rather than replaying unusable state forever.
+This applies uniformly to `codemie-codex`, `codemie-code`, `codemie-opencode`, `codemie-pi`, and
+`vscode-byok`.
 
 ```mermaid
 sequenceDiagram
@@ -741,7 +752,7 @@ sequenceDiagram
     PX->>PX: Validate and strip local key
     PX->>PX: Inject CodeMie SSO cookies
     PX->>PX: Inject profile/project context headers
-    PX->>PX: Normalize user and strip encrypted reasoning state
+    PX->>PX: Normalize user; forward reasoning state as-is
     PX->>GW: Forward stateless request
     GW->>LM: Invoke configured model
     LM-->>GW: Streaming events / tool calls

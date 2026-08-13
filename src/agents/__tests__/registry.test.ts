@@ -22,6 +22,7 @@ describe('AgentRegistry', () => {
           'gemini',
           'opencode',
           'codex',
+          'pi',
           'kimi',
           'kimi-acp',
           'copilot-cli', // analytics-only: read for the report, never managed by CodeMie

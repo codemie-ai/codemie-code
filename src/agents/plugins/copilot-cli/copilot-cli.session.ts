@@ -245,7 +245,12 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
           break;
         }
         case 'user.message': {
-          const text = (event.data as { text?: string } | undefined)?.text;
+          const data = (event.data as { text?: string; content?: string } | undefined) ?? {};
+          const text = typeof data.text === 'string' && data.text.trim()
+            ? data.text
+            : typeof data.content === 'string'
+              ? data.content
+              : undefined;
           if (typeof text === 'string' && text.trim()) {
             userPrompts.push({ count: 1, text });
           }
@@ -272,7 +277,14 @@ export class CopilotCliSessionAdapter implements SessionAdapter {
             timestamp: event.timestamp,
             cwd,
             gitBranch: branch,
-            message: { role: 'assistant', model: data.model ?? currentModel },
+            message: {
+              role: 'assistant',
+              model: data.model ?? currentModel,
+              content: typeof (data as { content?: string }).content === 'string'
+                ? (data as { content?: string }).content
+                : '',
+              toolRequests: Array.isArray(data.toolRequests) ? data.toolRequests : [],
+            },
           };
           if (!record.message.model) {
             unlabelledTurns.push(record);

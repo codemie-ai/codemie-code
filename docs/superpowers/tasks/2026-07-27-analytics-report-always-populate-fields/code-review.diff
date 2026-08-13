@@ -1,0 +1,352 @@
+diff --git a/src/agents/core/BaseAgentAdapter.ts b/src/agents/core/BaseAgentAdapter.ts
+index c4581d4..1718495 100644
+--- a/src/agents/core/BaseAgentAdapter.ts
++++ b/src/agents/core/BaseAgentAdapter.ts
+@@ -74,7 +74,16 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
+           const profileConfig = JSON.parse(env.CODEMIE_PROFILE_CONFIG) as { userEmail?: string };
+           userEmail = profileConfig.userEmail || undefined;
+         } catch {
+-          // malformed env — omit email gracefully
++          // malformed env — fall through to ConfigLoader fallback
++        }
++      }
++      if (!userEmail) {
++        try {
++          const { ConfigLoader } = await import('../../utils/config.js');
++          const cfg = await ConfigLoader.loadMultiProviderConfig();
++          userEmail = cfg.userEmail || undefined;
++        } catch {
++          // no ~/.codemie config — omit email gracefully
+         }
+       }
+ 
+diff --git a/src/agents/core/__tests__/BaseAgentAdapter-session-report.test.ts b/src/agents/core/__tests__/BaseAgentAdapter-session-report.test.ts
+index 27a8fb5..6626c42 100644
+--- a/src/agents/core/__tests__/BaseAgentAdapter-session-report.test.ts
++++ b/src/agents/core/__tests__/BaseAgentAdapter-session-report.test.ts
+@@ -9,6 +9,13 @@ vi.mock('../../../utils/logger.js', () => ({
+   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), setSessionId: vi.fn(), setAgentName: vi.fn(), setProfileName: vi.fn() },
+ }));
+ 
++const loadMultiProviderConfigMock = vi.fn();
++vi.mock('../../../utils/config.js', () => ({
++  ConfigLoader: {
++    loadMultiProviderConfig: (...a: unknown[]) => loadMultiProviderConfigMock(...a),
++  },
++}));
++
+ import { BaseAgentAdapter } from '../BaseAgentAdapter.js';
+ import type { AgentMetadata } from '../types.js';
+ 
+@@ -23,7 +30,11 @@ class TestAdapter extends BaseAgentAdapter {
+ const baseEnv = { CODEMIE_SESSION_ID: 's1' } as NodeJS.ProcessEnv;
+ 
+ describe('BaseAgentAdapter.maybeWriteSessionReport', () => {
+-  beforeEach(() => { vi.clearAllMocks(); generateSessionReportMock.mockResolvedValue({ written: '/x.json', sessions: 1 }); });
++  beforeEach(() => {
++    vi.clearAllMocks();
++    generateSessionReportMock.mockResolvedValue({ written: '/x.json', sessions: 1 });
++    loadMultiProviderConfigMock.mockResolvedValue({ userEmail: undefined });
++  });
+ 
+   it('generates a report when enabled', async () => {
+     await new TestAdapter({ sessionAnalyticsReport: true }).call(baseEnv);
+@@ -81,4 +92,45 @@ describe('BaseAgentAdapter.maybeWriteSessionReport', () => {
+     generateSessionReportMock.mockRejectedValue(new Error('boom'));
+     await expect(new TestAdapter({ sessionAnalyticsReport: true }).call(baseEnv)).resolves.toBeUndefined();
+   });
++
++  it('falls back to ConfigLoader.loadMultiProviderConfig when CODEMIE_PROFILE_CONFIG is absent', async () => {
++    loadMultiProviderConfigMock.mockResolvedValue({ userEmail: 'from-config@example.com' });
++    await new TestAdapter({ sessionAnalyticsReport: true }).call(baseEnv);
++    expect(loadMultiProviderConfigMock).toHaveBeenCalledTimes(1);
++    expect(generateSessionReportMock).toHaveBeenCalledWith(
++      expect.objectContaining({ userEmail: 'from-config@example.com' })
++    );
++  });
++
++  it('falls back to ConfigLoader when CODEMIE_PROFILE_CONFIG has no email', async () => {
++    loadMultiProviderConfigMock.mockResolvedValue({ userEmail: 'from-config@example.com' });
++    const env = {
++      ...baseEnv,
++      CODEMIE_PROFILE_CONFIG: JSON.stringify({ someOtherField: 'value' }),
++    } as NodeJS.ProcessEnv;
++    await new TestAdapter({ sessionAnalyticsReport: true }).call(env);
++    expect(loadMultiProviderConfigMock).toHaveBeenCalledTimes(1);
++    expect(generateSessionReportMock).toHaveBeenCalledWith(
++      expect.objectContaining({ userEmail: 'from-config@example.com' })
++    );
++  });
++
++  it('does not call ConfigLoader when CODEMIE_PROFILE_CONFIG already has an email', async () => {
++    const env = {
++      ...baseEnv,
++      CODEMIE_PROFILE_CONFIG: JSON.stringify({ userEmail: 'from-env@example.com' }),
++    } as NodeJS.ProcessEnv;
++    await new TestAdapter({ sessionAnalyticsReport: true }).call(env);
++    expect(loadMultiProviderConfigMock).not.toHaveBeenCalled();
++    expect(generateSessionReportMock).toHaveBeenCalledWith(
++      expect.objectContaining({ userEmail: 'from-env@example.com' })
++    );
++  });
++
++  it('omits userEmail silently when both env and ConfigLoader fail', async () => {
++    loadMultiProviderConfigMock.mockRejectedValue(new Error('no config file'));
++    await new TestAdapter({ sessionAnalyticsReport: true }).call(baseEnv);
++    const arg = generateSessionReportMock.mock.calls[0][0];
++    expect(arg.userEmail).toBeUndefined();
++  });
+ });
+diff --git a/src/cli/commands/analytics/__tests__/analytics-cli-metadata.test.ts b/src/cli/commands/analytics/__tests__/analytics-cli-metadata.test.ts
+index 315ae86..89881cb 100644
+--- a/src/cli/commands/analytics/__tests__/analytics-cli-metadata.test.ts
++++ b/src/cli/commands/analytics/__tests__/analytics-cli-metadata.test.ts
+@@ -120,4 +120,63 @@ describe('runAnalytics CLI metadata wiring', () => {
+     const ctx = buildPayloadMock.mock.calls[0][3];
+     expect(ctx.userEmail).toBeUndefined();
+   });
++
++  it('passes both periodStart and periodEnd into buildPayload when --last is used', async () => {
++    const before = Date.now();
++    const { runAnalytics } = await import('../index.js');
++    await runAnalytics(
++      { report: true, reportFormat: 'json', last: '7d' } as never,
++      mockSource() as never
++    );
++    const after = Date.now();
++    const ctx = buildPayloadMock.mock.calls[0][3];
++    expect(typeof ctx.periodStart).toBe('string');
++    expect(typeof ctx.periodEnd).toBe('string');
++    const startMs = Date.parse(ctx.periodStart);
++    const endMs = Date.parse(ctx.periodEnd);
++    expect(endMs).toBeGreaterThanOrEqual(before);
++    expect(endMs).toBeLessThanOrEqual(after);
++    expect(startMs).toBeLessThan(endMs);
++    // 7 days in ms, allow ±5s window for parseDuration + Date.now drift
++    const diff = endMs - startMs;
++    expect(diff).toBeGreaterThan(7 * 24 * 60 * 60 * 1000 - 5000);
++    expect(diff).toBeLessThan(7 * 24 * 60 * 60 * 1000 + 5000);
++  });
++
++  it('invokes buildPayload for --session with no --from/--to', async () => {
++    const { runAnalytics } = await import('../index.js');
++    await runAnalytics(
++      { report: true, reportFormat: 'json', session: 'abc-123' } as never,
++      mockSource() as never
++    );
++    expect(buildPayloadMock).toHaveBeenCalledTimes(1);
++    const ctx = buildPayloadMock.mock.calls[0][3];
++    expect(ctx.periodStart).toBeUndefined();
++    expect(ctx.periodEnd).toBeUndefined();
++    // Fallback is buildPayload's responsibility (covered in payload-builder.test.ts).
++  });
++
++  it('invokes buildPayload for --project + --branch with no --from/--to', async () => {
++    const { runAnalytics } = await import('../index.js');
++    await runAnalytics(
++      { report: true, reportFormat: 'json', project: 'my-proj', branch: 'feature/x' } as never,
++      mockSource() as never
++    );
++    expect(buildPayloadMock).toHaveBeenCalledTimes(1);
++    const ctx = buildPayloadMock.mock.calls[0][3];
++    expect(ctx.periodStart).toBeUndefined();
++    expect(ctx.periodEnd).toBeUndefined();
++  });
++
++  it('invokes buildPayload for a bare report (no filters at all)', async () => {
++    const { runAnalytics } = await import('../index.js');
++    await runAnalytics(
++      { report: true, reportFormat: 'json' } as never,
++      mockSource() as never
++    );
++    expect(buildPayloadMock).toHaveBeenCalledTimes(1);
++    const ctx = buildPayloadMock.mock.calls[0][3];
++    expect(ctx.periodStart).toBeUndefined();
++    expect(ctx.periodEnd).toBeUndefined();
++  });
+ });
+diff --git a/src/cli/commands/analytics/index.ts b/src/cli/commands/analytics/index.ts
+index b02b605..bc7c45e 100644
+--- a/src/cli/commands/analytics/index.ts
++++ b/src/cli/commands/analytics/index.ts
+@@ -275,6 +275,7 @@ function parseFilterOptions(options: AnalyticsOptions): AnalyticsFilter {
+       console.warn(chalk.yellow(`Warning: Invalid --last duration "${options.last}", ignoring filter`));
+     } else {
+       filter.fromDate = new Date(Date.now() - duration);
++      filter.toDate = new Date();
+     }
+   }
+ 
+diff --git a/src/cli/commands/analytics/report/__tests__/payload-builder.test.ts b/src/cli/commands/analytics/report/__tests__/payload-builder.test.ts
+index e9abec8..c5d35f4 100644
+--- a/src/cli/commands/analytics/report/__tests__/payload-builder.test.ts
++++ b/src/cli/commands/analytics/report/__tests__/payload-builder.test.ts
+@@ -287,12 +287,102 @@ describe('buildPayload', () => {
+     expect(payload.meta.periodEnd).toBe('2026-07-21T23:59:59.000Z');
+   });
+ 
+-  it('omits userEmail/periodStart/periodEnd in meta when absent from context', () => {
++  it('omits userEmail in meta when absent from context', () => {
+     const payload = buildPayload(root, costIndex, summary, ctxAll);
+     expect(payload.meta.userEmail).toBeUndefined();
++  });
++
++  it('derives meta.periodStart from min(startTime) when ctx omits it', () => {
++    const early = session({ sessionId: 's-early', startTime: 1_700_000_000_000, duration: 30_000 });
++    const late = session({ sessionId: 's-late', startTime: 1_700_000_600_000, duration: 60_000 });
++    const rootTwo = {
++      ...root,
++      projects: [
++        { projectPath: '/repo/app', branches: [{ branchName: 'main', sessions: [early, late] }] },
++      ],
++    } as unknown as RootAnalytics;
++    const costIndexTwo: SessionCostIndex = new Map([
++      ['s-early', { sessionId: 's-early', tokens: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, total: 2 }, costUSD: 0, perModel: [], priced: true, hadLog: true }],
++      ['s-late', { sessionId: 's-late', tokens: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, total: 2 }, costUSD: 0, perModel: [], priced: true, hadLog: true }],
++    ]);
++    const payload = buildPayload(rootTwo, costIndexTwo, summary, ctxAll);
++    expect(payload.meta.periodStart).toBe(new Date(1_700_000_000_000).toISOString());
++  });
++
++  it('derives meta.periodEnd from max(startTime + duration) when ctx omits it', () => {
++    const early = session({ sessionId: 's-early', startTime: 1_700_000_000_000, duration: 30_000 });
++    const late = session({ sessionId: 's-late', startTime: 1_700_000_600_000, duration: 60_000 });
++    const rootTwo = {
++      ...root,
++      projects: [
++        { projectPath: '/repo/app', branches: [{ branchName: 'main', sessions: [early, late] }] },
++      ],
++    } as unknown as RootAnalytics;
++    const costIndexTwo: SessionCostIndex = new Map([
++      ['s-early', { sessionId: 's-early', tokens: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, total: 2 }, costUSD: 0, perModel: [], priced: true, hadLog: true }],
++      ['s-late', { sessionId: 's-late', tokens: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, total: 2 }, costUSD: 0, perModel: [], priced: true, hadLog: true }],
++    ]);
++    const payload = buildPayload(rootTwo, costIndexTwo, summary, ctxAll);
++    expect(payload.meta.periodEnd).toBe(new Date(1_700_000_600_000 + 60_000).toISOString());
++  });
++
++  it('prefers ctx.periodStart / ctx.periodEnd over derived values (regression guard)', () => {
++    const payload = buildPayload(root, costIndex, summary, {
++      rangeLabel: 'custom',
++      projectFilter: 'all',
++      generatedAt: '2026-07-27T00:00:00Z',
++      periodStart: '2026-01-01T00:00:00.000Z',
++      periodEnd: '2026-06-30T00:00:00.000Z',
++    });
++    expect(payload.meta.periodStart).toBe('2026-01-01T00:00:00.000Z');
++    expect(payload.meta.periodEnd).toBe('2026-06-30T00:00:00.000Z');
++  });
++
++  it('treats duration=0 as endTime=startTime for periodEnd derivation', () => {
++    const only = session({ sessionId: 's-only', startTime: 1_700_000_000_000, duration: 0 });
++    const rootOne = {
++      ...root,
++      projects: [
++        { projectPath: '/repo/app', branches: [{ branchName: 'main', sessions: [only] }] },
++      ],
++    } as unknown as RootAnalytics;
++    const costIndexOne: SessionCostIndex = new Map([
++      ['s-only', { sessionId: 's-only', tokens: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, total: 2 }, costUSD: 0, perModel: [], priced: true, hadLog: true }],
++    ]);
++    const payload = buildPayload(rootOne, costIndexOne, summary, ctxAll);
++    expect(payload.meta.periodStart).toBe(new Date(1_700_000_000_000).toISOString());
++    expect(payload.meta.periodEnd).toBe(new Date(1_700_000_000_000).toISOString());
++  });
++
++  it('omits meta.periodStart / meta.periodEnd when there are no valid sessions', () => {
++    const emptyRoot = {
++      totalSessions: 0, totalDuration: 0, totalTurns: 0, totalFileOperations: 0,
++      totalLinesAdded: 0, totalLinesRemoved: 0, totalLinesModified: 0, netLinesChanged: 0,
++      totalToolCalls: 0, successfulToolCalls: 0, failedToolCalls: 0, toolSuccessRate: 0,
++      models: [], tools: [], languages: [], formats: [], projects: [],
++    } as unknown as RootAnalytics;
++    const payload = buildPayload(emptyRoot, new Map(), summary, ctxAll);
+     expect(payload.meta.periodStart).toBeUndefined();
+     expect(payload.meta.periodEnd).toBeUndefined();
+   });
++
++  it('skips records with startTime <= 0 when computing min/max', () => {
++    const zero = session({ sessionId: 's-zero', startTime: 0, duration: 60_000 });
++    const valid = session({ sessionId: 's-valid', startTime: 1_700_000_000_000, duration: 60_000 });
++    const rootMixed = {
++      ...root,
++      projects: [
++        { projectPath: '/repo/app', branches: [{ branchName: 'main', sessions: [zero, valid] }] },
++      ],
++    } as unknown as RootAnalytics;
++    const costIndexMixed: SessionCostIndex = new Map([
++      ['s-zero', { sessionId: 's-zero', tokens: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, total: 2 }, costUSD: 0, perModel: [], priced: true, hadLog: true }],
++      ['s-valid', { sessionId: 's-valid', tokens: { input: 1, output: 1, cacheRead: 0, cacheCreation: 0, total: 2 }, costUSD: 0, perModel: [], priced: true, hadLog: true }],
++    ]);
++    const payload = buildPayload(rootMixed, costIndexMixed, summary, ctxAll);
++    expect(payload.meta.periodStart).toBe(new Date(1_700_000_000_000).toISOString());
++    expect(payload.meta.periodEnd).toBe(new Date(1_700_000_000_000 + 60_000).toISOString());
++  });
+ });
+ 
+ function emptyTokens() {
+diff --git a/src/cli/commands/analytics/report/payload-builder.ts b/src/cli/commands/analytics/report/payload-builder.ts
+index a267c35..ba6eea8 100644
+--- a/src/cli/commands/analytics/report/payload-builder.ts
++++ b/src/cli/commands/analytics/report/payload-builder.ts
+@@ -34,6 +34,10 @@ export function buildPayload(
+   // the full (duplicated) session metrics. Dedupe by sessionId so the flat record
+   // list — the single source of truth for the client — counts each session once.
+   const seen = new Set<string>();
++  // Track earliest/latest activity across included sessions so the meta block can
++  // fall back to derived period when the caller did not stamp explicit dates.
++  let minStartMs: number | undefined;
++  let maxEndMs: number | undefined;
+ 
+   for (const project of root.projects) {
+     for (const branch of project.branches) {
+@@ -42,6 +46,15 @@ export function buildPayload(
+           continue;
+         }
+         seen.add(s.sessionId);
++        if (s.startTime > 0) {
++          if (minStartMs === undefined || s.startTime < minStartMs) {
++            minStartMs = s.startTime;
++          }
++          const endMs = s.startTime + Math.max(s.duration ?? 0, 0);
++          if (maxEndMs === undefined || endMs > maxEndMs) {
++            maxEndMs = endMs;
++          }
++        }
+         const cost = costIndex.get(s.sessionId);
+         agents.add(s.agentName);
+         const skillInvocations = s.skillInvocations ?? [];
+@@ -142,8 +155,16 @@ export function buildPayload(
+     unpricedModels: summary.unpricedModels,
+     coverage: [...coverageMap.values()].sort((a, b) => b.total - a.total),
+     ...(ctx.userEmail !== undefined && { userEmail: ctx.userEmail }),
+-    ...(ctx.periodStart !== undefined && { periodStart: ctx.periodStart }),
+-    ...(ctx.periodEnd !== undefined && { periodEnd: ctx.periodEnd }),
++    ...(ctx.periodStart !== undefined
++      ? { periodStart: ctx.periodStart }
++      : minStartMs !== undefined
++        ? { periodStart: new Date(minStartMs).toISOString() }
++        : {}),
++    ...(ctx.periodEnd !== undefined
++      ? { periodEnd: ctx.periodEnd }
++      : maxEndMs !== undefined
++        ? { periodEnd: new Date(maxEndMs).toISOString() }
++        : {}),
+   };
+ 
+   return { meta, sessions };
+diff --git a/src/cli/commands/analytics/report/types.ts b/src/cli/commands/analytics/report/types.ts
+index 1ea2bed..d9043cf 100644
+--- a/src/cli/commands/analytics/report/types.ts
++++ b/src/cli/commands/analytics/report/types.ts
+@@ -64,8 +64,8 @@ export interface ReportMeta {
+   unpricedModels: string[];
+   coverage: AgentCoverage[]; // per-agent priced/total — "which tools are included"
+   userEmail?: string;   // identity of the report owner; absent when not authenticated
+-  periodStart?: string; // ISO — start of the reported range; absent for unfiltered reports
+-  periodEnd?: string;   // ISO — end of the reported range; absent for unfiltered reports
++  periodStart?: string; // ISO — start of the reported range; always present when the report contains any sessions
++  periodEnd?: string;   // ISO — end of the reported range; always present when the report contains any sessions
+ }
+ 
+ export interface ReportPayload {

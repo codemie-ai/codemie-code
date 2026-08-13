@@ -101,6 +101,21 @@ codemie config reset
 codemie setup                    # Run wizard again
 ```
 
+### Non-Interactive Environments (CI/Automation)
+
+When SSO credentials are missing or expired, the CLI normally offers an interactive
+re-authentication prompt. In a non-interactive environment — no TTY attached to `stdin`, as in CI
+pipelines, cron jobs, or piped/redirected invocations — that prompt is automatically skipped. The
+CLI detects the missing TTY, fails fast with a clear message (e.g. "No valid SSO credentials found.
+Please run `codemie setup` interactively before using this command."), and exits non-zero instead of
+hanging.
+
+There is no separate `--non-interactive` flag to set — detection is automatic, based solely on
+whether `stdin` is a TTY. To run unattended in CI, either authenticate ahead of time
+(`codemie profile login`) with credentials persisted before the run, or use
+[JWT Bearer Authorization](#jwt-bearer-authorization) instead, which requires no interactive
+session at all.
+
 ## Enterprise SSO Features
 
 AI/Run CodeMie SSO provides enterprise-grade features:

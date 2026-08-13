@@ -1,6 +1,6 @@
 {
   "name": "@codemieai/code",
-  "version": "0.11.0",
+  "version": "0.13.1",
   "description": "Unified AI coding assistant CLI - Manage Claude Code, Gemini & custom agents. Multi-provider support (OpenAI, Azure, LiteLLM, SSO). Built-in LangGraph agent with file operations & git integration.",
   "type": "module",
   "main": "dist/index.js",
@@ -12,11 +12,13 @@
     "codemie-claude-acp": "./bin/codemie-claude-acp.js",
     "codemie-gemini": "./bin/codemie-gemini.js",
     "codemie-opencode": "./bin/codemie-opencode.js",
+    "codemie-pi": "./bin/codemie-pi.js",
     "codemie-codex": "./bin/codemie-codex.js",
     "codemie-kimi": "./bin/codemie-kimi.js",
     "codemie-kimi-acp": "./bin/codemie-kimi-acp.js",
     "codemie-mcp-proxy": "./bin/codemie-mcp-proxy.js",
-    "proxy-daemon": "./bin/proxy-daemon.js"
+    "proxy-daemon": "./bin/proxy-daemon.js",
+    "codemie-copilot": "./bin/codemie-copilot.js"
   },
   "files": [
     "dist",
@@ -46,8 +48,8 @@
     "typecheck": "tsc --noEmit",
     "format": "npm run lint:fix",
     "check:pre-commit": "npm run typecheck && npm run lint",
-    "lint": "eslint {src,tests}/**/*.ts --max-warnings=0",
-    "lint:fix": "eslint {src,tests}/**/*.ts --fix",
+    "lint": "eslint {src,tests}/**/*.ts src/agents/plugins/pi/extension/*.js --max-warnings=0",
+    "lint:fix": "eslint {src,tests}/**/*.ts src/agents/plugins/pi/extension/*.js --fix",
     "commitlint": "commitlint --edit",
     "commitlint:last": "commitlint --from HEAD~1 --to HEAD --verbose",
     "validate:secrets": "node scripts/validate-secrets.js",

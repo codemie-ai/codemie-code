@@ -2,8 +2,26 @@
  * Native session discovery + synthesis unit tests (dependency-injected — no fs/registry).
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { synthesizeRawSession, loadNativeSessions, type NativeLoaderDeps } from '../native-loader.js';
+
+// Module-level mock (must live at file top level, not inside a describe block, so Vitest's
+// hoisting transform actually lifts it above the static `native-loader.js` import above).
+// Only redirects the 'sessions' subpath used by buildOwnershipIndex(); everything else
+// (getCodemieHome, etc.) falls through to the real implementation.
+const mockSessionsDir = join(tmpdir(), `codemie-native-loader-ownership-test-${process.pid}`);
+
+vi.mock('../../../../utils/paths.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../../utils/paths.js')>();
+  return {
+    ...actual,
+    getCodemiePath: (...segments: string[]) =>
+      segments[0] === 'sessions' ? mockSessionsDir : actual.getCodemiePath(...segments),
+  };
+});
 
 const parsed = {
   sessionId: 'sx',
@@ -225,12 +243,11 @@ describe('loadNativeSessions — external session labeling', () => {
 
 /**
  * The ownership gate stops analytics silently counting UNMANAGED runs of an agent CodeMie
- * CAN manage (EPMCDME-13367). An analytics-only agent has no managed variant, so it can
- * never carry an ownership marker — applying the gate would tag every one of its sessions
- * `native-external`, which sources/sessions-source.ts filters out by default, dropping
- * 100% of them and making the integration a silent no-op.
+ * CAN manage (EPMCDME-13367). Copilot CLI used to be analytics-only and was exempt from
+ * that gate; now it is a managed CodeMie agent, so unowned native Copilot sessions follow
+ * the same native-external classification as other managed agents.
  */
-describe('loadNativeSessions — ownership gate exemption for analytics-only agents', () => {
+describe('loadNativeSessions — ownership gate for managed Copilot CLI', () => {
   const copilotParsed = {
     sessionId: 'cp1',
     agentName: 'GitHub Copilot CLI',
@@ -249,7 +266,7 @@ describe('loadNativeSessions — ownership gate exemption for analytics-only age
     metrics: { tools: {} },
   } as never;
 
-  /** Deps with NO ownership marker — the situation every Copilot session is in. */
+  /** Deps with NO ownership marker — an unmanaged/native run of a CodeMie-manageable agent. */
   function unownedDeps(agentName: string, sessionId: string, parsedSession: unknown): NativeLoaderDeps {
     return {
       trackedLogPaths: () => new Set<string>(),
@@ -272,19 +289,17 @@ describe('loadNativeSessions — ownership gate exemption for analytics-only age
     };
   }
 
-  it('tags an unowned copilot-cli session native-unmanaged, not native-external', async () => {
+  it('tags an unowned copilot-cli session native-external now that Copilot is managed', async () => {
     const results = await loadNativeSessions(undefined, unownedDeps('copilot-cli', 'cp1', copilotParsed));
 
     expect(results).toHaveLength(1);
-    // 'native-external' would mean sessions-source.ts filters it out by default, i.e. the
-    // feature ships displaying nothing. Plain 'native' would claim CodeMie launched it.
-    expect(results[0].startEvent!.data.provider).toBe('native-unmanaged');
+    expect(results[0].startEvent!.data.provider).toBe('native-external');
   });
 
-  it('keeps native-unmanaged out of the native-external filter', async () => {
-    // sessions-source.ts includes anything that is not exactly 'native-external'.
+  it('does not apply the analytics-only native-unmanaged exemption to copilot-cli', async () => {
     const results = await loadNativeSessions(undefined, unownedDeps('copilot-cli', 'cp1', copilotParsed));
-    expect(results[0].startEvent!.data.provider).not.toBe('native-external');
+
+    expect(results[0].startEvent!.data.provider).not.toBe('native-unmanaged');
   });
 
   it('still tags an unowned claude session as native-external', async () => {
@@ -292,6 +307,49 @@ describe('loadNativeSessions — ownership gate exemption for analytics-only age
 
     expect(results).toHaveLength(1);
     expect(results[0].startEvent!.data.provider).toBe('native-external');
+  });
+});
+
+describe('realNativeDeps.hasOwnershipMarker — ownership index excludes external-resume records (EPMCDME-12992)', () => {
+  const ownedTranscript = join(mockSessionsDir, 'owned.jsonl');
+  const externalTranscript = join(mockSessionsDir, 'external.jsonl');
+
+  beforeEach(() => {
+    vi.resetModules();
+    rmSync(mockSessionsDir, { recursive: true, force: true });
+    mkdirSync(mockSessionsDir, { recursive: true });
+    // Plain transcripts with no in-band marker — so a `false` result only comes from the
+    // ownership index correctly excluding the record, not from the legacy 4KB-scan fallback
+    // hitting a missing file.
+    writeFileSync(ownedTranscript, '{"type":"user"}\n');
+    writeFileSync(externalTranscript, '{"type":"user"}\n');
+  });
+
+  afterEach(() => {
+    rmSync(mockSessionsDir, { recursive: true, force: true });
+  });
+
+  it('adopts the transcript of a normal CodeMie session (origin unset)', async () => {
+    writeFileSync(
+      join(mockSessionsDir, 'codemie-session-1.json'),
+      JSON.stringify({ correlation: { agentSessionFile: ownedTranscript } })
+    );
+
+    const { realNativeDeps } = await import('../native-loader.js');
+    expect(realNativeDeps.hasOwnershipMarker(ownedTranscript)).toBe(true);
+  });
+
+  it('does NOT adopt the transcript of a session flagged origin=external-resume', async () => {
+    writeFileSync(
+      join(mockSessionsDir, 'codemie-session-2.json'),
+      JSON.stringify({
+        origin: 'external-resume',
+        correlation: { agentSessionFile: externalTranscript },
+      })
+    );
+
+    const { realNativeDeps } = await import('../native-loader.js');
+    expect(realNativeDeps.hasOwnershipMarker(externalTranscript)).toBe(false);
   });
 });
 

@@ -1,0 +1,33 @@
+{
+  "decision": "approve",
+  "rationale": "Fix-up diff (docs/AUTHENTICATION.md 'Non-Interactive Environments (CI/Automation)' section) resolves CR-001. Both confirmation lenses (blind + edge-case, scoped to the fix-up diff) found no new high-risk security/public-API/data-loss/build-runtime issues; the edge-case lens additionally verified the new doc's claims (process.exit(1) path, error-message source, anchor links) directly against the implementation and confirmed them accurate. Two minor non-blocking nits from the blind lens were checked and dismissed: the relative import path matches the pre-existing convention already used elsewhere in the same file, and the '#jwt-bearer-authorization' anchor was verified to exist.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {"kind": "spec", "item": "New utility src/utils/interactive.ts exports isNonInteractiveEnvironment(): boolean returning !process.stdin.isTTY", "status": "pass", "notes": "src/utils/interactive.ts:15; unit tests cover true/false/undefined isTTY branches, all pass"},
+    {"kind": "spec", "item": "Guard the shared gate handleAuthValidationFailure: check isNonInteractiveEnvironment() before calling setupSteps.promptForReauth; when true, skip and fall into the no-promptForReauth branch", "status": "pass", "notes": "src/providers/core/auth-validation.ts:32 condition changed to `setupSteps?.promptForReauth && !isNonInteractiveEnvironment()`"},
+    {"kind": "spec", "item": "Single edit at the shared gate fixes all three call sites with no per-caller changes", "status": "pass", "notes": "diff touches only auth-validation.ts plus new interactive.ts/tests; AgentCLI.ts, cli/commands/profile/index.ts, utils/auth.ts all call the shared function unmodified"},
+    {"kind": "spec", "item": "sso.setup-steps.ts / promptForReauth implementation itself is unchanged", "status": "pass", "notes": "no changes to src/providers/plugins/sso/sso.setup-steps.ts in the diff"},
+    {"kind": "spec", "item": "Interactive (TTY present): behavior unchanged, prompt still invoked", "status": "pass", "notes": "test 'should call promptForReauth when a TTY is present...' passes"},
+    {"kind": "spec", "item": "Non-interactive + missing/expired SSO credentials: clean actionable message printed, inquirer.prompt() never invoked, no hang/ERR_USE_AFTER_CLOSE", "status": "pass", "notes": "guard short-circuits before promptForReauth is reached; verified by test assertions"},
+    {"kind": "spec", "item": "Non-interactive failure path yields a non-zero exit", "status": "pass", "notes": "handleAuthValidationFailure returns false unchanged; AgentCLI.ts still calls process.exit(1); utils/auth.ts throws ConfigurationError -- both pre-existing, unchanged"},
+    {"kind": "spec", "item": "JWT (or any provider without promptForReauth): behavior unchanged regardless of TTY", "status": "pass", "notes": "condition still short-circuits on missing promptForReauth first; dedicated test passes"},
+    {"kind": "spec", "item": "No new --non-interactive CLI flag; no CI env var check; detection is TTY-only", "status": "pass", "notes": "interactive.ts uses only process.stdin.isTTY"},
+    {"kind": "spec", "item": "No changes to ProviderProfile / CodeMieConfigOptions persisted config shape", "status": "pass", "notes": "diff does not touch env/types.ts or any config schema"},
+    {"kind": "story-ac", "item": "CLI detects non-interactive execution reliably", "status": "pass", "notes": "isNonInteractiveEnvironment() in src/utils/interactive.ts, tested"},
+    {"kind": "story-ac", "item": "Missing/expired SSO credentials in non-interactive mode produce a clean non-zero exit", "status": "pass", "notes": "shared-gate guard + pre-existing process.exit(1)/ConfigurationError paths, confirmed unchanged"},
+    {"kind": "story-ac", "item": "Error message explains how to authenticate before retrying", "status": "pass", "notes": "underlying SSO validationResult.error already includes actionable re-auth instructions"},
+    {"kind": "story-ac", "item": "Optional --non-interactive or equivalent behavior is documented (README/CLI help as applicable)", "status": "pass", "notes": "Resolved by fix-up: docs/AUTHENTICATION.md now has a 'Non-Interactive Environments (CI/Automation)' section describing the auto-detect fail-fast behavior"},
+    {"kind": "story-ac", "item": "No readline crash occurs when authentication cannot proceed", "status": "pass", "notes": "inquirer.prompt() is never reached in non-interactive mode; verified via not-called assertions"},
+    {"kind": "story-ac", "item": "Regression tests cover interactive and non-interactive authentication paths", "status": "pass", "notes": "8/8 new tests pass covering TTY-present/absent x promptForReauth-present, JWT no-promptForReauth, and null-setupSteps cases"}
+  ],
+  "standards_review": [
+    {"kind": "commit-format", "status": "na", "notes": "no commits made yet in this session -- project policy defers git operations to explicit user request"},
+    {"kind": "code-quality", "status": "pass", "notes": "explicit return types, .js-extension imports, JSDoc on exported functions, kebab-case filenames, no `any`, functions well under 50 lines -- matches .ai-run/guides/standards/code-quality.md"},
+    {"kind": "security", "status": "na", "notes": "no credential handling, secrets, or sanitization-relevant code touched by this diff"}
+  ],
+  "findings": [],
+  "finding_status": [
+    {"id": "CR-001", "status": "resolved", "notes": "docs/AUTHENTICATION.md gained a 'Non-Interactive Environments (CI/Automation)' section documenting the auto-detect fail-fast behavior, its message, and the CI workaround (JWT auth); confirmed accurate against the implementation by the edge-case confirmation lens."}
+  ]
+}
