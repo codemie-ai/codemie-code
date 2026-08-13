@@ -224,6 +224,18 @@ export class AgentCLI {
         config.authMethod = AuthMethod.JWT;
       }
 
+      // Normalize a user-supplied --base-url (or one loaded from a profile) so the
+      // required /code-assistant-api path is always present, even when the root
+      // CodeMie URL is passed. Idempotent: leaves an already-correct URL untouched.
+      // Keyed on provider (not authMethod) because stored SSO profiles never set
+      // authMethod — proxy routing there is decided by provider.authType === 'sso'.
+      if (
+        config.baseUrl
+        && (config.provider === ProviderName.AI_RUN_SSO || config.provider === ProviderName.BEARER_AUTH)
+      ) {
+        config.baseUrl = ensureApiBase(config.baseUrl);
+      }
+
       // Validate --reasoning-effort (catches both CLI flag and profile defaults)
       if (config.reasoningEffort) {
         const { normalizeReasoningEffort } = await import('./reasoning-effort.js');
