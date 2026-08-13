@@ -5,6 +5,7 @@
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Command } from 'commander';
 
 vi.mock('../connect-orchestrator.js', () => ({
   connectTargets: vi.fn().mockResolvedValue(undefined),
@@ -91,5 +92,88 @@ describe('proxy connect — unified command and deprecated aliases', () => {
     expect(vscode).toBeDefined();
     expect(hasFlag(desktop)).toBe(false);
     expect(hasFlag(vscode)).toBe(false);
+  });
+});
+
+// Regression: the real CLI mounts `proxy` under a root `program` that does NOT
+// call enablePositionalOptions(). Under that nesting Commander captures the
+// alias flags (--profile/--verbose/--force/--insiders, which the unified
+// `connect` command also declares) on the intermediate `connect` command rather
+// than the alias leaf. These tests reproduce that nesting so the aliases must not
+// silently drop their flags. Parsing `createProxyCommand()` directly (proxy as
+// root) hid the bug because that path routed the flags to the leaf.
+describe('deprecated aliases forward their flags under real CLI nesting', () => {
+  let consoleLogSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleLogSpy.mockRestore();
+  });
+
+  async function rootWithProxy(): Promise<Command> {
+    const { createProxyCommand } = await import('../index.js');
+    // A bare root program, like src/cli/index.ts, with NO enablePositionalOptions.
+    const root = new Command();
+    root.addCommand(createProxyCommand());
+    return root;
+  }
+
+  it('`proxy connect desktop --profile custom --verbose --force` forwards every flag', async () => {
+    const { connectTargets } = await import('../connect-orchestrator.js');
+    const root = await rootWithProxy();
+
+    await root.parseAsync(
+      ['proxy', 'connect', 'desktop', '--profile', 'custom', '--verbose', '--force'],
+      { from: 'user' }
+    );
+
+    expect(connectTargets).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targets: { claudeDesktop: true },
+        profile: 'custom',
+        verbose: true,
+        force: true,
+      })
+    );
+  });
+
+  it('`proxy connect vscode --profile work --insiders` forwards every flag', async () => {
+    const { connectTargets } = await import('../connect-orchestrator.js');
+    const root = await rootWithProxy();
+
+    await root.parseAsync(
+      ['proxy', 'connect', 'vscode', '--profile', 'work', '--insiders'],
+      { from: 'user' }
+    );
+
+    expect(connectTargets).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targets: { vscode: true },
+        profile: 'work',
+        insiders: true,
+      })
+    );
+  });
+
+  it('unified `proxy connect --vscode --profile p` still forwards flags under nesting', async () => {
+    const { connectTargets } = await import('../connect-orchestrator.js');
+    const root = await rootWithProxy();
+
+    await root.parseAsync(
+      ['proxy', 'connect', '--vscode', '--profile', 'p'],
+      { from: 'user' }
+    );
+
+    expect(connectTargets).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targets: { claudeDesktop: false, vscode: true, vscodeClaudeCode: false },
+        profile: 'p',
+      })
+    );
   });
 });

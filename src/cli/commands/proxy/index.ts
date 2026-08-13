@@ -55,6 +55,23 @@ function printConnectDeprecation(oldSubcommand: 'desktop' | 'vscode', newFlag: s
   );
 }
 
+/**
+ * Resolve a deprecated alias's options, merging the parent `connect` command's
+ * options with the alias leaf's own (leaf wins on conflict).
+ *
+ * The unified `connect` command declares the same option names (`--profile`,
+ * `--verbose`, `--force`, `--insiders`) as its `desktop`/`vscode` subcommands.
+ * Under the real CLI nesting (`program → proxy → connect → <alias>`) Commander
+ * captures those shared flags on the intermediate `connect` command rather than
+ * the alias leaf — so an alias action reading only its own opts silently drops
+ * them. Merging the parent's opts makes the aliases forward every flag regardless
+ * of how positional-option parsing resolves at each level.
+ */
+function resolveAliasOptions(opts: AliasConnectOptions, command: Command): AliasConnectOptions {
+  const parentOpts = (command.parent?.opts() ?? {}) as AliasConnectOptions;
+  return { ...parentOpts, ...opts };
+}
+
 function parsePortOption(value: string | undefined, fallback: number): number {
   if (!value) {
     return fallback;
@@ -256,14 +273,15 @@ export function createProxyCommand(): Command {
     .option('--verbose', 'Show detailed connection info (URLs, config paths) for debugging')
     .option('--force', 'Stop any existing proxy and start a fresh one, even if it looks healthy')
     .option('--insiders', 'Configure VS Code Insiders instead of stable VS Code')
-    .action(async (opts: AliasConnectOptions) => {
+    .action(async (opts: AliasConnectOptions, command: Command) => {
+      const resolved = resolveAliasOptions(opts, command);
       printConnectDeprecation('desktop', '--claude-desktop');
       await connectTargets({
         targets: { claudeDesktop: true },
-        profile: opts.profile,
-        insiders: Boolean(opts.insiders),
-        force: Boolean(opts.force),
-        verbose: Boolean(opts.verbose),
+        profile: resolved.profile,
+        insiders: Boolean(resolved.insiders),
+        force: Boolean(resolved.force),
+        verbose: Boolean(resolved.verbose),
       });
     });
 
@@ -274,14 +292,15 @@ export function createProxyCommand(): Command {
     .option('--insiders', 'Configure VS Code Insiders instead of stable VS Code')
     .option('--verbose', 'Show detailed connection info (URLs, config paths) for debugging')
     .option('--force', 'Stop any existing proxy and start a fresh one, even if it looks healthy')
-    .action(async (opts: AliasConnectOptions) => {
+    .action(async (opts: AliasConnectOptions, command: Command) => {
+      const resolved = resolveAliasOptions(opts, command);
       printConnectDeprecation('vscode', '--vscode');
       await connectTargets({
         targets: { vscode: true },
-        profile: opts.profile,
-        insiders: Boolean(opts.insiders),
-        force: Boolean(opts.force),
-        verbose: Boolean(opts.verbose),
+        profile: resolved.profile,
+        insiders: Boolean(resolved.insiders),
+        force: Boolean(resolved.force),
+        verbose: Boolean(resolved.verbose),
       });
     });
 
