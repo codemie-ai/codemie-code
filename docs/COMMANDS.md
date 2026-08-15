@@ -614,7 +614,7 @@ in the bottom-left and persists your choice (defaults to dark).
 
 **Cost estimation** is computed at report time: for each session the native agent log
 (Claude, Claude Desktop, Gemini, …) is re-parsed for token usage and priced against
-`src/cli/commands/analytics/cost/pricing.json`. Claude Desktop (the native Anthropic
+`src/utils/pricing.json`. Claude Desktop (the native Anthropic
 subscription app, local-agent mode) is included — its `audit.jsonl` carries an
 authoritative per-model usage rollup that is matched against the pricing table. The
 Cost view shows a **Coverage by agent** table (sessions priced / native-log found per
