@@ -36,7 +36,7 @@ import type {
   DispatchEvent,
 } from './cost/types.js';
 import { MAX_SERIES_POINTS, MAX_DISPATCHES } from './cost/types.js';
-import { normalizeModelName } from './model-normalizer.js';
+import { normalizeModelName } from '@/utils/model-normalizer.js';
 
 /** One flattened OTEL event line (see the contract in codemie-claude-otel/plugin/README.md). */
 export interface OtelEvent {
