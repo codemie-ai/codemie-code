@@ -80,7 +80,16 @@ function vendoredPrice(id: string): ModelPrice | null {
 }
 ```
 
-`resolveModelCost` calls `vendoredPrice(id)` instead of `lookupPrice(id)`; needs `import type { ModelPrice }` from the same module. `logger.debug`, not `warn` — with 44 models a broken asset would otherwise print 44 warnings per launch, and the visible symptom (no cost data) is already self-evident in Pi.
+`resolveModelCost` calls `vendoredPrice(id)` instead of `lookupPrice(id)`; needs `import type { ModelPrice }` from the same module.
+
+> **Superseded by round 2 — see `remediation-plan-round-2.md` (R1).** This item originally chose
+> `logger.debug` over `warn` on two grounds, both of which the round-2 claims audit correctly
+> refuted: `logger.warn` writes only to the log file (`logger.ts:309-312`) and so cannot "print 44
+> warnings"; and the symptom is *not* self-evident in Pi — it is `$0`, indistinguishable from a
+> genuinely free model, which is the very bug this task fixes. `debug` is worse still: without
+> `CODEMIE_DEBUG` it is a complete no-op (`logger.ts:280-298` gates the file write too), so the
+> failure left no trace anywhere. The shipped code warns once behind a module-scoped latch — the
+> right lever for the cardinality concern, which was itself legitimate.
 
 This mirrors the philosophy already stated in this plugin's own extension (`src/agents/plugins/pi/extension/index.js:20-44`): metrics failures must never cost the user their session.
 
@@ -173,4 +182,5 @@ All six items applied. Gates and probes, all re-run after the final edit:
 
 The last two lines are the ones that matter for regression: no remediation moved any ordinary price.
 
-Nothing committed.
+Nothing committed. *(Point-in-time as of round 1, per the repo's commit-on-request policy. The user
+subsequently asked for the work to be committed; it landed as `a2a6881`, `40f3282`, `c25430f`.)*

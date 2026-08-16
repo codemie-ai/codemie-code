@@ -635,7 +635,7 @@ counting each response once — without this the figure inflates ~2–3×. On a 
 don't pay per token, so the figure is labeled **"Est. cost (API-equivalent)"** — the metered
 API value of your usage, not dollars billed.
 
-> **Refreshing prices:** `cost/pricing.json` is a vendored table (`{ "<model>":
+> **Refreshing prices:** `src/utils/pricing.json` is a vendored table (`{ "<model>":
 > { input, output, cacheRead, cacheWrite } }`, USD per 1M tokens). When new models ship,
 > add or update entries there — unpriced models are surfaced in the Cost view's banner.
 

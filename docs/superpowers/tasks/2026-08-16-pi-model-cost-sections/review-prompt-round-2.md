@@ -29,19 +29,24 @@ Two follow-up instructions shaped the current state: after the round-1 review, t
 | What | Where |
 |---|---|
 | Implementation repo | `/home/taras_spashchenko/EPAM/codemie-ai/codemie-code` |
-| Branch under review | `feat/pi-model-cost-sections`, two commits ahead of `main` (`23aa8d2`) |
+| Branch under review | `feat/pi-model-cost-sections`, three commits ahead of `main` (`23aa8d2`) |
 | Upstream Pi source (the consumer of the generated config) | `/home/taras_spashchenko/TS/github/pi` |
 | Installed Pi used for end-to-end checks | `pi` 0.84.2, global npm at `/home/taras_spashchenko/.nvm/versions/node/v22.21.0/lib/node_modules/@earendil-works/pi-coding-agent` |
 
 Review target:
 
 ```bash
-git log --oneline main..HEAD          # 2 commits: refactor(utils), feat(agents)
-git diff main..HEAD                   # everything under review, except untracked docs
-git status --short                    # docs in this task directory may still be untracked
+git log --oneline main..HEAD          # 3 commits: refactor(utils), feat(agents), docs(agents)
+git diff main..HEAD                   # everything under review
+git status --short                    # expected: clean
 ```
 
-Both commits are in scope, as is any uncommitted change `git status` reveals. Nothing else on the branch was touched.
+All three commits are in scope, as is any uncommitted change `git status` reveals. Nothing else on the branch was touched.
+
+> Corrected after round 2. This prompt originally described two commits with the task docs
+> untracked, because it was written before the docs commit existed — and was then swept into that
+> very commit (`c25430f`), which also carries this file. The round-2 reviewer flagged the
+> discrepancy; the branch state above is the accurate one.
 
 ---
 
@@ -133,7 +138,7 @@ Report a **factual defect** in how one of these was implemented; do not argue th
 1. **Price source: API first, vendored table as per-field fallback**, with `??` semantics (`api ?? table ?? 0`) and the block omitted when all four resolve to zero. The user chose this over "API only" and "table only".
 2. **A unit test file was explicitly requested.** Its presence is correct, not a violation of the repo's tests-on-request policy.
 3. **The layering refactor belongs in this branch.** The user directed it here rather than to a follow-up ticket.
-4. **Commits were requested**, so the branch having two commits is intended. Their granularity and messages are reviewable; the fact of committing is not.
+4. **Commits were requested**, so the branch having three commits is intended. Their granularity and messages are reviewable; the fact of committing is not.
 
 ---
 
@@ -202,7 +207,12 @@ Report actual output. Do not mark a gate passed without having run it.
 cd /home/taras_spashchenko/EPAM/codemie-ai/codemie-code
 git log --oneline main..HEAD
 git diff main..HEAD --stat
-git diff -M main..HEAD -- src/utils/pricing.ts src/utils/model-normalizer.ts   # expect: only import lines changed
+# Rename detection needs BOTH sides in the pathspec — with only the destinations, git shows the
+# files as pure additions and the "only imports changed" expectation is unreachable.
+git diff -M main..HEAD -- \
+  src/cli/commands/analytics/cost/pricing.ts src/utils/pricing.ts \
+  src/cli/commands/analytics/model-normalizer.ts src/utils/model-normalizer.ts
+# expect: model-normalizer.ts 100% similarity, pricing.ts ~97% with only its three import lines changed
 git status --short
 
 npm run ci        # license-check → lint → build → test:unit → test:integration
