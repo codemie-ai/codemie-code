@@ -142,17 +142,35 @@ function resolveRate(apiPerToken: unknown, vendoredPerMillion: number | undefine
 }
 
 /**
+ * An unreadable price table is process-wide and permanent — `lookupPrice` memoizes only on
+ * success, so it throws again for every one of the ~44 models in the list. Worth exactly one log
+ * line, hence the latch.
+ */
+let priceTableFailureLogged = false;
+
+/**
  * A price table we cannot read is a cost-reporting problem, not a reason to refuse to launch the
  * agent. `lookupPrice` reads a vendored JSON asset on first call, and this runs inside the
  * plugin's `beforeRun`, which nothing guards — an unreadable asset would otherwise abort the
  * user's whole session over missing metrics.
+ *
+ * The failure still has to be recorded: every rate falls to zero, the block is omitted, and Pi
+ * reports the same `$0` as a genuinely free model, so nothing downstream can tell the two apart.
+ * `warn` because it always reaches the log file (`debug` is a complete no-op without
+ * `CODEMIE_DEBUG`), and because it is the level this module already uses one function below for
+ * the larger degradation of losing the live model list.
  */
 function vendoredPrice(id: string): ModelPrice | null {
   try {
     return lookupPrice(id);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logger.debug(`[pi-models] Price table unavailable for ${id}: ${message}`);
+    if (!priceTableFailureLogged) {
+      priceTableFailureLogged = true;
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn(
+        `[pi-models] Model price table unavailable; models the CodeMie API does not price will be reported to Pi as free: ${message}`,
+      );
+    }
     return null;
   }
 }
