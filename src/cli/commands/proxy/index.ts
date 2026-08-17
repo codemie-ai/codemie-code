@@ -22,7 +22,6 @@ import {
 import { writeDesktopConfig, describeManagedSettingsOverride, getDesktopBaseDir, mapCanonicalToDesktop, summarizeManagedOauthShapes } from './connectors/desktop.js';
 import { fetchManagedMcpServers } from './connectors/managed-mcp-remote.js';
 import { writeVsCodeLanguageModelsConfig } from './connectors/vscode.js';
-import { VS_CODE_SUPPORTED_MODELS } from './connectors/vscode-models.js';
 import { checkProxyHealth } from './health-check.js';
 import { printDesktopInspection } from './inspect-desktop.js';
 
@@ -630,6 +629,7 @@ export function createProxyCommand(): Command {
 
         const result = await writeVsCodeLanguageModelsConfig(
           state!.url,
+          state!.gatewayKey,
           Boolean(opts.insiders)
         );
         logger.info(
@@ -639,7 +639,7 @@ export function createProxyCommand(): Command {
             gatewayUrl: state!.url,
             profile: state!.profile,
             project: state!.project,
-            modelCount: VS_CODE_SUPPORTED_MODELS.length,
+            modelCount: result.modelIds.length,
             clientType: state!.clientType,
             requiresSecretConfiguration: result.requiresSecretConfiguration,
           })
@@ -649,7 +649,7 @@ export function createProxyCommand(): Command {
         if (verbose) {
           console.log(`  Config:  ${result.configPath}`);
           console.log(`  Gateway: ${state!.url}`);
-          console.log(`  Models:  ${VS_CODE_SUPPORTED_MODELS.length}`);
+          console.log(`  Models:  ${result.modelIds.length}`);
           console.log(`  Project: ${config.codeMieProject || '(not configured)'}`);
         }
 

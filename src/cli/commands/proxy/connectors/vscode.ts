@@ -3,13 +3,26 @@ import { mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promis
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { ConfigurationError } from '@/utils/errors.js';
+import { logger } from '@/utils/logger.js';
+import { sanitizeLogArgs } from '@/utils/security.js';
+import { fetchGatewayModelIds } from './gateway-models.js';
 import {
   VS_CODE_SUPPORTED_MODELS,
   type VsCodeApiType,
+  type VsCodeModelDefinition,
   type VsCodeReasoningEffort,
 } from './vscode-models.js';
 
 const SECRET_REFERENCE_PATTERN = /^\$\{input:chat\.lm\.secret\.[^}]+\}$/;
+
+/** Capabilities assumed for a gateway model the curated catalog does not describe. */
+const UNCATALOGED_MODEL_DEFAULTS: Omit<VsCodeModelDefinition, 'id'> = {
+  apiType: 'chat-completions',
+  vision: false,
+  thinking: false,
+  maxInputTokens: 128000,
+  maxOutputTokens: 16384,
+};
 
 interface VsCodeLanguageModelProvider {
   [key: string]: unknown;
@@ -46,6 +59,8 @@ interface VsCodeManagedModel {
 export interface WriteVsCodeConfigResult {
   configPath: string;
   requiresSecretConfiguration: boolean;
+  /** Model IDs written under the CodeMie provider, in the order VS Code will see them. */
+  modelIds: string[];
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -104,41 +119,95 @@ function getApiPath(apiType: VsCodeApiType): string {
   return '/v1/chat/completions';
 }
 
-function buildManagedModels(proxyUrl: string): VsCodeManagedModel[] {
-  return VS_CODE_SUPPORTED_MODELS.map(definition => {
-    const model: VsCodeManagedModel = {
-      id: definition.id,
-      name: definition.id,
-      url: new URL(getApiPath(definition.apiType), proxyUrl).toString(),
-      apiType: definition.apiType,
-      toolCalling: true,
-      vision: definition.vision,
-      streaming: true,
-      thinking: definition.thinking,
-      maxInputTokens: definition.maxInputTokens,
-      maxOutputTokens: definition.maxOutputTokens,
-    };
+const CATALOG_BY_ID = new Map(VS_CODE_SUPPORTED_MODELS.map(definition => [definition.id, definition]));
+const CATALOG_ORDER = new Map(VS_CODE_SUPPORTED_MODELS.map((definition, index) => [definition.id, index]));
 
-    if (definition.adaptiveThinking) model.adaptiveThinking = true;
-    if (definition.zeroDataRetentionEnabled !== undefined) {
-      model.zeroDataRetentionEnabled = definition.zeroDataRetentionEnabled;
-    }
-    if (definition.modelOptions) model.modelOptions = definition.modelOptions;
-    if (definition.requestHeaders) model.requestHeaders = definition.requestHeaders;
-    if (definition.supportsReasoningEffort) {
-      model.supportsReasoningEffort = definition.supportsReasoningEffort;
-    }
-    if (definition.reasoningEffortFormat) {
-      model.reasoningEffortFormat = definition.reasoningEffortFormat;
-    }
+/**
+ * Match a gateway model ID against the curated catalog, tolerating the suffixes
+ * the gateway adds to its registrations (`-YYYYMMDD` snapshots, `-vertex`
+ * deployments). Returns undefined when the catalog says nothing about the model,
+ * which is not an error: the model is still exposed, with default capabilities.
+ */
+export function resolveModelDefinition(id: string): VsCodeModelDefinition | undefined {
+  const stripVertex = (value: string): string => value.replace(/-vertex$/i, '');
+  const stripSnapshot = (value: string): string => value.replace(/-\d{6,10}$/, '');
+  const candidates = new Set([
+    id,
+    stripVertex(id),
+    stripSnapshot(id),
+    stripSnapshot(stripVertex(id)),
+  ]);
 
-    return model;
-  });
+  for (const candidate of candidates) {
+    const definition = CATALOG_BY_ID.get(candidate);
+    if (definition) return definition;
+  }
+  return undefined;
+}
+
+/** Cataloged models first (in catalog order) so the familiar picker ordering survives. */
+function orderModelIds(availableIds: readonly string[]): string[] {
+  const known: Array<{ id: string; rank: number }> = [];
+  const unknown: string[] = [];
+
+  for (const id of new Set(availableIds)) {
+    const rank = CATALOG_ORDER.get(resolveModelDefinition(id)?.id ?? '');
+    if (rank === undefined) unknown.push(id);
+    else known.push({ id, rank });
+  }
+
+  known.sort((a, b) => a.rank - b.rank || a.id.localeCompare(b.id));
+  unknown.sort((a, b) => a.localeCompare(b));
+  return [...known.map(entry => entry.id), ...unknown];
+}
+
+function toManagedModel(proxyUrl: string, id: string): VsCodeManagedModel {
+  const definition = resolveModelDefinition(id) ?? UNCATALOGED_MODEL_DEFAULTS;
+  const model: VsCodeManagedModel = {
+    id,
+    name: id,
+    url: new URL(getApiPath(definition.apiType), proxyUrl).toString(),
+    apiType: definition.apiType,
+    toolCalling: true,
+    vision: definition.vision,
+    streaming: true,
+    thinking: definition.thinking,
+    maxInputTokens: definition.maxInputTokens,
+    maxOutputTokens: definition.maxOutputTokens,
+  };
+
+  if (definition.adaptiveThinking) model.adaptiveThinking = true;
+  if (definition.zeroDataRetentionEnabled !== undefined) {
+    model.zeroDataRetentionEnabled = definition.zeroDataRetentionEnabled;
+  }
+  if (definition.modelOptions) model.modelOptions = definition.modelOptions;
+  if (definition.requestHeaders) model.requestHeaders = definition.requestHeaders;
+  if (definition.supportsReasoningEffort) {
+    model.supportsReasoningEffort = definition.supportsReasoningEffort;
+  }
+  if (definition.reasoningEffortFormat) {
+    model.reasoningEffortFormat = definition.reasoningEffortFormat;
+  }
+
+  return model;
+}
+
+/**
+ * Build the provider's model list. `availableIds` is what the gateway actually
+ * serves; omitting it falls back to the curated catalog, which is only correct
+ * when discovery could not run.
+ */
+function buildManagedModels(proxyUrl: string, availableIds?: readonly string[]): VsCodeManagedModel[] {
+  const ids = availableIds
+    ? orderModelIds(availableIds)
+    : VS_CODE_SUPPORTED_MODELS.map(definition => definition.id);
+  return ids.map(id => toManagedModel(proxyUrl, id));
 }
 
 function mergeManagedProviders(
   providers: VsCodeLanguageModelProvider[],
-  proxyUrl: string
+  proxyUrl: string,
+  availableIds?: readonly string[]
 ): { provider: VsCodeLanguageModelProvider; requiresSecretConfiguration: boolean } {
   const existingProvider = Object.assign({}, ...providers);
   const existingSettings = Object.assign(
@@ -154,7 +223,7 @@ function mergeManagedProviders(
     name: 'CodeMie',
     vendor: 'customendpoint',
     apiType: 'chat-completions',
-    models: buildManagedModels(proxyUrl),
+    models: buildManagedModels(proxyUrl, availableIds),
   };
 
   // VS Code owns effort selections. Preserve them instead of racing with the editor.
@@ -223,19 +292,47 @@ async function writeAtomically(configPath: string, content: string): Promise<voi
   }
 }
 
+/**
+ * Resolve what the gateway serves, falling back to the curated catalog when
+ * discovery fails so a transient backend outage cannot leave VS Code with no
+ * CodeMie models at all.
+ */
+async function discoverModelIds(
+  proxyUrl: string,
+  gatewayKey: string
+): Promise<string[] | undefined> {
+  try {
+    const ids = await fetchGatewayModelIds(proxyUrl, gatewayKey);
+    if (ids.length > 0) return ids;
+    logger.warn('[proxy] Gateway returned no models — falling back to the curated VS Code catalog');
+  } catch (error) {
+    logger.warn(
+      '[proxy] Gateway model discovery failed — falling back to the curated VS Code catalog',
+      ...sanitizeLogArgs({
+        error: error instanceof Error ? error.message : String(error),
+      })
+    );
+  }
+  return undefined;
+}
+
 export async function writeVsCodeLanguageModelsConfig(
   proxyUrl: string,
+  gatewayKey: string,
   insiders = false
 ): Promise<WriteVsCodeConfigResult> {
+  const configPath = getVsCodeLanguageModelsPath(insiders);
   return writeVsCodeLanguageModelsConfigAtPath(
-    getVsCodeLanguageModelsPath(insiders),
-    proxyUrl
+    configPath,
+    proxyUrl,
+    await discoverModelIds(proxyUrl, gatewayKey)
   );
 }
 
 export async function writeVsCodeLanguageModelsConfigAtPath(
   configPath: string,
-  proxyUrl: string
+  proxyUrl: string,
+  availableModelIds?: readonly string[]
 ): Promise<WriteVsCodeConfigResult> {
   const providers = await readProviders(configPath);
   const managedProviderIndexes = providers
@@ -245,7 +342,7 @@ export async function writeVsCodeLanguageModelsConfigAtPath(
     .map(index => providers[index])
     .filter(isManagedProvider);
   const { provider: managedProvider, requiresSecretConfiguration } =
-    mergeManagedProviders(managedProviders, proxyUrl);
+    mergeManagedProviders(managedProviders, proxyUrl, availableModelIds);
   const firstManagedProviderIndex = managedProviderIndexes[0] ?? providers.length;
   const managedProviderIndexSet = new Set(managedProviderIndexes);
   const reconciledProviders = providers.flatMap((provider, index) => {
@@ -264,5 +361,18 @@ export async function writeVsCodeLanguageModelsConfigAtPath(
     );
   }
 
-  return { configPath, requiresSecretConfiguration };
+  const modelIds = (managedProvider.models as VsCodeManagedModel[]).map(model => model.id);
+  logger.info(
+    '[proxy] VS Code managed model catalog resolved',
+    ...sanitizeLogArgs({
+      configPath,
+      proxyUrl,
+      discoveredModelCount: availableModelIds?.length ?? 0,
+      usedCuratedFallback: availableModelIds === undefined,
+      writtenModelCount: modelIds.length,
+      writtenModels: modelIds,
+    })
+  );
+
+  return { configPath, requiresSecretConfiguration, modelIds };
 }
