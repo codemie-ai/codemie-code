@@ -142,53 +142,10 @@ export class GeminiSessionAdapter implements SessionAdapter {
       return [];
     }
 
-    const results: SessionDescriptor[] = [];
-
-    await Promise.all(
-      hashDirs.map(async (hash) => {
-        const chatsDir = join(tmpRoot, hash, 'chats');
-        let chatFiles: string[];
-        try {
-          chatFiles = (await readdir(chatsDir)).filter((f) => f.endsWith('.json'));
-        } catch {
-          logger.debug(`[gemini-discovery] no chats dir under hash ${hash}`);
-          return;
-        }
-
-        await Promise.all(
-          chatFiles.map(async (chatFile) => {
-            const filePath = join(chatsDir, chatFile);
-            let session: { sessionId?: string; startTime?: string; lastUpdated?: string };
-            try {
-              session = JSON.parse(await readFile(filePath, 'utf-8'));
-            } catch {
-              logger.debug(`[gemini-discovery] skipping malformed file: ${filePath}`);
-              return;
-            }
-
-            const createdAt = session.startTime ? Date.parse(session.startTime) : NaN;
-            if (Number.isNaN(createdAt)) {
-              if (!options?.includeTimestampless) {
-                return;
-              }
-            } else if (createdAt < cutoffMs) {
-              return;
-            }
-
-            const updatedAtMs = session.lastUpdated ? Date.parse(session.lastUpdated) : NaN;
-
-            results.push({
-              sessionId: session.sessionId ?? chatFile.replace(/\.json$/, ''),
-              filePath,
-              projectPath: undefined,
-              createdAt: Number.isNaN(createdAt) ? 0 : createdAt,
-              updatedAt: !Number.isNaN(updatedAtMs) ? updatedAtMs : undefined,
-              agentName: this.agentName,
-            });
-          })
-        );
-      })
+    const perDir = await Promise.all(
+      hashDirs.map((hash) => this.discoverHashDir(hash, tmpRoot, cutoffMs, options))
     );
+    const results = perDir.flat();
 
     results.sort((a, b) => b.createdAt - a.createdAt);
 
@@ -200,6 +157,64 @@ export class GeminiSessionAdapter implements SessionAdapter {
 
     logger.debug(`[gemini-discovery] found ${results.length} session(s)`);
     return results;
+  }
+
+  /** Collect all valid session descriptors from one project-hash directory. */
+  private async discoverHashDir(
+    hash: string,
+    tmpRoot: string,
+    cutoffMs: number,
+    options?: SessionDiscoveryOptions
+  ): Promise<SessionDescriptor[]> {
+    const chatsDir = join(tmpRoot, hash, 'chats');
+    let chatFiles: string[];
+    try {
+      chatFiles = (await readdir(chatsDir)).filter((f) => f.endsWith('.json'));
+    } catch {
+      logger.debug(`[gemini-discovery] no chats dir under hash ${hash}`);
+      return [];
+    }
+
+    const descriptors = await Promise.all(
+      chatFiles.map((chatFile) =>
+        this.readDescriptor(join(chatsDir, chatFile), chatFile, cutoffMs, options)
+      )
+    );
+    return descriptors.filter((d): d is SessionDescriptor => d !== null);
+  }
+
+  /** Parse one session file header and return a descriptor, or null if filtered/invalid. */
+  private async readDescriptor(
+    filePath: string,
+    chatFile: string,
+    cutoffMs: number,
+    options?: SessionDiscoveryOptions
+  ): Promise<SessionDescriptor | null> {
+    let session: { sessionId?: string; startTime?: string; lastUpdated?: string };
+    try {
+      session = JSON.parse(await readFile(filePath, 'utf-8'));
+    } catch {
+      logger.debug(`[gemini-discovery] skipping malformed file: ${filePath}`);
+      return null;
+    }
+
+    const createdAt = session.startTime ? Date.parse(session.startTime) : NaN;
+    if (Number.isNaN(createdAt)) {
+      if (!options?.includeTimestampless) return null;
+    } else if (createdAt < cutoffMs) {
+      return null;
+    }
+
+    const updatedAtMs = session.lastUpdated ? Date.parse(session.lastUpdated) : NaN;
+
+    return {
+      sessionId: session.sessionId ?? chatFile.replace(/\.json$/, ''),
+      filePath,
+      projectPath: undefined,
+      createdAt: Number.isNaN(createdAt) ? 0 : createdAt,
+      updatedAt: !Number.isNaN(updatedAtMs) ? updatedAtMs : undefined,
+      agentName: this.agentName,
+    };
   }
 
   /**
