@@ -12,8 +12,9 @@
  */
 
 import { readFile } from 'fs/promises';
-import type { SessionAdapter, ParsedSession, AggregatedResult } from '../../core/session/BaseSessionAdapter.js';
-import type { SessionProcessor, ProcessingContext } from '../../core/session/BaseProcessor.js';
+import type { ParsedSession, AggregatedResult } from '../../core/session/BaseSessionAdapter.js';
+import { AbstractBaseSessionAdapter } from '../../core/session/BaseSessionAdapter.js';
+import type { ProcessingContext } from '../../core/session/BaseProcessor.js';
 import type { AgentMetadata } from '../../core/types.js';
 import { logger } from '../../../utils/logger.js';
 import { GeminiMetricsProcessor } from './session/processors/gemini.metrics-processor.js';
@@ -79,32 +80,23 @@ interface GeminiToolCall {
  * Parses Gemini-specific JSON format into unified ParsedSession.
  * Orchestrates multiple processors that transform messages.
  */
-export class GeminiSessionAdapter implements SessionAdapter {
+export class GeminiSessionAdapter extends AbstractBaseSessionAdapter {
   readonly agentName = 'gemini';
-  private processors: SessionProcessor[] = [];
 
-  constructor(private readonly metadata: AgentMetadata) {
+  constructor(metadata: AgentMetadata) {
     if (!metadata.dataPaths?.home) {
       throw new Error('Agent metadata must provide dataPaths.home');
     }
-
-    // Initialize and register processors internally
-    // Processors run in priority order: metrics (1), conversations (2)
-    this.initializeProcessors();
+    super(metadata);
   }
 
   /**
    * Initialize processors for this adapter.
    * Uses Gemini-specific processors that understand Gemini's message format
    */
-  private initializeProcessors(): void {
-    // Register Gemini metrics processor (priority 1)
+  protected initializeProcessors(): void {
     this.registerProcessor(new GeminiMetricsProcessor());
-
-    // Register Gemini conversations processor (priority 2)
     this.registerProcessor(new GeminiConversationsProcessor());
-
-    logger.debug(`[gemini-adapter] Initialized ${this.processors.length} processors`);
   }
 
   /**
@@ -238,16 +230,6 @@ export class GeminiSessionAdapter implements SessionAdapter {
     if (opType) {
       operations.push({ type: opType, path: filePath });
     }
-  }
-
-  /**
-   * Register a processor to run during session processing.
-   * Processors are sorted by priority (lower runs first).
-   */
-  registerProcessor(processor: SessionProcessor): void {
-    this.processors.push(processor);
-    this.processors.sort((a, b) => a.priority - b.priority);
-    logger.debug(`[gemini-adapter] Registered processor: ${processor.name} (priority: ${processor.priority})`);
   }
 
   /**

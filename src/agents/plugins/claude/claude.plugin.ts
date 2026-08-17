@@ -28,6 +28,9 @@ import {
 // Using module scope (not env var) avoids leaking internal state into subprocess environments.
 let statuslineManagedThisSession = false;
 
+/** @internal Reset the statusline session flag between unit tests. Not for production use. */
+export const __resetStatuslineForTest = (): void => { statuslineManagedThisSession = false; };
+
 /**
  * Supported Claude Code version
  * Latest version tested and verified with CodeMie backend
@@ -79,6 +82,7 @@ export const ClaudePluginMetadata: AgentMetadata = {
   // Data paths (used by lifecycle hooks and analytics)
   dataPaths: {
     home: '.claude',
+    binary: '.local/bin/claude',
   },
 
   envMapping: {
@@ -307,58 +311,6 @@ export class ClaudePlugin extends BaseAgentAdapter {
   }
 
   /**
-   * Get Claude version (override from BaseAgentAdapter)
-   * Parses version from 'claude --version' output
-   * Claude outputs: '2.1.23 (Claude Code)' - we need just '2.1.23'
-   *
-   * Checks full path first on Unix systems (for native installations),
-   * then falls back to command in PATH for other installation methods
-   *
-   * @returns Version string or null if not installed
-   */
-  async getVersion(): Promise<string | null> {
-    if (!this.metadata.cliCommand) {
-      return null;
-    }
-
-    const { exec } = await import('../../../utils/processes.js');
-
-    // Try full path first on Unix systems (native installer places binary at ~/.local/bin/claude)
-    if (process.platform !== 'win32') {
-      const fullPath = resolveHomeDir('.local/bin/claude');
-      try {
-        const result = await exec(fullPath, ['--version']);
-
-        // Parse version from output like '2.1.23 (Claude Code)'
-        const versionMatch = result.stdout.trim().match(/^(\d+\.\d+\.\d+)/);
-        if (versionMatch) {
-          return versionMatch[1];
-        }
-
-        return result.stdout.trim();
-      } catch {
-        // Full path check failed, fall through to PATH check
-      }
-    }
-
-    // Fall back to command in PATH (works for npm installations, Windows, etc.)
-    try {
-      const result = await exec(this.metadata.cliCommand, ['--version']);
-
-      // Parse version from output like '2.1.23 (Claude Code)'
-      // Extract just the version number
-      const versionMatch = result.stdout.trim().match(/^(\d+\.\d+\.\d+)/);
-      if (versionMatch) {
-        return versionMatch[1];
-      }
-
-      return result.stdout.trim();
-    } catch {
-      return null;
-    }
-  }
-
-  /**
    * Detect how Claude was installed (npm vs native)
    * Returns installation method for informational purposes
    *
@@ -370,41 +322,6 @@ export class ClaudePlugin extends BaseAgentAdapter {
     }
 
     return await detectInstallationMethod(this.metadata.cliCommand);
-  }
-
-  /**
-   * Check if Claude is installed (override from BaseAgentAdapter)
-   * Checks full path first (for native installations to ~/.local/bin/claude),
-   * then falls back to PATH check for compatibility with other installation methods
-   *
-   * @returns true if Claude is installed and accessible
-   */
-  async isInstalled(): Promise<boolean> {
-    if (!this.metadata.cliCommand) {
-      return true; // Built-in agents are always "installed"
-    }
-
-    // On Unix systems, check full path first (native installer places binary at ~/.local/bin/claude)
-    // This avoids PATH issues where ~/.local/bin is not in user's PATH
-    if (process.platform !== 'win32') {
-      const fullPath = resolveHomeDir('.local/bin/claude');
-      try {
-        const { exec } = await import('../../../utils/processes.js');
-        const result = await exec(fullPath, ['--version']);
-        if (result.code === 0) {
-          return true;
-        }
-      } catch {
-        // Full path check failed, fall through to PATH check
-      }
-    }
-
-    // Fall back to base implementation (checks if command is in PATH)
-    // This handles:
-    // 1. npm global installations (in PATH)
-    // 2. Windows installations
-    // 3. Other installation methods
-    return super.isInstalled();
   }
 
   /**

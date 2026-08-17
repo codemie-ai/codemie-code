@@ -7,6 +7,8 @@
  */
 
 import type { SessionDiscoveryOptions, SessionDescriptor } from './discovery-types.js';
+import type { SessionProcessor, ProcessingContext } from './BaseProcessor.js';
+import type { AgentMetadata } from '../types.js';
 
 // Re-export for convenience
 export type { SessionDiscoveryOptions, SessionDescriptor };
@@ -146,5 +148,39 @@ export interface SessionAdapter {
     filePath: string,
     sessionId: string,
     context: import('./BaseProcessor.js').ProcessingContext
+  ): Promise<AggregatedResult>;
+}
+
+/**
+ * Abstract base class for all session adapters.
+ *
+ * Owns the processor registry so each adapter only overrides
+ * initializeProcessors() to register its own processors.
+ * The SessionAdapter interface is kept for external type consumers.
+ */
+export abstract class AbstractBaseSessionAdapter implements SessionAdapter {
+  protected readonly processors: SessionProcessor[] = [];
+
+  constructor(protected readonly metadata: AgentMetadata) {
+    this.initializeProcessors();
+  }
+
+  /**
+   * Register agent-specific processors. Called once from the constructor.
+   * Subclasses call this.registerProcessor() for each processor they need.
+   */
+  protected abstract initializeProcessors(): void;
+
+  registerProcessor(processor: SessionProcessor): void {
+    this.processors.push(processor);
+    this.processors.sort((a, b) => a.priority - b.priority);
+  }
+
+  abstract readonly agentName: string;
+  abstract parseSessionFile(filePath: string, sessionId: string): Promise<ParsedSession>;
+  abstract processSession(
+    filePath: string,
+    sessionId: string,
+    context: ProcessingContext,
   ): Promise<AggregatedResult>;
 }

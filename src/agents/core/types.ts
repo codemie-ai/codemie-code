@@ -310,9 +310,10 @@ export interface AgentMetadata {
 
   // === Data Paths ===
   dataPaths?: {
-    home: string;        // Main directory: '~/.gemini', '~/.claude'
-    settings?: string;   // Settings file path (relative to home, agent-specific)
-    binary?: string;     // Optional native binary path relative to home: '.kimi-code/bin/kimi'
+    home: string;           // Main directory: '~/.gemini', '~/.claude'
+    settings?: string;      // Settings file path (relative to home, agent-specific)
+    binary?: string;        // Primary native binary path relative to home: '.kimi-code/bin/kimi'
+    binaryAlt?: string;     // Secondary native binary path (e.g. legacy npm install location)
   };
 
   // === Analytics Support ===

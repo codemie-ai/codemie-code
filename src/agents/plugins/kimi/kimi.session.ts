@@ -9,38 +9,28 @@
  */
 
 import type {
-  SessionAdapter,
   ParsedSession,
   AggregatedResult,
   SessionDiscoveryOptions,
   SessionDescriptor,
 } from '../../core/session/BaseSessionAdapter.js';
-import type { SessionProcessor, ProcessingContext } from '../../core/session/BaseProcessor.js';
+import { AbstractBaseSessionAdapter } from '../../core/session/BaseSessionAdapter.js';
+import type { ProcessingContext } from '../../core/session/BaseProcessor.js';
 import type { AgentMetadata } from '../../core/types.js';
 import { readJSONLTolerant } from '../../core/session/utils/jsonl-reader.js';
 import { logger } from '../../../utils/logger.js';
 import { KimiMetricsProcessor } from './session/processors/kimi.metrics-processor.js';
 import type { KimiWireEvent } from './session/types.js';
 
-export class KimiSessionAdapter implements SessionAdapter {
+export class KimiSessionAdapter extends AbstractBaseSessionAdapter {
   readonly agentName = 'kimi';
-  private processors: SessionProcessor[] = [];
 
-  constructor(private readonly metadata: AgentMetadata) {
-    // Register processors now, but execution is currently orchestrated externally
-    // until processSession is implemented.
-    this.initializeProcessors();
+  constructor(metadata: AgentMetadata) {
+    super(metadata);
   }
 
-  private initializeProcessors(): void {
+  protected initializeProcessors(): void {
     this.registerProcessor(new KimiMetricsProcessor());
-    logger.debug(`[kimi-adapter] Initialized ${this.processors.length} processors`);
-  }
-
-  registerProcessor(processor: SessionProcessor): void {
-    this.processors.push(processor);
-    this.processors.sort((a, b) => a.priority - b.priority);
-    logger.debug(`[kimi-adapter] Registered processor: ${processor.name} (priority: ${processor.priority})`);
   }
 
   /**

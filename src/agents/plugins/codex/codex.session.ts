@@ -24,13 +24,13 @@ import { readdir, stat } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join, dirname } from 'path';
 import type {
-  SessionAdapter,
   ParsedSession,
   AggregatedResult,
   SessionDiscoveryOptions,
   SessionDescriptor,
 } from '../../core/session/BaseSessionAdapter.js';
-import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../../core/session/BaseProcessor.js';
+import { AbstractBaseSessionAdapter } from '../../core/session/BaseSessionAdapter.js';
+import type { ProcessingContext, ProcessingResult } from '../../core/session/BaseProcessor.js';
 import type { AgentMetadata } from '../../core/types.js';
 import type {
   CodexRolloutRecord,
@@ -50,27 +50,19 @@ import { extractCodexSpawnLinks } from './session/codex-collab-links.js';
 /** Regex to extract UUID from rollout filename: rollout-{ISO8601}-{uuid}.jsonl */
 const ROLLOUT_UUID_REGEX = /rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/;
 
-export class CodexSessionAdapter implements SessionAdapter {
+export class CodexSessionAdapter extends AbstractBaseSessionAdapter {
   readonly agentName = 'codex';
-  private processors: SessionProcessor[] = [];
 
-  constructor(private readonly metadata: AgentMetadata) {
+  constructor(metadata: AgentMetadata) {
     if (!metadata.dataPaths?.home) {
       throw new ConfigurationError('Agent metadata must provide dataPaths.home');
     }
-    this.initializeProcessors();
+    super(metadata);
   }
 
-  private initializeProcessors(): void {
+  protected initializeProcessors(): void {
     this.registerProcessor(new CodexMetricsProcessor());
     this.registerProcessor(new CodexConversationsProcessor());
-    logger.debug(`[codex-adapter] Initialized ${this.processors.length} processors`);
-  }
-
-  registerProcessor(processor: SessionProcessor): void {
-    this.processors.push(processor);
-    this.processors.sort((a, b) => a.priority - b.priority);
-    logger.debug(`[codex-adapter] Registered processor: ${processor.name} (priority: ${processor.priority})`);
   }
 
   private async applySyncUpdates(sessionId: string, results: ProcessingResult[]): Promise<void> {

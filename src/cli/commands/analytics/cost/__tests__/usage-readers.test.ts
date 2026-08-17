@@ -2,9 +2,26 @@
  * Per-agent token usage reader unit tests
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { buildCostSeries } from '../cost-enricher.js';
+
+// cost-enricher.ts imports AgentRegistry (which loads all 8 plugins) plus ClaudeSessionAdapter
+// and ClaudePluginMetadata. None of those are needed by buildCostSeries (a pure function), but
+// the combined module-loading overhead exceeds the 30 s test timeout in Vitest's transform layer.
+// Mock them so the dynamic import resolves quickly.
+vi.mock('../../../../agents/registry.js', () => ({
+  AgentRegistry: { getAgent: vi.fn(() => null), getAnalyticsAdapter: vi.fn(() => undefined), initialize: vi.fn() },
+}));
+vi.mock('../../../../agents/plugins/claude/claude.session.js', () => ({
+  ClaudeSessionAdapter: class ClaudeSessionAdapter {},
+}));
+vi.mock('../../../../agents/plugins/claude/claude.plugin.js', () => ({
+  ClaudePluginMetadata: { name: 'claude', dataPaths: { home: '.claude' } },
+  __resetStatuslineForTest: () => {},
+  CLAUDE_SUPPORTED_VERSION: '0.0.0',
+}));
 import { readUsageByModel, extractClaudeUsageRecords, gatherDedupedUsageRecords, sumUsageRecords, extractKimiUsageRecords, extractCodexUsageRecords } from '../usage-readers.js';
 
 const claudeParsed = {
@@ -401,8 +418,7 @@ describe('extractCodexUsageRecords', () => {
     expect(u?.total).toBeGreaterThan(1036);
   });
 
-  it('buildCostSeries works from codex per-turn records', async () => {
-    const { buildCostSeries } = await import('../cost-enricher.js');
+  it('buildCostSeries works from codex per-turn records', () => {
     const recs = extractCodexUsageRecords(loadCodex('turn-2.jsonl'));
     const series = buildCostSeries(recs);
     expect(series.length).toBeGreaterThanOrEqual(2);

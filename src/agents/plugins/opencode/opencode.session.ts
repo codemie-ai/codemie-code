@@ -2,8 +2,9 @@
 import { readFile, readdir, stat } from 'fs/promises';
 import { join, dirname, sep } from 'path';
 import { existsSync } from 'fs';
-import type { SessionAdapter, ParsedSession, AggregatedResult, SessionDiscoveryOptions, SessionDescriptor } from '../../core/session/BaseSessionAdapter.js';
-import type { SessionProcessor, ProcessingContext } from '../../core/session/BaseProcessor.js';
+import type { ParsedSession, AggregatedResult, SessionDiscoveryOptions, SessionDescriptor } from '../../core/session/BaseSessionAdapter.js';
+import { AbstractBaseSessionAdapter } from '../../core/session/BaseSessionAdapter.js';
+import type { ProcessingContext } from '../../core/session/BaseProcessor.js';
 import type { AgentMetadata } from '../../core/types.js';
 import type {
   OpenCodeSession,
@@ -74,34 +75,23 @@ async function readJsonWithRetry<T>(filePath: string): Promise<T | null> {
  * Parses OpenCode session files from ~/.local/share/opencode/storage/
  * Implements SessionAdapter interface with processor chain pattern.
  */
-export class OpenCodeSessionAdapter implements SessionAdapter {
+export class OpenCodeSessionAdapter extends AbstractBaseSessionAdapter {
   readonly agentName = 'opencode';
-  private processors: SessionProcessor[] = [];
 
-  constructor(private readonly metadata: AgentMetadata) {
+  constructor(metadata: AgentMetadata) {
     if (!metadata.dataPaths?.home) {
       throw new Error('Agent metadata must provide dataPaths.home');
     }
-    this.initializeProcessors();
+    super(metadata);
   }
 
   /**
    * Initialize processors for this adapter.
    * Processors run in priority order: metrics (1), conversations (2)
    */
-  private initializeProcessors(): void {
+  protected initializeProcessors(): void {
     this.registerProcessor(new OpenCodeMetricsProcessor());
     this.registerProcessor(new OpenCodeConversationsProcessor());
-    logger.debug(`[opencode-adapter] Initialized ${this.processors.length} processors`);
-  }
-
-  /**
-   * Register a processor to run during session processing.
-   */
-  registerProcessor(processor: SessionProcessor): void {
-    this.processors.push(processor);
-    this.processors.sort((a, b) => a.priority - b.priority);
-    logger.debug(`[opencode-adapter] Registered processor: ${processor.name} (priority: ${processor.priority})`);
   }
 
   /**

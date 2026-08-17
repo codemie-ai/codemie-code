@@ -17,7 +17,8 @@ import {
 import { isValidSemanticVersion } from '../../../utils/version-utils.js';
 import { logger } from '../../../utils/logger.js';
 import { sanitizeLogArgs } from '../../../utils/security.js';
-import { commandExists, exec, getCommandPath } from '../../../utils/processes.js';
+import { getCommandPath } from '../../../utils/processes.js';
+import { getExplicitModelArg } from '../../core/utils/args.js';
 import { resolveHomeDir } from '../../../utils/paths.js';
 
 const KIMI_SUPPORTED_VERSION = '0.16.0';
@@ -42,6 +43,7 @@ export const KimiPluginMetadata: AgentMetadata = {
   dataPaths: {
     home: '.kimi-code',
     binary: KIMI_NATIVE_BINARY_PATH,
+    binaryAlt: '.local/bin/kimi',  // legacy npm install location
   },
   envMapping: {
     baseUrl: ['KIMI_MODEL_BASE_URL'],
@@ -134,43 +136,6 @@ export class KimiPlugin extends BaseAgentAdapter {
       this.hookTransformer = new KimiHookTransformer();
     }
     return this.hookTransformer;
-  }
-
-  override async isInstalled(): Promise<boolean> {
-    if (!this.metadata.cliCommand) {
-      return true;
-    }
-
-    if (await commandExists(this.metadata.cliCommand)) {
-      return true;
-    }
-
-    if (process.platform !== 'win32') {
-      // Native installer location
-      const nativePath = resolveHomeDir(KIMI_NATIVE_BINARY_PATH);
-      try {
-        const result = await exec(nativePath, ['--version']);
-        if (result.code === 0) {
-          return true;
-        }
-      } catch {
-        // Native path check failed, fall through
-      }
-
-      // Legacy / npm location
-      const fullPath = resolveHomeDir('.local/bin/kimi');
-      try {
-        const result = await exec(fullPath, ['--version']);
-        return result.code === 0;
-      } catch {
-        // Full path check failed, fall through to PATH check already performed
-      }
-    }
-
-    logger.debug('[kimi-plugin] Kimi not installed. Install with:');
-    logger.debug('[kimi-plugin]   codemie install kimi');
-
-    return false;
   }
 
   private async installNative(version?: string): Promise<void> {
@@ -282,53 +247,6 @@ export class KimiPlugin extends BaseAgentAdapter {
     await super.uninstall();
   }
 
-  /**
-   * Get Kimi version by parsing 'kimi --version' output.
-   * Extracts the first semantic version found in the output.
-   *
-   * Checks the native installer full path first on Unix systems, then falls
-   * back to the command in PATH for other installation methods.
-   */
-  override async getVersion(): Promise<string | null> {
-    if (!this.metadata.cliCommand) {
-      return null;
-    }
-
-    const parseVersion = (output: string): string | null => {
-      const match = output.match(/(\d+\.\d+\.\d+)/);
-      return match ? match[1] : output.trim() || null;
-    };
-
-    // Try native installer full path first on Unix systems
-    // (native installer places binary at ~/.kimi-code/bin/kimi)
-    if (process.platform !== 'win32') {
-      const nativePath = resolveHomeDir(KIMI_NATIVE_BINARY_PATH);
-      try {
-        const result = await exec(nativePath, ['--version']);
-        return parseVersion(result.stdout);
-      } catch {
-        // Native path check failed, fall through to legacy path
-      }
-
-      // Legacy / npm location
-      const fullPath = resolveHomeDir('.local/bin/kimi');
-      try {
-        const result = await exec(fullPath, ['--version']);
-        return parseVersion(result.stdout);
-      } catch {
-        // Full path check failed, fall through to PATH check
-      }
-    }
-
-    // Fall back to command in PATH
-    try {
-      const result = await exec(this.metadata.cliCommand, ['--version']);
-      return parseVersion(result.stdout);
-    } catch {
-      return null;
-    }
-  }
-
   override async installVersion(version?: string): Promise<void> {
     // Resolve 'supported' to the version from metadata
     let resolvedVersion: string | undefined = version;
@@ -381,16 +299,3 @@ export class KimiPlugin extends BaseAgentAdapter {
   }
 }
 
-function getExplicitModelArg(args: string[]): string | undefined {
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === '-m' || arg === '--model') {
-      return args[i + 1];
-    }
-    if (arg.startsWith('--model=')) {
-      return arg.slice('--model='.length);
-    }
-  }
-
-  return undefined;
-}

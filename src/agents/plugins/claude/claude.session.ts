@@ -9,9 +9,10 @@ import { join, dirname, basename } from 'path';
 import { homedir } from 'os';
 import { existsSync } from 'fs';
 import { readdir, readFile, stat } from 'fs/promises';
-import type { SessionAdapter, ParsedSession, AggregatedResult } from '../../core/session/BaseSessionAdapter.js';
+import type { ParsedSession, AggregatedResult } from '../../core/session/BaseSessionAdapter.js';
+import { AbstractBaseSessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import type { SessionDiscoveryOptions, SessionDescriptor } from '../../core/session/discovery-types.js';
-import type { SessionProcessor, ProcessingContext } from '../../core/session/BaseProcessor.js';
+import type { ProcessingContext } from '../../core/session/BaseProcessor.js';
 import type { ClaudeMessage, ContentItem } from './claude-message-types.js';
 import type { AgentMetadata } from '../../core/types.js';
 import { readJSONL } from '../../core/session/utils/jsonl-reader.js';
@@ -37,32 +38,23 @@ function decodeClaudeProjectDir(encoded: string): string {
  *
  * ENCAPSULATION: Processors are managed internally, not exposed to plugin.
  */
-export class ClaudeSessionAdapter implements SessionAdapter {
+export class ClaudeSessionAdapter extends AbstractBaseSessionAdapter {
   readonly agentName = 'claude';
-  private processors: SessionProcessor[] = [];
 
-  constructor(private readonly metadata: AgentMetadata) {
+  constructor(metadata: AgentMetadata) {
     if (!metadata.dataPaths?.home) {
       throw new Error('Agent metadata must provide dataPaths.home');
     }
-
-    // Initialize and register processors internally
-    // Processors run in priority order: metrics (1), conversations (2)
-    this.initializeProcessors();
+    super(metadata);
   }
 
   /**
    * Initialize processors for this adapter.
-   * INTERNAL: Processors are an implementation detail of the adapter.
+   * Processors run in priority order: metrics (1), conversations (2)
    */
-  private initializeProcessors(): void {
-    // Register metrics processor (priority 1)
+  protected initializeProcessors(): void {
     this.registerProcessor(new MetricsProcessor());
-
-    // Register conversations processor (priority 2)
     this.registerProcessor(new ConversationsProcessor());
-
-    logger.debug(`[claude-adapter] Initialized ${this.processors.length} processors`);
   }
 
   /**
@@ -421,16 +413,6 @@ export class ClaudeSessionAdapter implements SessionAdapter {
       logger.debug(`[claude-adapter] Failed to find sub-agent files:`, error);
       return [];
     }
-  }
-
-  /**
-   * Register a processor to run during session processing.
-   * Processors are sorted by priority (lower runs first).
-   */
-  registerProcessor(processor: SessionProcessor): void {
-    this.processors.push(processor);
-    this.processors.sort((a, b) => a.priority - b.priority);
-    logger.debug(`[claude-adapter] Registered processor: ${processor.name} (priority: ${processor.priority})`);
   }
 
   /**

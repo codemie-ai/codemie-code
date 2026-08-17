@@ -217,8 +217,33 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       return true; // Built-in agents are always "installed"
     }
 
+    if (process.platform !== 'win32') {
+      if (this.metadata.dataPaths?.binary) {
+        const binaryPath = resolveHomeDir(this.metadata.dataPaths.binary);
+        try {
+          const result = await exec(binaryPath, ['--version']);
+          if (result.code === 0) {
+            return true;
+          }
+        } catch {
+          // Binary path unavailable — try alt
+        }
+      }
+
+      if (this.metadata.dataPaths?.binaryAlt) {
+        const altPath = resolveHomeDir(this.metadata.dataPaths.binaryAlt);
+        try {
+          const result = await exec(altPath, ['--version']);
+          if (result.code === 0) {
+            return true;
+          }
+        } catch {
+          // Alt path unavailable — fall through to PATH check
+        }
+      }
+    }
+
     try {
-      // Use commandExists which handles Windows (where) vs Unix (which)
       const { commandExists } = await import('../../utils/processes.js');
       return await commandExists(this.metadata.cliCommand);
     } catch {
@@ -234,9 +259,36 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       return null;
     }
 
+    const parseVersion = (stdout: string): string | null => {
+      const match = stdout.match(/(\d+\.\d+\.\d+)/);
+      return match ? match[1] : stdout.trim() || null;
+    };
+
+    if (process.platform !== 'win32') {
+      if (this.metadata.dataPaths?.binary) {
+        const binaryPath = resolveHomeDir(this.metadata.dataPaths.binary);
+        try {
+          const result = await exec(binaryPath, ['--version']);
+          return parseVersion(result.stdout);
+        } catch {
+          // Binary path unavailable — try alt
+        }
+      }
+
+      if (this.metadata.dataPaths?.binaryAlt) {
+        const altPath = resolveHomeDir(this.metadata.dataPaths.binaryAlt);
+        try {
+          const result = await exec(altPath, ['--version']);
+          return parseVersion(result.stdout);
+        } catch {
+          // Alt path unavailable — fall through to cliCommand
+        }
+      }
+    }
+
     try {
       const result = await exec(this.metadata.cliCommand, ['--version']);
-      return result.stdout.trim();
+      return parseVersion(result.stdout);
     } catch {
       return null;
     }

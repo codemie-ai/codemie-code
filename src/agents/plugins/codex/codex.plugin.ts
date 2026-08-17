@@ -47,7 +47,7 @@ import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import type { SessionDescriptor } from '../../core/session/discovery-types.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
 import type { HookProcessingConfig } from '../../../cli/commands/hook.js';
-import { commandExists, exec } from '../../../utils/processes.js';
+import { commandExists } from '../../../utils/processes.js';
 import { logger } from '../../../utils/logger.js';
 import { ConfigurationError } from '../../../utils/errors.js';
 import { CodexSessionAdapter } from './codex.session.js';
@@ -63,6 +63,7 @@ import {
 } from './codex.incremental-sync.js';
 import { reconcileStaleCodexSessions } from './codex.reconciliation.js';
 import { mkdir, realpath as fsRealpath } from 'fs/promises';
+import { getExplicitModelArg } from '../../core/utils/args.js';
 
 /**
  * Supported Codex CLI version
@@ -426,20 +427,6 @@ export const CodexPluginMetadata: AgentMetadata = {
   },
 };
 
-function getExplicitModelArg(args: string[]): string | undefined {
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === '-m' || arg === '--model') {
-      return args[i + 1];
-    }
-    if (arg.startsWith('--model=')) {
-      return arg.slice('--model='.length);
-    }
-  }
-
-  return undefined;
-}
-
 /**
  * Resolve a path through symlinks, falling back to the original path on error.
  * Used so a `cwd` of `/Users/foo` and a rollout's `projectPath` of
@@ -484,29 +471,6 @@ export class CodexPlugin extends BaseAgentAdapter {
     }
 
     return installed;
-  }
-
-  /**
-   * Get Codex version (override from BaseAgentAdapter).
-   * Codex versions can be emitted as plain semver or with a command prefix,
-   * for example: '0.129.0', 'codex 0.129.0', or 'codex-cli 0.129.0'.
-   * Base compatibility checks require just the semantic version.
-   *
-   * @returns Version string or null if not installed
-   */
-  async getVersion(): Promise<string | null> {
-    if (!this.metadata.cliCommand) {
-      return null;
-    }
-
-    try {
-      const result = await exec(this.metadata.cliCommand, ['--version']);
-      const output = result.stdout.trim();
-      const versionMatch = output.match(/(\d+\.\d+\.\d+)/);
-      return versionMatch ? versionMatch[1] : output;
-    } catch {
-      return null;
-    }
   }
 
   /**

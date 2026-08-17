@@ -7,7 +7,7 @@
  * @group unit
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import type { AgentConfig } from '../../../core/types.js';
 
 vi.mock('fs/promises');
@@ -40,6 +40,40 @@ vi.mock('../../../../utils/security.js', () => ({
   sanitizeLogArgs: vi.fn((...args: unknown[]) => args),
 }));
 
+// Prevent loading claude.plugin.ts's heavy static deps (BaseAgentAdapter → ProviderRegistry →
+// all providers → sso.proxy → module-level plugin auto-registration) — these are not exercised
+// by the statusline lifecycle hooks, but loading them causes the vi.resetModules() + re-import
+// in beforeEach to time out.
+vi.mock('../../../core/BaseAgentAdapter.js', () => ({
+  BaseAgentAdapter: class BaseAgentAdapter {},
+}));
+
+vi.mock('../claude.session.js', () => ({
+  ClaudeSessionAdapter: class ClaudeSessionAdapter {},
+}));
+
+vi.mock('../claude.plugin-installer.js', () => ({
+  ClaudePluginInstaller: class ClaudePluginInstaller {},
+}));
+
+vi.mock('../../../../utils/native-installer.js', () => ({
+  installNativeAgent: vi.fn(),
+}));
+
+vi.mock('../../../../utils/installation-detector.js', () => ({
+  detectInstallationMethod: vi.fn(),
+}));
+
+vi.mock('../../../../utils/version-utils.js', () => ({
+  isValidSemanticVersion: vi.fn().mockReturnValue(true),
+}));
+
+vi.mock('../../../../utils/errors.js', () => ({
+  AgentInstallationError: class AgentInstallationError extends Error {},
+  createErrorContext: vi.fn(() => ({})),
+  getErrorMessage: vi.fn((e: unknown) => String(e)),
+}));
+
 type HookEnv = NodeJS.ProcessEnv;
 type BeforeRunFn = (env: HookEnv, config: AgentConfig) => Promise<HookEnv>;
 type AfterRunFn = (exitCode: number, env: HookEnv) => Promise<void>;
@@ -51,21 +85,27 @@ describe('Claude Plugin – statusline lifecycle hooks', () => {
   let fsp: typeof import('fs/promises');
   let fsMod: typeof import('fs');
   let loggerMod: { logger: Record<string, ReturnType<typeof vi.fn>> };
+  let claudeMod: { ClaudePluginMetadata: import('../../../core/types.js').AgentMetadata; __resetStatuslineForTest: () => void };
 
   const mockConfig: AgentConfig = {};
 
-  beforeEach(async () => {
-    vi.resetModules(); // Reset module cache → resets statuslineManagedThisSession to false
-    vi.resetAllMocks();
-
-    const mod = await import('../claude.plugin.js');
-    beforeRun = mod.ClaudePluginMetadata.lifecycle!.beforeRun!;
-    afterRun = mod.ClaudePluginMetadata.lifecycle!.afterRun!;
-
+  // Import modules once — avoids the 10 s timeout caused by vi.resetModules() re-loading the
+  // full dependency graph on every test. The module-level statuslineManagedThisSession flag is
+  // reset between tests via __resetStatuslineForTest() instead.
+  beforeAll(async () => {
+    claudeMod = (await import('../claude.plugin.js')) as any;
     installerMod = (await import('../statusline-installer.js')) as any;
     fsp = await import('fs/promises');
     fsMod = await import('fs');
     loggerMod = (await import('../../../../utils/logger.js')) as any;
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Reset the module-level flag so each test starts with a clean session state.
+    claudeMod.__resetStatuslineForTest();
+    beforeRun = claudeMod.ClaudePluginMetadata.lifecycle!.beforeRun!;
+    afterRun = claudeMod.ClaudePluginMetadata.lifecycle!.afterRun!;
   });
 
   afterEach(() => {

@@ -214,32 +214,4 @@ export class GeminiPlugin extends BaseAgentAdapter {
     return this.extensionInstaller;
   }
 
-  /**
-   * Get Gemini CLI version (override from BaseAgentAdapter)
-   * Parses version from 'gemini --version' output
-   * Extracts just the semver number in case output contains extra text
-   *
-   * @returns Version string or null if not installed
-   */
-  async getVersion(): Promise<string | null> {
-    if (!this.metadata.cliCommand) {
-      return null;
-    }
-
-    try {
-      const { exec } = await import('../../../utils/processes.js');
-      const result = await exec(this.metadata.cliCommand, ['--version']);
-
-      // Parse semver from output (handles both '0.29.5' and '0.29.5 (Gemini CLI)' formats)
-      const versionMatch = result.stdout.trim().match(/^(\d+\.\d+\.\d+)/);
-      if (versionMatch) {
-        return versionMatch[1];
-      }
-
-      return result.stdout.trim();
-    } catch {
-      return null;
-    }
-  }
-
 }
