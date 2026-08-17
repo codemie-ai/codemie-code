@@ -663,10 +663,15 @@ export class AgentCLI {
     const { createInterface } = await import('node:readline');
     const rl = createInterface({ input: process.stdin, output: process.stdout });
 
+    const wrapperCommand = this.adapter.name.startsWith('codemie-')
+      ? this.adapter.name
+      : `codemie-${this.adapter.name}`;
+
     console.log(chalk.yellow(`\n⚠  Warning: Session ${sessionId} was not created through CodeMie.`));
     console.log(chalk.white('If you continue:'));
-    console.log(chalk.white('  • This session will NOT be tracked as a CodeMie session — no metrics, transcript sync, and it will not appear in CodeMie Analytics.'));
-    console.log(chalk.white('  • API calls still route through the CodeMie proxy while using codemie-claude, so usage may still be logged/billed there.\n'));
+    console.log(chalk.white('  • This session will NOT be tracked as a CodeMie session — no CodeMie session metrics, no transcript sync, and it will not appear in CodeMie Analytics.'));
+    console.log(chalk.white(`  • API calls still route through the CodeMie proxy while using ${wrapperCommand}, so usage will still be logged/billed there.\n`));
+    console.log(chalk.dim(fallbackLine));
 
     try {
       const answer = await new Promise<string>((resolve) => {
