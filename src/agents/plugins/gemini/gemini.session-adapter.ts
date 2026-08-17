@@ -11,8 +11,8 @@
  * - Session metadata at root level (sessionId, projectHash, timestamps)
  */
 
-import { readFile } from 'fs/promises';
-import { readdirSync, existsSync, readFileSync } from 'fs';
+import { readFile, readdir } from 'fs/promises';
+import { existsSync } from 'fs';
 import { join } from 'path';
 import type { SessionAdapter, ParsedSession, AggregatedResult } from '../../core/session/BaseSessionAdapter.js';
 import type { SessionProcessor, ProcessingContext } from '../../core/session/BaseProcessor.js';
@@ -134,7 +134,7 @@ export class GeminiSessionAdapter implements SessionAdapter {
 
     let hashDirs: string[];
     try {
-      hashDirs = readdirSync(tmpRoot, { withFileTypes: true })
+      hashDirs = (await readdir(tmpRoot, { withFileTypes: true }))
         .filter((e) => e.isDirectory())
         .map((e) => e.name);
     } catch {
@@ -143,52 +143,57 @@ export class GeminiSessionAdapter implements SessionAdapter {
 
     const results: SessionDescriptor[] = [];
 
-    for (const hash of hashDirs) {
-      const chatsDir = join(tmpRoot, hash, 'chats');
-      let chatFiles: string[];
-      try {
-        chatFiles = readdirSync(chatsDir).filter((f) => f.endsWith('.json'));
-      } catch {
-        logger.debug(`[gemini-discovery] no chats dir under hash ${hash}`);
-        continue;
-      }
-
-      for (const chatFile of chatFiles) {
-        const filePath = join(chatsDir, chatFile);
-        let session: { sessionId?: string; startTime?: string; lastUpdated?: string };
+    await Promise.all(
+      hashDirs.map(async (hash) => {
+        const chatsDir = join(tmpRoot, hash, 'chats');
+        let chatFiles: string[];
         try {
-          session = JSON.parse(readFileSync(filePath, 'utf-8'));
+          chatFiles = (await readdir(chatsDir)).filter((f) => f.endsWith('.json'));
         } catch {
-          logger.debug(`[gemini-discovery] skipping malformed file: ${filePath}`);
-          continue;
+          logger.debug(`[gemini-discovery] no chats dir under hash ${hash}`);
+          return;
         }
 
-        const createdAt = session.startTime ? Date.parse(session.startTime) : NaN;
-        if (Number.isNaN(createdAt)) {
-          if (!options?.includeTimestampless) {
-            continue;
-          }
-        } else if (createdAt < cutoffMs) {
-          continue;
-        }
+        await Promise.all(
+          chatFiles.map(async (chatFile) => {
+            const filePath = join(chatsDir, chatFile);
+            let session: { sessionId?: string; startTime?: string; lastUpdated?: string };
+            try {
+              session = JSON.parse(await readFile(filePath, 'utf-8'));
+            } catch {
+              logger.debug(`[gemini-discovery] skipping malformed file: ${filePath}`);
+              return;
+            }
 
-        const updatedAtMs = session.lastUpdated ? Date.parse(session.lastUpdated) : NaN;
+            const createdAt = session.startTime ? Date.parse(session.startTime) : NaN;
+            if (Number.isNaN(createdAt)) {
+              if (!options?.includeTimestampless) {
+                return;
+              }
+            } else if (createdAt < cutoffMs) {
+              return;
+            }
 
-        results.push({
-          sessionId: session.sessionId ?? chatFile.replace(/\.json$/, ''),
-          filePath,
-          projectPath: undefined,
-          createdAt: Number.isNaN(createdAt) ? 0 : createdAt,
-          updatedAt: !Number.isNaN(updatedAtMs) ? updatedAtMs : undefined,
-          agentName: this.agentName,
-        });
-      }
-    }
+            const updatedAtMs = session.lastUpdated ? Date.parse(session.lastUpdated) : NaN;
+
+            results.push({
+              sessionId: session.sessionId ?? chatFile.replace(/\.json$/, ''),
+              filePath,
+              projectPath: undefined,
+              createdAt: Number.isNaN(createdAt) ? 0 : createdAt,
+              updatedAt: !Number.isNaN(updatedAtMs) ? updatedAtMs : undefined,
+              agentName: this.agentName,
+            });
+          })
+        );
+      })
+    );
 
     results.sort((a, b) => b.createdAt - a.createdAt);
 
     if (options?.limit && options.limit > 0) {
-      logger.debug(`[gemini-discovery] found ${results.length} session(s), returning ${options.limit}`);
+      const returning = Math.min(results.length, options.limit);
+      logger.debug(`[gemini-discovery] found ${results.length} session(s), returning ${returning}`);
       return results.slice(0, options.limit);
     }
 
