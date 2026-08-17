@@ -665,13 +665,8 @@ export class AgentCLI {
 
     console.log(chalk.yellow(`\n⚠  Warning: Session ${sessionId} was not created through CodeMie.`));
     console.log(chalk.white('If you continue:'));
-    console.log(chalk.white('  • Token usage and API metrics WILL be tracked via the CodeMie proxy.'));
-    console.log(chalk.white('  • Conversation transcript will NOT be synced to your CodeMie account history.\n'));
-    console.log(chalk.dim(
-      fallbackResumeCommand
-        ? `To resume without any CodeMie tracking, use: ${fallbackResumeCommand}\n`
-        : 'To resume without any CodeMie tracking, use the native agent CLI.\n'
-    ));
+    console.log(chalk.white('  • This session will NOT be tracked as a CodeMie session — no metrics, transcript sync, and it will not appear in CodeMie Analytics.'));
+    console.log(chalk.white('  • API calls still route through the CodeMie proxy while using codemie-claude, so usage may still be logged/billed there.\n'));
 
     try {
       const answer = await new Promise<string>((resolve) => {
