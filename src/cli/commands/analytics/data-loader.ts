@@ -9,6 +9,7 @@ import type { MetricDelta } from '../../../agents/core/metrics/types.js';
 import type { AnalyticsFilter } from './types.js';
 import { getCodemiePath } from '../../../utils/paths.js';
 import { agentMatchesAnalyticsFilter } from './cost/codex-agent.js';
+import { SESSION_ORIGIN } from '../../../agents/core/session/types.js';
 
 /**
  * Session start event (special record type)
@@ -194,6 +195,15 @@ export class MetricsDataLoader {
     try {
       // Read session metadata
       const sessionMetadata = JSON.parse(readFileSync(sessionFile, 'utf-8'));
+
+      // A confirmed external-resume session must never surface in analytics. Its own
+      // metrics upload is already skipped (hook.ts / SessionSyncer), but cost-enrichment
+      // independently re-derives token usage from the correlated transcript for reports —
+      // without this check that would resurrect the session via the aggregator's
+      // zero-delta/real-cost keepSessionIds exception. See EPMCDME-12992.
+      if (sessionMetadata.origin === SESSION_ORIGIN.EXTERNAL_RESUME) {
+        return null;
+      }
 
       // Create synthetic start event from session metadata
       // Note: gitBranch is stored per-delta, not per-session
