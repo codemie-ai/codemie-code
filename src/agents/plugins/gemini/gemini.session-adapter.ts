@@ -15,10 +15,11 @@ import { readFile, readdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join } from 'path';
 import type { SessionAdapter, ParsedSession, AggregatedResult } from '../../core/session/BaseSessionAdapter.js';
-import type { SessionProcessor, ProcessingContext } from '../../core/session/BaseProcessor.js';
+import type { SessionProcessor, ProcessingContext, ProcessingResult } from '../../core/session/BaseProcessor.js';
 import type { AgentMetadata } from '../../core/types.js';
 import type { SessionDiscoveryOptions, SessionDescriptor } from '../../core/session/discovery-types.js';
 import { logger } from '../../../utils/logger.js';
+import { ConfigurationError } from '../../../utils/errors.js';
 import { GeminiMetricsProcessor } from './session/processors/gemini.metrics-processor.js';
 import { GeminiConversationsProcessor } from './session/processors/gemini.conversations-processor.js';
 import { getGeminiTmpRoot } from './gemini.paths.js';
@@ -92,7 +93,7 @@ export class GeminiSessionAdapter implements SessionAdapter {
 
   constructor(private readonly metadata: AgentMetadata) {
     if (!metadata.dataPaths?.home) {
-      throw new Error('Agent metadata must provide dataPaths.home');
+      throw new ConfigurationError('Agent metadata must provide dataPaths.home');
     }
 
     // Initialize and register processors internally
@@ -345,6 +346,40 @@ export class GeminiSessionAdapter implements SessionAdapter {
   }
 
   /**
+   * Persist sync-state updates emitted by processors back to SessionStore.
+   * Mirrors the same pattern used by ClaudeSessionAdapter and CodexSessionAdapter.
+   * No-ops when the session is not found or no processor emitted syncUpdates.
+   */
+  private async applySyncUpdates(
+    sessionId: string,
+    results: ProcessingResult[]
+  ): Promise<void> {
+    try {
+      const { SessionStore } = await import('../../core/session/SessionStore.js');
+      const { applyProcessingSyncUpdates } = await import('../../core/session/sync-state-utils.js');
+      const sessionStore = new SessionStore();
+      const session = await sessionStore.loadSession(sessionId);
+
+      if (!session) {
+        logger.debug(`[gemini-adapter] Session not found for sync updates: ${sessionId}`);
+        return;
+      }
+
+      const hasChanges = applyProcessingSyncUpdates(session, results);
+      if (!hasChanges) {
+        logger.debug('[gemini-adapter] No processor sync updates to persist');
+        return;
+      }
+
+      await sessionStore.saveSession(session);
+      logger.debug('[gemini-adapter] Session persisted after processor sync updates');
+    } catch (error) {
+      logger.error('[gemini-adapter] Failed to apply sync updates:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Process session file with all registered processors.
    * Reads file once, passes ParsedSession to all processors.
    *
@@ -370,6 +405,7 @@ export class GeminiSessionAdapter implements SessionAdapter {
         message?: string;
         recordsProcessed?: number;
       }> = {};
+      const allResults: ProcessingResult[] = [];
       const failedProcessors: string[] = [];
       let totalRecords = 0;
 
@@ -385,6 +421,7 @@ export class GeminiSessionAdapter implements SessionAdapter {
 
           // Execute processor
           const result = await processor.process(parsedSession, context);
+          allResults.push(result);
 
           processorResults[processor.name] = {
             success: result.success,
@@ -417,7 +454,10 @@ export class GeminiSessionAdapter implements SessionAdapter {
         }
       }
 
-      // 3. Aggregate results
+      // 3. Persist any sync-state updates processors emitted
+      await this.applySyncUpdates(sessionId, allResults);
+
+      // 4. Aggregate results
       const result: AggregatedResult = {
         success: failedProcessors.length === 0,
         processors: processorResults,
