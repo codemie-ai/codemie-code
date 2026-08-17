@@ -292,6 +292,41 @@ export class AgentCLI {
         process.exit(1);
       }
 
+      // Analytics auth validation for providers where CodeMie auth is analytics-only
+      // (e.g. anthropic-subscription, moonshot-subscription). ai-run-sso already
+      // validated these same credentials via its own validateAuth above.
+      // Enabled only when analytics sync is configured (codeMieUrl → CODEMIE_URL +
+      // CODEMIE_SYNC_API_URL) — same condition the UserPromptSubmit hook gate uses.
+      // Non-fatal: the hook gate enforces auth at prompt level; here we only offer
+      // an early interactive re-auth.
+      if (config.provider !== ProviderName.AI_RUN_SSO && config.codeMieUrl) {
+        try {
+          const ssoSetupSteps = ProviderRegistry.getSetupSteps(ProviderName.AI_RUN_SSO);
+
+          if (ssoSetupSteps?.validateAuth) {
+            const analyticsAuth = await ssoSetupSteps.validateAuth(config);
+
+            if (!analyticsAuth.valid) {
+              const { handleAuthValidationFailure } = await import('../../providers/core/auth-validation.js');
+              const reauthed = await handleAuthValidationFailure(analyticsAuth, ssoSetupSteps, config);
+
+              if (!reauthed) {
+                console.log(chalk.yellow('⚠️  CodeMie analytics authentication is invalid — session metrics will not be uploaded.'));
+                console.log(chalk.white(`  Re-authenticate later with: codemie profile login --url ${config.codeMieUrl}\n`));
+                logger.warn(`Analytics auth invalid for ${config.codeMieUrl}: ${analyticsAuth.error}`);
+              }
+            } else {
+              // Credentials verified against the API — clear any stale invalid-auth marker
+              const { clearAnalyticsAuthStatus } = await import('../../utils/analytics-auth-status.js');
+              await clearAnalyticsAuthStatus();
+            }
+          }
+        } catch (error) {
+          // Analytics auth is auxiliary — never block agent launch on check errors
+          logger.error('Analytics auth validation failed:', error);
+        }
+      }
+
       // Validate provider and model compatibility
       if (!this.validateCompatibility(config)) {
         process.exit(1);
