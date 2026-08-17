@@ -1,0 +1,14 @@
+[
+  {
+    "location": "src/cli/commands/proxy/connect-orchestrator.ts:543-554",
+    "trigger_condition": "setup throws while process.exit is stubbed/neutralized so printProxyError returns",
+    "guard_snippet": "printProxyError(error, 'Failed to connect proxy'); return;",
+    "potential_consequence": "catch falls through, dispatch derefs undefined state/config, TypeError crash"
+  },
+  {
+    "location": "src/cli/commands/proxy/connect-orchestrator.ts:508",
+    "trigger_condition": "standalone --vscode-claude-code with profile missing codeMieUrl",
+    "guard_snippet": "if ((targets.claudeDesktop||targets.vscodeClaudeCode)&&!config.codeMieUrl) throw new ConfigurationError('missing CodeMie URL');",
+    "potential_consequence": "claude-desktop-telemetry daemon spawns with no sync URL, metrics never sync"
+  }
+]
