@@ -15,6 +15,69 @@ Security patterns for CodeMie Code: credential storage, data sanitization, input
 | Data sanitization | Auto-redact sensitive data in logs |
 | Secure storage | Encrypted credential storage (keytar + fallback) |
 | Least privilege | File permissions, scoped access |
+| **Request header integrity (project & user attribution)** | **Any add/remove/rewrite of project- or user-attribution headers is a CRITICAL change — security review required before merge** |
+
+---
+
+## CRITICAL: Project & User Attribution Headers
+
+Any change that adds, removes, renames, or rewrites a header carrying **project identity**, **user identity**, or **session attribution** on outbound requests is a **CRITICAL, security-reviewed change**. This applies to headers, to fields that stand in for them (e.g. the Responses API `user` body field, JWT `sub` overrides), and to any derivation source that feeds them.
+
+These identifiers back audit trails, tenant isolation, per-user budget accounting, abuse tracing, and analytics attribution. A silent rewrite — even a "harmless" hash, prefix, or normalization — can:
+
+- break audit correlation between CLI action and server-side event,
+- misattribute usage or billing across tenants/users,
+- hide abuse behind an unreachable identifier,
+- cross-attribute analytics between repositories/branches.
+
+### Headers and identifier fields in scope
+
+Injected today by `src/providers/plugins/sso/proxy/plugins/header-injection.plugin.ts`:
+
+| Header | Meaning |
+|---|---|
+| `X-CodeMie-Request-ID` | Per-request correlation ID |
+| `X-CodeMie-Session-ID` (+ `x-litellm-session-id`) | Session attribution |
+| `X-CodeMie-CLI` / `X-CodeMie-CLI-Model` / `X-CodeMie-CLI-Timeout` | Client attribution |
+| `X-CodeMie-Client` | Agent client type |
+| `X-CodeMie-Integration` | Integration/tenant identity |
+| `X-CodeMie-Repository` / `X-CodeMie-Branch` / `X-CodeMie-Project` | Repository/branch/project attribution |
+
+Also in scope even though they are body fields, not headers: the Responses API `user` field, JWT `sub` / `email` overrides, and any other identifier the server treats as authoritative for attribution.
+
+### Rules for changes that touch any of the above
+
+1. **Do not add, remove, rename, or rewrite** any project/user attribution header (or standin field) without an explicit security-review sign-off on the PR.
+2. **Do not derive the value from a new source** (process introspection, environment guesswork, filesystem heuristics) without security review — the derivation is part of the surface.
+3. **Do not silently normalize** (hash, truncate, hex-prefix) an identifier the server may treat as authoritative — normalization must be an intentional, documented protocol change agreed with the server side.
+4. **Header injection lives in exactly one layer**: the proxy plugin `header-injection.plugin.ts`. Do not add a second injection path (telemetry runtime, adapter, CLI) that competes with it.
+5. **Never log full header values** without `sanitizeHeaders()` — attribution headers carry PII (email, repository path).
+
+### Bad vs. Good
+
+| Bad | Good |
+|-----|------|
+| Rewriting `user` body field to `sha256(user).slice(0,32)` inside a proxy plugin, silently, for all clients | Route the change through security review; if the server can't accept the raw identifier, agree on a protocol with the server team and document it |
+| Adding a second code path that sets `X-CodeMie-Repository` from `lsof` output outside `header-injection.plugin.ts` | Extend the single canonical injector with an audited derivation, or expose a typed contract the injector reads from |
+| Reading `.git/HEAD` and stuffing the result into `X-CodeMie-Branch` with no worktree handling | Use `detectGitBranch()` from `src/utils/processes.ts` and treat any failure as "no attribution", not a guess |
+| `logger.info('outbound headers', headers)` | `logger.debug('outbound headers', ...sanitizeLogArgs({ headers }))` |
+
+### Reviewer checklist for header-touching PRs
+
+Copy this into the PR review when the diff touches any attribution header, the `user` body field, JWT claim overrides, or the derivation source of any of them:
+
+- [ ] Change is called out as **CRITICAL** in the PR description with the security-review sign-off recorded.
+- [ ] Header injection stays in `header-injection.plugin.ts` — no competing injector added elsewhere.
+- [ ] Derivation source is auditable and does not depend on unbounded OS introspection (`lsof`, process tree walks) unless explicitly approved.
+- [ ] No silent normalization (hash/truncate/prefix) of an authoritative identifier without documented server-side agreement.
+- [ ] Values are sanitized on every log path (`sanitizeHeaders`, `sanitizeLogArgs`).
+- [ ] Tests cover: header present with expected value, header absent when attribution unknown (not a guessed default), header not leaked to logs.
+- [ ] No new PII surface in URL query strings or filenames derived from the identifier.
+
+References:
+- `src/providers/plugins/sso/proxy/plugins/header-injection.plugin.ts` — canonical injection point
+- `src/utils/security.ts` — `sanitizeHeaders`, `sanitizeLogArgs`
+- `.ai-run/guides/standards/git-workflow.md` — Code Review Checklist
 
 ---
 
@@ -214,6 +277,8 @@ Checked patterns: API keys (`sk-`, `sk-ant-`), private keys (`-----BEGIN PRIVATE
 | `fs.readFile(userPath)` | `validateFilePath(userPath, workingDir); fs.readFile(userPath)` |
 | `console.log(headers)` | `logger.debug('Headers', ...sanitizeLogArgs(headers))` |
 | Store tokens in plaintext file | Use `CredentialStore` |
+| **Add/rewrite an `X-CodeMie-*` attribution header (or the Responses `user` field) without security review** | **Route the change through security review; keep injection in `header-injection.plugin.ts`; document any normalization** |
+| **Add a second competing header-injection path (telemetry runtime, adapter, CLI)** | **Extend the single canonical injector or expose a typed contract it reads from** |
 
 ---
 
@@ -228,6 +293,7 @@ Checked patterns: API keys (`sk-`, `sk-ant-`), private keys (`-----BEGIN PRIVATE
 - [ ] `.env` in `.gitignore`
 - [ ] No secrets in test fixtures
 - [ ] No `console.log()` of sensitive data
+- [ ] **No add/remove/rename/rewrite of project or user attribution headers (or the Responses `user` body field) without security-review sign-off** — see "CRITICAL: Project & User Attribution Headers" above
 
 ### Production
 - [ ] Use `CredentialStore` for persistent secrets
