@@ -671,7 +671,11 @@ export class AgentCLI {
     console.log(chalk.white('If you continue:'));
     console.log(chalk.white('  • This session will NOT be tracked as a CodeMie session — no CodeMie session metrics, no transcript sync, and it will not appear in CodeMie Analytics.'));
     console.log(chalk.white(`  • API calls still route through the CodeMie proxy while using ${wrapperCommand}, so usage will still be logged/billed there.\n`));
-    console.log(chalk.dim(fallbackLine));
+    console.log(chalk.dim(
+      fallbackResumeCommand
+        ? `To resume without any CodeMie tracking, use: ${fallbackResumeCommand}\n`
+        : 'To resume without any CodeMie tracking, use the native agent CLI.\n'
+    ));
 
     try {
       const answer = await new Promise<string>((resolve) => {
