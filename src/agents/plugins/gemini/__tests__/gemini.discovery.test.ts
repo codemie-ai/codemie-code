@@ -169,4 +169,51 @@ describe('GeminiSessionAdapter.discoverSessions', () => {
 
     expect(found.map((d) => d.sessionId)).toEqual(['sess-a', 'sess-b']);
   });
+
+  it('falls back to filename stem when session JSON has no sessionId field', async () => {
+    const chatsDir = join(geminiHome, 'tmp', 'hash-no-id', 'chats');
+    mkdirSync(chatsDir, { recursive: true });
+    writeFileSync(
+      join(chatsDir, 'my-session-file.json'),
+      JSON.stringify({ startTime: new Date(Date.now() - DAY).toISOString(), messages: [] })
+    );
+
+    const found = await newAdapter().discoverSessions!();
+
+    expect(found).toHaveLength(1);
+    expect(found[0].sessionId).toBe('my-session-file');
+  });
+
+  it('sets updatedAt to undefined when lastUpdated is absent from the session file', async () => {
+    const chatsDir = join(geminiHome, 'tmp', 'hash-no-updated', 'chats');
+    mkdirSync(chatsDir, { recursive: true });
+    writeFileSync(
+      join(chatsDir, 'sess.json'),
+      JSON.stringify({ sessionId: 'sess', startTime: new Date(Date.now() - DAY).toISOString(), messages: [] })
+    );
+
+    const found = await newAdapter().discoverSessions!();
+
+    expect(found).toHaveLength(1);
+    expect(found[0].updatedAt).toBeUndefined();
+  });
+
+  it('discovers multiple sessions within the same hash directory', async () => {
+    const now = Date.now();
+    const chatsDir = join(geminiHome, 'tmp', 'shared-hash', 'chats');
+    mkdirSync(chatsDir, { recursive: true });
+    writeFileSync(
+      join(chatsDir, 'sess-x.json'),
+      JSON.stringify({ sessionId: 'sess-x', startTime: new Date(now - 1 * DAY).toISOString(), messages: [] })
+    );
+    writeFileSync(
+      join(chatsDir, 'sess-y.json'),
+      JSON.stringify({ sessionId: 'sess-y', startTime: new Date(now - 2 * DAY).toISOString(), messages: [] })
+    );
+
+    const found = await newAdapter().discoverSessions!();
+
+    expect(found).toHaveLength(2);
+    expect(found.map((d) => d.sessionId)).toEqual(['sess-x', 'sess-y']);
+  });
 });
