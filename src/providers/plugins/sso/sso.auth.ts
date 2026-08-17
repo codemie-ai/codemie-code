@@ -132,7 +132,8 @@ export class CodeMieSSO {
         };
 
         const store = CredentialStore.getInstance();
-        await store.storeSSOCredentials(credentials, this.codeMieUrl);
+        // Key must match getStoredCredentials() lookup, which normalizes to protocol+host
+        await store.storeSSOCredentials(credentials, normalizeToBase(this.codeMieUrl));
       }
 
       return result;
@@ -206,7 +207,7 @@ export class CodeMieSSO {
    */
   async clearStoredCredentials(baseUrl?: string): Promise<void> {
     const store = CredentialStore.getInstance();
-    await store.clearSSOCredentials(baseUrl);
+    await store.clearSSOCredentials(baseUrl ? normalizeToBase(baseUrl) : undefined);
   }
 
   /**
