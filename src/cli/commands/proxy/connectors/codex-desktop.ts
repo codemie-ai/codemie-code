@@ -11,6 +11,8 @@ import { copyFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+import { isCodexCompatibleModelName } from '@/agents/plugins/codex/codex-models.js';
+import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { getCodemiePath } from '@/utils/paths.js';
 
@@ -91,4 +93,69 @@ export async function backupIfUnmanaged(
   await copyFile(configPath, backupPath);
   logger.debug('[proxy] Backed up Codex config', { configPath, backupPath });
   return backupPath;
+}
+
+/** The fields of a gateway model-list entry this connector reads. */
+interface GatewayModelEntry {
+  deployment_name?: string;
+  base_name?: string;
+  enabled?: boolean;
+}
+
+/**
+ * Discover Codex-compatible model ids through the local proxy.
+ *
+ * Discovery goes through the proxy rather than the backend so the connector
+ * exercises exactly the path the app will use — a broken proxy fails here,
+ * before the config is written, rather than after.
+ */
+export async function discoverCodexModels(
+  proxyUrl: string,
+  gatewayKey: string
+): Promise<string[]> {
+  const url = new URL('/v1/llm_models?include_all=true', proxyUrl).toString();
+
+  let response: Response;
+  try {
+    response = await fetch(url, { headers: { Authorization: `Bearer ${gatewayKey}` } });
+  } catch (error) {
+    throw new ConfigurationError(
+      `Could not reach the local proxy at ${proxyUrl} to list models: ` +
+      `${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  if (!response.ok) {
+    throw new ConfigurationError(`Local proxy returned ${response.status} for ${url}.`);
+  }
+
+  const payload = (await response.json()) as GatewayModelEntry[] | { data?: GatewayModelEntry[] };
+  const entries = Array.isArray(payload) ? payload : (payload.data ?? []);
+
+  const ids = entries
+    .filter((entry) => entry.enabled !== false)
+    .map((entry) => entry.deployment_name ?? entry.base_name)
+    .filter(isCodexCompatibleModelName);
+
+  if (ids.length === 0) {
+    throw new ConfigurationError(
+      'The local proxy exposes no GPT/Codex-compatible model. ' +
+      'Enable a GPT-5/Codex deployment in CodeMie, then re-run this command.'
+    );
+  }
+
+  return ids;
+}
+
+/**
+ * Choose the model to pin. An explicit request must exist in the discovered set:
+ * silently substituting a different model would mean the user runs something
+ * other than what they asked for.
+ */
+export function selectCodexModel(discovered: string[], requested?: string): string {
+  if (!requested) return discovered[0];
+  if (discovered.includes(requested)) return requested;
+  throw new ConfigurationError(
+    `Model "${requested}" is not available through the proxy. Available: ${discovered.join(', ')}`
+  );
 }

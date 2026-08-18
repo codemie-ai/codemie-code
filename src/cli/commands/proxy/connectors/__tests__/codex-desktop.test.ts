@@ -81,3 +81,58 @@ describe('backupIfUnmanaged', () => {
     expect(await backupIfUnmanaged(join(workspace.path, 'absent.toml'), '')).toBeNull();
   });
 });
+
+describe('discoverCodexModels', () => {
+  afterEach(() => { vi.restoreAllMocks(); vi.resetModules(); });
+
+  it('requests the gateway model list with the bearer key and keeps Codex-compatible ids', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { deployment_name: 'gpt-5-codex', enabled: true },
+        { deployment_name: 'claude-sonnet-4-6', enabled: true },
+        { deployment_name: 'text-embedding-3-large', enabled: true },
+      ],
+    } as unknown as Response);
+
+    const { discoverCodexModels } = await import('../codex-desktop.js');
+    const models = await discoverCodexModels('http://127.0.0.1:4001', 'codemie-proxy');
+
+    const [url, init] = fetchSpy.mock.calls[0];
+    expect(String(url)).toContain('/v1/llm_models?include_all=true');
+    expect((init as RequestInit).headers).toMatchObject({ Authorization: 'Bearer codemie-proxy' });
+    expect(models).toContain('gpt-5-codex');
+    expect(models).not.toContain('claude-sonnet-4-6');
+    expect(models).not.toContain('text-embedding-3-large');
+  });
+
+  it('throws ConfigurationError when the proxy exposes no compatible model', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => [{ deployment_name: 'claude-sonnet-4-6', enabled: true }],
+    } as unknown as Response);
+
+    const { discoverCodexModels } = await import('../codex-desktop.js');
+    const { ConfigurationError } = await import('@/utils/errors.js');
+
+    await expect(discoverCodexModels('http://127.0.0.1:4001', 'k')).rejects.toThrow(ConfigurationError);
+  });
+
+  it('throws ConfigurationError when the proxy returns a non-ok response', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({ ok: false, status: 502 } as unknown as Response);
+
+    const { discoverCodexModels } = await import('../codex-desktop.js');
+    const { ConfigurationError } = await import('@/utils/errors.js');
+
+    await expect(discoverCodexModels('http://127.0.0.1:4001', 'k')).rejects.toThrow(ConfigurationError);
+  });
+
+  it('rejects an explicitly requested model that the proxy does not expose', async () => {
+    const { selectCodexModel } = await import('../codex-desktop.js');
+    const { ConfigurationError } = await import('@/utils/errors.js');
+
+    expect(() => selectCodexModel(['gpt-5-codex'], 'gpt-4o')).toThrow(ConfigurationError);
+    expect(selectCodexModel(['gpt-5-codex', 'gpt-5'], undefined)).toBe('gpt-5-codex');
+    expect(selectCodexModel(['gpt-5-codex', 'gpt-5'], 'gpt-5')).toBe('gpt-5');
+  });
+});
