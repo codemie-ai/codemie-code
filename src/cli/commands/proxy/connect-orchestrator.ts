@@ -38,6 +38,15 @@ import { writeVsCodeClaudeCodeConfig } from './connectors/vscode-claude-code.js'
 import { writeVsCodeLanguageModelsConfig } from './connectors/vscode.js';
 import { VS_CODE_SUPPORTED_MODELS } from './connectors/vscode-models.js';
 import { checkProxyHealth } from './health-check.js';
+import {
+  discoverCodexModels,
+  findCodexDesktopApp,
+  getCodexDesktopAppCandidates,
+  getCodexDesktopConfigPath,
+  getCodexDesktopStatePath,
+  selectCodexModel,
+  writeCodexDesktopConfig,
+} from './connectors/codex-desktop.js';
 
 export const DEFAULT_DAEMON_PORT = 4001;
 
@@ -504,6 +513,58 @@ async function runVscodeClaudeCode(state: DaemonState, insiders: boolean): Promi
  * target's writer runs independently; a per-target summary is printed and the
  * process exit code is set to 1 when any requested target fails (spec §3.4).
  */
+interface CodexDesktopRunOptions {
+  force?: boolean;
+  model?: string;
+  verbose?: boolean;
+}
+
+async function runCodexDesktop(
+  state: DaemonState,
+  options: CodexDesktopRunOptions
+): Promise<TargetResult> {
+  const label = 'Codex Desktop';
+  try {
+    if (!findCodexDesktopApp() && !options.force) {
+      throw new ConfigurationError(
+        'Could not find the ChatGPT desktop app (which ships Codex). Looked in: ' +
+        `${getCodexDesktopAppCandidates().join(', ')}. ` +
+        'Install it, or re-run with --force to write the config anyway.'
+      );
+    }
+
+    const configPath = getCodexDesktopConfigPath();
+    if (options.verbose) {
+      console.log(chalk.cyan(`Codex config: ${configPath}`));
+    }
+
+    const discovered = await discoverCodexModels(state.url, state.gatewayKey);
+    const model = selectCodexModel(discovered, options.model);
+
+    await writeCodexDesktopConfig({
+      configPath,
+      statePath: getCodexDesktopStatePath(),
+      proxyUrl: state.url,
+      baseUrl: new URL('/v1', state.url).toString(),
+      gatewayKey: state.gatewayKey,
+      model,
+      force: options.force,
+    });
+
+    console.log(chalk.green(`\u2713 Codex Desktop configured (model: ${model})`));
+    console.log(chalk.yellow('\u26a0 Quit and reopen the ChatGPT desktop app to apply the change.'));
+    console.log(chalk.dim('  The model picker will show "Custom" \u2014 requests use the pinned model.'));
+    return { label, ok: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn('[proxy] Codex Desktop configuration failed', ...sanitizeLogArgs({ error: message }));
+    return { label, ok: false, error: message };
+  }
+}
+
+/** Test seam \u2014 the runner is otherwise only reachable through `connectTargets`. */
+export const runCodexDesktopForTest = runCodexDesktop;
+
 export async function connectTargets(opts: ConnectOptions): Promise<void> {
   const { targets } = opts;
   if (!hasAnyTarget(targets)) {
@@ -583,6 +644,13 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   if (targets.claudeDesktop) results.push(await runClaudeDesktop(state, verbose));
   if (targets.vscode) results.push(await runVscodeByok(state, insiders, config, verbose));
   if (targets.vscodeClaudeCode) results.push(await runVscodeClaudeCode(state, insiders));
+  if (targets.codexDesktop) {
+    results.push(await runCodexDesktop(state, {
+      force: Boolean(opts.force),
+      model: opts.model,
+      verbose,
+    }));
+  }
 
   const anyFailed = results.some((r) => !r.ok);
   const allFailed = results.every((r) => !r.ok);

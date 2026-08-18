@@ -415,3 +415,86 @@ describe('deriveDaemonIdentity — codex-desktop', () => {
       .toBe('codex-desktop');
   });
 });
+
+describe('runCodexDesktop', () => {
+  // resetModules BEFORE each case: connect-orchestrator.js is cached by earlier
+  // describes, and vi.doMock only affects modules imported after the registry is
+  // clear. Without this the first case silently runs the real connector.
+  beforeEach(() => { vi.resetModules(); });
+  afterEach(() => { vi.doUnmock('../connectors/codex-desktop.js'); vi.resetModules(); });
+
+  const codexDesktopMock = (overrides: Record<string, unknown> = {}) => ({
+    findCodexDesktopApp: vi.fn().mockReturnValue('/Applications/ChatGPT.app'),
+    getCodexDesktopConfigPath: vi.fn().mockReturnValue('/tmp/config.toml'),
+    getCodexDesktopStatePath: vi.fn().mockReturnValue('/tmp/state.json'),
+    getCodexDesktopAppCandidates: vi.fn().mockReturnValue(['/Applications/ChatGPT.app']),
+    discoverCodexModels: vi.fn().mockResolvedValue(['gpt-5-codex']),
+    selectCodexModel: vi.fn().mockReturnValue('gpt-5-codex'),
+    writeCodexDesktopConfig: vi.fn().mockResolvedValue({}),
+    ...overrides,
+  });
+
+  it('surfaces a connector failure as a failed target rather than throwing', async () => {
+    vi.doMock('../connectors/codex-desktop.js', () => codexDesktopMock({
+      discoverCodexModels: vi.fn().mockRejectedValue(new Error('proxy down')),
+    }));
+
+    const { runCodexDesktopForTest } = await import('../connect-orchestrator.js');
+    const result = await runCodexDesktopForTest(
+      { url: 'http://127.0.0.1:4001', gatewayKey: 'k' } as never,
+      {}
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('proxy down');
+  });
+
+  it('fails with an app-not-found message when detection finds nothing', async () => {
+    vi.doMock('../connectors/codex-desktop.js', () => codexDesktopMock({
+      findCodexDesktopApp: vi.fn().mockReturnValue(null),
+    }));
+
+    const { runCodexDesktopForTest } = await import('../connect-orchestrator.js');
+    const result = await runCodexDesktopForTest(
+      { url: 'http://127.0.0.1:4001', gatewayKey: 'k' } as never,
+      {}
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('ChatGPT.app');
+  });
+
+  it('writes the config and succeeds when the app is present', async () => {
+    const write = vi.fn().mockResolvedValue({});
+    vi.doMock('../connectors/codex-desktop.js', () => codexDesktopMock({
+      writeCodexDesktopConfig: write,
+    }));
+
+    const { runCodexDesktopForTest } = await import('../connect-orchestrator.js');
+    const result = await runCodexDesktopForTest(
+      { url: 'http://127.0.0.1:4001', gatewayKey: 'k' } as never,
+      {}
+    );
+
+    expect(result.ok).toBe(true);
+    expect(write).toHaveBeenCalledWith(expect.objectContaining({
+      baseUrl: 'http://127.0.0.1:4001/v1',
+      gatewayKey: 'k',
+      model: 'gpt-5-codex',
+    }));
+  });
+
+  it('proceeds past a missing app when --force is set', async () => {
+    vi.doMock('../connectors/codex-desktop.js', () => codexDesktopMock({
+      findCodexDesktopApp: vi.fn().mockReturnValue(null),
+    }));
+
+    const { runCodexDesktopForTest } = await import('../connect-orchestrator.js');
+    const result = await runCodexDesktopForTest(
+      { url: 'http://127.0.0.1:4001', gatewayKey: 'k' } as never,
+      { force: true }
+    );
+
+    expect(result.ok).toBe(true);
+  });
+});
