@@ -48,3 +48,49 @@ export function findManagedRegions(text: string): ManagedRegions {
     table: locate(text, TABLE_OPEN, TABLE_CLOSE),
   };
 }
+
+/** Marks a user key the connector commented out so it can be restored verbatim. */
+export const DISPLACED_PREFIX = '#codemie-displaced# ';
+
+/** Top-level keys the managed header region owns and therefore must displace. */
+const DISPLACED_KEYS = ['model', 'model_provider'];
+
+const DISPLACED_KEY_PATTERN = new RegExp(`^\\s*(?:${DISPLACED_KEYS.join('|')})\\s*=`);
+
+/** A line opening a TOML table, after which bare keys belong to that table. */
+function isTableHeader(line: string): boolean {
+  return /^\s*\[/.test(line);
+}
+
+/**
+ * Comment out unmanaged root-level `model` / `model_provider` assignments.
+ *
+ * Only the document root matters: once the scan passes the first table header,
+ * any same-named key belongs to that table and is none of our business.
+ * Idempotent — a line already carrying `DISPLACED_PREFIX` is left alone.
+ */
+export function commentDisplacedKeys(text: string): string {
+  let inRootScope = true;
+
+  return text
+    .split('\n')
+    .map((line) => {
+      if (isTableHeader(line)) {
+        inRootScope = false;
+        return line;
+      }
+      if (!inRootScope) return line;
+      if (line.startsWith(DISPLACED_PREFIX)) return line;
+      if (!DISPLACED_KEY_PATTERN.test(line)) return line;
+      return `${DISPLACED_PREFIX}${line}`;
+    })
+    .join('\n');
+}
+
+/** Exact inverse of `commentDisplacedKeys`. */
+export function restoreDisplacedKeys(text: string): string {
+  return text
+    .split('\n')
+    .map((line) => (line.startsWith(DISPLACED_PREFIX) ? line.slice(DISPLACED_PREFIX.length) : line))
+    .join('\n');
+}

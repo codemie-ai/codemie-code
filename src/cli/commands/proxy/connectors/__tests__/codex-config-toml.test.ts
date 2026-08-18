@@ -8,7 +8,10 @@ import {
   HEADER_CLOSE,
   TABLE_OPEN,
   TABLE_CLOSE,
+  DISPLACED_PREFIX,
+  commentDisplacedKeys,
   findManagedRegions,
+  restoreDisplacedKeys,
 } from '../codex-config-toml.js';
 
 describe('findManagedRegions', () => {
@@ -43,5 +46,32 @@ describe('findManagedRegions', () => {
   it('treats a region whose close sentinel is missing as absent', () => {
     const text = `${HEADER_OPEN}\nmodel_provider = "codemie"\n`;
     expect(findManagedRegions(text).header).toBeNull();
+  });
+});
+
+describe('displaced keys', () => {
+  it('comments out unmanaged top-level model and model_provider keys', () => {
+    const text = 'model = "gpt-5"\nmodel_provider = "mine"\n\n[history]\npersistence = "none"\n';
+
+    const out = commentDisplacedKeys(text);
+
+    expect(out).toContain(`${DISPLACED_PREFIX}model = "gpt-5"`);
+    expect(out).toContain(`${DISPLACED_PREFIX}model_provider = "mine"`);
+    expect(out).toContain('persistence = "none"');
+  });
+
+  it('leaves same-named keys inside a table untouched', () => {
+    const text = '[profiles.work]\nmodel = "gpt-5"\n';
+    expect(commentDisplacedKeys(text)).toBe(text);
+  });
+
+  it('is idempotent - already-displaced lines are not double-commented', () => {
+    const once = commentDisplacedKeys('model = "gpt-5"\n');
+    expect(commentDisplacedKeys(once)).toBe(once);
+  });
+
+  it('restoreDisplacedKeys is the exact inverse', () => {
+    const original = 'model = "gpt-5"\nmodel_provider = "mine"\n\n[history]\npersistence = "none"\n';
+    expect(restoreDisplacedKeys(commentDisplacedKeys(original))).toBe(original);
   });
 });
