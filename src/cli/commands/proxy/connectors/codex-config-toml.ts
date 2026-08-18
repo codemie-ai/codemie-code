@@ -94,3 +94,77 @@ export function restoreDisplacedKeys(text: string): string {
     .map((line) => (line.startsWith(DISPLACED_PREFIX) ? line.slice(DISPLACED_PREFIX.length) : line))
     .join('\n');
 }
+
+export interface ManagedBlocks {
+  /** Body of the header region — bare top-level keys, no sentinels. */
+  header: string;
+  /** Body of the table region — the `[model_providers.codemie]` table. */
+  table: string;
+}
+
+/**
+ * Remove both managed regions, line by line.
+ *
+ * Line-based rather than offset-based on purpose: `spliceManagedBlocks` inserts
+ * each region as whole lines plus exactly one blank separator line, so removing
+ * whole lines plus exactly one separator is its precise inverse. Slicing by
+ * character offset cannot express "and the blank line that came with it", which
+ * is what makes `strip(splice(x)) === x` hold here.
+ */
+function cutRegionLines(text: string): string {
+  const lines = text.split('\n');
+  const keep: string[] = [];
+  let i = 0;
+
+  while (i < lines.length) {
+    if (lines[i] === HEADER_OPEN) {
+      while (i < lines.length && lines[i] !== HEADER_CLOSE) i++;
+      i++;
+      // The header chunk owns exactly one blank line after it.
+      if (i < lines.length && lines[i] === '') i++;
+      continue;
+    }
+    if (lines[i] === TABLE_OPEN) {
+      // The table chunk owns exactly one blank line before it.
+      if (keep.length > 0 && keep[keep.length - 1] === '') keep.pop();
+      while (i < lines.length && lines[i] !== TABLE_CLOSE) i++;
+      i++;
+      continue;
+    }
+    keep.push(lines[i]);
+    i++;
+  }
+
+  return keep.join('\n');
+}
+
+/** Normalize to `''` or text terminated by exactly one newline. */
+function normalizeBase(text: string): string {
+  if (text.trim() === '') return '';
+  return text.endsWith('\n') ? text : `${text}\n`;
+}
+
+/**
+ * Insert both managed regions, replacing any that already exist. The header is
+ * prepended (TOML bare keys must precede the first table header) and the table
+ * is appended. Every line outside the two regions is preserved verbatim.
+ */
+export function spliceManagedBlocks(text: string, blocks: ManagedBlocks): string {
+  const base = normalizeBase(commentDisplacedKeys(cutRegionLines(text)));
+
+  const header = [HEADER_OPEN, blocks.header, HEADER_CLOSE].join('\n');
+  const table = [TABLE_OPEN, blocks.table, TABLE_CLOSE].join('\n');
+
+  if (base === '') return `${header}\n\n${table}\n`;
+  return `${header}\n\n${base}\n${table}\n`;
+}
+
+/**
+ * Remove both managed regions and restore any keys the splice displaced,
+ * yielding the text the file held before `spliceManagedBlocks` ran.
+ */
+export function stripManagedRegions(text: string): string {
+  const restored = restoreDisplacedKeys(cutRegionLines(text));
+  if (restored.trim() === '') return '';
+  return restored.endsWith('\n') ? restored : `${restored}\n`;
+}

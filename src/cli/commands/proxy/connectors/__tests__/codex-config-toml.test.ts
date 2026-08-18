@@ -12,6 +12,8 @@ import {
   commentDisplacedKeys,
   findManagedRegions,
   restoreDisplacedKeys,
+  spliceManagedBlocks,
+  stripManagedRegions,
 } from '../codex-config-toml.js';
 
 describe('findManagedRegions', () => {
@@ -73,5 +75,44 @@ describe('displaced keys', () => {
   it('restoreDisplacedKeys is the exact inverse', () => {
     const original = 'model = "gpt-5"\nmodel_provider = "mine"\n\n[history]\npersistence = "none"\n';
     expect(restoreDisplacedKeys(commentDisplacedKeys(original))).toBe(original);
+  });
+});
+
+const BLOCKS = {
+  header: 'model_provider = "codemie"\nmodel = "gpt-5-codex"',
+  table: '[model_providers.codemie]\nname = "CodeMie"\nbase_url = "http://127.0.0.1:4001/v1"\nwire_api = "responses"',
+};
+
+describe('spliceManagedBlocks', () => {
+  it('preserves the user comments and key order outside the managed regions', () => {
+    const original = '# my notes\nsandbox_mode = "workspace-write"\n\n[history]\n# keep this\npersistence = "none"\n';
+
+    const out = spliceManagedBlocks(original, BLOCKS);
+
+    expect(out).toContain('# my notes');
+    expect(out).toContain('# keep this');
+    expect(out).toContain('sandbox_mode = "workspace-write"');
+    expect(out.indexOf('model_provider = "codemie"')).toBeLessThan(out.indexOf('[history]'));
+    expect(out.indexOf('[model_providers.codemie]')).toBeGreaterThan(out.indexOf('[history]'));
+  });
+
+  it('is idempotent - splicing twice equals splicing once', () => {
+    const original = 'sandbox_mode = "workspace-write"\n\n[history]\npersistence = "none"\n';
+    const once = spliceManagedBlocks(original, BLOCKS);
+    expect(spliceManagedBlocks(once, BLOCKS)).toBe(once);
+  });
+
+  it('round-trips: strip(splice(x)) === x when x has tables', () => {
+    const original = '# notes\nsandbox_mode = "workspace-write"\n\n[history]\npersistence = "none"\n';
+    expect(stripManagedRegions(spliceManagedBlocks(original, BLOCKS))).toBe(original);
+  });
+
+  it('round-trips: strip(splice(x)) === x when x is empty', () => {
+    expect(stripManagedRegions(spliceManagedBlocks('', BLOCKS))).toBe('');
+  });
+
+  it('round-trips: strip(splice(x)) === x when x has displaced keys', () => {
+    const original = 'model = "gpt-5"\n\n[history]\npersistence = "none"\n';
+    expect(stripManagedRegions(spliceManagedBlocks(original, BLOCKS))).toBe(original);
   });
 });
