@@ -3,6 +3,7 @@
  * @group unit
  */
 import { describe, expect, it } from 'vitest';
+import TOML from '@iarna/toml';
 import {
   HEADER_OPEN,
   HEADER_CLOSE,
@@ -12,6 +13,7 @@ import {
   commentDisplacedKeys,
   findManagedRegions,
   restoreDisplacedKeys,
+  buildManagedBlocks,
   spliceManagedBlocks,
   stripManagedRegions,
 } from '../codex-config-toml.js';
@@ -114,5 +116,45 @@ describe('spliceManagedBlocks', () => {
   it('round-trips: strip(splice(x)) === x when x has displaced keys', () => {
     const original = 'model = "gpt-5"\n\n[history]\npersistence = "none"\n';
     expect(stripManagedRegions(spliceManagedBlocks(original, BLOCKS))).toBe(original);
+  });
+});
+
+describe('buildManagedBlocks', () => {
+  it('emits the responses wire API, the bearer header and the pinned model', () => {
+    const blocks = buildManagedBlocks({
+      baseUrl: 'http://127.0.0.1:4001/v1',
+      gatewayKey: 'codemie-proxy',
+      model: 'gpt-5-codex',
+    });
+
+    expect(blocks.header).toContain('model_provider = "codemie"');
+    expect(blocks.header).toContain('model = "gpt-5-codex"');
+    expect(blocks.table).toContain('wire_api = "responses"');
+    expect(blocks.table).toContain('base_url = "http://127.0.0.1:4001/v1"');
+    expect(blocks.table).toContain('Authorization = "Bearer codemie-proxy"');
+  });
+
+  it('produces a file that parses as valid TOML', () => {
+    const blocks = buildManagedBlocks({
+      baseUrl: 'http://127.0.0.1:4001/v1',
+      gatewayKey: 'codemie-proxy',
+      model: 'gpt-5-codex',
+    });
+    const spliced = spliceManagedBlocks('model = "gpt-5"\n\n[history]\npersistence = "none"\n', blocks);
+
+    const parsed = TOML.parse(spliced) as Record<string, unknown>;
+
+    expect(parsed.model_provider).toBe('codemie');
+    expect(parsed.model).toBe('gpt-5-codex');
+    expect(parsed.history).toEqual({ persistence: 'none' });
+  });
+
+  it('escapes quotes and backslashes in values', () => {
+    const blocks = buildManagedBlocks({
+      baseUrl: 'http://h/v1?q="x"\\y',
+      gatewayKey: 'k"1',
+      model: 'm',
+    });
+    expect(() => TOML.parse(spliceManagedBlocks('', blocks))).not.toThrow();
   });
 });

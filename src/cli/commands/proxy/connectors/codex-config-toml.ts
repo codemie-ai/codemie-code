@@ -168,3 +168,49 @@ export function stripManagedRegions(text: string): string {
   if (restored.trim() === '') return '';
   return restored.endsWith('\n') ? restored : `${restored}\n`;
 }
+
+/** The provider id CodeMie owns in the user's Codex config. */
+export const CODEMIE_PROVIDER_ID = 'codemie';
+
+export interface ManagedBlockInput {
+  baseUrl: string;
+  gatewayKey: string;
+  model: string;
+}
+
+/** Escape a value for a TOML basic string. */
+function toTomlString(value: string): string {
+  const escaped = value
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, '\\n');
+  return `"${escaped}"`;
+}
+
+/**
+ * Render the two managed region bodies.
+ *
+ * `wire_api` is always `responses`: Codex removed the `chat` wire API in
+ * February 2026, so a custom provider declaring anything else fails at startup.
+ * The gateway key travels as a static `http_headers` entry rather than an
+ * `env_key`, because a desktop app does not inherit the shell environment — and
+ * never via `~/.codex/auth.json`, because writing there flips the app into
+ * API-key auth mode and disables its ChatGPT-account features.
+ */
+export function buildManagedBlocks(input: ManagedBlockInput): ManagedBlocks {
+  const header = [
+    `model_provider = ${toTomlString(CODEMIE_PROVIDER_ID)}`,
+    `model = ${toTomlString(input.model)}`,
+  ].join('\n');
+
+  const table = [
+    `[model_providers.${CODEMIE_PROVIDER_ID}]`,
+    `name = ${toTomlString('CodeMie')}`,
+    `base_url = ${toTomlString(input.baseUrl)}`,
+    'wire_api = "responses"',
+    `[model_providers.${CODEMIE_PROVIDER_ID}.http_headers]`,
+    `Authorization = ${toTomlString(`Bearer ${input.gatewayKey}`)}`,
+  ].join('\n');
+
+  return { header, table };
+}
