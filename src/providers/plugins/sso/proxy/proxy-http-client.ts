@@ -31,8 +31,8 @@ export interface ForwardRequestOptions {
 
 type NoProxyRule =
   | { kind: 'all' }
-  | { kind: 'host'; value: string }
-  | { kind: 'domain'; value: string }
+  | { kind: 'host'; value: string; port?: number }
+  | { kind: 'domain'; value: string; port?: number }
   | { kind: 'cidr'; base: number; maskBits: number };
 
 /**
@@ -80,6 +80,32 @@ function ipInCidr(ip: string, base: number, maskBits: number): boolean {
   return (value & mask) === (base & mask);
 }
 
+function parseHostPort(raw: string): { host: string; port?: number } {
+  if (raw.startsWith('[')) {
+    const closingBracket = raw.indexOf(']');
+    if (closingBracket > 0 && raw[closingBracket + 1] === ':') {
+      const portRaw = raw.slice(closingBracket + 2);
+      const port = Number.parseInt(portRaw, 10);
+      if (/^\d+$/.test(portRaw) && port >= 1 && port <= 65535) {
+        return { host: raw.slice(1, closingBracket), port };
+      }
+    }
+    return { host: raw };
+  }
+
+  const separator = raw.lastIndexOf(':');
+  if (separator > 0 && raw.indexOf(':') === separator) {
+    const host = raw.slice(0, separator);
+    const portRaw = raw.slice(separator + 1);
+    const port = Number.parseInt(portRaw, 10);
+    if (/^\d+$/.test(portRaw) && port >= 1 && port <= 65535) {
+      return { host, port };
+    }
+  }
+
+  return { host: raw };
+}
+
 function parseNoProxyRules(values: string[]): NoProxyRule[] {
   const rules: NoProxyRule[] = [];
 
@@ -98,12 +124,13 @@ function parseNoProxyRules(values: string[]): NoProxyRule[] {
       continue;
     }
 
-    if (value.startsWith('.')) {
-      rules.push({ kind: 'domain', value: value.slice(1) });
+    const { host, port } = parseHostPort(value);
+    if (host.startsWith('.')) {
+      rules.push({ kind: 'domain', value: host.slice(1), port });
       continue;
     }
 
-    rules.push({ kind: 'host', value });
+    rules.push({ kind: 'host', value: host, port });
   }
 
   return rules;
@@ -133,9 +160,12 @@ function readNpmNoProxyEntries(): string[] {
   return [];
 }
 
-function shouldBypassProxy(hostname: string, rules: NoProxyRule[]): boolean {
+function matchesPort(rule: { port?: number }, port: number): boolean {
+  return rule.port === undefined || rule.port === port;
+}
+
+function shouldBypassProxy(hostname: string, port: number, rules: NoProxyRule[]): boolean {
   const host = hostname.toLowerCase();
-  const ipVersion = isIP(host);
 
   for (const rule of rules) {
     if (rule.kind === 'all') {
@@ -143,16 +173,17 @@ function shouldBypassProxy(hostname: string, rules: NoProxyRule[]): boolean {
     }
 
     if (rule.kind === 'host') {
-      if (host === rule.value) return true;
+      if (host === rule.value && matchesPort(rule, port)) return true;
       continue;
     }
 
     if (rule.kind === 'domain') {
-      if (host === rule.value || host.endsWith(`.${rule.value}`)) return true;
+      const matchesDomain = host === rule.value || host.endsWith(`.${rule.value}`);
+      if (matchesDomain && matchesPort(rule, port)) return true;
       continue;
     }
 
-    if (rule.kind === 'cidr' && ipVersion === 4) {
+    if (rule.kind === 'cidr' && isIP(host) === 4) {
       if (ipInCidr(host, rule.base, rule.maskBits)) return true;
     }
   }
@@ -220,26 +251,29 @@ export class ProxyHTTPClient {
   }
 
   private getAgentForUrl(url: URL): http.Agent {
-    const bypass = shouldBypassProxy(url.hostname, this.noProxyRules);
+    const port = Number.parseInt(url.port, 10) || (url.protocol === 'https:' ? 443 : 80);
+    const bypass = shouldBypassProxy(url.hostname, port, this.noProxyRules);
 
     if (url.protocol === 'https:') {
       if (!bypass && this.proxyHttpsAgent) {
-        logger.debug('[proxy-http-client] Routing HTTPS request via proxy', { host: url.hostname });
+        logger.debug('[proxy-http-client] Routing HTTPS request via proxy', { host: url.hostname, port });
         return this.proxyHttpsAgent;
       }
       logger.debug('[proxy-http-client] Routing HTTPS request directly (no_proxy match or proxy disabled)', {
         host: url.hostname,
+        port,
         bypass,
       });
       return this.directHttpsAgent;
     }
 
     if (!bypass && this.proxyHttpAgent) {
-      logger.debug('[proxy-http-client] Routing HTTP request via proxy', { host: url.hostname });
+      logger.debug('[proxy-http-client] Routing HTTP request via proxy', { host: url.hostname, port });
       return this.proxyHttpAgent;
     }
     logger.debug('[proxy-http-client] Routing HTTP request directly (no_proxy match or proxy disabled)', {
       host: url.hostname,
+      port,
       bypass,
     });
     return this.directHttpAgent;
