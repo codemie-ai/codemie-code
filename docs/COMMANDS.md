@@ -67,6 +67,8 @@ codemie proxy stop               # Stop the local proxy daemon
 codemie proxy status             # Show daemon status
 codemie proxy connect vscode     # Configure VS Code BYOK to use the local proxy
 codemie proxy connect desktop    # Configure Claude Desktop (3P) to use the local proxy
+codemie proxy connect --codex-desktop     # Configure the Codex desktop app to use the local proxy
+codemie proxy disconnect --codex-desktop  # Remove the CodeMie block from ~/.codex/config.toml
 codemie proxy inspect desktop    # Inspect Desktop telemetry and sync state
 ```
 
@@ -251,6 +253,42 @@ If Claude Desktop still appears connected to Anthropic subscription or another G
 4. Reopen Claude Desktop.
 
 CodeMie cannot forcibly log you out from Claude Desktop. It can only write the CodeMie proxy configuration and help you inspect the current integration state.
+
+### Codex Desktop
+
+Point the Codex desktop app — Codex as it ships inside the ChatGPT desktop app — at CodeMie models through the local proxy:
+
+```bash
+codemie proxy connect --codex-desktop
+codemie proxy connect --codex-desktop --profile work
+codemie proxy connect --codex-desktop --model gpt-5-codex
+```
+
+The app embeds the same Codex core as the Codex CLI and reads the same user-level `~/.codex/config.toml`, so the connector configures it by writing that file. It splices in a CodeMie-managed block delimited by sentinel comments: a header region at the top of the file holding `model_provider` and `model`, and a `[model_providers.codemie]` table at the end holding the proxy `base_url`, `wire_api = "responses"`, and a static `Authorization` header carrying the daemon gateway key. Everything outside those two regions — including your comments, key order and formatting — is preserved byte for byte.
+
+`~/.codex/auth.json` is never touched. Writing a provider key there would flip the app into API-key auth mode and disable features that depend on your ChatGPT account.
+
+After connecting, **quit and reopen the ChatGPT desktop app**. Configuration is read at startup.
+
+The app's model picker will display `Custom` rather than the CodeMie model name. This is an upstream limitation: the desktop renderer applies a client-side allowlist that filters out locally configured models. Requests still use the model the connector pinned, and the command prints which one that is. `--model <slug>` overrides the automatic choice and is validated against the models the proxy actually exposes.
+
+`--force` has a second meaning for this target. It bypasses both the app-not-found check — useful when the app is installed somewhere the connector does not look — and the refusal to replace an existing non-CodeMie `model_provider`.
+
+The connector refuses to write, and changes nothing, when the app cannot be found, when `~/.codex/config.toml` is not valid TOML, when the config already selects a different custom provider, or when the proxy exposes no GPT/Codex-compatible model.
+
+#### Disconnecting
+
+```bash
+codemie proxy disconnect --codex-desktop
+```
+
+Disconnect removes the managed regions and restores any top-level keys the connector commented out, so a plain Codex run behaves exactly as it did before the first connect. Edits you made to the rest of the file while connected are kept. A pre-connect snapshot remains at `~/.codex/config.toml.codemie-backup` and is restored automatically only if surgical removal cannot produce a parseable file.
+
+The daemon keeps running — it may still be serving other connected targets. Stop it with `codemie proxy stop`.
+
+#### Codex home: app versus CLI
+
+The `codemie-codex` CLI agent isolates its own state under `~/.codex/codemie/home`, while the desktop app uses the default `~/.codex`. That is deliberate, so running the CLI never disturbs the app. The consequence is that the two surfaces have separate sessions, history and settings; the same conversation will not appear in both. If you set `CODEX_HOME` yourself, the connector honours it and prints the config path it resolved.
 
 ### Global Options
 
