@@ -10,6 +10,7 @@ import {
   spawnDaemon,
   stopDaemon,
 } from './daemon-manager.js';
+import { disconnectTargets } from './disconnect-orchestrator.js';
 import { checkProxyHealth } from './health-check.js';
 import { printDesktopInspection } from './inspect-desktop.js';
 import {
@@ -32,10 +33,12 @@ interface UnifiedConnectOptions {
   claudeDesktop?: boolean;
   vscode?: boolean;
   vscodeClaudeCode?: boolean;
+  codexDesktop?: boolean;
   profile?: string;
   force?: boolean;
   verbose?: boolean;
   insiders?: boolean;
+  model?: string;
 }
 
 interface AliasConnectOptions {
@@ -247,6 +250,8 @@ export function createProxyCommand(): Command {
     .option('--claude-desktop', 'Configure the Claude Desktop app (writes MCP servers config)')
     .option('--vscode', 'Configure VS Code Copilot Chat models — BYOK (writes chatLanguageModels.json)')
     .option('--vscode-claude-code', 'Configure the VS Code Claude Code extension (writes settings.json: ANTHROPIC_BASE_URL/token)')
+    .option('--codex-desktop', 'Configure the Codex desktop app (writes ~/.codex/config.toml)')
+    .option('--model <slug>', 'Pin a specific model for --codex-desktop (default: best available)')
     .option('--profile <name>', 'Profile whose credentials to use')
     .option('--force', 'Stop any existing proxy and start a fresh one, even if it looks healthy')
     .option('--verbose', 'Show detailed connection info (URLs, config paths) for debugging')
@@ -257,12 +262,22 @@ export function createProxyCommand(): Command {
           claudeDesktop: Boolean(opts.claudeDesktop),
           vscode: Boolean(opts.vscode),
           vscodeClaudeCode: Boolean(opts.vscodeClaudeCode),
+          codexDesktop: Boolean(opts.codexDesktop),
         },
         profile: opts.profile,
         insiders: Boolean(opts.insiders),
         force: Boolean(opts.force),
         verbose: Boolean(opts.verbose),
+        model: opts.model,
       });
+    });
+
+  proxy
+    .command('disconnect')
+    .description('Remove CodeMie proxy configuration from a client')
+    .option('--codex-desktop', 'Remove the CodeMie block from ~/.codex/config.toml')
+    .action(async (opts: { codexDesktop?: boolean }) => {
+      await disconnectTargets({ targets: { codexDesktop: Boolean(opts.codexDesktop) } });
     });
 
   // Deprecated aliases — kept working, mapped onto the unified target flags.
