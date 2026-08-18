@@ -7,10 +7,14 @@
  * that the app and the Codex CLI both read is the whole integration seam.
  */
 import { existsSync } from 'node:fs';
+import { copyFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
+import { logger } from '@/utils/logger.js';
 import { getCodemiePath } from '@/utils/paths.js';
+
+import { findManagedRegions } from './codex-config-toml.js';
 
 /**
  * Resolve the config file the desktop app reads.
@@ -56,4 +60,35 @@ export function findCodexDesktopApp(
   candidates: string[] = getCodexDesktopAppCandidates()
 ): string | null {
   return candidates.find((candidate) => existsSync(candidate)) ?? null;
+}
+
+/** Suffix for the pre-connect snapshot of the user's Codex config. */
+export const BACKUP_SUFFIX = '.codemie-backup';
+
+/**
+ * Snapshot the config only when CodeMie does not already own part of it.
+ *
+ * Keyed on marker presence rather than backup presence on purpose. Once our
+ * block is in the file, the existing backup is the true pre-CodeMie original and
+ * must not be replaced by a copy that already contains our block — which is the
+ * bug the Kimi hook injector's create-once backup has.
+ */
+export async function backupIfUnmanaged(
+  configPath: string,
+  currentText: string
+): Promise<string | null> {
+  if (!existsSync(configPath)) return null;
+
+  const backupPath = `${configPath}${BACKUP_SUFFIX}`;
+  const regions = findManagedRegions(currentText);
+  const alreadyManaged = regions.header !== null || regions.table !== null;
+
+  if (alreadyManaged && existsSync(backupPath)) {
+    logger.debug('[proxy] Codex config already managed; keeping existing backup', { backupPath });
+    return backupPath;
+  }
+
+  await copyFile(configPath, backupPath);
+  logger.debug('[proxy] Backed up Codex config', { configPath, backupPath });
+  return backupPath;
 }

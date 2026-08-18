@@ -47,3 +47,37 @@ describe('findCodexDesktopApp', () => {
     expect(findCodexDesktopApp([join(workspace.path, 'missing.app'), appDir])).toBe(appDir);
   });
 });
+
+describe('backupIfUnmanaged', () => {
+  let workspace: TempWorkspace;
+
+  beforeEach(() => { workspace = new TempWorkspace('codemie-codex-backup-'); });
+  afterEach(() => { workspace.cleanup(); vi.resetModules(); });
+
+  it('backs up a config that carries no managed region', async () => {
+    const configPath = workspace.writeFile('config.toml', 'model = "gpt-5"\n');
+    const { backupIfUnmanaged } = await import('../codex-desktop.js');
+
+    const backupPath = await backupIfUnmanaged(configPath, 'model = "gpt-5"\n');
+
+    expect(backupPath).toBe(`${configPath}.codemie-backup`);
+    expect(workspace.readFile('config.toml.codemie-backup')).toBe('model = "gpt-5"\n');
+  });
+
+  it('does not overwrite the backup when the config is already managed', async () => {
+    const { HEADER_OPEN, HEADER_CLOSE } = await import('../codex-config-toml.js');
+    const managed = `${HEADER_OPEN}\nmodel_provider = "codemie"\n${HEADER_CLOSE}\n`;
+    const configPath = workspace.writeFile('config.toml', managed);
+    workspace.writeFile('config.toml.codemie-backup', 'ORIGINAL\n');
+    const { backupIfUnmanaged } = await import('../codex-desktop.js');
+
+    await backupIfUnmanaged(configPath, managed);
+
+    expect(workspace.readFile('config.toml.codemie-backup')).toBe('ORIGINAL\n');
+  });
+
+  it('returns null when there is no config file to back up', async () => {
+    const { backupIfUnmanaged } = await import('../codex-desktop.js');
+    expect(await backupIfUnmanaged(join(workspace.path, 'absent.toml'), '')).toBeNull();
+  });
+});
