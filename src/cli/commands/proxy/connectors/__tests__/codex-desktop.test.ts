@@ -136,3 +136,96 @@ describe('discoverCodexModels', () => {
     expect(selectCodexModel(['gpt-5-codex', 'gpt-5'], 'gpt-5')).toBe('gpt-5');
   });
 });
+
+describe('writeCodexDesktopConfig', () => {
+  let workspace: TempWorkspace;
+
+  beforeEach(() => { workspace = new TempWorkspace('codemie-codex-write-'); });
+  afterEach(() => { workspace.cleanup(); vi.restoreAllMocks(); vi.resetModules(); });
+
+  const opts = (configPath: string, statePath: string, extra: Record<string, unknown> = {}) => ({
+    configPath,
+    statePath,
+    proxyUrl: 'http://127.0.0.1:4001',
+    baseUrl: 'http://127.0.0.1:4001/v1',
+    gatewayKey: 'codemie-proxy',
+    model: 'gpt-5-codex',
+    ...extra,
+  });
+
+  it('splices the managed block and preserves unrelated keys and comments', async () => {
+    const configPath = workspace.writeFile(
+      'config.toml',
+      '# keep me\nsandbox_mode = "workspace-write"\n\n[history]\npersistence = "none"\n'
+    );
+    const statePath = join(workspace.path, 'state.json');
+    const { writeCodexDesktopConfig } = await import('../codex-desktop.js');
+
+    await writeCodexDesktopConfig(opts(configPath, statePath));
+
+    const written = workspace.readFile('config.toml');
+    expect(written).toContain('# keep me');
+    expect(written).toContain('persistence = "none"');
+    expect(written).toContain('model_providers.codemie');
+    expect(written).toContain('wire_api = "responses"');
+  });
+
+  it('writes marker state before the config so ownership is never lost', async () => {
+    const configPath = workspace.writeFile('config.toml', 'model = "gpt-5"\n');
+    const statePath = join(workspace.path, 'state.json');
+    const { writeCodexDesktopConfig } = await import('../codex-desktop.js');
+
+    await writeCodexDesktopConfig(opts(configPath, statePath));
+
+    const state = JSON.parse(workspace.readFile('state.json'));
+    expect(state).toMatchObject({ configPath, model: 'gpt-5-codex' });
+    expect(state.backupPath).toBe(`${configPath}.codemie-backup`);
+  });
+
+  it('creates the config when none exists', async () => {
+    const configPath = join(workspace.path, 'fresh', 'config.toml');
+    const statePath = join(workspace.path, 'state.json');
+    const { writeCodexDesktopConfig } = await import('../codex-desktop.js');
+
+    await writeCodexDesktopConfig(opts(configPath, statePath));
+
+    expect(workspace.readFile('fresh/config.toml')).toContain('model_provider = "codemie"');
+  });
+
+  it('rejects malformed TOML and leaves the file untouched', async () => {
+    const malformed = 'this is [not = toml\n';
+    const configPath = workspace.writeFile('config.toml', malformed);
+    const statePath = join(workspace.path, 'state.json');
+    const { writeCodexDesktopConfig } = await import('../codex-desktop.js');
+    const { ConfigurationError } = await import('@/utils/errors.js');
+
+    await expect(writeCodexDesktopConfig(opts(configPath, statePath))).rejects.toThrow(ConfigurationError);
+    expect(workspace.readFile('config.toml')).toBe(malformed);
+  });
+
+  it('refuses a foreign model_provider unless forced', async () => {
+    const existing = 'model_provider = "someone-else"\n\n[model_providers.someone-else]\nbase_url = "http://x/v1"\n';
+    const configPath = workspace.writeFile('config.toml', existing);
+    const statePath = join(workspace.path, 'state.json');
+    const { writeCodexDesktopConfig } = await import('../codex-desktop.js');
+
+    await expect(writeCodexDesktopConfig(opts(configPath, statePath))).rejects.toThrow(/someone-else/);
+    expect(workspace.readFile('config.toml')).toBe(existing);
+
+    await expect(
+      writeCodexDesktopConfig(opts(configPath, statePath, { force: true }))
+    ).resolves.toBeDefined();
+  });
+
+  it('is idempotent - a second write does not duplicate the managed block', async () => {
+    const configPath = workspace.writeFile('config.toml', 'sandbox_mode = "workspace-write"\n');
+    const statePath = join(workspace.path, 'state.json');
+    const { writeCodexDesktopConfig } = await import('../codex-desktop.js');
+
+    await writeCodexDesktopConfig(opts(configPath, statePath));
+    const first = workspace.readFile('config.toml');
+    await writeCodexDesktopConfig(opts(configPath, statePath));
+
+    expect(workspace.readFile('config.toml')).toBe(first);
+  });
+});

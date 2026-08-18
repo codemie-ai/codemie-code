@@ -7,16 +7,25 @@
  * that the app and the Codex CLI both read is the whole integration seam.
  */
 import { existsSync } from 'node:fs';
-import { copyFile } from 'node:fs/promises';
+import { copyFile, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import TOML from '@iarna/toml';
 
 import { isCodexCompatibleModelName } from '@/agents/plugins/codex/codex-models.js';
 import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { getCodemiePath } from '@/utils/paths.js';
 
-import { findManagedRegions } from './codex-config-toml.js';
+import { sanitizeLogArgs } from '@/utils/security.js';
+
+import {
+  CODEMIE_PROVIDER_ID,
+  buildManagedBlocks,
+  findManagedRegions,
+  spliceManagedBlocks,
+} from './codex-config-toml.js';
+import { writeAtomically } from './vscode.js';
 
 /**
  * Resolve the config file the desktop app reads.
@@ -158,4 +167,95 @@ export function selectCodexModel(discovered: string[], requested?: string): stri
   throw new ConfigurationError(
     `Model "${requested}" is not available through the proxy. Available: ${discovered.join(', ')}`
   );
+}
+
+export interface CodexDesktopState {
+  configPath: string;
+  backupPath: string | null;
+  model: string;
+  writtenAt: string;
+}
+
+export interface WriteCodexDesktopConfigOptions {
+  configPath: string;
+  statePath: string;
+  proxyUrl: string;
+  baseUrl: string;
+  gatewayKey: string;
+  model: string;
+  force?: boolean;
+}
+
+/** Read the config, or empty text when the file does not exist yet. */
+async function readConfigText(configPath: string): Promise<string> {
+  if (!existsSync(configPath)) return '';
+  return readFile(configPath, 'utf-8');
+}
+
+/** Parse for validation only — the file itself is never re-serialized. */
+function parseOrThrow(text: string, configPath: string): Record<string, unknown> {
+  try {
+    return TOML.parse(text) as Record<string, unknown>;
+  } catch (error) {
+    throw new ConfigurationError(
+      `Codex config at ${configPath} is not valid TOML and was not changed: ` +
+      `${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
+/**
+ * Splice the managed block into the user's Codex config and record ownership.
+ *
+ * The marker state is written BEFORE the config on purpose. If the config write
+ * then fails, the marker over-claims — and removal is idempotent, so that is
+ * harmless. The reverse order is genuinely unsafe: a written config with no
+ * marker is one CodeMie can no longer recognize as its own.
+ */
+export async function writeCodexDesktopConfig(
+  options: WriteCodexDesktopConfigOptions
+): Promise<CodexDesktopState> {
+  const currentText = await readConfigText(options.configPath);
+
+  // Validate and check for conflicts before touching anything on disk.
+  if (currentText.trim() !== '') {
+    const parsed = parseOrThrow(currentText, options.configPath);
+    const active = parsed.model_provider;
+    if (!options.force && typeof active === 'string' && active !== CODEMIE_PROVIDER_ID) {
+      throw new ConfigurationError(
+        `Codex config already selects model_provider "${active}". ` +
+        'Re-run with --force to replace it with the CodeMie provider.'
+      );
+    }
+  }
+
+  const backupPath = await backupIfUnmanaged(options.configPath, currentText);
+
+  const state: CodexDesktopState = {
+    configPath: options.configPath,
+    backupPath,
+    model: options.model,
+    writtenAt: new Date().toISOString(),
+  };
+  await writeAtomically(options.statePath, `${JSON.stringify(state, null, 2)}\n`);
+
+  const blocks = buildManagedBlocks({
+    baseUrl: options.baseUrl,
+    gatewayKey: options.gatewayKey,
+    model: options.model,
+  });
+  await writeAtomically(options.configPath, spliceManagedBlocks(currentText, blocks));
+
+  logger.info(
+    '[proxy] Codex desktop configuration written',
+    ...sanitizeLogArgs({
+      configPath: options.configPath,
+      backupPath,
+      model: options.model,
+      baseUrl: options.baseUrl,
+      gatewayKey: options.gatewayKey,
+    })
+  );
+
+  return state;
 }
