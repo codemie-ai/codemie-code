@@ -24,6 +24,7 @@ import {
   buildManagedBlocks,
   findManagedRegions,
   spliceManagedBlocks,
+  stripManagedRegions,
 } from './codex-config-toml.js';
 import { writeAtomically } from './vscode.js';
 
@@ -258,4 +259,73 @@ export async function writeCodexDesktopConfig(
   );
 
   return state;
+}
+
+export interface RemoveCodexDesktopResult {
+  removed: boolean;
+  usedBackup: boolean;
+  configPath: string | null;
+}
+
+/**
+ * Remove the managed block, restoring the file to its pre-connect content.
+ *
+ * The surgical strip is the primary path rather than a wholesale backup restore:
+ * a blind restore would also throw away any edits the user made to their Codex
+ * config while connected. The backup is the fallback for when stripping cannot
+ * produce a parseable file.
+ */
+export async function removeCodexDesktopConfig(
+  statePath: string = getCodexDesktopStatePath()
+): Promise<RemoveCodexDesktopResult> {
+  if (!existsSync(statePath)) {
+    return { removed: false, usedBackup: false, configPath: null };
+  }
+
+  const raw = await readFile(statePath, 'utf-8');
+  if (raw.trim() === '') {
+    return { removed: false, usedBackup: false, configPath: null };
+  }
+
+  let state: CodexDesktopState;
+  try {
+    state = JSON.parse(raw) as CodexDesktopState;
+  } catch (error) {
+    throw new ConfigurationError(
+      `CodeMie Codex desktop state at ${statePath} is unreadable: ` +
+      `${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+
+  if (!existsSync(state.configPath)) {
+    await writeAtomically(statePath, '');
+    return { removed: false, usedBackup: false, configPath: state.configPath };
+  }
+
+  const currentText = await readFile(state.configPath, 'utf-8');
+  const stripped = stripManagedRegions(currentText);
+
+  let nextText = stripped;
+  let usedBackup = false;
+  try {
+    if (stripped.trim() !== '') TOML.parse(stripped);
+  } catch {
+    if (!state.backupPath || !existsSync(state.backupPath)) {
+      throw new ConfigurationError(
+        `Removing the CodeMie block from ${state.configPath} produced invalid TOML ` +
+        'and no backup is available to restore.'
+      );
+    }
+    nextText = await readFile(state.backupPath, 'utf-8');
+    usedBackup = true;
+    logger.warn(
+      '[proxy] Surgical removal of the CodeMie Codex block failed; restored the backup',
+      ...sanitizeLogArgs({ configPath: state.configPath, backupPath: state.backupPath })
+    );
+  }
+
+  await writeAtomically(state.configPath, nextText);
+  await writeAtomically(statePath, '');
+
+  return { removed: true, usedBackup, configPath: state.configPath };
 }

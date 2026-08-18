@@ -229,3 +229,78 @@ describe('writeCodexDesktopConfig', () => {
     expect(workspace.readFile('config.toml')).toBe(first);
   });
 });
+
+describe('removeCodexDesktopConfig', () => {
+  let workspace: TempWorkspace;
+
+  beforeEach(() => { workspace = new TempWorkspace('codemie-codex-remove-'); });
+  afterEach(() => { workspace.cleanup(); vi.restoreAllMocks(); vi.resetModules(); });
+
+  it('restores the pre-connect content by stripping the managed regions', async () => {
+    const original = '# notes\nmodel = "gpt-5"\n\n[history]\npersistence = "none"\n';
+    const configPath = workspace.writeFile('config.toml', original);
+    const statePath = join(workspace.path, 'state.json');
+    const { writeCodexDesktopConfig, removeCodexDesktopConfig } = await import('../codex-desktop.js');
+
+    await writeCodexDesktopConfig({
+      configPath,
+      statePath,
+      proxyUrl: 'http://127.0.0.1:4001',
+      baseUrl: 'http://127.0.0.1:4001/v1',
+      gatewayKey: 'k',
+      model: 'gpt-5-codex',
+    });
+    const result = await removeCodexDesktopConfig(statePath);
+
+    expect(result.removed).toBe(true);
+    expect(result.usedBackup).toBe(false);
+    expect(workspace.readFile('config.toml')).toBe(original);
+  });
+
+  it('reports a clean no-op when no marker state exists', async () => {
+    const { removeCodexDesktopConfig } = await import('../codex-desktop.js');
+    const result = await removeCodexDesktopConfig(join(workspace.path, 'absent.json'));
+    expect(result).toMatchObject({ removed: false, usedBackup: false });
+  });
+
+  it('falls back to the backup when the stripped result will not parse', async () => {
+    const { HEADER_OPEN, HEADER_CLOSE } = await import('../codex-config-toml.js');
+    // Valid managed region wrapping content that is not valid TOML on its own.
+    const configPath = workspace.writeFile(
+      'config.toml',
+      `${HEADER_OPEN}\nmodel_provider = "codemie"\n${HEADER_CLOSE}\n\nthis is [not = toml\n`
+    );
+    workspace.writeFile('config.toml.codemie-backup', 'model = "gpt-5"\n');
+    const statePath = workspace.writeFile('state.json', JSON.stringify({
+      configPath,
+      backupPath: `${configPath}.codemie-backup`,
+      model: 'gpt-5-codex',
+      writtenAt: '2026-08-18T00:00:00Z',
+    }));
+
+    const { removeCodexDesktopConfig } = await import('../codex-desktop.js');
+    const result = await removeCodexDesktopConfig(statePath);
+
+    expect(result.usedBackup).toBe(true);
+    expect(workspace.readFile('config.toml')).toBe('model = "gpt-5"\n');
+  });
+
+  it('throws when the stripped result will not parse and no backup exists', async () => {
+    const { HEADER_OPEN, HEADER_CLOSE } = await import('../codex-config-toml.js');
+    const configPath = workspace.writeFile(
+      'config.toml',
+      `${HEADER_OPEN}\nmodel_provider = "codemie"\n${HEADER_CLOSE}\n\nthis is [not = toml\n`
+    );
+    const statePath = workspace.writeFile('state.json', JSON.stringify({
+      configPath,
+      backupPath: null,
+      model: 'gpt-5-codex',
+      writtenAt: '2026-08-18T00:00:00Z',
+    }));
+
+    const { removeCodexDesktopConfig } = await import('../codex-desktop.js');
+    const { ConfigurationError } = await import('@/utils/errors.js');
+
+    await expect(removeCodexDesktopConfig(statePath)).rejects.toThrow(ConfigurationError);
+  });
+});
