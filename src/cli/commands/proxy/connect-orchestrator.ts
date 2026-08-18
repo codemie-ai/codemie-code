@@ -48,6 +48,7 @@ export interface ConnectTargets {
   claudeDesktop?: boolean;
   vscode?: boolean;
   vscodeClaudeCode?: boolean;
+  codexDesktop?: boolean;
 }
 
 /** Options for a unified `connect` run (built by the command/alias wrappers). */
@@ -57,10 +58,12 @@ export interface ConnectOptions {
   insiders?: boolean;
   force?: boolean;
   verbose?: boolean;
+  /** Pin a specific model for the Codex desktop target. */
+  model?: string;
 }
 
-/** Effective client type used by `daemonMatchesRequest` (never a new value). */
-export type EffectiveClientType = 'claude-desktop' | 'vscode-byok';
+/** Effective client type used by `daemonMatchesRequest`. */
+export type EffectiveClientType = 'claude-desktop' | 'vscode-byok' | 'codex-desktop';
 
 /**
  * The daemon identity for a target set. `spawnOptions` is byte-identical to the
@@ -73,7 +76,8 @@ export interface DaemonIdentity {
   clientType: EffectiveClientType;
   spawnOptions:
     | { telemetryMode: 'claude-desktop' }
-    | { clientType: 'vscode-byok' };
+    | { clientType: 'vscode-byok' }
+    | { clientType: 'codex-desktop' };
 }
 
 /**
@@ -85,6 +89,9 @@ export interface DaemonIdentity {
 export function deriveDaemonIdentity(targets: ConnectTargets): DaemonIdentity {
   if (targets.claudeDesktop || targets.vscodeClaudeCode) {
     return { clientType: 'claude-desktop', spawnOptions: { telemetryMode: 'claude-desktop' } };
+  }
+  if (targets.codexDesktop) {
+    return { clientType: 'codex-desktop', spawnOptions: { clientType: 'codex-desktop' } };
   }
   return { clientType: 'vscode-byok', spawnOptions: { clientType: 'vscode-byok' } };
 }
@@ -238,6 +245,7 @@ const TARGET_LIST = [
   '  --claude-desktop       Claude Desktop app (MCP servers)',
   '  --vscode               VS Code Copilot Chat models (BYOK)',
   '  --vscode-claude-code   VS Code Claude Code extension',
+  '  --codex-desktop        Codex desktop app (writes ~/.codex/config.toml)',
   '',
   'Examples:',
   '  codemie proxy connect --claude-desktop',
@@ -248,7 +256,7 @@ const TARGET_LIST = [
 ].join('\n');
 
 function hasAnyTarget(t: ConnectTargets): boolean {
-  return Boolean(t.claudeDesktop || t.vscode || t.vscodeClaudeCode);
+  return Boolean(t.claudeDesktop || t.vscode || t.vscodeClaudeCode || t.codexDesktop);
 }
 
 /** A human label and the base command to echo in remediation messages. */
@@ -258,6 +266,7 @@ function describeTargets(t: ConnectTargets): { label: string; commandExample: st
   if (t.claudeDesktop) { flags.push('--claude-desktop'); labels.push('Claude Desktop'); }
   if (t.vscode) { flags.push('--vscode'); labels.push('VS Code'); }
   if (t.vscodeClaudeCode) { flags.push('--vscode-claude-code'); labels.push('VS Code Claude Code'); }
+  if (t.codexDesktop) { flags.push('--codex-desktop'); labels.push('Codex Desktop'); }
   const label = labels.length === 1 ? labels[0] : 'CodeMie';
   return { label, commandExample: `codemie proxy connect ${flags.join(' ')}` };
 }

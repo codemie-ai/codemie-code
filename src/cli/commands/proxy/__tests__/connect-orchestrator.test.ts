@@ -390,3 +390,28 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
     expect(console_.log()).toHaveBeenCalledWith(expect.stringContaining('Targets configured'));
   });
 });
+
+describe('deriveDaemonIdentity — codex-desktop', () => {
+  it('gives the Codex desktop target its own client type and no telemetry mode', async () => {
+    const { deriveDaemonIdentity } = await import('../connect-orchestrator.js');
+
+    expect(deriveDaemonIdentity({ codexDesktop: true })).toEqual({
+      clientType: 'codex-desktop',
+      spawnOptions: { clientType: 'codex-desktop' },
+    });
+  });
+
+  it('keeps claude-desktop as the primary identity when combined', async () => {
+    const { deriveDaemonIdentity } = await import('../connect-orchestrator.js');
+
+    expect(deriveDaemonIdentity({ claudeDesktop: true, codexDesktop: true }).clientType)
+      .toBe('claude-desktop');
+  });
+
+  it('prefers codex-desktop over vscode-byok', async () => {
+    const { deriveDaemonIdentity } = await import('../connect-orchestrator.js');
+
+    expect(deriveDaemonIdentity({ codexDesktop: true, vscode: true }).clientType)
+      .toBe('codex-desktop');
+  });
+});
