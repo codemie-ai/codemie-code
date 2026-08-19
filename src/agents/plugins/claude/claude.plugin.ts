@@ -94,7 +94,10 @@ export const ClaudePluginMetadata: AgentMetadata = {
 
   supportedProviders: ['litellm', 'ai-run-sso', 'bedrock', 'bearer-auth', 'anthropic-subscription'],
   blockedModelPatterns: [],
-  recommendedModels: ['claude-sonnet-4-6', 'claude-4-opus', 'claude-haiku-4-5-20251001', 'gpt-4.1'],
+  // Family token, not a pinned version — computeRecommendedModelIds (setup-ui.ts)
+  // matches it against the live catalog and picks the current latest Sonnet.
+  // Only Sonnet is starred as recommended; Opus/Haiku remain fully selectable.
+  recommendedModels: ['sonnet'],
 
   ssoConfig: {
     enabled: true,

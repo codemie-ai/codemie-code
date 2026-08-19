@@ -22,12 +22,11 @@ export const AnthropicSubscriptionTemplate = registerProvider<ProviderTemplate>(
   priority: 16,
   defaultProfileName: 'anthropic-subscription',
   // Display-only (setup wizard listing) — this provider never forces a model
-  // choice onto the claude CLI; see exportEnvVars below.
-  recommendedModels: [
-    'claude-sonnet-4-6',
-    'claude-opus-4-7',
-    'claude-haiku-4-5-20251001',
-  ],
+  // choice onto the claude CLI; see exportEnvVars below. Family token, not a
+  // pinned version — computeRecommendedModelIds (setup-ui.ts) matches it
+  // against the live catalog and picks the current latest Sonnet. Only Sonnet
+  // is starred as recommended; Opus/Haiku remain fully selectable.
+  recommendedModels: ['sonnet'],
   capabilities: ['streaming', 'tools', 'function-calling', 'vision'],
   supportsModelInstallation: false,
   supportsStreaming: true,

@@ -28,13 +28,8 @@ describe('AnthropicSubscriptionTemplate', () => {
     expect(AnthropicSubscriptionTemplate.defaultBaseUrl).toBe('https://api.anthropic.com');
   });
 
-  it('includes recommended Claude models', () => {
-    expect(AnthropicSubscriptionTemplate.recommendedModels).toContain('claude-sonnet-4-6');
-    expect(AnthropicSubscriptionTemplate.recommendedModels).toContain('claude-opus-4-7');
-    expect(AnthropicSubscriptionTemplate.recommendedModels).not.toContain('claude-opus-4-6');
-    expect(AnthropicSubscriptionTemplate.recommendedModels).toContain('claude-haiku-4-5-20251001');
-    expect(AnthropicSubscriptionTemplate.recommendedModels).not.toContain('claude-4-5-haiku');
-    expect(AnthropicSubscriptionTemplate.recommendedModels.length).toBeGreaterThan(0);
+  it('recommends only the Sonnet family (not a pinned version)', () => {
+    expect(AnthropicSubscriptionTemplate.recommendedModels).toEqual(['sonnet']);
   });
 
   describe('agentHooks - beforeRun (*)', () => {
