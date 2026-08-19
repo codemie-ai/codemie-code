@@ -1,0 +1,116 @@
+{
+  "task": "Add a --codex-desktop target to codemie proxy connect (plus a proxy disconnect counterpart) that points the Codex desktop app at CodeMie models by splicing a managed provider block into ~/.codex/config.toml, and add proxy-side Codex model-name resolution and tool-description repair so the app's model picker and Work mode actually work.",
+  "generated": "2026-08-19",
+  "dimensions": {
+    "component_scope": {
+      "score": 6,
+      "label": "XXL",
+      "affected": "CLI proxy command surface (--codex-desktop, --model, new disconnect subcommand); connect-orchestrator (ConnectTargets, DaemonIdentity/EffectiveClientType third value, runCodexDesktop, shared-daemon warning); new disconnect-orchestrator; two new connectors (codex-config-toml pure splice/strip helpers, codex-desktop connector with app detection, model discovery, backup, atomic write and marker state); new proxy pipeline units (codex-model-resolver, CodexRequestNormalizerPlugin registered at priority 14); CodexEncryptedContentSanitizerPlugin ALLOWED_AGENTS; proxy plugin registry index; codex agent-plugin model ranking (splitDeploymentVersion, rankCodexModelIdsByRecency); README and docs/COMMANDS.md",
+      "layers": "CLI, Service/Orchestration, Connector/Config-Persistence, Provider (SSO proxy plugin pipeline), Agent Plugin, External"
+    },
+    "requirements_clarity": {
+      "score": 4,
+      "label": "L",
+      "status": "Partially Clear",
+      "gaps": "The spec's core technical assumption was wrong and was revised mid-implementation (spec s11: 'This spec originally stated the proxy pipeline needed no change. That was wrong.'). Acceptance criteria expanded during implementation: 'selecting a model in the app's picker works' became a requirement after live testing showed the desktop app writes its picker selection back into the managed config.toml, replacing the original fixed decision that the picker showing 'Custom' was merely cosmetic. All three defects surfaced only in live testing, not from the spec. Open at delivery: the empty-tool-description failure is not synthetically reproducible (the exact failing item shape is unidentified; the repair is scoped from the upstream error's own param path rather than a confirmed reproduction), and four review findings were accepted rather than fixed - isTableHeader is not TOML-aware, quoted root keys are not recognized as displaceable, concurrent connect/disconnect on the same file is unserialized, and the per-platform Windows app-candidate paths are unverified against a real install."
+    },
+    "technical_risk": {
+      "score": 6,
+      "label": "XXL",
+      "risk_factors": "Read-modify-write of a user-owned config file that the ChatGPT/Codex desktop app and the user's own Codex CLI both read and that the app rewrites concurrently - two genuine data-loss paths were found in review (cutRegionLines deleted to end of file when a close sentinel was missing; findManagedRegions matched sentinels by substring while the cutter matched whole lines, so a trailing space or CR duplicated the managed block into the user's file). A static Authorization: Bearer gatewayKey is persisted in cleartext into that file, and the key was passed to logger.info unredacted because gatewayKey matches none of SENSITIVE_KEY_PATTERNS; a backup path could also snapshot an already-managed file and enshrine the bearer token as the 'pre-connect original', restoring it on a later disconnect. Recursion over a client-controlled request body in the proxy hot path had no depth ceiling or cycle guard. Behaviour depends on undocumented external behaviour discovered only live: the app overwriting the pinned model key, and Azure-via-LiteLLM rejecting empty tool descriptions that direct OpenAI accepts. Introducing a dedicated codex-desktop daemon clientType silently de-registered CodexEncryptedContentSanitizerPlugin for the new surface. The substitution fallback initially ranked over all enabled deployments, so an account with no GPT/Codex model could have a Responses request rerouted to a Claude or embedding deployment. No precedent existed in the codebase for the TOML managed-region splice/strip inverse invariant.",
+      "mitigation": "Marker-delimited text splice with a documented strip(splice(x)) === x invariant and line-based cutting so 'the blank separator line that came with it' is expressible; write-ahead marker state before the config write, so an over-claiming marker is harmless while an unrecognizable config is not; the spliced output is TOML.parse-validated before writing, so every splice edge case fails closed and writes nothing; the pre-connect backup is rebuilt by stripping managed regions when the file is already managed, so the bearer token is never enshrined; assertNoCodeMieKeys post-strip check routes failure into the backup fallback instead of reporting a false success; unterminated regions are kept verbatim rather than deleting to EOF; the gateway key is no longer logged at all; depth ceiling of 64 plus a WeakSet cycle guard on the body walk; 15s AbortSignal.timeout on the connect-time model listing and a 60s negative-cache backoff on failed listings; isCodexServableDeployment filters listings so a Responses request can never be rerouted to an incompatible family; codex-desktop added to CodexEncryptedContentSanitizerPlugin ALLOWED_AGENTS; an explicit warning names the consequence when --codex-desktop is combined with a target that owns the shared daemon; the resolver never throws, passing unresolvable names upstream so the gateway's own error reaches the client."
+    },
+    "file_change_estimate": {
+      "score": 6,
+      "label": "XXL",
+      "modified_files": 9,
+      "modified_file_list": [
+        "README.md",
+        "docs/COMMANDS.md",
+        "src/agents/plugins/codex/codex-models.ts",
+        "src/cli/commands/proxy/__tests__/connect-orchestrator.test.ts",
+        "src/cli/commands/proxy/__tests__/connect-wiring.test.ts",
+        "src/cli/commands/proxy/connect-orchestrator.ts",
+        "src/cli/commands/proxy/index.ts",
+        "src/providers/plugins/sso/proxy/plugins/codex-encrypted-content-sanitizer.plugin.ts",
+        "src/providers/plugins/sso/proxy/plugins/index.ts"
+      ],
+      "new_files": 11,
+      "new_file_list": [
+        "src/cli/commands/proxy/connectors/codex-config-toml.ts",
+        "src/cli/commands/proxy/connectors/codex-desktop.ts",
+        "src/cli/commands/proxy/disconnect-orchestrator.ts",
+        "src/providers/plugins/sso/proxy/plugins/codex-model-resolver.ts",
+        "src/providers/plugins/sso/proxy/plugins/codex-request-normalizer.plugin.ts",
+        "src/cli/commands/proxy/__tests__/disconnect-orchestrator.test.ts",
+        "src/cli/commands/proxy/connectors/__tests__/codex-config-toml.test.ts",
+        "src/cli/commands/proxy/connectors/__tests__/codex-desktop.test.ts",
+        "src/providers/plugins/sso/proxy/plugins/__tests__/codex-model-resolver.test.ts",
+        "src/providers/plugins/sso/proxy/plugins/__tests__/codex-request-normalizer.plugin.test.ts",
+        "docs/superpowers/tasks/2026-08-18-codex-desktop-proxy-connect/spec.md"
+      ],
+      "affected_dirs": [
+        "src/cli/commands/proxy/",
+        "src/cli/commands/proxy/connectors/",
+        "src/providers/plugins/sso/proxy/plugins/",
+        "src/agents/plugins/codex/",
+        "docs/",
+        "."
+      ]
+    },
+    "dependencies": {
+      "score": 2,
+      "label": "S",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 5,
+      "label": "XL",
+      "layers_changed": [
+        "CLI (proxy connect flags, new disconnect subcommand)",
+        "Service/Orchestration (connect-orchestrator, disconnect-orchestrator, daemon identity)",
+        "Connector/Config-Persistence (~/.codex/config.toml managed block, ~/.codemie/proxy/codex-desktop-state.json marker state, backup file)",
+        "Provider (SSO proxy plugin pipeline: new priority-14 normalizer, registry registration, sanitizer allowlist)",
+        "Agent Plugin (codex model ranking)",
+        "External (Codex/ChatGPT desktop app config seam, CodeMie gateway /v1/llm_models, Azure-via-LiteLLM upstream validation)"
+      ],
+      "schema_migration": false,
+      "cross_system": true
+    }
+  },
+  "total": 29,
+  "size": "XL",
+  "band_range": "27-31",
+  "files_changed": 20,
+  "routing": "split-required",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Three subsystems changed, not one: the CLI proxy command surface plus orchestrators, the SSO proxy plugin pipeline (two new files registered into the plugin registry), and the codex agent plugin's model ranking. Two new abstractions were introduced - the marker-delimited TOML managed-region contract with its splice/strip inverse invariant, and a deployment-identity resolution model that strips release dates before reading versions. It also changed a shared contract: EffectiveClientType gained a third value consumed by daemonMatchesRequest for every connect target, which is exactly what silently de-registered CodexEncryptedContentSanitizerPlugin for the new surface."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Highest-risk dimension. The change owns a region of a user-owned config file that a third-party app rewrites concurrently, and persists a bearer credential into it in cleartext. Review found two data-loss paths, a credential-logging leak, and an unbounded recursion over a client-controlled body in the proxy hot path. Correctness depended on two pieces of undocumented external behaviour that only live testing revealed, and one of the three fixes is not synthetically reproducible."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "20 files (11 new, 9 modified) and 3277 insertions across 4 source directories plus docs - past the 16+ file XXL threshold on both the total and the 6+ new-file criterion. The two largest units, codex-desktop.ts (397 lines) and codex-desktop.test.ts (534 lines), plus the entire 440-line proxy-side resolver and normalizer pair, were not in the original file plan."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Six distinct layers including a config-persistence surface (managed TOML block, marker-state JSON, backup file - each a format the disconnect path must parse) and an external boundary reached by two outbound HTTP callers (discoverCodexModels via the proxy, fetchCodeMieLlmModels from the normalizer). No DB schema, so this stops short of cross-codebase XXL."
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "The requirement was clear but the spec's technical premise was not, and the gap caused real rework: spec s11 records that the original 'the proxy pipeline needs no change' assertion was wrong, and the 'picker showing Custom is expected' fixed decision was replaced by a new acceptance requirement that picker model-switching must work. Gaps remain at delivery - one non-reproducible defect and four findings accepted rather than fixed."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from XL (5) to XXL (6): 'Integration with new external service' - a new external integration seam (the ChatGPT/Codex desktop app's user-owned ~/.codex/config.toml) plus a change to the shared EffectiveClientType daemon contract that every connect target's matcher consumes.",
+    "Affected Layers bumped from L (4) to XL (5): same 'Integration with new external service' red flag - the connector and the normalizer both make outbound HTTP calls (discoverCodexModels, fetchCodeMieLlmModels) and the change writes into a third-party application's config file.",
+    "Technical Risk bumped from XL (5) to XXL (6): 'Security or Compliance requirements' and 'Affects authentication or authorization' - a static Authorization: Bearer gatewayKey is written into a user-readable config file, ~/.codex/auth.json is deliberately avoided because writing there flips the app's auth mode, and review found the key was logged unredacted plus a backup path that could restore it on disconnect.",
+    "Not applied: 'Requires data migration' (no data migration) and the clarity red flags (an approved spec with nine settled decisions existed, so Requirements Clarity stays at L rather than the XL 'specification doc needed before planning')."
+  ],
+  "split_recommendation": "Delivered as one branch, but the evidence says three stories. (1) The CLI/connector seam as originally specced: codex-config-toml.ts splice/strip helpers, the codex-desktop.ts connector, the --codex-desktop target and proxy disconnect - roughly 9 files and close to the initial 5-9 file estimate. (2) Proxy-side model-name resolution: codex-model-resolver.ts and CodexRequestNormalizerPlugin plus the codex-models.ts ranking fix - roughly 5 files, entirely unplanned, and required only because live testing invalidated the spec's 'the proxy needs no change' premise. (3) Upstream compatibility hardening: repairEmptyToolDescriptions, the CodexEncryptedContentSanitizerPlugin allowlist fix and the isCodexServableDeployment substitution guard - roughly 4 files. Splitting after (1) would have surfaced the wrong premise at a story boundary instead of carrying it into a single 3277-line reviewable unit, where a three-lens review then had to find 16 issues at once - including two data-loss paths, a credential leak and a plugin allowlist regression."
+}
