@@ -12,19 +12,6 @@ import type { AgentConfig } from '../../../agents/core/types.js';
 import { registerProvider } from '../../core/decorators.js';
 import { ensureApiBase } from '../../core/codemie-auth-helpers.js';
 
-const ANTHROPIC_SUBSCRIPTION_DEFAULT_HAIKU_MODEL = 'claude-haiku-4-5-20251001';
-const ANTHROPIC_SUBSCRIPTION_DEFAULT_OPUS_MODEL = 'claude-opus-4-7';
-
-const ANTHROPIC_SUBSCRIPTION_MODEL_ALIASES: Record<string, string> = {
-  'claude-4-5-haiku': ANTHROPIC_SUBSCRIPTION_DEFAULT_HAIKU_MODEL,
-  'claude-opus-4-6': ANTHROPIC_SUBSCRIPTION_DEFAULT_OPUS_MODEL,
-  'claude-opus-4-6[1m]': `${ANTHROPIC_SUBSCRIPTION_DEFAULT_OPUS_MODEL}[1m]`,
-};
-
-function normalizeAnthropicSubscriptionModel(model: string | undefined): string | undefined {
-  return model ? ANTHROPIC_SUBSCRIPTION_MODEL_ALIASES[model] ?? model : undefined;
-}
-
 export const AnthropicSubscriptionTemplate = registerProvider<ProviderTemplate>({
   name: 'anthropic-subscription',
   displayName: 'Anthropic Subscription',
@@ -34,10 +21,12 @@ export const AnthropicSubscriptionTemplate = registerProvider<ProviderTemplate>(
   authType: 'none',
   priority: 16,
   defaultProfileName: 'anthropic-subscription',
+  // Display-only (setup wizard listing) — this provider never forces a model
+  // choice onto the claude CLI; see exportEnvVars below.
   recommendedModels: [
     'claude-sonnet-4-6',
-    ANTHROPIC_SUBSCRIPTION_DEFAULT_OPUS_MODEL,
-    ANTHROPIC_SUBSCRIPTION_DEFAULT_HAIKU_MODEL,
+    'claude-opus-4-7',
+    'claude-haiku-4-5-20251001',
   ],
   capabilities: ['streaming', 'tools', 'function-calling', 'vision'],
   supportsModelInstallation: false,
@@ -113,20 +102,18 @@ export const AnthropicSubscriptionTemplate = registerProvider<ProviderTemplate>(
     };
 
     // SSO/JWT use CodeMie gateway model names, but this provider talks directly to
-    // Anthropic via Claude Code's native subscription session.
-    const model = normalizeAnthropicSubscriptionModel(config.model);
-    const haikuModel = normalizeAnthropicSubscriptionModel(config.haikuModel);
-    const opusModel = normalizeAnthropicSubscriptionModel(config.opusModel);
-
-    if (model && model !== config.model) {
-      env.CODEMIE_MODEL = model;
-    }
-    if (haikuModel && haikuModel !== config.haikuModel) {
-      env.CODEMIE_HAIKU_MODEL = haikuModel;
-    }
-    if (opusModel && opusModel !== config.opusModel) {
-      env.CODEMIE_OPUS_MODEL = opusModel;
-    }
+    // Anthropic via Claude Code's native subscription session — there is no CodeMie
+    // catalog to resolve a model from here, so defer entirely to the claude CLI's
+    // own built-in defaults instead of forcing a (potentially stale) hardcoded one.
+    //
+    // ConfigLoader.exportProviderEnvVars() sets CODEMIE_MODEL from config.model
+    // *before* layering this provider's exportEnvVars on top, so these must be
+    // explicitly blanked here — omitting them would leave the profile's saved
+    // (possibly stale) model in place.
+    env.CODEMIE_MODEL = '';
+    env.CODEMIE_HAIKU_MODEL = '';
+    env.CODEMIE_SONNET_MODEL = '';
+    env.CODEMIE_OPUS_MODEL = '';
 
     if (config.codeMieUrl) {
       env.CODEMIE_URL = config.codeMieUrl;

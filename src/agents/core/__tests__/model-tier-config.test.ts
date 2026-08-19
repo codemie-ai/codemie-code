@@ -283,7 +283,9 @@ describe('ConfigLoader.exportProviderEnvVars', () => {
     expect(env.CODEMIE_PROVIDER).toBe('anthropic-subscription');
     expect(env.CODEMIE_BASE_URL).toBe('https://api.anthropic.com');
     expect(env.CODEMIE_API_KEY).toBe('');
-    expect(env.CODEMIE_MODEL).toBe('claude-sonnet-4-6');
+    // anthropic-subscription always blanks model tiers so the claude CLI's own
+    // built-in defaults apply, regardless of what the profile has saved.
+    expect(env.CODEMIE_MODEL).toBe('');
     expect(env.CODEMIE_URL).toBe('https://codemie.lab.epam.com');
     expect(env.CODEMIE_SYNC_API_URL).toBe('https://codemie.lab.epam.com/code-assistant-api');
     expect(env.CODEMIE_PROJECT).toBe('codemie-platform');
