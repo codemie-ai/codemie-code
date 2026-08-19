@@ -521,6 +521,7 @@ Use `codemie codebase start|stop|status` to manage the UI process, or `codemie c
 
 ```bash
 codemie proxy connect --claude-desktop                       # Claude Desktop app (MCP servers)
+codemie proxy connect --codex-desktop                        # Codex desktop app (~/.codex/config.toml)
 codemie proxy connect --vscode                               # VS Code Copilot Chat models (BYOK)
 codemie proxy connect --vscode-claude-code                   # VS Code Claude Code extension
 codemie proxy connect --claude-desktop --vscode --insiders   # combine targets in one run
@@ -528,7 +529,35 @@ codemie proxy connect --claude-desktop --vscode --insiders   # combine targets i
 
 Flags are composable: a single run configures every target you pass, prints a per-target summary, and exits non-zero if any target fails. Run `codemie proxy connect` with no flags to list the available targets. Shared options: `--profile <name>`, `--force`, `--verbose`, and `--insiders` (VS Code targets only).
 
+Remove a target's configuration with `codemie proxy disconnect`:
+
+```bash
+codemie proxy disconnect --codex-desktop
+```
+
 > **Deprecated:** `codemie proxy connect desktop` and `codemie proxy connect vscode` still work but are deprecated and print a notice. Use `codemie proxy connect --claude-desktop` and `codemie proxy connect --vscode` instead.
+
+## Connect the Codex desktop app via CodeMie Proxy
+
+Point the Codex desktop app — Codex as it ships inside the ChatGPT desktop app — at your CodeMie models:
+
+```bash
+codemie proxy connect --codex-desktop
+```
+
+Then **quit and reopen the app**; it reads its configuration at startup. macOS and Windows are supported.
+
+The app embeds the same Codex core as the Codex CLI and reads the same user-level `~/.codex/config.toml`, so the connector configures it by writing that file. It splices in a CodeMie-managed block between sentinel comments — `model_provider` and `model` at the top, a `[model_providers.codemie]` table at the end holding the proxy `base_url`, `wire_api = "responses"` and an `Authorization` header carrying the daemon gateway key. **Everything outside those two regions is preserved byte for byte**, including your comments, key order and formatting. `~/.codex/auth.json` is never touched: writing a provider key there would flip the app into API-key auth mode and disable features that depend on your ChatGPT account.
+
+Switching models in the app's picker works. The app owns the `model` key and writes its own picker selection back into `config.toml`, and the names it writes are undated (`gpt-5.6-luna`) while CodeMie deployments are dated (`gpt-5.6-luna-2026-07-09`). The proxy resolves the difference automatically, matching on model identity and falling back to the newest available deployment when CodeMie carries nothing equivalent. The picker itself still shows `Custom` rather than the CodeMie model name — an upstream limitation of the desktop renderer.
+
+`--model <slug>` pins a specific model instead of the newest available, validated against what the proxy actually exposes. `--force` bypasses both the app-not-found check and the refusal to replace an existing non-CodeMie `model_provider`.
+
+The connector writes nothing and changes nothing when the app cannot be found, when `~/.codex/config.toml` is not valid TOML, when the config already selects a different custom provider, or when the proxy exposes no GPT/Codex-compatible model.
+
+`codemie proxy disconnect --codex-desktop` removes the managed regions and restores any top-level keys the connector commented out, keeping edits you made elsewhere in the file while connected. A pre-connect snapshot stays at `~/.codex/config.toml.codemie-backup` and is restored automatically only if surgical removal cannot produce a parseable file. The daemon keeps running — stop it with `codemie proxy stop`.
+
+> The Codex desktop app and the `codemie-codex` CLI use different Codex homes by design, so settings and history differ between the two surfaces.
 
 ## Connect VS Code BYOK via CodeMie Proxy
 
