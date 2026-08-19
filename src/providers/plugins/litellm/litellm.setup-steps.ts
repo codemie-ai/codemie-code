@@ -65,7 +65,9 @@ export const LiteLLMSetupSteps: ProviderSetupSteps = {
       const models = await modelProxy.listModels();
       return models.map(m => m.id);
     } catch {
-      return LiteLLMTemplate.recommendedModels;
+      // If fetch fails, return empty so setup prompts the user to enter a
+      // model manually instead of showing a static, possibly stale list.
+      return [];
     }
   },
 

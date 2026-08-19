@@ -111,8 +111,9 @@ export const OllamaSetupSteps: ProviderSetupSteps = {
 
       return models.map(m => m.id);
     } catch {
-      // If fetch fails, return recommended models
-      return OllamaTemplate.recommendedModels;
+      // If fetch fails, return empty so setup prompts the user to enter a
+      // model manually instead of showing a static, possibly stale list.
+      return [];
     }
   },
 

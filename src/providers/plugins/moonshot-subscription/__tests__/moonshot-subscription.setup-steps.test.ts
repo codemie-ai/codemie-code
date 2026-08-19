@@ -96,10 +96,10 @@ describe('MoonshotSubscriptionSetupSteps', () => {
   });
 
   describe('fetchModels', () => {
-    it('returns the template recommended models list', async () => {
+    it('returns an empty list so setup prompts for manual entry (no live catalog for this provider)', async () => {
       const models = await MoonshotSubscriptionSetupSteps.fetchModels({});
 
-      expect(models).toEqual(MoonshotSubscriptionTemplate.recommendedModels);
+      expect(models).toEqual([]);
     });
   });
 
