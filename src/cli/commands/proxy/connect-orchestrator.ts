@@ -553,7 +553,8 @@ async function runCodexDesktop(
 
     console.log(chalk.green(`\u2713 Codex Desktop configured (model: ${model})`));
     console.log(chalk.yellow('\u26a0 Quit and reopen the ChatGPT desktop app to apply the change.'));
-    console.log(chalk.dim('  The model picker will show "Custom" \u2014 requests use the pinned model.'));
+    console.log(chalk.dim('  Switching models in the app\'s picker is supported \u2014 the proxy'));
+    console.log(chalk.dim('  maps its model names onto CodeMie deployments.'));
     return { label, ok: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);

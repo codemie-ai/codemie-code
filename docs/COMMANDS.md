@@ -270,7 +270,9 @@ The app embeds the same Codex core as the Codex CLI and reads the same user-leve
 
 After connecting, **quit and reopen the ChatGPT desktop app**. Configuration is read at startup.
 
-The app's model picker will display `Custom` rather than the CodeMie model name. This is an upstream limitation: the desktop renderer applies a client-side allowlist that filters out locally configured models. Requests still use the model the connector pinned, and the command prints which one that is. `--model <slug>` overrides the automatic choice and is validated against the models the proxy actually exposes.
+The connector pins a model — the newest GPT/Codex deployment the proxy exposes — and prints which one it chose. `--model <slug>` overrides that choice and is validated against the models the proxy actually exposes.
+
+**Switching models in the app's picker works.** The app owns the `model` key and writes its picker selection back into `~/.codex/config.toml`, overwriting the pinned value, and the names it writes are undated (`gpt-5.6-luna`) while CodeMie deployments are dated (`gpt-5.6-luna-2026-07-09`). The proxy resolves the difference: it matches the requested name to a deployment CodeMie actually has, and when nothing matches it falls back to the newest available deployment and records the substitution in the proxy log. The picker itself still displays `Custom` rather than the CodeMie model name, which is an upstream limitation — the desktop renderer filters locally configured models out of the list.
 
 `--force` has a second meaning for this target. It bypasses both the app-not-found check — useful when the app is installed somewhere the connector does not look — and the refusal to replace an existing non-CodeMie `model_provider`.
 
