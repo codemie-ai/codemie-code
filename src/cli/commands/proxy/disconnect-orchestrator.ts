@@ -52,7 +52,7 @@ export async function disconnectTargets(opts: DisconnectOptions): Promise<void> 
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logger.warn('[proxy] Codex Desktop disconnect failed', ...sanitizeLogArgs({ error: message }));
-    console.log(chalk.red(`✗ Codex Desktop  — ${message}`));
+    console.error(chalk.red(`✗ Codex Desktop — ${message}`));
     process.exitCode = 1;
   }
 }

@@ -158,3 +158,54 @@ describe('buildManagedBlocks', () => {
     expect(() => TOML.parse(spliceManagedBlocks('', blocks))).not.toThrow();
   });
 });
+
+describe('unterminated and mismatched sentinels (data-loss guards)', () => {
+  it('does not delete to end of file when the header close sentinel is missing', () => {
+    // A user edit, a partial write, or another tool can remove the close marker.
+    // findManagedRegions documents such a region as unmanaged precisely so the
+    // writer never deletes content it cannot delimit.
+    const text = `${HEADER_OPEN}\nmodel_provider = "codemie"\n\n[history]\npersistence = "none"\n`;
+
+    const stripped = stripManagedRegions(text);
+
+    expect(stripped).toContain('[history]');
+    expect(stripped).toContain('persistence = "none"');
+  });
+
+  it('does not delete to end of file when the table close sentinel is missing', () => {
+    const text = `[history]\npersistence = "none"\n\n${TABLE_OPEN}\n[model_providers.codemie]\nname = "CodeMie"\n`;
+
+    const stripped = stripManagedRegions(text);
+
+    expect(stripped).toContain('persistence = "none"');
+  });
+
+  it('never yields an empty file from input that had unmanaged content', () => {
+    const text = `${HEADER_OPEN}\nmodel_provider = "codemie"\n\nsandbox_mode = "workspace-write"\n`;
+    expect(stripManagedRegions(text).trim()).not.toBe('');
+  });
+
+  it('recognizes and cuts a sentinel carrying a trailing carriage return', () => {
+    // Windows is a supported platform and the app rewrites this file.
+    const blocks = { header: 'model_provider = "codemie"', table: '[model_providers.codemie]' };
+    const spliced = spliceManagedBlocks('sandbox_mode = "workspace-write"\n', blocks);
+    const crlf = spliced.replace(new RegExp(HEADER_OPEN, 'g'), `${HEADER_OPEN}\r`);
+
+    const regions = findManagedRegions(crlf);
+    expect(regions.header).not.toBeNull();
+
+    // Splicing again must replace, never duplicate.
+    const respliced = spliceManagedBlocks(crlf, blocks);
+    expect(respliced.split('model_provider = "codemie"').length - 1).toBe(1);
+  });
+
+  it('does not duplicate the managed block when sentinels have trailing whitespace', () => {
+    const blocks = { header: 'model_provider = "codemie"', table: '[model_providers.codemie]' };
+    const spliced = spliceManagedBlocks('sandbox_mode = "x"\n', blocks);
+    const padded = spliced.replace(TABLE_OPEN, `${TABLE_OPEN}  `);
+
+    const respliced = spliceManagedBlocks(padded, blocks);
+
+    expect(respliced.split('[model_providers.codemie]').length - 1).toBe(1);
+  });
+});

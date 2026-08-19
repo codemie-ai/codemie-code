@@ -348,3 +348,187 @@ describe('discoverCodexModels ranking', () => {
     ]);
   });
 });
+
+describe('security and output-validation guards', () => {
+  let workspace: TempWorkspace;
+
+  beforeEach(() => { workspace = new TempWorkspace('codemie-codex-guard-'); });
+  afterEach(() => { workspace.cleanup(); vi.restoreAllMocks(); vi.resetModules(); });
+
+  const opts = (configPath: string, statePath: string, extra: Record<string, unknown> = {}) => ({
+    configPath,
+    statePath,
+    proxyUrl: 'http://127.0.0.1:4001',
+    baseUrl: 'http://127.0.0.1:4001/v1',
+    gatewayKey: 'super-secret-gateway-key',
+    model: 'gpt-5.6-luna-2026-07-09',
+    ...extra,
+  });
+
+  it('never writes the gateway key into a log line', async () => {
+    const configPath = workspace.writeFile('config.toml', 'model = "gpt-5"\n');
+    const statePath = join(workspace.path, 'state.json');
+    const { logger } = await import('@/utils/logger.js');
+    const infoSpy = vi.spyOn(logger, 'info').mockImplementation(() => {});
+    const { writeCodexDesktopConfig } = await import('../codex-desktop.js');
+
+    await writeCodexDesktopConfig(opts(configPath, statePath));
+
+    const logged = JSON.stringify(infoSpy.mock.calls);
+    expect(logged).not.toContain('super-secret-gateway-key');
+  });
+
+  it('does not create a backup containing the CodeMie credential', async () => {
+    // Marker present but backup deleted: the file already holds our block, so a
+    // fresh copy would enshrine the bearer token as the "pre-connect original".
+    const configPath = workspace.writeFile('config.toml', 'sandbox_mode = "x"\n');
+    const statePath = join(workspace.path, 'state.json');
+    const { writeCodexDesktopConfig } = await import('../codex-desktop.js');
+
+    await writeCodexDesktopConfig(opts(configPath, statePath));
+    // Simulate the backup being removed while the config stays managed.
+    const { unlink } = await import('fs/promises');
+    await unlink(`${configPath}.codemie-backup`);
+
+    await writeCodexDesktopConfig(opts(configPath, statePath));
+
+    const backup = workspace.readFile('config.toml.codemie-backup');
+    expect(backup).not.toContain('super-secret-gateway-key');
+    expect(backup).not.toContain('model_providers.codemie');
+  });
+
+  it('always leaves a config that parses, even for hostile model and key values', async () => {
+    const configPath = workspace.writeFile('config.toml', 'sandbox_mode = "x"\n');
+    const statePath = join(workspace.path, 'state.json');
+    const { writeCodexDesktopConfig } = await import('../codex-desktop.js');
+    const TOML = (await import('@iarna/toml')).default;
+
+    await writeCodexDesktopConfig(opts(configPath, statePath, {
+      model: 'a"\nb = 1\nc = "d',
+      gatewayKey: 'key"with\nnewline\tand\ttabs',
+    }));
+
+    const written = workspace.readFile('config.toml');
+    const parsed = TOML.parse(written) as Record<string, unknown>;
+    expect(parsed.sandbox_mode).toBe('x');
+    expect(parsed.model).toBe('a"\nb = 1\nc = "d');
+  });
+});
+
+describe('selectCodexModel accepts the names the app picker shows', () => {
+  afterEach(() => { vi.resetModules(); });
+
+  it('resolves an undated request to its dated deployment', async () => {
+    const { selectCodexModel } = await import('../codex-desktop.js');
+    const list = ['gpt-5-2025-08-07', 'gpt-5.6-luna-2026-07-09'];
+
+    // `--model gpt-5.6-luna` is the name the picker displays; rejecting it while
+    // the proxy resolves the very same name would be incoherent.
+    expect(selectCodexModel(list, 'gpt-5.6-luna')).toBe('gpt-5.6-luna-2026-07-09');
+  });
+
+  it('still rejects a model the gateway has no equivalent for', async () => {
+    const { selectCodexModel } = await import('../codex-desktop.js');
+    const { ConfigurationError } = await import('@/utils/errors.js');
+
+    expect(() => selectCodexModel(['gpt-5.6-luna-2026-07-09'], 'gpt-4o'))
+      .toThrow(ConfigurationError);
+  });
+});
+
+describe('disconnect verifies CodeMie keys actually went away', () => {
+  let workspace: TempWorkspace;
+
+  beforeEach(() => { workspace = new TempWorkspace('codemie-codex-verify-'); });
+  afterEach(() => { workspace.cleanup(); vi.restoreAllMocks(); vi.resetModules(); });
+
+  it('falls back to the backup when the strip leaves CodeMie keys behind', async () => {
+    // Sentinels lost (the app rewrites this file), so the surgical strip is a
+    // no-op while the CodeMie provider is still selected. Reporting success here
+    // would leave the bearer token in place.
+    const original = 'sandbox_mode = "workspace-write"\n';
+    const orphaned = 'model_provider = "codemie"\n\n[model_providers.codemie]\nbase_url = "http://127.0.0.1:4001/v1"\n';
+    const configPath = workspace.writeFile('config.toml', orphaned);
+    workspace.writeFile('config.toml.codemie-backup', original);
+    const statePath = workspace.writeFile('state.json', JSON.stringify({
+      configPath,
+      backupPath: `${configPath}.codemie-backup`,
+      model: 'gpt-5.6-luna-2026-07-09',
+      writtenAt: new Date().toISOString(),
+    }));
+
+    const { removeCodexDesktopConfig } = await import('../codex-desktop.js');
+    const result = await removeCodexDesktopConfig(statePath);
+
+    expect(result.usedBackup).toBe(true);
+    expect(workspace.readFile('config.toml')).toBe(original);
+  });
+
+  it('reports failure rather than success when no backup can rescue it', async () => {
+    const orphaned = 'model_provider = "codemie"\n\n[model_providers.codemie]\nbase_url = "x"\n';
+    const configPath = workspace.writeFile('config.toml', orphaned);
+    const statePath = workspace.writeFile('state.json', JSON.stringify({
+      configPath, backupPath: null, model: 'm', writtenAt: new Date().toISOString(),
+    }));
+
+    const { removeCodexDesktopConfig } = await import('../codex-desktop.js');
+    const { ConfigurationError } = await import('@/utils/errors.js');
+
+    await expect(removeCodexDesktopConfig(statePath)).rejects.toThrow(ConfigurationError);
+  });
+});
+
+describe('write ordering and failure atomicity (spec section 8)', () => {
+  let workspace: TempWorkspace;
+
+  beforeEach(() => { workspace = new TempWorkspace('codemie-codex-order-'); });
+  afterEach(() => { workspace.cleanup(); vi.restoreAllMocks(); vi.resetModules(); });
+
+  const opts = (configPath: string, statePath: string) => ({
+    configPath,
+    statePath,
+    proxyUrl: 'http://127.0.0.1:4001',
+    baseUrl: 'http://127.0.0.1:4001/v1',
+    gatewayKey: 'k',
+    model: 'gpt-5.6-luna-2026-07-09',
+  });
+
+  it('writes the marker state strictly before the config', async () => {
+    // Asserting the final contents cannot catch a reversed order; the sequence is
+    // the whole point of the write-ahead rationale.
+    const configPath = workspace.writeFile('config.toml', 'sandbox_mode = "x"\n');
+    const statePath = join(workspace.path, 'state.json');
+
+    const vscodeModule = await import('../vscode.js');
+    const order: string[] = [];
+    const real = vscodeModule.writeAtomically;
+    vi.spyOn(vscodeModule, 'writeAtomically').mockImplementation(async (path, content) => {
+      order.push(path === statePath ? 'state' : 'config');
+      return real(path, content);
+    });
+
+    const { writeCodexDesktopConfig } = await import('../codex-desktop.js');
+    await writeCodexDesktopConfig(opts(configPath, statePath));
+
+    expect(order.indexOf('state')).toBeGreaterThan(-1);
+    expect(order.indexOf('state')).toBeLessThan(order.lastIndexOf('config'));
+  });
+
+  it('leaves the original config intact when the atomic write fails', async () => {
+    const original = 'sandbox_mode = "x"\n# keep me\n';
+    const configPath = workspace.writeFile('config.toml', original);
+    const statePath = join(workspace.path, 'state.json');
+
+    const vscodeModule = await import('../vscode.js');
+    const real = vscodeModule.writeAtomically;
+    vi.spyOn(vscodeModule, 'writeAtomically').mockImplementation(async (path, content) => {
+      if (path === configPath) throw new Error('disk full');
+      return real(path, content);
+    });
+
+    const { writeCodexDesktopConfig } = await import('../codex-desktop.js');
+
+    await expect(writeCodexDesktopConfig(opts(configPath, statePath))).rejects.toThrow('disk full');
+    expect(workspace.readFile('config.toml')).toBe(original);
+  });
+});

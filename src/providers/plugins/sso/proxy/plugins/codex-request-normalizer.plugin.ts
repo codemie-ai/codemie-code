@@ -20,12 +20,19 @@ import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
 import { ProxyContext } from '../proxy-types.js';
 import { logger } from '../../../../../utils/logger.js';
 import { fetchCodeMieLlmModels } from '../../sso.http-client.js';
-import { rankDeploymentsByRecency, resolveCodexDeployment } from './codex-model-resolver.js';
+import {
+  isCodexServableDeployment,
+  rankDeploymentsByRecency,
+  resolveCodexDeployment,
+} from './codex-model-resolver.js';
 
 const ALLOWED_CLIENTS = ['codex-desktop'];
 
 /** Re-list deployments occasionally so a long-lived daemon picks up new models. */
 const MODEL_CACHE_TTL_MS = 10 * 60 * 1000;
+
+/** How long to wait before retrying after a failed or empty listing. */
+const MODEL_RETRY_BACKOFF_MS = 60 * 1000;
 
 /**
  * Repair empty `description` fields on tool definitions, in place.
@@ -46,11 +53,46 @@ const MODEL_CACHE_TTL_MS = 10 * 60 * 1000;
  *
  * Returns the number of descriptions repaired.
  */
+/**
+ * Depth ceiling for the walk. Request bodies are client-controlled — Codex
+ * accumulates conversation history plus nested MCP tool schemas — so an
+ * unbounded walk risks a RangeError escaping into the proxy pipeline. Real
+ * bodies nest far shallower than this.
+ */
+const MAX_WALK_DEPTH = 64;
+
 export function repairEmptyToolDescriptions(node: unknown): number {
-  if (Array.isArray(node)) {
-    return node.reduce<number>((count, item) => count + repairEmptyToolDescriptions(item), 0);
+  return walk(node, 0, new WeakSet<object>());
+}
+
+function repairToolEntry(tool: unknown): boolean {
+  if (tool === null || typeof tool !== 'object' || Array.isArray(tool)) return false;
+
+  const toolRecord = tool as Record<string, unknown>;
+  if (typeof toolRecord.description !== 'string') return false;
+  if (toolRecord.description.trim() !== '') return false;
+
+  const name = typeof toolRecord.name === 'string' ? toolRecord.name.trim() : '';
+  if (name !== '') {
+    toolRecord.description = name;
+  } else {
+    delete toolRecord.description;
   }
+  return true;
+}
+
+function walk(node: unknown, depth: number, seen: WeakSet<object>): number {
+  if (depth > MAX_WALK_DEPTH) return 0;
   if (node === null || typeof node !== 'object') return 0;
+
+  // Guard against cycles. The function is exported and takes `unknown`, so it
+  // cannot assume its input came from JSON.parse.
+  if (seen.has(node)) return 0;
+  seen.add(node);
+
+  if (Array.isArray(node)) {
+    return node.reduce<number>((count, item) => count + walk(item, depth + 1, seen), 0);
+  }
 
   let repaired = 0;
   const record = node as Record<string, unknown>;
@@ -58,23 +100,12 @@ export function repairEmptyToolDescriptions(node: unknown): number {
   for (const [key, value] of Object.entries(record)) {
     if (key === 'tools' && Array.isArray(value)) {
       for (const tool of value) {
-        if (tool === null || typeof tool !== 'object' || Array.isArray(tool)) continue;
-        const toolRecord = tool as Record<string, unknown>;
-        if (typeof toolRecord.description !== 'string') continue;
-        if (toolRecord.description.trim() !== '') continue;
-
-        const name = typeof toolRecord.name === 'string' ? toolRecord.name.trim() : '';
-        if (name !== '') {
-          toolRecord.description = name;
-        } else {
-          delete toolRecord.description;
-        }
-        repaired++;
+        if (repairToolEntry(tool)) repaired++;
       }
     }
     // Recurse regardless: a `tools` array can sit at any depth, and the entries
     // of one may themselves nest further structures.
-    repaired += repairEmptyToolDescriptions(value);
+    repaired += walk(value, depth + 1, seen);
   }
 
   return repaired;
@@ -101,6 +132,7 @@ class CodexRequestNormalizerInterceptor implements ProxyInterceptor {
 
   private availableModels: string[] = [];
   private loadedAt = 0;
+  private lastAttemptAt = 0;
   private inFlight: Promise<void> | null = null;
 
   constructor(private readonly context: PluginContext) {}
@@ -194,9 +226,17 @@ class CodexRequestNormalizerInterceptor implements ProxyInterceptor {
    * burst of list calls.
    */
   private async ensureModelsLoaded(): Promise<void> {
-    const fresh = this.availableModels.length > 0
-      && Date.now() - this.loadedAt < MODEL_CACHE_TTL_MS;
+    const now = Date.now();
+    const fresh = this.availableModels.length > 0 && now - this.loadedAt < MODEL_CACHE_TTL_MS;
     if (fresh) return;
+
+    // Negative cache: without this, expired credentials or a 5xx gateway turn
+    // every single request into a fresh listing call, because a failed load
+    // leaves availableModels empty and so never looks "fresh".
+    const backingOff = this.lastAttemptAt !== 0
+      && now - this.lastAttemptAt < MODEL_RETRY_BACKOFF_MS;
+    if (backingOff) return;
+
     if (this.inFlight) return this.inFlight;
 
     this.inFlight = this.loadModels().finally(() => { this.inFlight = null; });
@@ -204,8 +244,13 @@ class CodexRequestNormalizerInterceptor implements ProxyInterceptor {
   }
 
   private async loadModels(): Promise<void> {
+    this.lastAttemptAt = Date.now();
+
     const credentials = this.context.credentials;
-    if (!credentials) return;
+    if (!credentials) {
+      logger.debug(`[${this.name}] No credentials available; model names pass through unchanged`);
+      return;
+    }
 
     try {
       const apiUrl = credentials.apiUrl || this.context.config.targetApiUrl;
@@ -216,7 +261,9 @@ class CodexRequestNormalizerInterceptor implements ProxyInterceptor {
       this.availableModels = models
         .filter((model) => model.enabled !== false)
         .map((model) => model.deployment_name || model.base_name)
-        .filter((name): name is string => Boolean(name));
+        .filter((name): name is string => Boolean(name))
+        // Only Codex-servable deployments may be resolved to or substituted.
+        .filter(isCodexServableDeployment);
       this.loadedAt = Date.now();
 
       logger.debug(`[${this.name}] Loaded ${this.availableModels.length} deployments for model resolution`);

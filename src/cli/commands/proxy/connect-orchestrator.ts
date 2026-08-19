@@ -258,6 +258,7 @@ const TARGET_LIST = [
   '',
   'Examples:',
   '  codemie proxy connect --claude-desktop',
+  '  codemie proxy connect --codex-desktop',
   '  codemie proxy connect --vscode --vscode-claude-code',
   '  codemie proxy connect --claude-desktop --vscode --insiders',
   '',
@@ -525,18 +526,22 @@ async function runCodexDesktop(
 ): Promise<TargetResult> {
   const label = 'Codex Desktop';
   try {
-    if (!findCodexDesktopApp() && !options.force) {
+    const candidates = getCodexDesktopAppCandidates();
+    if (!findCodexDesktopApp(candidates) && !options.force) {
       throw new ConfigurationError(
-        'Could not find the ChatGPT desktop app (which ships Codex). Looked in: ' +
-        `${getCodexDesktopAppCandidates().join(', ')}. ` +
-        'Install it, or re-run with --force to write the config anyway.'
+        candidates.length === 0
+          ? `The Codex desktop app is not supported on ${process.platform} ` +
+            '(macOS and Windows only). Re-run with --force to write the config anyway.'
+          : 'Could not find the ChatGPT desktop app (which ships Codex). Looked in: ' +
+            `${candidates.join(', ')}. ` +
+            'Install it, or re-run with --force to write the config anyway.'
       );
     }
 
+    // Printed unconditionally: this command edits a file the user's own Codex CLI
+    // also reads, so which file was touched is not a debugging detail.
     const configPath = getCodexDesktopConfigPath();
-    if (options.verbose) {
-      console.log(chalk.cyan(`Codex config: ${configPath}`));
-    }
+    console.log(chalk.cyan(`Codex config: ${configPath}`));
 
     const discovered = await discoverCodexModels(state.url, state.gatewayKey);
     const model = selectCodexModel(discovered, options.model);
@@ -580,6 +585,21 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     console.log(
       chalk.yellow('Note: --insiders has no effect without a VS Code target (--vscode / --vscode-claude-code).')
     );
+  }
+
+  if (opts.model && !targets.codexDesktop) {
+    console.log(chalk.yellow('Note: --model has no effect without --codex-desktop.'));
+  }
+
+  // One daemon serves the whole run and carries a single client type. The Codex
+  // model normalizer is gated on that type, so a higher-priority target silently
+  // turns off the resolution the Codex app depends on.
+  if (targets.codexDesktop && deriveDaemonIdentity(targets).clientType !== 'codex-desktop') {
+    console.log(chalk.yellow(
+      'Warning: --codex-desktop was combined with a target that owns the shared daemon, so\n' +
+      '  Codex model-name resolution is disabled for this run. Selecting a model in the Codex\n' +
+      '  app will fail. Run `codemie proxy connect --codex-desktop` on its own instead.'
+    ));
   }
 
   const { label, commandExample } = describeTargets(targets);

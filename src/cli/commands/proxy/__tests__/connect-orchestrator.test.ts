@@ -462,6 +462,10 @@ describe('runCodexDesktop', () => {
 
     expect(result.ok).toBe(false);
     expect(result.error).toContain('ChatGPT.app');
+    // The story guarantees nothing is written when the app is absent, so the
+    // message alone is not enough — the writer must never have been reached.
+    const { writeCodexDesktopConfig } = await import('../connectors/codex-desktop.js');
+    expect(writeCodexDesktopConfig).not.toHaveBeenCalled();
   });
 
   it('writes the config and succeeds when the app is present', async () => {

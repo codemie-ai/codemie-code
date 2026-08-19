@@ -27,6 +27,8 @@ import {
   spliceManagedBlocks,
   stripManagedRegions,
 } from './codex-config-toml.js';
+import { resolveCodexDeployment } from '@/providers/plugins/sso/proxy/plugins/codex-model-resolver.js';
+
 import { writeAtomically } from './vscode.js';
 
 /**
@@ -75,6 +77,9 @@ export function findCodexDesktopApp(
   return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
 
+/** Bound on the connect-time model listing. */
+const MODEL_LIST_TIMEOUT_MS = 15000;
+
 /** Suffix for the pre-connect snapshot of the user's Codex config. */
 export const BACKUP_SUFFIX = '.codemie-backup';
 
@@ -96,8 +101,17 @@ export async function backupIfUnmanaged(
   const regions = findManagedRegions(currentText);
   const alreadyManaged = regions.header !== null || regions.table !== null;
 
-  if (alreadyManaged && existsSync(backupPath)) {
-    logger.debug('[proxy] Codex config already managed; keeping existing backup', { backupPath });
+  if (alreadyManaged) {
+    if (existsSync(backupPath)) {
+      logger.debug('[proxy] Codex config already managed; keeping existing backup', { backupPath });
+      return backupPath;
+    }
+    // Managed but the backup is gone. Copying the file as-is would enshrine our
+    // own block — bearer token included — as the "pre-connect original", and a
+    // later disconnect fallback would restore the credential. Reconstruct the
+    // original by stripping the managed regions instead.
+    await writeAtomically(backupPath, stripManagedRegions(currentText));
+    logger.debug('[proxy] Rebuilt missing Codex config backup without managed content', { backupPath });
     return backupPath;
   }
 
@@ -121,7 +135,12 @@ export async function discoverCodexModels(
 
   let response: Response;
   try {
-    response = await fetch(url, { headers: { Authorization: `Bearer ${gatewayKey}` } });
+    response = await fetch(url, {
+      headers: { Authorization: `Bearer ${gatewayKey}` },
+      // A proxy that accepts the socket but never answers would otherwise hang
+      // `proxy connect` indefinitely, after the daemon has already started.
+      signal: AbortSignal.timeout(MODEL_LIST_TIMEOUT_MS),
+    });
   } catch (error) {
     throw new ConfigurationError(
       `Could not reach the local proxy at ${proxyUrl} to list models: ` +
@@ -151,13 +170,24 @@ export async function discoverCodexModels(
 }
 
 /**
- * Choose the model to pin. An explicit request must exist in the discovered set:
- * silently substituting a different model would mean the user runs something
- * other than what they asked for.
+ * Choose the model to pin.
+ *
+ * An explicit request is resolved with the same rule the proxy applies to
+ * in-flight requests, so `--model gpt-5.6-luna` — the undated name the app's
+ * model picker displays — pins the dated deployment behind it rather than being
+ * rejected. Anything with no CodeMie equivalent is an error here: at connect
+ * time the user is present and can be told, so silently substituting would mean
+ * they run something other than what they asked for.
  */
 export function selectCodexModel(discovered: string[], requested?: string): string {
-  if (!requested) return discovered[0];
-  if (discovered.includes(requested)) return requested;
+  if (requested === undefined) return discovered[0];
+  if (requested.trim() === '') {
+    throw new ConfigurationError('--model was given an empty value.');
+  }
+
+  const resolution = resolveCodexDeployment(requested.trim(), discovered, undefined);
+  if (resolution.kind === 'exact' || resolution.kind === 'resolved') return resolution.model;
+
   throw new ConfigurationError(
     `Model "${requested}" is not available through the proxy. Available: ${discovered.join(', ')}`
   );
@@ -238,8 +268,26 @@ export async function writeCodexDesktopConfig(
     gatewayKey: options.gatewayKey,
     model: options.model,
   });
-  await writeAtomically(options.configPath, spliceManagedBlocks(currentText, blocks));
+  const next = spliceManagedBlocks(currentText, blocks);
 
+  // Validate what we are about to write, not just what we read. Every splice
+  // edge case — a duplicated region, an unrecognized quoted key, a value that
+  // escaping did not cover — surfaces here instead of landing a broken
+  // config.toml on the user's disk.
+  try {
+    TOML.parse(next);
+  } catch (error) {
+    throw new ConfigurationError(
+      `Refusing to write ${options.configPath}: the result would not be valid TOML ` +
+      `(${error instanceof Error ? error.message : String(error)}). The file is unchanged.`
+    );
+  }
+
+  await writeAtomically(options.configPath, next);
+
+  // The gateway key is deliberately absent: sanitizeLogArgs redacts by key name,
+  // and `gatewayKey` matches none of its patterns, so passing it would write the
+  // credential to the log in cleartext. Nothing here needs it.
   logger.info(
     '[proxy] Codex desktop configuration written',
     ...sanitizeLogArgs({
@@ -247,11 +295,28 @@ export async function writeCodexDesktopConfig(
       backupPath,
       model: options.model,
       baseUrl: options.baseUrl,
-      gatewayKey: options.gatewayKey,
     })
   );
 
   return state;
+}
+
+/**
+ * Throw when a stripped config still carries CodeMie-owned keys.
+ *
+ * The post-strip check for disconnect: a parseable result that still selects the
+ * CodeMie provider means removal did not actually happen, which is what occurs
+ * when the managed sentinels have been lost.
+ */
+function assertNoCodeMieKeys(parsed: Record<string, unknown>): void {
+  if (parsed.model_provider === CODEMIE_PROVIDER_ID) {
+    throw new Error(`model_provider is still "${CODEMIE_PROVIDER_ID}"`);
+  }
+  const providers = parsed.model_providers;
+  if (providers !== null && typeof providers === 'object'
+    && CODEMIE_PROVIDER_ID in (providers as Record<string, unknown>)) {
+    throw new Error(`model_providers.${CODEMIE_PROVIDER_ID} is still present`);
+  }
 }
 
 export interface RemoveCodexDesktopResult {
@@ -301,12 +366,20 @@ export async function removeCodexDesktopConfig(
   let nextText = stripped;
   let usedBackup = false;
   try {
-    if (stripped.trim() !== '') TOML.parse(stripped);
+    if (stripped.trim() !== '') {
+      const parsed = TOML.parse(stripped) as Record<string, unknown>;
+      // Parsing is not enough: if the sentinels were lost the strip is a silent
+      // no-op, and reporting success would leave the CodeMie provider — and its
+      // bearer header — in the user's config.
+      assertNoCodeMieKeys(parsed);
+    }
   } catch {
     if (!state.backupPath || !existsSync(state.backupPath)) {
       throw new ConfigurationError(
-        `Removing the CodeMie block from ${state.configPath} produced invalid TOML ` +
-        'and no backup is available to restore.'
+        `Could not cleanly remove the CodeMie block from ${state.configPath} ` +
+        '(the managed markers appear to be damaged or missing) and no backup is ' +
+        `available to restore. Remove the model_provider and [model_providers.${CODEMIE_PROVIDER_ID}] ` +
+        'entries by hand.'
       );
     }
     nextText = await readFile(state.backupPath, 'utf-8');

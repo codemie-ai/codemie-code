@@ -344,3 +344,71 @@ but selecting any model in it works, because the proxy resolves whatever it send
 was considered and rejected — upstream filters locally-configured catalog entries out of the picker
 (#19694) and a local catalog replaces the bundled one (#29156), and it could not fix
 `gpt-5.2` → `gpt-5-2` if the app ignores the catalog.
+
+---
+
+## 12. Revision: empty tool descriptions, and the review findings (2026-08-19)
+
+### Third defect found in live testing
+
+Switching the app from the Codex tab to **ChatGPT Work** mode failed upstream with
+`Invalid 'input[0].tools[0].description': empty string`, while the model resolution from section 11
+worked correctly (`Received Model Group=gpt-5.6-luna-2026-07-09`).
+
+Azure, which backs CodeMie deployments through LiteLLM, rejects a tool whose `description` is an
+empty string; direct OpenAI accepts it. The app's Work mode and the MCP servers it loads emit
+empty descriptions, so this is a client/upstream compatibility gap rather than a CodeMie defect —
+the same category as the Kimi normalizer capping token limits that Bedrock rejects.
+
+`repairEmptyToolDescriptions` in the Codex normalizer replaces an empty `description` with the
+tool's own `name`, which carries no information the model lacks, and drops the key when there is
+no usable name. It is scoped to arrays literally named `tools`, recursively at any depth, so
+JSON-schema property descriptions — legitimately allowed to be empty — are never rewritten.
+
+**Not reproducible synthetically.** Every `mcp_list_tools` shape tried against the gateway accepted
+an empty description, so the exact failing item shape is unidentified. The repair is scoped from
+the error's own `param` path rather than from a confirmed reproduction, which is why it is
+depth-agnostic. The user confirmed the fix works in the app.
+
+### Code-review findings resolved
+
+Three review lenses ran against the full diff. Confirmed and fixed:
+
+| Finding | Resolution |
+|---|---|
+| `cutRegionLines` deleted to end of file when a close sentinel was missing — silent data loss on connect *or* disconnect | Unterminated regions are now kept verbatim, matching `findManagedRegions`' documented contract |
+| `findManagedRegions` matched sentinels by substring while the cutter matched whole lines, so a trailing space or `\r` duplicated the managed block into the user's file | Both now use trimmed whole-line matching |
+| The gateway key was passed to `logger.info`; `gatewayKey` matches none of `SENSITIVE_KEY_PATTERNS`, so `sanitizeLogArgs` did not redact it | The key is no longer logged at all |
+| `backupIfUnmanaged` could snapshot an already-managed file, enshrining the bearer token as the "pre-connect original" | When managed and the backup is missing, the backup is rebuilt by stripping the managed regions |
+| Connect validated its input but not its output, so any splice edge case shipped a broken config | The spliced result is parsed before writing; failure writes nothing |
+| Disconnect verified only that the strip parsed, not that CodeMie keys were gone, so a lost sentinel reported success with the token still in place | Added `assertNoCodeMieKeys`, which routes failure into the backup fallback |
+| `codex-desktop` was absent from `CodexEncryptedContentSanitizerPlugin`'s allowlist, so introducing a dedicated client type silently disabled the Responses reasoning-state handling section 2 relies on | Added to `ALLOWED_AGENTS` |
+| The substitution fallback ranked over *all* enabled deployments, so an account with no GPT/Codex model could have a Responses request rerouted to a Claude or embedding deployment | Listings are filtered through `isCodexServableDeployment` |
+| A trailing suffix after the release date (`gpt-5-2025-08-07-preview`) reintroduced the date-as-version inversion | The date pattern is no longer end-anchored |
+| The resolver took the first identity match rather than the newest when several deployments shared an identity | It now ranks the matches |
+| `repairEmptyToolDescriptions` had unbounded recursion and no cycle guard on a client-controlled body | Depth ceiling of 64 plus a `WeakSet` guard |
+| A failed model listing was never cached, so a broken gateway caused a listing call on every request | 60-second negative-cache backoff |
+| `--model gpt-5.6-luna` — the name the picker displays and the proxy resolves — was rejected by connect | Connect now applies the same resolution rule as the proxy |
+| No timeout on the connect-time model listing | 15-second `AbortSignal.timeout` |
+| Combining `--codex-desktop` with a higher-priority target silently disabled Codex model resolution, because one daemon carries one client type | Warns explicitly and names the consequence |
+| The resolved config path printed only under `--verbose`, contradicting the docs | Printed unconditionally |
+| An unsupported platform rendered as `Looked in: .` | Names the platform and that macOS/Windows are supported |
+
+Also added the test cases section 8 required but that were missing or non-binding: atomic-write
+failure leaves the original intact, marker-state write ordering (asserted as a sequence, not as
+final content), and app-detection failure asserting the writer was never called.
+
+### Findings accepted rather than fixed
+
+- **`isTableHeader` is not TOML-aware.** A line beginning with `[` inside a multi-line string or a
+  multi-line array ends root-scope detection early, and a `model = …` line inside a root-level
+  multi-line string would be commented. Both now fail closed rather than corrupting: the
+  output-validation step refuses to write a config that would not parse. A correct fix needs a
+  real TOML scanner, which is disproportionate here.
+- **Quoted root keys** (`"model" = "x"`) are not recognized as displaceable, and likewise fail
+  closed via output validation.
+- **Concurrent connect/disconnect** on the same file is unserialized. Single-user CLI invocations
+  make this remote, and a lockfile is out of proportion to the risk.
+- **Real per-platform app-candidate paths are unverified by tests**; only injected paths are
+  covered. The Windows locations in particular should be checked against a real install, with
+  `--force` as the escape hatch meanwhile.

@@ -12,8 +12,15 @@
  * plugin, which installs independently of the provider stack.
  */
 
-/** Trailing release date on a CodeMie deployment name, e.g. `-2026-07-09`. */
-const DEPLOYMENT_DATE_PATTERN = /[-._](20\d{2})[-._](\d{2})[-._](\d{2})\s*$/;
+/**
+ * Release date embedded in a CodeMie deployment name, e.g. `-2026-07-09`.
+ *
+ * Not anchored to end-of-string: a deployment may carry a suffix after the date
+ * (`gpt-5-2025-08-07-preview`). Anchoring would fail the match there, and the
+ * version reader would then take `2025` as the minor version — the exact
+ * date-as-version inversion this module exists to avoid.
+ */
+const DEPLOYMENT_DATE_PATTERN = /[-._](20\d{2})[-._](\d{2})[-._](\d{2})/;
 
 /** Identity of a model, independent of which dated deployment carries it. */
 interface ModelIdentity {
@@ -62,6 +69,26 @@ function parseIdentity(name: string): ModelIdentity | null {
 
 function sameIdentity(a: ModelIdentity, b: ModelIdentity): boolean {
   return a.major === b.major && a.minor === b.minor && a.variant === b.variant;
+}
+
+/** Model families that cannot serve a Codex Responses request. */
+const INCOMPATIBLE_NAME_PATTERN =
+  /claude|sonnet|opus|haiku|anthropic|gemini|qwen|deepseek|llama|mistral|grok|embedding/i;
+
+/** Model families that can. */
+const COMPATIBLE_NAME_PATTERN = /codex|^gpt[-._]?5(?:[-._]|\b)|^gpt[-._]?6(?:[-._]|\b)/i;
+
+/**
+ * True when a deployment can serve a Codex Responses request.
+ *
+ * The gateway lists every model the account can reach, including Claude and
+ * embedding deployments. Substituting one of those for an unmatched Codex
+ * request would be far worse than passing the request through and letting the
+ * gateway report the real problem.
+ */
+export function isCodexServableDeployment(name: string): boolean {
+  if (INCOMPATIBLE_NAME_PATTERN.test(name)) return false;
+  return COMPATIBLE_NAME_PATTERN.test(name);
 }
 
 /**
@@ -115,11 +142,16 @@ export function resolveCodexDeployment(
 
   const wanted = parseIdentity(requested);
   if (wanted) {
-    const match = available.find((candidate) => {
+    const matches = available.filter((candidate) => {
       const identity = parseIdentity(candidate);
       return identity !== null && sameIdentity(identity, wanted);
     });
-    if (match) return { model: match, kind: 'resolved' };
+    // Rank rather than take the first: gateway order is arbitrary and in practice
+    // lists the oldest deployment first, so `find` would pin a stale date when
+    // several deployments share one identity.
+    if (matches.length > 0) {
+      return { model: rankDeploymentsByRecency(matches)[0], kind: 'resolved' };
+    }
   }
 
   if (pinnedFallback && available.includes(pinnedFallback)) {

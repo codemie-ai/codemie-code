@@ -29,12 +29,30 @@ export interface ManagedRegions {
   table: Region | null;
 }
 
+/**
+ * A line is a sentinel when it equals one after trimming.
+ *
+ * Trailing whitespace and a stray `\r` are tolerated because this file is
+ * rewritten by the Codex desktop app and by editors on Windows, a supported
+ * platform. Matching strictly would make a sentinel unrecognizable to the
+ * cutter while still looking managed to the reader — which duplicates the
+ * managed block into the user's file.
+ */
+function isSentinel(line: string, sentinel: string): boolean {
+  return line.trim() === sentinel;
+}
+
 function locate(text: string, open: string, close: string): Region | null {
-  const start = text.indexOf(open);
-  if (start === -1) return null;
-  const closeAt = text.indexOf(close, start + open.length);
-  if (closeAt === -1) return null;
-  return { start, end: closeAt + close.length };
+  const lines = text.split('\n');
+  const openLine = lines.findIndex((line) => isSentinel(line, open));
+  if (openLine === -1) return null;
+  const closeLine = lines.findIndex((line, index) => index > openLine && isSentinel(line, close));
+  if (closeLine === -1) return null;
+
+  // Character offsets of the whole-line span, so callers can slice text.
+  const start = lines.slice(0, openLine).reduce((n, line) => n + line.length + 1, 0);
+  const end = lines.slice(0, closeLine + 1).reduce((n, line) => n + line.length + 1, 0) - 1;
+  return { start, end };
 }
 
 /**
@@ -111,24 +129,46 @@ export interface ManagedBlocks {
  * character offset cannot express "and the blank line that came with it", which
  * is what makes `strip(splice(x)) === x` hold here.
  */
+/** Index of the matching close sentinel after `from`, or -1 when unterminated. */
+function findClose(lines: string[], from: number, close: string): number {
+  for (let i = from + 1; i < lines.length; i++) {
+    if (isSentinel(lines[i], close)) return i;
+  }
+  return -1;
+}
+
 function cutRegionLines(text: string): string {
   const lines = text.split('\n');
   const keep: string[] = [];
   let i = 0;
 
   while (i < lines.length) {
-    if (lines[i] === HEADER_OPEN) {
-      while (i < lines.length && lines[i] !== HEADER_CLOSE) i++;
-      i++;
+    if (isSentinel(lines[i], HEADER_OPEN)) {
+      const closeAt = findClose(lines, i, HEADER_CLOSE);
+      if (closeAt === -1) {
+        // Unterminated region: keep the line verbatim rather than consuming the
+        // rest of the file. Deleting to EOF here would destroy a user config
+        // whose close marker was removed, and would contradict
+        // findManagedRegions, which reports such a region as absent.
+        keep.push(lines[i]);
+        i++;
+        continue;
+      }
+      i = closeAt + 1;
       // The header chunk owns exactly one blank line after it.
-      if (i < lines.length && lines[i] === '') i++;
+      if (i < lines.length && lines[i].trim() === '') i++;
       continue;
     }
-    if (lines[i] === TABLE_OPEN) {
+    if (isSentinel(lines[i], TABLE_OPEN)) {
+      const closeAt = findClose(lines, i, TABLE_CLOSE);
+      if (closeAt === -1) {
+        keep.push(lines[i]);
+        i++;
+        continue;
+      }
       // The table chunk owns exactly one blank line before it.
-      if (keep.length > 0 && keep[keep.length - 1] === '') keep.pop();
-      while (i < lines.length && lines[i] !== TABLE_CLOSE) i++;
-      i++;
+      if (keep.length > 0 && keep[keep.length - 1].trim() === '') keep.pop();
+      i = closeAt + 1;
       continue;
     }
     keep.push(lines[i]);

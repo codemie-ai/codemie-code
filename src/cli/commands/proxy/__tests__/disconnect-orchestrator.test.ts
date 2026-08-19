@@ -74,6 +74,5 @@ describe('disconnectTargets', () => {
     await disconnectTargets({ targets: { codexDesktop: true } });
 
     expect(process.exitCode).toBe(1);
-    process.exitCode = 0;
   });
 });

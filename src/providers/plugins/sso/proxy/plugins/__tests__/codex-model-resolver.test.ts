@@ -83,3 +83,24 @@ describe('rankDeploymentsByRecency', () => {
     expect(rankDeploymentsByRecency([])).toEqual([]);
   });
 });
+
+describe('deployment names with a suffix after the release date', () => {
+  it('does not let a trailing suffix reintroduce the date-as-version inversion', async () => {
+    const { rankDeploymentsByRecency, resolveCodexDeployment } = await import('../codex-model-resolver.js');
+    const list = ['gpt-5-2025-08-07-preview', 'gpt-5.6-luna-2026-07-09'];
+
+    // gpt-5-...-preview must parse as major 5 / minor 0, not minor 2025.
+    expect(rankDeploymentsByRecency(list)[0]).toBe('gpt-5.6-luna-2026-07-09');
+    expect(resolveCodexDeployment('gpt-5.6-luna', list, undefined).model)
+      .toBe('gpt-5.6-luna-2026-07-09');
+  });
+
+  it('prefers the newest deployment when several share one identity', async () => {
+    const { resolveCodexDeployment } = await import('../codex-model-resolver.js');
+    // Gateway order is arbitrary and often lists the oldest first.
+    const list = ['gpt-5.6-luna-2026-01-01', 'gpt-5.6-luna-2026-07-09'];
+
+    expect(resolveCodexDeployment('gpt-5.6-luna', list, undefined))
+      .toEqual({ model: 'gpt-5.6-luna-2026-07-09', kind: 'resolved' });
+  });
+});

@@ -292,3 +292,73 @@ describe('CodexRequestNormalizerPlugin empty tool descriptions', () => {
     expect(context.requestBody!.toString('utf-8')).toBe(before);
   });
 });
+
+describe('CodexRequestNormalizerPlugin robustness', () => {
+  beforeEach(() => { vi.resetModules(); vi.clearAllMocks(); });
+
+  it('survives a pathologically deep body without blowing the stack', async () => {
+    const { repairEmptyToolDescriptions } = await import('../codex-request-normalizer.plugin.js');
+
+    // Body depth is client-controlled: Codex accumulates conversation history
+    // plus nested MCP tool schemas.
+    let deep: Record<string, unknown> = { tools: [{ name: 'x', description: '' }] };
+    for (let i = 0; i < 20000; i++) deep = { nested: deep };
+
+    expect(() => repairEmptyToolDescriptions(deep)).not.toThrow();
+  });
+
+  it('does not hang on a cyclic body', async () => {
+    const { repairEmptyToolDescriptions } = await import('../codex-request-normalizer.plugin.js');
+    const body: Record<string, unknown> = { tools: [{ name: 'x', description: '' }] };
+    body.self = body;
+
+    expect(() => repairEmptyToolDescriptions(body)).not.toThrow();
+  });
+
+  it('tolerates a tools key whose value is not an array of objects', async () => {
+    const { repairEmptyToolDescriptions } = await import('../codex-request-normalizer.plugin.js');
+
+    expect(() => repairEmptyToolDescriptions({ tools: 'not-an-array' })).not.toThrow();
+    expect(() => repairEmptyToolDescriptions({ tools: [null, 5, 'x', [1]] })).not.toThrow();
+  });
+
+  it('caches a failed model listing so a broken gateway is not refetched per request', async () => {
+    const httpModule = await import('../../../sso.http-client.js');
+    const fetchSpy = vi.spyOn(httpModule, 'fetchCodeMieLlmModels')
+      .mockRejectedValue(new Error('gateway down'));
+
+    const { CodexRequestNormalizerPlugin } = await import('../codex-request-normalizer.plugin.js');
+    const interceptor = await new CodexRequestNormalizerPlugin().createInterceptor(makePluginContext());
+
+    for (let i = 0; i < 4; i++) {
+      await interceptor.onRequest!(makeProxyContext({ model: 'gpt-5.6-luna', input: 'hi' }));
+    }
+
+    expect(fetchSpy.mock.calls.length).toBeLessThanOrEqual(1);
+  });
+});
+
+describe('CodexRequestNormalizerPlugin fallback safety', () => {
+  beforeEach(() => { vi.resetModules(); vi.clearAllMocks(); });
+
+  it('never substitutes a non-Codex deployment', async () => {
+    // loadModels must not hand the resolver Claude or embedding deployments: a
+    // Responses request silently rerouted to one of those would be worse than
+    // the gateway's own error.
+    const httpModule = await import('../../../sso.http-client.js');
+    vi.spyOn(httpModule, 'fetchCodeMieLlmModels').mockResolvedValue([
+      { deployment_name: 'claude-sonnet-4-6', enabled: true },
+      { deployment_name: 'text-embedding-3-large', enabled: true },
+    ] as never);
+
+    const { CodexRequestNormalizerPlugin } = await import('../codex-request-normalizer.plugin.js');
+    const interceptor = await new CodexRequestNormalizerPlugin().createInterceptor(makePluginContext());
+
+    const context = makeProxyContext({ model: 'gpt-5.6-luna', input: 'hi' });
+    await interceptor.onRequest!(context);
+
+    // No Codex-compatible deployment exists, so the request passes through and
+    // the gateway reports the real problem.
+    expect(bodyOf(context).model).toBe('gpt-5.6-luna');
+  });
+});

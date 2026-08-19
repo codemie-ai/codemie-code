@@ -166,8 +166,14 @@ function rankModel(model: LlmModel): RankedModel {
   };
 }
 
-/** Trailing release date on a CodeMie deployment name, e.g. `-2026-07-09`. */
-const DEPLOYMENT_DATE_PATTERN = /[-._](20\d{2})[-._](\d{2})[-._](\d{2})\s*$/;
+/**
+ * Release date embedded in a CodeMie deployment name, e.g. `-2026-07-09`.
+ *
+ * Not anchored to end-of-string: a deployment may carry a suffix after the date
+ * (`gpt-5-2025-08-07-preview`), and anchoring would fail the match there, making
+ * the version reader take `2025` as the minor version.
+ */
+const DEPLOYMENT_DATE_PATTERN = /[-._](20\d{2})[-._](\d{2})[-._](\d{2})/;
 
 /**
  * Split a deployment id into its generation version and its release date.
