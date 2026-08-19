@@ -1,0 +1,136 @@
+{
+  "decision": "request-changes",
+  "rationale": "All four lenses ran and parsed cleanly against an existing spec, and every candidate finding was verified against source within budget. 9 findings survive triage (4 critical, 5 major) — most notably the spec's required modelSource-based override protection was never implemented, the version-ranking regex can't score undated Claude model ids, and the new auto-resolver loop still forces catalog models onto anthropic-subscription while separately leaking a stale CODEMIE_SONNET_MODEL. 5 findings were dismissed as verified non-issues and 0 were deferred; see code-review-brief.md for the full list.",
+  "confidence": "high",
+  "risk_flags": ["breaking-change"],
+  "business_review": [
+    { "kind": "spec", "item": "Goal: CodeMie-proxied Claude always resolves to a current, compatible model per tier (default/haiku/sonnet/opus) without manual code change, mirroring the Codex/Kimi/Copilot pattern", "status": "partial", "notes": "resolver added and works for the common (unset) case, but explicit-override gating differs from Copilot's modelSource-based pattern, so a default-sourced-but-still-enabled stale model never gets re-ranked; claude.models.ts:306,330-335 vs copilot-cli.models.ts:213-217" },
+    { "kind": "spec", "item": "Goal: a user's explicit model choice (CLI flag, env var, project/global config) is never silently overridden", "status": "partial", "notes": "protection is presence-in-catalog based, not modelSource based as specced; roughly holds for the common cases but conflates 'default' with 'explicit' when both are simply non-empty; claude.models.ts:306,330-335" },
+    { "kind": "spec", "item": "Goal: anthropic-subscription stops forcing its hardcoded model list onto the claude CLI and defers entirely to the CLI's own built-in defaults (no CodeMie catalog to query on that path)", "status": "fail", "notes": "claude.plugin.ts's new resolver loop runs unconditionally in beforeRun for every provider; when config.codeMieUrl is set for anthropic-subscription (a supported combo, anthropic-subscription.template.ts:117-120), fetchCatalog takes the SSO path and re-populates ANTHROPIC_MODEL/ANTHROPIC_DEFAULT_*_MODEL from the CodeMie catalog — claude.plugin.ts:313-322, claude.models.ts:254-288" },
+    { "kind": "spec", "item": "Goal: no changes to BaseAgentAdapter or any other agent's plugin — Claude-plugin-local plus one provider-template change only", "status": "pass", "notes": "diff touches only claude.plugin.ts, new claude.models.ts, and anthropic-subscription.template.ts" },
+    { "kind": "spec", "item": "Non-goal: no change to how Codex, Kimi, Copilot, Pi, or OpenCode resolve models", "status": "pass", "notes": "no files under those plugins are touched" },
+    { "kind": "spec", "item": "Non-goal: no new user-facing command or config UI", "status": "pass", "notes": "no CLI/UI surface changed" },
+    { "kind": "spec", "item": "Non-goal: no attempt to unify the two hardcoded model sources under one mechanism", "status": "pass", "notes": "Claude catalog resolver and anthropic-subscription blanking remain independent" },
+    { "kind": "spec", "item": "Design 1: new claude.models.ts exports resolveClaudeModel(env, tier) following the resolve<Agent>Model convention", "status": "pass", "notes": "claude.models.ts:302-305" },
+    { "kind": "spec", "item": "Design 1: fetches the live CodeMie model catalog via the existing shared client (fetchCodeMieLlmModels)", "status": "pass", "notes": "claude.models.ts:131,271,281" },
+    { "kind": "spec", "item": "Design 1: catalog fetch is TTL-cached, keyed by credential/base-URL, to avoid a per-tier round trip", "status": "pass", "notes": "claude.models.ts:251-266, 5-minute module-level TTL cache" },
+    { "kind": "spec", "item": "Design 1: filters catalog to tier-compatible entries via naming-pattern predicate (haiku/sonnet/opus; bare 'model' tier uses the general Claude filter)", "status": "pass", "notes": "claude.models.ts:166-208 (CLAUDE_FAMILY_PATTERNS, TIER_PATTERN, isClaudeCompatibleModel)" },
+    { "kind": "spec", "item": "Design 1: ranks compatible candidates with version-aware comparison (descending score then id) and selects the top-ranked entry", "status": "pass", "notes": "claude.models.ts:224-246, 326-329" },
+    { "kind": "spec", "item": "Design 1: on catalog fetch failure, falls back silently to the currently configured model, logged at logger.debug (not warn/error)", "status": "pass", "notes": "claude.models.ts:311-323" },
+    { "kind": "spec", "item": "Design 1: fetch succeeds but no compatible model for a tier and no valid current fallback -> throws ConfigurationError naming the tier", "status": "pass", "notes": "claude.models.ts:337-343" },
+    { "kind": "spec", "item": "Design 1: ClaudePluginMetadata.recommendedModels stops being the source of truth for tier resolution and becomes only the resolver's last-resort static fallback", "status": "pass", "notes": "claude.models.ts:290-295 (staticFallback reads ClaudePluginMetadata.recommendedModels only on fetch failure)" },
+    { "kind": "spec", "item": "Design 2: explicit-override protection reuses the existing modelSource / CODEMIE_MODEL_SOURCE convention, resolving live only when a tier's modelSource is 'default' or the current model is stale/retired even if a source claims it was explicit", "status": "fail", "notes": "claude.models.ts never reads env.CODEMIE_MODEL_SOURCE or any modelSource concept; it substitutes a presence-in-catalog check (claude.models.ts:306,332-335) that treats any non-empty CODEMIE_*_MODEL env var as explicit, including a base-layer default the user never chose (src/utils/config.ts:1403-1425 unconditionally sets these vars before the provider overlay) — a stale-but-still-enabled default model is never re-ranked, unlike Copilot's modelSource-gated equivalent (copilot-cli.models.ts:174-217)" },
+    { "kind": "spec", "item": "Design 2: each tier (model/haiku/sonnet/opus) is resolved independently", "status": "pass", "notes": "claude.plugin.ts:313 per-tier loop; claude.models.ts TIER_ENV_VAR keyed per tier" },
+    { "kind": "spec", "item": "Design 3: resolveClaudeModel is invoked from ClaudePlugin's beforeRun hook, after generic CODEMIE_* vars are projected and before the process launches", "status": "pass", "notes": "claude.plugin.ts:159 (beforeRun), resolver call at 313-330" },
+    { "kind": "spec", "item": "Design 4: remove ANTHROPIC_SUBSCRIPTION_DEFAULT_HAIKU_MODEL, ANTHROPIC_SUBSCRIPTION_DEFAULT_OPUS_MODEL, and the alias table", "status": "pass", "notes": "anthropic-subscription.template.ts diff removes all three (former lines 61-72)" },
+    { "kind": "spec", "item": "Design 4: exportEnvVars stops normalizing/overriding CODEMIE_MODEL/HAIKU_MODEL/OPUS_MODEL so no ANTHROPIC_MODEL/ANTHROPIC_DEFAULT_*_MODEL is set by this provider path at all", "status": "fail", "notes": "exportEnvVars itself correctly blanks these (anthropic-subscription.template.ts:113-115), but claude.plugin.ts's provider-agnostic auto-resolver loop re-populates ANTHROPIC_MODEL/ANTHROPIC_DEFAULT_*_MODEL from the CodeMie catalog whenever config.codeMieUrl is also configured for this provider (the same combo the template itself supports at anthropic-subscription.template.ts:117-120), reintroducing exactly the forced-model behavior the goal removed" },
+    { "kind": "spec", "item": "Design 4: verify ConfigLoader.exportProviderEnvVars's always-emit-even-empty behavior doesn't reintroduce an override; blank explicitly if it would", "status": "pass", "notes": "verified src/utils/config.ts:1403-1440 layers base env (CODEMIE_MODEL/HAIKU/OPUS from config) before Object.assign of provider exportEnvVars; anthropic-subscription.template.ts:113-115 explicitly blanks all three afterward, correctly overriding any base-layer config.model/haikuModel/opusModel value — but CODEMIE_SONNET_MODEL (set the same way at config.ts:1424) is not blanked, see CR-009" },
+    { "kind": "spec", "item": "Testing: tests are written only on explicit request per repo policy", "status": "na", "notes": "no test coverage added; consistent with spec's Testing section and this diff's task, which carried no explicit test request" }
+  ],
+  "standards_review": [
+    { "kind": "commit-format", "status": "na", "notes": "No commits made this round — changes are in the working tree per repo policy (git ops only on explicit user request); nothing to check against commit-message format yet." },
+    { "kind": "code-quality", "status": "pass", "notes": "ES modules with .js import extensions, explicit return types on all exports, interface for shapes (ClaudeModelResolution), no any, camelCase/PascalCase naming consistent with guide. Verified via npm run lint (--max-warnings=0, zero output) and npm run typecheck (clean) and npm run build (succeeded)." },
+    { "kind": "security", "status": "na", "notes": "No .ai-run/guides/development/security-patterns.md exists in this repo. No concrete security issues observed in the diff (reuses existing authenticated SSO/JWT catalog-fetch client; no secrets logged, no injection surface)." }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude/claude.models.ts",
+      "line": 210,
+      "title": "Version regex can't rank undated model ids",
+      "problem": "extractVersionParts's genMatch regex (`claude(?:[-_.]?(\\d+))?(?:[-_.](\\d+))?`) assumes version digits immediately follow the literal `claude` prefix, but every real Claude model id shown elsewhere in this diff (`claude-sonnet-4-6`, `claude-opus-4-7`, `claude-haiku-4-5-20251001`) has the tier word between `claude` and the digits, so the optional digit groups never match and genMatch[1]/genMatch[2] are always undefined -> generation score is always [0,0].",
+      "impact": "Ranking between two non-dated versions of the same tier (e.g. claude-opus-4-6 vs claude-opus-4-7) collapses to compareRankedModels' alphabetical id tie-break, which does not correlate with recency (and actively misorders multi-digit versions, e.g. '4-10' sorting before '4-9') — undermining the 'always resolve to the current model' goal for the common undated naming pattern this diff's own examples use.",
+      "recommendation": "Rewrite the generation regex to skip an optional tier word between `claude` and the digits, e.g. match `claude(?:-(?:sonnet|opus|haiku))?[-_.]?(\\d+)(?:[-_.](\\d+))?`, and add a case covering `claude-sonnet-4-6`-style ids to catch a regression."
+    },
+    {
+      "id": "CR-002",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude/claude.models.ts",
+      "line": 224,
+      "title": "Malformed catalog entry aborts entire tier ranking",
+      "problem": "rankModel throws ConfigurationError when getModelId(model) is falsy (all of deployment_name/base_name/label empty), but isClaudeCompatibleModel doesn't require an id — it can pass an entry via the `provider` field alone. The ranking pipeline (`catalog.filter(isClaudeCompatibleModel).map(rankModel).sort(...)`) is not wrapped in a try/catch, so .map() throws synchronously for the whole tier.",
+      "impact": "One catalog entry with empty id fields (valid per the LlmModel type since the fields are required strings but empty string is falsy) but a matching provider name aborts ranking for every other otherwise-valid candidate in that tier; the outer per-tier catch in claude.plugin.ts swallows it and the tier silently keeps its old configured model (or throws ConfigurationError if unconfigured), instead of ranking around the one bad entry.",
+      "recommendation": "Guard the map step, e.g. `.map(m => { try { return rankModel(m); } catch { return null; } }).filter((r): r is RankedClaudeModel => r !== null)`, so one malformed entry is skipped rather than aborting the tier."
+    },
+    {
+      "id": "CR-003",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude/claude.models.ts",
+      "line": 290,
+      "title": "Haiku tier has no static fallback model",
+      "problem": "staticFallback('haiku') searches ClaudePluginMetadata.recommendedModels (`['claude-sonnet-4-6', 'claude-4-opus', 'gpt-4.1']`, claude.plugin.ts:97) for an id matching /haiku/i, but none of the three entries contain 'haiku'.",
+      "impact": "On a catalog fetch failure (network/auth error) with no currently configured haiku model — e.g. a first-ever run with no network — resolveClaudeModel('haiku') always throws ConfigurationError instead of falling back to a static default, unlike the sonnet and opus tiers which do have matching fallback entries.",
+      "recommendation": "Add a haiku-matching id to ClaudePluginMetadata.recommendedModels (e.g. 'claude-haiku-4-5-20251001') so staticFallback('haiku') can resolve."
+    },
+    {
+      "id": "CR-004",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude/claude.models.ts",
+      "line": 306,
+      "title": "Explicit-override check ignores modelSource",
+      "problem": "The spec's Design 2 requires reusing the existing modelSource/CODEMIE_MODEL_SOURCE convention (resolve live only when a tier's modelSource is 'default', or when the current model is stale/retired) mirroring resolveCopilotModel's assertExplicitCopilotModelAllowed gate. resolveClaudeModel never reads env.CODEMIE_MODEL_SOURCE or any modelSource value at all — it substitutes a presence-in-catalog check (`currentModel && availableModels.includes(currentModel)`) that treats any non-empty CODEMIE_*_MODEL as explicit.",
+      "impact": "ConfigLoader.exportProviderEnvVars unconditionally sets CODEMIE_MODEL/CODEMIE_HAIKU_MODEL/CODEMIE_SONNET_MODEL/CODEMIE_OPUS_MODEL from config.* before any provider overlay (src/utils/config.ts:1418-1425), so a stale-but-still-catalog-present default value the user never explicitly chose is treated as explicit and never re-ranked against newer catalog entries — the required design behavior for the common 'default, never explicitly set' case never runs.",
+      "recommendation": "Read env.CODEMIE_MODEL_SOURCE for the tier and gate the live-resolution path on it being 'default' (or the current model being absent from the catalog), matching resolveCopilotModel's gate in copilot-cli.models.ts:213-217."
+    },
+    {
+      "id": "CR-005",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude/claude.models.ts",
+      "line": 332,
+      "title": "No test covers explicit-override protection",
+      "problem": "No test in the repo exercises resolveClaudeModel's 'leave a still-valid configured model untouched' check (`if (currentModel && availableModels.includes(currentModel)) return null;`) against a non-empty live catalog — no claude.models.test.ts exists, and the two test files that execute the beforeRun hook containing this loop never set CODEMIE_JWT_TOKEN/CODEMIE_BASE_URL/CODEMIE_URL, so fetchCatalog always takes the empty-catalog fallback branch.",
+      "impact": "A regression that always overwrites the configured model (or picks the wrong ranked candidate) would silently replace a user's explicitly configured, still-valid Claude model on every `codemie claude` run, and no test in the repo would catch it.",
+      "recommendation": "Add src/agents/plugins/claude/__tests__/claude.models.test.ts covering per-tier ranking, fetch-failure fallback, and explicit-override-respect against a populated catalog, per the spec's own Testing section."
+    },
+    {
+      "id": "CR-006",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude/claude.plugin.ts",
+      "line": 313,
+      "title": "Auto-resolver loop not scoped away from anthropic-subscription",
+      "problem": "The new per-tier auto-resolve loop in ClaudePlugin's beforeRun runs unconditionally for every provider, including anthropic-subscription — the provider this diff's Design 4 explicitly says has 'no CodeMie catalog to resolve a model from' and should defer entirely to the claude CLI's own defaults. When config.codeMieUrl is also set for anthropic-subscription (a combination the provider template itself supports, anthropic-subscription.template.ts:117-120), fetchCatalog takes the SSO credential path and can successfully resolve a real CodeMie-catalog model.",
+      "impact": "That resolved model is then written into ANTHROPIC_MODEL/ANTHROPIC_DEFAULT_*_MODEL/CODEMIE_MODEL, directly re-introducing the 'forced model onto the claude CLI' behavior Goal 3 and Design 4 set out to remove. When codeMieUrl is unset instead, the same loop throws a ConfigurationError per tier (no catalog, no current model) that is caught and logged at logger.warn on every single anthropic-subscription run — functionally harmless but spurious warning noise the spec did not intend.",
+      "recommendation": "Scope the auto-resolve loop (or resolveClaudeModel/fetchCatalog itself) to skip entirely when the active provider is anthropic-subscription, so that path always defers to the claude CLI's built-in defaults as designed."
+    },
+    {
+      "id": "CR-007",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/agents/plugins/claude/claude.plugin.ts",
+      "line": 318,
+      "title": "Native Anthropic env vars overwritten without a check",
+      "problem": "The auto-resolve loop writes resolution.selectedModel to both the generic CODEMIE_*_MODEL var and every native var in TIER_TARGET_VARS[tier].native (ANTHROPIC_MODEL, ANTHROPIC_DEFAULT_SONNET_MODEL, CLAUDE_CODE_SUBAGENT_MODEL, ANTHROPIC_DEFAULT_HAIKU_MODEL, ANTHROPIC_DEFAULT_OPUS_MODEL) whenever resolution is non-null. resolveClaudeModel's own 'don't override an explicit choice' check only inspects the generic CODEMIE_*_MODEL var (claude.models.ts:306) — it never checks whether the native var itself was already set.",
+      "impact": "A user who sets a native var directly (a mechanism the claude CLI itself supports) without also setting the matching CODEMIE_*_MODEL is silently overwritten by the auto-resolved model on every run, contradicting the spec's Goal 2 ('a user's explicit model choice ... env var ... is never silently overridden').",
+      "recommendation": "Before writing a native var, check whether it was already explicitly set (e.g. `if (!env[nativeVar]) env[nativeVar] = resolution.selectedModel;`), or fold native-var presence into resolveClaudeModel's own override check."
+    },
+    {
+      "id": "CR-008",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/providers/plugins/anthropic-subscription/__tests__/anthropic-subscription.template.test.ts",
+      "line": 179,
+      "title": "Existing tests assert removed model-alias behavior",
+      "problem": "exportEnvVars now unconditionally blanks CODEMIE_MODEL/CODEMIE_HAIKU_MODEL/CODEMIE_OPUS_MODEL to '', but three pre-existing tests (lines 179-209) still assert the removed alias-normalization values (e.g. `expect(env.CODEMIE_MODEL).toBe('claude-haiku-4-5-20251001')`) or toBeUndefined(), and a fourth test in src/agents/core/__tests__/model-tier-config.test.ts:268-290 asserts env.CODEMIE_MODEL equals a specific model id via the same ConfigLoader path.",
+      "impact": "None of these tests were updated in this diff; they will fail against the new blanking behavior (actual value is '' in every case), breaking the normal CI/pre-commit test run for this branch.",
+      "recommendation": "Update the affected assertions in both files to match the new always-blank behavior before merge (subject to the repo's explicit-request testing policy)."
+    },
+    {
+      "id": "CR-009",
+      "severity": "critical",
+      "triage": "patch",
+      "file": "src/providers/plugins/anthropic-subscription/anthropic-subscription.template.ts",
+      "line": 113,
+      "title": "CODEMIE_SONNET_MODEL not blanked like the other tiers",
+      "problem": "exportEnvVars blanks env.CODEMIE_MODEL, env.CODEMIE_HAIKU_MODEL, and env.CODEMIE_OPUS_MODEL to '' but never mentions or blanks env.CODEMIE_SONNET_MODEL — the tier newly wired into the auto-update loop in the same diff. ConfigLoader.exportProviderEnvVars (src/utils/config.ts:1424) unconditionally sets env.CODEMIE_SONNET_MODEL = config.sonnetModel ?? '' before this provider overlay runs, exactly like the other three tiers, and BaseAgentAdapter.transformEnvVars projects a truthy CODEMIE_SONNET_MODEL straight into ANTHROPIC_DEFAULT_SONNET_MODEL and CLAUDE_CODE_SUBAGENT_MODEL before beforeRun even runs.",
+      "impact": "Any anthropic-subscription profile with a previously saved sonnet model leaks that stale value into ANTHROPIC_DEFAULT_SONNET_MODEL/CLAUDE_CODE_SUBAGENT_MODEL on every run, directly contradicting Design 4's stated goal that this provider path lets the claude CLI's own defaults take over for all tiers.",
+      "recommendation": "Add `env.CODEMIE_SONNET_MODEL = '';` alongside the other three blanked vars in exportEnvVars."
+    }
+  ]
+}
