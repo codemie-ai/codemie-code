@@ -27,6 +27,59 @@ const ALLOWED_CLIENTS = ['codex-desktop'];
 /** Re-list deployments occasionally so a long-lived daemon picks up new models. */
 const MODEL_CACHE_TTL_MS = 10 * 60 * 1000;
 
+/**
+ * Repair empty `description` fields on tool definitions, in place.
+ *
+ * Azure — which backs CodeMie deployments through LiteLLM — rejects a tool whose
+ * `description` is an empty string ("Expected a string with minimum length 1"),
+ * while direct OpenAI accepts it. The Codex desktop app and the MCP servers it
+ * loads do emit empty descriptions, so a turn that works against OpenAI fails
+ * here. The client cannot be fixed from our side, so the proxy repairs it.
+ *
+ * Scoped deliberately to arrays literally named `tools`: a JSON-schema property
+ * description is legitimately allowed to be empty and is not what Azure rejects,
+ * so rewriting one would silently alter the tool's schema.
+ *
+ * An empty description carries no information the model does not already have
+ * from the tool's name, so the name is the least-lossy replacement. The key is
+ * dropped when there is no usable name, which the gateway also accepts.
+ *
+ * Returns the number of descriptions repaired.
+ */
+export function repairEmptyToolDescriptions(node: unknown): number {
+  if (Array.isArray(node)) {
+    return node.reduce<number>((count, item) => count + repairEmptyToolDescriptions(item), 0);
+  }
+  if (node === null || typeof node !== 'object') return 0;
+
+  let repaired = 0;
+  const record = node as Record<string, unknown>;
+
+  for (const [key, value] of Object.entries(record)) {
+    if (key === 'tools' && Array.isArray(value)) {
+      for (const tool of value) {
+        if (tool === null || typeof tool !== 'object' || Array.isArray(tool)) continue;
+        const toolRecord = tool as Record<string, unknown>;
+        if (typeof toolRecord.description !== 'string') continue;
+        if (toolRecord.description.trim() !== '') continue;
+
+        const name = typeof toolRecord.name === 'string' ? toolRecord.name.trim() : '';
+        if (name !== '') {
+          toolRecord.description = name;
+        } else {
+          delete toolRecord.description;
+        }
+        repaired++;
+      }
+    }
+    // Recurse regardless: a `tools` array can sit at any depth, and the entries
+    // of one may themselves nest further structures.
+    repaired += repairEmptyToolDescriptions(value);
+  }
+
+  return repaired;
+}
+
 export class CodexRequestNormalizerPlugin implements ProxyPlugin {
   id = '@codemie/proxy-codex-request-normalizer';
   name = 'Codex Request Normalizer';
@@ -71,12 +124,23 @@ class CodexRequestNormalizerInterceptor implements ProxyInterceptor {
       return;
     }
 
-    if (typeof body.model !== 'string' || body.model === '') return;
+    const repairedDescriptions = repairEmptyToolDescriptions(body);
+    if (repairedDescriptions > 0) {
+      logger.debug(
+        `[${this.name}] Replaced ${repairedDescriptions} empty tool description(s) rejected by upstream`
+      );
+    }
+
+    if (typeof body.model !== 'string' || body.model === '') {
+      if (repairedDescriptions > 0) this.writeBody(context, body);
+      return;
+    }
 
     await this.ensureModelsLoaded();
     if (this.availableModels.length === 0) {
       // Never block a turn on an unavailable model list; the gateway's own
       // error is more useful than a guess.
+      if (repairedDescriptions > 0) this.writeBody(context, body);
       return;
     }
 
@@ -86,7 +150,10 @@ class CodexRequestNormalizerInterceptor implements ProxyInterceptor {
       this.resolveFallbackModel()
     );
 
-    if (resolution.kind === 'exact' || resolution.kind === 'unresolved') return;
+    if (resolution.kind === 'exact' || resolution.kind === 'unresolved') {
+      if (repairedDescriptions > 0) this.writeBody(context, body);
+      return;
+    }
 
     if (resolution.kind === 'substituted') {
       logger.info(
@@ -98,6 +165,11 @@ class CodexRequestNormalizerInterceptor implements ProxyInterceptor {
     }
 
     body.model = resolution.model;
+    this.writeBody(context, body);
+  }
+
+  /** Serialize the mutated body back onto the request, keeping content-length honest. */
+  private writeBody(context: ProxyContext, body: Record<string, unknown>): void {
     context.requestBody = Buffer.from(JSON.stringify(body), 'utf-8');
     context.headers['content-length'] = String(context.requestBody.length);
   }

@@ -178,3 +178,117 @@ describe('CodexRequestNormalizerPlugin fallback without a pinned model', () => {
     expect(bodyOf(context).model).toBe('gpt-5-2025-08-07');
   });
 });
+
+describe('CodexRequestNormalizerPlugin empty tool descriptions', () => {
+  beforeEach(() => { vi.resetModules(); vi.clearAllMocks(); });
+
+  async function makeInterceptor() {
+    const { CodexRequestNormalizerPlugin } = await import('../codex-request-normalizer.plugin.js');
+    const interceptor = await new CodexRequestNormalizerPlugin().createInterceptor(makePluginContext());
+    (interceptor as unknown as { setAvailableModelsForTest(m: string[]): void })
+      .setAvailableModelsForTest(AVAILABLE);
+    return interceptor;
+  }
+
+  it('fills an empty description on a nested input tools array with the tool name', async () => {
+    const interceptor = await makeInterceptor();
+    const context = makeProxyContext({
+      model: 'gpt-5.6-luna-2026-07-09',
+      input: [
+        {
+          type: 'mcp_list_tools',
+          server_label: 'codegraph',
+          tools: [
+            { name: 'codegraph_search', description: '', input_schema: { type: 'object' } },
+            { name: 'codegraph_node', description: 'real one', input_schema: { type: 'object' } },
+          ],
+        },
+        { type: 'message', role: 'user', content: 'hi' },
+      ],
+    });
+
+    await interceptor.onRequest!(context);
+    const tools = (bodyOf(context).input as Array<{ tools?: Array<{ description?: string }> }>)[0].tools!;
+
+    expect(tools[0].description).toBe('codegraph_search');
+    expect(tools[1].description).toBe('real one');
+  });
+
+  it('fills an empty description on a top-level tools array', async () => {
+    const interceptor = await makeInterceptor();
+    const context = makeProxyContext({
+      model: 'gpt-5.6-luna-2026-07-09',
+      input: 'hi',
+      tools: [{ type: 'function', name: 'probe', description: '', parameters: { type: 'object' } }],
+    });
+
+    await interceptor.onRequest!(context);
+    const tools = bodyOf(context).tools as Array<{ description?: string }>;
+
+    expect(tools[0].description).toBe('probe');
+  });
+
+  it('drops the key when an empty description has no usable name', async () => {
+    const interceptor = await makeInterceptor();
+    const context = makeProxyContext({
+      model: 'gpt-5.6-luna-2026-07-09',
+      input: 'hi',
+      tools: [{ type: 'function', description: '', parameters: { type: 'object' } }],
+    });
+
+    await interceptor.onRequest!(context);
+    const tools = bodyOf(context).tools as Array<Record<string, unknown>>;
+
+    expect('description' in tools[0]).toBe(false);
+  });
+
+  it('leaves whitespace-only descriptions repaired too', async () => {
+    const interceptor = await makeInterceptor();
+    const context = makeProxyContext({
+      model: 'gpt-5.6-luna-2026-07-09',
+      input: 'hi',
+      tools: [{ type: 'function', name: 'probe', description: '   ', parameters: { type: 'object' } }],
+    });
+
+    await interceptor.onRequest!(context);
+    expect((bodyOf(context).tools as Array<{ description?: string }>)[0].description).toBe('probe');
+  });
+
+  it('never touches a description outside a tools array', async () => {
+    const interceptor = await makeInterceptor();
+    const context = makeProxyContext({
+      model: 'gpt-5.6-luna-2026-07-09',
+      input: 'hi',
+      // A JSON-schema property description is legitimately allowed to be empty
+      // and is not what Azure rejects; rewriting it would alter the schema.
+      tools: [{
+        type: 'function',
+        name: 'probe',
+        description: 'fine',
+        parameters: { type: 'object', properties: { q: { type: 'string', description: '' } } },
+      }],
+      metadata: { description: '' },
+    });
+
+    await interceptor.onRequest!(context);
+    const body = bodyOf(context);
+    const params = (body.tools as Array<{ parameters: { properties: { q: { description: string } } } }>)[0].parameters;
+
+    expect(params.properties.q.description).toBe('');
+    expect((body.metadata as { description: string }).description).toBe('');
+  });
+
+  it('leaves a request with no empty descriptions byte-identical', async () => {
+    const interceptor = await makeInterceptor();
+    const context = makeProxyContext({
+      model: 'gpt-5.6-luna-2026-07-09',
+      input: 'hi',
+      tools: [{ type: 'function', name: 'probe', description: 'ok', parameters: { type: 'object' } }],
+    });
+    const before = context.requestBody!.toString('utf-8');
+
+    await interceptor.onRequest!(context);
+
+    expect(context.requestBody!.toString('utf-8')).toBe(before);
+  });
+});
