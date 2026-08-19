@@ -68,3 +68,18 @@ describe('resolveCodexDeployment', () => {
       .toEqual({ model: 'gpt-5.6-luna', kind: 'unresolved' });
   });
 });
+
+describe('rankDeploymentsByRecency', () => {
+  it('puts the newest generation first and reduced-capacity variants last', async () => {
+    const { rankDeploymentsByRecency } = await import('../codex-model-resolver.js');
+
+    expect(rankDeploymentsByRecency(AVAILABLE)[0]).toBe('gpt-5.6-luna-2026-07-09');
+    expect(rankDeploymentsByRecency(['gpt-5-mini-2025-08-07', 'gpt-5-2025-08-07'])[0])
+      .toBe('gpt-5-2025-08-07');
+  });
+
+  it('returns an empty list unchanged', async () => {
+    const { rankDeploymentsByRecency } = await import('../codex-model-resolver.js');
+    expect(rankDeploymentsByRecency([])).toEqual([]);
+  });
+});

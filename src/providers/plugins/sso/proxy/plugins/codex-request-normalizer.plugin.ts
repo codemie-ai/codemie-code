@@ -20,7 +20,7 @@ import { ProxyPlugin, PluginContext, ProxyInterceptor } from './types.js';
 import { ProxyContext } from '../proxy-types.js';
 import { logger } from '../../../../../utils/logger.js';
 import { fetchCodeMieLlmModels } from '../../sso.http-client.js';
-import { resolveCodexDeployment } from './codex-model-resolver.js';
+import { rankDeploymentsByRecency, resolveCodexDeployment } from './codex-model-resolver.js';
 
 const ALLOWED_CLIENTS = ['codex-desktop'];
 
@@ -83,7 +83,7 @@ class CodexRequestNormalizerInterceptor implements ProxyInterceptor {
     const resolution = resolveCodexDeployment(
       body.model,
       this.availableModels,
-      this.context.config.model
+      this.resolveFallbackModel()
     );
 
     if (resolution.kind === 'exact' || resolution.kind === 'unresolved') return;
@@ -100,6 +100,20 @@ class CodexRequestNormalizerInterceptor implements ProxyInterceptor {
     body.model = resolution.model;
     context.requestBody = Buffer.from(JSON.stringify(body), 'utf-8');
     context.headers['content-length'] = String(context.requestBody.length);
+  }
+
+  /**
+   * The model to substitute when CodeMie carries nothing matching the request.
+   *
+   * `config.model` is normally absent here: the daemon is spawned before the
+   * connector resolves a model, because discovery itself goes through this
+   * proxy. So the fallback cannot depend on a pinned value — it defaults to the
+   * newest available deployment, which is what `connect` would have pinned.
+   */
+  private resolveFallbackModel(): string | undefined {
+    const pinned = this.context.config.model;
+    if (pinned && this.availableModels.includes(pinned)) return pinned;
+    return rankDeploymentsByRecency(this.availableModels)[0];
   }
 
   /**

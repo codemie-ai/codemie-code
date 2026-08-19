@@ -142,3 +142,39 @@ describe('CodexRequestNormalizerPlugin', () => {
     expect(bodyOf(context).model).toBe('gpt-5.6-luna');
   });
 });
+
+describe('CodexRequestNormalizerPlugin fallback without a pinned model', () => {
+  beforeEach(() => { vi.resetModules(); vi.clearAllMocks(); });
+
+  it('substitutes the newest deployment when the daemon has no pinned model', async () => {
+    // The daemon is spawned before the connector resolves a model, so
+    // config.model is routinely absent — the fallback must not depend on it.
+    const { CodexRequestNormalizerPlugin } = await import('../codex-request-normalizer.plugin.js');
+    const plugin = new CodexRequestNormalizerPlugin();
+    const interceptor = await plugin.createInterceptor(
+      makePluginContext({ config: { clientType: 'codex-desktop' } })
+    );
+    (interceptor as unknown as { setAvailableModelsForTest(m: string[]): void })
+      .setAvailableModelsForTest(AVAILABLE);
+
+    const context = makeProxyContext({ model: 'gpt-4o-does-not-exist', input: 'hi' });
+    await interceptor.onRequest!(context);
+
+    expect(bodyOf(context).model).toBe('gpt-5.6-luna-2026-07-09');
+  });
+
+  it('prefers an explicitly pinned model over the newest when one is configured', async () => {
+    const { CodexRequestNormalizerPlugin } = await import('../codex-request-normalizer.plugin.js');
+    const plugin = new CodexRequestNormalizerPlugin();
+    const interceptor = await plugin.createInterceptor(
+      makePluginContext({ config: { clientType: 'codex-desktop', model: 'gpt-5-2025-08-07' } })
+    );
+    (interceptor as unknown as { setAvailableModelsForTest(m: string[]): void })
+      .setAvailableModelsForTest(AVAILABLE);
+
+    const context = makeProxyContext({ model: 'gpt-4o-does-not-exist', input: 'hi' });
+    await interceptor.onRequest!(context);
+
+    expect(bodyOf(context).model).toBe('gpt-5-2025-08-07');
+  });
+});

@@ -65,6 +65,37 @@ function sameIdentity(a: ModelIdentity, b: ModelIdentity): boolean {
 }
 
 /**
+ * Rank deployments newest-first, so a caller with no pinned model can still
+ * choose a sensible substitute — the same choice `connect` would have pinned.
+ */
+export function rankDeploymentsByRecency(available: string[]): string[] {
+  return available
+    .map((id) => {
+      const identity = parseIdentity(id);
+      const dateMatch = id.toLowerCase().match(DEPLOYMENT_DATE_PATTERN);
+      return {
+        id,
+        score: [
+          identity?.major ?? 0,
+          identity?.minor ?? 0,
+          /mini|nano/i.test(id) ? 0 : 1,
+          dateMatch ? Number(dateMatch[1]) : 0,
+          dateMatch ? Number(dateMatch[2]) : 0,
+          dateMatch ? Number(dateMatch[3]) : 0,
+        ],
+      };
+    })
+    .sort((a, b) => {
+      for (let i = 0; i < a.score.length; i++) {
+        const diff = (b.score[i] ?? 0) - (a.score[i] ?? 0);
+        if (diff !== 0) return diff;
+      }
+      return a.id.localeCompare(b.id);
+    })
+    .map((entry) => entry.id);
+}
+
+/**
  * Resolve the model a Codex client asked for to a deployment the gateway has.
  *
  * Returns the request unchanged when it is already a known deployment, the
