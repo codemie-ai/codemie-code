@@ -304,3 +304,47 @@ describe('removeCodexDesktopConfig', () => {
     await expect(removeCodexDesktopConfig(statePath)).rejects.toThrow(ConfigurationError);
   });
 });
+
+describe('discoverCodexModels ranking', () => {
+  afterEach(() => { vi.restoreAllMocks(); vi.resetModules(); });
+
+  it('returns the newest deployment first, not whatever order the gateway used', async () => {
+    // Gateway order is arbitrary and in practice lists the oldest GPT-5 first.
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { deployment_name: 'gpt-5-2025-08-07', enabled: true },
+        { deployment_name: 'gpt-5-mini-2025-08-07', enabled: true },
+        { deployment_name: 'gpt-5.4-2026-03-05', enabled: true },
+        { deployment_name: 'gpt-5.6-luna-2026-07-09', enabled: true },
+        { deployment_name: 'gpt-5.5-2026-04-24', enabled: true },
+      ],
+    } as unknown as Response);
+
+    const { discoverCodexModels, selectCodexModel } = await import('../codex-desktop.js');
+    const models = await discoverCodexModels('http://127.0.0.1:4001', 'k');
+
+    expect(models[0]).toBe('gpt-5.6-luna-2026-07-09');
+    expect(selectCodexModel(models, undefined)).toBe('gpt-5.6-luna-2026-07-09');
+  });
+
+  it('orders by version then release date across the whole list', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => [
+        { deployment_name: 'gpt-5-2025-08-07', enabled: true },
+        { deployment_name: 'gpt-5.6-sol-2026-07-09', enabled: true },
+        { deployment_name: 'gpt-5.4-2026-03-05', enabled: true },
+      ],
+    } as unknown as Response);
+
+    const { discoverCodexModels } = await import('../codex-desktop.js');
+    const models = await discoverCodexModels('http://127.0.0.1:4001', 'k');
+
+    expect(models).toEqual([
+      'gpt-5.6-sol-2026-07-09',
+      'gpt-5.4-2026-03-05',
+      'gpt-5-2025-08-07',
+    ]);
+  });
+});

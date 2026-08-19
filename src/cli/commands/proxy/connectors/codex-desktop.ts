@@ -12,7 +12,8 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import TOML from '@iarna/toml';
 
-import { isCodexCompatibleModelName } from '@/agents/plugins/codex/codex-models.js';
+import { rankCodexModelIdsByRecency } from '@/agents/plugins/codex/codex-models.js';
+import type { LlmModel } from '@/providers/plugins/sso/sso.http-client.js';
 import { ConfigurationError } from '@/utils/errors.js';
 import { logger } from '@/utils/logger.js';
 import { getCodemiePath } from '@/utils/paths.js';
@@ -105,13 +106,6 @@ export async function backupIfUnmanaged(
   return backupPath;
 }
 
-/** The fields of a gateway model-list entry this connector reads. */
-interface GatewayModelEntry {
-  deployment_name?: string;
-  base_name?: string;
-  enabled?: boolean;
-}
-
 /**
  * Discover Codex-compatible model ids through the local proxy.
  *
@@ -139,13 +133,12 @@ export async function discoverCodexModels(
     throw new ConfigurationError(`Local proxy returned ${response.status} for ${url}.`);
   }
 
-  const payload = (await response.json()) as GatewayModelEntry[] | { data?: GatewayModelEntry[] };
+  const payload = (await response.json()) as LlmModel[] | { data?: LlmModel[] };
   const entries = Array.isArray(payload) ? payload : (payload.data ?? []);
 
-  const ids = entries
-    .filter((entry) => entry.enabled !== false)
-    .map((entry) => entry.deployment_name ?? entry.base_name)
-    .filter(isCodexCompatibleModelName);
+  // Ranked newest-first. The gateway's own order is arbitrary and in practice
+  // lists the oldest GPT-5 first, so taking entries[0] would pin a stale model.
+  const ids = rankCodexModelIdsByRecency(entries);
 
   if (ids.length === 0) {
     throw new ConfigurationError(
