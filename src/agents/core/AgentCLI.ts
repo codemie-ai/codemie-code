@@ -673,13 +673,17 @@ export class AgentCLI {
       const recommendedModels = metadata.recommendedModels;
 
       if (recommendedModels && recommendedModels.length > 0) {
+        // recommendedModels entries may be family tokens (e.g. "sonnet") rather
+        // than literal ids, so these are shown as category hints, not a
+        // guaranteed-valid --model value — point to `codemie models list` for
+        // an actual current id instead of asserting one here.
         const modelExamples = recommendedModels.slice(0, 3).join(', ');
-        const suggestedModel = recommendedModels[0];
         const command = getAgentLauncherCommand(this.adapter.name);
 
         console.log(chalk.white(`  1. ${this.adapter.displayName} requires compatible models (e.g., ${modelExamples})`));
         console.log(chalk.white('  2. Update profile: ') + chalk.cyan('codemie setup'));
-        console.log(chalk.white(`  3. Override for this session: ${command} --model ${suggestedModel}`));
+        console.log(chalk.white(`  3. See available models: `) + chalk.cyan('codemie models list'));
+        console.log(chalk.white(`  4. Override for this session: ${command} --model <model-id>`));
       } else {
         console.log(chalk.white('  1. Update profile: ') + chalk.cyan('codemie setup'));
       }

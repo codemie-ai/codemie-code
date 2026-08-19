@@ -3,7 +3,6 @@ import { fetchCodeMieLlmModels } from '../../../providers/plugins/sso/sso.http-c
 import { CodeMieSSO } from '../../../providers/plugins/sso/sso.auth.js';
 import { ConfigurationError } from '../../../utils/errors.js';
 import { logger } from '../../../utils/logger.js';
-import { ClaudePluginMetadata } from './claude.plugin.js';
 
 export type ClaudeModelTier = 'model' | 'haiku' | 'sonnet' | 'opus';
 
@@ -160,13 +159,6 @@ async function fetchCatalog(env: NodeJS.ProcessEnv): Promise<LlmModel[]> {
   return models;
 }
 
-function staticFallback(tier: ClaudeModelTier): string | undefined {
-  const recommended = ClaudePluginMetadata.recommendedModels ?? [];
-  const tierPattern = TIER_PATTERN[tier];
-  if (!tierPattern) return recommended[0];
-  return recommended.find((id) => tierPattern.test(id));
-}
-
 /**
  * Resolves the live CodeMie model id for a Claude tier, or `null` when the
  * currently configured model is still present in the live catalog (nothing to
@@ -187,13 +179,12 @@ export async function resolveClaudeModel(
     });
     if (currentModel) return null;
 
-    const fallback = staticFallback(tier);
-    if (!fallback) {
-      throw new ConfigurationError(
-        `Could not resolve a CodeMie model for Claude tier "${tier}": catalog fetch failed and no static fallback is configured.`
-      );
-    }
-    return { selectedModel: fallback, availableModels: [] };
+    // No live catalog and nothing currently configured — guessing a static
+    // model id here would just be another hardcoded value that goes stale.
+    // Fail clearly instead and tell the user how to set one explicitly.
+    throw new ConfigurationError(
+      `Could not resolve a CodeMie model for Claude tier "${tier}": the model catalog is unavailable and no model is configured. Run "codemie setup" or set the ${TIER_ENV_VAR[tier]} environment variable explicitly.`
+    );
   }
 
   const ranked = catalog
