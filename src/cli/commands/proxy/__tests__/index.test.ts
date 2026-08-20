@@ -524,4 +524,28 @@ describe('proxy status', () => {
     expect(consoleLogSpy).toHaveBeenCalledWith('  Project: team-project');
     consoleLogSpy.mockRestore();
   });
+
+  it('shows the API key', async () => {
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { checkProxyHealth } = await import('../health-check.js');
+    const { createProxyCommand } = await import('../index.js');
+    vi.mocked(checkStatus).mockResolvedValue({
+      running: true,
+      state: {
+        pid: process.pid,
+        port: 4001,
+        url: 'http://127.0.0.1:4001',
+        profile: 'work',
+        gatewayKey: 'local-key',
+        startedAt: new Date().toISOString(),
+      },
+    });
+    vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'shallow', code: 'ok' });
+
+    await createProxyCommand().parseAsync(['status'], { from: 'user' });
+
+    expect(consoleLogSpy).toHaveBeenCalledWith('  API Key: local-key');
+    consoleLogSpy.mockRestore();
+  });
 });

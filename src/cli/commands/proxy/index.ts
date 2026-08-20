@@ -222,6 +222,7 @@ export function createProxyCommand(): Command {
 
       console.log(`  URL:     ${state.url}`);
       console.log(`  Port:    ${state.port}`);
+      console.log(`  API Key: ${state.gatewayKey}`);
       console.log(`  Profile: ${state.profile}`);
       if (state.clientType) {
         console.log(`  Client:  ${state.clientType}`);
