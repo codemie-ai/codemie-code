@@ -52,6 +52,9 @@ export class HookExecutor {
 	/** Cache of executed hooks (for deduplication) */
 	private executedHooks: Set<string> = new Set();
 
+	/** Hooks whose failure has already surfaced a console notice (avoids flooding on repeat failures) */
+	private notifiedFailedHooks: Set<string> = new Set();
+
 	/** Prompt hook executor (for LLM-based hooks) */
 	private promptExecutor: PromptHookExecutor | null = null;
 
@@ -395,7 +398,16 @@ export class HookExecutor {
 				return { decision: 'allow', reason: `Unknown hook type: ${hook.type}` };
 			}
 		} catch (error) {
-			logger.notice(`Hook execution failed: ${error}`);
+			// Surface the console banner only once per distinct hook to avoid
+			// flooding the terminal when the same hook fails repeatedly; every
+			// occurrence still always reaches the file log via logger.notice/warn.
+			const hookHash = this.hashHook(hook);
+			if (this.notifiedFailedHooks.has(hookHash)) {
+				logger.warn(`Hook execution failed: ${error}`);
+			} else {
+				this.notifiedFailedHooks.add(hookHash);
+				logger.notice(`Hook execution failed: ${error}`);
+			}
 			// Fail open (allow execution to continue)
 			return {
 				decision: 'allow',

@@ -7,7 +7,9 @@ const agentMaxWorkers = (() => {
   return Number.isNaN(n) || n < 1 ? 2 : n;
 })();
 
-const testCodemieHome = join(tmpdir(), 'codemie-test-home');
+// Includes this config-eval process's pid so concurrent `vitest run` invocations
+// (e.g. two CI jobs, or a local run alongside watch mode) never share a log directory.
+const testCodemieHome = join(tmpdir(), `codemie-test-home-${process.pid}`);
 
 export default defineConfig({
   test: {

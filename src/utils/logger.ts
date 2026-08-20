@@ -351,7 +351,8 @@ class Logger {
     // logger level meant to surface real failures to a normal terminal run.
     const logPath = this.getLogFilePath();
     const suffix = logPath ? ` (see ${logPath})` : '';
-    console.warn(chalk.yellow(`⚠ ${message}${suffix}`));
+    const sanitizedArgs = sanitizeLogArgs(...args);
+    console.warn(chalk.yellow(`⚠ ${message}${suffix}`), ...sanitizedArgs);
   }
 }
 
