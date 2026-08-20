@@ -655,4 +655,60 @@ describe('proxy status', () => {
     expect(consoleLogSpy).toHaveBeenCalledWith(JSON.stringify({ status: 'stopped' }, null, 2));
     consoleLogSpy.mockRestore();
   });
+
+  it('emits lastRecordedIssue in JSON when a prior unhealthy state recovered', async () => {
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { checkProxyHealth } = await import('../health-check.js');
+    const { createProxyCommand } = await import('../index.js');
+    vi.mocked(checkStatus).mockResolvedValue({
+      running: true,
+      state: {
+        pid: process.pid,
+        port: 4001,
+        url: 'http://127.0.0.1:4001',
+        profile: 'work',
+        gatewayKey: 'local-key',
+        startedAt: new Date().toISOString(),
+        health: 'unhealthy',
+        healthReason: 'timed out once',
+      },
+    });
+    vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'shallow', code: 'ok' });
+
+    await createProxyCommand().parseAsync(['status', '--json'], { from: 'user' });
+
+    const payload = JSON.parse(consoleLogSpy.mock.calls.map((call) => call[0]).join('\n'));
+    expect(payload.status).toBe('healthy');
+    expect(payload.lastRecordedIssue).toBe('timed out once');
+    consoleLogSpy.mockRestore();
+  });
+
+  it('leaves the default (non-JSON) output byte-identical aside from the new API Key line', async () => {
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { checkProxyHealth } = await import('../health-check.js');
+    const { createProxyCommand } = await import('../index.js');
+    vi.mocked(checkStatus).mockResolvedValue({
+      running: true,
+      state: {
+        pid: process.pid,
+        port: 4001,
+        url: 'http://127.0.0.1:4001',
+        profile: 'work',
+        gatewayKey: 'local-key',
+        startedAt: new Date().toISOString(),
+      },
+    });
+    vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'shallow', code: 'ok' });
+
+    await createProxyCommand().parseAsync(['status'], { from: 'user' });
+
+    const lines = consoleLogSpy.mock.calls.map((call) => call[0]);
+    expect(lines).toContain('  URL:     http://127.0.0.1:4001');
+    expect(lines).toContain('  Port:    4001');
+    expect(lines).toContain('  API Key: local-key');
+    expect(lines).toContain('  Profile: work');
+    consoleLogSpy.mockRestore();
+  });
 });
