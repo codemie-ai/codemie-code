@@ -544,5 +544,6 @@ export class HookExecutor {
 	 */
 	clearCache(): void {
 		this.executedHooks.clear();
+		this.notifiedFailedHooks.clear();
 	}
 }

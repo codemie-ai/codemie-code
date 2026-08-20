@@ -300,5 +300,37 @@ describe('HookExecutor', () => {
 			await executor.executeSessionStart();
 			expect(execSpy).toHaveBeenCalledTimes(2);
 		});
+
+		it('should re-surface a hook failure notice after clearCache, not just once per process', async () => {
+			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+			delete process.env.CODEMIE_DEBUG;
+
+			const config: HooksConfiguration = {
+				SessionStart: [
+					{
+						hooks: [{ type: 'command', command: '/test/hook.sh' }],
+					},
+				],
+			};
+
+			execSpy.mockRejectedValue(new Error('Hook script not found'));
+
+			const executor = new HookExecutor(config, mockContext);
+
+			await executor.executeSessionStart();
+			const noticeCallsBeforeClear = warnSpy.mock.calls.filter((call) =>
+				String(call[0]).includes('⚠'),
+			).length;
+			expect(noticeCallsBeforeClear).toBe(1);
+
+			// New event cycle: the same hook failing again must still be visible,
+			// not permanently silenced by the first failure.
+			executor.clearCache();
+			await executor.executeSessionStart();
+			const noticeCallsAfterClear = warnSpy.mock.calls.filter((call) =>
+				String(call[0]).includes('⚠'),
+			).length;
+			expect(noticeCallsAfterClear).toBe(2);
+		});
 	});
 });
