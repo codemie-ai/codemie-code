@@ -11,7 +11,10 @@ import {
   resolveBudget,
   isMainModule,
   ctxBar,
+  resolveCost,
+  resolveGatewayPrices,
 } from '../statusline.mjs';
+import { transcriptCostUSD, sumTranscriptUsage, priceFromGatewayCost, lookupPrice } from '../transcript-cost.mjs';
 
 const YELLOW = '\x1b[0;33m';
 const GREEN = '\x1b[0;32m';
@@ -297,5 +300,321 @@ describe('isMainModule', () => {
     const url = pathToFileURL(resolve('Users', 'me', 'script.mjs')).href;
     expect(isMainModule('', url)).toBe(false);
     expect(isMainModule(undefined, url)).toBe(false);
+  });
+});
+
+describe('transcript cost', () => {
+  const PRICES = {
+    'claude-sonnet-4-5': { input: 3, output: 15, cacheRead: 0.3, cacheCreation: 3.75, cacheWrite1h: 6 },
+    'claude-haiku-4-5': { input: 1, output: 5, cacheRead: 0.1, cacheCreation: 1.25, cacheWrite1h: 2 },
+  };
+  const row = (id: string, usage: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+    JSON.stringify({ type: 'assistant', requestId: `req-${id}`, message: { id, model: 'claude-sonnet-4-5', usage }, ...extra });
+
+  it('counts one API response once when Claude Code splits it across rows', () => {
+    const usage = { input_tokens: 1_000_000, output_tokens: 0 };
+    const text = [row('msg-1', usage), row('msg-1', usage)].join('\n');
+    expect(transcriptCostUSD(text, PRICES)).toBeCloseTo(3, 6);
+  });
+
+  it('keeps the most complete row when a partial one shares the key', () => {
+    const partial = row('msg-1', { input_tokens: 10, output_tokens: 0 });
+    const full = row('msg-1', { input_tokens: 1_000_000, output_tokens: 0 });
+    expect(transcriptCostUSD([partial, full].join('\n'), PRICES)).toBeCloseTo(3, 6);
+    expect(transcriptCostUSD([full, partial].join('\n'), PRICES)).toBeCloseTo(3, 6);
+  });
+
+  it('sums distinct responses and splits cache writes by TTL', () => {
+    const text = [
+      row('msg-1', { input_tokens: 1_000_000, output_tokens: 0 }),
+      row('msg-2', {
+        input_tokens: 0, output_tokens: 0,
+        cache_creation_input_tokens: 1_000_000,
+        cache_creation: { ephemeral_1h_input_tokens: 1_000_000 },
+      }),
+    ].join('\n');
+    expect(transcriptCostUSD(text, PRICES)).toBeCloseTo(9, 6);
+  });
+
+  it('ignores synthetic rows, usage-less rows, and a partially-written trailing line', () => {
+    const text = [
+      row('msg-1', { input_tokens: 1_000_000, output_tokens: 0 }),
+      JSON.stringify({ type: 'assistant', message: { id: 'x', model: '<synthetic>', usage: { input_tokens: 999_999_999 } } }),
+      JSON.stringify({ type: 'user', message: { role: 'user' } }),
+      '{"partial": ',
+    ].join('\n');
+    expect(transcriptCostUSD(text, PRICES)).toBeCloseTo(3, 6);
+  });
+
+  it('counts unkeyable rows individually', () => {
+    const line = JSON.stringify({ message: { model: 'claude-sonnet-4-5', usage: { input_tokens: 1_000_000, output_tokens: 0 } } });
+    expect(transcriptCostUSD([line, line].join('\n'), PRICES)).toBeCloseTo(6, 6);
+  });
+
+  it('returns null when nothing is priceable, so the caller can fall back', () => {
+    expect(transcriptCostUSD('', PRICES)).toBeNull();
+    expect(transcriptCostUSD(row('msg-1', { input_tokens: 5 }), null)).toBeNull();
+    expect(transcriptCostUSD(JSON.stringify({ message: { model: 'not-listed', usage: { input_tokens: 5 } } }), PRICES)).toBeNull();
+  });
+
+  it('groups usage per model', () => {
+    const text = [
+      row('msg-1', { input_tokens: 100, output_tokens: 0 }),
+      JSON.stringify({ requestId: 'r2', message: { id: 'msg-2', model: 'claude-haiku-4-5', usage: { input_tokens: 200, output_tokens: 0 } } }),
+    ].join('\n');
+    const byModel = sumTranscriptUsage(text);
+    expect(byModel.get('claude-sonnet-4-5').input).toBe(100);
+    expect(byModel.get('claude-haiku-4-5').input).toBe(200);
+  });
+});
+
+describe('resolveCost', () => {
+  const transcript = JSON.stringify({
+    requestId: 'r1',
+    message: { id: 'm1', model: 'claude-sonnet-4-5', usage: { input_tokens: 1_000_000, output_tokens: 0 } },
+  });
+
+  it('prices from the transcript rather than the cost Claude Code reports', async () => {
+    const cost = await resolveCost(
+      { transcriptPath: '/fake/t.jsonl', cost: 99 },
+      {
+        readFile: async () => transcript,
+        gatewayPrices: { 'claude-sonnet-4-5': { input: 3, output: 15, cacheRead: 0.3, cacheCreation: 3.75, cacheWrite1h: 6 } },
+      }
+    );
+    expect(cost).toBeCloseTo(3, 6);
+  });
+
+  it('falls back to the reported cost when the transcript is unreadable', async () => {
+    const cost = await resolveCost(
+      { transcriptPath: '/fake/t.jsonl', cost: 42 },
+      { readFile: async () => { throw new Error('ENOENT'); } }
+    );
+    expect(cost).toBe(42);
+  });
+
+  it('falls back when the transcript has nothing priceable (never a misleading $0)', async () => {
+    const cost = await resolveCost(
+      { transcriptPath: '/fake/t.jsonl', cost: 42 },
+      { readFile: async () => '' }
+    );
+    expect(cost).toBe(42);
+  });
+
+  it('falls back when no transcript path is provided', async () => {
+    expect(await resolveCost({ transcriptPath: null, cost: 7 })).toBe(7);
+  });
+});
+
+describe('priceFromGatewayCost', () => {
+  it('converts per-token gateway rates to per-million and derives the 1h write rate', () => {
+    const price = priceFromGatewayCost({
+      input: 0.0000055,
+      output: 0.0000275,
+      cache_read_input_token_cost: 5.5e-7,
+      cache_creation_input_token_cost: 0.000006875,
+    });
+    expect(price).toEqual({ input: 5.5, output: 27.5, cacheRead: 0.55, cacheCreation: 6.875, cacheWrite1h: 11 });
+  });
+
+  it('derives cache rates from input when the gateway omits them', () => {
+    const price = priceFromGatewayCost({ input: 0.000003, output: 0.000015 });
+    expect(price.cacheRead).toBeCloseTo(0.3, 6);
+    expect(price.cacheCreation).toBeCloseTo(3.75, 6);
+  });
+
+  it('returns null without a usable input rate', () => {
+    expect(priceFromGatewayCost(undefined)).toBeNull();
+    expect(priceFromGatewayCost({ output: 0.00001 })).toBeNull();
+  });
+});
+
+describe('pricing source', () => {
+  const line = JSON.stringify({
+    requestId: 'r1',
+    message: { id: 'm1', model: 'claude-sonnet-4-5', usage: { input_tokens: 1_000_000, output_tokens: 0 } },
+  });
+
+  it('prices with the tenant rate the gateway reports', () => {
+    const gateway = { 'claude-sonnet-4-5': { input: 3.3, output: 16.5, cacheRead: 0.33, cacheCreation: 4.125, cacheWrite1h: 6.6 } };
+    expect(transcriptCostUSD(line, gateway)).toBeCloseTo(3.3, 6);
+  });
+
+  it('returns null without gateway rates so the caller keeps the reported cost', () => {
+    expect(transcriptCostUSD(line, null)).toBeNull();
+    expect(transcriptCostUSD(line, { 'other-model': { input: 99, output: 99, cacheRead: 0, cacheCreation: 0, cacheWrite1h: 0 } })).toBeNull();
+  });
+});
+
+describe('resolveGatewayPrices', () => {
+  const config = JSON.stringify({
+    activeProfile: 'p',
+    profiles: { p: { provider: 'ai-run-sso', codeMieUrl: 'https://cm.test' } },
+  });
+  const models = [
+    { deployment_name: 'claude-opus-5', cost: { input: 0.0000055, output: 0.0000275 } },
+    { deployment_name: 'no-cost-model' },
+  ];
+
+  it('fetches, keys by lowercased deployment name, and caches', async () => {
+    const writeFile = vi.fn().mockResolvedValue(undefined);
+    const readFile = vi.fn(async (p: string) =>
+      String(p).includes('model-prices-cache') ? Promise.reject(new Error('ENOENT')) : config
+    );
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: true, json: async () => models });
+
+    const prices = await resolveGatewayPrices({
+      readFile, writeFile, fetchImpl, getAuthHeadersImpl: async () => ({ cookie: 'x' }),
+    });
+
+    expect(prices!['claude-opus-5'].input).toBeCloseTo(5.5, 6);
+    expect(prices!['no-cost-model']).toBeUndefined();
+    expect(fetchImpl.mock.calls[0][0]).toBe('https://cm.test/code-assistant-api/v1/llm_models?include_all=true');
+    expect(writeFile).toHaveBeenCalled();
+  });
+
+  it('serves a fresh cache without hitting the network', async () => {
+    const fetchImpl = vi.fn();
+    const cached = {
+      schema: 1,
+      tenant: 'https://cm.test/code-assistant-api',
+      ts: Date.now(),
+      value: { 'claude-opus-5': { input: 1 } },
+    };
+    const prices = await resolveGatewayPrices({
+      readFile: async (p: string) =>
+        String(p).includes('model-prices-cache') ? JSON.stringify(cached) : config,
+      writeFile: vi.fn(),
+      fetchImpl,
+      getAuthHeadersImpl: async () => ({ cookie: 'x' }),
+    });
+
+    expect(prices).toEqual(cached.value);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('returns null when unauthenticated, on a failed response, or with no config', async () => {
+    const readFile = vi.fn(async (p: string) =>
+      String(p).includes('model-prices-cache') ? Promise.reject(new Error('ENOENT')) : config
+    );
+    const base = { readFile, writeFile: vi.fn() };
+
+    expect(await resolveGatewayPrices({ ...base, fetchImpl: vi.fn(), getAuthHeadersImpl: async () => null })).toBeNull();
+    expect(await resolveGatewayPrices({
+      ...base,
+      fetchImpl: vi.fn().mockResolvedValue({ ok: false }),
+      getAuthHeadersImpl: async () => ({ cookie: 'x' }),
+    })).toBeNull();
+    expect(await resolveGatewayPrices({
+      readFile: async () => { throw new Error('ENOENT'); },
+      writeFile: vi.fn(),
+      fetchImpl: vi.fn(),
+      getAuthHeadersImpl: async () => ({ cookie: 'x' }),
+    })).toBeNull();
+  });
+
+  it('returns null when the network call throws', async () => {
+    const readFile = vi.fn(async (p: string) =>
+      String(p).includes('model-prices-cache') ? Promise.reject(new Error('ENOENT')) : config
+    );
+    const prices = await resolveGatewayPrices({
+      readFile,
+      writeFile: vi.fn(),
+      fetchImpl: vi.fn().mockRejectedValue(new Error('offline')),
+      getAuthHeadersImpl: async () => ({ cookie: 'x' }),
+    });
+    expect(prices).toBeNull();
+  });
+});
+
+describe('resolveGatewayPrices — provider gating', () => {
+  const run = (profile: Record<string, unknown>) => {
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: true, json: async () => [] });
+    return resolveGatewayPrices({
+      readFile: async (p: string) =>
+        String(p).includes('model-prices-cache')
+          ? Promise.reject(new Error('ENOENT'))
+          : JSON.stringify({ activeProfile: 'p', profiles: { p: profile } }),
+      writeFile: vi.fn(),
+      fetchImpl,
+      getAuthHeadersImpl: async () => ({ cookie: 'secret' }),
+    }).then((prices) => ({ prices, fetchImpl }));
+  };
+
+  it('never contacts a subscription provider, whose baseUrl is not a CodeMie host', async () => {
+    for (const provider of ['anthropic-subscription', 'moonshot-subscription']) {
+      const { prices, fetchImpl } = await run({
+        provider, codeMieUrl: 'https://cm.test', baseUrl: 'https://api.anthropic.com',
+      });
+      expect(prices).toBeNull();
+      expect(fetchImpl).not.toHaveBeenCalled();
+    }
+  });
+
+  it('skips a gateway provider with no codeMieUrl', async () => {
+    const { prices, fetchImpl } = await run({ provider: 'bedrock', baseUrl: 'https://bedrock.aws' });
+    expect(prices).toBeNull();
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('builds the endpoint from codeMieUrl, tolerating a trailing slash', async () => {
+    const { fetchImpl } = await run({ provider: 'ai-run-sso', codeMieUrl: 'https://cm.test/' });
+    expect(fetchImpl.mock.calls[0][0]).toBe('https://cm.test/code-assistant-api/v1/llm_models?include_all=true');
+  });
+});
+
+describe('resolveGatewayPrices — keying and cache identity', () => {
+  const gatewayProfile = (codeMieUrl: string) =>
+    JSON.stringify({ activeProfile: 'p', profiles: { p: { provider: 'ai-run-sso', codeMieUrl } } });
+
+  const run = (config: string, cached?: unknown, models: unknown[] = []) => {
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: true, json: async () => models });
+    const writeFile = vi.fn().mockResolvedValue(undefined);
+    return resolveGatewayPrices({
+      readFile: async (p: string) =>
+        String(p).includes('model-prices-cache')
+          ? (cached === undefined ? Promise.reject(new Error('ENOENT')) : JSON.stringify(cached))
+          : config,
+      writeFile,
+      fetchImpl,
+      getAuthHeadersImpl: async () => ({ cookie: 'x' }),
+    }).then((prices) => ({ prices, fetchImpl, writeFile }));
+  };
+
+  it('keys dotted deployment names so transcript lookups match', async () => {
+    const { prices } = await run(gatewayProfile('https://cm.test'), undefined, [
+      { deployment_name: 'us.anthropic.claude-sonnet-4-6', cost: { input: 0.000003, output: 0.000015 } },
+    ]);
+    expect(lookupPrice('us.anthropic.claude-sonnet-4-6', prices)).not.toBeNull();
+  });
+
+  it('keeps a model whose input rate is legitimately zero', async () => {
+    const { prices } = await run(gatewayProfile('https://cm.test'), undefined, [
+      { deployment_name: 'free-model', cost: { input: 0, output: 0 } },
+    ]);
+    expect(prices!['free-model']).toBeDefined();
+    expect(prices!['free-model'].input).toBe(0);
+  });
+
+  it('does not double-append the api base when codeMieUrl already carries it', async () => {
+    const { fetchImpl } = await run(gatewayProfile('https://cm.test/code-assistant-api'));
+    expect(fetchImpl.mock.calls[0][0]).toBe('https://cm.test/code-assistant-api/v1/llm_models?include_all=true');
+  });
+
+  it('ignores a cache entry belonging to a different tenant', async () => {
+    const stale = { schema: 1, tenant: 'https://other.test/code-assistant-api', ts: Date.now(), value: { m: { input: 1 } } };
+    const { prices, fetchImpl } = await run(gatewayProfile('https://cm.test'), stale, [
+      { deployment_name: 'mine', cost: { input: 0.000002 } },
+    ]);
+    expect(fetchImpl).toHaveBeenCalled();
+    expect(prices!.mine).toBeDefined();
+    expect(prices!.m).toBeUndefined();
+  });
+
+  it('stamps the tenant on the cache it writes', async () => {
+    const { writeFile } = await run(gatewayProfile('https://cm.test'), undefined, [
+      { deployment_name: 'm', cost: { input: 0.000002 } },
+    ]);
+    expect(JSON.parse(writeFile.mock.calls[0][1] as string).tenant).toBe('https://cm.test/code-assistant-api');
   });
 });

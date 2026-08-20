@@ -25,8 +25,6 @@ vi.mock('@/utils/security.js', () => ({
 }));
 
 describe('statusline-installer', () => {
-  // Derived paths go through path.join in production, so compute expected values the same
-  // way to get the correct separator on each OS (backslashes on Windows).
   const CLAUDE_HOME = '/home/testuser/claude';
   const SCRIPT_PATH = join(CLAUDE_HOME, 'codemie-budget-status.js');
   const LEGACY_SCRIPT_PATH = join(CLAUDE_HOME, 'codemie-statusline.mjs');
@@ -34,6 +32,24 @@ describe('statusline-installer', () => {
 
   let fsp: typeof import('fs/promises');
   let fsMod: typeof import('fs');
+
+  const realReadFile = async (p: string) => {
+    const { readFile } = await vi.importActual<typeof import('fs/promises')>('fs/promises');
+    return readFile(p, 'utf-8');
+  };
+
+  const mockScriptSources = (settings?: string) =>
+    vi.mocked(fsp.readFile).mockImplementation((async (p: string) => {
+      const path = String(p).split('\\').join('/');
+      if (path.includes('plugin/statusline.mjs')) {
+        return realReadFile('src/agents/plugins/claude/plugin/statusline.mjs');
+      }
+      if (path.includes('plugin/transcript-cost.mjs')) {
+        return realReadFile('src/agents/plugins/claude/plugin/transcript-cost.mjs');
+      }
+      if (settings !== undefined) return settings;
+      throw new Error('ENOENT');
+    }) as never);
 
   beforeEach(async () => {
     vi.resetModules();
@@ -48,9 +64,7 @@ describe('statusline-installer', () => {
 
   describe('installStatusline', () => {
     it('deploys the script and reports alreadyConfigured=false when settings.json has no statusLine yet', async () => {
-      vi.mocked(fsp.readFile)
-        .mockResolvedValueOnce('#!/usr/bin/env node\n// statusline' as any) // script source
-        .mockResolvedValueOnce(JSON.stringify({ theme: 'dark' }) as any);   // settings.json
+      mockScriptSources(JSON.stringify({ theme: 'dark' }));
       vi.mocked(fsMod.existsSync).mockReturnValue(true);
       vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
       vi.mocked(fsp.chmod).mockResolvedValue(undefined);
@@ -69,9 +83,7 @@ describe('statusline-installer', () => {
     });
 
     it('reports alreadyConfigured=true (and still refreshes settings) when statusLine already exists', async () => {
-      vi.mocked(fsp.readFile)
-        .mockResolvedValueOnce('// script' as any)
-        .mockResolvedValueOnce(JSON.stringify({ statusLine: { type: 'command', command: 'node "/old.js"' } }) as any);
+      mockScriptSources(JSON.stringify({ statusLine: { type: 'command', command: 'node "/old.js"' } }));
       vi.mocked(fsMod.existsSync).mockReturnValue(true);
       vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
       vi.mocked(fsp.chmod).mockResolvedValue(undefined);
@@ -82,8 +94,75 @@ describe('statusline-installer', () => {
       expect(result.alreadyConfigured).toBe(true);
     });
 
+    it('generates a self-contained script with no package imports', async () => {
+      mockScriptSources(JSON.stringify({}));
+      vi.mocked(fsMod.existsSync).mockReturnValue(true);
+      vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
+      vi.mocked(fsp.chmod).mockResolvedValue(undefined);
+
+      const { installStatusline } = await import('../statusline-installer.js');
+      await installStatusline();
+
+      const scriptWrite = vi.mocked(fsp.writeFile).mock.calls.find(([p]) => p === SCRIPT_PATH);
+      const script = scriptWrite![1] as string;
+      expect(script).not.toContain("from './transcript-cost.mjs'");
+      expect(script).not.toContain('__CODEMIE_TRANSCRIPT_COST_IMPORT__');
+      expect(script).not.toContain("from 'module'");
+      expect(script.startsWith('#!')).toBe(true);
+    });
+
+    it('prices a transcript with the rates it is given', async () => {
+      mockScriptSources(JSON.stringify({}));
+      vi.mocked(fsMod.existsSync).mockReturnValue(true);
+      vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
+      vi.mocked(fsp.chmod).mockResolvedValue(undefined);
+
+      const { installStatusline } = await import('../statusline-installer.js');
+      await installStatusline();
+      const script = vi.mocked(fsp.writeFile).mock.calls.find(([p]) => p === SCRIPT_PATH)![1] as string;
+
+      const dataUrl = `data:text/javascript;base64,${Buffer.from(
+        script.replace('function transcriptCostUSD', 'export function transcriptCostUSD')
+      ).toString('base64')}`;
+      const { transcriptCostUSD } = await import(/* @vite-ignore */ dataUrl);
+
+      const usage = { input_tokens: 1_000_000, output_tokens: 0 };
+      const line = JSON.stringify({ requestId: 'r1', message: { id: 'm1', model: 'claude-sonnet-4-5', usage } });
+      const prices = { 'claude-sonnet-4-5': { input: 3, output: 15, cacheRead: 0.3, cacheCreation: 3.75, cacheWrite1h: 6 } };
+      expect(transcriptCostUSD([line, line].join('\n'), prices)).toBeCloseTo(3, 6);
+    });
+
+    it('fails loudly when a source is missing its substitution marker', async () => {
+      mockScriptSources(JSON.stringify({}));
+      vi.mocked(fsp.readFile).mockImplementationOnce((async () => '#!/usr/bin/env node') as never);
+      vi.mocked(fsMod.existsSync).mockReturnValue(true);
+      vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
+
+      const { installStatusline } = await import('../statusline-installer.js');
+      await expect(installStatusline()).rejects.toThrow(/missing its/);
+      expect(fsp.writeFile).not.toHaveBeenCalled();
+    });
+
+    it('refuses to inline transcript-cost.mjs if it grows an import', async () => {
+      mockScriptSources(JSON.stringify({}));
+      vi.mocked(fsp.readFile).mockImplementation((async (p: string) => {
+        const path = String(p).split('\\').join('/');
+        if (path.includes('plugin/transcript-cost.mjs')) return "import x from 'y';\nexport function f() {}";
+        if (path.includes('plugin/statusline.mjs')) {
+          return realReadFile('src/agents/plugins/claude/plugin/statusline.mjs');
+        }
+        return JSON.stringify({});
+      }) as never);
+      vi.mocked(fsMod.existsSync).mockReturnValue(true);
+      vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
+
+      const { installStatusline } = await import('../statusline-installer.js');
+      await expect(installStatusline()).rejects.toThrow(/must have no imports/);
+      expect(fsp.writeFile).not.toHaveBeenCalled();
+    });
+
     it('creates ~/.claude when it does not exist', async () => {
-      vi.mocked(fsp.readFile).mockResolvedValueOnce('// script' as any);
+      mockScriptSources();
       vi.mocked(fsMod.existsSync).mockReturnValueOnce(false).mockReturnValueOnce(false);
       vi.mocked(fsp.mkdir).mockResolvedValue(undefined);
       vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
@@ -96,9 +175,7 @@ describe('statusline-installer', () => {
     });
 
     it('throws ConfigurationError and does not overwrite malformed settings.json', async () => {
-      vi.mocked(fsp.readFile)
-        .mockResolvedValueOnce('// script' as any)
-        .mockResolvedValueOnce('{ bad json' as any);
+      mockScriptSources('{ bad json');
       vi.mocked(fsMod.existsSync).mockReturnValue(true);
       vi.mocked(fsp.writeFile).mockResolvedValue(undefined);
       vi.mocked(fsp.chmod).mockResolvedValue(undefined);
