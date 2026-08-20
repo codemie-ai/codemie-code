@@ -128,9 +128,10 @@ export function createSetupCommand(): Command {
     .description('Interactive setup wizard for CodeMie Code')
     .option('--force', 'Force re-setup even if config exists')
     .option('-v, --verbose', 'Enable verbose debug output with detailed API logs')
+    .option('-p, --provider <name>', 'Skip provider selection and use specified provider (e.g., fcc, sso, litellm)')
     .addCommand(createAssistantsSetupCommand().name('assistants'))
     .addCommand(createSkillsSetupCommand().name('skills'))
-    .action(async (options: { force?: boolean; verbose?: boolean }) => {
+    .action(async (options: { force?: boolean; verbose?: boolean; provider?: string }) => {
       // Enable debug mode if verbose flag is set
       if (options.verbose) {
         process.env.CODEMIE_DEBUG = 'true';
@@ -143,7 +144,7 @@ export function createSetupCommand(): Command {
       }
 
       try {
-        await runSetupWizard(options.force);
+        await runSetupWizard(options.force, options.provider);
       } catch (error: unknown) {
         logger.error('Setup failed:', error);
         process.exit(1);
@@ -153,7 +154,7 @@ export function createSetupCommand(): Command {
   return command;
 }
 
-async function runSetupWizard(force?: boolean): Promise<void> {
+async function runSetupWizard(force?: boolean, preselectedProvider?: string): Promise<void> {
   // Show ecosystem introduction
   FirstTimeExperience.showEcosystemIntro();
 
@@ -302,18 +303,35 @@ async function runSetupWizard(force?: boolean): Promise<void> {
   const registeredProviders = ProviderRegistry.getAllProviders();
   const allProviderChoices = getAllProviderChoices(registeredProviders);
 
-  const { provider: selectedProvider } = await inquirer.prompt([
-    {
-      type: 'list',
-      name: 'provider',
-      message: 'Choose your LLM provider:\n',
-      choices: allProviderChoices,
-      pageSize: 15,
-      default: allProviderChoices[0]?.value
-    }
-  ]);
+  let provider: string;
 
-  let provider: string = selectedProvider;
+  if (preselectedProvider) {
+    // Validate that the preselected provider exists
+    const validProvider = registeredProviders.find(p => p.name === preselectedProvider);
+    if (!validProvider) {
+      console.log(chalk.red(`Error: Unknown provider "${preselectedProvider}"`));
+      console.log(chalk.white('Available providers:'));
+      allProviderChoices.forEach(choice => {
+        console.log(chalk.cyan(`  - ${choice.value}`));
+      });
+      process.exit(1);
+    }
+    provider = preselectedProvider;
+    console.log(chalk.green(`✓ Using provider: ${provider}\n`));
+  } else {
+    // Interactive provider selection
+    const { provider: selectedProvider } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'provider',
+        message: 'Choose your LLM provider:\n',
+        choices: allProviderChoices,
+        pageSize: 15,
+        default: allProviderChoices[0]?.value
+      }
+    ]);
+    provider = selectedProvider;
+  }
   let enforcementContext: LiteLLMEnforcementContext | undefined;
   let codeMieSession: CodeMieSetupSession | undefined;
 
