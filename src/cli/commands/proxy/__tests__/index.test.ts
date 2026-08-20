@@ -587,4 +587,72 @@ describe('proxy status', () => {
     expect(typeof payload.uptimeSec).toBe('number');
     consoleLogSpy.mockRestore();
   });
+
+  it('emits JSON with a reason when unhealthy', async () => {
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { checkProxyHealth } = await import('../health-check.js');
+    const { createProxyCommand } = await import('../index.js');
+    vi.mocked(checkStatus).mockResolvedValue({
+      running: true,
+      state: {
+        pid: process.pid,
+        port: 4001,
+        url: 'http://127.0.0.1:4001',
+        profile: 'work',
+        gatewayKey: 'local-key',
+        startedAt: new Date().toISOString(),
+      },
+    });
+    vi.mocked(checkProxyHealth).mockResolvedValue({
+      healthy: false,
+      level: 'shallow',
+      code: 'unreachable',
+      reason: 'connection refused',
+    });
+
+    await createProxyCommand().parseAsync(['status', '--json'], { from: 'user' });
+
+    const payload = JSON.parse(consoleLogSpy.mock.calls.map((call) => call[0]).join('\n'));
+    expect(payload.status).toBe('unhealthy');
+    expect(payload.reason).toBe('connection refused');
+    consoleLogSpy.mockRestore();
+  });
+
+  it('emits JSON with level "deep" when --deep is passed', async () => {
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { checkProxyHealth } = await import('../health-check.js');
+    const { createProxyCommand } = await import('../index.js');
+    vi.mocked(checkStatus).mockResolvedValue({
+      running: true,
+      state: {
+        pid: process.pid,
+        port: 4001,
+        url: 'http://127.0.0.1:4001',
+        profile: 'work',
+        gatewayKey: 'local-key',
+        startedAt: new Date().toISOString(),
+      },
+    });
+    vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'deep', code: 'ok' });
+
+    await createProxyCommand().parseAsync(['status', '--deep', '--json'], { from: 'user' });
+
+    const payload = JSON.parse(consoleLogSpy.mock.calls.map((call) => call[0]).join('\n'));
+    expect(payload.level).toBe('deep');
+    consoleLogSpy.mockRestore();
+  });
+
+  it('emits { status: "stopped" } JSON when the daemon is not running', async () => {
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { createProxyCommand } = await import('../index.js');
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+
+    await createProxyCommand().parseAsync(['status', '--json'], { from: 'user' });
+
+    expect(consoleLogSpy).toHaveBeenCalledWith(JSON.stringify({ status: 'stopped' }, null, 2));
+    consoleLogSpy.mockRestore();
+  });
 });
