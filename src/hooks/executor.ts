@@ -395,7 +395,7 @@ export class HookExecutor {
 				return { decision: 'allow', reason: `Unknown hook type: ${hook.type}` };
 			}
 		} catch (error) {
-			logger.error(`Hook execution failed: ${error}`);
+			logger.notice(`Hook execution failed: ${error}`);
 			// Fail open (allow execution to continue)
 			return {
 				decision: 'allow',

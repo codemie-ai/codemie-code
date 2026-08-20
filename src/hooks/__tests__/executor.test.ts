@@ -112,6 +112,28 @@ describe('HookExecutor', () => {
 			expect(result.hooksSucceeded).toBe(1);
 		});
 
+		it('should print a visible notice when a hook fails, without requiring CODEMIE_DEBUG', async () => {
+			delete process.env.CODEMIE_DEBUG;
+			const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+			const config: HooksConfiguration = {
+				SessionStart: [
+					{
+						hooks: [{ type: 'command', command: '/test/hook.sh' }],
+					},
+				],
+			};
+
+			execSpy.mockRejectedValue(new Error('Hook script not found'));
+
+			const executor = new HookExecutor(config, mockContext);
+			const result = await executor.executeSessionStart();
+
+			expect(result.decision).toBe('allow');
+			expect(warnSpy).toHaveBeenCalled();
+			expect(warnSpy.mock.calls.some((call) => String(call[0]).includes('⚠'))).toBe(true);
+		});
+
 		it('should handle blocking decision from SessionStart hook', async () => {
 			const config: HooksConfiguration = {
 				SessionStart: [
