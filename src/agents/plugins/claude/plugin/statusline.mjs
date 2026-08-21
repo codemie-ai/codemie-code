@@ -10,6 +10,8 @@ import fs from 'fs/promises';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
+/* __CODEMIE_TRANSCRIPT_COST_IMPORT__ */
+import { transcriptCostUSD, priceFromGatewayCost, normalizeModelKey } from './transcript-cost.mjs';
 
 const HOME = process.env.CODEMIE_HOME || path.join(os.homedir(), '.codemie');
 const CACHE_FILE = path.join(HOME, 'budget-cache.json');
@@ -17,6 +19,9 @@ const CONFIG_FILE = path.join(HOME, 'codemie-cli.config.json');
 const CREDS_DIR = path.join(HOME, 'credentials');
 const CACHE_TTL_MS = 60_000;
 const CACHE_SCHEMA = 2; // bump when the cache.value shape changes, to discard stale pre-upgrade entries
+const PRICES_CACHE_FILE = path.join(HOME, 'model-prices-cache.json');
+const PRICES_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+const PRICES_CACHE_SCHEMA = 1;
 
 const ENCRYPTION_KEY = (() => {
   const id = os.hostname() + os.platform() + os.arch();
@@ -97,7 +102,104 @@ export function extractBasicInfo(ctx) {
     tokOut: ctx?.context_window?.total_output_tokens ?? null,
     cost: ctx?.cost?.total_cost_usd ?? null,
     durationMs: ctx?.cost?.total_duration_ms ?? null,
+    transcriptPath: ctx?.transcript_path ?? null,
   };
+}
+
+const PROVIDERS = new Set(['ai-run-sso', 'jwt', 'litellm', 'bedrock']);
+
+/** Mirrors `ensureApiBase` in providers/core/codemie-auth-helpers.ts, which this cannot import. */
+function ensureApiBase(rawUrl) {
+  const base = String(rawUrl).replace(/\/+$/, '');
+  return /\/code-assistant-api(\/|$)/i.test(base) ? base : `${base}/code-assistant-api`;
+}
+
+/**
+ * Per-model rates from the gateway's `/v1/llm_models`, keyed by {@link normalizeModelKey}.
+ * Cached on disk per tenant. Returns null for non-gateway providers or when unavailable, so
+ * callers keep the cost Claude Code reports. Never throws.
+ */
+export async function resolveGatewayPrices({
+  readFile = fs.readFile,
+  writeFile = fs.writeFile,
+  fetchImpl = fetch,
+  getAuthHeadersImpl = getAuthHeaders,
+} = {}) {
+  let profile;
+  try {
+    const config = JSON.parse(await readFile(CONFIG_FILE, 'utf8'));
+    profile = config.profiles?.[config.activeProfile];
+  } catch {
+    return null;
+  }
+
+  const { codeMieUrl, provider } = profile ?? {};
+  if (!codeMieUrl || !PROVIDERS.has(provider)) {
+    return null;
+  }
+
+  // Rates are per-tenant, so a cache entry is only valid for the gateway that produced it.
+  const tenant = ensureApiBase(codeMieUrl).toLowerCase();
+  try {
+    const cache = JSON.parse(await readFile(PRICES_CACHE_FILE, 'utf8'));
+    if (
+      cache.schema === PRICES_CACHE_SCHEMA
+      && cache.tenant === tenant
+      && Date.now() - cache.ts < PRICES_CACHE_TTL_MS
+    ) {
+      return cache.value;
+    }
+  } catch {}
+
+  try {
+    const headers = await getAuthHeadersImpl(codeMieUrl);
+    if (!headers) {
+      return null;
+    }
+    const res = await fetchImpl(`${tenant}/v1/llm_models?include_all=true`, { headers });
+    if (!res.ok) {
+      return null;
+    }
+    const body = await res.json();
+    const models = Array.isArray(body) ? body : (body?.data ?? []);
+    const prices = {};
+    for (const model of models) {
+      const name = model?.deployment_name || model?.base_name;
+      const price = name && priceFromGatewayCost(model.cost);
+      if (price) {
+        prices[normalizeModelKey(name)] = price;
+      }
+    }
+    if (!Object.keys(prices).length) {
+      return null;
+    }
+    try {
+      await writeFile(
+        PRICES_CACHE_FILE,
+        JSON.stringify({ schema: PRICES_CACHE_SCHEMA, tenant, ts: Date.now(), value: prices }),
+        'utf8'
+      );
+    } catch {}
+    return prices;
+  } catch {
+    return null;
+  }
+}
+
+export async function resolveCost(
+  { transcriptPath, cost },
+  { readFile = fs.readFile, gatewayPrices = null } = {}
+) {
+  if (!transcriptPath) {
+    return cost;
+  }
+  try {
+    const text = await readFile(transcriptPath, 'utf8');
+    const derived = transcriptCostUSD(text, gatewayPrices);
+    return derived ?? cost;
+  } catch {
+    return cost;
+  }
 }
 
 export function formatDuration(ms) {
@@ -256,9 +358,14 @@ export async function main() {
   }
 
   const branchPromise = basic.cwd ? gitBranch(basic.cwd) : Promise.resolve('');
-  const [budgetResult, branch] = await Promise.all([resolveBudget(), branchPromise]);
+  const [budgetResult, branch, gatewayPrices] = await Promise.all([
+    resolveBudget(),
+    branchPromise,
+    resolveGatewayPrices(),
+  ]);
+  const cost = await resolveCost(basic, { gatewayPrices });
 
-  process.stdout.write(buildStatusLine({ ...basic, branch, ...budgetResult }));
+  process.stdout.write(buildStatusLine({ ...basic, branch, cost, ...budgetResult }));
 }
 
 // Compares decoded paths (not raw strings) so this correctly matches even when the
