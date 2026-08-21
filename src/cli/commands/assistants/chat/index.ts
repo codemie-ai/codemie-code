@@ -22,6 +22,7 @@ import { appendConversationTurn } from './historyPersister.js';
 import { isExitCommand, enableVerboseMode } from './utils.js';
 import type { ChatCommandOptions, SingleMessageOptions } from './types.js';
 import { detectFileUploadsFromSession, readFilesFromPaths, type DetectedFile } from './claudeUploadsDetector.js';
+import { detectCodexFileUploads } from './codexUploadsDetector.js';
 
 /** Assistant label color */
 const ASSISTANT_LABEL_COLOR = [177, 185, 249] as const;
@@ -95,9 +96,18 @@ async function chatWithAssistant(
   // Collect files from session and CLI paths
   let detectedFiles: DetectedFile[] = [];
 
-  // 1. Detect files from session (if conversationId exists)
-  if (conversationId) {
-    detectedFiles = await detectFileUploadsFromSession(conversationId, { quiet: false });
+  // 1. Detect files from the agent session.
+  // CODEMIE_AGENT selects the detection strategy:
+  //   - 'codex': scan Codex rollout JSONL by CWD match (Codex hooks are non-functional)
+  //   - default: read Claude session JSONL via CODEMIE_SESSION_ID → correlation → agentSessionFile
+  const agentName = process.env.CODEMIE_AGENT;
+  if (agentName === 'codex') {
+    detectedFiles = await detectCodexFileUploads({ cwd: process.cwd(), quiet: false });
+  } else {
+    const claudeSessionId = process.env.CODEMIE_SESSION_ID;
+    if (claudeSessionId) {
+      detectedFiles = await detectFileUploadsFromSession(claudeSessionId, { quiet: false });
+    }
   }
 
   // 2. Read files from --file paths (if provided)
