@@ -37,11 +37,13 @@ export const LiteLLMSetupSteps: ProviderSetupSteps = {
           ? `API Key for integration "${enforced.alias}" (required)${portalHint}:`
           : 'API Key (optional, leave empty if not required):',
         mask: '*',
-        validate: enforced
-          ? (input: string) =>
-              input.trim() !== '' ||
-              `API Key is required for this integration${portalHint || ' — retrieve it from your CodeMie portal'}.`
-          : undefined
+        ...(enforced
+          ? {
+              validate: (input: string) =>
+                input.trim() !== '' ||
+                `API Key is required for this integration${portalHint || ' — retrieve it from your CodeMie portal'}.`
+            }
+          : {})
       }
     ]);
 
