@@ -11,12 +11,11 @@ import chalk from 'chalk';
 import mime from 'mime-types';
 import { logger } from '@/utils/logger.js';
 import { readJSONL } from '@/agents/core/session/utils/jsonl-reader.js';
-import type { ClaudeMessage } from '@/agents/plugins/claude/claude-message-types.js';
+import type { ClaudeMessage, ContentItem } from '@/agents/plugins/claude/claude-message-types.js';
 import type { Session } from '@/agents/core/session/types.js';
 import { getSessionPath } from '@/agents/core/session/session-config.js';
 
 const ATTACHMENT_PATH_PATTERN = /\[(Image|Document): source: ([^\]]+)\]/g;
-const RECENT_MESSAGES_LIMIT = 2;
 const MAX_FILE_SIZE_MB = 100;
 const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
 const BYTES_PER_KB = 1024;
@@ -24,6 +23,7 @@ const BYTES_PER_MB = 1024 * 1024;
 
 const MESSAGE_TYPE = {
   USER: 'user',
+  ASSISTANT: 'assistant',
   TEXT: 'text',
   IMAGE: 'image',
   DOCUMENT: 'document'
@@ -70,47 +70,6 @@ function extractFileName(filePath: string): string {
   return basename(filePath);
 }
 
-function extractFileNamesFromMetaMessage(message: ClaudeMessage): string[] {
-  if (!message.isMeta || !message.parentUuid || !Array.isArray(message.message?.content)) {
-    return [];
-  }
-
-  const fileNames: string[] = [];
-  for (const item of message.message.content) {
-    if (item.type === MESSAGE_TYPE.TEXT && item.text) {
-      const matches = item.text.matchAll(ATTACHMENT_PATH_PATTERN);
-      for (const match of matches) {
-        fileNames.push(extractFileName(match[2]));
-      }
-    }
-  }
-
-  return fileNames;
-}
-
-function buildAttachmentMap(messages: ClaudeMessage[]): Map<string, string[]> {
-  const attachmentMap = new Map<string, string[]>();
-  const messagesWithAttachments = new Set<string>();
-
-  for (const msg of messages) {
-    if (msg.type === MESSAGE_TYPE.USER && msg.uuid && Array.isArray(msg.message?.content)) {
-      const hasAttachment = msg.message.content.some(item => isAttachmentType(item.type));
-      if (hasAttachment) {
-        messagesWithAttachments.add(msg.uuid);
-      }
-    }
-  }
-
-  for (const msg of messages) {
-    const fileNames = extractFileNamesFromMetaMessage(msg);
-    if (fileNames.length > 0 && msg.parentUuid && messagesWithAttachments.has(msg.parentUuid)) {
-      const existing = attachmentMap.get(msg.parentUuid) || [];
-      attachmentMap.set(msg.parentUuid, [...existing, ...fileNames]);
-    }
-  }
-
-  return attachmentMap;
-}
 
 function readSessionMetadata(sessionId: string): Session | null {
   const sessionPath = getSessionPath(sessionId);
@@ -148,22 +107,6 @@ function extractAgentSessionFile(session: Session): string | null {
   }
 
   return agentSessionFile;
-}
-
-function getRecentUserMessages(messages: ClaudeMessage[]): ClaudeMessage[] {
-  const recentMessages: ClaudeMessage[] = [];
-
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i];
-    if (msg.type === MESSAGE_TYPE.USER && msg.uuid) {
-      recentMessages.push(msg);
-      if (recentMessages.length >= RECENT_MESSAGES_LIMIT) {
-        break;
-      }
-    }
-  }
-
-  return recentMessages;
 }
 
 function processFileItem(
@@ -211,42 +154,59 @@ function processFileItem(
   }
 }
 
-function extractFileContentFromMessages(
-  messages: ClaudeMessage[],
-  attachmentMap: Map<string, string[]>
-): DetectedFile[] {
-  const detectedFiles: DetectedFile[] = [];
-  const recentUserMessages = getRecentUserMessages(messages);
-
-  if (recentUserMessages.length === 0) {
-    logger.debug(`${LOG_PREFIX} No user messages found`);
+function extractFileContentFromMessages(messages: ClaudeMessage[]): DetectedFile[] {
+  // Step 1: find the most recent non-meta user message and capture its promptId.
+  // promptId groups all JSONL entries belonging to one user prompt turn.
+  let foundAnchor = false;
+  let anchorPromptId: string | undefined;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.type === MESSAGE_TYPE.USER && !msg.isMeta) {
+      foundAnchor = true;
+      anchorPromptId = msg.promptId;
+      break;
+    }
+  }
+  if (!foundAnchor) {
+    logger.debug(`${LOG_PREFIX} Checked current-turn messages`, { filesFound: 0 });
     return [];
   }
 
-  for (const userMessage of recentUserMessages) {
-    if (!Array.isArray(userMessage.message?.content)) {
-      continue;
+  // Step 2: collect all isMeta messages that share the anchor's promptId.
+  // In real Claude Code JSONL the base64 data and the [Image: source:] filename
+  // text live in separate isMeta entries — both carry the same promptId.
+  const promptMessages = messages.filter(
+    msg => msg.isMeta && msg.promptId === anchorPromptId && Array.isArray(msg.message?.content)
+  );
+
+  // Step 3: gather every filename annotation across all those messages first.
+  const fileNames: string[] = [];
+  for (const msg of promptMessages) {
+    for (const item of msg.message!.content as ContentItem[]) {
+      if (item.type === MESSAGE_TYPE.TEXT && item.text) {
+        const matches = item.text.matchAll(ATTACHMENT_PATH_PATTERN);
+        for (const match of matches) {
+          fileNames.push(extractFileName(match[2]));
+        }
+      }
     }
+  }
 
-    const fileNames = attachmentMap.get(userMessage.uuid!) ?? [];
-    let fileIndex = 0;
-
-    for (const item of userMessage.message.content) {
+  // Step 4: collect every base64 attachment item and match by positional index.
+  const detectedFiles: DetectedFile[] = [];
+  let fileIndex = 0;
+  for (const msg of promptMessages) {
+    for (const item of msg.message!.content as ContentItem[]) {
       if (isAttachmentType(item.type)) {
         const fileName = fileNames[fileIndex] ?? generateFallbackFileName(detectedFiles.length, fileIndex);
-        const detectedFile = processFileItem(item, fileName, userMessage.uuid);
-
-        if (detectedFile) {
-          detectedFiles.push(detectedFile);
-        }
-
+        const detectedFile = processFileItem(item, fileName, msg.uuid);
+        if (detectedFile) detectedFiles.push(detectedFile);
         fileIndex++;
       }
     }
   }
 
-  logger.debug(`${LOG_PREFIX} Checked recent messages`, {
-    messagesChecked: recentUserMessages.length,
+  logger.debug(`${LOG_PREFIX} Checked current-turn messages`, {
     filesFound: detectedFiles.length
   });
 
@@ -412,8 +372,7 @@ export async function detectFileUploadsFromSession(
       agentSessionFile
     });
 
-    const attachmentMap = buildAttachmentMap(messages);
-    const detectedFiles = extractFileContentFromMessages(messages, attachmentMap);
+    const detectedFiles = extractFileContentFromMessages(messages);
 
     logDetectedFiles(detectedFiles, quiet);
 
