@@ -1,0 +1,71 @@
+{
+  "decision": "request-changes",
+  "rationale": "2 decision_needed items remain: CR-002's hook-failure notice() has no rate limiting/dedup and can flood the console on every failed tool call, and CR-004's shared static CODEMIE_HOME test path (an approved spec design) carries an unconfirmed parallel-worker race risk that a reachability check could not fully resolve from source. 2 patch-severity defects: CR-001 (codemie log never learned the new notice level) and CR-003 (notice() drops extra console args that reach the file log). 1 finding deferred as pre-existing and out of this task's hooks-only scope (sibling plugin loaders still on logger.debug — code-review-deferred.md). 8 findings dismissed: 2 verified non-issues (unconditional console.warn is the approved spec design; the shared test-home directory is created on demand by writeToLogFile's mkdirSync, contra the blind lens's claim), 1 style/indentation issue below the emission floor and covered by the lint gate, 1 narrow multi-path-hooks-config edge case below the floor, and 4 test-only hygiene items (env var leak, unmocked console.warn in an existing test, two temp-dir cleanup gaps) with no production impact. All 4 lenses plus standards ran and parsed cleanly; standards coverage_gap is false and blocking_findings is empty. Confidence is low solely because 2 decision_needed items remain unresolved.",
+  "confidence": "low",
+  "risk_flags": [],
+  "business_review": [
+    { "kind": "spec", "item": "Test log isolation: set CODEMIE_HOME in each of the three vitest.config.ts project env blocks (unit/cli/agent) to an OS-temp-dir directory computed once and shared across projects", "status": "pass", "notes": "vitest.config.ts:10 defines testCodemieHome=join(tmpdir(),'codemie-test-home'); added to env blocks at lines 30, 66, 89 (unit/cli/agent)" },
+    { "kind": "spec", "item": "Isolation relies on getCodemieHome()/getCodemiePath() reading process.env.CODEMIE_HOME at call time and Logger resolving log dir lazily, not at import — no logger.ts changes needed for isolation", "status": "pass", "notes": "src/utils/paths.ts:356-358 getCodemieHome() reads process.env.CODEMIE_HOME on each call; logger.ts unmodified for this part" },
+    { "kind": "spec", "item": "Existing per-test CODEMIE_HOME overrides (e.g. codex.reconciliation.test.ts) continue to work unmodified", "status": "pass", "notes": "codex.reconciliation.test.ts:13,44,48-51 still mkdtemp's and sets/restores process.env.CODEMIE_HOME per test, unaffected by config-level default" },
+    { "kind": "spec", "item": "Add a new Logger 'notice' level: always writes to file log in the same [LEVEL] [agent] [session] format, and always prints to console regardless of isDebugMode(), using a distinct ⚠ yellow symbol/color", "status": "pass", "notes": "src/utils/logger.ts:346-355 notice() calls writeToLogFile('notice',...) (format built at logger.ts:197, level.toUpperCase() -> [NOTICE]) and unconditionally console.warn(chalk.yellow('⚠ ...'))" },
+    { "kind": "spec", "item": "Notice console output stays short (identifier + one-line reason) and points to getLogFilePath() for detail; does not dump stack traces to console", "status": "pass", "notes": "logger.ts:352-354 appends '(see <logPath>)' suffix, single console.warn line, no stack trace printed (unlike error()'s debug-gated stack dump at logger.ts:336-338)" },
+    { "kind": "spec", "item": "Wire notice() into HookExecutor.executeSingleHook's catch block, replacing logger.error, without changing the fail-open decision:'allow' behavior", "status": "pass", "notes": "src/hooks/executor.ts:398 logger.notice replaces logger.error; return block at 400-403 still returns decision:'allow' unchanged" },
+    { "kind": "spec", "item": "Wire notice() into loadPluginHooks's JSON-parse-failure branch, replacing logger.debug", "status": "pass", "notes": "src/plugins/loaders/hooks-loader.ts:47 logger.notice replaces logger.debug in the catch block at hooks-loader.ts:46-50" },
+    { "kind": "spec", "item": "No other logger.error/warn/debug call sites change; console-visibility policy for logger.info/warn/debug or callers outside the two named hook sites stays untouched", "status": "pass", "notes": "diff touches only executor.ts:398 and hooks-loader.ts:47 as logging call-site changes; logger.ts info/warn/debug/error methods unmodified" },
+    { "kind": "spec", "item": "AggregatedHookResult / HookResult shapes unchanged", "status": "pass", "notes": "no diff hunks touch type definitions; executor.ts change is confined to the catch-block log call" },
+    { "kind": "spec", "item": "sanitizeLogArgs still applied to file-logged args for the new notice level (no bypassed sanitization)", "status": "pass", "notes": "notice() delegates to the shared writeToLogFile(), which calls sanitizeLogArgs(...args) at logger.ts:205 for every level including 'notice'" },
+    { "kind": "spec", "item": "New regression/characterization tests cover: HookExecutor failure -> file log + console notice; loadPluginHooks malformed JSON -> console notice; a smoke test proving logger file writes honor a CODEMIE_HOME override", "status": "pass", "notes": "executor.test.ts:9-29 (warn assertion, CODEMIE_DEBUG unset); hooks-loader test.ts:65-78 (malformed JSON -> null + warn); logger-notice.test.ts:133-147 (console warn + file [NOTICE] content); vitest-codemie-home-isolation.test.ts:9-14 (CODEMIE_HOME/log path under tmpdir)" },
+    { "kind": "spec", "item": "Zero lint/typecheck/build regressions", "status": "na", "notes": "not verifiable from a diff-only static audit; no Bash access to run quality gates" }
+  ],
+  "standards_review": [
+    { "kind": "commit-format", "status": "pass", "notes": "4 commit subjects all match <type>(<scope>): <subject> with allowed types (fix, feat, test) and allowed scopes (cli, utils); imperative mood, under 100 chars" },
+    { "kind": "code-quality", "status": "pass", "notes": "New Logger.notice() (src/utils/logger.ts:346-355) has explicit void return type, camelCase naming, <50 lines, follows the file's own logging-level pattern; callers are one-line level swaps; new test files follow *.test.ts naming; vitest.config.ts change is small and scoped" },
+    { "kind": "security", "status": "na", "notes": "Guide not found at the documented path .ai-run/guides/development/security-patterns.md and no security ArtifactRef was passed. Traced both call sites: hooks-loader.ts's catch only wraps a JSON.parse error on the plugin's own hooks.json (parser error text only); executor.ts's catch only wraps process-level failures (missing field, spawn ENOENT, timeout) since exec() resolves rather than rejects on non-zero hook exit. No sanitizeLogArgs bypass found." }
+  ],
+  "findings": [
+    {
+      "id": "CR-001",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/cli/commands/log/parser.ts",
+      "line": 64,
+      "title": "codemie log unaware of new notice level",
+      "problem": "The Logger gained a new 'notice' level, but src/cli/commands/log/types.ts's LogLevel union is still 'debug' | 'info' | 'warn' | 'error', and parser.ts's normalizeLogLevel() has no branch for 'notice' so it falls through to `return 'debug'`.",
+      "impact": "In the codemie log viewer, notice-scoped hook-failure entries are silently reclassified as debug: LogFilterEngine.byLevel's { debug:0, info:1, warn:2, error:3 } map means `codemie log --level warn` or `--level error` will not show them, and formatter.ts's formatLevel() falls into its 'debug'/default case, rendering them dim blue 'DEBUG' instead of a warning color — directly undermining this change's stated goal of making hook failures clear to users inspecting their logs.",
+      "recommendation": "Add 'notice' to the LogLevel union, give it a branch in normalizeLogLevel() and a level-rank entry in LogFilterEngine.byLevel (above warn, since it is meant to always surface), and a distinct color case in formatter.ts's formatLevel()."
+    },
+    {
+      "id": "CR-002",
+      "severity": "major",
+      "triage": "decision_needed",
+      "file": "src/hooks/executor.ts",
+      "line": 398,
+      "title": "Hook-failure notice() has no rate limiting",
+      "problem": "executeSingleHook's catch block calls `logger.notice(...)` unconditionally on every invocation; there is no per-hook or per-session dedup/throttling before the console.warn fires (executor.ts already has a hashHook() helper at line 366, but it is not used to gate notice()).",
+      "impact": "A hook that fails on every PreToolUse/PostToolUse call (e.g. a broken hook script) will print a fresh yellow ⚠ banner to the console on every single tool invocation for the rest of the session, defeating the goal of making hook failures clear rather than noisy.",
+      "recommendation": "Needs a human decision on the throttling shape (once per hook-hash per session vs. time-windowed vs. count-capped) before implementing; not a mechanical fix given no spec guidance on the desired behavior."
+    },
+    {
+      "id": "CR-003",
+      "severity": "major",
+      "triage": "patch",
+      "file": "src/utils/logger.ts",
+      "line": 354,
+      "title": "notice() drops extra console args",
+      "problem": "notice(message, ...args) passes ...args into writeToLogFile('notice', message, ...args) (line 348), so extra args reach the file log, but the console.warn call at line 354 only interpolates `message` and never spreads ...args into the console call.",
+      "impact": "Any future caller of logger.notice() that passes extra arguments (the current two call sites only pass a single pre-interpolated string, so the bug is latent today) will see those args recorded in the log file but silently missing from what the user sees on the terminal — the two output channels diverge for a method whose whole purpose is guaranteed console visibility.",
+      "recommendation": "Spread ...args into the console.warn call the same way writeToLogFile does, e.g. `console.warn(chalk.yellow(...), ...args)`."
+    },
+    {
+      "id": "CR-004",
+      "severity": "major",
+      "triage": "decision_needed",
+      "file": "vitest.config.ts",
+      "line": 10,
+      "title": "Shared static CODEMIE_HOME risks worker races",
+      "problem": "testCodemieHome = join(tmpdir(), 'codemie-test-home') is one fixed path shared by all three vitest projects (unit/cli/agent) and every test file within them, with no per-worker or per-run uniqueness suffix — this is the literal approved spec design (business_review item 1, pass), not an oversight.",
+      "impact": "Vitest runs test files across parallel workers; any test relying on the config-level default CODEMIE_HOME (rather than mkdtemp'ing its own, as codex.reconciliation.test.ts and the new isolation-focused tests already do) that performs real file I/O under that path risks colliding with a concurrent worker on the same directory. Reachability of an actual collision (which specific non-overriding tests write real files there) could not be fully confirmed from source within the review budget, so this keeps its lens-derived severity rather than being downgraded.",
+      "recommendation": "Confirm with the spec owner whether the shared-path design already assumes no non-overriding test performs concurrent file I/O there, or whether the path should get a per-worker/per-PID suffix (as the edge-case lens's guard_snippet suggests) to remove the race risk outright."
+    }
+  ]
+}
