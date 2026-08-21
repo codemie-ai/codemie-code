@@ -88,6 +88,7 @@ export class MetricsSyncProcessor implements SessionProcessor {
 
             return {
               recordId: d.recordId,
+              gitBranch: d.gitBranch || '(empty)',
               timestamp: typeof d.timestamp === 'number'
                 ? new Date(d.timestamp).toISOString()
                 : d.timestamp,
@@ -183,7 +184,7 @@ export class MetricsSyncProcessor implements SessionProcessor {
 
       for (const metric of metrics) {
         const branchDeltas = pendingDeltas.filter((delta) =>
-          (delta.gitBranch || '') === metric.attributes.branch
+          (delta.gitBranch || sessionMetadata.gitBranch || '') === metric.attributes.branch
         );
 
         try {

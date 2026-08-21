@@ -13,6 +13,7 @@ import type {
 import { setRuntimeCheckpoint } from '@/telemetry/runtime/checkpoints.js';
 import { logger } from '@/utils/logger.js';
 import { detectGitBranch, detectGitRemoteRepo } from '@/utils/processes.js';
+import { ConfigLoader } from '@/utils/config.js';
 
 interface TrackedSession {
   codemieSessionId: string;
@@ -48,10 +49,21 @@ export class DesktopTelemetryRuntime {
       this.timer = undefined;
     }
 
+    // Final poll to catch sessions whose transcript was written after the last regular poll
+    // but before proxy stop (e.g. Code tab sessions where transcript write is async).
+    await this.poll().catch((error) => {
+      logger.error('[desktop-telemetry] Final poll on stop failed:', error);
+    });
+
     for (const tracked of this.trackedSessions.values()) {
       await this.finalizeSession(tracked.codemieSessionId, 'desktop-daemon-stop');
     }
   }
+
+  async triggerPoll(): Promise<void> {
+    await this.poll();
+  }
+
 
   private async poll(): Promise<void> {
     if (this.isPolling) {
@@ -63,9 +75,24 @@ export class DesktopTelemetryRuntime {
 
     try {
       const discoveredSessions = await this.adapter.discoverSessions(this.lastPollAt - this.config.pollIntervalMs);
+      logger.debug('[desktop-telemetry] Poll tick', {
+        discovered: discoveredSessions.length,
+        tracked: this.trackedSessions.size,
+        lastPollAt: new Date(this.lastPollAt).toISOString(),
+      });
       for (const discovered of discoveredSessions) {
         if (discovered.createdAt < this.startedAt) {
           continue;
+        }
+
+        const isNew = !this.trackedSessions.has(discovered.externalSessionId);
+        if (isNew) {
+          logger.info('[desktop-telemetry] New session detected', {
+            externalSessionId: discovered.externalSessionId,
+            agentSessionId: discovered.agentSessionId,
+            workingDirectory: discovered.workingDirectory,
+            transcriptPath: discovered.transcriptPath,
+          });
         }
 
         const session = await this.ensureSession(discovered);
@@ -83,6 +110,11 @@ export class DesktopTelemetryRuntime {
           continue;
         }
 
+        logger.info('[desktop-telemetry] Session inactive — finalizing', {
+          externalSessionId,
+          inactiveForMs,
+          codemieSessionId: tracked.codemieSessionId,
+        });
         await this.finalizeSession(tracked.codemieSessionId, 'desktop-inactive-timeout');
         this.trackedSessions.delete(externalSessionId);
       }
@@ -108,10 +140,30 @@ export class DesktopTelemetryRuntime {
       return existing;
     }
 
-    const [gitBranch, repository] = await Promise.all([
+    const [gitBranch, repository, project] = await Promise.all([
       detectGitBranch(discovered.workingDirectory),
-      detectGitRemoteRepo(discovered.workingDirectory)
+      detectGitRemoteRepo(discovered.workingDirectory),
+      ConfigLoader.load(discovered.workingDirectory)
+        .then(c => c.codeMieProject ?? undefined)
+        .catch(() => undefined)
     ]);
+    logger.info('[desktop-telemetry] Session resolved', {
+      externalSessionId: discovered.externalSessionId,
+      workingDirectory: discovered.workingDirectory,
+      repository,
+      gitBranch,
+      project,
+    });
+
+    // Don't overwrite a value the header-injection plugin's per-request lookup (lsof/session-file
+    // scan) may have already resolved for this session — that path runs first and is more precise
+    // (process-level CWD vs. this poll's session-file-derived workingDirectory).
+    if (!discovered.agentSessionId.startsWith('local_') && !this.config.sessionRepositoryMap?.has(discovered.agentSessionId)) {
+      this.config.sessionRepositoryMap?.set(
+        discovered.agentSessionId,
+        repository || 'Cowork'
+      );
+    }
 
     const session: Session = {
       sessionId: randomUUID(),
@@ -121,6 +173,7 @@ export class DesktopTelemetryRuntime {
       workingDirectory: discovered.workingDirectory,
       gitBranch: gitBranch || undefined,
       repository: repository || undefined,
+      project: project || undefined,
       status: 'active',
       activeDurationMs: 0,
       correlation: {
@@ -203,6 +256,13 @@ export class DesktopTelemetryRuntime {
     const context = await this.buildProcessingContext(session);
     await this.syncer.sync(sessionId, context);
     await this.sendSessionEndMetric(session);
+    logger.info('[desktop-telemetry] Session finalized', {
+      sessionId,
+      reason,
+      repository: session.repository,
+      gitBranch: session.gitBranch,
+      status: session.status,
+    });
   }
 
   private async buildProcessingContext(
@@ -256,14 +316,24 @@ export class DesktopTelemetryRuntime {
       timeout: 10000
     });
 
+    logger.info('[desktop-telemetry] Sending session START metric', {
+      agentSessionId: discovered.agentSessionId,
+      repository: session.repository,
+      gitBranch: session.gitBranch,
+      workingDirectory: session.workingDirectory,
+      apiBaseUrl: context.apiBaseUrl,
+      hasCookies: !!context.cookies,
+    });
+
     await sender.sendSessionStart(
       {
         sessionId: discovered.agentSessionId,
         agentName: this.config.clientType,
         provider: this.config.provider,
+        project: session.project,
+        repository: session.repository,
         startTime: session.startTime,
         workingDirectory: session.workingDirectory,
-        repository: session.repository,
         model: discovered.model
       },
       session.workingDirectory,
@@ -286,14 +356,23 @@ export class DesktopTelemetryRuntime {
       timeout: 10000
     });
 
+    logger.info('[desktop-telemetry] Sending session END metric', {
+      agentSessionId: session.correlation.agentSessionId || session.sessionId,
+      repository: session.repository,
+      gitBranch: session.gitBranch,
+      reason: session.reason,
+      apiBaseUrl: context.apiBaseUrl,
+    });
+
     await sender.sendSessionEnd(
       {
         sessionId: session.correlation.agentSessionId || session.sessionId,
         agentName: this.config.clientType,
         provider: this.config.provider,
+        project: session.project,
+        repository: session.repository,
         startTime: session.startTime,
-        workingDirectory: session.workingDirectory,
-        repository: session.repository
+        workingDirectory: session.workingDirectory
       },
       session.workingDirectory,
       { status: 'completed', reason: session.reason || 'desktop-session-complete' },

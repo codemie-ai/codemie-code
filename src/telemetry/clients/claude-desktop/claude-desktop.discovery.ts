@@ -16,6 +16,7 @@ interface DesktopMetadata {
   cwd?: string;
   originCwd?: string;
   worktreePath?: string;
+  userSelectedFolders?: string[];
   createdAt: number;
   lastActivityAt: number;
   model?: string;
@@ -92,7 +93,7 @@ async function resolveClaudeTranscriptPath(metadata: DesktopMetadata): Promise<s
   return null;
 }
 
-async function walk(root: string): Promise<string[]> {
+export async function walk(root: string): Promise<string[]> {
   const files: string[] = [];
 
   // A directory that is unreadable (root-owned leftovers under ~/.config) or
@@ -173,6 +174,7 @@ export async function discoverClaudeDesktopSessions(
           || companionMetadata?.worktreePath
           || metadata.originCwd
           || metadata.worktreePath
+          || metadata.userSelectedFolders?.[0]
           || metadata.cwd
           || transcriptDir,
         createdAt: metadata.createdAt,
