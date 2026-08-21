@@ -71,7 +71,7 @@ export async function getAuthHeaders(codeMieUrl) {
 // --- Pure functions (unit-testable, no filesystem/network access) ---
 
 export function matchBudgetRow(rows, userEmail) {
-  if (!Array.isArray(rows) || !userEmail) return null;
+  if (!Array.isArray(rows) || rows.length === 0 || !userEmail) return null;
   const target = `${userEmail.trim().toLowerCase()} (cli)`;
   return rows.find(r => r.project_name?.trim().toLowerCase() === target) ?? null;
 }
@@ -81,7 +81,7 @@ export function formatBudgetSegment(row) {
   const pct = Math.round(row.total ?? 0);
   const reset = row.budget_reset_at ? new Date(row.budget_reset_at).toLocaleDateString() : '?';
   return {
-    text: `$${row.current_spending.toFixed(2)} (${pct}%) resets ${reset}`,
+    text: `Total: $${row.current_spending.toFixed(2)} (${pct}%) resets ${reset}`,
     pct,
   };
 }
@@ -211,9 +211,12 @@ export async function resolveBudget({
     return { budget: null, budgetError: null }; // no CodeMie config at all → skip silently
   }
 
-  const profile = config.profiles?.[config.activeProfile];
-  const { codeMieUrl, baseUrl, userEmail } = profile ?? {};
-  if (!profile || !codeMieUrl || !baseUrl || !userEmail) {
+  const profile = config?.profiles?.[config?.activeProfile] || config || {};
+  const codeMieUrl = profile.codeMieUrl || config.codeMieUrl;
+  const baseUrl = profile.baseUrl || config.baseUrl || codeMieUrl;
+  const userEmail = profile.userEmail || config.userEmail || '';
+
+  if (!codeMieUrl || !baseUrl) {
     return { budget: null, budgetError: null }; // no CodeMie profile configured → skip silently
   }
 
