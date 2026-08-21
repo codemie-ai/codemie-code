@@ -13,6 +13,7 @@ import { resolveCodemieOpenCodeBinary, getPlatformPackage } from './codemie-code
 import { getHooksPluginFileUrl, cleanupHooksPlugin } from './codemie-code-hooks/index.js';
 import { getReasoningSanitizerPluginUrl, cleanupReasoningSanitizerPlugin } from './reasoning-sanitizer/index.js';
 import { getCodemieHome } from '../../utils/paths.js';
+import { resolveCodemieBinary, resolveHookCommand } from '../../utils/hook-command.js';
 import type { HookProcessingConfig } from '../../cli/commands/hook.js';
 import { toBedrockModelId } from '../../providers/plugins/bedrock/bedrock.utils.js';
 import { MAX_ENV_SIZE, writeConfigToTempFile } from '../core/temp-config.js';
@@ -22,6 +23,16 @@ import { ensureSessionFile } from '../core/session/ensure-session.js';
  * Built-in agent name constant - single source of truth
  */
 export const BUILTIN_AGENT_NAME = 'codemie-code';
+
+// Default session-tracking/metrics hooks, using an absolute codemie command so the
+// OpenCode hook plugin can invoke it regardless of shell PATH. See EPMCDME-14035.
+export function buildDefaultHooks(binary: string): Record<string, unknown[]> {
+  const hookCommand = resolveHookCommand('codemie hook', binary);
+  return {
+    SessionStart: [{ hooks: [{ type: 'command', command: hookCommand, timeout: 5 }] }],
+    SessionEnd: [{ hooks: [{ type: 'command', command: hookCommand, timeout: 10 }] }],
+  };
+}
 
 const OPENCODE_SUBCOMMANDS = ['run', 'chat', 'config', 'init', 'help', 'version'];
 
@@ -295,11 +306,8 @@ export const CodeMieCodePluginMetadata: AgentMetadata = {
       });
 
       // --- Hooks injection ---
-      // 1. Build default hooks (always present for session tracking + metrics)
-      const defaultHooks: Record<string, unknown[]> = {
-        SessionStart: [{ hooks: [{ type: 'command', command: 'codemie hook', timeout: 5 }] }],
-        SessionEnd: [{ hooks: [{ type: 'command', command: 'codemie hook', timeout: 10 }] }],
-      };
+      const codemieBinary = await resolveCodemieBinary();
+      const defaultHooks: Record<string, unknown[]> = buildDefaultHooks(codemieBinary);
 
       // 2. Merge profile hooks on top of defaults
       let mergedHooks = { ...defaultHooks };

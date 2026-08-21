@@ -517,6 +517,25 @@ export abstract class BaseExtensionInstaller {
     }
   }
 
+  // Rewrite installed hooks.json commands to an absolute codemie path. Non-fatal:
+  // failures log and leave the copied file as-is so install never breaks. EPMCDME-14035.
+  protected async localizeInstalledHooks(targetPath: string): Promise<void> {
+    try {
+      const { resolveCodemieBinary, rewriteHooksCommandTree } = await import('../../../utils/hook-command.js');
+      const hooksFile = join(targetPath, 'hooks', 'hooks.json');
+      const raw = await readFile(hooksFile, 'utf-8');
+      const parsed = JSON.parse(raw) as { hooks?: unknown };
+      const binary = await resolveCodemieBinary();
+      if (rewriteHooksCommandTree(parsed.hooks, binary)) {
+        await writeFile(hooksFile, JSON.stringify(parsed, null, 2), 'utf-8');
+        logger.info(`[${this.agentName}] Localized hook commands to ${binary}`);
+      }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      logger.warn(`[${this.agentName}] Could not localize hook commands (non-fatal): ${msg}`);
+    }
+  }
+
   /**
    * Check if extension is already installed and get version info
    *
@@ -674,6 +693,8 @@ export abstract class BaseExtensionInstaller {
             sourceVersion: sourceVersion || undefined
           };
         }
+
+        await this.localizeInstalledHooks(targetPath);
       } else {
         logger.info(`[${this.agentName}] Skipping copy - extension already up-to-date`);
       }

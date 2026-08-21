@@ -27,3 +27,4 @@ import './002-consolidate-sessions.migration.js';
 import './003-remove-hooks-node.migration.js';
 import './004-skills-assistants-top-level.migration.js';
 import './005-skill-slug-format.migration.js';
+import './006-resolve-hook-command-paths.migration.js';
