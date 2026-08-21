@@ -192,10 +192,15 @@ export function createProxyCommand(): Command {
     .command('status')
     .description('Show proxy daemon status')
     .option('--deep', 'Also verify upstream/auth reachability (slower)')
+    .option('--json', 'Emit status as JSON instead of formatted output')
     .action(async (opts) => {
       const { running, state } = await checkStatus();
       if (!running || !state) {
-        console.log('Status: stopped');
+        if (opts.json) {
+          console.log(JSON.stringify({ status: 'stopped' }, null, 2));
+        } else {
+          console.log('Status: stopped');
+        }
         return;
       }
 
@@ -212,6 +217,26 @@ export function createProxyCommand(): Command {
         deep: Boolean(opts.deep),
       });
 
+      if (opts.json) {
+        const payload: Record<string, unknown> = {
+          status: health.healthy ? 'healthy' : 'unhealthy',
+          apiKey: state.gatewayKey,
+          url: state.url,
+          port: state.port,
+          profile: state.profile,
+          uptimeSec,
+          level: health.level,
+        };
+        if (state.clientType) payload.clientType = state.clientType;
+        if (state.project) payload.project = state.project;
+        if (!health.healthy) payload.reason = health.reason ?? state.healthReason ?? 'unknown';
+        if (state.health === 'unhealthy' && state.healthReason && health.healthy) {
+          payload.lastRecordedIssue = state.healthReason;
+        }
+        console.log(JSON.stringify(payload, null, 2));
+        return;
+      }
+
       if (health.healthy) {
         const label = health.level === 'deep' ? 'running, healthy (upstream OK)' : 'running, healthy';
         console.log(`Status:  ${chalk.green(label)}`);
@@ -222,6 +247,7 @@ export function createProxyCommand(): Command {
 
       console.log(`  URL:     ${state.url}`);
       console.log(`  Port:    ${state.port}`);
+      console.log(`  API Key: ${state.gatewayKey}`);
       console.log(`  Profile: ${state.profile}`);
       if (state.clientType) {
         console.log(`  Client:  ${state.clientType}`);
