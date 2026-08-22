@@ -90,6 +90,12 @@ beforeEach(() => {
 });
 
 describe('SHELL_HOOKS_PLUGIN_SOURCE', () => {
+  it('hides the console window for asynchronous hook commands', () => {
+    expect(SHELL_HOOKS_PLUGIN_SOURCE).toMatch(
+      /spawn\("sh",\s*\["-c", command\],[\s\S]*?windowsHide:\s*true/,
+    );
+  });
+
   it('exports an async factory returning flat dotted-key handlers', async () => {
     const hooks = await loadHooks(['UserPromptSubmit']);
 
