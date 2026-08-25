@@ -29,7 +29,7 @@
   }
   // Agent keys are internal ids; these are what a human should read. Unmapped agents fall
   // through to the key itself, so listing an agent here is optional.
-  var AGENT_LABELS = { 'copilot-cli': 'GitHub Copilot CLI', pi: 'Pi' };
+  var AGENT_LABELS = { 'copilot-cli': 'GitHub Copilot CLI', pi: 'Pi', 'gemini': 'Gemini CLI' };
   function labelFor(agent) { return AGENT_LABELS[agent] || agent; }
 
   // ---- formatting ---------------------------------------------------------

@@ -16,7 +16,7 @@ import type {
 } from './types.js';
 import type { MetricDelta } from '../../../agents/core/metrics/types.js';
 import type { RawSessionData } from './data-loader.js';
-import { normalizeModelName } from './model-normalizer.js';
+import { normalizeModelName } from '@/utils/model-normalizer.js';
 
 /**
  * Aggregates raw session data into hierarchical analytics

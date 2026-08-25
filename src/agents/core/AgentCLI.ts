@@ -224,6 +224,18 @@ export class AgentCLI {
         config.authMethod = AuthMethod.JWT;
       }
 
+      // Normalize a user-supplied --base-url (or one loaded from a profile) so the
+      // required /code-assistant-api path is always present, even when the root
+      // CodeMie URL is passed. Idempotent: leaves an already-correct URL untouched.
+      // Keyed on provider (not authMethod) because stored SSO profiles never set
+      // authMethod — proxy routing there is decided by provider.authType === 'sso'.
+      if (
+        config.baseUrl
+        && (config.provider === ProviderName.AI_RUN_SSO || config.provider === ProviderName.BEARER_AUTH)
+      ) {
+        config.baseUrl = ensureApiBase(config.baseUrl);
+      }
+
       // Validate --reasoning-effort (catches both CLI flag and profile defaults)
       if (config.reasoningEffort) {
         const { normalizeReasoningEffort } = await import('./reasoning-effort.js');
@@ -290,6 +302,41 @@ export class AgentCLI {
         logger.error('Auth validation failed:', error);
         console.log(chalk.red('\n✗ Authentication check failed\n'));
         process.exit(1);
+      }
+
+      // Analytics auth validation for providers where CodeMie auth is analytics-only
+      // (e.g. anthropic-subscription, moonshot-subscription). ai-run-sso already
+      // validated these same credentials via its own validateAuth above.
+      // Enabled only when analytics sync is configured (codeMieUrl → CODEMIE_URL +
+      // CODEMIE_SYNC_API_URL) — same condition the UserPromptSubmit hook gate uses.
+      // Non-fatal: the hook gate enforces auth at prompt level; here we only offer
+      // an early interactive re-auth.
+      if (config.provider !== ProviderName.AI_RUN_SSO && config.codeMieUrl) {
+        try {
+          const ssoSetupSteps = ProviderRegistry.getSetupSteps(ProviderName.AI_RUN_SSO);
+
+          if (ssoSetupSteps?.validateAuth) {
+            const analyticsAuth = await ssoSetupSteps.validateAuth(config);
+
+            if (!analyticsAuth.valid) {
+              const { handleAuthValidationFailure } = await import('../../providers/core/auth-validation.js');
+              const reauthed = await handleAuthValidationFailure(analyticsAuth, ssoSetupSteps, config);
+
+              if (!reauthed) {
+                console.log(chalk.yellow('⚠️  CodeMie analytics authentication is invalid — session metrics will not be uploaded.'));
+                console.log(chalk.white(`  Re-authenticate later with: codemie profile login --url ${config.codeMieUrl}\n`));
+                logger.warn(`Analytics auth invalid for ${config.codeMieUrl}: ${analyticsAuth.error}`);
+              }
+            } else {
+              // Credentials verified against the API — clear any stale invalid-auth marker
+              const { clearAnalyticsAuthStatus } = await import('../../utils/analytics-auth-status.js');
+              await clearAnalyticsAuthStatus();
+            }
+          }
+        } catch (error) {
+          // Analytics auth is auxiliary — never block agent launch on check errors
+          logger.error('Analytics auth validation failed:', error);
+        }
       }
 
       // Validate provider and model compatibility
@@ -626,13 +673,17 @@ export class AgentCLI {
       const recommendedModels = metadata.recommendedModels;
 
       if (recommendedModels && recommendedModels.length > 0) {
+        // recommendedModels entries may be family tokens (e.g. "sonnet") rather
+        // than literal ids, so these are shown as category hints, not a
+        // guaranteed-valid --model value — point to `codemie models list` for
+        // an actual current id instead of asserting one here.
         const modelExamples = recommendedModels.slice(0, 3).join(', ');
-        const suggestedModel = recommendedModels[0];
         const command = getAgentLauncherCommand(this.adapter.name);
 
         console.log(chalk.white(`  1. ${this.adapter.displayName} requires compatible models (e.g., ${modelExamples})`));
         console.log(chalk.white('  2. Update profile: ') + chalk.cyan('codemie setup'));
-        console.log(chalk.white(`  3. Override for this session: ${command} --model ${suggestedModel}`));
+        console.log(chalk.white(`  3. See available models: `) + chalk.cyan('codemie models list'));
+        console.log(chalk.white(`  4. Override for this session: ${command} --model <model-id>`));
       } else {
         console.log(chalk.white('  1. Update profile: ') + chalk.cyan('codemie setup'));
       }
@@ -663,10 +714,14 @@ export class AgentCLI {
     const { createInterface } = await import('node:readline');
     const rl = createInterface({ input: process.stdin, output: process.stdout });
 
+    const wrapperCommand = this.adapter.name.startsWith('codemie-')
+      ? this.adapter.name
+      : `codemie-${this.adapter.name}`;
+
     console.log(chalk.yellow(`\n⚠  Warning: Session ${sessionId} was not created through CodeMie.`));
     console.log(chalk.white('If you continue:'));
-    console.log(chalk.white('  • Token usage and API metrics WILL be tracked via the CodeMie proxy.'));
-    console.log(chalk.white('  • Conversation transcript will NOT be synced to your CodeMie account history.\n'));
+    console.log(chalk.white('  • This session will NOT be tracked as a CodeMie session — no CodeMie session metrics, no transcript sync, and it will not appear in CodeMie Analytics.'));
+    console.log(chalk.white(`  • API calls still route through the CodeMie proxy while using ${wrapperCommand}, so usage will still be logged/billed there.\n`));
     console.log(chalk.dim(
       fallbackResumeCommand
         ? `To resume without any CodeMie tracking, use: ${fallbackResumeCommand}\n`

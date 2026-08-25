@@ -15,10 +15,10 @@ import type { SessionCost, SessionCostIndex, CostSummary, ModelCost, TokenUsage,
 import type { DispatchEventRaw } from './types.js';
 import { MAX_SERIES_POINTS } from './types.js';
 import { emptyUsage, addUsage, costBreakdown } from './cost-calculator.js';
-import { lookupPrice } from './pricing.js';
+import { lookupPrice } from '@/utils/pricing.js';
 import { gatherUsageDeduped, gatherDedupedUsageRecords, sumUsageRecords, readCodexSubagentUsage, type UsageRecord } from './usage-readers.js';
 import { extractDispatchEvents } from './dispatch-extractor.js';
-import { normalizeModelName } from '../model-normalizer.js';
+import { normalizeModelName } from '@/utils/model-normalizer.js';
 import { getCodemiePath } from '../../../../utils/paths.js';
 import { AgentRegistry } from '../../../../agents/registry.js';
 import { ClaudeSessionAdapter } from '../../../../agents/plugins/claude/claude.session.js';

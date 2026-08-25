@@ -31,7 +31,7 @@ import { firstPiUserText } from '../../../agents/plugins/pi/session/pi-user-prom
 import { PI_FORKED_CONTINUATION, piForkedContinuations } from '../../../agents/plugins/pi/pi.session.js';
 
 /** Agents whose native logs we discover + synthesize. */
-const NATIVE_AGENTS = ['claude', 'codex', 'copilot-cli', 'pi'] as const;
+const NATIVE_AGENTS = ['claude', 'codex', 'copilot-cli', 'pi', 'gemini'] as const;
 
 function isPiAgent(agentName: string): boolean {
   return agentName.toLowerCase() === 'pi';

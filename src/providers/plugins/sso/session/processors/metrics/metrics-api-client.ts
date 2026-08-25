@@ -27,12 +27,15 @@ import type { MCPConfigSummary, ExtensionsScanSummary } from '../../../../../../
 import { logger } from '../../../../../../utils/logger.js';
 import { detectGitBranch } from '../../../../../../utils/processes.js';
 import { extractRepository } from '../../../../../../utils/paths.js';
+import { markAnalyticsAuthInvalid, clearAnalyticsAuthStatus } from '../../../../../../utils/analytics-auth-status.js';
 import { CODEMIE_ENDPOINTS } from '../../../sso.http-client.js';
 
 interface MetricsRequestError extends Error {
   statusCode?: number;
   response?: unknown;
   responseText?: string;
+  /** True when the server rejected the provided credentials (401/403 or an HTML SSO login page) */
+  isAuthFailure?: boolean;
 }
 
 /**
@@ -70,13 +73,25 @@ class MetricsApiClient {
           await this.sleep(delay);
         }
 
-        return await this.sendRequest(metric);
+        const response = await this.sendRequest(metric);
+        // Server accepted our credentials — clear any stale invalid-auth marker
+        await clearAnalyticsAuthStatus();
+        return response;
 
       } catch (error) {
         lastError = error as Error;
         const errorMessage = error instanceof Error ? error.message : String(error);
         const errorName = error instanceof Error ? error.name : 'Unknown';
         const statusCode = (error as MetricsRequestError).statusCode;
+
+        // Record credential rejections (401/403 or HTML SSO login page) so the
+        // hook auth gate can prompt the user to re-authenticate
+        if ((error as MetricsRequestError).isAuthFailure) {
+          await markAnalyticsAuthInvalid(
+            statusCode ? `HTTP ${statusCode}: ${errorMessage}` : errorMessage,
+            this.config.baseUrl
+          );
+        }
 
         if (!this.isRetryable(error as Error)) {
           logger.error(`[MetricsApiClient] Non-retryable error [${errorName}]: ${errorMessage}${statusCode ? ` (HTTP ${statusCode})` : ''}`);
@@ -174,6 +189,7 @@ class MetricsApiClient {
           const error = new Error(errorMessage) as MetricsRequestError;
           error.statusCode = response.status;
           error.response = data;
+          error.isAuthFailure = response.status === 401 || response.status === 403;
           throw error;
         }
 
@@ -181,6 +197,7 @@ class MetricsApiClient {
         const error = new Error(`API returned ${response.status}: ${errorMessage}`) as MetricsRequestError;
         error.statusCode = response.status;
         error.response = data;
+        error.isAuthFailure = response.status === 401 || response.status === 403;
         throw error;
       }
 
@@ -239,6 +256,9 @@ function parseMetricsResponse(
     ) as MetricsRequestError;
     error.statusCode = statusCode;
     error.responseText = excerpt;
+    // An HTML page instead of JSON means the request was redirected to the SSO
+    // login page (e.g. Keycloak answers HTTP 200 + login HTML for expired cookies)
+    error.isAuthFailure = Boolean(contentType?.includes('text/html'));
     throw error;
   }
 }

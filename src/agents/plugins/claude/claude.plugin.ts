@@ -5,6 +5,7 @@ import type {
 } from '../../core/types.js';
 import { BaseAgentAdapter } from '../../core/BaseAgentAdapter.js';
 import { ClaudeSessionAdapter } from './claude.session.js';
+import { resolveClaudeModel, type ClaudeModelTier } from './claude.models.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import { ClaudePluginInstaller } from './claude.plugin-installer.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
@@ -93,7 +94,10 @@ export const ClaudePluginMetadata: AgentMetadata = {
 
   supportedProviders: ['litellm', 'ai-run-sso', 'bedrock', 'bearer-auth', 'anthropic-subscription'],
   blockedModelPatterns: [],
-  recommendedModels: ['claude-sonnet-4-6', 'claude-4-opus', 'gpt-4.1'],
+  // Family token, not a pinned version — computeRecommendedModelIds (setup-ui.ts)
+  // matches it against the live catalog and picks the current latest Sonnet.
+  // Only Sonnet is starred as recommended; Opus/Haiku remain fully selectable.
+  recommendedModels: ['sonnet'],
 
   ssoConfig: {
     enabled: true,
@@ -294,6 +298,50 @@ export const ClaudePluginMetadata: AgentMetadata = {
             error: error instanceof Error ? error.message : String(error),
           })
         );
+      }
+
+      // Auto-update stale model tiers from the live CodeMie catalog (unless the
+      // user has explicitly configured a value that is still available). Each
+      // tier resolves independently so one failure never blocks the others.
+      //
+      // Skipped entirely for anthropic-subscription: that path talks directly to
+      // Anthropic (no CodeMie catalog backs it) and must defer to the claude CLI's
+      // own built-in defaults, not have them re-populated from the CodeMie catalog.
+      if (env.CODEMIE_PROVIDER !== 'anthropic-subscription') {
+        const TIER_TARGET_VARS: Record<ClaudeModelTier, { generic: string; native: string[] }> = {
+          model: { generic: 'CODEMIE_MODEL', native: ['ANTHROPIC_MODEL'] },
+          haiku: { generic: 'CODEMIE_HAIKU_MODEL', native: ['ANTHROPIC_DEFAULT_HAIKU_MODEL'] },
+          sonnet: {
+            generic: 'CODEMIE_SONNET_MODEL',
+            native: ['ANTHROPIC_DEFAULT_SONNET_MODEL', 'CLAUDE_CODE_SUBAGENT_MODEL'],
+          },
+          opus: { generic: 'CODEMIE_OPUS_MODEL', native: ['ANTHROPIC_DEFAULT_OPUS_MODEL'] },
+        };
+
+        for (const tier of Object.keys(TIER_TARGET_VARS) as ClaudeModelTier[]) {
+          try {
+            const resolution = await resolveClaudeModel(env, tier);
+            if (!resolution) continue;
+
+            const { generic, native } = TIER_TARGET_VARS[tier];
+            env[generic] = resolution.selectedModel;
+            for (const nativeVar of native) {
+              // Never overwrite a native var the user (or another hook) already
+              // set directly — only the generic CODEMIE_*_MODEL var is treated
+              // as the "configured" signal by resolveClaudeModel itself.
+              if (!env[nativeVar]) {
+                env[nativeVar] = resolution.selectedModel;
+              }
+            }
+          } catch (error) {
+            logger.warn(
+              `[Claude] Failed to auto-resolve model for tier "${tier}"; keeping configured value`,
+              ...sanitizeLogArgs({
+                error: error instanceof Error ? error.message : String(error),
+              })
+            );
+          }
+        }
       }
 
       return env;

@@ -59,6 +59,15 @@ const OAUTH_CONFIG = {
   tokenUrl: 'https://auth.codemie.test/realms/codemie-prod/protocol/openid-connect/token',
 };
 
+// OAUTH_CONFIG mirrors a backend payload that predates `authorizationServer`,
+// so resolveDesktopOAuth fills the gap with its built-in CodeMie issuer. Every
+// expectation built from that fixture has to account for the injected default.
+const DEFAULT_ISSUER = ['https://auth.codemie.lab.epam.com/realms/codemie-prod'];
+
+function withDefaultIssuer<T extends object>(oauth: T): T & { authorizationServer: string[] } {
+  return { ...oauth, authorizationServer: DEFAULT_ISSUER };
+}
+
 describe('buildGatewayConfig', () => {
   it('returns correct gateway config shape', () => {
     expect(buildGatewayConfig('http://localhost:4001', 'codemie-proxy')).toEqual({
@@ -651,7 +660,7 @@ describe('writeDesktopConfig', () => {
     const written = JSON.parse(await readFile(configPath, 'utf-8'));
     const servers = JSON.parse(written.managedMcpServers);
     const onehub = servers.find((s: any) => s.name === 'onehub_core');
-    expect(onehub.oauth).toEqual({ ...OAUTH_CONFIG, audience: 'onehub' });
+    expect(onehub.oauth).toEqual(withDefaultIssuer({ ...OAUTH_CONFIG, audience: 'onehub' }));
   });
 
   it('writes oauth: true for a legacy auth enum entry', async () => {
@@ -1099,7 +1108,7 @@ describe('mapCanonicalToDesktop', () => {
         name: 'onehub_core',
         url: 'https://mcp.example.com/mcp/onehub_core',
         transport: 'http',
-        oauth: OAUTH_CONFIG,
+        oauth: withDefaultIssuer(OAUTH_CONFIG),
       },
     ]);
   });
@@ -1116,13 +1125,15 @@ describe('resolveDesktopOAuth', () => {
   it('forwards a valid oauth object as a copy', () => {
     const entry = { name: 'onehub_core', transport: 'http' as const, url: 'https://x', oauth: OAUTH_CONFIG };
     const resolved = resolveDesktopOAuth(entry);
-    expect(resolved).toEqual(OAUTH_CONFIG);
+    expect(resolved).toEqual(withDefaultIssuer(OAUTH_CONFIG));
     expect(resolved).not.toBe(OAUTH_CONFIG);
   });
 
   it('preserves unknown keys inside the oauth object', () => {
     const oauth = { ...OAUTH_CONFIG, audience: 'onehub', pkce: true };
-    expect(resolveDesktopOAuth({ name: 'a', transport: 'http', url: 'https://x', oauth })).toEqual(oauth);
+    expect(resolveDesktopOAuth({ name: 'a', transport: 'http', url: 'https://x', oauth })).toEqual(
+      withDefaultIssuer(oauth),
+    );
   });
 
   it('passes the boolean shapes through unchanged', () => {
@@ -1142,7 +1153,7 @@ describe('resolveDesktopOAuth', () => {
   it('prefers the oauth object over the legacy enum when both are present', () => {
     expect(resolveDesktopOAuth({
       name: 'a', transport: 'http', url: 'https://x', auth: 'none', oauth: OAUTH_CONFIG,
-    })).toEqual(OAUTH_CONFIG);
+    })).toEqual(withDefaultIssuer(OAUTH_CONFIG));
   });
 
   it('returns false when the entry carries neither field (unchanged behavior)', () => {

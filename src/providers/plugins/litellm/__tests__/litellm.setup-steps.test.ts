@@ -31,6 +31,65 @@ describe('LiteLLMSetupSteps.getCredentials', () => {
     vi.clearAllMocks();
   });
 
+  describe('apiKey prompt question structure', () => {
+    it('does not include a validate key in non-enforcement mode — regression guard for validate:undefined crash', async () => {
+      const inquirer = await import('inquirer');
+      vi.mocked(inquirer.default.prompt).mockResolvedValueOnce({ baseUrl: 'http://localhost:4000', apiKey: '' });
+
+      await LiteLLMSetupSteps.getCredentials(false);
+
+      const questions = vi.mocked(inquirer.default.prompt).mock.calls[0][0] as any[];
+      const apiKeyQuestion = questions.find((q: any) => q.name === 'apiKey');
+      expect(apiKeyQuestion).toBeDefined();
+      expect('validate' in apiKeyQuestion).toBe(false);
+    });
+
+    it('includes a validate function in enforcement mode', async () => {
+      const inquirer = await import('inquirer');
+      vi.mocked(inquirer.default.prompt).mockResolvedValueOnce({
+        baseUrl: 'http://proxy.example.com',
+        apiKey: 'sk-key'
+      });
+      const enforcedContext: SetupContext = {
+        enforcedIntegration: {
+          id: 'int-1',
+          alias: 'my-integration',
+          codeMieUrl: 'https://codemie.example.com'
+        }
+      };
+
+      await LiteLLMSetupSteps.getCredentials(false, enforcedContext);
+
+      const questions = vi.mocked(inquirer.default.prompt).mock.calls[0][0] as any[];
+      const apiKeyQuestion = questions.find((q: any) => q.name === 'apiKey');
+      expect(apiKeyQuestion).toBeDefined();
+      expect(typeof apiKeyQuestion.validate).toBe('function');
+    });
+
+    it('validate function rejects empty key in enforcement mode', async () => {
+      const inquirer = await import('inquirer');
+      vi.mocked(inquirer.default.prompt).mockResolvedValueOnce({
+        baseUrl: 'http://proxy.example.com',
+        apiKey: 'sk-key'
+      });
+      const enforcedContext: SetupContext = {
+        enforcedIntegration: {
+          id: 'int-1',
+          alias: 'my-integration',
+          codeMieUrl: 'https://codemie.example.com'
+        }
+      };
+
+      await LiteLLMSetupSteps.getCredentials(false, enforcedContext);
+
+      const questions = vi.mocked(inquirer.default.prompt).mock.calls[0][0] as any[];
+      const apiKeyQuestion = questions.find((q: any) => q.name === 'apiKey');
+      expect(apiKeyQuestion.validate('')).not.toBe(true);
+      expect(apiKeyQuestion.validate('  ')).not.toBe(true);
+      expect(apiKeyQuestion.validate('sk-real-key')).toBe(true);
+    });
+  });
+
   describe('normal mode (no context)', () => {
     it('allows empty API key — defaults to "not-required"', async () => {
       const inquirer = await import('inquirer');

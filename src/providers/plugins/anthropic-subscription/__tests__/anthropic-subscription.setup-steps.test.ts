@@ -39,10 +39,10 @@ describe('AnthropicSubscriptionSetupSteps', () => {
   });
 
   describe('fetchModels', () => {
-    it('returns the template recommended models list', async () => {
+    it('returns an empty list so setup prompts for manual entry (no live catalog for this provider)', async () => {
       const models = await AnthropicSubscriptionSetupSteps.fetchModels({});
 
-      expect(models).toEqual(AnthropicSubscriptionTemplate.recommendedModels);
+      expect(models).toEqual([]);
     });
   });
 

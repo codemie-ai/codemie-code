@@ -521,6 +521,7 @@ Use `codemie codebase start|stop|status` to manage the UI process, or `codemie c
 
 ```bash
 codemie proxy connect --claude-desktop                       # Claude Desktop app (MCP servers)
+codemie proxy connect --codex-desktop                        # Codex desktop app (~/.codex/config.toml)
 codemie proxy connect --vscode                               # VS Code Copilot Chat models (BYOK)
 codemie proxy connect --vscode-claude-code                   # VS Code Claude Code extension
 codemie proxy connect --claude-desktop --vscode --insiders   # combine targets in one run
@@ -528,7 +529,29 @@ codemie proxy connect --claude-desktop --vscode --insiders   # combine targets i
 
 Flags are composable: a single run configures every target you pass, prints a per-target summary, and exits non-zero if any target fails. Run `codemie proxy connect` with no flags to list the available targets. Shared options: `--profile <name>`, `--force`, `--verbose`, and `--insiders` (VS Code targets only).
 
+Remove a target's configuration with `codemie proxy disconnect`:
+
+```bash
+codemie proxy disconnect --codex-desktop
+```
+
 > **Deprecated:** `codemie proxy connect desktop` and `codemie proxy connect vscode` still work but are deprecated and print a notice. Use `codemie proxy connect --claude-desktop` and `codemie proxy connect --vscode` instead.
+
+## Connect the Codex desktop app via CodeMie Proxy
+
+Point the Codex desktop app — Codex as it ships inside the ChatGPT desktop app — at your CodeMie models:
+
+```bash
+codemie proxy connect --codex-desktop
+```
+
+Then **quit and reopen the app**; it reads its configuration at startup. macOS and Windows are supported.
+
+The connector writes your user-level `~/.codex/config.toml`, preserving everything it does not own, and never touches `~/.codex/auth.json`. Switching models in the app's picker works — the proxy maps the app's model names onto CodeMie deployments. Undo it with `codemie proxy disconnect --codex-desktop`.
+
+See [docs/COMMANDS.md](docs/COMMANDS.md) for the managed-block format, `--model`, `--force`, and the backup and restore behaviour.
+
+> The Codex desktop app and the `codemie-codex` CLI use different Codex homes by design, so settings and history differ between the two surfaces.
 
 ## Connect VS Code BYOK via CodeMie Proxy
 

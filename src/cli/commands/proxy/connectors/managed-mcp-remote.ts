@@ -23,6 +23,16 @@ export interface McpOAuthConfig {
   scope?: string;
   callbackHost?: string;
   callbackPort?: number;
+  /**
+   * RFC 9207 issuer identifier(s). Its presence is what switches Claude Desktop
+   * out of "explicit" OAuth mode — where Desktop fabricates the issuer from the
+   * *origin* of {@link tokenUrl}, discarding the path — into "issuer" mode,
+   * where it discovers real metadata from
+   * `<issuer>/.well-known/openid-configuration`. A Keycloak issuer is the realm
+   * URL, so the fabricated value never matches the `iss` returned on the
+   * callback and Desktop aborts the flow.
+   */
+  authorizationServer?: string[];
   [key: string]: unknown;
 }
 

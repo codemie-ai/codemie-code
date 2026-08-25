@@ -7,6 +7,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Command } from 'commander';
 
+vi.mock('../disconnect-orchestrator.js', () => ({
+  disconnectTargets: vi.fn().mockResolvedValue(undefined),
+}));
+
 vi.mock('../connect-orchestrator.js', () => ({
   connectTargets: vi.fn().mockResolvedValue(undefined),
   // Symbols index.ts imports for other proxy subcommands (unused by these tests).
@@ -40,7 +44,7 @@ describe('proxy connect — unified command and deprecated aliases', () => {
 
     expect(connectTargets).toHaveBeenCalledWith(
       expect.objectContaining({
-        targets: { claudeDesktop: true, vscode: true, vscodeClaudeCode: true },
+        targets: { claudeDesktop: true, vscode: true, vscodeClaudeCode: true, codexDesktop: false },
       })
     );
   });
@@ -171,9 +175,39 @@ describe('deprecated aliases forward their flags under real CLI nesting', () => 
 
     expect(connectTargets).toHaveBeenCalledWith(
       expect.objectContaining({
-        targets: { claudeDesktop: false, vscode: true, vscodeClaudeCode: false },
+        targets: { claudeDesktop: false, vscode: true, vscodeClaudeCode: false, codexDesktop: false },
         profile: 'p',
       })
     );
+  });
+});
+
+describe('proxy connect --codex-desktop and proxy disconnect', () => {
+  beforeEach(() => { vi.resetModules(); vi.clearAllMocks(); });
+
+  it('maps --codex-desktop and --model onto the connect options', async () => {
+    const { connectTargets } = await import('../connect-orchestrator.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync(
+      ['connect', '--codex-desktop', '--model', 'gpt-5-codex'],
+      { from: 'user' }
+    );
+
+    expect(connectTargets).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targets: expect.objectContaining({ codexDesktop: true }),
+        model: 'gpt-5-codex',
+      })
+    );
+  });
+
+  it('routes `proxy disconnect --codex-desktop` to disconnectTargets', async () => {
+    const { disconnectTargets } = await import('../disconnect-orchestrator.js');
+    const { createProxyCommand } = await import('../index.js');
+
+    await createProxyCommand().parseAsync(['disconnect', '--codex-desktop'], { from: 'user' });
+
+    expect(disconnectTargets).toHaveBeenCalledWith({ targets: { codexDesktop: true } });
   });
 });

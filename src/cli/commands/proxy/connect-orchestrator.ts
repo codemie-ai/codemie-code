@@ -38,6 +38,15 @@ import { writeVsCodeClaudeCodeConfig } from './connectors/vscode-claude-code.js'
 import { writeVsCodeLanguageModelsConfig } from './connectors/vscode.js';
 import { VS_CODE_SUPPORTED_MODELS } from './connectors/vscode-models.js';
 import { checkProxyHealth } from './health-check.js';
+import {
+  discoverCodexModels,
+  findCodexDesktopApp,
+  getCodexDesktopAppCandidates,
+  getCodexDesktopConfigPath,
+  getCodexDesktopStatePath,
+  selectCodexModel,
+  writeCodexDesktopConfig,
+} from './connectors/codex-desktop.js';
 
 export const DEFAULT_DAEMON_PORT = 4001;
 
@@ -48,6 +57,7 @@ export interface ConnectTargets {
   claudeDesktop?: boolean;
   vscode?: boolean;
   vscodeClaudeCode?: boolean;
+  codexDesktop?: boolean;
 }
 
 /** Options for a unified `connect` run (built by the command/alias wrappers). */
@@ -57,10 +67,12 @@ export interface ConnectOptions {
   insiders?: boolean;
   force?: boolean;
   verbose?: boolean;
+  /** Pin a specific model for the Codex desktop target. */
+  model?: string;
 }
 
-/** Effective client type used by `daemonMatchesRequest` (never a new value). */
-export type EffectiveClientType = 'claude-desktop' | 'vscode-byok';
+/** Effective client type used by `daemonMatchesRequest`. */
+export type EffectiveClientType = 'claude-desktop' | 'vscode-byok' | 'codex-desktop';
 
 /**
  * The daemon identity for a target set. `spawnOptions` is byte-identical to the
@@ -73,7 +85,8 @@ export interface DaemonIdentity {
   clientType: EffectiveClientType;
   spawnOptions:
     | { telemetryMode: 'claude-desktop' }
-    | { clientType: 'vscode-byok' };
+    | { clientType: 'vscode-byok' }
+    | { clientType: 'codex-desktop' };
 }
 
 /**
@@ -85,6 +98,9 @@ export interface DaemonIdentity {
 export function deriveDaemonIdentity(targets: ConnectTargets): DaemonIdentity {
   if (targets.claudeDesktop || targets.vscodeClaudeCode) {
     return { clientType: 'claude-desktop', spawnOptions: { telemetryMode: 'claude-desktop' } };
+  }
+  if (targets.codexDesktop) {
+    return { clientType: 'codex-desktop', spawnOptions: { clientType: 'codex-desktop' } };
   }
   return { clientType: 'vscode-byok', spawnOptions: { clientType: 'vscode-byok' } };
 }
@@ -238,9 +254,11 @@ const TARGET_LIST = [
   '  --claude-desktop       Claude Desktop app (MCP servers)',
   '  --vscode               VS Code Copilot Chat models (BYOK)',
   '  --vscode-claude-code   VS Code Claude Code extension',
+  '  --codex-desktop        Codex desktop app (writes ~/.codex/config.toml)',
   '',
   'Examples:',
   '  codemie proxy connect --claude-desktop',
+  '  codemie proxy connect --codex-desktop',
   '  codemie proxy connect --vscode --vscode-claude-code',
   '  codemie proxy connect --claude-desktop --vscode --insiders',
   '',
@@ -248,7 +266,7 @@ const TARGET_LIST = [
 ].join('\n');
 
 function hasAnyTarget(t: ConnectTargets): boolean {
-  return Boolean(t.claudeDesktop || t.vscode || t.vscodeClaudeCode);
+  return Boolean(t.claudeDesktop || t.vscode || t.vscodeClaudeCode || t.codexDesktop);
 }
 
 /** A human label and the base command to echo in remediation messages. */
@@ -258,6 +276,7 @@ function describeTargets(t: ConnectTargets): { label: string; commandExample: st
   if (t.claudeDesktop) { flags.push('--claude-desktop'); labels.push('Claude Desktop'); }
   if (t.vscode) { flags.push('--vscode'); labels.push('VS Code'); }
   if (t.vscodeClaudeCode) { flags.push('--vscode-claude-code'); labels.push('VS Code Claude Code'); }
+  if (t.codexDesktop) { flags.push('--codex-desktop'); labels.push('Codex Desktop'); }
   const label = labels.length === 1 ? labels[0] : 'CodeMie';
   return { label, commandExample: `codemie proxy connect ${flags.join(' ')}` };
 }
@@ -495,6 +514,63 @@ async function runVscodeClaudeCode(state: DaemonState, insiders: boolean): Promi
  * target's writer runs independently; a per-target summary is printed and the
  * process exit code is set to 1 when any requested target fails (spec §3.4).
  */
+interface CodexDesktopRunOptions {
+  force?: boolean;
+  model?: string;
+  verbose?: boolean;
+}
+
+async function runCodexDesktop(
+  state: DaemonState,
+  options: CodexDesktopRunOptions
+): Promise<TargetResult> {
+  const label = 'Codex Desktop';
+  try {
+    const candidates = getCodexDesktopAppCandidates();
+    if (!findCodexDesktopApp(candidates) && !options.force) {
+      throw new ConfigurationError(
+        candidates.length === 0
+          ? `The Codex desktop app is not supported on ${process.platform} ` +
+            '(macOS and Windows only). Re-run with --force to write the config anyway.'
+          : 'Could not find the ChatGPT desktop app (which ships Codex). Looked in: ' +
+            `${candidates.join(', ')}. ` +
+            'Install it, or re-run with --force to write the config anyway.'
+      );
+    }
+
+    // Printed unconditionally: this command edits a file the user's own Codex CLI
+    // also reads, so which file was touched is not a debugging detail.
+    const configPath = getCodexDesktopConfigPath();
+    console.log(chalk.cyan(`Codex config: ${configPath}`));
+
+    const discovered = await discoverCodexModels(state.url, state.gatewayKey);
+    const model = selectCodexModel(discovered, options.model);
+
+    await writeCodexDesktopConfig({
+      configPath,
+      statePath: getCodexDesktopStatePath(),
+      proxyUrl: state.url,
+      baseUrl: new URL('/v1', state.url).toString(),
+      gatewayKey: state.gatewayKey,
+      model,
+      force: options.force,
+    });
+
+    console.log(chalk.green(`\u2713 Codex Desktop configured (model: ${model})`));
+    console.log(chalk.yellow('\u26a0 Quit and reopen the ChatGPT desktop app to apply the change.'));
+    console.log(chalk.dim('  Switching models in the app\'s picker is supported \u2014 the proxy'));
+    console.log(chalk.dim('  maps its model names onto CodeMie deployments.'));
+    return { label, ok: true };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn('[proxy] Codex Desktop configuration failed', ...sanitizeLogArgs({ error: message }));
+    return { label, ok: false, error: message };
+  }
+}
+
+/** Test seam \u2014 the runner is otherwise only reachable through `connectTargets`. */
+export const runCodexDesktopForTest = runCodexDesktop;
+
 export async function connectTargets(opts: ConnectOptions): Promise<void> {
   const { targets } = opts;
   if (!hasAnyTarget(targets)) {
@@ -509,6 +585,21 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     console.log(
       chalk.yellow('Note: --insiders has no effect without a VS Code target (--vscode / --vscode-claude-code).')
     );
+  }
+
+  if (opts.model && !targets.codexDesktop) {
+    console.log(chalk.yellow('Note: --model has no effect without --codex-desktop.'));
+  }
+
+  // One daemon serves the whole run and carries a single client type. The Codex
+  // model normalizer is gated on that type, so a higher-priority target silently
+  // turns off the resolution the Codex app depends on.
+  if (targets.codexDesktop && deriveDaemonIdentity(targets).clientType !== 'codex-desktop') {
+    console.log(chalk.yellow(
+      'Warning: --codex-desktop was combined with a target that owns the shared daemon, so\n' +
+      '  Codex model-name resolution is disabled for this run. Selecting a model in the Codex\n' +
+      '  app will fail. Run `codemie proxy connect --codex-desktop` on its own instead.'
+    ));
   }
 
   const { label, commandExample } = describeTargets(targets);
@@ -574,6 +665,13 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
   if (targets.claudeDesktop) results.push(await runClaudeDesktop(state, verbose));
   if (targets.vscode) results.push(await runVscodeByok(state, insiders, config, verbose));
   if (targets.vscodeClaudeCode) results.push(await runVscodeClaudeCode(state, insiders));
+  if (targets.codexDesktop) {
+    results.push(await runCodexDesktop(state, {
+      force: Boolean(opts.force),
+      model: opts.model,
+      verbose,
+    }));
+  }
 
   const anyFailed = results.some((r) => !r.ok);
   const allFailed = results.every((r) => !r.ok);
