@@ -89,10 +89,17 @@ class DecoupleProviderWorkspaceConfigMigration implements Migration {
       profiles[name] = clean;
     }
 
+    // Mirror the non-empty guard saveProfile()/initProjectConfig() use before writing
+    // `workspace`: an empty {} is a *defined* workspace to resolveWorkspace()'s
+    // whole-object-override rule, so writing one here for every scope that never had
+    // a moving field would permanently cut that scope off from its global fallback.
+    // Leave `workspace` unset in that case instead.
+    const hasWorkspaceFields = Object.keys(workspace).length > 0;
+
     return {
       ...config,
       profiles,
-      workspace
+      ...(hasWorkspaceFields ? { workspace } : {})
     };
   }
 }

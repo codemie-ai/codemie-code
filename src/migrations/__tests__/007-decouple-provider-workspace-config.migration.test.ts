@@ -56,7 +56,10 @@ describe('DecoupleProviderWorkspaceConfigMigration', () => {
     expect((result.profiles.other as any).codeMieProject).toBeUndefined();
   });
 
-  it('produces an empty workspace and leaves profiles unchanged when no profile has any moving field', () => {
+  it('leaves workspace unset (not an empty {}) and profiles unchanged when no profile has any moving field', () => {
+    // An empty `{}` is still a *defined* workspace to resolveWorkspace()'s whole-object
+    // override rule, so writing one for a scope with nothing to move would wrongly cut
+    // that scope off from falling back to the global scope's workspace. See CR-003.
     const config = baseConfig('active', {
       active: { provider: 'ai-run-sso', model: 'claude-sonnet-4-6' },
       other: { provider: 'anthropic-subscription', model: 'claude-sonnet-4-6' }
@@ -64,7 +67,7 @@ describe('DecoupleProviderWorkspaceConfigMigration', () => {
 
     const result = migrate(config);
 
-    expect(result.workspace).toEqual({});
+    expect(result.workspace).toBeUndefined();
     expect(result.profiles.active).toEqual(config.profiles.active);
     expect(result.profiles.other).toEqual(config.profiles.other);
   });
@@ -100,7 +103,7 @@ describe('DecoupleProviderWorkspaceConfigMigration', () => {
 
     const result = migrate(config);
 
-    expect(result.workspace).toEqual({});
+    expect(result.workspace).toBeUndefined();
     expect(result.profiles).toEqual({});
   });
 });
