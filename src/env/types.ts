@@ -95,6 +95,9 @@ export interface ProviderProfile {
 
   // In-memory assistants/skills state (not persisted here; stored at MultiProviderConfig level)
   codemieAssistants?: CodemieAssistant[];
+
+  // Optional routing mode: appended as `?routing=<mode>` to every upstream request.
+  routing?: 'signal' | 'classifier';
 }
 
 /**

@@ -1009,8 +1009,24 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       branch: branch || undefined,
       project: env.CODEMIE_PROJECT || undefined,
       syncApiUrl: env.CODEMIE_SYNC_API_URL || undefined,
-      syncCodeMieUrl: env.CODEMIE_URL || undefined
+      syncCodeMieUrl: env.CODEMIE_URL || undefined,
+      routing: this._resolveRouting(env, profileConfig),
     };
+  }
+
+  private _resolveRouting(
+    env: NodeJS.ProcessEnv,
+    profileConfig: import('../../env/types.js').CodeMieConfigOptions | undefined,
+  ): 'signal' | 'classifier' | undefined {
+    const ALLOWED = new Set(['signal', 'classifier']);
+    const raw = env.CODEMIE_ROUTING ?? profileConfig?.routing;
+    if (raw === undefined || raw === null || raw === '') return undefined;
+    const key = String(raw).trim().toLowerCase();
+    if (ALLOWED.has(key)) return key as 'signal' | 'classifier';
+    logger.warn(
+      `[BaseAgentAdapter] Invalid CODEMIE_ROUTING=${JSON.stringify(raw)}; allowed: signal, classifier`,
+    );
+    return undefined;
   }
 
   /**
