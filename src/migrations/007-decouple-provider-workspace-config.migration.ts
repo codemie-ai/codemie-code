@@ -4,15 +4,19 @@ import { ConfigLoader } from '../utils/config.js';
 import type { MultiProviderConfig, ProviderProfile, WorkspaceConfig } from '../env/types.js';
 
 /**
- * Keys that moved from ProviderProfile to WorkspaceConfig. Mirrors
- * ConfigLoader's private WORKSPACE_KEYS list (src/utils/config.ts) — kept as
- * an independent literal here so the migration has no runtime dependency on
- * ConfigLoader internals.
+ * CodeMie connectivity identity — always sourced from a single profile together,
+ * never mixed across profiles. A codeMieUrl from one provider paired with a
+ * codeMieProject/codeMieIntegration from another would point the client at the
+ * wrong project/integration, so these three resolve as one atomic group.
  */
-const WORKSPACE_KEYS: (keyof WorkspaceConfig)[] = [
-  'codeMieUrl',
-  'codeMieProject',
-  'codeMieIntegration',
+const IDENTITY_KEYS: (keyof WorkspaceConfig)[] = ['codeMieUrl', 'codeMieProject', 'codeMieIntegration'];
+
+/**
+ * Remaining repo/tooling-context fields. Unlike the identity trio, these carry
+ * no cross-field consistency requirement, so each resolves independently —
+ * whichever profile defines it.
+ */
+const OTHER_WORKSPACE_KEYS: (keyof WorkspaceConfig)[] = [
   'hooks',
   'plugins',
   'assistants',
@@ -20,6 +24,14 @@ const WORKSPACE_KEYS: (keyof WorkspaceConfig)[] = [
   'claudeAutocompactPct',
   'metrics'
 ];
+
+/**
+ * Keys that moved from ProviderProfile to WorkspaceConfig. Mirrors
+ * ConfigLoader's private WORKSPACE_KEYS list (src/utils/config.ts) — kept as
+ * an independent literal here so the migration has no runtime dependency on
+ * ConfigLoader internals.
+ */
+const WORKSPACE_KEYS: (keyof WorkspaceConfig)[] = [...IDENTITY_KEYS, ...OTHER_WORKSPACE_KEYS];
 
 class DecoupleProviderWorkspaceConfigMigration implements Migration {
   id = '007-decouple-provider-workspace-config';
@@ -58,25 +70,41 @@ class DecoupleProviderWorkspaceConfigMigration implements Migration {
     if (config.workspace !== undefined) return config;
 
     const profileEntries = Object.entries(config.profiles ?? {});
-
-    const hasMovingField = (profile: ProviderProfile): boolean =>
-      WORKSPACE_KEYS.some(key => (profile as any)[key] !== undefined);
-
-    // Prefer the active profile as the source of truth for workspace fields; fall
-    // back to the first profile (in object iteration order) that defines any.
     const activeProfile = config.activeProfile ? config.profiles?.[config.activeProfile] : undefined;
-    const sourceEntry = activeProfile && hasMovingField(activeProfile)
-      ? ([config.activeProfile, activeProfile] as [string, ProviderProfile])
-      : profileEntries.find(([, profile]) => hasMovingField(profile));
+
+    const hasAnyKey = (profile: ProviderProfile, keys: (keyof WorkspaceConfig)[]): boolean =>
+      keys.some(key => (profile as any)[key] !== undefined);
 
     const workspace: WorkspaceConfig = {};
-    if (sourceEntry) {
-      const [, sourceProfile] = sourceEntry;
-      for (const key of WORKSPACE_KEYS) {
+
+    // Identity trio: prefer the active profile if it defines any of codeMieUrl/
+    // codeMieProject/codeMieIntegration; otherwise fall back to the first profile
+    // (iteration order) that does. All three come from that ONE profile together.
+    const identitySourceEntry = activeProfile && hasAnyKey(activeProfile, IDENTITY_KEYS)
+      ? ([config.activeProfile, activeProfile] as [string, ProviderProfile])
+      : profileEntries.find(([, profile]) => hasAnyKey(profile, IDENTITY_KEYS));
+    if (identitySourceEntry) {
+      const [, sourceProfile] = identitySourceEntry;
+      for (const key of IDENTITY_KEYS) {
         const value = (sourceProfile as any)[key];
         if (value !== undefined) {
           (workspace as any)[key] = value;
         }
+      }
+    }
+
+    // Remaining fields carry no cross-field consistency requirement, so each
+    // resolves independently: the active profile's value if it defines one,
+    // else the first profile (iteration order) that does.
+    for (const key of OTHER_WORKSPACE_KEYS) {
+      const activeValue = activeProfile && (activeProfile as any)[key];
+      if (activeValue !== undefined) {
+        (workspace as any)[key] = activeValue;
+        continue;
+      }
+      const found = profileEntries.find(([, profile]) => (profile as any)[key] !== undefined);
+      if (found) {
+        (workspace as any)[key] = (found[1] as any)[key];
       }
     }
 
