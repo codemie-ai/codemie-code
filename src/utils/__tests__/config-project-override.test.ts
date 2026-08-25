@@ -615,6 +615,41 @@ describe('ConfigLoader - workspace resolution and project-only composition', () 
       expect(cfg.codeMieUrl).toBe('https://global.example.com');
     });
 
+    it('does not crash and falls back to the global workspace when the local config has an explicit "workspace": null', async () => {
+      await writeGlobal('personal-anthropic', {
+        'personal-anthropic': {
+          provider: 'anthropic-subscription',
+          baseUrl: 'https://api.anthropic.com',
+          model: 'claude-sonnet-4-6',
+          name: 'personal-anthropic'
+        }
+      });
+      const globalRaw = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8'));
+      globalRaw.workspace = { codeMieProject: 'global-proj', codeMieUrl: 'https://global.example.com' };
+      await fs.writeFile(GLOBAL_CONFIG_PATH, JSON.stringify(globalRaw, null, 2));
+
+      await writeLocal('personal-anthropic', {
+        'personal-anthropic': {
+          provider: 'anthropic-subscription',
+          baseUrl: 'https://api.anthropic.com',
+          model: 'claude-sonnet-4-6',
+          name: 'personal-anthropic'
+        }
+      });
+      // A hand-edited or externally-written local config with a literal `null`
+      // workspace: null !== undefined, so a naive `!== undefined` check would treat
+      // it as "defined" and return it as-is, crashing removeUndefined()'s
+      // Object.entries(null) downstream.
+      const localRaw = JSON.parse(await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8'));
+      localRaw.workspace = null;
+      await fs.writeFile(LOCAL_CONFIG_PATH, JSON.stringify(localRaw, null, 2));
+
+      await expect(ConfigLoader.load(path.join(TEST_DIR, 'project'))).resolves.toMatchObject({
+        codeMieProject: 'global-proj',
+        codeMieUrl: 'https://global.example.com'
+      });
+    });
+
     it('switching the selected global profile does not drop workspace context', async () => {
       await writeGlobal('codemie-sso', {
         'codemie-sso': {
@@ -641,7 +676,7 @@ describe('ConfigLoader - workspace resolution and project-only composition', () 
       expect(anthropicCfg.codeMieProject).toBe('shared-proj');
     });
 
-    it('loadWithSources reports workspace-resolved codeMieUrl with source "project"', async () => {
+    it('loadWithSources reports a global-only workspace value with source "global", not "project"', async () => {
       await writeGlobal('preview', {
         preview: {
           provider: 'ai-run-sso',
@@ -654,12 +689,48 @@ describe('ConfigLoader - workspace resolution and project-only composition', () 
       globalRaw.workspace = { codeMieUrl: 'https://global-workspace.example.com' };
       await fs.writeFile(GLOBAL_CONFIG_PATH, JSON.stringify(globalRaw, null, 2));
 
+      // No local .codemie/ config written — the resolved workspace can only have
+      // come from the global scope, so --show-sources must label it 'global'.
       const { config: merged, sources } = await ConfigLoader.loadWithSources(
         path.join(TEST_DIR, 'project'),
         { name: 'preview' }
       );
 
       expect(merged.codeMieUrl).toBe('https://global-workspace.example.com');
+      expect(sources['codeMieUrl']?.source).toBe('global');
+    });
+
+    it('loadWithSources reports a local-scope workspace value with source "project"', async () => {
+      await writeGlobal('preview', {
+        preview: {
+          provider: 'ai-run-sso',
+          baseUrl: 'https://preview.example.com/code-assistant-api',
+          model: 'claude-sonnet-4-6',
+          name: 'preview'
+        }
+      });
+      const globalRaw = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8'));
+      globalRaw.workspace = { codeMieUrl: 'https://global-workspace.example.com' };
+      await fs.writeFile(GLOBAL_CONFIG_PATH, JSON.stringify(globalRaw, null, 2));
+
+      await writeLocal('preview', {
+        preview: {
+          provider: 'ai-run-sso',
+          baseUrl: 'https://preview.example.com/code-assistant-api',
+          model: 'claude-sonnet-4-6',
+          name: 'preview'
+        }
+      });
+      const localRaw = JSON.parse(await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8'));
+      localRaw.workspace = { codeMieUrl: 'https://local-workspace.example.com' };
+      await fs.writeFile(LOCAL_CONFIG_PATH, JSON.stringify(localRaw, null, 2));
+
+      const { config: merged, sources } = await ConfigLoader.loadWithSources(
+        path.join(TEST_DIR, 'project'),
+        { name: 'preview' }
+      );
+
+      expect(merged.codeMieUrl).toBe('https://local-workspace.example.com');
       expect(sources['codeMieUrl']?.source).toBe('project');
     });
   });

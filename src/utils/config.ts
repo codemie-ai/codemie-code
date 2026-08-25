@@ -207,8 +207,12 @@ export class ConfigLoader {
    * this is what lets switching the active profile keep workspace context intact.
    */
   static async resolveWorkspace(workingDir: string): Promise<WorkspaceConfig> {
+    // `!= null` (loose) deliberately also excludes an explicit `"workspace": null` —
+    // e.g. from a hand-edited or externally-written config file — which is not a
+    // valid WorkspaceConfig object and must fall back to the next scope rather than
+    // being treated as "defined" and passed downstream to Object.entries().
     const localMultiConfig = await this.loadLocalMultiProviderConfig(workingDir);
-    if (localMultiConfig.workspace !== undefined) {
+    if (localMultiConfig.workspace != null) {
       return localMultiConfig.workspace;
     }
 
@@ -1054,6 +1058,7 @@ export class ConfigLoader {
    * Remove undefined values from object
    */
   private static removeUndefined(obj: any): any {
+    if (obj == null) return {};
     return Object.fromEntries(
       Object.entries(obj).filter(([_, v]) => v !== undefined)
     );
@@ -1222,7 +1227,12 @@ export class ConfigLoader {
     const effectiveLocalConfig = applyProjectOnly ? {} : localConfig;
 
     // Workspace (repo/tooling-context) fields resolve independently of profile
-    // selection — see resolveWorkspace().
+    // selection — see resolveWorkspace(). Label the layer by which scope actually
+    // supplied it (mirrors resolveWorkspace()'s own local-else-global rule) rather
+    // than hardcoding 'project', so --show-sources doesn't misattribute a
+    // global-scope-only workspace value to the local config.
+    const localWorkspaceScope = await this.loadLocalMultiProviderConfig(workingDir);
+    const workspaceSource: 'project' | 'global' = localWorkspaceScope.workspace != null ? 'project' : 'global';
     const workspace = await this.resolveWorkspace(workingDir);
 
     const configs: ConfigLayer[] = [
@@ -1243,7 +1253,7 @@ export class ConfigLoader {
       },
       {
         data: workspace,
-        source: 'project'
+        source: workspaceSource
       },
       {
         data: this.loadFromEnv(),
