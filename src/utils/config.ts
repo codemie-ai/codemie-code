@@ -551,6 +551,44 @@ export class ConfigLoader {
   }
 
   /**
+   * Keys that belong to WorkspaceConfig (repo/tooling-context) rather than to a
+   * ProviderProfile. Used to split a saved profile's input into its profile half
+   * and its workspace half — see splitProfileAndWorkspace().
+   */
+  private static readonly WORKSPACE_KEYS: (keyof WorkspaceConfig)[] = [
+    'codeMieUrl',
+    'codeMieProject',
+    'codeMieIntegration',
+    'hooks',
+    'plugins',
+    'assistants',
+    'skillsSearchUrl',
+    'claudeAutocompactPct',
+    'metrics'
+  ];
+
+  /**
+   * Partition a profile-shaped input into its provider-identity half and its
+   * workspace half, so callers that persist a profile can route each half to
+   * where it belongs (profiles[name] vs. the scope's workspace).
+   */
+  private static splitProfileAndWorkspace(
+    input: Partial<CodeMieConfigOptions>
+  ): { profile: Partial<ProviderProfile>; workspace: Partial<WorkspaceConfig> } {
+    const profile: Partial<ProviderProfile> = { ...(input as any) };
+    const workspace: Partial<WorkspaceConfig> = {};
+
+    for (const key of this.WORKSPACE_KEYS) {
+      if ((input as any)[key] !== undefined) {
+        (workspace as any)[key] = (input as any)[key];
+        delete (profile as any)[key];
+      }
+    }
+
+    return { profile, workspace };
+  }
+
+  /**
    * Add or update a profile
    */
   static async saveProfile(profileName: string, profile: ProviderProfile): Promise<void> {
@@ -559,8 +597,14 @@ export class ConfigLoader {
     // Strip top-level-only fields that must not live inside a profile
     const { codemieSkills: _skills, codemieAssistants: _assistants, ...cleanProfile } = profile as any;
 
-    cleanProfile.name = profileName;
-    config.profiles[profileName] = cleanProfile;
+    const { profile: profileFields, workspace: workspaceFields } = this.splitProfileAndWorkspace(cleanProfile);
+
+    (profileFields as any).name = profileName;
+    config.profiles[profileName] = profileFields as ProviderProfile;
+
+    if (Object.keys(this.removeUndefined(workspaceFields)).length > 0) {
+      config.workspace = { ...config.workspace, ...workspaceFields };
+    }
 
     // If this is the first profile, make it active
     if (Object.keys(config.profiles).length === 1) {
@@ -840,29 +884,24 @@ export class ConfigLoader {
 
     // Create multi-provider config structure
     const profileName = overrides?.profileName || 'default';
-    const profile: Partial<CodeMieConfigOptions> = {};
+    const rawOverrides: Partial<CodeMieConfigOptions> = {};
 
-    // Add overrides if provided
-    if (overrides?.codeMieProject) {
-      profile.codeMieProject = overrides.codeMieProject;
-    }
-    if (overrides?.codeMieIntegration) {
-      profile.codeMieIntegration = overrides.codeMieIntegration;
-    }
-
-    // Add any other overrides
+    // Collect all overrides (excluding the meta-only profileName key)
     for (const [key, value] of Object.entries(overrides || {})) {
-      if (key !== 'profileName' && key !== 'codeMieProject' && key !== 'codeMieIntegration' && value !== undefined) {
-        (profile as any)[key] = value;
+      if (key !== 'profileName' && value !== undefined) {
+        (rawOverrides as any)[key] = value;
       }
     }
+
+    const { profile, workspace } = this.splitProfileAndWorkspace(rawOverrides);
 
     const config: MultiProviderConfig = {
       version: 2,
       activeProfile: profileName,
       profiles: {
         [profileName]: profile as any
-      }
+      },
+      ...(Object.keys(this.removeUndefined(workspace)).length > 0 ? { workspace } : {})
     };
 
     const configPath = path.join(configDir, 'codemie-cli.config.json');

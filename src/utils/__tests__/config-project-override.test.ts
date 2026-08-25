@@ -76,7 +76,7 @@ describe('ConfigLoader - Project-Level Configuration', () => {
       expect(config.profiles.default).toBeDefined();
     });
 
-    it('should apply codeMieProject override', async () => {
+    it('should apply codeMieProject override into workspace, not the profile', async () => {
       const workingDir = path.join(TEST_DIR, 'project');
       await ConfigLoader.initProjectConfig(workingDir, {
         codeMieProject: 'frontend-app'
@@ -85,10 +85,11 @@ describe('ConfigLoader - Project-Level Configuration', () => {
       const content = await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8');
       const config: MultiProviderConfig = JSON.parse(content);
 
-      expect(config.profiles.default.codeMieProject).toBe('frontend-app');
+      expect((config.profiles.default as any).codeMieProject).toBeUndefined();
+      expect(config.workspace?.codeMieProject).toBe('frontend-app');
     });
 
-    it('should apply codeMieIntegration override', async () => {
+    it('should apply codeMieIntegration override into workspace, not the profile', async () => {
       const workingDir = path.join(TEST_DIR, 'project');
       const integration: CodeMieIntegrationInfo = {
         id: 'integration-123',
@@ -102,7 +103,8 @@ describe('ConfigLoader - Project-Level Configuration', () => {
       const content = await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8');
       const config: MultiProviderConfig = JSON.parse(content);
 
-      expect(config.profiles.default.codeMieIntegration).toEqual(integration);
+      expect((config.profiles.default as any).codeMieIntegration).toBeUndefined();
+      expect(config.workspace?.codeMieIntegration).toEqual(integration);
     });
 
     it('should apply custom profile name', async () => {
@@ -131,8 +133,10 @@ describe('ConfigLoader - Project-Level Configuration', () => {
       const config: MultiProviderConfig = JSON.parse(content);
 
       expect(config.activeProfile).toBe('work');
-      expect(config.profiles.work.codeMieProject).toBe('backend-service');
-      expect(config.profiles.work.codeMieIntegration).toEqual({
+      expect((config.profiles.work as any).codeMieProject).toBeUndefined();
+      expect((config.profiles.work as any).codeMieIntegration).toBeUndefined();
+      expect(config.workspace?.codeMieProject).toBe('backend-service');
+      expect(config.workspace?.codeMieIntegration).toEqual({
         id: 'backend-123',
         alias: 'backend-team'
       });
@@ -384,6 +388,39 @@ describe('ConfigLoader - Project-Level Configuration', () => {
       expect(result.config).toBeDefined();
       expect(result.hasLocalConfig).toBe(true);
       expect(result.sources).toBeDefined();
+    });
+  });
+
+  describe('saveProfile / initProjectConfig — workspace split', () => {
+    it('saveProfile routes workspace fields into the global scope workspace, not into profiles[name]', async () => {
+      await ConfigLoader.saveProfile('p1', {
+        provider: 'ai-run-sso',
+        codeMieUrl: 'https://x',
+        codeMieProject: 'proj'
+      } as any);
+
+      const content = await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8');
+      const config: MultiProviderConfig = JSON.parse(content);
+
+      expect((config.profiles.p1 as any).codeMieUrl).toBeUndefined();
+      expect((config.profiles.p1 as any).codeMieProject).toBeUndefined();
+      expect(config.profiles.p1.provider).toBe('ai-run-sso');
+      expect(config.workspace?.codeMieUrl).toBe('https://x');
+      expect(config.workspace?.codeMieProject).toBe('proj');
+    });
+
+    it('initProjectConfig routes workspace fields into the local scope workspace, not into profiles[name]', async () => {
+      const workingDir = path.join(TEST_DIR, 'project');
+      await ConfigLoader.initProjectConfig(workingDir, {
+        profileName: 'p1',
+        codeMieProject: 'proj'
+      });
+
+      const content = await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8');
+      const config: MultiProviderConfig = JSON.parse(content);
+
+      expect((config.profiles.p1 as any).codeMieProject).toBeUndefined();
+      expect(config.workspace?.codeMieProject).toBe('proj');
     });
   });
 });
