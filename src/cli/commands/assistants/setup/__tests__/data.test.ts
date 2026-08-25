@@ -449,6 +449,41 @@ describe('Data Fetcher', () => {
         fetcher.fetchAssistants({ scope: PANEL_ID.PROJECT })
       ).rejects.toThrow('API connection failed');
     });
+
+    it('should surface a clear re-auth error when a stale SSO session redirects to the Keycloak login page instead of JSON', async () => {
+      // Arrange: a stale session gets silently redirected server-side; the SDK
+      // hands back the login page's HTML string as the "response" rather than
+      // erroring, instead of the expected { data, pagination } shape.
+      const keycloakLoginHtml = '<!DOCTYPE html><html><head><title>Sign in</title></head><body>keycloak</body></html>';
+      vi.mocked(mockClient.assistants.listPaginated).mockResolvedValue(keycloakLoginHtml as any);
+
+      const fetcher = createDataFetcher({
+        config: mockConfig,
+        client: mockClient,
+        options: mockOptions
+      });
+
+      // Act & Assert
+      await expect(
+        fetcher.fetchAssistants({ scope: PANEL_ID.PROJECT })
+      ).rejects.toThrow(/session has expired.*codemie profile login/i);
+    });
+
+    it('should surface a clear error when the API response is missing data/pagination', async () => {
+      // Arrange
+      vi.mocked(mockClient.assistants.listPaginated).mockResolvedValue({} as any);
+
+      const fetcher = createDataFetcher({
+        config: mockConfig,
+        client: mockClient,
+        options: mockOptions
+      });
+
+      // Act & Assert
+      await expect(
+        fetcher.fetchAssistants({ scope: PANEL_ID.PROJECT })
+      ).rejects.toThrow(/unexpected response fetching project assistants/i);
+    });
   });
 
   describe('fetchAssistants - MARKETPLACE panel', () => {
