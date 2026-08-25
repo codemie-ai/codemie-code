@@ -9,33 +9,17 @@ import type { ProviderProfile } from '@/env/types.js';
 import type { SetupCommandOptions } from './index.js';
 import { PANEL_ID, API_SCOPE, CONFIG, type PanelId } from './selection/constants.js';
 import { logger } from '@/utils/logger.js';
-import { ConfigurationError } from '@/utils/errors.js';
+import { assertApiListResponse } from '@/cli/commands/shared/api-response-guard.js';
 
 interface AssistantListResponse {
   data: (Assistant | AssistantBase)[];
   pagination: { total: number; pages: number };
 }
 
-/**
- * A stale SSO session can get silently redirected server-side to the Keycloak
- * login page instead of erroring — the client then hands back the page's HTML
- * as the "response", not a 401. Detect that shape here so it surfaces as a
- * clear re-auth prompt instead of crashing on `response.data.length` below.
- */
-function assertValidListResponse(response: unknown, scope: PanelId): asserts response is AssistantListResponse {
+function isAssistantListResponse(response: unknown): response is AssistantListResponse {
   const r = response as Partial<AssistantListResponse> | null | undefined;
-  if (r && typeof r === 'object' && Array.isArray(r.data) && r.pagination
-    && typeof r.pagination.total === 'number' && typeof r.pagination.pages === 'number') {
-    return;
-  }
-
-  const looksLikeSessionRedirect = typeof response === 'string' && /keycloak|<!doctype html|<html/i.test(response);
-
-  throw new ConfigurationError(
-    looksLikeSessionRedirect
-      ? 'Your CodeMie session has expired. Run `codemie profile login` to re-authenticate, then try again.'
-      : `Unexpected response fetching ${scope} assistants — the CodeMie API did not return the expected data. Run \`codemie profile login\` to refresh your session and try again.`
-  );
+  return !!r && typeof r === 'object' && Array.isArray(r.data) && !!r.pagination
+    && typeof r.pagination.total === 'number' && typeof r.pagination.pages === 'number';
 }
 
 export interface DataFetcherDependencies {
@@ -113,7 +97,7 @@ export function createDataFetcher(deps: DataFetcherDependencies): DataFetcher {
         response: JSON.stringify(response, null, 2)
       });
 
-      assertValidListResponse(response, scope);
+      assertApiListResponse(response, isAssistantListResponse, `${scope} assistants`);
 
       logger.debug('[AssistantSelection] Processed response', {
         dataCount: response.data.length,
