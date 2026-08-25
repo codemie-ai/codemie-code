@@ -51,6 +51,58 @@ interface ClaudeRawMessage {
   message?: {
     id?: string;
     model?: string;
+    /** Injected by the CodeMie proxy when Switchyard routing is active. */
+    x_codemie_requested_model?: string;
+    x_codemie_routing_tier?: 'efficient' | 'capable' | string;
+    x_codemie_routing_capable_model?: string;
+    /** Routing confidence score (0–1), normalised to P(capable needed), emitted by the proxy. */
+    x_codemie_routing_confidence?: string;
+    /** Full reasoning string — confidence extracted from it as fallback. */
+    x_codemie_routing_reason?: string;
+    /** Routing decision source: 'stage_router' (rule-based) or 'judge' (LLM-based). */
+    x_codemie_routing_source?: 'stage_router' | 'judge' | string;
+    /** Why Switchyard chose this tier: override | tests_passed | dimensions | ambiguous | llm-classifier | fall_open. */
+    x_codemie_routing_decision_source?: string;
+
+    /** LiteLLM Router headers (alternative routing metadata format). */
+    'x-litellm-router-tier'?: string;
+    'x-litellm-router-cause'?: string;
+    'x-litellm-router-routed-model'?: string;
+    'x-litellm-router-classifier-model'?: string;
+    'x-litellm-router-model-name'?: string;
+    'x-litellm-router-type'?: string;
+    'x-litellm-router-signals'?: string | string[];
+
+    /** Judge/classifier LLM call tokens and cost (present when LLM was invoked for this turn). */
+    x_codemie_routing_judge_input_tokens?: string;
+    x_codemie_routing_judge_output_tokens?: string;
+    x_codemie_routing_judge_cached_tokens?: string;
+    x_codemie_routing_judge_cache_creation_tokens?: string;
+    x_codemie_routing_judge_cost_usd?: string;
+    /** Alias for the classifier variant (future Switchyard builds). */
+    x_codemie_routing_classifier_input_tokens?: string;
+    x_codemie_routing_classifier_output_tokens?: string;
+    x_codemie_routing_classifier_cached_tokens?: string;
+    x_codemie_routing_classifier_cache_creation_tokens?: string;
+    x_codemie_routing_classifier_cost_usd?: string;
+    /** Judge/classifier P(solve) score. */
+    x_codemie_routing_judge_p_solve?: string;
+    x_codemie_routing_classifier_p_solve?: string;
+    /** Signal composite, confidence, and sub-scores. */
+    x_codemie_routing_signal_score?: string;
+    x_codemie_routing_signal_confidence?: string;
+    x_codemie_routing_signal_severity?: string;
+    x_codemie_routing_signal_spinning?: string;
+    x_codemie_routing_signal_exploring?: string;
+    x_codemie_routing_signal_production?: string;
+    x_codemie_routing_signal_production_intensity?: string;
+    /** Judge/classifier string metadata. */
+    x_codemie_routing_judge_crux?: string;
+    x_codemie_routing_judge_primary_rule?: string;
+    x_codemie_routing_judge_capability_boundary?: string;
+    x_codemie_routing_classifier_crux?: string;
+    x_codemie_routing_classifier_primary_rule?: string;
+    x_codemie_routing_classifier_capability_boundary?: string;
     usage?: {
       input_tokens?: number;
       output_tokens?: number;
@@ -72,6 +124,47 @@ export interface UsageRecord {
   ts: number | null;
   model: string;
   usage: TokenUsage;
+  /** The capable model that was originally requested, when Switchyard routed to an efficient model. */
+  requestedModel?: string;
+  capableModel?: string;
+  /** Switchyard routing tier for this turn: 'efficient' or 'capable'. */
+  routingTier?: 'efficient' | 'capable' | string;
+  /** Routing confidence score (0–1), normalised to P(capable needed). */
+  routingConfidence?: number;
+  /** Routing decision source: 'stage_router' (rule-based) or 'judge'/'classifier' (LLM-based). */
+  routingSource?: 'stage_router' | 'judge' | 'classifier' | string;
+  /** Why Switchyard chose this tier: override | tests_passed | dimensions | ambiguous | llm-classifier | fall_open. */
+  decisionSource?: string;
+  /** Classifier LLM call input tokens for this turn (present when classifier was invoked). */
+  judgeInputTokens?: number;
+  /** Classifier LLM call output tokens for this turn. */
+  judgeOutputTokens?: number;
+  /** Classifier LLM call cached input tokens for this turn. */
+  judgeCachedTokens?: number;
+  /** Classifier LLM call cache-creation tokens for this turn. */
+  judgeCacheCreationTokens?: number;
+  /** Classifier LLM call cost in USD for this turn. */
+  judgeCostUSD?: number;
+  /** Raw signal composite score (-1 to +1). Present when scorer ran (includes classifier turns). */
+  signalScore?: number;
+  /** Scorer's own confidence in [0, 1]. Present when scorer ran (includes classifier turns). */
+  signalConfidence?: number;
+  /** Severity sub-score from Switchyard signal. */
+  signalSeverity?: number;
+  /** Spinning sub-score from Switchyard signal. Present when non-zero. */
+  signalSpinning?: number;
+  /** Exploring sub-score from Switchyard signal. Present when non-zero. */
+  signalExploring?: number;
+  /** Production intensity sub-score from Switchyard signal. Present when non-zero. */
+  signalProductionIntensity?: number;
+  /** Raw classifier P(efficient sufficient) before inversion. Present when classifier decided. */
+  judgePSolve?: number;
+  /** Classifier's description of the task crux. Present when classifier decided. */
+  judgeCrux?: string;
+  /** Primary routing rule the classifier applied. Present when classifier decided. */
+  judgePrimaryRule?: string;
+  /** Capability boundary the classifier identified. Present when classifier decided. */
+  judgeCapabilityBoundary?: string;
 }
 
 function usageWeight(usage: TokenUsage): number {
@@ -138,6 +231,41 @@ function takeUnseenRecords(records: UsageRecord[], seen: Set<string>): UsageReco
   return out;
 }
 
+function normalizeRoutingTier(raw: string | undefined): string | undefined {
+  if (raw == null) return undefined;
+  const key = String(raw).trim().toLowerCase();
+  const map: Record<string, string> = {
+    'simple': 'simple',
+    'efficient': 'middle',
+    'medium': 'middle',
+    'capable': 'complex',
+    'complex': 'complex',
+    'reasoning': 'reasoning',
+  };
+  return map[key] ?? key;
+}
+
+function normalizeDecisionSource(raw: string | undefined): string | undefined {
+  if (raw == null) return undefined;
+  return String(raw).trim().toLowerCase().replace(/_/g, '-');
+}
+
+function parseLitellmSignals(raw: string | string[] | undefined): { decisionSource?: string; routingTier?: string } {
+  if (raw == null) return {};
+  const arr = Array.isArray(raw) ? raw : [raw];
+  for (const item of arr) {
+    const str = String(item).trim();
+    const m = str.match(/^([^:]+):(.+)$/);
+    if (m) {
+      return {
+        decisionSource: normalizeDecisionSource(m[1]),
+        routingTier: normalizeRoutingTier(m[2]),
+      };
+    }
+  }
+  return {};
+}
+
 /**
  * Extract one {@link UsageRecord} per Claude assistant message (skipping `<synthetic>`),
  * across the main transcript AND every sub-agent transcript in `parsed.subagents`.
@@ -171,11 +299,89 @@ export function extractClaudeUsageRecords(parsed: ParsedSession): UsageRecord[] 
       const key = id || reqId ? `${id ?? ''}::${reqId ?? ''}` : null;
       const parsedTs = raw.timestamp ? Date.parse(raw.timestamp) : NaN;
       const ts = Number.isFinite(parsedTs) ? parsedTs : null;
+
+      // Switchyard / LiteLLM routing metadata from proxy response headers (stored by Claude Code in message metadata).
+      const msg = raw.message;
+      const codemieTier = normalizeRoutingTier(msg?.x_codemie_routing_tier);
+      const litellmTier = normalizeRoutingTier(msg?.['x-litellm-router-tier']);
+      const signals = parseLitellmSignals(msg?.['x-litellm-router-signals']);
+      const codemieDecisionSource = normalizeDecisionSource(msg?.x_codemie_routing_decision_source);
+      const litellmCause = normalizeDecisionSource(msg?.['x-litellm-router-cause']);
+
+      const requestedModel = msg?.x_codemie_requested_model;
+      const capableModel = msg?.x_codemie_routing_capable_model;
+      const routingTier = codemieTier ?? litellmTier ?? signals.routingTier;
+      const decisionSource = codemieDecisionSource ?? litellmCause ?? signals.decisionSource;
+      const routingSource = msg?.x_codemie_routing_source ?? (decisionSource === 'llm-classifier' ? 'judge' : (decisionSource != null ? 'stage_router' : undefined));
+      const rawConfidence = msg?.x_codemie_routing_confidence;
+      const routingConfidence: number | undefined = (() => {
+        if (rawConfidence != null) {
+          const v = parseFloat(rawConfidence);
+          return Number.isNaN(v) ? undefined : v;
+        }
+        // Fallback: extract from routing_reason string ("confidence 0.462")
+        const reason = raw.message?.x_codemie_routing_reason;
+        if (reason != null) {
+          const m = /confidence\s+([\d.]+)/i.exec(reason);
+          if (m) {
+            const v = parseFloat(m[1]);
+            return Number.isNaN(v) ? undefined : v;
+          }
+        }
+        return undefined;
+      })();
+      const parseOptInt = (s: string | undefined): number | undefined => {
+        if (s == null) return undefined;
+        const v = parseInt(s, 10);
+        return Number.isNaN(v) ? undefined : v;
+      };
+      const parseOptFloat = (s: string | undefined): number | undefined => {
+        if (s == null) return undefined;
+        const v = parseFloat(s);
+        return Number.isNaN(v) ? undefined : v;
+      };
+      const judgeInputTokens = parseOptInt(raw.message?.x_codemie_routing_judge_input_tokens ?? raw.message?.x_codemie_routing_classifier_input_tokens);
+      const judgeOutputTokens = parseOptInt(raw.message?.x_codemie_routing_judge_output_tokens ?? raw.message?.x_codemie_routing_classifier_output_tokens);
+      const judgeCachedTokens = parseOptInt(raw.message?.x_codemie_routing_judge_cached_tokens ?? raw.message?.x_codemie_routing_classifier_cached_tokens);
+      const judgeCacheCreationTokens = parseOptInt(raw.message?.x_codemie_routing_judge_cache_creation_tokens ?? raw.message?.x_codemie_routing_classifier_cache_creation_tokens);
+      const judgeCostUSD = parseOptFloat(raw.message?.x_codemie_routing_judge_cost_usd ?? raw.message?.x_codemie_routing_classifier_cost_usd);
+      const judgePSolve = parseOptFloat(raw.message?.x_codemie_routing_judge_p_solve ?? raw.message?.x_codemie_routing_classifier_p_solve);
+      const signalScore = parseOptFloat(raw.message?.x_codemie_routing_signal_score);
+      const signalConfidence = parseOptFloat(raw.message?.x_codemie_routing_signal_confidence);
+      const signalSeverity = parseOptFloat(raw.message?.x_codemie_routing_signal_severity);
+      const signalSpinning = parseOptFloat(raw.message?.x_codemie_routing_signal_spinning);
+      const signalExploring = parseOptFloat(raw.message?.x_codemie_routing_signal_exploring);
+      const signalProductionIntensity = parseOptFloat(raw.message?.x_codemie_routing_signal_production ?? raw.message?.x_codemie_routing_signal_production_intensity);
+      const judgeCrux = raw.message?.x_codemie_routing_judge_crux ?? raw.message?.x_codemie_routing_classifier_crux;
+      const judgePrimaryRule = raw.message?.x_codemie_routing_judge_primary_rule ?? raw.message?.x_codemie_routing_classifier_primary_rule;
+      const judgeCapabilityBoundary = raw.message?.x_codemie_routing_judge_capability_boundary ?? raw.message?.x_codemie_routing_classifier_capability_boundary;
+
       appendDedupedRecord(records, keyedRecords, {
         key,
         ts,
         model,
         usage: { input, output, cacheRead, cacheCreation, cacheCreation1h, total: input + output + cacheRead + cacheCreation },
+        ...(requestedModel != null && { requestedModel }),
+        ...(routingTier != null && { routingTier }),
+        ...(capableModel != null && { capableModel }),
+        ...(routingConfidence != null && { routingConfidence }),
+        ...(routingSource != null && { routingSource }),
+        ...(decisionSource != null && { decisionSource }),
+        ...(judgeInputTokens != null && { judgeInputTokens }),
+        ...(judgeOutputTokens != null && { judgeOutputTokens }),
+        ...(judgeCachedTokens != null && { judgeCachedTokens }),
+        ...(judgeCacheCreationTokens != null && { judgeCacheCreationTokens }),
+        ...(judgeCostUSD != null && { judgeCostUSD }),
+        ...(judgePSolve != null && { judgePSolve }),
+        ...(signalScore != null && { signalScore }),
+        ...(signalConfidence != null && { signalConfidence }),
+        ...(signalSeverity != null && { signalSeverity }),
+        ...(signalSpinning != null && { signalSpinning }),
+        ...(signalExploring != null && { signalExploring }),
+        ...(signalProductionIntensity != null && { signalProductionIntensity }),
+        ...(judgeCrux != null && { judgeCrux }),
+        ...(judgePrimaryRule != null && { judgePrimaryRule }),
+        ...(judgeCapabilityBoundary != null && { judgeCapabilityBoundary }),
       });
     }
   }

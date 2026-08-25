@@ -3,7 +3,7 @@
  * report. The client app reads only this and computes every view from it.
  */
 
-import type { TokenUsage, ModelCost, AgentCoverage, CostSeriesPoint, DispatchEvent } from '../cost/types.js';
+import type { TokenUsage, ModelCost, AgentCoverage, CostSeriesPoint, DispatchEvent, ModelTimelinePoint } from '../cost/types.js';
 import type { ToolStats, NamedInvocationStats } from '../types.js';
 
 /** One flat record per session — the client aggregates everything from these. */
@@ -42,7 +42,15 @@ export interface ReportSessionRecord {
   perModelCost: ModelCost[];
   hadLog: boolean; // a native agent log was located for this session (priced<hadLog ⇒ parse/reader gap)
   costSeries?: CostSeriesPoint[]; // per-turn cumulative cost/token growth; absent when no per-turn data
+  modelTimeline?: ModelTimelinePoint[]; // per-turn model + routing metadata; absent when no routing data
   dispatches?: DispatchEvent[]; // timed top-level agent/skill/command invocations; absent when none
+
+  // === Switchyard routing classifier cost (included in costUSD) ===
+  judgeCostUSD?: number; // USD spent on the routing classifier LLM
+  judgeInputTokens?: number;
+  judgeOutputTokens?: number;
+  judgeCachedTokens?: number;
+  judgeCacheCreationTokens?: number;
 
   // === Usage provenance (optional; absent for agents that always record full usage) ===
   /**

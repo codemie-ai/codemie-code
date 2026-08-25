@@ -30,6 +30,30 @@ export interface CostSeriesPoint {
   tokens: number; // cumulative total tokens up to and including this turn
 }
 
+/** One point in the per-turn model/tier/decision timeline shown in the session modal. */
+export interface ModelTimelinePoint {
+  t: number; // epoch ms when all records are timed, else the 1-based turn ordinal
+  model: string; // normalized model name that was actually used
+  costUSD: number; // per-turn cost attributed to this model
+  tokens: number; // per-turn total tokens for this turn
+  requestedModel?: string; // capable model that was originally requested
+  capableModel?: string; // alias for requestedModel
+  routingTier?: 'efficient' | 'capable' | string;
+  routingConfidence?: number;
+  routingSource?: 'stage_router' | 'judge' | 'classifier' | string;
+  decisionSource?: string;
+  signalScore?: number;
+  signalConfidence?: number;
+  signalSeverity?: number;
+  signalSpinning?: number;
+  signalExploring?: number;
+  signalProductionIntensity?: number;
+  judgePSolve?: number;
+  judgeCrux?: string;
+  judgePrimaryRule?: string;
+  judgeCapabilityBoundary?: string;
+}
+
 /** Max points kept per session series — downsample guard so the embedded payload stays small. */
 export const MAX_SERIES_POINTS = 40;
 
@@ -60,10 +84,17 @@ export interface SessionCost {
   costUSD: number; // summed across models
   cacheReadCostUSD?: number; // USD attributable to cache reads (subset of costUSD); 0 when unpriced
   costSeries?: CostSeriesPoint[]; // per-turn cumulative cost/token growth; absent when no per-turn data
+  modelTimeline?: ModelTimelinePoint[]; // per-turn model + routing metadata; absent when no routing data
   dispatches?: DispatchEvent[]; // top-level agent/skill/command invocations with timing; absent when none
   perModel: ModelCost[];
   priced: boolean; // true if the native log was found & parsed
   hadLog: boolean; // true if a native log path was located (priced<hadLog ⇒ parse/reader gap)
+  // === Switchyard routing classifier cost (additive to costUSD) ===
+  judgeCostUSD?: number; // USD spent on the routing classifier LLM
+  judgeInputTokens?: number;
+  judgeOutputTokens?: number;
+  judgeCachedTokens?: number;
+  judgeCacheCreationTokens?: number;
 
   // === Usage provenance (from ParsedSession.usageMeta) ===
   /**

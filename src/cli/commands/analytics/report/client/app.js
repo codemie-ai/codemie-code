@@ -55,8 +55,8 @@
   }
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   function shortPath(p) { var parts = String(p || '').split('/'); return parts[parts.length - 1] || p; }
-  // Human-readable session label: the cleaned first-prompt title, falling back to a short id.
-  function sessTitle(s) { return (s && s.title && s.title.trim()) ? s.title.trim() : ('#' + String((s && s.sessionId) || '').slice(0, 8)); }
+  // Human-readable session label: AI-generated name when available, else cleaned first-prompt title, else short id.
+  function sessTitle(s) { if (s && s.sessionName && s.sessionName.trim()) return s.sessionName.trim(); var t = (s && s.title && s.title.trim()) ? s.title.trim() : ''; if (t && t.charAt(0) === '/') { var m = t.match(/^\/\S+\s+([\s\S]+)/); if (m) t = m[1].trim(); } return t || ('#' + String((s && s.sessionId) || '').slice(0, 8)); }
   function truncStr(s, n) { s = String(s == null ? '' : s); return s.length > n ? s.slice(0, n - 1) + '…' : s; }
   // First n whitespace-delimited words (the "starting message" preview), '…' when truncated.
   function firstWords(s, n) { s = String(s == null ? '' : s).trim(); var w = s.split(/\s+/); return w.length > n ? w.slice(0, n).join(' ') + '…' : s; }
@@ -732,6 +732,24 @@
     });
     host.appendChild(grid);
 
+    // Routing KPI section — only shown when at least one session has judge routing cost.
+    var routedSessions = fs.filter(function (s) { return s.judgeCostUSD != null && s.judgeCostUSD > 0; });
+    if (routedSessions.length > 0) {
+      host.appendChild(el('h3', 'section-title', 'Routing'));
+      var rsGrid = el('div', 'kpi-grid'); rsGrid.style.gridTemplateColumns = 'repeat(3,1fr)';
+      var totalJudgeCost = sum(routedSessions, function (s) { return s.judgeCostUSD || 0; });
+      var totalJudgeIn = routedSessions.reduce(function (acc, s) { return acc + (s.judgeInputTokens || 0); }, 0);
+      var totalJudgeOut = routedSessions.reduce(function (acc, s) { return acc + (s.judgeOutputTokens || 0); }, 0);
+      [
+        ['Sessions with routing', fmtNum(routedSessions.length) + ' / ' + fmtNum(fs.length)],
+        ['Judge routing cost', fmtUSD(totalJudgeCost)],
+        ['Judge tokens (in/out)', fmtTokens(totalJudgeIn) + ' / ' + fmtTokens(totalJudgeOut)]
+      ].forEach(function (k) {
+        var c = el('div', 'kpi'); c.innerHTML = '<div class="kpi-label">' + k[0] + '</div><div class="kpi-value">' + k[1] + '</div>'; rsGrid.appendChild(c);
+      });
+      host.appendChild(rsGrid);
+    }
+
     // per-agent coverage — answers "which tools' metrics are included?"
     var cov = DATA.meta.coverage || [];
     if (cov.length) {
@@ -778,14 +796,15 @@
     var top = fs.slice().sort(function (a, b) { return b.costUSD - a.costUSD; }).slice(0, 10);
     topCard._body.style.paddingTop = '0';
     topCard._body.innerHTML = '<div class="table-wrapper">' + tableHTML(
-      ['Session', 'Agent', 'Project', 'Input', 'Output', 'Cached', 'Total', 'Cost'],
+      ['Session', 'Name', 'Agent', 'Project', 'Input', 'Output', 'Cached', 'Total', 'Cost'],
       top.map(function (s) {
         return [esc(s.sessionId.slice(0, 8)),
+          esc(sessTitle(s)),
           '<span class="tag tag-sm"' + (AGENT_LABELS[s.agentName] ? '' : ' style="text-transform:capitalize"') + '>' + esc(labelFor(s.agentName)) + '</span>',
           '<span title="' + esc(s.project) + '">' + esc(shortPath(s.project)) + '</span>',
           fmtTokens(tkIn(s)), fmtTokens(tkOut(s)), fmtTokens(tkCached(s)), fmtTokens(s.tokens ? s.tokens.total : 0), fmtUSD(s.costUSD)];
       }),
-      [false, false, false, true, true, true, true, true]) + '</div>';
+      [false, false, false, false, true, true, true, true, true]) + '</div>';
     host.appendChild(topCard);
   };
 
@@ -808,22 +827,23 @@
       var list = fs.slice().sort(function (a, b) { return b.startTime - a.startTime; });
       if (q) {
         var ql = q.toLowerCase();
-        list = list.filter(function (s) { return (s.sessionId + ' ' + s.agentName + ' ' + labelFor(s.agentName) + ' ' + s.project + ' ' + s.branch + ' ' + (s.title || '') + ' ' + (s.sessionSource || '')).toLowerCase().indexOf(ql) >= 0; });
+        list = list.filter(function (s) { return (s.sessionId + ' ' + s.agentName + ' ' + labelFor(s.agentName) + ' ' + s.project + ' ' + s.branch + ' ' + (s.sessionName || '') + ' ' + (s.title || '') + ' ' + (s.sessionSource || '')).toLowerCase().indexOf(ql) >= 0; });
       }
       var shown = list.slice(0, 300);
       holder.innerHTML = tableHTML(
-        ['Date', 'Prompt', 'Agent', 'Project', 'Branch', 'Source', 'Turns', 'Net lines', 'Input', 'Output', 'Cached', 'Cost'],
+        ['Date', 'Name / Prompt', 'Agent', 'Project', 'Branch', 'Source', 'Turns', 'Routed %', 'Net lines', 'Input', 'Output', 'Cached', 'Cost'],
         shown.map(function (s) {
           var branchCell = s.branch ? '<span title="' + esc(s.branch) + '" style="max-width:90px;display:inline-block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle">' + esc(s.branch) + '</span>' : '—';
-          var promptCell = '<span title="' + esc(s.title || '') + '" style="max-width:280px;display:inline-block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;color:var(--color-text-muted);font-size:12px">' + esc(truncStr(s.title || '—', 80)) + '</span>';
+          var sessionLabel = s.sessionName || s.title || '';
+          var promptCell = '<span title="' + esc(sessionLabel) + '" style="max-width:280px;display:inline-block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle;color:var(--color-text-muted);font-size:12px">' + esc(truncStr(sessionLabel || '—', 80)) + '</span>';
           var sourceCell = '<span class="tag tag-sm">' + esc(s.sessionSource || 'Pure chat') + '</span>';
           return [new Date(s.startTime).toISOString().slice(0, 16).replace('T', ' '),
             promptCell,
             '<span class="tag tag-sm"' + (AGENT_LABELS[s.agentName] ? '' : ' style="text-transform:capitalize"') + '>' + esc(labelFor(s.agentName)) + '</span>',
             '<span title="' + esc(s.project) + '">' + esc(shortPath(s.project)) + '</span>', branchCell, sourceCell,
-            fmtNum(s.turns), fmtNum(s.netLines), fmtTokens(tkIn(s)), fmtTokens(tkOut(s)), fmtTokens(tkCached(s)), fmtUSD(s.costUSD)];
+            fmtNum(s.turns), s.routedTurnsPct != null ? s.routedTurnsPct + '%' : '—', fmtNum(s.netLines), fmtTokens(tkIn(s)), fmtTokens(tkOut(s)), fmtTokens(tkCached(s)), fmtUSD(s.costUSD)];
         }),
-        [false, false, false, false, false, false, true, true, true, true, true, true],
+        [false, false, false, false, false, false, true, true, true, true, true, true, true],
         shown.map(function (s) { return 'class="clickable" data-session="' + esc(s.sessionId) + '"'; }));
       if (list.length > 300) holder.appendChild(el('p', 'text-muted', '<span style="font-size:12px">Showing first 300 of ' + list.length + '.</span>'));
     }
@@ -1135,6 +1155,9 @@
       ['Duration', fmtDuration(s.durationMs || 0), ''],
       ['Started', '<span class="mval-sm">' + esc(fmtWhen(s.startTime)) + '</span>', '']
     ];
+    if (s.judgeCostUSD != null) {
+      costRows.push(['Routing (judge)', fmtUSD(s.judgeCostUSD), 'included in cost']);
+    }
     if (s.premiumRequests !== undefined) {
       costRows.push(['Premium requests', fmtNum(s.premiumRequests), 'provider billing unit']);
     }
@@ -1144,11 +1167,15 @@
     } else if (s.usagePartial) {
       costCard._body.appendChild(el('div', 'text-muted', '<span style="font-size:12px">Partial usage — output tokens only; this session recorded no full rollup, so cost is understated.</span>'));
     }
-    var tokCard = card('Token usage'); tokCard._body.appendChild(statsEl([
+    var tokRows = [
       ['Input', fmtTokens(t.input), ''], ['Output', fmtTokens(t.output), ''],
       ['Cache read', fmtTokens(t.cacheRead), ''], ['Cache create', fmtTokens(t.cacheCreation), ''],
       ['Total', fmtTokens(t.total), '']
-    ]));
+    ];
+    if (s.judgeInputTokens != null || s.judgeOutputTokens != null) {
+      tokRows.push(['Judge tokens', fmtTokens(s.judgeInputTokens || 0) + ' / ' + fmtTokens(s.judgeOutputTokens || 0), 'routing LLM']);
+    }
+    var tokCard = card('Token usage'); tokCard._body.appendChild(statsEl(tokRows));
     var actCard = card('Activity'); actCard._body.appendChild(statsEl([
       ['Turns / API', fmtNum(s.turns), ''],
       ['Tool calls', fmtNum(s.toolCallsTotal), (s.toolCallsTotal ? Math.round((s.toolCallsSuccess / s.toolCallsTotal) * 100) + '% ok' : '')],
@@ -1191,6 +1218,198 @@
       growth._body.appendChild(el('div', 'empty', 'Per-turn data not available for this session.'));
     }
     body.appendChild(growth);
+
+    // Model routing decisions chart — bar height = P(capable needed), colour = who decided.
+    // Old sessions that store routingConfidence but no explicit source are labelled 'scorer'.
+    var timeline = s.modelTimeline || [];
+    var tlHasRouting = timeline.some(function (p) { return p.routingTier != null || p.routingConfidence != null; });
+    if (timeline.length >= 2 && tlHasRouting && window.Chart) {
+      var DS_COLORS = {
+        'override': '#EF4444',
+        'tests-passed': '#10B981',
+        'dimensions': '#3B82F6',
+        'ambiguous': '#9CA3AF',
+        'llm-classifier': '#7C5CFC',
+        'fall-open': '#F5A534',
+      };
+      function inferDecisionSource(p) {
+        if (p.decisionSource) return p.decisionSource;
+        if (p.routingSource === 'judge' || p.routingSource === 'classifier') return 'llm-classifier';
+        if (p.routingSource === 'stage_router') {
+          if (p.signalSeverity != null && p.signalSeverity >= 1.0) return 'override';
+          var score = p.signalScore;
+          if (score != null) {
+            var confidence = Math.abs(score);
+            if (confidence >= 0.5) return 'dimensions';
+            if (p.routingTier === 'efficient') return 'tests_passed';
+            return 'ambiguous';
+          }
+        }
+        // Old sessions: has confidence but no explicit source → label as scorer
+        if (p.routingConfidence != null) return 'dimensions';
+        return null;
+      }
+      function tlDsColor(p) { var ds = inferDecisionSource(p); return DS_COLORS[ds] || '#9CA3AF'; }
+      var useEpoch = timeline[0].t > 1e12;
+      var t0tl = timeline[0].t;
+      var tlLabels = timeline.map(function (p, i) { return useEpoch ? fmtDuration(Math.max(0, p.t - t0tl)) : ('turn ' + (i + 1)); });
+      var tierCounts = timeline.reduce(function (acc, p) {
+        if (p.routingTier === 'simple' || p.routingTier === 'middle' || p.routingTier === 'complex' || p.routingTier === 'reasoning') {
+          acc.total++;
+          if (p.routingTier === 'simple' || p.routingTier === 'middle') acc.simpleOrMiddle++;
+        }
+        return acc;
+      }, { total: 0, simpleOrMiddle: 0 });
+      var tierSubtitle = '';
+      if (tierCounts.total > 0) {
+        var simplePct = Math.round((tierCounts.simpleOrMiddle / tierCounts.total) * 100);
+        tierSubtitle = simplePct + '% simple/middle · ' + (100 - simplePct) + '% complex/reasoning';
+      }
+      var tlCard = card('Routing', tierSubtitle);
+
+      // Legend — show only decision sources present in this session
+      var dsPresent = {};
+      timeline.forEach(function (p) { var ds = inferDecisionSource(p); if (ds) dsPresent[ds] = true; });
+      var tlLeg = el('div', '');
+      tlLeg.style.cssText = 'display:flex;flex-wrap:wrap;gap:4px 12px;padding:2px 0 8px;align-items:center;';
+      Object.keys(DS_COLORS).forEach(function (k) {
+        if (!dsPresent[k]) return;
+        var chip = el('span', '');
+        chip.style.cssText = 'display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--color-text-muted)';
+        var dot = el('span', '');
+        dot.style.cssText = 'display:inline-block;width:10px;height:10px;border-radius:2px;flex-shrink:0;background:' + DS_COLORS[k];
+        chip.appendChild(dot);
+        chip.appendChild(document.createTextNode(k));
+        tlLeg.appendChild(chip);
+      });
+      tlCard._body.appendChild(tlLeg);
+
+      var TIER_LEVELS = {
+        'simple': 1,
+        'middle': 2,
+        'complex': 3,
+        'reasoning': 4
+      };
+      var TIER_LABELS = {
+        1: 'simple',
+        2: 'middle',
+        3: 'complex',
+        4: 'reasoning'
+      };
+      function tierLevel(p) { return TIER_LEVELS[p.routingTier] || 0; }
+      function tierName(p) { return p.routingTier || 'unknown'; }
+
+      var tlCv = canvasIn(tlCard._body, 180);
+
+      var tierData = timeline.map(function (p) { return tierLevel(p); });
+      var barBg = timeline.map(function (p) {
+        var base = tlDsColor(p);
+        if (base.match(/^#([0-9a-f]{6})$/i)) return base;
+        return '#9CA3AF';
+      });
+      var mainDataset = {
+        type: 'bar',
+        data: tierData,
+        backgroundColor: barBg,
+        borderRadius: 2,
+        barPercentage: 0.72,
+        categoryPercentage: 1.0,
+        yAxisID: 'ytier',
+        order: 2,
+      };
+
+      var confData = timeline.map(function (p) { return p.routingConfidence != null ? p.routingConfidence : null; });
+      var confDataset = {
+        type: 'line',
+        data: confData,
+        borderColor: '#F5A534',
+        backgroundColor: 'transparent',
+        borderWidth: 2,
+        pointRadius: 0,
+        pointHoverRadius: 3,
+        tension: 0.25,
+        yAxisID: 'yconf',
+        order: 1,
+      };
+
+      var detailEl = el('div', '');
+      detailEl.style.cssText = 'margin-top:10px;font-size:12px;color:var(--color-text-muted);line-height:1.4;';
+      detailEl.textContent = 'Click a turn to see judge details.';
+      function showTurnDetail(index) {
+        var p = timeline[index];
+        if (!p) return;
+        var html = '<div style="font-weight:600;color:var(--color-text-primary);margin-bottom:4px;">' + esc(p.model) + ' · ' + esc(tierName(p)) + '</div>';
+                  if ((p.routingSource === 'judge' || p.routingSource === 'classifier') && p.judgeCrux) {
+          html += '<div style="margin-bottom:4px;"><span style="color:var(--color-text-muted);">crux:</span> ' + esc(p.judgeCrux) + '</div>';
+        }
+        if (p.judgePrimaryRule) html += '<div><span style="color:var(--color-text-muted);">rule:</span> ' + esc(p.judgePrimaryRule) + '</div>';
+        if (p.judgeCapabilityBoundary) html += '<div><span style="color:var(--color-text-muted);">boundary:</span> ' + esc(p.judgeCapabilityBoundary) + '</div>';
+        detailEl.innerHTML = html;
+      }
+
+      makeModalChart(tlCv, {
+        type: 'bar',
+        data: { labels: tlLabels, datasets: [mainDataset, confDataset] },
+        options: {
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              callbacks: {
+                title: function () { return ''; },
+                label: function (item) {
+                  var p = timeline[item.dataIndex];
+                  var lines = [p.model];
+                  lines.push('tier:        ' + tierName(p) + ' (' + item.parsed.y + ')');
+                  var ds = inferDecisionSource(p);
+                  if (ds) lines.push('decision:    ' + ds);
+                  if (p.routingSource === 'stage_router') {
+                    if (p.routingConfidence != null) lines.push('confidence:  ' + p.routingConfidence.toFixed(2));
+                    if (p.signalSeverity != null) lines.push('severity:    ' + p.signalSeverity.toFixed(2));
+                    if (p.signalSpinning != null && p.signalSpinning >= 0.5) lines.push('spinning:    ✓');
+                    if (p.signalExploring != null && p.signalExploring >= 0.5) lines.push('exploring:   ✓');
+                    if (p.signalProductionIntensity != null) lines.push('production: ' + p.signalProductionIntensity.toFixed(2));
+                  } else if (p.routingSource === 'judge' || p.routingSource === 'classifier') {
+                    if (p.judgePrimaryRule) lines.push('rule: ' + p.judgePrimaryRule);
+                    if (p.judgeCapabilityBoundary) lines.push('boundary: ' + p.judgeCapabilityBoundary);
+                    if (p.judgeCrux) lines.push('crux (click to see)');
+                  } else if (p.routingConfidence != null) {
+                    lines.push('confidence:  ' + p.routingConfidence.toFixed(2));
+                  }
+                  return lines;
+                }
+              }
+            }
+          },
+          onClick: function (e, elements) {
+            if (elements && elements.length) showTurnDetail(elements[0].index);
+          },
+          scales: {
+            x: { grid: { display: false }, ticks: { maxTicksLimit: 12 } },
+            ytier: {
+              position: 'left',
+              min: 0, max: 4,
+              ticks: {
+                stepSize: 1,
+                callback: function (v) { return TIER_LABELS[v] || ''; }
+              },
+              grid: { color: GRID }
+            },
+            yconf: {
+              position: 'right',
+              min: 0, max: 1,
+              ticks: {
+                stepSize: 0.25,
+                callback: function (v) { return (v * 100).toFixed(0) + '%'; }
+              },
+              grid: { display: false }
+            }
+          }
+        }
+      });
+
+      tlCard._body.appendChild(detailEl);
+      body.appendChild(tlCard);
+    }
 
     // Timeline — Gantt of all top-level agent, skill, and command dispatches.
     var hasDispatches = (s.dispatches || []).length > 0;

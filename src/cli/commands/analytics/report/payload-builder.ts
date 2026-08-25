@@ -109,6 +109,12 @@ export function buildPayload(
             ? { usageUnavailableReason: cost.usageUnavailableReason }
             : {}),
           ...(cost?.costSeries && cost.costSeries.length ? { costSeries: cost.costSeries } : {}),
+          ...(cost?.modelTimeline && cost.modelTimeline.length ? { modelTimeline: cost.modelTimeline } : {}),
+          ...(cost?.judgeCostUSD != null ? { judgeCostUSD: cost.judgeCostUSD } : {}),
+          ...(cost?.judgeInputTokens != null ? { judgeInputTokens: cost.judgeInputTokens } : {}),
+          ...(cost?.judgeOutputTokens != null ? { judgeOutputTokens: cost.judgeOutputTokens } : {}),
+          ...(cost?.judgeCachedTokens != null ? { judgeCachedTokens: cost.judgeCachedTokens } : {}),
+          ...(cost?.judgeCacheCreationTokens != null ? { judgeCacheCreationTokens: cost.judgeCacheCreationTokens } : {}),
           ...(cost?.dispatches && cost.dispatches.length ? { dispatches: cost.dispatches } : {}),
           skillInvocations,
           agentInvocations,

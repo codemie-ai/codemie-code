@@ -11,7 +11,7 @@
 import { readFile } from 'node:fs/promises';
 import type { RawSessionData } from '../data-loader.js';
 import type { ParsedSession, SessionAdapter } from '../../../../agents/core/session/BaseSessionAdapter.js';
-import type { SessionCost, SessionCostIndex, CostSummary, ModelCost, TokenUsage, CostSeriesPoint } from './types.js';
+import type { SessionCost, SessionCostIndex, CostSummary, ModelCost, TokenUsage, CostSeriesPoint, ModelTimelinePoint } from './types.js';
 import type { DispatchEventRaw } from './types.js';
 import { MAX_SERIES_POINTS } from './types.js';
 import { emptyUsage, addUsage, costBreakdown } from './cost-calculator.js';
@@ -176,6 +176,44 @@ export function buildCostSeries(records: UsageRecord[]): CostSeriesPoint[] {
     points.push({ t: useTs ? (r.ts as number) : i + 1, cost: Math.round(cumCost * 1e8) / 1e8, tokens: cumTokens });
   });
   return downsample(points);
+}
+
+/**
+ * Build a per-turn model-usage timeline from ordered usage records.
+ * Each point captures the actual model, per-turn cost, and token count.
+ * Returns [] when there are no records.
+ */
+export function buildModelTimeline(records: UsageRecord[]): ModelTimelinePoint[] {
+  if (!records.length) return [];
+  const useTs = records.every((r) => r.ts != null);
+  return records.map((r, i) => {
+    const model = normalizeModelName(r.model);
+    const price = lookupPrice(model);
+    const costUSD = price ? costBreakdown(r.usage, price).total : 0;
+    const point: ModelTimelinePoint = {
+      t: useTs ? (r.ts as number) : i + 1,
+      model,
+      costUSD: Math.round(costUSD * 1e8) / 1e8,
+      tokens: r.usage.total,
+    };
+    if (r.requestedModel != null) point.requestedModel = r.requestedModel;
+    if (r.capableModel != null) point.capableModel = r.capableModel;
+    if (r.routingTier != null) point.routingTier = r.routingTier;
+    if (r.routingConfidence != null) point.routingConfidence = r.routingConfidence;
+    if (r.routingSource != null) point.routingSource = r.routingSource;
+    if (r.signalScore != null) point.signalScore = r.signalScore;
+    if (r.signalConfidence != null) point.signalConfidence = r.signalConfidence;
+    if (r.signalSeverity != null) point.signalSeverity = r.signalSeverity;
+    if (r.signalSpinning != null) point.signalSpinning = r.signalSpinning;
+    if (r.signalExploring != null) point.signalExploring = r.signalExploring;
+    if (r.signalProductionIntensity != null) point.signalProductionIntensity = r.signalProductionIntensity;
+    if (r.judgePSolve != null) point.judgePSolve = r.judgePSolve;
+    if (r.judgeCrux != null) point.judgeCrux = r.judgeCrux;
+    if (r.judgePrimaryRule != null) point.judgePrimaryRule = r.judgePrimaryRule;
+    if (r.judgeCapabilityBoundary != null) point.judgeCapabilityBoundary = r.judgeCapabilityBoundary;
+    if (r.decisionSource != null) point.decisionSource = r.decisionSource;
+    return point;
+  });
 }
 
 /** Run async tasks with bounded concurrency (cap open file descriptors). */
@@ -360,6 +398,32 @@ export async function enrichCosts(
     const { cost, unpriced: u } = priceUsage(entry.sessionId, entry.hadLog, usageByModel);
     if (series.length) {
       cost.costSeries = series;
+    }
+    if (records.length) {
+      const timeline = buildModelTimeline(records);
+      if (timeline.length) cost.modelTimeline = timeline;
+      // Accumulate classifier (Switchyard routing LLM) cost and tokens from per-turn metadata.
+      let judgeCostUSD = 0;
+      let judgeInputTokens = 0;
+      let judgeOutputTokens = 0;
+      let judgeCachedTokens = 0;
+      let judgeCacheCreationTokens = 0;
+      for (const r of records) {
+        judgeCostUSD += r.judgeCostUSD ?? 0;
+        judgeInputTokens += r.judgeInputTokens ?? 0;
+        judgeOutputTokens += r.judgeOutputTokens ?? 0;
+        judgeCachedTokens += r.judgeCachedTokens ?? 0;
+        judgeCacheCreationTokens += r.judgeCacheCreationTokens ?? 0;
+      }
+      if (judgeInputTokens > 0 || judgeOutputTokens > 0 || judgeCostUSD > 0) {
+        cost.judgeCostUSD = Math.round(judgeCostUSD * 1e8) / 1e8;
+        cost.judgeInputTokens = judgeInputTokens;
+        cost.judgeOutputTokens = judgeOutputTokens;
+        if (judgeCachedTokens > 0) cost.judgeCachedTokens = judgeCachedTokens;
+        if (judgeCacheCreationTokens > 0) cost.judgeCacheCreationTokens = judgeCacheCreationTokens;
+        // Include routing cost in the session total.
+        cost.costUSD = Math.round((cost.costUSD + judgeCostUSD) * 1e8) / 1e8;
+      }
     }
     if (entry.parsed) {
       // Usage provenance from the adapter: lets the report distinguish "cost is genuinely

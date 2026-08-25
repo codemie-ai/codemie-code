@@ -79,6 +79,14 @@ class HeaderInjectionInterceptor implements ProxyInterceptor {
       context.headers['X-CodeMie-Project'] = config.project;
     }
 
+    // Append optional routing mode as a query parameter on every upstream request.
+    const routingMode = config.routing;
+    if (routingMode) {
+      const sep = context.url.includes('?') ? '&' : '?';
+      context.url = `${context.url}${sep}routing=${routingMode}`;
+      logger.debug(`[${this.name}] Appended routing query param: ${routingMode}`);
+    }
+
     logger.debug(`[${this.name}] Injected CodeMie headers`);
   }
 }

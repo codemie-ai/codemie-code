@@ -97,6 +97,9 @@ export interface ProviderProfile {
   maxOutputTokens?: number;
   maxThinkingTokens?: number;
 
+  // Optional routing mode: appended as `?routing=<mode>` to every upstream request.
+  routing?: 'signal' | 'classifier';
+
   // Metrics configuration
   metrics?: {
     enabled?: boolean;  // Enable metrics collection (default: true)
