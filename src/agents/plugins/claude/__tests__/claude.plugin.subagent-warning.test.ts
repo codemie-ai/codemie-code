@@ -102,6 +102,35 @@ describe('Claude Plugin – subagent tier warning (EPMCDME-14355 AC-6)', () => {
     expect(haikuWarning).toBeUndefined();
   });
 
+  it('warns about missing haiku on an opus-only tenant, naming opus as the fallback (EPMCDME-14355 AC-6)', async () => {
+    // AC-6 says warn whenever haiku is NOT provisioned. On an opus-only tenant a subagent
+    // requesting model:"haiku" is redirected to opus, so the warning must still fire and
+    // name opus (not sonnet) as the fallback.
+    const env: HookEnv = {
+      ANTHROPIC_DEFAULT_OPUS_MODEL: 'anthropic/claude-opus-5',
+      // no haiku, no sonnet
+    };
+
+    await beforeRun(env, mockConfig);
+
+    const warnCalls = loggerMod.logger.warn.mock.calls.map((call) => String(call[0]));
+    const haikuWarning = warnCalls.find((msg) => /haiku/i.test(msg) && /subagent/i.test(msg));
+    expect(haikuWarning).toBeDefined();
+    expect(haikuWarning).toContain('anthropic/claude-opus-5');
+  });
+
+  it('does not warn when no tier at all is provisioned (no fallback to describe)', async () => {
+    const env: HookEnv = {
+      // no tier vars set on a CodeMie (non-subscription) provider
+    };
+
+    await beforeRun(env, mockConfig);
+
+    const warnCalls = loggerMod.logger.warn.mock.calls.map((call) => String(call[0]));
+    const haikuWarning = warnCalls.find((msg) => /haiku/i.test(msg) && /subagent/i.test(msg));
+    expect(haikuWarning).toBeUndefined();
+  });
+
   it('does not warn when the provider is anthropic-subscription (no CodeMie catalog applies)', async () => {
     const env: HookEnv = {
       CODEMIE_PROVIDER: 'anthropic-subscription',

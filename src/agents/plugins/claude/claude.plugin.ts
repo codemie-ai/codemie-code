@@ -362,10 +362,21 @@ export const ClaudePluginMetadata: AgentMetadata = {
         logger.info(
           `[Claude] Provisioned tiers: haiku=${hasHaiku ? 'yes' : 'no'}, sonnet=${hasSonnet ? 'yes' : 'no'}, opus=${hasOpus ? 'yes' : 'no'}. Subagent default: ${subagentDefault}.`
         );
-        if (!hasHaiku && hasSonnet) {
-          logger.warn(
-            '[Claude] Haiku tier not provisioned — subagents dispatched with model: "haiku" will fall back to the sonnet default rather than the requested Haiku model. Provision CODEMIE_HAIKU_MODEL or omit the `model` parameter to silence this warning.'
-          );
+        // Warn whenever haiku is absent but SOME tier can still absorb the request (AC-6:
+        // "warn when haiku is NOT provisioned"). Name the actual fallback model rather than
+        // assuming sonnet — on an opus-only tenant a `model: "haiku"` subagent lands on opus,
+        // and the warning must stay truthful. If no tier at all is provisioned there is no
+        // fallback to describe, so stay silent.
+        if (!hasHaiku) {
+          const subagentFallback =
+            env.CLAUDE_CODE_SUBAGENT_MODEL ||
+            (hasSonnet ? env.ANTHROPIC_DEFAULT_SONNET_MODEL : undefined) ||
+            (hasOpus ? env.ANTHROPIC_DEFAULT_OPUS_MODEL : undefined);
+          if (subagentFallback) {
+            logger.warn(
+              `[Claude] Haiku tier not provisioned — subagents dispatched with model: "haiku" will fall back to ${subagentFallback} rather than the requested Haiku model. Provision CODEMIE_HAIKU_MODEL or omit the \`model\` parameter to silence this warning.`
+            );
+          }
         }
       }
 
