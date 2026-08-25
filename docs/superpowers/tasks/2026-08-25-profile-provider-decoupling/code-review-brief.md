@@ -1,20 +1,19 @@
 # Code review — 2026-08-25-profile-provider-decoupling (2026-08-25)
 
-**request-changes** · confidence: low · 6 blocking (1 decision needed) · 1 deferred · 8 filtered as noise
-Coverage: blind ✓ · edge-case ✓ · verification-gap ✓ · acceptance ✓ (4/4 lenses ran)
+**approve** · confidence: high · 0 blocking · 6 resolved · 0 unresolved
+Coverage: blind ✓ · edge-case ✓ · acceptance — n/a (check round) · verification-gap — n/a (check round)  (2/2 lenses ran)
 
-## Look here first
+## Finding status
 
-- `src/agents/plugins/claude/plugin/statusline.mjs:215` — [config] `codeMieUrl` moved out of the profile object; statusline's budget check always fails, silently hiding the budget segment for every SSO user post-migration — CR-001
-- `src/migrations/006-decouple-provider-workspace-config.migration.ts:92` — [config] migration always writes `workspace` (even `{}`); `resolveWorkspace()` treats any defined workspace as a full override, so every local-config project permanently loses global fallback — CR-003
-- `src/env/__tests__/types.test.ts:186` — [other: build] stale `ProviderProfile` literal still sets `codeMieUrl`/`codeMieIntegration`, which no longer exist on the interface — breaks typecheck/CI — CR-002
-- `src/utils/config.ts:211` — [config] explicit `"workspace": null` in a hand-edited config crashes `ConfigLoader.load()` via `Object.entries(null)` — CR-005
-- `src/utils/config.ts:124` — [config] `applyProjectOnly` was required to be removed by the AC but is still needed; decision needed on whether to eliminate it or revise the AC — CR-004
+- CR-001 resolved — `statusline.mjs` now reads `codeMieUrl` from `config.workspace` and `userEmail` from the top-level field; regression test added
+- CR-002 resolved — `types.test.ts` literal split into a `ProviderProfile` object and a separate `WorkspaceConfig` object
+- CR-003 resolved — `migrate()` guards on `hasWorkspaceFields` before writing `workspace`, mirroring `saveProfile`/`initProjectConfig`; test added citing CR-003
+- CR-004 resolved — decision recorded: `applyProjectOnly` retained by design (prevents cross-profile credential leakage); `spec.md`'s AC revised to match, consistent with the unchanged code
+- CR-005 resolved — `resolveWorkspace`/`removeUndefined` now guard against an explicit `workspace: null`
+- CR-006 resolved — `workspaceSource` computed dynamically (`project`/`global`); the previously-pinned wrong-label test replaced with two correct per-scope tests
 
-## Also flagged
+## New findings
 
-- `src/utils/config.ts:1246` — [config] `loadWithSources` hardcodes workspace `source: 'project'` even when the value actually came from global scope, mislabeling `--show-sources` output — CR-006
+None. The confirmation pass returned 3 blind + 3 edge-case candidates (hand-edited null/malformed `workspace` values, a benign double-read race in `--show-sources` labeling); all were checked against current source and dismissed — either already handled (`resolveWorkspace`'s global branch uses `??`, covering null) or below the new-finding bar (not security/public-API/data-loss/build-runtime-correctness).
 
-## Checked and clean
-
-commit-format ✓ · security ✓ · code-quality partial (1 pre-existing 500-line-limit violation, deferred, not introduced by this diff) · 1 deferred → code-review-deferred.md
+See `code-review-check.json` for full detail.
