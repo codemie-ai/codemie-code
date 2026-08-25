@@ -88,8 +88,13 @@ export const ClaudePluginMetadata: AgentMetadata = {
     apiKey: ['ANTHROPIC_AUTH_TOKEN'],
     model: ['ANTHROPIC_MODEL'],
     haikuModel: ['ANTHROPIC_DEFAULT_HAIKU_MODEL'],
-    sonnetModel: ['ANTHROPIC_DEFAULT_SONNET_MODEL', 'CLAUDE_CODE_SUBAGENT_MODEL'],
+    // CLAUDE_CODE_SUBAGENT_MODEL was previously bundled here; upstream Claude Code treats it
+    // as a global subagent override that silences per-subagent `model` params, so it must
+    // NOT be populated on multi-tier tenants. Routed via `subagentDefaultModel` below only
+    // when the upstream default (sonnet) is unavailable (EPMCDME-14355).
+    sonnetModel: ['ANTHROPIC_DEFAULT_SONNET_MODEL'],
     opusModel: ['ANTHROPIC_DEFAULT_OPUS_MODEL'],
+    subagentDefaultModel: ['CLAUDE_CODE_SUBAGENT_MODEL'],
   },
 
   supportedProviders: ['litellm', 'ai-run-sso', 'bedrock', 'bearer-auth', 'anthropic-subscription'],
@@ -311,10 +316,11 @@ export const ClaudePluginMetadata: AgentMetadata = {
         const TIER_TARGET_VARS: Record<ClaudeModelTier, { generic: string; native: string[] }> = {
           model: { generic: 'CODEMIE_MODEL', native: ['ANTHROPIC_MODEL'] },
           haiku: { generic: 'CODEMIE_HAIKU_MODEL', native: ['ANTHROPIC_DEFAULT_HAIKU_MODEL'] },
-          sonnet: {
-            generic: 'CODEMIE_SONNET_MODEL',
-            native: ['ANTHROPIC_DEFAULT_SONNET_MODEL', 'CLAUDE_CODE_SUBAGENT_MODEL'],
-          },
+          // CLAUDE_CODE_SUBAGENT_MODEL removed from the sonnet tier: it is a global override
+          // that suppresses per-subagent `model` params in upstream Claude Code. On multi-
+          // tier tenants ANTHROPIC_DEFAULT_SONNET_MODEL alone is enough — the upstream binary
+          // picks it as the subagent default and honours explicit overrides (EPMCDME-14355).
+          sonnet: { generic: 'CODEMIE_SONNET_MODEL', native: ['ANTHROPIC_DEFAULT_SONNET_MODEL'] },
           opus: { generic: 'CODEMIE_OPUS_MODEL', native: ['ANTHROPIC_DEFAULT_OPUS_MODEL'] },
         };
 

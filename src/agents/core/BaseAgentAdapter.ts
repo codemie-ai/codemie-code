@@ -1105,6 +1105,11 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
         delete env[envVar];
       }
     }
+    if (envMapping.subagentDefaultModel) {
+      for (const envVar of envMapping.subagentDefaultModel) {
+        delete env[envVar];
+      }
+    }
 
     // Step 2: Set new values from CODEMIE_* vars
     // Transform base URL
@@ -1136,20 +1141,29 @@ export abstract class BaseAgentAdapter implements AgentAdapter {
       }
     }
     if (env.CODEMIE_SONNET_MODEL && env.CODEMIE_SONNET_MODEL !== env.CODEMIE_HAIKU_MODEL && envMapping.sonnetModel) {
-      // Distinct sonnet tier — map to all target vars normally
+      // Distinct sonnet tier — map to all target vars normally.
+      // envMapping.subagentDefaultModel is intentionally NOT touched here: when sonnet is
+      // provisioned the upstream binary already picks ANTHROPIC_DEFAULT_SONNET_MODEL as the
+      // subagent default, and setting CLAUDE_CODE_SUBAGENT_MODEL would override the per-
+      // subagent `model` parameter from the Agent tool (EPMCDME-14355).
       for (const envVar of envMapping.sonnetModel) {
         env[envVar] = env.CODEMIE_SONNET_MODEL;
       }
-    } else if ((!env.CODEMIE_SONNET_MODEL || env.CODEMIE_SONNET_MODEL === env.CODEMIE_HAIKU_MODEL) && env.CODEMIE_OPUS_MODEL && envMapping.sonnetModel?.includes('CLAUDE_CODE_SUBAGENT_MODEL')) {
-      // No distinct sonnet tier, opus provisioned: route subagent to opus.
-      // ANTHROPIC_DEFAULT_SONNET_MODEL is intentionally left unset to prevent
-      // duplicate-ID display in /model (EPMCDME-12779).
-      env['CLAUDE_CODE_SUBAGENT_MODEL'] = env.CODEMIE_OPUS_MODEL;
-    } else if ((!env.CODEMIE_SONNET_MODEL || env.CODEMIE_SONNET_MODEL === env.CODEMIE_HAIKU_MODEL) && !env.CODEMIE_OPUS_MODEL && env.CODEMIE_HAIKU_MODEL && envMapping.sonnetModel?.includes('CLAUDE_CODE_SUBAGENT_MODEL')) {
-      // Haiku-only tenant: route subagent to haiku.
-      // ANTHROPIC_DEFAULT_SONNET_MODEL is intentionally left unset to prevent
-      // duplicate-ID display in /model (EPMCDME-12779).
-      env['CLAUDE_CODE_SUBAGENT_MODEL'] = env.CODEMIE_HAIKU_MODEL;
+    } else if ((!env.CODEMIE_SONNET_MODEL || env.CODEMIE_SONNET_MODEL === env.CODEMIE_HAIKU_MODEL) && env.CODEMIE_OPUS_MODEL && envMapping.subagentDefaultModel?.length) {
+      // No distinct sonnet tier, opus provisioned: route subagent default to opus so the
+      // upstream binary does not try an unavailable sonnet-tier model for subagent tasks.
+      // ANTHROPIC_DEFAULT_SONNET_MODEL is intentionally left unset to prevent duplicate-ID
+      // display in /model (EPMCDME-12779).
+      for (const envVar of envMapping.subagentDefaultModel) {
+        env[envVar] = env.CODEMIE_OPUS_MODEL;
+      }
+    } else if ((!env.CODEMIE_SONNET_MODEL || env.CODEMIE_SONNET_MODEL === env.CODEMIE_HAIKU_MODEL) && !env.CODEMIE_OPUS_MODEL && env.CODEMIE_HAIKU_MODEL && envMapping.subagentDefaultModel?.length) {
+      // Haiku-only tenant: route subagent default to haiku so the upstream binary does not
+      // try an unavailable sonnet-tier model. ANTHROPIC_DEFAULT_SONNET_MODEL is intentionally
+      // left unset to prevent duplicate-ID display in /model (EPMCDME-12779).
+      for (const envVar of envMapping.subagentDefaultModel) {
+        env[envVar] = env.CODEMIE_HAIKU_MODEL;
+      }
     }
     if (env.CODEMIE_OPUS_MODEL && envMapping.opusModel) {
       for (const envVar of envMapping.opusModel) {
