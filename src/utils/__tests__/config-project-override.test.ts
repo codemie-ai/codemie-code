@@ -388,53 +388,7 @@ describe('ConfigLoader - Project-Level Configuration', () => {
   });
 });
 
-describe('ConfigLoader - cross-env URL gate', () => {
-  describe('shouldPreserveProjectContext', () => {
-    // Helper is private — access via index signature cast for unit testing.
-    // This is the established pattern when a Vitest suite needs to reach a
-    // class-private static. No production code reads it this way.
-    const gate = (l: string | undefined, g: string | undefined): boolean =>
-      (ConfigLoader as unknown as {
-        shouldPreserveProjectContext: (l?: string, g?: string) => boolean;
-      }).shouldPreserveProjectContext(l, g);
-
-    it('preserves when both URLs are equal', () => {
-      expect(gate('https://prod.example.com', 'https://prod.example.com')).toBe(true);
-    });
-
-    it('preserves when URLs differ only by trailing slash', () => {
-      expect(gate('https://prod.example.com/', 'https://prod.example.com')).toBe(true);
-    });
-
-    it('preserves when URLs differ only by case', () => {
-      expect(gate('https://PROD.example.com', 'https://prod.example.com')).toBe(true);
-    });
-
-    it('drops when URLs differ on host', () => {
-      expect(gate('https://prod.example.com', 'https://preview.example.com')).toBe(false);
-    });
-
-    it('preserves when local URL is undefined', () => {
-      expect(gate(undefined, 'https://preview.example.com')).toBe(true);
-    });
-
-    it('preserves when global URL is undefined', () => {
-      expect(gate('https://prod.example.com', undefined)).toBe(true);
-    });
-
-    it('preserves when both URLs are undefined', () => {
-      expect(gate(undefined, undefined)).toBe(true);
-    });
-
-    it('preserves when local URL is empty string', () => {
-      expect(gate('', 'https://preview.example.com')).toBe(true);
-    });
-
-    it('preserves when global URL is empty string', () => {
-      expect(gate('https://prod.example.com', '')).toBe(true);
-    });
-  });
-
+describe('ConfigLoader - workspace resolution and project-only composition', () => {
   describe('load with selected global and local team profiles', () => {
     // ConfigLoader.GLOBAL_CONFIG and .GLOBAL_CONFIG_DIR are static class fields
     // evaluated at module load time, so vi.spyOn(paths, ...) in beforeEach is
@@ -563,120 +517,113 @@ describe('ConfigLoader - cross-env URL gate', () => {
       expect(cfg.codeMieIntegration).toBeUndefined();
     });
 
-    it('preserves project context when --profile targets the same CodeMie URL', async () => {
+    it('resolves workspace from the local scope, overriding the global scope entirely (whole-object override)', async () => {
       await writeGlobal('personal-anthropic', {
         'personal-anthropic': {
           provider: 'anthropic-subscription',
-          codeMieUrl: 'https://prod.example.com',
           baseUrl: 'https://api.anthropic.com',
           model: 'claude-sonnet-4-6',
           name: 'personal-anthropic'
         }
       });
-      await writeLocal('team-prod', {
-        'team-prod': {
-          provider: 'ai-run-sso',
-          codeMieUrl: 'https://prod.example.com',
-          codeMieProject: 'prod-proj',
-          codeMieIntegration: 'prod-int' as unknown as CodeMieIntegrationInfo,
-          baseUrl: 'https://prod.example.com/code-assistant-api',
-          model: 'claude-sonnet-4-6',
-          name: 'team-prod'
-        }
-      });
+      const globalRaw = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8'));
+      globalRaw.workspace = { codeMieProject: 'global-proj', codeMieUrl: 'https://global.example.com' };
+      await fs.writeFile(GLOBAL_CONFIG_PATH, JSON.stringify(globalRaw, null, 2));
 
-      const cfg = await ConfigLoader.load(path.join(TEST_DIR, 'project'), { name: 'personal-anthropic' });
-
-      expect(cfg.codeMieUrl).toBe('https://prod.example.com');
-      expect(cfg.codeMieProject).toBe('prod-proj');
-      expect(cfg.codeMieIntegration).toBe('prod-int');
-    });
-
-    it('keeps project context explicitly defined by the selected profile', async () => {
-      await writeGlobal('personal-anthropic', {
+      await writeLocal('personal-anthropic', {
         'personal-anthropic': {
           provider: 'anthropic-subscription',
-          codeMieUrl: 'https://prod.example.com',
-          codeMieProject: 'personal-proj',
-          codeMieIntegration: 'personal-int' as unknown as CodeMieIntegrationInfo,
           baseUrl: 'https://api.anthropic.com',
           model: 'claude-sonnet-4-6',
           name: 'personal-anthropic'
         }
       });
-      await writeLocal('team-prod', {
-        'team-prod': {
-          provider: 'ai-run-sso',
-          codeMieUrl: 'https://prod.example.com',
-          codeMieProject: 'team-proj',
-          codeMieIntegration: 'team-int' as unknown as CodeMieIntegrationInfo,
-          baseUrl: 'https://prod.example.com/code-assistant-api',
+      const localRaw = JSON.parse(await fs.readFile(LOCAL_CONFIG_PATH, 'utf-8'));
+      localRaw.workspace = { codeMieProject: 'local-proj' };
+      await fs.writeFile(LOCAL_CONFIG_PATH, JSON.stringify(localRaw, null, 2));
+
+      const cfg = await ConfigLoader.load(path.join(TEST_DIR, 'project'));
+
+      // Whole-object override: the local workspace object wins outright — the
+      // global workspace's codeMieUrl must NOT leak in alongside it.
+      expect(cfg.codeMieProject).toBe('local-proj');
+      expect(cfg.codeMieUrl).toBeUndefined();
+    });
+
+    it('falls back to the global scope workspace entirely when the local scope has no workspace defined', async () => {
+      await writeGlobal('personal-anthropic', {
+        'personal-anthropic': {
+          provider: 'anthropic-subscription',
+          baseUrl: 'https://api.anthropic.com',
           model: 'claude-sonnet-4-6',
-          name: 'team-prod'
+          name: 'personal-anthropic'
+        }
+      });
+      const globalRaw = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8'));
+      globalRaw.workspace = { codeMieProject: 'global-proj', codeMieUrl: 'https://global.example.com' };
+      await fs.writeFile(GLOBAL_CONFIG_PATH, JSON.stringify(globalRaw, null, 2));
+
+      await writeLocal('personal-anthropic', {
+        'personal-anthropic': {
+          provider: 'anthropic-subscription',
+          baseUrl: 'https://api.anthropic.com',
+          model: 'claude-sonnet-4-6',
+          name: 'personal-anthropic'
         }
       });
 
-      const cfg = await ConfigLoader.load(path.join(TEST_DIR, 'project'), { name: 'personal-anthropic' });
+      const cfg = await ConfigLoader.load(path.join(TEST_DIR, 'project'));
 
-      expect(cfg.codeMieUrl).toBe('https://prod.example.com');
-      expect(cfg.codeMieProject).toBe('personal-proj');
-      expect(cfg.codeMieIntegration).toBe('personal-int');
+      expect(cfg.codeMieProject).toBe('global-proj');
+      expect(cfg.codeMieUrl).toBe('https://global.example.com');
     });
 
-    it('preserves local codeMieProject when local profile has no codeMieUrl', async () => {
+    it('switching the selected global profile does not drop workspace context', async () => {
+      await writeGlobal('codemie-sso', {
+        'codemie-sso': {
+          provider: 'ai-run-sso',
+          baseUrl: 'https://prod.example.com/code-assistant-api',
+          model: 'claude-sonnet-4-6',
+          name: 'codemie-sso'
+        },
+        anthropic: {
+          provider: 'anthropic-subscription',
+          baseUrl: 'https://api.anthropic.com',
+          model: 'claude-sonnet-4-6',
+          name: 'anthropic'
+        }
+      });
+      const globalRaw = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8'));
+      globalRaw.workspace = { codeMieProject: 'shared-proj' };
+      await fs.writeFile(GLOBAL_CONFIG_PATH, JSON.stringify(globalRaw, null, 2));
+
+      const ssoCfg = await ConfigLoader.load(path.join(TEST_DIR, 'project'), { name: 'codemie-sso' });
+      const anthropicCfg = await ConfigLoader.load(path.join(TEST_DIR, 'project'), { name: 'anthropic' });
+
+      expect(ssoCfg.codeMieProject).toBe('shared-proj');
+      expect(anthropicCfg.codeMieProject).toBe('shared-proj');
+    });
+
+    it('loadWithSources reports workspace-resolved codeMieUrl with source "project"', async () => {
       await writeGlobal('preview', {
         preview: {
           provider: 'ai-run-sso',
-          codeMieUrl: 'https://preview.example.com',
           baseUrl: 'https://preview.example.com/code-assistant-api',
           model: 'claude-sonnet-4-6',
           name: 'preview'
         }
       });
-      await writeLocal('team-default', {
-        'team-default': {
-          provider: 'ai-run-sso',
-          codeMieProject: 'shared-proj',
-          model: 'claude-sonnet-4-6',
-          name: 'team-default'
-        }
-      });
-
-      const cfg = await ConfigLoader.load(path.join(TEST_DIR, 'project'), { name: 'preview' });
-
-      expect(cfg.codeMieUrl).toBe('https://preview.example.com');
-      expect(cfg.codeMieProject).toBe('shared-proj');
-    });
-
-    it('loadWithSources reports codeMieUrl source as "global" when URLs differ', async () => {
-      await writeGlobal('preview', {
-        preview: {
-          provider: 'ai-run-sso',
-          codeMieUrl: 'https://preview.example.com',
-          baseUrl: 'https://preview.example.com/code-assistant-api',
-          model: 'claude-sonnet-4-6',
-          name: 'preview'
-        }
-      });
-      await writeLocal('team-prod', {
-        'team-prod': {
-          provider: 'ai-run-sso',
-          codeMieUrl: 'https://prod.example.com',
-          codeMieProject: 'prod-proj',
-          baseUrl: 'https://prod.example.com/code-assistant-api',
-          model: 'claude-sonnet-4-6',
-          name: 'team-prod'
-        }
-      });
+      const globalRaw = JSON.parse(await fs.readFile(GLOBAL_CONFIG_PATH, 'utf-8'));
+      globalRaw.workspace = { codeMieUrl: 'https://global-workspace.example.com' };
+      await fs.writeFile(GLOBAL_CONFIG_PATH, JSON.stringify(globalRaw, null, 2));
 
       const { config: merged, sources } = await ConfigLoader.loadWithSources(
         path.join(TEST_DIR, 'project'),
         { name: 'preview' }
       );
 
-      expect(merged.codeMieUrl).toBe('https://preview.example.com');
-      expect(sources['codeMieUrl']?.source).toBe('global');
-      expect(sources['codeMieProject']).toBeUndefined();
+      expect(merged.codeMieUrl).toBe('https://global-workspace.example.com');
+      expect(sources['codeMieUrl']?.source).toBe('project');
     });
   });
 });

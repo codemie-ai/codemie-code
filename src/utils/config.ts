@@ -7,6 +7,7 @@ import {
   CodeMieConfigOptions,
   ProviderProfile,
   MultiProviderConfig,
+  WorkspaceConfig,
   CodeMieIntegrationInfo,
   ConfigWithSource,
   ConfigWithSources,
@@ -113,33 +114,26 @@ export class ConfigLoader {
     const globalConfig = await this.loadGlobalConfigProfile(selectedProfileName);
     Object.assign(config, this.removeUndefined(globalConfig));
 
-    // 3. Project-local config (.codemie/codemie-cli.config.json)
+    // 3. Project-local config (.codemie/codemie-cli.config.json) — provider identity
+    // (name/model/baseUrl/apiKey/etc.). Repo/tooling-context fields no longer live on
+    // the profile; they resolve independently below via resolveWorkspace().
     const localConfig = await this.loadLocalConfigProfile(workingDir, localProfileName);
 
-    // When the selected global profile differs from the team's local profile, keep only
-    // project-level local fields. The selection may come from --profile or activeProfile;
-    // either way, the local team fallback must not replace provider, model, or credentials.
+    // When the selected global profile differs from the team's local profile, the local
+    // team profile must not replace provider, model, or credentials — apply none of it.
     const applyProjectOnly = Boolean(
       selectedProfileName && localProfileName && selectedProfileName !== localProfileName
     );
-    // When applying project-only composition, gate it on URL equality. If the
-    // selected global profile targets a different CodeMie env than the local
-    // team profile, the team's project/integration/URL all reference the wrong
-    // env's records — drop the project-context bundle and let the global
-    // profile supply everything.
-    const selectedProfileDefinesProjectContext =
-      Boolean(globalConfig.codeMieProject || globalConfig.codeMieIntegration);
-    const preserveProjectContext =
-      applyProjectOnly &&
-      !selectedProfileDefinesProjectContext &&
-      this.shouldPreserveProjectContext(localConfig.codeMieUrl, globalConfig.codeMieUrl);
-    const effectiveLocalConfig = preserveProjectContext
-      ? this.filterProjectFields(localConfig)
-      : applyProjectOnly
-        ? {}
-        : localConfig;
+    const effectiveLocalConfig = applyProjectOnly ? {} : localConfig;
 
     Object.assign(config, this.removeUndefined(effectiveLocalConfig));
+
+    // Workspace (repo/tooling-context) fields resolve by whole-object override — the
+    // local scope's workspace if defined, else the global scope's — independent of
+    // which profile is active, so switching the active profile never drops workspace
+    // context.
+    const workspace = await this.resolveWorkspace(workingDir);
+    Object.assign(config, this.removeUndefined(workspace));
 
     // 2. Environment variables (load .env first if in project)
     const envPath = path.join(workingDir, '.env');
@@ -204,6 +198,22 @@ export class ConfigLoader {
     }
 
     return config;
+  }
+
+  /**
+   * Resolve the workspace-level (repo/tooling-context) configuration for a working
+   * directory, by whole-object override: the local scope's `workspace` if it is
+   * defined, else the global scope's, else `{}`. Never mixes fields between scopes —
+   * this is what lets switching the active profile keep workspace context intact.
+   */
+  static async resolveWorkspace(workingDir: string): Promise<WorkspaceConfig> {
+    const localMultiConfig = await this.loadLocalMultiProviderConfig(workingDir);
+    if (localMultiConfig.workspace !== undefined) {
+      return localMultiConfig.workspace;
+    }
+
+    const globalMultiConfig = await this.loadMultiProviderConfig();
+    return globalMultiConfig.workspace ?? {};
   }
 
   /**
@@ -378,56 +388,6 @@ export class ConfigLoader {
 
     // Fallback: keep the original 2-level lookup behavior.
     return selectedProfileName;
-  }
-
-  /**
-   * Fields that belong to the repository/project context rather than to the provider
-   * identity. When a user explicitly selects a different global provider profile via
-   * --profile, these fields should still be supplied by the team's local profile so the
-   * repository context is not lost.
-   */
-  private static readonly PROJECT_FIELDS: (keyof CodeMieConfigOptions)[] = [
-    'codeMieProject',
-    'codeMieIntegration',
-    'codeMieUrl'
-  ];
-
-  /**
-   * Returns true when the local team profile's project context (codeMieProject,
-   * codeMieIntegration, codeMieUrl) is safe to compose with the selected global
-   * profile. The composition is only safe when both profiles target the same
-   * CodeMie environment — otherwise the local project/integration IDs reference
-   * the wrong env's database rows and the URL is outright wrong.
-   *
-   * The gate is conservative: it only blocks composition when both URLs are
-   * explicitly set and normalized-differ. A missing URL on either side is
-   * treated as "no signal of conflict" and composition proceeds. This matches
-   * the common case where a local profile sets only `codeMieProject` and relies
-   * on the global profile for the URL.
-   */
-  private static shouldPreserveProjectContext(
-    localUrl: string | undefined,
-    globalUrl: string | undefined
-  ): boolean {
-    if (!localUrl || !globalUrl) return true;
-    const normalize = (u: string): string => u.replace(/\/+$/, '').toLowerCase();
-    return normalize(localUrl) === normalize(globalUrl);
-  }
-
-  /**
-   * Keep only project-level fields from a local profile. Used when the selected global
-   * profile differs from the team's local default profile.
-   */
-  private static filterProjectFields(
-    config: Partial<CodeMieConfigOptions>
-  ): Partial<CodeMieConfigOptions> {
-    const result: Partial<CodeMieConfigOptions> = {};
-    for (const field of this.PROJECT_FIELDS) {
-      if ((config as any)[field] !== undefined) {
-        (result as any)[field] = (config as any)[field];
-      }
-    }
-    return result;
   }
 
   /**
@@ -1220,17 +1180,11 @@ export class ConfigLoader {
     const applyProjectOnly = Boolean(
       selectedProfileName && localProfileName && selectedProfileName !== localProfileName
     );
-    const selectedProfileDefinesProjectContext =
-      Boolean(globalConfig.codeMieProject || globalConfig.codeMieIntegration);
-    const preserveProjectContext =
-      applyProjectOnly &&
-      !selectedProfileDefinesProjectContext &&
-      this.shouldPreserveProjectContext(localConfig.codeMieUrl, globalConfig.codeMieUrl);
-    const effectiveLocalConfig = preserveProjectContext
-      ? this.filterProjectFields(localConfig)
-      : applyProjectOnly
-        ? {}
-        : localConfig;
+    const effectiveLocalConfig = applyProjectOnly ? {} : localConfig;
+
+    // Workspace (repo/tooling-context) fields resolve independently of profile
+    // selection — see resolveWorkspace().
+    const workspace = await this.resolveWorkspace(workingDir);
 
     const configs: ConfigLayer[] = [
       {
@@ -1246,6 +1200,10 @@ export class ConfigLoader {
       },
       {
         data: effectiveLocalConfig,
+        source: 'project'
+      },
+      {
+        data: workspace,
         source: 'project'
       },
       {
