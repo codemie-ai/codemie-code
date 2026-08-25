@@ -348,6 +348,25 @@ export const ClaudePluginMetadata: AgentMetadata = {
             );
           }
         }
+
+        // AC-6 (EPMCDME-14355): surface tier availability at startup so the user sees when a
+        // subagent-common tier (haiku) is missing. Per-subagent model resolution happens
+        // inside the upstream binary — the CLI has no dispatch-time hook — so a launch-time
+        // notice is the only place we can flag the mismatch before the sub-agent reports it.
+        const hasHaiku = Boolean(env.ANTHROPIC_DEFAULT_HAIKU_MODEL);
+        const hasSonnet = Boolean(env.ANTHROPIC_DEFAULT_SONNET_MODEL);
+        const hasOpus = Boolean(env.ANTHROPIC_DEFAULT_OPUS_MODEL);
+        const subagentDefault = env.CLAUDE_CODE_SUBAGENT_MODEL
+          ? `pinned to ${env.CLAUDE_CODE_SUBAGENT_MODEL}`
+          : 'per-request';
+        logger.info(
+          `[Claude] Provisioned tiers: haiku=${hasHaiku ? 'yes' : 'no'}, sonnet=${hasSonnet ? 'yes' : 'no'}, opus=${hasOpus ? 'yes' : 'no'}. Subagent default: ${subagentDefault}.`
+        );
+        if (!hasHaiku && hasSonnet) {
+          logger.warn(
+            '[Claude] Haiku tier not provisioned — subagents dispatched with model: "haiku" will fall back to the sonnet default rather than the requested Haiku model. Provision CODEMIE_HAIKU_MODEL or omit the `model` parameter to silence this warning.'
+          );
+        }
       }
 
       return env;
