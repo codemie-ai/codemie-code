@@ -9,6 +9,7 @@ import {
   isMultiProviderConfig,
   isLegacyConfig,
   ProviderProfile,
+  WorkspaceConfig,
 } from '../types.js';
 
 describe('Configuration Type Guards', () => {
@@ -183,23 +184,28 @@ describe('Configuration Type Guards', () => {
     });
 
     it('should accept profile with SSO fields', () => {
+      // codeMieUrl/codeMieIntegration moved to WorkspaceConfig (they are workspace
+      // identity, not per-profile provider credentials) — ProviderProfile no longer
+      // declares them.
       const profile: ProviderProfile = {
         name: 'sso-profile',
         provider: 'ai-run-sso',
         authMethod: 'sso',
-        codeMieUrl: 'https://codemie.ai',
-        codeMieIntegration: {
-          id: 'integration-123',
-          alias: 'my-integration',
-        },
         ssoConfig: {
           apiUrl: 'https://api.codemie.ai',
           cookiesEncrypted: 'encrypted-cookies',
         },
       };
+      const workspace: WorkspaceConfig = {
+        codeMieUrl: 'https://codemie.ai',
+        codeMieIntegration: {
+          id: 'integration-123',
+          alias: 'my-integration',
+        },
+      };
 
       expect(profile.authMethod).toBe('sso');
-      expect(profile.codeMieIntegration?.id).toBe('integration-123');
+      expect(workspace.codeMieIntegration?.id).toBe('integration-123');
     });
 
     it('should accept profile with allowed directories', () => {
