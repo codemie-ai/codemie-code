@@ -248,6 +248,41 @@
 
   // ---- small DOM builders -------------------------------------------------
   function el(tag, cls, html) { var e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
+  // ---- copy-to-clipboard helper -------------------------------------------
+  // getText(): () => string|undefined. label: base button text. Falls back to a
+  // hidden textarea + execCommand('copy') when the Clipboard API is unavailable
+  // or its promise rejects (reports are typically opened via file://, no server).
+  function copyButton(getText, label) {
+    var btn = el('button', 'modal-copy', esc(label));
+    btn.setAttribute('aria-label', label);
+    btn.addEventListener('click', function () {
+      var text = getText();
+      if (!text) return;
+      var show = function (ok) {
+        var prev = btn.textContent;
+        btn.textContent = ok ? 'Copied' : 'Copy failed';
+        btn.disabled = true;
+        setTimeout(function () { btn.textContent = prev; btn.disabled = false; }, 1200);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () { show(true); }, function () { fallbackCopy(text, show); });
+      } else {
+        fallbackCopy(text, show);
+      }
+    });
+    return btn;
+  }
+  function fallbackCopy(text, done) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0;';
+    document.body.appendChild(ta);
+    ta.select();
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    document.body.removeChild(ta);
+    done(ok);
+  }
   function card(title, sub) {
     var c = el('div', 'card');
     var head = el('div', 'card-header');
@@ -1100,6 +1135,11 @@
     htxt.appendChild(el('div', 'modal-title', esc(truncStr(firstWords(sessTitle(s), 10), 120))));
     var metaBits = [labelFor(s.agentName), (s.models && s.models[0]) || null, shortPath(s.project), s.branch].filter(Boolean);
     htxt.appendChild(el('div', 'modal-meta', metaBits.map(function (b) { return esc(b); }).join('  ·  ')));
+    var idRow = el('div', 'modal-meta');
+    idRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:2px;';
+    idRow.appendChild(el('span', '', 'ID: ' + esc(s.sessionId)));
+    idRow.appendChild(copyButton(function () { return s.sessionId; }, 'Copy ID'));
+    htxt.appendChild(idRow);
     head.appendChild(htxt);
     var headBtns = el('div'); headBtns.style.cssText = 'display:flex;gap:6px;align-items:center;flex-shrink:0;';
     var exportBtn = el('button', 'modal-export', '↓ JSON');
