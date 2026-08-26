@@ -63,6 +63,23 @@ describe('enrichCosts', () => {
     expect(index.get('s3')).toMatchObject({ priced: false, hadLog: false });
   });
 
+  it('surfaces the resolved log path on SessionCost, including the correlation-file fallback', async () => {
+    // loadAgentSessionFile resolves via the correlation-metadata fallback (no raw.agentSessionFile),
+    // so SessionCost.agentSessionFile must reflect the SAME path the cost logic actually used —
+    // never leaving hadLog=true paired with an undefined agentSessionFile (report/app.js:1169
+    // renders "File: Not available" from the absence of this field).
+    const { index } = await enrichCosts(raw, { ...baseDeps, loadAgentSessionFile: async () => '/home/.codemie/sessions/s1-fallback.jsonl' });
+    const c = index.get('s1')!;
+    expect(c.hadLog).toBe(true);
+    expect(c.agentSessionFile).toBe('/home/.codemie/sessions/s1-fallback.jsonl');
+  });
+
+  it('omits agentSessionFile when no native log was located', async () => {
+    const { index } = await enrichCosts(raw, { ...baseDeps, loadAgentSessionFile: async () => null });
+    expect(index.get('s1')!.hadLog).toBe(false);
+    expect(index.get('s1')!.agentSessionFile).toBeUndefined();
+  });
+
   it('prices a codex session from token_count events', async () => {
     const { readFileSync } = await import('node:fs');
     const { join } = await import('node:path');

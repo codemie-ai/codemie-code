@@ -1135,9 +1135,11 @@
     htxt.appendChild(el('div', 'modal-title', esc(truncStr(firstWords(sessTitle(s), 10), 120))));
     var metaBits = [labelFor(s.agentName), (s.models && s.models[0]) || null, shortPath(s.project), s.branch].filter(Boolean);
     htxt.appendChild(el('div', 'modal-meta', metaBits.map(function (b) { return esc(b); }).join('  ·  ')));
-    var idRow = el('div', 'modal-meta');
+    // Dedicated class (not `modal-meta`) — that class' `text-transform: capitalize` mangles
+    // a UUID's casing (e.g. "b78f" -> "B78f") when reused for arbitrary hyphenated text.
+    var idRow = el('div', 'modal-id-row');
     idRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:2px;';
-    idRow.appendChild(el('span', '', 'ID: ' + esc(s.sessionId)));
+    idRow.appendChild(el('span', 'modal-mono', 'ID: ' + esc(s.sessionId)));
     idRow.appendChild(copyButton(function () { return s.sessionId; }, 'Copy ID'));
     htxt.appendChild(idRow);
     head.appendChild(htxt);
@@ -1167,7 +1169,13 @@
     var fileRow = el('div', 'text-muted');
     fileRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:10px;font-size:12px;';
     if (s.agentSessionFile) {
-      fileRow.appendChild(el('span', '', 'File: ' + esc(s.agentSessionFile)));
+      // Truncate long absolute paths with an ellipsis (matching the branch/title cells'
+      // convention — app.js:852-853) and recover the full value via the title tooltip,
+      // instead of overflowing or hard-clipping inside the modal's overflow:hidden body.
+      var fileSpan = el('span', 'modal-mono', 'File: ' + esc(s.agentSessionFile));
+      fileSpan.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+      fileSpan.setAttribute('title', s.agentSessionFile);
+      fileRow.appendChild(fileSpan);
       fileRow.appendChild(copyButton(function () { return s.agentSessionFile; }, 'Copy path'));
     } else {
       fileRow.appendChild(el('span', '', 'File: Not available'));

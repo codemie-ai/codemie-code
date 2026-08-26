@@ -91,6 +91,8 @@ interface ParsedEntry {
   sessionId: string;
   agentName: string;
   hadLog: boolean;
+  /** The resolved log path itself (raw.agentSessionFile or the correlation-file fallback); null when hadLog is false. */
+  filePath: string | null;
   parsed: ParsedSession | null;
   startTime: number;
 }
@@ -101,7 +103,7 @@ async function parseOne(raw: RawSessionData, deps: EnricherDeps): Promise<Parsed
   const filePath = await deps.loadAgentSessionFile(raw);
   const hadLog = filePath != null;
   const parsed = filePath ? await deps.parseNative(agentName, filePath, raw.sessionId) : null;
-  return { sessionId: raw.sessionId, agentName, hadLog, parsed, startTime: raw.startEvent?.data?.startTime ?? 0 };
+  return { sessionId: raw.sessionId, agentName, hadLog, filePath, parsed, startTime: raw.startEvent?.data?.startTime ?? 0 };
 }
 
 /** Phase 3: price an already-gathered (deduped) per-model usage map for one session. */
@@ -358,6 +360,11 @@ export async function enrichCosts(
       records = [];
     }
     const { cost, unpriced: u } = priceUsage(entry.sessionId, entry.hadLog, usageByModel);
+    if (entry.filePath) {
+      // Same path that made hadLog/pricing true — so a consumer never sees "priced" and
+      // "no file to show" disagree (see CR-002 in the file-location UI review).
+      cost.agentSessionFile = entry.filePath;
+    }
     if (series.length) {
       cost.costSeries = series;
     }
