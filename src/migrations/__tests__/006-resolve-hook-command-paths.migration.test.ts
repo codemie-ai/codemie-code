@@ -11,10 +11,18 @@ import { join } from 'path';
 
 describe('006-resolve-hook-command-paths', () => {
   let home = '';
+  let originalCodemieHome: string | undefined;
 
   beforeEach(async () => {
     vi.resetModules();
     home = await mkdtemp(join(tmpdir(), 'mig006-'));
+    // getCodemieHome() (src/utils/paths.ts) checks CODEMIE_HOME before falling
+    // back to homedir() — and vitest.config.ts sets CODEMIE_HOME globally for
+    // the whole unit-test worker, so mocking os.homedir() alone leaves
+    // getCodemiePath() resolving to that shared directory instead of this
+    // test's isolated temp home, and the migration finds nothing to rewrite.
+    originalCodemieHome = process.env.CODEMIE_HOME;
+    process.env.CODEMIE_HOME = join(home, '.codemie');
     vi.doMock('os', async (imp) => ({ ...(await imp<typeof import('os')>()), homedir: () => home }));
     vi.doMock('../../utils/processes.js', () => ({
       getCommandPath: vi.fn().mockResolvedValue('/abs/codemie'),
@@ -28,6 +36,11 @@ describe('006-resolve-hook-command-paths', () => {
   });
 
   afterEach(async () => {
+    if (originalCodemieHome === undefined) {
+      delete process.env.CODEMIE_HOME;
+    } else {
+      process.env.CODEMIE_HOME = originalCodemieHome;
+    }
     await rm(home, { recursive: true, force: true, maxRetries: 3 });
   });
 
