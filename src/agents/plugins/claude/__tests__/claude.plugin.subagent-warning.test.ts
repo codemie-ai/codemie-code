@@ -119,6 +119,57 @@ describe('Claude Plugin – subagent tier warning (EPMCDME-14355 AC-6)', () => {
     expect(haikuWarning).toContain('anthropic/claude-opus-5');
   });
 
+  it('warns about missing opus when only haiku and sonnet are provisioned (EPMCDME-14355 AC-6)', async () => {
+    // AC-6 is model-general: any requested-but-unprovisioned tier falls back silently, not
+    // just haiku. A subagent dispatched with model:"opus" on a tenant without opus lands on
+    // the sonnet default — the same silent-fallback class as the original haiku bug.
+    const env: HookEnv = {
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'anthropic/claude-haiku-4-5',
+      ANTHROPIC_DEFAULT_SONNET_MODEL: 'anthropic/claude-sonnet-5',
+      // no opus
+    };
+
+    await beforeRun(env, mockConfig);
+
+    const warnCalls = loggerMod.logger.warn.mock.calls.map((call) => String(call[0]));
+    const opusWarning = warnCalls.find((msg) => /opus/i.test(msg) && /subagent/i.test(msg));
+    expect(opusWarning).toBeDefined();
+    expect(opusWarning).toContain('anthropic/claude-sonnet-5');
+    // haiku and sonnet are both present, so neither should be warned about
+    const haikuWarning = warnCalls.find((msg) => /haiku tier not provisioned/i.test(msg));
+    expect(haikuWarning).toBeUndefined();
+  });
+
+  it('warns about missing sonnet on a haiku+opus tenant (EPMCDME-14355 AC-6)', async () => {
+    // Sonnet is not immune: a subagent dispatched with model:"sonnet" on a tenant that has
+    // haiku and opus but no sonnet also falls back silently. Variant-2 coverage warns here too.
+    const env: HookEnv = {
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'anthropic/claude-haiku-4-5',
+      ANTHROPIC_DEFAULT_OPUS_MODEL: 'anthropic/claude-opus-5',
+      // no sonnet
+    };
+
+    await beforeRun(env, mockConfig);
+
+    const warnCalls = loggerMod.logger.warn.mock.calls.map((call) => String(call[0]));
+    const sonnetWarning = warnCalls.find((msg) => /sonnet tier not provisioned/i.test(msg));
+    expect(sonnetWarning).toBeDefined();
+  });
+
+  it('does not warn about any tier when all three tiers are provisioned', async () => {
+    const env: HookEnv = {
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: 'anthropic/claude-haiku-4-5',
+      ANTHROPIC_DEFAULT_SONNET_MODEL: 'anthropic/claude-sonnet-5',
+      ANTHROPIC_DEFAULT_OPUS_MODEL: 'anthropic/claude-opus-5',
+    };
+
+    await beforeRun(env, mockConfig);
+
+    const warnCalls = loggerMod.logger.warn.mock.calls.map((call) => String(call[0]));
+    const tierWarning = warnCalls.find((msg) => /tier not provisioned/i.test(msg));
+    expect(tierWarning).toBeUndefined();
+  });
+
   it('does not warn when no tier at all is provisioned (no fallback to describe)', async () => {
     const env: HookEnv = {
       // no tier vars set on a CodeMie (non-subscription) provider

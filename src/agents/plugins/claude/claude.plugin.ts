@@ -350,9 +350,9 @@ export const ClaudePluginMetadata: AgentMetadata = {
         }
 
         // AC-6 (EPMCDME-14355): surface tier availability at startup so the user sees when a
-        // subagent-common tier (haiku) is missing. Per-subagent model resolution happens
-        // inside the upstream binary — the CLI has no dispatch-time hook — so a launch-time
-        // notice is the only place we can flag the mismatch before the sub-agent reports it.
+        // subagent-requestable tier is missing. Per-subagent model resolution happens inside
+        // the upstream binary — the CLI has no dispatch-time hook — so a launch-time notice is
+        // the only place we can flag the mismatch before the sub-agent reports it.
         const hasHaiku = Boolean(env.ANTHROPIC_DEFAULT_HAIKU_MODEL);
         const hasSonnet = Boolean(env.ANTHROPIC_DEFAULT_SONNET_MODEL);
         const hasOpus = Boolean(env.ANTHROPIC_DEFAULT_OPUS_MODEL);
@@ -362,19 +362,30 @@ export const ClaudePluginMetadata: AgentMetadata = {
         logger.info(
           `[Claude] Provisioned tiers: haiku=${hasHaiku ? 'yes' : 'no'}, sonnet=${hasSonnet ? 'yes' : 'no'}, opus=${hasOpus ? 'yes' : 'no'}. Subagent default: ${subagentDefault}.`
         );
-        // Warn whenever haiku is absent but SOME tier can still absorb the request (AC-6:
-        // "warn when haiku is NOT provisioned"). Name the actual fallback model rather than
-        // assuming sonnet — on an opus-only tenant a `model: "haiku"` subagent lands on opus,
-        // and the warning must stay truthful. If no tier at all is provisioned there is no
-        // fallback to describe, so stay silent.
-        if (!hasHaiku) {
-          const subagentFallback =
-            env.CLAUDE_CODE_SUBAGENT_MODEL ||
-            (hasSonnet ? env.ANTHROPIC_DEFAULT_SONNET_MODEL : undefined) ||
-            (hasOpus ? env.ANTHROPIC_DEFAULT_OPUS_MODEL : undefined);
-          if (subagentFallback) {
+        // The silent-fallback problem is symmetric across tiers, not haiku-specific: a subagent
+        // dispatched with model:"opus" (or "sonnet") on a tenant that lacks that tier lands on
+        // the subagent default just as a model:"haiku" request does. So warn for EVERY absent
+        // subagent-requestable tier, naming the actual fallback model. The fallback is the
+        // single effective subagent default: the pinned CLAUDE_CODE_SUBAGENT_MODEL on single-
+        // tier tenants, otherwise upstream's own default subagent tier (sonnet), then opus,
+        // then haiku. If no tier at all is provisioned there is no fallback to describe, so
+        // stay silent.
+        const subagentFallback =
+          env.CLAUDE_CODE_SUBAGENT_MODEL ||
+          env.ANTHROPIC_DEFAULT_SONNET_MODEL ||
+          env.ANTHROPIC_DEFAULT_OPUS_MODEL ||
+          env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+        if (subagentFallback) {
+          const tiers: Array<{ name: string; provisioned: boolean }> = [
+            { name: 'haiku', provisioned: hasHaiku },
+            { name: 'sonnet', provisioned: hasSonnet },
+            { name: 'opus', provisioned: hasOpus },
+          ];
+          for (const { name, provisioned } of tiers) {
+            if (provisioned) continue;
+            const label = name.charAt(0).toUpperCase() + name.slice(1);
             logger.warn(
-              `[Claude] Haiku tier not provisioned — subagents dispatched with model: "haiku" will fall back to ${subagentFallback} rather than the requested Haiku model. Provision CODEMIE_HAIKU_MODEL or omit the \`model\` parameter to silence this warning.`
+              `[Claude] ${label} tier not provisioned — subagents dispatched with model: "${name}" will fall back to ${subagentFallback} rather than the requested ${label} model. Provision CODEMIE_${name.toUpperCase()}_MODEL or omit the \`model\` parameter to silence this warning.`
             );
           }
         }
