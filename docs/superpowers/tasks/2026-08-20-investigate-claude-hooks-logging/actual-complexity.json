@@ -1,0 +1,25 @@
+{
+  "schema": 1,
+  "generated": "2026-08-20T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 4, "label": "L" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 17,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 12,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Touches the shared Logger utility (src/utils/logger.ts) plus two independent consumer subsystems that adopt the new notice level: the hook executor (src/hooks/executor.ts, with new per-hook dedup notification state) and the plugin hooks loader (src/plugins/loaders/hooks-loader.ts), plus the CLI log viewer's type/parser/filter/formatter quartet (src/cli/commands/log/*.ts) that now recognizes 'notice' as a level. Four distinct components across Utils, Service/Hooks, and CLI layers." },
+    { "dimension": "file_change_estimate", "reason": "12 files changed (186 insertions, 4 deletions): 10 modified existing files (logger.ts, executor.ts, hooks-loader.ts, log/types.ts, log/parser.ts, log/filter.ts, log/formatter.ts, vitest.config.ts, executor.test.ts, hooks-loader.test.ts) and 2 new test files (logger-notice.test.ts, vitest-codemie-home-isolation.test.ts), spanning src/utils, src/hooks, src/plugins/loaders, and src/cli/commands/log." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L to XL: change touches the core shared Logger utility consumed across the whole codebase (touches core shared utilities red flag)"
+  ],
+  "split_recommendation": null
+}

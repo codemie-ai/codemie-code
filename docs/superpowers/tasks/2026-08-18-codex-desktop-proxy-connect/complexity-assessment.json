@@ -1,0 +1,41 @@
+{
+  "schema": 1,
+  "task": "Add a --codex-desktop target to `codemie proxy connect` that writes a [model_providers.codemie] block, model_provider, a pinned model, base_url and a static Authorization header into user-level ~/.codex/config.toml, preserving unrelated keys, with backup and a new `proxy disconnect` restore path on macOS and Windows.",
+  "generated": "2026-08-18",
+  "dimensions": {
+    "component_scope":      { "score": 5, "label": "XL" },
+    "requirements_clarity": { "score": 4, "label": "L" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 2, "label": "S" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 23,
+  "size": "L",
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Four components change: the Commander wiring in proxy/index.ts (new flag plus a greenfield `proxy disconnect` subcommand), connect-orchestrator.ts (ConnectTargets, ConnectOptions, a new per-target runner, deriveDaemonIdentity), a new connectors/codex-desktop.ts writer, and the shared model selector in connectors/desktop.ts. Base L, bumped to XL because two core shared contracts must actually be modified, not merely consumed: the closed two-value EffectiveClientType union wired into daemonMatchesRequest and daemon telemetry, and fetchClaudeModels/selectPreferredClaudeModels which hard-filter to ^claude- and cannot pin a GPT/Codex slug as-is."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "No usable precedent and a user-owned blast radius. The repo's only TOML writer (KimiHookConfigInjector) is untested, non-atomic, and uses a create-once backup that would silently restore stale config on disconnect - it is an anti-pattern to avoid, not a template. @iarna/toml stringify discards comments and key order, so a naive round-trip of the user's own ~/.codex/config.toml (which their Codex CLI depends on) directly violates the 'preserve unrelated settings' criterion. Base L for no-exact-precedent plus a required rollback plan; bumped to XL for credential handling - a static gateway-key bearer is written at rest into a third-party config, sanitizeLogArgs must cover every logging path touching it, and ~/.codex/auth.json must be deliberately left untouched because writing there flips the app into API-key auth mode."
+    },
+    {
+      "dimension": "requirements_clarity",
+      "reason": "Acceptance criteria are concrete (which keys to write, preserve unrelated keys, backup, disconnect restores, macOS plus Windows) and a story doc records the decided approach, so the 'what' is crisp. Base M for the remaining gaps: which model slug to pin, the shape of the `proxy disconnect` CLI surface, and rollback granularity. Bumped to L by the 'similar to X but different' red flag - the task is framed as mirroring --claude-desktop, but every named analogue breaks down on contact (JSON vs TOML, isolated vs default CODEX_HOME, the ^claude- model filter, the Kimi backup trap), and the TOML round-trip strategy - surgical text splice vs documented lossy-with-backup - is an open design decision the plan must settle explicitly."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Four layers change: CLI (Commander), Orchestrator (connect lifecycle and daemon identity), Connector (new config writer), and file/config persistence (~/.codex/config.toml, its backup, and CodeMie-owned marker state under ~/.codemie). No DB, and notably the proxy plugin pipeline needs zero change - /v1/responses pass-through and CodexEncryptedContentSanitizerPlugin already cover the Responses-API reasoning state - which is what holds this at L rather than higher."
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L (4) to XL (5): touches core shared utilities - the closed EffectiveClientType union feeding daemonMatchesRequest and DaemonState.telemetryMode typing, plus the ^claude--bound shared model selectors in desktop.ts, must both be modified.",
+    "Technical Risk bumped from L (4) to XL (5): security/credential red flag - a static Authorization bearer gateway key is persisted at rest in a third-party config file, and the feature configures the auth path for an external client while deliberately avoiding ~/.codex/auth.json.",
+    "Requirements Clarity bumped from M (3) to L (4): 'similar to X but different' red flag - specified as mirroring the --claude-desktop connector, yet the closest analogues (desktop.ts model filter, KimiHookConfigInjector backup and non-atomic write) are each explicitly unusable as-is.",
+    "NOT applied - 'integration with new external service' (would have bumped Component Scope and Affected Layers): CodeMie neither installs, launches, nor calls the Codex desktop app. Only its config file is written, and model discovery already routes through the existing local proxy, so no new adapter, client, or auth flow is introduced."
+  ],
+  "split_recommendation": null
+}

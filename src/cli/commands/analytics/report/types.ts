@@ -41,6 +41,10 @@ export interface ReportSessionRecord {
   cacheReadCostUSD: number; // USD attributable to cache reads (subset of costUSD)
   perModelCost: ModelCost[];
   hadLog: boolean; // a native agent log was located for this session (priced<hadLog ⇒ parse/reader gap)
+  // Native log path — same one the cost logic resolved (raw.agentSessionFile, or the
+  // ~/.codemie/sessions/{id}.json correlation-file fallback); absent iff hadLog is false, so
+  // this and hadLog never disagree.
+  agentSessionFile?: string;
   costSeries?: CostSeriesPoint[]; // per-turn cumulative cost/token growth; absent when no per-turn data
   dispatches?: DispatchEvent[]; // timed top-level agent/skill/command invocations; absent when none
 

@@ -130,6 +130,7 @@ export interface SessionAnalytics {
   // Token usage and cost (optional; populated only for the HTML report path)
   tokens?: import('./cost/types.js').TokenUsage;
   costUSD?: number;
+  agentSessionFile?: string; // native log path used for cost pricing; absent when none resolved
 }
 
 /**

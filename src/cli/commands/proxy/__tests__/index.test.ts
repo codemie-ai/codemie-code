@@ -527,4 +527,191 @@ describe('proxy status', () => {
     expect(consoleLogSpy).toHaveBeenCalledWith('  Project: team-project');
     consoleLogSpy.mockRestore();
   });
+
+  it('shows the API key', async () => {
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { checkProxyHealth } = await import('../health-check.js');
+    const { createProxyCommand } = await import('../index.js');
+    vi.mocked(checkStatus).mockResolvedValue({
+      running: true,
+      state: {
+        pid: process.pid,
+        port: 4001,
+        url: 'http://127.0.0.1:4001',
+        profile: 'work',
+        gatewayKey: 'local-key',
+        startedAt: new Date().toISOString(),
+      },
+    });
+    vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'shallow', code: 'ok' });
+
+    await createProxyCommand().parseAsync(['status'], { from: 'user' });
+
+    expect(consoleLogSpy).toHaveBeenCalledWith('  API Key: local-key');
+    consoleLogSpy.mockRestore();
+  });
+
+  it('emits JSON when --json is passed (running, healthy)', async () => {
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { checkProxyHealth } = await import('../health-check.js');
+    const { createProxyCommand } = await import('../index.js');
+    vi.mocked(checkStatus).mockResolvedValue({
+      running: true,
+      state: {
+        pid: process.pid,
+        port: 4001,
+        url: 'http://127.0.0.1:4001',
+        profile: 'work',
+        gatewayKey: 'local-key',
+        clientType: 'vscode-byok',
+        project: 'team-project',
+        startedAt: new Date().toISOString(),
+      },
+    });
+    vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'shallow', code: 'ok' });
+
+    await createProxyCommand().parseAsync(['status', '--json'], { from: 'user' });
+
+    const printed = consoleLogSpy.mock.calls.map((call) => call[0]).join('\n');
+    const payload = JSON.parse(printed);
+    expect(payload).toEqual({
+      status: 'healthy',
+      apiKey: 'local-key',
+      url: 'http://127.0.0.1:4001',
+      port: 4001,
+      profile: 'work',
+      clientType: 'vscode-byok',
+      project: 'team-project',
+      uptimeSec: payload.uptimeSec,
+      level: 'shallow',
+    });
+    expect(typeof payload.uptimeSec).toBe('number');
+    consoleLogSpy.mockRestore();
+  });
+
+  it('emits JSON with a reason when unhealthy', async () => {
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { checkProxyHealth } = await import('../health-check.js');
+    const { createProxyCommand } = await import('../index.js');
+    vi.mocked(checkStatus).mockResolvedValue({
+      running: true,
+      state: {
+        pid: process.pid,
+        port: 4001,
+        url: 'http://127.0.0.1:4001',
+        profile: 'work',
+        gatewayKey: 'local-key',
+        startedAt: new Date().toISOString(),
+      },
+    });
+    vi.mocked(checkProxyHealth).mockResolvedValue({
+      healthy: false,
+      level: 'shallow',
+      code: 'unreachable',
+      reason: 'connection refused',
+    });
+
+    await createProxyCommand().parseAsync(['status', '--json'], { from: 'user' });
+
+    const payload = JSON.parse(consoleLogSpy.mock.calls.map((call) => call[0]).join('\n'));
+    expect(payload.status).toBe('unhealthy');
+    expect(payload.reason).toBe('connection refused');
+    consoleLogSpy.mockRestore();
+  });
+
+  it('emits JSON with level "deep" when --deep is passed', async () => {
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { checkProxyHealth } = await import('../health-check.js');
+    const { createProxyCommand } = await import('../index.js');
+    vi.mocked(checkStatus).mockResolvedValue({
+      running: true,
+      state: {
+        pid: process.pid,
+        port: 4001,
+        url: 'http://127.0.0.1:4001',
+        profile: 'work',
+        gatewayKey: 'local-key',
+        startedAt: new Date().toISOString(),
+      },
+    });
+    vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'deep', code: 'ok' });
+
+    await createProxyCommand().parseAsync(['status', '--deep', '--json'], { from: 'user' });
+
+    const payload = JSON.parse(consoleLogSpy.mock.calls.map((call) => call[0]).join('\n'));
+    expect(payload.level).toBe('deep');
+    consoleLogSpy.mockRestore();
+  });
+
+  it('emits { status: "stopped" } JSON when the daemon is not running', async () => {
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { createProxyCommand } = await import('../index.js');
+    vi.mocked(checkStatus).mockResolvedValue({ running: false, state: null });
+
+    await createProxyCommand().parseAsync(['status', '--json'], { from: 'user' });
+
+    expect(consoleLogSpy).toHaveBeenCalledWith(JSON.stringify({ status: 'stopped' }, null, 2));
+    consoleLogSpy.mockRestore();
+  });
+
+  it('emits lastRecordedIssue in JSON when a prior unhealthy state recovered', async () => {
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { checkProxyHealth } = await import('../health-check.js');
+    const { createProxyCommand } = await import('../index.js');
+    vi.mocked(checkStatus).mockResolvedValue({
+      running: true,
+      state: {
+        pid: process.pid,
+        port: 4001,
+        url: 'http://127.0.0.1:4001',
+        profile: 'work',
+        gatewayKey: 'local-key',
+        startedAt: new Date().toISOString(),
+        health: 'unhealthy',
+        healthReason: 'timed out once',
+      },
+    });
+    vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'shallow', code: 'ok' });
+
+    await createProxyCommand().parseAsync(['status', '--json'], { from: 'user' });
+
+    const payload = JSON.parse(consoleLogSpy.mock.calls.map((call) => call[0]).join('\n'));
+    expect(payload.status).toBe('healthy');
+    expect(payload.lastRecordedIssue).toBe('timed out once');
+    consoleLogSpy.mockRestore();
+  });
+
+  it('leaves the default (non-JSON) output byte-identical aside from the new API Key line', async () => {
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const { checkStatus } = await import('../daemon-manager.js');
+    const { checkProxyHealth } = await import('../health-check.js');
+    const { createProxyCommand } = await import('../index.js');
+    vi.mocked(checkStatus).mockResolvedValue({
+      running: true,
+      state: {
+        pid: process.pid,
+        port: 4001,
+        url: 'http://127.0.0.1:4001',
+        profile: 'work',
+        gatewayKey: 'local-key',
+        startedAt: new Date().toISOString(),
+      },
+    });
+    vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'shallow', code: 'ok' });
+
+    await createProxyCommand().parseAsync(['status'], { from: 'user' });
+
+    const lines = consoleLogSpy.mock.calls.map((call) => call[0]);
+    expect(lines).toContain('  URL:     http://127.0.0.1:4001');
+    expect(lines).toContain('  Port:    4001');
+    expect(lines).toContain('  API Key: local-key');
+    expect(lines).toContain('  Profile: work');
+    consoleLogSpy.mockRestore();
+  });
 });

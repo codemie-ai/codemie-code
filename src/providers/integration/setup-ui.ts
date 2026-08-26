@@ -78,6 +78,11 @@ export function displaySetupInstructions(
   console.log('');
 }
 
+// Normalize strings for comparison (lowercase, remove special chars except hyphen)
+function normalizeForMatching(str: string): string {
+  return str.toLowerCase().replace(/[^a-z0-9-]/g, '');
+}
+
 /**
  * Check if a model matches any recommended pattern (using partial matching)
  *
@@ -85,10 +90,6 @@ export function displaySetupInstructions(
  */
 function matchesAnyRecommendedPattern(modelId: string, patterns?: string[]): boolean {
   if (!patterns || patterns.length === 0) return false;
-
-  // Normalize strings for comparison (lowercase, remove special chars except hyphen)
-  const normalizeForMatching = (str: string) =>
-    str.toLowerCase().replace(/[^a-z0-9-]/g, '');
 
   const normalizedModel = normalizeForMatching(modelId);
 
@@ -102,6 +103,69 @@ function matchesAnyRecommendedPattern(modelId: string, patterns?: string[]): boo
   });
 }
 
+// `recommendedModels` entries are usually written against one specific version
+// (e.g. "claude-sonnet-4-6") so they stay valid as a literal last-resort model
+// id when no live catalog is available at all. For matching purposes here we
+// only care about the family the pattern identifies, so strip a trailing
+// version/date tail (e.g. "-4-6", "-4-5-20251001") to get a version-agnostic
+// root that also matches newer releases the pattern predates.
+function familyRoot(pattern: string): string {
+  const normalized = normalizeForMatching(pattern);
+  const stripped = normalized.replace(/-\d[\d-]*$/, '');
+  return stripped || normalized;
+}
+
+function extractVersionParts(text: string): number[] {
+  const matches = text.match(/\d+/g) || [];
+  return matches.map(Number);
+}
+
+// Descending comparator: negative means `a` is the newer/higher version.
+function compareVersionParts(a: number[], b: number[]): number {
+  const max = Math.max(a.length, b.length);
+  for (let i = 0; i < max; i++) {
+    const diff = (b[i] ?? 0) - (a[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+/**
+ * Resolve `template.recommendedModels` patterns against the actual list of
+ * available model ids, so only the single latest version within each
+ * recommended family is marked recommended — not every version that has ever
+ * matched a (possibly stale, version-pinned) pattern.
+ *
+ * Falls back to an exact/substring match against the literal pattern when no
+ * model in `allModelIds` shares its family root (e.g. a static offline list
+ * that IS the recommendedModels array itself).
+ */
+export function computeRecommendedModelIds(
+  allModelIds: string[],
+  patterns?: string[]
+): Set<string> {
+  const recommended = new Set<string>();
+  if (!patterns || patterns.length === 0) return recommended;
+
+  for (const pattern of patterns) {
+    const root = familyRoot(pattern);
+    const candidates = allModelIds.filter(id => normalizeForMatching(id).includes(root));
+
+    if (candidates.length === 0) {
+      const fallback = allModelIds.find(id => matchesAnyRecommendedPattern(id, [pattern]));
+      if (fallback) recommended.add(fallback);
+      continue;
+    }
+
+    const latest = [...candidates].sort((a, b) =>
+      compareVersionParts(extractVersionParts(a), extractVersionParts(b))
+    )[0];
+    recommended.add(latest);
+  }
+
+  return recommended;
+}
+
 /**
  * Format model choice with metadata
  *
@@ -109,14 +173,19 @@ function matchesAnyRecommendedPattern(modelId: string, patterns?: string[]): boo
  */
 export function formatModelChoice(
   modelId: string,
-  template?: ProviderTemplate
+  template?: ProviderTemplate,
+  isRecommendedOverride?: boolean
 ): { name: string; value: string } {
   const metadata = template?.modelMetadata?.[modelId];
 
-  // Check if model is recommended (with partial matching support)
+  // Check if model is recommended. `isRecommendedOverride` — precomputed by
+  // getAllModelChoices via computeRecommendedModelIds so only the latest
+  // version per family is starred — wins when provided; otherwise fall back
+  // to a plain pattern match for a standalone call.
   const isRecommended =
     metadata?.popular ||
-    matchesAnyRecommendedPattern(modelId, template?.recommendedModels) ||
+    isRecommendedOverride ||
+    (isRecommendedOverride === undefined && matchesAnyRecommendedPattern(modelId, template?.recommendedModels)) ||
     false;
 
   // If no metadata and not recommended, return plain format
@@ -144,53 +213,23 @@ export function formatModelChoice(
 }
 
 /**
- * Check if a model matches a recommended pattern
- *
- * Supports both exact and partial matching:
- * - Exact: "anthropic.claude-3-5-sonnet-20240620-v1:0" matches "anthropic.claude-3-5-sonnet-20240620-v1:0"
- * - Partial: "anthropic.claude-3-5-sonnet-20240620-v1:0" matches "claude-3-5-sonnet"
- * - Partial: "anthropic.claude-sonnet-4-5-20250929-v1:0" matches "claude-sonnet-4-5"
- *
- * @param modelId Full model ID from provider (e.g., "anthropic.claude-3-5-sonnet-20240620-v1:0")
- * @param recommendedPattern Pattern to match (e.g., "claude-3-5-sonnet" or "claude-sonnet-4-5")
- */
-function isRecommendedModel(modelId: string, recommendedPattern: string): boolean {
-  // Exact match first
-  if (modelId === recommendedPattern) {
-    return true;
-  }
-
-  // Normalize both strings for comparison (lowercase, remove special chars except hyphen)
-  const normalizeForMatching = (str: string) =>
-    str.toLowerCase().replace(/[^a-z0-9-]/g, '');
-
-  const normalizedModel = normalizeForMatching(modelId);
-  const normalizedPattern = normalizeForMatching(recommendedPattern);
-
-  // Check if the model ID contains the pattern
-  return normalizedModel.includes(normalizedPattern);
-}
-
-/**
  * Get all model choices with metadata
  *
  * Returns array of formatted model choices, sorted by:
- * 1. Recommended models first (template.recommendedModels with partial matching)
+ * 1. Recommended models first — only the latest version within each
+ *    recommendedModels family (see computeRecommendedModelIds)
  * 2. Alphabetically by model ID
  */
 export function getAllModelChoices(
   models: string[],
   template?: ProviderTemplate
 ): Array<{ name: string; value: string }> {
+  const recommendedIds = computeRecommendedModelIds(models, template?.recommendedModels);
+
   // Sort models using common rules
   const sortedModels = [...models].sort((a, b) => {
-    // Check if models are recommended (with partial matching)
-    const aRecommended = template?.recommendedModels?.some(pattern =>
-      isRecommendedModel(a, pattern)
-    ) || false;
-    const bRecommended = template?.recommendedModels?.some(pattern =>
-      isRecommendedModel(b, pattern)
-    ) || false;
+    const aRecommended = recommendedIds.has(a);
+    const bRecommended = recommendedIds.has(b);
 
     // Recommended models first
     if (aRecommended && !bRecommended) return -1;
@@ -200,7 +239,7 @@ export function getAllModelChoices(
     return a.localeCompare(b);
   });
 
-  return sortedModels.map(model => formatModelChoice(model, template));
+  return sortedModels.map(model => formatModelChoice(model, template, recommendedIds.has(model)));
 }
 
 /**

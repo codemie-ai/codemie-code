@@ -156,7 +156,7 @@ codemie-claude --jwt-token "<YOUR_JWT_TOKEN>" "analyze this code"
 
 **Without Any Prior Setup:**
 
-`--jwt-token` works standalone — no `codemie setup` needed. Just supply `--base-url` if the URL is not already configured:
+`--jwt-token` works standalone — no `codemie setup` needed. Just supply `--base-url` if the URL is not already configured. You can pass either the root CodeMie host or the `/code-assistant-api` path directly — the CLI appends `/code-assistant-api` automatically when it's missing:
 
 ```bash
 codemie-claude \
@@ -264,6 +264,17 @@ codemie doctor
 # Check token structure
 echo $CODEMIE_JWT_TOKEN | awk -F. '{print NF}'  # Should output: 3
 ```
+
+**`API Error: 405 Not Allowed`:**
+
+This means the request reached your CodeMie host but was rejected before hitting the Code Assistant API — usually because `--base-url` (or `CODEMIE_BASE_URL`) points at a path the API doesn't route requests through. The CLI automatically appends `/code-assistant-api` to a root URL, so both of these are equivalent and safe to use:
+
+```bash
+--base-url "https://<your-codemie-host>"
+--base-url "https://<your-codemie-host>/code-assistant-api"
+```
+
+If you still see a 405 after this, confirm the host itself (not just the path) is correct, and check `~/.codemie/logs/` for the exact upstream URL the CLI attempted.
 
 ## MCP Server Authentication
 

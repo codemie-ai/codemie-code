@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "gate_id": "code-review.check",
+  "decision": "approve",
+  "rationale": "Both blocking findings resolved with direct test coverage in a tightly-scoped fix-up (4 files, +64/-1). CR-001: migration 006 now tracks write failures and returns success:false when a needed rewrite cannot be persisted, so MigrationRunner leaves it pending and retries — covered by a new test that mocks writeFile to reject and asserts success:false/migrated:false. CR-002: resolveCodemieBinary now prefixes the node executable when the argv[1] fallback is a .js path on win32 (both tokens always-quoted for spaces), leaving Unix shebang behavior unchanged — covered by new win32 and non-win32 tests. No new high-risk issue introduced by the fix-up diff (pure resolution/migration logic; the alwaysQuote helper and the write-failure flag are simple and fully exercised). Full unit suite 3037 passed, typecheck clean, and the commit passed the full pre-commit gate including the gitleaks secrets scan.",
+  "confidence": "high",
+  "risk_flags": [],
+  "business_review": [
+    {"criterion": "codemie command available to hook execution after setup", "status": "pass"},
+    {"criterion": "SessionStart hooks do not fail with command not found", "status": "pass"},
+    {"criterion": "UserPromptSubmit hooks do not fail with command not found", "status": "pass"},
+    {"criterion": "claude-4-5-sonnet requests do not include unsupported effort", "status": "pass"},
+    {"criterion": "unsupported params omitted/mapped safely before send", "status": "pass"},
+    {"criterion": "works without admin rights to downgrade CodeMie", "status": "pass"},
+    {"criterion": "regression validation of live start+prompt+response", "status": "partial", "note": "unit tests cover mechanisms; live session covered by make test-harness pre-MR"}
+  ],
+  "standards_review": [
+    {"standard": "commit-format (conventional commits)", "status": "pass"},
+    {"standard": "code-quality (eslint --max-warnings=0)", "status": "pass"},
+    {"standard": "secrets scan (gitleaks)", "status": "pass", "notes": "ran via podman on the fix-up commit; no leaks"}
+  ],
+  "finding_status": [
+    {"id": "CR-001", "status": "resolved", "note": "returns success:false on write failure so the runner retries; new test mocks writeFile rejection"},
+    {"id": "CR-002", "status": "resolved", "note": "win32 .js argv[1] fallback prefixed with node executable; new win32 + non-win32 tests"}
+  ],
+  "findings": []
+}

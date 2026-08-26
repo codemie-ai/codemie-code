@@ -302,14 +302,65 @@ function isValidMcpServerName(name: string): boolean {
 const DESKTOP_SUPPORTED_TRANSPORTS = new Set(['http', 'sse']);
 
 /**
+ * Issuer written into a structured oauth config that arrives without one.
+ *
+ * This is a deliberate, narrow exception to the courier rule stated throughout
+ * this module (the CLI forwards backend oauth values verbatim). Without an
+ * issuer, Desktop treats the config as "explicit" mode and fabricates one from
+ * the *origin* of `tokenUrl`, which can never equal a Keycloak realm issuer —
+ * so every flow dies with `Issuer mismatch in authorization response
+ * (RFC 9207)`. Forwarding a config we know Desktop cannot complete is worse
+ * than supplying the CodeMie default, and it mirrors DEFAULT_CODEMIE_BASE_URL:
+ * the CLI already ships a CodeMie endpoint as its built-in default.
+ *
+ * A backend that publishes `authorizationServer` always wins — this only fills
+ * the gap, and becomes dead weight once every deployment serves the field.
+ */
+const DEFAULT_AUTHORIZATION_SERVER: readonly string[] = [
+  'https://auth.codemie.lab.epam.com/realms/codemie-prod',
+];
+
+/**
+ * True when the value is an issuer list Desktop can actually use.
+ *
+ * Anything else — absent, null, a bare string, an empty array, or an array with
+ * a blank entry — counts as "not provided" and takes the default. Desktop reads
+ * this field as an array; a malformed value keeps it in explicit mode just as a
+ * missing one does, so treating the two alike is what makes the fallback
+ * effective rather than merely present.
+ */
+function hasUsableAuthorizationServer(value: unknown): boolean {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.every((issuer) => typeof issuer === 'string' && issuer.trim().length > 0)
+  );
+}
+
+/**
  * Normalize the three accepted auth shapes into what Claude Desktop consumes.
  *
  * Precedence: a valid oauth object wins, then the oauth boolean, then the
  * legacy `auth` enum, then `false`. The final fallback preserves the behavior
  * of entries carrying neither field.
+ *
+ * A structured oauth config additionally gains {@link DEFAULT_AUTHORIZATION_SERVER}
+ * when it carries no usable issuer. The boolean and legacy `auth` shapes are
+ * left alone: they tell Desktop to discover the server's own protected-resource
+ * metadata, so an injected issuer would override a working discovery path.
  */
 export function resolveDesktopOAuth(entry: CanonicalMcpEntry): McpOAuthConfig | boolean {
-  if (isValidOAuthConfig(entry.oauth)) return { ...entry.oauth };
+  if (isValidOAuthConfig(entry.oauth)) {
+    const oauth: McpOAuthConfig = { ...entry.oauth };
+    if (!hasUsableAuthorizationServer(oauth.authorizationServer)) {
+      // Fresh array per entry. Assigning the module constant itself would share
+      // one mutable array across every managed entry, and cloneManagedEntry's
+      // shallow oauth copy would not detach it — the same aliasing hazard that
+      // function exists to prevent.
+      oauth.authorizationServer = [...DEFAULT_AUTHORIZATION_SERVER];
+    }
+    return oauth;
+  }
   if (entry.oauth === true) return true;
   if (entry.oauth === false) return false;
   if (entry.auth === 'oauth') return true;

@@ -6,7 +6,7 @@
 
 import chalk from 'chalk';
 import type { Assistant, AssistantBase } from 'codemie-sdk';
-import type { ProviderProfile } from '@/env/types.js';
+import type { CodeMieConfigOptions } from '@/env/types.js';
 import { MESSAGES } from '@/cli/commands/assistants/constants.js';
 
 export interface AssistantChoice {
@@ -56,7 +56,7 @@ export function createAssistantChoices(
  */
 export function displayNoAssistantsMessage(
   options: { project?: string; allProjects?: boolean },
-  config: ProviderProfile
+  config: CodeMieConfigOptions
 ): void {
   console.log(chalk.yellow(MESSAGES.SETUP.NO_ASSISTANTS));
 
@@ -72,7 +72,7 @@ export function displayNoAssistantsMessage(
  */
 export function getProjectFilter(
   options: { project?: string; allProjects?: boolean },
-  config: ProviderProfile
+  config: CodeMieConfigOptions
 ): string | undefined {
   if (options.allProjects) {
     return undefined;

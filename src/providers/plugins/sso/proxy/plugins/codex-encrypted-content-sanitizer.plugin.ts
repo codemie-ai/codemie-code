@@ -38,6 +38,10 @@ const ALLOWED_AGENTS = [
   'codemie-opencode',
   'codemie-pi',
   'vscode-byok',
+  // The Codex desktop app speaks the Responses API and replays reasoning state
+  // exactly like the Codex CLI. It has its own daemon client type, so without
+  // this entry the sanitizer silently stops loading for that surface.
+  'codex-desktop',
 ];
 const ENCRYPTED_CONTENT_INCLUDE = 'reasoning.encrypted_content';
 const RESPONSES_PATH_SUFFIX = '/responses';

@@ -9,8 +9,7 @@ import {
   getAllProviderChoices,
   displaySetupSuccess,
   displaySetupError,
-  getAllModelChoices,
-  displaySetupInstructions
+  getAllModelChoices
 } from '../../providers/integration/setup-ui.js';
 import { FirstTimeExperience } from '../first-time.js';
 import { AgentRegistry } from '../../agents/registry.js';
@@ -61,7 +60,15 @@ export async function detectLiteLLMEnforcement(existingCodeMieUrl?: string): Pro
   let session: CodeMieSetupSession | undefined;
 
   try {
-    const codeMieUrl = await promptForCodeMieUrl(existingCodeMieUrl || DEFAULT_CODEMIE_BASE_URL);
+    console.log(chalk.dim('\n🔍 Checking for an organization-wide LiteLLM integration (leave blank to skip)...\n'));
+    const codeMieUrl = await promptForCodeMieUrl(
+      existingCodeMieUrl || DEFAULT_CODEMIE_BASE_URL,
+      'CodeMie organization URL (leave blank to skip):',
+      !existingCodeMieUrl
+    );
+    if (!codeMieUrl) {
+      return { enforced: false, session };
+    }
     const authResult = await authenticateWithCodeMie(codeMieUrl);
     if (!authResult.success || !authResult.apiUrl || !authResult.cookies) {
       throw new Error(authResult.error || 'SSO authentication failed');
@@ -382,11 +389,6 @@ async function handlePluginSetup(
 ): Promise<void> {
   try {
     const providerTemplate = ProviderRegistry.getProvider(providerName);
-
-    // Display setup instructions if available
-    if (providerTemplate) {
-      displaySetupInstructions(providerTemplate);
-    }
 
     // Step 1: Get credentials — pass SetupContext when LiteLLM enforcement is
     // active and/or when the wizard already established a CodeMie session, so

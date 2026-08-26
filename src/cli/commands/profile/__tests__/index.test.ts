@@ -1,5 +1,16 @@
-import { describe, expect, it, vi } from 'vitest';
-import { buildProfileSelectionChoiceName, renderProfileSelectionUI } from '../index.js';
+import { describe, expect, it, vi, afterEach } from 'vitest';
+import { buildProfileSelectionChoiceName, renderProfileSelectionUI, createProfileCommand } from '../index.js';
+import { ProfileDisplay } from '../display.js';
+
+vi.mock('../../../../utils/config.js', () => ({
+  ConfigLoader: {
+    listProfiles: vi.fn(),
+    hasLocalConfig: vi.fn(),
+    resolveWorkspace: vi.fn(),
+    getActiveProfileName: vi.fn(),
+    load: vi.fn(),
+  },
+}));
 
 vi.mock('chalk', () => ({
   default: {
@@ -12,7 +23,10 @@ vi.mock('chalk', () => ({
       { bold: (str: string) => `[green][bold]${str}[/bold][/green]` }
     ),
     black: (str: string) => `[black]${str}[/black]`,
-    bold: vi.fn((str: string) => `[bold]${str}[/bold]`),
+    bold: Object.assign(
+      vi.fn((str: string) => `[bold]${str}[/bold]`),
+      { cyan: (str: string) => `[bold][cyan]${str}[/cyan][/bold]` }
+    ),
     bgRgb: vi.fn(() => ({
       black: (str: string) => `[bg-purple][black]${str}[/black][/bg-purple]`,
     })),
@@ -67,5 +81,60 @@ describe('profile command helpers', () => {
     expect(output).not.toContain('❯');
     expect(output).toContain('[purple]› [/purple][white]○[/white] [white]novartis[/white] [dim](ai-run-sso)[/dim][cyan] [Global][/cyan]');
     expect(output).toContain('  [green]●[/green] [green][bold]personal[/bold][/green] [dim](ai-run-sso)[/dim][cyan] [Global][/cyan]');
+  });
+});
+
+describe('ProfileDisplay — workspace-resolved codeMieUrl', () => {
+  it('format() renders the workspace codeMieUrl even when the profile itself has none', () => {
+    const output = ProfileDisplay.format(
+      { name: 'personal', active: true, profile: { provider: 'ai-run-sso' }, source: 'global' },
+      'https://workspace-url'
+    );
+
+    expect(output).toContain('https://workspace-url');
+  });
+
+  it('formatStatus() renders the workspace codeMieUrl even when the profile itself has none', () => {
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      ProfileDisplay.formatStatus(
+        { name: 'personal', active: true, profile: { provider: 'ai-run-sso' }, source: 'global' },
+        undefined,
+        'https://workspace-url'
+      );
+
+      const rendered = logSpy.mock.calls.map(call => call.join(' ')).join('\n');
+      expect(rendered).toContain('https://workspace-url');
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+});
+
+describe('listProfiles — workspace-resolved codeMieUrl display', () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('displays the workspace-resolved codeMieUrl for the profile list, not a per-profile one', async () => {
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    (ConfigLoader.listProfiles as ReturnType<typeof vi.fn>).mockResolvedValue([
+      { name: 'personal', active: true, profile: { provider: 'ai-run-sso' }, source: 'global' },
+    ]);
+    (ConfigLoader.hasLocalConfig as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    (ConfigLoader.resolveWorkspace as ReturnType<typeof vi.fn>).mockResolvedValue({
+      codeMieUrl: 'https://workspace-url',
+    });
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      const command = createProfileCommand();
+      await command.parseAsync([], { from: 'user' });
+
+      const rendered = logSpy.mock.calls.map(call => call.join(' ')).join('\n');
+      expect(rendered).toContain('https://workspace-url');
+    } finally {
+      logSpy.mockRestore();
+    }
   });
 });

@@ -8,9 +8,9 @@
 
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { getDirname } from '../../../../utils/paths.js';
-import { normalizeModelName } from '../model-normalizer.js';
-import { logger } from '../../../../utils/logger.js';
+import { getDirname } from './paths.js';
+import { normalizeModelName } from './model-normalizer.js';
+import { logger } from './logger.js';
 
 /** USD per 1,000,000 tokens. */
 export interface ModelPrice {

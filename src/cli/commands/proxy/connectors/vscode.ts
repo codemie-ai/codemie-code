@@ -77,7 +77,7 @@ export function isVsCodeSecretReference(value: unknown): value is string {
   return typeof value === 'string' && SECRET_REFERENCE_PATTERN.test(value);
 }
 
-function getVsCodeProductDir(insiders: boolean): string {
+export function getVsCodeProductDir(insiders: boolean): string {
   const productName = insiders ? 'Code - Insiders' : 'Code';
 
   if (process.platform === 'darwin') {
@@ -270,7 +270,7 @@ async function readProviders(configPath: string): Promise<unknown[]> {
   }
 }
 
-async function writeAtomically(configPath: string, content: string): Promise<void> {
+export async function writeAtomically(configPath: string, content: string): Promise<void> {
   const configDir = dirname(configPath);
   await mkdir(configDir, { recursive: true });
 

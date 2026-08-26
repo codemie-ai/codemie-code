@@ -49,17 +49,18 @@ export function buildAuthHeaders(auth: Record<string, string> | string): Record<
 
 export async function promptForCodeMieUrl(
   defaultUrl: string = DEFAULT_CODEMIE_BASE_URL,
-  message: string = 'CodeMie organization URL:'
+  message: string = 'CodeMie organization URL:',
+  allowEmpty: boolean = false
 ): Promise<string> {
   const answers = await inquirer.prompt([
     {
       type: 'input',
       name: 'codeMieUrl',
       message,
-      default: defaultUrl,
+      default: allowEmpty ? undefined : defaultUrl,
       validate: (input: string) => {
         if (!input.trim()) {
-          return 'CodeMie URL is required';
+          return allowEmpty ? true : 'CodeMie URL is required';
         }
         if (!input.startsWith('http://') && !input.startsWith('https://')) {
           return 'Please enter a valid URL starting with http:// or https://';

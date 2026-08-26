@@ -12,6 +12,7 @@ import open from 'open';
 import chalk from 'chalk';
 import type { SSOAuthConfig, SSOAuthResult, SSOCredentials } from '../../core/types.js';
 import { CredentialStore } from '../../../utils/security.js';
+import { clearAnalyticsAuthStatus } from '../../../utils/analytics-auth-status.js';
 import { ensureApiBase } from '../../core/codemie-auth-helpers.js';
 
 function escapeHtml(str: string): string {
@@ -133,6 +134,8 @@ export class CodeMieSSO {
 
         const store = CredentialStore.getInstance();
         await store.storeSSOCredentials(credentials, this.codeMieUrl);
+        // Fresh credentials — analytics auth is healthy again
+        await clearAnalyticsAuthStatus();
       }
 
       return result;

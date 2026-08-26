@@ -29,7 +29,7 @@
   }
   // Agent keys are internal ids; these are what a human should read. Unmapped agents fall
   // through to the key itself, so listing an agent here is optional.
-  var AGENT_LABELS = { 'copilot-cli': 'GitHub Copilot CLI', pi: 'Pi' };
+  var AGENT_LABELS = { 'copilot-cli': 'GitHub Copilot CLI', pi: 'Pi', 'gemini': 'Gemini CLI' };
   function labelFor(agent) { return AGENT_LABELS[agent] || agent; }
 
   // ---- formatting ---------------------------------------------------------
@@ -248,6 +248,41 @@
 
   // ---- small DOM builders -------------------------------------------------
   function el(tag, cls, html) { var e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; }
+  // ---- copy-to-clipboard helper -------------------------------------------
+  // getText(): () => string|undefined. label: base button text. Falls back to a
+  // hidden textarea + execCommand('copy') when the Clipboard API is unavailable
+  // or its promise rejects (reports are typically opened via file://, no server).
+  function copyButton(getText, label) {
+    var btn = el('button', 'modal-copy', esc(label));
+    btn.setAttribute('aria-label', label);
+    btn.addEventListener('click', function () {
+      var text = getText();
+      if (!text) return;
+      var show = function (ok) {
+        var prev = btn.textContent;
+        btn.textContent = ok ? 'Copied' : 'Copy failed';
+        btn.disabled = true;
+        setTimeout(function () { btn.textContent = prev; btn.disabled = false; }, 1200);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(function () { show(true); }, function () { fallbackCopy(text, show); });
+      } else {
+        fallbackCopy(text, show);
+      }
+    });
+    return btn;
+  }
+  function fallbackCopy(text, done) {
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0;';
+    document.body.appendChild(ta);
+    ta.select();
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    document.body.removeChild(ta);
+    done(ok);
+  }
   function card(title, sub) {
     var c = el('div', 'card');
     var head = el('div', 'card-header');
@@ -1100,6 +1135,13 @@
     htxt.appendChild(el('div', 'modal-title', esc(truncStr(firstWords(sessTitle(s), 10), 120))));
     var metaBits = [labelFor(s.agentName), (s.models && s.models[0]) || null, shortPath(s.project), s.branch].filter(Boolean);
     htxt.appendChild(el('div', 'modal-meta', metaBits.map(function (b) { return esc(b); }).join('  ·  ')));
+    // Dedicated class (not `modal-meta`) — that class' `text-transform: capitalize` mangles
+    // a UUID's casing (e.g. "b78f" -> "B78f") when reused for arbitrary hyphenated text.
+    var idRow = el('div', 'modal-id-row');
+    idRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-top:2px;';
+    idRow.appendChild(el('span', 'modal-mono', 'ID: ' + esc(s.sessionId)));
+    idRow.appendChild(copyButton(function () { return s.sessionId; }, 'Copy ID'));
+    htxt.appendChild(idRow);
     head.appendChild(htxt);
     var headBtns = el('div'); headBtns.style.cssText = 'display:flex;gap:6px;align-items:center;flex-shrink:0;';
     var exportBtn = el('button', 'modal-export', '↓ JSON');
@@ -1122,6 +1164,23 @@
     modal.appendChild(head);
 
     var body = el('div', 'modal-body');
+
+    // File location — the session's native log path (absent when none was resolved).
+    var fileRow = el('div', 'text-muted');
+    fileRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:10px;font-size:12px;';
+    if (s.agentSessionFile) {
+      // Truncate long absolute paths with an ellipsis (matching the branch/title cells'
+      // convention — app.js:852-853) and recover the full value via the title tooltip,
+      // instead of overflowing or hard-clipping inside the modal's overflow:hidden body.
+      var fileSpan = el('span', 'modal-mono', 'File: ' + esc(s.agentSessionFile));
+      fileSpan.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+      fileSpan.setAttribute('title', s.agentSessionFile);
+      fileRow.appendChild(fileSpan);
+      fileRow.appendChild(copyButton(function () { return s.agentSessionFile; }, 'Copy path'));
+    } else {
+      fileRow.appendChild(el('span', '', 'File: Not available'));
+    }
+    body.appendChild(fileRow);
 
     // Cost & Time / Token Usage / Activity — light borderless stats, equal-height cards.
     var t = s.tokens || { input: 0, output: 0, cacheRead: 0, cacheCreation: 0, total: 0 };
