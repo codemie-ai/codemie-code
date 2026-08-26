@@ -1163,6 +1163,17 @@
 
     var body = el('div', 'modal-body');
 
+    // File location — the session's native log path (absent when none was resolved).
+    var fileRow = el('div', 'text-muted');
+    fileRow.style.cssText = 'display:flex;align-items:center;gap:6px;margin-bottom:10px;font-size:12px;';
+    if (s.agentSessionFile) {
+      fileRow.appendChild(el('span', '', 'File: ' + esc(s.agentSessionFile)));
+      fileRow.appendChild(copyButton(function () { return s.agentSessionFile; }, 'Copy path'));
+    } else {
+      fileRow.appendChild(el('span', '', 'File: Not available'));
+    }
+    body.appendChild(fileRow);
+
     // Cost & Time / Token Usage / Activity — light borderless stats, equal-height cards.
     var t = s.tokens || { input: 0, output: 0, cacheRead: 0, cacheCreation: 0, total: 0 };
     var grid3 = el('div', 'grid-3');
