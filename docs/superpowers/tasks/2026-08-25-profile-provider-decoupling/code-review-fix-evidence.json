@@ -1,0 +1,12 @@
+{
+  "schema": 1,
+  "reviewed_head": "17eb839e514171e97764a37bceb32bb21096c5ef",
+  "findings": {
+    "CR-004": {
+      "decision": {
+        "outcome": "Keep applyProjectOnly as-is; no code removal. spec.md's acceptance criterion revised to state applyProjectOnly is retained by design (it still gates provider-identity resolution) rather than eliminated.",
+        "rationale": "User decision (recorded 2026-08-25): applyProjectOnly is still functionally necessary to prevent a mismatched local profile's credentials leaking onto a different active global profile; the original AC's wording to eliminate it did not account for this, so the AC text was corrected instead of removing needed logic."
+      }
+    }
+  }
+}

@@ -1,0 +1,105 @@
+{
+  "schema": 1,
+  "task": "Decouple provider-level config from project/tooling config in the profile system (ConfigLoader/ProviderProfile) and add a migration so users can switch providers while preserving shared project/assistant/skills config.",
+  "ticket": null,
+  "size": "L",
+  "source_run": "docs/superpowers/tasks/2026-08-25-profile-provider-decoupling",
+  "branch": "feature/profile-provider-decoupling",
+  "generated": "2026-08-25T14:44:00Z",
+  "assessment_source": "actual-complexity",
+  "calibrated": {
+    "mode": "single",
+    "proposed": "L",
+    "overridden_to": null
+  },
+  "slug": "profile-provider-decoupling",
+  "dimensions": {
+    "component_scope": {
+      "score": 5,
+      "label": "XL",
+      "affected": "config schema (src/env/types.ts, new WorkspaceConfig split out of ProviderProfile), ConfigLoader service (src/utils/config.ts), migration subsystem (new 006 migration + registration), two CLI workflows (profile display/index, assistants historyLoader/setup selection utils), Claude agent plugin (statusline.mjs)",
+      "layers": "config schema, service (ConfigLoader), migration, CLI (profile + assistants setup), agent plugin"
+    },
+    "requirements_clarity": {
+      "score": 3,
+      "label": "M",
+      "status": "Partially Clear",
+      "gaps": "exact target schema shape and which fields counted as project-level vs. legitimately provider-scoped were undecided at research time; resolved during spec brainstorming"
+    },
+    "technical_risk": {
+      "score": 4,
+      "label": "L",
+      "risk_factors": "no exact precedent in the codebase for splitting ProviderProfile vs. WorkspaceConfig; requires a data migration rewriting existing users' persisted global and local config files, atomically resolving the codeMieUrl/codeMieProject/codeMieIntegration identity trio from a single source profile",
+      "mitigation": "reused the established Migration/MigrationRegistry pattern (5 prior migrations existed); migration 006 unit-tested per the config.migration.test.ts pattern; a post-implementation bug in the source-profile selection (dropping the identity trio when the active profile only had an unrelated field set) was found via manual testing and fixed with a dedicated regression test"
+    },
+    "file_change_estimate": {
+      "score": 6,
+      "label": "XXL",
+      "modified_files": 12,
+      "modified_file_list": [
+        "src/env/types.ts",
+        "src/utils/config.ts",
+        "src/migrations/index.ts",
+        "src/cli/commands/profile/index.ts",
+        "src/cli/commands/profile/display.ts",
+        "src/cli/commands/assistants/chat/historyLoader.ts",
+        "src/cli/commands/assistants/setup/selection/utils.ts",
+        "src/agents/plugins/claude/plugin/statusline.mjs",
+        "src/utils/__tests__/config-project-override.test.ts",
+        "src/env/__tests__/types.test.ts",
+        "src/cli/commands/profile/__tests__/index.test.ts",
+        "src/agents/plugins/claude/plugin/__tests__/statusline.test.ts"
+      ],
+      "new_files": 2,
+      "new_file_list": [
+        "src/migrations/006-decouple-provider-workspace-config.migration.ts",
+        "src/migrations/__tests__/006-decouple-provider-workspace-config.migration.test.ts"
+      ],
+      "affected_dirs": [
+        "src/env",
+        "src/utils",
+        "src/migrations",
+        "src/cli/commands/profile",
+        "src/cli/commands/assistants",
+        "src/agents/plugins/claude/plugin"
+      ]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 4,
+      "label": "L",
+      "layers_changed": ["DB-Persistence", "Service", "Workflow", "Agent-Tool"],
+      "schema_migration": true,
+      "cross_system": false
+    }
+  },
+  "total": 23,
+  "band_range": "21-26",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Touches 6 distinct areas across 4+ subsystems: config schema (src/env/types.ts — new WorkspaceConfig abstraction split out of ProviderProfile), the core ConfigLoader service (src/utils/config.ts — workspace resolution, splitProfileAndWorkspace, WORKSPACE_KEYS), the migration subsystem (new 006 migration + registration in src/migrations/index.ts), two CLI command workflows (profile display/index, assistants historyLoader/selection utils), and the Claude agent plugin's statusline.mjs, which now reads workspace.codeMieUrl directly."
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "No exact precedent in the codebase for splitting ProviderProfile vs. WorkspaceConfig, though the migration itself reuses the established Migration/MigrationRegistry pattern (5 prior migrations exist). Red flag applied: the change requires an actual data migration (006-decouple-provider-workspace-config.migration.ts) that rewrites existing users' persisted global and local config files, atomically resolving the codeMieUrl/codeMieProject/codeMieIntegration 'identity trio' from a single source profile — bumped Technical Risk from M to L."
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "14 source/test files touched (2 new: the 006 migration and its test; 12 modified) spanning src/env/, src/utils/, src/migrations/, src/cli/commands/profile/, src/cli/commands/assistants/, and src/agents/plugins/claude/plugin/ — base XL for the 11-15 file band, and the same data-migration red flag bumps it further to XXL."
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "4 distinct layers touched: DB-Persistence (local config file schema + migration of stored profiles/workspace), Service (ConfigLoader.resolveWorkspace / splitProfileAndWorkspace business logic), Workflow (profile and assistants-setup CLI commands), and Agent-Tool (the Claude plugin's statusline.mjs reading the new workspace.codeMieUrl shape) — with a required migration, matching the L criteria (3-4 layers including persistence, migration required)."
+    }
+  ],
+  "red_flags_applied": [
+    "Technical Risk bumped from M (3) to L (4): requires data migration (006-decouple-provider-workspace-config.migration.ts) to move existing users' identity/workspace fields out of their stored provider profiles.",
+    "File Change Estimate bumped from XL (5) to XXL (6): same data-migration red flag additionally bumps file change scope."
+  ]
+}

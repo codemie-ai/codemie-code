@@ -64,6 +64,7 @@ export class LogFormatter {
       case 'error':
         return this.colorize(chalk.red(levelUpper));
       case 'warn':
+      case 'notice':
         return this.colorize(chalk.yellow(levelUpper));
       case 'info':
         return this.colorize(chalk.green(levelUpper));

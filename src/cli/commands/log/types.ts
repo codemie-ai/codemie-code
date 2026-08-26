@@ -5,7 +5,7 @@
 /**
  * Log levels
  */
-export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+export type LogLevel = 'debug' | 'info' | 'warn' | 'notice' | 'error';
 
 /**
  * Parsed log entry from debug log file

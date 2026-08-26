@@ -64,6 +64,14 @@ export interface SessionCost {
   perModel: ModelCost[];
   priced: boolean; // true if the native log was found & parsed
   hadLog: boolean; // true if a native log path was located (priced<hadLog ⇒ parse/reader gap)
+  /**
+   * The native log path actually used to resolve `hadLog`/pricing — either
+   * `raw.agentSessionFile` or the ~/.codemie/sessions/{id}.json correlation-file
+   * fallback (see cost-enricher.ts's `loadAgentSessionFile`). Set iff `hadLog` is
+   * true, so a consumer never has to reconcile "cost was priced" against "no file
+   * to show" — those two must always agree.
+   */
+  agentSessionFile?: string;
 
   // === Usage provenance (from ParsedSession.usageMeta) ===
   /**

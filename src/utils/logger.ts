@@ -342,6 +342,18 @@ class Logger {
         }
     }
   }
+
+  notice(message: string, ...args: unknown[]): void {
+    // Always write to log file
+    this.writeToLogFile('notice', message, ...args);
+
+    // Always print to console, regardless of debug mode — this is the one
+    // logger level meant to surface real failures to a normal terminal run.
+    const logPath = this.getLogFilePath();
+    const suffix = logPath ? ` (see ${logPath})` : '';
+    const sanitizedArgs = sanitizeLogArgs(...args);
+    console.warn(chalk.yellow(`⚠ ${message}${suffix}`), ...sanitizedArgs);
+  }
 }
 
 export const logger = new Logger();

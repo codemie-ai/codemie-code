@@ -145,6 +145,17 @@ describe('AnalyticsAggregator branch attribution', () => {
     expect(project.branches.map((b) => b.branchName)).toEqual(['main']); // no Unknown bucket
     expect(project.branches[0].sessions.map((s) => s.sessionId)).toEqual(['A']);
   });
+
+  it('carries agentSessionFile through from RawSessionData when present, and leaves it undefined otherwise', () => {
+    const withFile = session('A', '/repo', [delta('A', 'main', 0)]);
+    withFile.agentSessionFile = '/logs/a.jsonl';
+    const withoutFile = session('B', '/repo', [delta('B', 'main', 0)]);
+
+    const root = AnalyticsAggregator.aggregate([withFile, withoutFile]);
+    const sessions = root.projects[0].branches[0].sessions;
+    expect(sessions.find((s) => s.sessionId === 'A')?.agentSessionFile).toBe('/logs/a.jsonl');
+    expect(sessions.find((s) => s.sessionId === 'B')?.agentSessionFile).toBeUndefined();
+  });
 });
 
 describe('NamedInvocationStats — type presence', () => {

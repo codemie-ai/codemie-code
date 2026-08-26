@@ -433,6 +433,7 @@ export class AnalyticsAggregator {
       skillInvocations: this.aggregateNamedInvocations(deltas, 'skillInvocations'),
       agentInvocations: this.aggregateNamedInvocations(deltas, 'agentInvocations'),
       commandInvocations: this.aggregateNamedInvocations(deltas, 'commandInvocations'),
+      agentSessionFile: raw.agentSessionFile,
     };
   }
 

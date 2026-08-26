@@ -52,8 +52,9 @@ describe('Model Tier Configuration', () => {
         apiKey: ['ANTHROPIC_AUTH_TOKEN'],
         model: ['ANTHROPIC_MODEL'],
         haikuModel: ['ANTHROPIC_DEFAULT_HAIKU_MODEL'],
-        sonnetModel: ['ANTHROPIC_DEFAULT_SONNET_MODEL', 'CLAUDE_CODE_SUBAGENT_MODEL'],
+        sonnetModel: ['ANTHROPIC_DEFAULT_SONNET_MODEL'],
         opusModel: ['ANTHROPIC_DEFAULT_OPUS_MODEL'],
+        subagentDefaultModel: ['CLAUDE_CODE_SUBAGENT_MODEL'],
       },
     };
 
@@ -76,7 +77,11 @@ describe('Model Tier Configuration', () => {
     expect(result.CODEMIE_HAIKU_MODEL).toBe('claude-haiku-4-5-20251001'); // Original preserved
   });
 
-  it('should transform CODEMIE_SONNET_MODEL to multiple target variables', () => {
+  it('should transform CODEMIE_SONNET_MODEL to ANTHROPIC_DEFAULT_SONNET_MODEL only (EPMCDME-14355)', () => {
+    // Sonnet-only tenant. Upstream Claude Code defaults subagents to the sonnet tier via
+    // ANTHROPIC_DEFAULT_SONNET_MODEL. CLAUDE_CODE_SUBAGENT_MODEL must NOT be set here — if
+    // it were, upstream would treat it as a global subagent override and silence any per-
+    // subagent `model` parameter from the Agent tool.
     const env: NodeJS.ProcessEnv = {
       CODEMIE_SONNET_MODEL: 'claude-4-5-sonnet',
     };
@@ -84,7 +89,7 @@ describe('Model Tier Configuration', () => {
     const result = adapter.testTransformEnvVars(env);
 
     expect(result.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-4-5-sonnet');
-    expect(result.CLAUDE_CODE_SUBAGENT_MODEL).toBe('claude-4-5-sonnet');
+    expect(result.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined();
     expect(result.CODEMIE_SONNET_MODEL).toBe('claude-4-5-sonnet'); // Original preserved
   });
 
@@ -115,7 +120,9 @@ describe('Model Tier Configuration', () => {
     expect(result.ANTHROPIC_MODEL).toBe('claude-4-5-sonnet');
     expect(result.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-haiku-4-5-20251001');
     expect(result.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-4-5-sonnet');
-    expect(result.CLAUDE_CODE_SUBAGENT_MODEL).toBe('claude-4-5-sonnet');
+    // Haiku + sonnet + opus all provisioned: CLAUDE_CODE_SUBAGENT_MODEL stays unset so per-
+    // subagent `model` overrides from the Agent tool are honoured (EPMCDME-14355).
+    expect(result.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined();
     expect(result.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('claude-opus-4-6-20260205');
     expect(result.ANTHROPIC_BASE_URL).toBe('https://api.anthropic.com');
     expect(result.ANTHROPIC_AUTH_TOKEN).toBe('test-key-123');
@@ -196,6 +203,42 @@ describe('Model Tier Configuration', () => {
     expect(result.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
     expect(result.CLAUDE_CODE_SUBAGENT_MODEL).toBe('claude-haiku-4-5-20251001');
     expect(result.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
+  });
+
+  it('does not set CLAUDE_CODE_SUBAGENT_MODEL when both haiku and sonnet tiers are provisioned (EPMCDME-14355)', () => {
+    // Regression for EPMCDME-14355: with sonnet provisioned, the sonnet-tier mapping used
+    // to also populate CLAUDE_CODE_SUBAGENT_MODEL. Upstream Claude Code treats that env
+    // var as a global override for all subagent launches — so per-subagent `model` from
+    // the Agent tool (e.g. `{model: "haiku"}`) is silently discarded. Fix: leave the var
+    // unset when sonnet is provisioned; ANTHROPIC_DEFAULT_SONNET_MODEL keeps the sonnet
+    // default flowing while explicit haiku/opus overrides survive.
+    const env: NodeJS.ProcessEnv = {
+      CODEMIE_HAIKU_MODEL: 'claude-haiku-4-5-20251001',
+      CODEMIE_SONNET_MODEL: 'claude-sonnet-4-6',
+    };
+
+    const result = adapter.testTransformEnvVars(env);
+
+    expect(result.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-haiku-4-5-20251001');
+    expect(result.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-sonnet-4-6');
+    expect(result.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined();
+  });
+
+  it('should handle opus-only configuration by routing subagents to opus via CLAUDE_CODE_SUBAGENT_MODEL', () => {
+    // Companion to the haiku-only case (EPMCDME-12779). Sonnet is the upstream Claude Code
+    // subagent default; when sonnet is not provisioned but opus is, subagents must redirect
+    // to opus rather than fail on an unavailable model.
+    const env: NodeJS.ProcessEnv = {
+      CODEMIE_OPUS_MODEL: 'claude-opus-4-6-20260205',
+      // sonnetModel and haikuModel not provided
+    };
+
+    const result = adapter.testTransformEnvVars(env);
+
+    expect(result.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('claude-opus-4-6-20260205');
+    expect(result.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
+    expect(result.CLAUDE_CODE_SUBAGENT_MODEL).toBe('claude-opus-4-6-20260205');
+    expect(result.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBeUndefined();
   });
 
   it('should handle agent with no envMapping', () => {

@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "task": "Fix test-suite log pollution in ~/.codemie/logs caused by an unset CODEMIE_HOME override during tests, and improve hook error visibility/logging clarity in user environments.",
+  "generated": "2026-08-20T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 6, "label": "XXL" },
+    "requirements_clarity": { "score": 5, "label": "XL" },
+    "technical_risk":       { "score": 5, "label": "XL" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 4, "label": "L" }
+  },
+  "total": 24,
+  "size": "L",
+  "size_legend": {
+    "XS": "6-9 — < half day — plan directly",
+    "S": "10-14 — 1 day — plan directly",
+    "M": "15-20 — 2-3 days — brainstorm first",
+    "L": "21-26 — 4-5 days — brainstorm first",
+    "XL": "27-31 — > 1 sprint — recommend splitting",
+    "XXL": "32-36 — > 1 sprint — must split"
+  },
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Touches 4-5 distinct components across 4 layers (test setup, Logger singleton, HookExecutor, hook.ts CLI entry, hooks-loader.ts) — baseline L for 'shared utilities involved', then bumped by two distinct red flags to XXL." },
+    { "dimension": "requirements_clarity", "reason": "The 'improve hook error visibility/logging clarity' half of the task has no defined acceptance criteria (what counts as sufficiently visible, whether a new env var or default-behavior change is expected); technical-analysis.md explicitly flags this as an open design decision for spec/plan." },
+    { "dimension": "technical_risk", "reason": "Task description names a specific failure mode (test-log pollution via unset CODEMIE_HOME) and targets the hook error-path behavior directly, but zero existing tests cover HookExecutor, hook.ts, hooks-loader.ts, prompt-executor.ts, matcher.ts, or decision.ts — any change here ships without a regression safety net on exactly the defensive pattern being modified." },
+    { "dimension": "affected_layers", "reason": "technical-analysis.md's own 'Architecture and Layers Affected' section enumerates 4 layers touched: CLI (hook.ts), Core/Engine (executor.ts, prompt-executor.ts, decision.ts, matcher.ts), Plugin (hooks-loader.ts, Claude plugin hook transformer lookup), and Utils (logger.ts, errors.ts, proxy-logger.ts)." }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L to XL: touches core shared utilities (Logger singleton, 228 callers across the codebase)",
+    "Component Scope bumped from XL to XXL: affects multiple workflows/agents (hook.ts's `codemie hook` command is the single shared entry point invoked by every agent plugin's hook script — Claude, Codex, Gemini, OpenCode, Pi, Kimi)",
+    "Requirements Clarity bumped from L to XL: vague acceptance criteria — 'improve hook error visibility/logging clarity' names no concrete success criteria",
+    "Technical Risk bumped from L to XL: task names a specific error-path failure mode (test-log pollution) with no existing test template covering this defensive/error-path pattern anywhere in the untested hooks subsystem"
+  ],
+  "split_recommendation": null
+}

@@ -7,6 +7,19 @@
 import type { SkillListItem, SkillDetail, CodeMieClient } from 'codemie-sdk';
 import { logger } from '@/utils/logger.js';
 import type { CodemieSkill } from '@/env/types.js';
+import { assertApiListResponse } from '@/cli/commands/shared/api-response-guard.js';
+
+interface SkillListResponse {
+  skills: SkillListItem[];
+  total: number;
+  pages: number;
+}
+
+function isSkillListResponse(response: unknown): response is SkillListResponse {
+  const r = response as Partial<SkillListResponse> | null | undefined;
+  return !!r && typeof r === 'object' && Array.isArray(r.skills)
+    && typeof r.total === 'number' && typeof r.pages === 'number';
+}
 
 export interface FetchSkillsParams {
   scope: 'registered' | 'project' | 'marketplace';
@@ -84,6 +97,8 @@ export function createSkillDataFetcher(config: SkillDataFetcherConfig): SkillDat
       }
     });
 
+    assertApiListResponse(response, isSkillListResponse, `${apiScope} skills`);
+
     logger.debug('[SkillSetup] Fetched skills from API', {
       scope: apiScope,
       count: response.skills.length,
@@ -113,6 +128,7 @@ export function createSkillDataFetcher(config: SkillDataFetcherConfig): SkillDat
 
     // Fetch all skills (no efficient bulk endpoint, so fetch all and filter)
     const response = await client.skills.listPaginated({ per_page: 100 });
+    assertApiListResponse(response, isSkillListResponse, 'skills');
     const skills = response.skills.filter(skill => ids.includes(skill.id));
 
     logger.debug('[SkillSetup] Fetched skills by IDs', { count: skills.length });

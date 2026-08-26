@@ -1,0 +1,24 @@
+{
+  "schema": 1,
+  "generated": "2026-08-26T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 3, "label": "M" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 5, "label": "XL" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 16,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 11,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "file_change_estimate", "reason": "Diffstat reports 11 files changed (all modifications — 0 new files, confirmed by reading the three touched test files, which already existed with unrelated pre-existing docstrings) spanning the analytics aggregator, cost pipeline, report payload builder, and report client. Per the actual-mode file-count mapping this lands in the 11-15/XL bucket even though the real diff is small (143 insertions, 1 deletion)." },
+    { "dimension": "component_scope", "reason": "Two cohesive components touched: the analytics data pipeline (aggregator.ts, cost-enricher.ts, payload-builder.ts, and their shared types.ts files) and the report client UI (app.js modal logic + template.html), both following an already-established pattern — agentSessionFile plumbing, a pre-existing session-detail modal (SESSION_BY_ID map keyed for it), and the existing esc() HTML-escaping helper." },
+    { "dimension": "affected_layers", "reason": "Touches Service (aggregator/cost-enricher/payload-builder) and UI (client app.js/template.html) layers only — a standard full-stack path with no DB-persistence, infrastructure, or new external-service changes." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}

@@ -293,6 +293,26 @@ describe('buildPayload', () => {
     expect(buildPayload(root, costIndex, summary, ctxAll).sessions[0].dispatches).toBeUndefined();
   });
 
+  it('threads agentSessionFile onto the record when present, and omits it when absent', () => {
+    const withFile = singleBranchRoot([session({ agentSessionFile: '/logs/a.jsonl' })]);
+    const ctx = { rangeLabel: 'all', projectFilter: 'all', generatedAt: '2026-06-08T00:00:00Z' };
+    expect(buildPayload(withFile, costIndex, summary, ctx).sessions[0].agentSessionFile).toBe('/logs/a.jsonl');
+
+    const noFile = buildPayload(root, costIndex, summary, ctx);
+    expect('agentSessionFile' in noFile.sessions[0]).toBe(false);
+  });
+
+  it('prefers the cost-resolved agentSessionFile (correlation-file fallback) over an absent session-record path', () => {
+    // s.agentSessionFile (SessionAnalytics, native-discovery only) is absent here, but the
+    // cost index resolved a log via the correlation-file fallback and priced from it (hadLog:
+    // true) — the record must surface THAT path, not omit it, so "File: Not available" never
+    // contradicts a session that actually has a priced cost (CR-002).
+    const idx: SessionCostIndex = new Map([
+      ['s1', { sessionId: 's1', tokens: emptyTokens(), costUSD: 2, perModel: [], priced: true, hadLog: true, agentSessionFile: '/home/.codemie/sessions/s1.json' }],
+    ]);
+    expect(buildPayload(root, idx, summary, ctxAll).sessions[0].agentSessionFile).toBe('/home/.codemie/sessions/s1.json');
+  });
+
   it('includes userEmail, periodStart, periodEnd in meta when provided in context', () => {
     const payload = buildPayload(root, costIndex, summary, {
       rangeLabel: 'custom',

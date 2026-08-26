@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "task": "Add API Key info display and a --json output flag to the codemie proxy status command.",
+  "generated": "2026-08-20T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 2, "label": "S" },
+    "requirements_clarity": { "score": 2, "label": "S" },
+    "technical_risk":       { "score": 2, "label": "S" },
+    "file_change_estimate": { "score": 1, "label": "XS" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 1, "label": "XS" }
+  },
+  "total": 9,
+  "size": "XS",
+  "routing": "writing-plans",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "Confined to a single CLI command (proxy status subcommand in src/cli/commands/proxy/index.ts): adding a Commander option and a new output branch, self-contained with no cross-cutting concerns." },
+    { "dimension": "technical_risk", "reason": "Two existing commands (skills/list.ts, skills/find.ts) plus a reusable outputJson() helper already establish the --json convention; the only open risk is keeping the JSON payload consistent across the status handler's running/stopped and healthy/unhealthy branches, which is low-risk and easily reviewable." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}
