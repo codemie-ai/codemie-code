@@ -1,0 +1,4 @@
+{"task_id":"task-1","status":"done","commit":"1cca189","test_command":"npx vitest run src/cli/commands/analytics/__tests__/aggregator.test.ts"}
+{"task_id":"task-2","status":"done","commit":"5c1c8f1","test_command":"npx vitest run src/cli/commands/analytics/report/__tests__/payload-builder.test.ts"}
+{"task_id":"task-3","status":"done","commit":"e83ff1c","test_command":"node --check src/cli/commands/analytics/report/client/app.js (code-reading validation per plan; no test harness for app.js)"}
+{"task_id":"task-4","status":"done","commit":"a460bda","test_command":"node --check src/cli/commands/analytics/report/client/app.js (code-reading validation per plan; no test harness for app.js)"}

@@ -1,0 +1,5 @@
+{"schema":1,"ts":"2026-08-26T07:57:51Z","event":"decision.recorded","phase":0,"actor":"sdlc-gate","summary":"Decision recorded for plan.approved: approve","artifacts":["decisions.jsonl"],"data":{"gate_id":"plan.approved","mode":"hitl","decision":"approve","source":"hitl","escalated":false}}
+{"event":"lifecycle_emission","intent":"artifact_published","artifact_kind":"plan","status":"skipped"}
+{"schema":1,"ts":"2026-08-26T08:31:58Z","event":"decision.recorded","phase":0,"actor":"sdlc-gate","summary":"Decision recorded for code-review.final: request-changes","artifacts":["decisions.jsonl"],"data":{"gate_id":"code-review.final","mode":"hitl","decision":"request-changes","source":"hitl","escalated":false}}
+{"schema":1,"ts":"2026-08-26T08:40:01Z","event":"decision.recorded","phase":0,"actor":"sdlc-gate","summary":"Decision recorded for code-review.final: approve","artifacts":["decisions.jsonl"],"data":{"gate_id":"code-review.final","mode":"hitl","decision":"approve","source":"hitl","escalated":false}}
+{"event":"lifecycle_emission","intent":"record_complexity_score","mode":"actual","status":"skipped"}
