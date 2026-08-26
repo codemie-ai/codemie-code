@@ -41,6 +41,7 @@ export interface ReportSessionRecord {
   cacheReadCostUSD: number; // USD attributable to cache reads (subset of costUSD)
   perModelCost: ModelCost[];
   hadLog: boolean; // a native agent log was located for this session (priced<hadLog ⇒ parse/reader gap)
+  agentSessionFile?: string; // native log path; absent when none was resolved for this session
   costSeries?: CostSeriesPoint[]; // per-turn cumulative cost/token growth; absent when no per-turn data
   dispatches?: DispatchEvent[]; // timed top-level agent/skill/command invocations; absent when none
 

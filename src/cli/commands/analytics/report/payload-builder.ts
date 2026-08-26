@@ -101,6 +101,7 @@ export function buildPayload(
           cacheReadCostUSD: cost?.cacheReadCostUSD ?? 0,
           perModelCost: cost?.perModel ?? [],
           hadLog: cost?.hadLog ?? false,
+          ...(s.agentSessionFile ? { agentSessionFile: s.agentSessionFile } : {}),
           // Optional and additive — omitted entirely for agents that record full usage,
           // so no other agent's record changes shape.
           ...(cost?.premiumRequests !== undefined ? { premiumRequests: cost.premiumRequests } : {}),

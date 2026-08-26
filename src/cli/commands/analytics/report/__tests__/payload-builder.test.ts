@@ -293,6 +293,15 @@ describe('buildPayload', () => {
     expect(buildPayload(root, costIndex, summary, ctxAll).sessions[0].dispatches).toBeUndefined();
   });
 
+  it('threads agentSessionFile onto the record when present, and omits it when absent', () => {
+    const withFile = singleBranchRoot([session({ agentSessionFile: '/logs/a.jsonl' })]);
+    const ctx = { rangeLabel: 'all', projectFilter: 'all', generatedAt: '2026-06-08T00:00:00Z' };
+    expect(buildPayload(withFile, costIndex, summary, ctx).sessions[0].agentSessionFile).toBe('/logs/a.jsonl');
+
+    const noFile = buildPayload(root, costIndex, summary, ctx);
+    expect('agentSessionFile' in noFile.sessions[0]).toBe(false);
+  });
+
   it('includes userEmail, periodStart, periodEnd in meta when provided in context', () => {
     const payload = buildPayload(root, costIndex, summary, {
       rangeLabel: 'custom',
