@@ -61,18 +61,18 @@ program
 
 program.addHelpText('after', `
 Claude Desktop 3P:
-  codemie proxy connect desktop           Connect Claude Desktop through CodeMie proxy
-  codemie proxy inspect desktop           Inspect Desktop proxy state, sessions, and sync
-  codemie proxy stop                      Stop the local proxy daemon
-  codemie codebase ui                     Start and open Codebase Memory graph UI
+  codemie proxy connect --claude-desktop      Connect Claude Desktop through CodeMie proxy
+  codemie proxy inspect desktop               Inspect Desktop proxy state, sessions, and sync
+  codemie proxy stop                          Stop the local proxy daemon
+  codemie codebase ui                         Start and open Codebase Memory graph UI
 
 VS Code BYOK:
-  codemie proxy connect vscode            Configure stable VS Code through CodeMie proxy
-  codemie proxy connect vscode --insiders Configure VS Code Insiders through CodeMie proxy
+  codemie proxy connect --vscode              Configure stable VS Code through CodeMie proxy
+  codemie proxy connect --vscode --insiders   Configure VS Code Insiders through CodeMie proxy
 
 Profile selection:
   Uses the active CodeMie profile by default.
-  Override for one run with: codemie proxy connect <desktop|vscode> --profile <name>
+  Override for one run with: codemie proxy connect <--claude-desktop|--vscode> --profile <name>
 `);
 
 // Add commands

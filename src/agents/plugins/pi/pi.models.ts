@@ -3,6 +3,8 @@ import type { LlmModel } from '../../../providers/plugins/sso/sso.http-client.js
 import { fetchCodeMieLlmModels } from '../../../providers/plugins/sso/sso.http-client.js';
 import { CodeMieSSO } from '../../../providers/plugins/sso/sso.auth.js';
 import { logger } from '../../../utils/logger.js';
+import type { ModelPrice } from '../../../utils/pricing.js';
+import { lookupPrice } from '../../../utils/pricing.js';
 import { getPiAgentDir, getPiModelsPath } from './pi.paths.js';
 
 export interface PiModelClassification {
@@ -35,6 +37,20 @@ export function classifyPiModel(modelId: string): PiModelClassification {
   return { provider: 'codemie-proxy' };
 }
 
+/**
+ * Pi's per-model rates, in USD per 1,000,000 tokens.
+ *
+ * All four are required together: Pi's schema declares the `cost` block itself optional but
+ * every rate inside it mandatory, and one missing rate rejects the whole `models.json` rather
+ * than the single entry. Pi has no rate for 1h cache writes — it bills those as `input * 2`.
+ */
+export interface PiModelCost {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
 export interface PiModelEntry {
   id: string;
   name: string;
@@ -45,6 +61,7 @@ export interface PiModelEntry {
   contextWindow: number;
   maxTokens: number;
   compat?: Record<string, unknown>;
+  cost?: PiModelCost;
 }
 
 function detectLimits(id: string): { contextWindow: number; maxTokens: number } {
@@ -87,6 +104,98 @@ function isReasoningModel(id: string): boolean {
   );
 }
 
+/**
+ * A rate we can hand to Pi. `LlmModel.cost` is typed `number`, but it arrives from
+ * `JSON.parse` of an HTTP response, so the type is a claim rather than a guarantee: a string,
+ * `NaN` or `Infinity` would serialize into `models.json` as a non-number and cost Pi the entire
+ * file, not just this model. A negative rate has no meaning here and would flip the sign of a
+ * real estimate, so it falls back too.
+ *
+ * Screening the payload is not enough on its own: `1e308` passes every check here and still
+ * overflows to `Infinity` once scaled to per-million, so the product is checked as well.
+ */
+function isValidRate(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
+
+/** CodeMie reports cost per token; Pi expects it per million. */
+function toPerMillion(value: number): number {
+  return value * 1_000_000;
+}
+
+/**
+ * One rate, resolved per field the way Pi resolves its own `modelOverrides`: the live API value
+ * wins, then the vendored price table, then zero. An explicit `0` from the API is a price, not a
+ * gap, so it too suppresses the table for that field.
+ */
+function resolveRate(apiPerToken: unknown, vendoredPerMillion: number | undefined): number {
+  if (isValidRate(apiPerToken)) {
+    const perMillion = toPerMillion(apiPerToken);
+    if (isValidRate(perMillion)) {
+      return perMillion;
+    }
+  }
+  if (isValidRate(vendoredPerMillion)) {
+    return vendoredPerMillion;
+  }
+  return 0;
+}
+
+/**
+ * An unreadable price table is process-wide and permanent — `lookupPrice` memoizes only on
+ * success, so it throws again for every one of the ~44 models in the list. Worth exactly one log
+ * line, hence the latch.
+ */
+let priceTableFailureLogged = false;
+
+/**
+ * A price table we cannot read is a cost-reporting problem, not a reason to refuse to launch the
+ * agent. `lookupPrice` reads a vendored JSON asset on first call, and this runs inside the
+ * plugin's `beforeRun`, which nothing guards — an unreadable asset would otherwise abort the
+ * user's whole session over missing metrics.
+ *
+ * The failure still has to be recorded: every rate falls to zero, the block is omitted, and Pi
+ * reports the same `$0` as a genuinely free model, so nothing downstream can tell the two apart.
+ * `warn` because it always reaches the log file (`debug` is a complete no-op without
+ * `CODEMIE_DEBUG`), and because it is the level this module already uses one function below for
+ * the larger degradation of losing the live model list.
+ */
+function vendoredPrice(id: string): ModelPrice | null {
+  try {
+    return lookupPrice(id);
+  } catch (error) {
+    if (!priceTableFailureLogged) {
+      priceTableFailureLogged = true;
+      const message = error instanceof Error ? error.message : String(error);
+      logger.warn(
+        `[pi-models] Model price table unavailable; models the CodeMie API does not price will be reported to Pi as free: ${message}`,
+      );
+    }
+    return null;
+  }
+}
+
+/**
+ * Build the `cost` block, or return `undefined` when no source prices this model.
+ *
+ * Omitting is what Pi already does with an entry that has no `cost` — it defaults every rate to
+ * zero — so an unpriced model behaves exactly as it did before this block existed. Emitting
+ * explicit zeros instead would assert "this model is free", which is a different claim from
+ * "we have no price for it".
+ */
+function resolveModelCost(model: LlmModel, id: string): PiModelCost | undefined {
+  const vendored = vendoredPrice(id);
+  const cost: PiModelCost = {
+    input: resolveRate(model.cost?.input, vendored?.input),
+    output: resolveRate(model.cost?.output, vendored?.output),
+    cacheRead: resolveRate(model.cost?.cache_read_input_token_cost, vendored?.cacheRead),
+    cacheWrite: resolveRate(model.cost?.cache_creation_input_token_cost, vendored?.cacheCreation),
+  };
+
+  const unpriced = cost.input === 0 && cost.output === 0 && cost.cacheRead === 0 && cost.cacheWrite === 0;
+  return unpriced ? undefined : cost;
+}
+
 export function convertLlmModelToPiEntry(model: LlmModel): PiModelEntry {
   const id = model.deployment_name || model.base_name || model.label;
   const limits = detectLimits(id);
@@ -116,6 +225,11 @@ export function convertLlmModelToPiEntry(model: LlmModel): PiModelEntry {
     id.startsWith('claude-opus-5')
   ) {
     entry.compat = { forceAdaptiveThinking: true };
+  }
+
+  const cost = resolveModelCost(model, id);
+  if (cost) {
+    entry.cost = cost;
   }
 
   return entry;

@@ -81,7 +81,9 @@ export const MoonshotSubscriptionSetupSteps: ProviderSetupSteps = {
   },
 
   async fetchModels(_credentials: ProviderCredentials): Promise<string[]> {
-    return [...MoonshotSubscriptionTemplate.recommendedModels];
+    // No live catalog exists for this provider — return empty so setup prompts
+    // the user to enter a model manually instead of showing a static list.
+    return [];
   },
 
   async selectModel(
@@ -89,6 +91,8 @@ export const MoonshotSubscriptionSetupSteps: ProviderSetupSteps = {
     models: string[]
   ): Promise<string | null> {
     if (credentials.additionalConfig?.codeMieUrl) {
+      // Unattended/auto-config path (analytics sync already linked) — no user
+      // is present to prompt, so a concrete literal default is still needed here.
       return models[0] || MoonshotSubscriptionTemplate.recommendedModels[0] || null;
     }
 

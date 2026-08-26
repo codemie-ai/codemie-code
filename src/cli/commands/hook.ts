@@ -495,9 +495,86 @@ async function accumulateActiveDuration(sessionId: string): Promise<number> {
  * Handle UserPromptSubmit event
  * Starts activity tracking to measure active session time
  */
-async function handleUserPromptSubmit(event: BaseHookEvent, sessionId: string, _config?: HookProcessingConfig): Promise<void> {
+async function handleUserPromptSubmit(event: BaseHookEvent, sessionId: string, config?: HookProcessingConfig): Promise<void> {
   logger.info(`[hook:UserPromptSubmit] ${JSON.stringify(event)}`);
+  await enforceAnalyticsAuthGate(config);
   await startActivityTracking(sessionId);
+}
+
+/**
+ * Analytics auth gate (generic for all agents using the unified hook handler).
+ *
+ * Blocks the prompt (exit code 2, stderr fed back to the agent) when CodeMie
+ * analytics sync is configured but authentication is known to be broken:
+ * - no valid stored SSO credentials (and no CODEMIE_API_KEY), or
+ * - the metrics endpoint previously rejected the credentials (invalid-auth
+ *   marker written by MetricsApiClient on 401/403 or HTML SSO login page).
+ *
+ * Without this gate, expired analytics credentials fail silently and sessions
+ * disappear from metrics. The marker is cleared by `codemie profile login`
+ * and by any successful metrics send.
+ */
+async function enforceAnalyticsAuthGate(config?: HookProcessingConfig): Promise<void> {
+  try {
+    const provider = getConfigValue('CODEMIE_PROVIDER', config);
+    const ssoUrl = getConfigValue('CODEMIE_URL', config);
+    const syncApiUrl = getConfigValue('CODEMIE_SYNC_API_URL', config);
+
+    const analyticsConfigured = provider === 'ai-run-sso' || Boolean(ssoUrl && syncApiUrl);
+    if (!analyticsConfigured) {
+      return;
+    }
+
+    let hasValidAuth = Boolean(getConfigValue('CODEMIE_API_KEY', config));
+    if (!hasValidAuth && ssoUrl) {
+      try {
+        const { CodeMieSSO } = await import('../../providers/plugins/sso/sso.auth.js');
+        const credentials = await new CodeMieSSO().getStoredCredentials(ssoUrl);
+        hasValidAuth = Boolean(credentials?.cookies);
+      } catch (error) {
+        logger.debug('[hook:UserPromptSubmit] Auth gate: failed to load SSO credentials:', error);
+      }
+    }
+
+    const { getAnalyticsAuthStatus } = await import('../../utils/analytics-auth-status.js');
+    const authStatus = await getAnalyticsAuthStatus();
+
+    if (hasValidAuth && !authStatus) {
+      return;
+    }
+
+    const reason = !hasValidAuth
+      ? 'no valid CodeMie SSO credentials found'
+      : `CodeMie metrics endpoint rejected the stored credentials (${authStatus?.reason || 'unknown reason'})`;
+    const loginCommand = ssoUrl
+      ? `codemie profile login --url ${ssoUrl}`
+      : 'codemie profile login';
+
+    const message = [
+      'CodeMie analytics authentication is invalid — session metrics are NOT being uploaded.',
+      `Reason: ${reason}.`,
+      `Re-authenticate by running: ${loginCommand}`,
+      'Then re-send your prompt.'
+    ].join('\n');
+
+    logger.warn(`[hook:UserPromptSubmit] Blocking prompt: ${reason}`);
+
+    if (config) {
+      // Programmatic mode (e.g. VSCode extension): let the host decide how to
+      // surface the failure instead of exiting its process
+      throw new Error(message);
+    }
+
+    await logger.close();
+    console.error(message);
+    process.exit(2); // Blocking: stderr is fed back to the agent
+  } catch (error) {
+    if (config) {
+      throw error;
+    }
+    // The gate itself must never break the prompt flow
+    logger.debug('[hook:UserPromptSubmit] Auth gate check failed (non-blocking):', error);
+  }
 }
 
 /**

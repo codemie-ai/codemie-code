@@ -28,13 +28,8 @@ describe('AnthropicSubscriptionTemplate', () => {
     expect(AnthropicSubscriptionTemplate.defaultBaseUrl).toBe('https://api.anthropic.com');
   });
 
-  it('includes recommended Claude models', () => {
-    expect(AnthropicSubscriptionTemplate.recommendedModels).toContain('claude-sonnet-4-6');
-    expect(AnthropicSubscriptionTemplate.recommendedModels).toContain('claude-opus-4-7');
-    expect(AnthropicSubscriptionTemplate.recommendedModels).not.toContain('claude-opus-4-6');
-    expect(AnthropicSubscriptionTemplate.recommendedModels).toContain('claude-haiku-4-5-20251001');
-    expect(AnthropicSubscriptionTemplate.recommendedModels).not.toContain('claude-4-5-haiku');
-    expect(AnthropicSubscriptionTemplate.recommendedModels.length).toBeGreaterThan(0);
+  it('recommends only the Sonnet family (not a pinned version)', () => {
+    expect(AnthropicSubscriptionTemplate.recommendedModels).toEqual(['sonnet']);
   });
 
   describe('agentHooks - beforeRun (*)', () => {
@@ -176,36 +171,38 @@ describe('AnthropicSubscriptionTemplate', () => {
       expect(env.CODEMIE_API_KEY).toBe('');
     });
 
-    it('normalizes gateway Haiku aliases to Anthropic-native Haiku for Claude Code', () => {
+    it('always blanks CODEMIE_MODEL/HAIKU/SONNET/OPUS so the claude CLI uses its own defaults', () => {
       const env = AnthropicSubscriptionTemplate.exportEnvVars!({
         model: 'claude-4-5-haiku',
         haikuModel: 'claude-haiku-4-5-20251001',
       } as any);
 
-      expect(env.CODEMIE_MODEL).toBe('claude-haiku-4-5-20251001');
-      expect(env.CODEMIE_HAIKU_MODEL).toBeUndefined();
+      expect(env.CODEMIE_MODEL).toBe('');
+      expect(env.CODEMIE_HAIKU_MODEL).toBe('');
+      expect(env.CODEMIE_SONNET_MODEL).toBe('');
+      expect(env.CODEMIE_OPUS_MODEL).toBe('');
     });
 
-    it('normalizes stale Opus defaults to Claude Code subscription Opus 4.7', () => {
+    it('blanks model tiers regardless of what is configured (no alias normalization)', () => {
       const env = AnthropicSubscriptionTemplate.exportEnvVars!({
         model: 'claude-opus-4-6',
         opusModel: 'claude-opus-4-6[1m]',
       } as any);
 
-      expect(env.CODEMIE_MODEL).toBe('claude-opus-4-7');
-      expect(env.CODEMIE_OPUS_MODEL).toBe('claude-opus-4-7[1m]');
+      expect(env.CODEMIE_MODEL).toBe('');
+      expect(env.CODEMIE_OPUS_MODEL).toBe('');
     });
 
-    it('does not rewrite non-Haiku Anthropic subscription models', () => {
+    it('blanks model tiers even when a current, non-legacy model is configured', () => {
       const env = AnthropicSubscriptionTemplate.exportEnvVars!({
         model: 'claude-sonnet-4-6',
         haikuModel: 'claude-haiku-4-5-20251001',
         opusModel: 'claude-opus-4-7',
       } as any);
 
-      expect(env.CODEMIE_MODEL).toBeUndefined();
-      expect(env.CODEMIE_HAIKU_MODEL).toBeUndefined();
-      expect(env.CODEMIE_OPUS_MODEL).toBeUndefined();
+      expect(env.CODEMIE_MODEL).toBe('');
+      expect(env.CODEMIE_HAIKU_MODEL).toBe('');
+      expect(env.CODEMIE_OPUS_MODEL).toBe('');
     });
 
     it('exports CODEMIE_URL and CODEMIE_SYNC_API_URL when codeMieUrl is set', () => {

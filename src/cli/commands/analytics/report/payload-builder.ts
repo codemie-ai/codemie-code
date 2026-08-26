@@ -57,6 +57,11 @@ export function buildPayload(
           }
         }
         const cost = costIndex.get(s.sessionId);
+        // Prefer the path the cost logic actually resolved (raw.agentSessionFile OR the
+        // correlation-file fallback — see cost-enricher.ts) over the aggregator's
+        // native-discovery-only field, so a priced session (hadLog: true) never shows
+        // "File: Not available" while its Cost card shows a real number (CR-002).
+        const agentSessionFile = cost?.agentSessionFile ?? s.agentSessionFile;
         agents.add(s.agentName);
         const skillInvocations = s.skillInvocations ?? [];
         const agentInvocations = s.agentInvocations ?? [];
@@ -101,6 +106,7 @@ export function buildPayload(
           cacheReadCostUSD: cost?.cacheReadCostUSD ?? 0,
           perModelCost: cost?.perModel ?? [],
           hadLog: cost?.hadLog ?? false,
+          ...(agentSessionFile ? { agentSessionFile } : {}),
           // Optional and additive — omitted entirely for agents that record full usage,
           // so no other agent's record changes shape.
           ...(cost?.premiumRequests !== undefined ? { premiumRequests: cost.premiumRequests } : {}),

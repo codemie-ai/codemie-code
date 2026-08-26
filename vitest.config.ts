@@ -1,9 +1,15 @@
 import { defineConfig, defineProject } from 'vitest/config';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
 const agentMaxWorkers = (() => {
   const n = parseInt(process.env.CI_AGENT_MAX_WORKERS ?? '', 10);
   return Number.isNaN(n) || n < 1 ? 2 : n;
 })();
+
+// Includes this config-eval process's pid so concurrent `vitest run` invocations
+// (e.g. two CI jobs, or a local run alongside watch mode) never share a log directory.
+const testCodemieHome = join(tmpdir(), `codemie-test-home-${process.pid}`);
 
 export default defineConfig({
   test: {
@@ -23,6 +29,7 @@ export default defineConfig({
           env: {
             FORCE_COLOR: '1',
             NODE_ENV: 'test',
+            CODEMIE_HOME: testCodemieHome,
           },
           coverage: {
             provider: 'v8',
@@ -58,6 +65,7 @@ export default defineConfig({
           env: {
             FORCE_COLOR: '1',
             NODE_ENV: 'test',
+            CODEMIE_HOME: testCodemieHome,
           },
         },
         resolve: {
@@ -80,6 +88,7 @@ export default defineConfig({
           env: {
             FORCE_COLOR: '1',
             NODE_ENV: 'test',
+            CODEMIE_HOME: testCodemieHome,
           },
         },
         resolve: {

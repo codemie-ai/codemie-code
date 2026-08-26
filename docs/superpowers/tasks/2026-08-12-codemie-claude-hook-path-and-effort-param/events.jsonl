@@ -1,0 +1,4 @@
+{"event":"lifecycle_emission","intent":"artifact_published","artifact_kind":"plan","status":"skipped"}
+{"event":"lifecycle_emission","intent":"code_review","gate":"code-review.final","decision":"request-changes","status":"succeeded"}
+{"event":"qa_gates","status":"passed","skipped":["license-check","integration-cli","integration-agent"],"reason":"environmental (npm cache / live-SSO / env-heavy) — enforced by CI"}
+{"event":"lifecycle_emission","intent":"record_complexity_score","assessment_mode":"actual","status":"skipped"}

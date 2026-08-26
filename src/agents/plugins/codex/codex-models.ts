@@ -166,6 +166,82 @@ function rankModel(model: LlmModel): RankedModel {
   };
 }
 
+/**
+ * Release date embedded in a CodeMie deployment name, e.g. `-2026-07-09`.
+ *
+ * Not anchored to end-of-string: a deployment may carry a suffix after the date
+ * (`gpt-5-2025-08-07-preview`), and anchoring would fail the match there, making
+ * the version reader take `2025` as the minor version.
+ */
+const DEPLOYMENT_DATE_PATTERN = /[-._](20\d{2})[-._](\d{2})[-._](\d{2})/;
+
+/**
+ * Split a deployment id into its generation version and its release date.
+ *
+ * The date must be removed BEFORE the version is read. `extractVersionParts`
+ * (used by the CLI ranking path) reads them from the same string, so
+ * `gpt-5-2025-08-07` parses as version [5, 2025, 8] and outranks
+ * `gpt-5.6-luna-2026-07-09`'s [5, 6, 0] — the date masquerades as a minor
+ * version. That inversion is why the CLI path needs a hardcoded gpt-5.4 bonus
+ * to compensate; this function avoids needing one.
+ */
+function splitDeploymentVersion(id: string): { version: number[]; date: number[] } {
+  const lower = id.toLowerCase();
+  const dateMatch = lower.match(DEPLOYMENT_DATE_PATTERN);
+  const date = dateMatch
+    ? [Number(dateMatch[1]), Number(dateMatch[2]), Number(dateMatch[3])]
+    : [0, 0, 0];
+
+  const withoutDate = dateMatch ? lower.slice(0, dateMatch.index) : lower;
+  const versionMatch = withoutDate.match(/gpt[-._]?(\d+)(?:[-._](\d+))?/);
+
+  return {
+    version: [Number(versionMatch?.[1] ?? 0), Number(versionMatch?.[2] ?? 0)],
+    date,
+  };
+}
+
+/**
+ * Rank Codex-compatible deployment ids newest-first.
+ *
+ * Shares the compatibility predicate with the CLI path but not its scoring: a
+ * surface that shows the model name to the user should default to the newest
+ * deployment the gateway actually offers, so there is no pinned-generation
+ * bonus, and reduced-capacity variants sort below full models of the same
+ * generation. Callers wanting a specific model pass it explicitly instead.
+ */
+export function rankCodexModelIdsByRecency(models: LlmModel[]): string[] {
+  return models
+    .filter(isCodexCompatibleModel)
+    .map((model) => {
+      const id = getModelId(model);
+      const searchText = getSearchText(model);
+      const { version, date } = splitDeploymentVersion(id);
+
+      return {
+        id,
+        score: [
+          ...version,
+          /mini|nano/i.test(searchText) ? 0 : 1,
+          ...date,
+          /codex/i.test(searchText) ? 1 : 0,
+          model.features?.tools === false ? 0 : 1,
+          model.features?.streaming === false ? 0 : 1,
+          model.default ? 1 : 0,
+        ],
+      };
+    })
+    .sort((a, b) => {
+      const max = Math.max(a.score.length, b.score.length);
+      for (let i = 0; i < max; i++) {
+        const diff = (b.score[i] ?? 0) - (a.score[i] ?? 0);
+        if (diff !== 0) return diff;
+      }
+      return a.id.localeCompare(b.id);
+    })
+    .map((entry) => entry.id);
+}
+
 function compareRankedModels(a: RankedModel, b: RankedModel): number {
   const max = Math.max(a.score.length, b.score.length);
   for (let i = 0; i < max; i++) {

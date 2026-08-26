@@ -252,8 +252,16 @@ export interface AgentMetadata {
     apiKey?: string[];             // ['ANTHROPIC_AUTH_TOKEN']
     model?: string[];              // ['ANTHROPIC_MODEL']
     haikuModel?: string[];         // ['ANTHROPIC_DEFAULT_HAIKU_MODEL']
-    sonnetModel?: string[];        // ['ANTHROPIC_DEFAULT_SONNET_MODEL', 'CLAUDE_CODE_SUBAGENT_MODEL']
+    sonnetModel?: string[];        // ['ANTHROPIC_DEFAULT_SONNET_MODEL']
     opusModel?: string[];          // ['ANTHROPIC_DEFAULT_OPUS_MODEL']
+    /**
+     * Vars that redirect the *subagent* default when the upstream agent binary would
+     * otherwise pick an unavailable tier. Only set by `transformEnvVars` on tenants that
+     * lack the upstream's own default subagent tier (e.g. haiku-only or opus-only Claude
+     * tenants). Never populated on multi-tier tenants — leaving it unset lets per-subagent
+     * `model` overrides from the Agent tool flow through (EPMCDME-14355).
+     */
+    subagentDefaultModel?: string[]; // ['CLAUDE_CODE_SUBAGENT_MODEL']
   };
 
   // === Compatibility Rules ===

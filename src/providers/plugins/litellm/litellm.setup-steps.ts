@@ -37,11 +37,13 @@ export const LiteLLMSetupSteps: ProviderSetupSteps = {
           ? `API Key for integration "${enforced.alias}" (required)${portalHint}:`
           : 'API Key (optional, leave empty if not required):',
         mask: '*',
-        validate: enforced
-          ? (input: string) =>
-              input.trim() !== '' ||
-              `API Key is required for this integration${portalHint || ' — retrieve it from your CodeMie portal'}.`
-          : undefined
+        ...(enforced
+          ? {
+              validate: (input: string) =>
+                input.trim() !== '' ||
+                `API Key is required for this integration${portalHint || ' — retrieve it from your CodeMie portal'}.`
+            }
+          : {})
       }
     ]);
 
@@ -65,7 +67,9 @@ export const LiteLLMSetupSteps: ProviderSetupSteps = {
       const models = await modelProxy.listModels();
       return models.map(m => m.id);
     } catch {
-      return LiteLLMTemplate.recommendedModels;
+      // If fetch fails, return empty so setup prompts the user to enter a
+      // model manually instead of showing a static, possibly stale list.
+      return [];
     }
   },
 

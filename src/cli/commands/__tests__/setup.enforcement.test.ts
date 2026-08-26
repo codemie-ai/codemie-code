@@ -147,7 +147,52 @@ describe('detectLiteLLMEnforcement', () => {
     await setupModule.detectLiteLLMEnforcement('https://saved.example.com');
 
     expect(vi.mocked(authHelpers.promptForCodeMieUrl)).toHaveBeenCalledWith(
-      'https://saved.example.com'
+      'https://saved.example.com',
+      'CodeMie organization URL (leave blank to skip):',
+      false
+    );
+  });
+
+  it('returns enforced:false immediately when user submits blank URL (skip path) — no SSO call', async () => {
+    vi.mocked(authHelpers.promptForCodeMieUrl).mockResolvedValue('');
+
+    const result = await setupModule.detectLiteLLMEnforcement();
+
+    expect(result.enforced).toBe(false);
+    expect(vi.mocked(authHelpers.authenticateWithCodeMie)).not.toHaveBeenCalled();
+  });
+
+  it('passes allowEmpty:true when no existingCodeMieUrl is provided', async () => {
+    vi.mocked(authHelpers.promptForCodeMieUrl).mockResolvedValue('');
+
+    await setupModule.detectLiteLLMEnforcement();
+
+    expect(vi.mocked(authHelpers.promptForCodeMieUrl)).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      true
+    );
+  });
+
+  it('passes allowEmpty:false when existingCodeMieUrl is provided', async () => {
+    vi.mocked(authHelpers.promptForCodeMieUrl).mockResolvedValue('https://saved.example.com');
+    vi.mocked(authHelpers.authenticateWithCodeMie).mockResolvedValue({
+      success: true,
+      apiUrl: 'https://saved.example.com/api',
+      cookies: { session: 'abc' }
+    });
+    vi.mocked(authHelpers.selectCodeMieProject).mockResolvedValue({
+      project: 'my-project',
+      userEmail: 'user@example.com'
+    });
+    vi.mocked(ssoClient.fetchCodeMieIntegrations).mockResolvedValue([]);
+
+    await setupModule.detectLiteLLMEnforcement('https://saved.example.com');
+
+    expect(vi.mocked(authHelpers.promptForCodeMieUrl)).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      false
     );
   });
 

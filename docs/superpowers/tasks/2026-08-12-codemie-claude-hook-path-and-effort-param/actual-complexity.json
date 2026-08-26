@@ -1,0 +1,97 @@
+{
+  "task": "EPMCDME-14035 bugfix: shared hook-command path resolver (src/utils/hook-command.ts) wired into BaseExtensionInstaller and codemie-code.plugin with one-time migration 006 for existing users, plus handleUnsupportedEffort handler added to SSO proxy claude-request-normalizer to strip the effort parameter for non-adaptive Claude models",
+  "generated": "2026-08-13T00:00:00.000Z",
+  "dimensions": {
+    "component_scope": {
+      "score": 5,
+      "label": "XL",
+      "affected": "hook-command utility, BaseExtensionInstaller base class, codemie-code.plugin, migration 006 + index, claude-request-normalizer proxy plugin",
+      "layers": "Service, Agent-Tool, DB-Persistence, External"
+    },
+    "requirements_clarity": {
+      "score": 2,
+      "label": "S",
+      "status": "Clear",
+      "gaps": null
+    },
+    "technical_risk": {
+      "score": 3,
+      "label": "M",
+      "risk_factors": "migration 006 rewrites existing user hook JSON files (data migration via migration runner); hook path resolution must never throw (handled with graceful fallback chain)",
+      "mitigation": "localizeInstalledHooks is non-fatal (catches all errors, logs warning); migration returns success:false on write failure so runner retries; resolveCodemieBinary falls back through three levels before returning bare 'codemie'"
+    },
+    "file_change_estimate": {
+      "score": 5,
+      "label": "XL",
+      "modified_files": 4,
+      "modified_file_list": [
+        "src/agents/core/extension/BaseExtensionInstaller.ts",
+        "src/agents/plugins/codemie-code.plugin.ts",
+        "src/migrations/index.ts",
+        "src/providers/plugins/sso/proxy/plugins/claude-request-normalizer.plugin.ts"
+      ],
+      "new_files": 7,
+      "new_file_list": [
+        "src/utils/hook-command.ts",
+        "src/utils/__tests__/hook-command.test.ts",
+        "src/agents/core/extension/__tests__/BaseExtensionInstaller.hooks.test.ts",
+        "src/agents/plugins/__tests__/codemie-code.hooks.test.ts",
+        "src/migrations/006-resolve-hook-command-paths.migration.ts",
+        "src/migrations/__tests__/006-resolve-hook-command-paths.migration.test.ts",
+        "src/providers/plugins/sso/proxy/plugins/__tests__/claude-request-normalizer.effort.test.ts"
+      ],
+      "affected_dirs": [
+        "src/agents",
+        "src/migrations",
+        "src/providers",
+        "src/utils"
+      ]
+    },
+    "dependencies": {
+      "score": 1,
+      "label": "XS",
+      "new_packages": [],
+      "version_changes": []
+    },
+    "affected_layers": {
+      "score": 4,
+      "label": "L",
+      "layers_changed": [
+        "Service",
+        "Agent-Tool",
+        "DB-Persistence",
+        "External"
+      ],
+      "schema_migration": true,
+      "cross_system": false
+    }
+  },
+  "total": 20,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 11,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    {
+      "dimension": "component_scope",
+      "reason": "Five distinct components touched across four subsystems (utils, agents-core, migrations, providers-sso); red flag applied — new hook-command.ts is a shared utility in src/utils/ consumed by BaseExtensionInstaller, codemie-code.plugin, and migration 006; bumped from L to XL"
+    },
+    {
+      "dimension": "file_change_estimate",
+      "reason": "Diffstat reports 11 files changed (4 modified, 7 new); maps to XL per the actual-mode file-count table (11–15 = XL); majority of new files are test files covering 20 new test cases"
+    },
+    {
+      "dimension": "affected_layers",
+      "reason": "Four distinct architectural layers: Service (hook-command utility), Agent-Tool (BaseExtensionInstaller + codemie-code.plugin), DB-Persistence (migration 006 runs via migration runner on startup), External (SSO proxy claude-request-normalizer); schema_migration true due to migration 006"
+    },
+    {
+      "dimension": "technical_risk",
+      "reason": "Bumped from S to M: migration 006 rewrites existing user hook JSON files — a data migration that must be idempotent and retry-safe; all other changes are additive with established patterns (migration 001-005 precedents, existing proxy-handler chain)"
+    }
+  ],
+  "red_flags_applied": [
+    "Component Scope bumped from L (4) to XL (5): new src/utils/hook-command.ts is a shared utility consumed across BaseExtensionInstaller, codemie-code.plugin, and migration 006 — triggers 'Touches core shared utilities' red flag",
+    "Technical Risk bumped from S (2) to M (3): migration 006 rewrites existing user hook JSON files via the project migration runner — triggers 'Requires data migration' red flag"
+  ],
+  "split_recommendation": null
+}

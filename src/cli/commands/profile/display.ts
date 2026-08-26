@@ -30,14 +30,14 @@ export class ProfileDisplay {
    * @param info - Profile information
    * @returns Formatted string
    */
-  static format(info: ProfileInfo): string {
+  static format(info: ProfileInfo, workspaceCodeMieUrl?: string): string {
     const { name, active, profile, source } = info;
 
     const baseInfo = renderProfileInfo({
       profile: name,
       provider: profile.provider || 'N/A',
       model: profile.model || 'N/A',
-      codeMieUrl: profile.codeMieUrl,
+      codeMieUrl: workspaceCodeMieUrl ?? profile.codeMieUrl,
       isActive: active
     });
 
@@ -57,7 +57,7 @@ export class ProfileDisplay {
    *
    * @param profiles - Array of profile information
    */
-  static formatList(profiles: ProfileInfo[]): void {
+  static formatList(profiles: ProfileInfo[], workspaceCodeMieUrl?: string): void {
     if (profiles.length === 0) {
       console.log(chalk.yellow('\nNo profiles found. Run "codemie setup" to create one.\n'));
       return;
@@ -66,7 +66,7 @@ export class ProfileDisplay {
     console.log(chalk.bold.cyan('\n📋 All Profiles:\n'));
 
     profiles.forEach((profile, index) => {
-      const formatted = this.format(profile);
+      const formatted = this.format(profile, workspaceCodeMieUrl);
       console.log(formatted);
 
       // Add separator between profiles except for the last one
@@ -93,7 +93,7 @@ export class ProfileDisplay {
    * @param info - Profile information
    * @param authStatus - Authentication status (optional)
    */
-  static formatStatus(info: ProfileInfo, authStatus?: AuthStatus): void {
+  static formatStatus(info: ProfileInfo, authStatus?: AuthStatus, workspaceCodeMieUrl?: string): void {
     console.log(chalk.bold.cyan('\n📋 Profile Status:\n'));
 
     const { name, active, profile } = info;
@@ -111,7 +111,7 @@ export class ProfileDisplay {
       profile: name,
       provider: profile.provider || 'N/A',
       model: profile.model || 'N/A',
-      codeMieUrl: profile.codeMieUrl,
+      codeMieUrl: workspaceCodeMieUrl ?? profile.codeMieUrl,
       authStatus: authStatusDisplay,
       isActive: active
     });

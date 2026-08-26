@@ -11,7 +11,6 @@ import type {
 } from '../../core/types.js';
 import type { CodeMieConfigOptions } from '../../../env/types.js';
 import { ProviderRegistry } from '../../core/registry.js';
-import { BedrockTemplate } from './bedrock.template.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 
@@ -322,10 +321,11 @@ export const BedrockSetupSteps: ProviderSetupSteps = {
       const chalk = (await import('chalk')).default;
       console.log(chalk.yellow('\n⚠ Could not fetch models from Bedrock'));
       console.log(chalk.dim(`  Error: ${error instanceof Error ? error.message : 'Unknown error'}`));
-      console.log(chalk.dim('  Using recommended models instead\n'));
+      console.log(chalk.dim('  You will be prompted to enter a model manually\n'));
 
-      // Fallback to recommended models
-      return BedrockTemplate.recommendedModels;
+      // Return empty so setup prompts the user to enter a model manually
+      // instead of showing a static, possibly stale list.
+      return [];
     }
   },
 

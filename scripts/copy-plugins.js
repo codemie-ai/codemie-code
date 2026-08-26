@@ -60,9 +60,9 @@ const fileConfigs = [
     dest: join(rootDir, 'dist/cli/commands/analytics/report/template.html')
   },
   {
-    name: 'Analytics pricing table',
-    src: join(rootDir, 'src/cli/commands/analytics/cost/pricing.json'),
-    dest: join(rootDir, 'dist/cli/commands/analytics/cost/pricing.json')
+    name: 'Model pricing table',
+    src: join(rootDir, 'src/utils/pricing.json'),
+    dest: join(rootDir, 'dist/utils/pricing.json')
   }
 ];
 

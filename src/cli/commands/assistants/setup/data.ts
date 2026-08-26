@@ -9,6 +9,18 @@ import type { ProviderProfile } from '@/env/types.js';
 import type { SetupCommandOptions } from './index.js';
 import { PANEL_ID, API_SCOPE, CONFIG, type PanelId } from './selection/constants.js';
 import { logger } from '@/utils/logger.js';
+import { assertApiListResponse } from '@/cli/commands/shared/api-response-guard.js';
+
+interface AssistantListResponse {
+  data: (Assistant | AssistantBase)[];
+  pagination: { total: number; pages: number };
+}
+
+function isAssistantListResponse(response: unknown): response is AssistantListResponse {
+  const r = response as Partial<AssistantListResponse> | null | undefined;
+  return !!r && typeof r === 'object' && Array.isArray(r.data) && !!r.pagination
+    && typeof r.pagination.total === 'number' && typeof r.pagination.pages === 'number';
+}
 
 export interface DataFetcherDependencies {
   config: ProviderProfile;
@@ -84,6 +96,8 @@ export function createDataFetcher(deps: DataFetcherDependencies): DataFetcher {
         scope,
         response: JSON.stringify(response, null, 2)
       });
+
+      assertApiListResponse(response, isAssistantListResponse, `${scope} assistants`);
 
       logger.debug('[AssistantSelection] Processed response', {
         dataCount: response.data.length,

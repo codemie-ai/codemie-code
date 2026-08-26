@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "generated": "2026-08-19T00:00:00Z",
+  "dimensions": {
+    "component_scope":      { "score": 4, "label": "L" },
+    "requirements_clarity": { "score": 3, "label": "M" },
+    "technical_risk":       { "score": 4, "label": "L" },
+    "file_change_estimate": { "score": 3, "label": "M" },
+    "dependencies":         { "score": 1, "label": "XS" },
+    "affected_layers":      { "score": 3, "label": "M" }
+  },
+  "total": 18,
+  "size": "M",
+  "band_range": "15-20",
+  "files_changed": 5,
+  "routing": "brainstorming",
+  "key_reasoning": [
+    { "dimension": "component_scope", "reason": "New resolver module (claude.models.ts: catalog fetch, tier-aware ranking, TTL cache, fallback logic) plus coordinated changes to claude.plugin.ts (beforeRun wiring) and anthropic-subscription.template.ts (blanking model tiers so this provider stays untouched) — 3 substantive components spanning the Agent-Tool and External/Provider layers, with a genuinely new abstraction (live model resolution) not present before." },
+    { "dimension": "technical_risk", "reason": "No exact precedent for auto-resolving Claude model tiers from a live catalog on every session start; adds a network round-trip to the beforeRun hot path (mitigated by a 5-minute TTL cache and per-tier try/catch isolation). Silent model-tier auto-switch behavior is a behavior-affecting change, though it is deliberately conservative (never overrides a still-valid explicit selection, falls back to static recommendedModels on catalog failure)." }
+  ],
+  "red_flags_applied": [],
+  "split_recommendation": null
+}
