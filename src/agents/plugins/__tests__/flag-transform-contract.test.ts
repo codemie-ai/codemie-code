@@ -38,13 +38,21 @@ async function finalArgs(meta: AgentMetadata, raw: string[]): Promise<string[]> 
 }
 
 let originalModel: string | undefined;
+let originalSessionId: string | undefined;
 beforeAll(() => {
   originalModel = process.env.CODEMIE_MODEL;
   process.env.CODEMIE_MODEL = 'test-model';
+  // pi injects --session-id only when CODEMIE_SESSION_ID is set; pin it so the
+  // pi contract is deterministic regardless of the ambient environment (CI has
+  // no CODEMIE_SESSION_ID, a codemie-agent shell does).
+  originalSessionId = process.env.CODEMIE_SESSION_ID;
+  process.env.CODEMIE_SESSION_ID = 'test-session-id';
 });
 afterAll(() => {
   if (originalModel !== undefined) process.env.CODEMIE_MODEL = originalModel;
   else delete process.env.CODEMIE_MODEL;
+  if (originalSessionId !== undefined) process.env.CODEMIE_SESSION_ID = originalSessionId;
+  else delete process.env.CODEMIE_SESSION_ID;
 });
 
 describe('flag-transform contract — --task', () => {
