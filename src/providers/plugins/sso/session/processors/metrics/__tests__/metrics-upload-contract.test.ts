@@ -107,7 +107,9 @@ describe('MetricsSender upload contract', () => {
     }
     if (originalHome === undefined) delete process.env.CODEMIE_HOME;
     else process.env.CODEMIE_HOME = originalHome;
-    rmSync(home, { recursive: true, force: true });
+    // Windows can briefly hold a handle (logger) on files under the temp home;
+    // retry and never let a cleanup failure fail the test.
+    try { rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch { /* best-effort */ }
   });
 
   it('POSTs a session-start to <baseUrl>/v1/metrics with the expected metric name and attributes', async () => {

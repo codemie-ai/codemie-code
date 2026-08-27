@@ -27,14 +27,19 @@ import { join } from 'node:path';
 let tmpHome: string;
 let originalCodemieHome: string | undefined;
 let originalHome: string | undefined;
+let originalUserProfile: string | undefined;
 
 beforeEach(() => {
   originalCodemieHome = process.env.CODEMIE_HOME;
   originalHome = process.env.HOME;
+  originalUserProfile = process.env.USERPROFILE;
   tmpHome = mkdtempSync(join(tmpdir(), 'codemie-migrations-'));
   // Both are read at migration construction time; set before any dynamic import.
   process.env.CODEMIE_HOME = tmpHome;
   process.env.HOME = tmpHome;
+  // os.homedir() reads USERPROFILE on Windows (not HOME) — set it too so 003's
+  // ~/.gemini path resolves inside the temp dir on every platform.
+  process.env.USERPROFILE = tmpHome;
 });
 
 afterEach(() => {
@@ -42,7 +47,11 @@ afterEach(() => {
   else delete process.env.CODEMIE_HOME;
   if (originalHome !== undefined) process.env.HOME = originalHome;
   else delete process.env.HOME;
-  rmSync(tmpHome, { recursive: true, force: true });
+  if (originalUserProfile !== undefined) process.env.USERPROFILE = originalUserProfile;
+  else delete process.env.USERPROFILE;
+  // maxRetries: Windows can briefly hold a handle (logger) on files under the temp
+  // home; retry, and never let a cleanup failure fail the test.
+  try { rmSync(tmpHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch { /* best-effort */ }
 });
 
 // ── 001: config.json → codemie-cli.config.json ────────────────────────────────

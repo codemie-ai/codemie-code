@@ -117,13 +117,18 @@ describe('assertExplicitCodexModelAllowed', () => {
 describe('resolveCodexModel (fetch mocked, HOME isolated)', () => {
   let tmpHome: string;
   let oldHome: string | undefined;
+  let oldUserProfile: string | undefined;
   let stderr: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     fetchMock.mockReset();
     tmpHome = mkdtempSync(join(tmpdir(), 'codex-home-'));
     oldHome = process.env.HOME;
+    oldUserProfile = process.env.USERPROFILE;
     process.env.HOME = tmpHome;
+    // os.homedir() (used by resolveHomeDir for the catalog path) reads USERPROFILE
+    // on Windows, not HOME — set it too so the catalog write stays in the temp dir.
+    process.env.USERPROFILE = tmpHome;
     stderr = vi.spyOn(console, 'error').mockImplementation(() => {});
   });
 
@@ -131,7 +136,9 @@ describe('resolveCodexModel (fetch mocked, HOME isolated)', () => {
     stderr.mockRestore();
     if (oldHome === undefined) delete process.env.HOME;
     else process.env.HOME = oldHome;
-    rmSync(tmpHome, { recursive: true, force: true });
+    if (oldUserProfile === undefined) delete process.env.USERPROFILE;
+    else process.env.USERPROFILE = oldUserProfile;
+    try { rmSync(tmpHome, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch { /* best-effort */ }
   });
 
   it('selects the top-ranked model and writes the catalog under ~/.codex/codemie', async () => {

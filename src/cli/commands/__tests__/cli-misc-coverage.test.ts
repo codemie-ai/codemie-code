@@ -202,8 +202,9 @@ describe('AnalyticsExporter', () => {
   it('getDefaultOutputPath composes cwd + dated filename per format', () => {
     const j = AnalyticsExporter.getDefaultOutputPath('json', '/x');
     const c = AnalyticsExporter.getDefaultOutputPath('csv', '/x');
-    expect(j).toMatch(/^\/x\/codemie-analytics-\d{4}-\d{2}-\d{2}\.json$/);
-    expect(c).toMatch(/^\/x\/codemie-analytics-\d{4}-\d{2}-\d{2}\.csv$/);
+    // join() uses '\' on Windows; normalize separators before matching.
+    expect(j.replace(/\\/g, '/')).toMatch(/^\/x\/codemie-analytics-\d{4}-\d{2}-\d{2}\.json$/);
+    expect(c.replace(/\\/g, '/')).toMatch(/^\/x\/codemie-analytics-\d{4}-\d{2}-\d{2}\.csv$/);
   });
 });
 

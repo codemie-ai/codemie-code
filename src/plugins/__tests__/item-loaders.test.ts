@@ -64,7 +64,8 @@ describe('discoverPluginAgents', () => {
     // Name comes from frontmatter metadata, not the filename
     expect(agent.agentName).toBe('code-reviewer');
     expect(agent.namespacedName).toBe('my-plugin:code-reviewer');
-    expect(agent.filePath).toBe(join(pluginDir, 'agents', 'reviewer.md'));
+    // Loader normalizes to forward slashes; normalize both sides for Windows.
+    expect(agent.filePath.replace(/\\/g, '/')).toBe(join(pluginDir, 'agents', 'reviewer.md').replace(/\\/g, '/'));
     expect(agent.content).toBe('You are a reviewer.');
     expect(agent.metadata).toMatchObject({
       name: 'code-reviewer',
@@ -278,8 +279,8 @@ describe('discoverPluginSkills', () => {
     expect(skill.pluginName).toBe('my-plugin');
     expect(skill.skillName).toBe('greet');
     expect(skill.namespacedName).toBe('my-plugin:greet');
-    expect(skill.filePath).toBe(
-      join(pluginDir, 'skills', 'greeter', 'SKILL.md')
+    expect(skill.filePath.replace(/\\/g, '/')).toBe(
+      join(pluginDir, 'skills', 'greeter', 'SKILL.md').replace(/\\/g, '/')
     );
     expect(skill.content).toBe('Greeting body.');
     expect(skill.metadata).toMatchObject({ name: 'greet' });

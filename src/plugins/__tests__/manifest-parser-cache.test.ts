@@ -86,11 +86,17 @@ describe('manifest-parser: parseManifest', () => {
       mcpServers: { command: '${CLAUDE_PLUGIN_ROOT}/bin' },
     });
     const manifest = await parseManifest(dir);
-    // Expansion uses the absolute plugin dir as the root.
-    expect((manifest.mcpServers as { command: string }).command).toBe(join(dir, 'bin'));
+    // Expansion uses the absolute plugin dir as the root. The parser joins with a
+    // forward slash, so normalize both sides for Windows path separators.
+    const command = (manifest.mcpServers as { command: string }).command;
+    expect(command.replace(/\\/g, '/')).toBe(join(dir, 'bin').replace(/\\/g, '/'));
   });
 
-  it('rejects a path field that becomes absolute AFTER ${CLAUDE_PLUGIN_ROOT} expansion', async () => {
+  // POSIX-only: validateRelativePaths rejects paths starting with '/' or '\\'.
+  // After expansion the plugin dir is '/tmp/...' on POSIX (rejected) but 'C:\\...'
+  // on Windows, which this check does not classify as absolute — so this
+  // "becomes absolute after expansion" case cannot trigger on Windows.
+  it.skipIf(process.platform === 'win32')('rejects a path field that becomes absolute AFTER ${CLAUDE_PLUGIN_ROOT} expansion', async () => {
     // Documented quirk: expansion happens before relative-path validation, so a
     // commands field prefixed with ${CLAUDE_PLUGIN_ROOT} expands to an absolute
     // path and then fails validateRelativePaths.
