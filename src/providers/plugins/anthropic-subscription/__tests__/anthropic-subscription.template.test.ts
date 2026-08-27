@@ -64,6 +64,31 @@ describe('AnthropicSubscriptionTemplate', () => {
       expect(env.ANTHROPIC_BASE_URL).toBe('http://localhost:1234');
     });
 
+    it('strips stale Anthropic model-tier env vars and does not mutate the original env', async () => {
+      const env: Record<string, string> = {
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: 'claude-haiku-3-5-old',
+        ANTHROPIC_DEFAULT_SONNET_MODEL: 'claude-sonnet-3-5-old',
+        ANTHROPIC_DEFAULT_OPUS_MODEL: 'claude-opus-3-old',
+        CLAUDE_CODE_SUBAGENT_MODEL: 'claude-opus-3-old',
+        OTHER_VAR: 'keep-me',
+      };
+
+      const hook = AnthropicSubscriptionTemplate.agentHooks?.['*'];
+      const result = await hook!.beforeRun!(env, { agent: 'claude' });
+
+      expect(result.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBeUndefined();
+      expect(result.ANTHROPIC_DEFAULT_SONNET_MODEL).toBeUndefined();
+      expect(result.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
+      expect(result.CLAUDE_CODE_SUBAGENT_MODEL).toBeUndefined();
+      expect(result.OTHER_VAR).toBe('keep-me');
+
+      // Must not mutate the caller's object
+      expect(env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('claude-haiku-3-5-old');
+      expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe('claude-sonnet-3-5-old');
+      expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe('claude-opus-3-old');
+      expect(env.CLAUDE_CODE_SUBAGENT_MODEL).toBe('claude-opus-3-old');
+    });
+
     it('sets CODEMIE_CLAUDE_EXTENSION_DIR when installer succeeds', async () => {
       const hook = AnthropicSubscriptionTemplate.agentHooks?.['*'];
       const result = await hook!.beforeRun!({}, { agent: 'claude' });

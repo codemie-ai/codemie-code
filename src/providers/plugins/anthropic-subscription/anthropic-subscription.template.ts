@@ -47,6 +47,19 @@ export const AnthropicSubscriptionTemplate = registerProvider<ProviderTemplate>(
         delete updated.ANTHROPIC_API_KEY;
         delete updated.ANTHROPIC_BASE_URL;
 
+        // This provider has no CodeMie model catalog to resolve against (see
+        // exportEnvVars below, which blanks CODEMIE_*_MODEL for the same reason), so
+        // claude.plugin.ts deliberately skips catalog-based tier resolution entirely
+        // for anthropic-subscription. That means nothing else ever clears these vars
+        // for this provider - a stale value left over from a shell export, a previous
+        // profile/run in the same session, or manual testing would otherwise silently
+        // and permanently pin the launched claude CLI to an outdated model. Delete them
+        // so the claude CLI always falls back to its own live-latest built-in defaults.
+        delete updated.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+        delete updated.ANTHROPIC_DEFAULT_SONNET_MODEL;
+        delete updated.ANTHROPIC_DEFAULT_OPUS_MODEL;
+        delete updated.CLAUDE_CODE_SUBAGENT_MODEL;
+
         // Reuse the Claude Code plugin hooks so local metrics/conversation files are
         // produced even though model traffic is not proxied through CodeMie.
         //
