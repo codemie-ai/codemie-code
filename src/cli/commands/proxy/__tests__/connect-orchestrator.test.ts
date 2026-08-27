@@ -302,7 +302,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
     const { writeDesktopConfig } = await import('../connectors/desktop.js');
     const { writeVsCodeLanguageModelsConfig } = await import('../connectors/vscode.js');
     vi.mocked(writeDesktopConfig).mockResolvedValue('/desktop/config.json');
-    vi.mocked(writeVsCodeLanguageModelsConfig).mockResolvedValue({ configPath: '/vscode/models.json', requiresSecretConfiguration: false });
+    vi.mocked(writeVsCodeLanguageModelsConfig).mockResolvedValue({ configPath: '/vscode/models.json', requiresSecretConfiguration: false, modelIds: ['model-a'] });
     const { connectTargets } = await import('../connect-orchestrator.js');
 
     await connectTargets({ targets: { claudeDesktop: true, vscode: true } });
@@ -319,7 +319,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
     const { writeDesktopConfig } = await import('../connectors/desktop.js');
     const { writeVsCodeLanguageModelsConfig } = await import('../connectors/vscode.js');
     vi.mocked(writeDesktopConfig).mockRejectedValue(new Error('disk full'));
-    vi.mocked(writeVsCodeLanguageModelsConfig).mockResolvedValue({ configPath: '/vscode/models.json', requiresSecretConfiguration: false });
+    vi.mocked(writeVsCodeLanguageModelsConfig).mockResolvedValue({ configPath: '/vscode/models.json', requiresSecretConfiguration: false, modelIds: ['model-a'] });
     const { connectTargets } = await import('../connect-orchestrator.js');
 
     await connectTargets({ targets: { claudeDesktop: true, vscode: true } });
@@ -381,7 +381,7 @@ describe('connectTargets — per-target dispatch, summary, partial-failure seman
   it('single successful target still prints the per-target summary (spec §3.4)', async () => {
     await withFreshDaemon();
     const { writeVsCodeLanguageModelsConfig } = await import('../connectors/vscode.js');
-    vi.mocked(writeVsCodeLanguageModelsConfig).mockResolvedValue({ configPath: '/vscode/models.json', requiresSecretConfiguration: false });
+    vi.mocked(writeVsCodeLanguageModelsConfig).mockResolvedValue({ configPath: '/vscode/models.json', requiresSecretConfiguration: false, modelIds: ['model-a'] });
     const { connectTargets } = await import('../connect-orchestrator.js');
 
     await connectTargets({ targets: { vscode: true } });

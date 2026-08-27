@@ -74,7 +74,11 @@ describe('writeVsCodeLanguageModelsConfigAtPath', () => {
     const provider = providers[0];
     const models = provider.models as Array<Record<string, unknown>>;
 
-    expect(result).toEqual({ configPath, requiresSecretConfiguration: true });
+    expect(result).toEqual({
+      configPath,
+      requiresSecretConfiguration: true,
+      modelIds: [...EXPECTED_MODEL_IDS],
+    });
     expect(provider).toMatchObject({
       name: 'CodeMie',
       vendor: 'customendpoint',

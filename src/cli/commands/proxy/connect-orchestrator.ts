@@ -36,7 +36,6 @@ import {
 import { fetchManagedMcpServers } from './connectors/managed-mcp-remote.js';
 import { writeVsCodeClaudeCodeConfig } from './connectors/vscode-claude-code.js';
 import { writeVsCodeLanguageModelsConfig } from './connectors/vscode.js';
-import { VS_CODE_SUPPORTED_MODELS } from './connectors/vscode-models.js';
 import { checkProxyHealth } from './health-check.js';
 import {
   discoverCodexModels,
@@ -442,7 +441,7 @@ async function runVscodeByok(
   verbose: boolean
 ): Promise<TargetResult> {
   try {
-    const result = await writeVsCodeLanguageModelsConfig(state.url, insiders);
+    const result = await writeVsCodeLanguageModelsConfig(state.url, state.gatewayKey, insiders);
     logger.info(
       '[proxy] VS Code BYOK configuration written',
       ...sanitizeLogArgs({
@@ -450,7 +449,7 @@ async function runVscodeByok(
         gatewayUrl: state.url,
         profile: state.profile,
         project: state.project,
-        modelCount: VS_CODE_SUPPORTED_MODELS.length,
+        modelCount: result.modelIds.length,
         clientType: state.clientType,
         requiresSecretConfiguration: result.requiresSecretConfiguration,
       })
@@ -459,7 +458,7 @@ async function runVscodeByok(
     if (verbose) {
       console.log(`  Config:  ${result.configPath}`);
       console.log(`  Gateway: ${state.url}`);
-      console.log(`  Models:  ${VS_CODE_SUPPORTED_MODELS.length}`);
+      console.log(`  Models:  ${result.modelIds.length}`);
       console.log(`  Project: ${config.codeMieProject || '(not configured)'}`);
     }
 
