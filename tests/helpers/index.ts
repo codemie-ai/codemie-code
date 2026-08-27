@@ -11,3 +11,4 @@ export { spawnPty, type PtySession } from './pty-session.js';
 export { getLatestMetricsRecord } from './metrics.js';
 export { getTestEnvFlag, getTestEnvFlagOrDefault, stripNodeModulesBin } from './test-env.js';
 export { pollForSession, type SessionPollOptions, type SessionPollResult } from './session-poll.js';
+export { runAgentTaskSmoke, type AgentSmokeOptions, type AgentSmokeRun } from './agent-smoke.js';
