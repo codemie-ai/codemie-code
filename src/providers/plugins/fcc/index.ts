@@ -1,10 +1,9 @@
 /**
- * FCC Provider - Halyk Bank Free Claude Code
+ * FCC Provider
  *
  * Auto-registers with ProviderRegistry on import.
  *
- * FCC is Halyk Bank's internal Claude Code setup that routes requests
- * through a corporate LiteLLM gateway with SSO authentication.
+ * FCC provider routes requests through a corporate LiteLLM gateway with SSO authentication.
  *
  * @packageDocumentation
  */

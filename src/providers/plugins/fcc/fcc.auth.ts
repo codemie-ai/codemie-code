@@ -1,8 +1,8 @@
 /**
  * FCC Authentication
  *
- * Handles authentication for Halyk Bank FCC provider.
- * Uses SSO session tokens and LiteLLM API keys.
+ * Handles authentication for FCC provider.
+ * Uses LiteLLM API keys.
  */
 
 import type { ProviderCredentials, ValidationResult } from '../../core/types.js';
@@ -31,17 +31,17 @@ export async function validateFCCCredentials(
 
   // Required: LiteLLM API key
   if (!credentials.fccLiteLLMKey) {
-    errors.push('FCC LiteLLM API key is required. Request it from Дамир Бахтияров or Алышер Сағидолдаев.');
+    errors.push('FCC LiteLLM API key is required.');
   }
 
   // Required: Server URL
   if (!credentials.fccServerUrl) {
-    errors.push('FCC server URL is required (default: https://fcc-server-spmng.apps.spm3-dev-rz.halykbank.nb)');
+    errors.push('FCC server URL is required.');
   }
 
-  // Required: Anthropic auth token
+  // Required: Auth token
   if (!credentials.authToken) {
-    errors.push('ANTHROPIC_AUTH_TOKEN is required (default: freecc for FCC)');
+    errors.push('Auth token is required.');
   }
 
   // Validate server URL format

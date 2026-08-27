@@ -1,7 +1,7 @@
 /**
  * FCC Setup Steps
  *
- * Interactive setup wizard for Halyk Bank Free Claude Code (FCC).
+ * Interactive setup wizard for FCC (Free Claude Code).
  * Implements ProviderSetupSteps interface for integration with CodeMie CLI setup wizard.
  */
 
@@ -35,20 +35,19 @@ export class FCCSetupStepsImpl implements ProviderSetupSteps {
    * Prompts for:
    * - FCC LiteLLM API key (required)
    * - FCC server URL (optional, has default)
-   * - Auth token (optional, defaults to 'freecc')
    */
   async getCredentials(isUpdate?: boolean, context?: SetupContext): Promise<FCCSetupCredentials> {
     console.log();
-    console.log(chalk.bold.cyan('🏦 Halyk FCC (Free Claude Code) Setup\n'));
-    console.log(chalk.dim('  FCC is Halyk Bank\'s internal Claude Code deployment via LiteLLM gateway.\n'));
+    console.log(chalk.bold.cyan('📡 FCC (Free Claude Code) Setup\n'));
+    console.log(chalk.dim('  FCC is a  Claude Code deployment via LiteLLM gateway.\n'));
 
     // Check if we have credentials in env
     const envCredentials = getFCCCredentialsFromEnv();
 
     // If updating and credentials exist in env, use them as defaults
     const existingKey = envCredentials.fccLiteLLMKey || '';
-    const existingUrl = envCredentials.fccServerUrl || 'https://fcc-server-spmng.apps.spm3-dev-rz.halykbank.nb';
-    const existingToken = envCredentials.authToken || 'freecc';
+    const existingUrl = envCredentials.fccServerUrl || '';
+    const existingToken = envCredentials.authToken || '';
 
     // Prompt for FCC LiteLLM API key
     const { fccLiteLLMKey } = await inquirer.prompt([
@@ -58,7 +57,7 @@ export class FCCSetupStepsImpl implements ProviderSetupSteps {
         message: 'Enter your FCC LiteLLM API key:',
         default: existingKey || undefined,
         validate: (input: string) => {
-          if (!input.trim()) return 'FCC LiteLLM API key is required. Request it from Дамир Бахтияров or Алышер Сағидолдаев.';
+          if (!input.trim()) return 'FCC LiteLLM API key is required.';
           return true;
         },
       },

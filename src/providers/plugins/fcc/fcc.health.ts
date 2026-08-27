@@ -1,7 +1,7 @@
 /**
  * FCC Health Check
  *
- * Health check implementation for Halyk Bank FCC provider.
+ * Health check implementation for FCC provider.
  * Verifies connectivity to the corporate LiteLLM gateway.
  */
 

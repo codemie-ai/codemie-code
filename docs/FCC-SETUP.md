@@ -1,8 +1,8 @@
 # FCC (Free Claude Code) Setup Guide
 
-**For Halyk Bank Corporate Users**
+**For  Users**
 
-This guide explains how to set up and use FCC (Free Claude Code), Halyk Bank's internal Claude Code deployment that routes requests through the corporate LiteLLM gateway with SSO authentication.
+This guide explains how to set up and use FCC (Free Claude Code), a  Claude Code deployment that routes requests through the LiteLLM gateway with SSO authentication.
 
 ---
 
@@ -24,8 +24,8 @@ Before installing FCC, ensure you have:
 
 ### Required Access
 
-- **GitLab Access**: Membership in `spm-api` group on GitLab (`gitlab.halykbank.nb`)
-- **API Key**: FCC LiteLLM API key (request from **Дамир Бахтияров** or **Алышер Сағидолдаев**)
+- **GitLab Access**: Membership in the appropriate GitLab group
+- **API Key**: FCC LiteLLM API key (request from your system administrator)
 - **Local Admin Rights**: Required for PowerShell commands and software installation
 
 ### System Requirements
@@ -41,9 +41,8 @@ Before installing FCC, ensure you have:
 
 If you're behind the corporate proxy, you'll need proxy access:
 
-- **Proxy URL**: `http://172.26.66.21:8080`
-- **Access Request**: Submit ticket via Ivanti → "Пользовательский доступ к интернет ресурсам"
-- **Example Ticket**: #2415385 (reference ticket)
+- **Proxy URL**: Configure via environment variables
+- **Access Request**: Submit ticket via your IT service desk
 
 ---
 
@@ -51,14 +50,9 @@ If you're behind the corporate proxy, you'll need proxy access:
 
 The fastest way to install FCC is using the automated PowerShell script:
 
-### Step 1: Copy Installation Script
+### Step 1: Get Installation Script
 
-Copy the script from:
-```
-W:\IT_\ДАБП\ДАБП\Alisher\install-fcc.ps1
-```
-
-Save it to your Desktop or a convenient location.
+Obtain the installation script from your system administrator.
 
 ### Step 2: Run Installation Script
 
@@ -74,7 +68,7 @@ cd C:\Users\<YourUsername>\Desktop
 After installation, set these environment variables:
 
 ```powershell
-$env:ANTHROPIC_AUTH_TOKEN = "freecc"
+$env:ANTHROPIC_AUTH_TOKEN = ""
 $env:FCC_LITELLM_KEY = "<Your API Key>"
 $env:PATH += ";C:\Users\<YourUsername>\.local\bin"
 ```
@@ -146,15 +140,15 @@ npm install -g @anthropic-ai/claude-code
 **If behind corporate proxy:**
 
 ```powershell
-npm config set proxy http://172.26.66.21:8080
-npm config set https-proxy http://172.26.66.21:8080
+npm config set proxy http://your-proxy-server:port
+npm config set https-proxy http://your-proxy-server:port
 npm install -g @anthropic-ai/claude-code
 ```
 
 ### 3.5 Install FCC
 
 ```powershell
-uv tool install --force --reinstall git+https://gitlab.halykbank.nb/spm-api/genai/localclaude.git
+uv tool install --force --reinstall git+https://your-gitlab-server/your-org/localclaude.git
 ```
 
 ### 3.6 Create Configuration
@@ -163,8 +157,8 @@ Create `~/.fcc/.env` file:
 
 ```env
 # Free Claude Code Configuration
-FCC_SERVER_URL=https://fcc-server-spmng.apps.spm3-dev-rz.halykbank.nb
-ANTHROPIC_AUTH_TOKEN=freecc
+FCC_SERVER_URL=https://your-fcc-server-url
+ANTHROPIC_AUTH_TOKEN=your-auth-token
 ```
 
 ---
@@ -175,11 +169,11 @@ ANTHROPIC_AUTH_TOKEN=freecc
 
 | Variable | Description | Default | Required |
 |----------|-------------|---------|----------|
-| `ANTHROPIC_AUTH_TOKEN` | Auth token for Claude Code | `freecc` | ✅ |
+| `ANTHROPIC_AUTH_TOKEN` | Auth token for Claude Code | - | ✅ |
 | `FCC_LITELLM_KEY` | FCC LiteLLM API key | - | ✅ |
-| `FCC_SERVER_URL` | FCC server URL | `https://fcc-server-spmng.apps.spm3-dev-rz.halykbank.nb` | ❌ |
-| `HTTP_PROXY` | Corporate proxy URL | `http://172.26.66.21:8080` | ❌ |
-| `HTTPS_PROXY` | Corporate proxy URL | `http://172.26.66.21:8080` | ❌ |
+| `FCC_SERVER_URL` | FCC server URL | - | ❌ |
+| `HTTP_PROXY` | Corporate proxy URL | - | ❌ |
+| `HTTPS_PROXY` | Corporate proxy URL | - | ❌ |
 
 ### Permanent Environment Variables (Windows)
 
@@ -187,7 +181,7 @@ To set environment variables permanently:
 
 1. Open **System Properties** → **Advanced** → **Environment Variables**
 2. Add **User variables**:
-   - `ANTHROPIC_AUTH_TOKEN` = `freecc`
+   - `ANTHROPIC_AUTH_TOKEN` = `<your auth token>`
    - `FCC_LITELLM_KEY` = `<your key>`
    - Add `C:\Users\<YourUsername>\.local\bin` to `PATH`
 
@@ -196,7 +190,7 @@ To set environment variables permanently:
 If you have CodeMie CLI installed, you can create a profile:
 
 ```bash
-codemie profile create halyk-fcc
+codemie profile create fcc
 # Follow prompts to enter:
 # - Provider: fcc
 # - FCC LiteLLM Key: <your key>
@@ -232,7 +226,7 @@ After setting up the FCC provider in CodeMie:
 codemie-claude --provider fcc "Refactor this module"
 
 # Create a new profile
-codemie profile create halyk-work
+codemie profile create fcc-work
 
 # List available models
 codemie models list --provider fcc
@@ -254,12 +248,11 @@ Caused by: tunnel error: proxy authorization required
 
 **Solution:**
 
-Submit Ivanti request:
-- **Service**: Пользовательский доступ к интернет ресурсам
+Submit IT access request:
+- **Service**: User internet access request
 - **PC Name**: Your computer name
 - **IP Address**: Your IP
 - **Phone**: Your contact number
-- **Reference**: Ticket #2415385
 
 #### 2. Python Installation Fails
 
@@ -274,8 +267,8 @@ uv python install 3.14.6
 Set proxy variables explicitly:
 
 ```powershell
-$env:HTTP_PROXY = "http://172.26.66.21:8080"
-$env:HTTPS_PROXY = "http://172.26.66.21:8080"
+$env:HTTP_PROXY = "http://your-proxy-server:port"
+$env:HTTPS_PROXY = "http://your-proxy-server:port"
 $env:UV_PYTHON_INSTALL_MIRROR = "https://github.com/indygreg/python-build-standalone/releases/download"
 uv python install 3.14.6
 ```
@@ -372,14 +365,12 @@ If `.npmrc` has old proxy settings:
 
 **Error:**
 ```
-fatal: Authentication failed for 'https://gitlab.halykbank.nb/...'
+fatal: Authentication failed for 'https://your-gitlab-server/...'
 ```
 
 **Solution:**
 
-Request access to `spm-api` group on GitLab. Contact:
-- **Дамир Бахтияров**
-- **Алышер Сағидолдаев**
+Request access to the appropriate GitLab group. Contact your system administrator.
 
 ### 7.4 Microsoft Desktop App Installer Missing
 
@@ -397,9 +388,9 @@ Get-AppxPackage -AllUsers -Name "Microsoft.DesktopAppInstaller" | Foreach {
 
 If you encounter issues not covered in this guide:
 
-1. Check the [install-fcc.ps1](../install/windows/install-fcc.ps1) script for latest installation logic
-2. Contact **Дамир Бахтияров** or **Алышер Сағидолдаев**
-3. Reference ticket #2415385 for network access issues
+1. Check the installation script for latest installation logic
+2. Contact your system administrator
+3. Reference your IT ticket for network access issues
 
 ---
 
@@ -414,10 +405,10 @@ uv python install 3.14.6
 node -v  # Check version (must be 18+)
 winget install --id OpenJS.NodeJS --source winget  # If needed
 npm install -g @anthropic-ai/claude-code
-uv tool install --force --reinstall git+https://gitlab.halykbank.nb/spm-api/genai/localclaude.git
+uv tool install --force --reinstall git+https://your-gitlab-server/your-org/localclaude.git
 
 # Set environment variables
-$env:ANTHROPIC_AUTH_TOKEN = "freecc"
+$env:ANTHROPIC_AUTH_TOKEN = "<your-auth-token>"
 $env:FCC_LITELLM_KEY = "<API Key>"
 $env:PATH += ";C:\Users\$env:USERNAME\.local\bin"
 

@@ -47,7 +47,7 @@ codemie doctor
 codemie install claude --supported
 codemie install codex --supported
 codemie install copilot
-codemie install fcc  # Halyk Bank corporate users only
+codemie install fcc  # Corporate users only
 codemie-claude "Review my API code"
 codemie-codex "Refactor this service"
 codemie-copilot --task "Summarize this module"
@@ -302,7 +302,7 @@ A profile binds an agent to a provider. Run `codemie setup` to create one, or `c
 | Provider | Auth | Use case |
 |---|---|---|
 | CodeMie SSO | enterprise SSO | Enterprise default — centralized model management, proxy routing, analytics |
-| **Halyk FCC** | **SSO + LiteLLM API key** | **Halyk Bank internal Claude Code via corporate gateway** |
+| **FCC** | **SSO + LiteLLM API key** | **Claude Code via LiteLLM gateway** |
 | Bearer Authorization | JWT via CLI or env var | CI, service accounts, self-hosted gateways |
 | LiteLLM | API key | Universal gateway to 100+ LLM providers (OpenAI, Azure, Vertex, …) |
 | AWS Bedrock | AWS access key + secret | Claude, Llama, Mistral & more via Amazon Bedrock |
@@ -310,7 +310,7 @@ A profile binds an agent to a provider. Run `codemie setup` to create one, or `c
 | Anthropic Subscription | native Claude Code login | Bring your own Claude subscription |
 | Moonshot Subscription | native Kimi Code login | Bring your own Moonshot subscription (Kimi Code) |
 
-**Halyk FCC Setup:** For Halyk Bank employees, FCC (Free Claude Code) provides access to Claude models through the corporate LiteLLM gateway. See [FCC Setup Guide](docs/FCC-SETUP.md) for installation and configuration.
+**FCC Setup:** FCC (Free Claude Code) provides access to Claude models through a  LiteLLM gateway. See [FCC Setup Guide](docs/FCC-SETUP.md) for installation and configuration.
 
 See [Authentication](docs/AUTHENTICATION.md) and [Configuration](docs/CONFIGURATION.md) for setup details.
 

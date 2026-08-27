@@ -1,8 +1,8 @@
 /**
- * FCC Provider - Halyk Bank Free Claude Code
+ * FCC Provider
  *
- * Provider template for Halyk Bank's internal Free Claude Code (FCC) setup.
- * FCC routes Claude Code requests through a corporate LiteLLM gateway with SSO authentication.
+ * Provider template for FCC setup.
+ * FCC routes requests through a corporate LiteLLM gateway with SSO authentication.
  */
 
 import { registerProvider } from '../../core/decorators.js';
@@ -12,25 +12,24 @@ import type { CodeMieConfigOptions } from '../../../env/types.js';
 /**
  * FCC Provider Template
  *
- * This provider is designed for Halyk Bank's corporate environment:
- * - Uses internal LiteLLM gateway (fcc-server-spmng.apps.spm3-dev-rz.halykbank.nb)
+ * This provider is designed for  environments:
+ * - Uses internal LiteLLM gateway
  * - Requires SSO authentication via session cookies
  * - Supports Claude models through corporate proxy
- * - Integrated with corporate analytics and audit logging
  */
 export const FCC_PROVIDER: ProviderTemplate = {
   name: 'fcc',
-  displayName: 'Halyk FCC (Free Claude Code)',
-  description: 'Halyk Bank internal Claude Code via LiteLLM gateway with SSO',
+  displayName: 'FCC (Free Claude Code)',
+  description: 'Corporate Claude Code via LiteLLM gateway with SSO',
 
   // Connectivity
-  defaultBaseUrl: 'https://fcc-server-spmng.apps.spm3-dev-rz.halykbank.nb',
+  defaultBaseUrl: '',
   requiresAuth: true,
   authType: 'sso',
 
   // UI & UX
-  priority: 3, // High priority for corporate users
-  defaultProfileName: 'halyk-fcc',
+  priority: 3,
+  defaultProfileName: 'fcc',
   recommendedModels: ['claude-sonnet-4-5-20250929', 'claude-opus-4-5-20250929'],
 
   // Capabilities

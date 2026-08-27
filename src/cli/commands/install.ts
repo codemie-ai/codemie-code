@@ -84,9 +84,9 @@ export function createInstallCommand(): Command {
           console.log(`    Status: ${statuslineStatus}`);
           console.log(`    ${chalk.white(STATUSLINE_DESCRIPTION)}`);
           console.log();
-          console.log(chalk.bold(`  Halyk FCC (Free Claude Code)`));
+          console.log(chalk.bold(`  FCC (Free Claude Code)`));
           console.log(`    Command: ${chalk.cyan('codemie install fcc')}`);
-          console.log(`    ${chalk.white('Halyk Bank internal Claude Code via LiteLLM gateway')}`);
+          console.log(`    ${chalk.white('Claude Code via LiteLLM gateway with SSO')}`);
           console.log();
 
           console.log(chalk.cyan('💡 Tip:') + ' Run ' + chalk.blueBright('codemie install <name>') + ' to install an agent or framework');
@@ -313,8 +313,8 @@ export function createInstallCommand(): Command {
           return;
         }
 
-        // FCC (Free Claude Code) - Halyk Bank corporate deployment
-        if (name === 'fcc' || name === 'halyk-fcc') {
+        // FCC (Free Claude Code) -  deployment
+        if (name === 'fcc') {
           await handleFCCInstall(options || {});
           return;
         }
@@ -350,13 +350,13 @@ export function createInstallCommand(): Command {
 }
 
 /**
- * Install FCC (Free Claude Code) for Halyk Bank corporate users
+ * Install FCC (Free Claude Code) for  users
  *
- * FCC is Halyk Bank's internal Claude Code deployment that routes requests
+ * FCC is a  Claude Code deployment that routes requests
  * through the corporate LiteLLM gateway with SSO authentication.
  *
  * This function:
- * 1. Checks for GitLab access (spm-api group)
+ * 1. Checks for GitLab access
  * 2. Installs uv (Python package manager) if needed
  * 3. Checks/installs Node.js 18+ if needed
  * 4. Installs Claude Code CLI via npm
@@ -373,8 +373,8 @@ async function handleFCCInstall(options: { verbose?: boolean; supported?: boolea
   const inquirer = (await import('inquirer')).default;
 
   console.log();
-  console.log(chalk.bold.cyan('🏦 Halyk FCC (Free Claude Code) Installation\n'));
-  console.log(chalk.dim('  FCC is Halyk Bank\'s internal Claude Code deployment via LiteLLM gateway.\n'));
+  console.log(chalk.bold.cyan('📡 FCC (Free Claude Code) Installation\n'));
+  console.log(chalk.dim('  FCC is a Claude Code deployment via LiteLLM gateway.\n'));
 
   // Step 1: Check GitLab access
   console.log(chalk.white('Step 1/6: Checking GitLab access...'));
@@ -382,16 +382,14 @@ async function handleFCCInstall(options: { verbose?: boolean; supported?: boolea
     {
       type: 'confirm',
       name: 'confirmGitLab',
-      message: 'Do you have access to the spm-api group on GitLab (gitlab.halykbank.nb)?',
+      message: 'Do you have access to the  GitLab repository?',
       default: true,
     },
   ]);
 
   if (!confirmGitLab) {
-    console.log(chalk.yellow('\n⚠️  GitLab access is required to install FCC.'));
-    console.log(chalk.white('   Request access from:'));
-    console.log(chalk.cyan('   • Дамир Бахтияров'));
-    console.log(chalk.cyan('   • Алышер Сағидолдаев\n'));
+    console.log(chalk.yellow('\nGitLab access is required to install FCC.'));
+    console.log(chalk.white('   Request access from your system administrator.\n'));
     process.exit(1);
   }
   console.log(chalk.green('✓ GitLab access confirmed\n'));
@@ -517,9 +515,9 @@ async function handleFCCInstall(options: { verbose?: boolean; supported?: boolea
   // FCC installation from GitLab requires corporate network access.
   // Users should install FCC manually when connected to corporate network.
   console.log(chalk.white('Step 5/7: Installing FCC from GitLab...'));
-  console.log(chalk.yellow('⊘ Skipped: Requires corporate network access\n'));
-  console.log(chalk.dim('  To install FCC manually when in the office:\n'));
-  console.log(chalk.blueBright('  uv tool install git+https://gitlab.halykbank.nb/spm-api/genai/localclaude.git\n'));
+  console.log(chalk.yellow('⊘ Skipped: Requires  network access\n'));
+  console.log(chalk.dim('  To install FCC manually:\n'));
+  console.log(chalk.blueBright('  uv tool install git+https://your-gitlab-server/your-org/localclaude.git\n'));
 
   // Step 6: Get FCC LiteLLM API key
   console.log(chalk.white('Step 6/6: Configuring FCC API key...'));
@@ -543,8 +541,8 @@ async function handleFCCInstall(options: { verbose?: boolean; supported?: boolea
   try {
     await fs.mkdir(fccDir, { recursive: true });
 
-    const serverUrl = process.env.FCC_SERVER_URL || 'https://fcc-server-spmng.apps.spm3-dev-rz.halykbank.nb';
-    const authToken = 'freecc';
+    const serverUrl = process.env.FCC_SERVER_URL || '';
+    const authToken = '' + (process.env.ANTHROPIC_AUTH_TOKEN || ''); // Empty string if not set
 
     const envContent = `# Free Claude Code Configuration
 # Generated: ${new Date().toISOString()}
@@ -564,8 +562,8 @@ FCC_LITELLM_KEY=${fccLiteLLMKey}
   console.log();
   console.log(chalk.bold.green('✅ FCC setup completed!\n'));
   console.log(chalk.cyan('💡 Next steps:\n'));
-  console.log(chalk.white('   1. When connected to corporate network, install FCC:'));
-  console.log(chalk.blueBright('      uv tool install git+https://gitlab.halykbank.nb/spm-api/genai/localclaude.git'));
+  console.log(chalk.white('   1. Install FCC from your  GitLab:'));
+  console.log(chalk.blueBright('      uv tool install git+https://your-gitlab-server/your-org/localclaude.git'));
   console.log();
   console.log(chalk.white('   2. Run FCC Claude (after FCC installation):'));
   console.log(chalk.blueBright('      fcc-claude'));

@@ -1,7 +1,7 @@
 /**
  * FCC Model Fetcher
  *
- * Model fetching for Halyk Bank FCC provider.
+ * Model fetching for FCC provider.
  * Lists available Claude models through the corporate LiteLLM gateway.
  */
 
