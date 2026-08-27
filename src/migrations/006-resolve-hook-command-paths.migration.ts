@@ -12,7 +12,6 @@ import { logger } from '../utils/logger.js';
 class RewriteHookCommandPathsMigration implements Migration {
   id = '006-resolve-hook-command-paths';
   description = 'Rewrite installed Claude/Gemini hook commands to the absolute codemie path';
-  minVersion = '0.1.0';
 
   private hookFiles(): string[] {
     return [

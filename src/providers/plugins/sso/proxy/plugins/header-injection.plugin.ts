@@ -30,7 +30,11 @@ class HeaderInjectionInterceptor implements ProxyInterceptor {
   async onRequest(context: ProxyContext): Promise<void> {
     // Request and session ID headers
     context.headers['X-CodeMie-Request-ID'] = context.requestId;
-    context.headers['X-CodeMie-Session-ID'] = context.sessionId;
+    // Omit the session header entirely when there is no real session id, rather
+    // than forwarding the 'unknown' sentinel that context.sessionId defaults to.
+    if (context.sessionId && context.sessionId !== 'unknown') {
+      context.headers['X-CodeMie-Session-ID'] = context.sessionId;
+    }
 
     // LiteLLM can use these headers for Responses API session affinity when
     // its router is configured with session-aware pre-call checks.

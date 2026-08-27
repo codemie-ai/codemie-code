@@ -205,7 +205,9 @@ export const CopilotCliPluginMetadata: AgentMetadata = {
     enrichArgs(args: string[], _config: AgentConfig): string[] {
       const enriched = [...args];
 
-      const hasPrompt = enriched.includes('-p') || enriched.includes('--prompt');
+      // --task is CodeMie's prompt flag (rewritten to --prompt later by flagMappings);
+      // detect it here too so a non-interactive `--task` run still gets tool auto-approval.
+      const hasPrompt = enriched.includes('-p') || enriched.includes('--prompt') || enriched.includes('--task');
       const hasAutoApproval = enriched.includes('--allow-all') || enriched.includes('--allow-all-tools') || enriched.includes('--yolo');
       const hasModel = enriched.includes('--model');
 

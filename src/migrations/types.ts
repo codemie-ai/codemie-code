@@ -14,10 +14,7 @@ export interface Migration {
   /** Human-readable description */
   description: string;
 
-  /** Minimum CLI version required (e.g., '0.1.0') */
-  minVersion?: string;
-
-  /** Version when migration becomes obsolete (e.g., '1.0.0') */
+  /** Version when migration becomes obsolete (e.g., '1.0.0'); used by MigrationTracker.cleanupDeprecated */
   deprecatedIn?: string;
 
   /** Execute the migration */

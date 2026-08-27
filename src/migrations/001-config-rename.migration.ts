@@ -15,7 +15,6 @@ import { getCodemieHome } from '../utils/paths.js';
 class ConfigRenameMigration implements Migration {
   id = '001-config-rename';
   description = 'Rename config.json to codemie-cli.config.json';
-  minVersion = '0.1.0';
   deprecatedIn = '1.0.0';
 
   private readonly GLOBAL_DIR = getCodemieHome();

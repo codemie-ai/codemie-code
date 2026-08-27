@@ -5,6 +5,7 @@ import { GeminiSessionAdapter } from './gemini.session-adapter.js';
 import type { SessionAdapter } from '../../core/session/BaseSessionAdapter.js';
 import { GeminiExtensionInstaller } from './gemini.extension-installer.js';
 import type { BaseExtensionInstaller } from '../../core/extension/BaseExtensionInstaller.js';
+import { validateGeminiModel } from './gemini.models.js';
 
 /**
  * Supported Gemini CLI version
@@ -167,6 +168,12 @@ export const GeminiPluginMetadata: AgentMetadata = {
           }
         }
       );
+
+      // Fail fast with a clear, actionable message when the configured model is
+      // not a valid Gemini deployment — otherwise the upstream rejects it with an
+      // opaque HTTP 400 ("Invalid model name…"). Best-effort: skips silently when
+      // the catalog can't be fetched. Ref EPMCDME-14421.
+      await validateGeminiModel(env);
 
       return env;
     }
