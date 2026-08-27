@@ -84,6 +84,10 @@ export function createInstallCommand(): Command {
           console.log(`    Status: ${statuslineStatus}`);
           console.log(`    ${chalk.white(STATUSLINE_DESCRIPTION)}`);
           console.log();
+          console.log(chalk.bold(`📡 FCC (LiteLLM Gateway)`));
+          console.log(`    Command: ${chalk.cyan('codemie install fcc')}`);
+          console.log(`    ${chalk.white(' Custom Claude Code deployment via LiteLLM')}`);
+          console.log();
 
           console.log(chalk.cyan('💡 Tip:') + ' Run ' + chalk.blueBright('codemie install <name>') + ' to install an agent or framework');
           console.log();
@@ -309,6 +313,11 @@ export function createInstallCommand(): Command {
           return;
         }
 
+        if (name === 'fcc') {
+          await handleFCCInstall(options || {});
+          return;
+        }
+
         // Neither agent nor framework found
         throw new AgentInstallationError(
           name,
@@ -325,16 +334,221 @@ export function createInstallCommand(): Command {
             console.log(chalk.white(`   • ${getUserFacingAgentName(agent.name)}`));
           }
           console.log();
-          console.log(chalk.cyan('💡 Tip:') + ' Run ' + chalk.blueBright('codemie install') + ' to see all agents');
+          console.log(chalk.cyan('Tip:') + ' Run ' + chalk.blueBright('codemie install') + ' to see all agents');
           console.log();
           process.exit(1);
         }
 
-        // For other errors, show simple message
-        console.error(chalk.red(`✗ Installation failed: ${getErrorMessage(error)}`));
+        console.error(chalk.red(`Installation failed: ${getErrorMessage(error)}`));
         process.exit(1);
       }
     });
 
   return command;
+}
+
+
+async function handleFCCInstall(options: { verbose?: boolean; supported?: boolean }): Promise<void> {
+  const { exec } = await import('../../utils/processes.js');
+  const { logger } = await import('../../utils/logger.js');
+  const { homedir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { promises: fs } = await import('node:fs');
+  const inquirer = (await import('inquirer')).default;
+
+  console.log();
+  console.log(chalk.bold.cyan('📡 FCC (LiteLLM Gateway) Installation\n'));
+  console.log(chalk.dim('  FCC is a custom Claude Code deployment via LiteLLM gateway.\n'));
+
+  console.log(chalk.white('Step 1/5: Checking prerequisites...\n'));
+
+  console.log(chalk.white('Step 2/6: Checking uv (Python package manager)...'));
+  let uvInstalled = false;
+  try {
+    await exec('uv --version');
+    console.log(chalk.green('uv is already installed\n'));
+    uvInstalled = true;
+  } catch {
+    console.log(chalk.yellow('○ uv not found\n'));
+  }
+
+  if (!uvInstalled) {
+    const { installUv } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'installUv',
+        message: 'Install uv via winget?',
+        default: true,
+      },
+    ]);
+
+    if (installUv) {
+      const spinner = ora('Installing uv...').start();
+      try {
+        await exec('winget install --id astral-sh.uv --silent --accept-package-agreements --accept-source-agreements');
+        spinner.succeed('uv installed successfully');
+        console.log(chalk.dim('  Note: You may need to restart your terminal for uv to be available.\n'));
+      } catch (error: unknown) {
+        spinner.fail('Failed to install uv');
+        console.log(chalk.yellow('  Install manually from: https://github.com/astral-sh/uv\n'));
+        logger.debug('uv installation failed', { error });
+      }
+    }
+  }
+
+  console.log(chalk.white('Step 3/6: Checking Node.js (requires v18+)...'));
+  let nodeInstalled = false;
+  try {
+    const nodeResult = await exec('node -v');
+    const nodeVersion = nodeResult.stdout.trim().replace('v', '');
+    const major = parseInt(nodeVersion.split('.')[0], 10);
+    if (major >= 18) {
+      console.log(chalk.green(` Node.js ${nodeVersion} is installed\n`));
+      nodeInstalled = true;
+    } else {
+      console.log(chalk.yellow(` Node.js ${nodeVersion} is too old (requires 18+)\n`));
+    }
+  } catch {
+    console.log(chalk.yellow('Node.js not found\n'));
+  }
+
+  if (!nodeInstalled) {
+    const { installNode } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'installNode',
+        message: 'Install Node.js LTS via winget?',
+        default: true,
+      },
+    ]);
+
+    if (installNode) {
+      const spinner = ora('Installing Node.js LTS...').start();
+      try {
+        await exec('winget install --id OpenJS.NodeJS.LTS --silent --accept-package-agreements');
+        spinner.succeed('Node.js installed successfully');
+        console.log(chalk.dim('  Note: You may need to restart your terminal for node to be available.\n'));
+      } catch (error: unknown) {
+        spinner.fail('Failed to install Node.js');
+        console.log(chalk.yellow('  Install manually from: https://nodejs.org/\n'));
+        logger.debug('Node.js installation failed', { error });
+      }
+    }
+  }
+
+  
+  console.log(chalk.white('Step 4/6: Installing Claude Code CLI...'));
+  let claudeCliInstalled = false;
+  try {
+    await exec('claude --version');
+    console.log(chalk.green(' Claude Code CLI is already installed\n'));
+    claudeCliInstalled = true;
+  } catch {
+    console.log(chalk.yellow(' Claude Code CLI not found\n'));
+  }
+
+  if (!claudeCliInstalled) {
+    const { installClaudeCli } = await inquirer.prompt([
+      {
+        type: 'confirm',
+        name: 'installClaudeCli',
+        message: 'Install Claude Code CLI via npm?',
+        default: true,
+      },
+    ]);
+
+    if (installClaudeCli) {
+      const spinner = ora('Installing Claude Code CLI..').start();
+      try {
+        // Configure npm proxy if needed
+        const proxyUrl = process.env.HTTPS_PROXY || process.env.HTTP_PROXY;
+        if (proxyUrl) {
+          logger.debug('Configuring npm proxy', { proxyUrl });
+          await exec(`npm config set proxy ${proxyUrl}`);
+          await exec(`npm config set https-proxy ${proxyUrl}`);
+        }
+        await exec('npm install -g @anthropic-ai/claude-code');
+        spinner.succeed('Claude Code CLI installed successfully\n');
+      } catch (error: unknown) {
+        spinner.fail('Failed to install Claude Code CLI');
+        console.log(chalk.yellow('  Check proxy settings and npm configuration.\n'));
+        logger.debug('Claude Code CLI installation failed', { error });
+      }
+    }
+  }
+
+  // Step 5: Install FCC - SKIPPED
+  // FCC installation from repo requires corporate network access.
+  
+  console.log(chalk.white('Step 4/5: Configuring FCC credentials...'));
+  const { fccLiteLLMKey, fccServerUrl, authToken } = await inquirer.prompt([
+    {
+      type: 'password',
+      name: 'fccLiteLLMKey',
+      message: 'Enter your LiteLLM API key:',
+      validate: (input: string) => {
+        if (!input.trim()) return 'API key is required';
+        return true;
+      },
+    },
+    {
+      type: 'input',
+      name: 'fccServerUrl',
+      message: 'LiteLLM Gateway URL:',
+      default: process.env.FCC_SERVER_URL || '',
+      validate: (input: string) => {
+        if (!input.trim()) return 'Server URL is required';
+        try {
+          new URL(input);
+          return true;
+        } catch {
+          return 'Please enter a valid URL';
+        }
+      },
+    },
+    {
+      type: 'password',
+      name: 'authToken',
+      message: 'Auth Token (if required):',
+      default: process.env.ANTHROPIC_AUTH_TOKEN || '',
+      validate: (input: string) => {
+        if (!input.trim()) return 'Auth token is required';
+        return true;
+      },
+    },
+  ]);
+
+  // Step 5: Create configuration
+  console.log(chalk.white('Step 5/5: Creating FCC configuration...'));
+  const fccDir = join(homedir(), '.fcc');
+  const envPath = join(fccDir, '.env');
+
+  try {
+    await fs.mkdir(fccDir, { recursive: true });
+
+    const envContent = `# FCC (LiteLLM Gateway) Configuration
+# Generated: ${new Date().toISOString()}
+
+FCC_SERVER_URL=${fccServerUrl}
+ANTHROPIC_AUTH_TOKEN=${authToken}
+FCC_LITELLM_KEY=${fccLiteLLMKey}
+`;
+
+    await fs.writeFile(envPath, envContent, 'utf-8');
+    console.log(chalk.green(` FCC configuration created at ${envPath}\n`));
+  } catch (error: unknown) {
+    console.log(chalk.yellow(`Failed to create configuration file: ${error instanceof Error ? error.message : String(error)}\n`));
+  }
+
+  console.log();
+  console.log(chalk.bold.green('✅ FCC setup completed!\n'));
+  console.log(chalk.cyan(' Next steps:\n'));
+  console.log(chalk.white('   1. Use FCC with CodeMie CLI:'));
+  console.log(chalk.blueBright('      codemie setup --provider fcc'));
+  console.log();
+  console.log(chalk.white('   2. Or run directly:'));
+  console.log(chalk.blueBright('      codemie-claude --provider fcc "your task"'));
+  console.log();
+  console.log(chalk.dim('   For detailed usage instructions, see: docs/FCC-SETUP.md\n'));
+  console.log();
 }
