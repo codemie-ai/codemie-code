@@ -436,6 +436,38 @@ describe('selectCodexModel accepts the names the app picker shows', () => {
   });
 });
 
+describe('selectCodexModel honours the active profile model', () => {
+  afterEach(() => { vi.resetModules(); });
+
+  it('pins the resolved profile model when no --model flag is given', async () => {
+    const { selectCodexModel } = await import('../codex-desktop.js');
+    const list = ['gpt-5-2025-08-07', 'gpt-5.6-luna-2026-07-09'];
+
+    // The profile's config.model is the undated picker name; it must resolve to
+    // its dated deployment rather than dropping to the recency default.
+    expect(selectCodexModel(list, undefined, 'gpt-5.6-luna')).toBe('gpt-5.6-luna-2026-07-09');
+  });
+
+  it('falls back to the recency default when the profile model is unresolvable', async () => {
+    const { selectCodexModel } = await import('../codex-desktop.js');
+    const list = ['gpt-5.6-luna-2026-07-09', 'gpt-5-2025-08-07'];
+
+    expect(selectCodexModel(list, undefined, 'gpt-4o')).toBe('gpt-5.6-luna-2026-07-09');
+    expect(selectCodexModel(list, undefined, undefined)).toBe('gpt-5.6-luna-2026-07-09');
+    expect(selectCodexModel(list, undefined, '   ')).toBe('gpt-5.6-luna-2026-07-09');
+  });
+
+  it('lets an explicit --model flag win over the profile model', async () => {
+    const { selectCodexModel } = await import('../codex-desktop.js');
+    const { ConfigurationError } = await import('@/utils/errors.js');
+    const list = ['gpt-5-2025-08-07', 'gpt-5.6-luna-2026-07-09'];
+
+    // Explicit request still resolves-or-throws, unaffected by the profile model.
+    expect(selectCodexModel(list, 'gpt-5', 'gpt-5.6-luna')).toBe('gpt-5-2025-08-07');
+    expect(() => selectCodexModel(list, 'gpt-4o', 'gpt-5.6-luna')).toThrow(ConfigurationError);
+  });
+});
+
 describe('disconnect verifies CodeMie keys actually went away', () => {
   let workspace: TempWorkspace;
 

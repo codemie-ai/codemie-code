@@ -517,6 +517,7 @@ async function runVscodeClaudeCode(state: DaemonState, insiders: boolean): Promi
 interface CodexDesktopRunOptions {
   force?: boolean;
   model?: string;
+  profileModel?: string;
   verbose?: boolean;
 }
 
@@ -544,7 +545,7 @@ async function runCodexDesktop(
     console.log(chalk.cyan(`Codex config: ${configPath}`));
 
     const discovered = await discoverCodexModels(state.url, state.gatewayKey);
-    const model = selectCodexModel(discovered, options.model);
+    const model = selectCodexModel(discovered, options.model, options.profileModel);
 
     await writeCodexDesktopConfig({
       configPath,
@@ -669,6 +670,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
     results.push(await runCodexDesktop(state, {
       force: Boolean(opts.force),
       model: opts.model,
+      profileModel: config.model,
       verbose,
     }));
   }

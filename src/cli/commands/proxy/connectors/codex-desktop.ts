@@ -179,18 +179,34 @@ export async function discoverCodexModels(
  * time the user is present and can be told, so silently substituting would mean
  * they run something other than what they asked for.
  */
-export function selectCodexModel(discovered: string[], requested?: string): string {
-  if (requested === undefined) return discovered[0];
-  if (requested.trim() === '') {
-    throw new ConfigurationError('--model was given an empty value.');
+export function selectCodexModel(
+  discovered: string[],
+  requested?: string,
+  profileModel?: string
+): string {
+  if (requested !== undefined) {
+    if (requested.trim() === '') {
+      throw new ConfigurationError('--model was given an empty value.');
+    }
+
+    const resolution = resolveCodexDeployment(requested.trim(), discovered, undefined);
+    if (resolution.kind === 'exact' || resolution.kind === 'resolved') return resolution.model;
+
+    throw new ConfigurationError(
+      `Model "${requested}" is not available through the proxy. Available: ${discovered.join(', ')}`
+    );
   }
 
-  const resolution = resolveCodexDeployment(requested.trim(), discovered, undefined);
-  if (resolution.kind === 'exact' || resolution.kind === 'resolved') return resolution.model;
+  // No explicit --model: prefer the active profile's configured model, resolved
+  // to its dated deployment the same way an in-flight request is. Only when it
+  // has no CodeMie equivalent do we drop to the recency-ranked default.
+  const profile = profileModel?.trim();
+  if (profile) {
+    const resolution = resolveCodexDeployment(profile, discovered, undefined);
+    if (resolution.kind === 'exact' || resolution.kind === 'resolved') return resolution.model;
+  }
 
-  throw new ConfigurationError(
-    `Model "${requested}" is not available through the proxy. Available: ${discovered.join(', ')}`
-  );
+  return discovered[0];
 }
 
 export interface CodexDesktopState {
