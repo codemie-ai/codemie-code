@@ -45,12 +45,19 @@ export interface ReportSessionRecord {
   modelTimeline?: ModelTimelinePoint[]; // per-turn model + routing metadata; absent when no routing data
   dispatches?: DispatchEvent[]; // timed top-level agent/skill/command invocations; absent when none
 
-  // === Switchyard routing classifier cost (included in costUSD) ===
+  // === Routing classifier cost (included in costUSD; Switchyard only — see routingCostKnown) ===
   judgeCostUSD?: number; // USD spent on the routing classifier LLM
   judgeInputTokens?: number;
   judgeOutputTokens?: number;
   judgeCachedTokens?: number;
   judgeCacheCreationTokens?: number;
+  /**
+   * True when every routed turn in this session came from a family that reports classifier
+   * cost (Switchyard). False when any turn used LiteLLM, which never reports cost — so
+   * `judgeCostUSD` is absent even though classifiers ran. Absent when the session had no
+   * routed turns at all.
+   */
+  routingCostKnown?: boolean;
 
   // === Usage provenance (optional; absent for agents that always record full usage) ===
   /**

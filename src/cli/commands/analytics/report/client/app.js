@@ -732,17 +732,18 @@
     });
     host.appendChild(grid);
 
-    // Routing KPI section — only shown when at least one session has judge routing cost.
-    var routedSessions = fs.filter(function (s) { return s.judgeCostUSD != null && s.judgeCostUSD > 0; });
+    // Routing KPI section — only shown when at least one session has routing.
+    var routedSessions = fs.filter(function (s) { return s.judgeCostUSD != null || s.routingCostKnown === false; });
     if (routedSessions.length > 0) {
       host.appendChild(el('h3', 'section-title', 'Routing'));
       var rsGrid = el('div', 'kpi-grid'); rsGrid.style.gridTemplateColumns = 'repeat(3,1fr)';
-      var totalJudgeCost = sum(routedSessions, function (s) { return s.judgeCostUSD || 0; });
-      var totalJudgeIn = routedSessions.reduce(function (acc, s) { return acc + (s.judgeInputTokens || 0); }, 0);
-      var totalJudgeOut = routedSessions.reduce(function (acc, s) { return acc + (s.judgeOutputTokens || 0); }, 0);
+      var measuredSessions = routedSessions.filter(function (s) { return s.judgeCostUSD != null && s.judgeCostUSD > 0; });
+      var totalJudgeCost = sum(measuredSessions, function (s) { return s.judgeCostUSD || 0; });
+      var totalJudgeIn = measuredSessions.reduce(function (acc, s) { return acc + (s.judgeInputTokens || 0); }, 0);
+      var totalJudgeOut = measuredSessions.reduce(function (acc, s) { return acc + (s.judgeOutputTokens || 0); }, 0);
       [
-        ['Sessions with routing', fmtNum(routedSessions.length) + ' / ' + fmtNum(fs.length)],
-        ['Judge routing cost', fmtUSD(totalJudgeCost)],
+        ['Sessions with routing', fmtNum(routedSessions.length) + ' / ' + fmtNum(fs.length) + (routedSessions.some(function(s) { return s.routingCostKnown === false; }) ? ' (cost unmeasured on ' + fmtNum(routedSessions.filter(function(s) { return s.routingCostKnown === false; }).length) + ')' : '')],
+        ['Judge routing cost', fmtUSD(totalJudgeCost) + (measuredSessions.length < routedSessions.length ? ' (LiteLLM unmeasured)' : '')],
         ['Judge tokens (in/out)', fmtTokens(totalJudgeIn) + ' / ' + fmtTokens(totalJudgeOut)]
       ].forEach(function (k) {
         var c = el('div', 'kpi'); c.innerHTML = '<div class="kpi-label">' + k[0] + '</div><div class="kpi-value">' + k[1] + '</div>'; rsGrid.appendChild(c);
@@ -1156,7 +1157,10 @@
       ['Started', '<span class="mval-sm">' + esc(fmtWhen(s.startTime)) + '</span>', '']
     ];
     if (s.judgeCostUSD != null) {
-      costRows.push(['Routing (judge)', fmtUSD(s.judgeCostUSD), 'included in cost']);
+      var detail = s.routingCostKnown === false ? 'unmeasured (LiteLLM)' : 'included in cost';
+      costRows.push(['Routing (judge)', s.judgeCostUSD > 0 ? fmtUSD(s.judgeCostUSD) : '—', detail]);
+    } else if (s.routingCostKnown === false) {
+      costRows.push(['Routing (judge)', '—', 'unmeasured (LiteLLM, no cost headers)']);
     }
     if (s.premiumRequests !== undefined) {
       costRows.push(['Premium requests', fmtNum(s.premiumRequests), 'provider billing unit']);

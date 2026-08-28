@@ -198,7 +198,13 @@ export function buildModelTimeline(records: UsageRecord[]): ModelTimelinePoint[]
     };
     if (r.requestedModel != null) point.requestedModel = r.requestedModel;
     if (r.capableModel != null) point.capableModel = r.capableModel;
+    if (r.routingFamily != null) point.routingFamily = r.routingFamily;
     if (r.routingTier != null) point.routingTier = r.routingTier;
+    if (r.routingTierRaw != null) point.routingTierRaw = r.routingTierRaw;
+    if (r.routedModel != null) point.routedModel = r.routedModel;
+    if (r.classifierModel != null) point.classifierModel = r.classifierModel;
+    if (r.routerType != null) point.routerType = r.routerType;
+    if (r.routerScore != null) point.routerScore = r.routerScore;
     if (r.routingConfidence != null) point.routingConfidence = r.routingConfidence;
     if (r.routingSource != null) point.routingSource = r.routingSource;
     if (r.signalScore != null) point.signalScore = r.signalScore;
@@ -402,18 +408,29 @@ export async function enrichCosts(
     if (records.length) {
       const timeline = buildModelTimeline(records);
       if (timeline.length) cost.modelTimeline = timeline;
-      // Accumulate classifier (Switchyard routing LLM) cost and tokens from per-turn metadata.
+      // Accumulate classifier (routing LLM) cost and tokens from per-turn metadata.
       let judgeCostUSD = 0;
       let judgeInputTokens = 0;
       let judgeOutputTokens = 0;
       let judgeCachedTokens = 0;
       let judgeCacheCreationTokens = 0;
+      // A session is only "cost known" if every routed turn came from a family that reports
+      // cost. One LiteLLM turn makes the session total an understatement, not a measurement.
+      let routedTurns = 0;
+      let costKnownTurns = 0;
       for (const r of records) {
         judgeCostUSD += r.judgeCostUSD ?? 0;
         judgeInputTokens += r.judgeInputTokens ?? 0;
         judgeOutputTokens += r.judgeOutputTokens ?? 0;
         judgeCachedTokens += r.judgeCachedTokens ?? 0;
         judgeCacheCreationTokens += r.judgeCacheCreationTokens ?? 0;
+        if (r.routingFamily != null) {
+          routedTurns++;
+          if (r.routingCostKnown) costKnownTurns++;
+        }
+      }
+      if (routedTurns > 0) {
+        cost.routingCostKnown = costKnownTurns === routedTurns;
       }
       if (judgeInputTokens > 0 || judgeOutputTokens > 0 || judgeCostUSD > 0) {
         cost.judgeCostUSD = Math.round(judgeCostUSD * 1e8) / 1e8;

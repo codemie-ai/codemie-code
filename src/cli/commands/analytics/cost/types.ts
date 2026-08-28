@@ -38,7 +38,13 @@ export interface ModelTimelinePoint {
   tokens: number; // per-turn total tokens for this turn
   requestedModel?: string; // capable model that was originally requested
   capableModel?: string; // alias for requestedModel
+  routingFamily?: 'switchyard' | 'litellm'; // which header family carried the decision
   routingTier?: 'efficient' | 'capable' | string;
+  routingTierRaw?: string; // tier as emitted, before the two vocabularies are folded
+  routedModel?: string; // model the router actually dispatched to
+  classifierModel?: string; // LLM that made the routing decision
+  routerType?: string; // router strategy, e.g. 'complexity'
+  routerScore?: number; // numeric score from LiteLLM's heuristic scorer
   routingConfidence?: number;
   routingSource?: 'stage_router' | 'judge' | 'classifier' | string;
   decisionSource?: string;
@@ -89,12 +95,19 @@ export interface SessionCost {
   perModel: ModelCost[];
   priced: boolean; // true if the native log was found & parsed
   hadLog: boolean; // true if a native log path was located (priced<hadLog ⇒ parse/reader gap)
-  // === Switchyard routing classifier cost (additive to costUSD) ===
+  // === Routing classifier cost (additive to costUSD; Switchyard only — see routingCostKnown) ===
   judgeCostUSD?: number; // USD spent on the routing classifier LLM
   judgeInputTokens?: number;
   judgeOutputTokens?: number;
   judgeCachedTokens?: number;
   judgeCacheCreationTokens?: number;
+  /**
+   * True when every routed turn in this session used a header family that reports classifier
+   * cost (Switchyard). False when any routed turn used LiteLLM, which never reports cost —
+   * so `judgeCostUSD` stays absent even though a classifier ran. Absent when the session had
+   * no routed turns at all.
+   */
+  routingCostKnown?: boolean;
 
   // === Usage provenance (from ParsedSession.usageMeta) ===
   /**

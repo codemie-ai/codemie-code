@@ -115,6 +115,7 @@ export function buildPayload(
           ...(cost?.judgeOutputTokens != null ? { judgeOutputTokens: cost.judgeOutputTokens } : {}),
           ...(cost?.judgeCachedTokens != null ? { judgeCachedTokens: cost.judgeCachedTokens } : {}),
           ...(cost?.judgeCacheCreationTokens != null ? { judgeCacheCreationTokens: cost.judgeCacheCreationTokens } : {}),
+          ...(cost?.routingCostKnown != null ? { routingCostKnown: cost.routingCostKnown } : {}),
           ...(cost?.dispatches && cost.dispatches.length ? { dispatches: cost.dispatches } : {}),
           skillInvocations,
           agentInvocations,

@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 // CodeMie statusline — shows model, project, branch, context, session cost/duration,
 // and (when a CodeMie profile is configured) the CLI budget for the authenticated user.
+// When the request was routed to a different backend model (CodeMie Switchyard or the
+// LiteLLM router), the actual model is read from the routing headers the proxy injects
+// into the transcript and shown alongside the nominal one — see resolveActualModel().
 // Deployed to ~/.claude/ by `codemie install statusline` (also triggered by the `--status`
 // CLI flag, which calls the same installer). Runs standalone — Node builtins only, no
 // project imports, since it executes via `node <path>` after the project process exits.
@@ -91,6 +94,8 @@ export function extractBasicInfo(ctx) {
   return {
     projectName: cwd ? path.basename(cwd) : '',
     cwd,
+    transcriptPath: ctx?.transcript_path ?? '',
+    modelId: ctx?.model?.id ?? '',
     model: ctx?.model?.display_name ?? '',
     ctxPct: ctx?.context_window?.used_percentage ?? null,
     tokIn: ctx?.context_window?.total_input_tokens ?? null,
@@ -98,6 +103,134 @@ export function extractBasicInfo(ctx) {
     cost: ctx?.cost?.total_cost_usd ?? null,
     durationMs: ctx?.cost?.total_duration_ms ?? null,
   };
+}
+
+// --- Actual (routed) model resolution ---
+//
+// Claude Code's own stdin JSON only ever reports the nominal model (`model.id`, the
+// alias/tier the session was started with). When CodeMie Switchyard or the LiteLLM router
+// dispatches a turn to a different backend model, that can surface two ways in the transcript's
+// most recent assistant turn (transcript_path):
+//   1. Routing headers — the proxy's routing-header-injector plugin copies the upstream
+//      router's response headers onto the response body (see
+//      src/providers/plugins/sso/proxy/plugins/routing-header-injector.plugin.ts), which
+//      Claude Code then persists verbatim. Authoritative when present: the proxy tags these
+//      explicitly, so they win over the body-model heuristic below.
+//   2. The response body's own `model` field — every Anthropic-compatible response reports
+//      the model that actually generated it. A router that doesn't emit routing headers (or
+//      a deployment where this proxy isn't involved at all) still shows the truth here, so
+//      it's a fallback signal rather than depending on headers alone.
+//
+// Header field precedence mirrors src/cli/commands/analytics/cost/usage-readers.ts's
+// `routedModel` so the statusline and the analytics report agree when both are present.
+
+const ROUTED_MODEL_TAIL_BYTES = 65_536; // last 64KB — comfortably covers the most recent turn(s)
+
+// Claude model family names, used to tell "genuinely routed to a different tier" apart from
+// "alias resolved to its concrete dated/region-qualified snapshot", which happens on every
+// request regardless of routing and must never be shown as if it were routing.
+const MODEL_FAMILY_PATTERN = /(opus|sonnet|haiku|fable)/i;
+
+/** Pulls the actual dispatched model out of a transcript line's `message` object, if present. */
+export function extractRoutedModel(message) {
+  if (!message || typeof message !== 'object') return null;
+  return message.x_codemie_routing_capable_model ?? message['x-litellm-router-routed-model'] ?? null;
+}
+
+function modelFamily(modelId) {
+  const match = modelId ? MODEL_FAMILY_PATTERN.exec(modelId) : null;
+  return match ? match[1].toLowerCase() : null;
+}
+
+/** Strips Bedrock region/provider qualifiers (`converse/global.anthropic.` / `eu.anthropic.`) and its `-v1:0` suffix. */
+export function normalizeModelId(modelId) {
+  if (!modelId) return '';
+  return modelId
+    .toLowerCase()
+    .replace(/^converse\//, '')
+    .replace(/^[a-z0-9-]+\.anthropic\./, '')
+    .replace(/-v\d+:\d+$/, '');
+}
+
+/**
+ * True when two model identifiers name the same tier — either a recognized family (opus/
+ * sonnet/haiku/fable) matches on both sides, or, when neither side matches a known family,
+ * the Bedrock-normalized identifiers are identical. Used to avoid flagging an alias's normal
+ * resolution to its concrete provider snapshot as if it were routing.
+ */
+export function sameModelFamily(a, b) {
+  if (!a || !b) return false;
+  const famA = modelFamily(a);
+  const famB = modelFamily(b);
+  if (famA && famB) return famA === famB;
+  return normalizeModelId(a) === normalizeModelId(b);
+}
+
+/**
+ * Scans transcript JSONL text backwards for the most recent assistant turn and returns the
+ * response body's own model plus any header-injected routed model. The first (partial) line
+ * of a tail read is expected to fail JSON.parse when the read didn't start at a line boundary
+ * — that's normal, not an error, so parse failures are skipped rather than treated as a reason
+ * to stop scanning.
+ */
+export function parseLastAssistantTurn(tailText) {
+  if (!tailText) return null;
+  const lines = tailText.split('\n');
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    let parsed;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    const message = parsed?.message;
+    if (parsed?.type === 'assistant' && message?.model) {
+      return { responseModel: message.model, headerRoutedModel: extractRoutedModel(message) };
+    }
+  }
+  return null;
+}
+
+async function defaultReadTail(filePath, maxBytes) {
+  const handle = await fs.open(filePath, 'r');
+  try {
+    const { size } = await handle.stat();
+    const start = Math.max(0, size - maxBytes);
+    const length = size - start;
+    if (length <= 0) return '';
+    const { buffer, bytesRead } = await handle.read({ buffer: Buffer.alloc(length), position: start });
+    return buffer.toString('utf8', 0, bytesRead);
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * Resolves the actual routed model for the current session, or null when there is nothing
+ * useful to show — no transcript, an unreadable transcript, or the best available signal
+ * (routing headers, falling back to the response body's own model) names the same tier as
+ * `nominalModelId`. Never throws: the statusline must keep rendering even if the transcript
+ * is mid-write or has already rotated away.
+ */
+export async function resolveActualModel(transcriptPath, nominalModelId, { readTail = defaultReadTail } = {}) {
+  if (!transcriptPath) return null;
+  let tail;
+  try {
+    tail = await readTail(transcriptPath, ROUTED_MODEL_TAIL_BYTES);
+  } catch {
+    return null;
+  }
+  const turn = parseLastAssistantTurn(tail);
+  if (!turn) return null;
+  const candidate = turn.headerRoutedModel ?? turn.responseModel;
+  if (!candidate) return null;
+  const nominal = nominalModelId || turn.responseModel;
+  // Display the Bedrock-stripped form — the raw candidate may be a fully qualified backend
+  // id (e.g. `converse/global.anthropic.claude-haiku-4-5-20251001-v1:0`), which is accurate
+  // but not what a human wants to read in a one-line statusline.
+  return sameModelFamily(nominal, candidate) ? null : normalizeModelId(candidate);
 }
 
 export function formatDuration(ms) {
@@ -138,14 +271,14 @@ export function ctxBar(pct) {
   return `${c(color, bar)} ${pct}%`;
 }
 
-export function buildStatusLine({ projectName, branch, model, ctxPct, tokIn, tokOut, cost, durationMs, budget, budgetError }) {
+export function buildStatusLine({ projectName, branch, model, actualModel, ctxPct, tokIn, tokOut, cost, durationMs, budget, budgetError }) {
   const parts = [];
 
   if (projectName) parts.push(c(C.purple, `[${projectName}]`));
   if (budget)            parts.push(c(budgetColor(budget.pct), budget.text));
   else if (budgetError)  parts.push(c(C.yellow, `⚠ ${budgetError}`));
   if (branch) parts.push(c(C.blue, `(${branch})`));
-  if (model)  parts.push(c(C.cyan, `[${model}]`));
+  if (model)  parts.push(c(C.cyan, `[${actualModel ? `${model} → ${actualModel}` : model}]`));
 
   const bar = ctxBar(ctxPct);
   if (bar) parts.push(bar);
@@ -256,9 +389,13 @@ export async function main() {
   }
 
   const branchPromise = basic.cwd ? gitBranch(basic.cwd) : Promise.resolve('');
-  const [budgetResult, branch] = await Promise.all([resolveBudget(), branchPromise]);
+  const [budgetResult, branch, actualModel] = await Promise.all([
+    resolveBudget(),
+    branchPromise,
+    resolveActualModel(basic.transcriptPath, basic.modelId),
+  ]);
 
-  process.stdout.write(buildStatusLine({ ...basic, branch, ...budgetResult }));
+  process.stdout.write(buildStatusLine({ ...basic, branch, actualModel, ...budgetResult }));
 }
 
 // Compares decoded paths (not raw strings) so this correctly matches even when the
