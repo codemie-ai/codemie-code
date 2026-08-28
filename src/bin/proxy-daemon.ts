@@ -32,6 +32,7 @@ const { values } = parseArgs({
     'target-url':   { type: 'string' },
     'provider':     { type: 'string' },
     'profile':      { type: 'string' },
+    'model':        { type: 'string' },
     'project':      { type: 'string' },
     'client-type':  { type: 'string' },
     'port':         { type: 'string' },
@@ -63,6 +64,7 @@ const port = parsedPort;
 const gatewayKey = (values['gateway-key'] as string | undefined) ?? 'codemie-proxy';
 const profile    = (values['profile'] as string | undefined) ?? 'default';
 const provider   = (values['provider'] as string | undefined) ?? 'ai-run-sso';
+const model = values['model'] as string | undefined;
 const project = values['project'] as string | undefined;
 const clientType = values['client-type'] as string | undefined;
 const authMethod = ((values['auth-method'] as string | undefined) ?? 'sso') as 'sso' | 'jwt';
@@ -79,6 +81,7 @@ const config: ProxyConfig = {
   host: '127.0.0.1',
   provider,
   profile,
+  model,
   project,
   gatewayKey,
   authMethod,

@@ -342,6 +342,7 @@ async function ensureDaemon(
       targetUrl: config.baseUrl as string,
       provider: config.provider ?? 'ai-run-sso',
       profile: config.name ?? 'default',
+      ...(config.model ? { model: config.model } : {}),
       port: DEFAULT_DAEMON_PORT,
       project: config.codeMieProject,
       ...identity.spawnOptions,
