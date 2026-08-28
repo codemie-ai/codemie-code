@@ -216,7 +216,12 @@ class CodexRequestNormalizerInterceptor implements ProxyInterceptor {
    */
   private resolveFallbackModel(): string | undefined {
     const pinned = this.context.config.model;
-    if (pinned && this.availableModels.includes(pinned)) return pinned;
+    if (pinned) {
+      // The pinned value may be the profile's undated picker name; resolve it to
+      // its dated deployment the same way an in-flight request is resolved.
+      const resolution = resolveCodexDeployment(pinned, this.availableModels, undefined);
+      if (resolution.kind === 'exact' || resolution.kind === 'resolved') return resolution.model;
+    }
     return rankDeploymentsByRecency(this.availableModels)[0];
   }
 
