@@ -16,6 +16,7 @@ export interface DaemonState {
   targetUrl?: string;
   provider?: string;
   project?: string;
+  model?: string;
   clientType?: string;
   syncApiUrl?: string;
   syncCodeMieUrl?: string;

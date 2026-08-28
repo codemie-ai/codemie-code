@@ -114,6 +114,18 @@ export interface RequestedDaemonConfig {
   clientType: string;
   provider?: string;
   targetUrl?: string;
+  /** Normalized profile model that drives the daemon lifecycle (see `normalizeDaemonModel`). */
+  model?: string;
+}
+
+/**
+ * Canonical form of a profile model for daemon lifecycle comparison. Trims
+ * surrounding whitespace and treats an empty/blank value as "unset" so the
+ * recorded `state.model` and the requested `config.model` compare apples-to-apples.
+ */
+export function normalizeDaemonModel(model: string | undefined): string | undefined {
+  const trimmed = model?.trim();
+  return trimmed ? trimmed : undefined;
 }
 
 export function getEffectiveClientType(
@@ -138,6 +150,8 @@ export function daemonMatchesRequest(
     state.project === requested.project &&
     (!requested.provider || state.provider === requested.provider) &&
     (!requested.targetUrl || state.targetUrl === requested.targetUrl) &&
+    (!normalizeDaemonModel(requested.model) ||
+      normalizeDaemonModel(state.model) === normalizeDaemonModel(requested.model)) &&
     getEffectiveClientType(state) === requested.clientType;
 }
 
@@ -342,7 +356,7 @@ async function ensureDaemon(
       targetUrl: config.baseUrl as string,
       provider: config.provider ?? 'ai-run-sso',
       profile: config.name ?? 'default',
-      ...(config.model ? { model: config.model } : {}),
+      ...(normalizeDaemonModel(config.model) ? { model: normalizeDaemonModel(config.model) } : {}),
       port: DEFAULT_DAEMON_PORT,
       project: config.codeMieProject,
       ...identity.spawnOptions,
@@ -646,6 +660,7 @@ export async function connectTargets(opts: ConnectOptions): Promise<void> {
       clientType: identity.clientType,
       provider: config.provider ?? 'ai-run-sso',
       targetUrl: config.baseUrl,
+      model: normalizeDaemonModel(config.model),
     };
 
     const ensured = await ensureDaemon(requested, identity, config, Boolean(opts.force), verbose);

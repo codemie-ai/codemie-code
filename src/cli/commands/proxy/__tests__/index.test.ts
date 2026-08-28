@@ -454,11 +454,52 @@ describe('proxy connect vscode', () => {
     );
   });
 
-  it('reuses a matching daemon independently of the profile model', async () => {
+  it('reuses a matching daemon when the profile model is unchanged', async () => {
     const { ConfigLoader } = await import('../../../../utils/config.js');
     const { checkStatus, spawnDaemon, stopDaemon } = await import('../daemon-manager.js');
     const { checkProxyHealth } = await import('../health-check.js');
     const { writeVsCodeLanguageModelsConfig } = await import('../connectors/vscode.js');
+    const { createProxyCommand } = await import('../index.js');
+    vi.mocked(ConfigLoader.load).mockResolvedValue({
+      name: 'custom',
+      provider: 'ai-run-sso',
+      baseUrl: 'https://custom.example.com/api',
+      model: 'shared-profile-model',
+      codeMieProject: 'team-project',
+      codeMieUrl: 'https://custom.example.com',
+    } as Awaited<ReturnType<typeof ConfigLoader.load>>);
+    vi.mocked(checkStatus).mockResolvedValue({
+      running: true,
+      state: {
+        pid: process.pid,
+        port: 4001,
+        url: 'http://127.0.0.1:4001',
+        profile: 'custom',
+        gatewayKey: 'local-key',
+        provider: 'ai-run-sso',
+        targetUrl: 'https://custom.example.com/api',
+        project: 'team-project',
+        model: 'shared-profile-model',
+        clientType: 'vscode-byok',
+        startedAt: new Date().toISOString(),
+      },
+    });
+    vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'deep', code: 'ok' });
+
+    await createProxyCommand().parseAsync(['connect', 'vscode', '--profile', 'custom'], { from: 'user' });
+
+    expect(stopDaemon).not.toHaveBeenCalled();
+    expect(spawnDaemon).not.toHaveBeenCalled();
+    expect(writeVsCodeLanguageModelsConfig).toHaveBeenCalledWith(
+      'http://127.0.0.1:4001',
+      false
+    );
+  });
+
+  it('restarts a matching daemon when the profile model changed', async () => {
+    const { ConfigLoader } = await import('../../../../utils/config.js');
+    const { checkStatus, spawnDaemon, stopDaemon } = await import('../daemon-manager.js');
+    const { checkProxyHealth } = await import('../health-check.js');
     const { createProxyCommand } = await import('../index.js');
     vi.mocked(ConfigLoader.load).mockResolvedValue({
       name: 'custom',
@@ -479,20 +520,27 @@ describe('proxy connect vscode', () => {
         provider: 'ai-run-sso',
         targetUrl: 'https://custom.example.com/api',
         project: 'team-project',
+        model: 'old-profile-model',
         clientType: 'vscode-byok',
         startedAt: new Date().toISOString(),
       },
     });
     vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'deep', code: 'ok' });
+    vi.mocked(spawnDaemon).mockResolvedValue({
+      pid: process.pid,
+      port: 4001,
+      url: 'http://127.0.0.1:4001',
+      profile: 'custom',
+      gatewayKey: 'local-key',
+      clientType: 'vscode-byok',
+      model: 'new-profile-model',
+      startedAt: new Date().toISOString(),
+    } as Awaited<ReturnType<typeof spawnDaemon>>);
 
     await createProxyCommand().parseAsync(['connect', 'vscode', '--profile', 'custom'], { from: 'user' });
 
-    expect(stopDaemon).not.toHaveBeenCalled();
-    expect(spawnDaemon).not.toHaveBeenCalled();
-    expect(writeVsCodeLanguageModelsConfig).toHaveBeenCalledWith(
-      'http://127.0.0.1:4001',
-      false
-    );
+    expect(stopDaemon).toHaveBeenCalled();
+    expect(spawnDaemon).toHaveBeenCalled();
   });
 
 });

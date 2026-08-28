@@ -3,7 +3,12 @@
  * @group unit
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { deriveDaemonIdentity, type ConnectTargets } from '../connect-orchestrator.js';
+import {
+  daemonMatchesRequest,
+  deriveDaemonIdentity,
+  type ConnectTargets,
+  type RequestedDaemonConfig,
+} from '../connect-orchestrator.js';
 
 vi.mock('../../../../utils/config.js', () => ({
   ConfigLoader: {
@@ -92,13 +97,14 @@ function daemonState(extra: Record<string, unknown> = {}): Record<string, unknow
 }
 
 // A running daemon whose fields match the happy-path config for a claude-desktop request.
-function matchingDesktopState(): Record<string, unknown> {
+function matchingDesktopState(extra: Record<string, unknown> = {}): Record<string, unknown> {
   return daemonState({
     provider: 'ai-run-sso',
     targetUrl: 'https://x.example.com/api',
     project: 'proj',
     telemetryMode: 'claude-desktop',
     syncCodeMieUrl: 'https://x.example.com',
+    ...extra,
   });
 }
 
@@ -157,6 +163,54 @@ describe('deriveDaemonIdentity', () => {
         expect(spawnOptions).not.toHaveProperty('telemetryMode');
       }
     }
+  });
+});
+
+describe('daemonMatchesRequest — model comparison', () => {
+  function baseRequest(extra: Partial<RequestedDaemonConfig> = {}): RequestedDaemonConfig {
+    return {
+      profile: 'p',
+      port: 4001,
+      project: 'proj',
+      clientType: 'codex-desktop',
+      provider: 'ai-run-sso',
+      targetUrl: 'https://x.example.com/api',
+      ...extra,
+    };
+  }
+
+  function codexState(extra: Record<string, unknown> = {}): Parameters<typeof daemonMatchesRequest>[0] {
+    return daemonState({
+      provider: 'ai-run-sso',
+      targetUrl: 'https://x.example.com/api',
+      project: 'proj',
+      clientType: 'codex-desktop',
+      ...extra,
+    }) as Parameters<typeof daemonMatchesRequest>[0];
+  }
+
+  it('matches when the requested model equals the recorded model', () => {
+    expect(
+      daemonMatchesRequest(codexState({ model: 'gpt-5-codex' }), baseRequest({ model: 'gpt-5-codex' }))
+    ).toBe(true);
+  });
+
+  it('fails to match when the profile model changed against the running daemon', () => {
+    expect(
+      daemonMatchesRequest(codexState({ model: 'gpt-5-codex' }), baseRequest({ model: 'gpt-5' }))
+    ).toBe(false);
+  });
+
+  it('compares the trimmed form on both sides', () => {
+    expect(
+      daemonMatchesRequest(codexState({ model: 'gpt-5-codex' }), baseRequest({ model: '  gpt-5-codex  ' }))
+    ).toBe(true);
+  });
+
+  it('reuses the daemon when no model is requested (backward compatible)', () => {
+    expect(
+      daemonMatchesRequest(codexState({ model: 'gpt-5-codex' }), baseRequest({ model: undefined }))
+    ).toBe(true);
   });
 });
 
@@ -228,6 +282,27 @@ describe('connectTargets — no-write paths and daemon lifecycle', () => {
     });
     vi.mocked(spawnDaemon).mockResolvedValue(
       daemonState({ telemetryMode: 'claude-desktop', syncCodeMieUrl: 'https://x.example.com' }) as Awaited<ReturnType<typeof spawnDaemon>>
+    );
+    const { connectTargets } = await import('../connect-orchestrator.js');
+
+    await connectTargets({ targets: { claudeDesktop: true } });
+
+    expect(stopDaemon).toHaveBeenCalled();
+    expect(spawnDaemon).toHaveBeenCalled();
+  });
+
+  it('restarts when the profile model changed against an otherwise-matching daemon', async () => {
+    await setupHappyMocks({ model: 'gpt-5' });
+    const { checkStatus, spawnDaemon, stopDaemon } = await import('../daemon-manager.js');
+    const { checkProxyHealth } = await import('../health-check.js');
+    // A healthy daemon that matches on every field EXCEPT the (now-changed) model.
+    vi.mocked(checkStatus).mockResolvedValue({
+      running: true,
+      state: matchingDesktopState({ model: 'gpt-4' }) as Awaited<ReturnType<typeof checkStatus>>['state'],
+    });
+    vi.mocked(checkProxyHealth).mockResolvedValue({ healthy: true, level: 'deep', code: 'ok' });
+    vi.mocked(spawnDaemon).mockResolvedValue(
+      daemonState({ telemetryMode: 'claude-desktop', syncCodeMieUrl: 'https://x.example.com', model: 'gpt-5' }) as Awaited<ReturnType<typeof spawnDaemon>>
     );
     const { connectTargets } = await import('../connect-orchestrator.js');
 
