@@ -64,7 +64,13 @@ interface ClaudeRawMessage {
     /** Why Switchyard chose this tier: override | tests_passed | dimensions | ambiguous | llm-classifier | fall_open. */
     x_codemie_routing_decision_source?: string;
 
-    /** LiteLLM Router headers (alternative routing metadata format). */
+    /**
+     * LiteLLM Router headers (alternative routing metadata format).
+     * Mutually exclusive with the `x_codemie_routing_*` family: a deployment routes
+     * through either Switchyard or the LiteLLM router, never both. Unlike Switchyard,
+     * this family reports no classifier token counts or cost, so routing overhead is
+     * unmeasurable on LiteLLM deployments (see `routingCostKnown` on UsageRecord).
+     */
     'x-litellm-router-tier'?: string;
     'x-litellm-router-cause'?: string;
     'x-litellm-router-routed-model'?: string;
@@ -72,6 +78,10 @@ interface ClaudeRawMessage {
     'x-litellm-router-model-name'?: string;
     'x-litellm-router-type'?: string;
     'x-litellm-router-signals'?: string | string[];
+    /** Numeric complexity score from the heuristic scorer; absent on llm_classifier turns. */
+    'x-litellm-router-score'?: string;
+    /** Upstream deployment the router actually dispatched to (provider-qualified). */
+    'x-litellm-model-name'?: string;
 
     /** Judge/classifier LLM call tokens and cost (present when LLM was invoked for this turn). */
     x_codemie_routing_judge_input_tokens?: string;
@@ -124,9 +134,31 @@ export interface UsageRecord {
   ts: number | null;
   model: string;
   usage: TokenUsage;
-  /** The capable model that was originally requested, when Switchyard routed to an efficient model. */
+  /** The capable model that was originally requested, when routing selected a cheaper model. */
   requestedModel?: string;
   capableModel?: string;
+  /**
+   * Which header family carried this turn's routing decision. Lets consumers tell a
+   * genuinely-zero routing cost (Switchyard, `judgeCostUSD: 0`) apart from an
+   * unmeasurable one (LiteLLM, which reports no classifier cost at all).
+   */
+  routingFamily?: 'switchyard' | 'litellm';
+  /** Raw tier string as emitted, before {@link normalizeRoutingTier} folds the two vocabularies. */
+  routingTierRaw?: string;
+  /** Model the router actually dispatched to, when the family names it separately. */
+  routedModel?: string;
+  /** The LLM used to make the routing decision (LiteLLM: `router-classifier-model`). */
+  classifierModel?: string;
+  /** Router strategy, e.g. 'complexity' (LiteLLM: `router-type`). */
+  routerType?: string;
+  /** Numeric complexity score from LiteLLM's heuristic scorer; absent on classifier turns. */
+  routerScore?: number;
+  /**
+   * True when the family reports classifier cost (Switchyard), so `judgeCostUSD == null`
+   * means "no classifier ran". False on LiteLLM, where cost is never reported and absence
+   * carries no information.
+   */
+  routingCostKnown?: boolean;
   /** Switchyard routing tier for this turn: 'efficient' or 'capable'. */
   routingTier?: 'efficient' | 'capable' | string;
   /** Routing confidence score (0–1), normalised to P(capable needed). */
@@ -231,6 +263,18 @@ function takeUnseenRecords(records: UsageRecord[], seen: Set<string>): UsageReco
   return out;
 }
 
+function parseOptInt(s: string | undefined): number | undefined {
+  if (s == null) return undefined;
+  const v = parseInt(s, 10);
+  return Number.isNaN(v) ? undefined : v;
+}
+
+function parseOptFloat(s: string | undefined): number | undefined {
+  if (s == null) return undefined;
+  const v = parseFloat(s);
+  return Number.isNaN(v) ? undefined : v;
+}
+
 function normalizeRoutingTier(raw: string | undefined): string | undefined {
   if (raw == null) return undefined;
   const key = String(raw).trim().toLowerCase();
@@ -308,11 +352,24 @@ export function extractClaudeUsageRecords(parsed: ParsedSession): UsageRecord[] 
       const codemieDecisionSource = normalizeDecisionSource(msg?.x_codemie_routing_decision_source);
       const litellmCause = normalizeDecisionSource(msg?.['x-litellm-router-cause']);
 
-      const requestedModel = msg?.x_codemie_requested_model;
+      // Discriminate between the two routing header families so consumers know if routing cost is known.
+      const routingFamily: 'switchyard' | 'litellm' | undefined =
+        codemieTier != null || msg?.x_codemie_routing_source != null
+          ? 'switchyard'
+          : litellmTier != null || litellmCause != null
+            ? 'litellm'
+            : undefined;
+
+      const requestedModel = msg?.x_codemie_requested_model ?? msg?.['x-litellm-router-model-name'];
       const capableModel = msg?.x_codemie_routing_capable_model;
       const routingTier = codemieTier ?? litellmTier ?? signals.routingTier;
+      const routingTierRaw = msg?.x_codemie_routing_tier ?? msg?.['x-litellm-router-tier'];
       const decisionSource = codemieDecisionSource ?? litellmCause ?? signals.decisionSource;
       const routingSource = msg?.x_codemie_routing_source ?? (decisionSource === 'llm-classifier' ? 'judge' : (decisionSource != null ? 'stage_router' : undefined));
+      const routedModel = msg?.x_codemie_routing_capable_model ?? msg?.['x-litellm-router-routed-model'];
+      const classifierModel = msg?.['x-litellm-router-classifier-model'];
+      const routerType = msg?.['x-litellm-router-type'];
+      const routerScore = parseOptFloat(msg?.['x-litellm-router-score']);
       const rawConfidence = msg?.x_codemie_routing_confidence;
       const routingConfidence: number | undefined = (() => {
         if (rawConfidence != null) {
@@ -330,16 +387,6 @@ export function extractClaudeUsageRecords(parsed: ParsedSession): UsageRecord[] 
         }
         return undefined;
       })();
-      const parseOptInt = (s: string | undefined): number | undefined => {
-        if (s == null) return undefined;
-        const v = parseInt(s, 10);
-        return Number.isNaN(v) ? undefined : v;
-      };
-      const parseOptFloat = (s: string | undefined): number | undefined => {
-        if (s == null) return undefined;
-        const v = parseFloat(s);
-        return Number.isNaN(v) ? undefined : v;
-      };
       const judgeInputTokens = parseOptInt(raw.message?.x_codemie_routing_judge_input_tokens ?? raw.message?.x_codemie_routing_classifier_input_tokens);
       const judgeOutputTokens = parseOptInt(raw.message?.x_codemie_routing_judge_output_tokens ?? raw.message?.x_codemie_routing_classifier_output_tokens);
       const judgeCachedTokens = parseOptInt(raw.message?.x_codemie_routing_judge_cached_tokens ?? raw.message?.x_codemie_routing_classifier_cached_tokens);
@@ -356,17 +403,27 @@ export function extractClaudeUsageRecords(parsed: ParsedSession): UsageRecord[] 
       const judgePrimaryRule = raw.message?.x_codemie_routing_judge_primary_rule ?? raw.message?.x_codemie_routing_classifier_primary_rule;
       const judgeCapabilityBoundary = raw.message?.x_codemie_routing_judge_capability_boundary ?? raw.message?.x_codemie_routing_classifier_capability_boundary;
 
+
       appendDedupedRecord(records, keyedRecords, {
         key,
         ts,
         model,
         usage: { input, output, cacheRead, cacheCreation, cacheCreation1h, total: input + output + cacheRead + cacheCreation },
         ...(requestedModel != null && { requestedModel }),
+        ...(routingFamily != null && { routingFamily }),
         ...(routingTier != null && { routingTier }),
+        ...(routingTierRaw != null && { routingTierRaw }),
         ...(capableModel != null && { capableModel }),
+        ...(routedModel != null && { routedModel }),
+        ...(classifierModel != null && { classifierModel }),
+        ...(routerType != null && { routerType }),
+        ...(routerScore != null && { routerScore }),
         ...(routingConfidence != null && { routingConfidence }),
         ...(routingSource != null && { routingSource }),
         ...(decisionSource != null && { decisionSource }),
+        // Switchyard reports classifier cost explicitly (possibly $0); LiteLLM never reports it at
+        // all. Record which is which so a session total doesn't read a LiteLLM "unmeasured" as "free".
+        ...(routingFamily != null && { routingCostKnown: routingFamily === 'switchyard' }),
         ...(judgeInputTokens != null && { judgeInputTokens }),
         ...(judgeOutputTokens != null && { judgeOutputTokens }),
         ...(judgeCachedTokens != null && { judgeCachedTokens }),
