@@ -27,6 +27,7 @@ export const CodebaseMemoryMetadata: FrameworkMetadata = {
   isAgentSpecific: false,
   supportedAgents: [],
   initDirectory: '.codebase-memory',
+  group: 'documentation',
 };
 
 export class CodebaseMemoryPlugin extends BaseFrameworkAdapter {

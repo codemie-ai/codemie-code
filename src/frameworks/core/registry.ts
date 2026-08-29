@@ -68,6 +68,17 @@ export class FrameworkRegistry {
   }
 
   /**
+   * Get frameworks in a listing group (default group: 'framework')
+   * @param group - Listing group to filter by
+   * @returns Array of framework adapters in the group
+   */
+  static getFrameworksByGroup(group: 'framework' | 'documentation' = 'framework'): FrameworkAdapter[] {
+    return this.getAllFrameworks().filter(
+      (adapter) => (adapter.metadata.group ?? 'framework') === group
+    );
+  }
+
+  /**
    * Get framework names
    * @returns Array of registered framework names
    */

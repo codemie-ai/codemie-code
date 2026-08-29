@@ -53,27 +53,34 @@ export function createInstallCommand(): Command {
             console.log();
           }
 
-          // Show frameworks
+          // Show frameworks, split into dev frameworks and documentation tools
           const { FrameworkRegistry } = await import('../../frameworks/index.js');
-          const frameworks = FrameworkRegistry.getAllFrameworks();
+          const frameworkGroups: Array<{ group: 'framework' | 'documentation'; heading: string }> = [
+            { group: 'framework', heading: '🛠️  Available Frameworks:\n' },
+            { group: 'documentation', heading: '📚 Documentation & Knowledge Tools:\n' },
+          ];
 
-          if (frameworks.length > 0) {
-            console.log(chalk.bold('🛠️  Available Frameworks:\n'));
+          for (const { group, heading } of frameworkGroups) {
+            const frameworks = FrameworkRegistry.getFrameworksByGroup(group);
 
-            for (const framework of frameworks) {
-              const installed = await framework.isInstalled();
-              const status = installed ? chalk.green('✓ installed') : chalk.yellow('○ not installed');
-              const version = installed ? await framework.getVersion() : null;
-              const versionStr = version ? chalk.white(` (${version})`) : '';
+            if (frameworks.length > 0) {
+              console.log(chalk.bold(heading));
 
-              console.log(chalk.bold(`  ${framework.metadata.displayName}`) + versionStr);
-              console.log(`    Command: ${chalk.cyan(`codemie install ${framework.metadata.name}`)}`);
-              console.log(`    Status: ${status}`);
-              console.log(`    ${chalk.white(framework.metadata.description)}`);
-              if (framework.metadata.docsUrl) {
-                console.log(chalk.gray(`    Docs: ${framework.metadata.docsUrl}`));
+              for (const framework of frameworks) {
+                const installed = await framework.isInstalled();
+                const status = installed ? chalk.green('✓ installed') : chalk.yellow('○ not installed');
+                const version = installed ? await framework.getVersion() : null;
+                const versionStr = version ? chalk.white(` (${version})`) : '';
+
+                console.log(chalk.bold(`  ${framework.metadata.displayName}`) + versionStr);
+                console.log(`    Command: ${chalk.cyan(`codemie install ${framework.metadata.name}`)}`);
+                console.log(`    Status: ${status}`);
+                console.log(`    ${chalk.white(framework.metadata.description)}`);
+                if (framework.metadata.docsUrl) {
+                  console.log(chalk.gray(`    Docs: ${framework.metadata.docsUrl}`));
+                }
+                console.log();
               }
-              console.log();
             }
           }
 
@@ -273,8 +280,13 @@ export function createInstallCommand(): Command {
             // Show how to initialize the framework
             console.log();
             console.log(chalk.cyan('💡 Next steps:'));
-            console.log(chalk.white(`   Initialize in project:`), chalk.blueBright(`codemie-<agent> init ${framework.metadata.name}`));
-            console.log(chalk.white(`   List frameworks:`), chalk.blueBright(`codemie-<agent> init --list`));
+            if ((framework.metadata.group ?? 'framework') === 'documentation') {
+              console.log(chalk.white(`   Initialize in project:`), chalk.blueBright(`codemie docs init ${framework.metadata.name}`));
+              console.log(chalk.white(`   List documentation tools:`), chalk.blueBright('codemie docs list'));
+            } else {
+              console.log(chalk.white(`   Initialize in project:`), chalk.blueBright(`codemie-<agent> init ${framework.metadata.name}`));
+              console.log(chalk.white(`   List frameworks:`), chalk.blueBright(`codemie-<agent> init --list`));
+            }
             console.log();
           } catch (error: unknown) {
             spinner.fail(`Failed to install ${framework.metadata.displayName}`);

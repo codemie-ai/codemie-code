@@ -44,6 +44,14 @@ export interface FrameworkMetadata {
 
   /** Directory created by framework initialization (for detection) */
   initDirectory?: string;
+
+  /**
+   * Listing group: 'framework' (default) for dev frameworks like SpecKit/BMAD,
+   * 'documentation' for documentation & knowledge tools (codegraph, graphify,
+   * codebase-memory). Documentation tools surface under `codemie docs` and are
+   * grouped separately in `codemie install` listings.
+   */
+  group?: 'framework' | 'documentation';
 }
 
 /**
