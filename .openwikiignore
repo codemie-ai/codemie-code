@@ -1,0 +1,15 @@
+# OpenWiki read boundary — keep generated docs away from build output,
+# dependencies, and AI-agent working artifacts.
+node_modules/
+dist/
+coverage/
+.hypothesis/
+.pytest_cache/
+.scannerwork/
+.sonarlint/
+*.log
+
+# Agent working artifacts (plans, runs, cached guides) — not codebase docs.
+.ai-run/
+.codegraph/
+docs/superpowers/

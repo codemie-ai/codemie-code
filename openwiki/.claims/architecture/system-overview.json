@@ -1,0 +1,226 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:a9950f3da9e22cecc6fddbe0fdb566a281f272d822196a63e059a483c0b314b0",
+  "claims": [
+    {
+      "id": "claim_90652fe11f0b4c598716e23c6ffb26d6",
+      "statement": "The package is an ECMAScript module with `dist/index.js` as its main/types entrypoint and declares the `codemie` executable plus dedicated agent/proxy executable shims.",
+      "evidence": [
+        {
+          "resource": "repo://package.json#L188-L190",
+          "version": "repo-lines-v1:sha256:61e2536f49f4f187a161e8ed7c7a55149cb5ae98d7efe9ecf0dbcf04a363c72e:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNWY2MDE1NTQxMjJlZmU4NTVkNTZlMTBjYzliYWYyMDMxY2EzZjRhYjExY2RiYTIyZjFlYmM1ZDM5YTc1NTgyNCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMjdlNTc4OGQ1ZDlkNzNkMjRhODFkYmMwYTVhNzRiZmE4MmM5YzNiM2FmOTllNTJhZjc5NmU5MGI0NjhhOGEzZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNjI5ZTQ1ZjQ4MzYwMWY0MGM0Nzc0ZGY5ZDUyNjhiNTA2ZjAxMTg3Y2NkOTBmMGY3MDAwYWM0YTE4NjU2NjkyNCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjEsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNDEyY2EzNDVjY2Y3NWJmOWMwODA2YmNlNjk1YmU4ZGU4MDhiNzk5ODQyNTFhN2E1NGQyMDJjZjYxMDFkZDQ1MSJ9"
+        },
+        {
+          "resource": "repo://package.json#L2-L22",
+          "version": "repo-lines-v1:sha256:932e30a5c0c7cfe1671350b5458844cfd7e4de4d3e1ed200a144c399b23058f1:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ2OGQ0YTYzZmY3MjkyYmZmNmZiYTg1MjBlOWFlY2JhZTZmYzZjNjkzNjk1N2RjMTdjOGNkOTY2MGQ3ZDBkZTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRkNWNkMmZiNGYzZGY4ODQ1MTUyNTViMzk1MjNmMmY4YjU0NzJiZWVhOWY1NjZmZmNhMjA0ZGI4MDI1NjEwNDEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjoxLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE2ZmIwOGZkYTFhY2I5NTdiNjExNmJkMzc4MTFhMWZlNDFhMDE2MTFjMDYzMWVkYmY3ODZkNjg4OWEyN2E1NWMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjMzNGNiYzVkZWI4OGY3NjE4NjdiZDJiOTQ2YTdlMTY4OGYwNGI4YjQzZDU0NzJlZjU1ZGVhNzcxOWJiZWE1MmQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8d82f0d837ef422fbb7a5aed4ba62ea8",
+      "statement": "The root package entrypoint is a deliberately selective programmatic API: it exports the agent registry, selected utilities/configuration, SSO/proxy facilities, hook processing, and proxy-plugin registry access rather than re-exporting all implementation modules.",
+      "evidence": [
+        {
+          "resource": "repo://src/index.ts#L1-L28",
+          "version": "repo-lines-v1:sha256:29f352fabb7fd1863329253909290a9260fcaa59a6a59c91ab4c45f17a3d4b73:eyJzZWxlY3RlZExpbmVDb3VudCI6MjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIwODhlOGQ1YjY0M2VkMzM5OGMxZDJlYjIyMjg3YjIxMWRhM2U3MmQ5MmQ0MDIwNmNmMjlhNTFmZTE2YzFhNmYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMzZWVjNjdmYTlkN2VlMGEwOWEyZGM0OWE0MzkzNjUwMzNlMWZiNjJlYzUwNTgxNDU0MTA2Mzc3ZTNmY2U5YTciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_354c4252ee274e8784f2477d3319eb32",
+      "statement": "`AgentAdapter` is the agent-plugin contract for identity, immutable metadata, install/uninstall/install-state, execution and version lookup, with optional capabilities for resume ownership, extension/session/MCP support and version management.",
+      "evidence": [
+        {
+          "resource": "repo://src/agents/core/types.ts#L729-L847",
+          "version": "repo-lines-v1:sha256:d08e6df2512d9b409a4731a84d1089798ba623eef2d5b294eda16bba26d7d24f:eyJzZWxlY3RlZExpbmVDb3VudCI6MTE5LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJlYWYyMmNmMDczMjU5MmMyNDcxNDFjYmU2MWVmYTExMDEyNjEyZjVhMzEyMmI5YWY5YmJhZjUyZjU3MjRkMTk0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJjZWY1MDMzMTAxMGNjYjdhMTlhMjFlZWMyNDEyNTI5MmQxZDMxNjk2NDBlNGUyMzZiMWUzMGU3MzhhYzFhNmZlIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIxYjc1OGJlN2MxYzlkMTE3NGUzNzkxYzcwMDE5MWI3ODQ2MTkyMzgyOGMwZWM4NDNhZTc4YjBmODQwNjdlN2I4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MSwiZm9sbG93aW5nQ29udGV4dEhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_48779df987fb40039e2c86e258cda56b",
+      "statement": "Agent metadata is the declarative boundary for agent installation, provider compatibility, environment mappings, CLI behavior, lifecycle defaults, local data paths, analytics, MCP and extension configuration.",
+      "evidence": [
+        {
+          "resource": "repo://src/agents/core/types.ts#L208-L373",
+          "version": "repo-lines-v1:sha256:cb3afc261b38870a8a83efe73d44da62583858990399b5c93e5895aac7bd9073:eyJzZWxlY3RlZExpbmVDb3VudCI6MTY2LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJlYWYyMmNmMDczMjU5MmMyNDcxNDFjYmU2MWVmYTExMDEyNjEyZjVhMzEyMmI5YWY5YmJhZjUyZjU3MjRkMTk0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJhNzQ3YzY5YTU3OWZhNTkwMWVkYzQ4ODIyZWU1NDRmYzFiNjdkNzlkYTI0NmQ0ZjBiNTBmY2M5MjU2OTE1YjRjIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI0OTAzYmU0NjJiOWQzNGViOGU0MjUxZGNkZTY3MTY2MWZmMGNhMDA4ODc3YjYxYzk4ZDA5ZDlmMzFjNGQ4MDlkIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIzNzkyOWU5MWUwZjk5YzNlODI1ZGU2OWI0MzVmYjY0ODRkMWIwYTFkZjJmNDY1NjFhYmYxYTI5ZjA0MTg4Yjg4In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_43d23d26e3d544b4abfd204d9531deea",
+      "statement": "`AgentRegistry` lazily instantiates the built-in agent plugins on first lookup, stores them by name, automatically records a metadata-supplied analytics adapter, and returns `undefined` for an unknown name.",
+      "evidence": [
+        {
+          "resource": "repo://src/agents/__tests__/registry.test.ts#L10-L88",
+          "version": "repo-lines-v1:sha256:40ae5d686c24a77ec4a4021ba26a1b6124d62c40ba3abf064a95b218b0144821:eyJzZWxlY3RlZExpbmVDb3VudCI6NzksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMzZDUzNjMzNjY1ZDJlZmRhMjRmYzhhNWM3ZmYzNWRjOTk3ZmZkZDM5ZWM4OTVmNWNkZmFlMzJkYzYwYjQ4ZTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIyZDExY2FmNDNlOTdlZjM2OWU2YmVlZDFhMjY4YmQwNTgzOGYyOWI5ZGQyNTRiZjY5YmE2NDg4NDE0NzIzNGEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFmM2ZhNWQ2MzQyZDA3MmFkOTA1NDMxZTgxZDU2NGYyYzdlODljZjQzNWZkN2YxYWE4MmEzY2YwYWQ5ZDk4MjMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjJlZGFlY2FhMTVlOTJhNGE2MWExNTI0M2NkNGZhOTc0NTYxMmQ1ZDJhOTdjNjRmYWNmMWUyZWUzOTNhMzVlMGUifQ"
+        },
+        {
+          "resource": "repo://src/agents/registry.ts#L116-L130",
+          "version": "repo-lines-v1:sha256:b0090a8d624a95de3af1dcc47387f0ac11fcca1de8c665a9183f468a7ddca097:eyJzZWxlY3RlZExpbmVDb3VudCI6MTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmMmEyZjk5NmYwOGU2ODBiZDI5MjEzNWE2ZmE0OTc4YmRhMjZlNjAyZDg0ZjMzY2IxZDU5NDc3NWQ0MzA0YjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjMyMGY4ZGJjZmE0MDU3MDA4MWE2MGFlMDJlNTMzYTU4MzVhN2UyYzQ0ZmRjMjgzM2QxZDk0Y2QxZmUyODYyZDMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        },
+        {
+          "resource": "repo://src/agents/registry.ts#L21-L74",
+          "version": "repo-lines-v1:sha256:4fecce737df1b6add64f2284e8c5ce2651f6f5ced63a4fcc1b55ee905dedec19:eyJzZWxlY3RlZExpbmVDb3VudCI6NTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFhYTRmNTI5YmIxOGE5NDQyODQyMDJiZTc3ODk0YTEyMjI1ZjIyZTQ1YThkNTkyYmQyNDA5ZDVmZGUyODZjYjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM3ZDk5NmEwODFhMDhmZDZkM2Q2M2I1YTZkMTA0NzcyYTY0M2M1NDMzZDE1Yzg5NzMyMzQ5NmExNTFlMDhlNmQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjkwNGNjY2NhYjEzMTI4NGEyZWRkNmFhZTA0NjAxYzEzMWRiZmJjZGM3ZWE1MTFmZWU1MmY2MDEzMDNiMjE3YWYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_346ae8bb08a8420695fe4a86541f335b",
+      "statement": "Agent management and analytics intentionally have different visibility: manageable and installed-agent queries exclude `metadata.analyticsOnly` adapters, while all-agent lookup retains them for analytics resolution.",
+      "evidence": [
+        {
+          "resource": "repo://src/agents/registry.ts#L76-L114",
+          "version": "repo-lines-v1:sha256:4a3cfcad600cd9da18ab7cf7019d6f91dac729ffb7b02d627901b7b36abc73ce:eyJzZWxlY3RlZExpbmVDb3VudCI6MzksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmMmEyZjk5NmYwOGU2ODBiZDI5MjEzNWE2ZmE0OTc4YmRhMjZlNjAyZDg0ZjMzY2IxZDU5NDc3NWQ0MzA0YjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI2MzE0ODFhZTIwMDUxNDgwMzk2NjgxZGE3ZWM4ZmRjYTRmOWU1YTBkNjI5YzdlYTVjYjljM2MwNGU1MWZkNTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjgzM2FjNDQ1NDg0NzJhMTJjYTEzZWFmMjBkYmM2ZjY2NzAyOTMxMDNkOWZkZTZlOTJjYTk2OTEyYTA0ZTZkZDUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_3275297a1efc408da763c116963f15cc",
+      "statement": "Provider templates declare endpoint/authentication, models, capabilities and optional environment export and agent lifecycle hooks; provider-specific environment transformation is owned by the provider template instead of being hardcoded in configuration loading.",
+      "evidence": [
+        {
+          "resource": "repo://src/providers/core/types.ts#L66-L141",
+          "version": "repo-lines-v1:sha256:8f12fdd695a434d4bbfe02dd6dd5ce23b47ec1736cd56965687f7e12a81a3bc3:eyJzZWxlY3RlZExpbmVDb3VudCI6NzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg4MGQ4YjgzNmQ1ZDU1Mjg2NDk3ZjA1MjZkODlmNWY4M2Q5MDcxMTdhMWZjMTAzYmExYzJmOTY3ZjE4YWYwMzQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImNhYjFjMzFmNjMyZmJjZjlkMDhjY2M4NzVjODUxNzIyYzQ5OTQwYWIwZTJhNWY0MjJlODlkMjg0NjZkYmI4OTEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImU0OTA2NjMzYjI4NDg5OGMyM2NjNmE0NTUzN2Y5MzQ0YjRiMTZmMTg5YzMzYjY4NDJlYmU2MmRlNzk0ZjY3YzcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_111ece763a594345b21e65b0ad4d773e",
+      "statement": "Provider hooks resolve provider wildcard hooks before agent-specific hooks; where appropriate the resolver chains a wildcard hook with an agent-specific or agent-default hook, otherwise it falls back to the agent lifecycle default.",
+      "evidence": [
+        {
+          "resource": "repo://src/agents/core/lifecycle-helpers.ts#L46-L126",
+          "version": "repo-lines-v1:sha256:04793370072307f4006c0c1f88d2f62ae02c7679ddecab13dcffe8d28dd733dc:eyJzZWxlY3RlZExpbmVDb3VudCI6ODEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJlYzRlM2U3NTJlNTYwNzAyZmQ2NTA2ZjA1Y2FhMWY4MWRiMjEzN2VkOTllNzdmMTA0M2NhODYxMDg5YzZhODAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQzYmY3ZmM4ODMyNzZhOTQzNmZhMTYwODI0YjllYzY3NGY4YmY0MTVlZDhmYmYwMmExYTNjZjQ3OWQ3YmM4NTIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE0ZjkxNmM4OTczYWUyYzQxYWEzZjllMTNiYmJlZTk3OTAyYjNkODViNzBiNGQ5N2MyMGU2MGM3MjE0NDZlYmIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM3OTI5ZTkxZTBmOTljM2U4MjVkZTY5YjQzNWZiNjQ4NGQxYjBhMWRmMmY0NjU2MWFiZjFhMjlmMDQxODhiODgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_34e2f31b595a4778a230358e2c4916bf",
+      "statement": "Importing the providers module is a composition side effect: it imports all built-in provider plugin entrypoints, while the registry stores templates, health checks, model fetchers and setup steps separately; capability lookup can return `undefined` when no registered implementation supports the provider.",
+      "evidence": [
+        {
+          "resource": "repo://src/providers/core/registry.ts#L19-L123",
+          "version": "repo-lines-v1:sha256:2f159c8592298817aff69f9f37af32b4a2387e74b8f40e6c9437ca5d63b36dab:eyJzZWxlY3RlZExpbmVDb3VudCI6MTA1LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI4ZDZkMmYzZGFlZWIwMmVlMmE4MjYxNWRkYWMzZjE4MGQ4Yzk3MzEyOGUyYjc1NThhOTYyZTFjOTZlZmJhNDFlIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIyN2U1Nzg4ZDVkOWQ3M2QyNGE4MWRiYzBhNWE3NGJmYTgyYzljM2IzYWY5OWU1MmFmNzk2ZTkwYjQ2OGE4YTNkIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI2M2JmNjhiMGZiZDQ0MzIzODZlNjlkYTExMWZlOTUxZTQ0MTRlNjliNThhOWIwMjk4MGYzNTI1ZGU0OWZjNjZkIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MSwiZm9sbG93aW5nQ29udGV4dEhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIn0"
+        },
+        {
+          "resource": "repo://src/providers/index.ts#L1-L49",
+          "version": "repo-lines-v1:sha256:f1d31651d1652143dd8e3016ef32f3c612678ccda13b6109f33c7f7350eb855e:eyJzZWxlY3RlZExpbmVDb3VudCI6NDksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE3MGI4N2JiNjhmZGMzMDAwZGY2YTRmOWRkYWM2MzZkODQwMTNmZmNhNzhkM2VhOTNiM2RlN2I2N2NjZDhjNTAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_09f4b6e96ebc481c9d92ae594f133f1a",
+      "statement": "Provider template registration stores by provider name and is last-write-wins when the same name is registered again.",
+      "evidence": [
+        {
+          "resource": "repo://src/providers/core/__tests__/providers-core.test.ts#L269-L291",
+          "version": "repo-lines-v1:sha256:aba9502843dc4d287b1bc932874cfe4353978f63afdb1f0de201b179f192c136:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU3YzdlMTNmMGQxOTkwMzdjMjhiNzFkMWMzNTdmNjkyNWY0OGU2YTM4ZGY2NjQwMzJlMDI3MjQ3MzFlYjVlMTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkyMDQwZTA5NWE5NGUyYWRhNzRlNDIxZjM3MTg3NTFhOTFhODEwYmZkNjZmNDhmNGU5MzljN2I3NDgwZWI2NzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ1ZWJiMjhjMDg0MzM5MjBjMTQwN2RmNWYxYzI1ZWNkNjhjNjJhMWM3NGU2ZDRkMDFiMzExYmVmNzlhMDhkYTIifQ"
+        },
+        {
+          "resource": "repo://src/providers/core/registry.ts#L25-L31",
+          "version": "repo-lines-v1:sha256:8fb0b5766c86e0bf073a8d313fcadc249d4e21d12f5b24c3c136c55a88170c5d:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNGYyYTJmOTk2ZjA4ZTY4MGJkMjkyMTM1YTZmYTQ5NzhiZGEyNmU2MDJkODRmMzNjYjFkNTk0Nzc1ZDQzMDRiNSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMjdlNTc4OGQ1ZDlkNzNkMjRhODFkYmMwYTVhNzRiZmE4MmM5YzNiM2FmOTllNTJhZjc5NmU5MGI0NjhhOGEzZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYTUyYTJlNjZiOGNjNzllZGMzZGY5YzhlYjAwOThhYTMyNTZjYzdhZjYyNTFlMWU4OGQ4ZTVmMGM4NThiZTZlYyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNTc5MjdkMjk1ZDljODlmMGMwZjZhNjYxZDRkZjEzZTVjNDEzZmNkMGRkNzkzMWMzMTY3MjIzYjkwM2NjNmFiNSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_306383c12a41495ea2153684f88e0bc8",
+      "statement": "Framework plugins are registered by their plugin index at import time, and the framework registry exposes only available adapters and filters an agent-specific query according to `supportedAgents` (missing or empty means all agents).",
+      "evidence": [
+        {
+          "resource": "repo://src/frameworks/core/registry.ts#L10-L91",
+          "version": "repo-lines-v1:sha256:93881e48af2ce4d8c003373c92fe45f0bdede58393f6cc34cd6275c22dc2716b:eyJzZWxlY3RlZExpbmVDb3VudCI6ODIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJhNDMwN2I1NGI0MzhlYjA3N2MyZmEzODI2OTFmZmJmMjk0YjQwNDBkZjNjZWY1YzcxYzllMDlmNmE2OTMxM2YiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZjZTU2M2ZkZGFhMzA5N2YwNzNhMGVmMWRhODliODQ1Y2RiYjE0M2Y2M2I0OWRmOGVkMTM5MTA2ZjFkOWIxNTgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        },
+        {
+          "resource": "repo://src/frameworks/core/types.ts#L8-L101",
+          "version": "repo-lines-v1:sha256:2d9e892b44637d953c733ba8042eb1645e7916b29c7a16f43aaa1a9175a66733:eyJzZWxlY3RlZExpbmVDb3VudCI6OTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ4Y2E2ZWY5MGY0YWYwN2JmNTYyNzM4N2U5ODBiNmE1ZDUxZWMxNDllYzFmZTBhMDgyM2YxZGE0MGVjY2I4MGQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImIxNDUzYmZiYzc4YTQzM2QwZjJmYzZhNzc3MzBhODhmNjllZDhjNzdjZmFjNzA2MzVmZDY3ODAzMzA5ZjBmNzcifQ"
+        },
+        {
+          "resource": "repo://src/frameworks/plugins/index.ts#L1-L20",
+          "version": "repo-lines-v1:sha256:d43e9eaa0843016eed7d16b94a2d706830bc3c8b01eaab215cf62e070e4e6da1:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEzOGIzNjQ3ZGQzNzgxOGVhYzBlNGYyMTM4YmU4OTIzYzZjMDA4ZjdiODM4N2ZkNTEzZDMxY2VmZjVhNWRjZTciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_15c85bb881834e21882788ff8b5aa835",
+      "statement": "The CLI composition root imports provider and framework plugin entrypoints before configuring Commander commands; its `--task` fast path dynamically resolves the built-in agent through `AgentRegistry`, delegates to `AgentCLI`, and exits nonzero if resolution or execution fails.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/index.ts#L1-L43",
+          "version": "repo-lines-v1:sha256:48c7a4275d29cab8bafb6cc8731128d15b3983855eb33fc32229b1956c13fffb:eyJzZWxlY3RlZExpbmVDb3VudCI6NDMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE1OWM0Nzg3MmI3MWYxMjU4OTk0Mjg5MjQ2NGU3NjRjMGRiMzUwYzIwYjcyMjI4NjQ1NjE1Y2MzNmUwYTA3MjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJhNDJmODBjNzEzY2QwYmMzODNmNDNlZTc2NmJmYWJlMmY5NTUxMGFiOTc3YWZkNDNjOTlhZmU0ZDEwM2Q5NGMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc0MTc0MzIzMzNjN2IyZWU0MjUyYjIxZGQxOTI0NzcxZjU1ZTMyYjgxN2NkMmIyMGM5YWYyYjllMWIwYmY3OTQifQ"
+        },
+        {
+          "resource": "repo://src/cli/index.ts#L78-L146",
+          "version": "repo-lines-v1:sha256:3a540b8e62b1271f1633755c49d2fd37512a4aff96887878472363df67c496d8:eyJzZWxlY3RlZExpbmVDb3VudCI6NjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImViMDM0MDM2Nzk4MzljNmRiYjdmN2EyNDhmZDU5YTQyNDA1Y2RlNjEyMjcyZmZjYzhiZDcyZGFiMmZlMDI2N2MiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjEyNDI5NjBlMWZmMWQ2YjU2NTIyOTQ3NWFlMTA1NGI4NDU2ZTg5OWEwMDAwNzQ4MjY4YjdmODRlODRiNjRmMTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_89db5666f3164c338d1c7c7f99299086",
+      "statement": "CLI consumers resolve integration capabilities through registries: for example, `list` obtains manageable/installed agents and dynamically imports the framework entrypoint before reading frameworks, while `models list` obtains the configured provider's model proxy and exits with an unsupported error when it is absent.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/commands/list.ts#L7-L96",
+          "version": "repo-lines-v1:sha256:675130676e1b9745de2c93399919168f9ae9c0a7d1cb0b0bf9db6a4dd050f372:eyJzZWxlY3RlZExpbmVDb3VudCI6OTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU4ZGU3MzhjZmU2MDg2YjBlM2FkZmU1YjU4ZTIwMjIwZjk0ODUwZjA4MWFlMGMwZjM0ZmZjNTdiOTUxOWUzMGQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY5MGRjZDliZWI2NjZiNThhNDIwMThlM2U3ZTcyNTU1MjQ2NDQ3OTBkODVjODRkYzllZmExNDRiMDBmYzBlODYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjYwZDJiNTk4YTQyMzY5NDkxNjJkYTM3YTE0MjA5YTRjNGNkZjU4ZjFjODg1MjI0YjE4ZWU0YWQ0NmFlZDI0NGMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImEwZTVlYWFiNmE3YWUyOWQ5ZjE3ODA5MWM2MjIzNzZmY2M5OWE1MGFiYTg0Y2U3NDllNjI5Zjk0YWEyNDFkN2QifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/models.ts#L39-L88",
+          "version": "repo-lines-v1:sha256:521bba1bd86c6299d0ee6beca4cffd22b8e8c49d2768b02571b66fa52e582b4a:eyJzZWxlY3RlZExpbmVDb3VudCI6NTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjcxNjVhMjIxNWM2ODQ5YjE5NTE4YTBlYWY4MWYyNTJkYWRmZWY1ZWZkYmVkYTgwZDJiYTRjYWZkN2YwMzEzNTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUxNmNjNzM4YjliMDFkMzM0YzcxNWI1MDZjOTBjYWU3MzI1MzJhNWI1MDIyYTk0OTU4NmRhNzQ1ZDg1YTI1NmMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImYyZjE1ZDViODNkZGEwNjE3MmRhNzk4MmEyMDVjNGE4MTFlMzc0M2UxODI3NjY5ZTViMjk3MDNjM2M5ZThlOWYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8db305f6904141d6b7db0cf9321bd98c",
+      "statement": "During agent execution, local proxy routing is disabled for providers whose template has `authType: 'none'`; otherwise it requires SSO or JWT authentication and an agent metadata proxy opt-in.",
+      "evidence": [
+        {
+          "resource": "repo://src/agents/core/BaseAgentAdapter.ts#L938-L960",
+          "version": "repo-lines-v1:sha256:c1354589b2d1f49e41fa8c02d184f64d20d406256bdfcbb1c2e676c332936eda:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmMmEyZjk5NmYwOGU2ODBiZDI5MjEzNWE2ZmE0OTc4YmRhMjZlNjAyZDg0ZjMzY2IxZDU5NDc3NWQ0MzA0YjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk3ZDg2MzJlNTRlOTI5OGFiYjk1ODcyN2UyZDUxNDA4YWJhZjEzNjYwMzUzNzkxMDE0MGFiZjY1YjMwYWI2MTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJhMGQxODhjOTdkYTY4NzYwMjM5MWZiNmExZTk3Mzk4MzliMmMxMjllYjQ3Mjg3YmZkZDUyOTA0YTNlMGFlZGEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e1b10dd9979b476ab61619032f2a1e69",
+      "statement": "The project uses NodeNext TypeScript module settings and an `@/*` alias rooted at `src`; production modules conventionally use ESM `.js` specifiers and `import.meta.url` with `getDirname` for module-relative paths, although a legacy production `require()` remains in the Claude conversations processor.",
+      "evidence": [
+        {
+          "resource": "repo://src/agents/plugins/claude/session/processors/claude.conversations-processor.ts#L15-L37",
+          "version": "repo-lines-v1:sha256:603a2404bb1122d6c3d41b53a51d79b23dc4cfe3d465c5f92bde724e24fab229:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmYTUyMWUyZjIyZDEyMjcwNjY5NTRlZWMwYTZkMWI5ZGQ5MDc5Y2ZiYjFkOGFkMzM3MzQ3OGIxNDUzYWRiZjYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImNjNmQ4YzI0ODU4ODc5NTJhZDEyZmUxMjdmYTNiNjUwMzljZTljNjkwZjI1NjdjM2MyNWQ4OGIzMTk5ZTY2MTAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjgyNjIzOGI0YTEzZjM3MWQ3OTgzNDMzMTY0ZDAzZDZmZGFmZTMyMDQ0Zjk5NzY5MWIyMmQ2NjkxZjc5NGE2MmUifQ"
+        },
+        {
+          "resource": "repo://src/cli/index.ts#L3-L12",
+          "version": "repo-lines-v1:sha256:77f11f59ab731c4e1e3055d35b635b9b83a6020ccefd4c016bec8b306f80e2c7:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZmMTA2NjIxZmJjNmNlYzNmNmQwZmEzNDAxN2Q5ZmJjNTcyODlmNDI3YmNlNWYxMzEwODFiNjczYzdmM2Y4MzQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImE2ZGNhYzNkNjliYzE0M2EzNTg3YzRhOGQ4NDI2N2U5NmVlZmU3YzVhZTZlYzE5YjFlZWM3NzY0YzFlYmU3NDEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjoyLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJkN2IxNzBiZjUyZTA4OTUxMDA4YmYzZWNjYmJiODcwYTI2YmUwYTFlNWI4ZTVmMDIwYmFmYmNmMzU5OTk3YzkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM3YjcxMDQxN2M0ZTJmZTcyYjBiM2ViZDI4YTgzMzVhMjJjYmNkZmE4ODZiNmRkY2UzODI3ZDRkZDgxZmI5YzkifQ"
+        },
+        {
+          "resource": "repo://src/cli/index.ts#L41-L54",
+          "version": "repo-lines-v1:sha256:5bb04b2915cca3e0c7591fda9594ed18a957ca006b324f0cd51b63ff23be9762:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhMGE5OTZlMjFjZTI2NzY5MmVjMDIwMzdkOTEwNGFlMDQ0YzJkNTEwZWU1NTY2OTJiOTQyNDI1MjhiMWJiNjkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijc2YzM4MjViYmQ3NDZiYjZhNzdiN2I0MWQ5MjZmZDY2MDYxOGQ0NDk3ZmQ4N2ZkY2IwNWE1N2E2NzY1NjhiNDciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjY1ZTFmMDU4MGUyY2FkMGNiMDNiOGRiYjI3NTIwM2Y3MjFlYTZhNjQ4OGNkM2JmN2E2ZDVkNzQ4MTljODhiMzgifQ"
+        },
+        {
+          "resource": "repo://tsconfig.json#L2-L30",
+          "version": "repo-lines-v1:sha256:c758c513ae1a697c2a4f211a0ece7c219d418c91787909bce33467a185b9587a:eyJzZWxlY3RlZExpbmVDb3VudCI6MjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjliMGNkOTc0ZWU2ZjM2NjYwMjI0MzRhNmRlODBkZDlmMTA3Zjk5MGYwZDk4MzM1ZjRkYWM2OWYwZGEyYWNkOWIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg0Yjg5NmM1ZDdkZTViNzI5MjQ3NzY2NDEwOWEwYzQ3YjRlNzdiMjQyMzVhZGM2NTliZDA2YTIzNTYyODJkNzYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjoxLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE2ZmIwOGZkYTFhY2I5NTdiNjExNmJkMzc4MTFhMWZlNDFhMDE2MTFjMDYzMWVkYmY3ODZkNjg4OWEyN2E1NWMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_ca292f4c29cc4a90b6bd416bedd40396",
+      "statement": "Focused tests assert the complete default agent registry membership, unknown-agent behavior, adapter operation surface and installed-agent filtering; provider-core tests verify registration identity and duplicate override behavior.",
+      "evidence": [
+        {
+          "resource": "repo://package.json#L31-L61",
+          "version": "repo-lines-v1:sha256:b83146f3662339b238c51ba70a157aab9c28790ec4772732af3b6a1e92ba86f1:eyJzZWxlY3RlZExpbmVDb3VudCI6MzEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM0ODMzZDU5NDljMDNhNDBjYTk1MjQ5MTYxMGE2NjU5NjQ0YjNhYTQ2NjM2MmY3OTkwMjBkYmYxOTgxNTQ3ZGIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImZmYzc5YzAwN2QxMjA3NWI0ZmQ3MGIzNDg2M2U2MDkyN2U0YzBlOWIwMjRkNjQ4ZmRlOTI0ZDY5YjQ5ZjhkYTUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNjMTg5NDZlOTUwNzAzNjY5Yzg3ZWQ3OTRmNjcxMzI1MDc5ZGI3ODk5MDg3NGU0ZGI1ZTAzY2M4ZmM1OWI4YTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAwNDFlN2YwOWZiNGJmNmVlYTJiY2ExODZhMDU4MjY1MTQwYzMyODBjNzZjOWE3NDU5ZTUzZTNmZWUyYTcxMWYifQ"
+        },
+        {
+          "resource": "repo://src/agents/__tests__/registry.test.ts#L10-L177",
+          "version": "repo-lines-v1:sha256:da4aaa848d40d8af6748110d10b51affd39bc1b200a798ca1965b436736a9930:eyJzZWxlY3RlZExpbmVDb3VudCI6MTY4LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJjM2Q1MzYzMzY2NWQyZWZkYTI0ZmM4YTVjN2ZmMzVkYzk5N2ZmZGQzOWVjODk1ZjVjZGZhZTMyZGM2MGI0OGU0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIyMmQxMWNhZjQzZTk3ZWYzNjllNmJlZWQxYTI2OGJkMDU4MzhmMjliOWRkMjU0YmY2OWJhNjQ4ODQxNDcyMzRhIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIxZjNmYTVkNjM0MmQwNzJhZDkwNTQzMWU4MWQ1NjRmMmM3ZTg5Y2Y0MzVmZDdmMWFhODJhM2NmMGFkOWQ5ODIzIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MiwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJkODE3ZmJiNzNjOTJiMzZkNWU0ODk2ZmY1MWMxYjU4ZWVjMzMwYmJlOTYxYmEwNWZjNjIwNWY4NjdlYTFiY2Y2In0"
+        },
+        {
+          "resource": "repo://src/providers/core/__tests__/providers-core.test.ts#L269-L291",
+          "version": "repo-lines-v1:sha256:aba9502843dc4d287b1bc932874cfe4353978f63afdb1f0de201b179f192c136:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU3YzdlMTNmMGQxOTkwMzdjMjhiNzFkMWMzNTdmNjkyNWY0OGU2YTM4ZGY2NjQwMzJlMDI3MjQ3MzFlYjVlMTUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjNhM2U0NmY5NDI3NmI2ZjZmNGVkMWYwMmFmNzhiZWY2YTJlZTFjNDM5ZGQ1NTg0Yjk3Mzk0ODMxMzIxNGQyYjciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkyMDQwZTA5NWE5NGUyYWRhNzRlNDIxZjM3MTg3NTFhOTFhODEwYmZkNjZmNDhmNGU5MzljN2I3NDgwZWI2NzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ1ZWJiMjhjMDg0MzM5MjBjMTQwN2RmNWYxYzI1ZWNkNjhjNjJhMWM3NGU2ZDRkMDFiMzExYmVmNzlhMDhkYTIifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.4.3",
+    "at": "2026-08-29T08:09:18.077Z"
+  }
+}

@@ -213,9 +213,32 @@ CodeMie installs external agents, routes them through the CodeMie proxy, and tra
 | Pi | `codemie install pi` | `codemie-pi` | `@earendil-works/pi-coding-agent` |
 | Kimi Code | `codemie install kimi` | `codemie-kimi` | `@moonshot-ai/kimi-code` |
 | Kimi Code ACP | `codemie install kimi-acp` | `codemie-kimi-acp` | `@moonshot-ai/kimi-code` (`acp` mode) |
+| OpenWiki | `codemie install openwiki` | `codemie-openwiki` | `openwiki` |
 | GitHub Copilot CLI | `codemie install copilot` | `codemie-copilot` | `@github/copilot` |
 
 ACP agents are launched by your IDE, not directly — see [ACP Agent usage](#acp-agent-usage-in-ides-and-editors) below.
+
+### Documentation & Knowledge Tools
+
+CodeMie also manages documentation tooling for your agents — install globally and initialize per project with `codemie docs`. These fall into two capability groups:
+
+- **Authored documentation** — prose a human or agent reads. *OpenWiki* generates a linked Markdown wiki (`openwiki/`) with validated Mermaid diagrams and grounded, source-cited claims; it maintains the wiki on every change (`--update`), can refresh it from a scheduled GitHub Action, and points your coding agents at it via a managed block in `AGENTS.md`/`CLAUDE.md`. It runs on your CodeMie profile (SSO/LiteLLM/Ollama), so no separate API keys.
+- **Queryable knowledge graphs** — indexes an agent queries at runtime instead of re-reading files. *Codebase Memory MCP* (persistent code intelligence graph, auto-indexing, 3D graph UI via `codemie codebase ui`), *CodeGraph* (local-first symbol index: `query`, `callers`/`callees`, `impact`, MCP server for Claude/Codex/OpenCode via `codegraph install`), and *Graphify* (multimodal knowledge graph over code + docs + PDFs + images, with an interactive `graph.html`, agent-crawlable wiki output, and a `/graphify` skill for Claude Code).
+
+| Tool | Install | Init in project | What it does |
+|---|---|---|---|
+| Codebase Memory MCP | `codemie docs install codebase-memory` | `codemie docs init codebase-memory` | Persistent code intelligence graph + 3D UI |
+| CodeGraph | `codemie docs install codegraph` | `codemie docs init codegraph` | Local-first code intelligence graph + MCP server |
+| Graphify | `codemie docs install graphify` | `codemie docs init graphify` | Queryable knowledge graph (Claude Code skill) |
+| OpenWiki | `codemie install openwiki` | `codemie-openwiki --init` | Agent-written, self-updating repo wiki (uses your CodeMie profile) |
+
+```bash
+codemie docs list                            # status of all docs tools
+codemie docs install codegraph               # install a tool globally
+codemie docs init codegraph                  # initialize it in the current project
+```
+
+The tools complement each other: OpenWiki keeps human/agent-readable docs current, while the graph tools give agents fast structural lookups at runtime. See [docs/COMMANDS.md](docs/COMMANDS.md#documentation--knowledge-tools) for the full command reference.
 
 ```bash
 codemie install claude --supported             # install

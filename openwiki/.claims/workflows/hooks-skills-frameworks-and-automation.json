@@ -1,0 +1,338 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:ffb67568cd9f45bc4bc42d4da62a43af35e768338040bb48650901c841ef7cd3",
+  "claims": [
+    {
+      "id": "claim_77da99dbd077402e9d776f31e0f12de5",
+      "statement": "The configurable HookExecutor is a distinct hook engine: it accepts a lifecycle-event configuration of command or prompt hooks, builds event/context input, and returns an aggregated decision/context result.",
+      "evidence": [
+        {
+          "resource": "repo://src/hooks/executor.ts#L45-L112",
+          "version": "repo-lines-v1:sha256:d705915cff4af64841d883d79cc18dba42d63226709bb9cb6d185582a04affb8:eyJzZWxlY3RlZExpbmVDb3VudCI6NjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVkOWI2YzdiNWM2MjhjNTZiYWMxOTI2ZTVkYzA1NjEyMThiZmVhYzYzMmM2ZTNiYzFiN2JkYmJjNDQyYmI5ZmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUwYjczODBkMjI0NDA2Yjg1ZTM2MDZkNGYwYTdkOGVlNDNmYTViZTE3MTQyNDM5YjM2ZTUwNzY3M2I4YzlhNGMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImU0MWY1NTU3YjkzODY4NjIyZThjYTI0OTc5YmE5MzBjZWI5ZDhkMWY4OTFlN2M2ZjAwYzVkMDU3NjRhNzk0MzgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk4ZTIyN2VjMzU5NzEyMTlmMGRhMzkxNTExNWQ5NWZjYmFkNWZhYTQzMDQwMjQ3OGY4ZGI2Mjc5MTY2YmQ5YTcifQ"
+        },
+        {
+          "resource": "repo://src/hooks/types.ts#L95-L197",
+          "version": "repo-lines-v1:sha256:b2444c91db3a874e596e603e97d20ae0609da33290017a7d9f84274b3ff930e3:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAzLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJlYWYyMmNmMDczMjU5MmMyNDcxNDFjYmU2MWVmYTExMDEyNjEyZjVhMzEyMmI5YWY5YmJhZjUyZjU3MjRkMTk0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI1MTI0M2I2OGZmZjFmNjY1Mjg2ZDc3MGQ3MGVkODY0YzE3OWQ2YjhmNWUzOTQ3MzMwYjQ2YWRjNTU2N2ZiMGY2IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI1ZTc2ZDlmM2RiZTdhMzA2MTEwMjYxY2M3ZmY5MjM3OGM0M2RlN2UzOTRjZTUwNDFlMWIxMWY5OGU3YmIyYWEwIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MSwiZm9sbG93aW5nQ29udGV4dEhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIn0"
+        }
+      ]
+    },
+    {
+      "id": "claim_ae5a974a7ef045dcb5bced3548f296ef",
+      "statement": "Tool hooks use literal, wildcard, or anchored-regex matcher selection, whereas UserPromptSubmit, Stop, and SessionStart flatten and execute all hooks configured for their event.",
+      "evidence": [
+        {
+          "resource": "repo://src/hooks/executor.ts#L165-L188",
+          "version": "repo-lines-v1:sha256:85238a57c24c13e46d5e4c582734e8127dcad5dd800bd208cfb87d2b6f1a99b1:eyJzZWxlY3RlZExpbmVDb3VudCI6MjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA2YjY4NzRmZTU2MzQxYmEwYWVjMDI2ZmZkNTFhNWRiNTU0YjEyNTc1NjMxNzAxNTQxNzAxZDk3N2Y4ZmY4NzUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhiZDk0NDQyZjFmMDgzNmZjMjViOThlNTIxNDI3YmY1YzQ3YzkzMjhlYmY3YjE5MjNiZTJlMDU1YjFiMDA1OGYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjNhMTIzZDNjYmQ5OWI2MjlkYjU5ZWQ5MDJlODE3YmQ3MTc4Njc5NzIyNDQ2ZmEyOTEyN2VjNGQxZDcwNDQ2NDQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk4ZTIyN2VjMzU5NzEyMTlmMGRhMzkxNTExNWQ5NWZjYmFkNWZhYTQzMDQwMjQ3OGY4ZGI2Mjc5MTY2YmQ5YTcifQ"
+        },
+        {
+          "resource": "repo://src/hooks/executor.ts#L199-L275",
+          "version": "repo-lines-v1:sha256:5d54bafbfdc11a989ee9f39ce264bd8b3b7ac4ecbc7ee8984c229fbe67ac695d:eyJzZWxlY3RlZExpbmVDb3VudCI6NzcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYwYzgzNjYxNDdjYWQ4NjYzNzg3Mjk3NTFiMTMzMjU5NDAxMTA5YzhjMDhiZmU1M2Y4NjZhY2MzNjk4NmExY2IiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhiZDk0NDQyZjFmMDgzNmZjMjViOThlNTIxNDI3YmY1YzQ3YzkzMjhlYmY3YjE5MjNiZTJlMDU1YjFiMDA1OGYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUwYjZjYmJlNjBlMzUzNmM5MmM4NTUwOTVjZjEyMmU3MzAzN2Y3OWM2OGRkMTY2NjNkNzlhN2ZkODE1YmNmMjgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk4ZTIyN2VjMzU5NzEyMTlmMGRhMzkxNTExNWQ5NWZjYmFkNWZhYTQzMDQwMjQ3OGY4ZGI2Mjc5MTY2YmQ5YTcifQ"
+        },
+        {
+          "resource": "repo://src/hooks/executor.ts#L285-L300",
+          "version": "repo-lines-v1:sha256:8c4fd7cbab75a51c1c568df64a319b655c500177da6c757d232adae7564eabac:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjU3YTdiNDQ1MTlhNmNjMjE1NDM4MzNkY2MxOTAwMWUzNzlhMzJjZjBkZWViNDljNDRjM2ZkMTA4Njc1ZjM5ODMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY3Y2RhODJkYTYwNjIzOGUwNWU2MjM5OTU2OWM1ZWUwMzk5MzQxOTY0OGFlNWQ0M2EyYmY4Y2Q2MzQ3ZjgyNjMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjIwZDJlY2U2Y2NkMDhjNjZkZTA0Y2E3NTkxMWIyZjljY2RhZTNmNjE5ZjkyNDQ2YTkwZTRiYjRjZGYzMDJjOGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg1NGRmZmMyZTgzMzM2N2E5NGNjZmU1OGRjMGVlZTU4MGZiMDczYzQ2NGQ3ZGYwMzhkZThjM2ZjZmM0ODgxYWIifQ"
+        },
+        {
+          "resource": "repo://src/hooks/matcher.ts#L24-L50",
+          "version": "repo-lines-v1:sha256:57dd15fc58456e95592445d9054adaf20a442bf50cbdbba6b82c156482071972:eyJzZWxlY3RlZExpbmVDb3VudCI6MjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVhYzRhMTZhZGM5NDU3YjU3YmQxMmZmYjYyYmVkNDgyMDY2ZGNjZmI4MTA2MmRkM2Y0NGIxNWQ1ZTAyMWEwNDEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY0ZWZjNDk0MThkMjZkY2YxMjliMjJhNmFhMjExMDhjZWVjMzc2NzdhMzJkMDhlOWQ1ZmVlMzVkZGE2NmJiOWQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjYwMzE0YWExOWJmM2NkNDVmNzliZWE5MGNhMjI4NWM4YzA1NGE2OTcxMGMwMDE3Mzg1NzEyNjA5YTlmNWZjMjEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk4ZTIyN2VjMzU5NzEyMTlmMGRhMzkxNTExNWQ5NWZjYmFkNWZhYTQzMDQwMjQ3OGY4ZGI2Mjc5MTY2YmQ5YTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_c40a157db5f04b71a016345475e5fb09",
+      "statement": "HookExecutor deduplicates configurations by a SHA-256 hash, runs unique hooks concurrently with Promise.allSettled, and merges their results.",
+      "evidence": [
+        {
+          "resource": "repo://src/hooks/decision.ts#L125-L209",
+          "version": "repo-lines-v1:sha256:1f7835f64248442b213220f5988c3a989dea2d6500fd4f07d02e705507704dd6:eyJzZWxlY3RlZExpbmVDb3VudCI6ODUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFlNDUyZmZlZDI0YWViNTMwNTVmYmU1MDMwOGUyY2U1MDgzZDY4YzU2MTU3MWM5MjQ0YzdiNjA2YWE4MWFhZTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFlNzUwNmQyZmNkYzE4ZGJjM2E3YTE3MjM0OWQ3OThhOWNmZDRkOTdjNzQ2MjQ3YzNlOGU1Y2E5MzcxZTI0MDMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhhNjQxMzA4ZmZlZGNkOTgxZTI4Njc2NmFhNzI4YjUxMzJjZTcyYmFlNGNkMWZjMmI1MTViMzFiOGE2ODIzZmYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk4ZTIyN2VjMzU5NzEyMTlmMGRhMzkxNTExNWQ5NWZjYmFkNWZhYTQzMDQwMjQ3OGY4ZGI2Mjc5MTY2YmQ5YTcifQ"
+        },
+        {
+          "resource": "repo://src/hooks/executor.ts#L309-L377",
+          "version": "repo-lines-v1:sha256:e52275a4262651051e2f6a3f0692474489373289c17c864160d739e066dae762:eyJzZWxlY3RlZExpbmVDb3VudCI6NjksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBhMDkzMjc5ZTE5Y2U3OWQ1YzIyMGUxMjExNjlhYTgxZDY0ODZjN2M2YTVkOTcxNDgwODc3ZjQzZGZkMTViNmYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI0MDA5NjgxNTkyMDQxMWYxMGJlZTc1OWEzMWJkMThiMmM4OWVjMzc2NmFmNDBiYWQ4NDg3M2I3Y2NjNTU3MzYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVjMzExMDI4M2ViZDMzMWExMjliNjdlNjBhY2U4MjNiYWY1ZjZkNjZiZmU3ZTljZTY3NjhmNGVlMjY0YWFjYmQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk4ZTIyN2VjMzU5NzEyMTlmMGRhMzkxNTExNWQ5NWZjYmFkNWZhYTQzMDQwMjQ3OGY4ZGI2Mjc5MTY2YmQ5YTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e24f9010fe6349dba7ca3e6543fc1e66",
+      "statement": "Command hooks sanitize tool input/output before serializing them into CODEMIE_HOOK_INPUT, execute in the configured working directory with CODEMIE context variables, and use a 60-second default timeout.",
+      "evidence": [
+        {
+          "resource": "repo://src/hooks/executor.ts#L25-L28",
+          "version": "repo-lines-v1:sha256:3b940f970649e65352baaf1e0f9a1318d9b63417552a7d14e4a153e2ae21938e:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZWFmMjJjZjA3MzI1OTJjMjQ3MTQxY2JlNjFlZmExMTAxMjYxMmY1YTMxMjJiOWFmOWJiYWY1MmY1NzI0ZDE5NCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMTAzNDZlOTM1ZDMyOTY3OGI0YWQ2MDQyYjc1MTkwMzBmOWFjZTMzOGExZGZiNmMxYzUxZGI5MWMwNmZmY2U2MyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYTM0MGY4YWM5OGZmNjVhZTM1NjI1NDZmMjc2OGZiNjU2YzRiZTBkZTQxMTIyYzBiMjkxYWYyOWY3MzgwZThhYiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiODI2OGQzNTFlZGJiYTJhNzBjMTc5NzBlNGZjMWVhNGQ0OTk4MGIyMDdlYjljODk0MjNjN2MwMzVhODA3NDcyYyJ9"
+        },
+        {
+          "resource": "repo://src/hooks/executor.ts#L426-L475",
+          "version": "repo-lines-v1:sha256:4285fe6ac37e15d567d07b726a1a10c8559a4766182e0c40128c02dbb1208aab:eyJzZWxlY3RlZExpbmVDb3VudCI6NTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImNlMTJjY2FhN2M0YmNmZjQyNTI2NjYwMDEzZDY0NGVjZjcwY2IzMGI0N2FkZmJmYWEyNDQzZjM2OWVmYzA5MDMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEzMGZlYjk2MmZmOWZlY2IwYmEyYjY3YTFjNDQ0MTIwODY5YWQzNjEyOTM5YzVmZjY3NTVlNjhhOWFmYzk0MzEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhlMjJiN2JmMTc5NjcwYjE3OWExM2U5MGQyOWNlMTJkMDEyYjg1NmUwNzI4MDRiNWJlYTNkMzg2YzgzNDk0NTAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk4ZTIyN2VjMzU5NzEyMTlmMGRhMzkxNTExNWQ5NWZjYmFkNWZhYTQzMDQwMjQ3OGY4ZGI2Mjc5MTY2YmQ5YTcifQ"
+        },
+        {
+          "resource": "repo://src/hooks/executor.ts#L508-L525",
+          "version": "repo-lines-v1:sha256:bab4f7d3731e1d890e41575267aa589482e37636f37b7b8328252f4289bb13f4:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVkOWQ4Y2EyYmNhNmJiZDE2YjU5Y2JmNTJiNDM1ZDNlNzY3NjA3MTk4NjQ1Njc0YTdjN2ZiOGMyZTA1NjA2YTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM2MGI4OGEwNWQ1YjUzODQ3NjAyMjliZTYwNTcyZmU2MmIxYzI5Y2RjNTdlZGI1ZTY5NTFkYWE0ZmQ0NmM4MDMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI0YTE0YTE0ZWQ3Mzk0Y2MwYjE4MmZiOWMzZWM0M2E4ZjIxNTBkZDE0MzQ4OTk0NTk1Zjk2NGM2Y2I3MGIxN2QiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk4ZTIyN2VjMzU5NzEyMTlmMGRhMzkxNTExNWQ5NWZjYmFkNWZhYTQzMDQwMjQ3OGY4ZGI2Mjc5MTY2YmQ5YTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_4766b35ae68846a585da8e19f66ebfed",
+      "statement": "Hook output handling fails open in most failure cases: exit code 2 becomes block feedback, other nonzero exits and non-JSON output allow with context, and decision priority is block over deny over approve over allow.",
+      "evidence": [
+        {
+          "resource": "repo://src/hooks/decision.ts#L113-L209",
+          "version": "repo-lines-v1:sha256:23764e24d1042deffbd10effb66395fa24f22630778f127194b2621e2ac0b2fd:eyJzZWxlY3RlZExpbmVDb3VudCI6OTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVkOWQ4Y2EyYmNhNmJiZDE2YjU5Y2JmNTJiNDM1ZDNlNzY3NjA3MTk4NjQ1Njc0YTdjN2ZiOGMyZTA1NjA2YTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFlNzUwNmQyZmNkYzE4ZGJjM2E3YTE3MjM0OWQ3OThhOWNmZDRkOTdjNzQ2MjQ3YzNlOGU1Y2E5MzcxZTI0MDMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ4ZTU2NGE1NTYxMTExNmU0Y2U5N2E1ZjYzMDlmNTJmMDM4ZTBiNzZmNjJkNDQxYTAxYmVkNDNiZWVlOWEwM2MiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk4ZTIyN2VjMzU5NzEyMTlmMGRhMzkxNTExNWQ5NWZjYmFkNWZhYTQzMDQwMjQ3OGY4ZGI2Mjc5MTY2YmQ5YTcifQ"
+        },
+        {
+          "resource": "repo://src/hooks/decision.ts#L20-L64",
+          "version": "repo-lines-v1:sha256:4f37cddacf86cb26576bed4ef2656817c53ba276b96e0924480d23901e84db23:eyJzZWxlY3RlZExpbmVDb3VudCI6NDUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdjM2VkNmIwOTI4YjgxOThiNDJhNTJhYzlhNzQ1ZWIzYjlmYmQ5N2M3MGVlMjg0MzA3NzMyNDE2ZTQ2YzVlZDMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY0ZWZjNDk0MThkMjZkY2YxMjliMjJhNmFhMjExMDhjZWVjMzc2NzdhMzJkMDhlOWQ1ZmVlMzVkZGE2NmJiOWQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImNiN2EyNzQxNTdkMWQxNWQ5N2UyZWM3ZWIxZGQ0ZGNmNzZhOWZjMjU0NzAzYjc4YjI4MzRiMzU2MjQ2MGRlZDgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk4ZTIyN2VjMzU5NzEyMTlmMGRhMzkxNTExNWQ5NWZjYmFkNWZhYTQzMDQwMjQ3OGY4ZGI2Mjc5MTY2YmQ5YTcifQ"
+        },
+        {
+          "resource": "repo://src/hooks/executor.ts#L387-L416",
+          "version": "repo-lines-v1:sha256:062630c02105ade0b114c67e55fb64989b61ac1f5e7b679b61bfa9a9fc8c67a7:eyJzZWxlY3RlZExpbmVDb3VudCI6MzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI2YWRhM2RmZjUxNjBlZmQyOTRiMTllYWRmMWY0MTJjNDdhMWY4YWNmYmQwZmQxOGI1ZmU3NGI0YTY4NWM2ZjAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY0ZWZjNDk0MThkMjZkY2YxMjliMjJhNmFhMjExMDhjZWVjMzc2NzdhMzJkMDhlOWQ1ZmVlMzVkZGE2NmJiOWQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjY4M2E3OTg5ZGYxZDUwNTQ1YzU0ZDY3NmUxZWEzMTEyYTIyYzM1ZWEyNzRiNDU4MjRiYjY2OWVkNjk4MzRlZGUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk4ZTIyN2VjMzU5NzEyMTlmMGRhMzkxNTExNWQ5NWZjYmFkNWZhYTQzMDQwMjQ3OGY4ZGI2Mjc5MTY2YmQ5YTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_55c5ec0c74bd4cd4a35c79be782423af",
+      "statement": "Prompt hooks resolve documented input placeholders, invoke a deterministic ChatOpenAI configuration, and fail open when invocation fails or LLM configuration is absent.",
+      "evidence": [
+        {
+          "resource": "repo://src/hooks/executor.ts#L485-L505",
+          "version": "repo-lines-v1:sha256:a10077a5d63e8ecd95ebba7515548fc1c1e5803e3c178081158906151fff51b6:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBmZjQ4YjYyZTU4ZDlkOWYwOWJiZGQwMTdhOTI3NTFiM2E4MmNkOWNiMGVjMzViYWU4YWQxMzY3OWZlMTljMTAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjExYjIzOGMwNWJkNzY3N2I0MDgxZWVmMGZjMWRlODU4OWY1YTM5ZTY5N2U3ZDlhOTlkM2Q5NTZiMzA4NWQ5YzIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjhkZWY4MTNhYWNmMjM1MGFiYzQwOWI2NTIxN2Y2NWExN2FlZmZlNTYwMGRlZGJlZTc5MDczYWU1Yzc1MzNkMmMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk4ZTIyN2VjMzU5NzEyMTlmMGRhMzkxNTExNWQ5NWZjYmFkNWZhYTQzMDQwMjQ3OGY4ZGI2Mjc5MTY2YmQ5YTcifQ"
+        },
+        {
+          "resource": "repo://src/hooks/prompt-executor.ts#L100-L181",
+          "version": "repo-lines-v1:sha256:93a1b0ccf807ec8363fd4399809c6b5002e4b6e362087940b92c337fc19eb131:eyJzZWxlY3RlZExpbmVDb3VudCI6ODIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUzNTRjZWNlMDY1ZTBlNGUwNDhjYzUxYmFkYmViMjhhZDMwZTE4MmJhMjA1YTk1NTE4YTk5MDU3ODRjMWU4OGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY0ZWZjNDk0MThkMjZkY2YxMjliMjJhNmFhMjExMDhjZWVjMzc2NzdhMzJkMDhlOWQ1ZmVlMzVkZGE2NmJiOWQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE2Y2E4MzI5YzdjYWNjNDE4OGFlMDJkMDZhZDIyYTNiNTk2NmYyMmU0YTA5MWNkMTI5MzE5OWVjZTBiMTAzNmQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoyLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQwMzk5NDVmNzEzY2VjY2MyYTJiZTk4MWFiNWM1ZWVhMzdmOTVmOTc2OWU1NzVjZDhlZDlhOWZjYmFmZGYwNmEifQ"
+        },
+        {
+          "resource": "repo://src/hooks/prompt-executor.ts#L42-L90",
+          "version": "repo-lines-v1:sha256:5b8783331a637b26153184f80c4b79b0dee54d3cba91850726e272f6daac7b77:eyJzZWxlY3RlZExpbmVDb3VudCI6NDksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYzOTExZmE4ZDliMzc2NmI5OTVjZjdiMTc4MDRkMjA5YzBjMDYyZmIwNTRmMDY1ODRjMzgyNDU5NGQzZTQ2NGEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY0ZWZjNDk0MThkMjZkY2YxMjliMjJhNmFhMjExMDhjZWVjMzc2NzdhMzJkMDhlOWQ1ZmVlMzVkZGE2NmJiOWQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjJjNGZmNTI3YTRmOWFhNDFkOTM3NmRlOGYxMWNlYzM2MjU1ZDIwNTUwZGE5ZTVkOGFiY2M4OGQ5NWUwMTRiMzUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk4ZTIyN2VjMzU5NzEyMTlmMGRhMzkxNTExNWQ5NWZjYmFkNWZhYTQzMDQwMjQ3OGY4ZGI2Mjc5MTY2YmQ5YTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8c9ad0e1c3f94c48acd553c2e2b2d7cb",
+      "statement": "The codemie hook command is a unified agent-plugin event entrypoint: it reads JSON from stdin, initializes context, lets the registered agent transform the event before validation, normalizes its name, and routes the supported lifecycle events.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/commands/hook.ts#L1376-L1448",
+          "version": "repo-lines-v1:sha256:115340304251624eb7225462444f8eb6e778e63931ce1176bf6e2a257a05872d:eyJzZWxlY3RlZExpbmVDb3VudCI6NzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImY2YWQxODNiYWMyYWRlOWYxYjIzZTBhNGMxMzc1NDUxOGFlYTk0OTkyNmMzMzg5ZGMyNmNhYzQ0YjI5NTJlMDAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc5OGFmYjRlOGFlMzBjNmQ1ZjdlYmFlNmU3M2ZiOTYzZThjZTBkOThhZTJmMDVkOTEzNDhmNTU4Nzg1ODlhZTMifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/hook.ts#L1450-L1552",
+          "version": "repo-lines-v1:sha256:f0cd4a0fa53d9b99426fba6a3b1081fba8f1934870089b90e068bc8e895354d7:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAzLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJlYWYyMmNmMDczMjU5MmMyNDcxNDFjYmU2MWVmYTExMDEyNjEyZjVhMzEyMmI5YWY5YmJhZjUyZjU3MjRkMTk0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJjMDgzMDAyYmZkZThhMGJiMzY4NDdkNWI4N2IwY2NhMzJjMTQzYTdiYmJjMThkOTZkMDgwZDI2YjIwOTBjM2M4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MCwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJlM2IwYzQ0Mjk4ZmMxYzE0OWFmYmY0Yzg5OTZmYjkyNDI3YWU0MWU0NjQ5YjkzNGNhNDk1OTkxYjc4NTJiODU1In0"
+        },
+        {
+          "resource": "repo://src/cli/commands/hook.ts#L607-L738",
+          "version": "repo-lines-v1:sha256:7ab1c6a46c0f4e344e5563fbaf4a6529b4974a38078778d3a21509e9b287d365:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMyLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJlYWYyMmNmMDczMjU5MmMyNDcxNDFjYmU2MWVmYTExMDEyNjEyZjVhMzEyMmI5YWY5YmJhZjUyZjU3MjRkMTk0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIyN2U1Nzg4ZDVkOWQ3M2QyNGE4MWRiYzBhNWE3NGJmYTgyYzljM2IzYWY5OWU1MmFmNzk2ZTkwYjQ2OGE4YTNkIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI0NDYyNDg1NTJhZjU0ZWE4MzI3ODY1YzdlNzg5NTI2OGNhMTFjODI4OTlhN2VhYjhiY2JjZjE5NzAyNjlmZGE0IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIzNzkyOWU5MWUwZjk5YzNlODI1ZGU2OWI0MzVmYjY0ODRkMWIwYTFkZjJmNDY1NjFhYmYxYTI5ZjA0MTg4Yjg4In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_b56ae04f365e4f74a85bddba1ff356f8",
+      "statement": "At SessionStart the agent hook creates or refreshes correlated session state and non-blockingly syncs skills to Claude; Stop processes transcripts after active-duration accumulation, while SessionEnd performs final processing/sync, updates status, and renames local session artifacts.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/commands/hook.ts#L1051-L1176",
+          "version": "repo-lines-v1:sha256:fa3033af04a3abdf2fed8af876e1cd106efd2d9874af32439fa6d3cfddf2dbcb:eyJzZWxlY3RlZExpbmVDb3VudCI6MTI2LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJjNTFiY2Y3M2JiMTNmMjJjMjQxZGRmOGUxODU1YWFlY2NiYWRhOTFhYzVjYTg0NjdiMDlkZmZjMjA2MWYxOGM5IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIzNzkyOWU5MWUwZjk5YzNlODI1ZGU2OWI0MzVmYjY0ODRkMWIwYTFkZjJmNDY1NjFhYmYxYTI5ZjA0MTg4Yjg4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJmZGQ3ZTAxZDU1ZTQ3ZmE4ZDZmNzU4ODUwZWUyOWI0OGM3ZDhjNTBlNTdjN2NmYmJiMjlmNzcxYTIyYzhhOGJlIn0"
+        },
+        {
+          "resource": "repo://src/cli/commands/hook.ts#L167-L229",
+          "version": "repo-lines-v1:sha256:b87e1a3c7221042f4914037c4dff9c817783e2e04bbf21c02cac68d971e04cf4:eyJzZWxlY3RlZExpbmVDb3VudCI6NjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA5ZjkzMDgzYzE5NzEyMWI5ODI3MDBiYThhZmFiZDE3MjJjZjFkM2U3NDA0NTA5ZTgwZWZhMjcyNDdmNjJmMDciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNlODc2NWQ2NGJlNDI0MjMxOWUzYmZlNzBiYzgxZjZmMGFlYmM4MTg2ZWEzNWRmYjg5ODgzMzlkODFkMGZjYzEifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/hook.ts#L580-L598",
+          "version": "repo-lines-v1:sha256:5b407038b1ceb75c416e85abfbcae93f1f6f3861d75e5ae8fa8d92a5d831420b:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZiNTgwZTk2NGY4M2E0NzNmNDNkNDQzODQ2Mjk0OWQ2OGI1NjAwZmRhNzg3ZjE2Mzc0NWQwMGRlODljYmYzNmEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjA5MmUyYmZjNWFiOTY0YzU3ZWY5MTEzZGQ3NGU5YzJiNjVkNDRmYjZjY2EzMWFkMjEyMDM2M2ZhZjk3NWE1ODMifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/hook.ts#L749-L892",
+          "version": "repo-lines-v1:sha256:84d6c468e9805d9791b4cb3d7b6142fbd2e26742c8d46300119b20f5bc11aaae:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQ0LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJhOWE1NjlhOTZjYWJkYzBkNDhmMDY5OGIyMDVmY2M0YmQzOWQwNDA1ZmVjMzRmYjdhNTQ4MThkODMwYTE0Zjg4IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIyN2U1Nzg4ZDVkOWQ3M2QyNGE4MWRiYzBhNWE3NGJmYTgyYzljM2IzYWY5OWU1MmFmNzk2ZTkwYjQ2OGE4YTNkIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJmNzNmODFiMDFiMjIyM2E3ZDBiNTFhOWQ4ZWZlZGUyNDliZDRlMGFhNjI2N2UzMGVmYzEzYzVkZjA1OWM2MDNlIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIzNzkyOWU5MWUwZjk5YzNlODI1ZGU2OWI0MzVmYjY0ODRkMWIwYTFkZjJmNDY1NjFhYmYxYTI5ZjA0MTg4Yjg4In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_37240b9cda224ba79b186574fd6d113b",
+      "statement": "When analytics is configured, UserPromptSubmit checks for valid SSO/API-key authentication and a prior invalid-auth marker; invalid authentication blocks native CLI prompts with exit code 2, while programmatic callers receive an error.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/commands/hook.ts#L494-L578",
+          "version": "repo-lines-v1:sha256:e9554e77d898c7137e424239f1760b8a26a08b6978b2ce595ad2683cb43a2981:eyJzZWxlY3RlZExpbmVDb3VudCI6ODUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZiNTgwZTk2NGY4M2E0NzNmNDNkNDQzODQ2Mjk0OWQ2OGI1NjAwZmRhNzg3ZjE2Mzc0NWQwMGRlODljYmYzNmEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjAwMjFiMzNiZWFlOTgyZDcyZmMyZGQ2MzljMWQxMzQ0NTBkMzEyNDk0MDZkNzYxMzg3Yjc2YzliYjM2ZTFkZDkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_9a1afbdf7d5f4eee90dc219b3eef5855",
+      "statement": "BaseExtensionInstaller provides version-aware extension installation: subclasses define source/target/manifest/critical files, changes use a clean replacement copy and structural JSON verification, and hook-command localization is non-fatal.",
+      "evidence": [
+        {
+          "resource": "repo://src/agents/core/extension/BaseExtensionInstaller.ts#L520-L602",
+          "version": "repo-lines-v1:sha256:1dc20b7c4456dcc7fc36b2fb691928e91de0790b529512196888bfc1372de24b:eyJzZWxlY3RlZExpbmVDb3VudCI6ODMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI1YTgzODQ0ZDlmMDE4NjQ3NzVhNDgzOTFiNzlmODc5MmIzOWI3YWMyZmFiNTIyODNhMDQxNWIyNTgwODMwYjIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk3ZDg2MzJlNTRlOTI5OGFiYjk1ODcyN2UyZDUxNDA4YWJhZjEzNjYwMzUzNzkxMDE0MGFiZjY1YjMwYWI2MTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY4ZDUxMGZkMTI3NGM4NjM3NTA2NjY3MTZkYTgxZTZkNjJkMjFjMjQzMGZmOWU1ZDk3OWZjODUwYzUyNDVlZDUifQ"
+        },
+        {
+          "resource": "repo://src/agents/core/extension/BaseExtensionInstaller.ts#L618-L779",
+          "version": "repo-lines-v1:sha256:633402000c7c06053b4ba5329b8589f4009748fb5401ae6fb4383eb9e5f4fd32:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYyLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJjZDljZDczMDExNDlkYjkzYjg0NDY2OWViZmFmNTE4MDA2MDk0NGE3MmM0NDViODU3MDgxMjhhZDkxZTEzYTg4IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIyN2U1Nzg4ZDVkOWQ3M2QyNGE4MWRiYzBhNWE3NGJmYTgyYzljM2IzYWY5OWU1MmFmNzk2ZTkwYjQ2OGE4YTNkIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJmYWRmODM1Mzc0MmEwOWQzYzlmZGEwNDc0ZmM0MTc3MmIwNTY0Y2I4Mzc1N2UyZTE2NDYxZTMzZTc5YmVjMmQ2IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MSwiZm9sbG93aW5nQ29udGV4dEhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIn0"
+        },
+        {
+          "resource": "repo://src/agents/core/extension/BaseExtensionInstaller.ts#L93-L165",
+          "version": "repo-lines-v1:sha256:a46e8cad4450451b6c4aa010d52f385b324a02effeefa427502c5ef6c7ecc063:eyJzZWxlY3RlZExpbmVDb3VudCI6NzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImExYTBiYzdhYTJiNzgzMDZkZjU0YTQzOWJmMmYxOTk4YzVmZDZlNzgyZjMwOWY0NjM3ZTNkZjgwMTMzMDdlMjkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA0OGU3YTYxMWY0NjIwN2ExYWI0ZGVjMGFhYWRhYjBjMDYzMmQ2NTA5YTE5ZGIxNjNjN2JjMTI0ODBiMjEyZTUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkzNjQzZWM0ODdhMGI0MDRkNzI5OWIyMDYxMjEzM2JlOTEzZDFiZTU2OGU1M2FmMjJjOTAyZTg2MjE4ODU1NzYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ5ZTQ2YmEyNDYxYjBjYzk4N2ViYzI3YjBhY2E5ZDQ2YWQ2MDVlNjc5MjUwY2Y4Mjg4MDA2ZDQxZDhlNTljNjgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_91b904c15caf47ca8ec7ae3a8c3efa78",
+      "statement": "Skills are discovered from project, mode-specific, enabled-plugin, and global sources; source priority plus metadata priority determines same-name override and sorted load order, with optional agent and mode filtering.",
+      "evidence": [
+        {
+          "resource": "repo://src/skills/core/SkillDiscovery.ts#L17-L81",
+          "version": "repo-lines-v1:sha256:26ba49e66b628945671a5d0c4387a885f5e2a4bc606ae332e3b6c3a2a90db0fa:eyJzZWxlY3RlZExpbmVDb3VudCI6NjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFkMmMwOWQ0Y2JlZWM5YjBjMWFkNWRkYWZmOGFhYjhkZTQ1YWFmN2U1ZTgyZmUyNGM5ZjFlNzFlNWFkNTgyNmEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijg2NTkzY2I2MTk3M2QxZDE5YzkwNjRkMDcyNjQyMjRjNzY4N2JiZDZlZWJlNDgyYjJmNmI0MGIxNGU0OTViOTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVhOTI5M2ZkODA1NGI2ZTQ3MjQ4MzczZjM5ZjRkZDc3ODAwMTA1ZWI3NTgzNDg2ODcyNTQyODVjZDEyODJiNzgifQ"
+        },
+        {
+          "resource": "repo://src/skills/core/SkillDiscovery.ts#L263-L325",
+          "version": "repo-lines-v1:sha256:d91f28dbcac6615adee6e9d1481a04a05cf96113a89566327527cb596539ced3:eyJzZWxlY3RlZExpbmVDb3VudCI6NjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmMmEyZjk5NmYwOGU2ODBiZDI5MjEzNWE2ZmE0OTc4YmRhMjZlNjAyZDg0ZjMzY2IxZDU5NDc3NWQ0MzA0YjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEyYjRhMTZiY2U0ZTcxZDAxNzBlZTAyNTY0YjUzOWNkOWE4NmYzY2Y4ZmUzZTUxMGNjMWNkZmVkZTcxZWZhMmUiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk3ZDg2MzJlNTRlOTI5OGFiYjk1ODcyN2UyZDUxNDA4YWJhZjEzNjYwMzUzNzkxMDE0MGFiZjY1YjMwYWI2MTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVhOTI5M2ZkODA1NGI2ZTQ3MjQ4MzczZjM5ZjRkZDc3ODAwMTA1ZWI3NTgzNDg2ODcyNTQyODVjZDEyODJiNzgifQ"
+        },
+        {
+          "resource": "repo://src/skills/core/SkillDiscovery.ts#L84-L142",
+          "version": "repo-lines-v1:sha256:51ef570a4e8d28b4fd8cd5885ae63bfe8800799d6f4ae81ce0018003b272047b:eyJzZWxlY3RlZExpbmVDb3VudCI6NTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmMmEyZjk5NmYwOGU2ODBiZDI5MjEzNWE2ZmE0OTc4YmRhMjZlNjAyZDg0ZjMzY2IxZDU5NDc3NWQ0MzA0YjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjY2ZGUyYTRlZTEwOWNmOGYxYmE0MmY2N2FmZDQyNTY0NjFlMjdhNDYyZWQ3NDM3ZDllYWQyMTZmMDFhNDJmYzAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVhOTI5M2ZkODA1NGI2ZTQ3MjQ4MzczZjM5ZjRkZDc3ODAwMTA1ZWI3NTgzNDg2ODcyNTQyODVjZDEyODJiNzgifQ"
+        },
+        {
+          "resource": "repo://src/skills/core/types.ts#L3-L20",
+          "version": "repo-lines-v1:sha256:d8baa21575762ff08d776632ba93397429ca613707f06409b40db88fda84f39b:eyJzZWxlY3RlZExpbmVDb3VudCI6MTgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjoyLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUwMGZkZjRiZjYxNmMwNTdmYmQ5MjhkZDJmYzczNDUxNjU0YTcwNTg1MDMzMzFmZWNmZTZmMjBmMzk1MDBhNWMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQwZTdiYjQwZmFiYTY3NzdhMWQxODY2NmUxYjZhN2Y3NjhiMjQ5MjUyOGYwMDJlYzRiNDVjOTQ0YWQwYzkwMWYifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_efc6c3e2101b4b2d9e1fe278283bd24c",
+      "statement": "Skill discovery parses and validates SKILL.md frontmatter, excludes malformed files without failing the whole discovery, and caches results by working directory, mode, and agent until reload.",
+      "evidence": [
+        {
+          "resource": "repo://src/skills/core/SkillDiscovery.ts#L175-L260",
+          "version": "repo-lines-v1:sha256:189ec3efc7db4359f9c5849d107744565acece99de7603e226945fa32f9c0572:eyJzZWxlY3RlZExpbmVDb3VudCI6ODYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI1ZTFjOTU0NDE0ZTNmM2VlYThjOGNjYzQ1M2IyMzI0YmE5ODU0NTM3NzA2ZDVkNGVkZTU0NTg5ZTk4MDk1NGYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijc5Yzc1NTJiMGNiMTVjYjEzNWRlZThiY2RiODc2MjZjMDZmOGJkMTA2YjBlOWM2ZDU3OTFlYjAzMTI4MjQ0MTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVhOTI5M2ZkODA1NGI2ZTQ3MjQ4MzczZjM5ZjRkZDc3ODAwMTA1ZWI3NTgzNDg2ODcyNTQyODVjZDEyODJiNzgifQ"
+        },
+        {
+          "resource": "repo://src/skills/core/SkillDiscovery.ts#L328-L350",
+          "version": "repo-lines-v1:sha256:29c2f1528b172731b8c8b9a32e889f796bc45a1b6ace8da10e1bdde96fa58305:eyJzZWxlY3RlZExpbmVDb3VudCI6MjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmMmEyZjk5NmYwOGU2ODBiZDI5MjEzNWE2ZmE0OTc4YmRhMjZlNjAyZDg0ZjMzY2IxZDU5NDc3NWQ0MzA0YjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFkOWUxMjU0NjQyNTU3NmQzZGVhZThjOWI5ZGJmMTI4ZDVkNmRkYWY1ZDdmZTg1NzkzNDkyN2RlZmZhM2I5ZGQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE2MzYyOGJlZTllYmY3N2M4ZGZjZDVhMzBkYjBjYWVjNTIxNWE4MDRmNmY5MmMyNWM0MzYzMDI4ZjgxNzg2OTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoyLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImRmNzM5YTA2YzFjYmIxMjQ0ZTMzNjNkMzhiY2Y5ZmE1MGNlODRmZWQzOTljMjE5M2EzYzdmMDhkNTk5MThiMmEifQ"
+        },
+        {
+          "resource": "repo://src/skills/core/SkillManager.ts#L128-L135",
+          "version": "repo-lines-v1:sha256:752e22f2117bf04aaf5dacef95a1f03025dcca3cc8c15d82ebf3467828ac4bfe:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNGYyYTJmOTk2ZjA4ZTY4MGJkMjkyMTM1YTZmYTQ5NzhiZGEyNmU2MDJkODRmMzNjYjFkNTk0Nzc1ZDQzMDRiNSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMjdlNTc4OGQ1ZDlkNzNkMjRhODFkYmMwYTVhNzRiZmE4MmM5YzNiM2FmOTllNTJhZjc5NmU5MGI0NjhhOGEzZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiMmNlZmI1ZjBlMWUxYWE1OTIzYmQxZDBhNmIxMTZjMzQ4NjVlZTI0YTc2Mzk1OGU3ZjAwMTM4MWM5ZTc4YTIwZiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMGJiNjFhNGE0YjkwY2JjZWJkYmRjZjc3N2RlMTFkZmQ4ZTA1NWM0ZDBlODBiZWNiYTQ4NWM0NzhkZGFhMzQ5NCJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_365718307f054adb901af8c05d299bf1",
+      "statement": "SkillSync copies complete discovered skill directories to .claude/skills, tracks source path and SKILL.md mtime in .codemie-sync.json for incremental sync, supports dry runs, and optionally removes manifest-tracked orphan directories.",
+      "evidence": [
+        {
+          "resource": "repo://src/skills/sync/SkillSync.ts#L219-L244",
+          "version": "repo-lines-v1:sha256:c67fe788cb0802808a6122cab83e8f8ea1a264ac91d37e574655311192177c52:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmMmEyZjk5NmYwOGU2ODBiZDI5MjEzNWE2ZmE0OTc4YmRhMjZlNjAyZDg0ZjMzY2IxZDU5NDc3NWQ0MzA0YjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQwNGU1MmY2MGY3NGY1M2E4ZmE0OTU0MDFjN2NlN2FhMTE4NTEzMzdkOGNlOGY3YjQ4ZDM5N2E1NDMwYjI5YzIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        },
+        {
+          "resource": "repo://src/skills/sync/SkillSync.ts#L48-L190",
+          "version": "repo-lines-v1:sha256:892ea3dc065a821fb34d1da31a431aeafe14f5feb5f0ef98888a3ab9669f8a03:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQzLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJlYWYyMmNmMDczMjU5MmMyNDcxNDFjYmU2MWVmYTExMDEyNjEyZjVhMzEyMmI5YWY5YmJhZjUyZjU3MjRkMTk0IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiJkZWJkYjM2NWJjMGI1NzlhNzcyNjhhNmE2N2I2MGU0MGMwMGFmMTAzNzgwZWMxZTc1NjIzYTE0ZWRmMzdmZmFhIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJjNjljOTNjZDYwOWFjYWMwMjk3NDEyZDljYjUyZWJmYThjMzk4MTNiYTE2MjQ2YTc5MDZkNWYxYzk1MzVhOTU1IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI1YTkyOTNmZDgwNTRiNmU0NzI0ODM3M2YzOWY0ZGQ3NzgwMDEwNWViNzU4MzQ4Njg3MjU0Mjg1Y2QxMjgyYjc4In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_c2a8367a87bf47c7b5eae4df6a065db0",
+      "statement": "The singular codemie skill CLI manages internal discovery/validation/cache/sync, while plural codemie skills delegates catalog operations to the authenticated upstream skills CLI and applies source sanitization, agent selection, noninteractive Git credentials, and lifecycle metrics.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/commands/skill.ts#L36-L303",
+          "version": "repo-lines-v1:sha256:62778d5475120dc692b73f8f350e268caa078d70c5a18507d8a9a873f7a8d665:eyJzZWxlY3RlZExpbmVDb3VudCI6MjY4LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiIwYmM5Yjc2YzYyZDJjOGI1ZDliMDRmODE5NmE5OTNjM2Y4MDdjNDhmNTgzNjQ5OWE5ZDA0YjNkOWI4OWQzNDRlIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI4YmUwM2M5ZWFjMDhkNmQ5ZTU2NjEyMzZlMmMxY2UzMzNiNWMyYmE3NDRhNDNkZTY2NTlmOTZjNWZmZjFhZmNmIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIzNzkyOWU5MWUwZjk5YzNlODI1ZGU2OWI0MzVmYjY0ODRkMWIwYTFkZjJmNDY1NjFhYmYxYTI5ZjA0MTg4Yjg4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MSwiZm9sbG93aW5nQ29udGV4dEhhc2giOiI0MTJjYTM0NWNjZjc1YmY5YzA4MDZiY2U2OTViZThkZTgwOGI3OTk4NDI1MWE3YTU0ZDIwMmNmNjEwMWRkNDUxIn0"
+        },
+        {
+          "resource": "repo://src/cli/commands/skills/add.ts#L36-L149",
+          "version": "repo-lines-v1:sha256:40382fd04a060498dfee187c7fd05a5c1e60fb669c00c17d3415e30a28bb0079:eyJzZWxlY3RlZExpbmVDb3VudCI6MTE0LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJkYzU4ZTJmNmQwOGNlOWUwNDg0OTA0NTdhMzgyYjVmYzNiNDM3NTU1MjMwYjliNDQ2Y2Q1NjQ4YjYxNzRhZGU1IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI5YjYyZjYwZDg1OTBhNTc5Y2Y0NmY4ZDY3Mzc4YzRjNTcyYjk2MmNlY2NkYjkwYzdhNWY3YjQyYjk2MDc4MmE0IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJkNmFlMmYzNzIzZDk2OWJjODA5YjYwNjI2ZDcxZmM3ZTUxMGFkYzRmOGJlMWUyYmEwYzMxNTFlMGNmYjJkNmUzIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJkZmFiNzEwZGRmNzg1OWU1NzU3NjRhOTEzYTAwMmM3NDU4NWZmYTcwMDE1MTBjYjg4MTFkYTgzZDJjZjc0YjM0In0"
+        },
+        {
+          "resource": "repo://src/cli/commands/skills/index.ts#L1-L27",
+          "version": "repo-lines-v1:sha256:4af2e5e316e1965c0bf63a586f34d74f464d5ca60bb88b7c1133f3b45bec19cc:eyJzZWxlY3RlZExpbmVDb3VudCI6MjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUxNmNjNzM4YjliMDFkMzM0YzcxNWI1MDZjOTBjYWU3MzI1MzJhNWI1MDIyYTk0OTU4NmRhNzQ1ZDg1YTI1NmMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_58da7cf6b5d9494fbd2e74938d7c2ac3",
+      "statement": "Assistant setup selects and registers server assistants as target-agent artifacts, persists registrations in the chosen scope, and generates Claude subagent or skill wrappers that invoke assistants chat with a task-specific conversation ID.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/commands/assistants/setup/generators/claude-agent-generator.ts#L50-L124",
+          "version": "repo-lines-v1:sha256:c98e9d6fc62d30fdf462639a994215326fcb615e428c7ca21a3e61523bc736d2:eyJzZWxlY3RlZExpbmVDb3VudCI6NzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjhkOTJkYjU0MDhlMWYwMDZjYjQ5OWVkY2IwMDI5MzA1ZWZkNWRkNmJjNTkzNDk2ODZiNWYwYWYxZTQ1MDRhNDYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE0ZjY4ODMzMzk5ZmYxYWM4Njc2ZDdkZGFmNjU2MDAxOWY5YWI3MDE4YTIxNjA1YTE3NjNiNDU4M2FkOTQ0ODEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImFkYWUzOGVjNmIxMGE1YmYxNTE3ZmQyMjhiZThmNThjMzI2YTBhNTJlZmEwZmYxODVhZGI5OGY4NDlkNjk2MGQifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/assistants/setup/generators/claude-skill-generator.ts#L90-L110",
+          "version": "repo-lines-v1:sha256:c42287287e132443e8d71d86cd1469f275d7b309908bd50981e0d5e4903a3376:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY3Y2RhODJkYTYwNjIzOGUwNWU2MjM5OTU2OWM1ZWUwMzk5MzQxOTY0OGFlNWQ0M2EyYmY4Y2Q2MzQ3ZjgyNjMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFhNzZjMjBjOTI0MjkzNjhhYjIzN2EzY2Y1ZTIxZjFjZTYyNTY5OGQ3NThmMGUyZWJlZmM4NjdkM2YyODIxMmEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM3OTI5ZTkxZTBmOTljM2U4MjVkZTY5YjQzNWZiNjQ4NGQxYjBhMWRmMmY0NjU2MWFiZjFhMjlmMDQxODhiODgifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/assistants/setup/helpers.ts#L38-L126",
+          "version": "repo-lines-v1:sha256:da6831a8adc4c30f15ffc6d8a9cc5388d51ed804fa840919d6fbef9eb37d7475:eyJzZWxlY3RlZExpbmVDb3VudCI6ODksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVmYmNjZmZjMmQxZjVlYzBiOTJiNmM1NWMyNjBjODlhZWVkMGUxNWEyNDkwYjhkZDc0Y2FiOTVkOGI3MWJmM2QiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQyYTJjYjI1YTEyMmI0NDIyMWE2MjM0ZWM2NjBhN2I1ZmI3ZjliZGU3YjNiOWUyYjNjNTU5YTBkOTZmYWM3MzkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjU4Njg2ZGZhNDFhYWY0NmY2Mzg1MmQwMDBmMDRjNGVjYmY4MTU1NWIzOTM0MDFlNmY1ZGI1YWU5ZDFkZmQ0NWEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImYxNTY4ZDg4ZjVhNzMyMDY2OWYzYThlYmJiYjc0Yjc1ZDc1NTZkNmQ4NWY4YjVhNGI4OTdkMDQzOWE3YzgzNGUifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/assistants/setup/index.ts#L62-L203",
+          "version": "repo-lines-v1:sha256:06f56d921bcc589cb4f82be4aceef28cc11033e1fb435d816c5ab8ebc3219ab0:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQyLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI1Y2Q4ZmNkODBhNjYwMWQ2NzkzZmU5NDE5YzlhZjliYTg4MDBiMjcyMDExMDYzMWQ2ZTM5NWY5MzNhYzA1MDJjIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI0MmEyY2IyNWExMjJiNDQyMjFhNjIzNGVjNjYwYTdiNWZiN2Y5YmRlN2IzYjllMmIzYzU1OWEwZDk2ZmFjNzM5IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI1OTgyZDBkNzg1NzU0NDRkOGZmMTNmZGFlN2NiYmVlMjYxZTdjZGYwMDE0YTU4N2U1ZmNjNWY5OGM0YzE5ZmVlIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI3NzZhZTUzNTg5MmY3ZjM4YjJjNGExN2ZhYjk4NzE5MzJkYjNhYmM3ZDAwNWQ1MTQwYmM3MjgwNTU4ZjJjMjc0In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_d70f2cc88d274b0a873b87da19d193f0",
+      "statement": "Importing the framework entrypoint auto-registers Speckit, Bmad, and CodebaseMemory adapters; the registry supports lookup and agent compatibility filtering, and agent initialization uses the registry to reject unknown or unsupported frameworks.",
+      "evidence": [
+        {
+          "resource": "repo://src/agents/core/AgentCLI.ts#L507-L584",
+          "version": "repo-lines-v1:sha256:66c7b71bc614e9b5668a8881e0274c9f8bf608daac9ec6327ef6aba1b57372d1:eyJzZWxlY3RlZExpbmVDb3VudCI6NzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmMmEyZjk5NmYwOGU2ODBiZDI5MjEzNWE2ZmE0OTc4YmRhMjZlNjAyZDg0ZjMzY2IxZDU5NDc3NWQ0MzA0YjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk3ZDg2MzJlNTRlOTI5OGFiYjk1ODcyN2UyZDUxNDA4YWJhZjEzNjYwMzUzNzkxMDE0MGFiZjY1YjMwYWI2MTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImJhOWI2MzE0ZDYyYWIzOGM2NzZlODVhODU5ZTI4MzQwYzQxZmJjOTQ3NTAwNmFjNThlYWFkMjA1M2VjYmRjODcifQ"
+        },
+        {
+          "resource": "repo://src/frameworks/core/registry.ts#L10-L68",
+          "version": "repo-lines-v1:sha256:a2be90a90472bb1bacd058bfa433b6361db166bb350704d3b7f8d9afe2d5688d:eyJzZWxlY3RlZExpbmVDb3VudCI6NTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJhNDMwN2I1NGI0MzhlYjA3N2MyZmEzODI2OTFmZmJmMjk0YjQwNDBkZjNjZWY1YzcxYzllMDlmNmE2OTMxM2YiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImZjZTU2M2ZkZGFhMzA5N2YwNzNhMGVmMWRhODliODQ1Y2RiYjE0M2Y2M2I0OWRmOGVkMTM5MTA2ZjFkOWIxNTgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc2MzZhNzFhZjM3MTM3ZTcxYzE0NWIwMzc3ZThmNGYzZjFjNzUwNGI1MjJhMDk2YzAzZGMyZjk5MmQwOGM5ZDgifQ"
+        },
+        {
+          "resource": "repo://src/frameworks/index.ts#L1-L14",
+          "version": "repo-lines-v1:sha256:3bbeb3b85647c556e5d26be921d6d8caf30095a2c9e281afce227acefea9e212:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMxYTFlMzY5Y2UwYzJlNWI4YTE4NjI2NzgxZThkZjc4MjY4YThkMDA0NTA5NTNhYzhjMjAxNTE3NDhiYWZhMmMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://src/frameworks/plugins/index.ts#L1-L20",
+          "version": "repo-lines-v1:sha256:d43e9eaa0843016eed7d16b94a2d706830bc3c8b01eaab215cf62e070e4e6da1:eyJzZWxlY3RlZExpbmVDb3VudCI6MjAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImEzOGIzNjQ3ZGQzNzgxOGVhYzBlNGYyMTM4YmU4OTIzYzZjMDA4ZjdiODM4N2ZkNTEzZDMxY2VmZjVhNWRjZTciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_7314c8237a0f4172943e705283b04f0b",
+      "statement": "Workflow management detects GitHub/GitLab from the Git origin or accepts an explicit provider, resolves templates by provider/ID, and installs codemie-<id>.yml unless already present or dry-run.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/commands/workflow.ts#L148-L246",
+          "version": "repo-lines-v1:sha256:c2cbd4e26df217f37976810f611578a438ee85c341a6d484069cb0d56ecab054:eyJzZWxlY3RlZExpbmVDb3VudCI6OTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYxMWQ4NDViZmRlOWUxMGY0OWJiNzBiMTlkNGUyMWMxOWY0ZmQ5ZDNlMWRmNTcxOTg0MGIyNDc1MmUwMjAwN2EiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAyYjQwNWJhMWE0ZGQyMmNiZDc3OTBjMDczNzJlNDI3YThhMzk0OTJiZmU3NDIyMGQ4MWFiYTIxOWQ3MTZmNGMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVhZjAwNzYzYmU5ZmYwN2U3YzFjNTdkYTNmMTg0ZThjZmIzYTNjMjBkY2JhZmM5YTI3Mjc1NWIxZGM2YWU5NTIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVhMDcyM2Q0N2ZhYjU4NzI5YjM1MzIzMDNiNmExMDg4YjRjM2Q0OTA1ZDRkYTJjM2U1MWY0NmY3ZDU4NzAyNjYifQ"
+        },
+        {
+          "resource": "repo://src/workflows/detector.ts#L10-L87",
+          "version": "repo-lines-v1:sha256:1a512e283e67d6e3f9a3757cd38375c27b2833dd7eb46846d6a37c86420abb33:eyJzZWxlY3RlZExpbmVDb3VudCI6NzgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjUyNjcyYTYwNmY5NTA4N2UzYTcyMDVjNmVjM2ZhZDNlY2VlZjgxMmEzMjQ2ZTIyN2E2MWRkODdhMjk4OTgzZDgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE1Mjg3ZmVkNDI5ZWFhNGFmYjc0ZmRlMDU2NTFjMDg0ZjJiODU5ODlhNjcyOWU4M2NmMTQ3OWMwODdlMTRlMjIifQ"
+        },
+        {
+          "resource": "repo://src/workflows/installer.ts#L12-L57",
+          "version": "repo-lines-v1:sha256:c160088458e1d043b9b0e7cdce46961ef709e70d7d2a1905dc36dda963e12a8a:eyJzZWxlY3RlZExpbmVDb3VudCI6NDYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc2MTJkZTZlNGY0MTliMGI0MDNkNDUzYjU0ZjY3MTdhMjRkYzM1N2IxZWFiYWEzZDMwMmVjMDg1MzQ1MTNmNjgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjM5NzgyY2E4ZWM5MGY3YjMzNGYyNTM5MzVjN2Q3YjMwNmRjYzRmNDk1ZjRjNDY1Y2JmYjNlM2FkNzYwODI2OTgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc0ZGM1ZmRmZWVhYTFlMWNmZDMxM2M1MmM0NGQwNmMzNThlY2Y1ZmYyNzIxMGY5ZGUwOTVjM2VjMDFlM2E2ZGEifQ"
+        },
+        {
+          "resource": "repo://src/workflows/registry.ts#L9-L35",
+          "version": "repo-lines-v1:sha256:7b3da2c69c428a1625a3ed3b39621a9bdb6932d1b06c8ba4df5255f2f19c2d18:eyJzZWxlY3RlZExpbmVDb3VudCI6MjcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE4MTU2YzI2ZmZhZDczNDA2ZThiZGFhZDNiMDJiMTM5Y2M3OGExNWY4Zjc3MmI4YzJhNjU3YjU3NTcwZGU4YWMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE4YTY5MGRmNGViOTA5NzEwYzJlOTIxNTQ0NDczNzU3ODllZDIzZDUwNGY0ZGMwNWMwN2UxZjVkZmIwMjI1MGEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM3OTI5ZTkxZTBmOTljM2U4MjVkZTY5YjQzNWZiNjQ4NGQxYjBhMWRmMmY0NjU2MWFiZjFhMjlmMDQxODhiODgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_e4c1ad4f73ec4047a925dfb0d8337db8",
+      "statement": "The current workflow registry exposes three GitHub templates—pr-review, inline-fix, and code-ci—while GitLab has no templates; dependency validation only warns about required secrets/tools and cannot verify them.",
+      "evidence": [
+        {
+          "resource": "repo://src/workflows/installer.ts#L117-L153",
+          "version": "repo-lines-v1:sha256:17c80209eff18f9133b6db9558ff5b9c9e2ffc583dcb3b9f94d5fabd8ed3f64d:eyJzZWxlY3RlZExpbmVDb3VudCI6MzcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQyYTJjYjI1YTEyMmI0NDIyMWE2MjM0ZWM2NjBhN2I1ZmI3ZjliZGU3YjNiOWUyYjNjNTU5YTBkOTZmYWM3MzkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjRhNDYxNjgxNzhiYzEwNzAxMzY4NjEwOTBlOTc1ZjBkMzU5ZDdmYzdiMTMxNzQ4NGNlNzVhYzM1ZGU1MTAyMjYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        },
+        {
+          "resource": "repo://src/workflows/templates/github/metadata.ts#L18-L114",
+          "version": "repo-lines-v1:sha256:5e4a9bbcd9917000a4c88e1b3eb8f07cf623360edc78cfdf1ec5a1d469ec0273:eyJzZWxlY3RlZExpbmVDb3VudCI6OTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg4ZDBjYTE1MDdmNGVmMDYxNjM4YmE2MTRkMGFjNmVkYjc3OTFkYzRkZGRlMTYwZDZmYjVmZDJhMTJhYTc2NmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRkNWNkMmZiNGYzZGY4ODQ1MTUyNTViMzk1MjNmMmY4YjU0NzJiZWVhOWY1NjZmZmNhMjA0ZGI4MDI1NjEwNDEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk3ZDZlYTBmN2IwOTc1YmRjYjZmY2JlMDM2ZWVkN2NiMjRjYzI5ZDAyZGI5NjFiZTMwZjIyYzliYjU4OTk5ZjEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImIwMmQyYzBkNmRjNWU3NGQ5MmZhMTRiOTFkYmVhMjY0MDkwYmViMzVmZGI5MTg4ZDliMzQxMTgxZGNlOWY0Y2UifQ"
+        },
+        {
+          "resource": "repo://src/workflows/templates/gitlab/metadata.ts#L12-L18",
+          "version": "repo-lines-v1:sha256:11fa8eb92045edd08e0b08aabd1f2bd08cebc9c8da758e580b39902450ffe3fb:eyJzZWxlY3RlZExpbmVDb3VudCI6NywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMTk0ZjY2NWI5YmFhZjM5Mjk2YjQ2ZjU0ZDk3MjA5YmRhYThlMTQ2YmZkYzEyMTE2OTQyN2Q0MGEwYjUyMWYzYSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiZGVkOTU4NjU5OWNmMWJlODAyZTM3ODgyNTJlODY1MjlhYWU3OWVjYWU0ZWYxN2Q4MzY5ZTU3NWRlNjRmOWY1NCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiZmRiMjVjZTRkNTI5NWRhZmY3YTA3OGVhZmJiZTI4ZjIwMzQzY2ZkMzFhMzI1NzViMTBlOWFkNGViZTExYTdiNiIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjAsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSJ9"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.4.3",
+    "at": "2026-08-29T08:09:18.077Z"
+  }
+}

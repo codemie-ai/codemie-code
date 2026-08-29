@@ -1,0 +1,226 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:e2fbbe521e00202d5ba81ea02da41e8199241e287e03d4c4d229d8d5278831f6",
+  "claims": [
+    {
+      "id": "claim_f52ed439c61049c5a463830a310fd93e",
+      "statement": "AgentCLI resolves profile and CLI configuration, validates installation/authentication/compatibility, exports provider environment overrides, and passes them with collected arguments to the selected adapter; its `--no-analytics-report` option sets `CODEMIE_SESSION_ANALYTICS_REPORT=0`.",
+      "evidence": [
+        {
+          "resource": "repo://src/agents/core/AgentCLI.ts#L158-L202",
+          "version": "repo-lines-v1:sha256:9be943e1d33b37f734cf60830a42ff0e239340b365e74f722b81fd2c0e205a60:eyJzZWxlY3RlZExpbmVDb3VudCI6NDUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMwNWJjOGVjMDI0OTA0ZjhlOTUxMmUwMDUwYzdjNzE4OTc4YTJjZDI3OGQxZWNhYmMzMjIxYzQ2MzQ4ZjA2MWYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjcxN2FmMTEwMWM5N2I3YzJmNTI1NDA3ODJlNjM0Y2M0NDQwZjBlOTcwMzQxZTUyZjk3NTIzMTFkNzhiN2Q3ZDAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjI5NmM2YWI3MDE3NTFhOWY0NzE4YzJiZmVjNTlmMTgyMTVhZDM1NTNmMGNiMTJjOTUwMGY1MWE5MWI3MzcwMmIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijg0YzEwZjVjMWNkYWY4N2YwMjYyNDEzOTQ1YTBjY2JjZjJmNTkwZjNmM2IzZjk1MDQxOTk3ZjkwYjAwYmNjYjYifQ"
+        },
+        {
+          "resource": "repo://src/agents/core/AgentCLI.ts#L258-L374",
+          "version": "repo-lines-v1:sha256:9400af6d93970b74ddfc13c779436de62e176f8ced22cd0fcdee490e2875a69d:eyJzZWxlY3RlZExpbmVDb3VudCI6MTE3LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI2NzQ3NmU4NTYzZWYwNjk2ZjllOTA4NzRhZjU3YTZiOTM5MzJmMmUyNDVjYzJiNWJhODk1YzRkMzI1MjIyZTk3IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI5MGQyY2RjNzg1OWMxOTg2YTRjMGY3MjBkOTc3YWRkMGZhZmEyZTVlMDJmOWMyN2E2MjdjOWY3MjA0NDRkMTVjIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJhZTU0YThjMWYyYmU4NjgxZjFhNjhjMTc3YjliMDk2ODQwN2M5ODgxYzUwYTBlZGUzMDhiYzMyYmJkMGVkN2ZmIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiJhMGVhYTgzOTMzZGFkMjlmNDRlYzNlNzc1MDFlNGYyNTNlYWZhMzA5MTdkNTU2YzgyNDI5NmJlMjQwZjQyMWUyIn0"
+        },
+        {
+          "resource": "repo://src/agents/core/AgentCLI.ts#L450-L470",
+          "version": "repo-lines-v1:sha256:bdbb9d652e84bdbe8feb9b328c19ad9e7b971e16968c684224902181fd0f37ed:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA3NGM0ODFjNmI3ODRhOTk5OTkwN2Q5NDBmMmFmZTcxM2IwMzQ1MTA3NjExM2I0N2FlOGZkNjhhYjI0NjNlN2EiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk1M2JiNDFhZjFhYzY0MWE4ZjY2NWIwN2UzZTY5MGExZmNmYmFkNjdjOTZlZGViYWE3ZWE2ZmUyYzBlMmEzM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjAxMzQxZDBjNTg4MmU5MWE2NmM2MGNiODYwMjBiMjQ3ZjBhZmMzMzZjZGY3NmMwYWUxOGJjZDIwYWM4ZmUxZDUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijk3ZDg2MzJlNTRlOTI5OGFiYjk1ODcyN2UyZDUxNDA4YWJhZjEzNjYwMzUzNzkxMDE0MGFiZjY1YjMwYWI2MTMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_8aba53c91c874be5841e7a4ba7622301",
+      "statement": "BaseAgentAdapter creates a UUID as the source-of-truth CodeMie session ID before proxy setup, propagates it along with one-time repository/branch detection through the environment, and initializes logger session context.",
+      "evidence": [
+        {
+          "resource": "repo://src/agents/core/BaseAgentAdapter.ts#L518-L557",
+          "version": "repo-lines-v1:sha256:7233fe0cbc097f48f7a45478ec30a5f3f7a077c890eaee4313f8bb0c5f577693:eyJzZWxlY3RlZExpbmVDb3VudCI6NDAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI0ZGMxNDgzNWUwMzhiNzA3MWU4MWFkOGRjOTEwM2FlZjVmYmY3NTlmNjNhNmJhYTUxYmEzNDM2MmNlMTA1MTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijg5OWFkYjZkODU2NTIwNTExZWRjM2I4NDI2Y2MzOTQ2NTE4NTdjZjA1NjJmZmRmY2Q2ZGY2MDNjOWQzODYyMGQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA0YjlhMGIxNmI5OTEwYmFhNWQwYTRkY2FmZjhhNjBjNDI5NjMzYmYyYWUzY2JhY2M4MjAyOTA3NTgwZDEwY2EiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNmNTExZDZhNTAyMjA1YTY1ZDFkN2ZjYjU3NTY2YTcwOWM0NTYwNWI3ODI5MDE2NDY1ZDQ4Y2U0NjRmOGUyM2UifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_9eb02badb5b9471cbaf5b76d75a94d0b",
+      "statement": "The adapter only routes through CodeMieProxy for SSO or JWT authentication when agent metadata enables it; the proxy receives session and repository context, and its local URL replaces the child base URL while the child API key becomes `proxy-handled`.",
+      "evidence": [
+        {
+          "resource": "repo://src/agents/core/BaseAgentAdapter.ts#L1020-L1040",
+          "version": "repo-lines-v1:sha256:e8cbd49cc589643e3f11acfbf2915df360159f98b4d81933eb28daf91b911eb6:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYxNDE3ZDQ2ZjlkMTI3NDdmZDBmMjA3NTJjZDdiNDU4NjdkZjZjYzkyZjE3NWVhOTZkNjYyNmM5MDYwYjNkNjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjlkYmZkNWM0NGIxMTI2NGNiZmZhYjgyZmFlNGRlZWNiZjljNzZkMDU1MDNlNDJiYWE1OTMyYzg0NzcxNjAxODgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVhOTI5M2ZkODA1NGI2ZTQ3MjQ4MzczZjM5ZjRkZDc3ODAwMTA1ZWI3NTgzNDg2ODcyNTQyODVjZDEyODJiNzgifQ"
+        },
+        {
+          "resource": "repo://src/agents/core/BaseAgentAdapter.ts#L939-L1013",
+          "version": "repo-lines-v1:sha256:36858783aa8d099c671f8a0b26835f4f2f342c1bc3fbf55a679800a6ec083620:eyJzZWxlY3RlZExpbmVDb3VudCI6NzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjE1ZWQ4YjU4MDMyOTI1MjQ5MGE1MDYyNGU5YzBhOTRmOGUzNmJmMWEyNGJiYzI0MTU2NjllMzBkYjBhMGUxNjAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFkOWUxMjU0NjQyNTU3NmQzZGVhZThjOWI5ZGJmMTI4ZDVkNmRkYWY1ZDdmZTg1NzkzNDkyN2RlZmZhM2I5ZGQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjVhOTI5M2ZkODA1NGI2ZTQ3MjQ4MzczZjM5ZjRkZDc3ODAwMTA1ZWI3NTgzNDg2ODcyNTQyODVjZDEyODJiNzgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVhOTI5M2ZkODA1NGI2ZTQ3MjQ4MzczZjM5ZjRkZDc3ODAwMTA1ZWI3NTgzNDg2ODcyNTQyODVjZDEyODJiNzgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_5ffb68bc13c740c1aca868a1f21c89b9",
+      "statement": "Lifecycle hook resolution composes provider wildcard and agent-specific hooks in that order, falls back to agent lifecycle hooks, and the adapter executes start, environment/argument preparation, session-end, and after-run phases around agent execution.",
+      "evidence": [
+        {
+          "resource": "repo://src/agents/core/BaseAgentAdapter.ts#L556-L625",
+          "version": "repo-lines-v1:sha256:515eff23f71ef2591d4e2d408fb90067f45ce9d0c54bed6e0f86ea0a81b73d3b:eyJzZWxlY3RlZExpbmVDb3VudCI6NzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjA4YThiZGRjNGE4OWI2MjlkYzU2MmIxOTYzMzM2ZDhkZTA1Njc0NjgxNzZiOWU2MzU1ZWNhNWM4ZTVlZGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImUyZTJiN2FlYmMyM2FkNjA1YWQxMjUwMzFkZjFhZDE5NDc3YzkyODIxOTE2ZmY0MzZlMjA0NWNmZTk0YzAyZTkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjdlZWE3YTU2YzgxY2Q2ZGEyNjkwOTkzNWU0ZWRiZTNmMjRmODJjNWNiZjczZTYzZTE3M2NhMDY5NTBjYTdlYTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ2MzMwNmE2MGY0Yzk5ZWJiMGMwZWY0YTBmYmQzY2I1NTI1NGNkOGU3ODAyOTUyOWQyYzI0YWQ2OTg4MjM3ZmYifQ"
+        },
+        {
+          "resource": "repo://src/agents/core/lifecycle-helpers.ts#L141-L190",
+          "version": "repo-lines-v1:sha256:b14e1815d866a814a7785176c42dd45f8819029319394240092fd5dadae6d502:eyJzZWxlY3RlZExpbmVDb3VudCI6NTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM3ZjUwZjE3MTc4NThhZGY2Y2IwMTUyNmRlMWY0MzgzYjFlNmVlMTliYWI1ZGY2M2ZlZmZjODBjNmVmNDRjOGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMyZjg5OTYxMjhkNmVlODQ4ODI0YzZmNzRjOTJmYjJjY2MyZjNkZmI5MjlkZDhhZTZiNDBjMTQzNmQzN2JjOGMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBlZjc0ZjRiMTYyMmIzMjc5MzIyYzc0OTY0NmY4NzlhM2MzMzFlOTFkMWRjNDZlZjkwN2MxODNhMzY0OWI3NzciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM3OTI5ZTkxZTBmOTljM2U4MjVkZTY5YjQzNWZiNjQ4NGQxYjBhMWRmMmY0NjU2MWFiZjFhMjlmMDQxODhiODgifQ"
+        },
+        {
+          "resource": "repo://src/agents/core/lifecycle-helpers.ts#L205-L279",
+          "version": "repo-lines-v1:sha256:0c2b8d5987c7bc376a036bf291b47ab62437ab1eb82740c08ca54afe8cebfadc:eyJzZWxlY3RlZExpbmVDb3VudCI6NzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI2ZTM0ZDcyNmMyMzRhMDk2ZTM1MjQzNTExNGIzM2ZjNmJmNWQyYjdmZjdiMzgxMTg4NDVmYTdhZDhiODlmNjkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjlmOWYzMTk0YWRiOTk5ZWIxMWFjMTM2YjJhMzEyODhmM2JkODFjYmQxMTY1YzBkNjk4YmVkOGY0NGRiMWYyMTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        },
+        {
+          "resource": "repo://src/agents/core/lifecycle-helpers.ts#L51-L127",
+          "version": "repo-lines-v1:sha256:3a4504b2390e3eb93e3f2b9c7882582a53a2315b1f60c3adb14da629399151bc:eyJzZWxlY3RlZExpbmVDb3VudCI6NzcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjYyMWFjZWUzMGEyYjQwOWM2Mzg1MjZlNWZmNjdhNTk0OGIzMzdhNjEyNDI3Mjk2NWQ2YjhlZjExYjkzMzI3M2UiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjljNjNjNzUxNjYxZTczZTNlZmU1ZTUyYjc3YjIwMTBlYmY5MTBhMGU3MDVlOWU2YmQxYzdkYTU1ZmJjZDA4ZjkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b5f89c4855fe437f80f2adc1c37e3ec6",
+      "statement": "The adapter protects proxy cleanup across built-in-handler errors, child spawn errors, normal/nonzero exits, and signals; session-end hook failures are non-blocking, child exit gets a proxy grace period, and registered signal handlers are removed after termination.",
+      "evidence": [
+        {
+          "resource": "repo://src/agents/core/BaseAgentAdapter.ts#L699-L753",
+          "version": "repo-lines-v1:sha256:8fbfab3ae1cd29d304cc3dd30be6e66126c1154aa968ae85bd50d6299169ee23:eyJzZWxlY3RlZExpbmVDb3VudCI6NTUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA5OTUxYTdmMGZlMWQ3MjJkZDk4MzEwYjAwZWNlZWYwYTVlYmNlOWRiOGQ0MTVhNjNjNmIwYjllOWE0ODhkMmMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjliNjJmNjBkODU5MGE1NzljZjQ2ZjhkNjczNzhjNGM1NzJiOTYyY2VjY2RiOTBjN2E1ZjdiNDJiOTYwNzgyYTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImMyZWYwZWYwODA0Zjc5N2RlZjBmNTIzNTQzMjNlY2NmYTY5YWI2NzBiNzk0ZWIwODNlMTQzMDg1OWYxNTgxYjQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ0MWM4YTc1YzM5YzE2Zjc3MzEzMmY3NjQ2NGE1N2I3MDMzNWUzYjc1OTU4OWZiMmRlNDk5Mzk1OTJkZjY0NjkifQ"
+        },
+        {
+          "resource": "repo://src/agents/core/BaseAgentAdapter.ts#L836-L925",
+          "version": "repo-lines-v1:sha256:bae586c7d5623c1d31df55a751347618dd3bc702a35ff7ba013d4fa08050ce1e:eyJzZWxlY3RlZExpbmVDb3VudCI6OTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjcxYzc0NTIwMmYzMjIxN2RlOTBlZDM3MGY4ZTk0YzVjNTQ1ZjFkZWFlNzNmN2QyZjcyZDViZmVlYzAxOTE4OTMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjcxN2FmMTEwMWM5N2I3YzJmNTI1NDA3ODJlNjM0Y2M0NDQwZjBlOTcwMzQxZTUyZjk3NTIzMTFkNzhiN2Q3ZDAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImMxNTBlMGQwOWMxY2I3YjVjOWU2YWU5ZGUxMDQxZDA1MGQ2OThmZjc1ZjFiMzFiZGRiNjgxN2Y2YjE4YTFlYWIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImM1YWZiOTBkNTVhMDdlMWZkOGE4MzAwOGMxOWNhZWQ2YmJjZTk5ZGJiN2JhNDM2NzBmOTNhMmFhMThhYjFjYmUifQ"
+        },
+        {
+          "resource": "repo://src/agents/core/BaseAgentAdapter.ts#L926-L935",
+          "version": "repo-lines-v1:sha256:41ea05eb47d900293d8e15f489387889c560abb523c6cf56dd32aeeeffa78773:eyJzZWxlY3RlZExpbmVDb3VudCI6MTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA4ZGI3NDYwODE4MmNiN2NhNGQ5ZmJhNDlhMzk0OTlhN2YzOTA3YjRlYTAzM2IxNDkyYWQ1Y2YwYmVlZWVjZWQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjcyNmVmNThjNmM1ZTdhYzM2OWJmNWUyZTJkODM3OWJhODJkNzE2NmI5NzM5YzVkNjE1NzlkNTZjNzhiNzQ5NGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVhOTI5M2ZkODA1NGI2ZTQ3MjQ4MzczZjM5ZjRkZDc3ODAwMTA1ZWI3NTgzNDg2ODcyNTQyODVjZDEyODJiNzgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_50d6ffc7134e45c68aecda9177cd2b6a",
+      "statement": "SessionStore persists one JSON record per CodeMie session under `~/.codemie/sessions`, falls back to `completed_` records during final-sync races, and guards activity timing from double-starts or accumulation with no active period.",
+      "evidence": [
+        {
+          "resource": "repo://src/agents/core/session/SessionStore.ts#L1-L75",
+          "version": "repo-lines-v1:sha256:3a1c09f68d33cb4b3dce4baf97ae3fd5cea6667776476599e400c326601f5c97:eyJzZWxlY3RlZExpbmVDb3VudCI6NzUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVhOTI5M2ZkODA1NGI2ZTQ3MjQ4MzczZjM5ZjRkZDc3ODAwMTA1ZWI3NTgzNDg2ODcyNTQyODVjZDEyODJiNzgifQ"
+        },
+        {
+          "resource": "repo://src/agents/core/session/SessionStore.ts#L142-L198",
+          "version": "repo-lines-v1:sha256:715b2ca215eaf3c86afd5d7201f10da04fb3c5cec6027f575efa80e9a3e47769:eyJzZWxlY3RlZExpbmVDb3VudCI6NTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmMmEyZjk5NmYwOGU2ODBiZDI5MjEzNWE2ZmE0OTc4YmRhMjZlNjAyZDg0ZjMzY2IxZDU5NDc3NWQ0MzA0YjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUwNTRhYzM5ZGEwMjRiMmVlMzFhMWFjYTFiYmNhYjU4YWFkYjI1ODYzOWNhMjYzYjNhNWVjNjJiMjM1MjhlOTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        },
+        {
+          "resource": "repo://src/agents/core/session/types.ts#L125-L158",
+          "version": "repo-lines-v1:sha256:6cac12a0433c2078f2892fa292cf4ad60984b4f22170bf02751d73652fbea92d:eyJzZWxlY3RlZExpbmVDb3VudCI6MzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFlOWI0NThkYTA0YmQ1NjQ0NmYzNGU4YmFhMzk0YjgzNTc5M2NlMmU2ZWM5YTFiYmQxMGI4MDA5NDE0OWEyN2MiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM4ODFmMGI3MDkyOWJlZjBiMjlmZGQ5NGFjMDBmZmNlZjA5OWQ5MTE5MjE4NDg1NzA5YjQwNTM5NzhjODVkMDgiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_82ee04cfc629462b910d9475cda10383",
+      "statement": "Hook processing creates correlated session records from native SessionStart events, preserves active state on re-entry, processes transcript paths incrementally through the registered agent SessionAdapter, and on SessionEnd transforms and syncs before sending end metrics, completing status, and renaming files.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/commands/hook.ts#L1102-L1175",
+          "version": "repo-lines-v1:sha256:a87d530d8e0c663442e34cbbe0cee28b803f3fa78e4b9920fde49bd315bdbd71:eyJzZWxlY3RlZExpbmVDb3VudCI6NzQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjdiYzgyYTI3ZThjOGI3OWFkYmQzYTI4NmQzZjY1MWJlMDc5NzFhODgyYmYwYzViNmY4N2MxZWM4Y2NmZGMzZGUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM3OTI5ZTkxZTBmOTljM2U4MjVkZTY5YjQzNWZiNjQ4NGQxYjBhMWRmMmY0NjU2MWFiZjFhMjlmMDQxODhiODgifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/hook.ts#L167-L229",
+          "version": "repo-lines-v1:sha256:b87e1a3c7221042f4914037c4dff9c817783e2e04bbf21c02cac68d971e04cf4:eyJzZWxlY3RlZExpbmVDb3VudCI6NjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjA5ZjkzMDgzYzE5NzEyMWI5ODI3MDBiYThhZmFiZDE3MjJjZjFkM2U3NDA0NTA5ZTgwZWZhMjcyNDdmNjJmMDciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNlODc2NWQ2NGJlNDI0MjMxOWUzYmZlNzBiYzgxZjZmMGFlYmM4MTg2ZWEzNWRmYjg5ODgzMzlkODFkMGZjYzEifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/hook.ts#L293-L377",
+          "version": "repo-lines-v1:sha256:dfee3e710dfb3c0d58f40412d0cc500294ffc27b1dd3aa05f773159570ed4e43:eyJzZWxlY3RlZExpbmVDb3VudCI6ODUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU5M2M0Mjk0MWI2MWI3ZDE2MmI4OThiZTgyZjZmYjIzZmJjMGVmNjc4YzcxMjZlYzA1YmZhOTc3Nzg0M2NhZGUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ3ZDlmNDQxYWM1NDE0YThlYTU2NjI3MGNlZDQ2Y2U3NWE4Y2MyYjg4ZjU1NWM3Y2NjMjJkODk4NDI5NDA3MWQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjM3OTI5ZTkxZTBmOTljM2U4MjVkZTY5YjQzNWZiNjQ4NGQxYjBhMWRmMmY0NjU2MWFiZjFhMjlmMDQxODhiODgifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/hook.ts#L784-L887",
+          "version": "repo-lines-v1:sha256:cccec9aa12df91582dd7239c6bca88c8a007742190e7657a22c9441e84934e58:eyJzZWxlY3RlZExpbmVDb3VudCI6MTA0LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI1OTBjNTg3OWIxYTkxZDVjZGQ5NzYyNWMzMjk0NjJkNWU0MTUwYTBmZTlkMDlmNjIwNWE5OWFhZDQ4OTM4ZTY1IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI4NGU0MjA4Y2Q2ZmZiOGM0YTM1NDdiMmY1NGFkYTE5OTc4YzNmMzY1ZTc4Zjk1MDJlZjUxNDVjZGQyYWE4NTQzIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJmN2JjMTZjNjlhYzYxYzM5ZTFiOTA4YzMyOGEwZTg3YjcyYzVkNWNlOTM2N2JkMjRiN2ZlNWUxMGFkMGUyMTIwIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI2ZmM1NWIzMWFhMjQ4NmU0YTQyMGNjYmUxOTIzOTI3MDdmYzQ0ZWYxMGVmYWMxOWI4MDRmM2MzYzBhZWE5Y2Q2In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_11939287a78540dda95abef197b9d71c",
+      "statement": "A confirmed external resume is persisted as `external-resume` and is excluded from transcript ownership markers, lifecycle metrics, and centralized metric/conversation synchronization; the persisted origin decides when present and the environment is a fail-closed fallback.",
+      "evidence": [
+        {
+          "resource": "repo://src/agents/core/AgentCLI.ts#L376-L445",
+          "version": "repo-lines-v1:sha256:bc869fea9acd5c41041309b06858eda6c81d4a17f80da5faa798eab4538d463f:eyJzZWxlY3RlZExpbmVDb3VudCI6NzAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjBhNWU4MjgwMmFlZjRlZTMzNjQwNzc4M2QyYjA0MzA4MzhiZDlmMTNiYjkyNTU4NjAxODMyOGI1YzIxMjc5NWUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQyMTg4MTU2YzYyNDNiZGM1NGU3ZWMzOTk1ZWU1OGMxYTFkNzdkN2QyOTY0OGRkMTliMGM3MjQ0OGIzNTQ1MzYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjczMGY5ZTUyNDAzNTUwZDlmMzEyOTBjMjgyY2Y0ZmYyOTRkNWI1YTljNmYwNzU1NmM1N2UwYTIyMTg1Y2Q0NmIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY0OTllODhhNDBmMjhhOTYxOTg2OTUyOWEzZDZlYmZiZWM5YzMzMTcwOGQ0ODIwOTUyNjQwOWFkMGM0Zjg3MzcifQ"
+        },
+        {
+          "resource": "repo://src/agents/core/session/session-origin-audit.ts#L11-L27",
+          "version": "repo-lines-v1:sha256:52aa71f3beb5a9115adda3b20bb98de20e2ab85c646a1c5ffea3f245f8fff373:eyJzZWxlY3RlZExpbmVDb3VudCI6MTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjBhNDg1OGFkODE1NTc2YTBmNjI4NzVlN2EyYTQ5MDdhNWQ1MzU4YzQxMzBjNmVmZjhmYzYwNmM5NzJkZjQwNDQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjE1MmI4NDcwZjc4MmIyYTQ5NWMxYjE3NjVjYWFkNzcyNmY0MDE2MTM1YjgyYjI2NTc5MTliMDUxMjk4NmZjNGIifQ"
+        },
+        {
+          "resource": "repo://src/agents/core/session/session-origin-audit.ts#L62-L126",
+          "version": "repo-lines-v1:sha256:a52d809fcf7be939e420b20cd1ce337e79896d9b4e1bba77f70f9111c7049554:eyJzZWxlY3RlZExpbmVDb3VudCI6NjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMxMmI0MzFkOTg5MWJiMDRmZGRjYWQ1ZjY3ZWZmZTE1NjczMjQ3MGZjZmUwMWMwMDE4OWE4OTAzYWZmOThjZTkiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImMzMGYwOTk2Y2Y1NzEzZWQ3YTZiMTUyMDVlN2M4ZDVhOGQ4MTFmMGRkMmJlYWNjNjZhYTc2MDc0YTE3NjZmNjQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/__tests__/hook.session-origin.test.ts#L69-L173",
+          "version": "repo-lines-v1:sha256:542abe2e241580c2e6aa16f72cdaac5412c596b6d80385b0e86218ac038065d0:eyJzZWxlY3RlZExpbmVDb3VudCI6MTA1LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI2MGFjMDhlNzljOThlZWNmMjk0YzBiZjZmNzlhMTYxM2U0ZjNjMzUxMjRmZGQ4ZGNmYWJmNWYyZDZlODBkNjhkIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIzYTNlNDZmOTQyNzZiNmY2ZjRlZDFmMDJhZjc4YmVmNmEyZWUxYzQzOWRkNTU4NGI5NzM5NDgzMTMyMTRkMmI3IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiJlZTZiOWMyYzJjZmQwZjlhYzE4NTZlYmEwMGM2NzJhM2JiOWM3MWRlMDIwMTg1ZmQ3YzUxNjJjNjMzOGIxODA4IiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MSwiZm9sbG93aW5nQ29udGV4dEhhc2giOiJmNmY1YjQwYjE1ODQ1N2QxNzg2NGYyMTc5MDc4NmRkNWEyZWNkYjY0YjY2YTY1MWY3ODhkNGUyNWNkMzMwM2QyIn0"
+        },
+        {
+          "resource": "repo://src/providers/plugins/sso/session/SessionSyncer.ts#L85-L121",
+          "version": "repo-lines-v1:sha256:932746ced92afbdc8a5f81d0082e79cd6ee14c4c87c8b5023161465b563bc5b1:eyJzZWxlY3RlZExpbmVDb3VudCI6MzcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjgwZTVjNDQ3N2I3NzU0MWNhZDk4YmE3YTVjNjQ2MzM0M2I0YjExZTY2MzI3Nzg5YjJmY2Y3YzAxYmY2ZGE4MzAiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjliNjJmNjBkODU5MGE1NzljZjQ2ZjhkNjczNzhjNGM1NzJiOTYyY2VjY2RiOTBjN2E1ZjdiNDJiOTYwNzgyYTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijc1ZmFhODQzYjRmOGNmNTdmZGVmOWFkY2NiNmZlNDI3N2E1YjA2NWMzMDYzZDAzMDJkZThmZmM1YzNmZjdiZmQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjMzY2NmYWJjYWE1NGQ2MWE0NzcxYThjYjc5ZTY1MTU1ZDJmNDJiYWNlYTNlNWFlZDk2MGIyZTBhYzhjZGY0OTcifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_9302f687580247d6a32d06b5e519d5a5",
+      "statement": "SessionSyncer requires stored matched correlation, runs metrics and conversation sync processors in priority order against pending JSONL, continues collecting per-processor failures, and persists combined synchronization updates once.",
+      "evidence": [
+        {
+          "resource": "repo://src/providers/plugins/sso/session/SessionSyncer.ts#L123-L218",
+          "version": "repo-lines-v1:sha256:9f2f4f15c0c24e25e64c8b1641fd247dd4aeff4b56a581303477b2c13b62dcda:eyJzZWxlY3RlZExpbmVDb3VudCI6OTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjY4OTNhZTc5MjExZTc2NzhjNTE2NWM4ZDc3NDAxNDM0ZTY1ZjQyYzYwZTAwNTg1MDJjYzM0MzA5NTg4Zjg1MjQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjRkOWM1MTIyYTgxZmU2ZTE5M2VlNTAzODUzMmU0OTliMmVkZDgxMmIxYTEzZDE1MDM1ZTA1YzJiMTE5ZTBhMmYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoyLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImRmNzM5YTA2YzFjYmIxMjQ0ZTMzNjNkMzhiY2Y5ZmE1MGNlODRmZWQzOTljMjE5M2EzYzdmMDhkNTk5MThiMmEifQ"
+        },
+        {
+          "resource": "repo://src/providers/plugins/sso/session/SessionSyncer.ts#L32-L75",
+          "version": "repo-lines-v1:sha256:c2a5f61cdb8525ec644b17bb7ff0671d44a444cbd28007425b0c1791570ef759:eyJzZWxlY3RlZExpbmVDb3VudCI6NDQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjM3NDY5ZGQyNzU1NTcxZjMzN2IwNTAzYmRiYzQ0YjQ2MzEyY2Y3NjE5YmMwYmU0NGFjODRkZjcyYTAxYTM2NWIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijg3ZDk3YjNiYzk0ZTgxOTk2YWYxNDA2OGY1MmVhMDMyNWEyOTAxNWI4NGRhYTVjNmQwNWJjNjlhZTAyMTYyOGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjRhMjBkNmZiZGE1MGNjZDcxYWNlYjliMGMwNjhjYzMwYWQ5ZDVhNDI2YzlhYzJmZjI4YjE2MTEwZjBjZmJlYjUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_9ca6b1d7a45544a28decaf6f733c7def",
+      "statement": "The SSO session-sync proxy plugin is enabled only with a session ID, SSO credentials, client type, and enabled configuration; it schedules nonconcurrent background sync, and proxy shutdown clears the timer and attempts a final sync.",
+      "evidence": [
+        {
+          "resource": "repo://src/providers/plugins/sso/proxy/plugins/sso.session-sync.plugin.ts#L185-L260",
+          "version": "repo-lines-v1:sha256:887bc152615ecde7d73f928b1fd1a88bc42a97298dd41381590bfb3cbc855477:eyJzZWxlY3RlZExpbmVDb3VudCI6NzYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmMmEyZjk5NmYwOGU2ODBiZDI5MjEzNWE2ZmE0OTc4YmRhMjZlNjAyZDg0ZjMzY2IxZDU5NDc3NWQ0MzA0YjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjFkYjNlN2NkMGMzYTYyMzA0NzY2ODE2MWQxMDRlOTlkODYyMDljYTNlNzc1NGEyNWIxMTlhNDkwNzg3ODA0MjYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImI0MjEzN2NhNTk1OTRlOTY3Nzk3ODJmYzFjNjkxYzQ4ZGNhMzExZDFkOGEwNDI0Mjc2MjhkNTFjYjNhMGM5ZWIifQ"
+        },
+        {
+          "resource": "repo://src/providers/plugins/sso/proxy/plugins/sso.session-sync.plugin.ts#L37-L123",
+          "version": "repo-lines-v1:sha256:9b7c6f00d476bfaad6ac0900ebcbfc7dd7826a5f9895dc77c1ed9cd675dc3e87:eyJzZWxlY3RlZExpbmVDb3VudCI6ODcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVlZjM5ODgyMzk0NGNlZDZjYWRlNjU1MzJmMWYwYWQyNTkzNWRmNGEyNTgzMzkyYjE1MTMxMjBjMmU2YjNjMTgiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJkNWQyN2IzZGIxZGI2N2JkNWJjYzE3ODczNjYwYzUyNWM4YjRhZDBjNDU4ZjA2ODM2Njk0MDRlMjdlZWIxMTEiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQ3N2MyODQ3MDljNjQ1ZGY4NzZhZWIyNDVmMjcyODc5YjQzYjUyNTI1MjAwMjRlNGRkNTM1ZDBmMTMyODUzNTgifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_053cbf9a981a436faea7cb628267f31e",
+      "statement": "DesktopTelemetryRuntime polls local adapter discovery, creates or updates CodeMie correlation and runtime checkpoints, processes and syncs discovered records, and finalizes sessions on inactivity or runtime stop with final transcript processing, sync, and end metrics.",
+      "evidence": [
+        {
+          "resource": "repo://src/telemetry/runtime/DesktopTelemetryRuntime.ts#L161-L205",
+          "version": "repo-lines-v1:sha256:559581739de60e95435bbbb7e0b5880a4cbf94a2600540bf97d49d0559deb137:eyJzZWxlY3RlZExpbmVDb3VudCI6NDUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ2MzQ4NDVhOWMwNmUxNmE3OGMxODlmMmViMjU4OGUwNjgyNjQ3ODM0NWExMzE2M2RmNmRkOTcwZDIyN2FmOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk1MDQxNDMzMjZiZDQ5MGEwNjFmYjgzMzdhMmFiM2ExZWU5NDZmYjFkMmIwODI3YmUwMTMzNzdkYmJmMmY2YWYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk3ZDg2MzJlNTRlOTI5OGFiYjk1ODcyN2UyZDUxNDA4YWJhZjEzNjYwMzUzNzkxMDE0MGFiZjY1YjMwYWI2MTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImZjMGM2MDI4MmY1YTA4NDdhOGViNTg1YWM1ZWUxNTc0NGMwZjdiZjcxMDJhOTQ2MWIxNGQwNDA0YmM0NTA3MDUifQ"
+        },
+        {
+          "resource": "repo://src/telemetry/runtime/DesktopTelemetryRuntime.ts#L36-L92",
+          "version": "repo-lines-v1:sha256:91ca748f580c1a8945bf6472a357da82557b0f3ae198daaa49960a11479783e3:eyJzZWxlY3RlZExpbmVDb3VudCI6NTcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmNjA1OWY2MTEyODMxNzViNjEwZTY3YzA3YzdhZDNmNDI4ZDNiYjBjZTNiNjViZGI2NTdlZjQyYjBmZTFiN2UiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImNjMWMwNDI2ODIzYjA3NWNhYjJiZjZiYzViODc1OTdmZTc5OWE3NjBkYjM0ZTk0OWQ3MWU4YzBmMmZhYWUzOTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY4MGU2NmJhYTNkMjljNjc0NDM1ZmU5NTgyMzk2YzZiMjMzMzBmNjQyZTdjNmI1ZGMxZTA2MTZhYTA0YWM3ZjMifQ"
+        },
+        {
+          "resource": "repo://src/telemetry/runtime/DesktopTelemetryRuntime.ts#L95-L158",
+          "version": "repo-lines-v1:sha256:82c00e5ae24862aa3e2f36cd2cde52c71941d23500bc743f3b9a0fd0912c8bb5:eyJzZWxlY3RlZExpbmVDb3VudCI6NjQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI5MTEzYmJlMDk5ZWJhOTZhNGZmMDQ2N2Q0MTg0YzQ4YTcyYWZkNzU5NWRkYmM0ZDg5NjIxNDM4ZTUwNjU0NjEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ4OTNmNDBlMzc4MWViODk2YzgyZDA0NmEwODA2N2ExMWUzNWNkZjJmMWRmYWYyNmZlYTkwYjhkYjY2NzY0MTMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk3ZDg2MzJlNTRlOTI5OGFiYjk1ODcyN2UyZDUxNDA4YWJhZjEzNjYwMzUzNzkxMDE0MGFiZjY1YjMwYWI2MTMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxOWY4MDMyNzE1NmFkNTg0NzAzNzYwODZiZDVlZDc3YjMwY2Y1YzgwYWM5YTJhM2M4Zjc1NjJlOGViYzA0OTMifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_77742d5d0c60466bb519329441857d1f",
+      "statement": "The analytics command uses CodeMie-tracked sessions plus native-agent discovery by default, supports explicitly including unmanaged sessions, filters, export, and report generation; per-session reports are opt-in by agent metadata, kill-switchable, and non-fatal.",
+      "evidence": [
+        {
+          "resource": "repo://src/agents/core/BaseAgentAdapter.ts#L57-L103",
+          "version": "repo-lines-v1:sha256:f1dcc2e50781f20545a8a28de49c0827fddd65095e3bd3c6f1163ab78e10624d:eyJzZWxlY3RlZExpbmVDb3VudCI6NDcsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmMmEyZjk5NmYwOGU2ODBiZDI5MjEzNWE2ZmE0OTc4YmRhMjZlNjAyZDg0ZjMzY2IxZDU5NDc3NWQ0MzA0YjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjQ0MjMzYTUwZGYyOTI4ZDUzOTViYmFlMDEzMjVjNGYzMTdhNDBiMTk5OGU4MzU4NTI2YTZkMGViY2E5ZDU2ZTkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImEyZjQ4M2I1NjA4N2ExNmFlYzQ3ZTIwMjQxYWYwNzA1Mzk5ZDgwNzY1N2VmZThhMTgwOTI3YzI3ZmM1M2JlMjAifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/analytics/index.ts#L18-L62",
+          "version": "repo-lines-v1:sha256:7cb6a73f01de7a79dda6c7256404d37d5f1edad3f6518e69f76719163151449a:eyJzZWxlY3RlZExpbmVDb3VudCI6NDUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjA4ZTg3NzU2ODA2MTNlZTg0YzUxMDIwY2Y3YzFmZDk4Y2Q4MzljM2I0OWNhMjI2NDRjMjRmMGJhOGY5ZTBjYjMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQ1MTJkNDA2MzYyNDkzYjdhMWY4MWJjNDJlNGUxNjA0OGVhYzJjNDQ2ZmIwNWQ0NzU4MDhlZmY2NTVhMmZkMzgiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImIwMGQ3YmViYzRmZjExYTMyNTNmZWViZTQ3Nzc1YWI3OTJiZmY2NGY4MmJlMWE5ZmNhZDk2MGVmNTA2MjA2Y2EiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImVlYzA1ZjE4ZTNmNDEwMjJjYzdlMzEwMzE4OGUzNmZjMGY1ZTkzZWJjYWUzM2YzNDQyOTNhNTQ1YjhhZWE2ZGIifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/analytics/index.ts#L65-L143",
+          "version": "repo-lines-v1:sha256:b03211cbd5f3fc555ae4192c6b93c22f4dc8a6cb2ad37135388465332b333b19:eyJzZWxlY3RlZExpbmVDb3VudCI6NzksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjgxOGE3NzE3ZTNhY2NhYTMzY2Y1ZjM5OTQyMDFhNWQyOTcxZGE4MTgyY2I4ZmNlYzY3Y2JkYzRlOTVhYzZlYzQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImFlNTFmYmRkY2Q4ZWUxNTFiNDM0NDZhZTU1M2FkYTJkMTQ5ZTBmOTUzNjM2OWVlMDJjMzAwMjg2MjAwNjRlZWYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjYxNGVhOTgxNmI2OThhMjA1YWNlY2M3M2QzZGM4MDg3MDc5MDhlN2I3YjQ1MTg4NjdhYWNhODlhZmI3ZGM5ZjYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImNjNWZjMzE2ZjAyMjhjOWI1Y2M0ZmI0NTU4MDYyMjliMmViZjE3ZjI0OGNlM2M1ODNmODljMGFmNWY4MTY3MDcifQ"
+        },
+        {
+          "resource": "repo://src/cli/commands/analytics/native-loader.ts#L1-L13",
+          "version": "repo-lines-v1:sha256:0a2fb55d4555963ea8e496596e5f2b8a3e133912fb07faf8227b6c1d646aeb2f:eyJzZWxlY3RlZExpbmVDb3VudCI6MTMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk3MmE0MjkzODJiMmUxNDcxOGUwZTM3YjA1NzBhOGExNzAyOTkxZmNkODQ5OGNkODQwNjBhOGJmNGYwNTAxN2IiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6Ijc0MWQwOWJhYTNhZGNiMTVjOTk5ZTJkYjIyZGFmZmFhZjk4M2UzZDIwNDMwMGExZTMxYTY1NDQ1MGVkYmUxMWMifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.4.3",
+    "at": "2026-08-29T08:09:18.077Z"
+  }
+}

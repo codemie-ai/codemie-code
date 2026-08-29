@@ -23,6 +23,7 @@ codemie doctor [options]         # Health check and diagnostics
 codemie plugin <command>         # Manage native plugins
 codemie mcp-proxy <url>          # Stdio-to-HTTP MCP proxy with OAuth support
 codemie codebase <command>       # Manage Codebase Memory graph UI
+codemie docs <command>           # Manage documentation & knowledge tools
 codemie version                  # Show version information
 ```
 
@@ -40,6 +41,25 @@ codemie codebase open                    # Open the graph UI URL only
 ```
 
 `codemie-<agent> init codebase-memory` runs the upstream MCP installer configuration, enables automatic indexing, and indexes the current repository. The graph UI defaults to `http://localhost:9749`.
+
+## Documentation & Knowledge Tools
+
+```bash
+codemie docs                             # List documentation tools and their status
+codemie docs list                        # Same as above
+codemie docs install <name>              # Install a tool globally (codebase-memory, codegraph, graphify)
+codemie docs uninstall <name>            # Uninstall a tool
+codemie docs init <name>                 # Initialize a tool in the current project
+codemie docs init <name> --cwd <path>    # Initialize in a specific directory
+```
+
+Available tools:
+
+- **codebase-memory** — persistent code intelligence graph with MCP tools and a 3D graph UI (`codemie codebase ui`). `init` runs the upstream MCP installer, enables auto-indexing, and indexes the repo.
+- **codegraph** — local-first code intelligence: builds `.codegraph/` (symbol index with `query`/`callers`/`callees`/`impact`). `init` builds the initial index; afterwards run `codegraph install` to wire its MCP server into Claude Code/Codex/OpenCode and `codegraph sync` to refresh.
+- **graphify** — multimodal knowledge graph (code, docs, PDFs, images) as a Claude Code skill. `install` uses pipx/pip (Python 3.10+ required); `init` registers the `/graphify` skill, then run `/graphify .` inside Claude Code to build the graph.
+
+OpenWiki is model-backed and managed as an agent instead of a docs tool: `codemie install openwiki`, then `codemie-openwiki --init` to generate the repo wiki and `codemie-openwiki --update` to refresh it. It uses the active CodeMie profile (SSO proxy, LiteLLM, or Ollama) — no separate API keys.
 
 ## Framework Init Commands
 

@@ -1,0 +1,180 @@
+{
+  "schemaVersion": 1,
+  "pageVersion": "sha256:b67dced5935a91f2a0e36dc3719a8b8930b8956c7a24409023fd44c8838e60f3",
+  "claims": [
+    {
+      "id": "claim_14b902065ada4ba38d0bba67bf1330e5",
+      "statement": "The package is an ESM Node.js package requiring Node.js >=20 and publishes the `codemie` root CLI, built-in and per-agent shortcuts, `codemie-mcp-proxy`, and `proxy-daemon` through its `bin` map.",
+      "evidence": [
+        {
+          "resource": "repo://package.json#L188-L190",
+          "version": "repo-lines-v1:sha256:61e2536f49f4f187a161e8ed7c7a55149cb5ae98d7efe9ecf0dbcf04a363c72e:eyJzZWxlY3RlZExpbmVDb3VudCI6MywiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiNWY2MDE1NTQxMjJlZmU4NTVkNTZlMTBjYzliYWYyMDMxY2EzZjRhYjExY2RiYTIyZjFlYmM1ZDM5YTc1NTgyNCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMjdlNTc4OGQ1ZDlkNzNkMjRhODFkYmMwYTVhNzRiZmE4MmM5YzNiM2FmOTllNTJhZjc5NmU5MGI0NjhhOGEzZCIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNjI5ZTQ1ZjQ4MzYwMWY0MGM0Nzc0ZGY5ZDUyNjhiNTA2ZjAxMTg3Y2NkOTBmMGY3MDAwYWM0YTE4NjU2NjkyNCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjEsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNDEyY2EzNDVjY2Y3NWJmOWMwODA2YmNlNjk1YmU4ZGU4MDhiNzk5ODQyNTFhN2E1NGQyMDJjZjYxMDFkZDQ1MSJ9"
+        },
+        {
+          "resource": "repo://package.json#L2-L22",
+          "version": "repo-lines-v1:sha256:932e30a5c0c7cfe1671350b5458844cfd7e4de4d3e1ed200a144c399b23058f1:eyJzZWxlY3RlZExpbmVDb3VudCI6MjEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImQ2OGQ0YTYzZmY3MjkyYmZmNmZiYTg1MjBlOWFlY2JhZTZmYzZjNjkzNjk1N2RjMTdjOGNkOTY2MGQ3ZDBkZTIiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRkNWNkMmZiNGYzZGY4ODQ1MTUyNTViMzk1MjNmMmY4YjU0NzJiZWVhOWY1NjZmZmNhMjA0ZGI4MDI1NjEwNDEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjoxLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImE2ZmIwOGZkYTFhY2I5NTdiNjExNmJkMzc4MTFhMWZlNDFhMDE2MTFjMDYzMWVkYmY3ODZkNjg4OWEyN2E1NWMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjMzNGNiYzVkZWI4OGY3NjE4NjdiZDJiOTQ2YTdlMTY4OGYwNGI4YjQzZDU0NzJlZjU1ZGVhNzcxOWJiZWE1MmQifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_2ad3190a0ca74eefac520fc446ae1abd",
+      "statement": "The normal `codemie` wrapper runs pending migrations with warning-only failure behavior, performs a non-blocking update check outside test environments, and then dynamically imports the compiled root CLI; failure to import that CLI exits nonzero.",
+      "evidence": [
+        {
+          "resource": "repo://bin/codemie.js#L8-L39",
+          "version": "repo-lines-v1:sha256:ac50537cb1c125c1c161b6d9921d80a4421b377ebdc39eea9390390a8a0cb783:eyJzZWxlY3RlZExpbmVDb3VudCI6MzIsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQzMTVjZWU0ZDczZGJmNjA2ODhhNDNhNzdhZmQ1NGIxMTczYzdmYTc5Njg2ZDZhNzZkYmY3ZDk4ZmYzZDJjYmEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU0ZWEwZjRmOWEwNDJhZmE0ZmYyYjkyMGUzZDY3NTVlZTFmYzRmYjA0NzAwNmZmNDNiMGU0OGJjMTI4MGM3NTAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM3Yzc1OTk5NjkwZWIzODAzNGFkNmE3YzIwZTY3M2ZiYzczM2YwOWZjYWZmOWI3NzZjZGQ5MzM1MTU2YWZlMTQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY2ZjViNDBiMTU4NDU3ZDE3ODY0ZjIxNzkwNzg2ZGQ1YTJlY2RiNjRiNjZhNjUxZjc4OGQ0ZTI1Y2QzMzAzZDIifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_f778839537b44c1589961017cc92a368",
+      "statement": "The MCP proxy wrapper deliberately skips migrations, update checks, and plugin loading to protect its JSON-RPC stdout channel; it validates the server URL, writes boot diagnostics under `~/.codemie/logs`, starts `StdioHttpBridge`, and treats invalid input or bridge startup failure as fatal.",
+      "evidence": [
+        {
+          "resource": "repo://bin/codemie-mcp-proxy.js#L19-L61",
+          "version": "repo-lines-v1:sha256:ee175b28f8192bd839e782a2f5a803e77fb2d460a0a8fe5f6efd9b8a60a77054:eyJzZWxlY3RlZExpbmVDb3VudCI6NDMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImI3Y2U1N2Y5ZjU2ZTE3ZGFiOTM4NjA2ZjQ2NmMzYzBjMzYxMTY2YjIwM2JkZTE0ZjU5YzQ0ZDZmZmJkOGZhYjciLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjJkMWJiNDYxMGU0NjZkNzk0YWUzZTc3OTNhYTg0OTJmZTI2NTI1ZWNjOWNhZWE3YjUzZGY3ODVjY2JlOGFjOWYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjkxYWM4ZjQ0NzU0NzIwNjMwNDM4Y2JmYzE0NDQyNzU3NzViMzg1YTZkOWFkM2NlMmM5NTZiMTUyYTBkZTU1ZWIiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQxYzdhZGJlMTczZmJhOWUyMjA3Zjc5MjA3Yjk2OWQ5NDhjZWFlNGIxYTI0OWY0YmVlOWRjNmM2OWI2ZjZhMTkifQ"
+        },
+        {
+          "resource": "repo://bin/codemie-mcp-proxy.js#L3-L13",
+          "version": "repo-lines-v1:sha256:ef9c88b8436874fc4ac571a8d7b413185a74dd5839dab963681d6e5d10a408b2:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijk3MmE0MjkzODJiMmUxNDcxOGUwZTM3YjA1NzBhOGExNzAyOTkxZmNkODQ5OGNkODQwNjBhOGJmNGYwNTAxN2IiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjoyLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJkN2IxNzBiZjUyZTA4OTUxMDA4YmYzZWNjYmJiODcwYTI2YmUwYTFlNWI4ZTVmMDIwYmFmYmNmMzU5OTk3YzkiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImY1Y2Y1OTFjZDM1ODBiNjYzMWY3NWEyYThhNDZiM2I5ODMzMzYwY2NiNmJlNTZkOWYxYmRhMzFhMWZmMTRjOWEifQ"
+        },
+        {
+          "resource": "repo://bin/codemie-mcp-proxy.js#L63-L90",
+          "version": "repo-lines-v1:sha256:a9975422657e35da26e3ea114960c5021be7bc2c99fb90e3b0e0f336f9350a6e:eyJzZWxlY3RlZExpbmVDb3VudCI6MjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjdmY2MzOGQ3MDljNzIxNmNhMTgxODg0OGEzOTkwOTRkZTE4NzFlZjRlNWVkODk4Y2NhODEzZTcxYTQ2MTlhOTEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU0ZWEwZjRmOWEwNDJhZmE0ZmYyYjkyMGUzZDY3NTVlZTFmYzRmYjA0NzAwNmZmNDNiMGU0OGJjMTI4MGM3NTAiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjE5NTk1NTBmZmE4NTg4ZGQ1N2NmOTY3ZTY5MTY3OWU2ZDMzZmE4MzNhMjFkZDNhNjU5OGQ2YmNiNjk5MjM5ZTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoxLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_00d1b86777524a4dbbc467ab48354ffa",
+      "statement": "The root CLI imports provider and framework plugin entry modules for auto-registration before assembling Commander command factories, and its `--task` fast path resolves the `codemie-code` adapter through `AgentRegistry` and executes it with `AgentCLI`.",
+      "evidence": [
+        {
+          "resource": "repo://src/cli/index.ts#L78-L125",
+          "version": "repo-lines-v1:sha256:febca20555bc2f98fc76a7e7d955319ca33e62046e01a2060c16ca4e83f680a1:eyJzZWxlY3RlZExpbmVDb3VudCI6NDgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImViMDM0MDM2Nzk4MzljNmRiYjdmN2EyNDhmZDU5YTQyNDA1Y2RlNjEyMjcyZmZjYzhiZDcyZGFiMmZlMDI2N2MiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6Ijc5ODAxZDUwZTdiZjhiYjE5OTZhNjlmZTE0NDU5NDRmMmNjMTQ5ZmZkNzM1ZDhjNzBlNmZjYWEwZWE5ODI1M2UiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjEyNDI5NjBlMWZmMWQ2YjU2NTIyOTQ3NWFlMTA1NGI4NDU2ZTg5OWEwMDAwNzQ4MjY4YjdmODRlODRiNjRmMTYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjZmNDU2MWFmNjNjYWRhOTczNmI1NDkyYWQ0N2RiMzE4YTE3OGNjMDE1OWE0ZWVkOWVlNTlkMDI0NzI1YmE0MzAifQ"
+        },
+        {
+          "resource": "repo://src/cli/index.ts#L8-L40",
+          "version": "repo-lines-v1:sha256:b24c3ad2a6428f458409d8edcb36d3b53a303ac0fe20f8c3a0fc2cb9d46ba5a4:eyJzZWxlY3RlZExpbmVDb3VudCI6MzMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxYjZmZDFiZjZjYTc0OTM2YWMyNDg1ZDFiNmY5MDRiMTYwNDNiMmE3ODZhNjQ3MjIxNGNkMjAwZTQ3ODRiYmUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImY1OTIzYTRmMTc5NjMzYTI2MGU3MGFlMmY2OTRiZWUyYjgxYjE1YjgwMWEwZjBjYmVkYWI3MTczYzE1ZDRmMGYiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImYyZDA3ODQ5ZTkzNmNjZmViZDE5NGM4NDQ3MzAwMjc3YjI5NDMyZDZjZjgzOWMxNWJjNTBhZDNmMmNiYmI2ODYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNmMTQ3YTE1OGEzZGYyOWYwZGI4MGExYjU3OGU2OTEwMWJhNmI1Nzk4Y2YzNzMzNGQ5OGJjYWVmZDgzM2U0ZGEifQ"
+        },
+        {
+          "resource": "repo://src/frameworks/plugins/index.ts#L17-L20",
+          "version": "repo-lines-v1:sha256:a2a663b098ad38936fe77972d1c1b546ca80f7c6a161ae8717cf15e1229e95de:eyJzZWxlY3RlZExpbmVDb3VudCI6NCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMzliZGJjZmY3NDNkZTkyZTNmYWI3NzU2NDgwZWEwMThhMTNmYWE1Y2EyMjljZDMxNTIxYjQyOTI5NWJkMmJjNSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiYTM4YjM2NDdkZDM3ODE4ZWFjMGU0ZjIxMzhiZTg5MjNjNmMwMDhmN2I4Mzg3ZmQ1MTNkMzFjZWZmNWE1ZGNlNyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNDZhODE5NGYyMmU3ODJmN2VmODAxZDc5MzZjOTEwZGQ4YjEyYzdmOWI1ZmM3YzQxNDUzZjNkMGYzNDYyM2IxOCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjAsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiZTNiMGM0NDI5OGZjMWMxNDlhZmJmNGM4OTk2ZmI5MjQyN2FlNDFlNDY0OWI5MzRjYTQ5NTk5MWI3ODUyYjg1NSJ9"
+        },
+        {
+          "resource": "repo://src/providers/index.ts#L32-L40",
+          "version": "repo-lines-v1:sha256:9d2fc4e3234a3ede8aefa22d3e4d3cca716cf29507d91aaa88ae46eed11b5fbe:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMjJjODgyYTE5N2NkNzk1MzEyM2JlY2RhYjIwYmM2OTM3OWE5NGJhODBiZGM1NTJiZTM2MjhiZjViYmU4NDAyYSIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMDZhNDFkZWQ3NGJkNGUxMTJlNzYyZTM0M2FiOGUxZDc3YWJiZWFjNzE0OTQ2YTFhMDdhMDlkY2Y3OTczZmZiMyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiNGY3NzUzZWNjMWVlZTA3NWUwNGRmMzYxYzdmZWUxNDVmNTIyZGUxODU4NzI3MzQzNzZkNDMxZGQ4ZTc2ODFhOSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiMWY5NWQzZWMzODRkOTlmNWFlZjY1YWZkZTM5MGQ5ZDVlYmU0MDI5NWE0ODA0YjIwYzk3OTIxNmZkYWUzMTY2ZiJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_3a26b1083a454e0a964a586eb3b5332a",
+      "statement": "Agent shortcuts resolve a named adapter from `AgentRegistry` and execute it through `AgentCLI`; the registry lazily registers built-in adapters once and separates analytics-only adapters from management surfaces while retaining them for telemetry lookup.",
+      "evidence": [
+        {
+          "resource": "repo://bin/agent-executor.js#L11-L24",
+          "version": "repo-lines-v1:sha256:7776d98e2133ee733c12ea0a4eb4dd5dd8ab51b58ccbaf37511299ffebce825e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMzMTYzNGJhZWVhODM3ODE1MjMzZmExNzRkMTZlY2MxODk5N2FlNGFmNGYxNmU3N2E5NzcwMjRjNGQxMGFlYzYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJhNmE5YTQ5OGI4ODFjYjcwMDBjZmQxZjJiN2YwNjI3NzFmNmUwODM1YWZhOTE3ZDIxNTM4ZmE3MGMyZmUxMGEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQwNTdjOWNiYzg2NGJlZjE1MTQ1YzgxNTc4YjdmMGM1ODY1ZTgzYjEzYWMyNGE0YjAzNDQ0MWUwY2FkODllNmMiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://bin/codemie-claude.js#L8-L18",
+          "version": "repo-lines-v1:sha256:e300bde7322b64fb2a0789510a4e632cc05334aae8e170bbaa7eaa2e7785b37e:eyJzZWxlY3RlZExpbmVDb3VudCI6MTEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImMzMTYzNGJhZWVhODM3ODE1MjMzZmExNzRkMTZlY2MxODk5N2FlNGFmNGYxNmU3N2E5NzcwMjRjNGQxMGFlYzYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImJhNmE5YTQ5OGI4ODFjYjcwMDBjZmQxZjJiN2YwNjI3NzFmNmUwODM1YWZhOTE3ZDIxNTM4ZmE3MGMyZmUxMGEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijc1Zjc1MzE2NzNhZjNkNzJlMDJiZWM3MmI1NWRiMGEzMmM5N2ExYWI2N2FlYjRmMWIxNTZiNGZlNGQwMDhhODAiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        },
+        {
+          "resource": "repo://src/agents/registry.ts#L21-L45",
+          "version": "repo-lines-v1:sha256:573ac68e80ec9d4adf79d45518aea102f2c5acfe13c9fc741a5bc012c62b201e:eyJzZWxlY3RlZExpbmVDb3VudCI6MjUsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjFhYTRmNTI5YmIxOGE5NDQyODQyMDJiZTc3ODk0YTEyMjI1ZjIyZTQ1YThkNTkyYmQyNDA5ZDVmZGUyODZjYjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjVjYTgyOTYzZGFjZjk3YTUyMDdmNWI5ZGYyYjhlYTkwZDkyNjg0ZGRkZDJhODc2Y2E2ZTAzMTJkYWM0YmYxMzkiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImM3ZDk5NmEwODFhMDhmZDZkM2Q2M2I1YTZkMTA0NzcyYTY0M2M1NDMzZDE1Yzg5NzMyMzQ5NmExNTFlMDhlNmQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjVhOTI5M2ZkODA1NGI2ZTQ3MjQ4MzczZjM5ZjRkZDc3ODAwMTA1ZWI3NTgzNDg2ODcyNTQyODVjZDEyODJiNzgifQ"
+        },
+        {
+          "resource": "repo://src/agents/registry.ts#L76-L129",
+          "version": "repo-lines-v1:sha256:12d9b58f332cd297ec4f53d337bb51c0013eced77d9d1047cb96102d5321d725:eyJzZWxlY3RlZExpbmVDb3VudCI6NTQsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmMmEyZjk5NmYwOGU2ODBiZDI5MjEzNWE2ZmE0OTc4YmRhMjZlNjAyZDg0ZjMzY2IxZDU5NDc3NWQ0MzA0YjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjYxN2UyNDQxNWY5MjZlMTAwOWY0MTA2YzdkMzFkYzdkMTE4ZjA3ODBmMTQ2NDRlZjkyNjJhZDdlZWMyZjRiNGMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImI2MzE0ODFhZTIwMDUxNDgwMzk2NjgxZGE3ZWM4ZmRjYTRmOWU1YTBkNjI5YzdlYTVjYjljM2MwNGU1MWZkNTciLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjoyLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImRmNzM5YTA2YzFjYmIxMjQ0ZTMzNjNkMzhiY2Y5ZmE1MGNlODRmZWQzOTljMjE5M2EzYzdmMDhkNTk5MThiMmEifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_c909d990209e4611948dd592660c2dc8",
+      "statement": "Before an agent launch, `AgentCLI` checks installation, loads configuration with CLI overrides, gives an explicit JWT token precedence, normalizes SSO/JWT API URLs, validates required configuration and provider authentication, and validates provider/model compatibility.",
+      "evidence": [
+        {
+          "resource": "repo://src/agents/core/AgentCLI.ts#L158-L280",
+          "version": "repo-lines-v1:sha256:a992487a5a065ba445b278162728e4e48f78c1e124fc7cbd8a6718ad29bf90d9:eyJzZWxlY3RlZExpbmVDb3VudCI6MTIzLCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiJjMDViYzhlYzAyNDkwNGY4ZTk1MTJlMDA1MGM3YzcxODk3OGEyY2QyNzhkMWVjYWJjMzIyMWM0NjM0OGYwNjFmIiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiIyNWRkMjM5MGE2NmM0ZmY3YWYwZWU2MWVlMGVkNzRlYmRiMTU1MTU3MWZkOWRhNjg2ZmYxMjgwOTZjODNlNjE0IiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiIyOTZjNmFiNzAxNzUxYTlmNDcxOGMyYmZlYzU5ZjE4MjE1YWQzNTUzZjBjYjEyYzk1MDBmNTFhOTFiNzM3MDJiIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiIwMDMyOWE2NjMxMzUwMjE0ZDBjMWI4ZTEzZDI1ZmNhNjJiNmQ1Y2U3MmE4NGI4MzQ1ZDM0OWZmZDZlZjVkZDQwIn0"
+        },
+        {
+          "resource": "repo://src/agents/core/AgentCLI.ts#L283-L345",
+          "version": "repo-lines-v1:sha256:0f41b31ad1074490c46760cb0bb8589cd7b28d4430e32acbb6ec7447c29c5fcb:eyJzZWxlY3RlZExpbmVDb3VudCI6NjMsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI2MGI2MjA3YjQwYTc2NjFmZDcwNGQxYzZhMDZlYzQ1NWIzMzI5OWNlMGYzMTRlZGY1YjdjMDUxMWNhNzYxZTEiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjliNjJmNjBkODU5MGE1NzljZjQ2ZjhkNjczNzhjNGM1NzJiOTYyY2VjY2RiOTBjN2E1ZjdiNDJiOTYwNzgyYTQiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImFlNTRhOGMxZjJiZTg2ODFmMWE2OGMxNzdiOWIwOTY4NDA3Yzk4ODFjNTBhMGVkZTMwOGJjMzJiYmQwZWQ3ZmYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjNmNGEzYjVmZDg1NWQ2OWZhMjg2MDBmOTQ5YWRlOGFmMWQ5OGZlNGQwY2FmM2ZiMzEzZDE2ZWVkNjViYjk1MDkifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_95723872ccf94ad38476a411c1d8efdd",
+      "statement": "`ConfigLoader` applies configuration in the order CLI arguments, environment variables, project config, global config, and defaults; project workspace context is resolved independently as a whole-object local-over-global override.",
+      "evidence": [
+        {
+          "resource": "repo://src/utils/config.ts#L203-L221",
+          "version": "repo-lines-v1:sha256:50ea1a4df09fbe4a757c4e56f9bae67768a018c8db80c2cd996c45454732011d:eyJzZWxlY3RlZExpbmVDb3VudCI6MTksImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRmMmEyZjk5NmYwOGU2ODBiZDI5MjEzNWE2ZmE0OTc4YmRhMjZlNjAyZDg0ZjMzY2IxZDU5NDc3NWQ0MzA0YjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjI3ZTU3ODhkNWQ5ZDczZDI0YTgxZGJjMGE1YTc0YmZhODJjOWMzYjNhZjk5ZTUyYWY3OTZlOTBiNDY4YThhM2QiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6IjIxYzQ5OTU4YzMzOTY4ZTllYmZmNzlhOWM4MGZjNTc1YjU1NTVkNTRkMzc5ZDAwOGE0MGNhZWFmMGU1YmUyOGYiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYTRkMzNiMTdjZTFhNmIyNWE0NWM0MjdjZTFhYmJjMTQ5YjU0NDY0MGFmOTI4ZjJjZmExZWNmMTBjNzk0YWIifQ"
+        },
+        {
+          "resource": "repo://src/utils/config.ts#L29-L36",
+          "version": "repo-lines-v1:sha256:a85687d7202edd96582067b6cb4dff3dfc2dd9219e4a103c14a8ac3bff036159:eyJzZWxlY3RlZExpbmVDb3VudCI6OCwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiZWFmMjJjZjA3MzI1OTJjMjQ3MTQxY2JlNjFlZmExMTAxMjYxMmY1YTMxMjJiOWFmOWJiYWY1MmY1NzI0ZDE5NCIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiOTcyYTQyOTM4MmIyZTE0NzE4ZTBlMzdiMDU3MGE4YTE3MDI5OTFmY2Q4NDk4Y2Q4NDA2MGE4YmY0ZjA1MDE3YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiYjA0NGQ3MjViOTRhMmE1ZDIyZjY2YTU4ZTg0Mjk0MDQwZDZlZTE0ZmMyZGY4M2YxZjZhZWE1YzdjYTUwZTJkYSIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNDk2NmI4YmI0MmI3MjZkOWRiMzJmMTNjNGQzYmQ5ZTU0MDUxMjVlOTdmNGM4NjkxOWEyMDQ0YWU0YjlhYzAyNCJ9"
+        },
+        {
+          "resource": "repo://src/utils/config.ts#L87-L200",
+          "version": "repo-lines-v1:sha256:6d1807a1f94ff4b374dc88c17d12b647ec3aa82ef4097d67b8d69ed1d4817618:eyJzZWxlY3RlZExpbmVDb3VudCI6MTE0LCJmaXJzdFNlbGVjdGVkTGluZUhhc2giOiI0ZjJhMmY5OTZmMDhlNjgwYmQyOTIxMzVhNmZhNDk3OGJkYTI2ZTYwMmQ4NGYzM2NiMWQ1OTQ3NzVkNDMwNGI1IiwibGFzdFNlbGVjdGVkTGluZUhhc2giOiI2ZDlhZjUzNDQwMmY3NDllY2Y3NDFjZjYxMmU4MWU3ZWZmZDY4YmIzNWEzODYzZjE3ZTM1NThjMjk5YjdhMDdiIiwicHJlY2VkaW5nQ29udGV4dExpbmVDb3VudCI6MywicHJlY2VkaW5nQ29udGV4dEhhc2giOiI5N2Q4NjMyZTU0ZTkyOThhYmI5NTg3MjdlMmQ1MTQwOGFiYWYxMzY2MDM1Mzc5MTAxNDBhYmY2NWIzMGFiNjEzIiwiZm9sbG93aW5nQ29udGV4dExpbmVDb3VudCI6MywiZm9sbG93aW5nQ29udGV4dEhhc2giOiI1YTkyOTNmZDgwNTRiNmU0NzI0ODM3M2YzOWY0ZGQ3NzgwMDEwNWViNzU4MzQ4Njg3MjU0Mjg1Y2QxMjgyYjc4In0"
+        }
+      ]
+    },
+    {
+      "id": "claim_8eaafd061ec8419699c0ca74fda07c00",
+      "statement": "CodeMie local state is relocatable: `getCodemieHome()` uses `CODEMIE_HOME` when set and otherwise `~/.codemie`, while `getCodemiePath()` derives paths beneath that resolved home.",
+      "evidence": [
+        {
+          "resource": "repo://src/utils/paths.ts#L327-L376",
+          "version": "repo-lines-v1:sha256:529f018994c74f14c207867df44d64f287f6a1ae731c0bf0d24cb772aef6bedf:eyJzZWxlY3RlZExpbmVDb3VudCI6NTAsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImVhZjIyY2YwNzMyNTkyYzI0NzE0MWNiZTYxZWZhMTEwMTI2MTJmNWEzMTIyYjlhZjliYmFmNTJmNTcyNGQxOTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjQxMmNhMzQ1Y2NmNzViZjljMDgwNmJjZTY5NWJlOGRlODA4Yjc5OTg0MjUxYTdhNTRkMjAyY2Y2MTAxZGQ0NTEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijk3NTk2ZjVlMWUyMGIwZDFmNzgyZWQxMDY3ZjcxMTJmOGNlYjg4Y2UwOWEwMWIyMTlmNTkwZjRmYmZkZWYyYzQiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImQ5MDJhMGYxM2Y2OTVjODcwMTg0NDI1M2JiYTVhYTU4ZTFkOWQ1MWNkNGU4ZmFkZGEzZmRmYmUxODNhZDlkY2IifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_bb1f143cdac04a6a888a2ca0a66b790d",
+      "statement": "The library barrel intentionally exports the agent registry and adapter type, logging/process/error utilities, environment manager, SSO and proxy APIs, proxy-plugin registry, hook processing, and `ConfigLoader`.",
+      "evidence": [
+        {
+          "resource": "repo://src/index.ts#L1-L28",
+          "version": "repo-lines-v1:sha256:29f352fabb7fd1863329253909290a9260fcaa59a6a59c91ab4c45f17a3d4b73:eyJzZWxlY3RlZExpbmVDb3VudCI6MjgsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjIwODhlOGQ1YjY0M2VkMzM5OGMxZDJlYjIyMjg3YjIxMWRhM2U3MmQ5MmQ0MDIwNmNmMjlhNTFmZTE2YzFhNmYiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjMzZWVjNjdmYTlkN2VlMGEwOWEyZGM0OWE0MzkzNjUwMzNlMWZiNjJlYzUwNTgxNDU0MTA2Mzc3ZTNmY2U5YTciLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjowLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjowLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImUzYjBjNDQyOThmYzFjMTQ5YWZiZjRjODk5NmZiOTI0MjdhZTQxZTQ2NDliOTM0Y2E0OTU5OTFiNzg1MmI4NTUifQ"
+        }
+      ]
+    },
+    {
+      "id": "claim_b926a3a0de874b0987b049c62ed60690",
+      "statement": "Vitest defines isolated `unit`, `cli`, and networked `agent` projects; all receive a process-specific temporary `CODEMIE_HOME`, while the agent project uses build setup, longer timeouts, and bounded workers.",
+      "evidence": [
+        {
+          "resource": "repo://package.json#L37-L45",
+          "version": "repo-lines-v1:sha256:cba7e80024e44dbe3285bdff8c0c37da7b77f31ae8be3cff6ecbbdfab54d3b3c:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiODI5MWU4NTRlYmY5NzRhMGY4MDdiZTQ2OTM3NGM0YTkwZTI2MDYzNDIwNjhjZDZjMjNiYzc4NmY0NmNjNTBmYiIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMDViNmU2ZTRmYjY1MGVmZDQ3ZGQxNmI3M2U0MDhjNjQ5MjBlN2ZmYTIwNTI5OWY1YTY5OWYxNGJhZWEwNWJiMyIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiM2ZiNTJiMTMzM2JhMGE1MzhhZTM4ZGNhNWIxMzEwNmIzNmE0NDhkOTExOGYxYjVmMzkxMTU4ZTM0YjA3NmQxYyIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiNDFkZWE4YjE4MmFlZGUxOGVlMDM5YTg0N2I4ZDE4NjVmYjRjNmExYTIxODBmYzVhMjQyODY5Y2U4YWJlOGU2MyJ9"
+        },
+        {
+          "resource": "repo://vitest.config.ts#L17-L97",
+          "version": "repo-lines-v1:sha256:7aea62709c233df468e5196454122dd4acf81a13fdd8d1cf84703b6db95b0bf1:eyJzZWxlY3RlZExpbmVDb3VudCI6ODEsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU3Y2FkZTg3ZTc3MWFhMjhmOTUzNmZiNDhlMGIzMmNiODhkZjI2YmIyODQxOGRjNWY3ZDcwYzFiZjFhNTZhZjUiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6ImU2NzdkMmYwMzFlOThiNWU5MTFjNWFkNGZiOWIyMTg2YTkzMjUyMmU4ZjQ2ZWU0MGJhYmZhZTNkYTAwZmMxMjEiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImJhYzA5MzM4YWQ2MWI2YTUzNjQ0MTM2ZmQ5NGI2NTU0ZDU2NGM3MmMyZWJlYmVjOTlhNjZjYTkxMjg3ODM0MWUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImRmZmFhNjQ1NzcwZTJkN2UyODgzOTNhZGQwMjJjMTI1NzJjYjYzZjAwZDI3MTM0YWMwYjZlYzAxYjBmYThmOTUifQ"
+        },
+        {
+          "resource": "repo://vitest.config.ts#L5-L13",
+          "version": "repo-lines-v1:sha256:a2d6dc33545d81e00a86edb716ac655b2bae2158c8e685904a0dc2fe8ebe2537:eyJzZWxlY3RlZExpbmVDb3VudCI6OSwiZmlyc3RTZWxlY3RlZExpbmVIYXNoIjoiMTA3ZmQyNDk4ZjVlMTMwMjE5Zjk2YmExMDQ3MTE5YmUwODRiMGVmYjIyOGFkZmU5YzVjNTk5N2UwM2U3YTE3YyIsImxhc3RTZWxlY3RlZExpbmVIYXNoIjoiMDFiYTQ3MTljODBiNmZlOTExYjA5MWE3YzA1MTI0YjY0ZWVlY2U5NjRlMDljMDU4ZWY4Zjk4MDVkYWNhNTQ2YiIsInByZWNlZGluZ0NvbnRleHRMaW5lQ291bnQiOjMsInByZWNlZGluZ0NvbnRleHRIYXNoIjoiOTFmNGE4MTNlNjRmZGI2Y2EwMjc4MDExYWJkMjdlZTgzYzI5NzZmOGUzNDNiYzMxMDgzOTBjNWFjMGEyZDJmOCIsImZvbGxvd2luZ0NvbnRleHRMaW5lQ291bnQiOjMsImZvbGxvd2luZ0NvbnRleHRIYXNoIjoiYmFjMDkzMzhhZDYxYjZhNTM2NDQxMzZmZDk0YjY1NTRkNTY0YzcyYzJlYmViZWM5OWE2NmNhOTEyODc4MzQxZSJ9"
+        }
+      ]
+    },
+    {
+      "id": "claim_bafc76a6ea9f460c87a41729dff9b398",
+      "statement": "Repository instructions require task-relevant guides to be checked before code search, prohibit writing or running tests unless explicitly requested, and prescribe the CLI-to-registry-to-plugin dependency direction along with ESM `.js` imports and derived CodeMie paths.",
+      "evidence": [
+        {
+          "resource": "repo://AGENTS.md#L12-L37",
+          "version": "repo-lines-v1:sha256:5a1784f15dcb78bab0372d7a792124f2d7c7e71bbb8b0ef5a17454ed383edd7a:eyJzZWxlY3RlZExpbmVDb3VudCI6MjYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjExZTBkNTRmNGI5YjZmODhlZjBlYjc3ZDgwMjQ4ZjNhMGZlYzlhYzdmYzhkYmU3Nzk2OWFhMzY5ZjA4ZjE0MTQiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjRlZjE5ZWUzOWRmMTNkZmI1NzhkM2ExZDBhOWQyZTYxMmYxMTE5ZWI5M2MyMTZkOWM0YWM0NDQ4ZTZmNzg5ODMiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6ImQ2YTUxNDk0YThjYjIwNGJhYzVjMDMxMzU5Yjg4YjE2ODk4ZWU5ZDQ4ZWIyMGYwMDZlNjFkMzVkNmViZGJmNTUiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6ImE5YmFiY2RmOGVlOTY3ZmU1YjNiOTg3MmU4ZmM0NTZlNzIwNzk0MGM5N2Q1OTE3OGIwZGE2OThjNDcyNjJhYTQifQ"
+        },
+        {
+          "resource": "repo://AGENTS.md#L163-L178",
+          "version": "repo-lines-v1:sha256:f841fec7d759aa167ec3cda48556cef9f6ec57ee4e620baabe22cb3179ac23d6:eyJzZWxlY3RlZExpbmVDb3VudCI6MTYsImZpcnN0U2VsZWN0ZWRMaW5lSGFzaCI6IjUwZjgxMzc0NWM0MmI2YjNiNzQ2YjhlYmEyZjczYmRhZTk0NDJkZGZiYTliYjI0OTk5MWZkMjAzYjI2ZTYwOGMiLCJsYXN0U2VsZWN0ZWRMaW5lSGFzaCI6IjAxYmE0NzE5YzgwYjZmZTkxMWIwOTFhN2MwNTEyNGI2NGVlZWNlOTY0ZTA5YzA1OGVmOGY5ODA1ZGFjYTU0NmIiLCJwcmVjZWRpbmdDb250ZXh0TGluZUNvdW50IjozLCJwcmVjZWRpbmdDb250ZXh0SGFzaCI6Ijg5NTcwZjNlYzI3NmUwZjg2NTczMWJjYjE3Mzg3ZmQyMWE2ZDNmZGUzZDNkY2Q4MTBlYzQ4ZTAyNTkxM2E0N2EiLCJmb2xsb3dpbmdDb250ZXh0TGluZUNvdW50IjozLCJmb2xsb3dpbmdDb250ZXh0SGFzaCI6IjMwOGFkMjcxYzk3OWY2MWUwMzdiODFhYjI5MGI4MDFlYTE5MDRjYWQxODI5NjY1YWQ3Y2UwZTllZTM3MGJlNjYifQ"
+        }
+      ]
+    }
+  ],
+  "verification": {
+    "by": "openwiki/0.4.3",
+    "at": "2026-08-29T08:09:18.077Z"
+  }
+}
