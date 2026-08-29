@@ -29,6 +29,7 @@ export interface ModelMetadata {
   description?: string;              // Model description
   popular?: boolean;                 // Mark as popular/recommended
   contextWindow?: number;            // Token context window
+  minMemoryGb?: number;              // Minimum memory (RAM/VRAM) to run locally - omit for cloud-hosted models
   pricing?: {                        // Pricing information (optional)
     input: number;
     output: number;

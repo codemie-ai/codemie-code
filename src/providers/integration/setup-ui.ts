@@ -7,6 +7,7 @@
 
 import chalk from 'chalk';
 import type { ProviderTemplate } from '../core/types.js';
+import { getSystemCapabilities, modelFitsSystem } from '../../utils/hardware.js';
 
 /**
  * Format provider choice for inquirer
@@ -175,7 +176,7 @@ export function formatModelChoice(
   modelId: string,
   template?: ProviderTemplate,
   isRecommendedOverride?: boolean
-): { name: string; value: string } {
+): { name: string; value: string; disabled?: boolean | string } {
   const metadata = template?.modelMetadata?.[modelId];
 
   // Check if model is recommended. `isRecommendedOverride` — precomputed by
@@ -188,9 +189,17 @@ export function formatModelChoice(
     (isRecommendedOverride === undefined && matchesAnyRecommendedPattern(modelId, template?.recommendedModels)) ||
     false;
 
+  // Models with a memory requirement that exceeds this system are shown
+  // but disabled, so users see why a recommended model is unavailable.
+  let disabled: string | undefined;
+  if (metadata?.minMemoryGb && !modelFitsSystem(metadata.minMemoryGb)) {
+    const capabilities = getSystemCapabilities();
+    disabled = `needs ~${metadata.minMemoryGb}GB, only ~${Math.round(capabilities.usableMemoryGb)}GB usable on this system`;
+  }
+
   // If no metadata and not recommended, return plain format
   if (!metadata && !isRecommended) {
-    return { name: modelId, value: modelId };
+    return { name: modelId, value: modelId, disabled };
   }
 
   const popularBadge = isRecommended ? chalk.yellow('⭐ ') : '';
@@ -200,6 +209,9 @@ export function formatModelChoice(
   if (metadata?.description) {
     details.push(metadata.description);
   }
+  if (metadata?.minMemoryGb) {
+    details.push(`requires ~${metadata.minMemoryGb}GB memory`);
+  }
   if (metadata?.contextWindow) {
     details.push(`${metadata.contextWindow.toLocaleString()} tokens`);
   }
@@ -208,7 +220,8 @@ export function formatModelChoice(
 
   return {
     name: mainLine + detailLine,
-    value: modelId
+    value: modelId,
+    disabled
   };
 }
 
@@ -219,11 +232,14 @@ export function formatModelChoice(
  * 1. Recommended models first — only the latest version within each
  *    recommendedModels family (see computeRecommendedModelIds)
  * 2. Alphabetically by model ID
+ *
+ * Choices whose declared memory requirement (modelMetadata.minMemoryGb)
+ * exceeds the current system are included but disabled with an explanation.
  */
 export function getAllModelChoices(
   models: string[],
   template?: ProviderTemplate
-): Array<{ name: string; value: string }> {
+): Array<{ name: string; value: string; disabled?: boolean | string }> {
   const recommendedIds = computeRecommendedModelIds(models, template?.recommendedModels);
 
   // Sort models using common rules
