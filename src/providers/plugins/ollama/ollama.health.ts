@@ -97,7 +97,7 @@ Or install Ollama:
    * Custom no-models remediation
    */
   protected getNoModelsRemediation(): string {
-    return 'Install a model: codemie models install ollama/llama3.2';
+    return 'Install a model: ollama pull llama3.2';
   }
 }
 

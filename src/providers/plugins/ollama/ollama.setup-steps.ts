@@ -14,6 +14,7 @@ import type {
 import type { CodeMieConfigOptions } from '../../../env/types.js';
 import { ProviderRegistry } from '../../core/registry.js';
 import { OllamaTemplate } from './ollama.template.js';
+import { toCloudOffloadTag } from './ollama.models.js';
 
 /**
  * Ollama setup steps implementation
@@ -25,7 +26,8 @@ export const OllamaSetupSteps: ProviderSetupSteps = {
 
   /**
    * Get credentials for Ollama
-   * Ollama runs locally so no API key needed, just verify it's running
+   * The local daemon needs no API key; an optional ollama.com API key
+   * additionally enables listing models available on Ollama cloud.
    */
   async getCredentials(): Promise<ProviderCredentials> {
     const inquirer = (await import('inquirer')).default;
@@ -86,30 +88,98 @@ export const OllamaSetupSteps: ProviderSetupSteps = {
       throw error;
     }
 
+    // Detect system capabilities (with GPU probe) so model selection can
+    // recommend only the local models that actually fit this machine
+    const { detectSystemCapabilities } = await import('../../../utils/hardware.js');
+    const capabilities = await detectSystemCapabilities();
+    console.log(chalk.dim(
+      `  System: ~${Math.round(capabilities.totalMemoryGb)}GB RAM` +
+      (capabilities.gpuMemoryGb ? `, ~${Math.round(capabilities.gpuMemoryGb)}GB GPU VRAM` : '') +
+      ` (~${Math.round(capabilities.usableMemoryGb)}GB usable for local models)\n`
+    ));
+
+    // Optional ollama.com API key - lets agents run cloud models directly
+    // on ollama.com (no local daemon) and unlocks Ollama's web search/fetch
+    // API (https://ollama.com/settings/keys). Not needed for local usage.
+    const { apiKey: cloudApiKey } = await inquirer.prompt([
+      {
+        type: 'password',
+        name: 'apiKey',
+        message: 'Ollama cloud API key (optional, for ollama.com direct access):',
+        mask: '*'
+      }
+    ]);
+
+    let apiKey = (cloudApiKey || '').trim();
+
+    // Validate the key against ollama.com before saving it
+    if (apiKey) {
+      const keySpinner = ora('Validating Ollama cloud API key...').start();
+      const { validateOllamaCloudApiKey } = await import('./ollama.models.js');
+
+      if (await validateOllamaCloudApiKey(apiKey)) {
+        keySpinner.succeed(chalk.green('Ollama cloud API key is valid'));
+      } else {
+        keySpinner.fail(chalk.red('Ollama cloud API key validation failed'));
+        console.log(chalk.yellow('  Check your key at https://ollama.com/settings/keys\n'));
+
+        const { keepKey } = await inquirer.prompt([
+          {
+            type: 'confirm',
+            name: 'keepKey',
+            message: 'Save this key anyway?',
+            default: false
+          }
+        ]);
+
+        if (!keepKey) {
+          apiKey = '';
+        }
+      }
+    }
+
     return {
       baseUrl,
-      apiKey: '' // Ollama doesn't use API keys
+      apiKey
     };
   },
 
   /**
    * Fetch available models from Ollama
+   *
+   * Offers installed local models, the template's curated recommendations,
+   * and the ollama.com cloud catalog (capability filtering happens in the
+   * selection UI via modelMetadata).
+   *
+   * For local setups (daemon at localhost) cloud catalog entries are mapped
+   * to their local cloud-offload tag (`gpt-oss:120b` -> `gpt-oss:120b-cloud`,
+   * `kimi-k2.6` -> `kimi-k2.6:cloud`) so selecting one pulls an instant
+   * manifest and runs it on Ollama cloud through the signed-in daemon.
+   * When the base URL points at ollama.com directly, raw catalog ids are
+   * used as-is.
    */
   async fetchModels(credentials: ProviderCredentials): Promise<string[]> {
     const { OllamaModelProxy } = await import('./ollama.models.js');
 
-    const modelProxy = new OllamaModelProxy(credentials.baseUrl);
+    const modelProxy = new OllamaModelProxy(credentials.baseUrl, credentials.apiKey);
 
     try {
       const models = await modelProxy.fetchModels({
         provider: 'ollama',
         baseUrl: credentials.baseUrl,
-        apiKey: '',
+        apiKey: credentials.apiKey || '',
         model: 'temp',
         timeout: 300
       });
 
-      return models.map(m => m.id);
+      const isCloudHost = (credentials.baseUrl || '').includes('ollama.com');
+      const ids = models.map(m =>
+        !isCloudHost && m.metadata?.origin === 'cloud'
+          ? toCloudOffloadTag(m.id)
+          : m.id
+      );
+
+      return [...new Set([...ids, ...OllamaTemplate.recommendedModels])];
     } catch {
       // If fetch fails, return empty so setup prompts the user to enter a
       // model manually instead of showing a static, possibly stale list.
@@ -125,7 +195,7 @@ export const OllamaSetupSteps: ProviderSetupSteps = {
     const chalk = (await import('chalk')).default;
     const { OllamaModelProxy } = await import('./ollama.models.js');
 
-    const modelProxy = new OllamaModelProxy(credentials.baseUrl);
+    const modelProxy = new OllamaModelProxy(credentials.baseUrl, credentials.apiKey);
 
     // Check if model is actually installed by querying Ollama directly
     let isInstalled = false;
@@ -162,7 +232,11 @@ export const OllamaSetupSteps: ProviderSetupSteps = {
       console.log(chalk.green(`✓ Model "${selectedModel}" is ready to use\n`));
     } catch (error) {
       installSpinner.fail(chalk.red('Model installation failed'));
-      throw new Error(`Failed to install model: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      const isCloudModel = selectedModel.endsWith('-cloud') || selectedModel.endsWith(':cloud');
+      const hint = isCloudModel
+        ? ' (cloud models require `ollama signin` or a configured Ollama cloud API key)'
+        : '';
+      throw new Error(`Failed to install model: ${error instanceof Error ? error.message : 'Unknown error'}${hint}`);
     }
   },
 
@@ -180,7 +254,7 @@ export const OllamaSetupSteps: ProviderSetupSteps = {
     return {
       provider: 'ollama',
       baseUrl,
-      apiKey: '', // Ollama doesn't use API keys
+      apiKey: credentials.apiKey || '', // Optional ollama.com cloud API key
       model,
       timeout: 300,
       debug: false

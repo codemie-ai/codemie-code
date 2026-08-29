@@ -31,6 +31,60 @@ interface OllamaTagsResponse {
 }
 
 /**
+ * Ollama cloud API base URL.
+ * ollama.com acts as a remote Ollama host - same API surface as the local
+ * daemon, but requires an ollama.com API key (Authorization: Bearer).
+ */
+const OLLAMA_CLOUD_BASE_URL = 'https://ollama.com';
+
+/**
+ * Check whether an API key is a real credential (not empty or a placeholder)
+ */
+function hasApiKey(apiKey?: string): apiKey is string {
+  return !!apiKey && apiKey.trim() !== '' && apiKey !== 'not-required';
+}
+
+/**
+ * List models available on Ollama cloud (ollama.com).
+ * The cloud catalog endpoint is public - no API key required.
+ */
+export async function listOllamaCloudModels(): Promise<ModelInfo[]> {
+  const cloudProxy = new OllamaModelProxy(OLLAMA_CLOUD_BASE_URL);
+  return cloudProxy.listModels();
+}
+
+/**
+ * Validate an ollama.com API key.
+ * The model catalog (/api/tags) is public, so validation probes the
+ * auth-enforced web search endpoint with a minimal query instead.
+ */
+export async function validateOllamaCloudApiKey(apiKey: string): Promise<boolean> {
+  try {
+    const response = await fetch(`${OLLAMA_CLOUD_BASE_URL}/api/web_search`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({ query: 'ollama', max_results: 1 })
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Map an ollama.com cloud catalog model id to the tag used to run it
+ * through a local signed-in daemon:
+ * - tagged:   `gpt-oss:120b`        -> `gpt-oss:120b-cloud`
+ * - untagged: `kimi-k2.6`           -> `kimi-k2.6:cloud`
+ */
+export function toCloudOffloadTag(modelId: string): string {
+  return modelId.includes(':') ? `${modelId}-cloud` : `${modelId}:cloud`;
+}
+
+/**
  * Pattern to identify coding model names
  */
 const CODING_MODEL_PATTERNS = [
@@ -56,8 +110,9 @@ function getCodingModelMetadata(modelId: string): Partial<ModelInfo> {
   // Extract base name (without tag)
   const baseName = modelId.split(':')[0];
 
-  // Get metadata from template (single source of truth)
-  const metadata = OllamaTemplate.modelMetadata?.[baseName];
+  // Get metadata from template (single source of truth) -
+  // prefer the full id, fall back to the base name
+  const metadata = OllamaTemplate.modelMetadata?.[modelId] ?? OllamaTemplate.modelMetadata?.[baseName];
 
   if (metadata) {
     return {
@@ -84,8 +139,19 @@ function getCodingModelMetadata(modelId: string): Partial<ModelInfo> {
  * Extends BaseModelProxy for common patterns
  */
 export class OllamaModelProxy extends BaseModelProxy {
-  constructor(baseUrl: string = OllamaTemplate.defaultBaseUrl) {
+  private apiKey?: string;
+
+  constructor(baseUrl: string = OllamaTemplate.defaultBaseUrl, apiKey?: string) {
     super(baseUrl, 300000); // 5 minutes for model operations
+    this.apiKey = apiKey;
+  }
+
+  /**
+   * Authorization headers for remote Ollama hosts (ollama.com cloud API).
+   * Empty for the local daemon, which needs no credentials.
+   */
+  private authHeaders(): Record<string, string> {
+    return hasApiKey(this.apiKey) ? { Authorization: `Bearer ${this.apiKey}` } : {};
   }
 
   /**
@@ -107,7 +173,7 @@ export class OllamaModelProxy extends BaseModelProxy {
    */
   async listModels(): Promise<ModelInfo[]> {
     try {
-      const response = await this.client.get<OllamaTagsResponse>(`${this.baseUrl}/api/tags`);
+      const response = await this.client.get<OllamaTagsResponse>(`${this.baseUrl}/api/tags`, this.authHeaders());
 
       return response.data.models.map((model) => ({
         id: model.name,
@@ -126,32 +192,55 @@ export class OllamaModelProxy extends BaseModelProxy {
 
   /**
    * Fetch available models (for setup/discovery)
-   * Returns installed models if available
+   * Returns installed models merged with the ollama.com cloud catalog
+   * (public endpoint); falls back to recommended models otherwise.
+   * An API key is only needed to *run* cloud models directly on
+   * ollama.com, not to list them.
    */
   async fetchModels(config: CodeMieConfigOptions): Promise<ModelInfo[]> {
-    try {
-      // Use baseUrl from config if provided, otherwise use default
-      const baseUrl = config.baseUrl || OllamaTemplate.defaultBaseUrl;
-      const proxy = baseUrl === this.baseUrl ? this : new OllamaModelProxy(baseUrl);
+    const apiKey = hasApiKey(config.apiKey) ? config.apiKey : undefined;
+    const merged = new Map<string, ModelInfo>();
 
-      // Try to fetch installed models from Ollama
+    const toModelInfo = (m: ModelInfo, origin: 'local' | 'cloud'): ModelInfo => {
+      const metadata = getCodingModelMetadata(m.id);
+      return {
+        id: m.id,
+        name: metadata.name || m.name || m.id,
+        description: metadata.description,
+        size: m.size,
+        popular: metadata.popular || false,
+        metadata: { ...m.metadata, origin }
+      };
+    };
+
+    // Local daemon (or a remote Ollama host configured via baseUrl)
+    try {
+      const baseUrl = config.baseUrl || OllamaTemplate.defaultBaseUrl;
+      const proxy = baseUrl === this.baseUrl && apiKey === this.apiKey ? this : new OllamaModelProxy(baseUrl, apiKey);
       const installedModels = await proxy.listModels();
 
-      // Return all installed models
-      if (installedModels.length > 0) {
-        return installedModels.map(m => {
-          const metadata = getCodingModelMetadata(m.id);
-          return {
-            id: m.id,
-            name: metadata.name || m.name || m.id,
-            description: metadata.description,
-            size: m.size,
-            popular: metadata.popular || false
-          };
-        });
+      for (const model of installedModels) {
+        merged.set(model.id, toModelInfo(model, 'local'));
       }
     } catch (error) {
       logger.debug('Failed to fetch installed Ollama models:', error);
+    }
+
+    // Ollama cloud catalog (ollama.com) - public endpoint, no key required
+    try {
+      const cloudModels = await listOllamaCloudModels();
+
+      for (const model of cloudModels) {
+        if (!merged.has(model.id)) {
+          merged.set(model.id, toModelInfo(model, 'cloud'));
+        }
+      }
+    } catch (error) {
+      logger.debug('Failed to fetch Ollama cloud models:', error);
+    }
+
+    if (merged.size > 0) {
+      return [...merged.values()];
     }
 
     // Fall back to template's recommended models with metadata from template
@@ -176,6 +265,7 @@ export class OllamaModelProxy extends BaseModelProxy {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...this.authHeaders(),
         },
         body: JSON.stringify({ name: modelName, stream: true }),
       });
@@ -245,7 +335,7 @@ export class OllamaModelProxy extends BaseModelProxy {
    */
   async removeModel(modelName: string): Promise<void> {
     try {
-      await this.client.post(`${this.baseUrl}/api/delete`, { name: modelName });
+      await this.client.post(`${this.baseUrl}/api/delete`, { name: modelName }, this.authHeaders());
     } catch (error) {
       throw new Error(`Failed to remove model ${modelName}: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
@@ -266,7 +356,7 @@ export class OllamaModelProxy extends BaseModelProxy {
 
       // Get detailed info from template if available
       const baseName = modelName.split(':')[0];
-      const templateMetadata = OllamaTemplate.modelMetadata?.[baseName];
+      const templateMetadata = OllamaTemplate.modelMetadata?.[modelName] ?? OllamaTemplate.modelMetadata?.[baseName];
 
       if (templateMetadata) {
         return {
