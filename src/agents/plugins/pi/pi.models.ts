@@ -329,6 +329,68 @@ function createSyntheticLlmModel(modelId: string): LlmModel {
   };
 }
 
+/**
+ * Build Pi's models.json for an Ollama profile.
+ *
+ * Registers an `ollama` provider speaking OpenAI-compatible chat completions
+ * against the configured base URL (local daemon or ollama.com directly).
+ * Models come from the merged local + cloud listing; for local daemons the
+ * cloud catalog ids are mapped to their `-cloud` offload tags so every entry
+ * is actually runnable (see toCloudOffloadTag).
+ */
+async function buildOllamaModelsConfig(env: NodeJS.ProcessEnv): Promise<PiModelsConfig> {
+  const { OllamaModelProxy, toCloudOffloadTag } = await import('../../../providers/plugins/ollama/ollama.models.js');
+
+  const rawBaseUrl = env.CODEMIE_BASE_URL || 'http://localhost:11434/v1';
+  const baseUrl = rawBaseUrl.endsWith('/v1') ? rawBaseUrl : `${rawBaseUrl.replace(/\/$/, '')}/v1`;
+  // Local daemons ignore the key but Pi requires one; a real ollama.com API
+  // key is passed through when configured.
+  const apiKey = env.CODEMIE_API_KEY && env.CODEMIE_API_KEY !== 'not-required'
+    ? env.CODEMIE_API_KEY
+    : 'ollama';
+  const isCloudHost = rawBaseUrl.includes('ollama.com');
+
+  let ids: string[] = [];
+  try {
+    const proxy = new OllamaModelProxy(baseUrl.replace(/\/v1\/?$/, ''), env.CODEMIE_API_KEY);
+    const models = await proxy.fetchModels({
+      provider: 'ollama',
+      baseUrl,
+      apiKey: env.CODEMIE_API_KEY || '',
+      model: 'temp',
+      timeout: 300,
+    });
+    ids = models.map(m =>
+      !isCloudHost && m.metadata?.origin === 'cloud' ? toCloudOffloadTag(m.id) : m.id
+    );
+  } catch (error) {
+    logger.warn(`[pi-models] Failed to list Ollama models, using configured model only: ${error instanceof Error ? error.message : error}`);
+  }
+
+  if (env.CODEMIE_MODEL && !ids.includes(env.CODEMIE_MODEL)) {
+    ids.unshift(env.CODEMIE_MODEL);
+  }
+
+  if (ids.length === 0) {
+    throw new Error('No model configured for codemie-pi and Ollama is unreachable.');
+  }
+
+  return {
+    providers: {
+      ollama: {
+        baseUrl,
+        api: 'openai-completions',
+        apiKey,
+        compat: {
+          supportsReasoningEffort: true,
+          thinkingFormat: 'reasoning_effort',
+        },
+        models: ids.map(id => convertLlmModelToPiEntry(createSyntheticLlmModel(id))),
+      },
+    },
+  };
+}
+
 function buildStaticFallbackModel(modelId: string, baseUrl: string, apiKey: string): PiModelsConfig {
   const entry = convertLlmModelToPiEntry(createSyntheticLlmModel(modelId));
   return buildModelsConfig([entry], baseUrl, apiKey);
@@ -340,6 +402,14 @@ export async function fetchAndBuildPiModels(
 ): Promise<void> {
   const agentDir = getPiAgentDir(cwd);
   await mkdir(agentDir, { recursive: true });
+
+  // Ollama profiles have no CodeMie backend - build the model list from the
+  // Ollama daemon / ollama.com directly.
+  if (env.CODEMIE_PROVIDER === 'ollama') {
+    const config = await buildOllamaModelsConfig(env);
+    await writeFile(getPiModelsPath(cwd), JSON.stringify(config, null, 2), 'utf-8');
+    return;
+  }
 
   const baseUrl = env.CODEMIE_BASE_URL || '';
   const apiKey = env.CODEMIE_API_KEY || 'proxy-handled';

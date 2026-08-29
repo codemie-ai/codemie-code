@@ -134,7 +134,7 @@ export const CodexPluginMetadata: AgentMetadata = {
     apiKey: ['OPENAI_API_KEY'],
     model: [],
   },
-  supportedProviders: ['ai-run-sso', 'bearer-auth', 'litellm'],
+  supportedProviders: ['ai-run-sso', 'bearer-auth', 'litellm', 'ollama'],
   blockedModelPatterns: [],
   recommendedModels: ['gpt-5.5', 'gpt-5.4', 'gpt-5.3-codex', 'gpt-5.2-codex'],
 
@@ -292,8 +292,13 @@ export const CodexPluginMetadata: AgentMetadata = {
       // even OPENAI_API_KEY env var. Using a custom provider with env_key pointing to
       // CODEMIE_API_KEY (set by transformEnvVars) bypasses auth.json entirely, since
       // auth.json only stores credentials for the default openai provider.
+      // Ollama is allowed with its 'not-required' placeholder key (the daemon ignores
+      // it); ollama supports the Responses API at /v1/responses, and recent codex
+      // versions no longer accept wire_api="chat" anyway.
       // --config uses TOML values: strings must be double-quoted.
-      if (config?.apiKey && config.apiKey !== 'not-required' && config?.baseUrl) {
+      const isOllama = config?.provider === 'ollama';
+      const hasUsableApiKey = config?.apiKey && config.apiKey !== 'not-required';
+      if ((hasUsableApiKey || isOllama) && config?.baseUrl) {
         enriched = [
           '--config', 'model_provider="codemie"',
           '--config', 'model_providers.codemie.name="codemie"',
@@ -525,6 +530,29 @@ export class CodexPlugin extends BaseAgentAdapter {
   }
 
   protected override async setupProxy(env: NodeJS.ProcessEnv): Promise<void> {
+    if (env.CODEMIE_PROVIDER === 'ollama') {
+      // Ollama has no CodeMie model catalog - any model the daemon (or
+      // ollama.com, when configured as a remote host) serves is usable.
+      // Expose the actually available models for --model validation.
+      env.CODEMIE_CODEX_AVAILABLE_MODELS = env.CODEMIE_MODEL ?? '';
+      try {
+        const { OllamaModelProxy } = await import('../../../providers/plugins/ollama/ollama.models.js');
+        const ollamaBaseUrl = (env.CODEMIE_BASE_URL || 'http://localhost:11434').replace(/\/v1\/?$/, '');
+        const models = await new OllamaModelProxy(ollamaBaseUrl, env.CODEMIE_API_KEY).listModels();
+        const ids = models.map(m => m.id);
+        if (env.CODEMIE_MODEL && !ids.includes(env.CODEMIE_MODEL)) {
+          ids.unshift(env.CODEMIE_MODEL);
+        }
+        if (ids.length > 0) {
+          env.CODEMIE_CODEX_AVAILABLE_MODELS = ids.join(',');
+        }
+      } catch (error) {
+        logger.debug('[codex] Failed to list Ollama models; keeping configured model only', error);
+      }
+      await super.setupProxy(env);
+      return;
+    }
+
     if (env.CODEMIE_PROVIDER === 'litellm') {
       if (!isCodexCompatibleModelName(env.CODEMIE_MODEL)) {
         throw new ConfigurationError(

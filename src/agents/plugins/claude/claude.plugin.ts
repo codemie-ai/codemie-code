@@ -97,7 +97,7 @@ export const ClaudePluginMetadata: AgentMetadata = {
     subagentDefaultModel: ['CLAUDE_CODE_SUBAGENT_MODEL'],
   },
 
-  supportedProviders: ['litellm', 'ai-run-sso', 'bedrock', 'bearer-auth', 'anthropic-subscription'],
+  supportedProviders: ['litellm', 'ai-run-sso', 'bedrock', 'bearer-auth', 'anthropic-subscription', 'ollama'],
   blockedModelPatterns: [],
   // Family token, not a pinned version — computeRecommendedModelIds (setup-ui.ts)
   // matches it against the live catalog and picks the current latest Sonnet.

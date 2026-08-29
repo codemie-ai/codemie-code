@@ -279,7 +279,7 @@ export const PiPluginMetadata: AgentMetadata = {
     model: [],
   },
 
-  supportedProviders: ['ai-run-sso', 'bearer-auth', 'litellm'],
+  supportedProviders: ['ai-run-sso', 'bearer-auth', 'litellm', 'ollama'],
 
   ssoConfig: {
     enabled: true,
@@ -334,8 +334,12 @@ export const PiPluginMetadata: AgentMetadata = {
         throw new Error('No model configured for codemie-pi. Run codemie setup to select a model.');
       }
 
-      const classification = classifyPiModel(model);
-      const providerId = classification.provider;
+      // Ollama models are served by the `ollama` provider written to
+      // models.json by fetchAndBuildPiModels; classifyPiModel only knows the
+      // CodeMie backends and would misroute them to `codemie-proxy`.
+      const providerId = process.env.CODEMIE_PROVIDER === 'ollama'
+        ? 'ollama'
+        : classifyPiModel(model).provider;
 
       // `--task` is not handled here: `flagMappings` rewrites it to Pi's `-p`, which
       // BaseAgentAdapter applies after this hook. Consuming it here would leave a bare
