@@ -7,6 +7,7 @@ import { CodexPlugin } from './plugins/codex/index.js';
 import { PiPlugin } from './plugins/pi/index.js';
 import { KimiPlugin } from './plugins/kimi/kimi.plugin.js';
 import { KimiAcpPlugin } from './plugins/kimi/kimi-acp.plugin.js';
+import { OpenWikiPlugin } from './plugins/openwiki/openwiki.plugin.js';
 import { CopilotCliPlugin } from './plugins/copilot-cli/index.js';
 import { AgentAdapter, AgentAnalyticsAdapter } from './core/types.js';
 
@@ -40,6 +41,7 @@ export class AgentRegistry {
     AgentRegistry.registerPlugin(new PiPlugin());
     AgentRegistry.registerPlugin(new KimiPlugin());
     AgentRegistry.registerPlugin(new KimiAcpPlugin());
+    AgentRegistry.registerPlugin(new OpenWikiPlugin());
     AgentRegistry.registerPlugin(new CopilotCliPlugin());
 
     AgentRegistry.initialized = true;

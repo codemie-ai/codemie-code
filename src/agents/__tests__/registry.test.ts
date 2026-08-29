@@ -25,6 +25,7 @@ describe('AgentRegistry', () => {
           'pi',
           'kimi',
           'kimi-acp',
+          'openwiki',
           'copilot-cli', // analytics-only: read for the report, never managed by CodeMie
         ].sort()
       );
