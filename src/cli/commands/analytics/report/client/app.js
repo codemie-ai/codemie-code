@@ -732,8 +732,12 @@
     });
     host.appendChild(grid);
 
-    // Routing KPI section — only shown when at least one session has routing.
-    var routedSessions = fs.filter(function (s) { return s.judgeCostUSD != null || s.routingCostKnown === false; });
+    // Routing KPI section — only shown when at least one session has routing. routingCostKnown
+    // is set (true OR false) whenever a session had at least one routed turn — see
+    // cost-enricher.ts's `routedTurns > 0` guard — so `!= null` alone identifies "was routed",
+    // independent of whether a classifier cost was actually incurred (heuristic-only Switchyard
+    // decisions report zero judge cost but are still routing).
+    var routedSessions = fs.filter(function (s) { return s.judgeCostUSD != null || s.routingCostKnown != null; });
     if (routedSessions.length > 0) {
       host.appendChild(el('h3', 'section-title', 'Routing'));
       var rsGrid = el('div', 'kpi-grid'); rsGrid.style.gridTemplateColumns = 'repeat(3,1fr)';
