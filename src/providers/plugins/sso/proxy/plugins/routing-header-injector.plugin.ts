@@ -33,7 +33,11 @@ import { ProxyContext } from '../proxy-types.js';
 import { logger } from '../../../../../utils/logger.js';
 
 const LITELLM_PREFIX = 'x-litellm-';
-const CODEMIE_ROUTING_PREFIXES = ['x-codemie-routing-', 'x-codemie-requested-'];
+// x-codemie-routed-model is a real Switchyard response header (confirmed against live traffic —
+// it always matches the response body's own `model`, i.e. the actually-dispatched model) that
+// does NOT share a prefix with x-codemie-routing-*/x-codemie-requested-*, so it needs its own
+// entry or it silently never reaches the body (see usage-readers.ts's `routedModel`).
+const CODEMIE_ROUTING_PREFIXES = ['x-codemie-routing-', 'x-codemie-requested-', 'x-codemie-routed-'];
 const METADATA_HEADERS_KEY = '_routingInjectionHeaders';
 const METADATA_INJECTED_KEY = '_routingInjected';
 

@@ -54,6 +54,12 @@ interface ClaudeRawMessage {
     /** Injected by the CodeMie proxy when Switchyard routing is active. */
     x_codemie_requested_model?: string;
     x_codemie_routing_tier?: 'efficient' | 'capable' | string;
+    /**
+     * The model Switchyard actually dispatched to. Confirmed against live traffic to always
+     * match the response body's own `model`, so it's a corroborating signal rather than the
+     * sole source — `model` remains authoritative when this is absent.
+     */
+    x_codemie_routed_model?: string;
     x_codemie_routing_capable_model?: string;
     /** Routing confidence score (0–1), normalised to P(capable needed), emitted by the proxy. */
     x_codemie_routing_confidence?: string;
@@ -366,7 +372,7 @@ export function extractClaudeUsageRecords(parsed: ParsedSession): UsageRecord[] 
       const routingTierRaw = msg?.x_codemie_routing_tier ?? msg?.['x-litellm-router-tier'];
       const decisionSource = codemieDecisionSource ?? litellmCause ?? signals.decisionSource;
       const routingSource = msg?.x_codemie_routing_source ?? (decisionSource === 'llm-classifier' ? 'judge' : (decisionSource != null ? 'stage_router' : undefined));
-      const routedModel = msg?.x_codemie_routing_capable_model ?? msg?.['x-litellm-router-routed-model'];
+      const routedModel = msg?.x_codemie_routed_model ?? msg?.x_codemie_routing_capable_model ?? msg?.['x-litellm-router-routed-model'];
       const classifierModel = msg?.['x-litellm-router-classifier-model'];
       const routerType = msg?.['x-litellm-router-type'];
       const routerScore = parseOptFloat(msg?.['x-litellm-router-score']);
