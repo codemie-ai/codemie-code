@@ -376,10 +376,20 @@ describe('defaultAgentHooks', () => {
 
   describe('claude.enrichArgs', () => {
     const original = process.env.CODEMIE_CLAUDE_EXTENSION_DIR;
+    const originalModel = process.env.CODEMIE_MODEL;
+
+    // CODEMIE_MODEL now drives --model injection, and CodeMie exports its whole
+    // CODEMIE_* block into the shell of any session it launches. Clearing it per
+    // test keeps these assertions independent of the developer's environment.
+    beforeEach(() => {
+      delete process.env.CODEMIE_MODEL;
+    });
 
     afterEach(() => {
       if (original === undefined) delete process.env.CODEMIE_CLAUDE_EXTENSION_DIR;
       else process.env.CODEMIE_CLAUDE_EXTENSION_DIR = original;
+      if (originalModel === undefined) delete process.env.CODEMIE_MODEL;
+      else process.env.CODEMIE_MODEL = originalModel;
     });
 
     it('returns args unchanged when the extension dir env var is unset', () => {
@@ -400,6 +410,45 @@ describe('defaultAgentHooks', () => {
       const args = ['--plugin-dir', '/other', 'chat'];
       const result = claudeHooks.enrichArgs!(args, {} as AgentConfig);
       expect(result).toBe(args);
+    });
+
+    // Claude Code ignores ANTHROPIC_MODEL; --model is the only way the profile's
+    // model reaches the wire ahead of ~/.claude/settings.json and the default tier.
+    it('prepends --model from CODEMIE_MODEL', () => {
+      delete process.env.CODEMIE_CLAUDE_EXTENSION_DIR;
+      process.env.CODEMIE_MODEL = 'claude-sonnet-5';
+      const result = claudeHooks.enrichArgs!(['-p', 'hi'], {} as AgentConfig);
+      expect(result).toEqual(['--model', 'claude-sonnet-5', '-p', 'hi']);
+    });
+
+    it('injects both --model and --plugin-dir together', () => {
+      process.env.CODEMIE_CLAUDE_EXTENSION_DIR = '/plugins/here';
+      process.env.CODEMIE_MODEL = 'claude-sonnet-5';
+      const result = claudeHooks.enrichArgs!(['-p', 'hi'], {} as AgentConfig);
+      expect(result).toEqual(['--model', 'claude-sonnet-5', '--plugin-dir', '/plugins/here', '-p', 'hi']);
+    });
+
+    it('does not override an explicit --model already in args', () => {
+      delete process.env.CODEMIE_CLAUDE_EXTENSION_DIR;
+      process.env.CODEMIE_MODEL = 'claude-sonnet-5';
+      const args = ['--model', 'claude-opus-5', '-p', 'hi'];
+      expect(claudeHooks.enrichArgs!(args, {} as AgentConfig)).toBe(args);
+    });
+
+    it('does not override an explicit --model= form already in args', () => {
+      delete process.env.CODEMIE_CLAUDE_EXTENSION_DIR;
+      process.env.CODEMIE_MODEL = 'claude-sonnet-5';
+      const args = ['--model=claude-opus-5', '-p', 'hi'];
+      expect(claudeHooks.enrichArgs!(args, {} as AgentConfig)).toBe(args);
+    });
+
+    // anthropic-subscription deliberately blanks CODEMIE_MODEL so the Claude CLI
+    // applies its own defaults — an empty value must never become `--model ''`.
+    it('ignores a blank CODEMIE_MODEL', () => {
+      delete process.env.CODEMIE_CLAUDE_EXTENSION_DIR;
+      process.env.CODEMIE_MODEL = '   ';
+      const args = ['-p', 'hi'];
+      expect(claudeHooks.enrichArgs!(args, {} as AgentConfig)).toBe(args);
     });
   });
 });

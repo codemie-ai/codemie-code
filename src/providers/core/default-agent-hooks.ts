@@ -52,10 +52,31 @@ export const defaultAgentHooks: ProviderTemplate['agentHooks'] = {
 
   'claude': {
     enrichArgs(args: string[], _config: AgentConfig): string[] {
+      let enriched = args;
+
       const pluginDir = process.env.CODEMIE_CLAUDE_EXTENSION_DIR;
-      if (!pluginDir) return args;
-      if (args.some(arg => arg === '--plugin-dir')) return args;
-      return ['--plugin-dir', pluginDir, ...args];
+      if (pluginDir && !enriched.some(arg => arg === '--plugin-dir')) {
+        enriched = ['--plugin-dir', pluginDir, ...enriched];
+      }
+
+      // Claude Code ignores ANTHROPIC_MODEL. Its precedence is
+      // `--model` > settings.json `model` > its own default tier, so mapping the
+      // profile's model onto ANTHROPIC_MODEL alone (claude.plugin.ts envMapping)
+      // never reaches the wire: a developer with `"model"` pinned in
+      // ~/.claude/settings.json silently ran every session on that model, and one
+      // without it silently ran on the default (opus) tier — in both cases
+      // ignoring the model chosen in `codemie setup`.
+      //
+      // Empty is meaningful and must not be forwarded: anthropic-subscription
+      // deliberately blanks CODEMIE_MODEL so the Claude CLI applies its own
+      // defaults (anthropic-subscription.template.ts).
+      const model = process.env.CODEMIE_MODEL?.trim();
+      const hasModelFlag = enriched.some(arg => arg === '--model' || arg.startsWith('--model='));
+      if (model && !hasModelFlag) {
+        enriched = ['--model', model, ...enriched];
+      }
+
+      return enriched;
     }
   }
 };
