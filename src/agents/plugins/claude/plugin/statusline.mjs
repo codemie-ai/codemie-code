@@ -134,7 +134,7 @@ const MODEL_FAMILY_PATTERN = /(opus|sonnet|haiku|fable)/i;
 /** Pulls the actual dispatched model out of a transcript line's `message` object, if present. */
 export function extractRoutedModel(message) {
   if (!message || typeof message !== 'object') return null;
-  return message.x_codemie_routing_capable_model ?? message['x-litellm-router-routed-model'] ?? null;
+  return message.x_codemie_routed_model ?? message.x_codemie_routing_capable_model ?? message['x-litellm-router-routed-model'] ?? null;
 }
 
 function modelFamily(modelId) {
