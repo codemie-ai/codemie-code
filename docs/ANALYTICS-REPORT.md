@@ -30,7 +30,7 @@ codemie analytics --report --report-format both
 
 ## What the Report Covers
 
-The dashboard reads every AI session CodeMie has tracked — Claude Code, Gemini, Codex, OpenCode, and the built-in agent — plus native agent logs it discovers automatically. It builds a single portable HTML file with **eight interactive views**.
+The dashboard reads every AI session CodeMie has tracked — Claude Code, Gemini, Codex, OpenCode, and the built-in agent — plus native agent logs it discovers automatically. It builds a single portable HTML file with **nine interactive views**.
 
 ---
 
@@ -105,6 +105,27 @@ Focuses on context waste and productivity. Key metrics:
 - **Code changes summary** — files written vs. edited, lines added/removed/net
 
 A ranked table of the most bloated sessions and the dead-session list are both clickable to open the session detail modal.
+
+---
+
+### Frameworks · Compare
+
+Groups all sessions by **detected framework or tooling signal** (source classification). For each framework — CodeMie AI Factory, Superpowers, SpecKit, BMAD, OpenSpec, and Pure chat — shows a compact per-session summary plus adoption share.
+
+**What it shows:**
+
+- **Source comparison table** — one row per framework, columns: session count, adoption share (% of sessions in current view), per-session averages (turns, cost, net lines, files changed), and tool success rate. Rows sorted by session count descending.
+- **Adoption doughnut chart** — visual share of sessions by source, sized by session count.
+
+Both table and chart respect active date-range, agent, and project filters; adoption share is always relative to sessions in the filtered view (never the full dataset).
+
+**How sources are detected:**
+
+Framework classification is invocation-name-based, implemented in `session-source-detector.ts`. Detectors run in priority order (first match wins); fallback to "Pure chat" if none match. See the [source detector](src/cli/commands/analytics/report/session-source-detector.ts) for the full list and matching patterns.
+
+**Limitation:**
+
+Metrics shown are generic per-session metrics aggregated by source — **no framework-specific or heuristic KPIs** such as spec adherence, task-completion rate, or cycle-time analysis. Session data carries no structured per-framework events, so these deeper signals are not yet available. This view answers *"how is adoption distributed?"* and *"how do session patterns differ by source?"* but not *"how effective is each framework for achieving its methodology goals?"*
 
 ---
 

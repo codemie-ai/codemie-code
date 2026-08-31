@@ -1,7 +1,7 @@
 /* eslint-disable */
 /**
  * CodeMie Analytics — client app (vanilla JS, no build).
- * Reads window.__ANALYTICS__ (ReportPayload) and renders 7 client-side views.
+ * Reads window.__ANALYTICS__ (ReportPayload) and renders 9 client-side views.
  * All filtering/aggregation happens here so the report needs no server.
  */
 (function () {
@@ -485,6 +485,57 @@
       }),
       [false, true, true, true, true, false, true, true]);
     host.appendChild(detail);
+  };
+
+  VIEWS.frameworks = function (host, fs) {
+    host.appendChild(el('h2', 'view-title', 'Frameworks · Compare'));
+    host.appendChild(el('p', 'view-sub', 'Adoption and per-session averages grouped by session source (framework / tooling signal).'));
+    if (!fs.length) { host.appendChild(el('div', 'empty', 'No sessions in view.')); return; }
+
+    // Group by sessionSource
+    var bySource = groupBy(fs, function(s) { return s.sessionSource || 'Pure chat'; });
+
+    // Get list of sources sorted by session count descending
+    var sources = Array.from(bySource.keys());
+    sources.sort(function(a, b) { return bySource.get(b).length - bySource.get(a).length; });
+
+    // Build rows for the table
+    var headers = ['Source', 'Sessions', 'Share', 'Avg turns', 'Avg cost', 'Avg net lines', 'Avg files', 'Tool success'];
+    var rows = sources.map(function(label) {
+      var g = bySource.get(label);
+      var avg = sum(g, function(s) { return s.netLines; }) / g.length;
+      return [
+        '<span class="tag tag-sm">' + esc(label) + '</span>',
+        fmtNum(g.length),
+        Math.round((g.length / fs.length) * 1000) / 10 + '%',
+        fmtNum(Math.round(sum(g, function(s) { return s.turns; }) / g.length)),
+        fmtUSD(sum(g, function(s) { return s.costUSD; }) / g.length),
+        (avg >= 0 ? '+' : '') + fmtNum(Math.round(avg)),
+        fmtNum(Math.round(sum(g, function(s) { return s.fileOps; }) / g.length)),
+        successRate(g) + '%'
+      ];
+    });
+
+    // Render table in card
+    var tableCard = card('Source comparison', 'per-session averages · sorted by session count');
+    tableCard._body.innerHTML = tableHTML(headers, rows, [false, true, true, true, true, true, true, true]);
+    host.appendChild(tableCard);
+
+    // Add adoption doughnut chart
+    var adoptionCard = card('Adoption by source');
+    makeChart(canvasIn(adoptionCard._body), {
+      type: 'doughnut',
+      data: {
+        labels: sources,
+        datasets: [{
+          data: sources.map(function(s) { return bySource.get(s).length; }),
+          backgroundColor: sources.map(function(_, i) { return PALETTE[i % PALETTE.length]; }),
+          borderWidth: 0
+        }]
+      },
+      options: { cutout: '62%', plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, padding: 10 } } } }
+    });
+    host.appendChild(adoptionCard);
   };
 
   VIEWS.projects = function (host, fs) {
