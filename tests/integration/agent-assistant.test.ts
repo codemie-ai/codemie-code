@@ -39,6 +39,7 @@ import {
   setupSsoAutotestProfile,
   teardownSsoAutotestProfile,
   getTestEnvFlagOrDefault,
+  getCodemieTestUrl,
 } from '../helpers/index.js';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -75,7 +76,7 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('Assistant management test
   let originalActiveProfile: string | undefined;
 
   beforeAll(async () => {
-    const ciCodemieUrl = (process.env.CI_CODEMIE_URL ?? '').replace(/\/$/, '');
+    const ciCodemieUrl = getCodemieTestUrl();
 
     if (!CI_IS_LOCAL_RUN) {
       // JWT mode: isolated temp home
@@ -90,6 +91,13 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('Assistant management test
     } else {
       // SSO mode: upsert sso-autotest profile into ~/.codemie
       originalActiveProfile = setupSsoAutotestProfile();
+      // CREDENTIALS_DIR in src/utils/security.ts is a module-level constant
+      // resolved from CODEMIE_HOME at import time, and the agent vitest project
+      // points CODEMIE_HOME at a throwaway temp home. The real credentials must
+      // therefore be copied into that same temp home before the in-process SDK
+      // client looks them up, or the lookup fails with "SSO authentication
+      // required" despite the global setup having validated them.
+      if (process.env.CODEMIE_HOME) copySsoCredentials(process.env.CODEMIE_HOME);
       sdkClient = await getCodemieClient(true);
     }
 

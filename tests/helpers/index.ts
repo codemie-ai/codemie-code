@@ -9,6 +9,6 @@ export { writeSsoProfile, ssoCleanEnv, copySsoCredentials, setupSsoAutotestProfi
 export { waitForOutput, cleanKill } from './interactive-helpers.js';
 export { spawnPty, type PtySession } from './pty-session.js';
 export { getLatestMetricsRecord } from './metrics.js';
-export { getTestEnvFlag, getTestEnvFlagOrDefault, stripNodeModulesBin } from './test-env.js';
+export { getTestEnvFlag, getTestEnvFlagOrDefault, stripNodeModulesBin, getTestEnvValue, getCodemieTestUrl, getCodemieTestModel, DEFAULT_CODEMIE_TEST_URL, DEFAULT_CODEMIE_TEST_MODEL } from './test-env.js';
 export { pollForSession, type SessionPollOptions, type SessionPollResult } from './session-poll.js';
 export { runAgentTaskSmoke, type AgentSmokeOptions, type AgentSmokeRun } from './agent-smoke.js';

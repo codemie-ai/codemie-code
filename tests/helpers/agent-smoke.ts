@@ -18,6 +18,7 @@ import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { copySsoCredentials, ssoCleanEnv } from './sso-auth.js';
 import { getTempDir } from './temp-workspace.js';
+import { getCodemieTestUrl } from './test-env.js';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -46,7 +47,7 @@ export interface AgentSmokeRun {
 }
 
 function writeSmokeProfile(home: string, model: string): void {
-  const url = (process.env.CI_CODEMIE_URL ?? 'https://codemie.lab.epam.com').replace(/\/$/, '');
+  const url = getCodemieTestUrl();
   const config = {
     version: 2,
     activeProfile: 'sso-autotest',

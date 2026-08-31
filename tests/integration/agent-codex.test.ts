@@ -48,6 +48,7 @@ import {
   setupSsoAutotestProfile,
   teardownSsoAutotestProfile,
   getTempDir,
+  getCodemieTestUrl,
 } from '../helpers/index.js';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -60,7 +61,7 @@ const CODEX_MODEL = process.env.CODEMIE_CODEX_MODEL ?? 'gpt-5.4';
 
 /** Write an sso-autotest profile carrying a Codex-appropriate model. */
 function writeCodexProfile(home: string): void {
-  const url = (process.env.CI_CODEMIE_URL ?? 'https://codemie.lab.epam.com').replace(/\/$/, '');
+  const url = getCodemieTestUrl();
   const config = {
     version: 2,
     activeProfile: 'sso-autotest',

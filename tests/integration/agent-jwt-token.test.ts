@@ -28,6 +28,7 @@ import {
   getTempDir,
   jwtCleanEnv,
   getTestEnvFlagOrDefault,
+  getCodemieTestUrl,
 } from '../helpers/index.js';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -44,7 +45,7 @@ const CI_IS_LOCAL_RUN = getTestEnvFlagOrDefault('CI_IS_LOCAL_RUN', true);
  * active profile selection and the auth method at runtime.
  */
 function writeTwoProfileConfig(testHome: string): void {
-  const ciCodemieUrl = (process.env.CI_CODEMIE_URL ?? '').replace(/\/$/, '');
+  const ciCodemieUrl = getCodemieTestUrl();
   const authBase = (process.env.CI_CODEMIE_AUTH_URL ?? '').replace(/\/$/, '');
   const config = {
     version: 2,
@@ -54,7 +55,7 @@ function writeTwoProfileConfig(testHome: string): void {
         name: 'profile-sso-active',
         provider: 'ai-run-sso',
         authMethod: 'sso',
-        codeMieUrl: process.env.CI_CODEMIE_URL ?? '',
+        codeMieUrl: ciCodemieUrl,
         baseUrl: `${ciCodemieUrl}/code-assistant-api`,
         apiKey: 'sso-authenticated',
         model: process.env.CI_CODEMIE_MODEL ?? 'claude-sonnet-4-6',
@@ -65,7 +66,7 @@ function writeTwoProfileConfig(testHome: string): void {
         name: 'profile-jwt-override',
         provider: 'bearer-auth',
         authMethod: 'jwt',
-        codeMieUrl: process.env.CI_CODEMIE_URL ?? '',
+        codeMieUrl: ciCodemieUrl,
         baseUrl: `${ciCodemieUrl}/code-assistant-api`,
         model: process.env.CI_CODEMIE_MODEL ?? 'claude-sonnet-4-6',
         authServerUrl: authBase,
