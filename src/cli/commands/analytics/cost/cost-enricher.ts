@@ -414,8 +414,8 @@ export async function enrichCosts(
       let judgeOutputTokens = 0;
       let judgeCachedTokens = 0;
       let judgeCacheCreationTokens = 0;
-      // A session is only "cost known" if every routed turn came from a family that reports
-      // cost. One LiteLLM turn makes the session total an understatement, not a measurement.
+      // A session is only "cost known" if every routed turn reported its classifier cost.
+      // One unreported turn makes the session total an understatement, not a measurement.
       let routedTurns = 0;
       let costKnownTurns = 0;
       for (const r of records) {
