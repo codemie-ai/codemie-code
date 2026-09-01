@@ -36,10 +36,10 @@
  *   - afterAll ALWAYS stops the daemon (even if assertions failed), hard-kills any
  *     survivor, restores env, and removes the temp home — no orphan survives.
  *
- * Requires dist/ built (CI builds before test:integration; locally run
+ * Requires dist/ built (CI builds before running tests; locally run
  * `npm run build` first). If dist is missing the suite skips with a warning.
  *
- * Run: npm run test:integration -- proxy-daemon-lifecycle
+ * Run: npx vitest run --project cli -- proxy-daemon-lifecycle
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';

@@ -1,7 +1,7 @@
 /**
  * Task output tests — TC-016
  *
- * Run with: npm run test:integration:agent
+ * Run with: npx vitest run --project agent
  *
  * Auth mode (CI_IS_LOCAL_RUN in .env.test.local):
  *   true  (default) — SSO mode; uses developer's sso-autotest profile in ~/.codemie

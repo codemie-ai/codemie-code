@@ -1,7 +1,7 @@
 /**
  * Agent negative cases — TC-018, TC-019
  *
- * Run with: npm run test:integration:agent
+ * Run with: npx vitest run --project agent
  *
  * Auth mode (CI_IS_LOCAL_RUN in .env.test.local):
  *   true  (default) — SSO mode

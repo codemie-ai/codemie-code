@@ -337,9 +337,8 @@ codemie doctor
 | Dev watch | `npm run dev` | Watch mode (tsc --watch) |
 | Lint | `npm run lint` | ESLint check (zero warnings) |
 | Lint fix | `npm run lint:fix` | Auto-fix issues |
-| Test | `npm test` | ONLY if user requests |
-| Test unit | `npm run test:unit` | Unit tests only |
-| Test integration | `npm run test:integration` | Integration tests only |
+| Test | `npm test` | Full local suite (unit + cli + agent), ONLY if user requests |
+| Test one project | `npx vitest run --project unit\|cli\|agent` | Scoped run while iterating |
 | CI | `npm run ci` | Full CI pipeline |
 | Link global | `npm link` | Link for local testing |
 

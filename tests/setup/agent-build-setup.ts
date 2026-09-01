@@ -118,7 +118,7 @@ export async function setup(): Promise<void> {
         `[agent-integration] Active profile provider is "${activeProvider ?? 'none'}" — not CodeMie SSO.`,
       );
       console.log('[agent-integration] Agent SSO tests will be skipped.');
-      console.log('[agent-integration] Use npm run test:run for unit + CLI tests without credentials.\n');
+      console.log('[agent-integration] Use `npx vitest run --project unit --project cli` for unit + CLI tests without credentials.\n');
       process.env.SSO_AVAILABLE = 'false';
       return;
     }

@@ -6,7 +6,7 @@
  * agent session it launches, and the anthropic-subscription provider
  * deliberately blanks CODEMIE_MODEL (see
  * src/providers/plugins/anthropic-subscription/anthropic-subscription.template.ts).
- * Running `npm run test:all` from inside such a session inherited
+ * Running `npm test` from inside such a session inherited
  * CODEMIE_MODEL='', and the old `process.env.CODEMIE_MODEL ?? 'claude-sonnet-4-6'`
  * coalescing let that empty string beat the default — every generated profile
  * was written with no model and the agent tests died with

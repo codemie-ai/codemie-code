@@ -6,7 +6,7 @@
 # Designed to be resumable - can continue from failed steps
 #
 # Release flow: version bump → commit → agent tests gate → tag → push → GitHub release
-# Agent tests gate: runs `npm run test:integration:agent` before tagging.
+# Agent tests gate: runs `npx vitest run --project agent` before tagging.
 #   - Tests pass → continue automatically
 #   - Tests fail → release blocked (fix tests first)
 #   - Tests cannot run (missing SSO/JWT credentials) → manual confirmation required
@@ -207,7 +207,7 @@ echo ""
 echo "🧪 Running agent tests..."
 AGENT_TEST_JSON=$(mktemp /tmp/agent-test-XXXXX.json) || { echo "ERROR: mktemp failed, cannot capture agent test results"; exit 1; }
 trap 'rm -f "$AGENT_TEST_JSON"' EXIT INT TERM
-npm run test:integration:agent -- --reporter=verbose --reporter=json --outputFile="$AGENT_TEST_JSON"
+npx vitest run --project agent --reporter=verbose --reporter=json --outputFile="$AGENT_TEST_JSON"
 AGENT_EXIT_CODE=$?
 
 AGENT_PASSED=0
@@ -237,7 +237,7 @@ else
     echo "     (check: cat ~/.codemie/codemie-cli.config.json)"
     echo "   • CI:    set CI_IS_LOCAL_RUN=false and provide tests/.env.test.local"
     echo ""
-    echo "   To run manually: npm run test:integration:agent"
+    echo "   To run manually: npx vitest run --project agent"
     echo ""
     read -p "❓ Have you manually run agent tests and confirmed they pass? (y/N): " -n 1 -r
     echo

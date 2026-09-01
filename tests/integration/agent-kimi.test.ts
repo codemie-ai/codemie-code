@@ -12,7 +12,7 @@
  *
  * Gated on SSO_AVAILABLE. Cleanup: profile restored + temp home removed.
  *
- * Run: npm run test:integration:agent -- agent-kimi
+ * Run: npx vitest run --project agent -- agent-kimi
  */
 
 import '../setup/load-test-env.js';

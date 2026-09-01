@@ -71,9 +71,9 @@ npm run validate:secrets
 The repository policy says tests are run only on explicit user request. If the user explicitly requested tests or coverage, run the requested scope:
 
 ```bash
-npm test
-npm run test:unit
-npm run test:integration
+npm test                              # full local suite: unit + cli + agent
+npx vitest run --project unit         # scoped: unit only
+npx vitest run --project cli          # scoped: CLI integration only
 npm run test:coverage
 ```
 

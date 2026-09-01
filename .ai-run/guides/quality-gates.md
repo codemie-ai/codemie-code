@@ -36,7 +36,7 @@ Run order is fastest-to-slowest. Each gate is a real `npm run` script in `packag
 
 ### Unit tests
 
-**Run**: `npm run test:unit` (`vitest run src`)
+**Run**: `npx vitest run --project unit` (part of `npm test`)
 **Pass**: all tests under `src/**/__tests__/` and `src/**/*.test.ts` pass.
 **Fail**: Vitest prints failing specs with stack traces.
 **Auto-fix**: none.
@@ -44,13 +44,13 @@ Run order is fastest-to-slowest. Each gate is a real `npm run` script in `packag
 
 ### Cross-platform CI (Windows)
 
-CI runs a separate `test-windows` job (`.github/workflows/ci.yml`) using the same `npm run test:unit`/`test:integration` commands on `windows-latest`. GitHub's Windows runners default `core.autocrlf=true`, so any text file is checked out with CRLF unless `.gitattributes` forces LF. The repo's `.gitattributes` (`* text=auto eol=lf`) exists specifically to prevent this — without it, a `.mjs`/`.js` file starting with a shebang line (`#!/usr/bin/env node`) breaks Vite/Vitest's module transform with `SyntaxError: Invalid or unexpected token` when checked out with CRLF. See `src/agents/plugins/claude/plugin/statusline.mjs:1`.
+CI runs a separate `test-windows` job (`.github/workflows/ci.yml`) using the same `npm run ci` test commands (`vitest run --project unit` / `--project cli`) on `windows-latest`. GitHub's Windows runners default `core.autocrlf=true`, so any text file is checked out with CRLF unless `.gitattributes` forces LF. The repo's `.gitattributes` (`* text=auto eol=lf`) exists specifically to prevent this — without it, a `.mjs`/`.js` file starting with a shebang line (`#!/usr/bin/env node`) breaks Vite/Vitest's module transform with `SyntaxError: Invalid or unexpected token` when checked out with CRLF. See `src/agents/plugins/claude/plugin/statusline.mjs:1`.
 
 **Local repro**: convert a file to CRLF (`perl -pi -e 's/\n/\r\n/ unless /\r\n$/' <file>`) and re-run `npx vitest run <its-test>` — this reproduces Windows-only CI failures without needing a Windows machine.
 
 ### Integration tests
 
-**Run**: `npm run test:integration` (`vitest run tests/integration`)
+**Run**: `npx vitest run --project cli` (part of `npm test`; `tests/integration/**` minus `agent-*.test.ts`)
 **Pass**: all specs under `tests/integration/` pass.
 **Fail**: Vitest output identifies the failing scenario; check `tests/integration/session/fixtures/` for snapshot drift.
 **Auto-fix**: none.
@@ -80,7 +80,7 @@ CI runs a separate `test-windows` job (`.github/workflows/ci.yml`) using the sam
 
 ### Full CI
 
-**Run**: `npm run ci` (`license-check && lint && build && test:unit && test:integration`)
+**Run**: `npm run ci` (`license-check && lint && build && vitest run --project unit && vitest run --project cli`)
 **Pass**: every above-listed gate passes in order.
 **Fail**: stops at the first failing gate.
 **Skip if**: never before merge.

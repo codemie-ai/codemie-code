@@ -11,7 +11,7 @@
  * Gated on SSO_AVAILABLE (tests/setup/agent-build-setup.ts). Cleanup: profile
  * restored + temp home removed in afterAll.
  *
- * Run: npm run test:integration:agent -- agent-opencode
+ * Run: npx vitest run --project agent -- agent-opencode
  */
 
 import '../setup/load-test-env.js';

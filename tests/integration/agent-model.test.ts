@@ -1,7 +1,7 @@
 /**
  * Model tests — TC-020, TC-021, TC-022, TC-024
  *
- * Run with: npm run test:integration:agent
+ * Run with: npx vitest run --project agent
  *
  * Auth mode (CI_IS_LOCAL_RUN in .env.test.local):
  *   true  (default) — SSO mode; uses developer's sso-autotest profile in ~/.codemie
@@ -16,7 +16,7 @@
 import '../setup/load-test-env.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -249,7 +249,7 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('Model tests', () => {
       rmSync(testHome, { recursive: true, force: true });
     });
 
-    it('agent processes /model switch and records new model in metrics', async () => {
+    it('agent processes /model switch and records new model in metrics', async (ctx) => {
       const sessionArgs = CI_IS_LOCAL_RUN
         ? [CLAUDE_BIN]
         : [CLAUDE_BIN, '--profile', 'jwt-autotest', '--jwt-token', jwtToken];
@@ -305,7 +305,38 @@ describe.runIf(process.env.SSO_AVAILABLE !== 'false')('Model tests', () => {
       }
 
       const ptyLines = proc.lines();
-      const metrics = getLatestMetricsRecord(join(testHome, 'sessions'));
+
+      // Known upstream gap (#523): an interactively-driven Claude Code session may not
+      // persist its transcript JSONL at the path it reports to the hooks. When that
+      // happens there is no data source for per-model metrics, CodeMie downgrades the
+      // session's correlation matched → failed, and no *_metrics.jsonl is written. That
+      // is now a graceful, expected outcome — skip rather than fail, so this test still
+      // asserts the happy path wherever the transcript IS persisted (e.g. --task-backed
+      // runs or once the upstream behavior is fixed) and does not mask an unrelated
+      // metrics regression (a 'matched' session with no metrics still falls through and
+      // fails below).
+      const sessionsDir = join(testHome, 'sessions');
+      const hasMetrics =
+        existsSync(sessionsDir) && readdirSync(sessionsDir).some((f) => f.endsWith('_metrics.jsonl'));
+      if (!hasMetrics) {
+        const recordFile = existsSync(sessionsDir)
+          ? readdirSync(sessionsDir).find((f) => f.endsWith('.json') && !f.endsWith('-codemie-marker.json'))
+          : undefined;
+        const correlationStatus = recordFile
+          ? (JSON.parse(readFileSync(join(sessionsDir, recordFile), 'utf-8')) as { correlation?: { status?: string } })
+              .correlation?.status
+          : undefined;
+        if (correlationStatus === 'failed') {
+          ctx.skip(
+            `Claude did not persist an interactive transcript (correlation downgraded to failed); ` +
+            `per-model metrics are unavailable for this session. See ` +
+            `https://github.com/codemie-ai/codemie-code/issues/523.\n` +
+            `Last PTY lines:\n${ptyLines.slice(-15).join('\n')}`,
+          );
+        }
+      }
+
+      const metrics = getLatestMetricsRecord(sessionsDir);
       const models = (metrics.models as string[]) ?? [];
       expect(
         models.some((m) => /haiku/i.test(m)),

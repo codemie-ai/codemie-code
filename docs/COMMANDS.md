@@ -185,7 +185,7 @@ reduced hidden-reasoning continuity. Prefer a current VS Code release (1.122 or 
 stateless flag and marker suppression are honored.
 
 Check the daemon context with `codemie proxy status`. Automated VS Code BYOK configuration
-and routing coverage runs as part of `npm run test:all`.
+and routing coverage runs as part of `npm test`.
 
 #### Troubleshooting VS Code BYOK
 

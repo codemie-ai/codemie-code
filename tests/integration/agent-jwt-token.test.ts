@@ -1,7 +1,7 @@
 /**
  * JWT token tests — TC-017, TC-027
  *
- * Run with: npm run test:integration:agent
+ * Run with: npx vitest run --project agent
  * Requires: CI_IS_LOCAL_RUN=false (JWT mode) + CI_CODEMIE_* env vars
  *
  * JWT-ONLY: these tests exercise CLI flag paths that are specific to the

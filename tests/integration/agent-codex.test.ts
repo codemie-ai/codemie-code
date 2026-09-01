@@ -33,7 +33,7 @@
  * Gated on SSO_AVAILABLE (set by tests/setup/agent-build-setup.ts): skipped when
  * no valid CodeMie SSO session is present, exactly like the Claude agent tests.
  *
- * Run: npm run test:integration:agent -- agent-codex
+ * Run: npx vitest run --project agent -- agent-codex
  */
 
 import '../setup/load-test-env.js';
