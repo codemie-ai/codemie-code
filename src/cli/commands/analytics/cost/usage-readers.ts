@@ -73,9 +73,10 @@ interface ClaudeRawMessage {
     /**
      * LiteLLM Router headers (alternative routing metadata format).
      * Mutually exclusive with the `x_codemie_routing_*` family: a deployment routes
-     * through either Switchyard or the LiteLLM router, never both. Unlike Switchyard,
-     * this family reports no classifier token counts or cost, so routing overhead is
-     * unmeasurable on LiteLLM deployments (see `routingCostKnown` on UsageRecord).
+     * through either Switchyard or the LiteLLM router, never both. Newer LiteLLM builds
+     * report classifier cost too (see the `x-litellm-classifier-*` block below), but older
+     * ones do not — so routing overhead is measurable per turn, not per family (see
+     * `routingCostKnown` on UsageRecord).
      */
     'x-litellm-router-tier'?: string;
     'x-litellm-router-cause'?: string;
@@ -88,6 +89,22 @@ interface ClaudeRawMessage {
     'x-litellm-router-score'?: string;
     /** Upstream deployment the router actually dispatched to (provider-qualified). */
     'x-litellm-model-name'?: string;
+
+    /**
+     * LiteLLM classifier (routing LLM) cost and tokens, the counterpart to Switchyard's
+     * `x_codemie_routing_judge_*` block. Present only on builds that report routing spend.
+     *
+     * Cost is exact per turn. Token counts are NOT: a turn that reused an earlier routing
+     * decision still carries this block with cost `"0.0"` and the token counts repeated
+     * verbatim from the last billed call. Summing them therefore yields an upper bound, not
+     * a count of distinct classifier invocations (observed ~6x over on real sessions).
+     * `-total-tokens` is exactly prompt + completion, so it is declared but not stored —
+     * no consumer has a combined-total field to put it in.
+     */
+    'x-litellm-classifier-cost'?: string;
+    'x-litellm-classifier-prompt-tokens'?: string;
+    'x-litellm-classifier-completion-tokens'?: string;
+    'x-litellm-classifier-total-tokens'?: string;
 
     /** Judge/classifier LLM call tokens and cost (present when LLM was invoked for this turn). */
     x_codemie_routing_judge_input_tokens?: string;
@@ -144,9 +161,9 @@ export interface UsageRecord {
   requestedModel?: string;
   capableModel?: string;
   /**
-   * Which header family carried this turn's routing decision. Lets consumers tell a
-   * genuinely-zero routing cost (Switchyard, `judgeCostUSD: 0`) apart from an
-   * unmeasurable one (LiteLLM, which reports no classifier cost at all).
+   * Which header family carried this turn's routing decision. Pair with
+   * {@link UsageRecord.routingCostKnown} to tell a genuinely-zero routing cost apart from an
+   * unreported one.
    */
   routingFamily?: 'switchyard' | 'litellm';
   /** Raw tier string as emitted, before {@link normalizeRoutingTier} folds the two vocabularies. */
@@ -160,9 +177,10 @@ export interface UsageRecord {
   /** Numeric complexity score from LiteLLM's heuristic scorer; absent on classifier turns. */
   routerScore?: number;
   /**
-   * True when the family reports classifier cost (Switchyard), so `judgeCostUSD == null`
-   * means "no classifier ran". False on LiteLLM, where cost is never reported and absence
-   * carries no information.
+   * True when this turn's routing cost was reported, so `judgeCostUSD == null` means "no
+   * classifier ran" rather than "not measured". Always true on Switchyard; true on LiteLLM
+   * builds that emit `x-litellm-classifier-cost`. False when a routed turn reported no cost,
+   * where absence carries no information.
    */
   routingCostKnown?: boolean;
   /** Switchyard routing tier for this turn: 'efficient' or 'capable'. */
@@ -173,7 +191,12 @@ export interface UsageRecord {
   routingSource?: 'stage_router' | 'judge' | 'classifier' | string;
   /** Why Switchyard chose this tier: override | tests_passed | dimensions | ambiguous | llm-classifier | fall_open. */
   decisionSource?: string;
-  /** Classifier LLM call input tokens for this turn (present when classifier was invoked). */
+  /**
+   * Classifier LLM call input tokens for this turn (present when classifier was invoked).
+   * On LiteLLM these counts repeat on turns that reused an earlier routing decision, so
+   * sums across turns are an upper bound — unlike {@link UsageRecord.judgeCostUSD}, which is
+   * exact because unbilled turns report `0`.
+   */
   judgeInputTokens?: number;
   /** Classifier LLM call output tokens for this turn. */
   judgeOutputTokens?: number;
@@ -359,10 +382,12 @@ export function extractClaudeUsageRecords(parsed: ParsedSession): UsageRecord[] 
       const litellmCause = normalizeDecisionSource(msg?.['x-litellm-router-cause']);
 
       // Discriminate between the two routing header families so consumers know if routing cost is known.
+      // A turn carrying only the classifier block (no tier/cause) still counts as LiteLLM-routed.
+      const litellmClassifierCostRaw = msg?.['x-litellm-classifier-cost'];
       const routingFamily: 'switchyard' | 'litellm' | undefined =
         codemieTier != null || msg?.x_codemie_routing_source != null
           ? 'switchyard'
-          : litellmTier != null || litellmCause != null
+          : litellmTier != null || litellmCause != null || litellmClassifierCostRaw != null
             ? 'litellm'
             : undefined;
 
@@ -393,11 +418,14 @@ export function extractClaudeUsageRecords(parsed: ParsedSession): UsageRecord[] 
         }
         return undefined;
       })();
-      const judgeInputTokens = parseOptInt(raw.message?.x_codemie_routing_judge_input_tokens ?? raw.message?.x_codemie_routing_classifier_input_tokens);
-      const judgeOutputTokens = parseOptInt(raw.message?.x_codemie_routing_judge_output_tokens ?? raw.message?.x_codemie_routing_classifier_output_tokens);
+      // Switchyard keys take precedence; LiteLLM's classifier headers are the last fallback.
+      // The families are mutually exclusive per deployment, so this never blends the two.
+      // Cached/cache-creation stay Switchyard-only — LiteLLM emits no such header.
+      const judgeInputTokens = parseOptInt(raw.message?.x_codemie_routing_judge_input_tokens ?? raw.message?.x_codemie_routing_classifier_input_tokens ?? msg?.['x-litellm-classifier-prompt-tokens']);
+      const judgeOutputTokens = parseOptInt(raw.message?.x_codemie_routing_judge_output_tokens ?? raw.message?.x_codemie_routing_classifier_output_tokens ?? msg?.['x-litellm-classifier-completion-tokens']);
       const judgeCachedTokens = parseOptInt(raw.message?.x_codemie_routing_judge_cached_tokens ?? raw.message?.x_codemie_routing_classifier_cached_tokens);
       const judgeCacheCreationTokens = parseOptInt(raw.message?.x_codemie_routing_judge_cache_creation_tokens ?? raw.message?.x_codemie_routing_classifier_cache_creation_tokens);
-      const judgeCostUSD = parseOptFloat(raw.message?.x_codemie_routing_judge_cost_usd ?? raw.message?.x_codemie_routing_classifier_cost_usd);
+      const judgeCostUSD = parseOptFloat(raw.message?.x_codemie_routing_judge_cost_usd ?? raw.message?.x_codemie_routing_classifier_cost_usd ?? litellmClassifierCostRaw);
       const judgePSolve = parseOptFloat(raw.message?.x_codemie_routing_judge_p_solve ?? raw.message?.x_codemie_routing_classifier_p_solve);
       const signalScore = parseOptFloat(raw.message?.x_codemie_routing_signal_score);
       const signalConfidence = parseOptFloat(raw.message?.x_codemie_routing_signal_confidence);
@@ -427,9 +455,14 @@ export function extractClaudeUsageRecords(parsed: ParsedSession): UsageRecord[] 
         ...(routingConfidence != null && { routingConfidence }),
         ...(routingSource != null && { routingSource }),
         ...(decisionSource != null && { decisionSource }),
-        // Switchyard reports classifier cost explicitly (possibly $0); LiteLLM never reports it at
-        // all. Record which is which so a session total doesn't read a LiteLLM "unmeasured" as "free".
-        ...(routingFamily != null && { routingCostKnown: routingFamily === 'switchyard' }),
+        // Whether routing cost was actually reported for THIS turn, so a session total doesn't
+        // read an unmeasured turn as "free". Switchyard always reports it (possibly $0), so
+        // absence there means "no classifier ran". LiteLLM only reports it on builds that emit
+        // the classifier headers — and a malformed value parses to undefined, which is not a
+        // measurement either, so gate on the parsed cost rather than raw header presence.
+        ...(routingFamily != null && {
+          routingCostKnown: routingFamily === 'switchyard' || judgeCostUSD != null,
+        }),
         ...(judgeInputTokens != null && { judgeInputTokens }),
         ...(judgeOutputTokens != null && { judgeOutputTokens }),
         ...(judgeCachedTokens != null && { judgeCachedTokens }),

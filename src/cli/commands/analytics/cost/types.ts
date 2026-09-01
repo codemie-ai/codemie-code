@@ -104,17 +104,17 @@ export interface SessionCost {
    */
   agentSessionFile?: string;
 
-  // === Routing classifier cost (additive to costUSD; Switchyard only — see routingCostKnown) ===
+  // === Routing classifier cost (additive to costUSD; see routingCostKnown) ===
   judgeCostUSD?: number; // USD spent on the routing classifier LLM
   judgeInputTokens?: number;
   judgeOutputTokens?: number;
   judgeCachedTokens?: number;
   judgeCacheCreationTokens?: number;
   /**
-   * True when every routed turn in this session used a header family that reports classifier
-   * cost (Switchyard). False when any routed turn used LiteLLM, which never reports cost —
-   * so `judgeCostUSD` stays absent even though a classifier ran. Absent when the session had
-   * no routed turns at all.
+   * True when every routed turn in this session reported its classifier cost — always the
+   * case on Switchyard, and on LiteLLM builds that emit `x-litellm-classifier-cost`. False
+   * when any routed turn reported none, making `judgeCostUSD` an understatement rather than a
+   * measurement. Absent when the session had no routed turns at all.
    */
   routingCostKnown?: boolean;
 
