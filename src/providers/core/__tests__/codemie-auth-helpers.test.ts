@@ -17,7 +17,7 @@ vi.mock('inquirer', () => ({
   default: { prompt: vi.fn() },
 }));
 
-import { ensureApiBase, buildAuthHeaders, fetchCodeMieUserInfo, selectCodeMieProject, promptForCodeMieUrl } from '../codemie-auth-helpers.js';
+import { ensureApiBase, buildAuthHeaders, fetchCodeMieUserInfo, selectCodeMieProject } from '../codemie-auth-helpers.js';
 
 describe('ensureApiBase', () => {
   it('appends /code-assistant-api when missing', () => {
@@ -287,89 +287,5 @@ describe('selectCodeMieProject', () => {
 
     // Only one project after dedup → auto-selected
     expect(result).toEqual({ project: 'shared-project', userEmail: 'test' });
-  });
-});
-
-describe('promptForCodeMieUrl', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  async function captureQuestion() {
-    const inquirer = await import('inquirer');
-    return (vi.mocked(inquirer.default.prompt).mock.calls[0][0] as any[])[0];
-  }
-
-  it('uses defaultUrl as the prompt default when allowEmpty is false (default)', async () => {
-    const inquirer = await import('inquirer');
-    vi.mocked(inquirer.default.prompt).mockResolvedValueOnce({ codeMieUrl: 'https://example.com' });
-
-    await promptForCodeMieUrl('https://example.com', 'Enter URL:');
-
-    const question = await captureQuestion();
-    expect(question.default).toBe('https://example.com');
-  });
-
-  it('omits the prompt default when allowEmpty is true', async () => {
-    const inquirer = await import('inquirer');
-    vi.mocked(inquirer.default.prompt).mockResolvedValueOnce({ codeMieUrl: '' });
-
-    await promptForCodeMieUrl('https://example.com', 'Enter URL:', true);
-
-    const question = await captureQuestion();
-    expect(question.default).toBeUndefined();
-  });
-
-  it('validate rejects empty input when allowEmpty is false', async () => {
-    const inquirer = await import('inquirer');
-    vi.mocked(inquirer.default.prompt).mockResolvedValueOnce({ codeMieUrl: 'https://example.com' });
-
-    await promptForCodeMieUrl('https://example.com');
-
-    const { validate } = await captureQuestion();
-    expect(validate('')).toBe('CodeMie URL is required');
-    expect(validate('   ')).toBe('CodeMie URL is required');
-  });
-
-  it('validate accepts empty input when allowEmpty is true', async () => {
-    const inquirer = await import('inquirer');
-    vi.mocked(inquirer.default.prompt).mockResolvedValueOnce({ codeMieUrl: '' });
-
-    await promptForCodeMieUrl('https://example.com', 'Enter URL:', true);
-
-    const { validate } = await captureQuestion();
-    expect(validate('')).toBe(true);
-    expect(validate('   ')).toBe(true);
-  });
-
-  it('validate rejects non-URL input regardless of allowEmpty', async () => {
-    const inquirer = await import('inquirer');
-    vi.mocked(inquirer.default.prompt).mockResolvedValueOnce({ codeMieUrl: 'not-a-url' });
-
-    await promptForCodeMieUrl('https://example.com', 'Enter URL:', true);
-
-    const { validate } = await captureQuestion();
-    expect(validate('not-a-url')).toBe('Please enter a valid URL starting with http:// or https://');
-    expect(validate('ftp://example.com')).toBe('Please enter a valid URL starting with http:// or https://');
-  });
-
-  it('accepts valid http and https URLs', async () => {
-    const inquirer = await import('inquirer');
-    vi.mocked(inquirer.default.prompt).mockResolvedValueOnce({ codeMieUrl: 'https://example.com' });
-
-    await promptForCodeMieUrl('https://example.com');
-
-    const { validate } = await captureQuestion();
-    expect(validate('https://example.com')).toBe(true);
-    expect(validate('http://localhost:4000')).toBe(true);
-  });
-
-  it('returns empty string when allowEmpty is true and user submits blank input', async () => {
-    const inquirer = await import('inquirer');
-    vi.mocked(inquirer.default.prompt).mockResolvedValueOnce({ codeMieUrl: '  ' });
-
-    const result = await promptForCodeMieUrl('https://example.com', 'Enter URL:', true);
-
-    expect(result).toBe('');
   });
 });
