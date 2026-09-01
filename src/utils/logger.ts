@@ -85,6 +85,18 @@ class Logger {
       // Create write stream with append mode
       this.writeStream = fs.createWriteStream(this.logFilePath, { flags: 'a' });
 
+      // createWriteStream opens the file ASYNCHRONOUSLY, so a logs directory that
+      // disappears between this call and the open surfaces as an 'error' event —
+      // never as a throw the try/catch above can see. With no listener attached
+      // Node treats it as an unhandled error and takes the whole process down, so
+      // an ephemeral CODEMIE_HOME (a temp dir in tests, a sandbox that cleans up
+      // under us) could kill the CLI purely because logging failed. Logging must
+      // never be fatal: degrade to console-only instead.
+      this.writeStream.on('error', () => {
+        this.writeStream = null;
+        this.logFilePath = null;
+      });
+
       this.logFileInitialized = true;
     } catch {
       // If we can't create log directory, disable file logging
